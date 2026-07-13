@@ -4,15 +4,16 @@ _Living status board. Append-only decisions log at bottom. Last updated: 2026-07
 
 ## Current phase
 
-**P0 — COMPLETE** (audit AUDIT-1 PASS, tagged `phase-0-complete`, protocol FROZEN).
-**P1 — Infinite Canvas + Live Frames — IN PROGRESS.** Serialized: sync-daemon → canvas. daemon worker spawned.
+**P0 — COMPLETE** (AUDIT-1 PASS, tag `phase-0-complete`, protocol FROZEN).
+**P1 — COMPLETE** (AUDIT-2 daemon + AUDIT-3 canvas/integration PASS, tag `phase-1-complete`).
+**⛔ HALTED at P1 gate per human instruction — do NOT start P2 without a new go.**
 
 ## Phase status board
 
 | Phase | Title | State | Gate |
 |---|---|---|---|
 | P0 | Foundations & Contracts | ✅ complete (tag phase-0-complete) | — |
-| P1 | Infinite Canvas + Live Frames | 🟡 in progress (sync-daemon) | P0 ✅ |
+| P1 | Infinite Canvas + Live Frames | ✅ complete (tag phase-1-complete) | P0 ✅ |
 | P2 | Selection Bridge | ⬜ not started | P1 |
 | P3 | AST Write-Back Engine (critical path) | ⬜ not started | P2 |
 | P4 | Design System: Tokens + Components | ⬜ not started | P3 |
@@ -79,3 +80,15 @@ _(one-command demo per phase recorded here as phases complete)_
 - Protocol froze cleanly; TreeNode/FrameMeta item shapes were underspecified in the playbook — pre-specify cross-boundary interfaces BEFORE spawning (did this for P1 via ADR-0012).
 - Change for P1 prompts: give workers an independently-demonstrable sub-acceptance so serialized coupled workstreams each prove something alone.
 - Watch: TS pinned to ^6.0.3 (not 7.x) due to typescript-eslint peer crash — revisit when tseslint supports TS7.
+
+## P1 retro (≤10 lines)
+- Serializing coupled workstreams (daemon→canvas) paid off: each proved a sub-acceptance alone; integration risk stayed low.
+- Pre-freezing the daemon↔canvas wire format (ADR-0012/0013) BEFORE spawning meant zero interface churn between the two workers.
+- One worker stalled (watchdog) at ~95%; a tight "finish-and-verify" respawn recovered it cheaply — cheaper than resuming a stalled agent.
+- Interface gaps (create-frame/get-canvas-json) surfaced late; folding them into ADR-0014 kept the daemon as sole fs-writer — worth blocking the tag for.
+- .orchestrator/DECISIONS.md was silently truncated by an external edit (lost ADR-0014 once); AUDIT-3 caught it. LESSON: re-grep the ADR is present after each append; auditors reading the doc are a good backstop.
+- Perf gate smashed (118fps vs 60); had to tighten a too-loose CI guard (>24→>50) so the gate actually guards.
+- Change for P2 prompts: keep the "run NO git commands" rule (it worked); keep verifying git tree + ADR presence at every gate.
+
+## P1 acceptance demo (one command)
+`pnpm --filter @ccs/canvas run test:e2e`  → drives real daemon+canvas: (a) HMR<1s (b) drag→canvas.json (c) new-frame via daemon API (d) 20 frames ~118fps. Manual: `pnpm --filter @ccs/canvas run demo:daemon` + `demo:harness`, open http://127.0.0.1:5555/?daemonPort=4700

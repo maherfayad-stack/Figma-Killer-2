@@ -105,3 +105,14 @@ ADR format. Numbered, dated. Alternatives-rejected required. Standing positions 
 - **Geometry-write → watcher duplicate `file-changed`:** accepted as cosmetic for P1; add a generation-counter/self-write suppression before P3 if noisy.
 - **design-system tokens-changed vs components-changed heuristic:** accepted (no P1 consumers); P4 must revisit.
 **Rationale:** Freeze the exact interface the next serialized worker needs; keep additive-only; smallest reversible step; defer speculative event variants.
+
+## ADR-0014 — Close P1 interface gaps before tag: additive daemon create-frame + get-canvas-json APIs
+**Date:** 2026-07-13 · **Status:** Accepted (orchestrator, Advisor) · _(re-logged 2026-07-13 after an external edit dropped the first append; AUDIT-3 finding #1)_
+**Context:** P1 canvas worker met all four acceptance criteria (HMR<1s, drag→canvas.json, new-frame, 20 frames ~118fps) but flagged two interface gaps (CR1/CR2): (1) no daemon `create-frame` control-ws API — the production `onCreateFrame` threw; new-frame was demonstrated only via a dev-only HTTP `create-frame-server`; (2) no daemon way to fetch a file-folder's `.studio/canvas.json` — canvas read it via an undocumented `GET <viteOrigin>/.studio/canvas.json` static-serve reliance.
+**Decision:** The daemon MUST be the sole filesystem-writer (P3 git checkpoints, P6 locks depend on this). Closed both gaps with ADDITIVE control-ws APIs BEFORE tagging `phase-1-complete`:
+- `{kind:'create-frame', fileFolder, name}` → daemon writes `src/frames/<Name>.tsx` (from template), patches `src/frames.ts`, appends the `.studio/canvas.json` entry — inside the existing per-file `FileOpQueue`, atomic — then broadcasts `file-changed`. Rejects path-traversal / duplicate / unknown-folder names (tested).
+- `{kind:'get-canvas-json', fileFolder}` → returns the file-folder's FrameMeta (reply `get-canvas-json-result`; errors via `control-error` keyed by requestId). Removes the Vite-static-serve reliance.
+- New request/reply shapes live in additive `packages/protocol/src/control-messages.ts`; frozen types (CanvasOp, DaemonEvent, FrameMeta, TreeNode, NodeUid, ProjectInfo) unchanged.
+**Authorized scope exception:** ONE P1-integration worker was allowed to touch BOTH `packages/sync-daemon` (add APIs) AND `packages/canvas` (wire production `onCreateFrame` + canvas.json read; production path no longer uses the dev-only HTTP server — the dev harness keeps its own copy for standalone runs only). Normal one-package boundary resumes after.
+**CR3 (empty file-folder has no learned origin):** deferred — real only for a brand-new zero-frame file-folder; revisit when dashboard/file-create lands (P5/P6).
+**Verification:** AUDIT-3 (P1 gate) reproduced (c) through the real daemon `create-frame` API (dev HTTP server unused by production + e2e); protocol freeze intact; One Rule clean (canvas makes zero direct fs writes).

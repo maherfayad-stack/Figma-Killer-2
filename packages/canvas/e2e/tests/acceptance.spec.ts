@@ -250,7 +250,9 @@ test('(d) 20 frames pan/zoom performance measurement', async () => {
       `${framesOver33ms}/${usable.length} frames slower than 30fps`,
   );
 
-  // Regression guard (not the headline number — see the console log above
-  // and the P1 report for the actual measured fps to cite).
-  expect(fps).toBeGreaterThan(24);
+  // Regression guard for the playbook §4/P1 60fps gate. Actual measured avg
+  // is ~118fps (2x margin); guard set at 50 to catch a real regression toward
+  // the 60fps floor while tolerating CI jitter. See console log above for the
+  // headline number. (Tightened per AUDIT-3 finding #2.)
+  expect(fps).toBeGreaterThan(50);
 });
