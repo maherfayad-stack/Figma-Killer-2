@@ -29,7 +29,9 @@ Dependency graph: `P0 → P1 → P2 → P3 → {P4, P5} → P6 → P7 → P8`.
 
 ## Open workstreams / agent assignments
 
-- **P0 / infra** — worker COMPLETE (13 workspace projects, protocol frozen, templates standalone, CI). Independent auditor RUNNING. 6 CRs adjudicated → ADR-0009/0010/0011.
+- **P1 / sync-daemon** — worker COMPLETE + AUDIT-2 PASS. Vite-per-folder, loopback ws, chokidar, atomic geometry writes; 62+9 real tests; wire format frozen (ADR-0013). Committed as 85c8900 (worker self-committed — see learning). Carry-forward minors: empty .studio dir on shutdown; e2e (e) soft-skip.
+- **P1 / canvas** — NEXT (spawning): tldraw FrameShape + iframe + overlay + 60fps perf, against the real daemon.
+- **P0 / infra** — COMPLETE (AUDIT-1 PASS, tag phase-0-complete).
 - Topology (playbook §6): infra, canvas, ast, tokens-ds, chrome, platform, qa.
 - Sequencing: P3 golden suite is the critical path — staff ast first/heaviest; scaffold golden suite during P2.
 

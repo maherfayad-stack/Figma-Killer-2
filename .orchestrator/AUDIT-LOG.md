@@ -41,3 +41,21 @@ type/lint/test: green (36/36 forced) ✅
 Security spot-check (P1+): n/a
 Perf gate: n/a
 **Action: MERGE — P0 gated complete.**
+
+### AUDIT-2 — sync-daemon · Phase 1 · 2026-07-13
+Auditor: fresh independent agent (Sonnet 5) · Ref: `git diff phase-0-complete` (tree == commit 85c8900)
+**Verdict: PASS** (no blockers)
+Findings:
+  1. [info] .orchestrator/.gitignore diffs belong to earlier orchestrator commit 58b9917 — not worker's. No action.
+  2. [info] Commit 85c8900 landed mid-audit — the sync-daemon WORKER self-committed despite "do not commit" instruction (authored as repo git identity). Content byte-identical to audited diff; conclusions unaffected. → process learning, prompts tightened.
+  3. [minor] coord-file.ts:54-56 removeDaemonCoordFile leaves an empty `.studio/` dir on shutdown — harmless (gitignored, no state). Carry-forward P8.
+  4. [minor] e2e.demo.test.ts:233-236 sub-acceptance (e) soft-skips if no non-loopback iface (proven live this run). Carry-forward: assert bind-config as fallback.
+Reproduced: protocol freeze additive-only (diff = +1 export line; frozen types zero diff) ✅ · 62 daemon + 9 ProjectInfo tests real & green ✅ · e2e a–e live (vite 200s, hmr-update+file-changed, add/remove, atomic geometry write, non-loopback refused) ✅ · one vite/file-folder, HMR direct ✅
+One-Rule scan: clean (only .studio/canvas.json for design state; daemon.json = ports/pids, asserted no 'canvas') ✅
+Wire-format (ADR-0013): conforms exactly ✅
+Boundary check: scoped to sync-daemon/ + additive protocol/ + .gitignore; design-system/playbook/canvas/studio untouched ✅ · files/demo fixture reverted byte-identical ✅
+type/lint/test: 12/12 green ✅
+Security (§5.8): all sockets 127.0.0.1 only; no 0.0.0.0 ✅
+Cleanup: child vite servers SIGTERM→SIGKILL, no orphaned ports ✅
+Perf gate: n/a (canvas concern)
+**Action: MERGE daemon workstream. P1 NOT yet complete — canvas workstream next; phase-1-complete tag deferred to joint acceptance.**
