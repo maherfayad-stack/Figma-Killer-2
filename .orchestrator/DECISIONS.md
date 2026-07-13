@@ -79,3 +79,14 @@ ADR format. Numbered, dated. Alternatives-rejected required. Standing positions 
 **Context:** Playbook §4/P4 ComponentsPanel uses ts-morph TYPE extraction on typed `.tsx` (`meta.ts propsSchemaFrom:'types'`). The real Almosafer DS is ~40 UNTYPED `.jsx` components with zero metadata files. Type extraction cannot work as specified.
 **Options (to decide before P4 build):** (a) hand-author `meta.ts` + prop schemas for each real DS component; (b) add a JS/PropTypes/runtime fallback extraction path in `packages/tokens`/ComponentsPanel; (c) generate `.d.ts` types for the DS upstream. Likely (a)+(b) combined.
 **Impact:** P4 effort + fidelity. Not blocking now (P4 is downstream of P3). Will present options to human at P4 kickoff.
+
+## ADR-0012 — Daemon↔studio transport interface (frozen for P1)
+**Date:** 2026-07-13 · **Status:** Accepted (orchestrator) — freezes the P1 cross-boundary surface
+**Decision:** The sync-daemon exposes to the studio app:
+- **Control WebSocket** at `ws://127.0.0.1:<daemonPort>` (localhost-bind ONLY, playbook §5.8). Server→client carries `DaemonEvent` (frozen protocol union). Client→server carries `CanvasOp` (queued; actual AST apply is P3 — in P1 the daemon may no-op/echo ops) plus control requests.
+- **One Vite dev server per file-folder** (portpool from 5200+). Each frame renders at `http://127.0.0.1:<frameServerPort>/?frame=<Name>` — direct HMR connection, NOT proxied through the daemon (playbook §1/P1 pitfall).
+- **Bootstrap handshake:** on ws connect the daemon sends project info: `{ frames: [{ framePath, name, devServerUrl }], daemonPort }`.
+**Additive protocol extension (APPROVED):** the sync-daemon worker MAY add a `ProjectInfo`/bootstrap-message zod schema + type to `packages/protocol` **additively**. The frozen types (CanvasOp, DaemonEvent, FrameMeta, TreeNode, NodeUid) MUST NOT change. `project-info` is a control/handshake message, deliberately NOT a `DaemonEvent` variant (events = state changes only).
+**Runtime coordination file:** `<projectRoot>/.studio/daemon.json` (ports/pids only) is permitted — it holds NO design/scene state, is gitignored, ephemeral. Auditors: this is not a One-Rule violation.
+**Rationale:** Freezing this now lets P1's daemon and canvas workstreams integrate deterministically; keeps HMR direct; honors localhost-only security.
+**Alternatives rejected:** Proxying HMR through daemon (playbook pitfall, kills HMR perf); adding project-info to DaemonEvent (pollutes the frozen event union with non-events).

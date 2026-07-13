@@ -4,14 +4,15 @@ _Living status board. Append-only decisions log at bottom. Last updated: 2026-07
 
 ## Current phase
 
-**P0 — Foundations & Contracts — IN PROGRESS.** Human gate passed 2026-07-13. infra worker spawned.
+**P0 — COMPLETE** (audit AUDIT-1 PASS, tagged `phase-0-complete`, protocol FROZEN).
+**P1 — Infinite Canvas + Live Frames — IN PROGRESS.** Serialized: sync-daemon → canvas. daemon worker spawned.
 
 ## Phase status board
 
 | Phase | Title | State | Gate |
 |---|---|---|---|
-| P0 | Foundations & Contracts | 🟡 worker done, auditing | — |
-| P1 | Infinite Canvas + Live Frames | ⬜ not started | P0 |
+| P0 | Foundations & Contracts | ✅ complete (tag phase-0-complete) | — |
+| P1 | Infinite Canvas + Live Frames | 🟡 in progress (sync-daemon) | P0 ✅ |
 | P2 | Selection Bridge | ⬜ not started | P1 |
 | P3 | AST Write-Back Engine (critical path) | ⬜ not started | P2 |
 | P4 | Design System: Tokens + Components | ⬜ not started | P3 |
@@ -65,3 +66,10 @@ _(one-command demo per phase recorded here as phases complete)_
 - **2026-07-13** — Flagged tldraw licensing ($6k/yr or watermark) to human (ADR-0005) — cost/license implication, out of my autonomous authority.
 - **2026-07-13** — Flagged presence of real Almosafer DS in working dir (ADR-0006) — affects P4 scope.
 - **2026-07-13** — Gating before P0 worker spawn; reported status board to human.
+
+## P0 retro (≤10 lines)
+- Worker delivered clean, self-audited honestly, disclosed every divergence as a CR — high trust; keep this worker profile.
+- The real Almosafer DS being untyped `.jsx` w/o metadata is the biggest downstream surprise (ADR-0011) — surface to human at P4 kickoff, not later.
+- Protocol froze cleanly; TreeNode/FrameMeta item shapes were underspecified in the playbook — pre-specify cross-boundary interfaces BEFORE spawning (did this for P1 via ADR-0012).
+- Change for P1 prompts: give workers an independently-demonstrable sub-acceptance so serialized coupled workstreams each prove something alone.
+- Watch: TS pinned to ^6.0.3 (not 7.x) due to typescript-eslint peer crash — revisit when tseslint supports TS7.
