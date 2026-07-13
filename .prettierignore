@@ -1,0 +1,10 @@
+**/node_modules/**
+**/dist/**
+**/build/**
+**/.turbo/**
+**/coverage/**
+**/files/**
+pnpm-lock.yaml
+design-system/**
+.orchestrator/**
+CANVAS-CODE-STUDIO-PLAYBOOK.md

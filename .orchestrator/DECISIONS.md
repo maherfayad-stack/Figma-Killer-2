@@ -56,3 +56,26 @@ ADR format. Numbered, dated. Alternatives-rejected required. Standing positions 
 **Decision:** Init git + the pnpm/turborepo monorepo at the current working-dir root. The existing `./design-system` folder is its own git repo (tajawal/design-system) — do NOT move, delete, or nest it as studio source in P0. Gitignore it at the studio level; use it as the format reference for `templates/design-system` and, later, as the seed project's imported DS (ADR-0006).
 **Rationale:** Avoids embedded-git-repo tangles in P0; keeps the real DS pristine; templates stay standalone (playbook §4/P0 pitfall).
 **Alternatives rejected:** Moving DS under templates/ (mutates a real repo); git submodule (premature ceremony for P0).
+
+## ADR-0009 — packages/protocol freeze v1: resolutions to P0 change-requests
+**Date:** 2026-07-13 · **Status:** Accepted (orchestrator, Advisor)
+**Context:** P0 infra worker raised CRs on protocol shapes with no full playbook spec. Protocol freezes at end of P0; resolving now.
+**Decisions:**
+- **wrap-node `wrapper.tag`** stays literal `"div"` for v1 (matches Appendix B + §4/P3 exactly; smallest surface). Widening to a `div|span|section` allowlist is a deliberate later change requiring a new ADR (breaking schema edit).
+- **DaemonEvent `file-changed`** added to the union (Appendix B's 7 + this) — accepted; reconciles Appendix B with §4/P0 prose. Not a silent change.
+- **TreeNode** shape `{uid, kind, tag, dynamic, component?, children}` authored fresh (no playbook spec) — accepted as frozen v1. P2 (bridge) and P5 (LayersPanel) owners MUST build against it; if they need fields, that is a CHANGE-REQUEST to me, not a silent edit.
+- **FrameMeta.comments / .zoomBookmarks** item shapes kept minimal for v1. P7 (Comments) may extend `comments[]` **additively** (playbook §7 anchor: `{file, frameName, nodeUid|frameXY}`) without re-freeze; removing/renaming existing fields needs an ADR.
+**Rationale:** Boring/proven, smallest reversible step; keep Appendix B authoritative; make every future change explicit.
+
+## ADR-0010 — Token source of truth = Almosafer DS format; DTCG is interop only
+**Date:** 2026-07-13 · **Status:** Accepted (orchestrator) — deviates from playbook §4/P4
+**Context:** Playbook §4/P4 assumes tokens live in DTCG `tokens.json`. The real Almosafer DS (ADR-0006) stores tokens as CSS custom properties + a JS mirror, NOT DTCG.
+**Decision:** `packages/tokens` (P4) treats the Almosafer DS token format (CSS custom props + JS mirror) as the PRIMARY parse/emit target. DTCG import/export becomes an interop feature layered on top, not the core storage model. The build pipeline (tokens → CSS vars + Tailwind preset consumed by file-apps) is unchanged.
+**Rationale:** ADR-0006 makes the real DS the imported design system; forcing it into DTCG would fork it from upstream. Deviation is scoped and additive (DTCG still supported for import).
+**Alternatives rejected:** Convert Almosafer DS to DTCG at P0 (mutates a live upstream repo; ADR-0008 forbids touching it); DTCG-only (breaks the real DS import).
+
+## ADR-0011 — Almosafer DS is untyped .jsx with no per-component metadata → P4 prop-extraction risk
+**Date:** 2026-07-13 · **Status:** OPEN — decide at P4 planning; flag to human (scope/effort)
+**Context:** Playbook §4/P4 ComponentsPanel uses ts-morph TYPE extraction on typed `.tsx` (`meta.ts propsSchemaFrom:'types'`). The real Almosafer DS is ~40 UNTYPED `.jsx` components with zero metadata files. Type extraction cannot work as specified.
+**Options (to decide before P4 build):** (a) hand-author `meta.ts` + prop schemas for each real DS component; (b) add a JS/PropTypes/runtime fallback extraction path in `packages/tokens`/ComponentsPanel; (c) generate `.d.ts` types for the DS upstream. Likely (a)+(b) combined.
+**Impact:** P4 effort + fidelity. Not blocking now (P4 is downstream of P3). Will present options to human at P4 kickoff.

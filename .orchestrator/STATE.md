@@ -10,7 +10,7 @@ _Living status board. Append-only decisions log at bottom. Last updated: 2026-07
 
 | Phase | Title | State | Gate |
 |---|---|---|---|
-| P0 | Foundations & Contracts | 🟡 in progress (infra worker) | — |
+| P0 | Foundations & Contracts | 🟡 worker done, auditing | — |
 | P1 | Infinite Canvas + Live Frames | ⬜ not started | P0 |
 | P2 | Selection Bridge | ⬜ not started | P1 |
 | P3 | AST Write-Back Engine (critical path) | ⬜ not started | P2 |
@@ -28,8 +28,14 @@ Dependency graph: `P0 → P1 → P2 → P3 → {P4, P5} → P6 → P7 → P8`.
 
 ## Open workstreams / agent assignments
 
-None spawned yet. Topology (playbook §6): infra, canvas, ast, tokens-ds, chrome, platform, qa.
-Sequencing: P3 golden suite is the critical path — staff ast first/heaviest; scaffold golden suite during P2.
+- **P0 / infra** — worker COMPLETE (13 workspace projects, protocol frozen, templates standalone, CI). Independent auditor RUNNING. 6 CRs adjudicated → ADR-0009/0010/0011.
+- Topology (playbook §6): infra, canvas, ast, tokens-ds, chrome, platform, qa.
+- Sequencing: P3 golden suite is the critical path — staff ast first/heaviest; scaffold golden suite during P2.
+
+### Carry-forward into later phases (from P0 CRs)
+- **P2/P5:** confirm the frozen `TreeNode` shape before building (ADR-0009).
+- **P4:** token pipeline parses Almosafer DS format, DTCG = interop (ADR-0010); Almosafer DS is untyped `.jsx` w/o metadata → prop-extraction needs JS fallback + meta strategy, decide at P4 kickoff, flag to human (ADR-0011).
+- **P7:** may additively extend `FrameMeta.comments` (ADR-0009).
 
 ## Blockers (owner)
 

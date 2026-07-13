@@ -1,0 +1,29 @@
+{
+  "name": "@ccs/studio",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The editor app (Vite + React + TS). Chrome lands in P5 (playbook §4/P5); P0 is a boot-only placeholder proving the app builds/typechecks in the monorepo.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "eslint .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@ccs/canvas": "workspace:*",
+    "@ccs/protocol": "workspace:*",
+    "@ccs/ui": "workspace:*",
+    "react": "catalog:",
+    "react-dom": "catalog:"
+  },
+  "devDependencies": {
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "@vitejs/plugin-react": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:",
+    "vitest": "catalog:"
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "name": "@ccs/canvas",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "tldraw integration, FrameShape, selection overlay. P1 scope; P0 is a typed stub behind the abstraction (playbook §5.4).",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "eslint .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@ccs/protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

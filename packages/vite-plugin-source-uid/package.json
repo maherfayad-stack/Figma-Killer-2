@@ -1,0 +1,28 @@
+{
+  "name": "@ccs/vite-plugin-source-uid",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Babel/Vite plugin injecting data-uid/data-dynamic/data-component on every JSXElement in studio dev mode. P2 scope.",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "eslint .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@ccs/protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "catalog:",
+    "vite": "catalog:",
+    "vitest": "catalog:"
+  },
+  "peerDependencies": {
+    "vite": "catalog:"
+  }
+}

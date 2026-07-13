@@ -4,3 +4,10 @@ dist/
 .turbo/
 *.log
 .DS_Store
+files/
+coverage/
+.vite/
+playwright-report/
+test-results/
+.env
+.env.local

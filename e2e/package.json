@@ -1,0 +1,16 @@
+{
+  "name": "@ccs/e2e",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Playwright tests driving studio + real file-apps (playbook §3). P0: config + one trivial smoke spec against the file-app template; real studio-driving e2e lands per-phase (playbook §5 Global Risk #10).",
+  "scripts": {
+    "test": "playwright test",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "eslint ."
+  },
+  "devDependencies": {
+    "@playwright/test": "catalog:",
+    "typescript": "catalog:"
+  }
+}

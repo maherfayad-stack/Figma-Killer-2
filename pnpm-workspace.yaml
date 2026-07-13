@@ -1,0 +1,54 @@
+# canvas-code-studio monorepo workspace (§3 layout).
+#
+# `templates/*` are listed here only so the root install manages their node_modules
+# too (dedup, one `pnpm install`) — they declare zero `workspace:*` deps on any
+# studio package (playbook §4/P0 pitfall: templates must run standalone). The
+# `pnpm create-file` script copies a template out to `files/<name>/` and runs an
+# independent `pnpm install` there to prove that standalone claim.
+packages:
+  - 'apps/*'
+  - 'packages/*'
+  - 'templates/*'
+  - 'e2e'
+
+catalog:
+  # pinned per .orchestrator/DECISIONS.md ADR-0001..0004 (verified npm latest, not memory)
+  ts-morph: ^28.0.0
+  vite: ^8.1.4
+
+  # verified against registry.npmjs.org on 2026-07-13 (same discipline as ADR-0001..0004).
+  # typescript: latest npm is 7.0.2, but typescript-eslint@8.63.0 declares
+  # peerDependencies.typescript ">=4.8.4 <6.1.0" and crashes (not just warns)
+  # against 7.x (`Cannot read properties of undefined (reading 'Cjs')` deep
+  # in @typescript-eslint/typescript-estree's program cache). Verified by
+  # actually running `pnpm lint`, not assumed. Pinning to the newest release
+  # inside typescript-eslint's supported range instead — CHANGE-REQUEST:
+  # revisit once typescript-eslint ships TS 7 support.
+  typescript: ^6.0.3
+  vitest: ^4.1.10
+  eslint: ^10.7.0
+  '@eslint/js': ^10.0.1
+  typescript-eslint: ^8.63.0
+  globals: ^17.7.0
+  eslint-config-prettier: ^10.1.8
+  eslint-plugin-react-hooks: ^7.1.1
+  eslint-plugin-react-refresh: ^0.5.3
+  prettier: ^3.9.5
+  turbo: ^2.10.4
+  '@playwright/test': ^1.61.1
+  '@types/node': ^26.1.1
+  zod: ^4.4.3
+  react: ^19.2.7
+  react-dom: ^19.2.7
+  '@types/react': ^19.2.17
+  '@types/react-dom': ^19.2.3
+  '@vitejs/plugin-react': ^6.0.3
+  tailwindcss: ^4.3.2
+  '@tailwindcss/vite': ^4.3.2
+  '@tailwindcss/postcss': ^4.3.2
+  autoprefixer: ^10.5.2
+  postcss: ^8.5.18
+  chokidar: ^5.0.0
+  ws: ^8.21.0
+  '@types/ws': ^8.18.1
+  simple-git: ^3.36.0
