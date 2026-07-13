@@ -90,3 +90,18 @@ ADR format. Numbered, dated. Alternatives-rejected required. Standing positions 
 **Runtime coordination file:** `<projectRoot>/.studio/daemon.json` (ports/pids only) is permitted — it holds NO design/scene state, is gitignored, ephemeral. Auditors: this is not a One-Rule violation.
 **Rationale:** Freezing this now lets P1's daemon and canvas workstreams integrate deterministically; keeps HMR direct; honors localhost-only security.
 **Alternatives rejected:** Proxying HMR through daemon (playbook pitfall, kills HMR perf); adding project-info to DaemonEvent (pollutes the frozen event union with non-events).
+
+## ADR-0013 — sync-daemon P1 CR resolutions + control-ws wire format (frozen for canvas worker)
+**Date:** 2026-07-13 · **Status:** Accepted (orchestrator, Advisor)
+**Context:** P1 sync-daemon worker raised 4 CRs; the canvas worker must build to a concrete wire format ADR-0012 only specified at a high level.
+**Decisions:**
+- **Control-ws wire format FROZEN** (canvas builds to this exactly):
+  - First message per connection = bare `ProjectInfo` `{frames:[{framePath,name,devServerUrl}], daemonPort}` (no `t` field).
+  - Subsequent server→client = bare `DaemonEvent` (always has `t`).
+  - Client→server op: `{kind:'canvas-op', opId, op:CanvasOp}` → daemon replies `{t:'op-rejected', opId, reason}` in P1 (real AST apply = P3).
+  - Client→server geometry: `{kind:'set-geometry', fileFolder, framePath, x,y,w,h}` → no direct reply; debounced (~250ms) persist + broadcast `{t:'file-changed', file:'<fileFolder>/.studio/canvas.json'}`.
+- **Path conventions:** `FrameMeta.framePath` / `NodeUid` = file-folder-relative (frozen). Daemon wire paths (`DaemonEvent.file`, `ProjectInfo.framePath`) = project-root-relative. Canvas maps between them via the fileFolder segment / `devServerUrl`. Accepted (one daemon spans multiple file-folders).
+- **frame add/remove signalling:** ACCEPTED for P1 as generic `file-changed` on the frame path; canvas infers add vs remove via `existsSync`. Edits additionally emit `hmr-update`; add/remove do not. Dedicated `frame-added`/`frame-removed` DaemonEvent variants are DEFERRED — add additively in P2/P3 when uid-remap plumbing lands, only if the generic signal proves too coarse (revisit ADR).
+- **Geometry-write → watcher duplicate `file-changed`:** accepted as cosmetic for P1; add a generation-counter/self-write suppression before P3 if noisy.
+- **design-system tokens-changed vs components-changed heuristic:** accepted (no P1 consumers); P4 must revisit.
+**Rationale:** Freeze the exact interface the next serialized worker needs; keep additive-only; smallest reversible step; defer speculative event variants.

@@ -1,12 +1,52 @@
 /**
- * packages/sync-daemon — per-project Node daemon: boots one Vite dev server
- * per file-folder, exposes a ws server speaking `@ccs/protocol` (CanvasOp
- * in, DaemonEvent out), watches `.studio/canvas.json` + frames dirs with
- * chokidar, and owns git checkpoint commits. Scope: Phase 1 (playbook
- * §4/P1), op-queue/undo lands in Phase 3.
+ * packages/sync-daemon — per-project Node daemon: boots one Vite dev
+ * server per file-folder, exposes a localhost-only control ws speaking
+ * `@ccs/protocol` (CanvasOp in, DaemonEvent out, ProjectInfo bootstrap),
+ * watches `.studio/canvas.json` + frame dirs + `design-system/**` with
+ * chokidar, and owns the debounced geometry-write API. Scope: Phase 1
+ * (playbook §4/P1). AST write-back (op-queue actually mutating source) is
+ * Phase 3; git checkpoint commits are a later phase.
  */
-export const SYNC_DAEMON_PACKAGE_PHASE = 'P1' as const;
+export { openProject } from './daemon.js';
+export type {
+  DaemonHandle,
+  DaemonFileFolder,
+  OpenProjectOptions,
+  StartViteServerFn,
+} from './daemon.js';
 
-export function notImplementedYet(feature: string): never {
-  throw new Error(`@ccs/sync-daemon: "${feature}" is P1 scope, not implemented in P0`);
-}
+export { scanProject } from './scan.js';
+export type { FileFolder, FrameFile } from './scan.js';
+
+export {
+  readCanvasJson,
+  writeCanvasJsonAtomic,
+  syncFrameEntries,
+  frameMetaEquals,
+  reconcileCanvasJson,
+} from './canvas-json.js';
+
+export { allocatePort, isPortFree } from './port-pool.js';
+
+export { startViteServer } from './vite-orchestrator.js';
+export type { ViteServerHandle, StartViteServerOptions } from './vite-orchestrator.js';
+
+export { watchFrameFiles, watchCanvasJson, watchDesignSystem } from './watcher.js';
+export type { WatchHandle } from './watcher.js';
+
+export { createControlServer } from './ws-server.js';
+export type {
+  ControlServerHandle,
+  ControlServerOptions,
+  ClientMessage,
+  SetGeometryRequest,
+} from './ws-server.js';
+
+export { createGeometryWriter } from './geometry.js';
+export type { GeometryWriter, GeometryWriterOptions, GeometryUpdate } from './geometry.js';
+
+export { writeDaemonCoordFile, readDaemonCoordFile, removeDaemonCoordFile } from './coord-file.js';
+export type { DaemonCoordFile, DaemonCoordFileFileFolder } from './coord-file.js';
+
+export { FileOpQueue } from './file-op-queue.js';
+export { toProjectRelative } from './paths.js';

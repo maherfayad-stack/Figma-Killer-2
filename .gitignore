@@ -11,3 +11,9 @@ playwright-report/
 test-results/
 .env
 .env.local
+
+# sync-daemon runtime coordination file (ports/pids only, no design state —
+# playbook §4/P1 step 7, ADR-0012). Rooted so it only matches the studio
+# project's own root .studio/, not templates/file-app/.studio/ (a tracked
+# template file) or files/**/.studio/ (already covered by `files/` above).
+/.studio/
