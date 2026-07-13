@@ -2,7 +2,7 @@ import net from 'node:net';
 import { networkInterfaces } from 'node:os';
 import { WebSocket } from 'ws';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { CanvasOp, DaemonEvent, ProjectInfo } from '@ccs/protocol';
+import type { CanvasOp, ControlReply, DaemonEvent, ProjectInfo } from '@ccs/protocol';
 import { allocatePort } from './port-pool.js';
 import { createControlServer, type ControlServerHandle } from './ws-server.js';
 
@@ -78,6 +78,8 @@ describe('createControlServer', () => {
       getBootstrap: () => ({ ...BOOTSTRAP, daemonPort: port }),
       onCanvasOp: () => {},
       onSetGeometry: () => {},
+      onCreateFrame: () => {},
+      onGetCanvasJson: () => {},
     });
 
     expect(handle.host).toBe('127.0.0.1');
@@ -100,6 +102,8 @@ describe('createControlServer', () => {
       getBootstrap: () => ({ ...BOOTSTRAP, daemonPort: port }),
       onCanvasOp: () => {},
       onSetGeometry: () => {},
+      onCreateFrame: () => {},
+      onGetCanvasJson: () => {},
     });
 
     const client = await connect(port);
@@ -116,6 +120,8 @@ describe('createControlServer', () => {
       getBootstrap: () => ({ ...BOOTSTRAP, daemonPort: port }),
       onCanvasOp: () => {},
       onSetGeometry: () => {},
+      onCreateFrame: () => {},
+      onGetCanvasJson: () => {},
     });
 
     const clientA = await connect(port);
@@ -140,6 +146,8 @@ describe('createControlServer', () => {
       getBootstrap: () => ({ ...BOOTSTRAP, daemonPort: port }),
       onCanvasOp,
       onSetGeometry: () => {},
+      onCreateFrame: () => {},
+      onGetCanvasJson: () => {},
     });
 
     const client = await connect(port);
@@ -159,6 +167,8 @@ describe('createControlServer', () => {
       getBootstrap: () => ({ ...BOOTSTRAP, daemonPort: port }),
       onCanvasOp,
       onSetGeometry: () => {},
+      onCreateFrame: () => {},
+      onGetCanvasJson: () => {},
     });
 
     const client = await connect(port);
@@ -179,6 +189,8 @@ describe('createControlServer', () => {
       getBootstrap: () => ({ ...BOOTSTRAP, daemonPort: port }),
       onCanvasOp: () => {},
       onSetGeometry,
+      onCreateFrame: () => {},
+      onGetCanvasJson: () => {},
     });
 
     const client = await connect(port);
@@ -208,6 +220,96 @@ describe('createControlServer', () => {
     );
   });
 
+  it('forwards a create-frame envelope to onCreateFrame with a working reply channel (ADR-0014)', async () => {
+    const port = await allocatePort(59270);
+    const onCreateFrame = vi.fn((request: { requestId: string }, reply: (r: ControlReply) => void) => {
+      reply({ kind: 'control-error', requestId: request.requestId, reason: 'boom' });
+    });
+    handle = createControlServer({
+      port,
+      getBootstrap: () => ({ ...BOOTSTRAP, daemonPort: port }),
+      onCanvasOp: () => {},
+      onSetGeometry: () => {},
+      onCreateFrame,
+      onGetCanvasJson: () => {},
+    });
+
+    const client = await connect(port);
+    await client.next(); // bootstrap
+
+    client.socket.send(
+      JSON.stringify({ kind: 'create-frame', requestId: 'req-1', fileFolder: 'demo', name: 'Testimonials' }),
+    );
+
+    await vi.waitFor(() =>
+      expect(onCreateFrame).toHaveBeenCalledWith(
+        { kind: 'create-frame', requestId: 'req-1', fileFolder: 'demo', name: 'Testimonials' },
+        expect.any(Function),
+      ),
+    );
+
+    const reply = await client.next();
+    expect(reply).toEqual({ kind: 'control-error', requestId: 'req-1', reason: 'boom' });
+  });
+
+  it('forwards a get-canvas-json envelope to onGetCanvasJson and replies only to the requester, not broadcast', async () => {
+    const port = await allocatePort(59280);
+    const meta = { frames: [], comments: [], zoomBookmarks: [] };
+    const onGetCanvasJson = vi.fn(
+      (request: { requestId: string; fileFolder: string }, reply: (r: ControlReply) => void) => {
+        reply({ kind: 'get-canvas-json-result', requestId: request.requestId, fileFolder: request.fileFolder, meta });
+      },
+    );
+    handle = createControlServer({
+      port,
+      getBootstrap: () => ({ ...BOOTSTRAP, daemonPort: port }),
+      onCanvasOp: () => {},
+      onSetGeometry: () => {},
+      onCreateFrame: () => {},
+      onGetCanvasJson,
+    });
+
+    const requester = await connect(port);
+    const bystander = await connect(port);
+    await requester.next(); // bootstrap
+    await bystander.next();
+
+    const bystanderNext = bystander.next();
+    requester.socket.send(JSON.stringify({ kind: 'get-canvas-json', requestId: 'req-2', fileFolder: 'demo' }));
+
+    const reply = await requester.next();
+    expect(reply).toEqual({ kind: 'get-canvas-json-result', requestId: 'req-2', fileFolder: 'demo', meta });
+
+    // the bystander (a second connected client) never receives this
+    // direct reply — only the requesting socket does (contrast with
+    // `broadcast`, which every client receives).
+    const raceResult = await Promise.race([
+      bystanderNext.then(() => 'received' as const),
+      new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 300)),
+    ]);
+    expect(raceResult).toBe('timeout');
+  });
+
+  it('silently drops a structurally invalid create-frame envelope (missing requestId)', async () => {
+    const port = await allocatePort(59290);
+    const onCreateFrame = vi.fn();
+    handle = createControlServer({
+      port,
+      getBootstrap: () => ({ ...BOOTSTRAP, daemonPort: port }),
+      onCanvasOp: () => {},
+      onSetGeometry: () => {},
+      onCreateFrame,
+      onGetCanvasJson: () => {},
+    });
+
+    const client = await connect(port);
+    await client.next(); // bootstrap
+
+    client.socket.send(JSON.stringify({ kind: 'create-frame', fileFolder: 'demo', name: 'X' }));
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(onCreateFrame).not.toHaveBeenCalled();
+  });
+
   it('tracks clientCount as clients connect and disconnect', async () => {
     const port = await allocatePort(59260);
     handle = createControlServer({
@@ -215,6 +317,8 @@ describe('createControlServer', () => {
       getBootstrap: () => ({ ...BOOTSTRAP, daemonPort: port }),
       onCanvasOp: () => {},
       onSetGeometry: () => {},
+      onCreateFrame: () => {},
+      onGetCanvasJson: () => {},
     });
 
     expect(handle.clientCount()).toBe(0);

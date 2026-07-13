@@ -1,12 +1,19 @@
 import { join } from 'node:path';
-import type { CanvasOp, DaemonEvent, ProjectInfo } from '@ccs/protocol';
-import { reconcileCanvasJson } from './canvas-json.js';
+import type {
+  CanvasOp,
+  CreateFrameRequest,
+  DaemonEvent,
+  GetCanvasJsonRequest,
+  ProjectInfo,
+} from '@ccs/protocol';
+import { reconcileCanvasJson, readCanvasJson } from './canvas-json.js';
+import { createFrameOnDisk } from './create-frame.js';
 import { createGeometryWriter, type GeometryUpdate } from './geometry.js';
 import { FileOpQueue } from './file-op-queue.js';
 import { toProjectRelative } from './paths.js';
 import { allocatePort } from './port-pool.js';
 import { scanProject, type FileFolder } from './scan.js';
-import { createControlServer, type ControlServerHandle, type SetGeometryRequest } from './ws-server.js';
+import { createControlServer, type ControlServerHandle, type ReplyFn, type SetGeometryRequest } from './ws-server.js';
 import { startViteServer, type ViteServerHandle } from './vite-orchestrator.js';
 import { watchCanvasJson, watchDesignSystem, watchFrameFiles, type WatchHandle } from './watcher.js';
 import {
@@ -167,11 +174,71 @@ export async function openProject(options: OpenProjectOptions): Promise<DaemonHa
     });
   }
 
+  /** The shared queue key both ADR-0014 handlers use for one file-folder:
+   * `src/frames.ts` is the one artifact every `create-frame` call mutates
+   * (alongside the new source file + canvas.json), so serializing on it
+   * both prevents two concurrent create-frame calls from interleaving
+   * their registry reads/writes AND guarantees a `get-canvas-json` queued
+   * right after a `create-frame` observes that create-frame's writes
+   * rather than racing ahead of them. */
+  function createFrameQueueKey(fileFolderRoot: string): string {
+    return join(fileFolderRoot, 'src', 'frames.ts');
+  }
+
+  function handleCreateFrame(request: CreateFrameRequest, reply: ReplyFn): void {
+    const fileFolder = resolveFileFolder(request.fileFolder);
+    if (!fileFolder) {
+      reply({ kind: 'control-error', requestId: request.requestId, reason: `unknown file-folder "${request.fileFolder}"` });
+      return;
+    }
+    void fileOpQueue.enqueue(createFrameQueueKey(fileFolder.root), async () => {
+      try {
+        const result = await createFrameOnDisk(fileFolder.root, request.name);
+        control.broadcast({
+          t: 'file-changed',
+          file: toProjectRelative(projectRoot, join(fileFolder.root, result.framePath)),
+        });
+        control.broadcast({
+          t: 'file-changed',
+          file: toProjectRelative(projectRoot, join(fileFolder.root, '.studio', 'canvas.json')),
+        });
+      } catch (err) {
+        reply({
+          kind: 'control-error',
+          requestId: request.requestId,
+          reason: err instanceof Error ? err.message : String(err),
+        });
+      }
+    });
+  }
+
+  function handleGetCanvasJson(request: GetCanvasJsonRequest, reply: ReplyFn): void {
+    const fileFolder = resolveFileFolder(request.fileFolder);
+    if (!fileFolder) {
+      reply({ kind: 'control-error', requestId: request.requestId, reason: `unknown file-folder "${request.fileFolder}"` });
+      return;
+    }
+    void fileOpQueue.enqueue(createFrameQueueKey(fileFolder.root), async () => {
+      try {
+        const meta = await readCanvasJson(fileFolder.root);
+        reply({ kind: 'get-canvas-json-result', requestId: request.requestId, fileFolder: fileFolder.name, meta });
+      } catch (err) {
+        reply({
+          kind: 'control-error',
+          requestId: request.requestId,
+          reason: err instanceof Error ? err.message : String(err),
+        });
+      }
+    });
+  }
+
   const control: ControlServerHandle = createControlServer({
     port: daemonPort,
     getBootstrap: buildBootstrap,
     onCanvasOp: handleCanvasOp,
     onSetGeometry: handleSetGeometry,
+    onCreateFrame: handleCreateFrame,
+    onGetCanvasJson: handleGetCanvasJson,
   });
 
   const watchHandles: WatchHandle[] = [];

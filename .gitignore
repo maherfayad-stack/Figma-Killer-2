@@ -17,3 +17,5 @@ test-results/
 # project's own root .studio/, not templates/file-app/.studio/ (a tracked
 # template file) or files/**/.studio/ (already covered by `files/` above).
 /.studio/
+.gstack/
+.playwright-mcp/

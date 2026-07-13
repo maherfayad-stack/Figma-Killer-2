@@ -5,3 +5,4 @@ export * from './ops.js';
 export * from './events.js';
 export * from './frame-meta.js';
 export * from './project-info.js';
+export * from './control-messages.js';

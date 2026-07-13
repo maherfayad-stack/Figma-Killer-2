@@ -10,15 +10,29 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p dev/tsconfig.json && tsc --noEmit -p e2e/tsconfig.json",
     "lint": "eslint .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:e2e": "playwright test -c e2e/playwright.config.ts",
+    "demo:daemon": "tsx dev/run-daemon.ts",
+    "demo:harness": "vite dev --config dev/vite.config.ts"
   },
   "dependencies": {
-    "@ccs/protocol": "workspace:*"
+    "@ccs/protocol": "workspace:*",
+    "html-to-image": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "tldraw": "catalog:"
   },
   "devDependencies": {
+    "@ccs/sync-daemon": "workspace:*",
+    "@playwright/test": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "@vitejs/plugin-react": "catalog:",
+    "tsx": "catalog:",
     "typescript": "catalog:",
+    "vite": "catalog:",
     "vitest": "catalog:"
   }
 }

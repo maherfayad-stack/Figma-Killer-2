@@ -30,7 +30,8 @@ Dependency graph: `P0 → P1 → P2 → P3 → {P4, P5} → P6 → P7 → P8`.
 ## Open workstreams / agent assignments
 
 - **P1 / sync-daemon** — worker COMPLETE + AUDIT-2 PASS. Vite-per-folder, loopback ws, chokidar, atomic geometry writes; 62+9 real tests; wire format frozen (ADR-0013). Committed as 85c8900 (worker self-committed — see learning). Carry-forward minors: empty .studio dir on shutdown; e2e (e) soft-skip.
-- **P1 / canvas** — NEXT (spawning): tldraw FrameShape + iframe + overlay + 60fps perf, against the real daemon.
+- **P1 / canvas** — worker COMPLETE (no-git rule respected ✅). All 4 acceptance met; perf 20 frames ~117fps avg (gate: 60fps) ✅; 98 unit + 4 e2e green; tldraw abstracted, watermark per ADR-0005. 2 interface gaps → ADR-0014.
+- **P1 / integration** — worker STALLED at ~95% (watchdog, not logic fail); protocol+daemon typecheck clean, only `onControlReply` wiring in StudioCanvas + a test left. Finish-and-verify worker dispatched. daemon `create-frame`/`get-canvas-json` + additive protocol/control-messages.ts + canvas client all present.
 - **P0 / infra** — COMPLETE (AUDIT-1 PASS, tag phase-0-complete).
 - Topology (playbook §6): infra, canvas, ast, tokens-ds, chrome, platform, qa.
 - Sequencing: P3 golden suite is the critical path — staff ast first/heaviest; scaffold golden suite during P2.
@@ -39,6 +40,9 @@ Dependency graph: `P0 → P1 → P2 → P3 → {P4, P5} → P6 → P7 → P8`.
 - **P2/P5:** confirm the frozen `TreeNode` shape before building (ADR-0009).
 - **P4:** token pipeline parses Almosafer DS format, DTCG = interop (ADR-0010); Almosafer DS is untyped `.jsx` w/o metadata → prop-extraction needs JS fallback + meta strategy, decide at P4 kickoff, flag to human (ADR-0011).
 - **P7:** may additively extend `FrameMeta.comments` (ADR-0009).
+
+## ⛔ HARD STOP INSTRUCTION (human, 2026-07-13)
+**Stop when Phase 1 is done.** Complete P1 through its gate (finish worker → audit PASS → tag `phase-1-complete` + retro), then HALT. Do NOT spawn P2 or any further phase without a new human go.
 
 ## Blockers (owner)
 
