@@ -448,6 +448,137 @@ export function getFrame(name: string | null): ComponentType | null {
     await stopAll();
   });
 
+  it('ADR-0015: duplicate-frame copies the source content, patches the registry, and appends a +40/+40 canvas.json entry', async () => {
+    const { startVite, stopAll } = makeFakeStartVite();
+    daemon = await openProject({ projectRoot, startVite, daemonPortStart: 60030, frameServerPortStart: 60040 });
+
+    const before = await readCanvasJson(join(projectRoot, 'files', 'demo'));
+    const heroBefore = before.frames.find((f) => f.framePath === 'src/frames/Hero.tsx');
+    expect(heroBefore).toBeDefined();
+
+    const { socket } = await connectAndGetBootstrap(daemon.daemonPort);
+    const received: DaemonEvent[] = [];
+    socket.on('message', (data) => received.push(JSON.parse(data.toString())));
+
+    socket.send(JSON.stringify({ kind: 'duplicate-frame', requestId: 'req-5', fileFolder: 'demo', sourceName: 'Hero' }));
+
+    await vi.waitFor(
+      () => {
+        expect(received).toContainEqual({ t: 'file-changed', file: 'files/demo/src/frames/HeroCopy.tsx' });
+        expect(received).toContainEqual({ t: 'file-changed', file: 'files/demo/.studio/canvas.json' });
+      },
+      { timeout: 3000, interval: 30 },
+    );
+
+    const sourceContent = await readFile(join(projectRoot, 'files', 'demo', 'src', 'frames', 'Hero.tsx'), 'utf8');
+    const copiedContent = await readFile(join(projectRoot, 'files', 'demo', 'src', 'frames', 'HeroCopy.tsx'), 'utf8');
+    expect(copiedContent).toBe(sourceContent);
+
+    const registry = await readFile(join(projectRoot, 'files', 'demo', 'src', 'frames.ts'), 'utf8');
+    expect(registry).toContain("import HeroCopy from './frames/HeroCopy.js';");
+
+    const meta = await readCanvasJson(join(projectRoot, 'files', 'demo'));
+    const copyEntry = meta.frames.find((f) => f.framePath === 'src/frames/HeroCopy.tsx');
+    expect(copyEntry).toEqual({
+      framePath: 'src/frames/HeroCopy.tsx',
+      x: heroBefore!.x + 40,
+      y: heroBefore!.y + 40,
+      w: heroBefore!.w,
+      h: heroBefore!.h,
+    });
+
+    socket.terminate();
+    await stopAll();
+  });
+
+  it('ADR-0015: duplicate-frame replies with a dedicated duplicate-frame-result carrying the picked newName', async () => {
+    const { startVite, stopAll } = makeFakeStartVite();
+    daemon = await openProject({ projectRoot, startVite, daemonPortStart: 60050, frameServerPortStart: 60060 });
+
+    const { socket } = await connectAndGetBootstrap(daemon.daemonPort);
+    // The two `file-changed` broadcasts land on this same socket ahead of
+    // the direct `duplicate-frame-result` reply (broadcast happens before
+    // `reply()` in `handleDuplicateFrame` — same ordering `create-frame`
+    // uses), so collect every message rather than assuming the reply is
+    // the first one, mirroring the "queue order" test below.
+    const received: unknown[] = [];
+    socket.on('message', (data) => received.push(JSON.parse(data.toString())));
+
+    socket.send(JSON.stringify({ kind: 'duplicate-frame', requestId: 'req-6', fileFolder: 'demo', sourceName: 'Pricing' }));
+
+    await vi.waitFor(() => {
+      expect(received).toContainEqual({
+        kind: 'duplicate-frame-result',
+        requestId: 'req-6',
+        fileFolder: 'demo',
+        sourceName: 'Pricing',
+        newName: 'PricingCopy',
+        framePath: 'src/frames/PricingCopy.tsx',
+      });
+    });
+
+    socket.terminate();
+    await stopAll();
+  });
+
+  it('ADR-0015: duplicate-frame rejects an unknown source frame with a direct control-error reply (no broadcast)', async () => {
+    const { startVite, stopAll } = makeFakeStartVite();
+    daemon = await openProject({ projectRoot, startVite, daemonPortStart: 60070, frameServerPortStart: 60080 });
+
+    const { socket } = await connectAndGetBootstrap(daemon.daemonPort);
+    const pending = nextEvent(socket);
+    socket.send(JSON.stringify({ kind: 'duplicate-frame', requestId: 'req-7', fileFolder: 'demo', sourceName: 'Ghost' }));
+
+    const reply = await pending;
+    expect(reply).toMatchObject({ kind: 'control-error', requestId: 'req-7' });
+    expect((reply as { reason: string }).reason).toMatch(/unknown source frame/);
+
+    socket.terminate();
+    await stopAll();
+  });
+
+  it('ADR-0015: duplicate-frame rejects an unknown file-folder', async () => {
+    const { startVite, stopAll } = makeFakeStartVite();
+    daemon = await openProject({ projectRoot, startVite, daemonPortStart: 60090, frameServerPortStart: 60100 });
+
+    const { socket } = await connectAndGetBootstrap(daemon.daemonPort);
+    const pending = nextEvent(socket);
+    socket.send(
+      JSON.stringify({ kind: 'duplicate-frame', requestId: 'req-8', fileFolder: 'nonexistent', sourceName: 'Hero' }),
+    );
+
+    const reply = await pending;
+    expect(reply).toMatchObject({ kind: 'control-error', requestId: 'req-8' });
+    expect((reply as { reason: string }).reason).toMatch(/unknown file-folder/);
+
+    socket.terminate();
+    await stopAll();
+  });
+
+  it('ADR-0015: duplicate-frame queued right after create-frame observes the create (per-file-folder ordering)', async () => {
+    const { startVite, stopAll } = makeFakeStartVite();
+    daemon = await openProject({ projectRoot, startVite, daemonPortStart: 60110, frameServerPortStart: 60120 });
+
+    const { socket } = await connectAndGetBootstrap(daemon.daemonPort);
+    const received: unknown[] = [];
+    socket.on('message', (data) => received.push(JSON.parse(data.toString())));
+
+    socket.send(JSON.stringify({ kind: 'create-frame', requestId: 'req-9', fileFolder: 'demo', name: 'Fresh' }));
+    socket.send(
+      JSON.stringify({ kind: 'duplicate-frame', requestId: 'req-10', fileFolder: 'demo', sourceName: 'Fresh' }),
+    );
+
+    await vi.waitFor(() => {
+      const dupReply = received.find(
+        (m) => typeof m === 'object' && m !== null && (m as { kind?: unknown }).kind === 'duplicate-frame-result',
+      );
+      expect(dupReply).toMatchObject({ kind: 'duplicate-frame-result', requestId: 'req-10', newName: 'FreshCopy' });
+    });
+
+    socket.terminate();
+    await stopAll();
+  });
+
   it('close() stops watchers/servers so a second openProject can reuse the same ports', async () => {
     const { startVite, stopAll } = makeFakeStartVite();
     const first = await openProject({ projectRoot, startVite, daemonPortStart: 59890, frameServerPortStart: 59900 });

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Tldraw, createShapeId, type Editor, type TLComponents } from 'tldraw';
+import { Tldraw, createShapeId, type Editor, type TLComponents, type TLUiOverrides } from 'tldraw';
 import type { ControlReply, DaemonEvent, FrameMeta, ProjectInfo } from '@ccs/protocol';
 import { connectDaemon, type DaemonClient } from './daemon-client.js';
 import {
@@ -54,10 +54,34 @@ export interface CreateFrameRequest {
  */
 export type CreateFrameFn = (request: CreateFrameRequest) => Promise<void>;
 
-/** Bound on how long a `defaultCreateFrame` promise waits for either a
- * `file-changed`-driven success or a `control-error` before giving up —
- * a stuck daemon/connection should surface as a UI error, not hang the
- * "+ New Frame" form forever. */
+export interface DuplicateFrameRequest {
+  fileFolder: string;
+  /** Filename (without extension) of the existing frame to duplicate — the
+   * daemon reads its source, copies it to a uniquely-named new frame file,
+   * patches the registry, and appends an offset `.studio/canvas.json`
+   * entry (ADR-0015 — see `duplicate-frame.ts` in `packages/sync-daemon`
+   * for the full three-artifact write). */
+  sourceName: string;
+}
+
+/**
+ * Duplicates an existing frame (ADR-0015 — the P1 defect fix: tldraw's
+ * built-in duplicate/copy/paste created fileless "phantom" `ccs-frame`
+ * shapes the reaper then deleted on the next sync). The default
+ * implementation (see `defaultDuplicateFrame` inside `StudioCanvas`) sends
+ * a `{kind:'duplicate-frame', ...}` request over the real control-ws
+ * connection and resolves once the dedicated `duplicate-frame-result`
+ * reply lands (unlike `CreateFrameFn`, success here is NOT observed via
+ * `frames` state — the caller doesn't know the daemon-picked `newName` in
+ * advance), or rejects on a `control-error` reply. Callers may still
+ * supply their own `onDuplicateFrame` (e.g. a test double) — it fully
+ * replaces the default, it does not layer on top of it.
+ */
+export type DuplicateFrameFn = (request: DuplicateFrameRequest) => Promise<void>;
+
+/** Bound on how long a `defaultCreateFrame`/`defaultDuplicateFrame` promise
+ * waits for a daemon reply before giving up — a stuck daemon/connection
+ * should surface as a UI error, not hang forever. */
 const CREATE_FRAME_TIMEOUT_MS = 10_000;
 
 export interface StudioCanvasProps {
@@ -67,6 +91,10 @@ export interface StudioCanvasProps {
    * implementation (ADR-0014's `create-frame` control request) — pass this
    * prop only to override that default (e.g. in tests). */
   onCreateFrame?: CreateFrameFn;
+  /** See {@link DuplicateFrameFn}. Defaults to a real daemon-backed
+   * implementation (ADR-0015's `duplicate-frame` control request) — pass
+   * this prop only to override that default (e.g. in tests). */
+  onDuplicateFrame?: DuplicateFrameFn;
   className?: string;
   style?: React.CSSProperties;
 }
@@ -119,7 +147,13 @@ function nextRequestId(prefix: string): string {
   return `${prefix}-${requestIdCounter}`;
 }
 
-export function StudioCanvas({ daemonUrl, onCreateFrame, className, style }: StudioCanvasProps): React.ReactElement {
+export function StudioCanvas({
+  daemonUrl,
+  onCreateFrame,
+  onDuplicateFrame,
+  className,
+  style,
+}: StudioCanvasProps): React.ReactElement {
   const [frames, setFrames] = React.useState<CanvasFrameRecord[]>([]);
   const [editorReady, setEditorReady] = React.useState(false);
   const editorRef = React.useRef<Editor | null>(null);
@@ -130,8 +164,19 @@ export function StudioCanvas({ daemonUrl, onCreateFrame, className, style }: Stu
   const [newFrameName, setNewFrameName] = React.useState('');
   const [newFrameError, setNewFrameError] = React.useState<string | null>(null);
   const [newFrameBusy, setNewFrameBusy] = React.useState(false);
+  /** ADR-0015 phantom-frame guard: `true` for the duration of the
+   * `CanvasFrameRecord[] -> tldraw shape` sync effect's own
+   * `createShape`/`updateShape`/`deleteShapes` calls below, `false`
+   * otherwise. The `registerAfterCreateHandler('shape', ...)` effect
+   * (further down) uses this to tell "the sync effect just created a
+   * real, record-backed frame shape" apart from "tldraw's native
+   * duplicate/copy/paste/undo just created a `ccs-frame` shape out of
+   * nowhere" — only the latter gets deleted right back out. A plain ref
+   * (not React state) because it must be read synchronously inside a
+   * tldraw store callback that can fire outside React's render cycle. */
+  const isSyncingRef = React.useRef(false);
 
-  // --- ADR-0014 control-request/reply correlation ---------------------
+  // --- ADR-0014/0015 control-request/reply correlation -----------------
   // `get-canvas-json` resolves by `requestId` alone (direct reply carries
   // the `FrameMeta`). `create-frame` has no dedicated success reply (see
   // `daemon-client.ts`'s module doc): a `control-error` reply still
@@ -139,9 +184,15 @@ export function StudioCanvas({ daemonUrl, onCreateFrame, className, style }: Stu
   // resulting `file-changed` broadcast(s) land the new record in `frames`
   // state — hence tracking `fileFolder`/`framePath` per pending request too
   // (resolved by the `frames`-watching effect below, not by a reply).
+  // `duplicate-frame` (ADR-0015) DOES get a dedicated success reply
+  // (`duplicate-frame-result`) — the caller can't know the daemon-picked
+  // `newName` in advance, so it resolves directly from that reply instead.
   const pendingGetCanvasJsonRef = React.useRef<Map<string, (meta: FrameMeta | null) => void>>(new Map());
   const pendingCreateFrameRef = React.useRef<
     Map<string, { fileFolder: string; framePath: string; resolve: () => void; reject: (err: Error) => void }>
+  >(new Map());
+  const pendingDuplicateFrameRef = React.useRef<
+    Map<string, { resolve: () => void; reject: (err: Error) => void }>
   >(new Map());
 
   const shapeUtils = React.useMemo(() => [CcsFrameShapeUtil], []);
@@ -184,6 +235,43 @@ export function StudioCanvas({ daemonUrl, onCreateFrame, className, style }: Stu
   }, []);
 
   const createFrame = onCreateFrame ?? defaultCreateFrame;
+
+  /** ADR-0015 default `onDuplicateFrame`: sends `duplicate-frame` over the
+   * real control-ws connection. Unlike `defaultCreateFrame`, this resolves
+   * directly from the dedicated `duplicate-frame-result` reply (handled in
+   * `handleControlReply` below) rather than by watching `frames` state —
+   * the caller doesn't know the daemon-picked `newName` in advance, so
+   * there's no known `framePath` to watch for. */
+  const defaultDuplicateFrame = React.useCallback<DuplicateFrameFn>((request) => {
+    const client = clientRef.current;
+    if (!client) {
+      return Promise.reject(new Error('@ccs/canvas: not connected to the daemon yet'));
+    }
+    const requestId = nextRequestId('duplicate-frame');
+    return new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        pendingDuplicateFrameRef.current.delete(requestId);
+        reject(
+          new Error(
+            `@ccs/canvas: duplicate-frame for "${request.sourceName}" in "${request.fileFolder}" timed out waiting for the daemon`,
+          ),
+        );
+      }, CREATE_FRAME_TIMEOUT_MS);
+      pendingDuplicateFrameRef.current.set(requestId, {
+        resolve: () => {
+          clearTimeout(timer);
+          resolve();
+        },
+        reject: (err) => {
+          clearTimeout(timer);
+          reject(err);
+        },
+      });
+      client.sendDuplicateFrame(request.fileFolder, request.sourceName, requestId);
+    });
+  }, []);
+
+  const duplicateFrame = onDuplicateFrame ?? defaultDuplicateFrame;
 
   // Resolves pending `defaultCreateFrame` promises once the new frame's
   // `file-changed` broadcast(s) have propagated through `handleFileChanged`
@@ -229,9 +317,22 @@ export function StudioCanvas({ daemonUrl, onCreateFrame, className, style }: Stu
         return;
       }
 
-      // reply.kind === 'control-error' — could be a `get-canvas-json` or a
-      // `create-frame` failure; both track pending requests by `requestId`
-      // in their own map, so check each.
+      if (reply.kind === 'duplicate-frame-result') {
+        // ADR-0015: unlike create-frame, duplicate-frame has a dedicated
+        // success reply — resolve directly, no `frames`-watching effect
+        // needed (the new frame still arrives via the ordinary
+        // `file-changed` -> `get-canvas-json` -> `setFrames` path; this
+        // reply is purely about settling the caller's promise).
+        const pendingDuplicate = pendingDuplicateFrameRef.current.get(reply.requestId);
+        if (!pendingDuplicate) return; // stale/unmatched reply — ignore
+        pendingDuplicateFrameRef.current.delete(reply.requestId);
+        pendingDuplicate.resolve();
+        return;
+      }
+
+      // reply.kind === 'control-error' — could be a `get-canvas-json`,
+      // `create-frame`, or `duplicate-frame` failure; each tracks pending
+      // requests by `requestId` in its own map, so check each.
       const pendingJson = pendingGetCanvasJsonRef.current.get(reply.requestId);
       if (pendingJson) {
         pendingGetCanvasJsonRef.current.delete(reply.requestId);
@@ -242,6 +343,12 @@ export function StudioCanvas({ daemonUrl, onCreateFrame, className, style }: Stu
       if (pendingCreate) {
         pendingCreateFrameRef.current.delete(reply.requestId);
         pendingCreate.reject(new Error(reply.reason));
+        return;
+      }
+      const pendingDuplicate = pendingDuplicateFrameRef.current.get(reply.requestId);
+      if (pendingDuplicate) {
+        pendingDuplicateFrameRef.current.delete(reply.requestId);
+        pendingDuplicate.reject(new Error(reply.reason));
       }
     }
 
@@ -341,45 +448,78 @@ export function StudioCanvas({ daemonUrl, onCreateFrame, className, style }: Stu
     const editor = editorRef.current;
     if (!editor || !editorReady) return;
 
-    const currentShapeIds = new Set<string>();
-    for (const record of frames) {
-      const shapeId = shapeIdForRecordId(record.id);
-      currentShapeIds.add(shapeId);
-      const existing = editor.getShape<CcsFrameShape>(shapeId);
-      const props = {
-        fileFolder: record.fileFolder,
-        framePath: record.framePath,
-        name: record.name,
-        devServerUrl: record.devServerUrl,
-        w: record.w,
-        h: record.h,
-      };
-      if (!existing) {
-        editor.createShape<CcsFrameShape>({
-          id: shapeId,
-          type: CCS_FRAME_SHAPE_TYPE,
-          x: record.x,
-          y: record.y,
-          props,
-        });
-      } else if (
-        existing.x !== record.x ||
-        existing.y !== record.y ||
-        existing.props.w !== record.w ||
-        existing.props.h !== record.h ||
-        existing.props.devServerUrl !== record.devServerUrl ||
-        existing.props.name !== record.name
-      ) {
-        editor.updateShape<CcsFrameShape>({ id: shapeId, type: CCS_FRAME_SHAPE_TYPE, x: record.x, y: record.y, props });
+    // ADR-0015: everything this effect does to the store is "the file
+    // system is the truth, catching the canvas up" — never a user gesture
+    // — so the phantom-frame guard (registered below) must let it through
+    // unconditionally. Set for the duration of this synchronous block only
+    // (tldraw's create/update/delete calls run synchronously; there's no
+    // await in between), then always cleared via `finally`.
+    isSyncingRef.current = true;
+    try {
+      const currentShapeIds = new Set<string>();
+      for (const record of frames) {
+        const shapeId = shapeIdForRecordId(record.id);
+        currentShapeIds.add(shapeId);
+        const existing = editor.getShape<CcsFrameShape>(shapeId);
+        const props = {
+          fileFolder: record.fileFolder,
+          framePath: record.framePath,
+          name: record.name,
+          devServerUrl: record.devServerUrl,
+          w: record.w,
+          h: record.h,
+        };
+        if (!existing) {
+          editor.createShape<CcsFrameShape>({
+            id: shapeId,
+            type: CCS_FRAME_SHAPE_TYPE,
+            x: record.x,
+            y: record.y,
+            props,
+          });
+        } else if (
+          existing.x !== record.x ||
+          existing.y !== record.y ||
+          existing.props.w !== record.w ||
+          existing.props.h !== record.h ||
+          existing.props.devServerUrl !== record.devServerUrl ||
+          existing.props.name !== record.name
+        ) {
+          editor.updateShape<CcsFrameShape>({ id: shapeId, type: CCS_FRAME_SHAPE_TYPE, x: record.x, y: record.y, props });
+        }
       }
-    }
 
-    const staleShapeIds = editor
-      .getCurrentPageShapesSorted()
-      .filter((s) => s.type === CCS_FRAME_SHAPE_TYPE && !currentShapeIds.has(s.id))
-      .map((s) => s.id);
-    if (staleShapeIds.length > 0) editor.deleteShapes(staleShapeIds);
+      const staleShapeIds = editor
+        .getCurrentPageShapesSorted()
+        .filter((s) => s.type === CCS_FRAME_SHAPE_TYPE && !currentShapeIds.has(s.id))
+        .map((s) => s.id);
+      if (staleShapeIds.length > 0) editor.deleteShapes(staleShapeIds);
+    } finally {
+      isSyncingRef.current = false;
+    }
   }, [frames, editorReady]);
+
+  // --- ADR-0015 phantom-frame guard ------------------------------------
+  // tldraw's `registerBeforeCreateHandler` can only TRANSFORM a record
+  // about to be created, not cancel its creation (verified against the
+  // installed tldraw@5.2.4 `@tldraw/store` build — `StoreSideEffects`
+  // has no "return false to block" affordance for creates, only for
+  // deletes). `registerAfterCreateHandler` runs synchronously right after
+  // the record lands in the store, in the SAME atomic operation, before
+  // React ever re-renders — calling `editor.deleteShape` there removes it
+  // before the user perceives it existing at all. This is the safety net
+  // behind the `overrides.actions.duplicate` override below: it catches
+  // ANY route to a fileless `ccs-frame` shape (native duplicate, copy/
+  // paste, cut+undo, a future stray codepath), not just Cmd/Ctrl+D.
+  React.useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor || !editorReady) return;
+    return editor.sideEffects.registerAfterCreateHandler('shape', (shape) => {
+      if (shape.type === CCS_FRAME_SHAPE_TYPE && !isSyncingRef.current) {
+        editor.deleteShape(shape.id);
+      }
+    });
+  }, [editorReady]);
 
   // --- drag/resize -> debounced .studio/canvas.json write (ADR-0013) ---
   React.useEffect(() => {
@@ -402,6 +542,52 @@ export function StudioCanvas({ daemonUrl, onCreateFrame, className, style }: Stu
     editorRef.current = editor;
     setEditorReady(true);
   }, []);
+
+  /**
+   * ADR-0015: replaces tldraw's native "duplicate" action (Cmd/Ctrl+D, and
+   * the tool exposed via `overrides` — bound regardless of `MINIMAL_COMPONENTS`
+   * hiding every UI panel, since `useKeyboardShortcuts` mounts unconditionally
+   * inside `<Tldraw>`'s own UI provider) for `ccs-frame` shapes: instead of
+   * tldraw's built-in record-copy (which the phantom-frame guard above would
+   * immediately delete again), issue one real `duplicate-frame` daemon
+   * request per selected frame. A selection with no frame shapes falls
+   * through to the original action unchanged (harmless today — no other
+   * shape type is ever intentionally created in this P1 UI — but keeps this
+   * override honest about only touching what it means to).
+   */
+  const overrides = React.useMemo<TLUiOverrides>(
+    () => ({
+      actions(editor, actions) {
+        const original = actions.duplicate;
+        if (!original) return actions;
+        return {
+          ...actions,
+          duplicate: {
+            ...original,
+            onSelect(source) {
+              const frameShapes = editor
+                .getSelectedShapes()
+                .filter((shape): shape is CcsFrameShape => shape.type === CCS_FRAME_SHAPE_TYPE);
+              if (frameShapes.length === 0) {
+                original.onSelect(source);
+                return;
+              }
+              for (const shape of frameShapes) {
+                const sourceName = frameNameFromPath(shape.props.framePath);
+                if (!sourceName) continue;
+                duplicateFrame({ fileFolder: shape.props.fileFolder, sourceName }).catch((err: unknown) => {
+                  // No toast system in P1 chrome (that's P5) — surface to
+                  // the console rather than fail silently.
+                  console.error('@ccs/canvas: duplicate-frame failed', err);
+                });
+              }
+            },
+          },
+        };
+      },
+    }),
+    [duplicateFrame],
+  );
 
   const defaultFileFolder = frames[0]?.fileFolder;
 
@@ -436,7 +622,7 @@ export function StudioCanvas({ daemonUrl, onCreateFrame, className, style }: Stu
   return (
     <div className={className} style={{ ...CONTAINER_STYLE, ...style }}>
       <ScreenshotCacheContext.Provider value={screenshotCache}>
-        <Tldraw shapeUtils={shapeUtils} components={MINIMAL_COMPONENTS} onMount={handleMount} />
+        <Tldraw shapeUtils={shapeUtils} components={MINIMAL_COMPONENTS} overrides={overrides} onMount={handleMount} />
       </ScreenshotCacheContext.Provider>
       <div style={{ position: 'absolute', top: 12, right: 12, zIndex: 10, fontFamily: 'system-ui, sans-serif' }}>
         {newFrameOpen ? (

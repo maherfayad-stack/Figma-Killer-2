@@ -4,11 +4,13 @@ import {
   ControlReplySchema,
   CreateFrameRequestSchema,
   DaemonEventSchema,
+  DuplicateFrameRequestSchema,
   GetCanvasJsonRequestSchema,
   type CanvasOp,
   type ControlReply,
   type CreateFrameRequest,
   type DaemonEvent,
+  type DuplicateFrameRequest,
   type GetCanvasJsonRequest,
   type ProjectInfo,
 } from '@ccs/protocol';
@@ -30,6 +32,8 @@ import {
  *       x: number; y: number; w: number; h: number }
  *     { kind: 'create-frame'; requestId: string; fileFolder: string; name: string }   (ADR-0014)
  *     { kind: 'get-canvas-json'; requestId: string; fileFolder: string }              (ADR-0014)
+ *     { kind: 'duplicate-frame'; requestId: string; fileFolder: string;
+ *       sourceName: string; newName?: string }                                        (ADR-0015)
  *
  *   Server → Client:
  *     - first message on every connection: the bare `ProjectInfo`
@@ -37,12 +41,16 @@ import {
  *       `DaemonEvent`, which always has one).
  *     - afterwards: bare `DaemonEvent` objects, broadcast to all
  *       connected clients.
- *     - ADR-0014 control replies (`ControlReply` — `get-canvas-json-result`
- *       or `control-error`) are sent directly to the ONE requesting socket,
+ *     - ADR-0014/0015 control replies (`ControlReply` —
+ *       `get-canvas-json-result`, `duplicate-frame-result`, or
+ *       `control-error`) are sent directly to the ONE requesting socket,
  *       never broadcast — distinct from `DaemonEvent` in having a `kind`
  *       field instead of `t`. A successful `create-frame` has no dedicated
  *       reply; it's observed via the ordinary broadcast `file-changed`
  *       events on the new frame's source path and canvas.json (below).
+ *       `duplicate-frame` DOES get a dedicated success reply
+ *       (`duplicate-frame-result`) — unlike `create-frame`, the caller
+ *       doesn't know the resulting unique name in advance (ADR-0015).
  */
 
 export interface SetGeometryRequest {
@@ -58,7 +66,8 @@ export type ClientMessage =
   | { kind: 'canvas-op'; opId: string; op: CanvasOp }
   | ({ kind: 'set-geometry' } & SetGeometryRequest)
   | CreateFrameRequest
-  | GetCanvasJsonRequest;
+  | GetCanvasJsonRequest
+  | DuplicateFrameRequest;
 
 /** Sends a `ControlReply` to the ONE socket that made the request —
  * validated against the frozen-shape-additive `ControlReplySchema` first,
@@ -75,6 +84,8 @@ export interface ControlServerOptions {
   onCreateFrame: (request: CreateFrameRequest, reply: ReplyFn) => void;
   /** ADR-0014. */
   onGetCanvasJson: (request: GetCanvasJsonRequest, reply: ReplyFn) => void;
+  /** ADR-0015. */
+  onDuplicateFrame: (request: DuplicateFrameRequest, reply: ReplyFn) => void;
 }
 
 export interface ControlServerHandle {
@@ -121,6 +132,8 @@ export function createControlServer(options: ControlServerOptions): ControlServe
         options.onCreateFrame(message, (reply) => sendReply(socket, reply));
       } else if (message.kind === 'get-canvas-json') {
         options.onGetCanvasJson(message, (reply) => sendReply(socket, reply));
+      } else if (message.kind === 'duplicate-frame') {
+        options.onDuplicateFrame(message, (reply) => sendReply(socket, reply));
       }
     });
 
@@ -227,6 +240,11 @@ function parseClientMessage(data: RawData): ClientMessage | null {
 
   if (record.kind === 'get-canvas-json') {
     const parsed = GetCanvasJsonRequestSchema.safeParse(record);
+    return parsed.success ? parsed.data : null;
+  }
+
+  if (record.kind === 'duplicate-frame') {
+    const parsed = DuplicateFrameRequestSchema.safeParse(record);
     return parsed.success ? parsed.data : null;
   }
 

@@ -1,6 +1,7 @@
 import type { CanvasOp, ControlReply, DaemonEvent, ProjectInfo } from '@ccs/protocol';
 import {
   buildCreateFrameMessage,
+  buildDuplicateFrameMessage,
   buildGetCanvasJsonMessage,
   buildSetGeometryMessage,
   classifyDaemonMessage,
@@ -60,6 +61,12 @@ export interface DaemonClient {
   /** ADR-0014. Reply arrives via `onControlReply` (`get-canvas-json-result`
    * or `control-error`) with this `requestId`. */
   sendGetCanvasJson(fileFolder: string, requestId: string): void;
+  /** ADR-0015. Unlike `sendCreateFrame`, success IS observed via a direct
+   * reply (`onControlReply` with a `duplicate-frame-result`) — the caller
+   * doesn't know the daemon-picked `newName` in advance, so there's no
+   * `frames`-state path to watch instead. Failure arrives the same way, as
+   * a `control-error`, both keyed by this `requestId`. */
+  sendDuplicateFrame(fileFolder: string, sourceName: string, requestId: string, newName?: string): void;
   close(): void;
 }
 
@@ -109,6 +116,9 @@ export function connectDaemon(
     },
     sendGetCanvasJson(fileFolder, requestId) {
       socket.send(JSON.stringify(buildGetCanvasJsonMessage(requestId, fileFolder)));
+    },
+    sendDuplicateFrame(fileFolder, sourceName, requestId, newName) {
+      socket.send(JSON.stringify(buildDuplicateFrameMessage(requestId, fileFolder, sourceName, newName)));
     },
     close() {
       socket.close();

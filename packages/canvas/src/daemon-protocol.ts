@@ -5,6 +5,7 @@ import {
   type ControlReply,
   type CreateFrameRequest,
   type DaemonEvent,
+  type DuplicateFrameRequest,
   type GetCanvasJsonRequest,
   type ProjectInfo,
 } from '@ccs/protocol';
@@ -26,6 +27,7 @@ import {
  *   - Client→server geometry: `{kind:'set-geometry', fileFolder, framePath, x,y,w,h}`.
  *   - Client→server create-frame: `{kind:'create-frame', requestId, fileFolder, name}` (ADR-0014).
  *   - Client→server get-canvas-json: `{kind:'get-canvas-json', requestId, fileFolder}` (ADR-0014).
+ *   - Client→server duplicate-frame: `{kind:'duplicate-frame', requestId, fileFolder, sourceName, newName?}` (ADR-0015).
  */
 
 export type IncomingDaemonMessage =
@@ -91,6 +93,21 @@ export function buildCreateFrameMessage(requestId: string, fileFolder: string, n
 
 export function buildGetCanvasJsonMessage(requestId: string, fileFolder: string): GetCanvasJsonRequest {
   return { kind: 'get-canvas-json', requestId, fileFolder };
+}
+
+/** ADR-0015. `newName` is an optional caller hint — omitted by
+ * `packages/canvas`'s default duplicate handler today (it always lets the
+ * daemon pick a unique name), kept here so this builder can express the
+ * full wire shape without a future protocol change. */
+export function buildDuplicateFrameMessage(
+  requestId: string,
+  fileFolder: string,
+  sourceName: string,
+  newName?: string,
+): DuplicateFrameRequest {
+  return newName === undefined
+    ? { kind: 'duplicate-frame', requestId, fileFolder, sourceName }
+    : { kind: 'duplicate-frame', requestId, fileFolder, sourceName, newName };
 }
 
 export function buildSetGeometryMessage(

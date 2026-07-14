@@ -13,7 +13,13 @@
 export const CANVAS_PACKAGE_PHASE = 'P1' as const;
 
 export { StudioCanvas } from './StudioCanvas.js';
-export type { StudioCanvasProps, CreateFrameFn, CreateFrameRequest } from './StudioCanvas.js';
+export type {
+  StudioCanvasProps,
+  CreateFrameFn,
+  CreateFrameRequest,
+  DuplicateFrameFn,
+  DuplicateFrameRequest,
+} from './StudioCanvas.js';
 
 export type { CanvasFrameRecord } from './project-wiring.js';
 export type { Box, CameraState, Point } from './geometry.js';

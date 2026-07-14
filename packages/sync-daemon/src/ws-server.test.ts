@@ -80,6 +80,7 @@ describe('createControlServer', () => {
       onSetGeometry: () => {},
       onCreateFrame: () => {},
       onGetCanvasJson: () => {},
+      onDuplicateFrame: () => {},
     });
 
     expect(handle.host).toBe('127.0.0.1');
@@ -104,6 +105,7 @@ describe('createControlServer', () => {
       onSetGeometry: () => {},
       onCreateFrame: () => {},
       onGetCanvasJson: () => {},
+      onDuplicateFrame: () => {},
     });
 
     const client = await connect(port);
@@ -122,6 +124,7 @@ describe('createControlServer', () => {
       onSetGeometry: () => {},
       onCreateFrame: () => {},
       onGetCanvasJson: () => {},
+      onDuplicateFrame: () => {},
     });
 
     const clientA = await connect(port);
@@ -148,6 +151,7 @@ describe('createControlServer', () => {
       onSetGeometry: () => {},
       onCreateFrame: () => {},
       onGetCanvasJson: () => {},
+      onDuplicateFrame: () => {},
     });
 
     const client = await connect(port);
@@ -169,6 +173,7 @@ describe('createControlServer', () => {
       onSetGeometry: () => {},
       onCreateFrame: () => {},
       onGetCanvasJson: () => {},
+      onDuplicateFrame: () => {},
     });
 
     const client = await connect(port);
@@ -191,6 +196,7 @@ describe('createControlServer', () => {
       onSetGeometry,
       onCreateFrame: () => {},
       onGetCanvasJson: () => {},
+      onDuplicateFrame: () => {},
     });
 
     const client = await connect(port);
@@ -232,6 +238,7 @@ describe('createControlServer', () => {
       onSetGeometry: () => {},
       onCreateFrame,
       onGetCanvasJson: () => {},
+      onDuplicateFrame: () => {},
     });
 
     const client = await connect(port);
@@ -267,6 +274,7 @@ describe('createControlServer', () => {
       onSetGeometry: () => {},
       onCreateFrame: () => {},
       onGetCanvasJson,
+      onDuplicateFrame: () => {},
     });
 
     const requester = await connect(port);
@@ -290,6 +298,100 @@ describe('createControlServer', () => {
     expect(raceResult).toBe('timeout');
   });
 
+  it('forwards a duplicate-frame envelope to onDuplicateFrame with a working reply channel (ADR-0015)', async () => {
+    const port = await allocatePort(59300);
+    const onDuplicateFrame = vi.fn((request: { requestId: string }, reply: (r: ControlReply) => void) => {
+      reply({
+        kind: 'duplicate-frame-result',
+        requestId: request.requestId,
+        fileFolder: 'demo',
+        sourceName: 'Hero',
+        newName: 'HeroCopy',
+        framePath: 'src/frames/HeroCopy.tsx',
+      });
+    });
+    handle = createControlServer({
+      port,
+      getBootstrap: () => ({ ...BOOTSTRAP, daemonPort: port }),
+      onCanvasOp: () => {},
+      onSetGeometry: () => {},
+      onCreateFrame: () => {},
+      onGetCanvasJson: () => {},
+      onDuplicateFrame,
+    });
+
+    const client = await connect(port);
+    await client.next(); // bootstrap
+
+    client.socket.send(
+      JSON.stringify({ kind: 'duplicate-frame', requestId: 'req-3', fileFolder: 'demo', sourceName: 'Hero' }),
+    );
+
+    await vi.waitFor(() =>
+      expect(onDuplicateFrame).toHaveBeenCalledWith(
+        { kind: 'duplicate-frame', requestId: 'req-3', fileFolder: 'demo', sourceName: 'Hero' },
+        expect.any(Function),
+      ),
+    );
+
+    const reply = await client.next();
+    expect(reply).toEqual({
+      kind: 'duplicate-frame-result',
+      requestId: 'req-3',
+      fileFolder: 'demo',
+      sourceName: 'Hero',
+      newName: 'HeroCopy',
+      framePath: 'src/frames/HeroCopy.tsx',
+    });
+  });
+
+  it('replies with control-error for a duplicate-frame request the handler rejects', async () => {
+    const port = await allocatePort(59310);
+    const onDuplicateFrame = vi.fn((request: { requestId: string }, reply: (r: ControlReply) => void) => {
+      reply({ kind: 'control-error', requestId: request.requestId, reason: 'unknown source frame "Ghost"' });
+    });
+    handle = createControlServer({
+      port,
+      getBootstrap: () => ({ ...BOOTSTRAP, daemonPort: port }),
+      onCanvasOp: () => {},
+      onSetGeometry: () => {},
+      onCreateFrame: () => {},
+      onGetCanvasJson: () => {},
+      onDuplicateFrame,
+    });
+
+    const client = await connect(port);
+    await client.next(); // bootstrap
+
+    client.socket.send(
+      JSON.stringify({ kind: 'duplicate-frame', requestId: 'req-4', fileFolder: 'demo', sourceName: 'Ghost' }),
+    );
+
+    const reply = await client.next();
+    expect(reply).toEqual({ kind: 'control-error', requestId: 'req-4', reason: 'unknown source frame "Ghost"' });
+  });
+
+  it('silently drops a structurally invalid duplicate-frame envelope (missing sourceName)', async () => {
+    const port = await allocatePort(59320);
+    const onDuplicateFrame = vi.fn();
+    handle = createControlServer({
+      port,
+      getBootstrap: () => ({ ...BOOTSTRAP, daemonPort: port }),
+      onCanvasOp: () => {},
+      onSetGeometry: () => {},
+      onCreateFrame: () => {},
+      onGetCanvasJson: () => {},
+      onDuplicateFrame,
+    });
+
+    const client = await connect(port);
+    await client.next(); // bootstrap
+
+    client.socket.send(JSON.stringify({ kind: 'duplicate-frame', requestId: 'req-5', fileFolder: 'demo' }));
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(onDuplicateFrame).not.toHaveBeenCalled();
+  });
+
   it('silently drops a structurally invalid create-frame envelope (missing requestId)', async () => {
     const port = await allocatePort(59290);
     const onCreateFrame = vi.fn();
@@ -300,6 +402,7 @@ describe('createControlServer', () => {
       onSetGeometry: () => {},
       onCreateFrame,
       onGetCanvasJson: () => {},
+      onDuplicateFrame: () => {},
     });
 
     const client = await connect(port);
@@ -319,6 +422,7 @@ describe('createControlServer', () => {
       onSetGeometry: () => {},
       onCreateFrame: () => {},
       onGetCanvasJson: () => {},
+      onDuplicateFrame: () => {},
     });
 
     expect(handle.clientCount()).toBe(0);

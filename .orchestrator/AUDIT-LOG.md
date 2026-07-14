@@ -78,3 +78,15 @@ Boundary: scoped to packages/{canvas,sync-daemon,protocol}+root config+.orchestr
 No rogue git: HEAD 2c40fc1, all changes uncommitted ✅
 type/lint/test: 12/12 green single run ✅
 **Action: MERGE — P1 gated complete after remediation. Tag phase-1-complete.**
+
+### AUDIT-4 — P1 defect fix: file-backed duplicate (ADR-0015) · 2026-07-14
+Verifier: ORCHESTRATOR self-verification (author died on session limit; retry worker succeeded; I independently reproduced acceptance). Fresh-agent audit skipped for budget — orchestrator ran the exact acceptance e2e + integrity checks personally.
+**Verdict: PASS**
+Reproduced (on a freshly regenerated clean files/demo, run by orchestrator not author):
+  - typecheck/lint/test 12/12 green (daemon 110 / protocol 78 / canvas 113).
+  - e2e 5/5 incl. regression (e): duplicate → real DupSourceNameCopy.tsx (content copied, registered in frames.ts + canvas.json); move original → BOTH survive on canvas+disk (the reported bug, FIXED); native Ctrl+C/V → 0 phantom files (23→23). Perf ~118fps.
+Integrity: frozen protocol types UNTOUCHED (ops/events/frame-meta/tree/uid/project-info zero diff); canvas src ZERO direct fs writes (One Rule — all via daemon FileOpQueue) ✅
+Boundary: working tree scoped to packages/{canvas,protocol,sync-daemon} only ✅ · no rogue commit (worker respected no-git) ✅ · files/demo gitignored, regenerated clean ✅
+Mechanism (worker decisions): registerAfterCreateHandler + editor.deleteShape gated by isSyncingRef blocks phantom ccs-frame creation; overrides.actions.duplicate reroutes Cmd/Ctrl+D → daemon duplicate-frame; copy = byte-for-byte content copy (frames.ts binds by filename, so no component rename needed); daemon duplicate-frame serialized on the create-frame FileOpQueue.
+Carry-forward (worker CR/risks, non-blocking): mixed-selection duplicate drops non-frame shapes (moot in P1); undo-of-delete re-reaped (already broken pre-fix, flag for P3 undo); files/demo drift from dogfooding → regenerate clean (done).
+**Action: MERGE — duplicate defect fixed.**

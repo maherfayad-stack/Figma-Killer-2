@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildCreateFrameMessage,
+  buildDuplicateFrameMessage,
   buildGetCanvasJsonMessage,
   buildSetGeometryMessage,
   classifyDaemonMessage,
@@ -76,6 +77,19 @@ describe('classifyDaemonMessage', () => {
     expect(result).toEqual({ kind: 'control-reply', reply: raw });
   });
 
+  it('classifies an ADR-0015 duplicate-frame-result reply', () => {
+    const raw = {
+      kind: 'duplicate-frame-result',
+      requestId: 'r3',
+      fileFolder: 'demo',
+      sourceName: 'Hero',
+      newName: 'HeroCopy',
+      framePath: 'src/frames/HeroCopy.tsx',
+    };
+    const result = classifyDaemonMessage(raw);
+    expect(result).toEqual({ kind: 'control-reply', reply: raw });
+  });
+
   it('rejects a `kind`-tagged message that fails ControlReply validation', () => {
     const result = classifyDaemonMessage({ kind: 'not-a-real-reply' });
     expect(result.kind).toBe('invalid');
@@ -120,6 +134,30 @@ describe('buildGetCanvasJsonMessage', () => {
       requestId: 'req-2',
       fileFolder: 'demo',
     });
+  });
+});
+
+describe('buildDuplicateFrameMessage', () => {
+  it('matches the ADR-0015 client→server envelope exactly, without newName', () => {
+    expect(buildDuplicateFrameMessage('req-3', 'demo', 'Hero')).toEqual({
+      kind: 'duplicate-frame',
+      requestId: 'req-3',
+      fileFolder: 'demo',
+      sourceName: 'Hero',
+    });
+  });
+
+  it('includes newName only when provided (never as an explicit undefined key)', () => {
+    const withHint = buildDuplicateFrameMessage('req-3', 'demo', 'Hero', 'HeroAlt');
+    expect(withHint).toEqual({
+      kind: 'duplicate-frame',
+      requestId: 'req-3',
+      fileFolder: 'demo',
+      sourceName: 'Hero',
+      newName: 'HeroAlt',
+    });
+    const withoutHint = buildDuplicateFrameMessage('req-3', 'demo', 'Hero');
+    expect(Object.hasOwn(withoutHint, 'newName')).toBe(false);
   });
 });
 

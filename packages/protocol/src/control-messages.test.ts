@@ -4,6 +4,8 @@ import {
   ControlReplySchema,
   ControlRequestSchema,
   CreateFrameRequestSchema,
+  DuplicateFrameRequestSchema,
+  DuplicateFrameResultSchema,
   GetCanvasJsonRequestSchema,
   GetCanvasJsonResultSchema,
 } from './control-messages.js';
@@ -44,12 +46,44 @@ describe('GetCanvasJsonRequestSchema', () => {
   });
 });
 
+describe('DuplicateFrameRequestSchema', () => {
+  it('accepts a well-formed duplicate-frame request without newName', () => {
+    const req = { kind: 'duplicate-frame', requestId: 'r3', fileFolder: 'demo', sourceName: 'Hero' };
+    expect(DuplicateFrameRequestSchema.parse(req)).toEqual(req);
+  });
+
+  it('accepts an optional newName hint', () => {
+    const req = { kind: 'duplicate-frame', requestId: 'r3', fileFolder: 'demo', sourceName: 'Hero', newName: 'HeroAlt' };
+    expect(DuplicateFrameRequestSchema.parse(req)).toEqual(req);
+  });
+
+  it('rejects a missing sourceName', () => {
+    expect(
+      DuplicateFrameRequestSchema.safeParse({ kind: 'duplicate-frame', requestId: 'r3', fileFolder: 'demo' }).success,
+    ).toBe(false);
+  });
+
+  it('rejects extra/unknown fields (strict)', () => {
+    expect(
+      DuplicateFrameRequestSchema.safeParse({
+        kind: 'duplicate-frame',
+        requestId: 'r3',
+        fileFolder: 'demo',
+        sourceName: 'Hero',
+        extra: 'nope',
+      }).success,
+    ).toBe(false);
+  });
+});
+
 describe('ControlRequestSchema', () => {
-  it('discriminates between create-frame and get-canvas-json', () => {
+  it('discriminates between create-frame, get-canvas-json, and duplicate-frame', () => {
     const a = ControlRequestSchema.parse({ kind: 'create-frame', requestId: 'r1', fileFolder: 'demo', name: 'X' });
     const b = ControlRequestSchema.parse({ kind: 'get-canvas-json', requestId: 'r2', fileFolder: 'demo' });
+    const c = ControlRequestSchema.parse({ kind: 'duplicate-frame', requestId: 'r3', fileFolder: 'demo', sourceName: 'Hero' });
     expect(a.kind).toBe('create-frame');
     expect(b.kind).toBe('get-canvas-json');
+    expect(c.kind).toBe('duplicate-frame');
   });
 
   it('rejects an unknown kind', () => {
@@ -77,6 +111,32 @@ describe('GetCanvasJsonResultSchema', () => {
   });
 });
 
+describe('DuplicateFrameResultSchema', () => {
+  it('accepts a well-formed result', () => {
+    const reply = {
+      kind: 'duplicate-frame-result',
+      requestId: 'r3',
+      fileFolder: 'demo',
+      sourceName: 'Hero',
+      newName: 'HeroCopy',
+      framePath: 'src/frames/HeroCopy.tsx',
+    };
+    expect(DuplicateFrameResultSchema.parse(reply)).toEqual(reply);
+  });
+
+  it('rejects a result missing newName', () => {
+    expect(
+      DuplicateFrameResultSchema.safeParse({
+        kind: 'duplicate-frame-result',
+        requestId: 'r3',
+        fileFolder: 'demo',
+        sourceName: 'Hero',
+        framePath: 'src/frames/HeroCopy.tsx',
+      }).success,
+    ).toBe(false);
+  });
+});
+
 describe('ControlErrorSchema', () => {
   it('accepts a well-formed error', () => {
     const err = { kind: 'control-error', requestId: 'r1', reason: 'invalid frame name' };
@@ -85,15 +145,24 @@ describe('ControlErrorSchema', () => {
 });
 
 describe('ControlReplySchema', () => {
-  it('discriminates between get-canvas-json-result and control-error', () => {
+  it('discriminates between get-canvas-json-result, duplicate-frame-result, and control-error', () => {
     const okReply = ControlReplySchema.parse({
       kind: 'get-canvas-json-result',
       requestId: 'r2',
       fileFolder: 'demo',
       meta: { frames: [], comments: [], zoomBookmarks: [] },
     });
+    const dupReply = ControlReplySchema.parse({
+      kind: 'duplicate-frame-result',
+      requestId: 'r3',
+      fileFolder: 'demo',
+      sourceName: 'Hero',
+      newName: 'HeroCopy',
+      framePath: 'src/frames/HeroCopy.tsx',
+    });
     const errReply = ControlReplySchema.parse({ kind: 'control-error', requestId: 'r1', reason: 'boom' });
     expect(okReply.kind).toBe('get-canvas-json-result');
+    expect(dupReply.kind).toBe('duplicate-frame-result');
     expect(errReply.kind).toBe('control-error');
   });
 

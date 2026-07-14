@@ -123,6 +123,43 @@ describe('connectDaemon', () => {
     expect(JSON.parse(socket.sent[0]!)).toEqual({ kind: 'get-canvas-json', requestId: 'req-2', fileFolder: 'demo' });
   });
 
+  it('sendDuplicateFrame sends the exact ADR-0015 envelope, without newName', () => {
+    const { socket, client } = connectWithFake();
+    client.sendDuplicateFrame('demo', 'Hero', 'req-3');
+    expect(JSON.parse(socket.sent[0]!)).toEqual({
+      kind: 'duplicate-frame',
+      requestId: 'req-3',
+      fileFolder: 'demo',
+      sourceName: 'Hero',
+    });
+  });
+
+  it('sendDuplicateFrame includes an explicit newName hint when given', () => {
+    const { socket, client } = connectWithFake();
+    client.sendDuplicateFrame('demo', 'Hero', 'req-3', 'HeroAlt');
+    expect(JSON.parse(socket.sent[0]!)).toEqual({
+      kind: 'duplicate-frame',
+      requestId: 'req-3',
+      fileFolder: 'demo',
+      sourceName: 'Hero',
+      newName: 'HeroAlt',
+    });
+  });
+
+  it('routes an ADR-0015 duplicate-frame-result reply to onControlReply', () => {
+    const { socket, handlers } = connectWithFake();
+    const reply = {
+      kind: 'duplicate-frame-result',
+      requestId: 'req-3',
+      fileFolder: 'demo',
+      sourceName: 'Hero',
+      newName: 'HeroCopy',
+      framePath: 'src/frames/HeroCopy.tsx',
+    };
+    socket.emitMessage(reply);
+    expect(handlers.onControlReply).toHaveBeenCalledWith(reply);
+  });
+
   it('routes an ADR-0014 ControlReply (has `kind`, no `t`) to onControlReply', () => {
     const { socket, handlers } = connectWithFake();
     const reply = { kind: 'control-error', requestId: 'req-1', reason: 'boom' };

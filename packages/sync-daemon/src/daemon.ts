@@ -3,11 +3,13 @@ import type {
   CanvasOp,
   CreateFrameRequest,
   DaemonEvent,
+  DuplicateFrameRequest,
   GetCanvasJsonRequest,
   ProjectInfo,
 } from '@ccs/protocol';
 import { reconcileCanvasJson, readCanvasJson } from './canvas-json.js';
 import { createFrameOnDisk } from './create-frame.js';
+import { duplicateFrameOnDisk } from './duplicate-frame.js';
 import { createGeometryWriter, type GeometryUpdate } from './geometry.js';
 import { FileOpQueue } from './file-op-queue.js';
 import { toProjectRelative } from './paths.js';
@@ -212,6 +214,46 @@ export async function openProject(options: OpenProjectOptions): Promise<DaemonHa
     });
   }
 
+  /** ADR-0015: real file-backed frame duplication (the P1 defect fix — see
+   * `duplicate-frame.ts`'s module doc). Serialized on the same
+   * `createFrameQueueKey` as `create-frame`/`get-canvas-json` so the three
+   * request kinds can never interleave their reads/writes of a
+   * file-folder's `src/frames.ts`/`.studio/canvas.json`. */
+  function handleDuplicateFrame(request: DuplicateFrameRequest, reply: ReplyFn): void {
+    const fileFolder = resolveFileFolder(request.fileFolder);
+    if (!fileFolder) {
+      reply({ kind: 'control-error', requestId: request.requestId, reason: `unknown file-folder "${request.fileFolder}"` });
+      return;
+    }
+    void fileOpQueue.enqueue(createFrameQueueKey(fileFolder.root), async () => {
+      try {
+        const result = await duplicateFrameOnDisk(fileFolder.root, request.sourceName, request.newName);
+        control.broadcast({
+          t: 'file-changed',
+          file: toProjectRelative(projectRoot, join(fileFolder.root, result.framePath)),
+        });
+        control.broadcast({
+          t: 'file-changed',
+          file: toProjectRelative(projectRoot, join(fileFolder.root, '.studio', 'canvas.json')),
+        });
+        reply({
+          kind: 'duplicate-frame-result',
+          requestId: request.requestId,
+          fileFolder: fileFolder.name,
+          sourceName: request.sourceName,
+          newName: result.newName,
+          framePath: result.framePath,
+        });
+      } catch (err) {
+        reply({
+          kind: 'control-error',
+          requestId: request.requestId,
+          reason: err instanceof Error ? err.message : String(err),
+        });
+      }
+    });
+  }
+
   function handleGetCanvasJson(request: GetCanvasJsonRequest, reply: ReplyFn): void {
     const fileFolder = resolveFileFolder(request.fileFolder);
     if (!fileFolder) {
@@ -239,6 +281,7 @@ export async function openProject(options: OpenProjectOptions): Promise<DaemonHa
     onSetGeometry: handleSetGeometry,
     onCreateFrame: handleCreateFrame,
     onGetCanvasJson: handleGetCanvasJson,
+    onDuplicateFrame: handleDuplicateFrame,
   });
 
   const watchHandles: WatchHandle[] = [];

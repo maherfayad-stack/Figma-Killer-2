@@ -4,8 +4,10 @@ import { FrameMetaSchema } from './frame-meta.js';
 /**
  * ADR-0014 — additive control-ws request/reply shapes closing the two P1
  * interface gaps (daemon has no `create-frame`/`get-canvas-json` API yet).
- * Additive only: does NOT touch the frozen `CanvasOp`/`DaemonEvent`/
- * `FrameMeta`/`TreeNode`/`NodeUid` types (ADR-0012/0013).
+ * Extended by ADR-0015 with `duplicate-frame`/`duplicate-frame-result`
+ * (the P1 defect fix: real file-backed frame duplication). Additive only:
+ * does NOT touch the frozen `CanvasOp`/`DaemonEvent`/`FrameMeta`/
+ * `TreeNode`/`NodeUid` types (ADR-0012/0013).
  *
  * These are control-channel request/reply envelopes, deliberately NOT
  * `DaemonEvent` variants (same rationale as `ProjectInfo` in
@@ -55,13 +57,33 @@ export const GetCanvasJsonRequestSchema = z
   })
   .strict();
 
+/**
+ * ADR-0015 — duplicate-frame request. `newName` is an OPTIONAL caller hint
+ * (not currently sent by `packages/canvas`'s default duplicate handler,
+ * which always lets the daemon pick a unique `<sourceName>Copy`/`Copy2`/…
+ * name — see `duplicate-frame.ts`'s module doc); accepted here so a future
+ * "rename while duplicating" UI doesn't need a protocol change. When
+ * omitted, the daemon derives a unique name itself.
+ */
+export const DuplicateFrameRequestSchema = z
+  .object({
+    kind: z.literal('duplicate-frame'),
+    requestId: z.string().min(1),
+    fileFolder: z.string().min(1),
+    sourceName: z.string().min(1),
+    newName: z.string().min(1).optional(),
+  })
+  .strict();
+
 export const ControlRequestSchema = z.discriminatedUnion('kind', [
   CreateFrameRequestSchema,
   GetCanvasJsonRequestSchema,
+  DuplicateFrameRequestSchema,
 ]);
 
 export type CreateFrameRequest = z.infer<typeof CreateFrameRequestSchema>;
 export type GetCanvasJsonRequest = z.infer<typeof GetCanvasJsonRequestSchema>;
+export type DuplicateFrameRequest = z.infer<typeof DuplicateFrameRequestSchema>;
 export type ControlRequest = z.infer<typeof ControlRequestSchema>;
 
 // --- server -> client (direct reply to the requesting socket only) ------
@@ -75,6 +97,29 @@ export const GetCanvasJsonResultSchema = z
   })
   .strict();
 
+/**
+ * ADR-0015 — duplicate-frame's dedicated success reply. Deliberately
+ * DIFFERENT from `create-frame`'s pattern (which has no success reply and
+ * is observed only via the resulting `file-changed` broadcasts): a
+ * `create-frame` caller already knows the exact `name`/`framePath` it
+ * asked for, so watching `frames` state for that known path is enough to
+ * detect success. A `duplicate-frame` caller does NOT know the resulting
+ * `newName` in advance (the daemon picks it to guarantee uniqueness), so
+ * without a direct reply carrying it back there would be no reliable way
+ * to correlate "my duplicate landed" to a specific new frame — decision
+ * taken alone, flagged in the P1-defect-fix report.
+ */
+export const DuplicateFrameResultSchema = z
+  .object({
+    kind: z.literal('duplicate-frame-result'),
+    requestId: z.string().min(1),
+    fileFolder: z.string().min(1),
+    sourceName: z.string().min(1),
+    newName: z.string().min(1),
+    framePath: z.string().min(1),
+  })
+  .strict();
+
 export const ControlErrorSchema = z
   .object({
     kind: z.literal('control-error'),
@@ -85,9 +130,11 @@ export const ControlErrorSchema = z
 
 export const ControlReplySchema = z.discriminatedUnion('kind', [
   GetCanvasJsonResultSchema,
+  DuplicateFrameResultSchema,
   ControlErrorSchema,
 ]);
 
 export type GetCanvasJsonResult = z.infer<typeof GetCanvasJsonResultSchema>;
+export type DuplicateFrameResult = z.infer<typeof DuplicateFrameResultSchema>;
 export type ControlError = z.infer<typeof ControlErrorSchema>;
 export type ControlReply = z.infer<typeof ControlReplySchema>;
