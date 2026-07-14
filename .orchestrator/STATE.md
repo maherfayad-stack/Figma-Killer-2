@@ -5,8 +5,9 @@ _Living status board. Append-only decisions log at bottom. Last updated: 2026-07
 ## Current phase
 
 **P0 — COMPLETE** (AUDIT-1 PASS, tag `phase-0-complete`, protocol FROZEN).
-**P1 — COMPLETE** (AUDIT-2 daemon + AUDIT-3 canvas/integration PASS, tag `phase-1-complete`).
-**⛔ HALTED at P1 gate per human instruction — do NOT start P2 without a new go.**
+**P1 — COMPLETE** (AUDIT-2 daemon + AUDIT-3 canvas/integration PASS, tag `phase-1-complete`; defect fix AUDIT-4 PASS, dc070de).
+**P2 — COMPLETE** (AUDIT-5 PASS, tag `phase-2-complete`). Selection Bridge: source-uid plugin + bridge + canvas edit-mode/overlay. Hard stop LIFTED 2026-07-14. Running P2→P8 gated per phase.
+**P3 — NEXT** (AST Write-Back Engine, the critical path).
 
 ## Phase status board
 
@@ -14,8 +15,8 @@ _Living status board. Append-only decisions log at bottom. Last updated: 2026-07
 |---|---|---|---|
 | P0 | Foundations & Contracts | ✅ complete (tag phase-0-complete) | — |
 | P1 | Infinite Canvas + Live Frames | ✅ complete (tag phase-1-complete) | P0 ✅ |
-| P2 | Selection Bridge | ⬜ not started | P1 |
-| P3 | AST Write-Back Engine (critical path) | ⬜ not started | P2 |
+| P2 | Selection Bridge | ✅ complete (tag phase-2-complete) | P1 ✅ |
+| P3 | AST Write-Back Engine (critical path) | 🔜 next | P2 ✅ |
 | P4 | Design System: Tokens + Components | ⬜ not started | P3 |
 | P5 | Studio UI Chrome | ⬜ not started | P3 |
 | P6 | Backend (Supabase, git-host) | ⬜ not started | P4,P5 |
@@ -42,8 +43,8 @@ Dependency graph: `P0 → P1 → P2 → P3 → {P4, P5} → P6 → P7 → P8`.
 - **P4:** token pipeline parses Almosafer DS format, DTCG = interop (ADR-0010); Almosafer DS is untyped `.jsx` w/o metadata → prop-extraction needs JS fallback + meta strategy, decide at P4 kickoff, flag to human (ADR-0011).
 - **P7:** may additively extend `FrameMeta.comments` (ADR-0009).
 
-## ⛔ HARD STOP INSTRUCTION (human, 2026-07-13)
-**Stop when Phase 1 is done.** Complete P1 through its gate (finish worker → audit PASS → tag `phase-1-complete` + retro), then HALT. Do NOT spawn P2 or any further phase without a new human go.
+## ✅ HARD STOP LIFTED (human, 2026-07-14)
+Prior instruction "stop when Phase 1 is done" was satisfied and then **lifted** — human said "continue with the rest of the phases". Now authorized to run P2→P8, **gated per phase** (worker → git-reconcile → fresh adversarial audit PASS → tag `phase-<n>-complete` + retro → next). Surface human-decision points as they arrive: P4 = Almosafer DS untyped `.jsx` prop-extraction strategy (ADR-0011); P6 = git-host choice (gitea vs GitHub App); tldraw license before launch (ADR-0005). None block P2/P3.
 
 ## Blockers (owner)
 
@@ -96,3 +97,15 @@ _(one-command demo per phase recorded here as phases complete)_
 ## Note on P1 git history
 - `phase-1-complete` = commit `bcf884f` (verified state: typecheck/lint/test 12/12, e2e 4/4, tree clean).
 - P1 history = `8fa895c` (canvas, worker self-committed again despite hardened no-git rule) + `bcf884f` (gate commit: integration + protocol-additive + orchestrator docs). Cumulative diff phase-0-complete..HEAD is in-scope (packages/{canvas,protocol,sync-daemon} + config + .orchestrator). Not rewriting history; see memory [[workers-self-commit]].
+
+## P2 retro (≤10 lines)
+- Pre-freezing BOTH the data-uid derivation AND the full bridge postMessage contract (ADR-0016) before spawning again gave zero interface churn across the A→B serialization — the P1 lesson keeps paying.
+- The standalone-contract constraint (templates stay zero-@ccs) forced the right architecture: daemon layers instrumentation in at studio-boot via an ephemeral merged Vite config; file-app template never changed. Proven live by a boot-with/without diff test.
+- Converting the "shared derivation module" ideal (impossible across babel vs ts-morph) into a golden CONFORMANCE CORPUS (ADR-0017) is the durable fix — P3's ts-morph resolver must pass byte-identical uids or a test fails.
+- WS-B caught two real bugs by RUNNING not inspecting: capture-overlay swallowing wheel events (broke pan/zoom in edit mode) and a camera-animation race. "Drive the real thing" in acceptance is worth the e2e cost.
+- Session limits bit again: WS-B died once at ~0 code, clean respawn with an efficiency preamble succeeded. Cheap because the tree was clean (no partial state to reconcile).
+- Cross-origin reality: iframes never deliver DOM events to the parent → hit-testing MUST be a parent-owned capture overlay + postMessage. Good that the frozen bridge protocol already assumed this.
+- Carry-forward: bridge targetOrigin '*' → tighten to exact origin + doc "identity-based" (P8); e2e (a) should pre-warm Vite deps before the HMR timing assert (flaky cold-start); watcher.test.ts deflake (P8).
+
+## P2 acceptance demo (one command)
+`pnpm --filter @ccs/canvas run test:e2e` → 11/11 (5 P1 + 6 P2) against a real studio-mode daemon. Manual: `pnpm --filter @ccs/canvas run demo:daemon` + `demo:harness`, open http://127.0.0.1:5555/?daemonPort=4700, double-click a frame → hover/click nodes → breadcrumb + lock badges. NOTE: the demo harness now opens with `studioMode:true` (data-uids + bridge injected).

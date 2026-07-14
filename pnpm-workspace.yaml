@@ -63,5 +63,40 @@ catalog:
   html-to-image: ^1.11.13
   tsx: ^4.23.1
 
+  # P2 WS-A (packages/vite-plugin-source-uid) — new direct dependencies, not
+  # previously in this catalog. Deliberately NOT pinned to npm's bare
+  # "latest" (Babel 8.0.x as of 2026-07-14) — pinned to 7.29.7 instead,
+  # matching the version ALREADY resolved in pnpm-lock.yaml as a transitive
+  # dependency of @vitejs/plugin-react's HMR-refresh transform. Taking the
+  # fresh 8.x major here would fork the babel toolchain into two
+  # incompatible major versions living side-by-side in node_modules (7.x via
+  # plugin-react, 8.x via us) for no benefit. CHANGE-REQUEST flagged to the
+  # orchestrator in the P2 WS-A worker report: this deviates from the
+  # "always npm-view latest" ADR-0001..0004 discipline; rationale is
+  # toolchain-coherence — please ratify or correct with an ADR.
+  '@babel/core': ^7.29.7
+  '@babel/traverse': ^7.29.7
+  '@babel/parser': ^7.29.7
+  '@babel/types': ^7.29.7
+  # verified against registry.npmjs.org 2026-07-14: @babel/parser and
+  # @babel/types ship their own bundled .d.ts at 7.29.7 (no @types/babel__*
+  # package needed for those two — @types/babel__types 404s on npm, it's
+  # been retired in favor of the bundled types); @babel/core/@babel/traverse
+  # do not bundle types, hence the two @types/babel__* entries below.
+  '@types/babel__core': ^7.20.5
+  '@types/babel__traverse': ^7.28.0
+
+  # P2 WS-A (packages/bridge) — jsdom for the postMessage/DOM bridge test
+  # suite (task brief: "vitest + jsdom or happy-dom"). Verified against
+  # registry.npmjs.org 2026-07-14, not memory.
+  jsdom: ^29.1.1
+
+  # P2 WS-B (packages/canvas) — zustand for the in-memory selection store
+  # (editModeFrame/hoveredUid/selectedUids/breadcrumb; playbook §4/P2, One
+  # Rule §5.1 — ephemeral UI state only, never persisted to disk). Verified
+  # against registry.npmjs.org 2026-07-14, not memory. No separate
+  # `@types/zustand` — the package ships its own bundled types.
+  zustand: ^5.0.14
+
 minimumReleaseAgeExclude:
   - tsx@4.23.1

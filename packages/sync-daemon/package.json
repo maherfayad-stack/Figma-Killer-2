@@ -16,8 +16,11 @@
   },
   "dependencies": {
     "@ccs/protocol": "workspace:*",
+    "@ccs/vite-plugin-source-uid": "workspace:*",
+    "@ccs/bridge": "workspace:*",
     "chokidar": "catalog:",
     "simple-git": "catalog:",
+    "vite": "catalog:",
     "ws": "catalog:"
   },
   "devDependencies": {

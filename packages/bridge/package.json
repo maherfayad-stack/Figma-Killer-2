@@ -15,9 +15,10 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@ccs/protocol": "workspace:*"
+    "zod": "catalog:"
   },
   "devDependencies": {
+    "jsdom": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
   }

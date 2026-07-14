@@ -15,9 +15,15 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@ccs/protocol": "workspace:*"
+    "@ccs/protocol": "workspace:*",
+    "@babel/core": "catalog:",
+    "@babel/traverse": "catalog:",
+    "@babel/parser": "catalog:",
+    "@babel/types": "catalog:"
   },
   "devDependencies": {
+    "@types/babel__core": "catalog:",
+    "@types/babel__traverse": "catalog:",
     "typescript": "catalog:",
     "vite": "catalog:",
     "vitest": "catalog:"

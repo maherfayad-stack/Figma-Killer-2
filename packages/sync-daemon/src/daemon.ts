@@ -15,9 +15,20 @@ import { FileOpQueue } from './file-op-queue.js';
 import { toProjectRelative } from './paths.js';
 import { allocatePort } from './port-pool.js';
 import { scanProject, type FileFolder } from './scan.js';
-import { createControlServer, type ControlServerHandle, type ReplyFn, type SetGeometryRequest } from './ws-server.js';
+import {
+  createControlServer,
+  type ControlServerHandle,
+  type ReplyFn,
+  type SetGeometryRequest,
+} from './ws-server.js';
 import { startViteServer, type ViteServerHandle } from './vite-orchestrator.js';
-import { watchCanvasJson, watchDesignSystem, watchFrameFiles, type WatchHandle } from './watcher.js';
+import { writeStudioViteConfig } from './studio-vite-config.js';
+import {
+  watchCanvasJson,
+  watchDesignSystem,
+  watchFrameFiles,
+  type WatchHandle,
+} from './watcher.js';
 import {
   removeDaemonCoordFile,
   writeDaemonCoordFile,
@@ -40,7 +51,7 @@ const DEFAULT_DAEMON_PORT_START = 4700;
 const DEFAULT_GEOMETRY_DEBOUNCE_MS = 250;
 
 export interface StartViteServerFn {
-  (options: { cwd: string; port: number }): Promise<ViteServerHandle>;
+  (options: { cwd: string; port: number; studioConfigPath?: string }): Promise<ViteServerHandle>;
 }
 
 export interface OpenProjectOptions {
@@ -57,6 +68,16 @@ export interface OpenProjectOptions {
    * the real `startViteServer`. */
   startVite?: StartViteServerFn;
   geometryDebounceMs?: number;
+  /** ADR-0016 addendum / P2 WS-A daemon boot hook: when `true`, every
+   * file-folder's Vite dev server boots with a daemon-generated studio
+   * config (`writeStudioViteConfig`) layering the source-uid plugin +
+   * bridge injection on top of that file-folder's OWN `vite.config.ts` —
+   * WITHOUT the file-folder ever depending on any `@ccs/*` package (P0
+   * standalone contract). Defaults to `false`: a plain `openProject` call
+   * boots every file-folder exactly as P1 always has (no `@ccs/*`
+   * involvement at all), preserving that contract by construction rather
+   * than by convention. */
+  studioMode?: boolean;
 }
 
 export interface DaemonFileFolder {
@@ -94,11 +115,18 @@ export async function openProject(options: OpenProjectOptions): Promise<DaemonHa
 
   const takenPorts = new Set<number>();
   const daemonPort =
-    options.daemonPort ?? (await allocatePort(options.daemonPortStart ?? DEFAULT_DAEMON_PORT_START, takenPorts));
+    options.daemonPort ??
+    (await allocatePort(options.daemonPortStart ?? DEFAULT_DAEMON_PORT_START, takenPorts));
   takenPorts.add(daemonPort);
 
   const startVite: StartViteServerFn =
-    options.startVite ?? ((o) => startViteServer({ cwd: o.cwd, port: o.port }));
+    options.startVite ??
+    ((o) =>
+      startViteServer({
+        cwd: o.cwd,
+        port: o.port,
+        ...(o.studioConfigPath !== undefined ? { studioConfigPath: o.studioConfigPath } : {}),
+      }));
 
   const viteHandles: ViteServerHandle[] = [];
   const fileFolders: DaemonFileFolder[] = [];
@@ -109,7 +137,19 @@ export async function openProject(options: OpenProjectOptions): Promise<DaemonHa
     takenPorts.add(port);
     portCursor = port + 1;
 
-    const handle = await startVite({ cwd: fileFolder.root, port });
+    const studioConfigPath = options.studioMode
+      ? await writeStudioViteConfig({
+          projectRoot,
+          fileFolderRoot: fileFolder.root,
+          fileFolderName: fileFolder.name,
+        })
+      : undefined;
+
+    const handle = await startVite({
+      cwd: fileFolder.root,
+      port,
+      ...(studioConfigPath !== undefined ? { studioConfigPath } : {}),
+    });
     viteHandles.push(handle);
     fileFolders.push({
       name: fileFolder.name,
@@ -190,7 +230,11 @@ export async function openProject(options: OpenProjectOptions): Promise<DaemonHa
   function handleCreateFrame(request: CreateFrameRequest, reply: ReplyFn): void {
     const fileFolder = resolveFileFolder(request.fileFolder);
     if (!fileFolder) {
-      reply({ kind: 'control-error', requestId: request.requestId, reason: `unknown file-folder "${request.fileFolder}"` });
+      reply({
+        kind: 'control-error',
+        requestId: request.requestId,
+        reason: `unknown file-folder "${request.fileFolder}"`,
+      });
       return;
     }
     void fileOpQueue.enqueue(createFrameQueueKey(fileFolder.root), async () => {
@@ -222,12 +266,20 @@ export async function openProject(options: OpenProjectOptions): Promise<DaemonHa
   function handleDuplicateFrame(request: DuplicateFrameRequest, reply: ReplyFn): void {
     const fileFolder = resolveFileFolder(request.fileFolder);
     if (!fileFolder) {
-      reply({ kind: 'control-error', requestId: request.requestId, reason: `unknown file-folder "${request.fileFolder}"` });
+      reply({
+        kind: 'control-error',
+        requestId: request.requestId,
+        reason: `unknown file-folder "${request.fileFolder}"`,
+      });
       return;
     }
     void fileOpQueue.enqueue(createFrameQueueKey(fileFolder.root), async () => {
       try {
-        const result = await duplicateFrameOnDisk(fileFolder.root, request.sourceName, request.newName);
+        const result = await duplicateFrameOnDisk(
+          fileFolder.root,
+          request.sourceName,
+          request.newName,
+        );
         control.broadcast({
           t: 'file-changed',
           file: toProjectRelative(projectRoot, join(fileFolder.root, result.framePath)),
@@ -257,13 +309,22 @@ export async function openProject(options: OpenProjectOptions): Promise<DaemonHa
   function handleGetCanvasJson(request: GetCanvasJsonRequest, reply: ReplyFn): void {
     const fileFolder = resolveFileFolder(request.fileFolder);
     if (!fileFolder) {
-      reply({ kind: 'control-error', requestId: request.requestId, reason: `unknown file-folder "${request.fileFolder}"` });
+      reply({
+        kind: 'control-error',
+        requestId: request.requestId,
+        reason: `unknown file-folder "${request.fileFolder}"`,
+      });
       return;
     }
     void fileOpQueue.enqueue(createFrameQueueKey(fileFolder.root), async () => {
       try {
         const meta = await readCanvasJson(fileFolder.root);
-        reply({ kind: 'get-canvas-json-result', requestId: request.requestId, fileFolder: fileFolder.name, meta });
+        reply({
+          kind: 'get-canvas-json-result',
+          requestId: request.requestId,
+          fileFolder: fileFolder.name,
+          meta,
+        });
       } catch (err) {
         reply({
           kind: 'control-error',

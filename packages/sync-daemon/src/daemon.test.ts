@@ -17,9 +17,15 @@ import { readDaemonCoordFile } from './coord-file.js';
  * `startViteServer` (actual `vite` CLI) is covered separately in
  * `vite-orchestrator.test.ts` and the demo script.
  */
-function makeFakeStartVite(): { startVite: StartViteServerFn; stopAll: () => Promise<void> } {
+function makeFakeStartVite(): {
+  startVite: StartViteServerFn;
+  stopAll: () => Promise<void>;
+  calls: Array<{ cwd: string; port: number; studioConfigPath: string | undefined }>;
+} {
   const stops: Array<() => Promise<void>> = [];
-  const startVite: StartViteServerFn = async ({ port }) => {
+  const calls: Array<{ cwd: string; port: number; studioConfigPath: string | undefined }> = [];
+  const startVite: StartViteServerFn = async ({ cwd, port, studioConfigPath }) => {
+    calls.push({ cwd, port, studioConfigPath });
     const http = await import('node:http');
     const server = http.createServer((_req, res) => {
       res.writeHead(200, { 'Content-Type': 'text/html' });
@@ -38,10 +44,16 @@ function makeFakeStartVite(): { startVite: StartViteServerFn; stopAll: () => Pro
       },
     };
   };
-  return { startVite, stopAll: async () => Promise.all(stops.map((s) => s())).then(() => undefined) };
+  return {
+    startVite,
+    stopAll: async () => Promise.all(stops.map((s) => s())).then(() => undefined),
+    calls,
+  };
 }
 
-async function connectAndGetBootstrap(port: number): Promise<{ socket: WebSocket; bootstrap: ProjectInfo }> {
+async function connectAndGetBootstrap(
+  port: number,
+): Promise<{ socket: WebSocket; bootstrap: ProjectInfo }> {
   const socket = new WebSocket(`ws://127.0.0.1:${port}`);
   const bootstrap = await new Promise<ProjectInfo>((resolve, reject) => {
     socket.once('message', (data) => resolve(JSON.parse(data.toString())));
@@ -51,7 +63,9 @@ async function connectAndGetBootstrap(port: number): Promise<{ socket: WebSocket
 }
 
 function nextEvent(socket: WebSocket): Promise<DaemonEvent> {
-  return new Promise((resolve) => socket.once('message', (data) => resolve(JSON.parse(data.toString()))));
+  return new Promise((resolve) =>
+    socket.once('message', (data) => resolve(JSON.parse(data.toString()))),
+  );
 }
 
 describe('openProject', () => {
@@ -124,7 +138,12 @@ export function getFrame(name: string | null): ComponentType | null {
 
   it('sends the ADR-0012 bootstrap with per-frame devServerUrl including ?frame=<Name>', async () => {
     const { startVite, stopAll } = makeFakeStartVite();
-    daemon = await openProject({ projectRoot, startVite, daemonPortStart: 59730, frameServerPortStart: 59740 });
+    daemon = await openProject({
+      projectRoot,
+      startVite,
+      daemonPortStart: 59730,
+      frameServerPortStart: 59740,
+    });
 
     const { socket, bootstrap } = await connectAndGetBootstrap(daemon.daemonPort);
     socket.terminate();
@@ -170,7 +189,12 @@ export function getFrame(name: string | null): ComponentType | null {
 
   it('broadcasts file-changed + hmr-update when a frame file is edited on disk', async () => {
     const { startVite, stopAll } = makeFakeStartVite();
-    daemon = await openProject({ projectRoot, startVite, daemonPortStart: 59770, frameServerPortStart: 59780 });
+    daemon = await openProject({
+      projectRoot,
+      startVite,
+      daemonPortStart: 59770,
+      frameServerPortStart: 59780,
+    });
 
     const { socket } = await connectAndGetBootstrap(daemon.daemonPort);
     const received: DaemonEvent[] = [];
@@ -183,7 +207,10 @@ export function getFrame(name: string | null): ComponentType | null {
 
     await vi.waitFor(
       () => {
-        expect(received).toContainEqual({ t: 'hmr-update', file: 'files/demo/src/frames/Hero.tsx' });
+        expect(received).toContainEqual({
+          t: 'hmr-update',
+          file: 'files/demo/src/frames/Hero.tsx',
+        });
       },
       { timeout: 3000, interval: 30 },
     );
@@ -194,7 +221,12 @@ export function getFrame(name: string | null): ComponentType | null {
 
   it('broadcasts file-changed when a frame file is added or removed', async () => {
     const { startVite, stopAll } = makeFakeStartVite();
-    daemon = await openProject({ projectRoot, startVite, daemonPortStart: 59790, frameServerPortStart: 59800 });
+    daemon = await openProject({
+      projectRoot,
+      startVite,
+      daemonPortStart: 59790,
+      frameServerPortStart: 59800,
+    });
 
     const { socket } = await connectAndGetBootstrap(daemon.daemonPort);
     const received: DaemonEvent[] = [];
@@ -207,7 +239,10 @@ export function getFrame(name: string | null): ComponentType | null {
 
     await vi.waitFor(
       () => {
-        expect(received).toContainEqual({ t: 'file-changed', file: 'files/demo/src/frames/NewOne.tsx' });
+        expect(received).toContainEqual({
+          t: 'file-changed',
+          file: 'files/demo/src/frames/NewOne.tsx',
+        });
       },
       { timeout: 3000, interval: 30 },
     );
@@ -221,13 +256,21 @@ export function getFrame(name: string | null): ComponentType | null {
     await writeFile(join(projectRoot, 'design-system', 'tokens', 'tokens.json'), '{}');
 
     const { startVite, stopAll } = makeFakeStartVite();
-    daemon = await openProject({ projectRoot, startVite, daemonPortStart: 59810, frameServerPortStart: 59820 });
+    daemon = await openProject({
+      projectRoot,
+      startVite,
+      daemonPortStart: 59810,
+      frameServerPortStart: 59820,
+    });
 
     const { socket } = await connectAndGetBootstrap(daemon.daemonPort);
     const received: DaemonEvent[] = [];
     socket.on('message', (data) => received.push(JSON.parse(data.toString())));
 
-    await writeFile(join(projectRoot, 'design-system', 'tokens', 'tokens.json'), '{"color":"blue"}');
+    await writeFile(
+      join(projectRoot, 'design-system', 'tokens', 'tokens.json'),
+      '{"color":"blue"}',
+    );
 
     await vi.waitFor(
       () => {
@@ -242,7 +285,12 @@ export function getFrame(name: string | null): ComponentType | null {
 
   it('replies op-rejected with reason "ast-engine P3" for a canvas-op (P1 no-op stub)', async () => {
     const { startVite, stopAll } = makeFakeStartVite();
-    daemon = await openProject({ projectRoot, startVite, daemonPortStart: 59830, frameServerPortStart: 59840 });
+    daemon = await openProject({
+      projectRoot,
+      startVite,
+      daemonPortStart: 59830,
+      frameServerPortStart: 59840,
+    });
 
     const { socket } = await connectAndGetBootstrap(daemon.daemonPort);
     const pending = nextEvent(socket);
@@ -262,7 +310,12 @@ export function getFrame(name: string | null): ComponentType | null {
 
   it('serializes ops targeting the same file (per-file queue) in arrival order', async () => {
     const { startVite, stopAll } = makeFakeStartVite();
-    daemon = await openProject({ projectRoot, startVite, daemonPortStart: 59850, frameServerPortStart: 59860 });
+    daemon = await openProject({
+      projectRoot,
+      startVite,
+      daemonPortStart: 59850,
+      frameServerPortStart: 59860,
+    });
 
     const { socket } = await connectAndGetBootstrap(daemon.daemonPort);
     const events: DaemonEvent[] = [];
@@ -297,7 +350,12 @@ export function getFrame(name: string | null): ComponentType | null {
 
   it('writes .studio/daemon.json with ports/pids only, and removes it on close', async () => {
     const { startVite, stopAll } = makeFakeStartVite();
-    daemon = await openProject({ projectRoot, startVite, daemonPortStart: 59870, frameServerPortStart: 59880 });
+    daemon = await openProject({
+      projectRoot,
+      startVite,
+      daemonPortStart: 59870,
+      frameServerPortStart: 59880,
+    });
 
     const coord = await readDaemonCoordFile(projectRoot);
     expect(coord).toMatchObject({
@@ -319,23 +377,44 @@ export function getFrame(name: string | null): ComponentType | null {
 
   it('ADR-0014: create-frame writes the three artifacts and broadcasts two file-changed events', async () => {
     const { startVite, stopAll } = makeFakeStartVite();
-    daemon = await openProject({ projectRoot, startVite, daemonPortStart: 59910, frameServerPortStart: 59920 });
+    daemon = await openProject({
+      projectRoot,
+      startVite,
+      daemonPortStart: 59910,
+      frameServerPortStart: 59920,
+    });
 
     const { socket } = await connectAndGetBootstrap(daemon.daemonPort);
     const received: DaemonEvent[] = [];
     socket.on('message', (data) => received.push(JSON.parse(data.toString())));
 
-    socket.send(JSON.stringify({ kind: 'create-frame', requestId: 'req-1', fileFolder: 'demo', name: 'Testimonials' }));
+    socket.send(
+      JSON.stringify({
+        kind: 'create-frame',
+        requestId: 'req-1',
+        fileFolder: 'demo',
+        name: 'Testimonials',
+      }),
+    );
 
     await vi.waitFor(
       () => {
-        expect(received).toContainEqual({ t: 'file-changed', file: 'files/demo/src/frames/Testimonials.tsx' });
-        expect(received).toContainEqual({ t: 'file-changed', file: 'files/demo/.studio/canvas.json' });
+        expect(received).toContainEqual({
+          t: 'file-changed',
+          file: 'files/demo/src/frames/Testimonials.tsx',
+        });
+        expect(received).toContainEqual({
+          t: 'file-changed',
+          file: 'files/demo/.studio/canvas.json',
+        });
       },
       { timeout: 3000, interval: 30 },
     );
 
-    const tsxContent = await readFile(join(projectRoot, 'files', 'demo', 'src', 'frames', 'Testimonials.tsx'), 'utf8');
+    const tsxContent = await readFile(
+      join(projectRoot, 'files', 'demo', 'src', 'frames', 'Testimonials.tsx'),
+      'utf8',
+    );
     expect(tsxContent).toContain('export default function Testimonials()');
 
     const registry = await readFile(join(projectRoot, 'files', 'demo', 'src', 'frames.ts'), 'utf8');
@@ -350,11 +429,23 @@ export function getFrame(name: string | null): ComponentType | null {
 
   it('ADR-0014: create-frame rejects an invalid name with a direct control-error reply (no broadcast)', async () => {
     const { startVite, stopAll } = makeFakeStartVite();
-    daemon = await openProject({ projectRoot, startVite, daemonPortStart: 59930, frameServerPortStart: 59940 });
+    daemon = await openProject({
+      projectRoot,
+      startVite,
+      daemonPortStart: 59930,
+      frameServerPortStart: 59940,
+    });
 
     const { socket } = await connectAndGetBootstrap(daemon.daemonPort);
     const pending = nextEvent(socket);
-    socket.send(JSON.stringify({ kind: 'create-frame', requestId: 'req-2', fileFolder: 'demo', name: '../../etc/passwd' }));
+    socket.send(
+      JSON.stringify({
+        kind: 'create-frame',
+        requestId: 'req-2',
+        fileFolder: 'demo',
+        name: '../../etc/passwd',
+      }),
+    );
 
     const reply = await pending;
     expect(reply).toMatchObject({ kind: 'control-error', requestId: 'req-2' });
@@ -366,17 +457,26 @@ export function getFrame(name: string | null): ComponentType | null {
 
   it('ADR-0014: create-frame rejects a duplicate frame name', async () => {
     const { startVite, stopAll } = makeFakeStartVite();
-    daemon = await openProject({ projectRoot, startVite, daemonPortStart: 59950, frameServerPortStart: 59960 });
+    daemon = await openProject({
+      projectRoot,
+      startVite,
+      daemonPortStart: 59950,
+      frameServerPortStart: 59960,
+    });
 
     const { socket } = await connectAndGetBootstrap(daemon.daemonPort);
-    socket.send(JSON.stringify({ kind: 'create-frame', requestId: 'req-a', fileFolder: 'demo', name: 'Dup' }));
+    socket.send(
+      JSON.stringify({ kind: 'create-frame', requestId: 'req-a', fileFolder: 'demo', name: 'Dup' }),
+    );
     await vi.waitFor(async () => {
       const meta = await readCanvasJson(join(projectRoot, 'files', 'demo'));
       expect(meta.frames.some((f) => f.framePath === 'src/frames/Dup.tsx')).toBe(true);
     });
 
     const pending = nextEvent(socket);
-    socket.send(JSON.stringify({ kind: 'create-frame', requestId: 'req-b', fileFolder: 'demo', name: 'Dup' }));
+    socket.send(
+      JSON.stringify({ kind: 'create-frame', requestId: 'req-b', fileFolder: 'demo', name: 'Dup' }),
+    );
     const reply = await pending;
     expect(reply).toMatchObject({ kind: 'control-error', requestId: 'req-b' });
 
@@ -386,11 +486,23 @@ export function getFrame(name: string | null): ComponentType | null {
 
   it('ADR-0014: create-frame rejects an unknown file-folder', async () => {
     const { startVite, stopAll } = makeFakeStartVite();
-    daemon = await openProject({ projectRoot, startVite, daemonPortStart: 59970, frameServerPortStart: 59980 });
+    daemon = await openProject({
+      projectRoot,
+      startVite,
+      daemonPortStart: 59970,
+      frameServerPortStart: 59980,
+    });
 
     const { socket } = await connectAndGetBootstrap(daemon.daemonPort);
     const pending = nextEvent(socket);
-    socket.send(JSON.stringify({ kind: 'create-frame', requestId: 'req-3', fileFolder: 'nonexistent', name: 'X' }));
+    socket.send(
+      JSON.stringify({
+        kind: 'create-frame',
+        requestId: 'req-3',
+        fileFolder: 'nonexistent',
+        name: 'X',
+      }),
+    );
 
     const reply = await pending;
     expect(reply).toMatchObject({ kind: 'control-error', requestId: 'req-3' });
@@ -402,16 +514,28 @@ export function getFrame(name: string | null): ComponentType | null {
 
   it('ADR-0014: get-canvas-json round-trips the current FrameMeta for a file-folder', async () => {
     const { startVite, stopAll } = makeFakeStartVite();
-    daemon = await openProject({ projectRoot, startVite, daemonPortStart: 59990, frameServerPortStart: 60000 });
+    daemon = await openProject({
+      projectRoot,
+      startVite,
+      daemonPortStart: 59990,
+      frameServerPortStart: 60000,
+    });
 
     const onDisk = await readCanvasJson(join(projectRoot, 'files', 'demo'));
 
     const { socket } = await connectAndGetBootstrap(daemon.daemonPort);
     const pending = nextEvent(socket);
-    socket.send(JSON.stringify({ kind: 'get-canvas-json', requestId: 'req-4', fileFolder: 'demo' }));
+    socket.send(
+      JSON.stringify({ kind: 'get-canvas-json', requestId: 'req-4', fileFolder: 'demo' }),
+    );
 
     const reply = await pending;
-    expect(reply).toEqual({ kind: 'get-canvas-json-result', requestId: 'req-4', fileFolder: 'demo', meta: onDisk });
+    expect(reply).toEqual({
+      kind: 'get-canvas-json-result',
+      requestId: 'req-4',
+      fileFolder: 'demo',
+      meta: onDisk,
+    });
 
     socket.terminate();
     await stopAll();
@@ -419,7 +543,12 @@ export function getFrame(name: string | null): ComponentType | null {
 
   it('ADR-0014: get-canvas-json reflects a create-frame that was queued just before it (per-file-folder ordering)', async () => {
     const { startVite, stopAll } = makeFakeStartVite();
-    daemon = await openProject({ projectRoot, startVite, daemonPortStart: 60010, frameServerPortStart: 60020 });
+    daemon = await openProject({
+      projectRoot,
+      startVite,
+      daemonPortStart: 60010,
+      frameServerPortStart: 60020,
+    });
 
     const { socket } = await connectAndGetBootstrap(daemon.daemonPort);
     const received: unknown[] = [];
@@ -429,8 +558,17 @@ export function getFrame(name: string | null): ComponentType | null {
     // socket ahead of the get-canvas-json-result reply (both requests are
     // queued on the same file-folder key, in arrival order) — so this
     // waits for the specific reply by shape rather than "the next message".
-    socket.send(JSON.stringify({ kind: 'create-frame', requestId: 'req-c', fileFolder: 'demo', name: 'QueueOrder' }));
-    socket.send(JSON.stringify({ kind: 'get-canvas-json', requestId: 'req-d', fileFolder: 'demo' }));
+    socket.send(
+      JSON.stringify({
+        kind: 'create-frame',
+        requestId: 'req-c',
+        fileFolder: 'demo',
+        name: 'QueueOrder',
+      }),
+    );
+    socket.send(
+      JSON.stringify({ kind: 'get-canvas-json', requestId: 'req-d', fileFolder: 'demo' }),
+    );
 
     await vi.waitFor(() => {
       expect(received).toContainEqual(
@@ -440,7 +578,9 @@ export function getFrame(name: string | null): ComponentType | null {
 
     const reply = received.find(
       (m): m is { kind: string; meta?: { frames: Array<{ framePath: string }> } } =>
-        typeof m === 'object' && m !== null && (m as { kind?: unknown }).kind === 'get-canvas-json-result',
+        typeof m === 'object' &&
+        m !== null &&
+        (m as { kind?: unknown }).kind === 'get-canvas-json-result',
     );
     expect(reply?.meta?.frames.some((f) => f.framePath === 'src/frames/QueueOrder.tsx')).toBe(true);
 
@@ -450,7 +590,12 @@ export function getFrame(name: string | null): ComponentType | null {
 
   it('ADR-0015: duplicate-frame copies the source content, patches the registry, and appends a +40/+40 canvas.json entry', async () => {
     const { startVite, stopAll } = makeFakeStartVite();
-    daemon = await openProject({ projectRoot, startVite, daemonPortStart: 60030, frameServerPortStart: 60040 });
+    daemon = await openProject({
+      projectRoot,
+      startVite,
+      daemonPortStart: 60030,
+      frameServerPortStart: 60040,
+    });
 
     const before = await readCanvasJson(join(projectRoot, 'files', 'demo'));
     const heroBefore = before.frames.find((f) => f.framePath === 'src/frames/Hero.tsx');
@@ -460,18 +605,37 @@ export function getFrame(name: string | null): ComponentType | null {
     const received: DaemonEvent[] = [];
     socket.on('message', (data) => received.push(JSON.parse(data.toString())));
 
-    socket.send(JSON.stringify({ kind: 'duplicate-frame', requestId: 'req-5', fileFolder: 'demo', sourceName: 'Hero' }));
+    socket.send(
+      JSON.stringify({
+        kind: 'duplicate-frame',
+        requestId: 'req-5',
+        fileFolder: 'demo',
+        sourceName: 'Hero',
+      }),
+    );
 
     await vi.waitFor(
       () => {
-        expect(received).toContainEqual({ t: 'file-changed', file: 'files/demo/src/frames/HeroCopy.tsx' });
-        expect(received).toContainEqual({ t: 'file-changed', file: 'files/demo/.studio/canvas.json' });
+        expect(received).toContainEqual({
+          t: 'file-changed',
+          file: 'files/demo/src/frames/HeroCopy.tsx',
+        });
+        expect(received).toContainEqual({
+          t: 'file-changed',
+          file: 'files/demo/.studio/canvas.json',
+        });
       },
       { timeout: 3000, interval: 30 },
     );
 
-    const sourceContent = await readFile(join(projectRoot, 'files', 'demo', 'src', 'frames', 'Hero.tsx'), 'utf8');
-    const copiedContent = await readFile(join(projectRoot, 'files', 'demo', 'src', 'frames', 'HeroCopy.tsx'), 'utf8');
+    const sourceContent = await readFile(
+      join(projectRoot, 'files', 'demo', 'src', 'frames', 'Hero.tsx'),
+      'utf8',
+    );
+    const copiedContent = await readFile(
+      join(projectRoot, 'files', 'demo', 'src', 'frames', 'HeroCopy.tsx'),
+      'utf8',
+    );
     expect(copiedContent).toBe(sourceContent);
 
     const registry = await readFile(join(projectRoot, 'files', 'demo', 'src', 'frames.ts'), 'utf8');
@@ -493,7 +657,12 @@ export function getFrame(name: string | null): ComponentType | null {
 
   it('ADR-0015: duplicate-frame replies with a dedicated duplicate-frame-result carrying the picked newName', async () => {
     const { startVite, stopAll } = makeFakeStartVite();
-    daemon = await openProject({ projectRoot, startVite, daemonPortStart: 60050, frameServerPortStart: 60060 });
+    daemon = await openProject({
+      projectRoot,
+      startVite,
+      daemonPortStart: 60050,
+      frameServerPortStart: 60060,
+    });
 
     const { socket } = await connectAndGetBootstrap(daemon.daemonPort);
     // The two `file-changed` broadcasts land on this same socket ahead of
@@ -504,7 +673,14 @@ export function getFrame(name: string | null): ComponentType | null {
     const received: unknown[] = [];
     socket.on('message', (data) => received.push(JSON.parse(data.toString())));
 
-    socket.send(JSON.stringify({ kind: 'duplicate-frame', requestId: 'req-6', fileFolder: 'demo', sourceName: 'Pricing' }));
+    socket.send(
+      JSON.stringify({
+        kind: 'duplicate-frame',
+        requestId: 'req-6',
+        fileFolder: 'demo',
+        sourceName: 'Pricing',
+      }),
+    );
 
     await vi.waitFor(() => {
       expect(received).toContainEqual({
@@ -523,11 +699,23 @@ export function getFrame(name: string | null): ComponentType | null {
 
   it('ADR-0015: duplicate-frame rejects an unknown source frame with a direct control-error reply (no broadcast)', async () => {
     const { startVite, stopAll } = makeFakeStartVite();
-    daemon = await openProject({ projectRoot, startVite, daemonPortStart: 60070, frameServerPortStart: 60080 });
+    daemon = await openProject({
+      projectRoot,
+      startVite,
+      daemonPortStart: 60070,
+      frameServerPortStart: 60080,
+    });
 
     const { socket } = await connectAndGetBootstrap(daemon.daemonPort);
     const pending = nextEvent(socket);
-    socket.send(JSON.stringify({ kind: 'duplicate-frame', requestId: 'req-7', fileFolder: 'demo', sourceName: 'Ghost' }));
+    socket.send(
+      JSON.stringify({
+        kind: 'duplicate-frame',
+        requestId: 'req-7',
+        fileFolder: 'demo',
+        sourceName: 'Ghost',
+      }),
+    );
 
     const reply = await pending;
     expect(reply).toMatchObject({ kind: 'control-error', requestId: 'req-7' });
@@ -539,12 +727,22 @@ export function getFrame(name: string | null): ComponentType | null {
 
   it('ADR-0015: duplicate-frame rejects an unknown file-folder', async () => {
     const { startVite, stopAll } = makeFakeStartVite();
-    daemon = await openProject({ projectRoot, startVite, daemonPortStart: 60090, frameServerPortStart: 60100 });
+    daemon = await openProject({
+      projectRoot,
+      startVite,
+      daemonPortStart: 60090,
+      frameServerPortStart: 60100,
+    });
 
     const { socket } = await connectAndGetBootstrap(daemon.daemonPort);
     const pending = nextEvent(socket);
     socket.send(
-      JSON.stringify({ kind: 'duplicate-frame', requestId: 'req-8', fileFolder: 'nonexistent', sourceName: 'Hero' }),
+      JSON.stringify({
+        kind: 'duplicate-frame',
+        requestId: 'req-8',
+        fileFolder: 'nonexistent',
+        sourceName: 'Hero',
+      }),
     );
 
     const reply = await pending;
@@ -557,22 +755,46 @@ export function getFrame(name: string | null): ComponentType | null {
 
   it('ADR-0015: duplicate-frame queued right after create-frame observes the create (per-file-folder ordering)', async () => {
     const { startVite, stopAll } = makeFakeStartVite();
-    daemon = await openProject({ projectRoot, startVite, daemonPortStart: 60110, frameServerPortStart: 60120 });
+    daemon = await openProject({
+      projectRoot,
+      startVite,
+      daemonPortStart: 60110,
+      frameServerPortStart: 60120,
+    });
 
     const { socket } = await connectAndGetBootstrap(daemon.daemonPort);
     const received: unknown[] = [];
     socket.on('message', (data) => received.push(JSON.parse(data.toString())));
 
-    socket.send(JSON.stringify({ kind: 'create-frame', requestId: 'req-9', fileFolder: 'demo', name: 'Fresh' }));
     socket.send(
-      JSON.stringify({ kind: 'duplicate-frame', requestId: 'req-10', fileFolder: 'demo', sourceName: 'Fresh' }),
+      JSON.stringify({
+        kind: 'create-frame',
+        requestId: 'req-9',
+        fileFolder: 'demo',
+        name: 'Fresh',
+      }),
+    );
+    socket.send(
+      JSON.stringify({
+        kind: 'duplicate-frame',
+        requestId: 'req-10',
+        fileFolder: 'demo',
+        sourceName: 'Fresh',
+      }),
     );
 
     await vi.waitFor(() => {
       const dupReply = received.find(
-        (m) => typeof m === 'object' && m !== null && (m as { kind?: unknown }).kind === 'duplicate-frame-result',
+        (m) =>
+          typeof m === 'object' &&
+          m !== null &&
+          (m as { kind?: unknown }).kind === 'duplicate-frame-result',
       );
-      expect(dupReply).toMatchObject({ kind: 'duplicate-frame-result', requestId: 'req-10', newName: 'FreshCopy' });
+      expect(dupReply).toMatchObject({
+        kind: 'duplicate-frame-result',
+        requestId: 'req-10',
+        newName: 'FreshCopy',
+      });
     });
 
     socket.terminate();
@@ -581,7 +803,12 @@ export function getFrame(name: string | null): ComponentType | null {
 
   it('close() stops watchers/servers so a second openProject can reuse the same ports', async () => {
     const { startVite, stopAll } = makeFakeStartVite();
-    const first = await openProject({ projectRoot, startVite, daemonPortStart: 59890, frameServerPortStart: 59900 });
+    const first = await openProject({
+      projectRoot,
+      startVite,
+      daemonPortStart: 59890,
+      frameServerPortStart: 59900,
+    });
     const firstDaemonPort = first.daemonPort;
     await first.close();
 
@@ -596,5 +823,43 @@ export function getFrame(name: string | null): ComponentType | null {
     expect(daemon.daemonPort).toBe(firstDaemonPort);
     await stopAll();
     await stopAll2();
+  });
+
+  it('studioMode: false (default) boots every file-folder with no studioConfigPath (P0 standalone contract preserved)', async () => {
+    const { startVite, stopAll, calls } = makeFakeStartVite();
+    daemon = await openProject({
+      projectRoot,
+      startVite,
+      daemonPortStart: 59955,
+      frameServerPortStart: 59965,
+    });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.studioConfigPath).toBeUndefined();
+
+    await stopAll();
+  });
+
+  it('studioMode: true generates a per-file-folder studio Vite config and passes it through to startVite (ADR-0016 addendum)', async () => {
+    const { startVite, stopAll, calls } = makeFakeStartVite();
+    daemon = await openProject({
+      projectRoot,
+      startVite,
+      studioMode: true,
+      daemonPortStart: 59956,
+      frameServerPortStart: 59966,
+    });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.studioConfigPath).toBeDefined();
+    expect(calls[0]!.studioConfigPath).toBe(
+      join(projectRoot, '.studio', 'vite', 'demo.studio-config.mjs'),
+    );
+
+    const generated = await readFile(calls[0]!.studioConfigPath!, 'utf8');
+    expect(generated).toContain('sourceUidPlugin');
+    expect(generated).toContain('installBridge');
+
+    await stopAll();
   });
 });

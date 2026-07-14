@@ -14,6 +14,8 @@ import {
 import { decideRenderMode } from './viewport-cull.js';
 import { captureFrameScreenshot } from './screenshot-capture.js';
 import type { ScreenshotCache } from './screenshot-cache.js';
+import { FRAME_CHROME_HEADER_HEIGHT } from './geometry.js';
+import { useSelectionStore } from './selection-store.js';
 
 /**
  * `FrameShape` — the custom tldraw shape (playbook §4/P1 step 2). This is
@@ -86,11 +88,50 @@ function emitFrameGeometryCommitted(shape: CcsFrameShape): void {
   for (const listener of geometryCommitListeners) listener(shape);
 }
 
-const FRAME_HEADER_HEIGHT = 24;
+/**
+ * P2/WS-B iframe registry (playbook §4/P2): maps a live `ccs-frame` shape's
+ * tldraw shape id -> its rendered `<iframe>` element, so the top-level edit-
+ * mode overlay (`edit-mode-layer.tsx`, which lives OUTSIDE any one shape's
+ * own transformed DOM subtree — see that module's doc for why) can reach
+ * into the currently-edit-mode frame's iframe to open a bridge connection
+ * on it. Same module-level pub-sub shape as `onFrameGeometryCommitted`
+ * above (a `ShapeUtil`/its component instances are constructed by tldraw
+ * itself, not this package, so there's no React context boundary to thread
+ * a ref through cleanly).
+ */
+type IframeRegistryListener = () => void;
+const iframeRegistry = new Map<string, HTMLIFrameElement>();
+const iframeRegistryListeners = new Set<IframeRegistryListener>();
+
+function setRegisteredFrameIframe(shapeId: string, iframe: HTMLIFrameElement | null): void {
+  const had = iframeRegistry.get(shapeId);
+  if (had === iframe) return;
+  if (iframe) iframeRegistry.set(shapeId, iframe);
+  else iframeRegistry.delete(shapeId);
+  for (const listener of iframeRegistryListeners) listener();
+}
+
+export function getRegisteredFrameIframe(shapeId: string): HTMLIFrameElement | null {
+  return iframeRegistry.get(shapeId) ?? null;
+}
+
+export function onFrameIframeRegistryChange(listener: IframeRegistryListener): () => void {
+  iframeRegistryListeners.add(listener);
+  return () => iframeRegistryListeners.delete(listener);
+}
 
 function CcsFrameShapeComponent({ shape }: { shape: CcsFrameShape }): React.ReactElement {
   const editor: Editor = useEditor();
   const screenshotCache = React.useContext(ScreenshotCacheContext);
+  // P2/WS-B: this frame's iframe gets pointer-events only while IT is the
+  // one frame in edit mode (playbook §4/P2 "double-click frame = enter edit
+  // mode ... iframe pointer-events auto"; all other frames stay `none`, and
+  // normal P1 canvas pan/zoom is untouched since nothing here changes
+  // outside this one shape's own render). See `edit-mode-layer.tsx`'s
+  // module doc for why the actual hit-testing input is captured by a
+  // top-level overlay rather than by this iframe directly (cross-origin
+  // iframes never receive the parent's native mouse events either way).
+  const isEditModeFrame = useSelectionStore((s) => s.editModeFrame?.shapeId === shape.id);
 
   const frameBox = React.useMemo(
     () => ({ x: shape.x, y: shape.y, w: shape.props.w, h: shape.props.h }),
@@ -133,6 +174,16 @@ function CcsFrameShapeComponent({ shape }: { shape: CcsFrameShape }): React.Reac
     wasLiveRef.current = renderMode === 'live';
   }, [renderMode, screenshotCache, shape.id]);
 
+  // P2/WS-B iframe registry sync — see module doc above. Runs after every
+  // render so it always reflects the CURRENT `iframeRef.current` (refs are
+  // committed before effects run), registering while live and clearing
+  // whenever this shape isn't rendering a live iframe (screenshot mode) or
+  // unmounts.
+  React.useEffect(() => {
+    setRegisteredFrameIframe(shape.id, renderMode === 'live' ? iframeRef.current : null);
+    return () => setRegisteredFrameIframe(shape.id, null);
+  }, [renderMode, shape.id]);
+
   return (
     <HTMLContainer
       id={shape.id}
@@ -155,7 +206,7 @@ function CcsFrameShapeComponent({ shape }: { shape: CcsFrameShape }): React.Reac
     >
       <div
         style={{
-          height: FRAME_HEADER_HEIGHT,
+          height: FRAME_CHROME_HEADER_HEIGHT,
           flexShrink: 0,
           display: 'flex',
           alignItems: 'center',
@@ -189,9 +240,19 @@ function CcsFrameShapeComponent({ shape }: { shape: CcsFrameShape }): React.Reac
               // Perf/pitfall (playbook §4/P1): pointer-events MUST be
               // none in canvas/nav mode or tldraw's own drag/select
               // gestures never reach the canvas — the iframe would eat
-              // every mousedown first. Edit-mode pointer passthrough is
-              // P2 scope (double-click to enter).
-              pointerEvents: 'none',
+              // every mousedown first. P2/WS-B: 'auto' only for the ONE
+              // frame currently in edit mode (double-click to enter, Esc
+              // to exit — see `CcsFrameShapeUtil.onDoubleClick` below and
+              // `edit-mode-layer.tsx`). Note this toggle reflects the
+              // frame's general "editable now" state per the playbook
+              // prompt; the actual hit-test input capture in P2 happens
+              // via a top-level overlay in front of the iframe (see that
+              // module's doc) because a cross-origin iframe's own DOM
+              // events never reach this parent document regardless of
+              // this CSS property — this keeps the property meaningful
+              // for whenever a later phase needs the iframe itself to
+              // receive events (e.g. in-place text editing).
+              pointerEvents: isEditModeFrame ? 'auto' : 'none',
             }}
           />
         ) : screenshotUrl ? (
@@ -243,6 +304,41 @@ export class CcsFrameShapeUtil extends BaseBoxShapeUtil<CcsFrameShape> {
     const path = new Path2D();
     path.rect(0, 0, shape.props.w, shape.props.h);
     return path;
+  }
+
+  /**
+   * P2/WS-B "double-click frame = enter edit mode" (playbook §4/P2,
+   * ADR-0016 WS-B split): zooms the camera to fit this frame and records
+   * it as the studio's `editModeFrame` (selection store below).
+   * `ShapeUtil.onDoubleClick` is the officially-supported per-shape
+   * double-click hook (fires before tldraw's own default double-click
+   * behavior for a box shape, e.g. entering its native edit/rename flow —
+   * `ccs-frame` has none of that, so nothing to conflict with). Esc exit
+   * (camera restore + `exitEditMode`) lives in `edit-mode-layer.tsx` since
+   * it needs to run for a keydown anywhere on the page, not a per-shape
+   * event.
+   *
+   * DELIBERATELY does NOT call `editor.setCameraOptions({isLocked:true})`
+   * (CR, see worker report): tldraw's `isLocked` is a single blanket flag
+   * with no "block pan, allow zoom" middle ground, and blocking zoom while
+   * inspecting a frame's internals is worse UX than the "camera locks to
+   * frame" playbook wording likely intended — read here as "the camera
+   * SNAPS to the frame on entry / restores on exit", not "camera input is
+   * frozen for the duration". Confirmed live: the P2 e2e zoom-level test
+   * needs to zoom while in edit mode, and `isLocked:true` blocked that
+   * entirely (both pan AND zoom), not just pan.
+   */
+  override onDoubleClick(shape: CcsFrameShape): void {
+    const editor = this.editor;
+    const camera = editor.getCamera();
+    editor.zoomToBounds(
+      { x: shape.x, y: shape.y, w: shape.props.w, h: shape.props.h },
+      { animation: { duration: 200 } },
+    );
+    useSelectionStore.getState().enterEditMode(
+      { shapeId: shape.id, fileFolder: shape.props.fileFolder, framePath: shape.props.framePath },
+      { x: camera.x, y: camera.y, z: camera.z },
+    );
   }
 
   override component(shape: CcsFrameShape): React.ReactElement {

@@ -27,6 +27,8 @@ import {
   type CcsFrameShape,
 } from './frame-shape.js';
 import { frameSourcePath, isValidFrameName } from './new-frame.js';
+import { EditModeLayer } from './edit-mode-layer.js';
+import { emitUidRemap } from './selection-store.js';
 
 /**
  * `StudioCanvas` — the package's public entry point (playbook §4/P1). All
@@ -157,6 +159,14 @@ export function StudioCanvas({
   const [frames, setFrames] = React.useState<CanvasFrameRecord[]>([]);
   const [editorReady, setEditorReady] = React.useState(false);
   const editorRef = React.useRef<Editor | null>(null);
+  // P2/WS-B: `EditModeLayer` needs the `Editor` instance as a render-time
+  // value (it's JSX-conditional below), and `react-hooks/refs` correctly
+  // flags reading `editorRef.current` during render (refs are an escape
+  // hatch for effects/handlers, not render). `editorReady`/`editorRef`
+  // above are untouched (still used the same way by the existing
+  // effects further down) — this is purely an additional render-safe
+  // mirror of the same value, set in the same `handleMount` callback.
+  const [mountedEditor, setMountedEditor] = React.useState<Editor | null>(null);
   const clientRef = React.useRef<DaemonClient | null>(null);
   const originByFileFolderRef = React.useRef<Map<string, string>>(new Map());
   const [screenshotCache] = React.useState(() => createScreenshotCache());
@@ -426,6 +436,14 @@ export function StudioCanvas({
         const derived = deriveFileFolderPath(event.file);
         if (!derived) return;
         screenshotCache.bumpGeneration(frameRecordId(derived.fileFolder, derived.relPath));
+      } else if (event.t === 'uid-remap') {
+        // P2/WS-B (playbook §4/P2, ADR-0016): forwarded to
+        // `edit-mode-layer.tsx`'s subscriber via the module-level bus in
+        // `selection-store.ts` — this daemon connection effect is the one
+        // place `DaemonEvent`s are classified, but the re-resolution logic
+        // needs the active edit-mode frame's bridge connection, which lives
+        // in that component, not here.
+        emitUidRemap(event);
       }
     }
 
@@ -541,6 +559,7 @@ export function StudioCanvas({
   const handleMount = React.useCallback((editor: Editor) => {
     editorRef.current = editor;
     setEditorReady(true);
+    setMountedEditor(editor);
   }, []);
 
   /**
@@ -624,6 +643,7 @@ export function StudioCanvas({
       <ScreenshotCacheContext.Provider value={screenshotCache}>
         <Tldraw shapeUtils={shapeUtils} components={MINIMAL_COMPONENTS} overrides={overrides} onMount={handleMount} />
       </ScreenshotCacheContext.Provider>
+      {mountedEditor && <EditModeLayer editor={mountedEditor} frames={frames} />}
       <div style={{ position: 'absolute', top: 12, right: 12, zIndex: 10, fontFamily: 'system-ui, sans-serif' }}>
         {newFrameOpen ? (
           <form

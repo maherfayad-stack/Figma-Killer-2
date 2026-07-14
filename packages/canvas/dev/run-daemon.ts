@@ -18,7 +18,14 @@ const REPO_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 
 async function main(): Promise<void> {
   console.log(`[demo] opening project at ${REPO_ROOT}`);
-  const daemon = await openProject({ projectRoot: REPO_ROOT });
+  // studioMode: true (ADR-0016 addendum / P2 WS-A daemon boot hook) — boots
+  // every file-folder's Vite dev server with `vite-plugin-source-uid` +
+  // `@ccs/bridge` injected, so this harness's frames carry `data-uid`/
+  // `data-dynamic`/`data-component` and answer the bridge postMessage
+  // protocol (playbook §4/P2). Without this flag the daemon boots exactly
+  // as P1 always has (P0 standalone contract, ADR-0016 addendum) and P2's
+  // edit-mode/selection overlay has nothing to hit-test against.
+  const daemon = await openProject({ projectRoot: REPO_ROOT, studioMode: true });
   console.log(`[demo] daemon control-ws: ws://127.0.0.1:${daemon.daemonPort}`);
   for (const ff of daemon.fileFolders) {
     console.log(`[demo] file-folder "${ff.name}" -> ${ff.devServerUrl} (frames: ${ff.frameNames.join(', ')})`);

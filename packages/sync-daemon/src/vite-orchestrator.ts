@@ -29,6 +29,13 @@ export interface StartViteServerOptions {
   /** How long to wait for the dev server to start responding before
    * giving up. */
   readyTimeoutMs?: number;
+  /** Absolute path to a daemon-generated studio-mode Vite config (see
+   * `studio-vite-config.ts`, ADR-0016 addendum) that `mergeConfig`s this
+   * file-folder's own `vite.config.ts` with the source-uid plugin + bridge
+   * injection. When omitted (the default), Vite boots exactly as it would
+   * standalone — the P0 standalone contract (no `@ccs/*` involvement at
+   * all unless this is explicitly passed). */
+  studioConfigPath?: string;
 }
 
 /**
@@ -45,9 +52,19 @@ export async function startViteServer(options: StartViteServerOptions): Promise<
   const localBin = join(options.cwd, 'node_modules', '.bin', 'vite');
   const useLocalBin = existsSync(localBin);
   const command = useLocalBin ? localBin : 'pnpm';
+  const configArgs = options.studioConfigPath ? ['--config', options.studioConfigPath] : [];
   const args = useLocalBin
-    ? ['--port', String(options.port), '--host', host, '--strictPort']
-    : ['exec', 'vite', '--port', String(options.port), '--host', host, '--strictPort'];
+    ? ['--port', String(options.port), '--host', host, '--strictPort', ...configArgs]
+    : [
+        'exec',
+        'vite',
+        '--port',
+        String(options.port),
+        '--host',
+        host,
+        '--strictPort',
+        ...configArgs,
+      ];
 
   const child = spawn(command, args, {
     cwd: options.cwd,
@@ -110,7 +127,9 @@ async function waitUntilReady(
     await sleep(150);
   }
 
-  throw new Error(`@ccs/sync-daemon: vite server at ${url} did not become ready within ${timeoutMs}ms`);
+  throw new Error(
+    `@ccs/sync-daemon: vite server at ${url} did not become ready within ${timeoutMs}ms`,
+  );
 }
 
 function sleep(ms: number): Promise<void> {

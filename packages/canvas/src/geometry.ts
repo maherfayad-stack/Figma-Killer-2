@@ -31,6 +31,15 @@ export interface Box {
   h: number;
 }
 
+/** Height (px) of the frame chrome header strip a live frame's `<iframe>`
+ * is offset by within its `ccs-frame` shape's local space (playbook §4/P2
+ * — `frame-shape.tsx` renders this header above the iframe). Lives here
+ * (not just in `frame-shape.tsx`) so the pure iframe<->frame/page/screen
+ * transform helpers below (consumed by `bridge-geometry.ts`) don't need a
+ * tldraw-shape import to account for it, and so `frame-shape.tsx` has a
+ * single source of truth instead of a second hard-coded `24`. */
+export const FRAME_CHROME_HEADER_HEIGHT = 24;
+
 export interface Point {
   x: number;
   y: number;

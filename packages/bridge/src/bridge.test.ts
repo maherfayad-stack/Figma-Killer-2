@@ -1,0 +1,187 @@
+// @vitest-environment jsdom
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { installBridge, type BridgeHandle } from './bridge.js';
+
+/**
+ * Acceptance test #2 (task brief): "load an HTML doc containing
+ * data-uid-tagged elements + the bridge; simulate a hit-test postMessage
+ * -> assert the reply's uid is the nearest tagged ancestor and breadcrumb
+ * is correct; report-rects returns rects for requested uids; origin
+ * validation rejects a spoofed source."
+ *
+ * jsdom doesn't implement real layout, so `document.elementFromPoint` is
+ * stubbed per-test (standard practice for hit-test-style DOM tests under
+ * jsdom) rather than relying on real paint geometry.
+ */
+
+const OUTER_UID = 'src/frames/Hero.tsx:d0';
+const CARD_UID = 'src/frames/Hero.tsx:d0.0';
+const BUTTON_UID = 'src/frames/Hero.tsx:d0.0.0';
+
+function buildFixtureDom(): { icon: HTMLElement } {
+  document.body.innerHTML = `
+    <div data-uid="${OUTER_UID}">
+      <section data-uid="${CARD_UID}" data-component="ds:Card">
+        <button data-uid="${BUTTON_UID}" data-component="ds:Button">
+          <span id="icon">*</span>
+        </button>
+      </section>
+    </div>
+  `;
+  const icon = document.getElementById('icon');
+  if (!icon) throw new Error('fixture setup failed');
+  return { icon };
+}
+
+describe('bridge — hit-test / report-rects / origin validation', () => {
+  let handle: BridgeHandle | undefined;
+  let fakeParent: Window;
+  let originalParent: PropertyDescriptor | undefined;
+
+  beforeEach(() => {
+    document.body.innerHTML = '';
+    fakeParent = { postMessage: vi.fn() } as unknown as Window;
+    originalParent = Object.getOwnPropertyDescriptor(window, 'parent');
+    Object.defineProperty(window, 'parent', { value: fakeParent, configurable: true });
+  });
+
+  afterEach(() => {
+    handle?.dispose();
+    handle = undefined;
+    if (originalParent) Object.defineProperty(window, 'parent', originalParent);
+  });
+
+  it('replies to hit-test with the nearest data-uid ancestor and a correct outermost->innermost breadcrumb', () => {
+    const { icon } = buildFixtureDom();
+    // jsdom doesn't implement elementFromPoint at all (no real layout
+    // engine) — assign it directly rather than vi.spyOn, which requires the
+    // property to already exist on the object.
+    document.elementFromPoint = () => icon;
+
+    handle = installBridge();
+    // The bridge sends an unsolicited `ready` handshake as soon as it's
+    // installed (DOM already "complete" in jsdom) — clear that call so the
+    // assertions below only see the message this test actually cares about.
+    (fakeParent.postMessage as ReturnType<typeof vi.fn>).mockClear();
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: { source: 'ccs-studio', type: 'hit-test', requestId: 'req-1', x: 10, y: 20 },
+        source: fakeParent,
+      }),
+    );
+
+    expect(fakeParent.postMessage).toHaveBeenCalledTimes(1);
+    const [message] = (fakeParent.postMessage as ReturnType<typeof vi.fn>).mock.calls[0]!;
+    expect(message).toMatchObject({
+      source: 'ccs-bridge',
+      type: 'hit-test-result',
+      requestId: 'req-1',
+      hit: {
+        uid: BUTTON_UID,
+        dynamic: false,
+        component: 'ds:Button',
+      },
+    });
+    expect(message.hit.breadcrumb).toEqual([
+      { uid: OUTER_UID, name: 'div' },
+      { uid: CARD_UID, name: 'ds:Card' },
+      { uid: BUTTON_UID, name: 'ds:Button' },
+    ]);
+  });
+
+  it('replies with hit: null when elementFromPoint misses everything tagged', () => {
+    document.body.innerHTML = `<div id="untagged">no uid here</div>`;
+    const untagged = document.getElementById('untagged')!;
+    document.elementFromPoint = () => untagged;
+
+    handle = installBridge();
+    // The bridge sends an unsolicited `ready` handshake as soon as it's
+    // installed (DOM already "complete" in jsdom) — clear that call so the
+    // assertions below only see the message this test actually cares about.
+    (fakeParent.postMessage as ReturnType<typeof vi.fn>).mockClear();
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: { source: 'ccs-studio', type: 'hit-test', requestId: 'req-2', x: 0, y: 0 },
+        source: fakeParent,
+      }),
+    );
+
+    const [message] = (fakeParent.postMessage as ReturnType<typeof vi.fn>).mock.calls[0]!;
+    expect(message).toMatchObject({ type: 'hit-test-result', requestId: 'req-2', hit: null });
+  });
+
+  it('report-rects returns a rect per requested uid and null for unknown uids', () => {
+    buildFixtureDom();
+    handle = installBridge();
+    (fakeParent.postMessage as ReturnType<typeof vi.fn>).mockClear();
+
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: {
+          source: 'ccs-studio',
+          type: 'report-rects',
+          requestId: 'req-3',
+          uids: [OUTER_UID, BUTTON_UID, 'src/frames/Hero.tsx:d99'],
+        },
+        source: fakeParent,
+      }),
+    );
+
+    const [message] = (fakeParent.postMessage as ReturnType<typeof vi.fn>).mock.calls[0]!;
+    expect(message.type).toBe('rects-result');
+    expect(message.requestId).toBe('req-3');
+    expect(Object.keys(message.rects).sort()).toEqual(
+      [OUTER_UID, BUTTON_UID, 'src/frames/Hero.tsx:d99'].sort(),
+    );
+    expect(message.rects[OUTER_UID]).toEqual(
+      expect.objectContaining({ x: expect.any(Number), y: expect.any(Number) }),
+    );
+    expect(message.rects['src/frames/Hero.tsx:d99']).toBeNull();
+  });
+
+  it('rejects a message whose event.source is not window.parent, even with a correct payload source tag', () => {
+    buildFixtureDom();
+    handle = installBridge();
+    (fakeParent.postMessage as ReturnType<typeof vi.fn>).mockClear();
+
+    const impostor = { postMessage: vi.fn() } as unknown as Window;
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: { source: 'ccs-studio', type: 'report-rects', requestId: 'req-4', uids: [OUTER_UID] },
+        source: impostor, // NOT window.parent
+      }),
+    );
+
+    expect(fakeParent.postMessage).not.toHaveBeenCalled();
+  });
+
+  it('rejects a message from window.parent whose payload source tag is spoofed/wrong', () => {
+    buildFixtureDom();
+    handle = installBridge();
+    (fakeParent.postMessage as ReturnType<typeof vi.fn>).mockClear();
+
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: { source: 'evil-spoof', type: 'report-rects', requestId: 'req-5', uids: [OUTER_UID] },
+        source: fakeParent,
+      }),
+    );
+
+    expect(fakeParent.postMessage).not.toHaveBeenCalled();
+  });
+
+  it('rejects a structurally invalid message (fails zod validation) even from the right window+source', () => {
+    buildFixtureDom();
+    handle = installBridge();
+    (fakeParent.postMessage as ReturnType<typeof vi.fn>).mockClear();
+
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: { source: 'ccs-studio', type: 'not-a-real-type' },
+        source: fakeParent,
+      }),
+    );
+
+    expect(fakeParent.postMessage).not.toHaveBeenCalled();
+  });
+});

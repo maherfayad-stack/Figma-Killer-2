@@ -1,12 +1,22 @@
 import { describe, expect, it } from 'vitest';
-import { BRIDGE_PACKAGE_PHASE, notImplementedYet } from './index.js';
+import * as pkg from './index.js';
 
-describe('@ccs/bridge (P0 stub)', () => {
-  it('declares its owning phase', () => {
-    expect(BRIDGE_PACKAGE_PHASE).toBe('P2');
+describe('@ccs/bridge public API surface', () => {
+  it('exports the bridge installer', () => {
+    expect(typeof pkg.installBridge).toBe('function');
   });
 
-  it('throws a clear error for not-yet-implemented P2 features', () => {
-    expect(() => notImplementedYet('hit-test')).toThrow(/P2 scope/);
+  it('exports the hit-test / rects / highlight primitives', () => {
+    expect(typeof pkg.performHitTest).toBe('function');
+    expect(typeof pkg.buildBreadcrumb).toBe('function');
+    expect(typeof pkg.reportRects).toBe('function');
+    expect(typeof pkg.createRectsSubscription).toBe('function');
+    expect(typeof pkg.setHover).toBe('function');
+    expect(typeof pkg.setSelection).toBe('function');
+  });
+
+  it('exports the frozen (ADR-0016) protocol schemas', () => {
+    expect(pkg.StudioToBridgeMessageSchema).toBeDefined();
+    expect(pkg.BridgeToStudioMessageSchema).toBeDefined();
   });
 });
