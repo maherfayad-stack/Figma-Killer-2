@@ -76,6 +76,107 @@ export const DuplicateFrameRequestSchema = z
   .strict();
 
 /**
+ * P4 (playbook §4/P4, ADR-0022) — additive token-CRUD control-ws requests.
+ * The daemon is the SOLE fs-writer (One Rule) — a studio TokensPanel (P5)
+ * never writes `design-system/src/tokens/tokens.js` directly, it sends one
+ * of these three requests and the daemon applies the edit via
+ * `@ccs/tokens`'s pure, format-preserving `setTokenValue`/`createToken`/
+ * `deleteToken` (ADR-0010: the Almosafer JS-export shape, not DTCG, is the
+ * on-disk source of truth). `group`/`theme` are the STUDIO-facing concept
+ * (which token, which theme) — the daemon translates that to the concrete
+ * tokens.js `export const` name (`colors`/`colorsDark`/`spacing`/
+ * `rounded`/`elevation`) via `@ccs/tokens`'s `resolveExportName`, keeping
+ * this wire shape independent of that implementation detail. `typography`
+ * is deliberately NOT in `TokenGroupSchema` — nested `scale.field` CRUD is
+ * out of v1 scope (see `@ccs/tokens/edit-almosafer-tokens.ts` module doc);
+ * widening this enum later is additive, not breaking.
+ *
+ * A successful write triggers the SAME rebuild pipeline as an external
+ * `tokens.js` edit (daemon `design-system/**` watch) — re-emitting the
+ * FROZEN `tokens-changed` DaemonEvent (`packages/protocol/src/events.ts`)
+ * once the CSS/preset outputs are rebuilt and written to every file-folder.
+ * No new DaemonEvent variant needed; `TokenWriteResultSchema` below is the
+ * direct (non-broadcast) success/failure reply to the ONE requesting
+ * socket, same pattern as `GetCanvasJsonResultSchema` etc.
+ */
+
+export const TokenGroupSchema = z.enum(['color', 'spacing', 'rounded', 'elevation']);
+export type TokenGroup = z.infer<typeof TokenGroupSchema>;
+
+export const TokenThemeSchema = z.enum(['light', 'dark']);
+export type TokenTheme = z.infer<typeof TokenThemeSchema>;
+
+/**
+ * CR (AUDIT-7 close-out, back-to-worker on the CSS-injection blocker) —
+ * NARROWING-only tightening of the wire schema itself, additive to the
+ * P4 `.strict()` shapes below (no field added/removed/renamed). This is
+ * intentionally a SUPERSET-COMPATIBLE early filter, not the authoritative
+ * gate: the daemon-boundary check in `packages/sync-daemon/src/
+ * token-crud.ts` (`validateTokenKey`/`validateTokenValue`) is what actually
+ * decides whether a token-CRUD request is safe to apply, including the
+ * per-group value shape (color vs dimension vs free-text) that a bare zod
+ * union can't express without duplicating that group-conditional logic
+ * here too (drift risk explicitly called out in the fix brief). What IS
+ * cheap and safe to assert at the wire boundary: the key can only be a
+ * CSS-custom-property-safe identifier segment, and a string value can't
+ * contain a declaration/rule-terminating sequence. Same class of defect as
+ * ADR-0020 (wire string -> sensitive sink, unsanitized) — see emit-css.ts
+ * and css-var.ts for the matching sink-side defense-in-depth.
+ */
+const TOKEN_KEY_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+const CSS_BREAKING_VALUE_PATTERN = /[;{}]|\/\*|\*\/|[\r\n]/;
+
+const TokenKeySchema = z
+  .string()
+  .regex(TOKEN_KEY_PATTERN, 'token key must be 1-64 chars of letters, digits, "_", or "-"');
+
+const TokenValueSchema = z.union([
+  z.number(),
+  z
+    .string()
+    .min(1)
+    .refine((v) => !CSS_BREAKING_VALUE_PATTERN.test(v), {
+      message: 'token value must not contain ";", "{", "}", "/*", "*/", or a newline',
+    }),
+]);
+
+export const SetTokenRequestSchema = z
+  .object({
+    kind: z.literal('set-token'),
+    requestId: z.string().min(1),
+    group: TokenGroupSchema,
+    theme: TokenThemeSchema,
+    key: TokenKeySchema,
+    value: TokenValueSchema,
+  })
+  .strict();
+
+export const CreateTokenRequestSchema = z
+  .object({
+    kind: z.literal('create-token'),
+    requestId: z.string().min(1),
+    group: TokenGroupSchema,
+    theme: TokenThemeSchema,
+    key: TokenKeySchema,
+    value: TokenValueSchema,
+  })
+  .strict();
+
+export const DeleteTokenRequestSchema = z
+  .object({
+    kind: z.literal('delete-token'),
+    requestId: z.string().min(1),
+    group: TokenGroupSchema,
+    theme: TokenThemeSchema,
+    key: TokenKeySchema,
+  })
+  .strict();
+
+export type SetTokenRequest = z.infer<typeof SetTokenRequestSchema>;
+export type CreateTokenRequest = z.infer<typeof CreateTokenRequestSchema>;
+export type DeleteTokenRequest = z.infer<typeof DeleteTokenRequestSchema>;
+
+/**
  * ADR-0018/P3 (WS-B) — undo/redo control-ws requests. The daemon owns a
  * per-file-folder undo/redo stack (ADR-0018 item 9: undo/redo lives in the
  * DAEMON, not ast-engine); these are how a client asks it to pop one step.
@@ -106,6 +207,9 @@ export const ControlRequestSchema = z.discriminatedUnion('kind', [
   DuplicateFrameRequestSchema,
   UndoRequestSchema,
   RedoRequestSchema,
+  SetTokenRequestSchema,
+  CreateTokenRequestSchema,
+  DeleteTokenRequestSchema,
 ]);
 
 export type CreateFrameRequest = z.infer<typeof CreateFrameRequestSchema>;
@@ -184,6 +288,28 @@ export const RedoResultSchema = z
   })
   .strict();
 
+/**
+ * P4 — direct (non-broadcast) reply to a `set-token`/`create-token`/
+ * `delete-token` request. One shared shape for all three (they're
+ * structurally identical: did it apply, and if not, why) rather than three
+ * near-duplicate `*-result` schemas. `applied: false` with a `reason`
+ * covers both validation failures (e.g. "token already exists" from
+ * `@ccs/tokens`'s `TokenEditError`) and the concurrent-edit guard, mirroring
+ * `undo-result`/`redo-result`'s convention. On `applied: true` the daemon
+ * ALSO broadcasts `tokens-changed` (see module doc above) once the rebuilt
+ * CSS/preset outputs are written — this reply is just "your write landed",
+ * the broadcast is "here's what changed as a result".
+ */
+export const TokenWriteResultSchema = z
+  .object({
+    kind: z.literal('token-write-result'),
+    requestId: z.string().min(1),
+    applied: z.boolean(),
+    reason: z.string().optional(),
+  })
+  .strict();
+export type TokenWriteResult = z.infer<typeof TokenWriteResultSchema>;
+
 export const ControlErrorSchema = z
   .object({
     kind: z.literal('control-error'),
@@ -197,6 +323,7 @@ export const ControlReplySchema = z.discriminatedUnion('kind', [
   DuplicateFrameResultSchema,
   UndoResultSchema,
   RedoResultSchema,
+  TokenWriteResultSchema,
   ControlErrorSchema,
 ]);
 

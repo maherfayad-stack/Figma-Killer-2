@@ -83,6 +83,9 @@ describe('createControlServer', () => {
       onDuplicateFrame: () => {},
       onUndo: () => {},
       onRedo: () => {},
+      onSetToken: () => {},
+      onCreateToken: () => {},
+      onDeleteToken: () => {},
     });
 
     expect(handle.host).toBe('127.0.0.1');
@@ -131,6 +134,9 @@ describe('createControlServer', () => {
       onDuplicateFrame: () => {},
       onUndo: () => {},
       onRedo: () => {},
+      onSetToken: () => {},
+      onCreateToken: () => {},
+      onDeleteToken: () => {},
     });
 
     await expect(attemptConnect(port, { origin: 'http://evil-attacker-page.example' })).resolves.toBe(
@@ -150,6 +156,9 @@ describe('createControlServer', () => {
       onDuplicateFrame: () => {},
       onUndo: () => {},
       onRedo: () => {},
+      onSetToken: () => {},
+      onCreateToken: () => {},
+      onDeleteToken: () => {},
     });
 
     // A plain `new WebSocket(url)` (no `origin` option) never sends an
@@ -171,6 +180,9 @@ describe('createControlServer', () => {
       onDuplicateFrame: () => {},
       onUndo: () => {},
       onRedo: () => {},
+      onSetToken: () => {},
+      onCreateToken: () => {},
+      onDeleteToken: () => {},
     });
 
     await expect(attemptConnect(port, { origin: 'http://127.0.0.1:5555' })).resolves.toBe('open');
@@ -188,6 +200,9 @@ describe('createControlServer', () => {
       onDuplicateFrame: () => {},
       onUndo: () => {},
       onRedo: () => {},
+      onSetToken: () => {},
+      onCreateToken: () => {},
+      onDeleteToken: () => {},
     });
 
     await expect(attemptConnect(port, { origin: 'http://localhost:3000' })).resolves.toBe('open');
@@ -205,6 +220,9 @@ describe('createControlServer', () => {
       onDuplicateFrame: () => {},
       onUndo: () => {},
       onRedo: () => {},
+      onSetToken: () => {},
+      onCreateToken: () => {},
+      onDeleteToken: () => {},
     });
 
     const client = await connect(port);
@@ -226,6 +244,9 @@ describe('createControlServer', () => {
       onDuplicateFrame: () => {},
       onUndo: () => {},
       onRedo: () => {},
+      onSetToken: () => {},
+      onCreateToken: () => {},
+      onDeleteToken: () => {},
     });
 
     const clientA = await connect(port);
@@ -255,6 +276,9 @@ describe('createControlServer', () => {
       onDuplicateFrame: () => {},
       onUndo: () => {},
       onRedo: () => {},
+      onSetToken: () => {},
+      onCreateToken: () => {},
+      onDeleteToken: () => {},
     });
 
     const client = await connect(port);
@@ -279,6 +303,9 @@ describe('createControlServer', () => {
       onDuplicateFrame: () => {},
       onUndo: () => {},
       onRedo: () => {},
+      onSetToken: () => {},
+      onCreateToken: () => {},
+      onDeleteToken: () => {},
     });
 
     const client = await connect(port);
@@ -303,6 +330,9 @@ describe('createControlServer', () => {
       onDuplicateFrame: () => {},
       onUndo: () => {},
       onRedo: () => {},
+      onSetToken: () => {},
+      onCreateToken: () => {},
+      onDeleteToken: () => {},
     });
 
     const client = await connect(port);
@@ -328,6 +358,9 @@ describe('createControlServer', () => {
       onDuplicateFrame: () => {},
       onUndo: () => {},
       onRedo: () => {},
+      onSetToken: () => {},
+      onCreateToken: () => {},
+      onDeleteToken: () => {},
     });
 
     const client = await connect(port);
@@ -372,6 +405,9 @@ describe('createControlServer', () => {
       onDuplicateFrame: () => {},
       onUndo: () => {},
       onRedo: () => {},
+      onSetToken: () => {},
+      onCreateToken: () => {},
+      onDeleteToken: () => {},
     });
 
     const client = await connect(port);
@@ -410,6 +446,9 @@ describe('createControlServer', () => {
       onDuplicateFrame: () => {},
       onUndo: () => {},
       onRedo: () => {},
+      onSetToken: () => {},
+      onCreateToken: () => {},
+      onDeleteToken: () => {},
     });
 
     const requester = await connect(port);
@@ -455,6 +494,9 @@ describe('createControlServer', () => {
       onDuplicateFrame,
       onUndo: () => {},
       onRedo: () => {},
+      onSetToken: () => {},
+      onCreateToken: () => {},
+      onDeleteToken: () => {},
     });
 
     const client = await connect(port);
@@ -497,6 +539,9 @@ describe('createControlServer', () => {
       onDuplicateFrame,
       onUndo: () => {},
       onRedo: () => {},
+      onSetToken: () => {},
+      onCreateToken: () => {},
+      onDeleteToken: () => {},
     });
 
     const client = await connect(port);
@@ -523,6 +568,9 @@ describe('createControlServer', () => {
       onDuplicateFrame,
       onUndo: () => {},
       onRedo: () => {},
+      onSetToken: () => {},
+      onCreateToken: () => {},
+      onDeleteToken: () => {},
     });
 
     const client = await connect(port);
@@ -546,6 +594,9 @@ describe('createControlServer', () => {
       onDuplicateFrame: () => {},
       onUndo: () => {},
       onRedo: () => {},
+      onSetToken: () => {},
+      onCreateToken: () => {},
+      onDeleteToken: () => {},
     });
 
     const client = await connect(port);
@@ -568,6 +619,9 @@ describe('createControlServer', () => {
       onDuplicateFrame: () => {},
       onUndo: () => {},
       onRedo: () => {},
+      onSetToken: () => {},
+      onCreateToken: () => {},
+      onDeleteToken: () => {},
     });
 
     expect(handle.clientCount()).toBe(0);
@@ -594,6 +648,9 @@ describe('createControlServer', () => {
       onDuplicateFrame: () => {},
       onUndo,
       onRedo: () => {},
+      onSetToken: () => {},
+      onCreateToken: () => {},
+      onDeleteToken: () => {},
     });
 
     const client = await connect(port);
@@ -625,6 +682,9 @@ describe('createControlServer', () => {
       onDuplicateFrame: () => {},
       onUndo: () => {},
       onRedo,
+      onSetToken: () => {},
+      onCreateToken: () => {},
+      onDeleteToken: () => {},
     });
 
     const client = await connect(port);
@@ -648,6 +708,9 @@ describe('createControlServer', () => {
       onDuplicateFrame: () => {},
       onUndo,
       onRedo: () => {},
+      onSetToken: () => {},
+      onCreateToken: () => {},
+      onDeleteToken: () => {},
     });
 
     const client = await connect(port);

@@ -3,12 +3,15 @@ import { join } from 'node:path';
 import type {
   CanvasOp,
   CreateFrameRequest,
+  CreateTokenRequest,
   DaemonEvent,
+  DeleteTokenRequest,
   DuplicateFrameRequest,
   GetCanvasJsonRequest,
   NodeUid,
   ProjectInfo,
   RedoRequest,
+  SetTokenRequest,
   UndoRequest,
 } from '@ccs/protocol';
 import type { InverseOp } from '@ccs/ast-engine';
@@ -50,6 +53,8 @@ import {
   relPathFromCanvasOp,
   summarizeCanvasOp,
 } from './op-apply.js';
+import { applyTokenCrud, type TokenCrudRequest } from './token-crud.js';
+import { rebuildTokenOutputs, tokensJsPath } from './token-rebuild.js';
 
 /**
  * `openProject` — the sync-daemon entry point (playbook §4/P1, ADR-0012).
@@ -606,6 +611,58 @@ export async function openProject(options: OpenProjectOptions): Promise<DaemonHa
     });
   }
 
+  /**
+   * P4 token-CRUD (playbook §4/P4, ADR-0022): one shared handler for
+   * `set-token`/`create-token`/`delete-token` — write via `token-crud.ts`
+   * (the daemon's sole `design-system/src/tokens/tokens.js` write path),
+   * then immediately run the SAME rebuild pipeline a `tokens-changed`
+   * watch event triggers (`token-rebuild.ts`), then broadcast
+   * `tokens-changed` once (not twice — `applyTokenCrud` marks the
+   * self-write tracker so `watchDesignSystem`'s independent rediscovery of
+   * this exact edit is suppressed). Serialized on the tokens.js path
+   * itself via the existing `FileOpQueue` (same discipline as canvas ops:
+   * concurrent token edits never interleave their read-modify-write).
+   */
+  function tokenCrudQueueKey(): string {
+    return tokensJsPath(projectRoot);
+  }
+
+  async function handleTokenCrudRequest(
+    request: SetTokenRequest | CreateTokenRequest | DeleteTokenRequest,
+    reply: ReplyFn,
+  ): Promise<void> {
+    const crudRequest: TokenCrudRequest = {
+      kind: request.kind,
+      group: request.group,
+      theme: request.theme,
+      key: request.key,
+      ...('value' in request ? { value: request.value } : {}),
+    };
+    const result = await applyTokenCrud(projectRoot, crudRequest, selfWriteTracker);
+    if (!result.ok) {
+      reply({ kind: 'token-write-result', requestId: request.requestId, applied: false, reason: result.reason });
+      return;
+    }
+    const rebuildResult = await rebuildTokenOutputs(
+      projectRoot,
+      fileFolders.map((f) => f.root),
+    );
+    if (rebuildResult.ok) {
+      control.broadcast({ t: 'tokens-changed' });
+    }
+    reply({ kind: 'token-write-result', requestId: request.requestId, applied: true });
+  }
+
+  function handleSetToken(request: SetTokenRequest, reply: ReplyFn): void {
+    void fileOpQueue.enqueue(tokenCrudQueueKey(), () => handleTokenCrudRequest(request, reply));
+  }
+  function handleCreateToken(request: CreateTokenRequest, reply: ReplyFn): void {
+    void fileOpQueue.enqueue(tokenCrudQueueKey(), () => handleTokenCrudRequest(request, reply));
+  }
+  function handleDeleteToken(request: DeleteTokenRequest, reply: ReplyFn): void {
+    void fileOpQueue.enqueue(tokenCrudQueueKey(), () => handleTokenCrudRequest(request, reply));
+  }
+
   const control: ControlServerHandle = createControlServer({
     port: daemonPort,
     getBootstrap: buildBootstrap,
@@ -616,6 +673,9 @@ export async function openProject(options: OpenProjectOptions): Promise<DaemonHa
     onDuplicateFrame: handleDuplicateFrame,
     onUndo: handleUndo,
     onRedo: handleRedo,
+    onSetToken: handleSetToken,
+    onCreateToken: handleCreateToken,
+    onDeleteToken: handleDeleteToken,
   });
 
   const watchHandles: WatchHandle[] = [];
@@ -625,7 +685,43 @@ export async function openProject(options: OpenProjectOptions): Promise<DaemonHa
     );
     watchHandles.push(watchCanvasJson(projectRoot, fileFolder.root, (e) => control.broadcast(e)));
   }
-  watchHandles.push(watchDesignSystem(projectRoot, (e) => control.broadcast(e)));
+
+  /**
+   * P4 (playbook §4/P4, ADR-0022): an IDE edit to `design-system/src/
+   * tokens/tokens.js` (as opposed to a token-CRUD control message, which
+   * already rebuilds+broadcasts itself in `handleTokenCrudRequest`) is
+   * only visible to the daemon via this watcher's `tokens-changed` signal
+   * — run the SAME rebuild pipeline here before re-broadcasting it, and
+   * only broadcast on a successful rebuild (a malformed edit mid-save
+   * shouldn't tell every connected client "tokens changed" for a rebuild
+   * that produced nothing new). `components-changed` has no P4 rebuild
+   * step (the component catalog reads meta.ts on demand, not via a
+   * daemon-pushed artifact) — broadcast it straight through, unchanged
+   * from P1.
+   */
+  function onDesignSystemEvent(event: DaemonEvent): void {
+    if (event.t !== 'tokens-changed') {
+      control.broadcast(event);
+      return;
+    }
+    void rebuildTokenOutputs(
+      projectRoot,
+      fileFolders.map((f) => f.root),
+    ).then((result) => {
+      if (result.ok) control.broadcast(event);
+    });
+  }
+  watchHandles.push(watchDesignSystem(projectRoot, onDesignSystemEvent, selfWriteTracker));
+
+  // Initial build (playbook §4/P4 acceptance: a fresh project boot already
+  // has up-to-date `src/tokens.css` / `tokens.preset.js` in every
+  // file-folder, not just after the first subsequent edit). Best-effort —
+  // a project with no `design-system/` yet (or a malformed tokens.js)
+  // still boots normally; `rebuildTokenOutputs` never throws.
+  await rebuildTokenOutputs(
+    projectRoot,
+    fileFolders.map((f) => f.root),
+  );
 
   const coordFileFolders: DaemonCoordFileFileFolder[] = fileFolders.map((ff, i) => {
     const viteHandle = viteHandles[i];

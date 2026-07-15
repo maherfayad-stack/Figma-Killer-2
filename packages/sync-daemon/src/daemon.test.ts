@@ -253,8 +253,20 @@ export function getFrame(name: string | null): ComponentType | null {
   });
 
   it('broadcasts tokens-changed/components-changed on design-system edits', async () => {
-    await mkdir(join(projectRoot, 'design-system', 'tokens'), { recursive: true });
-    await writeFile(join(projectRoot, 'design-system', 'tokens', 'tokens.json'), '{}');
+    // P4 (ADR-0010/ADR-0022): the daemon's `onDesignSystemEvent` now runs the
+    // real `@ccs/tokens` rebuild pipeline on a `tokens-changed` watch signal
+    // and only re-broadcasts it once that rebuild SUCCEEDS (a malformed edit
+    // shouldn't tell clients "tokens changed" for a rebuild that produced
+    // nothing) — so the fixture must be a real, parseable
+    // `design-system/src/tokens/tokens.js` (the ADR-0010 primary format),
+    // not an arbitrary `tokens.json` (this test predates P4 and used a path
+    // the real pipeline never reads).
+    await mkdir(join(projectRoot, 'design-system', 'src', 'tokens'), { recursive: true });
+    await mkdir(join(projectRoot, 'design-system', 'src', 'components'), { recursive: true });
+    await writeFile(
+      join(projectRoot, 'design-system', 'src', 'tokens', 'tokens.js'),
+      'export const colors = { blue: "#0000ff" };\n',
+    );
 
     const { startVite, stopAll } = makeFakeStartVite();
     daemon = await openProject({
@@ -269,13 +281,29 @@ export function getFrame(name: string | null): ComponentType | null {
     socket.on('message', (data) => received.push(JSON.parse(data.toString())));
 
     await writeFile(
-      join(projectRoot, 'design-system', 'tokens', 'tokens.json'),
-      '{"color":"blue"}',
+      join(projectRoot, 'design-system', 'src', 'tokens', 'tokens.js'),
+      'export const colors = { blue: "#00ff00" };\n',
     );
 
     await vi.waitFor(
       () => {
         expect(received).toContainEqual({ t: 'tokens-changed' });
+      },
+      { timeout: 3000, interval: 30 },
+    );
+
+    // A components-dir edit (no "token" in the path) broadcasts
+    // components-changed straight through (no P4 rebuild gate for it —
+    // the component catalog reads meta.ts on demand, per `watcher.ts`).
+    received.length = 0;
+    await writeFile(
+      join(projectRoot, 'design-system', 'src', 'components', 'Badge.meta.ts'),
+      'export const meta = {};\n',
+    );
+
+    await vi.waitFor(
+      () => {
+        expect(received).toContainEqual({ t: 'components-changed' });
       },
       { timeout: 3000, interval: 30 },
     );

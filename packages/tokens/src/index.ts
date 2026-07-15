@@ -1,14 +1,71 @@
 /**
- * packages/tokens — token parse/validate, CSS custom property + Tailwind
- * preset emitters. Scope: Phase 4 (playbook §4/P4). Per ADR-0006 the real
- * Almosafer DS is the imported design system; this package's real-world
- * input format is the Almosafer DS shape (CSS custom properties + a JS
- * mirror object — see `templates/design-system` and the CHANGE-REQUEST
- * recorded there), NOT raw W3C DTCG as the playbook's generic §4/P4 text
- * assumes.
+ * @ccs/tokens — Design-token parse/validate/emit + the component catalog
+ * (playbook §4/P4, ADR-0006/0010/0021/0022). PRIMARY format: the Almosafer
+ * DS's `design-system/src/tokens/tokens.js` JS-export shape (ADR-0010);
+ * DTCG (`dtcg.ts`) is a layered-on interop format, not the storage model.
+ *
+ * ============================================================================
+ * FROZEN engine API (ADR-0022) — P5 codes to this; changing a signature
+ * here is a CHANGE-REQUEST, not a silent edit:
+ *   - `TokenModel` (type) + a loader (`parseAlmosaferTokensJs`)
+ *   - `emitCss(model, theme)`
+ *   - `emitTailwindPreset(model)`
+ *   - `listComponents(): {name,category,description}[]`
+ *   - `getPropSchema(name): {props: Record<string,PropSchema>}`
+ *   - `tokensForProperty(cssProp): {token,value}[]`
+ * ============================================================================
  */
-export const TOKENS_PACKAGE_PHASE = 'P4' as const;
 
-export function notImplementedYet(feature: string): never {
-  throw new Error(`@ccs/tokens: "${feature}" is P4 scope, not implemented in P0`);
-}
+export type { ThemeName, TokenType, TokenGroup, Token, TokenModel } from './types.js';
+export { THEME_NAMES, findToken, tokensByGroup } from './types.js';
+
+export { kebabCase } from './kebab.js';
+export { cssVarForFlatToken, cssVarForTypographyField } from './css-var.js';
+
+export { parseAlmosaferTokensJs } from './parse-almosafer.js';
+export { emitCss } from './emit-css.js';
+export { emitTailwindPreset, serializePresetModule, type TailwindPreset } from './emit-tailwind-preset.js';
+export { buildTokenOutputs, type TokenOutputs } from './build-outputs.js';
+
+export {
+  tokenModelToDtcg,
+  dtcgToTokenModel,
+  type DtcgDocument,
+  type DtcgTree,
+  type DtcgTokenNode,
+} from './dtcg.js';
+
+export {
+  setTokenValue,
+  createToken,
+  deleteToken,
+  resolveExportName,
+  TokenEditError,
+  type TokenEditTarget,
+  type FlatExportName,
+} from './edit-almosafer-tokens.js';
+
+export {
+  PropTypeSchema,
+  ControlKindSchema,
+  PropSchemaSchema,
+  ComponentMetaSchema,
+  type PropType,
+  type ControlKind,
+  type PropSchema,
+  type ComponentMeta,
+} from './component-meta.js';
+export { parseComponentMeta } from './parse-component-meta.js';
+export { extractDestructuredProps } from './jsx-props.js';
+
+export {
+  listComponents,
+  getPropSchema,
+  tokensForProperty,
+  configureComponentCatalog,
+  configureTokenSource,
+  resetCatalogCache,
+  type TokenRef,
+} from './catalog.js';
+
+export { evaluateExpressionToJson, type JsonValue } from './parse-literal.js';

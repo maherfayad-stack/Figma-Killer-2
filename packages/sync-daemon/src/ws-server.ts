@@ -3,19 +3,25 @@ import {
   CanvasOpSchema,
   ControlReplySchema,
   CreateFrameRequestSchema,
+  CreateTokenRequestSchema,
   DaemonEventSchema,
+  DeleteTokenRequestSchema,
   DuplicateFrameRequestSchema,
   GetCanvasJsonRequestSchema,
   RedoRequestSchema,
+  SetTokenRequestSchema,
   UndoRequestSchema,
   type CanvasOp,
   type ControlReply,
   type CreateFrameRequest,
+  type CreateTokenRequest,
   type DaemonEvent,
+  type DeleteTokenRequest,
   type DuplicateFrameRequest,
   type GetCanvasJsonRequest,
   type ProjectInfo,
   type RedoRequest,
+  type SetTokenRequest,
   type UndoRequest,
 } from '@ccs/protocol';
 
@@ -40,6 +46,9 @@ import {
  *       sourceName: string; newName?: string }                                        (ADR-0015)
  *     { kind: 'undo'; requestId: string; fileFolder: string }                         (P3, ADR-0018 item 9)
  *     { kind: 'redo'; requestId: string; fileFolder: string }                         (P3, ADR-0018 item 9)
+ *     { kind: 'set-token'|'create-token'; requestId: string; group; theme; key: string;
+ *       value: string|number }                                                        (P4, ADR-0022)
+ *     { kind: 'delete-token'; requestId: string; group; theme; key: string }           (P4, ADR-0022)
  *
  *   CR (P3, flagged): `canvas-op.fileFolder` is a NEW optional field on
  *   the ADR-0013-frozen envelope. `NodeUid` (and therefore `CanvasOp`) is
@@ -99,7 +108,10 @@ export type ClientMessage =
   | GetCanvasJsonRequest
   | DuplicateFrameRequest
   | UndoRequest
-  | RedoRequest;
+  | RedoRequest
+  | SetTokenRequest
+  | CreateTokenRequest
+  | DeleteTokenRequest;
 
 const LOCALHOST_ORIGIN_PATTERN = /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/;
 
@@ -145,6 +157,12 @@ export interface ControlServerOptions {
   onRedo: (request: RedoRequest, reply: ReplyFn) => void;
   /** ADR-0015. */
   onDuplicateFrame: (request: DuplicateFrameRequest, reply: ReplyFn) => void;
+  /** P4, ADR-0022. */
+  onSetToken: (request: SetTokenRequest, reply: ReplyFn) => void;
+  /** P4, ADR-0022. */
+  onCreateToken: (request: CreateTokenRequest, reply: ReplyFn) => void;
+  /** P4, ADR-0022. */
+  onDeleteToken: (request: DeleteTokenRequest, reply: ReplyFn) => void;
 }
 
 export interface ControlServerHandle {
@@ -197,6 +215,12 @@ export function createControlServer(options: ControlServerOptions): ControlServe
         options.onUndo(message, (reply) => sendReply(socket, reply));
       } else if (message.kind === 'redo') {
         options.onRedo(message, (reply) => sendReply(socket, reply));
+      } else if (message.kind === 'set-token') {
+        options.onSetToken(message, (reply) => sendReply(socket, reply));
+      } else if (message.kind === 'create-token') {
+        options.onCreateToken(message, (reply) => sendReply(socket, reply));
+      } else if (message.kind === 'delete-token') {
+        options.onDeleteToken(message, (reply) => sendReply(socket, reply));
       }
     });
 
@@ -320,6 +344,21 @@ function parseClientMessage(data: RawData): ClientMessage | null {
 
   if (record.kind === 'redo') {
     const parsed = RedoRequestSchema.safeParse(record);
+    return parsed.success ? parsed.data : null;
+  }
+
+  if (record.kind === 'set-token') {
+    const parsed = SetTokenRequestSchema.safeParse(record);
+    return parsed.success ? parsed.data : null;
+  }
+
+  if (record.kind === 'create-token') {
+    const parsed = CreateTokenRequestSchema.safeParse(record);
+    return parsed.success ? parsed.data : null;
+  }
+
+  if (record.kind === 'delete-token') {
+    const parsed = DeleteTokenRequestSchema.safeParse(record);
     return parsed.success ? parsed.data : null;
   }
 

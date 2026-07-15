@@ -4,12 +4,16 @@ import {
   ControlReplySchema,
   ControlRequestSchema,
   CreateFrameRequestSchema,
+  CreateTokenRequestSchema,
+  DeleteTokenRequestSchema,
   DuplicateFrameRequestSchema,
   DuplicateFrameResultSchema,
   GetCanvasJsonRequestSchema,
   GetCanvasJsonResultSchema,
   RedoRequestSchema,
   RedoResultSchema,
+  SetTokenRequestSchema,
+  TokenWriteResultSchema,
   UndoRequestSchema,
   UndoResultSchema,
 } from './control-messages.js';
@@ -240,5 +244,159 @@ describe('ControlReplySchema', () => {
 
   it('rejects a bare ProjectInfo-shaped message (neither `t` nor `kind`)', () => {
     expect(ControlReplySchema.safeParse({ frames: [], daemonPort: 4700 }).success).toBe(false);
+  });
+});
+
+// ---- P4 (playbook §4/P4, ADR-0022) — additive token-CRUD messages -------
+
+describe('SetTokenRequestSchema / CreateTokenRequestSchema / DeleteTokenRequestSchema', () => {
+  it('accepts a well-formed set-token request (string value)', () => {
+    const req = { kind: 'set-token', requestId: 'r1', group: 'color', theme: 'light', key: 'aqua100', value: '#123456' };
+    expect(SetTokenRequestSchema.parse(req)).toEqual(req);
+  });
+
+  it('accepts a numeric value (spacing/rounded groups)', () => {
+    const req = { kind: 'set-token', requestId: 'r1', group: 'spacing', theme: 'light', key: 'md', value: 20 };
+    expect(SetTokenRequestSchema.parse(req)).toEqual(req);
+  });
+
+  it('rejects an unknown group (typography is out of v1 CRUD scope)', () => {
+    expect(
+      SetTokenRequestSchema.safeParse({
+        kind: 'set-token',
+        requestId: 'r1',
+        group: 'typography',
+        theme: 'light',
+        key: 'display.fontSize',
+        value: '34px',
+      }).success,
+    ).toBe(false);
+  });
+
+  it('rejects extra/unknown fields (strict)', () => {
+    expect(
+      SetTokenRequestSchema.safeParse({
+        kind: 'set-token',
+        requestId: 'r1',
+        group: 'color',
+        theme: 'light',
+        key: 'aqua100',
+        value: '#123456',
+        extra: 'nope',
+      }).success,
+    ).toBe(false);
+  });
+
+  it('accepts a well-formed create-token request', () => {
+    const req = { kind: 'create-token', requestId: 'r2', group: 'color', theme: 'dark', key: 'coral300', value: '#ABCDEF' };
+    expect(CreateTokenRequestSchema.parse(req)).toEqual(req);
+  });
+
+  it('accepts a well-formed delete-token request (no value field)', () => {
+    const req = { kind: 'delete-token', requestId: 'r3', group: 'rounded', theme: 'light', key: 'xxl' };
+    expect(DeleteTokenRequestSchema.parse(req)).toEqual(req);
+  });
+
+  it('is part of the ControlRequestSchema union', () => {
+    const parsed = ControlRequestSchema.parse({
+      kind: 'set-token',
+      requestId: 'r1',
+      group: 'color',
+      theme: 'light',
+      key: 'aqua100',
+      value: '#123456',
+    });
+    expect(parsed.kind).toBe('set-token');
+  });
+
+  // ---- CR (AUDIT-7 blocker close-out) — narrowed key/value wire schema ---
+  //
+  // Additive/narrowing only (no field added/removed): a `key` outside the
+  // CSS-custom-property-safe identifier charset, or a string `value`
+  // containing a declaration/rule-breaking sequence, is now rejected at
+  // parse time. This is a cheap early filter, NOT the authoritative gate —
+  // see `packages/sync-daemon/src/token-crud.ts`'s `validateTokenKey`/
+  // `validateTokenValue` for the real (per-group) check.
+  describe('narrowed key/value validation (CR)', () => {
+    it('rejects the AUDIT-7 injection payload delivered via key', () => {
+      expect(
+        SetTokenRequestSchema.safeParse({
+          kind: 'set-token',
+          requestId: 'r1',
+          group: 'color',
+          theme: 'light',
+          key: 'x: red; } body { display:none } /* pwned',
+          value: '#000',
+        }).success,
+      ).toBe(false);
+    });
+
+    it('rejects an equivalent injection payload delivered via value', () => {
+      expect(
+        CreateTokenRequestSchema.safeParse({
+          kind: 'create-token',
+          requestId: 'r2',
+          group: 'color',
+          theme: 'light',
+          key: 'legitname',
+          value: 'red; } body { display:none } /* pwned */',
+        }).success,
+      ).toBe(false);
+    });
+
+    it('rejects a key exceeding the max length', () => {
+      expect(
+        SetTokenRequestSchema.safeParse({
+          kind: 'set-token',
+          requestId: 'r1',
+          group: 'color',
+          theme: 'light',
+          key: 'a'.repeat(65),
+          value: '#000',
+        }).success,
+      ).toBe(false);
+    });
+
+    it('still accepts digit-leading and hyphenated keys (no false-positive regression)', () => {
+      expect(
+        SetTokenRequestSchema.safeParse({
+          kind: 'set-token',
+          requestId: 'r1',
+          group: 'spacing',
+          theme: 'light',
+          key: '2xl',
+          value: 40,
+        }).success,
+      ).toBe(true);
+    });
+
+    it('delete-token also validates key (no value field to worry about)', () => {
+      expect(
+        DeleteTokenRequestSchema.safeParse({
+          kind: 'delete-token',
+          requestId: 'r3',
+          group: 'color',
+          theme: 'light',
+          key: 'x; } body {}',
+        }).success,
+      ).toBe(false);
+    });
+  });
+});
+
+describe('TokenWriteResultSchema', () => {
+  it('accepts a successful reply', () => {
+    const reply = { kind: 'token-write-result', requestId: 'r1', applied: true };
+    expect(TokenWriteResultSchema.parse(reply)).toEqual(reply);
+  });
+
+  it('accepts a failed reply with a reason', () => {
+    const reply = { kind: 'token-write-result', requestId: 'r1', applied: false, reason: 'token already exists' };
+    expect(TokenWriteResultSchema.parse(reply)).toEqual(reply);
+  });
+
+  it('is part of the ControlReplySchema union', () => {
+    const parsed = ControlReplySchema.parse({ kind: 'token-write-result', requestId: 'r1', applied: true });
+    expect(parsed.kind).toBe('token-write-result');
   });
 });

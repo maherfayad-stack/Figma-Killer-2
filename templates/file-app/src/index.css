@@ -1,2 +1,10 @@
 @config "../tailwind.config.js";
 @import 'tailwindcss';
+/* Design-token CSS custom properties (playbook §4/P4, ADR-0022). Regenerated
+   in-place by the sync-daemon's design-system watch on every `design-system/`
+   token change — see `templates/file-app/tokens.preset.js` for the paired
+   Tailwind utility layer. This file ships with a real seed copy so a fresh
+   `pnpm create-file`/standalone `pnpm dev` renders on-brand BEFORE any
+   studio daemon ever boots (P0 standalone contract: zero @ccs/* runtime
+   dep — this is a plain relative import, not a package import). */
+@import './tokens.css';

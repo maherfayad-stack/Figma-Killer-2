@@ -8,7 +8,8 @@ _Living status board. Append-only decisions log at bottom. Last updated: 2026-07
 **P1 — COMPLETE** (AUDIT-2 daemon + AUDIT-3 canvas/integration PASS, tag `phase-1-complete`; defect fix AUDIT-4 PASS, dc070de).
 **P2 — COMPLETE** (AUDIT-5 PASS, tag `phase-2-complete`). Selection Bridge: source-uid plugin + bridge + canvas edit-mode/overlay. Hard stop LIFTED 2026-07-14. Running P2→P8 gated per phase.
 **P3 — COMPLETE** (AUDIT-6 FAIL→remediated→AUDIT-6b FAIL→remediated→**AUDIT-6c PASS**, tag `phase-3-complete`). AST Write-Back Engine: canvas ops mutate real source (ts-morph+prettier, format-preserving), byte-identical undo, uid-remap, git checkpoints, concurrent-edit guard, and file-folder write-boundary containment (ADR-0020). The core editing loop is live + sandbox-safe.
-**P4 — NEXT** (Design System: tokens + components, ∥ P5) — needs HUMAN decision at kickoff: Almosafer DS is untyped `.jsx` w/o prop metadata (ADR-0011).
+**P4 — COMPLETE** (AUDIT-7 FAIL→remediated→**AUDIT-7b PASS**, tag `phase-4-complete`). Design-system ENGINE: token pipeline (Almosafer tokens.js → CSS vars + Tailwind preset, both build-verified), daemon token-CRUD+watch (edit→HMR ~40ms), 39 meta.ts (ADR-0021), frozen engine API (ADR-0022). CSS-injection hardened (3-layer, ADR-0020 pattern).
+**P5 — IN PROGRESS** (studio CHROME): a partial finish-and-verify is next (sequential, its own uncommitted partial sits in apps/studio + packages/ui).
 
 ## Phase status board
 
@@ -18,8 +19,8 @@ _Living status board. Append-only decisions log at bottom. Last updated: 2026-07
 | P1 | Infinite Canvas + Live Frames | ✅ complete (tag phase-1-complete) | P0 ✅ |
 | P2 | Selection Bridge | ✅ complete (tag phase-2-complete) | P1 ✅ |
 | P3 | AST Write-Back Engine (critical path) | ✅ complete (tag phase-3-complete) | P2 ✅ |
-| P4 | Design System: Tokens + Components | 🔜 next (∥ P5) | P3 ✅ |
-| P5 | Studio UI Chrome | 🔜 next (∥ P4) | P3 ✅ |
+| P4 | Design System: Tokens + Components | ✅ complete (tag phase-4-complete) | P3 ✅ |
+| P5 | Studio UI Chrome | 🟡 in progress (finish-and-verify) | P3 ✅ |
 | P6 | Backend (Supabase, git-host) | ⬜ not started | P4,P5 |
 | P7 | Presence + Comments | ⬜ not started | P6 |
 | P8 | Hardening + Polish | ⬜ not started | P7 |
@@ -123,3 +124,14 @@ _(one-command demo per phase recorded here as phases complete)_
 
 ## P3 acceptance demo (one command)
 `pnpm --filter @ccs/sync-daemon exec vitest run src/e2e-500-ops.test.ts` → 500 random ops through the REAL control-ws → app still typechecks + `vite build`s → all 500 undone byte-identical. Plus `pnpm --filter @ccs/ast-engine test` (140 tests / 66 golden) + `pnpm --filter @ccs/sync-daemon exec vitest run src/safe-path.test.ts src/op-apply.test.ts` (containment + symlink-escape rejection).
+
+## P4 retro (≤10 lines)
+- HUMAN chose manual meta.ts; the win was authoring them FROM the DS's own Code Connect (.figma.tsx, 29/39) + .jsx defaults → accurate, not guessed. ADR-0011's "untyped, no metadata" fear was overblown (Code Connect existed).
+- Recurring vuln class struck again: wire-controlled string → sensitive sink unsanitized (P3: uid→fs path; P4: token key/value→CSS). Fresh adversarial audit caught it; fixed with the same defense-in-depth (boundary validate + sink fail-closed). PATTERN to pre-empt in P6+ (any new wire input).
+- Parallel P4∥P5 double-burned the session limit → both died. Switched to SEQUENTIAL finish-and-verify; recovered the substantial partials cheaply (they died on limit not error → coherent). Memory [[session-limit-clean-respawn]] updated.
+- ts-morph returns QUOTED text for string-literal object keys → corrupted `'2xl'` token names; caught by finish-worker. Watch for this in any ts-morph key handling.
+- Orchestrator preset-verification mattered: an auditor's "preset broken" was actually Tailwind JIT (utilities only emit when used) — I build-tested it myself before gating rather than trust OR dismiss. Verify contested claims directly.
+- Carry-forward: emit-tailwind-preset sink sanitization (non-exploitable, P8); demo frames use stock slate/sky not DS tokens (showcase gap, P5/P8); 39 meta.ts untracked in the external design-system repo (versioning home TBD, P6/P8).
+
+## P4 acceptance demo (one command)
+`pnpm --filter @ccs/tokens test` (112) + `pnpm --filter @ccs/sync-daemon exec vitest run src/token-crud.test.ts` (20, incl. CSS-injection rejection). Live loop: regen `files/demo`, add `bg-aqua-100` to a frame → `vite build` → output CSS has `.bg-aqua-100{background-color:var(--color-aqua-100)}`; edit that token via daemon control-ws → HMR ~40ms.

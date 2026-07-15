@@ -100,14 +100,29 @@ export function watchCanvasJson(
 /**
  * Watch the project's `design-system/**` (ADR-0006/ADR-0008: the real
  * Almosafer DS at `./design-system` when this daemon's projectRoot is the
- * studio monorepo root). Read-only observation — this module never writes
- * into `design-system/` (BOUNDARIES: "Do NOT touch ./design-system/").
- * P1 scope is broadcast-only; P4 lands actual consumers (tokens/components
- * rebuild pipeline).
+ * studio monorepo root). THIS MODULE remains read-only observation — it
+ * never writes into `design-system/` itself (BOUNDARIES: "Do NOT touch
+ * ./design-system/" still holds for the watcher). P1 was broadcast-only;
+ * P4 (playbook §4/P4, ADR-0022) adds the actual consumer: the daemon's
+ * caller wraps `emit` to run the `@ccs/tokens` rebuild pipeline on
+ * `tokens-changed` BEFORE re-broadcasting it (see `daemon.ts`
+ * `handleDesignSystemEvent`) — the write authority for
+ * `design-system/src/tokens/tokens.js` itself lives in the NEW
+ * `token-rebuild.ts`/`token-crud.ts` modules (via the token-CRUD control
+ * message), not here.
+ *
+ * `selfWriteTracker` (optional, P4-additive — every pre-P4 caller keeps
+ * its exact original behavior): when the daemon's OWN token-CRUD write
+ * path just wrote `tokens.js`, this watcher's rediscovery of that same
+ * change is swallowed instead of re-emitted — same discipline as
+ * `watchFrameFiles`'s `onEdit`, avoiding a duplicate `tokens-changed`
+ * broadcast (the CRUD handler already broadcasts one explicitly once its
+ * own rebuild completes).
  */
 export function watchDesignSystem(
   projectRoot: string,
   emit: (event: DaemonEvent) => void,
+  selfWriteTracker?: SelfWriteTracker,
 ): WatchHandle {
   const designSystemDir = join(projectRoot, 'design-system');
   const watcher: FSWatcher = chokidarWatch(designSystemDir, {
@@ -115,15 +130,16 @@ export function watchDesignSystem(
     awaitWriteFinish: AWAIT_WRITE_FINISH,
   });
 
-  watcher.on('all', (_event, path) => {
+  watcher.on('all', (event, path) => {
     if (!path) return;
+    if (event === 'change' && selfWriteTracker?.consume(path)) return;
     const rel = toProjectRelative(projectRoot, path).toLowerCase();
     const touchesTokens = rel.includes('token');
     const touchesComponents = rel.includes('component');
     // Heuristic split by path segment; if neither keyword is present
-    // (e.g. a top-level index/readme change) broadcast both — P1 has no
-    // consumers yet so over-broadcasting is harmless (playbook step 5:
-    // "broadcast only in P1").
+    // (e.g. a top-level index/readme change) broadcast both — over-
+    // broadcasting is harmless (no consumer treats a spurious rebuild-
+    // trigger as anything worse than a no-op re-emit of the same output).
     if (touchesTokens || !touchesComponents) emit({ t: 'tokens-changed' });
     if (touchesComponents || !touchesTokens) emit({ t: 'components-changed' });
   });
