@@ -1,0 +1,115 @@
+/**
+ * @ccs/ui chrome tokens — the STUDIO APPLICATION's own dark, Penpot-grade
+ * design tokens (ADR-0007: NOT the Almosafer DS, NOT themed by it; that DS
+ * themes user file-app CONTENT, not this tool). CSS custom properties only
+ * — every primitive in this package consumes these vars, never a hardcoded
+ * color/space, so re-theming the chrome later is a one-file change.
+ *
+ * RTL-first (playbook §5.9, ADR-0022): every primitive built on top of this
+ * file uses CSS LOGICAL properties (inline/block, start/end) exclusively —
+ * this file defines physical color/space primitives only, no left/right.
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* --- surfaces (Penpot's near-black workspace, layered dock panels) --- */
+  --ccs-bg-canvas: #18181b;
+  --ccs-bg-panel: #1f1f23;
+  --ccs-bg-panel-raised: #27272b;
+  --ccs-bg-hover: #313136;
+  --ccs-bg-active: #3a3a90;
+  --ccs-bg-selected: #4c4cff33;
+  --ccs-bg-input: #131316;
+  --ccs-bg-overlay: #1b1b1eF2;
+
+  /* --- borders --- */
+  --ccs-border: #313136;
+  --ccs-border-strong: #47474e;
+  --ccs-border-focus: #7c7cff;
+
+  /* --- text --- */
+  --ccs-text: #e4e4e7;
+  --ccs-text-muted: #a1a1aa;
+  --ccs-text-subtle: #71717a;
+  --ccs-text-inverted: #18181b;
+  --ccs-text-danger: #f87171;
+  --ccs-text-accent: #9494ff;
+
+  /* --- accent (Penpot's signature violet-blue) --- */
+  --ccs-accent: #7c7cff;
+  --ccs-accent-hover: #9494ff;
+  --ccs-accent-active: #6363e6;
+  --ccs-accent-contrast: #0b0b10;
+
+  /* --- semantic --- */
+  --ccs-warning: #f5a623;
+  --ccs-danger: #f04444;
+  --ccs-success: #3ecf8e;
+  --ccs-locked: #f5a623;
+
+  /* --- spacing scale (4px base) --- */
+  --ccs-space-1: 4px;
+  --ccs-space-2: 8px;
+  --ccs-space-3: 12px;
+  --ccs-space-4: 16px;
+  --ccs-space-5: 20px;
+  --ccs-space-6: 24px;
+
+  /* --- radii --- */
+  --ccs-radius-sm: 4px;
+  --ccs-radius-md: 6px;
+  --ccs-radius-lg: 10px;
+
+  /* --- typography --- */
+  --ccs-font: 'Inter', -apple-system, 'Segoe UI', system-ui, sans-serif;
+  --ccs-font-mono: 'SF Mono', 'Cascadia Code', ui-monospace, monospace;
+  --ccs-font-size-xs: 11px;
+  --ccs-font-size-sm: 12px;
+  --ccs-font-size-md: 13px;
+  --ccs-font-size-lg: 15px;
+
+  /* --- elevation --- */
+  --ccs-shadow-panel: 0 1px 3px rgba(0, 0, 0, 0.4);
+  --ccs-shadow-overlay: 0 8px 24px rgba(0, 0, 0, 0.5);
+
+  /* --- layout --- */
+  --ccs-dock-width: 280px;
+  --ccs-topbar-height: 48px;
+  --ccs-statusbar-height: 28px;
+  --ccs-row-height: 28px;
+
+  /* --- focus ring (a11y, WCAG 2.2 §P8 pull-forward) --- */
+  --ccs-focus-ring: 0 0 0 2px var(--ccs-bg-panel), 0 0 0 4px var(--ccs-border-focus);
+}
+
+/* Minimal reset scoped to the studio chrome only — never applied globally
+ * to file-app iframe content (those are separate documents/origins). */
+.ccs-root,
+.ccs-root * {
+  box-sizing: border-box;
+}
+
+.ccs-root {
+  background: var(--ccs-bg-canvas);
+  color: var(--ccs-text);
+  font-family: var(--ccs-font);
+  font-size: var(--ccs-font-size-md);
+  line-height: 1.4;
+  /* Logical, not physical — RTL flips this automatically via `dir`. */
+  text-align: start;
+}
+
+.ccs-root :focus-visible {
+  outline: none;
+  box-shadow: var(--ccs-focus-ring);
+}
+
+.ccs-visually-hidden {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}

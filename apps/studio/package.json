@@ -3,25 +3,34 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "The editor app (Vite + React + TS). Chrome lands in P5 (playbook §4/P5); P0 is a boot-only placeholder proving the app builds/typechecks in the monorepo.",
+  "description": "The editor app (Vite + React + TS) — Penpot-grade studio chrome (playbook §4/P5, §2): dashboard, workspace shell, layers/inspector/components/tokens panels.",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p e2e/tsconfig.json",
     "lint": "eslint .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:e2e": "playwright test -c e2e/playwright.config.ts"
   },
   "dependencies": {
     "@ccs/canvas": "workspace:*",
     "@ccs/protocol": "workspace:*",
     "@ccs/ui": "workspace:*",
     "react": "catalog:",
-    "react-dom": "catalog:"
+    "react-dom": "catalog:",
+    "tldraw": "catalog:",
+    "zustand": "catalog:"
   },
   "devDependencies": {
+    "@ccs/sync-daemon": "workspace:*",
+    "@ccs/tokens": "workspace:*",
+    "@playwright/test": "catalog:",
+    "@types/node": "catalog:",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
     "@vitejs/plugin-react": "catalog:",
+    "jsdom": "catalog:",
+    "prettier": "catalog:",
     "typescript": "catalog:",
     "vite": "catalog:",
     "vitest": "catalog:"

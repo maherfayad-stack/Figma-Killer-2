@@ -21,3 +21,4 @@ export { invertOp, applyInverseOp } from './invert-op.js';
 export type { InverseOp } from './invert-op.js';
 export { EMBEDDED_PRETTIER_CONFIG } from './prettier-config.js';
 export { classGroupKey, mergeClassNames } from './tailwind-groups.js';
+export { buildTree } from './build-tree.js';
