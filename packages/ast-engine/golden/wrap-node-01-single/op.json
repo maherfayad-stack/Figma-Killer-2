@@ -1,0 +1,10 @@
+{
+  "t": "wrap-node",
+  "uids": [
+    "src/Frame.tsx:d0.0"
+  ],
+  "wrapper": {
+    "tag": "div",
+    "classes": "flex"
+  }
+}

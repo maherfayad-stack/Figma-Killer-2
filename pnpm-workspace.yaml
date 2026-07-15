@@ -98,5 +98,20 @@ catalog:
   # `@types/zustand` — the package ships its own bundled types.
   zustand: ^5.0.14
 
+  # P3 WS-A (packages/ast-engine) — new direct dependency, not previously in
+  # this catalog. CHANGE-REQUEST flagged in the P3 WS-A worker report:
+  # ADR-0018's frozen `applyOp` signature returns `{newText, uidRemap}`
+  # SYNCHRONOUSLY (no Promise — matches the P0 stub and
+  # `golden-runner.test.ts`, which calls `applyOp(...)` without `await`).
+  # prettier's public `format()` API is Promise-only as of v3 (verified
+  # locally: `prettier.format(...)` returns a pending Promise even for the
+  # built-in `typescript` parser — there is no more `format.sync`). `synckit`
+  # is the standard fix for exactly this class of problem (it's what
+  # `eslint-plugin-prettier` itself depends on to call prettier's async
+  # `format()` synchronously from ESLint's sync rule API): a persistent
+  # worker thread + `Atomics.wait`-based bridge, no fs/network IO of its
+  # own. Verified against registry.npmjs.org 2026-07-14, not memory.
+  synckit: ^0.11.13
+
 minimumReleaseAgeExclude:
   - tsx@4.23.1

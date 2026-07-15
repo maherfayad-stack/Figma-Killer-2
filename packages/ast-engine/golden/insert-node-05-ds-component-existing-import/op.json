@@ -1,0 +1,9 @@
+{
+  "t": "insert-node",
+  "parentUid": "src/Frame.tsx:d0",
+  "index": 1,
+  "source": {
+    "kind": "ds-component",
+    "name": "Badge"
+  }
+}

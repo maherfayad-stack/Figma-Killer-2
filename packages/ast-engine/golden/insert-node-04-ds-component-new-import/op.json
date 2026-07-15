@@ -1,0 +1,9 @@
+{
+  "t": "insert-node",
+  "parentUid": "src/Frame.tsx:d0",
+  "index": 0,
+  "source": {
+    "kind": "ds-component",
+    "name": "Button"
+  }
+}

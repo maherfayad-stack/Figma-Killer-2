@@ -15,5 +15,9 @@ export function notImplementedYet(feature: string): never {
   throw new Error(`@ccs/ast-engine: "${feature}" is P3 scope, not implemented in P0`);
 }
 
-export { applyOp } from './apply-op.js';
-export type { ApplyOpResult } from './apply-op.js';
+export { applyOp, ApplyOpError } from './apply-op.js';
+export type { ApplyOpResult, ApplyOpErrorCode } from './apply-op.js';
+export { invertOp, applyInverseOp } from './invert-op.js';
+export type { InverseOp } from './invert-op.js';
+export { EMBEDDED_PRETTIER_CONFIG } from './prettier-config.js';
+export { classGroupKey, mergeClassNames } from './tailwind-groups.js';

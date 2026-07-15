@@ -7,7 +7,18 @@ _Living status board. Append-only decisions log at bottom. Last updated: 2026-07
 **P0 — COMPLETE** (AUDIT-1 PASS, tag `phase-0-complete`, protocol FROZEN).
 **P1 — COMPLETE** (AUDIT-2 daemon + AUDIT-3 canvas/integration PASS, tag `phase-1-complete`; defect fix AUDIT-4 PASS, dc070de).
 **P2 — COMPLETE** (AUDIT-5 PASS, tag `phase-2-complete`). Selection Bridge: source-uid plugin + bridge + canvas edit-mode/overlay. Hard stop LIFTED 2026-07-14. Running P2→P8 gated per phase.
-**P3 — NEXT** (AST Write-Back Engine, the critical path).
+**P3 — IN PROGRESS.** WS-A (ast-engine core) COMPLETE + verified green + committed. WS-B (daemon write-back) was IN-FLIGHT and STOPPED mid-write on 2026-07-15 for session close — its `packages/sync-daemon` changes are PARTIAL/UNVERIFIED.
+
+## ⏸ SESSION PAUSED 2026-07-15 — RESUME HERE
+**Last committed:** `phase-3-wsA-checkpoint` (WS-A ast-engine + all orchestrator docs). Tags: phase-0/1/2-complete + phase-3-wsA-checkpoint. Protocol still FROZEN.
+**Working tree at pause:** `packages/sync-daemon` holds WS-B's PARTIAL write-back work (uncommitted): new files `canvas-op-pipeline.ts`, `source-write.ts`, `undo-redo-stack.ts`, `git-checkpoint.ts`, `self-write-tracker.ts`, `op-file-folder-resolver.ts` (+ tests) and edits to `daemon.ts`/`ws-server.ts`/`watcher.ts`. It was stopped mid-edit of `write-back-acceptance.test.ts` → will NOT typecheck/pass as-is. `pnpm-lock.yaml` also uncommitted (WS-B ran pnpm install adding `@ccs/ast-engine` to daemon).
+**To resume P3 (do this):**
+1. `git status` + reconcile. The partial WS-B tree is NOT trustworthy — do NOT try to hand-finish it blind.
+2. Decide: either (a) **discard** the partial daemon work (`git checkout -- packages/sync-daemon && git clean -fd packages/sync-daemon`, keeping ast-engine intact) and re-spawn WS-B FRESH with the ADR-0018 prompt (clean-respawn pattern — cheapest, recommended), OR (b) if the partial looks ~complete, run `pnpm --filter @ccs/sync-daemon run typecheck/test` and finish-and-verify. Prefer (a).
+3. WS-B spec is unchanged: ADR-0018 (frozen interface) + ADR-0019 (WS-A ratifications, esp. sync `applyOp` via synckit → run inside FileOpQueue; `invertOp`/`applyInverseOp`+`InverseOp` for undo). Acceptance: 500 random ops → typechecks/builds/renders, prettier-stable, undo byte-identical; uid-remap emit; concurrent-edit guard; git checkpoints.
+4. Then: git-reconcile → FRESH adversarial P3 gate audit (AUDIT-6) → tag `phase-3-complete` + retro.
+5. Then P4 (needs HUMAN: Almosafer DS untyped `.jsx` prop strategy, ADR-0011) ∥ P5.
+**Standing rules still in force:** all workers/auditors = Sonnet 5 medium; workers run NO git (orchestrator reconciles at every gate — see memory [[workers-self-commit]]); one gate commit + tag per phase; do NOT touch frozen protocol / design-system / playbook.
 
 ## Phase status board
 
@@ -16,7 +27,7 @@ _Living status board. Append-only decisions log at bottom. Last updated: 2026-07
 | P0 | Foundations & Contracts | ✅ complete (tag phase-0-complete) | — |
 | P1 | Infinite Canvas + Live Frames | ✅ complete (tag phase-1-complete) | P0 ✅ |
 | P2 | Selection Bridge | ✅ complete (tag phase-2-complete) | P1 ✅ |
-| P3 | AST Write-Back Engine (critical path) | 🔜 next | P2 ✅ |
+| P3 | AST Write-Back Engine (critical path) | 🟡 in progress (WS-A done+committed; WS-B partial, re-spawn) | P2 ✅ |
 | P4 | Design System: Tokens + Components | ⬜ not started | P3 |
 | P5 | Studio UI Chrome | ⬜ not started | P3 |
 | P6 | Backend (Supabase, git-host) | ⬜ not started | P4,P5 |

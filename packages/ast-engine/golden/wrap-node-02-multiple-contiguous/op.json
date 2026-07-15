@@ -1,0 +1,11 @@
+{
+  "t": "wrap-node",
+  "uids": [
+    "src/Frame.tsx:d0.0",
+    "src/Frame.tsx:d0.1"
+  ],
+  "wrapper": {
+    "tag": "div",
+    "classes": "flex gap-2"
+  }
+}

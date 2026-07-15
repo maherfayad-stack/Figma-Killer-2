@@ -16,11 +16,13 @@
   },
   "dependencies": {
     "@ccs/protocol": "workspace:*",
+    "prettier": "catalog:",
+    "synckit": "catalog:",
     "ts-morph": "catalog:"
   },
   "devDependencies": {
+    "@ccs/vite-plugin-source-uid": "workspace:*",
     "@types/node": "catalog:",
-    "prettier": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
   }

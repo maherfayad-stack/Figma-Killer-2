@@ -1,0 +1,8 @@
+{
+  "t": "set-classes",
+  "uid": "src/Frame.tsx:d0",
+  "add": [
+    "items-center"
+  ],
+  "remove": []
+}

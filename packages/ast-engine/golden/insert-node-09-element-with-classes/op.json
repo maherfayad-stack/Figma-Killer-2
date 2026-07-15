@@ -1,0 +1,10 @@
+{
+  "t": "insert-node",
+  "parentUid": "src/Frame.tsx:d0",
+  "index": 0,
+  "source": {
+    "kind": "element",
+    "tag": "section",
+    "classes": "flex gap-2"
+  }
+}
