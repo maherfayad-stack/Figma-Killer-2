@@ -152,6 +152,15 @@ function generateOp(rng: () => number, sourceText: string): CanvasOp | null {
       const nonRoot = entries.filter((e) => e.astPath.includes('.'));
       if (nonRoot.length === 0) return null;
       const target = pick(rng, nonRoot);
+      // Deliberately NOT restricted to same-parent reorders: `candidates`
+      // includes any other node in the file (minus target's own subtree),
+      // so this generator freely produces CROSS-parent reparenting moves —
+      // including ones that reparent a deeply-nested node out to an
+      // ancestor, which is exactly the shape that can cascade-shift the old
+      // parent's own astPath (see invertMoveNode's module doc in
+      // invert-op.ts, and golden fixtures move-node-08/09). Restricting this
+      // to same-parent moves would dodge that bug class rather than prove
+      // it's fixed — do not narrow this filter.
       const candidates = entries.filter(
         (e) => e.node !== target.node && !e.astPath.startsWith(`${target.astPath}.`),
       );
@@ -207,6 +216,18 @@ describe('property test: N random valid ops preserve all 3 invariants', () => {
             inverse = invertOp(currentSource, op);
             result = applyOp(currentSource, op);
           } catch (err) {
+            // Legitimate, expected refusals ONLY: invertOp declining to
+            // invert (e.g. dynamic set-text, spread prop) or applyOp
+            // declining the forward op (e.g. dynamic-locked target) are
+            // generator-quality noise, not correctness findings — retry a
+            // different random pick. This is the ONLY try/catch in this
+            // loop that's allowed to swallow ApplyOpError: once invertOp has
+            // returned a value, it is asserting that inverse IS well-formed
+            // and applicable, so any ApplyOpError from applying it below
+            // (see Invariant 3) is a real bug and must NOT be caught here —
+            // see uid-not-found reparenting-cascade bug this test caught in
+            // invertMoveNode (fixed in invert-op.ts; move-node-08/09 golden
+            // fixtures + invert-golden-runner.test.ts pin the fix).
             if (err instanceof ApplyOpError) continue; // ineligible pick, retry
             throw err;
           }
@@ -226,13 +247,15 @@ describe('property test: N random valid ops preserve all 3 invariants', () => {
           expect(reformatted, `chain ${chain} step ${step}: prettier not idempotent`).toBe(result.newText);
 
           // Invariant 3: invertOp + applyInverseOp restores byte-identical.
-          let restoredText: string;
-          try {
-            restoredText = applyInverseOp(result.newText, inverse).newText;
-          } catch (err) {
-            if (err instanceof ApplyOpError) continue; // this op's inverse isn't representable, retry a different op
-            throw err;
-          }
+          // Deliberately NOT wrapped in a try/catch that swallows
+          // ApplyOpError: invertOp already had its chance to refuse (above)
+          // if this op genuinely can't be inverted. If it returned an
+          // InverseOp, applying that inverse against the post-image MUST
+          // succeed and MUST restore byte-identical — an ApplyOpError or a
+          // mismatch here is a real invertOp/applyInverseOp correctness bug,
+          // not an ineligible generator pick, and must fail the test loudly
+          // rather than being retried away.
+          const restoredText = applyInverseOp(result.newText, inverse).newText;
           expect(restoredText, `chain ${chain} step ${step}: invert round-trip not byte-identical`).toBe(
             currentSource,
           );

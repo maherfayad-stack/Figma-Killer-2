@@ -6,6 +6,8 @@ import {
   DaemonEventSchema,
   DuplicateFrameRequestSchema,
   GetCanvasJsonRequestSchema,
+  RedoRequestSchema,
+  UndoRequestSchema,
   type CanvasOp,
   type ControlReply,
   type CreateFrameRequest,
@@ -13,6 +15,8 @@ import {
   type DuplicateFrameRequest,
   type GetCanvasJsonRequest,
   type ProjectInfo,
+  type RedoRequest,
+  type UndoRequest,
 } from '@ccs/protocol';
 
 /**
@@ -27,13 +31,27 @@ import {
  * full control-channel wire format:
  *
  *   Client → Server:
- *     { kind: 'canvas-op'; opId: string; op: CanvasOp }
+ *     { kind: 'canvas-op'; opId: string; op: CanvasOp; fileFolder?: string }
  *     { kind: 'set-geometry'; fileFolder: string; framePath: string;
  *       x: number; y: number; w: number; h: number }
  *     { kind: 'create-frame'; requestId: string; fileFolder: string; name: string }   (ADR-0014)
  *     { kind: 'get-canvas-json'; requestId: string; fileFolder: string }              (ADR-0014)
  *     { kind: 'duplicate-frame'; requestId: string; fileFolder: string;
  *       sourceName: string; newName?: string }                                        (ADR-0015)
+ *     { kind: 'undo'; requestId: string; fileFolder: string }                         (P3, ADR-0018 item 9)
+ *     { kind: 'redo'; requestId: string; fileFolder: string }                         (P3, ADR-0018 item 9)
+ *
+ *   CR (P3, flagged): `canvas-op.fileFolder` is a NEW optional field on
+ *   the ADR-0013-frozen envelope. `NodeUid` (and therefore `CanvasOp`) is
+ *   only FILE-FOLDER-relative (ADR-0013's own path-conventions note:
+ *   "Canvas maps between them via the fileFolder segment / devServerUrl")
+ *   — the frozen envelope itself never carried that segment, which is
+ *   invisible with exactly one file-folder (every P1/P2 fixture) but
+ *   genuinely ambiguous once two file-folders can contain a same-named
+ *   frame path. When omitted, the daemon falls back to a best-effort
+ *   on-disk lookup (`resolveFileFolderForOp` in `daemon.ts`) and rejects
+ *   with a clear "ambiguous file-folder" reason if more than one
+ *   candidate matches — additive/optional, so no existing caller breaks.
  *
  *   Server → Client:
  *     - first message on every connection: the bare `ProjectInfo`
@@ -51,6 +69,18 @@ import {
  *       `duplicate-frame` DOES get a dedicated success reply
  *       (`duplicate-frame-result`) — unlike `create-frame`, the caller
  *       doesn't know the resulting unique name in advance (ADR-0015).
+ *
+ * AUDIT-6 BLOCKER finding (playbook §5.8): binding to 127.0.0.1 only
+ * blocks OFF-machine attackers, but NOT an in-browser attacker — any
+ * malicious webpage the user has open in a normal browser tab can still
+ * open a `ws://127.0.0.1:<port>` connection to this server, because
+ * browsers don't sandbox loopback WebSocket connections the way they
+ * sandbox cross-origin HTTP. `verifyOrigin` below closes that gap: a
+ * connection whose `Origin` header is PRESENT and NOT a localhost origin
+ * is rejected at the handshake. A connection with NO `Origin` header at
+ * all (native/non-browser clients — this package's own tests, the CLI dev
+ * harness, `ws` Node clients that never set `origin` in `ClientOptions`)
+ * is allowed, since only browsers are required to send it.
  */
 
 export interface SetGeometryRequest {
@@ -63,11 +93,34 @@ export interface SetGeometryRequest {
 }
 
 export type ClientMessage =
-  | { kind: 'canvas-op'; opId: string; op: CanvasOp }
+  | { kind: 'canvas-op'; opId: string; op: CanvasOp; fileFolder?: string }
   | ({ kind: 'set-geometry' } & SetGeometryRequest)
   | CreateFrameRequest
   | GetCanvasJsonRequest
-  | DuplicateFrameRequest;
+  | DuplicateFrameRequest
+  | UndoRequest
+  | RedoRequest;
+
+const LOCALHOST_ORIGIN_PATTERN = /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/;
+
+/**
+ * AUDIT-6 BLOCKER fix (playbook §5.8): true for "no Origin header at all"
+ * (native/non-browser clients) OR an `http(s)://127.0.0.1[:port]` /
+ * `http(s)://localhost[:port]` origin. False for anything else — in
+ * particular, any REAL webpage origin a browser would send, which is
+ * exactly the malicious-webpage-drives-the-daemon threat this closes.
+ */
+export function isAllowedOrigin(origin: string | undefined): boolean {
+  if (origin === undefined || origin === '') return true;
+  return LOCALHOST_ORIGIN_PATTERN.test(origin);
+}
+
+/** `ws`'s synchronous `verifyClient` hook — runs before the handshake
+ * completes, so a rejected connection never reaches the `connection`
+ * handler at all (no bootstrap sent, no messages processed). */
+function verifyOrigin(info: { origin: string; secure: boolean; req: unknown }): boolean {
+  return isAllowedOrigin(info.origin);
+}
 
 /** Sends a `ControlReply` to the ONE socket that made the request —
  * validated against the frozen-shape-additive `ControlReplySchema` first,
@@ -78,12 +131,18 @@ export interface ControlServerOptions {
   port: number;
   host?: string;
   getBootstrap: () => ProjectInfo;
-  onCanvasOp: (op: CanvasOp, opId: string) => void;
+  /** `fileFolder` is the P3 CR above — optional, undefined for any caller
+   * that predates it. */
+  onCanvasOp: (op: CanvasOp, opId: string, fileFolder?: string) => void;
   onSetGeometry: (request: SetGeometryRequest) => void;
   /** ADR-0014. */
   onCreateFrame: (request: CreateFrameRequest, reply: ReplyFn) => void;
   /** ADR-0014. */
   onGetCanvasJson: (request: GetCanvasJsonRequest, reply: ReplyFn) => void;
+  /** P3, ADR-0018 item 9. */
+  onUndo: (request: UndoRequest, reply: ReplyFn) => void;
+  /** P3, ADR-0018 item 9. */
+  onRedo: (request: RedoRequest, reply: ReplyFn) => void;
   /** ADR-0015. */
   onDuplicateFrame: (request: DuplicateFrameRequest, reply: ReplyFn) => void;
 }
@@ -100,7 +159,7 @@ export interface ControlServerHandle {
 
 export function createControlServer(options: ControlServerOptions): ControlServerHandle {
   const host = options.host ?? '127.0.0.1';
-  const wss = new WebSocketServer({ host, port: options.port });
+  const wss = new WebSocketServer({ host, port: options.port, verifyClient: verifyOrigin });
   const clients = new Set<WebSocket>();
 
   wss.on('connection', (socket) => {
@@ -118,7 +177,7 @@ export function createControlServer(options: ControlServerOptions): ControlServe
       if (!message) return;
 
       if (message.kind === 'canvas-op') {
-        options.onCanvasOp(message.op, message.opId);
+        options.onCanvasOp(message.op, message.opId, message.fileFolder);
       } else if (message.kind === 'set-geometry') {
         options.onSetGeometry({
           fileFolder: message.fileFolder,
@@ -134,6 +193,10 @@ export function createControlServer(options: ControlServerOptions): ControlServe
         options.onGetCanvasJson(message, (reply) => sendReply(socket, reply));
       } else if (message.kind === 'duplicate-frame') {
         options.onDuplicateFrame(message, (reply) => sendReply(socket, reply));
+      } else if (message.kind === 'undo') {
+        options.onUndo(message, (reply) => sendReply(socket, reply));
+      } else if (message.kind === 'redo') {
+        options.onRedo(message, (reply) => sendReply(socket, reply));
       }
     });
 
@@ -215,7 +278,9 @@ function parseClientMessage(data: RawData): ClientMessage | null {
     const opId = typeof record.opId === 'string' ? record.opId : null;
     const parsedOp = CanvasOpSchema.safeParse(record.op);
     if (!opId || !parsedOp.success) return null;
-    return { kind: 'canvas-op', opId, op: parsedOp.data };
+    // P3 CR (see module doc): optional fileFolder disambiguator.
+    const fileFolder = typeof record.fileFolder === 'string' ? record.fileFolder : undefined;
+    return { kind: 'canvas-op', opId, op: parsedOp.data, ...(fileFolder !== undefined ? { fileFolder } : {}) };
   }
 
   if (record.kind === 'set-geometry') {
@@ -245,6 +310,16 @@ function parseClientMessage(data: RawData): ClientMessage | null {
 
   if (record.kind === 'duplicate-frame') {
     const parsed = DuplicateFrameRequestSchema.safeParse(record);
+    return parsed.success ? parsed.data : null;
+  }
+
+  if (record.kind === 'undo') {
+    const parsed = UndoRequestSchema.safeParse(record);
+    return parsed.success ? parsed.data : null;
+  }
+
+  if (record.kind === 'redo') {
+    const parsed = RedoRequestSchema.safeParse(record);
     return parsed.success ? parsed.data : null;
   }
 

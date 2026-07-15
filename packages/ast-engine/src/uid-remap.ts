@@ -144,6 +144,29 @@ function mergeRemaps(...maps: AstPathRemap[]): AstPathRemap {
   return out;
 }
 
+/**
+ * Rewrites the leading `oldPrefix` portion of every VALUE in `remap` to
+ * `newPrefix` (a no-op if they're equal) — used by `moveNodeRemap`'s
+ * cross-parent branch to correct an already-computed shift's DESTINATION
+ * paths after discovering its reference ancestor's OWN astPath moved too
+ * (see the module doc there for why `removal`/`insertion`'s output prefixes
+ * can each go stale when the old/new parent are on the same branch).
+ */
+function rewriteValuePrefix(remap: AstPathRemap, oldPrefix: string, newPrefix: string): AstPathRemap {
+  if (oldPrefix === newPrefix) return remap;
+  const out: AstPathRemap = new Map();
+  for (const [oldPath, newPath] of remap) {
+    if (newPath === oldPrefix) {
+      out.set(oldPath, newPrefix);
+    } else if (newPath.startsWith(`${oldPrefix}.`)) {
+      out.set(oldPath, `${newPrefix}${newPath.slice(oldPrefix.length)}`);
+    } else {
+      out.set(oldPath, newPath);
+    }
+  }
+  return out;
+}
+
 /** Unique direct-child sibling indices observed under `ancestorAstPath`
  * across the pre-image entries (used to simulate a same-parent reorder as
  * an array splice). */
@@ -208,14 +231,44 @@ export function moveNodeRemap(
     return remap;
   }
 
+  // `removal` and `insertion` each identify their affected preEntries by
+  // matching against the OTHER op-relevant ancestor's PRE-image astPath
+  // (`oldParentAstPath`/`newParentAstPath` as passed in) — that matching is
+  // correct as-is, since `preEntries` are themselves all pre-image-labeled.
+  // But a cross-parent move has TWO reference ancestors in the SAME tree,
+  // and one can be a (possibly deeply nested) descendant of the other —
+  // in which case ITS OWN astPath is among the entries the other side
+  // shifts. Two symmetric cases:
+  //   - new parent is a later descendant under old parent's ancestor chain
+  //     (removing the target from an earlier position bumps the new
+  //     parent's own sibling index down) — `removal` will contain a
+  //     `newParentAstPath` KEY when this happens.
+  //   - old parent is a later descendant under new parent's ancestor chain
+  //     (inserting at the new parent bumps the old parent's own sibling
+  //     index, several levels up from the removal site, up) —
+  //     `insertion` will contain an `oldParentAstPath` KEY when this
+  //     happens.
+  // Exactly one of these can ever be true for a given move (a node can't be
+  // both an ancestor and a descendant of another distinct node), so there's
+  // no circular dependency between the two lookups below. Whichever fires,
+  // `removal`'s / `insertion`'s DESTINATION prefixes (which were computed
+  // using the stale pre-image `oldParentAstPath`/`newParentAstPath`) need
+  // correcting to the ancestor's actual post-shift location — as does the
+  // moved subtree's own new prefix, which is anchored on `newParentAstPath`.
   const removal = shiftForRemoval(preEntries, oldParentAstPath, oldIndex);
   const insertion = shiftForInsertion(preEntries, newParentAstPath, newIndex);
+
+  const postImageOldParentAstPath = insertion.get(oldParentAstPath) ?? oldParentAstPath;
+  const postImageNewParentAstPath = removal.get(newParentAstPath) ?? newParentAstPath;
+
+  const removalCorrected = rewriteValuePrefix(removal, oldParentAstPath, postImageOldParentAstPath);
+  const insertionCorrected = rewriteValuePrefix(insertion, newParentAstPath, postImageNewParentAstPath);
   const movedSubtree = rewritePrefix(
     preEntries,
     targetAstPath,
-    joinAtAncestor(newParentAstPath, newIndex, ''),
+    joinAtAncestor(postImageNewParentAstPath, newIndex, ''),
   );
-  return mergeRemaps(removal, insertion, movedSubtree);
+  return mergeRemaps(removalCorrected, insertionCorrected, movedSubtree);
 }
 
 /** `wrappedIndices` MUST be the sorted, contiguous direct-child sibling

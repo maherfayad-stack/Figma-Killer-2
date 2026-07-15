@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WebSocket } from 'ws';
+import simpleGit from 'simple-git';
 import type { DaemonEvent, ProjectInfo } from '@ccs/protocol';
 import { openProject, type DaemonHandle, type StartViteServerFn } from './daemon.js';
 import { readCanvasJson } from './canvas-json.js';
@@ -283,13 +284,100 @@ export function getFrame(name: string | null): ComponentType | null {
     await stopAll();
   });
 
-  it('replies op-rejected with reason "ast-engine P3" for a canvas-op (P1 no-op stub)', async () => {
+  // ---- P3: real AST write-back (playbook §4/P3, ADR-0018/0019) ----------
+  //
+  // Fixture with a static child (h1, astPath "d0.0") and a dynamic child
+  // (a `.map()`-produced <span>, astPath "d0.1") — lets these tests
+  // exercise both a successful structural op (with a real uid-remap) and
+  // the `dynamic-locked` refusal against the SAME file.
+  const HERO_JSX_SOURCE = `export default function Hero() {
+  return (
+    <div>
+      <h1>Title</h1>
+      {[1, 2].map((i) => (
+        <span key={i}>{i}</span>
+      ))}
+    </div>
+  );
+}
+`;
+  const HERO_ABS = () => join(projectRoot, 'files', 'demo', 'src', 'frames', 'Hero.tsx');
+  const HERO_PROJECT_REL = 'files/demo/src/frames/Hero.tsx';
+  const HERO_FF_REL = 'src/frames/Hero.tsx';
+
+  it('P3 write-through: applies insert-node, writes the file atomically, and broadcasts file-changed/hmr-update/uid-remap(file-folder-relative)/op-applied', async () => {
+    await writeFile(HERO_ABS(), HERO_JSX_SOURCE);
     const { startVite, stopAll } = makeFakeStartVite();
     daemon = await openProject({
       projectRoot,
       startVite,
-      daemonPortStart: 59830,
-      frameServerPortStart: 59840,
+      daemonPortStart: 59870,
+      frameServerPortStart: 59880,
+    });
+
+    const { socket } = await connectAndGetBootstrap(daemon.daemonPort);
+    const events: DaemonEvent[] = [];
+    socket.on('message', (data) => events.push(JSON.parse(data.toString())));
+
+    socket.send(
+      JSON.stringify({
+        kind: 'canvas-op',
+        opId: 'ins-1',
+        fileFolder: 'demo',
+        op: {
+          t: 'insert-node',
+          parentUid: `${HERO_FF_REL}:d0`,
+          index: 0,
+          source: { kind: 'element', tag: 'div' },
+        },
+      }),
+    );
+
+    await vi.waitFor(
+      () => {
+        expect(events).toContainEqual({ t: 'file-changed', file: HERO_PROJECT_REL });
+        expect(events).toContainEqual({ t: 'hmr-update', file: HERO_PROJECT_REL });
+        const remapEvent = events.find((e) => e.t === 'uid-remap');
+        expect(remapEvent).toBeDefined();
+        const opApplied = events.find((e) => e.t === 'op-applied');
+        expect(opApplied).toBeDefined();
+      },
+      { timeout: 3000, interval: 30 },
+    );
+
+    // uid-remap.file is FILE-FOLDER-relative (ADR-0018 item 5) — NOT
+    // project-relative like file-changed/hmr-update above.
+    const remapEvent = events.find((e) => e.t === 'uid-remap') as Extract<DaemonEvent, { t: 'uid-remap' }>;
+    expect(remapEvent.file).toBe(HERO_FF_REL);
+    expect(remapEvent.map[`${HERO_FF_REL}:d0.0`]).toBe(`${HERO_FF_REL}:d0.1`);
+    expect(remapEvent.map[`${HERO_FF_REL}:d0.1`]).toBe(`${HERO_FF_REL}:d0.2`);
+
+    const opApplied = events.find((e) => e.t === 'op-applied') as Extract<DaemonEvent, { t: 'op-applied' }>;
+    expect(opApplied.opId).toBe('ins-1');
+    expect(opApplied.inverse).toEqual([{ t: 'delete-node', uid: `${HERO_FF_REL}:d0.0` }]);
+
+    // Never a redundant SECOND file-changed/hmr-update pair from the fs
+    // watcher rediscovering the daemon's own write (self-write
+    // suppression) — exactly one of each.
+    expect(events.filter((e) => e.t === 'file-changed').length).toBe(1);
+    expect(events.filter((e) => e.t === 'hmr-update').length).toBe(1);
+
+    const onDisk = await readFile(HERO_ABS(), 'utf8');
+    expect(onDisk).toContain('<div></div>');
+    expect(onDisk).toContain('<h1>Title</h1>');
+
+    socket.terminate();
+    await stopAll();
+  });
+
+  it('P3 ApplyOpError path: a dynamic-target op is rejected with the right reason and the file is left untouched', async () => {
+    await writeFile(HERO_ABS(), HERO_JSX_SOURCE);
+    const { startVite, stopAll } = makeFakeStartVite();
+    daemon = await openProject({
+      projectRoot,
+      startVite,
+      daemonPortStart: 59890,
+      frameServerPortStart: 59900,
     });
 
     const { socket } = await connectAndGetBootstrap(daemon.daemonPort);
@@ -297,12 +385,347 @@ export function getFrame(name: string | null): ComponentType | null {
     socket.send(
       JSON.stringify({
         kind: 'canvas-op',
-        opId: 'op-x',
-        op: { t: 'set-text', uid: 'src/frames/Hero.tsx:JSXElement[0]', text: 'hi' },
+        opId: 'dyn-1',
+        fileFolder: 'demo',
+        op: { t: 'set-text', uid: `${HERO_FF_REL}:d0.1`, text: 'nope' },
       }),
     );
 
-    expect(await pending).toEqual({ t: 'op-rejected', opId: 'op-x', reason: 'ast-engine P3' });
+    const rejected = await pending;
+    expect(rejected).toMatchObject({ t: 'op-rejected', opId: 'dyn-1' });
+    expect((rejected as { reason: string }).reason).toMatch(/^dynamic-locked:/);
+    expect(await readFile(HERO_ABS(), 'utf8')).toBe(HERO_JSX_SOURCE);
+
+    socket.terminate();
+    await stopAll();
+  });
+
+  it('P3 concurrent-IDE-edit guard: an external write racing a canvas op never silently loses the external edit', async () => {
+    await writeFile(HERO_ABS(), HERO_JSX_SOURCE);
+    const { startVite, stopAll } = makeFakeStartVite();
+    daemon = await openProject({
+      projectRoot,
+      startVite,
+      daemonPortStart: 59910,
+      frameServerPortStart: 59920,
+    });
+
+    const { socket } = await connectAndGetBootstrap(daemon.daemonPort);
+    const events: DaemonEvent[] = [];
+    socket.on('message', (data) => events.push(JSON.parse(data.toString())));
+
+    // The op targets d0.0 (the <h1>); the external edit touches an
+    // UNRELATED part of the file (a leading comment) so the two changes
+    // are independent — a correct guard preserves BOTH regardless of
+    // whether the two writes actually straddled the daemon's read/write
+    // window or landed sequentially (both are legitimate outcomes; what
+    // must NEVER happen is the external comment vanishing because the
+    // daemon wrote from a stale in-memory snapshot).
+    const EXTERNAL_MARKER = '// external-ide-edit-marker';
+    const externallyEdited = `${EXTERNAL_MARKER}\n${HERO_JSX_SOURCE}`;
+
+    socket.send(
+      JSON.stringify({
+        kind: 'canvas-op',
+        opId: 'race-1',
+        fileFolder: 'demo',
+        op: { t: 'set-text', uid: `${HERO_FF_REL}:d0.0`, text: 'Updated' },
+      }),
+    );
+    // Race a real external write against the daemon's own read-compute-
+    // write window — no code-level hook, a genuine filesystem race (Node
+    // dispatches the queued op's fs work asynchronously, so this write
+    // can land before, during, or after it depending on real timing).
+    await writeFile(HERO_ABS(), externallyEdited);
+
+    await vi.waitFor(
+      () => {
+        const settled = events.find((e) => e.t === 'op-applied' || e.t === 'op-rejected');
+        expect(settled).toBeDefined();
+      },
+      { timeout: 3000, interval: 30 },
+    );
+
+    const onDisk = await readFile(HERO_ABS(), 'utf8');
+    const settled = events.find((e) => e.t === 'op-applied' || e.t === 'op-rejected')!;
+    if (settled.t === 'op-rejected') {
+      // Rejected (guard couldn't safely retry) — the external edit MUST
+      // survive completely untouched.
+      expect((settled as { reason: string }).reason).toBe('file changed, retry');
+      expect(onDisk).toBe(externallyEdited);
+    } else {
+      // Re-applied on top of the fresh external content — the op's own
+      // change AND the external comment both survive; the daemon never
+      // silently discarded the external write by writing from a stale
+      // pre-race snapshot.
+      expect(onDisk).toContain('Updated');
+      expect(onDisk).toContain(EXTERNAL_MARKER);
+    }
+
+    socket.terminate();
+    await stopAll();
+  });
+
+  it('P3 undo/redo: undo restores the file byte-identical to before, redo re-applies it', async () => {
+    await writeFile(HERO_ABS(), HERO_JSX_SOURCE);
+    const { startVite, stopAll } = makeFakeStartVite();
+    daemon = await openProject({
+      projectRoot,
+      startVite,
+      daemonPortStart: 59930,
+      frameServerPortStart: 59940,
+    });
+
+    const { socket } = await connectAndGetBootstrap(daemon.daemonPort);
+    const events: DaemonEvent[] = [];
+    socket.on('message', (data) => events.push(JSON.parse(data.toString())));
+
+    function waitForKind(pred: (e: DaemonEvent) => boolean): Promise<DaemonEvent> {
+      return vi.waitFor(
+        () => {
+          const found = events.find(pred);
+          expect(found).toBeDefined();
+          return found!;
+        },
+        { timeout: 3000, interval: 30 },
+      );
+    }
+
+    socket.send(
+      JSON.stringify({
+        kind: 'canvas-op',
+        opId: 'op-1',
+        fileFolder: 'demo',
+        op: { t: 'set-text', uid: `${HERO_FF_REL}:d0.0`, text: 'Updated' },
+      }),
+    );
+    await waitForKind((e) => e.t === 'op-applied');
+    const postImage = await readFile(HERO_ABS(), 'utf8');
+    expect(postImage).not.toBe(HERO_JSX_SOURCE);
+
+    socket.send(JSON.stringify({ kind: 'undo', requestId: 'u-1', fileFolder: 'demo' }));
+    const undoReply = await waitForKind((e) => (e as { kind?: string }).kind === 'undo-result');
+    expect(undoReply).toMatchObject({ kind: 'undo-result', requestId: 'u-1', applied: true });
+
+    const afterUndo = await readFile(HERO_ABS(), 'utf8');
+    expect(afterUndo).toBe(HERO_JSX_SOURCE); // byte-identical to the pre-image
+
+    socket.send(JSON.stringify({ kind: 'redo', requestId: 'r-1', fileFolder: 'demo' }));
+    const redoReply = await waitForKind((e) => (e as { kind?: string }).kind === 'redo-result');
+    expect(redoReply).toMatchObject({ kind: 'redo-result', requestId: 'r-1', applied: true });
+
+    const afterRedo = await readFile(HERO_ABS(), 'utf8');
+    expect(afterRedo).toBe(postImage); // byte-identical to the original post-image
+
+    // Undo again (undoes the redo), then a SECOND undo finds an empty stack.
+    socket.send(JSON.stringify({ kind: 'undo', requestId: 'u-2', fileFolder: 'demo' }));
+    await waitForKind((e) => (e as { kind?: string; requestId?: string }).kind === 'undo-result' && (e as { requestId?: string }).requestId === 'u-2');
+    socket.send(JSON.stringify({ kind: 'undo', requestId: 'u-3', fileFolder: 'demo' }));
+    const emptyStackReply = await waitForKind(
+      (e) => (e as { kind?: string; requestId?: string }).kind === 'undo-result' && (e as { requestId?: string }).requestId === 'u-3',
+    );
+    expect(emptyStackReply).toEqual({ kind: 'undo-result', requestId: 'u-3', fileFolder: 'demo', applied: false, file: null });
+
+    socket.terminate();
+    await stopAll();
+  });
+
+  // ---- AUDIT-6 BLOCKER regression: path traversal / arbitrary file write
+  // (playbook §5.8). Mirrors the auditor's live-proven probe: a crafted
+  // uid whose relPath half escapes the file-folder root, sent as a normal
+  // canvas-op over the real control-ws, must be rejected before any
+  // read/write — never applied, never written outside the root. The
+  // "victim" lives inside THIS test's own temp `projectRoot` (never the
+  // real repo's `files/demo`), so there's no residue outside the test's
+  // own sandbox even if the fix regressed.
+  it('AUDIT-6 BLOCKER regression: a ../../-traversal uid is rejected and the outside file is never created/modified', async () => {
+    await writeFile(HERO_ABS(), HERO_JSX_SOURCE);
+    const { startVite, stopAll } = makeFakeStartVite();
+    daemon = await openProject({
+      projectRoot,
+      startVite,
+      daemonPortStart: 60130,
+      frameServerPortStart: 60140,
+    });
+
+    // Victim OUTSIDE the 'demo' file-folder root (files/demo) but still
+    // inside this test's temp projectRoot — matches the auditor's exact
+    // exploit shape (`../../outside-victim/target.tsx`, two levels up from
+    // files/demo lands at <projectRoot>/outside-victim/target.tsx).
+    const victimDir = join(projectRoot, 'outside-victim');
+    const victimAbs = join(victimDir, 'target.tsx');
+    await mkdir(victimDir, { recursive: true });
+    const victimOriginal = 'export default function Target() { return null; }\n';
+    await writeFile(victimAbs, victimOriginal);
+
+    const { socket } = await connectAndGetBootstrap(daemon.daemonPort);
+    const pending = nextEvent(socket);
+    socket.send(
+      JSON.stringify({
+        kind: 'canvas-op',
+        opId: 'traversal-1',
+        fileFolder: 'demo',
+        op: { t: 'set-text', uid: '../../outside-victim/target.tsx:d0', text: 'HACKED' },
+      }),
+    );
+
+    const rejected = await pending;
+    expect(rejected).toMatchObject({ t: 'op-rejected', opId: 'traversal-1' });
+    expect((rejected as { reason: string }).reason).toMatch(/invalid path/i);
+
+    // The victim file is untouched — no traversal write landed.
+    expect(await readFile(victimAbs, 'utf8')).toBe(victimOriginal);
+    // The legit in-folder file the op's fileFolder actually points at is
+    // also untouched (the rejection happened before any read/write).
+    expect(await readFile(HERO_ABS(), 'utf8')).toBe(HERO_JSX_SOURCE);
+
+    socket.terminate();
+    await stopAll();
+  });
+
+  it('AUDIT-6 BLOCKER regression: the disk-search fallback branch (no explicit fileFolder) also refuses a traversal uid', async () => {
+    await writeFile(HERO_ABS(), HERO_JSX_SOURCE);
+    const { startVite, stopAll } = makeFakeStartVite();
+    daemon = await openProject({
+      projectRoot,
+      startVite,
+      daemonPortStart: 60145,
+      frameServerPortStart: 60155,
+    });
+
+    const victimDir = join(projectRoot, 'outside-victim-2');
+    const victimAbs = join(victimDir, 'target.tsx');
+    await mkdir(victimDir, { recursive: true });
+    const victimOriginal = 'export default function Target() { return null; }\n';
+    await writeFile(victimAbs, victimOriginal);
+
+    const { socket } = await connectAndGetBootstrap(daemon.daemonPort);
+    const pending = nextEvent(socket);
+    // No `fileFolder` — forces the disk-search fallback branch of
+    // `resolveFileFolderForOp`, which used to trust `existsSync` (checks
+    // existence, not containment) rather than `resolveContainedPath`.
+    socket.send(
+      JSON.stringify({
+        kind: 'canvas-op',
+        opId: 'traversal-2',
+        op: { t: 'set-text', uid: '../../outside-victim-2/target.tsx:d0', text: 'HACKED' },
+      }),
+    );
+
+    const rejected = await pending;
+    expect(rejected).toMatchObject({ t: 'op-rejected', opId: 'traversal-2' });
+    expect(await readFile(victimAbs, 'utf8')).toBe(victimOriginal);
+
+    socket.terminate();
+    await stopAll();
+  });
+
+  it('AUDIT-6 BLOCKER regression: an absolute-path uid is rejected, not resolved against the real filesystem root', async () => {
+    await writeFile(HERO_ABS(), HERO_JSX_SOURCE);
+    const { startVite, stopAll } = makeFakeStartVite();
+    daemon = await openProject({
+      projectRoot,
+      startVite,
+      daemonPortStart: 60150,
+      frameServerPortStart: 60160,
+    });
+
+    const { socket } = await connectAndGetBootstrap(daemon.daemonPort);
+    const pending = nextEvent(socket);
+    socket.send(
+      JSON.stringify({
+        kind: 'canvas-op',
+        opId: 'abs-1',
+        fileFolder: 'demo',
+        op: { t: 'set-text', uid: '/etc/hosts.tsx:d0', text: 'HACKED' },
+      }),
+    );
+
+    const rejected = await pending;
+    expect(rejected).toMatchObject({ t: 'op-rejected', opId: 'abs-1' });
+    expect((rejected as { reason: string }).reason).toMatch(/invalid path/i);
+
+    socket.terminate();
+    await stopAll();
+  });
+
+  it('AUDIT-6 regression sanity: a legit in-folder uid still applies normally after the containment fix', async () => {
+    await writeFile(HERO_ABS(), HERO_JSX_SOURCE);
+    const { startVite, stopAll } = makeFakeStartVite();
+    daemon = await openProject({
+      projectRoot,
+      startVite,
+      daemonPortStart: 60170,
+      frameServerPortStart: 60180,
+    });
+
+    const { socket } = await connectAndGetBootstrap(daemon.daemonPort);
+    const events: DaemonEvent[] = [];
+    socket.on('message', (data) => events.push(JSON.parse(data.toString())));
+    socket.send(
+      JSON.stringify({
+        kind: 'canvas-op',
+        opId: 'legit-1',
+        fileFolder: 'demo',
+        op: { t: 'set-text', uid: `${HERO_FF_REL}:d0.0`, text: 'Still Works' },
+      }),
+    );
+
+    await vi.waitFor(
+      () => {
+        expect(events).toContainEqual(expect.objectContaining({ t: 'op-applied', opId: 'legit-1' }));
+      },
+      { timeout: 3000, interval: 30 },
+    );
+    expect(await readFile(HERO_ABS(), 'utf8')).toContain('Still Works');
+
+    socket.terminate();
+    await stopAll();
+  });
+
+  it('P3 git checkpoint: after the N-ops threshold a "studio: " commit lands in the file-folder\'s own nested repo', async () => {
+    await writeFile(HERO_ABS(), HERO_JSX_SOURCE);
+    const { startVite, stopAll } = makeFakeStartVite();
+    daemon = await openProject({
+      projectRoot,
+      startVite,
+      daemonPortStart: 59950,
+      frameServerPortStart: 59960,
+      checkpointEveryNOps: 1,
+      checkpointIdleMs: 60_000,
+    });
+
+    const demoRoot = join(projectRoot, 'files', 'demo');
+    // A repo already exists at project-open (ensureFileFolderGitRepo runs
+    // for every file-folder up front) — assert that too.
+    expect(await simpleGit(demoRoot).checkIsRepo()).toBe(true);
+
+    const { socket } = await connectAndGetBootstrap(daemon.daemonPort);
+    const opApplied = nextEvent(socket);
+    socket.send(
+      JSON.stringify({
+        kind: 'canvas-op',
+        opId: 'ckpt-1',
+        fileFolder: 'demo',
+        op: { t: 'set-text', uid: `${HERO_FF_REL}:d0.0`, text: 'Checkpointed' },
+      }),
+    );
+    await opApplied;
+
+    const log = await vi.waitFor(
+      async () => {
+        const l = await simpleGit(demoRoot).log();
+        expect(l.total).toBeGreaterThanOrEqual(1);
+        return l;
+      },
+      { timeout: 5000, interval: 50 },
+    );
+    expect(log.latest?.message).toMatch(/^studio: /);
+
+    // node_modules/.studio are kept out of the checkpoint (task brief).
+    const tracked = await simpleGit(demoRoot).raw(['ls-tree', '-r', '--name-only', 'HEAD']);
+    expect(tracked).not.toMatch(/node_modules/);
+    expect(tracked).not.toMatch(/^\.studio\//m);
 
     socket.terminate();
     await stopAll();

@@ -81,6 +81,8 @@ describe('createControlServer', () => {
       onCreateFrame: () => {},
       onGetCanvasJson: () => {},
       onDuplicateFrame: () => {},
+      onUndo: () => {},
+      onRedo: () => {},
     });
 
     expect(handle.host).toBe('127.0.0.1');
@@ -96,6 +98,101 @@ describe('createControlServer', () => {
     await expect(connectExpectRefusal(nonLoopback, port)).resolves.toBe(true);
   });
 
+  // ---- AUDIT-6 BLOCKER: WS Origin hardening (playbook §5.8) --------------
+  // Binding to 127.0.0.1 only stops OFF-machine attackers, but a malicious
+  // webpage open in the user's own browser can still open a
+  // `ws://127.0.0.1:<port>` connection — browsers don't sandbox loopback
+  // WebSocket connections the way they sandbox cross-origin HTTP. These
+  // tests drive the REAL control-ws handshake (not a unit test of the
+  // regex alone) to prove the server actually refuses/accepts at the
+  // handshake based on the incoming `Origin` header.
+
+  function attemptConnect(port: number, wsOptions?: { origin?: string }): Promise<'open' | 'rejected'> {
+    return new Promise((resolve) => {
+      const socket = new WebSocket(`ws://127.0.0.1:${port}`, wsOptions);
+      socket.once('open', () => {
+        clients.push(socket);
+        resolve('open');
+      });
+      socket.once('unexpected-response', () => resolve('rejected'));
+      socket.once('error', () => resolve('rejected'));
+    });
+  }
+
+  it('rejects a connection whose Origin header is a real (non-localhost) webpage origin', async () => {
+    const port = await allocatePort(59260);
+    handle = createControlServer({
+      port,
+      getBootstrap: () => ({ ...BOOTSTRAP, daemonPort: port }),
+      onCanvasOp: () => {},
+      onSetGeometry: () => {},
+      onCreateFrame: () => {},
+      onGetCanvasJson: () => {},
+      onDuplicateFrame: () => {},
+      onUndo: () => {},
+      onRedo: () => {},
+    });
+
+    await expect(attemptConnect(port, { origin: 'http://evil-attacker-page.example' })).resolves.toBe(
+      'rejected',
+    );
+  });
+
+  it('allows a connection with NO Origin header at all (native/non-browser clients — this package\'s own tests and the dev harness)', async () => {
+    const port = await allocatePort(59270);
+    handle = createControlServer({
+      port,
+      getBootstrap: () => ({ ...BOOTSTRAP, daemonPort: port }),
+      onCanvasOp: () => {},
+      onSetGeometry: () => {},
+      onCreateFrame: () => {},
+      onGetCanvasJson: () => {},
+      onDuplicateFrame: () => {},
+      onUndo: () => {},
+      onRedo: () => {},
+    });
+
+    // A plain `new WebSocket(url)` (no `origin` option) never sends an
+    // Origin header at all — this is exactly how every other test in this
+    // suite (via `connect()`/`openClient()`) and the real dev harness
+    // connect today; must keep working unchanged.
+    await expect(attemptConnect(port)).resolves.toBe('open');
+  });
+
+  it('allows a connection whose Origin header is http://127.0.0.1:<port> (matches the dev harness origin)', async () => {
+    const port = await allocatePort(59280);
+    handle = createControlServer({
+      port,
+      getBootstrap: () => ({ ...BOOTSTRAP, daemonPort: port }),
+      onCanvasOp: () => {},
+      onSetGeometry: () => {},
+      onCreateFrame: () => {},
+      onGetCanvasJson: () => {},
+      onDuplicateFrame: () => {},
+      onUndo: () => {},
+      onRedo: () => {},
+    });
+
+    await expect(attemptConnect(port, { origin: 'http://127.0.0.1:5555' })).resolves.toBe('open');
+  });
+
+  it('allows a connection whose Origin header is http://localhost:<port>', async () => {
+    const port = await allocatePort(59290);
+    handle = createControlServer({
+      port,
+      getBootstrap: () => ({ ...BOOTSTRAP, daemonPort: port }),
+      onCanvasOp: () => {},
+      onSetGeometry: () => {},
+      onCreateFrame: () => {},
+      onGetCanvasJson: () => {},
+      onDuplicateFrame: () => {},
+      onUndo: () => {},
+      onRedo: () => {},
+    });
+
+    await expect(attemptConnect(port, { origin: 'http://localhost:3000' })).resolves.toBe('open');
+  });
+
   it('sends the ADR-0012 bootstrap ProjectInfo as the first message (no envelope, no `t` field)', async () => {
     const port = await allocatePort(59210);
     handle = createControlServer({
@@ -106,6 +203,8 @@ describe('createControlServer', () => {
       onCreateFrame: () => {},
       onGetCanvasJson: () => {},
       onDuplicateFrame: () => {},
+      onUndo: () => {},
+      onRedo: () => {},
     });
 
     const client = await connect(port);
@@ -125,6 +224,8 @@ describe('createControlServer', () => {
       onCreateFrame: () => {},
       onGetCanvasJson: () => {},
       onDuplicateFrame: () => {},
+      onUndo: () => {},
+      onRedo: () => {},
     });
 
     const clientA = await connect(port);
@@ -152,6 +253,8 @@ describe('createControlServer', () => {
       onCreateFrame: () => {},
       onGetCanvasJson: () => {},
       onDuplicateFrame: () => {},
+      onUndo: () => {},
+      onRedo: () => {},
     });
 
     const client = await connect(port);
@@ -160,7 +263,31 @@ describe('createControlServer', () => {
     const op: CanvasOp = { t: 'set-text', uid: 'src/frames/Hero.tsx:JSXElement[0]', text: 'hi' };
     client.socket.send(JSON.stringify({ kind: 'canvas-op', opId: 'op-1', op }));
 
-    await vi.waitFor(() => expect(onCanvasOp).toHaveBeenCalledWith(op, 'op-1'));
+    await vi.waitFor(() => expect(onCanvasOp).toHaveBeenCalledWith(op, 'op-1', undefined));
+  });
+
+  it('forwards an explicit fileFolder on a canvas-op envelope (P3 CR — disambiguates multi-file-folder daemons)', async () => {
+    const port = await allocatePort(59241);
+    const onCanvasOp = vi.fn();
+    handle = createControlServer({
+      port,
+      getBootstrap: () => ({ ...BOOTSTRAP, daemonPort: port }),
+      onCanvasOp,
+      onSetGeometry: () => {},
+      onCreateFrame: () => {},
+      onGetCanvasJson: () => {},
+      onDuplicateFrame: () => {},
+      onUndo: () => {},
+      onRedo: () => {},
+    });
+
+    const client = await connect(port);
+    await client.next(); // bootstrap
+
+    const op: CanvasOp = { t: 'set-text', uid: 'src/frames/Hero.tsx:JSXElement[0]', text: 'hi' };
+    client.socket.send(JSON.stringify({ kind: 'canvas-op', opId: 'op-2', op, fileFolder: 'demo' }));
+
+    await vi.waitFor(() => expect(onCanvasOp).toHaveBeenCalledWith(op, 'op-2', 'demo'));
   });
 
   it('replies with op-rejected for a structurally invalid CanvasOp, without calling onCanvasOp', async () => {
@@ -174,6 +301,8 @@ describe('createControlServer', () => {
       onCreateFrame: () => {},
       onGetCanvasJson: () => {},
       onDuplicateFrame: () => {},
+      onUndo: () => {},
+      onRedo: () => {},
     });
 
     const client = await connect(port);
@@ -197,6 +326,8 @@ describe('createControlServer', () => {
       onCreateFrame: () => {},
       onGetCanvasJson: () => {},
       onDuplicateFrame: () => {},
+      onUndo: () => {},
+      onRedo: () => {},
     });
 
     const client = await connect(port);
@@ -239,6 +370,8 @@ describe('createControlServer', () => {
       onCreateFrame,
       onGetCanvasJson: () => {},
       onDuplicateFrame: () => {},
+      onUndo: () => {},
+      onRedo: () => {},
     });
 
     const client = await connect(port);
@@ -275,6 +408,8 @@ describe('createControlServer', () => {
       onCreateFrame: () => {},
       onGetCanvasJson,
       onDuplicateFrame: () => {},
+      onUndo: () => {},
+      onRedo: () => {},
     });
 
     const requester = await connect(port);
@@ -318,6 +453,8 @@ describe('createControlServer', () => {
       onCreateFrame: () => {},
       onGetCanvasJson: () => {},
       onDuplicateFrame,
+      onUndo: () => {},
+      onRedo: () => {},
     });
 
     const client = await connect(port);
@@ -358,6 +495,8 @@ describe('createControlServer', () => {
       onCreateFrame: () => {},
       onGetCanvasJson: () => {},
       onDuplicateFrame,
+      onUndo: () => {},
+      onRedo: () => {},
     });
 
     const client = await connect(port);
@@ -382,6 +521,8 @@ describe('createControlServer', () => {
       onCreateFrame: () => {},
       onGetCanvasJson: () => {},
       onDuplicateFrame,
+      onUndo: () => {},
+      onRedo: () => {},
     });
 
     const client = await connect(port);
@@ -403,6 +544,8 @@ describe('createControlServer', () => {
       onCreateFrame,
       onGetCanvasJson: () => {},
       onDuplicateFrame: () => {},
+      onUndo: () => {},
+      onRedo: () => {},
     });
 
     const client = await connect(port);
@@ -423,6 +566,8 @@ describe('createControlServer', () => {
       onCreateFrame: () => {},
       onGetCanvasJson: () => {},
       onDuplicateFrame: () => {},
+      onUndo: () => {},
+      onRedo: () => {},
     });
 
     expect(handle.clientCount()).toBe(0);
@@ -432,6 +577,85 @@ describe('createControlServer', () => {
 
     client.socket.close();
     await vi.waitFor(() => expect(handle?.clientCount()).toBe(0));
+  });
+
+  it('forwards an undo request to onUndo with a working reply channel', async () => {
+    const port = await allocatePort(59410);
+    const onUndo = vi.fn((request: { requestId: string; fileFolder: string }, reply: (r: ControlReply) => void) => {
+      reply({ kind: 'undo-result', requestId: request.requestId, fileFolder: request.fileFolder, applied: true, file: 'files/demo/src/frames/Hero.tsx' });
+    });
+    handle = createControlServer({
+      port,
+      getBootstrap: () => ({ ...BOOTSTRAP, daemonPort: port }),
+      onCanvasOp: () => {},
+      onSetGeometry: () => {},
+      onCreateFrame: () => {},
+      onGetCanvasJson: () => {},
+      onDuplicateFrame: () => {},
+      onUndo,
+      onRedo: () => {},
+    });
+
+    const client = await connect(port);
+    await client.next(); // bootstrap
+
+    client.socket.send(JSON.stringify({ kind: 'undo', requestId: 'u1', fileFolder: 'demo' }));
+    const reply = await client.next();
+    expect(reply).toEqual({
+      kind: 'undo-result',
+      requestId: 'u1',
+      fileFolder: 'demo',
+      applied: true,
+      file: 'files/demo/src/frames/Hero.tsx',
+    });
+  });
+
+  it('forwards a redo request to onRedo with a working reply channel', async () => {
+    const port = await allocatePort(59420);
+    const onRedo = vi.fn((request: { requestId: string; fileFolder: string }, reply: (r: ControlReply) => void) => {
+      reply({ kind: 'redo-result', requestId: request.requestId, fileFolder: request.fileFolder, applied: false, file: null });
+    });
+    handle = createControlServer({
+      port,
+      getBootstrap: () => ({ ...BOOTSTRAP, daemonPort: port }),
+      onCanvasOp: () => {},
+      onSetGeometry: () => {},
+      onCreateFrame: () => {},
+      onGetCanvasJson: () => {},
+      onDuplicateFrame: () => {},
+      onUndo: () => {},
+      onRedo,
+    });
+
+    const client = await connect(port);
+    await client.next(); // bootstrap
+
+    client.socket.send(JSON.stringify({ kind: 'redo', requestId: 'r1', fileFolder: 'demo' }));
+    const reply = await client.next();
+    expect(reply).toEqual({ kind: 'redo-result', requestId: 'r1', fileFolder: 'demo', applied: false, file: null });
+  });
+
+  it('silently drops a structurally invalid undo envelope (missing fileFolder)', async () => {
+    const port = await allocatePort(59430);
+    const onUndo = vi.fn();
+    handle = createControlServer({
+      port,
+      getBootstrap: () => ({ ...BOOTSTRAP, daemonPort: port }),
+      onCanvasOp: () => {},
+      onSetGeometry: () => {},
+      onCreateFrame: () => {},
+      onGetCanvasJson: () => {},
+      onDuplicateFrame: () => {},
+      onUndo,
+      onRedo: () => {},
+    });
+
+    const client = await connect(port);
+    await client.next(); // bootstrap
+
+    client.socket.send(JSON.stringify({ kind: 'undo', requestId: 'u2' }));
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(onUndo).not.toHaveBeenCalled();
   });
 });
 

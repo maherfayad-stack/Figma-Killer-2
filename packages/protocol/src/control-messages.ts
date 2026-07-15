@@ -75,15 +75,44 @@ export const DuplicateFrameRequestSchema = z
   })
   .strict();
 
+/**
+ * ADR-0018/P3 (WS-B) — undo/redo control-ws requests. The daemon owns a
+ * per-file-folder undo/redo stack (ADR-0018 item 9: undo/redo lives in the
+ * DAEMON, not ast-engine); these are how a client asks it to pop one step.
+ * `fileFolder`-scoped (not per-file) because that's the natural unit a
+ * studio UI thinks in ("undo my last change in this project"), and because
+ * a single canvas op's inverse may need to be replayed against whichever
+ * file it targeted without the caller having to track that itself.
+ */
+export const UndoRequestSchema = z
+  .object({
+    kind: z.literal('undo'),
+    requestId: z.string().min(1),
+    fileFolder: z.string().min(1),
+  })
+  .strict();
+
+export const RedoRequestSchema = z
+  .object({
+    kind: z.literal('redo'),
+    requestId: z.string().min(1),
+    fileFolder: z.string().min(1),
+  })
+  .strict();
+
 export const ControlRequestSchema = z.discriminatedUnion('kind', [
   CreateFrameRequestSchema,
   GetCanvasJsonRequestSchema,
   DuplicateFrameRequestSchema,
+  UndoRequestSchema,
+  RedoRequestSchema,
 ]);
 
 export type CreateFrameRequest = z.infer<typeof CreateFrameRequestSchema>;
 export type GetCanvasJsonRequest = z.infer<typeof GetCanvasJsonRequestSchema>;
 export type DuplicateFrameRequest = z.infer<typeof DuplicateFrameRequestSchema>;
+export type UndoRequest = z.infer<typeof UndoRequestSchema>;
+export type RedoRequest = z.infer<typeof RedoRequestSchema>;
 export type ControlRequest = z.infer<typeof ControlRequestSchema>;
 
 // --- server -> client (direct reply to the requesting socket only) ------
@@ -120,6 +149,41 @@ export const DuplicateFrameResultSchema = z
   })
   .strict();
 
+/**
+ * ADR-0018/P3 (WS-B) — undo/redo replies. `applied: false` (with no
+ * `reason`) means "the stack for this file-folder is empty, nothing to
+ * undo/redo" — a normal, expected outcome, not an error, so it's a reply
+ * field rather than a `control-error`. `applied: false` WITH a `reason`
+ * means a real failure (e.g. the concurrent-edit guard: "file changed,
+ * retry") — the entry is preserved on the stack so the client can retry.
+ * `file` (present only when `applied: true`) is the project-root-relative
+ * path that changed, matching every other daemon wire path convention
+ * (`paths.ts`) EXCEPT `uid-remap.file`, which stays file-folder-relative
+ * per ADR-0018 item 5 — the broadcast `uid-remap` event (if any) carries
+ * that separately.
+ */
+export const UndoResultSchema = z
+  .object({
+    kind: z.literal('undo-result'),
+    requestId: z.string().min(1),
+    fileFolder: z.string().min(1),
+    applied: z.boolean(),
+    file: z.string().nullable(),
+    reason: z.string().optional(),
+  })
+  .strict();
+
+export const RedoResultSchema = z
+  .object({
+    kind: z.literal('redo-result'),
+    requestId: z.string().min(1),
+    fileFolder: z.string().min(1),
+    applied: z.boolean(),
+    file: z.string().nullable(),
+    reason: z.string().optional(),
+  })
+  .strict();
+
 export const ControlErrorSchema = z
   .object({
     kind: z.literal('control-error'),
@@ -131,10 +195,14 @@ export const ControlErrorSchema = z
 export const ControlReplySchema = z.discriminatedUnion('kind', [
   GetCanvasJsonResultSchema,
   DuplicateFrameResultSchema,
+  UndoResultSchema,
+  RedoResultSchema,
   ControlErrorSchema,
 ]);
 
 export type GetCanvasJsonResult = z.infer<typeof GetCanvasJsonResultSchema>;
 export type DuplicateFrameResult = z.infer<typeof DuplicateFrameResultSchema>;
+export type UndoResult = z.infer<typeof UndoResultSchema>;
+export type RedoResult = z.infer<typeof RedoResultSchema>;
 export type ControlError = z.infer<typeof ControlErrorSchema>;
 export type ControlReply = z.infer<typeof ControlReplySchema>;

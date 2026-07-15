@@ -107,3 +107,47 @@ tldraw abstraction (§5.4): clean — index.ts exports zero tldraw types; waterm
 Adversarial: coord transform (z=0.5/1/1.5/2 + pan + round-trip property test) — no counterexample; hit-test uses `Element.closest()` (correct for nested data-uid); edit-mode pointer-events has reactive selector + force-exit safety net (test l); wheel-forwarding replicates tldraw `normalizeWheel` (ctrl/alt/meta→deltaZ) — real zoom proven; uid-path format-invariant by construction; Arabic/RTL byte-exact round-trip is a real test not a stub.
 CR opinions: (a) drop `isLocked` → snap-on-entry/restore-on-exit — ACCEPT (isLocked blocks zoom too, would fail the 2-zoom acceptance; defensible reading). (b) capture-overlay drives hit-test (not iframe) — ACCEPT (cross-origin iframes never deliver events to parent; postMessage is the only channel; iframe pointer-events:auto wired-but-inert, reserved for P3 in-place text edit). (c) `UidRemapEvent.file` = file-folder-relative assumed, no real producer yet — correctly deferred to P3 (consumer fully wired+tested vs frozen event shape).
 **Action: MERGE — P2 gated complete. Tag phase-2-complete.**
+
+### AUDIT-6 — P3 GATE (AST Write-Back): ast-engine + daemon write-through · Phase 3 · 2026-07-15
+Auditor: fresh independent agent (Sonnet 5) · Ref: working tree on top of `d14de71` (ast-engine core committed + uncommitted invert fixes; sync-daemon write-back; additive control-messages)
+**Verdict: FAIL** (1 blocker, 1 major, 2 minor) — back-to-worker, then re-audit.
+Findings:
+  1. [BLOCKER] PATH TRAVERSAL / arbitrary file write. `NodeUid` relPath half never containment-checked. A crafted `set-text` op with uid `../../outside-victim/target.tsx:d0` over control-ws is APPLIED + WRITTEN outside the file-folder root — PROVEN LIVE by the auditor (throwaway probe, deleted, no residue). Holds on both the explicit-`fileFolder` branch (zero containment check) and the disk-search fallback (existsSync matches escaped path). No WS Origin validation → reachable from a malicious local webpage. Breaks One-Rule sole-fs-writer scope + §5.8. FIX: resolve absFilePath and assert `path.resolve(abs).startsWith(path.resolve(fileFolder.root)+sep)` before any read/write, reject `op-rejected` otherwise; add WS Origin check (allow no-Origin/localhost only). [Daemon-only fix — do NOT touch frozen uid.ts; validate at the fs-write trust boundary.]
+  2. [major] `e2e-500-ops.test.ts` still restricts move-node to SAME-PARENT with a now-STALE "ast-engine gap" comment — but that gap was fixed this cycle. Reparenting move + undo is thus NOT exercised end-to-end through the real daemon (only in-memory at ast-engine). FIX: remove the restriction (mirror property.test.ts generator), re-run.
+  3. [minor] `.studio/canvas.json` excluded from git checkpoints — reasonable for P3; explicit product decision needed before P6 "restore checkpoint" UX. Carry-forward P6.
+  4. [minor] flat Tailwind conflict groups (ADR-0019 CR3) — already deferred, correctly.
+Reproduced acceptance (all RAN green): ast-engine 140/140 (66 golden incl. reparent move-08/09); sync-daemon 156/156; **500-op e2e isolated PASS** (500 applied/585 attempts, all undone byte-identical, real control-ws + real tsc + real vite build, no stall); typecheck 12/12; lint clean x2.
+Format-preservation: clean (ts-morph structured edits + single prettier pass; no default-printer; invertInsertNode self-verifies round-trip). No noisy-diff repro found.
+Editable-surface: dynamic-locked/not-editable refusals solid + structural (not DOM). No bypass found.
+uid-remap: cross-parent cascade correct at ast-engine layer (golden + property); NOT re-verified at daemon broadcast layer for reparent (see #2). Same-parent daemon remap proven.
+Concurrent-edit guard: mechanism sound (hash-before/after + retry + reject), matches ADR-0018 item 10.
+One-Rule: sole-fs-writer design clean (self-write-tracker) EXCEPT broken by the traversal blocker (unbounded write surface). No second scene model.
+Boundary: protocol 100% additive (control-messages only; ops/events/uid/tree/frame-meta/project-info zero-diff); ast-engine signatures unchanged; design-system/playbook/templates untouched.
+Security (§5.8): control-ws 127.0.0.1-only, but no Origin check → localhost bind doesn't sandbox vs malicious webpage; traversal blocker is the §5.8 finding. Git checkpoints correctly scoped to file-folder repo.
+Adversarial: proved traversal write (blocker); dynamic-node edit attempts all refused; ds-component import uses `design-system` alias not relative (pitfall #4 clean); no non-byte-identical undo/crash found in ast-engine.
+CR opinions: (a) additive control-messages — sound. (b) optional fileFolder + disk-search fallback — shape fine but IMPLEMENTATION is the blocker root cause (no containment); don't accept until fixed. (c) .studio excluded from checkpoints — fine for P3. (d) {token}/ds-prop-defaulting deferred to P4 — fine.
+**Action: back-to-worker (fix blocker + major), then AUDIT-6b re-audit before tagging.**
+
+### AUDIT-6b — P3 gate RE-AUDIT (security remediation) · Phase 3 · 2026-07-15
+Auditor: fresh independent agent (Sonnet 5) · Focused re-audit of the AUDIT-6 blocker+major remediation.
+**Verdict: FAIL** (1 blocker: NEW symlink-escape vector; original 2 findings CLOSED)
+Original findings — status:
+  - Lexical path traversal (`..`, absolute, prefix-sibling, null-byte, empty) → CLOSED. `resolveContainedPath` + WS Origin gating verified live (52 regression tests; Origin: bad rejected / no-Origin allowed / localhost allowed).
+  - Reparent move-node e2e gap → CLOSED. Generator now cross-parent (mirrors ast-engine property test); 500 applied/592, byte-identical undo, 34/39 move ops genuine reparents (instrumented, reverted).
+NEW finding:
+  1. [BLOCKER] SYMLINK-mediated escape. `resolveContainedPath` (safe-path.ts) is purely LEXICAL — `path.resolve` doesn't follow symlinks — so a symlink segment INSIDE the file-folder pointing outside defeats the `startsWith(root+sep)` check; the real fs write then follows the link. PROVEN LIVE: symlink `files/demo/src/frames/shortcut` → outside dir; `set-text` uid `src/frames/shortcut/victim.tsx:d0.0` rewrote the outside file. **Reachable in practice** (NOT exotic): no op creates symlinks, but pnpm projects are symlink-heavy (node_modules/.pnpm) and the e2e fixture itself symlinks node_modules into the served root — an attacker only needs to ADDRESS a pre-existing symlink. FIX: realpath-based containment — resolve the REAL path (fs.realpathSync of the target, or nearest existing ancestor) and assert it stays within the REAL (realpath'd) root, in addition to the lexical check. Note macOS /var→/private/var: realpath BOTH sides.
+Scope/frozen: protocol uid.ts zero-diff; scope = sync-daemon only; ast-engine diff is the prior (AUDIT-6-reviewed) WS-A work, not new. typecheck 12/12, lint clean, safe-path 8/8, sync-daemon 171/172 (known watcher flake, isolated 7/7).
+**Action: back-to-worker (symlink-aware containment), then re-verify before tagging.**
+
+### AUDIT-6c — P3 gate FINAL security re-attack (symlink fix) · Phase 3 · 2026-07-15
+Auditor: fresh independent agent (Sonnet 5) · Focused re-attack of the realpath containment fix.
+**Verdict: PASS — MERGE.**
+Symlink blocker CLOSED — all vectors REJECTED (proven live via throwaway tsx probes vs real mkdtemp fixtures, deleted, zero residue): (1) direct symlink→outside; (2) chained symlink A→B→outside (realpathSync resolves full chain); (3) relative-target symlink→outside; (4) prefix-sibling via realpath (real root /x/demo vs symlink→/x/demo-evil — `realTarget.startsWith(realRoot+sep)` refuses it).
+False-reject check: real frame file under mkdtemp (/tmp→/private/tmp) ALLOWED; in-root pnpm-style symlink (→ in-root .pnpm target) ALLOWED. No legit-op false-reject.
+Fail-closed: broken symlink → ok:false no throw; self-referential loop → realpathSync ELOOP caught → clean rejection, no uncaught exception.
+TOCTOU: documented RESIDUAL, not a blocker — no CanvasOp creates/swaps symlinks; only a separate co-resident malicious process could race the check→write window, and per §5.8 local threat model such a process already has the user's fs privileges. Write path is string-based (not O_NOFOLLOW/fd) → carry-forward hardening note.
+Regression: lexical `..`/absolute/empty/null-byte still rejected (safe-path 13/13 + probe); `.`→root itself correctly allowed.
+Scope/frozen: `git diff d14de71 -- protocol/src/uid.ts` EMPTY; fix scoped to sync-daemon (safe-path.ts + op-apply.ts + daemon.ts call sites); ast-engine/control-messages diffs are the prior AUDIT-6-reviewed WS-A/additive work.
+type/lint/test/500-op: typecheck 12/12, lint clean, sync-daemon 179/179 isolated (watcher/vite-orchestrator chokidar/port flakes under concurrent load only — isolated green), e2e-500-ops PASS (500 applied, byte-identical undo, real control-ws/tsc/vite build).
+Carry-forward (non-blocking): TOCTOU O_NOFOLLOW write-path hardening (P6 cloud/P8); deflake watcher.test.ts + vite-orchestrator.test.ts (P8, now elevated — occasionally flake isolated too).
+**Action: MERGE — P3 gated complete. Tag phase-3-complete.**

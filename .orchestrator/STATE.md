@@ -7,18 +7,8 @@ _Living status board. Append-only decisions log at bottom. Last updated: 2026-07
 **P0 — COMPLETE** (AUDIT-1 PASS, tag `phase-0-complete`, protocol FROZEN).
 **P1 — COMPLETE** (AUDIT-2 daemon + AUDIT-3 canvas/integration PASS, tag `phase-1-complete`; defect fix AUDIT-4 PASS, dc070de).
 **P2 — COMPLETE** (AUDIT-5 PASS, tag `phase-2-complete`). Selection Bridge: source-uid plugin + bridge + canvas edit-mode/overlay. Hard stop LIFTED 2026-07-14. Running P2→P8 gated per phase.
-**P3 — IN PROGRESS.** WS-A (ast-engine core) COMPLETE + verified green + committed. WS-B (daemon write-back) was IN-FLIGHT and STOPPED mid-write on 2026-07-15 for session close — its `packages/sync-daemon` changes are PARTIAL/UNVERIFIED.
-
-## ⏸ SESSION PAUSED 2026-07-15 — RESUME HERE
-**Last committed:** `phase-3-wsA-checkpoint` (WS-A ast-engine + all orchestrator docs). Tags: phase-0/1/2-complete + phase-3-wsA-checkpoint. Protocol still FROZEN.
-**Working tree at pause:** `packages/sync-daemon` holds WS-B's PARTIAL write-back work (uncommitted): new files `canvas-op-pipeline.ts`, `source-write.ts`, `undo-redo-stack.ts`, `git-checkpoint.ts`, `self-write-tracker.ts`, `op-file-folder-resolver.ts` (+ tests) and edits to `daemon.ts`/`ws-server.ts`/`watcher.ts`. It was stopped mid-edit of `write-back-acceptance.test.ts` → will NOT typecheck/pass as-is. `pnpm-lock.yaml` also uncommitted (WS-B ran pnpm install adding `@ccs/ast-engine` to daemon).
-**To resume P3 (do this):**
-1. `git status` + reconcile. The partial WS-B tree is NOT trustworthy — do NOT try to hand-finish it blind.
-2. Decide: either (a) **discard** the partial daemon work (`git checkout -- packages/sync-daemon && git clean -fd packages/sync-daemon`, keeping ast-engine intact) and re-spawn WS-B FRESH with the ADR-0018 prompt (clean-respawn pattern — cheapest, recommended), OR (b) if the partial looks ~complete, run `pnpm --filter @ccs/sync-daemon run typecheck/test` and finish-and-verify. Prefer (a).
-3. WS-B spec is unchanged: ADR-0018 (frozen interface) + ADR-0019 (WS-A ratifications, esp. sync `applyOp` via synckit → run inside FileOpQueue; `invertOp`/`applyInverseOp`+`InverseOp` for undo). Acceptance: 500 random ops → typechecks/builds/renders, prettier-stable, undo byte-identical; uid-remap emit; concurrent-edit guard; git checkpoints.
-4. Then: git-reconcile → FRESH adversarial P3 gate audit (AUDIT-6) → tag `phase-3-complete` + retro.
-5. Then P4 (needs HUMAN: Almosafer DS untyped `.jsx` prop strategy, ADR-0011) ∥ P5.
-**Standing rules still in force:** all workers/auditors = Sonnet 5 medium; workers run NO git (orchestrator reconciles at every gate — see memory [[workers-self-commit]]); one gate commit + tag per phase; do NOT touch frozen protocol / design-system / playbook.
+**P3 — COMPLETE** (AUDIT-6 FAIL→remediated→AUDIT-6b FAIL→remediated→**AUDIT-6c PASS**, tag `phase-3-complete`). AST Write-Back Engine: canvas ops mutate real source (ts-morph+prettier, format-preserving), byte-identical undo, uid-remap, git checkpoints, concurrent-edit guard, and file-folder write-boundary containment (ADR-0020). The core editing loop is live + sandbox-safe.
+**P4 — NEXT** (Design System: tokens + components, ∥ P5) — needs HUMAN decision at kickoff: Almosafer DS is untyped `.jsx` w/o prop metadata (ADR-0011).
 
 ## Phase status board
 
@@ -27,9 +17,9 @@ _Living status board. Append-only decisions log at bottom. Last updated: 2026-07
 | P0 | Foundations & Contracts | ✅ complete (tag phase-0-complete) | — |
 | P1 | Infinite Canvas + Live Frames | ✅ complete (tag phase-1-complete) | P0 ✅ |
 | P2 | Selection Bridge | ✅ complete (tag phase-2-complete) | P1 ✅ |
-| P3 | AST Write-Back Engine (critical path) | 🟡 in progress (WS-A done+committed; WS-B partial, re-spawn) | P2 ✅ |
-| P4 | Design System: Tokens + Components | ⬜ not started | P3 |
-| P5 | Studio UI Chrome | ⬜ not started | P3 |
+| P3 | AST Write-Back Engine (critical path) | ✅ complete (tag phase-3-complete) | P2 ✅ |
+| P4 | Design System: Tokens + Components | 🔜 next (∥ P5) | P3 ✅ |
+| P5 | Studio UI Chrome | 🔜 next (∥ P4) | P3 ✅ |
 | P6 | Backend (Supabase, git-host) | ⬜ not started | P4,P5 |
 | P7 | Presence + Comments | ⬜ not started | P6 |
 | P8 | Hardening + Polish | ⬜ not started | P7 |
@@ -120,3 +110,16 @@ _(one-command demo per phase recorded here as phases complete)_
 
 ## P2 acceptance demo (one command)
 `pnpm --filter @ccs/canvas run test:e2e` → 11/11 (5 P1 + 6 P2) against a real studio-mode daemon. Manual: `pnpm --filter @ccs/canvas run demo:daemon` + `demo:harness`, open http://127.0.0.1:5555/?daemonPort=4700, double-click a frame → hover/click nodes → breadcrumb + lock badges. NOTE: the demo harness now opens with `studioMode:true` (data-uids + bridge injected).
+
+## P3 retro (≤12 lines — the critical path)
+- Serialize A→B held again: ast-engine (pure, zero-IO, huge golden+property suite) proven ALONE, then daemon wiring on top. Pre-freezing applyOp/ApplyOpError/uidRemap (ADR-0018) → zero interface churn.
+- The ADR-0017 conformance corpus (ts-morph uids == babel plugin uids, byte-identical) paid off — no silent addressing divergence.
+- **Property tests are the MVP of this phase.** ast-engine's caught 5 bugs pre-audit; the fix worker's strengthened property test (after removing a try/catch that SILENTLY SWALLOWED uid-not-found) caught 4 MORE invert bugs incl. a forward-path moveNodeRemap bug. Lesson: a property test that catches its own failures is worthless — never swallow the assertion.
+- **The gate earned its keep.** 3 adversarial rounds on ONE boundary: AUDIT-6 found lexical path-traversal arbitrary-write (blocker); AUDIT-6b found symlink-escape (I'd wrongly hand-waved symlinks as unreachable — fresh eyes corrected my blind spot); AUDIT-6c confirmed closed. NEVER let authors self-certify a security boundary.
+- Fix at the trust boundary, not the schema: containment lives in the sole-fs-writer daemon (ADR-0020), protocol stayed frozen.
+- Clean-respawn (memory [[session-limit-clean-respawn]]) worked: WS-B died at session close, discarded partial, fresh respawn succeeded cheaply.
+- Cost of the phase: 8 workers (WS-A, WS-B, ast-fix, 3 audits, 2 security fixes). Heavy but correct — this is the one component that writes users' real files.
+- Carry-forward P8: TOCTOU O_NOFOLLOW write hardening; deflake watcher.test.ts + vite-orchestrator.test.ts (now occasionally flake isolated). P6: `.studio/canvas.json` excluded from checkpoints (frame-layout not in restore history — decide before "restore checkpoint" UX). P4: ds-component insert doesn't default required props + `{token}` set-prop = `unsupported` (needs token/type pipeline).
+
+## P3 acceptance demo (one command)
+`pnpm --filter @ccs/sync-daemon exec vitest run src/e2e-500-ops.test.ts` → 500 random ops through the REAL control-ws → app still typechecks + `vite build`s → all 500 undone byte-identical. Plus `pnpm --filter @ccs/ast-engine test` (140 tests / 66 golden) + `pnpm --filter @ccs/sync-daemon exec vitest run src/safe-path.test.ts src/op-apply.test.ts` (containment + symlink-escape rejection).

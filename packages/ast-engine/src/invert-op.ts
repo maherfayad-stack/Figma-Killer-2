@@ -212,7 +212,36 @@ function invertInsertNode(sourceText: string, op: InsertNodeOp): DeleteNodeOp {
 
   const childCount = getJsxElementChildren(parentNode).length;
   const clampedIndex = Math.max(0, Math.min(op.index, childCount));
-  return { t: 'delete-node', uid: `${relPath}:${parentAstPath}.${clampedIndex}` as NodeUid };
+  const candidateInverse: DeleteNodeOp = { t: 'delete-node', uid: `${relPath}:${parentAstPath}.${clampedIndex}` as NodeUid };
+
+  // FOURTH invert bug found by the strengthened property test — a SEPARATE,
+  // more general one-way formatting transformation than the self-closing
+  // case above: prettier's JSX child layout is not always reversible.
+  // Inserting a node can force a parent from a single-line/tightly-packed
+  // child layout to a multi-line one (a 3rd child no longer fits inline, or
+  // an inserted element no longer sits flush against adjacent JsxText);
+  // deleting that same node again removes exactly the inserted text but
+  // prettier does NOT re-collapse the remaining siblings back onto one
+  // line/flush against each other once that break has been introduced —
+  // this is deliberate prettier JSX-whitespace-sensitivity behavior, not an
+  // ast-engine astPath/whitespace-range bug, and no amount of deletion-range
+  // adjustment can undo a formatting decision prettier won't reverse.
+  // Rather than guess whether THIS insertion point is safe, verify it: run
+  // the actual forward op + candidate inverse (both already-frozen,
+  // side-effect-free functions) and refuse if the round trip doesn't
+  // restore byte-identical — "refuse, don't silently lose" (ADR-0019 CR 4),
+  // applied by construction instead of by enumerating every unsafe shape.
+  const forward = applyOp(sourceText, op);
+  const roundTrip = applyOp(forward.newText, candidateInverse);
+  if (roundTrip.newText !== sourceText) {
+    throw new ApplyOpError(
+      'unsupported',
+      'invertOp: insert-node cannot be losslessly inverted here — prettier will not re-collapse the ' +
+        'formatting change this insertion introduces once the inserted node is deleted again',
+    );
+  }
+
+  return candidateInverse;
 }
 
 /** Which `design-system`-imported component names are used (as a JSX tag)
@@ -258,14 +287,68 @@ function invertMoveNode(sourceText: string, op: MoveNodeOp): MoveNodeOp {
   const { astPath: newParentAstPath } = splitNodeUid(op.newParentUid);
   const { parentAstPath: originalParentAstPath, index: originalIndex } = parentAndIndexOf(targetAstPath);
 
+  // SECOND invert bug found by the strengthened property test/golden suite
+  // (move-node-05-to-self-closing-parent): moving a node INTO a self-closing
+  // parent converts it to a container (`<Card />` -> `<Card>...</Card>`,
+  // same one-way transformation `invertInsertNode` already refuses above).
+  // Moving the child back out again cannot un-convert the container back to
+  // self-closing, so a byte-identical undo isn't representable — refuse
+  // rather than silently leave `<Card></Card>` behind. Checked against the
+  // PRE-image (this function's `sourceText`), i.e. the parent's state
+  // BEFORE the forward move that's being inverted.
+  const newParentNodePreImage = resolveOrThrow(sourceFile, newParentAstPath, op.newParentUid);
+  if (newParentNodePreImage.getKind() === SyntaxKind.JsxSelfClosingElement) {
+    throw new ApplyOpError(
+      'unsupported',
+      'invertOp: move-node into a self-closing parent cannot be losslessly inverted (the container conversion is one-way)',
+    );
+  }
+
+  // THIRD invert bug found by the strengthened property test: `applyOp`'s
+  // real forward move (`applyMoveNodeOp` in apply-op.ts) never uses
+  // `op.index` raw — it CLAMPS it against the new parent's existing
+  // element-children count (excluding the target itself, since the target
+  // isn't one of "the OTHER siblings" being indexed against): `clampedIndex
+  // = max(0, min(op.index, siblingsExcludingTarget.length))`. `applyOp`'s
+  // own `uidRemap` is built from that CLAMPED index. Computing the inverse
+  // with the raw, unclamped `op.index` instead derives a moved-subtree
+  // destination prefix that doesn't match where `applyOp` actually put the
+  // node — landing on a sibling-index that may not exist in the POST-image
+  // at all (`ApplyOpError('uid-not-found')`). Must replicate the exact same
+  // clamp here, against the SAME pre-image, to compute the SAME remap
+  // `applyOp` did.
+  const targetNode = resolveOrThrow(sourceFile, targetAstPath, op.uid);
+  const siblingsExcludingTarget = getJsxElementChildren(newParentNodePreImage).filter((c) => c !== targetNode);
+  const clampedIndex = Math.max(0, Math.min(op.index, siblingsExcludingTarget.length));
+
   const preAstPaths = deriveUidPathsForFile(sourceFile).map((e) => e.astPath);
-  const remap = moveNodeRemap(preAstPaths, targetAstPath, newParentAstPath, op.index);
+  const remap = moveNodeRemap(preAstPaths, targetAstPath, newParentAstPath, clampedIndex);
   const newAstPathOfMovedNode = remap.get(targetAstPath) ?? targetAstPath;
+
+  // BUG (fixed here): `originalParentAstPath` is a PRE-image astPath. The
+  // inverse is APPLIED against the POST-image (the output of this forward
+  // move), so the restore-parent uid must be expressed in POST-image
+  // coordinates too. A cross-parent (reparenting) move can shift the OLD
+  // parent's OWN astPath — not just the moved node's — whenever the OLD
+  // parent's ancestor chain passes through a sibling index that the
+  // insertion side of the move bumps (e.g. moving a deeply-nested node OUT
+  // to an ANCESTOR at an index before that ancestor chain: the old parent,
+  // several levels up from the removal site, is itself a later sibling
+  // under the insertion point and shifts by the same +1 that the moved
+  // node's other siblings get). Naively string-slicing the PRE-image
+  // astPath for the old parent (as this used to do) then resolves against
+  // the POST-image tree and either hits a stale/wrong node or nothing at
+  // all (`ApplyOpError('uid-not-found')`). `moveNodeRemap` already computes
+  // exactly this shift for every surviving astPath (it's the same function
+  // `applyOp`'s forward move uses to build its own `uidRemap`), so reusing
+  // it here for the OLD parent's astPath — not just the moved node's — is
+  // both correct and consistent with the one true remap computation.
+  const postImageOldParentAstPath = remap.get(originalParentAstPath) ?? originalParentAstPath;
 
   return {
     t: 'move-node',
     uid: `${relPath}:${newAstPathOfMovedNode}` as NodeUid,
-    newParentUid: `${relPath}:${originalParentAstPath}` as NodeUid,
+    newParentUid: `${relPath}:${postImageOldParentAstPath}` as NodeUid,
     index: originalIndex,
   };
 }

@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type {
   CanvasOp,
@@ -5,8 +6,12 @@ import type {
   DaemonEvent,
   DuplicateFrameRequest,
   GetCanvasJsonRequest,
+  NodeUid,
   ProjectInfo,
+  RedoRequest,
+  UndoRequest,
 } from '@ccs/protocol';
+import type { InverseOp } from '@ccs/ast-engine';
 import { reconcileCanvasJson, readCanvasJson } from './canvas-json.js';
 import { createFrameOnDisk } from './create-frame.js';
 import { duplicateFrameOnDisk } from './duplicate-frame.js';
@@ -15,6 +20,7 @@ import { FileOpQueue } from './file-op-queue.js';
 import { toProjectRelative } from './paths.js';
 import { allocatePort } from './port-pool.js';
 import { scanProject, type FileFolder } from './scan.js';
+import { resolveContainedPath } from './safe-path.js';
 import {
   createControlServer,
   type ControlServerHandle,
@@ -34,6 +40,16 @@ import {
   writeDaemonCoordFile,
   type DaemonCoordFileFileFolder,
 } from './coord-file.js';
+import { SelfWriteTracker } from './self-write-tracker.js';
+import { UndoRedoManager, type UndoEntry } from './undo-stack.js';
+import { CheckpointScheduler, ensureFileFolderGitRepo } from './git-checkpoint.js';
+import {
+  applyCanvasOpToDisk,
+  applyForwardOpToDisk,
+  applyInverseOpToDisk,
+  relPathFromCanvasOp,
+  summarizeCanvasOp,
+} from './op-apply.js';
 
 /**
  * `openProject` — the sync-daemon entry point (playbook §4/P1, ADR-0012).
@@ -49,6 +65,10 @@ import {
 const DEFAULT_FRAME_SERVER_PORT_START = 5200;
 const DEFAULT_DAEMON_PORT_START = 4700;
 const DEFAULT_GEOMETRY_DEBOUNCE_MS = 250;
+/** git checkpoint cadence (playbook §4/P3, ADR-0018 item 11): commit every
+ * N applied ops, or after this many ms of idle — whichever comes first. */
+const DEFAULT_CHECKPOINT_EVERY_N_OPS = 20;
+const DEFAULT_CHECKPOINT_IDLE_MS = 30_000;
 
 export interface StartViteServerFn {
   (options: { cwd: string; port: number; studioConfigPath?: string }): Promise<ViteServerHandle>;
@@ -78,6 +98,10 @@ export interface OpenProjectOptions {
    * involvement at all), preserving that contract by construction rather
    * than by convention. */
   studioMode?: boolean;
+  /** P3 git-checkpoint tuning (default 20 ops / 30s idle) — overridable so
+   * tests/integration harnesses don't have to wait 30 real seconds. */
+  checkpointEveryNOps?: number;
+  checkpointIdleMs?: number;
 }
 
 export interface DaemonFileFolder {
@@ -160,6 +184,25 @@ export async function openProject(options: OpenProjectOptions): Promise<DaemonHa
     });
   }
 
+  // P3 (playbook §4/P3, ADR-0018 items 9/11): self-write suppression, the
+  // per-file-folder undo/redo stack, and per-file-folder git checkpoint
+  // schedulers. Each file-folder gets its OWN nested git repo (`git init`
+  // if absent) + a managed `.gitignore` right at project-open, so the
+  // very first canvas op already has somewhere to check into.
+  const selfWriteTracker = new SelfWriteTracker();
+  const undoManager = new UndoRedoManager();
+  const checkpointSchedulers = new Map<string, CheckpointScheduler>();
+  for (const fileFolder of fileFolders) {
+    await ensureFileFolderGitRepo(fileFolder.root);
+    checkpointSchedulers.set(
+      fileFolder.name,
+      new CheckpointScheduler(fileFolder.root, {
+        everyNOps: options.checkpointEveryNOps ?? DEFAULT_CHECKPOINT_EVERY_N_OPS,
+        idleMs: options.checkpointIdleMs ?? DEFAULT_CHECKPOINT_IDLE_MS,
+      }),
+    );
+  }
+
   const scannedByName = new Map(scanned.map((f) => [f.name, f] as const));
 
   function buildBootstrap(): ProjectInfo {
@@ -193,16 +236,244 @@ export async function openProject(options: OpenProjectOptions): Promise<DaemonHa
     return fileFolders.find((f) => f.name === name);
   }
 
-  function handleCanvasOp(op: CanvasOp, opId: string): void {
-    const file = fileFromCanvasOp(op);
-    void fileOpQueue.enqueue(file, async () => {
-      // P1 scope: AST write-back is Phase 3 (playbook §4/P3). The daemon
-      // queues + serializes per file (real, load-bearing behavior) but
-      // does not touch source files yet — it answers every op with the
-      // explicitly-sanctioned stub rejection (ADR-0012 / playbook §4/P1
-      // step 3: "in P1 the daemon may no-op/echo ops").
-      control.broadcast({ t: 'op-rejected', opId, reason: 'ast-engine P3' });
+  const CANVAS_OP_TYPES = new Set<CanvasOp['t']>([
+    'set-text',
+    'set-prop',
+    'set-classes',
+    'insert-node',
+    'delete-node',
+    'move-node',
+    'wrap-node',
+  ]);
+  /** `InverseOp` (ast-engine-owned, ADR-0019 CR2) is a strict SUPERSET of
+   * `CanvasOp` — `restore-node`/`unwrap-node` have no wire representation.
+   * The frozen `op-applied` DaemonEvent's `inverse` field is typed
+   * `CanvasOp[]` (protocol/events.ts), so only the 5/7 op kinds that
+   * invert as themselves can be surfaced there; the other 2 still get a
+   * real undo via the daemon's OWN stack (`undoManager`), just not a
+   * client-visible preview of what undo would do. */
+  function isCanvasOp(inverseOp: InverseOp): inverseOp is CanvasOp {
+    return CANVAS_OP_TYPES.has(inverseOp.t as CanvasOp['t']);
+  }
+
+  /** ast-engine's `ApplyOpResult.uidRemap` is typed as a plain
+   * `Record<string, string>` (a pure library — it has no reason to import
+   * the wire-level `NodeUid` brand); the frozen `UidRemapEventSchema.map`
+   * requires `Record<NodeUid, NodeUid>`. Every key/value ast-engine
+   * produces is already `<relPath>:<astPath>`-shaped by construction, so
+   * this is a type-level bridge, not a runtime transformation. */
+  function toNodeUidMap(map: Record<string, string>): Record<NodeUid, NodeUid> {
+    return map as Record<NodeUid, NodeUid>;
+  }
+
+  /**
+   * P3 CR (ws-server.ts module doc): `NodeUid`/`CanvasOp` only carry a
+   * FILE-FOLDER-relative path — the ADR-0013-frozen `canvas-op` envelope
+   * never carried the file-folder segment itself, which is unambiguous
+   * with exactly one file-folder but not with several. Prefers an
+   * explicit `fileFolder` (unambiguous, O(1)); falls back to an on-disk
+   * search across every known file-folder for the op's relPath, erroring
+   * on zero or multiple matches rather than silently guessing.
+   *
+   * AUDIT-6 BLOCKER fix (playbook §5.8): `relPath` is attacker-controlled
+   * (it's derived from the uid embedded in an incoming `CanvasOp`), so
+   * EVERY branch below runs it through the shared `resolveContainedPath`
+   * containment check (`safe-path.ts`) before it's ever joined into a
+   * filesystem path — a `..`-traversal or absolute relPath is rejected
+   * HERE, before any `existsSync`/read/write is attempted, rather than
+   * relying on `existsSync` (which checks existence, not containment) or
+   * on the write boundary alone to catch it.
+   */
+  function resolveFileFolderForOp(
+    op: CanvasOp,
+    explicitFileFolder?: string,
+  ): { fileFolder: DaemonFileFolder; relPath: string; absPath: string } | { error: string } {
+    const relPath = relPathFromCanvasOp(op);
+
+    if (explicitFileFolder) {
+      const fileFolder = resolveFileFolder(explicitFileFolder);
+      if (!fileFolder) return { error: `unknown file-folder "${explicitFileFolder}"` };
+      const safe = resolveContainedPath(fileFolder.root, relPath);
+      if (!safe.ok) return { error: `invalid path: ${safe.reason}` };
+      return { fileFolder, relPath, absPath: safe.absPath };
+    }
+
+    const candidates: Array<{ fileFolder: DaemonFileFolder; absPath: string }> = [];
+    for (const ff of fileFolders) {
+      const safe = resolveContainedPath(ff.root, relPath);
+      if (safe.ok && existsSync(safe.absPath)) candidates.push({ fileFolder: ff, absPath: safe.absPath });
+    }
+    if (candidates.length === 0) return { error: `no file-folder contains "${relPath}"` };
+    if (candidates.length > 1) {
+      return {
+        error: `ambiguous file-folder for "${relPath}" across [${candidates.map((c) => c.fileFolder.name).join(', ')}] — pass fileFolder explicitly in the canvas-op message`,
+      };
+    }
+    return { fileFolder: candidates[0]!.fileFolder, relPath, absPath: candidates[0]!.absPath };
+  }
+
+  /**
+   * The P3 write-through path (playbook §4/P3, ADR-0018): resolve which
+   * file-folder/file the op targets, then run the actual `applyOp` +
+   * atomic-write + concurrent-edit-guard INSIDE that file's `FileOpQueue`
+   * slot (ADR-0019 CR1 watch: `applyOp` briefly blocks via
+   * `Atomics.wait` for the embedded-prettier worker thread — running it
+   * here, one file-queue-slot at a time, is what keeps that blocking
+   * bounded and serialized rather than piling up across concurrent ops on
+   * DIFFERENT files, which still proceed independently).
+   */
+  function handleCanvasOp(op: CanvasOp, opId: string, explicitFileFolder?: string): void {
+    const resolved = resolveFileFolderForOp(op, explicitFileFolder);
+    if ('error' in resolved) {
+      control.broadcast({ t: 'op-rejected', opId, reason: resolved.error });
+      return;
+    }
+    const { fileFolder, relPath, absPath: absFilePath } = resolved;
+
+    void fileOpQueue.enqueue(absFilePath, async () => {
+      const result = await applyCanvasOpToDisk(fileFolder.root, op, selfWriteTracker);
+      if (!result.ok) {
+        control.broadcast({ t: 'op-rejected', opId, reason: result.reason });
+        return;
+      }
+
+      undoManager.recordApplied(fileFolder.name, {
+        absFilePath: result.absFilePath,
+        relPath: result.relPath,
+        forwardOp: op,
+        inverseOp: result.extra.inverseOp,
+      });
+
+      const projectRelFile = toProjectRelative(projectRoot, absFilePath);
+      // Explicit broadcast from the write-through path itself — paired
+      // with `uid-remap` below — NOT a re-discovery via the fs watcher
+      // (which self-write-suppresses this exact write, see watcher.ts).
+      control.broadcast({ t: 'file-changed', file: projectRelFile });
+      control.broadcast({ t: 'hmr-update', file: projectRelFile });
+      if (Object.keys(result.extra.uidRemap).length > 0) {
+        // ADR-0018 item 5: file-folder-relative, NOT project-relative.
+        control.broadcast({ t: 'uid-remap', file: relPath, map: toNodeUidMap(result.extra.uidRemap) });
+      }
+      control.broadcast({
+        t: 'op-applied',
+        opId,
+        inverse: isCanvasOp(result.extra.inverseOp) ? [result.extra.inverseOp] : [],
+      });
+
+      checkpointSchedulers.get(fileFolder.name)?.noteOp(summarizeCanvasOp(op));
     });
+  }
+
+  /**
+   * Undo/redo (ADR-0018 item 9, additive `undo`/`redo` control requests —
+   * `packages/protocol/src/control-messages.ts`). Peeks the top-of-stack
+   * entry first (without popping) purely to learn WHICH file it targets,
+   * so the actual pop + apply can run inside that file's `FileOpQueue`
+   * slot — serialized against any canvas-op racing the same file. If
+   * nothing pops out from under us in the meantime the peeked entry and
+   * the popped one are the same; if a queued canvas-op landed first and
+   * changed the top of stack, the freshly-popped entry (re-read inside
+   * the queue) is still the correct one to undo.
+   */
+  function handleUndo(request: UndoRequest, reply: ReplyFn): void {
+    const fileFolder = resolveFileFolder(request.fileFolder);
+    if (!fileFolder) {
+      reply({ kind: 'control-error', requestId: request.requestId, reason: `unknown file-folder "${request.fileFolder}"` });
+      return;
+    }
+    const peeked = undoManager.peekUndo(fileFolder.name);
+    if (!peeked) {
+      reply({ kind: 'undo-result', requestId: request.requestId, fileFolder: fileFolder.name, applied: false, file: null });
+      return;
+    }
+
+    void fileOpQueue.enqueue(peeked.absFilePath, async () => {
+      const entry = undoManager.popUndo(fileFolder.name);
+      if (!entry) {
+        reply({ kind: 'undo-result', requestId: request.requestId, fileFolder: fileFolder.name, applied: false, file: null });
+        return;
+      }
+
+      const result = await applyInverseOpToDisk(entry.absFilePath, entry.inverseOp, selfWriteTracker);
+      if (!result.ok) {
+        undoManager.pushUndo(fileFolder.name, entry); // preserve history — never lose it on a failed attempt
+        reply({
+          kind: 'undo-result',
+          requestId: request.requestId,
+          fileFolder: fileFolder.name,
+          applied: false,
+          file: null,
+          reason: result.reason,
+        });
+        return;
+      }
+
+      undoManager.pushRedo(fileFolder.name, entry);
+      broadcastAfterUndoRedo(entry, result.extra.uidRemap);
+      reply({
+        kind: 'undo-result',
+        requestId: request.requestId,
+        fileFolder: fileFolder.name,
+        applied: true,
+        file: toProjectRelative(projectRoot, entry.absFilePath),
+      });
+      checkpointSchedulers.get(fileFolder.name)?.noteOp(`undo ${summarizeCanvasOp(entry.forwardOp)}`);
+    });
+  }
+
+  function handleRedo(request: RedoRequest, reply: ReplyFn): void {
+    const fileFolder = resolveFileFolder(request.fileFolder);
+    if (!fileFolder) {
+      reply({ kind: 'control-error', requestId: request.requestId, reason: `unknown file-folder "${request.fileFolder}"` });
+      return;
+    }
+    const peeked = undoManager.peekRedo(fileFolder.name);
+    if (!peeked) {
+      reply({ kind: 'redo-result', requestId: request.requestId, fileFolder: fileFolder.name, applied: false, file: null });
+      return;
+    }
+
+    void fileOpQueue.enqueue(peeked.absFilePath, async () => {
+      const entry = undoManager.popRedo(fileFolder.name);
+      if (!entry) {
+        reply({ kind: 'redo-result', requestId: request.requestId, fileFolder: fileFolder.name, applied: false, file: null });
+        return;
+      }
+
+      const result = await applyForwardOpToDisk(entry.absFilePath, entry.forwardOp, selfWriteTracker);
+      if (!result.ok) {
+        undoManager.pushRedo(fileFolder.name, entry);
+        reply({
+          kind: 'redo-result',
+          requestId: request.requestId,
+          fileFolder: fileFolder.name,
+          applied: false,
+          file: null,
+          reason: result.reason,
+        });
+        return;
+      }
+
+      undoManager.pushUndo(fileFolder.name, entry);
+      broadcastAfterUndoRedo(entry, result.extra.uidRemap);
+      reply({
+        kind: 'redo-result',
+        requestId: request.requestId,
+        fileFolder: fileFolder.name,
+        applied: true,
+        file: toProjectRelative(projectRoot, entry.absFilePath),
+      });
+      checkpointSchedulers.get(fileFolder.name)?.noteOp(`redo ${summarizeCanvasOp(entry.forwardOp)}`);
+    });
+  }
+
+  function broadcastAfterUndoRedo(entry: UndoEntry, uidRemap: Record<string, string>): void {
+    const projectRelFile = toProjectRelative(projectRoot, entry.absFilePath);
+    control.broadcast({ t: 'file-changed', file: projectRelFile });
+    control.broadcast({ t: 'hmr-update', file: projectRelFile });
+    if (Object.keys(uidRemap).length > 0) {
+      control.broadcast({ t: 'uid-remap', file: entry.relPath, map: toNodeUidMap(uidRemap) });
+    }
   }
 
   function handleSetGeometry(request: SetGeometryRequest): void {
@@ -343,11 +614,15 @@ export async function openProject(options: OpenProjectOptions): Promise<DaemonHa
     onCreateFrame: handleCreateFrame,
     onGetCanvasJson: handleGetCanvasJson,
     onDuplicateFrame: handleDuplicateFrame,
+    onUndo: handleUndo,
+    onRedo: handleRedo,
   });
 
   const watchHandles: WatchHandle[] = [];
   for (const fileFolder of fileFolders) {
-    watchHandles.push(watchFrameFiles(projectRoot, fileFolder.root, (e) => control.broadcast(e)));
+    watchHandles.push(
+      watchFrameFiles(projectRoot, fileFolder.root, (e) => control.broadcast(e), selfWriteTracker),
+    );
     watchHandles.push(watchCanvasJson(projectRoot, fileFolder.root, (e) => control.broadcast(e)));
   }
   watchHandles.push(watchDesignSystem(projectRoot, (e) => control.broadcast(e)));
@@ -378,26 +653,20 @@ export async function openProject(options: OpenProjectOptions): Promise<DaemonHa
     },
     async close() {
       await geometryWriter.flushAll();
+      // Flush every file-folder's pending git checkpoint before shutting
+      // down so ops applied right before close() aren't silently left
+      // uncommitted (best-effort — commit() itself never throws, see
+      // git-checkpoint.ts).
+      for (const scheduler of checkpointSchedulers.values()) {
+        await scheduler.commit();
+        scheduler.dispose();
+      }
       for (const watchHandle of watchHandles) await watchHandle.close();
       await control.close();
       for (const viteHandle of viteHandles) await viteHandle.stop();
       await removeDaemonCoordFile(projectRoot);
     },
   };
-}
-
-function fileFromCanvasOp(op: CanvasOp): string {
-  let uid: string | undefined;
-  if ('uid' in op) {
-    uid = op.uid;
-  } else if ('parentUid' in op) {
-    uid = op.parentUid;
-  } else if ('uids' in op) {
-    uid = op.uids[0];
-  }
-  if (!uid) return 'unknown';
-  const idx = uid.indexOf('.tsx:');
-  return idx === -1 ? uid : uid.slice(0, idx + 4);
 }
 
 export type { FileFolder };

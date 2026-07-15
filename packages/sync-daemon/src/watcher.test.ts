@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DaemonEvent } from '@ccs/protocol';
 import { watchCanvasJson, watchDesignSystem, watchFrameFiles, type WatchHandle } from './watcher.js';
+import { SelfWriteTracker } from './self-write-tracker.js';
 
 describe('watchFrameFiles / watchCanvasJson / watchDesignSystem', () => {
   let projectRoot: string;
@@ -58,6 +59,47 @@ describe('watchFrameFiles / watchCanvasJson / watchDesignSystem', () => {
     await writeFile(
       join(fileFolderRoot, 'src', 'frames', 'Hero.tsx'),
       'export default function Hero() { return "edited"; }\n',
+    );
+
+    await vi.waitFor(() => {
+      expect(events).toContainEqual({ t: 'file-changed', file: 'files/demo/src/frames/Hero.tsx' });
+      expect(events).toContainEqual({ t: 'hmr-update', file: 'files/demo/src/frames/Hero.tsx' });
+    }, { timeout: 3000, interval: 30 });
+  });
+
+  it('P3 self-write suppression: swallows the change notification for a path the tracker says was self-written', async () => {
+    await writeFile(
+      join(fileFolderRoot, 'src', 'frames', 'Hero.tsx'),
+      'export default function Hero() { return null; }\n',
+    );
+
+    const { events, emit } = collect();
+    const tracker = new SelfWriteTracker();
+    openHandles.push(watchFrameFiles(projectRoot, fileFolderRoot, emit, tracker));
+
+    const heroPath = join(fileFolderRoot, 'src', 'frames', 'Hero.tsx');
+    tracker.markWritten(heroPath);
+    await writeFile(heroPath, 'export default function Hero() { return "self-written"; }\n');
+
+    // Give chokidar's awaitWriteFinish window a chance to fire (or not).
+    await new Promise((r) => setTimeout(r, 300));
+    expect(events).toEqual([]);
+    expect(tracker.consume(heroPath)).toBe(false); // already consumed by the watcher
+  });
+
+  it('P3 self-write suppression: still emits normally for an untracked (external) edit', async () => {
+    await writeFile(
+      join(fileFolderRoot, 'src', 'frames', 'Hero.tsx'),
+      'export default function Hero() { return null; }\n',
+    );
+
+    const { events, emit } = collect();
+    const tracker = new SelfWriteTracker();
+    openHandles.push(watchFrameFiles(projectRoot, fileFolderRoot, emit, tracker));
+
+    await writeFile(
+      join(fileFolderRoot, 'src', 'frames', 'Hero.tsx'),
+      'export default function Hero() { return "external-edit"; }\n',
     );
 
     await vi.waitFor(() => {

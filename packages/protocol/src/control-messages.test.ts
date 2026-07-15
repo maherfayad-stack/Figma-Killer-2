@@ -8,6 +8,10 @@ import {
   DuplicateFrameResultSchema,
   GetCanvasJsonRequestSchema,
   GetCanvasJsonResultSchema,
+  RedoRequestSchema,
+  RedoResultSchema,
+  UndoRequestSchema,
+  UndoResultSchema,
 } from './control-messages.js';
 
 describe('CreateFrameRequestSchema', () => {
@@ -76,14 +80,62 @@ describe('DuplicateFrameRequestSchema', () => {
   });
 });
 
+describe('UndoRequestSchema / RedoRequestSchema', () => {
+  it('accepts well-formed undo/redo requests', () => {
+    const undoReq = { kind: 'undo', requestId: 'r4', fileFolder: 'demo' };
+    const redoReq = { kind: 'redo', requestId: 'r5', fileFolder: 'demo' };
+    expect(UndoRequestSchema.parse(undoReq)).toEqual(undoReq);
+    expect(RedoRequestSchema.parse(redoReq)).toEqual(redoReq);
+  });
+
+  it('rejects a missing fileFolder', () => {
+    expect(UndoRequestSchema.safeParse({ kind: 'undo', requestId: 'r4' }).success).toBe(false);
+    expect(RedoRequestSchema.safeParse({ kind: 'redo', requestId: 'r5' }).success).toBe(false);
+  });
+
+  it('rejects extra/unknown fields (strict)', () => {
+    expect(
+      UndoRequestSchema.safeParse({ kind: 'undo', requestId: 'r4', fileFolder: 'demo', extra: 'nope' }).success,
+    ).toBe(false);
+  });
+});
+
+describe('UndoResultSchema / RedoResultSchema', () => {
+  it('accepts an applied result with a file', () => {
+    const reply = { kind: 'undo-result', requestId: 'r4', fileFolder: 'demo', applied: true, file: 'files/demo/src/frames/Hero.tsx' };
+    expect(UndoResultSchema.parse(reply)).toEqual(reply);
+  });
+
+  it('accepts a not-applied result (empty stack) with a null file and no reason', () => {
+    const reply = { kind: 'redo-result', requestId: 'r5', fileFolder: 'demo', applied: false, file: null };
+    expect(RedoResultSchema.parse(reply)).toEqual(reply);
+  });
+
+  it('accepts a not-applied result carrying a failure reason', () => {
+    const reply = {
+      kind: 'undo-result',
+      requestId: 'r4',
+      fileFolder: 'demo',
+      applied: false,
+      file: null,
+      reason: 'file changed, retry',
+    };
+    expect(UndoResultSchema.parse(reply)).toEqual(reply);
+  });
+});
+
 describe('ControlRequestSchema', () => {
-  it('discriminates between create-frame, get-canvas-json, and duplicate-frame', () => {
+  it('discriminates between create-frame, get-canvas-json, duplicate-frame, undo, and redo', () => {
     const a = ControlRequestSchema.parse({ kind: 'create-frame', requestId: 'r1', fileFolder: 'demo', name: 'X' });
     const b = ControlRequestSchema.parse({ kind: 'get-canvas-json', requestId: 'r2', fileFolder: 'demo' });
     const c = ControlRequestSchema.parse({ kind: 'duplicate-frame', requestId: 'r3', fileFolder: 'demo', sourceName: 'Hero' });
+    const d = ControlRequestSchema.parse({ kind: 'undo', requestId: 'r4', fileFolder: 'demo' });
+    const e = ControlRequestSchema.parse({ kind: 'redo', requestId: 'r5', fileFolder: 'demo' });
     expect(a.kind).toBe('create-frame');
     expect(b.kind).toBe('get-canvas-json');
     expect(c.kind).toBe('duplicate-frame');
+    expect(d.kind).toBe('undo');
+    expect(e.kind).toBe('redo');
   });
 
   it('rejects an unknown kind', () => {
@@ -161,9 +213,25 @@ describe('ControlReplySchema', () => {
       framePath: 'src/frames/HeroCopy.tsx',
     });
     const errReply = ControlReplySchema.parse({ kind: 'control-error', requestId: 'r1', reason: 'boom' });
+    const undoReply = ControlReplySchema.parse({
+      kind: 'undo-result',
+      requestId: 'r4',
+      fileFolder: 'demo',
+      applied: true,
+      file: 'files/demo/src/frames/Hero.tsx',
+    });
+    const redoReply = ControlReplySchema.parse({
+      kind: 'redo-result',
+      requestId: 'r5',
+      fileFolder: 'demo',
+      applied: false,
+      file: null,
+    });
     expect(okReply.kind).toBe('get-canvas-json-result');
     expect(dupReply.kind).toBe('duplicate-frame-result');
     expect(errReply.kind).toBe('control-error');
+    expect(undoReply.kind).toBe('undo-result');
+    expect(redoReply.kind).toBe('redo-result');
   });
 
   it('rejects a bare DaemonEvent-shaped message (has `t`, not `kind`)', () => {

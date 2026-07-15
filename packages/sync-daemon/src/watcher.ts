@@ -2,6 +2,7 @@ import { watch as chokidarWatch, type FSWatcher } from 'chokidar';
 import { join } from 'node:path';
 import type { DaemonEvent } from '@ccs/protocol';
 import { toProjectRelative } from './paths.js';
+import type { SelfWriteTracker } from './self-write-tracker.js';
 
 /**
  * FS watching (chokidar) — playbook §4/P1 step 5:
@@ -39,6 +40,16 @@ export function watchFrameFiles(
   projectRoot: string,
   fileFolderRoot: string,
   emit: (event: DaemonEvent) => void,
+  /** P3 self-write suppression (ADR-0013 carry-forward, `self-write-
+   * tracker.ts`): when provided, an in-place edit whose path was just
+   * written by the daemon's own op-apply/undo/redo path is swallowed
+   * here instead of re-broadcast — that write-through path already emits
+   * its own `file-changed`/`hmr-update` (paired with `uid-remap`), so
+   * without this every canvas op would double-fire the pair once
+   * explicitly and once via this watcher rediscovering the same change a
+   * `stabilityThreshold` later. Optional (defaults to no suppression) so
+   * every pre-P3 caller/test keeps its exact original behavior. */
+  selfWriteTracker?: SelfWriteTracker,
 ): WatchHandle {
   const framesDir = join(fileFolderRoot, 'src', 'frames');
   const watcher: FSWatcher = chokidarWatch(framesDir, {
@@ -51,6 +62,7 @@ export function watchFrameFiles(
     emit({ t: 'file-changed', file: toProjectRelative(projectRoot, path) });
   };
   const onEdit = (path: string) => {
+    if (selfWriteTracker?.consume(path)) return;
     const file = toProjectRelative(projectRoot, path);
     emit({ t: 'file-changed', file });
     emit({ t: 'hmr-update', file });
