@@ -22,8 +22,10 @@
     "zustand": "catalog:"
   },
   "devDependencies": {
+    "@ccs/ast-engine": "workspace:*",
     "@ccs/sync-daemon": "workspace:*",
     "@ccs/tokens": "workspace:*",
+    "@ccs/vite-plugin-source-uid": "workspace:*",
     "@playwright/test": "catalog:",
     "@types/node": "catalog:",
     "@types/react": "catalog:",

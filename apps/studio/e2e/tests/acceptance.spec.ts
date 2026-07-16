@@ -7,8 +7,10 @@ import { test, expect, type Page, type BrowserContext } from '@playwright/test';
 import { createServer as createViteServer, type ViteDevServer } from 'vite';
 import prettier from 'prettier';
 import { openProject, type DaemonHandle } from '@ccs/sync-daemon';
-import type { FrameMeta } from '@ccs/protocol';
-import { buildFrameSource, buildNewCanvasJsonEntry, frameSourcePath, patchFramesRegistry } from '@ccs/canvas';
+import { applyOp, buildTree } from '@ccs/ast-engine';
+import { transformSourceUid } from '@ccs/vite-plugin-source-uid';
+import type { FrameMeta, NodeUid, TreeNode } from '@ccs/protocol';
+import { buildNewCanvasJsonEntry, frameSourcePath, patchFramesRegistry } from '@ccs/canvas';
 
 /**
  * ============================================================================
@@ -51,12 +53,32 @@ const STUDIO_PORT = 5557;
 const DAEMON_PORT_START = 4780;
 const FRAME_SERVER_PORT_START = 5280;
 
-// Dynamic-node acceptance fixture (see this file's module doc (d)) — a REAL
-// frame file so it shows up in the studio's PagesPanel (which only lists
-// real daemon-reported frames), matched by `framePath` to the hand-authored
-// `testimonialsTree` mock tree-snapshot fixture (`engine/tree-fixtures.ts`).
+// Dynamic-node acceptance fixture (see this file's module doc (d)/(i)) — a
+// REAL frame file so it shows up in the studio's PagesPanel (which only
+// lists real daemon-reported frames) AND in the LIVE `tree-snapshot` the
+// daemon now emits from this exact file (P5 RESUME item 1/2 — no more
+// hand-authored `tree-fixtures.ts` mock in the production path). Hand-
+// written (not `buildFrameSource`'s generic static template) specifically
+// so it contains a REAL `.map()`-generated dynamic subtree (playbook §0
+// editable-surface contract) for test (i) below to select against.
 const TESTIMONIALS_NAME = 'Testimonials';
 const TESTIMONIALS_TSX = join(DEMO_ROOT, frameSourcePath(TESTIMONIALS_NAME));
+const TESTIMONIALS_SOURCE = `export default function Testimonials() {
+  const quotes = ["Great product", "Loved it"];
+  return (
+    <section>
+      <h2>Testimonials</h2>
+      <div>
+        {quotes.map((quote) => (
+          <article key={quote}>
+            <p>{quote}</p>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+`;
 
 let daemon: DaemonHandle;
 let viteServer: ViteDevServer;
@@ -74,7 +96,7 @@ test.beforeAll(async () => {
   originalFramesTs = await readFile(FRAMES_TS, 'utf8');
   originalCanvasJson = await readFile(CANVAS_JSON, 'utf8');
 
-  await writeFile(TESTIMONIALS_TSX, buildFrameSource(TESTIMONIALS_NAME), 'utf8');
+  await writeFile(TESTIMONIALS_TSX, TESTIMONIALS_SOURCE, 'utf8');
   const patchedFramesTs = patchFramesRegistry(originalFramesTs, TESTIMONIALS_NAME);
   await writeFile(FRAMES_TS, patchedFramesTs, 'utf8');
   const meta: FrameMeta = JSON.parse(originalCanvasJson);
@@ -130,18 +152,106 @@ async function selectFrame(name: string): Promise<void> {
   await page.getByRole('tab', { name: 'Layers' }).click();
 }
 
+/** Reads the `selected: <uid>` text StatusBar.tsx renders once a node is
+ * selected (`workspace-store`'s `selectedUid`) — the ONE place in the
+ * studio chrome DOM that exposes the raw uid string for a test to read. */
+async function readSelectedUidFromStatusBar(): Promise<string> {
+  const text = await page.getByTestId('statusbar').innerText();
+  const match = /selected: (\S+)/.exec(text);
+  if (!match) throw new Error(`statusbar did not render a selected uid: "${text}"`);
+  return match[1]!;
+}
+
+/** Pre-order-flattens a `TreeNode` (root first, then children, skipping
+ * fragments — they carry no DOM node/data-uid, same rule build-tree's own
+ * conformance test uses) — for comparing document-order position against
+ * the babel-tagged output's `data-uid` sequence below. */
+function flattenTreeNodes(node: TreeNode, out: TreeNode[] = []): TreeNode[] {
+  if (node.kind !== 'fragment') out.push(node);
+  for (const child of node.children) flattenTreeNodes(child, out);
+  return out;
+}
+
+/** Every `data-uid="..."` value in the babel-transformed source, in
+ * DOCUMENT (textual) order — a parent's opening tag always precedes its
+ * children's in the source text, so this order lines up 1:1 with
+ * `flattenTreeNodes`'s pre-order walk of the SAME source (this is exactly
+ * the comparison method `packages/ast-engine/src/build-tree.test.ts`'s own
+ * ADR-0017 conformance test uses). */
+function extractDataUidsInOrder(transformedCode: string): string[] {
+  const uids: string[] = [];
+  const pattern = /data-uid="([^"]+)"/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(transformedCode))) uids.push(match[1]!);
+  return uids;
+}
+
 test('(a) opening the Demo project connects the real studio chrome to the real daemon', async () => {
   await openDemoWorkspace();
   await expect(page.getByTestId('toolbar')).toBeVisible();
 });
 
-test('(b) Pages -> Layers: selecting Hero shows its real layer tree (h1/p/button/button)', async () => {
+test('(b) Pages -> Layers: selecting Hero shows its LIVE daemon-derived layer tree, updates live on a real file edit, and a Layers-selected uid === the P2 bridge uid === an applyOp target', async () => {
   await selectFrame('Hero');
   const tree = page.getByTestId('layers-tree');
   await expect(tree).toBeVisible();
   await expect(tree.getByText('h1', { exact: true })).toBeVisible();
   await expect(tree.getByText('p', { exact: true })).toBeVisible();
   await expect(tree.getByText('button', { exact: true }).first()).toBeVisible();
+
+  // --- liveness (P5 RESUME item 1/2): the panel above is now backed by a
+  // REAL `tree-snapshot` DaemonEvent (`packages/sync-daemon/src/tree-
+  // snapshot.ts`), not the retired `tree-fixtures.ts` mock. Prove it by
+  // editing the REAL file on disk (no Inspector/op involved) and watching
+  // the LayersPanel pick up a brand-new node, then revert — leaving
+  // `HERO_TSX` byte-identical to `originalHeroSource` before test (c)
+  // (which asserts an exact minimal diff against it) runs. ---
+  const LIVE_MARKER_TAG = 'blockquote';
+  const liveEditedSource = originalHeroSource.replace(
+    '</section>',
+    `      <${LIVE_MARKER_TAG}>live edit marker</${LIVE_MARKER_TAG}>\n    </section>`,
+  );
+  await writeFile(HERO_TSX, liveEditedSource, 'utf8');
+  await expect(tree.getByText(LIVE_MARKER_TAG, { exact: true })).toBeVisible({ timeout: 10_000 });
+
+  await writeFile(HERO_TSX, originalHeroSource, 'utf8');
+  await expect(tree.getByText(LIVE_MARKER_TAG, { exact: true })).toHaveCount(0, { timeout: 10_000 });
+  expect(await readFile(HERO_TSX, 'utf8')).toBe(originalHeroSource); // fixture restored before test (c)/(d)/(e)
+
+  // --- uid consistency (this task's core acceptance bullet): the uid the
+  // LayersPanel puts into `selectedUid` for the <p> node must be BYTE-
+  // IDENTICAL to (1) what ast-engine's `buildTree` (the exact function the
+  // daemon just used to build the tree above) assigns it, (2) what the
+  // REAL `@ccs/vite-plugin-source-uid` babel plugin (what the P2 bridge
+  // actually tags `data-uid` with in the live iframe DOM) assigns the SAME
+  // node, and (3) a uid `applyOp` (P3's real write-back engine) can
+  // resolve to precisely that node and no other. ---
+  await tree.getByText('p', { exact: true }).click();
+  const selectedUid = await readSelectedUidFromStatusBar();
+
+  const liveTree = buildTree(originalHeroSource, 'src/frames/Hero.tsx');
+  const treeNodes = flattenTreeNodes(liveTree);
+  const selectedIndex = treeNodes.findIndex((n) => n.uid === selectedUid);
+  expect(selectedIndex).toBeGreaterThanOrEqual(0);
+  expect(treeNodes[selectedIndex]?.tag).toBe('p'); // sanity: really the <p>, not some other node
+
+  // (2) tree uid === bridge uid: same document-order position in the REAL
+  // babel-tagged output the bridge injects into the iframe.
+  const { code: babelTaggedCode } = transformSourceUid(originalHeroSource, { relPath: 'src/frames/Hero.tsx' });
+  const babelUids = extractDataUidsInOrder(babelTaggedCode);
+  expect(babelUids[selectedIndex]).toBe(selectedUid);
+
+  // (3) tree uid === applyOp target: a pure, offline (no daemon mutation —
+  // real op-driven writes are covered by test (c)/(d)) `set-text` against
+  // this exact uid changes ONLY the <p> line, never <h1>/<button>.
+  const probe = applyOp(originalHeroSource, {
+    t: 'set-text',
+    uid: selectedUid as NodeUid,
+    text: 'UID_CONSISTENCY_PROBE',
+  });
+  expect(probe.newText).toContain('UID_CONSISTENCY_PROBE');
+  expect(probe.newText).toContain('Plan your next trip effortlessly'); // h1 untouched
+  expect(probe.newText).toContain('Start planning'); // button untouched
 });
 
 test('(c) editing a static layer’s text via the Inspector writes the REAL Hero.tsx through the real P3 engine, prettier-formatted, minimally diffed', async () => {
@@ -261,15 +371,23 @@ test('(h) RTL: the dock panels mirror under dir="rtl" (CSS logical properties + 
   await rtlPage.close();
 });
 
-test('(i) Inspector: a dynamic node (Testimonials fixture) is read-only with "Open in IDE"; a static node is editable', async () => {
+test('(i) Inspector: a dynamic node (Testimonials fixture, a REAL .map() in the live file) is read-only with "Open in IDE"; a static node is editable', async () => {
   await selectFrame(TESTIMONIALS_NAME);
   const tree = page.getByTestId('layers-tree');
   await expect(tree).toBeVisible();
+  // `h2`/`div` are the LIVE tree's top-level rows (`section`'s children —
+  // the root itself is never its own row, see `LayersPanel.tsx`); confirms
+  // the panel is rendering the REAL daemon-derived tree for this file, not
+  // a stale/fixture one.
+  await expect(tree.getByText('h2', { exact: true })).toBeVisible();
 
-  // Expand down to a dynamic (.map()-generated) leaf: root `section` ->
-  // its `div` child (the mapped-list container) -> the mapped card itself.
-  await page.getByRole('button', { name: 'Expand' }).first().click(); // expand section
-  await page.getByRole('button', { name: 'Expand' }).first().click(); // expand the div (only remaining expandable row)
+  // Expand down to a dynamic (.map()-generated) leaf: `div` (the mapped-
+  // list container) -> the mapped `article` itself -> its `p` child. Both
+  // `article` and `p` are inside the source's `.map()` callback, so both
+  // are `dynamic:true` (playbook §0 editable-surface contract) — real
+  // ast-engine `buildTree` output, not a hand-authored mock.
+  await page.getByRole('button', { name: 'Expand' }).first().click(); // expand div
+  await page.getByRole('button', { name: 'Expand' }).first().click(); // expand the article (only remaining expandable row)
   const dynamicBadges = tree.getByTestId('dynamic-badge');
   await expect(dynamicBadges.first()).toBeVisible();
   await dynamicBadges.first().locator('xpath=ancestor::div[@role="treeitem"]').click();

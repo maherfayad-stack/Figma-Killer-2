@@ -8,17 +8,18 @@ import { useNodeOps } from './use-node-ops.js';
  * LayersPanel (playbook §2.2 `layers.cljs`/`layer_item.cljs`): a
  * virtualized, DERIVED view of the AST tree (playbook §5 pitfall #4: "layers
  * tree = derived view of the AST, NEVER a store") — it reads
- * `workspace-store`'s `currentTree()`, which resolves against the mock
- * `tree-snapshot` fixtures (daemon gap, see `tree-fixtures.ts`). Nothing
- * about a layer's identity is stored here; the tree is recomputed from the
- * source of truth (mock today, real `tree-snapshot` events at integration)
- * on every render.
+ * `workspace-store`'s `currentTree()`, which resolves against LIVE
+ * `tree-snapshot` `DaemonEvent`s (P5 RESUME item 2, `use-tree-snapshot-
+ * sync.ts`), sourced from the real sync-daemon's `tree-snapshot.ts`
+ * (buildTree over the frame's actual on-disk source, ADR-0017 uid
+ * consistency). Nothing about a layer's identity is stored here; the tree
+ * is recomputed from the source of truth on every render, and updates live
+ * as the daemon rebroadcasts a fresh snapshot after every edit/HMR.
  *
  * Lock/hide are STUDIO-ONLY visual aids (playbook: "stored in canvas.json")
  * — modeled here as local component state (`hiddenUids`/`lockedUids`) since
  * writing them into `.studio/canvas.json` requires a daemon API this phase
- * doesn't add (CR, same daemon-gap family as tree-snapshot); the toggle UX
- * itself is real and wired for that swap-in.
+ * doesn't add (CR); the toggle UX itself is real and wired for that swap-in.
  */
 export function LayersPanel(): React.ReactElement {
   const framePath = useWorkspaceStore((s) => s.framePath);
@@ -26,12 +27,20 @@ export function LayersPanel(): React.ReactElement {
   const expandedUids = useWorkspaceStore((s) => s.expandedUids);
   const selectNode = useWorkspaceStore((s) => s.selectNode);
   const toggleExpanded = useWorkspaceStore((s) => s.toggleExpanded);
-  const currentTree = useWorkspaceStore((s) => s.currentTree);
+  // NOTE (bug found via this task's own e2e liveness acceptance run — the
+  // SAME pitfall `Inspector.tsx`'s existing comment documents for
+  // `selectedNode`): the selector must CALL `currentTree()` INSIDE the
+  // selector callback, not outside it. `useWorkspaceStore((s) =>
+  // s.currentTree)` subscribes to the FUNCTION reference (stable forever),
+  // so the panel never re-rendered when a live `tree-snapshot` updated
+  // `trees` without `framePath`/`selectedUid`/`expandedUids` also
+  // changing — i.e. it worked once per frame selection but never updated
+  // again after that. `(s) => s.currentTree()` subscribes to the COMPUTED
+  // TREE, whose reference genuinely changes on every new snapshot.
+  const tree = useWorkspaceStore((s) => s.currentTree());
   const [hiddenUids, setHiddenUids] = React.useState<Set<string>>(new Set());
   const [lockedUids, setLockedUids] = React.useState<Set<string>>(new Set());
   const nodeOps = useNodeOps();
-
-  const tree = currentTree();
 
   if (!framePath || !tree) {
     return (

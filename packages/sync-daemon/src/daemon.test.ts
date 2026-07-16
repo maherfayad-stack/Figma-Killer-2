@@ -2,8 +2,9 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { WebSocket } from 'ws';
+import { WebSocket, type RawData } from 'ws';
 import simpleGit from 'simple-git';
+import { buildTree } from '@ccs/ast-engine';
 import type { DaemonEvent, ProjectInfo } from '@ccs/protocol';
 import { openProject, type DaemonHandle, type StartViteServerFn } from './daemon.js';
 import { readCanvasJson } from './canvas-json.js';
@@ -63,10 +64,51 @@ async function connectAndGetBootstrap(
   return { socket, bootstrap };
 }
 
+/**
+ * Connects and immediately attaches ONE persistent accumulator — BEFORE
+ * any `await`, so it can never race against `getInitialEvents`'s replay
+ * (bootstrap + any queued `tree-snapshot`s, sent back-to-back in the same
+ * synchronous `connection` handler turn — see `ws-server.ts`). Using
+ * `connectAndGetBootstrap`'s separate `.once('message', ...)` followed by a
+ * LATER `.on('message', ...)` attach has an inherent gap between them (the
+ * `await` yields to the event loop) that can silently drop a message that
+ * arrives in that gap — exactly the flake the dedicated tree-snapshot tests
+ * below need to avoid. The returned array's first entry is always the bare
+ * `ProjectInfo` bootstrap (no `t` field).
+ */
+function connectAndCollect(port: number): { socket: WebSocket; events: DaemonEvent[] } {
+  const socket = new WebSocket(`ws://127.0.0.1:${port}`);
+  const events: DaemonEvent[] = [];
+  socket.on('message', (data) => {
+    const parsed = JSON.parse(data.toString());
+    if ('t' in parsed) events.push(parsed);
+  });
+  return { socket, events };
+}
+
+/**
+ * Waits for the next `DaemonEvent`, SKIPPING any `tree-snapshot` — P5's
+ * per-connection `getInitialEvents` replay (`ws-server.ts`) can now queue
+ * one right after the bootstrap `ProjectInfo` for any fixture file that
+ * already parses as valid JSX at connect-time (several tests below write a
+ * real JSX fixture BEFORE calling `openProject`). None of the pre-existing
+ * assertions using this helper are testing tree-snapshot content — that's
+ * covered by dedicated tree-snapshot tests — so this helper stays blind to
+ * it rather than becoming racy against whether the replay lands before or
+ * after a given `.once('message', ...)` attaches.
+ */
 function nextEvent(socket: WebSocket): Promise<DaemonEvent> {
-  return new Promise((resolve) =>
-    socket.once('message', (data) => resolve(JSON.parse(data.toString()))),
-  );
+  return new Promise((resolve) => {
+    const handler = (data: RawData): void => {
+      const event = JSON.parse(data.toString()) as DaemonEvent;
+      if (event.t === 'tree-snapshot') {
+        socket.once('message', handler);
+        return;
+      }
+      resolve(event);
+    };
+    socket.once('message', handler);
+  });
 }
 
 describe('openProject', () => {
@@ -332,6 +374,144 @@ export function getFrame(name: string | null): ComponentType | null {
   const HERO_ABS = () => join(projectRoot, 'files', 'demo', 'src', 'frames', 'Hero.tsx');
   const HERO_PROJECT_REL = 'files/demo/src/frames/Hero.tsx';
   const HERO_FF_REL = 'src/frames/Hero.tsx';
+
+  // ---- P5: tree-snapshot emission (STATE.md "P5 RESUME HERE" item 1) ----
+
+  it('P5 tree-snapshot: a newly-connecting client receives the live tree for every frame already on disk at project-open', async () => {
+    await writeFile(HERO_ABS(), HERO_JSX_SOURCE);
+    const { startVite, stopAll } = makeFakeStartVite();
+    daemon = await openProject({
+      projectRoot,
+      startVite,
+      daemonPortStart: 59900,
+      frameServerPortStart: 59910,
+    });
+
+    const { socket, events } = connectAndCollect(daemon.daemonPort);
+
+    await vi.waitFor(
+      () => {
+        expect(events.some((e) => e.t === 'tree-snapshot' && e.file === HERO_FF_REL)).toBe(true);
+      },
+      { timeout: 3000, interval: 30 },
+    );
+
+    const snapshot = events.find(
+      (e) => e.t === 'tree-snapshot' && e.file === HERO_FF_REL,
+    ) as Extract<DaemonEvent, { t: 'tree-snapshot' }>;
+    // Byte-identical to what ast-engine's own `buildTree` produces on the
+    // SAME source — proves the daemon isn't reimplementing uid derivation,
+    // just reading the file and delegating (ADR-0017).
+    expect(snapshot.tree).toEqual(buildTree(HERO_JSX_SOURCE, HERO_FF_REL));
+
+    socket.terminate();
+    await stopAll();
+  });
+
+  it('P5 tree-snapshot: editing a frame file on disk broadcasts a fresh live tree matching buildTree on the new source', async () => {
+    await writeFile(HERO_ABS(), HERO_JSX_SOURCE);
+    const { startVite, stopAll } = makeFakeStartVite();
+    daemon = await openProject({
+      projectRoot,
+      startVite,
+      daemonPortStart: 59920,
+      frameServerPortStart: 59930,
+      treeSnapshotDebounceMs: 20,
+    });
+
+    const { socket, events } = connectAndCollect(daemon.daemonPort);
+
+    // Drain the project-open replay first so the assertion below only sees
+    // the snapshot produced by the edit below.
+    await vi.waitFor(
+      () => expect(events.some((e) => e.t === 'tree-snapshot')).toBe(true),
+      { timeout: 3000, interval: 30 },
+    );
+    events.length = 0;
+
+    const EDITED_SOURCE = `export default function Hero() {
+  return (
+    <div>
+      <h1>Title</h1>
+      <p>New paragraph</p>
+      {[1, 2].map((i) => (
+        <span key={i}>{i}</span>
+      ))}
+    </div>
+  );
+}
+`;
+    await writeFile(HERO_ABS(), EDITED_SOURCE);
+
+    await vi.waitFor(
+      () => expect(events.some((e) => e.t === 'tree-snapshot')).toBe(true),
+      { timeout: 3000, interval: 30 },
+    );
+
+    const snapshot = events.find((e) => e.t === 'tree-snapshot') as Extract<
+      DaemonEvent,
+      { t: 'tree-snapshot' }
+    >;
+    expect(snapshot.file).toBe(HERO_FF_REL); // file-folder-relative (ADR-0018 item 5 precedent), not project-relative
+    expect(snapshot.tree).toEqual(buildTree(EDITED_SOURCE, HERO_FF_REL));
+    // The new <p> node's uid matches the EXACT astPath buildTree/the P2
+    // bridge/applyOp's resolver would all independently derive for it.
+    expect(snapshot.tree.children[1]?.tag).toBe('p');
+    expect(snapshot.tree.children[1]?.uid).toBe(`${HERO_FF_REL}:d0.1`);
+
+    socket.terminate();
+    await stopAll();
+  });
+
+  it('P5 tree-snapshot: an op-driven edit (Inspector set-text) also broadcasts a fresh live tree (self-write-suppressed watcher path is covered explicitly)', async () => {
+    await writeFile(HERO_ABS(), HERO_JSX_SOURCE);
+    const { startVite, stopAll } = makeFakeStartVite();
+    daemon = await openProject({
+      projectRoot,
+      startVite,
+      daemonPortStart: 59960,
+      frameServerPortStart: 59970,
+      treeSnapshotDebounceMs: 20,
+    });
+
+    const { socket, events } = connectAndCollect(daemon.daemonPort);
+
+    await vi.waitFor(
+      () => expect(events.some((e) => e.t === 'tree-snapshot')).toBe(true),
+      { timeout: 3000, interval: 30 },
+    );
+    events.length = 0;
+
+    socket.send(
+      JSON.stringify({
+        kind: 'canvas-op',
+        opId: 'settext-1',
+        fileFolder: 'demo',
+        op: { t: 'set-text', uid: `${HERO_FF_REL}:d0.0`, text: 'Renamed Title' },
+      }),
+    );
+
+    await vi.waitFor(
+      () => expect(events.some((e) => e.t === 'tree-snapshot')).toBe(true),
+      { timeout: 3000, interval: 30 },
+    );
+
+    // This is the watcher's self-write-suppressed path (the write went
+    // through applyOp/FileOpQueue, not a raw external edit) — the
+    // tree-snapshot above can ONLY have come from `handleCanvasOp`'s
+    // explicit `treeSnapshotStore.scheduleRecompute` call, proving that
+    // path is real and not just the watcher's.
+    const onDisk = await readFile(HERO_ABS(), 'utf8');
+    const snapshot = events.find((e) => e.t === 'tree-snapshot') as Extract<
+      DaemonEvent,
+      { t: 'tree-snapshot' }
+    >;
+    expect(snapshot.tree).toEqual(buildTree(onDisk, HERO_FF_REL));
+    expect(onDisk).toContain('Renamed Title');
+
+    socket.terminate();
+    await stopAll();
+  });
 
   it('P3 write-through: applies insert-node, writes the file atomically, and broadcasts file-changed/hmr-update/uid-remap(file-folder-relative)/op-applied', async () => {
     await writeFile(HERO_ABS(), HERO_JSX_SOURCE);

@@ -1,24 +1,26 @@
 import type { TreeNode } from '@ccs/protocol';
 
 /**
- * MOCK `tree-snapshot` fixtures — DAEMON GAP (flag to P1/P3 owner + me,
- * per this task's brief): `packages/sync-daemon` never emits the FROZEN
- * `tree-snapshot` `DaemonEvent` (ADR-0009's `TreeNode` shape is defined in
- * `@ccs/protocol`, but nothing in `packages/sync-daemon/src/**` constructs
- * or broadcasts one — verified by grep, zero hits). `LayersPanel` needs a
- * live JSX tree per selected frame to be real; until the daemon gap closes,
- * these hand-authored fixtures (uid format matching the ADR-0017 `d<root>.
- * <idx>...` astPath encoding, so a future swap-in of real tree-snapshots
- * needs no uid-shape change downstream) stand in.
+ * TEST-ONLY `tree-snapshot` fixtures (P5 RESUME item 2 — the daemon gap
+ * this doc used to describe is closed: `packages/sync-daemon`'s
+ * `tree-snapshot.ts` now emits the real, frozen `tree-snapshot`
+ * `DaemonEvent`, and `workspace-store.ts`'s `trees` map is populated from
+ * it via `use-tree-snapshot-sync.ts`, not from this file). Production code
+ * (`LayersPanel`/`Inspector`/`workspace-store`) no longer imports
+ * `MOCK_FRAME_TREES` — ONLY `*.test.ts` files seed `workspace-store`'s
+ * `trees` directly via `setTreeSnapshot(framePath, fixtureTree)` when they
+ * need a tree without a real daemon connection. Kept around (uid format
+ * matching the ADR-0017 `d<root>.<idx>...` astPath encoding) purely as
+ * convenient, hand-authored unit-test data — `findNodeByUid` below is
+ * still used by the real store's `selectedNode()`.
  *
  * `heroTree` mirrors `files/demo/src/frames/Hero.tsx` byte-for-byte
  * (section > h1, p, button, button — all static, editable). `pricingTree`
  * mirrors `files/demo/src/frames/Pricing.tsx` (the repo's real Arabic/RTL
  * fixture frame). `testimonialsTree` is synthetic: it demonstrates a
  * `.map()`-generated list (`dynamic: true` throughout the mapped subtree,
- * playbook §0 editable-surface contract) so the Inspector's read-only +
- * "Open in IDE" path has something real to render against without needing
- * the daemon gap closed first.
+ * playbook §0 editable-surface contract) for tests that need a dynamic
+ * node without depending on a real daemon/file fixture.
  */
 
 const HERO_PATH = 'src/frames/Hero.tsx';

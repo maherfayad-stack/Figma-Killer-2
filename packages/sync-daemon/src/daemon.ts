@@ -20,7 +20,8 @@ import { createFrameOnDisk } from './create-frame.js';
 import { duplicateFrameOnDisk } from './duplicate-frame.js';
 import { createGeometryWriter, type GeometryUpdate } from './geometry.js';
 import { FileOpQueue } from './file-op-queue.js';
-import { toProjectRelative } from './paths.js';
+import { toFileFolderRelative, toProjectRelative } from './paths.js';
+import { createTreeSnapshotStore } from './tree-snapshot.js';
 import { allocatePort } from './port-pool.js';
 import { scanProject, type FileFolder } from './scan.js';
 import { resolveContainedPath } from './safe-path.js';
@@ -93,6 +94,9 @@ export interface OpenProjectOptions {
    * the real `startViteServer`. */
   startVite?: StartViteServerFn;
   geometryDebounceMs?: number;
+  /** P5 `tree-snapshot` debounce (default 150ms) — overridable so tests
+   * don't have to wait through the default window. */
+  treeSnapshotDebounceMs?: number;
   /** ADR-0016 addendum / P2 WS-A daemon boot hook: when `true`, every
    * file-folder's Vite dev server boots with a daemon-generated studio
    * config (`writeStudioViteConfig`) layering the source-uid plugin +
@@ -237,6 +241,30 @@ export async function openProject(options: OpenProjectOptions): Promise<DaemonHa
     },
   });
 
+  /**
+   * P5 resume item 1 (STATE.md "P5 RESUME HERE", `tree-snapshot.ts`): the
+   * live-tree cache + debouncer. `onRecomputed` references `control`
+   * before it's assigned below — safe, same forward-reference-via-closure
+   * pattern `geometryWriter.onWritten` already relies on (the callback
+   * only ever RUNS after a debounce timer fires, by which point `control`
+   * is long since assigned; JS closures capture the binding, not a
+   * snapshotted value).
+   */
+  const treeSnapshotStore = createTreeSnapshotStore({
+    onRecomputed: (event) => control.broadcast(event),
+    ...(options.treeSnapshotDebounceMs !== undefined ? { debounceMs: options.treeSnapshotDebounceMs } : {}),
+  });
+  // Populate the cache for every frame ALREADY on disk at project-open
+  // (playbook brief: "on project open (per frame)") — so a client that
+  // connects before any edit happens still gets every frame's current
+  // tree via `getInitialEvents` right after the bootstrap `ProjectInfo`,
+  // rather than only discovering it after the next edit/HMR event.
+  for (const fileFolder of scanned) {
+    for (const frame of fileFolder.frames) {
+      await treeSnapshotStore.computeAndCache(frame.absPath, frame.framePath);
+    }
+  }
+
   function resolveFileFolder(name: string): DaemonFileFolder | undefined {
     return fileFolders.find((f) => f.name === name);
   }
@@ -365,6 +393,13 @@ export async function openProject(options: OpenProjectOptions): Promise<DaemonHa
         inverse: isCanvasOp(result.extra.inverseOp) ? [result.extra.inverseOp] : [],
       });
 
+      // P5 (`tree-snapshot.ts`): an op-driven write self-write-suppresses
+      // the watcher's OWN tree-snapshot trigger (same reason it suppresses
+      // file-changed/hmr-update re-discovery, see watcher-wiring below) —
+      // schedule the recompute explicitly here so the LayersPanel still
+      // updates after an Inspector-driven edit, not just a raw IDE edit.
+      treeSnapshotStore.scheduleRecompute(absFilePath, relPath);
+
       checkpointSchedulers.get(fileFolder.name)?.noteOp(summarizeCanvasOp(op));
     });
   }
@@ -479,6 +514,8 @@ export async function openProject(options: OpenProjectOptions): Promise<DaemonHa
     if (Object.keys(uidRemap).length > 0) {
       control.broadcast({ t: 'uid-remap', file: entry.relPath, map: toNodeUidMap(uidRemap) });
     }
+    // Same self-write-suppression reasoning as `handleCanvasOp` above.
+    treeSnapshotStore.scheduleRecompute(entry.absFilePath, entry.relPath);
   }
 
   function handleSetGeometry(request: SetGeometryRequest): void {
@@ -666,6 +703,7 @@ export async function openProject(options: OpenProjectOptions): Promise<DaemonHa
   const control: ControlServerHandle = createControlServer({
     port: daemonPort,
     getBootstrap: buildBootstrap,
+    getInitialEvents: () => treeSnapshotStore.currentEvents(),
     onCanvasOp: handleCanvasOp,
     onSetGeometry: handleSetGeometry,
     onCreateFrame: handleCreateFrame,
@@ -681,7 +719,29 @@ export async function openProject(options: OpenProjectOptions): Promise<DaemonHa
   const watchHandles: WatchHandle[] = [];
   for (const fileFolder of fileFolders) {
     watchHandles.push(
-      watchFrameFiles(projectRoot, fileFolder.root, (e) => control.broadcast(e), selfWriteTracker),
+      watchFrameFiles(
+        projectRoot,
+        fileFolder.root,
+        (e) => {
+          control.broadcast(e);
+          // P5 (`tree-snapshot.ts`): a genuine external edit (IDE, git
+          // checkout, etc.) to a frame file — NOT an op-driven write (those
+          // are self-write-suppressed before `emit` is even called here,
+          // see `watcher.ts`'s `onEdit`, and are scheduled explicitly from
+          // `handleCanvasOp`/`broadcastAfterUndoRedo` instead, so this can
+          // never double-schedule the same write). Covers both in-place
+          // edits (`hmr-update`) and add/remove (`file-changed` only) —
+          // an add gets an initial tree computed here; a remove's
+          // `computeAndCache` fails soft (ENOENT) and just evicts the
+          // stale cache entry, emitting nothing.
+          if (e.t === 'file-changed' || e.t === 'hmr-update') {
+            const absPath = join(projectRoot, e.file);
+            const relPath = toFileFolderRelative(fileFolder.root, absPath);
+            treeSnapshotStore.scheduleRecompute(absPath, relPath);
+          }
+        },
+        selfWriteTracker,
+      ),
     );
     watchHandles.push(watchCanvasJson(projectRoot, fileFolder.root, (e) => control.broadcast(e)));
   }
@@ -748,6 +808,7 @@ export async function openProject(options: OpenProjectOptions): Promise<DaemonHa
       await geometryWriter.schedule(fileFolder.root, framePath, geometry);
     },
     async close() {
+      treeSnapshotStore.dispose();
       await geometryWriter.flushAll();
       // Flush every file-folder's pending git checkpoint before shutting
       // down so ops applied right before close() aren't silently left

@@ -66,6 +66,9 @@ import {
  *     - first message on every connection: the bare `ProjectInfo`
  *       bootstrap object (no `t` field — structurally distinct from every
  *       `DaemonEvent`, which always has one).
+ *     - immediately after: zero or more `getInitialEvents` replays (P5,
+ *       `tree-snapshot.ts`) — currently every known frame's cached
+ *       tree-snapshot — sent to THAT connection only.
  *     - afterwards: bare `DaemonEvent` objects, broadcast to all
  *       connected clients.
  *     - ADR-0014/0015 control replies (`ControlReply` —
@@ -143,6 +146,16 @@ export interface ControlServerOptions {
   port: number;
   host?: string;
   getBootstrap: () => ProjectInfo;
+  /**
+   * Additive (P5, `tree-snapshot.ts`): events replayed to a NEWLY
+   * connecting client ONLY (never broadcast to existing clients), sent
+   * immediately after the bootstrap `ProjectInfo` — e.g. every currently-
+   * known frame's live tree-snapshot, so a fresh connection's LayersPanel
+   * has data to render before the next edit/HMR event would otherwise
+   * trigger a broadcast. Validated the same way `broadcast` is. Optional
+   * so every pre-existing caller/test needs no change.
+   */
+  getInitialEvents?: () => DaemonEvent[];
   /** `fileFolder` is the P3 CR above — optional, undefined for any caller
    * that predates it. */
   onCanvasOp: (op: CanvasOp, opId: string, fileFolder?: string) => void;
@@ -183,6 +196,9 @@ export function createControlServer(options: ControlServerOptions): ControlServe
   wss.on('connection', (socket) => {
     clients.add(socket);
     socket.send(JSON.stringify(options.getBootstrap()));
+    for (const event of options.getInitialEvents?.() ?? []) {
+      socket.send(JSON.stringify(DaemonEventSchema.parse(event)));
+    }
 
     socket.on('message', (data: RawData) => {
       const rejection = rejectIfInvalidCanvasOp(data);

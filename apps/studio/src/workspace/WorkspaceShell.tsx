@@ -8,6 +8,7 @@ import type { EngineApi } from '../engine/engine-api.js';
 import { useWorkspaceStore } from './workspace-store.js';
 import { useComponentInsert } from './use-component-insert.js';
 import { useWorkspaceKeymap } from './use-workspace-keymap.js';
+import { useTreeSnapshotSync } from './use-tree-snapshot-sync.js';
 import { TopBar } from './TopBar.js';
 import { Toolbar } from './Toolbar.js';
 import { PagesPanel } from './PagesPanel.js';
@@ -44,6 +45,7 @@ function WorkspaceShellInner({ fileName, daemonUrl, onBackToDashboard }: Workspa
   const [leftTab, setLeftTab] = React.useState('pages');
   const insertComponent = useComponentInsert();
   useWorkspaceKeymap();
+  useTreeSnapshotSync();
 
   return (
     <div

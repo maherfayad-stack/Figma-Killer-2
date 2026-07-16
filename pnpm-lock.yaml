@@ -186,12 +186,18 @@ importers:
         specifier: 'catalog:'
         version: 5.0.14(@types/react@19.2.17)(react@19.2.7)(use-sync-external-store@1.6.0(react@19.2.7))
     devDependencies:
+      '@ccs/ast-engine':
+        specifier: workspace:*
+        version: link:../../packages/ast-engine
       '@ccs/sync-daemon':
         specifier: workspace:*
         version: link:../../packages/sync-daemon
       '@ccs/tokens':
         specifier: workspace:*
         version: link:../../packages/tokens
+      '@ccs/vite-plugin-source-uid':
+        specifier: workspace:*
+        version: link:../../packages/vite-plugin-source-uid
       '@playwright/test':
         specifier: 'catalog:'
         version: 1.61.1

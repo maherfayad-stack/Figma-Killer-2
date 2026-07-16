@@ -9,17 +9,12 @@ _Living status board. Append-only decisions log at bottom. Last updated: 2026-07
 **P2 — COMPLETE** (AUDIT-5 PASS, tag `phase-2-complete`). Selection Bridge: source-uid plugin + bridge + canvas edit-mode/overlay. Hard stop LIFTED 2026-07-14. Running P2→P8 gated per phase.
 **P3 — COMPLETE** (AUDIT-6 FAIL→remediated→AUDIT-6b FAIL→remediated→**AUDIT-6c PASS**, tag `phase-3-complete`). AST Write-Back Engine: canvas ops mutate real source (ts-morph+prettier, format-preserving), byte-identical undo, uid-remap, git checkpoints, concurrent-edit guard, and file-folder write-boundary containment (ADR-0020). The core editing loop is live + sandbox-safe.
 **P4 — COMPLETE** (AUDIT-7 FAIL→remediated→**AUDIT-7b PASS**, tag `phase-4-complete`). Design-system ENGINE: token pipeline (Almosafer tokens.js → CSS vars + Tailwind preset, both build-verified), daemon token-CRUD+watch (edit→HMR ~40ms), 39 meta.ts (ADR-0021), frozen engine API (ADR-0022). CSS-injection hardened (3-layer, ADR-0020 pattern).
-**P5 — IN PROGRESS** (studio CHROME): chrome BUILT + green + committed (WIP), NOT yet gated.
+**P5 — COMPLETE** (AUDIT-8 PASS, tag `phase-5-complete`). Studio UI Chrome (Penpot-grade): dock, LayersPanel (LIVE frame AST via daemon tree-snapshot), Inspector (§2.3, ops + token-aware + dynamic→read-only), Toolbar, Components/Tokens panels (real @ccs/tokens), context menu, keyboard map, Dashboard. RTL-first. uid-consistency proven (tree === bridge === applyOp). One Rule intact (studio zero fs writes). 406 unit + 9 e2e green.
 
-## ⏸ SESSION PAUSED 2026-07-15 — P5 RESUME HERE
-**Last committed:** `f9fab96` (tag `phase-5-wip-checkpoint`). ⚠️ Its commit MESSAGE ("feat: add new UI primitives…") is a WORKER SELF-COMMIT (recurring [[workers-self-commit]]) and UNDERSELLS its content — f9fab96 actually contains the FULL P5 chrome + ast-engine `buildTree`: `apps/studio` (37 files: dock, LayersPanel, Inspector, Toolbar, Components/Tokens panels, context menu, keyboard, Dashboard, e2e), `packages/ui` (19: Penpot-grade RTL primitives), `packages/ast-engine` (4: additive `buildTree`), pnpm-lock. Clean scope (NO frozen-protocol/tokens/daemon files). Not amended (origin/main divergence → avoided history rewrite). Tags: phase-0..4-complete + phase-3-wsA-checkpoint + phase-5-wip-checkpoint.
-**Verified green at pause:** ast-engine 150/150 (140 + 10 new buildTree), studio 24/24, ui 16/16, apps/studio e2e 9/9 (real daemon+ast-engine+tokens), monorepo typecheck 12/12. tldraw watermark intact. Real `@ccs/tokens` wired (39 DS components + token sets) via a dev-server catalog bridge. Two critical bugs fixed (Inspector zustand-selector never re-rendered; LayersPanel root-node hid layers).
-**REMAINING to reach `phase-5-complete` (in order):**
-1. **daemon `tree-snapshot` emission — NOT STARTED.** LayersPanel/Inspector currently read a TreeNode FIXTURE (`apps/studio/src/engine/tree-fixtures.ts`), NOT the live frame AST. The additive `ast-engine buildTree(sourceText, relPath): TreeNode` is DONE + green (reuses canonical uid-path, ADR-0017). Wire the daemon: on frame change/open → `buildTree` → broadcast frozen `{t:'tree-snapshot', file, tree}` (debounce HMR bursts). (This is the task that was mid-spawn when paused.)
-2. **studio: swap fixture → live tree-snapshot** (isolated behind `workspace-store.currentTree()`/`selectedNode()` — a one-function swap); e2e test (b) should assert the LIVE tree matches the real frame; verify tree uid === bridge selection uid === applyOp target.
-3. **P5 gate:** fresh adversarial audit → tag `phase-5-complete` + retro. (Watch the recurring "wire-controlled string → sink" vuln class + do the standard One-Rule/boundary/security scan.)
-**P5 carry-forwards surfaced by workers (for P6/P8):** catalog reads are DEV-SERVER-ONLY (Vite middleware `/__ccs/catalog/*`) — no production/static path; right fix = a daemon control-message (daemon is sole fs-reader). Local projects registry (`~/.studio/projects.json`), lock/hide persistence into canvas.json, byte-exact clone-node primitive — all need daemon APIs (P6). 39 meta.ts live untracked in the external design-system repo (versioning home TBD).
-**Then P6** (Backend) — needs HUMAN git-host decision (Gitea vs GitHub App).
+## 🎉 MILESTONE: P0–P5 COMPLETE — the studio is a usable end-to-end design tool.
+Canvas + live frames (P1) → click real JSX nodes (P2) → edit → real source rewritten, format-preserving, undoable, sandbox-safe (P3) → design tokens + component catalog (P4) → full Penpot-grade chrome (P5). Next: P6 backend.
+
+**P6 — NEXT** (Backend: Supabase + git-host). ⚠️ NEEDS HUMAN DECISION at kickoff: git-host = self-hosted Gitea vs GitHub App integration (behind the `packages/git-host` interface).
 **Standing rules:** workers/auditors = Sonnet 5 medium; run heavy workers SEQUENTIALLY (parallel double-burns the session limit — [[session-limit-clean-respawn]]); workers self-commit despite the rule → git-reconcile at every gate ([[workers-self-commit]]); orchestrator owns tags + gate commits; frozen protocol/design-system/playbook off-limits.
 
 ## Phase status board
@@ -31,8 +26,8 @@ _Living status board. Append-only decisions log at bottom. Last updated: 2026-07
 | P2 | Selection Bridge | ✅ complete (tag phase-2-complete) | P1 ✅ |
 | P3 | AST Write-Back Engine (critical path) | ✅ complete (tag phase-3-complete) | P2 ✅ |
 | P4 | Design System: Tokens + Components | ✅ complete (tag phase-4-complete) | P3 ✅ |
-| P5 | Studio UI Chrome | 🟡 chrome built+green (tag phase-5-wip-checkpoint); live-tree + gate remain | P3 ✅ |
-| P6 | Backend (Supabase, git-host) | ⬜ not started | P4,P5 |
+| P5 | Studio UI Chrome | ✅ complete (tag phase-5-complete) | P3 ✅ |
+| P6 | Backend (Supabase, git-host) | 🔜 next [HUMAN: git-host] | P4 ✅,P5 ✅ |
 | P7 | Presence + Comments | ⬜ not started | P6 |
 | P8 | Hardening + Polish | ⬜ not started | P7 |
 
@@ -146,3 +141,15 @@ _(one-command demo per phase recorded here as phases complete)_
 
 ## P4 acceptance demo (one command)
 `pnpm --filter @ccs/tokens test` (112) + `pnpm --filter @ccs/sync-daemon exec vitest run src/token-crud.test.ts` (20, incl. CSS-injection rejection). Live loop: regen `files/demo`, add `bg-aqua-100` to a frame → `vite build` → output CSS has `.bg-aqua-100{background-color:var(--color-aqua-100)}`; edit that token via daemon control-ws → HMR ~40ms.
+
+## P5 retro (≤10 lines)
+- The DATA-vs-CHROME partition (ADR-0022: P4=engine, P5=all UI consuming a frozen API) let P4∥P5 truly parallelize — and after the parallel session-limit double-death, each finish-and-verify'd independently against that frozen seam with no churn.
+- zustand selector-called-outside-the-callback bug appeared THREE times (Inspector, then LayersPanel ×2 workers) — `useStore((s)=>s.fn())` not `useStore((s)=>s.fn)()`. Pattern to grep for in any future zustand code.
+- Live LayersPanel demanded uid-consistency across FOUR producers (babel plugin, bridge, ast-engine applyOp, ast-engine buildTree). Solved by making buildTree REUSE the plugin's uid-path module (not re-derive) — the ADR-0017 corpus discipline paying off again. Proven live in e2e.
+- Studio makes ZERO fs writes — everything through the daemon (One Rule held even for a big UI). localStorage only for studio-local project prefs.
+- The recurring wire-string→sink vuln class (P3 path, P4 CSS) was pre-empted here: the new dev-server catalog bridge inputs go only to in-memory .find()/static-key-lookup — audit found no sink. Pre-empting worked.
+- Worker self-commit recurred (f9fab96, misleading msg) — tagged + documented, not amended (origin divergence). git-reconcile at the gate caught it as always.
+- Carry-forward P5-polish/P8: disable drag on dynamic Layers rows + op-rejected toast; TokensPanel→daemon token-write wiring; byte-exact clone-node; catalog dev-server-only→daemon control-message (P6); git-checkpoint .gitignore warning.
+
+## P5 acceptance demo (one command)
+`pnpm --filter @ccs/studio run test:e2e` → 9/9: builds a landing page using ONLY the studio UI against the real daemon+ast-engine+tokens (insert component, edit text, set class, bind token), clean prettier diff, file-app still builds; live Layers tree + uid-consistency; RTL; dynamic-node read-only. Manual: `pnpm --filter @ccs/studio run dev` (needs a daemon: `pnpm --filter @ccs/canvas run demo:daemon`).
