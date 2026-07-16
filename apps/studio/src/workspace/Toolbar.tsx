@@ -1,18 +1,19 @@
 import * as React from 'react';
-import { Button, Tooltip } from '@ccs/ui';
+import { Button, Tooltip, Icon, type IconName } from '@ccs/ui';
 import { useWorkspaceStore, type ToolId } from './workspace-store.js';
 
 /**
- * Toolbar (playbook §2.1 `top_toolbar.cljs`): "select / frame / insert-
- * component (opens palette) / text / image / comment(stub)".
+ * Toolbar (playbook §2.1 `top_toolbar.cljs`; spec §5.8): "select / frame /
+ * insert-component (opens palette) / text / image / comment(stub)", real
+ * vector icons instead of glyphs/emoji.
  */
-const TOOLS: { id: ToolId; label: string; icon: string }[] = [
-  { id: 'select', label: 'Select (V)', icon: '↖' },
-  { id: 'frame', label: 'Frame (F)', icon: '▭' },
-  { id: 'insert-component', label: 'Insert component (I)', icon: '◇' },
-  { id: 'text', label: 'Text (T)', icon: 'T' },
-  { id: 'image', label: 'Image', icon: '▧' },
-  { id: 'comment', label: 'Comment (stub)', icon: '💬' },
+const TOOLS: { id: ToolId; label: string; icon: IconName }[] = [
+  { id: 'select', label: 'Select (V)', icon: 'move' },
+  { id: 'frame', label: 'Frame (F)', icon: 'board' },
+  { id: 'insert-component', label: 'Insert component (I)', icon: 'component' },
+  { id: 'text', label: 'Text (T)', icon: 'text' },
+  { id: 'image', label: 'Image', icon: 'img' },
+  { id: 'comment', label: 'Comment (stub)', icon: 'comments' },
 ];
 
 export interface ToolbarProps {
@@ -49,7 +50,7 @@ export function Toolbar({ onOpenComponentPalette }: ToolbarProps): React.ReactEl
               if (tool.id === 'insert-component') onOpenComponentPalette();
             }}
           >
-            <span aria-hidden>{tool.icon}</span>
+            <Icon name={tool.icon} size={16} />
           </Button>
         </Tooltip>
       ))}
