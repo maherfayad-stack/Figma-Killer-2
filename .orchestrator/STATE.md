@@ -153,3 +153,28 @@ _(one-command demo per phase recorded here as phases complete)_
 
 ## P5 acceptance demo (one command)
 `pnpm --filter @ccs/studio run test:e2e` → 9/9: builds a landing page using ONLY the studio UI against the real daemon+ast-engine+tokens (insert component, edit text, set class, bind token), clean prettier diff, file-app still builds; live Layers tree + uid-consistency; RTL; dynamic-node read-only. Manual: `pnpm --filter @ccs/studio run dev` (needs a daemon: `pnpm --filter @ccs/canvas run demo:daemon`).
+
+## P5-REWORK ground-truth QA (2026-07-16, orchestrator drove the REAL studio in a browser)
+Human dogfood found P5 broken in real use despite green audits (audits tested op-emission + scripted flows + a design-system STUB, not integrated human UX). Combined P5-rework authorized (HUMAN): fix functionality + Penpot look/feel in ONE pass, CODE-FIRST (no vector/shape tools). P6 on hold (ADR-0023).
+**Confirmed findings (from real browser QA at localhost:5173):**
+1. [BLOCKER, root-caused] `insert-node` DS component writes `import { X } from 'design-system'` but NOTHING makes `design-system` resolvable by a file-app (no dep, no vite alias, no node_modules). → frame crashes ("Failed to resolve import design-system") → cascades: crashed frame = no DOM = selection/inspector/layers/editing ALL dead. This is why "can't edit anything." DS pkg IS named "design-system" (main ./dist/index.js) → fix = daemon studio-vite-config injects a `design-system` alias → DS dist (+ template for standalone), and BUILD the DS dist. (Temp: removed the bad insert from files/demo/Hero.tsx so demo renders.)
+2. [major] Camera doesn't fit/center the frame on open — Hero content dumped bottom-right, mostly off-screen. Bad first impression. Need zoom-to-fit on project open + on frame select.
+3. [major] Layers panel: shows "Select a frame in Pages to see its layers"; selecting a frame did NOT populate the live tree in my QA (needs verification — either selection doesn't drive Layers, or a wiring bug). Layers is a headline panel; must show the live tree reliably.
+4. [design] "Doesn't look/function like Penpot at all" (human) — CONFIRMED. Dashboard is a single bare card (no team sidebar/drafts/grid). Workspace has the right STRUCTURE (Pages/Layers/Assets/Tokens tabs, toolbar, Design inspector, connected) but is sparse, plain, low-density — not Penpot's polished dense UI. Pages vs Frames conflated (Hero/Pricing listed as "Pages" but they're frames).
+5. [minor] WebSocket warning on open ("closed before connection established") — possible double-connect/flaky; verify the ops+canvas connections.
+6. Scope clarifications given to human: Comments = P7 (not built, stub) — correct it's absent. Shapes/vector = deliberately OUT of scope permanently (§5.6); human confirmed code-first, NO vector.
+**REWORK PLAN (not yet started):** (a) fix DS resolution + rebuild DS dist so component-insert works end-to-end; (b) zoom-to-fit camera; (c) fix Layers-from-selection wiring; (d) real Penpot-fidelity design pass on dashboard + workspace chrome; (e) RE-GATE on REAL browser QA (drive it, screenshot, verify editing by hand) — NOT scripted e2e alone. Screenshots: scratchpad/studio-01..04*.png.
+**Process learning:** green automated gates gave false confidence; must dogfood in a browser before tagging any UI phase complete. e2e that asserts "op emitted" ≠ "feature works end-to-end / frame still renders."
+
+## P5-REWORK — WS-6 functionality GATE PASSED (2026-07-16)
+Verified LIVE in browser (daemon restarted to regenerate studio vite config):
+- DS-resolution BLOCKER fixed: `studio-vite-config.ts` now emits `resolve.alias`
+  design-system → design-system/dist/index.js (+ .css) + dist in fs.allow.
+  Confirmed: Hero.tsx with `import { Accolade } from 'design-system'` RENDERS,
+  no crash (this exact import crashed it pre-fix).
+- Camera zoom-to-fit on open (StudioCanvas): all 3 frames fitted in view (was
+  off-screen bottom-right = the "pan doesn't work" symptom).
+- Layers-from-selection: populates (h1/p/button) on Hero select.
+- Pan/context-menu: no real pointer/z-index trap found; symptom was camera-fit.
+Tests: sync-daemon 216/216, canvas 150/150, typecheck clean. No worker self-commit.
+NEXT: WS-1 foundations (tokens/fonts/icons) → WS-3 panels → WS-2 dash → WS-4/5 → re-gate.

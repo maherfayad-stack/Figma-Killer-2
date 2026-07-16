@@ -231,3 +231,29 @@ The file-app template must keep **ZERO `@ccs/*` runtime/dev deps** (P0 standalon
 - **FROZEN engine API (the P4↔P5 seam; P5 mocks it until P4 lands):** `@ccs/tokens` (or `@ccs/design-system`) exports: `TokenModel` (sets, themes, tokens `{name,value,type,group}`, alias resolve); `listComponents(): {name,category,description}[]`; `getPropSchema(name): {props: Record<name,{type,enum?,default?,control,required?}>}`; `tokensForProperty(cssProp): TokenRef[]` (token-aware inputs). Token edits + component inserts flow through EXISTING mechanisms (daemon token-CRUD control-message; P3 `insert-node`+`set-prop` ops) — no CanvasOp/protocol-frozen change.
 - **Studio chrome mirrors Penpot** (ADR-0007); studio UI must support RTL (`dir="rtl"`, CSS logical properties) from day one (§P5 pitfall, GCC market).
 **Sequencing:** spawn P4-engine + P5-chrome workers now, both to the frozen API. Each gates independently (own audit) but both must land before P6. Integration wiring (real P4 API into P5 panels) is a small pass after both cores.
+
+## ADR-0023 — P6 decisions (HUMAN, 2026-07-15): git-host = interface+local (defer concrete); backend = local Supabase
+**Status:** Accepted (human decision). NOT YET STARTED — human paused before P6 to try the tool locally.
+- **git-host:** build `packages/git-host` INTERFACE + a local/self-hosted impl (bare-repo/local git, works offline, no cloud account). DEFER the Gitea-vs-GitHub-App concrete choice to launch. Daemon: clone/pull on open, background push on checkpoint (P3 checkpoints already commit locally).
+- **backend:** local Supabase (CLI/Docker) for schema (teams, members, projects, files-registry, comments-anchors) + auth + project registry + server-backed Dashboard + invites. Real cloud project + secrets wired at LAUNCH (I can't provision cloud/secrets). Local-first must still work offline.
+- **P6 acceptance (adapted, single-machine):** two CLIENTS against two clones of one local bare repo prove git push/pull checkpoint sync (no two real machines needed); invite-flow tested against local Supabase auth.
+- **Scope note:** P6 builds + tests against LOCAL/ephemeral services only; production deploy is a launch task. Pre-freeze the git-host interface + backend data model before spawning (P1/P2/P3 lesson).
+
+## ADR-0024 — P5-REWORK: Penpot-fidelity + functionality (HUMAN "start executing", 2026-07-16)
+**Status:** Accepted. P5 passed automated gates but FAILED the human-use bar (dogfood 2026-07-15/16). Re-open P5 as a combined rework: fix functionality AND redesign chrome to Penpot fidelity in one pass. P6 stays ON HOLD until a working P5 is shown in a browser (human, 2026-07-16).
+**Alignment doc:** `.orchestrator/PENPOT-FIDELITY-SPEC.md` (SINGLE source of truth; mined from a Penpot clone [MPL-2.0], two research briefs in scratchpad). All workers build to it.
+**Constraints (unchanged):** code-first / filesystem-is-truth; NO vector/shape drawing (Penpot rect/ellipse/path/bool/mask + Stroke/Shadow/Blur/Constraints/SVG inspector sections OUT); RTL-first (logical CSS only); protocol frozen (only control-messages.ts additive); design-system/ is external+gitignored (only add alias/dist, never restructure); daemon = sole fs-writer with path containment; workers run NO git (orchestrator commits + reconciles at gates), Sonnet 5 / medium effort, SEQUENTIAL (session-limit memory).
+**Decisions taken (human said "start" with recommended defaults; each is a 1-line veto):**
+- **D1 accent = mint `#7efff5`** (faithful Penpot dark; purple is light-theme only). Port the `.default` theme token values (spec §2.1).
+- **D2 fonts = adopt WorkSans + Vazirmatn** (OFL; Vazirmatn = real Arabic/RTL font; bundle into packages/ui).
+- **D3 page semantics = a "page" is a canvas SURFACE (a tldraw page) persisted in `.studio/canvas.json`; frames (real React frame files) are the BOARDS on the current page.** Frames that are "pages" TODAY become boards in the Layers tree; Pages becomes the surface switcher. Pure spatial metadata → respects the One Rule.
+**Workstream partition (sequential; each = one fresh Sonnet worker, no git):**
+- WS-1 Foundations (packages/ui): port tokens (spec §2), bundle fonts (D2), build `<Icon>` + vendor ~30 Penpot SVGs (spec §3) with MPL NOTICE.
+- WS-2 Dashboard (apps/studio/dashboard): Penpot 3-col shell + hover-kebab cards (spec §4).
+- WS-3 Left panel restructure (apps/studio/workspace [+ minimal packages/canvas]): Pages+Layers in ONE tab (spec §5.2/5.3), D3 page model, layers-tree fidelity (§5.4).
+- WS-4 Assets + Tokens panels (spec §5.6/5.7).
+- WS-5 Right Inspector code-first section stack (spec §5.5/§7).
+- WS-6 Canvas + functionality (packages/canvas, packages/sync-daemon): DS-resolution BLOCKER, pan/context-menu regression, camera zoom-to-fit, layers-from-selection, floating-toolbar restyle (spec §6).
+**Order:** WS-6 FIRST (unblocks "can't edit anything"), then WS-1, WS-3, WS-2, WS-4, WS-5, then RE-GATE.
+**Gate:** REAL browser dogfood (drive it, screenshot every panel, insert a component + confirm the frame still renders & is editable, pan/zoom/context-menu by hand) — NOT scripted e2e alone (per dogfood-ui-before-gating memory).
+**WS-6 DS-resolution diagnosis (confirmed live 2026-07-16):** `studio-vite-config.ts writeStudioViteConfig` emits NO `resolve.alias` for `design-system` and omits it from `server.fs.allow`; the file-folder has zero deps → `import from 'design-system'` is unresolvable → frame crashes → cascades. DS `dist/index.js`+`index.css` ARE built (pkg main `./dist/index.js`). Fix: add a daemon-computed `resolve.alias {'design-system'→<abs>/design-system/dist/index.js, 'design-system/dist/index.css'→…}` + add `<abs>/design-system/dist` to `server.fs.allow`. Alias target is a fixed daemon path (NOT wire input) → no injection risk.

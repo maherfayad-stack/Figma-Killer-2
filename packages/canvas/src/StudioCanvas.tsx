@@ -185,6 +185,11 @@ export function StudioCanvas({
    * (not React state) because it must be read synchronously inside a
    * tldraw store callback that can fire outside React's render cycle. */
   const isSyncingRef = React.useRef(false);
+  /** §6 blocker #3 / playbook §5.9 "Shift+1 fit-all" equivalent on open:
+   * guards the zoom-to-fit effect below so it fires exactly ONCE per
+   * `StudioCanvas` mount (project load), never again after — see that
+   * effect's doc for why. */
+  const hasZoomedToFitRef = React.useRef(false);
 
   // --- ADR-0014/0015 control-request/reply correlation -----------------
   // `get-canvas-json` resolves by `requestId` alone (direct reply carries
@@ -515,6 +520,26 @@ export function StudioCanvas({
     } finally {
       isSyncingRef.current = false;
     }
+  }, [frames, editorReady]);
+
+  // --- §6 blocker #3: camera zoom-to-fit on project open ----------------
+  // Frames used to render fully off-screen (tldraw's default camera sits at
+  // the origin; real frame geometry from `.studio/canvas.json` is
+  // elsewhere), which read to a user as "pan doesn't work" — it wasn't pan,
+  // there was simply nothing on-screen to pan TO. This effect is declared
+  // AFTER the frames->shape sync effect above, so React runs it later in
+  // the same commit: by the time this runs, `editor.createShape` calls from
+  // that effect have already landed in the store, and `zoomToFit` sees the
+  // real content bounds. Fires exactly once per mount, gated by
+  // `hasZoomedToFitRef` — deliberately NOT re-triggered on every `frames`
+  // change (e.g. a later frame create/geometry edit), which would yank the
+  // camera out from under a user who has since panned/zoomed manually.
+  React.useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor || !editorReady || hasZoomedToFitRef.current) return;
+    if (frames.length === 0) return; // nothing synced into shapes yet
+    hasZoomedToFitRef.current = true;
+    editor.zoomToFit({ animation: { duration: 200 } });
   }, [frames, editorReady]);
 
   // --- ADR-0015 phantom-frame guard ------------------------------------
