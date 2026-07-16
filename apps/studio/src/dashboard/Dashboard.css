@@ -1,0 +1,83 @@
+/**
+ * Dashboard-only styling that inline `style` props can't express (`:hover`,
+ * `:focus-within`) — everything else in this folder stays inline per the
+ * rest of `apps/studio`'s convention. Logical properties only (RTL-first,
+ * playbook §5.9): no `left`/`right`/`margin-left` anywhere in this file.
+ */
+
+.ccs-project-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  border-radius: var(--ccs-radius);
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.ccs-project-card:hover,
+.ccs-project-card:focus-visible {
+  background: var(--ccs-bg-hover);
+}
+
+/* Hover kebab (Penpot dashboard file-card pattern §4): hidden until the
+ * card is hovered/focused, or the menu inside it is open/focused. */
+.ccs-project-kebab-wrap {
+  position: absolute;
+  inset-block-start: 8px;
+  inset-inline-end: 8px;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.ccs-project-card:hover .ccs-project-kebab-wrap,
+.ccs-project-card:focus-within .ccs-project-kebab-wrap,
+.ccs-project-kebab-wrap:focus-within {
+  opacity: 1;
+}
+
+.ccs-add-project-card {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  block-size: 168px;
+  border: 1px dashed var(--ccs-border);
+  border-radius: var(--ccs-radius);
+  color: var(--ccs-text-subtle);
+  cursor: pointer;
+  transition: border-color 120ms ease, background-color 120ms ease, color 120ms ease;
+}
+
+.ccs-add-project-card:hover,
+.ccs-add-project-card:focus-visible {
+  border-color: var(--ccs-accent);
+  background: var(--ccs-bg-hover);
+  color: var(--ccs-text);
+}
+
+.ccs-sidebar-nav-item {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  inline-size: 100%;
+  padding-block: 8px;
+  padding-inline: 12px;
+  border-radius: var(--ccs-radius);
+  color: var(--ccs-text-muted);
+  font-size: var(--ccs-font-size-md);
+  cursor: pointer;
+}
+
+.ccs-sidebar-nav-item:hover {
+  background: var(--ccs-bg-hover);
+}
+
+.ccs-sidebar-nav-item.is-selected {
+  background: var(--ccs-bg-selected);
+  color: var(--ccs-accent);
+}
