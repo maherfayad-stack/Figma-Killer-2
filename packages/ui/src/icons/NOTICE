@@ -1,0 +1,21 @@
+Penpot icons (c) Kaleidos INC — MPL-2.0
+
+The SVG icon artwork vendored in `packages/ui/src/icons/penpot/`, and the
+path data extracted from it in `packages/ui/src/icons/registry.ts`, is
+original artwork from the Penpot project:
+
+  https://github.com/penpot/penpot
+  path: frontend/resources/images/icons/*.svg
+
+Copyright (c) KALEIDOS INC Sucursal en España SL.
+
+Licensed under the Mozilla Public License 2.0 (MPL-2.0). A copy of the
+license is available at:
+
+  http://mozilla.org/MPL/2.0/
+
+Only the ~29 icons listed in `.orchestrator/PENPOT-FIDELITY-SPEC.md` §3
+were vendored (not Penpot's full ~317-icon set). Files were copied
+unmodified; `registry.ts` is a mechanical extraction of each file's `d`
+path attribute (see the header comment in that file) and is itself a
+derivative subject to the same MPL-2.0 terms as the source SVGs.

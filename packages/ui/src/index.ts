@@ -13,3 +13,4 @@
 export const UI_PACKAGE_PHASE = 'P5' as const;
 
 export * from './primitives/index.js';
+export { Icon, type IconProps, type IconName } from './icons/Icon.js';

@@ -8,76 +8,106 @@
  * RTL-first (playbook §5.9, ADR-0022): every primitive built on top of this
  * file uses CSS LOGICAL properties (inline/block, start/end) exclusively —
  * this file defines physical color/space primitives only, no left/right.
+ *
+ * Values ported from Penpot's `.default` (dark) theme — see
+ * `.orchestrator/PENPOT-FIDELITY-SPEC.md` §2 for the source table and cited
+ * Penpot scss files. Per that spec: existing `--ccs-*` names are NEVER
+ * renamed/removed (many are consumed across apps/studio) — only their
+ * VALUES are updated, and net-new tokens are ADDED.
  */
+
+@import './fonts.css';
 
 :root {
   color-scheme: dark;
 
-  /* --- surfaces (Penpot's near-black workspace, layered dock panels) --- */
-  --ccs-bg-canvas: #18181b;
-  --ccs-bg-panel: #1f1f23;
-  --ccs-bg-panel-raised: #27272b;
-  --ccs-bg-hover: #313136;
+  /* --- surfaces (Penpot dark: near-black workspace, layered dock panels) --- */
+  --ccs-bg-canvas: #18181a;
+  --ccs-bg-deepest: #000000; /* NEW — Penpot background-secondary */
+  --ccs-bg-panel: #18181a;
+  --ccs-bg-panel-raised: #212426;
+  --ccs-bg-hover: #212426;
   --ccs-bg-active: #3a3a90;
-  --ccs-bg-selected: #4c4cff33;
-  --ccs-bg-input: #131316;
+  --ccs-bg-selected: #2e3434;
+  --ccs-bg-input: #212426;
   --ccs-bg-overlay: #1b1b1eF2;
+  --ccs-canvas-backdrop: #bfbfbf; /* NEW — Penpot color-canvas, frames sit on this gray */
 
   /* --- borders --- */
-  --ccs-border: #313136;
-  --ccs-border-strong: #47474e;
-  --ccs-border-focus: #7c7cff;
+  --ccs-border: #2e3434;
+  --ccs-border-strong: #3a4040;
+  --ccs-border-focus: #7efff5;
 
   /* --- text --- */
-  --ccs-text: #e4e4e7;
-  --ccs-text-muted: #a1a1aa;
-  --ccs-text-subtle: #71717a;
-  --ccs-text-inverted: #18181b;
-  --ccs-text-danger: #f87171;
-  --ccs-text-accent: #9494ff;
+  --ccs-text: #ffffff;
+  --ccs-text-muted: #8f9da3;
+  --ccs-text-subtle: #6a767c;
+  --ccs-text-inverted: #18181a;
+  --ccs-text-danger: #ff3277;
+  --ccs-text-accent: #b3fff8;
 
-  /* --- accent (Penpot's signature violet-blue) --- */
-  --ccs-accent: #7c7cff;
-  --ccs-accent-hover: #9494ff;
-  --ccs-accent-active: #6363e6;
+  /* --- icons (NEW — Penpot's icon-default/hover/active) --- */
+  --ccs-icon: #8f9da3;
+  --ccs-icon-hover: #ffffff;
+  --ccs-icon-active: #7efff5;
+
+  /* --- accent (D1: Penpot dark-theme mint, NOT the light-theme purple) --- */
+  --ccs-accent: #7efff5;
+  --ccs-accent-hover: #00d1b8;
+  --ccs-accent-active: #00a692;
   --ccs-accent-contrast: #0b0b10;
+  --ccs-accent-muted: #426158; /* NEW — accent-primary-muted */
+  --ccs-accent-component: #bb97d8; /* NEW — accent-secondary, component-instance layer rows */
 
-  /* --- semantic --- */
-  --ccs-warning: #f5a623;
-  --ccs-danger: #f04444;
-  --ccs-success: #3ecf8e;
-  --ccs-locked: #f5a623;
+  /* --- semantic (fg / bg pairs per Penpot design-tokens.scss) --- */
+  --ccs-warning: #fe9c07;
+  --ccs-warning-bg: #3d2501; /* NEW */
+  --ccs-danger: #c80857;
+  --ccs-danger-bg: #500124; /* NEW */
+  --ccs-danger-fg: #ff3277; /* NEW — foreground-error, brighter than --ccs-danger */
+  --ccs-success: #2d9f8f;
+  --ccs-success-bg: #0a2927; /* NEW */
+  --ccs-info: #0e9be9; /* NEW */
+  --ccs-info-bg: #082c49; /* NEW */
+  --ccs-locked: #fe9c07;
 
-  /* --- spacing scale (4px base) --- */
+  /* --- spacing scale (4px base; Penpot xxs2/xs4/s8/m12/l16/xl20/xxl24/xxxl32) --- */
+  --ccs-space-0: 2px; /* NEW — xxs */
   --ccs-space-1: 4px;
   --ccs-space-2: 8px;
   --ccs-space-3: 12px;
   --ccs-space-4: 16px;
   --ccs-space-5: 20px;
   --ccs-space-6: 24px;
+  --ccs-space-7: 32px; /* NEW — xxxl */
 
-  /* --- radii --- */
+  /* --- radii (standard = 8px for buttons/panels/toolbar/cards) --- */
   --ccs-radius-sm: 4px;
   --ccs-radius-md: 6px;
-  --ccs-radius-lg: 10px;
+  --ccs-radius: 8px; /* NEW — the Penpot "standard" radius */
+  --ccs-radius-lg: 12px;
 
   /* --- typography --- */
-  --ccs-font: 'Inter', -apple-system, 'Segoe UI', system-ui, sans-serif;
-  --ccs-font-mono: 'SF Mono', 'Cascadia Code', ui-monospace, monospace;
+  --ccs-font: 'Work Sans', 'Vazirmatn', -apple-system, system-ui, sans-serif;
+  --ccs-font-mono: 'Roboto Mono', ui-monospace, monospace;
   --ccs-font-size-xs: 11px;
   --ccs-font-size-sm: 12px;
-  --ccs-font-size-md: 13px;
+  --ccs-font-size-md: 14px;
   --ccs-font-size-lg: 15px;
 
-  /* --- elevation --- */
-  --ccs-shadow-panel: 0 1px 3px rgba(0, 0, 0, 0.4);
-  --ccs-shadow-overlay: 0 8px 24px rgba(0, 0, 0, 0.5);
+  /* --- elevation (Penpot: one shadow only; menus use a wider spread) --- */
+  --ccs-shadow-panel: 0 0 10px 0 rgba(0, 0, 0, 0.6);
+  --ccs-shadow-overlay: 0 0 12px 0 rgba(0, 0, 0, 0.6);
 
   /* --- layout --- */
-  --ccs-dock-width: 280px;
-  --ccs-topbar-height: 48px;
+  --ccs-dock-width: 318px;
+  --ccs-sidebar-left-width: 318px; /* NEW */
+  --ccs-sidebar-right-width: 318px; /* NEW */
+  --ccs-topbar-height: 52px;
   --ccs-statusbar-height: 28px;
-  --ccs-row-height: 28px;
+  --ccs-row-height: 32px;
+  --ccs-row-height-compact: 24px; /* NEW — icon-action buttons */
+  --ccs-layer-indent: 24px; /* NEW — per-depth layer-tree indentation */
 
   /* --- focus ring (a11y, WCAG 2.2 §P8 pull-forward) --- */
   --ccs-focus-ring: 0 0 0 2px var(--ccs-bg-panel), 0 0 0 4px var(--ccs-border-focus);
@@ -113,3 +143,8 @@
   clip: rect(0 0 0 0);
   white-space: nowrap;
 }
+
+/* Note: panel-title / sidebar-section-label styling (Penpot `headline-small`:
+ * 12px / 500 / 1.2 / UPPERCASE) is a COMPONENT style, not a token — apply it
+ * via `font-size: var(--ccs-font-size-sm); font-weight: 500; line-height: 1.2;
+ * text-transform: uppercase;` on the component itself. */
