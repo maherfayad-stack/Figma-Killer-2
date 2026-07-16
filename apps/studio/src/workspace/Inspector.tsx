@@ -1,17 +1,23 @@
 import * as React from 'react';
 import type { TreeNode } from '@ccs/protocol';
-import { Panel, Input, Select, Checkbox, Button } from '@ccs/ui';
+import { Panel, Input, Select, Checkbox, Button, Icon, type IconName } from '@ccs/ui';
 import { useDaemonConnection } from '../engine/daemon-connection.js';
 import { useEngineApi } from '../engine/engine-api-context.js';
 import { useWorkspaceStore } from './workspace-store.js';
-import { useNodeOps } from './use-node-ops.js';
+import { useNodeOps, type NodeOps } from './use-node-ops.js';
 import type { PropSchemaEntry } from '../engine/engine-api.js';
 
 /**
- * Inspector (right sidebar, playbook §2.3): sections shown/hidden by node
- * kind; every control emits a P3 `CanvasOp`; a `data-dynamic` node renders
- * READ-ONLY + "Open in IDE" (playbook §0 editable-surface contract, this
- * task's acceptance bullet 3).
+ * Inspector (right sidebar, playbook §2.3 / PENPOT-FIDELITY-SPEC §5.5): a
+ * fixed, ordered stack of independently-collapsible `Panel` sections —
+ * Penpot's Design-tab pattern, adapted to code-first concerns (no
+ * vector-only sections; see spec §7): `Layer` (identity) → `Content`
+ * (text, only for nodes that can hold it) → `Layout` (Tailwind presets) →
+ * `Fill` (token bind) → `Component props` (instances only) → `Code` (Open
+ * in IDE, any node). Every control still emits the exact same P3
+ * `CanvasOp` as before; a `data-dynamic` node renders READ-ONLY + "Open in
+ * IDE" (playbook §0 editable-surface contract, this task's acceptance
+ * bullet 3).
  */
 export function Inspector(): React.ReactElement {
   // NOTE (bug found via this phase's own e2e acceptance run): the selector
@@ -28,43 +34,126 @@ export function Inspector(): React.ReactElement {
   if (!node) {
     return (
       <Panel title="Design" id="inspector">
-        <p style={{ color: 'var(--ccs-text-subtle)', fontSize: 'var(--ccs-font-size-sm)' }}>
-          Select a layer to inspect it.
-        </p>
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: 8,
+            paddingBlock: 'var(--ccs-space-4)',
+            textAlign: 'center',
+          }}
+        >
+          <Icon name="move" size={32} style={{ color: 'var(--ccs-text-subtle)' }} />
+          <p style={{ color: 'var(--ccs-text-subtle)', fontSize: 'var(--ccs-font-size-sm)', margin: 0 }}>
+            Select a layer to inspect it.
+          </p>
+        </div>
       </Panel>
     );
   }
 
   if (node.dynamic) {
     return (
-      <Panel title="Design" id="inspector">
-        <div data-testid="dynamic-readonly" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <p style={{ fontSize: 'var(--ccs-font-size-sm)', color: 'var(--ccs-text-muted)' }}>
-            <strong style={{ color: 'var(--ccs-locked)' }}>Dynamic node</strong> — generated in code
-            (<code>.map()</code>/conditional). This is real code, not a limitation: edit its logic in the
-            source file.
-          </p>
-          <dl style={{ fontSize: 'var(--ccs-font-size-xs)', color: 'var(--ccs-text-subtle)' }}>
-            <dt>uid</dt>
-            <dd style={{ marginInlineStart: 0, fontFamily: 'var(--ccs-font-mono)', wordBreak: 'break-all' }}>
-              {node.uid}
-            </dd>
-          </dl>
-          <Button variant="secondary" onClick={() => nodeOps.openInIde(node)}>
-            Open in IDE
-          </Button>
-        </div>
-      </Panel>
+      <>
+        <LayerSection node={node} />
+        <Panel title="Code" id="inspector-code">
+          <div data-testid="dynamic-readonly" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <p style={{ fontSize: 'var(--ccs-font-size-sm)', color: 'var(--ccs-text-muted)', margin: 0 }}>
+              <strong style={{ color: 'var(--ccs-locked)' }}>Dynamic node</strong> — generated in code
+              (<code>.map()</code>/conditional). This is real code, not a limitation: edit its logic in the
+              source file.
+            </p>
+            <Button variant="secondary" onClick={() => nodeOps.openInIde(node)}>
+              Open in IDE
+            </Button>
+          </div>
+        </Panel>
+      </>
     );
   }
 
+  const canHoldText = node.kind === 'element' || node.kind === 'text';
+
   return (
     <>
-      <ContentSection node={node} />
+      <LayerSection node={node} />
+      {canHoldText && <ContentSection node={node} />}
       <LayoutSection node={node} />
       <FillSection node={node} />
       {node.kind === 'component-instance' && <ComponentPropsSection node={node} />}
+      <CodeSection node={node} nodeOps={nodeOps} />
     </>
+  );
+}
+
+/** Mirrors `LayersPanel`'s `iconForNode` (kept as a small local duplicate —
+ * this file is scoped to `Inspector.tsx` only, no shared-helper extraction). */
+function iconForNode(node: TreeNode): IconName {
+  if (node.kind === 'component-instance') return 'component';
+  if (node.kind === 'text') return 'text';
+  if (node.kind === 'fragment') return 'group';
+  if (node.tag === 'img') return 'img';
+  if (node.tag === 'svg' || node.tag === 'path') return 'path';
+  return 'group';
+}
+
+/** Layer — read-only identity block (name/tag + uid + a type icon), Penpot's
+ * §5.5 "Layer" section adapted: no vector geometry, just AST identity. */
+function LayerSection({ node }: { node: TreeNode }): React.ReactElement {
+  const label = node.component ?? node.tag ?? '(text)';
+  const color = node.kind === 'component-instance' ? 'var(--ccs-accent-component)' : 'var(--ccs-text)';
+
+  return (
+    <Panel title="Layer" id="inspector-layer">
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, minInlineSize: 0 }}>
+          <Icon name={iconForNode(node)} size={16} style={{ color, flexShrink: 0 }} />
+          <span
+            style={{
+              fontSize: 'var(--ccs-font-size-sm)',
+              fontWeight: 500,
+              color,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {label}
+          </span>
+        </div>
+        <span
+          style={{
+            fontSize: 'var(--ccs-font-size-xs)',
+            color: 'var(--ccs-text-subtle)',
+            fontFamily: 'var(--ccs-font-mono)',
+            wordBreak: 'break-all',
+          }}
+        >
+          {node.uid}
+        </span>
+      </div>
+    </Panel>
+  );
+}
+
+/** Code — Penpot's Inspect/dev-mode affordance, adapted: any node (not just
+ * `dynamic`) can jump to its real source location. */
+function CodeSection({ node, nodeOps }: { node: TreeNode; nodeOps: NodeOps }): React.ReactElement {
+  return (
+    <Panel title="Code" id="inspector-code" defaultCollapsed>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <dl style={{ margin: 0, fontSize: 'var(--ccs-font-size-xs)', color: 'var(--ccs-text-subtle)' }}>
+          <dt>uid</dt>
+          <dd style={{ marginInlineStart: 0, fontFamily: 'var(--ccs-font-mono)', wordBreak: 'break-all' }}>
+            {node.uid}
+          </dd>
+        </dl>
+        <Button variant="secondary" size="sm" onClick={() => nodeOps.openInIde(node)}>
+          Open in IDE
+        </Button>
+      </div>
+    </Panel>
   );
 }
 
@@ -95,29 +184,62 @@ function ContentSection({ node }: { node: TreeNode }): React.ReactElement {
   );
 }
 
-const LAYOUT_PRESETS: { id: string; label: string; add: string[] }[] = [
-  { id: 'flex-row', label: 'Flex row', add: ['flex', 'flex-row'] },
-  { id: 'flex-col', label: 'Flex col', add: ['flex', 'flex-col'] },
-  { id: 'gap-2', label: 'Gap 2', add: ['gap-2'] },
-  { id: 'items-center', label: 'Items center', add: ['items-center'] },
-  { id: 'justify-center', label: 'Justify center', add: ['justify-center'] },
-  { id: 'p-4', label: 'Padding 4', add: ['p-4'] },
+// Same presets/ops as before (identical `set-classes` shape); only grouped
+// under Penpot-style subheadings (direction / align / justify / padding) —
+// the "our code-first Layout container" adaptation, spec §5.5/§7.
+const LAYOUT_GROUPS: { label: string; presets: { id: string; label: string; add: string[] }[] }[] = [
+  {
+    label: 'Direction',
+    presets: [
+      { id: 'flex-row', label: 'Flex row', add: ['flex', 'flex-row'] },
+      { id: 'flex-col', label: 'Flex col', add: ['flex', 'flex-col'] },
+    ],
+  },
+  {
+    label: 'Align',
+    presets: [{ id: 'items-center', label: 'Items center', add: ['items-center'] }],
+  },
+  {
+    label: 'Justify',
+    presets: [{ id: 'justify-center', label: 'Justify center', add: ['justify-center'] }],
+  },
+  {
+    label: 'Padding',
+    presets: [
+      { id: 'gap-2', label: 'Gap 2', add: ['gap-2'] },
+      { id: 'p-4', label: 'Padding 4', add: ['p-4'] },
+    ],
+  },
 ];
 
 function LayoutSection({ node }: { node: TreeNode }): React.ReactElement {
   const { sendOp } = useDaemonConnection();
   return (
     <Panel title="Layout" id="inspector-layout">
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-        {LAYOUT_PRESETS.map((preset) => (
-          <Button
-            key={preset.id}
-            variant="secondary"
-            size="sm"
-            onClick={() => sendOp({ t: 'set-classes', uid: node.uid, add: preset.add, remove: [] })}
-          >
-            {preset.label}
-          </Button>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {LAYOUT_GROUPS.map((group) => (
+          <div key={group.label} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <span
+              style={{
+                fontSize: 'var(--ccs-font-size-xs)',
+                color: 'var(--ccs-text-subtle)',
+              }}
+            >
+              {group.label}
+            </span>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {group.presets.map((preset) => (
+                <Button
+                  key={preset.id}
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => sendOp({ t: 'set-classes', uid: node.uid, add: preset.add, remove: [] })}
+                >
+                  {preset.label}
+                </Button>
+              ))}
+            </div>
+          </div>
         ))}
       </div>
     </Panel>
