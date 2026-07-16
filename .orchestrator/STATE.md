@@ -178,3 +178,21 @@ Verified LIVE in browser (daemon restarted to regenerate studio vite config):
 - Pan/context-menu: no real pointer/z-index trap found; symptom was camera-fit.
 Tests: sync-daemon 216/216, canvas 150/150, typecheck clean. No worker self-commit.
 NEXT: WS-1 foundations (tokens/fonts/icons) → WS-3 panels → WS-2 dash → WS-4/5 → re-gate.
+
+## P5-REWORK COMPLETE — all 6 workstreams shipped + dogfooded (2026-07-16)
+Commits: WS-6 031a68b, WS-1 a54d827, WS-3 d0e499f, WS-2 b68b82c, WS-4 cee3617, WS-5 3c7fe91.
+Full real-browser re-gate PASSED (drove the whole flow, screenshots in scratchpad rework-*.png):
+- Dashboard: Penpot 3-col (rail+sidebar+grid, hover-kebab cards).
+- Open project -> camera fits all frames (was off-screen).
+- Left panel: Pages+Layers ONE tab; "Page 1" surface; frames as BOARDS (Hero
+  expands -> h1/p/button/ds:Accolade); real vendored Penpot icons + mint theme.
+- Assets: grouped categorized component cards + search + grid/list.
+- Tokens: DS color tokens w/ swatches + light/dark segmented switcher.
+- Inspector: LAYER/CONTENT/LAYOUT/FILL/Component-props/CODE sections.
+- EDITING PROVEN: set-text wrote to Hero.tsx source; Padding-4 preset added
+  `p-4` to h1 className in real source; ds-component insert renders (no crash).
+- No console errors (only benign double-connect ws warnings).
+Tests across the rework: sync-daemon 216/216, canvas 150/150, studio 25/25, ui 20/20.
+DEFERRED (own follow-up WS, needs canvas+daemon): multi-page canvas-surface CRUD;
+UI Tree primitive indent (14px vs --ccs-layer-indent 24px); token write-back persistence.
+P6 remains ON HOLD until human sees P5.
