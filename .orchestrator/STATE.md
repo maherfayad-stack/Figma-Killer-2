@@ -9,7 +9,18 @@ _Living status board. Append-only decisions log at bottom. Last updated: 2026-07
 **P2 — COMPLETE** (AUDIT-5 PASS, tag `phase-2-complete`). Selection Bridge: source-uid plugin + bridge + canvas edit-mode/overlay. Hard stop LIFTED 2026-07-14. Running P2→P8 gated per phase.
 **P3 — COMPLETE** (AUDIT-6 FAIL→remediated→AUDIT-6b FAIL→remediated→**AUDIT-6c PASS**, tag `phase-3-complete`). AST Write-Back Engine: canvas ops mutate real source (ts-morph+prettier, format-preserving), byte-identical undo, uid-remap, git checkpoints, concurrent-edit guard, and file-folder write-boundary containment (ADR-0020). The core editing loop is live + sandbox-safe.
 **P4 — COMPLETE** (AUDIT-7 FAIL→remediated→**AUDIT-7b PASS**, tag `phase-4-complete`). Design-system ENGINE: token pipeline (Almosafer tokens.js → CSS vars + Tailwind preset, both build-verified), daemon token-CRUD+watch (edit→HMR ~40ms), 39 meta.ts (ADR-0021), frozen engine API (ADR-0022). CSS-injection hardened (3-layer, ADR-0020 pattern).
-**P5 — IN PROGRESS** (studio CHROME): a partial finish-and-verify is next (sequential, its own uncommitted partial sits in apps/studio + packages/ui).
+**P5 — IN PROGRESS** (studio CHROME): chrome BUILT + green + committed (WIP), NOT yet gated.
+
+## ⏸ SESSION PAUSED 2026-07-15 — P5 RESUME HERE
+**Last committed:** `f9fab96` (tag `phase-5-wip-checkpoint`). ⚠️ Its commit MESSAGE ("feat: add new UI primitives…") is a WORKER SELF-COMMIT (recurring [[workers-self-commit]]) and UNDERSELLS its content — f9fab96 actually contains the FULL P5 chrome + ast-engine `buildTree`: `apps/studio` (37 files: dock, LayersPanel, Inspector, Toolbar, Components/Tokens panels, context menu, keyboard, Dashboard, e2e), `packages/ui` (19: Penpot-grade RTL primitives), `packages/ast-engine` (4: additive `buildTree`), pnpm-lock. Clean scope (NO frozen-protocol/tokens/daemon files). Not amended (origin/main divergence → avoided history rewrite). Tags: phase-0..4-complete + phase-3-wsA-checkpoint + phase-5-wip-checkpoint.
+**Verified green at pause:** ast-engine 150/150 (140 + 10 new buildTree), studio 24/24, ui 16/16, apps/studio e2e 9/9 (real daemon+ast-engine+tokens), monorepo typecheck 12/12. tldraw watermark intact. Real `@ccs/tokens` wired (39 DS components + token sets) via a dev-server catalog bridge. Two critical bugs fixed (Inspector zustand-selector never re-rendered; LayersPanel root-node hid layers).
+**REMAINING to reach `phase-5-complete` (in order):**
+1. **daemon `tree-snapshot` emission — NOT STARTED.** LayersPanel/Inspector currently read a TreeNode FIXTURE (`apps/studio/src/engine/tree-fixtures.ts`), NOT the live frame AST. The additive `ast-engine buildTree(sourceText, relPath): TreeNode` is DONE + green (reuses canonical uid-path, ADR-0017). Wire the daemon: on frame change/open → `buildTree` → broadcast frozen `{t:'tree-snapshot', file, tree}` (debounce HMR bursts). (This is the task that was mid-spawn when paused.)
+2. **studio: swap fixture → live tree-snapshot** (isolated behind `workspace-store.currentTree()`/`selectedNode()` — a one-function swap); e2e test (b) should assert the LIVE tree matches the real frame; verify tree uid === bridge selection uid === applyOp target.
+3. **P5 gate:** fresh adversarial audit → tag `phase-5-complete` + retro. (Watch the recurring "wire-controlled string → sink" vuln class + do the standard One-Rule/boundary/security scan.)
+**P5 carry-forwards surfaced by workers (for P6/P8):** catalog reads are DEV-SERVER-ONLY (Vite middleware `/__ccs/catalog/*`) — no production/static path; right fix = a daemon control-message (daemon is sole fs-reader). Local projects registry (`~/.studio/projects.json`), lock/hide persistence into canvas.json, byte-exact clone-node primitive — all need daemon APIs (P6). 39 meta.ts live untracked in the external design-system repo (versioning home TBD).
+**Then P6** (Backend) — needs HUMAN git-host decision (Gitea vs GitHub App).
+**Standing rules:** workers/auditors = Sonnet 5 medium; run heavy workers SEQUENTIALLY (parallel double-burns the session limit — [[session-limit-clean-respawn]]); workers self-commit despite the rule → git-reconcile at every gate ([[workers-self-commit]]); orchestrator owns tags + gate commits; frozen protocol/design-system/playbook off-limits.
 
 ## Phase status board
 
@@ -20,7 +31,7 @@ _Living status board. Append-only decisions log at bottom. Last updated: 2026-07
 | P2 | Selection Bridge | ✅ complete (tag phase-2-complete) | P1 ✅ |
 | P3 | AST Write-Back Engine (critical path) | ✅ complete (tag phase-3-complete) | P2 ✅ |
 | P4 | Design System: Tokens + Components | ✅ complete (tag phase-4-complete) | P3 ✅ |
-| P5 | Studio UI Chrome | 🟡 in progress (finish-and-verify) | P3 ✅ |
+| P5 | Studio UI Chrome | 🟡 chrome built+green (tag phase-5-wip-checkpoint); live-tree + gate remain | P3 ✅ |
 | P6 | Backend (Supabase, git-host) | ⬜ not started | P4,P5 |
 | P7 | Presence + Comments | ⬜ not started | P6 |
 | P8 | Hardening + Polish | ⬜ not started | P7 |
