@@ -320,8 +320,28 @@ classes — display-only, not corrupting (ast-engine evicts conflicts server-sid
 true read needs additive TreeNode.className or a bridge query → queued. (b) DS
 catalog empty (no meta.ts) → queued with DS work.
 
-**Next:** FP-INS-b (Inspect/code tab: copy JSX+CSS for node/component/whole frame)
-→ then DS robustness+catalog, read-current-values, then FP-6/5/7.
+### FP-INS-b — COMPLETE (AUDIT-FPINSb FAIL→remediated→PASS, tag `fp-ins-b-complete`, commit `54b0579`) 2026-07-17
+Design | Inspect tab toggle; Inspect shows read-only node JSX + whole-frame JSX +
+computed CSS with Copy (component instance shows its `<Component .../>` usage).
+Delivers FP-6's "copy code". Additive `read-source` control-message (READ-ONLY,
+reuses hardened realpath containment — full AUDIT-6/6b re-attack incl. live symlink
+REJECTED) + additive `report-computed-style` bridge message; frozen @ccs/protocol
+types ZERO-diff. Audit FAIL'd on 1 major (computed-CSS never loaded on the default
+open→Layers-select→Inspect flow: off-screen frame = no bridge + one-shot fetch) →
+worker fixed (force the single edit-mode frame live regardless of zoom + re-fetch on
+bridge `ready` via a generation counter) → orchestrator re-verified natural flow +
+gates green (lint 6 pkgs, tests protocol 107/canvas 171/studio 58).
+**Carry-forward (informational):** Windows CRLF clipboard normalization; empty
+framePath fails-closed w/o control-error reply.
+
+**Human's 3 dogfood asks all delivered:** (1) Inspector→CSS parity ✅ (FP-INS-a),
+(2) component props list ✅ (FP-INS-a), (3) Inspect/code tab ✅ (FP-INS-b).
+
+**Queued next (surface to human for priority):** (a) Inspector READ current values
+(additive TreeNode.className or bridge query) — controls write but show defaults;
+(b) proper daemon DS-location fix + restore component catalog meta.ts (Assets panel
+empty in this checkout); (c) original FP-6 raster export (PNG/JPG) · FP-5 comments
+(local-first) · FP-7 structure ops + keyboard parity.
 **Standing note:** account monthly spend limit was hit once (FP-3 attempt 1) — if a
 worker dies with that API error, it's the account cap (raise at claude.ai/settings/
 usage), not a logic failure; clean-respawn from the last tag.
