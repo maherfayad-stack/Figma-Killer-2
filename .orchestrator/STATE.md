@@ -290,7 +290,38 @@ Remaining (post-review): FP-6 export, FP-5 comments (local-first), FP-7 structur
 ops + keyboard parity.
 
 **FP status board:** FP-1 ✅ · FP-2 ✅ · FP-3 ✅ · FP-4a ✅ · FP-4b ✅ ·
-**⏸ DOGFOOD REVIEW GATE (human)** · FP-6 (export) · FP-5 (comments) · FP-7 (polish).
+**DOGFOOD REVIEW (human, 2026-07-17)** → see below · FP-INS-a ✅ · FP-INS-b 🔜 ·
+FP-6 (raster export) · FP-5 (comments) · FP-7 (polish).
+
+## HUMAN DOGFOOD (2026-07-17) — feedback + new work
+Human ran FP-1..4 in a browser. Findings + directives:
+1. **[BLOCKER, FIXED]** Importing any component crashed the frame ("Failed to
+   resolve import design-system"). Root cause: daemon aliases `design-system` →
+   `<projectRoot>/design-system/dist`, but the built DS clone lives at the SIBLING
+   `../design-system` in this checkout. UNBLOCKED via a directory junction
+   `<repoRoot>/design-system` → `../design-system` (in `.git/info/exclude`).
+   Proper fix QUEUED: daemon should locate DS robustly (inside/sibling/configured).
+   Also: DS clone has ZERO `*.meta.ts` in this checkout → component CATALOG is
+   empty (Assets panel + props-list lack real data) — pre-existing P4/P5 gap;
+   fold catalog restore into the DS work.
+2. **Inspector must have ALL Penpot features mapped to CSS** → FP-INS-a (below).
+3. **Components as a list of props** → done in FP-INS-a.
+4. **Inspect tab for code (page/component/anything)** → FP-INS-b (next).
+
+### FP-INS-a — COMPLETE (AUDIT-FPINSa PASS, tag `fp-ins-a-complete`, commit `f83ef44`) 2026-07-17
+Inspector Design tab expanded to the full Penpot section stack mapped to Tailwind
+(Size/Layout-container/Layout-item/Typography/Fill/Border-radius/Shadow/Opacity),
+component-instance props as an editable LIST, dynamic nodes read-only. Vector-only
+menus dropped. Reuses set-classes/set-prop; frozen contracts ZERO-diff; studio
+55/55, lint green. Worker survived a SESSION-LIMIT death mid-verify (code intact,
+resumed to finish). Audit verified 11 preset groups live w/ disk diffs.
+**Carry-forwards:** (a) controls WRITE classes but don't READ the node's current
+classes — display-only, not corrupting (ast-engine evicts conflicts server-side);
+true read needs additive TreeNode.className or a bridge query → queued. (b) DS
+catalog empty (no meta.ts) → queued with DS work.
+
+**Next:** FP-INS-b (Inspect/code tab: copy JSX+CSS for node/component/whole frame)
+→ then DS robustness+catalog, read-current-values, then FP-6/5/7.
 **Standing note:** account monthly spend limit was hit once (FP-3 attempt 1) — if a
 worker dies with that API error, it's the account cap (raise at claude.ai/settings/
 usage), not a logic failure; clean-respawn from the last tag.
