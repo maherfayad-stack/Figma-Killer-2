@@ -15,6 +15,7 @@ export const CANVAS_PACKAGE_PHASE = 'P1' as const;
 export { StudioCanvas } from './StudioCanvas.js';
 export type {
   StudioCanvasProps,
+  StudioCanvasHandle,
   CreateFrameFn,
   CreateFrameRequest,
   DuplicateFrameFn,

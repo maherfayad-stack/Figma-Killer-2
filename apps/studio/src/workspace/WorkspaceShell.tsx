@@ -1,6 +1,6 @@
 import * as React from 'react';
 import 'tldraw/tldraw.css';
-import { StudioCanvas } from '@ccs/canvas';
+import { StudioCanvas, type StudioCanvasHandle, type CanvasFrameRecord } from '@ccs/canvas';
 import { Tabs } from '@ccs/ui';
 import { DaemonConnectionProvider, useDaemonConnection } from '../engine/daemon-connection.js';
 import { EngineApiContext } from '../engine/engine-api-context.js';
@@ -8,6 +8,7 @@ import type { EngineApi } from '../engine/engine-api.js';
 import { useWorkspaceStore } from './workspace-store.js';
 import { useComponentInsert } from './use-component-insert.js';
 import { useWorkspaceKeymap } from './use-workspace-keymap.js';
+import { useZoomKeymap } from './use-zoom-keymap.js';
 import { useTreeSnapshotSync } from './use-tree-snapshot-sync.js';
 import { TopBar } from './TopBar.js';
 import { Toolbar } from './Toolbar.js';
@@ -15,6 +16,7 @@ import { LayersPanel } from './LayersPanel.js';
 import { ComponentsPanel } from './ComponentsPanel.js';
 import { TokensPanel } from './TokensPanel.js';
 import { Inspector } from './Inspector.js';
+import { ZoomWidget } from './ZoomWidget.js';
 
 /**
  * WorkspaceShell — the per-file workspace (playbook §2.1 `workspace.cljs`):
@@ -46,6 +48,26 @@ function WorkspaceShellInner({ fileName, daemonUrl, onBackToDashboard }: Workspa
   const insertComponent = useComponentInsert();
   useWorkspaceKeymap();
   useTreeSnapshotSync();
+
+  // FP-1 (`.orchestrator/FEATURE-PARITY-PLAN.md` §2): camera-control handle
+  // from `StudioCanvas.onReady` + the live zoom % from `onZoomChange` — see
+  // `ZoomWidget.tsx` and `use-zoom-keymap.ts`, both driven from these two
+  // pieces of state, never a tldraw type (playbook §5.4).
+  const [canvasHandle, setCanvasHandle] = React.useState<StudioCanvasHandle | null>(null);
+  const [zoomPercent, setZoomPercent] = React.useState(100);
+  useZoomKeymap(canvasHandle);
+
+  // FP-1 §2 item 4: clicking/marquee-selecting a frame on the canvas
+  // (tldraw native) reflects in the studio's own selection store exactly
+  // the same way `LayersPanel`'s board-row click already does — reuses
+  // `selectFrame` rather than adding a parallel selection path.
+  const selectFrame = useWorkspaceStore((s) => s.selectFrame);
+  const handleFrameSelect = React.useCallback(
+    (record: CanvasFrameRecord | null) => {
+      if (record) selectFrame(record.fileFolder, record.framePath);
+    },
+    [selectFrame],
+  );
 
   return (
     <div
@@ -87,7 +109,26 @@ function WorkspaceShellInner({ fileName, daemonUrl, onBackToDashboard }: Workspa
               if (name) insertComponent(name);
             }}
           >
-            <StudioCanvas daemonUrl={daemonUrl} style={{ inlineSize: '100%', blockSize: '100%' }} />
+            <StudioCanvas
+              daemonUrl={daemonUrl}
+              style={{ inlineSize: '100%', blockSize: '100%' }}
+              onReady={setCanvasHandle}
+              onZoomChange={setZoomPercent}
+              onFrameSelect={handleFrameSelect}
+            />
+            {/* FP-1 §2 item 2: floating zoom widget. Per the brief, FP-2
+                hasn't restructured the header into left/right panes yet, so
+                this is a floating overlay for now. Top-end corner, offset
+                below the canvas package's own "+ New Frame" control (same
+                corner, see `StudioCanvas.tsx`) rather than bottom-end:
+                verified live that tldraw's own (unlicensed-build) watermark
+                badge occupies the bottom-end corner and fully intercepts
+                pointer events there, which would make the widget
+                unclickable — FP-2 relocates this into the right-pane
+                header anyway, so this is a placement of convenience. */}
+            <div style={{ position: 'absolute', insetBlockStart: 54, insetInlineEnd: 12, zIndex: 10 }}>
+              <ZoomWidget zoomPercent={zoomPercent} handle={canvasHandle} />
+            </div>
           </div>
         </main>
 

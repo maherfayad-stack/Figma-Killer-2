@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Tldraw, createShapeId, type Editor, type TLComponents, type TLUiOverrides } from 'tldraw';
+import { Tldraw, createShapeId, useValue, type Editor, type TLComponents, type TLUiOverrides } from 'tldraw';
 import type { ControlReply, DaemonEvent, FrameMeta, ProjectInfo } from '@ccs/protocol';
 import { connectDaemon, type DaemonClient } from './daemon-client.js';
 import {
@@ -29,6 +29,7 @@ import {
 import { frameSourcePath, isValidFrameName } from './new-frame.js';
 import { EditModeLayer } from './edit-mode-layer.js';
 import { emitUidRemap } from './selection-store.js';
+import { shiftPanDelta } from './wheel-gesture.js';
 
 /**
  * `StudioCanvas` — the package's public entry point (playbook §4/P1). All
@@ -81,6 +82,30 @@ export interface DuplicateFrameRequest {
  */
 export type DuplicateFrameFn = (request: DuplicateFrameRequest) => Promise<void>;
 
+/**
+ * FP-1 (`.orchestrator/FEATURE-PARITY-PLAN.md` §2, playbook §5.4 abstraction
+ * rule): the camera-control surface handed to `onReady` — plain, tldraw-
+ * independent methods a caller (the studio's zoom widget + keymap) can
+ * invoke without ever importing a tldraw `Editor` type. Backed by tldraw's
+ * own `Editor.zoomIn`/`zoomOut`/`resetZoom`/`zoomToFit`/`zoomToSelection`
+ * (verified present on the installed tldraw@5.2.4 `Editor` class) — see
+ * `StudioCanvas`'s `onReady` effect for the mapping. Mirrors Penpot's own
+ * zoom-widget action set 1:1 (`../penpot/frontend/src/app/main/ui/
+ * workspace/right_header.cljs` `zoom-widget-workspace`: increase/decrease/
+ * reset/fit-all/zoom-selected).
+ */
+export interface StudioCanvasHandle {
+  zoomIn(): void;
+  zoomOut(): void;
+  /** Resets to 100% (Penpot: `Shift+0`). */
+  resetZoom(): void;
+  /** Fits every frame in the viewport (Penpot: `Shift+1`). */
+  zoomToFit(): void;
+  /** Fits the current tldraw selection in the viewport; a no-op if nothing
+   * is selected (Penpot: `Shift+2`). */
+  zoomToSelection(): void;
+}
+
 /** Bound on how long a `defaultCreateFrame`/`defaultDuplicateFrame` promise
  * waits for a daemon reply before giving up — a stuck daemon/connection
  * should surface as a UI error, not hang forever. */
@@ -99,6 +124,23 @@ export interface StudioCanvasProps {
   onDuplicateFrame?: DuplicateFrameFn;
   className?: string;
   style?: React.CSSProperties;
+  /** FP-1: fired once the tldraw editor has mounted, with a plain
+   * tldraw-independent camera-control handle (see {@link StudioCanvasHandle})
+   * — the caller's zoom widget + keyboard map drive the camera through this,
+   * never a tldraw `Editor` directly (playbook §5.4). */
+  onReady?: (handle: StudioCanvasHandle) => void;
+  /** FP-1: fires with the live zoom level as a rounded percentage (100 =
+   * 100%) whenever tldraw's camera zoom changes — backs the zoom widget's
+   * `%` readout (Penpot: `right_header.cljs`'s `zoom-widget-workspace`). */
+  onZoomChange?: (percent: number) => void;
+  /** FP-1 (`.orchestrator/FEATURE-PARITY-PLAN.md` §2 item 4): fires with the
+   * currently-selected frame's record whenever tldraw's own selection
+   * resolves to exactly one `ccs-frame` shape (a plain click, or a marquee
+   * that nets exactly one frame) — `null` when the selection is empty or
+   * spans more than one frame. The caller wires this into the studio's own
+   * selection store so Layers/Inspector reflect a canvas click, mirroring
+   * what `LayersPanel`'s own board-row click already does. */
+  onFrameSelect?: (record: CanvasFrameRecord | null) => void;
 }
 
 const CONTAINER_STYLE: React.CSSProperties = { position: 'relative', width: '100%', height: '100%' };
@@ -155,10 +197,14 @@ export function StudioCanvas({
   onDuplicateFrame,
   className,
   style,
+  onReady,
+  onZoomChange,
+  onFrameSelect,
 }: StudioCanvasProps): React.ReactElement {
   const [frames, setFrames] = React.useState<CanvasFrameRecord[]>([]);
   const [editorReady, setEditorReady] = React.useState(false);
   const editorRef = React.useRef<Editor | null>(null);
+  const containerRef = React.useRef<HTMLDivElement | null>(null);
   // P2/WS-B: `EditModeLayer` needs the `Editor` instance as a render-time
   // value (it's JSX-conditional below), and `react-hooks/refs` correctly
   // flags reading `editorRef.current` during render (refs are an escape
@@ -542,6 +588,63 @@ export function StudioCanvas({
     editor.zoomToFit({ animation: { duration: 200 } });
   }, [frames, editorReady]);
 
+  // --- FP-1: hand the caller a plain camera-control handle ---------------
+  // (`.orchestrator/FEATURE-PARITY-PLAN.md` §2 item 3 — the zoom widget +
+  // keymap drive the camera through this, never a tldraw `Editor` directly,
+  // per the §5.4 abstraction rule). Fires once editor mounts; `onReady`
+  // itself is expected to be a stable callback (e.g. a `useState` setter) —
+  // this effect intentionally does NOT re-fire on every render.
+  React.useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor || !editorReady || !onReady) return;
+    onReady({
+      zoomIn: () => editor.zoomIn(undefined, { animation: { duration: 120 } }),
+      zoomOut: () => editor.zoomOut(undefined, { animation: { duration: 120 } }),
+      resetZoom: () => editor.resetZoom(undefined, { animation: { duration: 200 } }),
+      zoomToFit: () => editor.zoomToFit({ animation: { duration: 200 } }),
+      zoomToSelection: () => editor.zoomToSelection({ animation: { duration: 200 } }),
+    });
+  }, [editorReady, onReady]);
+
+  // --- FP-1: shift+wheel horizontal-pan gap fix ---------------------------
+  // See `wheel-gesture.ts`'s module doc for the full "why": tldraw's own
+  // wheel dispatch never swaps a shift-held wheel gesture's axis (Windows/
+  // Linux keep reporting the motion on `deltaY`, only macOS's browser/OS
+  // layer already reports `deltaX` for that gesture) — Penpot hits the same
+  // gap and hand-rolls the same remap. Attached on the OUTER wrapper with
+  // `capture: true` so it runs before tldraw's own bubble-phase listener
+  // (attached lower in the same DOM subtree, on tldraw's own container) and
+  // can `stopPropagation()` to fully replace tldraw's handling for just this
+  // one case — every other wheel gesture (plain wheel, ctrl/meta-wheel zoom,
+  // a platform that already reports a real `deltaX`) is left untouched and
+  // falls through to tldraw's native handling unchanged.
+  React.useEffect(() => {
+    const container = containerRef.current;
+    const editor = editorRef.current;
+    if (!container || !editor || !editorReady) return;
+
+    function onWheelCapture(e: WheelEvent): void {
+      if (!e.shiftKey || e.ctrlKey || e.metaKey || e.altKey || e.deltaX !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const delta = shiftPanDelta(e.deltaX, e.deltaY);
+      editorRef.current?.dispatch({
+        type: 'wheel',
+        name: 'wheel',
+        point: { x: e.clientX, y: e.clientY, z: 0 },
+        delta: { x: -delta.x, y: -delta.y, z: 0 },
+        shiftKey: true,
+        altKey: false,
+        ctrlKey: false,
+        metaKey: false,
+        accelKey: false,
+      });
+    }
+
+    container.addEventListener('wheel', onWheelCapture, { capture: true, passive: false });
+    return () => container.removeEventListener('wheel', onWheelCapture, { capture: true });
+  }, [editorReady]);
+
   // --- ADR-0015 phantom-frame guard ------------------------------------
   // tldraw's `registerBeforeCreateHandler` can only TRANSFORM a record
   // about to be created, not cancel its creation (verified against the
@@ -664,11 +767,15 @@ export function StudioCanvas({
   );
 
   return (
-    <div className={className} style={{ ...CONTAINER_STYLE, ...style }}>
+    <div ref={containerRef} className={className} style={{ ...CONTAINER_STYLE, ...style }}>
       <ScreenshotCacheContext.Provider value={screenshotCache}>
         <Tldraw shapeUtils={shapeUtils} components={MINIMAL_COMPONENTS} overrides={overrides} onMount={handleMount} />
       </ScreenshotCacheContext.Provider>
       {mountedEditor && <EditModeLayer editor={mountedEditor} frames={frames} />}
+      {mountedEditor && onZoomChange && <ZoomReporter editor={mountedEditor} onZoomChange={onZoomChange} />}
+      {mountedEditor && onFrameSelect && (
+        <FrameSelectionBridge editor={mountedEditor} frames={frames} onFrameSelect={onFrameSelect} />
+      )}
       <div style={{ position: 'absolute', top: 12, right: 12, zIndex: 10, fontFamily: 'system-ui, sans-serif' }}>
         {newFrameOpen ? (
           <form
@@ -721,4 +828,59 @@ export function StudioCanvas({
       </div>
     </div>
   );
+}
+
+/**
+ * FP-1: reports tldraw's live zoom level to `onZoomChange` as a rounded
+ * percentage, backing the zoom widget's `%` readout. A separate render-tree
+ * leaf (sibling of `<Tldraw>`, same pattern `EditModeLayer` already uses)
+ * rather than inline in `StudioCanvas` so `useValue`'s reactivity only
+ * re-renders this tiny leaf on every camera tick, not the whole canvas.
+ */
+function ZoomReporter({
+  editor,
+  onZoomChange,
+}: {
+  editor: Editor;
+  onZoomChange: (percent: number) => void;
+}): null {
+  const zoom = useValue('ccs-zoom-level', () => editor.getZoomLevel(), [editor]);
+  React.useEffect(() => {
+    onZoomChange(Math.round(zoom * 100));
+  }, [zoom, onZoomChange]);
+  return null;
+}
+
+/**
+ * FP-1 (`.orchestrator/FEATURE-PARITY-PLAN.md` §2 item 4): reports the
+ * currently-selected frame (tldraw's native select tool + marquee already
+ * do the actual selecting — see `StudioCanvasProps.onFrameSelect`'s doc) up
+ * to the caller. Resolves to a record only when the selection is EXACTLY
+ * one `ccs-frame` shape — an empty selection or a multi-frame marquee both
+ * report `null`, matching "select one board" as the unambiguous case the
+ * studio's Layers/Inspector can reflect.
+ */
+function FrameSelectionBridge({
+  editor,
+  frames,
+  onFrameSelect,
+}: {
+  editor: Editor;
+  frames: CanvasFrameRecord[];
+  onFrameSelect: (record: CanvasFrameRecord | null) => void;
+}): null {
+  const selectedShapeIds = useValue('ccs-selected-shape-ids', () => editor.getSelectedShapeIds(), [editor]);
+  const lastReportedRef = React.useRef<string | null>(null);
+
+  React.useEffect(() => {
+    const frameShapeIds = selectedShapeIds.filter((id) => editor.getShape(id)?.type === CCS_FRAME_SHAPE_TYPE);
+    const record =
+      frameShapeIds.length === 1 ? (frames.find((f) => shapeIdForRecordId(f.id) === frameShapeIds[0]) ?? null) : null;
+    const key = record?.id ?? null;
+    if (lastReportedRef.current === key) return;
+    lastReportedRef.current = key;
+    onFrameSelect(record);
+  }, [selectedShapeIds, frames, editor, onFrameSelect]);
+
+  return null;
 }
