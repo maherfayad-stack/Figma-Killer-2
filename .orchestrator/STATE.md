@@ -369,3 +369,30 @@ empty in this checkout); (c) original FP-6 raster export (PNG/JPG) · FP-5 comme
 **Standing note:** account monthly spend limit was hit once (FP-3 attempt 1) — if a
 worker dies with that API error, it's the account cap (raise at claude.ai/settings/
 usage), not a logic failure; clean-respawn from the last tag.
+
+### FIX-W3 — COMPLETE (AUDIT-FIXW3 PASS, tag `fix-w3-complete`, commit `d639d5d`) 2026-07-18
+Component-import fixes (dogfood round-2 item 7a/b/c). Root cause: junctioned DS
+clone ships 117 raw .jsx/.css, ZERO .meta.ts → `catalog.ts` (reads only *.meta.ts)
+returned [] → "No components match" + nothing to insert. Second co-located bug: DS
+component CSS never imported into any frame project → styled `<span>` = 0×0 box (the
+literal "empty box representing nothing"). Fix (additive, low-risk): NEW build-time
+generator `packages/tokens/src/generate-meta.ts` (+ CLI `scripts/generate-component-
+meta.ts`) derives metadata from raw .jsx via ts-morph — `catalog.ts` + protocol/ast-
+engine/sync-daemon ALL zero-diff. `ComponentsPanel.tsx` empty-search UX. `@import
+'design-system/dist/index.css'` added to the TRACKED `templates/file-app/src/
+index.css` (audit proved load-bearing: toggling off → Badge/Button collapse to 0×0).
+28 components got usable metadata + render visibly; 33 skipped (need real data). Audit
+reproduced all 5 acceptance items + 3 distinct components rendering styled, live.
+**RELEASE-RISK carry-forward:** the 28 generated .meta.ts live OUTSIDE this repo's
+VCS (external junctioned DS repo). Re-clone / force-reset / stale-after-DS-upstream →
+Components panel silently degrades back to empty, NO CI signal here. Needs ADR/CR to
+wire the generator into DS onboarding/CI. Also carried: pre-existing use-component-
+insert.ts uid-prediction drift (schema-default set-prop sometimes doesn't persist on
+insert); 2 pre-existing parse-almosafer.test.ts failures (DS token drift).
+
+**Remaining dogfood round-2 queue:** bridge-rasterization (real culled-frame
+screenshots + FP-6 raster export) → FIX-W4 (Inspector Penpot structure+icons item 1
++ component-instance ONLY props item 7d) → FIX-W5 (frames nest as <div> + device
+presets item 8) → FIX-W6 (comments FP-5 faithful item 2). FIX-W2 (Inspect-tab
+loading item 3) likely already resolved by fresh daemon + FP-INS-b/FIX-W1 — AWAIT
+human retry before spending a worker.
