@@ -254,10 +254,23 @@ effect live; studio 30/30, canvas 150/150, lint+typecheck green.
 **Carry-forwards:** no op-rejected/no-op toast feedback (shared "no toast yet" gap);
 Text-then-Image without reselect nests img in the p (consistent w/ insert pattern).
 
-**FP status board:** FP-1 ✅ · FP-2 ✅ · FP-3 ✅ · FP-4 🔜 (in-place edit:
-select+text+context-drag — the meatiest; may split 4a select+text / 4b drag) ·
-**[then dogfood + SHOW HUMAN per D-ORDER]** · FP-6 (export) · FP-5 (comments) ·
-FP-7 (structure ops + keymap).
+### FP-4a — COMPLETE (AUDIT-FP4a PASS, tag `fp-4a-complete`, commit `2d639e0`) 2026-07-17
+Frictionless single-click element select (overlay sized to active frame only, no
+double-click-into-edit-mode); two-way select sync canvas↔Layers↔Inspector (dedupe
+guards, no ping-pong) — CLOSES the AUDIT-FP1 carry-forward (⇧2 works after Layers
+select); in-place text edit via bridge `contentEditable` inside the iframe →
+Enter/blur commits real `set-text` (Esc cancels byte-identical, Arabic byte-exact,
+dynamic/.map() read-only). Bridge protocol extended ADDITIVELY (4 new msg kinds,
+window-identity+zod preserved); frozen @ccs/protocol + sync-daemon + ast-engine
+ZERO-diff. Fresh audit reproduced all acceptance live w/ disk diffs; hostile text
+lands as inert escaped string literal (no injection); lint green (bridge/canvas/
+studio), typecheck 11/11, tests bridge 39/canvas 155/studio 33.
+
+**FP status board:** FP-1 ✅ · FP-2 ✅ · FP-3 ✅ · FP-4a ✅ · FP-4b 🔜 (context-
+aware drag: D-EDIT — flex/grid parent reorders via move-node, non-layout parent
+free-drags to absolute positioning; bridge reports parent layout mode) ·
+**[then dogfood + SHOW HUMAN per D-ORDER before FP-5/6/7]** · FP-6 (export) ·
+FP-5 (comments) · FP-7 (structure ops + keymap).
 **Standing note:** account monthly spend limit was hit once (FP-3 attempt 1) — if a
 worker dies with that API error, it's the account cap (raise at claude.ai/settings/
 usage), not a logic failure; clean-respawn from the last tag.
