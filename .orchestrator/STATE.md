@@ -266,11 +266,31 @@ ZERO-diff. Fresh audit reproduced all acceptance live w/ disk diffs; hostile tex
 lands as inert escaped string literal (no injection); lint green (bridge/canvas/
 studio), typecheck 11/11, tests bridge 39/canvas 155/studio 33.
 
-**FP status board:** FP-1 ✅ · FP-2 ✅ · FP-3 ✅ · FP-4a ✅ · FP-4b 🔜 (context-
-aware drag: D-EDIT — flex/grid parent reorders via move-node, non-layout parent
-free-drags to absolute positioning; bridge reports parent layout mode) ·
-**[then dogfood + SHOW HUMAN per D-ORDER before FP-5/6/7]** · FP-6 (export) ·
-FP-5 (comments) · FP-7 (structure ops + keymap).
+### FP-4b — COMPLETE (AUDIT-FP4b PASS, tag `fp-4b-complete`, commit `85332d0`) 2026-07-17
+Context-aware drag (D-EDIT): bridge reports parent layout mode LIVE from computed
+style → flex/grid parent drag REORDERS (move-node, no coords; auditor confirmed
+BOTH flex + grid live), non-layout parent FREE-drags (absolute + RTL logical
+start-[Npx]/top-[Npx] via set-classes, +relative on static parent). 4px threshold
+keeps click-select + dblclick-text-edit; dynamic/.map() + unaddressable-parent
+disable drag. Reuses frozen move-node/set-classes (zero new ops); bridge additive;
+@ccs/protocol+sync-daemon+ast-engine ZERO-diff. bridge 64/canvas 169/studio 33,
+lint green, typecheck 11/11.
+**Carry-forward (2 minor):** free-drag-onto-static-parent = 2 ops → 1 Undo leaves
+transient half-state (2nd fully reverts); zoom-WHILE-dragging mixes camera frames
+(constant-zoom correct). Snapping deferred ([secondary]).
+
+## 🏁 FP-1..4 QUARTET COMPLETE (2026-07-17) — the "feels like a working editor" milestone
+Tags fp-1-complete … fp-4b-complete (+ infra c71cc3c). Per D-ORDER, STOP HERE and
+SHOW THE HUMAN a real dogfood before FP-5/6/7. What now works end-to-end: pan/zoom
++ zoom widget (FP-1); resizable panels + two-header shell, no global top bar (FP-2);
+toolbar tools create frames / insert text+image / open assets (FP-3); single-click
+select + in-place text edit + bidirectional Layers/Inspector sync (FP-4a);
+context-aware drag = reorder in auto-layout / free-place otherwise (FP-4b).
+Remaining (post-review): FP-6 export, FP-5 comments (local-first), FP-7 structure
+ops + keyboard parity.
+
+**FP status board:** FP-1 ✅ · FP-2 ✅ · FP-3 ✅ · FP-4a ✅ · FP-4b ✅ ·
+**⏸ DOGFOOD REVIEW GATE (human)** · FP-6 (export) · FP-5 (comments) · FP-7 (polish).
 **Standing note:** account monthly spend limit was hit once (FP-3 attempt 1) — if a
 worker dies with that API error, it's the account cap (raise at claude.ai/settings/
 usage), not a logic failure; clean-respawn from the last tag.
