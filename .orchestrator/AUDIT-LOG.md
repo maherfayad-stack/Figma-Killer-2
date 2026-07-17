@@ -193,3 +193,27 @@ Boundary: protocol zero-diff since 3dedb24; ast-engine purely ADDITIVE (build-tr
 RTL: verified live (e2e h: dir=rtl, left dock physically right of right dock — only holds with logical props); source uses paddingInline/insetInlineStart/marginInline throughout; dir wired in main.tsx (real boot logic).
 CR opinions: (a) catalog dev-server-only → ACCEPTABLE for P5 (P6 static-hosting concern). (b) git-checkpoint .gitignore warning → COSMETIC non-fatal. (c) 39 meta.ts untracked in external DS repo → out of P5 scope. (d) Dashboard localStorage → acceptable (studio-local prefs).
 **Action: MERGE — P5 gated complete. Tag phase-5-complete.**
+
+---
+
+### INFRA — daemon Windows child-Vite spawn fix · 2026-07-17
+Orchestrator self-verified (small non-feature cross-platform fix, AUDIT-4 precedent). Committed `c71cc3c`.
+Root cause: `vite-orchestrator.ts` spawned `node_modules/.bin/vite`/`pnpm` via `node:child_process.spawn` → ENOENT on native Windows (no `.CMD`/PATHEXT resolution) → daemon could not boot a dev server → studio undogfoodable on this machine.
+Fix: swap to `cross-spawn` (pinned 7.0.6; PATHEXT-aware, no `shell:true` so the space-containing repo path stays injection-safe) + on win32 tear the child tree down with `taskkill /pid <pid> /T /F` (SIGTERM only kills the cmd.exe wrapper, orphaning the grandchild node running Vite and leaking the port). Security/path-containment code (`safe-path.ts`/`op-apply.ts`/FileOpQueue/Origin-gate) UNTOUCHED; scope = process launch/teardown only.
+Verified (orchestrator, independently): daemon typecheck clean; `cross-spawn` resolves; booted `demo:daemon` against `files/demo` → Hero + Arabic Pricing frames both HTTP 200; worker also showed `vite-orchestrator.test.ts` 2/2 (failing baseline) + `standalone-contract` 2→1. Pre-existing Windows-only failures (`e2e-500-ops.test.ts` NodeUid regex, watcher/safe-path path-sep asserts) confirmed present on the reverted baseline too → not caused by this fix.
+Carry-forward P8: pre-existing Windows-only daemon test failures (path-separator assertions + NodeUid derivation on `\`) — deflake/port-separator-normalize.
+**Action: MERGE — unblocks real-browser dogfooding of the FP pipeline on Windows.**
+
+### AUDIT-FP1 — FP-1 canvas interaction + zoom widget · 2026-07-17
+Auditor: fresh independent agent (Sonnet 5, NOT the author) · Ref: uncommitted tree on `c71cc3c`; feature now committed `e02aced`.
+**Verdict: PASS — MERGE.** (0 blockers, 0 majors, 1 minor carry-forward)
+Findings:
+  1. [minor] Layers-panel-originated frame selection doesn't drive tldraw's own canvas selection, so `zoomToSelection` (⇧2) silently no-ops after a panel-only select (PROVEN LIVE: panel-select Pricing → canvas kept Hero's blue handles; ⇧2 stayed 17% vs a canvas-click select correctly zooming 17%→46%). Pre-existing gap (LayersPanel untouched by FP-1) but undercuts the "↔" bidirectional framing. FIX (carry-forward, fold into FP-4 selection sync): have `selectFrame()` also `editor.select(shapeId)`, or gate the zoom-to-selected affordance when selection didn't originate on canvas.
+Reproduced acceptance (all RAN live, own screenshots fp1-audit-*): (a) pan — space+drag/middle-drag both axes, plain wheel = pure vertical, shift+wheel = pure horizontal (tx 217.16→17.18, ty UNCHANGED — verified via computed transform matrix), ctrl+wheel zoom-at-cursor; (b) zoom widget floating top-end, `elementFromPoint` returns its own button (NOT the watermark, which sits bottom-end — confirms relocation reason), dropdown strings byte-match Penpot `en.po`, live %-tracking; (c) keys +/-/⇧0/1/2 match `shortcuts.cljs` exactly; (d) canvas frame-click → Layers row mint highlight; marquee both → reports null, no crash. PASS all four.
+One-Rule scan: clean (zoom/camera = React state only; sole localStorage hit is pre-existing Dashboard prefs).
+Boundary check: clean — exactly the 8 declared files; `git diff HEAD -- packages/protocol` and `-- packages/sync-daemon` both EMPTY; FP-1 fully uncommitted at audit time.
+tldraw abstraction (§5.4): clean — `index.ts` leaks zero tldraw types (`StudioCanvasHandle` = plain 5-method interface); no tldraw imports in the new files; MINIMAL_COMPONENTS untouched.
+Penpot fidelity: verified vs the real clone — shift+wheel remap doc-comment is a VERBATIM match to `viewport/actions.cljs` `schedule-scroll!`; widget strings/shortcuts/layout a 1:1 port of `right_header.cljs`+`en.po`+`shortcuts.cljs`. No drift.
+type/lint/test: canvas 150/150, studio 25/25, ui 20/20; lint + typecheck clean across all 11 projects.
+Regression probes: Ctrl+D duplicate → real daemon-backed copy, no phantom; double-click edit-mode overlay + child-select still work (new capture-phase wheel listener doesn't trap them); marquee no crash; no new console errors attributable to FP-1. Windows teardown via `taskkill /T /F` (ports freed).
+**Action: MERGE — FP-1 gated complete. Tag fp-1-complete.**

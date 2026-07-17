@@ -196,3 +196,37 @@ Tests across the rework: sync-daemon 216/216, canvas 150/150, studio 25/25, ui 2
 DEFERRED (own follow-up WS, needs canvas+daemon): multi-page canvas-surface CRUD;
 UI Tree primitive indent (14px vs --ccs-layer-indent 24px); token write-back persistence.
 P6 remains ON HOLD until human sees P5.
+
+## FEATURE-PARITY EXECUTION AUTHORIZED (human, 2026-07-17)
+Human said "start working on the feature parity plan, spawn multiple agents, you
+orchestrate+audit, don't do the work yourself, all agents on Sonnet 5." Plus:
+"check Penpot's real implementation and take most of the features + look/feel."
+→ Executing `.orchestrator/FEATURE-PARITY-PLAN.md` FP-1..7 in the resolved order
+(FP-1→2→3→4, dogfood+show human, then FP-6→5→7). One Sonnet-5 worker + one fresh
+Sonnet-5 adversarial auditor per FP, SEQUENTIAL (session-limit discipline),
+no-git workers, orchestrator owns commits+tags, real-browser dogfood gate.
+**Penpot source is cloned at `c:\Users\Admin\Documents\GitHub\penpot` (`../penpot`,
+MPL-2.0)** — every worker studies the real cljs/scss for its feature (map saved in
+memory `penpot-source-reference-map.md`) and cites what it pulled; auditors verify
+fidelity against the same source.
+
+### INFRA (2026-07-17) — daemon Windows child-Vite spawn fixed → `c71cc3c`
+`vite-orchestrator.ts` couldn't boot Vite on native Windows (spawn ENOENT). Fixed
+with cross-spawn + win32 `taskkill /T /F` teardown; security/path code untouched.
+Orchestrator-verified boot (Hero + Pricing HTTP 200). Unblocks all dogfooding on
+this machine. See AUDIT-LOG INFRA entry.
+
+### FP-1 — COMPLETE (AUDIT-FP1 PASS, tag `fp-1-complete`, commit `e02aced`) 2026-07-17
+Canvas interaction unlock + Penpot zoom widget: native pan (space/middle/wheel,
+shift+wheel=horizontal via a Windows axis-remap mirroring Penpot), ctrl+wheel
+zoom-at-cursor; floating zoom widget (%/in/out/Reset ⇧0/fit-all ⇧1/fit-sel ⇧2,
+strings ported from Penpot `right_header.cljs`+`en.po`); keys per `shortcuts.cljs`;
+canvas frame-click → Layers sync. tldraw stays abstracted (index.ts leaks none),
+One Rule intact. Fresh audit reproduced all 4 acceptance items live. Tests: canvas
+150/150, studio 25/25, ui 20/20; lint+typecheck clean.
+**Carry-forward → FP-4:** Layers-panel-originated selection doesn't drive tldraw's
+canvas selection → zoom-to-selected no-ops after a panel-only select. Fix as part
+of FP-4's bidirectional select+sync work (or gate the affordance).
+
+**FP status board:** FP-1 ✅ · FP-2 🔜 (panel resize + fold TopBar into panes) ·
+FP-3 (toolbar tools) · FP-4 (in-place edit: select+text+context-drag) · [dogfood+show human] · FP-6 (export) · FP-5 (comments) · FP-7 (structure ops + keymap).
