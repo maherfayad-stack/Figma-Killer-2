@@ -1,6 +1,7 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import { execFile, type ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import spawn from 'cross-spawn';
 
 /**
  * One Vite dev server per file-folder — NOT per frame (playbook §4/P1 step
@@ -138,6 +139,25 @@ function sleep(ms: number): Promise<void> {
 
 async function killChild(child: ChildProcess): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) return;
+
+  // On Windows, the vite/pnpm command we spawn resolves to a `.CMD` shim,
+  // so the direct child Node sees is `cmd.exe` — SIGTERM (Node maps this
+  // to `TerminateProcess` on that one PID, since Windows has no real POSIX
+  // signals/process groups) kills the wrapper but can orphan the
+  // grandchild `node` process actually running Vite, which keeps the dev
+  // server's port bound. `taskkill /T /F` kills the whole process tree by
+  // PID instead, so we go straight to it — Windows console processes
+  // (unlike GUI apps with a message loop) don't respond to a non-forceful
+  // `taskkill` anyway, so attempting one first would just burn the full
+  // grace period below on every stop(). POSIX keeps the real
+  // SIGTERM-then-SIGKILL escalation.
+  if (process.platform === 'win32' && child.pid) {
+    await new Promise<void>((resolve) => {
+      execFile('taskkill', ['/pid', String(child.pid), '/T', '/F'], () => resolve());
+    });
+    return;
+  }
+
   await new Promise<void>((resolve) => {
     const timer = setTimeout(() => {
       child.kill('SIGKILL');
