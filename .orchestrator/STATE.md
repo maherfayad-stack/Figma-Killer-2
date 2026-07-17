@@ -228,5 +228,18 @@ One Rule intact. Fresh audit reproduced all 4 acceptance items live. Tests: canv
 canvas selection → zoom-to-selected no-ops after a panel-only select. Fix as part
 of FP-4's bidirectional select+sync work (or gate the affordance).
 
-**FP status board:** FP-1 ✅ · FP-2 🔜 (panel resize + fold TopBar into panes) ·
-FP-3 (toolbar tools) · FP-4 (in-place edit: select+text+context-drag) · [dogfood+show human] · FP-6 (export) · FP-5 (comments) · FP-7 (structure ops + keymap).
+### FP-2 — COMPLETE (AUDIT-FP2 PASS after lint remediation, tag `fp-2-complete`, commit `297a74e`) 2026-07-17
+Removed global TopBar → Penpot two-header model: LeftHeader (file name + inline
+rename + File menu + back-to-dashboard), RightHeader (relocated FP-1 zoom widget +
+comments-toggle stub + undo/redo wired to sendUndo/sendRedo). `use-resize` hook
+(React port of Penpot `resize.cljs`): per-panel drag handle, clamp 318–500 / 318–768,
+width persisted per-project in localStorage, RTL-aware drag sign. Fresh audit
+reproduced all acceptance live; FAIL'd on 2 react-hooks lint errors → worker fixed
+(no suppressions) → orchestrator re-verified lint/typecheck/tests green.
+**Carry-forwards:** undo/redo disabled until a frame is selected (fileFolder guard);
+stale `acceptance.spec.ts` e2e (pre-existing from P5-rework `d0e499f` — repair the
+suite); narrow-viewport <636px overflow (Penpot is non-responsive too).
+
+**FP status board:** FP-1 ✅ · FP-2 ✅ · FP-3 🔜 (toolbar tools wired to canvas
+actions) · FP-4 (in-place edit: select+text+context-drag) · [dogfood+show human] ·
+FP-6 (export) · FP-5 (comments) · FP-7 (structure ops + keymap).
