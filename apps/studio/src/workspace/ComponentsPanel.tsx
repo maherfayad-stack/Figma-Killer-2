@@ -119,7 +119,18 @@ export function ComponentsPanel(): React.ReactElement {
       {groups.length === 0 && (
         <Panel title="Components" id="assets-components">
           <p style={{ fontSize: 'var(--ccs-font-size-sm)', color: 'var(--ccs-text-subtle)' }}>
-            No components match &ldquo;{query}&rdquo;.
+            {query.trim() ? (
+              <>No components match &ldquo;{query}&rdquo;.</>
+            ) : (
+              // Empty query with an EMPTY catalog (no `.meta.ts` reachable) —
+              // distinct from "your search matched nothing" (FIX-W3): never
+              // show `No components match ""` for a query the user didn't
+              // type. A non-empty catalog always takes the `groups.length >
+              // 0` branch above once the query is empty (no filtering
+              // applied), so this only renders when `listComponents()`
+              // itself returned nothing.
+              <>No components available.</>
+            )}
           </p>
         </Panel>
       )}

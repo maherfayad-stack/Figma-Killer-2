@@ -56,7 +56,8 @@ export {
   type ComponentMeta,
 } from './component-meta.js';
 export { parseComponentMeta } from './parse-component-meta.js';
-export { extractDestructuredProps } from './jsx-props.js';
+export { extractDestructuredProps, extractDestructuredPropDefaults, type DestructuredPropDefault } from './jsx-props.js';
+export { generateComponentMeta, serializeComponentMeta, type GenerateMetaInput, type GenerateMetaResult } from './generate-meta.js';
 
 export {
   listComponents,

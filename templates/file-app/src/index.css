@@ -8,3 +8,15 @@
    studio daemon ever boots (P0 standalone contract: zero @ccs/* runtime
    dep — this is a plain relative import, not a package import). */
 @import './tokens.css';
+/* FIX-W3: the bare `design-system/dist/index.css` specifier only resolves
+   under the sync-daemon's studio-mode dev-server overlay (`packages/
+   sync-daemon/src/studio-vite-config.ts` already aliases it — same as the
+   bare `design-system` JS import `insert-node` writes into frames, which
+   is ALSO only resolvable studio-mode; the same accepted P0 standalone
+   trade-off, not a new one). Without this import, every inserted DS
+   component's OWN `.css` (e.g. `Badge.css`'s `.badge`/`.badge--alert`
+   rules) never loads, so components with no browser-default styling (a
+   bare `<span>`) render as a genuine 0x0 empty box — the literal "insert
+   drops an empty box representing nothing" bug. Every NEW `pnpm create-
+   file` project inherits this from the template so the bug can't recur. */
+@import 'design-system/dist/index.css';

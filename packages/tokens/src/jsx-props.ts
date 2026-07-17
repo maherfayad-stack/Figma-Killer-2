@@ -6,6 +6,7 @@ import {
   type ObjectBindingPattern,
   type SourceFile,
 } from 'ts-morph';
+import { evaluateExpressionToJson, type JsonValue } from './parse-literal.js';
 
 /**
  * `extractDestructuredProps` — reads a `design-system/src/components/
@@ -13,7 +14,7 @@ import {
  * component destructures from its first parameter (`function X({a, b,
  * ...rest})`, `const X = ({a, b}) => ...`, or the `forwardRef(function
  * X({a, b}, ref) => ...)` wrapper all three real-world shapes used across
- * the 39 components). PURE — no execution, ts-morph AST walk only,
+ * the components). PURE — no execution, ts-morph AST walk only,
  * matching `parseComponentMeta`'s "read the source, never run it"
  * discipline.
  *
@@ -23,6 +24,35 @@ import {
  * future prop rename/removal in the real component.
  */
 export function extractDestructuredProps(sourceText: string, componentName: string): string[] {
+  return extractDestructuredPropDefaults(sourceText, componentName).map((p) => p.name);
+}
+
+export interface DestructuredPropDefault {
+  name: string;
+  /** `true` iff the binding element had a `= <expr>` default initializer
+   * (regardless of whether that expression was evaluable to a literal). */
+  hasDefault: boolean;
+  /** The initializer's literal value, evaluated the same way `meta.ts`/
+   * `tokens.js` literals are (`evaluateExpressionToJson`) — `undefined`
+   * when there's no default OR the default isn't a literal this walker
+   * understands (a function call, identifier reference, etc.). */
+  defaultValue: JsonValue;
+}
+
+/**
+ * FIX-W3: like `extractDestructuredProps`, but also returns each prop's
+ * default-parameter VALUE (not just its name) — the input the `.meta.ts`
+ * GENERATOR (`generate-component-meta.ts`) needs to infer a `PropSchema`
+ * (`type`/`control`/`default`) straight from the real `.jsx`, since this
+ * DS checkout ships zero hand-authored `.meta.ts`/Code Connect. Still a
+ * pure AST walk — reuses the same binding-pattern traversal as
+ * `extractDestructuredProps` (kept as a thin wrapper above so its existing
+ * callers/tests are unaffected).
+ */
+export function extractDestructuredPropDefaults(
+  sourceText: string,
+  componentName: string,
+): DestructuredPropDefault[] {
   const project = new Project({
     useInMemoryFileSystem: true,
     skipFileDependencyResolution: true,
@@ -34,7 +64,7 @@ export function extractDestructuredProps(sourceText: string, componentName: stri
   if (!firstParam) return [];
   const pattern = firstParam.getNameNode().asKind(SyntaxKind.ObjectBindingPattern);
   if (!pattern) return [];
-  return bindingPatternNames(pattern);
+  return bindingPatternEntries(pattern);
 }
 
 function findComponentFirstParam(sourceFile: SourceFile, componentName: string): ParameterDeclaration | undefined {
@@ -64,17 +94,24 @@ function asFunctionLike(node: Node | undefined) {
   return node.asKind(SyntaxKind.ArrowFunction) ?? node.asKind(SyntaxKind.FunctionExpression);
 }
 
-function bindingPatternNames(pattern: ObjectBindingPattern): string[] {
-  const names: string[] = [];
+function bindingPatternEntries(pattern: ObjectBindingPattern): DestructuredPropDefault[] {
+  const entries: DestructuredPropDefault[] = [];
   for (const element of pattern.getElements()) {
     if (element.getDotDotDotToken()) continue; // `...rest` — not an individual prop
     const propertyNameNode = element.getPropertyNameNode();
+    let name: string;
     if (propertyNameNode) {
       const str = propertyNameNode.asKind(SyntaxKind.StringLiteral);
-      names.push(str ? str.getLiteralValue() : propertyNameNode.getText());
+      name = str ? str.getLiteralValue() : propertyNameNode.getText();
     } else {
-      names.push(element.getName());
+      name = element.getName();
     }
+    const initializer = element.getInitializer();
+    entries.push({
+      name,
+      hasDefault: initializer !== undefined,
+      defaultValue: evaluateExpressionToJson(initializer),
+    });
   }
-  return names;
+  return entries;
 }
