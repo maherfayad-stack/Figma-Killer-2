@@ -28,6 +28,7 @@ import { LayersPanel } from './LayersPanel.js';
 import { ComponentsPanel } from './ComponentsPanel.js';
 import { TokensPanel } from './TokensPanel.js';
 import { Inspector } from './Inspector.js';
+import { InspectPanel } from './InspectPanel.js';
 
 /**
  * WorkspaceShell — the per-file workspace (playbook §2.1 `workspace.cljs`).
@@ -82,6 +83,15 @@ function WorkspaceShellInner({
   onRenameFile,
 }: WorkspaceShellProps): React.ReactElement {
   const [leftTab, setLeftTab] = React.useState('layers');
+  // FP-INS-b (`.orchestrator/FEATURE-PARITY-PLAN.md` "Inspect / code tab"):
+  // the right dock's Design | Inspect toggle (Penpot's own model — `Tabs`'s
+  // own module doc already anticipated this: "used by ... the right dock
+  // (Design/Interactions/Inspect, §2.3)"). Defaults to `'design'` so this
+  // task's hard constraint ("the tab toggle must default to Design and not
+  // break the existing Inspector") holds by construction — every existing
+  // test/flow that never touches this toggle still sees exactly the
+  // Inspector it always did.
+  const [rightTab, setRightTab] = React.useState('design');
   const insertComponent = useComponentInsert();
   useWorkspaceKeymap();
   useTreeSnapshotSync();
@@ -101,6 +111,21 @@ function WorkspaceShellInner({
   const [canvasHandle, setCanvasHandle] = React.useState<StudioCanvasHandle | null>(null);
   const [zoomPercent, setZoomPercent] = React.useState(100);
   useZoomKeymap(canvasHandle);
+
+  // FP-INS-b (AUDIT-FPINSb major fix): a monotonically-increasing "bridge
+  // generation" bumped every time the edit-mode frame's bridge (re)connects
+  // or tears down (`StudioCanvas.onBridgeConnectionChange`). The Inspect
+  // tab's computed-CSS fetch (`InspectPanel`) depends on this so it re-runs
+  // once the bridge is actually live — `StudioCanvasHandle.requestComputedStyle`
+  // resolves `not-found` while no bridge exists, and selecting a node via the
+  // Layers panel only brings its (possibly off-screen) frame live AFTER the
+  // selection, so a one-shot mount-time fetch would otherwise lose that race
+  // and show "Loading…" forever. A plain counter (not the connected boolean)
+  // so a disconnect→reconnect on the SAME frame still re-triggers.
+  const [bridgeGeneration, setBridgeGeneration] = React.useState(0);
+  const handleBridgeConnectionChange = React.useCallback(() => {
+    setBridgeGeneration((g) => g + 1);
+  }, []);
 
   // FP-3 (`.orchestrator/FEATURE-PARITY-PLAN.md` §2 FP-3): V/F/T/I/C
   // keyboard shortcuts, routed through the same `useToolActions` bridge
@@ -320,6 +345,7 @@ function WorkspaceShellInner({
               onCommitText={handleCommitText}
               onReorderNode={handleReorderNode}
               onCommitFreeDrag={handleCommitFreeDrag}
+              onBridgeConnectionChange={handleBridgeConnectionChange}
             />
             <Toolbar onOpenComponentPalette={openComponentPalette} canvasHandle={canvasHandle} />
           </div>
@@ -337,8 +363,20 @@ function WorkspaceShellInner({
           }}
         >
           <RightHeader zoomPercent={zoomPercent} canvasHandle={canvasHandle} />
-          <div style={{ flex: 1, overflow: 'auto', minBlockSize: 0 }}>
-            <Inspector />
+          <div style={{ flex: 1, display: 'flex', minBlockSize: 0 }}>
+            <Tabs
+              ariaLabel="Right dock"
+              value={rightTab}
+              onValueChange={setRightTab}
+              items={[
+                { id: 'design', label: 'Design', content: <Inspector /> },
+                {
+                  id: 'inspect',
+                  label: 'Inspect',
+                  content: <InspectPanel canvasHandle={canvasHandle} bridgeGeneration={bridgeGeneration} />,
+                },
+              ]}
+            />
           </div>
           <ResizeHandle testId="resize-handle-right" edge="start" {...right.handleProps} />
         </aside>

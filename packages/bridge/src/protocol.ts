@@ -176,6 +176,26 @@ export const ResolveFreeDropRequestSchema = z
   .strict();
 export type ResolveFreeDropRequest = z.infer<typeof ResolveFreeDropRequestSchema>;
 
+/**
+ * FP-INS-b (`.orchestrator/FEATURE-PARITY-PLAN.md` "Inspect / code tab") —
+ * ADDITIVE bridge message, mirroring `report-parent-layout`'s exact pattern
+ * (FP-4b): the Inspect tab's "CSS" section needs a node's COMPUTED style,
+ * which only the bridge (running INSIDE the file-app iframe) can read via
+ * `getComputedStyle` — the studio itself has no DOM access across the
+ * cross-origin iframe boundary. New member of the existing
+ * `StudioToBridgeMessageSchema` discriminated union — every previously-
+ * frozen member is unchanged (verbatim).
+ */
+export const ReportComputedStyleRequestSchema = z
+  .object({
+    source: z.literal('ccs-studio'),
+    type: z.literal('report-computed-style'),
+    requestId: z.string(),
+    uid: z.string(),
+  })
+  .strict();
+export type ReportComputedStyleRequest = z.infer<typeof ReportComputedStyleRequestSchema>;
+
 export const StudioToBridgeMessageSchema = z.discriminatedUnion('type', [
   HitTestRequestSchema,
   ReportRectsRequestSchema,
@@ -186,6 +206,7 @@ export const StudioToBridgeMessageSchema = z.discriminatedUnion('type', [
   EnterTextEditRequestSchema,
   ReportParentLayoutRequestSchema,
   ResolveFreeDropRequestSchema,
+  ReportComputedStyleRequestSchema,
 ]);
 export type StudioToBridgeMessage = z.infer<typeof StudioToBridgeMessageSchema>;
 
@@ -412,6 +433,66 @@ export const FreeDropResultReplySchema = z
   .strict();
 export type FreeDropResultReply = z.infer<typeof FreeDropResultReplySchema>;
 
+/**
+ * FP-INS-b: `report-computed-style`'s reply payload — a CURATED set of CSS
+ * properties (Penpot's own dev-mode inspect view, `inspect/attributes/
+ * layout.cljs`/`geometry.cljs`/`text.cljs`, likewise shows a fixed property
+ * list per attribute section, never the full ~300-prop `CSSStyleDeclaration`
+ * dump). `group` mirrors that same section split so the studio can render
+ * Penpot-style grouped attribute rows: `layout` (display/flex/grid),
+ * `geometry` (box: size/position/radius/shadow/opacity), `typography`
+ * (font/line/letter/text-align), `color` (text/background/border color).
+ * Rows are OMITTED when `getComputedStyle` returns an empty string for that
+ * property (rare — most browsers always resolve a value) rather than
+ * included as a blank row.
+ */
+export const ComputedStyleGroupSchema = z.enum(['layout', 'geometry', 'typography', 'color']);
+export type ComputedStyleGroup = z.infer<typeof ComputedStyleGroupSchema>;
+
+export const ComputedStyleRowSchema = z
+  .object({
+    group: ComputedStyleGroupSchema,
+    /** kebab-case CSS property name, e.g. `"font-size"` — matches what a
+     * caller would actually write in a stylesheet/inline style. */
+    prop: z.string(),
+    value: z.string(),
+  })
+  .strict();
+export type ComputedStyleRow = z.infer<typeof ComputedStyleRowSchema>;
+
+export const ComputedStyleInfoSchema = z
+  .object({
+    /** Ordered rows, grouped (see `ComputedStyleGroupSchema`'s doc) —
+     * document order within each group matches the curated property list's
+     * own order, not alphabetical. */
+    rows: z.array(ComputedStyleRowSchema),
+  })
+  .strict();
+export type ComputedStyleInfo = z.infer<typeof ComputedStyleInfoSchema>;
+
+/** `ok:false` mirrors `ParentLayoutResult`/`FreeDropResult`'s pattern
+ * (defense-in-depth, same editable-surface contract as `parent-layout.ts`):
+ * `'not-found'` is the only reason needed here — reading computed style is
+ * safe for ANY node (including a `dynamic`-locked one; Penpot's own inspect
+ * view shows CSS for any shape, editable or not), so there is no
+ * `dynamic-locked` refusal for this READ-ONLY request. */
+export const ComputedStyleResultSchema = z.discriminatedUnion('ok', [
+  z.object({ ok: z.literal(true), info: ComputedStyleInfoSchema }).strict(),
+  z.object({ ok: z.literal(false), reason: z.enum(['not-found']) }).strict(),
+]);
+export type ComputedStyleResult = z.infer<typeof ComputedStyleResultSchema>;
+
+export const ComputedStyleResultReplySchema = z
+  .object({
+    source: z.literal('ccs-bridge'),
+    type: z.literal('computed-style-result'),
+    requestId: z.string(),
+    uid: z.string(),
+    result: ComputedStyleResultSchema,
+  })
+  .strict();
+export type ComputedStyleResultReply = z.infer<typeof ComputedStyleResultReplySchema>;
+
 export const BridgeToStudioMessageSchema = z.discriminatedUnion('type', [
   HitTestResultSchema,
   RectsResultSchema,
@@ -422,5 +503,6 @@ export const BridgeToStudioMessageSchema = z.discriminatedUnion('type', [
   TextEditExitSchema,
   ParentLayoutResultReplySchema,
   FreeDropResultReplySchema,
+  ComputedStyleResultReplySchema,
 ]);
 export type BridgeToStudioMessage = z.infer<typeof BridgeToStudioMessageSchema>;

@@ -66,4 +66,36 @@ describe('connectOpsClient', () => {
     expect(socket.sent[0]).toMatchObject({ kind: 'undo', fileFolder: 'demo' });
     expect(socket.sent[1]).toMatchObject({ kind: 'redo', fileFolder: 'demo' });
   });
+
+  describe('FP-INS-b: sendReadSource', () => {
+    it('writes a whole-frame read-source request (no uid field at all) when uid is omitted', () => {
+      const { socket, client } = connectWithFake();
+      const requestId = client.sendReadSource('demo', 'src/frames/Hero.tsx');
+      expect(socket.sent).toEqual([
+        { kind: 'read-source', requestId, fileFolder: 'demo', framePath: 'src/frames/Hero.tsx' },
+      ]);
+      expect(socket.sent[0]).not.toHaveProperty('uid');
+    });
+
+    it('writes a node-slice read-source request with uid when provided', () => {
+      const { socket, client } = connectWithFake();
+      const requestId = client.sendReadSource('demo', 'src/frames/Hero.tsx', 'src/frames/Hero.tsx:d0.1');
+      expect(socket.sent).toEqual([
+        {
+          kind: 'read-source',
+          requestId,
+          fileFolder: 'demo',
+          framePath: 'src/frames/Hero.tsx',
+          uid: 'src/frames/Hero.tsx:d0.1',
+        },
+      ]);
+    });
+
+    it('returns a fresh requestId per call so concurrent requests correlate independently', () => {
+      const { client } = connectWithFake();
+      const a = client.sendReadSource('demo', 'src/frames/Hero.tsx');
+      const b = client.sendReadSource('demo', 'src/frames/Hero.tsx', 'src/frames/Hero.tsx:d0.1');
+      expect(a).not.toBe(b);
+    });
+  });
 });

@@ -142,11 +142,26 @@ function CcsFrameShapeComponent({ shape }: { shape: CcsFrameShape }): React.Reac
   // by tldraw's own viewport-page-bounds + zoom signals (re-runs whenever
   // either changes, i.e. every pan/zoom tick) rather than a manual
   // resize/scroll listener.
-  const renderMode = useValue(
+  const viewportRenderMode = useValue(
     `ccs-frame-render-mode-${shape.id}`,
     () => decideRenderMode(editor.getViewportPageBounds(), editor.getZoomLevel(), frameBox),
     [editor, frameBox],
   );
+
+  // FP-INS-b (AUDIT-FPINSb major fix): the ONE frame currently in edit mode
+  // is ALWAYS rendered live, overriding the zoom/viewport cull. Rationale: an
+  // edit-mode frame is being actively inspected/edited (its element selected
+  // in the Layers panel, its computed CSS shown in the Inspect tab), and ALL
+  // of that depends on a live iframe + bridge connection (`edit-mode-layer.
+  // tsx` only opens a bridge on a REGISTERED — i.e. live — iframe, and the
+  // registry is only populated in `'live'` mode below). Before this, opening
+  // a multi-frame project (open-time `zoomToFit()` puts every frame under the
+  // 30% screenshot threshold) then selecting a node via Layers left the
+  // frame a static screenshot with no bridge, so the Inspect tab's
+  // computed-CSS request resolved `not-found` forever. Perf stays bounded:
+  // only the SINGLE edit-mode frame is force-lived; every other frame still
+  // obeys the ordinary viewport/zoom cull (`viewportRenderMode` above).
+  const renderMode = isEditModeFrame ? 'live' : viewportRenderMode;
 
   const iframeRef = React.useRef<HTMLIFrameElement | null>(null);
   // `capturedUrl` only ever holds a screenshot THIS component captured

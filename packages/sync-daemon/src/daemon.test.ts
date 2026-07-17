@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -1430,6 +1430,231 @@ export function getFrame(name: string | null): ComponentType | null {
 
     socket.terminate();
     await stopAll();
+  });
+
+  // ---- FP-INS-b: read-source (Inspect tab "Code (JSX)" section) ---------
+  // Additive, READ-ONLY control message. The security-critical assertions
+  // here mirror the AUDIT-6/6b regression tests above almost verbatim
+  // (same shared `resolveContainedPath` gate, same proven exploit shapes) —
+  // this is deliberately treated as seriously as the write path, per this
+  // task's brief ("the auditor WILL re-attack this like AUDIT-6 did the
+  // write path").
+
+  describe('FP-INS-b: read-source', () => {
+    it('reads the WHOLE FRAME source verbatim when no uid is given', async () => {
+      await writeFile(HERO_ABS(), HERO_JSX_SOURCE);
+      const { startVite, stopAll } = makeFakeStartVite();
+      daemon = await openProject({ projectRoot, startVite, daemonPortStart: 60500, frameServerPortStart: 60510 });
+
+      const { socket } = await connectAndGetBootstrap(daemon.daemonPort);
+      const pending = nextEvent(socket);
+      socket.send(
+        JSON.stringify({ kind: 'read-source', requestId: 'rs-1', fileFolder: 'demo', framePath: HERO_FF_REL }),
+      );
+
+      const reply = await pending;
+      expect(reply).toEqual({
+        kind: 'read-source-result',
+        requestId: 'rs-1',
+        fileFolder: 'demo',
+        framePath: HERO_FF_REL,
+        uid: null,
+        source: HERO_JSX_SOURCE,
+      });
+
+      socket.terminate();
+      await stopAll();
+    });
+
+    it('reads exactly one NODE\'s JSX slice when a uid is given (reprinted from the parsed AST, not a substring-hack)', async () => {
+      await writeFile(HERO_ABS(), HERO_JSX_SOURCE);
+      const { startVite, stopAll } = makeFakeStartVite();
+      daemon = await openProject({ projectRoot, startVite, daemonPortStart: 60520, frameServerPortStart: 60530 });
+
+      const tree = buildTree(HERO_JSX_SOURCE, HERO_FF_REL);
+      const h1Uid = tree.children[0]!.uid; // the <h1>Title</h1> node
+      expect(h1Uid).toContain(HERO_FF_REL);
+
+      const { socket } = await connectAndGetBootstrap(daemon.daemonPort);
+      const pending = nextEvent(socket);
+      socket.send(
+        JSON.stringify({
+          kind: 'read-source',
+          requestId: 'rs-2',
+          fileFolder: 'demo',
+          framePath: HERO_FF_REL,
+          uid: h1Uid,
+        }),
+      );
+
+      const reply = await pending;
+      expect(reply).toEqual({
+        kind: 'read-source-result',
+        requestId: 'rs-2',
+        fileFolder: 'demo',
+        framePath: HERO_FF_REL,
+        uid: h1Uid,
+        source: '<h1>Title</h1>',
+      });
+
+      socket.terminate();
+      await stopAll();
+    });
+
+    it('rejects an unknown file-folder with a direct control-error (no fs access attempted)', async () => {
+      await writeFile(HERO_ABS(), HERO_JSX_SOURCE);
+      const { startVite, stopAll } = makeFakeStartVite();
+      daemon = await openProject({ projectRoot, startVite, daemonPortStart: 60540, frameServerPortStart: 60550 });
+
+      const { socket } = await connectAndGetBootstrap(daemon.daemonPort);
+      const pending = nextEvent(socket);
+      socket.send(
+        JSON.stringify({ kind: 'read-source', requestId: 'rs-3', fileFolder: 'not-a-real-folder', framePath: HERO_FF_REL }),
+      );
+
+      const reply = await pending;
+      expect(reply).toMatchObject({ kind: 'control-error', requestId: 'rs-3' });
+      expect((reply as { reason: string }).reason).toMatch(/unknown file-folder/);
+
+      socket.terminate();
+      await stopAll();
+    });
+
+    it('SECURITY (containment-rejection, traversal): a ../../-traversal framePath is rejected, never read', async () => {
+      await writeFile(HERO_ABS(), HERO_JSX_SOURCE);
+      const { startVite, stopAll } = makeFakeStartVite();
+      daemon = await openProject({ projectRoot, startVite, daemonPortStart: 60560, frameServerPortStart: 60570 });
+
+      // A secret file OUTSIDE the 'demo' file-folder root but still inside
+      // this test's temp projectRoot — same exploit shape AUDIT-6 proved
+      // against the write path, replayed here against the read path.
+      const victimDir = join(projectRoot, 'outside-victim-read');
+      const victimAbs = join(victimDir, 'secret.tsx');
+      await mkdir(victimDir, { recursive: true });
+      const victimContent = 'export const SECRET = "should never be exposed";\n';
+      await writeFile(victimAbs, victimContent);
+
+      const { socket } = await connectAndGetBootstrap(daemon.daemonPort);
+      const pending = nextEvent(socket);
+      socket.send(
+        JSON.stringify({
+          kind: 'read-source',
+          requestId: 'rs-4',
+          fileFolder: 'demo',
+          framePath: '../../outside-victim-read/secret.tsx',
+        }),
+      );
+
+      const reply = await pending;
+      expect(reply).toMatchObject({ kind: 'control-error', requestId: 'rs-4' });
+      expect((reply as { reason: string }).reason).toMatch(/invalid path/i);
+      // The reply must NEVER carry the victim file's content.
+      expect(JSON.stringify(reply)).not.toContain('SECRET');
+
+      socket.terminate();
+      await stopAll();
+    });
+
+    it('SECURITY (containment-rejection, absolute path): an absolute framePath is rejected, not resolved against the real fs root', async () => {
+      await writeFile(HERO_ABS(), HERO_JSX_SOURCE);
+      const { startVite, stopAll } = makeFakeStartVite();
+      daemon = await openProject({ projectRoot, startVite, daemonPortStart: 60580, frameServerPortStart: 60590 });
+
+      const { socket } = await connectAndGetBootstrap(daemon.daemonPort);
+      const pending = nextEvent(socket);
+      socket.send(
+        JSON.stringify({
+          kind: 'read-source',
+          requestId: 'rs-5',
+          fileFolder: 'demo',
+          framePath: process.platform === 'win32' ? 'C:\\Windows\\win.ini' : '/etc/passwd',
+        }),
+      );
+
+      const reply = await pending;
+      expect(reply).toMatchObject({ kind: 'control-error', requestId: 'rs-5' });
+
+      socket.terminate();
+      await stopAll();
+    });
+
+    it('SECURITY (containment-rejection, symlink escape — AUDIT-6b shape): a framePath addressed THROUGH a pre-existing symlink pointing outside the root is rejected, never read', async () => {
+      const { startVite, stopAll } = makeFakeStartVite();
+      daemon = await openProject({ projectRoot, startVite, daemonPortStart: 60600, frameServerPortStart: 60610 });
+
+      const outsideDir = await mkdtemp(join(tmpdir(), 'ccs-read-source-outside-'));
+      const victimContent = 'export const SECRET = "symlink-escape should never be exposed";\n';
+      await writeFile(join(outsideDir, 'secret.tsx'), victimContent);
+
+      const demoRoot = join(projectRoot, 'files', 'demo');
+      const symlinkPath = join(demoRoot, 'src', 'frames', 'shortcut');
+      let symlinkCreated = false;
+      try {
+        await symlink(outsideDir, symlinkPath, 'dir');
+        symlinkCreated = true;
+      } catch (err) {
+        // Symlink creation can require elevated privileges on some Windows
+        // configurations (no Developer Mode / no admin) — if the symlink
+        // itself can't even be created, there's nothing to escape through;
+        // skip this one assertion rather than false-failing on an
+        // environment limitation unrelated to the containment logic itself
+        // (the lexical/absolute-path/unknown-file-folder cases above still
+        // fully cover this handler on every platform).
+        console.warn('[read-source symlink test] skipped: could not create symlink —', err);
+      }
+
+      if (symlinkCreated) {
+        try {
+          const { socket } = await connectAndGetBootstrap(daemon.daemonPort);
+          const pending = nextEvent(socket);
+          socket.send(
+            JSON.stringify({
+              kind: 'read-source',
+              requestId: 'rs-6',
+              fileFolder: 'demo',
+              framePath: 'src/frames/shortcut/secret.tsx',
+            }),
+          );
+
+          const reply = await pending;
+          expect(reply).toMatchObject({ kind: 'control-error', requestId: 'rs-6' });
+          expect((reply as { reason: string }).reason).toMatch(/escapes the file-folder root/i);
+          expect(JSON.stringify(reply)).not.toContain('SECRET');
+
+          socket.terminate();
+        } finally {
+          await rm(symlinkPath, { force: true });
+        }
+      }
+
+      await stopAll();
+      await rm(outsideDir, { recursive: true, force: true });
+    });
+
+    it('reports a clear error (not a crash) when the uid does not resolve to any node in the current source', async () => {
+      await writeFile(HERO_ABS(), HERO_JSX_SOURCE);
+      const { startVite, stopAll } = makeFakeStartVite();
+      daemon = await openProject({ projectRoot, startVite, daemonPortStart: 60620, frameServerPortStart: 60630 });
+
+      const { socket } = await connectAndGetBootstrap(daemon.daemonPort);
+      const pending = nextEvent(socket);
+      socket.send(
+        JSON.stringify({
+          kind: 'read-source',
+          requestId: 'rs-7',
+          fileFolder: 'demo',
+          framePath: HERO_FF_REL,
+          uid: `${HERO_FF_REL}:d0.99`,
+        }),
+      );
+
+      const reply = await pending;
+      expect(reply).toMatchObject({ kind: 'control-error', requestId: 'rs-7' });
+      expect((reply as { reason: string }).reason).toMatch(/no JSX node found/);
+
+      socket.terminate();
+      await stopAll();
+    });
   });
 
   it('close() stops watchers/servers so a second openProject can reuse the same ports', async () => {

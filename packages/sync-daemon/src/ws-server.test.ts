@@ -86,6 +86,7 @@ describe('createControlServer', () => {
       onSetToken: () => {},
       onCreateToken: () => {},
       onDeleteToken: () => {},
+      onReadSource: () => {},
     });
 
     expect(handle.host).toBe('127.0.0.1');
@@ -137,6 +138,7 @@ describe('createControlServer', () => {
       onSetToken: () => {},
       onCreateToken: () => {},
       onDeleteToken: () => {},
+      onReadSource: () => {},
     });
 
     await expect(attemptConnect(port, { origin: 'http://evil-attacker-page.example' })).resolves.toBe(
@@ -159,6 +161,7 @@ describe('createControlServer', () => {
       onSetToken: () => {},
       onCreateToken: () => {},
       onDeleteToken: () => {},
+      onReadSource: () => {},
     });
 
     // A plain `new WebSocket(url)` (no `origin` option) never sends an
@@ -183,6 +186,7 @@ describe('createControlServer', () => {
       onSetToken: () => {},
       onCreateToken: () => {},
       onDeleteToken: () => {},
+      onReadSource: () => {},
     });
 
     await expect(attemptConnect(port, { origin: 'http://127.0.0.1:5555' })).resolves.toBe('open');
@@ -203,6 +207,7 @@ describe('createControlServer', () => {
       onSetToken: () => {},
       onCreateToken: () => {},
       onDeleteToken: () => {},
+      onReadSource: () => {},
     });
 
     await expect(attemptConnect(port, { origin: 'http://localhost:3000' })).resolves.toBe('open');
@@ -223,6 +228,7 @@ describe('createControlServer', () => {
       onSetToken: () => {},
       onCreateToken: () => {},
       onDeleteToken: () => {},
+      onReadSource: () => {},
     });
 
     const client = await connect(port);
@@ -247,6 +253,7 @@ describe('createControlServer', () => {
       onSetToken: () => {},
       onCreateToken: () => {},
       onDeleteToken: () => {},
+      onReadSource: () => {},
     });
 
     const clientA = await connect(port);
@@ -279,6 +286,7 @@ describe('createControlServer', () => {
       onSetToken: () => {},
       onCreateToken: () => {},
       onDeleteToken: () => {},
+      onReadSource: () => {},
     });
 
     const client = await connect(port);
@@ -306,6 +314,7 @@ describe('createControlServer', () => {
       onSetToken: () => {},
       onCreateToken: () => {},
       onDeleteToken: () => {},
+      onReadSource: () => {},
     });
 
     const client = await connect(port);
@@ -333,6 +342,7 @@ describe('createControlServer', () => {
       onSetToken: () => {},
       onCreateToken: () => {},
       onDeleteToken: () => {},
+      onReadSource: () => {},
     });
 
     const client = await connect(port);
@@ -361,6 +371,7 @@ describe('createControlServer', () => {
       onSetToken: () => {},
       onCreateToken: () => {},
       onDeleteToken: () => {},
+      onReadSource: () => {},
     });
 
     const client = await connect(port);
@@ -408,6 +419,7 @@ describe('createControlServer', () => {
       onSetToken: () => {},
       onCreateToken: () => {},
       onDeleteToken: () => {},
+      onReadSource: () => {},
     });
 
     const client = await connect(port);
@@ -449,6 +461,7 @@ describe('createControlServer', () => {
       onSetToken: () => {},
       onCreateToken: () => {},
       onDeleteToken: () => {},
+      onReadSource: () => {},
     });
 
     const requester = await connect(port);
@@ -497,6 +510,7 @@ describe('createControlServer', () => {
       onSetToken: () => {},
       onCreateToken: () => {},
       onDeleteToken: () => {},
+      onReadSource: () => {},
     });
 
     const client = await connect(port);
@@ -542,6 +556,7 @@ describe('createControlServer', () => {
       onSetToken: () => {},
       onCreateToken: () => {},
       onDeleteToken: () => {},
+      onReadSource: () => {},
     });
 
     const client = await connect(port);
@@ -571,6 +586,7 @@ describe('createControlServer', () => {
       onSetToken: () => {},
       onCreateToken: () => {},
       onDeleteToken: () => {},
+      onReadSource: () => {},
     });
 
     const client = await connect(port);
@@ -597,6 +613,7 @@ describe('createControlServer', () => {
       onSetToken: () => {},
       onCreateToken: () => {},
       onDeleteToken: () => {},
+      onReadSource: () => {},
     });
 
     const client = await connect(port);
@@ -622,6 +639,7 @@ describe('createControlServer', () => {
       onSetToken: () => {},
       onCreateToken: () => {},
       onDeleteToken: () => {},
+      onReadSource: () => {},
     });
 
     expect(handle.clientCount()).toBe(0);
@@ -651,6 +669,7 @@ describe('createControlServer', () => {
       onSetToken: () => {},
       onCreateToken: () => {},
       onDeleteToken: () => {},
+      onReadSource: () => {},
     });
 
     const client = await connect(port);
@@ -685,6 +704,7 @@ describe('createControlServer', () => {
       onSetToken: () => {},
       onCreateToken: () => {},
       onDeleteToken: () => {},
+      onReadSource: () => {},
     });
 
     const client = await connect(port);
@@ -711,6 +731,7 @@ describe('createControlServer', () => {
       onSetToken: () => {},
       onCreateToken: () => {},
       onDeleteToken: () => {},
+      onReadSource: () => {},
     });
 
     const client = await connect(port);

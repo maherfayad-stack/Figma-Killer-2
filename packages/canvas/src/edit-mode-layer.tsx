@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { createShapeId, useValue, type Editor } from 'tldraw';
-import type { HitInfo, LayoutAxis, Rect, TextEditExit } from '@ccs/bridge';
+import type { ComputedStyleResult, HitInfo, LayoutAxis, Rect, TextEditExit } from '@ccs/bridge';
 import type { CanvasFrameRecord } from './project-wiring.js';
 import { getRegisteredFrameIframe, onFrameIframeRegistryChange } from './frame-shape.js';
 import { useSelectionStore, onUidRemap, type HoverState, type SelectionState } from './selection-store.js';
@@ -247,6 +247,16 @@ export interface EditModeLayerProps {
   /** FP-4b (D-EDIT): called once per completed FREE-DRAG drop. See
    * {@link CommitFreeDragRequest}'s doc. */
   onCommitFreeDrag?: ((request: CommitFreeDragRequest) => void) | undefined;
+  /** FP-INS-b (Inspect / code tab): fires with a `requestComputedStyle`
+   * function bound to the CURRENT edit-mode frame's live bridge connection
+   * whenever that connection (re)connects, and with `null` when it's torn
+   * down (frame deselected/reloaded, no live iframe yet). `StudioCanvas`
+   * stores whatever this last reports in a ref and exposes it as
+   * `StudioCanvasHandle.requestComputedStyle` — this is the ONLY place a
+   * frame's bridge connection actually lives, so it's the only place that
+   * can hand one out. Optional so existing callers/tests compile unchanged
+   * (additive prop, same pattern as `onCommitText`/`onReorderNode`). */
+  onBridgeConnectionChange?: ((requestComputedStyle: ((uid: string) => Promise<ComputedStyleResult>) | null) => void) | undefined;
 }
 
 function exitEditModeAndRestoreCamera(editor: Editor): void {
@@ -270,6 +280,7 @@ export function EditModeLayer({
   onCommitText,
   onReorderNode,
   onCommitFreeDrag,
+  onBridgeConnectionChange,
 }: EditModeLayerProps): React.ReactElement {
   const editModeFrame = useSelectionStore((s) => s.editModeFrame);
   const hover = useSelectionStore((s) => s.hover);
@@ -358,6 +369,7 @@ export function EditModeLayer({
     if (connectedWindowRef.current === win) return;
     connectionRef.current?.dispose();
     connectionRef.current = null;
+    onBridgeConnectionChange?.(null);
     connectedWindowRef.current = win;
     // A reconnect (new/reloaded iframe) invalidates any in-progress edit's
     // DOM state — drop back to hit-test-capture mode rather than leaving
@@ -382,16 +394,41 @@ export function EditModeLayer({
           connectionRef.current?.subscribeRects(currentSelection);
           connectionRef.current?.setSelection(currentSelection);
         }
+        // FP-INS-b (AUDIT-FPINSb): re-announce the connection on READY, not
+        // just on connect. A FRESHLY-MOUNTED edit-mode iframe (the natural
+        // Layers-select-then-Inspect flow: the frame only goes live AFTER
+        // selection) isn't yet listening when `connectBridge` returns below,
+        // so a `report-computed-style` fired at connect-time is dropped and
+        // never answered. This `ready` handshake is the point the in-iframe
+        // bridge is actually able to reply — re-announcing here bumps the
+        // studio's bridge-generation again so the Inspect tab's CSS fetch
+        // re-runs against a bridge that can now respond.
+        const conn = connectionRef.current;
+        if (conn) onBridgeConnectionChange?.(conn.requestComputedStyle);
       },
       onTextEditExit: handleTextEditExit,
     });
     connectionRef.current = connection;
+    // FP-INS-b: hand the Inspect tab a way to reach THIS connection's
+    // `requestComputedStyle` without `StudioCanvas` needing its own bridge
+    // wiring — see this prop's own doc. (Covers the case where the iframe's
+    // bridge is ALREADY listening at connect time — e.g. reconnecting to an
+    // already-booted iframe; the `onReady` re-announce above covers the
+    // freshly-mounted case where it isn't ready yet.)
+    onBridgeConnectionChange?.(connection.requestComputedStyle);
 
     return () => {
       connection.dispose();
       if (connectedWindowRef.current === win) connectedWindowRef.current = null;
     };
-  }, [iframeEl, handleTextEditExit]);
+    // `onBridgeConnectionChange` is a real dependency (included below) —
+    // callers are expected to pass a stable ref-setter (`StudioCanvas.tsx`
+    // uses `useCallback` with an empty dep array, exactly like `onReady`'s
+    // other stable callbacks), so this doesn't reconnect the bridge on every
+    // render in practice, but the exhaustive-deps discipline this repo
+    // otherwise follows (no lint-suppression comments elsewhere) still
+    // applies here.
+  }, [iframeEl, handleTextEditExit, onBridgeConnectionChange]);
 
   // FP-4a (`.orchestrator/FEATURE-PARITY-PLAN.md` §2 FP-4, two-way sync
   // bullet): keeps the bridge's live-rect subscription + in-iframe

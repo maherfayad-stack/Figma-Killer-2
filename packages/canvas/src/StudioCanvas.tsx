@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { Tldraw, createShapeId, useValue, type Editor, type TLComponents, type TLUiOverrides } from 'tldraw';
+import type { ComputedStyleResult } from '@ccs/bridge';
 import type { ControlReply, DaemonEvent, FrameMeta, ProjectInfo } from '@ccs/protocol';
 import { connectDaemon, type DaemonClient } from './daemon-client.js';
 import {
@@ -170,6 +171,17 @@ export interface StudioCanvasHandle {
    * (`set-selection`, `subscribe-rects`) once that frame's bridge
    * connection is available. A no-op if no matching frame is known. */
   selectNode(request: SelectNodeRequest): void;
+  /** FP-INS-b (Inspect / code tab): requests `uid`'s CURATED computed CSS
+   * (see `@ccs/bridge`'s `computed-style.ts`) through whichever frame is
+   * CURRENTLY the edit-mode frame's live bridge connection (the same
+   * connection `EditModeLayer` uses for hit-test/selection — see that
+   * file's `onBridgeConnectionChange` doc). Resolves `{ok:false,
+   * reason:'not-found'}` if no bridge connection is currently live (no
+   * frame active yet, or its iframe hasn't mounted/is still in screenshot
+   * render mode) — the caller (Inspector's Inspect tab) treats this the
+   * same as any other "couldn't resolve this uid" outcome, no special
+   * handling needed. */
+  requestComputedStyle(uid: string): Promise<ComputedStyleResult>;
 }
 
 /** Bound on how long a `defaultCreateFrame`/`defaultDuplicateFrame` promise
@@ -229,6 +241,18 @@ export interface StudioCanvasProps {
    * The caller emits the existing `set-classes` `CanvasOp`(s) — see
    * `edit-mode-layer.tsx`'s `CommitFreeDragRequest` doc. */
   onCommitFreeDrag?: (request: CommitFreeDragRequest) => void;
+  /** FP-INS-b (AUDIT-FPINSb major fix): fires whenever the edit-mode frame's
+   * live bridge connection (re)connects (`true`) or tears down (`false`) —
+   * the studio-facing surfacing of `EditModeLayer`'s own
+   * `onBridgeConnectionChange`. The Inspect tab uses this as a "bridge
+   * generation" trigger: `requestComputedStyle` resolves `not-found` while no
+   * bridge is live, so a one-shot mount-time fetch loses the race against a
+   * frame that only goes live AFTER selection (see `frame-shape.tsx`'s
+   * edit-mode force-live) — this lets the caller re-run the fetch the moment
+   * the bridge is actually up. Distinct from the per-frame `onFrameSelect`/
+   * `onElementSelect`: this is specifically about the BRIDGE's readiness, the
+   * one thing `requestComputedStyle` depends on. */
+  onBridgeConnectionChange?: (connected: boolean) => void;
 }
 
 const CONTAINER_STYLE: React.CSSProperties = { position: 'relative', width: '100%', height: '100%' };
@@ -292,6 +316,7 @@ export function StudioCanvas({
   onCommitText,
   onReorderNode,
   onCommitFreeDrag,
+  onBridgeConnectionChange,
 }: StudioCanvasProps): React.ReactElement {
   const [frames, setFrames] = React.useState<CanvasFrameRecord[]>([]);
   const [editorReady, setEditorReady] = React.useState(false);
@@ -347,6 +372,35 @@ export function StudioCanvas({
   const pendingDuplicateFrameRef = React.useRef<
     Map<string, { resolve: () => void; reject: (err: Error) => void }>
   >(new Map());
+
+  // FP-INS-b: the CURRENT edit-mode frame's `requestComputedStyle`, kept in
+  // a ref (not React state) so `StudioCanvasHandle.requestComputedStyle`
+  // (below) always reads whichever bridge connection is live AT CALL TIME —
+  // same "ref mirrors a value the onReady handle reaches for lazily"
+  // reasoning as `framesRef` uses for `selectFrameOnCanvas`/
+  // `selectNodeOnCanvas`. `EditModeLayer` is the sole owner of the actual
+  // bridge connection (one per edit-mode iframe); this is populated/cleared
+  // via its `onBridgeConnectionChange` callback.
+  const computedStyleRequesterRef = React.useRef<((uid: string) => Promise<ComputedStyleResult>) | null>(null);
+  // `onBridgeConnectionChange` is expected to be a stable callback (the
+  // studio passes a `useCallback`-wrapped setter, same discipline as
+  // `onReady`); read via a ref so `handleBridgeConnectionChange` itself stays
+  // stable (empty dep array) and doesn't churn `EditModeLayer`'s effect.
+  const onBridgeConnectionChangeRef = React.useRef(onBridgeConnectionChange);
+  React.useEffect(() => {
+    onBridgeConnectionChangeRef.current = onBridgeConnectionChange;
+  }, [onBridgeConnectionChange]);
+  const handleBridgeConnectionChange = React.useCallback(
+    (fn: ((uid: string) => Promise<ComputedStyleResult>) | null) => {
+      computedStyleRequesterRef.current = fn;
+      // FP-INS-b (AUDIT-FPINSb): surface the (re)connect/teardown to the
+      // studio so the Inspect tab can re-run its computed-CSS fetch once the
+      // bridge is actually live (a one-shot mount-time fetch otherwise races
+      // a frame that only goes live after selection).
+      onBridgeConnectionChangeRef.current?.(fn !== null);
+    },
+    [],
+  );
 
   const shapeUtils = React.useMemo(() => [CcsFrameShapeUtil], []);
 
@@ -480,6 +534,18 @@ export function StudioCanvas({
         if (!pendingDuplicate) return; // stale/unmatched reply — ignore
         pendingDuplicateFrameRef.current.delete(reply.requestId);
         pendingDuplicate.resolve();
+        return;
+      }
+
+      if (reply.kind === 'read-source-result') {
+        // FP-INS-b: `read-source`/`read-source-result` is sent/consumed over
+        // `apps/studio`'s OWN (separate) daemon-ops connection (`daemon-
+        // connection.tsx`), never over THIS package's internal control-ws —
+        // `@ccs/canvas` never issues a `read-source` request itself. Ignored
+        // here purely so this reply kind (which carries no `reason` field)
+        // narrows out of the remaining `.reason`-bearing union below; a
+        // stray reply of this kind reaching this socket is otherwise
+        // harmless and unreachable in practice.
         return;
       }
 
@@ -751,6 +817,11 @@ export function StudioCanvas({
       createFrame,
       selectFrame: selectFrameOnCanvas,
       selectNode: selectNodeOnCanvas,
+      requestComputedStyle: (uid: string) => {
+        const fn = computedStyleRequesterRef.current;
+        if (!fn) return Promise.resolve({ ok: false, reason: 'not-found' } as ComputedStyleResult);
+        return fn(uid);
+      },
     });
   }, [editorReady, onReady, createFrame, selectFrameOnCanvas, selectNodeOnCanvas]);
 
@@ -926,6 +997,7 @@ export function StudioCanvas({
           onCommitText={onCommitText}
           onReorderNode={onReorderNode}
           onCommitFreeDrag={onCommitFreeDrag}
+          onBridgeConnectionChange={handleBridgeConnectionChange}
         />
       )}
       {mountedEditor && onZoomChange && <ZoomReporter editor={mountedEditor} onZoomChange={onZoomChange} />}

@@ -8,6 +8,7 @@ import {
   DeleteTokenRequestSchema,
   DuplicateFrameRequestSchema,
   GetCanvasJsonRequestSchema,
+  ReadSourceRequestSchema,
   RedoRequestSchema,
   SetTokenRequestSchema,
   UndoRequestSchema,
@@ -20,6 +21,7 @@ import {
   type DuplicateFrameRequest,
   type GetCanvasJsonRequest,
   type ProjectInfo,
+  type ReadSourceRequest,
   type RedoRequest,
   type SetTokenRequest,
   type UndoRequest,
@@ -49,6 +51,8 @@ import {
  *     { kind: 'set-token'|'create-token'; requestId: string; group; theme; key: string;
  *       value: string|number }                                                        (P4, ADR-0022)
  *     { kind: 'delete-token'; requestId: string; group; theme; key: string }           (P4, ADR-0022)
+ *     { kind: 'read-source'; requestId: string; fileFolder: string; framePath: string;
+ *       uid?: string }                                                                 (FP-INS-b, READ-ONLY)
  *
  *   CR (P3, flagged): `canvas-op.fileFolder` is a NEW optional field on
  *   the ADR-0013-frozen envelope. `NodeUid` (and therefore `CanvasOp`) is
@@ -114,7 +118,8 @@ export type ClientMessage =
   | RedoRequest
   | SetTokenRequest
   | CreateTokenRequest
-  | DeleteTokenRequest;
+  | DeleteTokenRequest
+  | ReadSourceRequest;
 
 const LOCALHOST_ORIGIN_PATTERN = /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/;
 
@@ -176,6 +181,10 @@ export interface ControlServerOptions {
   onCreateToken: (request: CreateTokenRequest, reply: ReplyFn) => void;
   /** P4, ADR-0022. */
   onDeleteToken: (request: DeleteTokenRequest, reply: ReplyFn) => void;
+  /** FP-INS-b — additive, READ-ONLY: the Inspect tab's node/whole-frame JSX
+   * source read (containment-checked via `resolveContainedPath`, same as
+   * every write path — see `daemon.ts`'s `handleReadSource`). */
+  onReadSource: (request: ReadSourceRequest, reply: ReplyFn) => void;
 }
 
 export interface ControlServerHandle {
@@ -237,6 +246,8 @@ export function createControlServer(options: ControlServerOptions): ControlServe
         options.onCreateToken(message, (reply) => sendReply(socket, reply));
       } else if (message.kind === 'delete-token') {
         options.onDeleteToken(message, (reply) => sendReply(socket, reply));
+      } else if (message.kind === 'read-source') {
+        options.onReadSource(message, (reply) => sendReply(socket, reply));
       }
     });
 
@@ -375,6 +386,11 @@ function parseClientMessage(data: RawData): ClientMessage | null {
 
   if (record.kind === 'delete-token') {
     const parsed = DeleteTokenRequestSchema.safeParse(record);
+    return parsed.success ? parsed.data : null;
+  }
+
+  if (record.kind === 'read-source') {
+    const parsed = ReadSourceRequestSchema.safeParse(record);
     return parsed.success ? parsed.data : null;
   }
 

@@ -40,6 +40,9 @@ export {
 export { computeParentLayout } from './parent-layout.js';
 export { resolveFreeDrop } from './free-drop.js';
 
+// FP-INS-b (Inspect / code tab) — see `computed-style.ts`'s own doc.
+export { computeComputedStyle } from './computed-style.js';
+
 export {
   StudioToBridgeMessageSchema,
   BridgeToStudioMessageSchema,
@@ -52,6 +55,10 @@ export {
   ParentLayoutResultSchema,
   FreeDropInfoSchema,
   FreeDropResultSchema,
+  ComputedStyleGroupSchema,
+  ComputedStyleRowSchema,
+  ComputedStyleInfoSchema,
+  ComputedStyleResultSchema,
   type Rect,
   type BreadcrumbEntry,
   type HitInfo,
@@ -66,6 +73,7 @@ export {
   type EnterTextEditRequest,
   type ReportParentLayoutRequest,
   type ResolveFreeDropRequest,
+  type ReportComputedStyleRequest,
   type HitTestResult,
   type RectsResult,
   type RectsUpdate,
@@ -81,4 +89,9 @@ export {
   type FreeDropInfo,
   type FreeDropResult,
   type FreeDropResultReply,
+  type ComputedStyleGroup,
+  type ComputedStyleRow,
+  type ComputedStyleInfo,
+  type ComputedStyleResult,
+  type ComputedStyleResultReply,
 } from './protocol.js';

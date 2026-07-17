@@ -5,6 +5,7 @@ import { setHover, setSelection } from './highlight.js';
 import { createTextEditController } from './text-edit.js';
 import { computeParentLayout } from './parent-layout.js';
 import { resolveFreeDrop } from './free-drop.js';
+import { computeComputedStyle } from './computed-style.js';
 import {
   StudioToBridgeMessageSchema,
   type BridgeToStudioMessage,
@@ -158,6 +159,16 @@ export function installBridge(options: InstallBridgeOptions = {}): BridgeHandle 
           requestId: message.requestId,
           uid: message.uid,
           result: resolveFreeDrop(message.uid, message.targetX, message.targetY, win.document),
+        });
+        return;
+      }
+      case 'report-computed-style': {
+        send(win, {
+          source: 'ccs-bridge',
+          type: 'computed-style-result',
+          requestId: message.requestId,
+          uid: message.uid,
+          result: computeComputedStyle(message.uid, win.document),
         });
         return;
       }

@@ -1,5 +1,6 @@
 import {
   BridgeToStudioMessageSchema,
+  type ComputedStyleResult,
   type FreeDropResult,
   type HitInfo,
   type ParentLayoutResult,
@@ -76,6 +77,11 @@ export interface BridgeConnection {
    * classes to write back via `set-classes` — see `@ccs/bridge`'s
    * `free-drop.ts`. */
   resolveFreeDrop(uid: string, targetX: number, targetY: number): Promise<FreeDropResult>;
+  /** FP-INS-b (Inspect / code tab): asks the bridge for `uid`'s CURATED
+   * computed CSS (layout/geometry/typography/color groups) — see `@ccs/
+   * bridge`'s `computed-style.ts`. Read-only; safe to call for any node,
+   * including a `dynamic`-locked one. */
+  requestComputedStyle(uid: string): Promise<ComputedStyleResult>;
   dispose(): void;
 }
 
@@ -94,6 +100,7 @@ export function connectBridge(options: BridgeConnectionOptions): BridgeConnectio
   const pendingTextEdit = new Map<string, (result: EnterTextEditResult) => void>();
   const pendingParentLayout = new Map<string, (result: ParentLayoutResult) => void>();
   const pendingFreeDrop = new Map<string, (result: FreeDropResult) => void>();
+  const pendingComputedStyle = new Map<string, (result: ComputedStyleResult) => void>();
 
   function send(message: StudioToBridgeMessage): void {
     // Target origin '*' mirrors `bridge.ts`'s own `send()` — the studio
@@ -160,6 +167,13 @@ export function connectBridge(options: BridgeConnectionOptions): BridgeConnectio
         resolve(message.result);
         return;
       }
+      case 'computed-style-result': {
+        const resolve = pendingComputedStyle.get(message.requestId);
+        if (!resolve) return;
+        pendingComputedStyle.delete(message.requestId);
+        resolve(message.result);
+        return;
+      }
     }
   }
 
@@ -213,6 +227,13 @@ export function connectBridge(options: BridgeConnectionOptions): BridgeConnectio
         send({ source: 'ccs-studio', type: 'resolve-free-drop', requestId, uid, targetX, targetY });
       });
     },
+    requestComputedStyle(uid) {
+      const requestId = nextRequestId('report-computed-style');
+      return new Promise((resolve) => {
+        pendingComputedStyle.set(requestId, resolve);
+        send({ source: 'ccs-studio', type: 'report-computed-style', requestId, uid });
+      });
+    },
     dispose() {
       win.removeEventListener('message', onMessage as EventListener);
       pendingHitTest.clear();
@@ -220,6 +241,7 @@ export function connectBridge(options: BridgeConnectionOptions): BridgeConnectio
       pendingTextEdit.clear();
       pendingParentLayout.clear();
       pendingFreeDrop.clear();
+      pendingComputedStyle.clear();
     },
   };
 }

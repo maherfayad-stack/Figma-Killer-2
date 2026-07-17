@@ -10,6 +10,8 @@ import {
   DuplicateFrameResultSchema,
   GetCanvasJsonRequestSchema,
   GetCanvasJsonResultSchema,
+  ReadSourceRequestSchema,
+  ReadSourceResultSchema,
   RedoRequestSchema,
   RedoResultSchema,
   SetTokenRequestSchema,
@@ -381,6 +383,92 @@ describe('SetTokenRequestSchema / CreateTokenRequestSchema / DeleteTokenRequestS
         }).success,
       ).toBe(false);
     });
+  });
+});
+
+// ---- FP-INS-b — additive, read-only Inspect-tab source-read message -----
+
+describe('ReadSourceRequestSchema', () => {
+  it('accepts a whole-frame request (no uid)', () => {
+    const req = { kind: 'read-source', requestId: 'r1', fileFolder: 'demo', framePath: 'src/frames/Hero.tsx' };
+    expect(ReadSourceRequestSchema.parse(req)).toEqual(req);
+  });
+
+  it('accepts a node-slice request (uid present)', () => {
+    const req = {
+      kind: 'read-source',
+      requestId: 'r1',
+      fileFolder: 'demo',
+      framePath: 'src/frames/Hero.tsx',
+      uid: 'src/frames/Hero.tsx:d0.1',
+    };
+    expect(ReadSourceRequestSchema.parse(req)).toEqual(req);
+  });
+
+  it('rejects a missing framePath', () => {
+    expect(ReadSourceRequestSchema.safeParse({ kind: 'read-source', requestId: 'r1', fileFolder: 'demo' }).success).toBe(
+      false,
+    );
+  });
+
+  it('rejects extra/unknown fields (strict)', () => {
+    expect(
+      ReadSourceRequestSchema.safeParse({
+        kind: 'read-source',
+        requestId: 'r1',
+        fileFolder: 'demo',
+        framePath: 'src/frames/Hero.tsx',
+        extra: 'nope',
+      }).success,
+    ).toBe(false);
+  });
+
+  it('is part of the ControlRequestSchema union', () => {
+    const parsed = ControlRequestSchema.parse({
+      kind: 'read-source',
+      requestId: 'r1',
+      fileFolder: 'demo',
+      framePath: 'src/frames/Hero.tsx',
+    });
+    expect(parsed.kind).toBe('read-source');
+  });
+});
+
+describe('ReadSourceResultSchema', () => {
+  it('accepts a whole-frame result (uid: null)', () => {
+    const reply = {
+      kind: 'read-source-result',
+      requestId: 'r1',
+      fileFolder: 'demo',
+      framePath: 'src/frames/Hero.tsx',
+      uid: null,
+      source: 'export default function Hero() { return null; }\n',
+    };
+    expect(ReadSourceResultSchema.parse(reply)).toEqual(reply);
+  });
+
+  it('accepts a node-slice result', () => {
+    const reply = {
+      kind: 'read-source-result',
+      requestId: 'r1',
+      fileFolder: 'demo',
+      framePath: 'src/frames/Hero.tsx',
+      uid: 'src/frames/Hero.tsx:d0.1',
+      source: '<h1>Hero</h1>',
+    };
+    expect(ReadSourceResultSchema.parse(reply)).toEqual(reply);
+  });
+
+  it('is part of the ControlReplySchema union', () => {
+    const parsed = ControlReplySchema.parse({
+      kind: 'read-source-result',
+      requestId: 'r1',
+      fileFolder: 'demo',
+      framePath: 'src/frames/Hero.tsx',
+      uid: null,
+      source: 'x',
+    });
+    expect(parsed.kind).toBe('read-source-result');
   });
 });
 

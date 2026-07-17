@@ -258,4 +258,37 @@ describe('connectBridge', () => {
       await expect(promise).resolves.toEqual({ ok: false, reason: 'not-found' });
     });
   });
+
+  describe('FP-INS-b — requestComputedStyle', () => {
+    it('sends a ccs-studio report-computed-style request and resolves from the matching reply', async () => {
+      const { iframeWindow, connection } = setup();
+      const promise = connection.requestComputedStyle('a');
+      const sent = iframeWindow.posted[0] as { type: string; requestId: string; uid: string };
+      expect(sent).toMatchObject({ source: 'ccs-studio', type: 'report-computed-style', uid: 'a' });
+
+      const info = { rows: [{ group: 'typography' as const, prop: 'font-size', value: '32px' }] };
+      iframeWindow.emitFromBridge({
+        source: 'ccs-bridge',
+        type: 'computed-style-result',
+        requestId: sent.requestId,
+        uid: 'a',
+        result: { ok: true, info },
+      });
+      await expect(promise).resolves.toEqual({ ok: true, info });
+    });
+
+    it('resolves not-ok with the reason', async () => {
+      const { iframeWindow, connection } = setup();
+      const promise = connection.requestComputedStyle('a');
+      const sent = iframeWindow.posted[0] as { requestId: string };
+      iframeWindow.emitFromBridge({
+        source: 'ccs-bridge',
+        type: 'computed-style-result',
+        requestId: sent.requestId,
+        uid: 'a',
+        result: { ok: false, reason: 'not-found' },
+      });
+      await expect(promise).resolves.toEqual({ ok: false, reason: 'not-found' });
+    });
+  });
 });

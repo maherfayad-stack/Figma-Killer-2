@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type {
   CanvasOp,
@@ -10,11 +11,12 @@ import type {
   GetCanvasJsonRequest,
   NodeUid,
   ProjectInfo,
+  ReadSourceRequest,
   RedoRequest,
   SetTokenRequest,
   UndoRequest,
 } from '@ccs/protocol';
-import type { InverseOp } from '@ccs/ast-engine';
+import { getNodeSource, type InverseOp } from '@ccs/ast-engine';
 import { reconcileCanvasJson, readCanvasJson } from './canvas-json.js';
 import { createFrameOnDisk } from './create-frame.js';
 import { duplicateFrameOnDisk } from './duplicate-frame.js';
@@ -690,6 +692,90 @@ export async function openProject(options: OpenProjectOptions): Promise<DaemonHa
     reply({ kind: 'token-write-result', requestId: request.requestId, applied: true });
   }
 
+  /**
+   * FP-INS-b (`.orchestrator/FEATURE-PARITY-PLAN.md` "Inspect / code tab") —
+   * additive, READ-ONLY control-ws handler: the Inspect tab's "Code (JSX)"
+   * section. This NEVER writes — the only fs call below is `readFile`.
+   *
+   * SECURITY (the hard constraint this task exists to get right — mirrors
+   * `resolveFileFolderForOp`'s AUDIT-6/6b discipline exactly, reusing the
+   * SAME shared containment check rather than reimplementing it): `request.
+   * framePath` is attacker-controlled wire input (it arrives verbatim from
+   * whatever's connected to the control-ws) and is run through the shared
+   * `resolveContainedPath` (`safe-path.ts` — realpath-based, symlink-safe)
+   * against `fileFolder.root` BEFORE any read is attempted. A `..`-traversal,
+   * an absolute `framePath`, or a path that only escapes the root via a
+   * symlink is rejected with a `control-error`, exactly like a write would
+   * be — there is no separate/weaker check for this read path. The studio
+   * never gets to pass a raw absolute filesystem path in: only a known
+   * `fileFolder` NAME (resolved server-side against the daemon's own
+   * configured roots) plus a root-relative `framePath`.
+   *
+   * The node-slice branch (`request.uid` present) never substring-hacks the
+   * raw file text — it asks `@ccs/ast-engine`'s `getNodeSource` to reprint
+   * the node from a fresh parse of the SAME source text this handler just
+   * read (the identical uid <-> AST-node mapping `tree-snapshot.ts`/
+   * `op-apply.ts` already rely on, ADR-0017), so a component-instance uid's
+   * slice is naturally its `<Component .../>` usage code.
+   */
+  function handleReadSource(request: ReadSourceRequest, reply: ReplyFn): void {
+    const fileFolder = resolveFileFolder(request.fileFolder);
+    if (!fileFolder) {
+      reply({
+        kind: 'control-error',
+        requestId: request.requestId,
+        reason: `unknown file-folder "${request.fileFolder}"`,
+      });
+      return;
+    }
+
+    const safe = resolveContainedPath(fileFolder.root, request.framePath);
+    if (!safe.ok) {
+      reply({ kind: 'control-error', requestId: request.requestId, reason: `invalid path: ${safe.reason}` });
+      return;
+    }
+
+    void (async () => {
+      let sourceText: string;
+      try {
+        sourceText = await readFile(safe.absPath, 'utf8');
+      } catch (err) {
+        reply({
+          kind: 'control-error',
+          requestId: request.requestId,
+          reason: `read failed: ${err instanceof Error ? err.message : String(err)}`,
+        });
+        return;
+      }
+
+      if (!request.uid) {
+        reply({
+          kind: 'read-source-result',
+          requestId: request.requestId,
+          fileFolder: fileFolder.name,
+          framePath: request.framePath,
+          uid: null,
+          source: sourceText,
+        });
+        return;
+      }
+
+      const nodeSource = getNodeSource(sourceText, request.uid);
+      if (!nodeSource.ok) {
+        reply({ kind: 'control-error', requestId: request.requestId, reason: nodeSource.reason });
+        return;
+      }
+      reply({
+        kind: 'read-source-result',
+        requestId: request.requestId,
+        fileFolder: fileFolder.name,
+        framePath: request.framePath,
+        uid: request.uid,
+        source: nodeSource.source,
+      });
+    })();
+  }
+
   function handleSetToken(request: SetTokenRequest, reply: ReplyFn): void {
     void fileOpQueue.enqueue(tokenCrudQueueKey(), () => handleTokenCrudRequest(request, reply));
   }
@@ -714,6 +800,7 @@ export async function openProject(options: OpenProjectOptions): Promise<DaemonHa
     onSetToken: handleSetToken,
     onCreateToken: handleCreateToken,
     onDeleteToken: handleDeleteToken,
+    onReadSource: handleReadSource,
   });
 
   const watchHandles: WatchHandle[] = [];

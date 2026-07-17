@@ -49,6 +49,12 @@ export interface OpsClient {
   sendOp: (op: CanvasOp) => string;
   sendUndo: (fileFolder: string) => string;
   sendRedo: (fileFolder: string) => string;
+  /** FP-INS-b (Inspect / code tab) — additive, READ-ONLY: requests either
+   * the whole frame's source (`uid` omitted) or one node's JSX slice (`uid`
+   * present). Returns the generated `requestId` so the caller can correlate
+   * the eventual `read-source-result`/`control-error` reply, same pattern as
+   * `sendUndo`/`sendRedo`. */
+  sendReadSource: (fileFolder: string, framePath: string, uid?: string) => string;
   close: () => void;
 }
 
@@ -169,6 +175,13 @@ export function connectOpsClient(
     sendRedo(fileFolder: string): string {
       const requestId = nextRequestId('redo');
       socket.send(JSON.stringify({ kind: 'redo', requestId, fileFolder }));
+      return requestId;
+    },
+    sendReadSource(fileFolder: string, framePath: string, uid?: string): string {
+      const requestId = nextRequestId('read-source');
+      socket.send(
+        JSON.stringify({ kind: 'read-source', requestId, fileFolder, framePath, ...(uid !== undefined ? { uid } : {}) }),
+      );
       return requestId;
     },
     close() {

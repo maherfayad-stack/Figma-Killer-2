@@ -38,6 +38,13 @@ export type { CanvasFrameRecord } from './project-wiring.js';
 export type { Box, CameraState, Point } from './geometry.js';
 export type { FrameRenderMode } from './viewport-cull.js';
 
+// FP-INS-b (Inspect / code tab) — `StudioCanvasHandle.requestComputedStyle`'s
+// result type, re-exported from `@ccs/bridge` here so a caller (`apps/
+// studio`) only ever needs this ONE package's public entry point, never a
+// direct `@ccs/bridge` dependency, matching every other type this index
+// already re-exports.
+export type { ComputedStyleGroup, ComputedStyleInfo, ComputedStyleResult, ComputedStyleRow } from '@ccs/bridge';
+
 // New-frame tool builders (playbook §4/P1 step 4) — pure, IO-free, reused
 // by both a future daemon-backed `onCreateFrame` and any dev-harness /
 // tooling that needs to construct the same three artifacts (source,

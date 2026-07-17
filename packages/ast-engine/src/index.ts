@@ -22,3 +22,5 @@ export type { InverseOp } from './invert-op.js';
 export { EMBEDDED_PRETTIER_CONFIG } from './prettier-config.js';
 export { classGroupKey, mergeClassNames } from './tailwind-groups.js';
 export { buildTree } from './build-tree.js';
+export { getNodeSource } from './node-source.js';
+export type { NodeSourceResult } from './node-source.js';

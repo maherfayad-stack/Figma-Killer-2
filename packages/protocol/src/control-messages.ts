@@ -201,6 +201,46 @@ export const RedoRequestSchema = z
   })
   .strict();
 
+/**
+ * FP-INS-b (`.orchestrator/FEATURE-PARITY-PLAN.md` "Inspect / code tab") —
+ * additive, READ-ONLY control-ws request: the Inspect tab's "Code (JSX)"
+ * section needs the SOURCE TEXT of the selected node and of the whole frame
+ * file. This is deliberately its own request `kind` (not folded into
+ * `get-canvas-json`, which returns `FrameMeta` geometry, not source text) so
+ * the daemon can gate it as a pure fs-read with no side effects at all —
+ * never a write, mirroring the One Rule (studio makes zero fs writes; the
+ * daemon is the sole fs actor even for reads).
+ *
+ * SECURITY (the hard constraint this task exists to get right): `fileFolder`
+ * + `framePath` name a file the SAME way every other daemon read/write does
+ * (`get-canvas-json`'s `fileFolder`, `CanvasOp`'s uid-embedded relPath) —
+ * `framePath` is attacker-controlled and MUST be run through the same
+ * hardened `resolveContainedPath` (`safe-path.ts`, AUDIT-6/6b) the write path
+ * uses before any read, rejecting traversal/absolute/symlink-escape paths
+ * with a `control-error`, exactly like `handleCanvasOp`'s
+ * `resolveFileFolderForOp` does. There is deliberately NO way to pass an
+ * arbitrary absolute path — only a `fileFolder` name (resolved server-side to
+ * a known, daemon-configured root) + a relative `framePath`.
+ *
+ * `uid` is OPTIONAL: omitted -> the whole frame file's source text (the
+ * "page" granularity from the human's "page, component, or code of
+ * anything" ask); present -> just that ONE node's JSX slice, resolved by
+ * asking `@ccs/ast-engine`'s `getNodeSource` to reprint the node from the
+ * SAME parse `tree-snapshot.ts`/`buildTree` already use (not a substring-hack
+ * against the raw file text), so a component-instance uid's slice is
+ * naturally its `<Component .../>` usage code.
+ */
+export const ReadSourceRequestSchema = z
+  .object({
+    kind: z.literal('read-source'),
+    requestId: z.string().min(1),
+    fileFolder: z.string().min(1),
+    framePath: z.string().min(1),
+    uid: z.string().min(1).optional(),
+  })
+  .strict();
+export type ReadSourceRequest = z.infer<typeof ReadSourceRequestSchema>;
+
 export const ControlRequestSchema = z.discriminatedUnion('kind', [
   CreateFrameRequestSchema,
   GetCanvasJsonRequestSchema,
@@ -210,6 +250,7 @@ export const ControlRequestSchema = z.discriminatedUnion('kind', [
   SetTokenRequestSchema,
   CreateTokenRequestSchema,
   DeleteTokenRequestSchema,
+  ReadSourceRequestSchema,
 ]);
 
 export type CreateFrameRequest = z.infer<typeof CreateFrameRequestSchema>;
@@ -310,6 +351,25 @@ export const TokenWriteResultSchema = z
   .strict();
 export type TokenWriteResult = z.infer<typeof TokenWriteResultSchema>;
 
+/**
+ * FP-INS-b — `read-source`'s direct (non-broadcast) success reply. `uid`
+ * echoes the request's (`null` when the request omitted it — a whole-frame
+ * read), so a caller that fired off both a node-slice and a whole-frame
+ * request concurrently (the Inspect tab does exactly this) can tell the two
+ * replies apart without tracking `requestId` -> "which one was this" itself.
+ */
+export const ReadSourceResultSchema = z
+  .object({
+    kind: z.literal('read-source-result'),
+    requestId: z.string().min(1),
+    fileFolder: z.string().min(1),
+    framePath: z.string().min(1),
+    uid: z.string().nullable(),
+    source: z.string(),
+  })
+  .strict();
+export type ReadSourceResult = z.infer<typeof ReadSourceResultSchema>;
+
 export const ControlErrorSchema = z
   .object({
     kind: z.literal('control-error'),
@@ -324,6 +384,7 @@ export const ControlReplySchema = z.discriminatedUnion('kind', [
   UndoResultSchema,
   RedoResultSchema,
   TokenWriteResultSchema,
+  ReadSourceResultSchema,
   ControlErrorSchema,
 ]);
 
