@@ -9,6 +9,7 @@ import { useWorkspaceStore } from './workspace-store.js';
 import { useComponentInsert } from './use-component-insert.js';
 import { useWorkspaceKeymap } from './use-workspace-keymap.js';
 import { useZoomKeymap } from './use-zoom-keymap.js';
+import { useToolKeymap } from './use-tool-keymap.js';
 import { useTreeSnapshotSync } from './use-tree-snapshot-sync.js';
 import { useResize } from './use-resize.js';
 import { LeftHeader } from './LeftHeader.js';
@@ -29,10 +30,14 @@ import { Inspector } from './Inspector.js';
  * history / that file's former module doc); it now renders NO top-level
  * header row at all — each `<aside>` is its own `[header][content]` flex
  * column (`LeftHeader.tsx` / `RightHeader.tsx`), and the middle (canvas)
- * column has no header of its own (Penpot's floating toolbar already
- * overlays the canvas — unchanged from FP-1). The zoom widget (FP-1,
- * `ZoomWidget.tsx`) no longer floats over the canvas; it's mounted inside
- * `RightHeader`.
+ * column has no header of its own. The zoom widget (FP-1, `ZoomWidget.tsx`)
+ * no longer floats over the canvas; it's mounted inside `RightHeader`.
+ * FP-3 (`.orchestrator/FEATURE-PARITY-PLAN.md` §2 FP-3) makes `Toolbar.tsx`
+ * itself the thing that DOES float over the canvas now — it's rendered as a
+ * sibling of `<StudioCanvas>` inside the `position: relative` `canvas-area`
+ * div, absolutely positioned top-center (spec §5.8 / Penpot's
+ * `top_toolbar.scss`), overlaying the viewport instead of occupying a flow
+ * row above it.
  *
  * Panels are now resizable (`use-resize.ts`, a reimplementation of Penpot's
  * `resize.cljs`): drag either sidebar's inner edge (the one facing the
@@ -87,6 +92,12 @@ function WorkspaceShellInner({
   const [canvasHandle, setCanvasHandle] = React.useState<StudioCanvasHandle | null>(null);
   const [zoomPercent, setZoomPercent] = React.useState(100);
   useZoomKeymap(canvasHandle);
+
+  // FP-3 (`.orchestrator/FEATURE-PARITY-PLAN.md` §2 FP-3): V/F/T/I/C
+  // keyboard shortcuts, routed through the same `useToolActions` bridge
+  // `Toolbar.tsx`'s buttons use — see `use-tool-keymap.ts`'s doc.
+  const openComponentPalette = React.useCallback(() => setLeftTab('assets'), []);
+  useToolKeymap(canvasHandle, openComponentPalette);
 
   // FP-1 §2 item 4: clicking/marquee-selecting a frame on the canvas
   // (tldraw native) reflects in the studio's own selection store exactly
@@ -146,7 +157,6 @@ function WorkspaceShellInner({
         </aside>
 
         <main style={{ display: 'flex', flexDirection: 'column', minBlockSize: 0, minInlineSize: 0 }}>
-          <Toolbar onOpenComponentPalette={() => setLeftTab('assets')} />
           <div
             data-testid="canvas-area"
             style={{ flex: 1, position: 'relative', minBlockSize: 0 }}
@@ -163,6 +173,7 @@ function WorkspaceShellInner({
               onZoomChange={setZoomPercent}
               onFrameSelect={handleFrameSelect}
             />
+            <Toolbar onOpenComponentPalette={openComponentPalette} canvasHandle={canvasHandle} />
           </div>
         </main>
 

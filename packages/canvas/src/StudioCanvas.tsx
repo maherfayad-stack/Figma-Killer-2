@@ -104,6 +104,16 @@ export interface StudioCanvasHandle {
   /** Fits the current tldraw selection in the viewport; a no-op if nothing
    * is selected (Penpot: `Shift+2`). */
   zoomToSelection(): void;
+  /** FP-3 (`.orchestrator/FEATURE-PARITY-PLAN.md` §2 FP-3): creates a new
+   * frame through the EXACT SAME flow the "+ New Frame" form below already
+   * uses (`CreateFrameFn`/`defaultCreateFrame`, ADR-0014) — the studio's
+   * Frame toolbar tool calls this instead of re-implementing frame
+   * creation, keeping create-frame a single code path. Resolves once the
+   * daemon's resulting `file-changed` broadcast(s) land the new frame in
+   * `frames` state (same completion signal `defaultCreateFrame` already
+   * defines), or rejects on timeout/`control-error` — see
+   * {@link CreateFrameFn}'s own doc. */
+  createFrame: CreateFrameFn;
 }
 
 /** Bound on how long a `defaultCreateFrame`/`defaultDuplicateFrame` promise
@@ -603,8 +613,9 @@ export function StudioCanvas({
       resetZoom: () => editor.resetZoom(undefined, { animation: { duration: 200 } }),
       zoomToFit: () => editor.zoomToFit({ animation: { duration: 200 } }),
       zoomToSelection: () => editor.zoomToSelection({ animation: { duration: 200 } }),
+      createFrame,
     });
-  }, [editorReady, onReady]);
+  }, [editorReady, onReady, createFrame]);
 
   // --- FP-1: shift+wheel horizontal-pan gap fix ---------------------------
   // See `wheel-gesture.ts`'s module doc for the full "why": tldraw's own
