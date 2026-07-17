@@ -23,12 +23,11 @@ import type { StudioCanvasHandle } from '@ccs/canvas';
  *     shortcut labels shown (`Shift 0` / `Shift 1` / `Shift 2`; see
  *     `use-zoom-keymap.ts` for the matching keydown wiring).
  *
- * FP-2 will relocate this into the (not-yet-built) right-pane header per
- * the plan; for FP-1 it's a floating overlay in the top-end corner of the
- * canvas area (see `WorkspaceShell.tsx` — bottom-end was tried first but
- * collides with tldraw's own unlicensed-build watermark badge, which
- * intercepts pointer events there) and opens DOWNWARD, matching Penpot's
- * own top-anchored, downward-opening dropdown exactly.
+ * FP-2 UPDATE: relocated into the right-pane header (`RightHeader.tsx`),
+ * per the plan — no longer a floating overlay over the canvas. `WorkspaceShell.tsx`
+ * no longer mounts this directly. Still opens DOWNWARD, matching Penpot's
+ * own top-anchored, downward-opening dropdown exactly (unchanged from FP-1;
+ * mounting it in the header didn't require any layout changes here).
  */
 export interface ZoomWidgetProps {
   /** Live zoom level as a rounded percentage (100 = 100%) — see

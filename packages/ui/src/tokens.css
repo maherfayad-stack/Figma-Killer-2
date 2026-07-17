@@ -103,7 +103,8 @@
   --ccs-dock-width: 318px;
   --ccs-sidebar-left-width: 318px; /* NEW */
   --ccs-sidebar-right-width: 318px; /* NEW */
-  --ccs-topbar-height: 52px;
+  --ccs-topbar-height: 52px; /* DEPRECATED as of FP-2 (no more global top bar) — kept per the "never rename/remove" rule; unused, superseded by --ccs-header-height below. */
+  --ccs-header-height: 52px; /* NEW (FP-2, spec §2.2) — the left-pane/right-pane header row height */
   --ccs-statusbar-height: 28px;
   --ccs-row-height: 32px;
   --ccs-row-height-compact: 24px; /* NEW — icon-action buttons */

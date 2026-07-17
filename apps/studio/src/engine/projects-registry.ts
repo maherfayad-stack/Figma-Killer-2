@@ -73,6 +73,26 @@ export function duplicateProject(id: string, newName: string): ProjectEntry | nu
   return addProject({ name: newName, folder: source.folder, daemonUrl: source.daemonUrl });
 }
 
+/** FP-2 (`.orchestrator/FEATURE-PARITY-PLAN.md` §2): backs the left-pane
+ * header's inline file rename (`left_header.cljs`'s `handle-blur` ->
+ * `dw/rename-file` — our equivalent, since a "file" here is a registry
+ * entry, not a daemon-owned resource: renaming is a pure UI-prefs write,
+ * same category as the rest of this module, never a filesystem/daemon
+ * mutation). Returns the updated entry (or `null` if the id/blank-name
+ * guard fails) so the caller can push it back into its own `openProject`
+ * state without a second registry read. */
+export function renameProject(id: string, newName: string): ProjectEntry | null {
+  const trimmed = newName.trim();
+  if (!trimmed) return null;
+  const all = readAll();
+  const index = all.findIndex((p) => p.id === id);
+  if (index === -1) return null;
+  const updated: ProjectEntry = { ...all[index]!, name: trimmed };
+  all[index] = updated;
+  writeAll(all);
+  return updated;
+}
+
 /** Ensures at least the repo's own `files/demo` project is registered, so
  * the Dashboard is never empty on a fresh profile (dev/e2e convenience —
  * mirrors how `files/demo` is already the repo's canonical fixture

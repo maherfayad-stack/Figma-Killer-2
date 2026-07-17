@@ -13,7 +13,7 @@ import * as React from 'react';
 import type { EngineApi } from './engine/engine-api.js';
 import { createMockEngineApi } from './engine/mock-engine-api.js';
 import { loadRealEngineApi } from './engine/real-engine-api.js';
-import { ensureDefaultProject, type ProjectEntry } from './engine/projects-registry.js';
+import { ensureDefaultProject, renameProject, type ProjectEntry } from './engine/projects-registry.js';
 import { readDaemonPort } from './engine/query-params.js';
 import { useWorkspaceStore } from './workspace/workspace-store.js';
 import { Dashboard } from './dashboard/Dashboard.js';
@@ -68,11 +68,16 @@ export function App(): React.ReactElement {
   return (
     <WorkspaceShell
       fileName={openProject.name}
+      projectId={openProject.id}
       daemonUrl={openProject.daemonUrl}
       engineApi={engineApi}
       onBackToDashboard={() => {
         useWorkspaceStore.getState().clearSelection();
         setOpenProject(null);
+      }}
+      onRenameFile={(name) => {
+        const updated = renameProject(openProject.id, name);
+        if (updated) setOpenProject(updated);
       }}
     />
   );

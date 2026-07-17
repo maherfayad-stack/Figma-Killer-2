@@ -10,27 +10,44 @@ import { useComponentInsert } from './use-component-insert.js';
 import { useWorkspaceKeymap } from './use-workspace-keymap.js';
 import { useZoomKeymap } from './use-zoom-keymap.js';
 import { useTreeSnapshotSync } from './use-tree-snapshot-sync.js';
-import { TopBar } from './TopBar.js';
+import { useResize } from './use-resize.js';
+import { LeftHeader } from './LeftHeader.js';
+import { RightHeader } from './RightHeader.js';
 import { Toolbar } from './Toolbar.js';
 import { LayersPanel } from './LayersPanel.js';
 import { ComponentsPanel } from './ComponentsPanel.js';
 import { TokensPanel } from './TokensPanel.js';
 import { Inspector } from './Inspector.js';
-import { ZoomWidget } from './ZoomWidget.js';
 
 /**
- * WorkspaceShell — the per-file workspace (playbook §2.1 `workspace.cljs`):
- * top toolbar, left dock (Layers/Assets/Tokens — spec §5.1/§5.2: "Pages" is
- * no longer a separate top-level tab, it's the top strip of the "Layers"
- * tab, see `LayersPanel.tsx`), center canvas (mounts `@ccs/canvas`'s
- * `StudioCanvas`, P1), right dock (Inspector), bottom status bar. Owns the
- * daemon connection + engine-API provider for everything beneath it.
+ * WorkspaceShell — the per-file workspace (playbook §2.1 `workspace.cljs`).
+ *
+ * FP-2 (`.orchestrator/FEATURE-PARITY-PLAN.md` §2; spec §5.1) restructure:
+ * Penpot has NO single global top bar — a LEFT header and a RIGHT header,
+ * each 52px, pinned atop their own sidebar, flank the viewport. This shell
+ * used to render one global `TopBar` row above a 3-column grid (see git
+ * history / that file's former module doc); it now renders NO top-level
+ * header row at all — each `<aside>` is its own `[header][content]` flex
+ * column (`LeftHeader.tsx` / `RightHeader.tsx`), and the middle (canvas)
+ * column has no header of its own (Penpot's floating toolbar already
+ * overlays the canvas — unchanged from FP-1). The zoom widget (FP-1,
+ * `ZoomWidget.tsx`) no longer floats over the canvas; it's mounted inside
+ * `RightHeader`.
+ *
+ * Panels are now resizable (`use-resize.ts`, a reimplementation of Penpot's
+ * `resize.cljs`): drag either sidebar's inner edge (the one facing the
+ * canvas), clamped and persisted per-project in localStorage.
  */
 export interface WorkspaceShellProps {
   fileName: string;
+  /** Stable per-project id (`ProjectEntry.id`, `projects-registry.ts`) —
+   * scopes both the localStorage panel-width persistence (`use-resize.ts`)
+   * and inline-rename writes to exactly this project's registry entry. */
+  projectId: string;
   daemonUrl: string;
   engineApi: EngineApi;
   onBackToDashboard: () => void;
+  onRenameFile: (name: string) => void;
 }
 
 export function WorkspaceShell(props: WorkspaceShellProps): React.ReactElement {
@@ -43,16 +60,30 @@ export function WorkspaceShell(props: WorkspaceShellProps): React.ReactElement {
   );
 }
 
-function WorkspaceShellInner({ fileName, daemonUrl, onBackToDashboard }: WorkspaceShellProps): React.ReactElement {
+function WorkspaceShellInner({
+  fileName,
+  projectId,
+  daemonUrl,
+  onBackToDashboard,
+  onRenameFile,
+}: WorkspaceShellProps): React.ReactElement {
   const [leftTab, setLeftTab] = React.useState('layers');
   const insertComponent = useComponentInsert();
   useWorkspaceKeymap();
   useTreeSnapshotSync();
 
+  // FP-2 (spec §2.2): left panel 318–500px, right panel 318–768px,
+  // persisted per-project (`projectId`) in localStorage — see
+  // `use-resize.ts`'s module doc for the Penpot `resize.cljs` mechanics
+  // this reimplements.
+  const left = useResize({ projectId, panelId: 'left', initial: 318, min: 318, max: 500 });
+  const right = useResize({ projectId, panelId: 'right', initial: 318, min: 318, max: 768 });
+
   // FP-1 (`.orchestrator/FEATURE-PARITY-PLAN.md` §2): camera-control handle
   // from `StudioCanvas.onReady` + the live zoom % from `onZoomChange` — see
-  // `ZoomWidget.tsx` and `use-zoom-keymap.ts`, both driven from these two
-  // pieces of state, never a tldraw type (playbook §5.4).
+  // `ZoomWidget.tsx` (now mounted in `RightHeader`) and `use-zoom-keymap.ts`,
+  // both driven from these two pieces of state, never a tldraw type
+  // (playbook §5.4).
   const [canvasHandle, setCanvasHandle] = React.useState<StudioCanvasHandle | null>(null);
   const [zoomPercent, setZoomPercent] = React.useState(100);
   useZoomKeymap(canvasHandle);
@@ -75,27 +106,43 @@ function WorkspaceShellInner({ fileName, daemonUrl, onBackToDashboard }: Workspa
       data-testid="workspace-shell"
       style={{
         display: 'grid',
-        gridTemplateRows: 'var(--ccs-topbar-height) 1fr var(--ccs-statusbar-height)',
+        gridTemplateRows: '1fr var(--ccs-statusbar-height)',
         blockSize: '100vh',
         inlineSize: '100%',
       }}
     >
-      <TopBar fileName={fileName} onBackToDashboard={onBackToDashboard} />
-      <div style={{ display: 'grid', gridTemplateColumns: 'var(--ccs-sidebar-left-width) 1fr var(--ccs-sidebar-right-width)', minBlockSize: 0 }}>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: `${left.size}px 1fr ${right.size}px`,
+          minBlockSize: 0,
+        }}
+      >
         <aside
           data-testid="dock-left"
-          style={{ borderInlineEnd: '1px solid var(--ccs-border)', background: 'var(--ccs-bg-panel)', display: 'flex', minBlockSize: 0 }}
+          style={{
+            position: 'relative',
+            borderInlineEnd: '1px solid var(--ccs-border)',
+            background: 'var(--ccs-bg-panel)',
+            display: 'flex',
+            flexDirection: 'column',
+            minBlockSize: 0,
+          }}
         >
-          <Tabs
-            ariaLabel="Left dock"
-            value={leftTab}
-            onValueChange={setLeftTab}
-            items={[
-              { id: 'layers', label: 'Layers', content: <LayersPanel /> },
-              { id: 'assets', label: 'Assets', content: <ComponentsPanel /> },
-              { id: 'tokens', label: 'Tokens', content: <TokensPanel /> },
-            ]}
-          />
+          <LeftHeader fileName={fileName} onBackToDashboard={onBackToDashboard} onRenameFile={onRenameFile} />
+          <div style={{ flex: 1, display: 'flex', minBlockSize: 0 }}>
+            <Tabs
+              ariaLabel="Left dock"
+              value={leftTab}
+              onValueChange={setLeftTab}
+              items={[
+                { id: 'layers', label: 'Layers', content: <LayersPanel /> },
+                { id: 'assets', label: 'Assets', content: <ComponentsPanel /> },
+                { id: 'tokens', label: 'Tokens', content: <TokensPanel /> },
+              ]}
+            />
+          </div>
+          <ResizeHandle testId="resize-handle-left" edge="end" {...left.handleProps} />
         </aside>
 
         <main style={{ display: 'flex', flexDirection: 'column', minBlockSize: 0, minInlineSize: 0 }}>
@@ -116,32 +163,77 @@ function WorkspaceShellInner({ fileName, daemonUrl, onBackToDashboard }: Workspa
               onZoomChange={setZoomPercent}
               onFrameSelect={handleFrameSelect}
             />
-            {/* FP-1 §2 item 2: floating zoom widget. Per the brief, FP-2
-                hasn't restructured the header into left/right panes yet, so
-                this is a floating overlay for now. Top-end corner, offset
-                below the canvas package's own "+ New Frame" control (same
-                corner, see `StudioCanvas.tsx`) rather than bottom-end:
-                verified live that tldraw's own (unlicensed-build) watermark
-                badge occupies the bottom-end corner and fully intercepts
-                pointer events there, which would make the widget
-                unclickable — FP-2 relocates this into the right-pane
-                header anyway, so this is a placement of convenience. */}
-            <div style={{ position: 'absolute', insetBlockStart: 54, insetInlineEnd: 12, zIndex: 10 }}>
-              <ZoomWidget zoomPercent={zoomPercent} handle={canvasHandle} />
-            </div>
           </div>
         </main>
 
         <aside
           data-testid="dock-right"
-          style={{ borderInlineStart: '1px solid var(--ccs-border)', background: 'var(--ccs-bg-panel)', overflow: 'auto', minBlockSize: 0 }}
+          style={{
+            position: 'relative',
+            borderInlineStart: '1px solid var(--ccs-border)',
+            background: 'var(--ccs-bg-panel)',
+            display: 'flex',
+            flexDirection: 'column',
+            minBlockSize: 0,
+          }}
         >
-          <Inspector />
+          <RightHeader zoomPercent={zoomPercent} canvasHandle={canvasHandle} />
+          <div style={{ flex: 1, overflow: 'auto', minBlockSize: 0 }}>
+            <Inspector />
+          </div>
+          <ResizeHandle testId="resize-handle-right" edge="start" {...right.handleProps} />
         </aside>
       </div>
 
       <StatusBar />
     </div>
+  );
+}
+
+/** Drag handle for `use-resize.ts` — sits on the panel's INNER edge (the
+ * one facing the canvas), expressed LOGICALLY (`edge: 'start' | 'end'` ->
+ * `insetInlineStart`/`insetInlineEnd`) so it mirrors correctly under
+ * `dir="rtl"` (playbook §5.9, ADR-0022) rather than a hardcoded physical
+ * left/right. `edge="end"` = left panel's resize edge (its logical end,
+ * facing the canvas); `edge="start"` = right panel's resize edge (its
+ * logical start, facing the canvas). */
+function ResizeHandle({
+  testId,
+  edge,
+  onPointerDown,
+  onPointerMove,
+  onPointerUp,
+}: {
+  testId: string;
+  edge: 'start' | 'end';
+  onPointerDown: (e: React.PointerEvent<HTMLDivElement>) => void;
+  onPointerMove: (e: React.PointerEvent<HTMLDivElement>) => void;
+  onPointerUp: (e: React.PointerEvent<HTMLDivElement>) => void;
+}): React.ReactElement {
+  const [hover, setHover] = React.useState(false);
+  return (
+    <div
+      data-testid={testId}
+      role="separator"
+      aria-orientation="vertical"
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        position: 'absolute',
+        insetBlockStart: 0,
+        insetBlockEnd: 0,
+        [edge === 'end' ? 'insetInlineEnd' : 'insetInlineStart']: -3,
+        inlineSize: 6,
+        cursor: 'col-resize',
+        zIndex: 5,
+        background: hover ? 'var(--ccs-accent)' : 'transparent',
+        opacity: hover ? 0.5 : 1,
+        touchAction: 'none',
+      }}
+    />
   );
 }
 
@@ -162,7 +254,9 @@ function StatusBar(): React.ReactElement {
         borderBlockStart: '1px solid var(--ccs-border)',
       }}
     >
-      <span>{connected ? 'daemon: connected' : 'daemon: offline'}</span>
+      <span data-testid="connection-status" data-connected={connected}>
+        {connected ? 'daemon: connected' : 'daemon: offline'}
+      </span>
       {selectedUid && <span style={{ fontFamily: 'var(--ccs-font-mono)' }}>selected: {selectedUid}</span>}
     </div>
   );
