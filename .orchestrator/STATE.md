@@ -240,6 +240,24 @@ reproduced all acceptance live; FAIL'd on 2 react-hooks lint errors → worker f
 stale `acceptance.spec.ts` e2e (pre-existing from P5-rework `d0e499f` — repair the
 suite); narrow-viewport <636px overflow (Penpot is non-responsive too).
 
-**FP status board:** FP-1 ✅ · FP-2 ✅ · FP-3 🔜 (toolbar tools wired to canvas
-actions) · FP-4 (in-place edit: select+text+context-drag) · [dogfood+show human] ·
-FP-6 (export) · FP-5 (comments) · FP-7 (structure ops + keymap).
+### FP-3 — COMPLETE (AUDIT-FP3 PASS, tag `fp-3-complete`, commit `71fc9f4`) 2026-07-17
+Wired the dead `activeTool` to real actions via a `use-tool-actions` bridge +
+`use-tool-keymap` (toolbar click and V/F/T/I keys share one path): Frame(F) creates
+an auto-named frame via the existing create-frame flow (exposed on the tldraw-free
+FP-1 StudioCanvasHandle); Text(T) inserts a real `<p>` (insert-node+set-text);
+Image inserts a real `<img>` data-URI (insert-node+set-prop, no new protocol msg);
+Insert-component(I) focuses Assets; Comment(C) honest stub. Text/Image disabled with
+no active frame. Floating pill restyled per Penpot `top_toolbar.cljs`. NOTE: the
+first FP-3 worker died on the ACCOUNT MONTHLY SPEND LIMIT mid-exploration (zero code
+written) → clean respawn succeeded. Fresh audit reproduced every tool's on-disk
+effect live; studio 30/30, canvas 150/150, lint+typecheck green.
+**Carry-forwards:** no op-rejected/no-op toast feedback (shared "no toast yet" gap);
+Text-then-Image without reselect nests img in the p (consistent w/ insert pattern).
+
+**FP status board:** FP-1 ✅ · FP-2 ✅ · FP-3 ✅ · FP-4 🔜 (in-place edit:
+select+text+context-drag — the meatiest; may split 4a select+text / 4b drag) ·
+**[then dogfood + SHOW HUMAN per D-ORDER]** · FP-6 (export) · FP-5 (comments) ·
+FP-7 (structure ops + keymap).
+**Standing note:** account monthly spend limit was hit once (FP-3 attempt 1) — if a
+worker dies with that API error, it's the account cap (raise at claude.ai/settings/
+usage), not a logic failure; clean-respawn from the last tag.
