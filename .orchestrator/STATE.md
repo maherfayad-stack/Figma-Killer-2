@@ -337,6 +337,30 @@ framePath fails-closed w/o control-error reply.
 **Human's 3 dogfood asks all delivered:** (1) Inspector→CSS parity ✅ (FP-INS-a),
 (2) component props list ✅ (FP-INS-a), (3) Inspect/code tab ✅ (FP-INS-b).
 
+## DOGFOOD ROUND 2 (human, 2026-07-18) — 8 fixes → workstreams
+Human dogfooded FP-1..INS-b and filed 8 items → FIX-W1..W6 + a new bridge-raster
+workstream. Order: W1 canvas → W2 inspect-load → W3 components → W4 inspector-
+restructure → W5 frames → W6 comments; bridge-raster after W1.
+
+### FIX-W1 — COMPLETE (AUDIT-FIXW1 FAIL→remediated→PASS, tag `fix-w1-complete`, commit `8a37542`) 2026-07-18
+Canvas dogfood fixes: (4) Ctrl/Cmd+wheel preventDefault so browser native zoom no
+longer fires; (5) Layers type-icon click frames+selects the element (zoomToNode
+clamped ≤200% + capture overlay clipped via overflow:hidden so it can't trap clicks
+on the panels); (6) frames stay VISIBLE without perf blowup — `selectLiveFrames`
+caps live iframes at 8 (nearest viewport-centre; edit-mode frame counts), culled
+frames show LABELED PLACEHOLDER boards (never blank). Audit caught the deep root
+cause: screenshot-capture reads `iframe.contentDocument` but studio/frames are
+cross-origin (diff ports) → capture always fails → culled frames blanked (this is
+WHY #6 happened) → the first fix's force-live became permanent (perf blocker). Cap
+approach fixed it perf-safely (unit-tested 15/15, 60.4fps @ 20 frames). FP-INS-b +
+frozen contracts preserved.
+**KEY ARCHITECTURAL CARRY-FORWARD:** real cross-origin frame screenshots (culled-
+frame thumbnails) + FP-6 raster export BOTH require BRIDGE-SIDE rasterization (the
+in-iframe bridge snapshots its own DOM → posts image to parent). Queued as the
+`bridge-rasterization` workstream, runs after re-verification. Until then culled
+frames show labeled placeholders (fine for small projects — all frames live).
+Also: e2e `acceptance.spec.ts`/`p2-selection.spec.ts` need harness repair.
+
 **Queued next (surface to human for priority):** (a) Inspector READ current values
 (additive TreeNode.className or bridge query) — controls write but show defaults;
 (b) proper daemon DS-location fix + restore component catalog meta.ts (Assets panel
