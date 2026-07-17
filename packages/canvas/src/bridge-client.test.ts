@@ -140,4 +140,50 @@ describe('connectBridge', () => {
     iframeWindow.emitFromBridge({ source: 'ccs-bridge', type: 'ready', frame: 'Hero' });
     expect(onReady).not.toHaveBeenCalled();
   });
+
+  describe('FP-4a — enterTextEdit / onTextEditExit', () => {
+    it('enterTextEdit sends a ccs-studio enter-text-edit request and resolves ok on text-edit-entered', async () => {
+      const { iframeWindow, connection } = setup();
+      const promise = connection.enterTextEdit('a');
+      const sent = iframeWindow.posted[0] as { type: string; requestId: string; uid: string };
+      expect(sent).toMatchObject({ source: 'ccs-studio', type: 'enter-text-edit', uid: 'a' });
+
+      iframeWindow.emitFromBridge({
+        source: 'ccs-bridge',
+        type: 'text-edit-entered',
+        requestId: sent.requestId,
+        uid: 'a',
+        text: 'Hello',
+      });
+      await expect(promise).resolves.toEqual({ ok: true, text: 'Hello' });
+    });
+
+    it('enterTextEdit resolves not-ok with the reason on text-edit-rejected', async () => {
+      const { iframeWindow, connection } = setup();
+      const promise = connection.enterTextEdit('a');
+      const sent = iframeWindow.posted[0] as { requestId: string };
+      iframeWindow.emitFromBridge({
+        source: 'ccs-bridge',
+        type: 'text-edit-rejected',
+        requestId: sent.requestId,
+        uid: 'a',
+        reason: 'dynamic-locked',
+      });
+      await expect(promise).resolves.toEqual({ ok: false, reason: 'dynamic-locked' });
+    });
+
+    it('routes an unsolicited text-edit-exit to onTextEditExit', () => {
+      const iframeWindow = new FakeWindow();
+      const onTextEditExit = vi.fn();
+      connectBridge({
+        iframeWindow: iframeWindow as unknown as Window,
+        onRectsUpdate: vi.fn(),
+        onTextEditExit,
+        win: iframeWindow,
+      });
+      const exit = { source: 'ccs-bridge', type: 'text-edit-exit', uid: 'a', committed: true, text: 'done' };
+      iframeWindow.emitFromBridge(exit);
+      expect(onTextEditExit).toHaveBeenCalledWith(exit);
+    });
+  });
 });

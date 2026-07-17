@@ -11,6 +11,7 @@ describe('bridge <-> studio protocol schemas (ADR-0016)', () => {
       { source: 'ccs-studio', type: 'set-hover', uid: 'a' },
       { source: 'ccs-studio', type: 'set-hover', uid: null },
       { source: 'ccs-studio', type: 'set-selection', uids: [] },
+      { source: 'ccs-studio', type: 'enter-text-edit', requestId: 'r3', uid: 'src/frames/Hero.tsx:d0' },
     ];
     for (const message of messages) {
       expect(StudioToBridgeMessageSchema.safeParse(message).success).toBe(true);
@@ -56,6 +57,10 @@ describe('bridge <-> studio protocol schemas (ADR-0016)', () => {
       },
       { source: 'ccs-bridge', type: 'rects-result', requestId: 'r2', rects: { a: null } },
       { source: 'ccs-bridge', type: 'rects-update', rects: {} },
+      { source: 'ccs-bridge', type: 'text-edit-entered', requestId: 'r3', uid: 'a', text: 'Hello' },
+      { source: 'ccs-bridge', type: 'text-edit-rejected', requestId: 'r3', uid: 'a', reason: 'dynamic-locked' },
+      { source: 'ccs-bridge', type: 'text-edit-exit', uid: 'a', committed: true, text: 'Hello world' },
+      { source: 'ccs-bridge', type: 'text-edit-exit', uid: 'a', committed: false, text: null },
     ];
     for (const message of messages) {
       expect(BridgeToStudioMessageSchema.safeParse(message).success).toBe(true);
@@ -68,6 +73,23 @@ describe('bridge <-> studio protocol schemas (ADR-0016)', () => {
         source: 'ccs-studio',
         type: 'unsubscribe-rects',
         somethingElse: true,
+      }).success,
+    ).toBe(false);
+  });
+
+  it('FP-4a: rejects enter-text-edit / text-edit-exit missing required fields or with extras', () => {
+    expect(
+      StudioToBridgeMessageSchema.safeParse({ source: 'ccs-studio', type: 'enter-text-edit', requestId: 'r1' })
+        .success,
+    ).toBe(false);
+    expect(
+      BridgeToStudioMessageSchema.safeParse({
+        source: 'ccs-bridge',
+        type: 'text-edit-exit',
+        uid: 'a',
+        committed: true,
+        text: 'x',
+        extra: true,
       }).success,
     ).toBe(false);
   });

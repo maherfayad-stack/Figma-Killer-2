@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   boxToFrameEntry,
+  boxToScreenBox,
   boxesEqual,
   boxesIntersect,
   frameEntryToBox,
@@ -58,6 +59,28 @@ describe('page space <-> screen space (camera transform)', () => {
   it('identity camera (no pan, zoom 1) leaves points unchanged', () => {
     const camera = { x: 0, y: 0, z: 1 };
     expect(pagePointToScreenSpace(camera, { x: 42, y: 7 })).toEqual({ x: 42, y: 7 });
+  });
+});
+
+describe('boxToScreenBox', () => {
+  it('identity camera leaves a box unchanged', () => {
+    expect(boxToScreenBox({ x: 0, y: 0, z: 1 }, { x: 10, y: 20, w: 300, h: 200 })).toEqual({
+      x: 10,
+      y: 20,
+      w: 300,
+      h: 200,
+    });
+  });
+
+  it('applies pan + zoom to both the origin and the size', () => {
+    const camera = { x: -50, y: -50, z: 2 };
+    // top-left: (10 + -50) * 2 = -80, (20 + -50) * 2 = -60; size scales by z.
+    expect(boxToScreenBox(camera, { x: 10, y: 20, w: 300, h: 200 })).toEqual({
+      x: -80,
+      y: -60,
+      w: 600,
+      h: 400,
+    });
   });
 });
 

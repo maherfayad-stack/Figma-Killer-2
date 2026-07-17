@@ -27,8 +27,8 @@ import {
   type CcsFrameShape,
 } from './frame-shape.js';
 import { frameSourcePath, isValidFrameName } from './new-frame.js';
-import { EditModeLayer } from './edit-mode-layer.js';
-import { emitUidRemap } from './selection-store.js';
+import { EditModeLayer, type CommitTextRequest } from './edit-mode-layer.js';
+import { emitUidRemap, useSelectionStore } from './selection-store.js';
 import { shiftPanDelta } from './wheel-gesture.js';
 
 /**
@@ -83,6 +83,41 @@ export interface DuplicateFrameRequest {
 export type DuplicateFrameFn = (request: DuplicateFrameRequest) => Promise<void>;
 
 /**
+ * FP-4a (`.orchestrator/FEATURE-PARITY-PLAN.md` §2 FP-4, "two-way selection
+ * sync: canvas ↔ Layers ↔ Inspector" bullet — closes the AUDIT-FP1 carry-
+ * forward: "Layers-panel-originated frame selection doesn't drive tldraw's
+ * own canvas selection"). Everything a caller needs to drive an EXTERNAL
+ * (Layers-panel-originated) element selection onto the canvas — plain data,
+ * no tldraw/bridge types (playbook §5.4): `dynamic`/`component`/`breadcrumb`
+ * are already known to the caller from its own live tree (the SAME
+ * `TreeNode` fields `Inspector.tsx`/`LayersPanel.tsx` already read), so
+ * `StudioCanvas` never needs to re-derive them via an extra bridge round
+ * trip — only the RECT is fetched fresh (via `report-rects`, once the
+ * frame's bridge connection is available), same as `EditModeLayer`'s own
+ * `handleClick` does for a canvas-originated selection.
+ */
+export interface SelectNodeRequest {
+  fileFolder: string;
+  framePath: string;
+  uid: string;
+  dynamic: boolean;
+  component: string | null;
+  breadcrumb: { uid: string; name: string }[];
+}
+
+/** FP-4a: the canvas-originated counterpart of {@link SelectNodeRequest} —
+ * reported UP to the caller (via `StudioCanvasProps.onElementSelect`)
+ * whenever a real canvas click/hit-test resolves a selection, so the
+ * studio's own `workspace-store` (Layers highlight + Inspector) can mirror
+ * it. `null` when the canvas-side element selection is cleared (frame
+ * deselected, or a click landed on empty frame background). */
+export interface ElementSelection {
+  fileFolder: string;
+  framePath: string;
+  uid: string;
+}
+
+/**
  * FP-1 (`.orchestrator/FEATURE-PARITY-PLAN.md` §2, playbook §5.4 abstraction
  * rule): the camera-control surface handed to `onReady` — plain, tldraw-
  * independent methods a caller (the studio's zoom widget + keymap) can
@@ -114,6 +149,22 @@ export interface StudioCanvasHandle {
    * defines), or rejects on timeout/`control-error` — see
    * {@link CreateFrameFn}'s own doc. */
   createFrame: CreateFrameFn;
+  /** FP-4a: selects a BOARD on the canvas (drives tldraw's own shape
+   * selection only — no edit-mode activation, no bridge round trip) given
+   * its `(fileFolder, framePath)`. A no-op if no matching frame is
+   * currently known. This is the fix for the AUDIT-FP1 carry-forward: a
+   * Layers-panel board-row click now ALSO selects the tldraw shape, so
+   * `zoomToSelection` (⇧2) works after a Layers-originated selection, not
+   * just a canvas-originated one. */
+  selectFrame(fileFolder: string, framePath: string): void;
+  /** FP-4a: selects a specific ELEMENT on the canvas from an EXTERNAL
+   * (Layers-panel) origin — see {@link SelectNodeRequest}'s doc. Selects the
+   * owning frame's tldraw shape, activates it (same "frame becomes active,
+   * elements become hit-testable" state a canvas single-click enters — see
+   * `edit-mode-layer.tsx`), and drives the bridge highlight/selection
+   * (`set-selection`, `subscribe-rects`) once that frame's bridge
+   * connection is available. A no-op if no matching frame is known. */
+  selectNode(request: SelectNodeRequest): void;
 }
 
 /** Bound on how long a `defaultCreateFrame`/`defaultDuplicateFrame` promise
@@ -151,6 +202,19 @@ export interface StudioCanvasProps {
    * selection store so Layers/Inspector reflect a canvas click, mirroring
    * what `LayersPanel`'s own board-row click already does. */
   onFrameSelect?: (record: CanvasFrameRecord | null) => void;
+  /** FP-4a: fires with the currently-selected ELEMENT whenever a real
+   * canvas click/hit-test resolves one (or `null` when it's cleared) — see
+   * {@link ElementSelection}'s doc. The caller wires this into
+   * `workspace-store`'s `selectFrame`/`selectNode` so Layers/Inspector
+   * mirror a canvas-originated element selection, symmetric with
+   * `onFrameSelect` for boards. */
+  onElementSelect?: (selection: ElementSelection | null) => void;
+  /** FP-4a: fires once an in-place text edit COMMITS (never for a
+   * cancelled/Esc'd one — see `edit-mode-layer.tsx`'s `CommitTextRequest`
+   * doc). The caller (studio chrome) owns emitting the actual `set-text`
+   * `CanvasOp` over ITS OWN daemon-ops connection — this package never
+   * sends `CanvasOp`s itself. */
+  onCommitText?: (request: CommitTextRequest) => void;
 }
 
 const CONTAINER_STYLE: React.CSSProperties = { position: 'relative', width: '100%', height: '100%' };
@@ -210,6 +274,8 @@ export function StudioCanvas({
   onReady,
   onZoomChange,
   onFrameSelect,
+  onElementSelect,
+  onCommitText,
 }: StudioCanvasProps): React.ReactElement {
   const [frames, setFrames] = React.useState<CanvasFrameRecord[]>([]);
   const [editorReady, setEditorReady] = React.useState(false);
@@ -598,6 +664,59 @@ export function StudioCanvas({
     editor.zoomToFit({ animation: { duration: 200 } });
   }, [frames, editorReady]);
 
+  // FP-4a: `frames` mirror readable at CALL TIME (not closure-creation time)
+  // by `selectFrameOnCanvas`/`selectNodeOnCanvas` below. Those two functions
+  // are handed to the caller ONCE via the `onReady` effect right after this
+  // one (which deliberately does NOT re-fire on every `frames` change — see
+  // its own doc) — a plain destructured `frames` closure would go stale the
+  // moment a frame that didn't exist yet at `onReady`-time needs to be
+  // selected, so this ref is kept current independently instead.
+  const framesRef = React.useRef<CanvasFrameRecord[]>(frames);
+  React.useEffect(() => {
+    framesRef.current = frames;
+  }, [frames]);
+
+  /** FP-4a `StudioCanvasHandle.selectFrame` — see its own doc. */
+  const selectFrameOnCanvas = React.useCallback((fileFolder: string, framePath: string) => {
+    const editor = editorRef.current;
+    const record = framesRef.current.find((r) => r.fileFolder === fileFolder && r.framePath === framePath);
+    if (!editor || !record) return;
+    editor.select(shapeIdForRecordId(record.id));
+  }, []);
+
+  /** FP-4a `StudioCanvasHandle.selectNode` — see its own doc. Reuses the
+   * exact same `selection-store` entry points (`enterEditMode`/
+   * `setSelection`) a canvas-originated click already goes through
+   * (`edit-mode-layer.tsx`'s `handleClick`) — the only difference is the
+   * rect starts `null` here (no hit-test ever ran); `EditModeLayer`'s own
+   * selection-sync effect backfills it via `report-rects` once that
+   * frame's bridge connection is available (see that file's doc). */
+  const selectNodeOnCanvas = React.useCallback((request: SelectNodeRequest) => {
+    const editor = editorRef.current;
+    const record = framesRef.current.find(
+      (r) => r.fileFolder === request.fileFolder && r.framePath === request.framePath,
+    );
+    if (!editor || !record) return;
+    const shapeId = shapeIdForRecordId(record.id);
+    editor.select(shapeId);
+
+    const store = useSelectionStore.getState();
+    if (store.editModeFrame?.shapeId !== shapeId) {
+      const camera = editor.getCamera();
+      store.enterEditMode(
+        { shapeId, fileFolder: record.fileFolder, framePath: record.framePath },
+        { x: camera.x, y: camera.y, z: camera.z },
+      );
+    }
+    useSelectionStore.getState().setSelection({
+      uid: request.uid,
+      rect: null,
+      dynamic: request.dynamic,
+      component: request.component,
+      breadcrumb: request.breadcrumb,
+    });
+  }, []);
+
   // --- FP-1: hand the caller a plain camera-control handle ---------------
   // (`.orchestrator/FEATURE-PARITY-PLAN.md` §2 item 3 — the zoom widget +
   // keymap drive the camera through this, never a tldraw `Editor` directly,
@@ -614,8 +733,10 @@ export function StudioCanvas({
       zoomToFit: () => editor.zoomToFit({ animation: { duration: 200 } }),
       zoomToSelection: () => editor.zoomToSelection({ animation: { duration: 200 } }),
       createFrame,
+      selectFrame: selectFrameOnCanvas,
+      selectNode: selectNodeOnCanvas,
     });
-  }, [editorReady, onReady, createFrame]);
+  }, [editorReady, onReady, createFrame, selectFrameOnCanvas, selectNodeOnCanvas]);
 
   // --- FP-1: shift+wheel horizontal-pan gap fix ---------------------------
   // See `wheel-gesture.ts`'s module doc for the full "why": tldraw's own
@@ -782,11 +903,15 @@ export function StudioCanvas({
       <ScreenshotCacheContext.Provider value={screenshotCache}>
         <Tldraw shapeUtils={shapeUtils} components={MINIMAL_COMPONENTS} overrides={overrides} onMount={handleMount} />
       </ScreenshotCacheContext.Provider>
-      {mountedEditor && <EditModeLayer editor={mountedEditor} frames={frames} />}
+      {mountedEditor && <EditModeLayer editor={mountedEditor} frames={frames} onCommitText={onCommitText} />}
       {mountedEditor && onZoomChange && <ZoomReporter editor={mountedEditor} onZoomChange={onZoomChange} />}
-      {mountedEditor && onFrameSelect && (
+      {mountedEditor && (
+        // FP-4a: this bridge now ALSO drives frictionless frame activation
+        // (see its own doc) — mounted whenever the editor is up, not just
+        // when the caller wants `onFrameSelect` reports.
         <FrameSelectionBridge editor={mountedEditor} frames={frames} onFrameSelect={onFrameSelect} />
       )}
+      {onElementSelect && <ElementSelectionBridge onElementSelect={onElementSelect} />}
       <div style={{ position: 'absolute', top: 12, right: 12, zIndex: 10, fontFamily: 'system-ui, sans-serif' }}>
         {newFrameOpen ? (
           <form
@@ -870,6 +995,20 @@ function ZoomReporter({
  * one `ccs-frame` shape — an empty selection or a multi-frame marquee both
  * report `null`, matching "select one board" as the unambiguous case the
  * studio's Layers/Inspector can reflect.
+ *
+ * FP-4a (`.orchestrator/FEATURE-PARITY-PLAN.md` §2 FP-4, "frictionless
+ * element select" bullet): this is ALSO where a frame becomes "active" —
+ * hit-testable via the bridge, per the task brief — the MOMENT it's
+ * selected, with NO prior double-click required. `CcsFrameShapeUtil.
+ * onDoubleClick` (unchanged, still zooms + activates) remains the ONLY way
+ * to enter edit mode with a camera snapshot for Esc-restore; a plain
+ * single-click activation captures the CURRENT camera as `previousCamera`
+ * too (so Esc still restores sensibly) but never animates a zoom — see
+ * `edit-mode-layer.tsx`'s module doc for how the capture overlay itself
+ * stays confined to just the active frame's screen box, which is what
+ * makes clicking a DIFFERENT frame (or empty canvas) "just work" again
+ * instead of being swallowed by an edit-mode overlay meant for another
+ * frame entirely.
  */
 function FrameSelectionBridge({
   editor,
@@ -878,7 +1017,7 @@ function FrameSelectionBridge({
 }: {
   editor: Editor;
   frames: CanvasFrameRecord[];
-  onFrameSelect: (record: CanvasFrameRecord | null) => void;
+  onFrameSelect?: ((record: CanvasFrameRecord | null) => void) | undefined;
 }): null {
   const selectedShapeIds = useValue('ccs-selected-shape-ids', () => editor.getSelectedShapeIds(), [editor]);
   const lastReportedRef = React.useRef<string | null>(null);
@@ -888,10 +1027,60 @@ function FrameSelectionBridge({
     const record =
       frameShapeIds.length === 1 ? (frames.find((f) => shapeIdForRecordId(f.id) === frameShapeIds[0]) ?? null) : null;
     const key = record?.id ?? null;
+
+    // --- FP-4a frictionless activation (runs even if the caller doesn't
+    // care about `onFrameSelect` reports) -------------------------------
+    const store = useSelectionStore.getState();
+    const activeShapeId = store.editModeFrame?.shapeId ?? null;
+    const nextShapeId = record ? shapeIdForRecordId(record.id) : null;
+    if (activeShapeId !== nextShapeId) {
+      if (activeShapeId) store.exitEditMode();
+      if (record && nextShapeId) {
+        const camera = editor.getCamera();
+        store.enterEditMode(
+          { shapeId: nextShapeId, fileFolder: record.fileFolder, framePath: record.framePath },
+          { x: camera.x, y: camera.y, z: camera.z },
+        );
+      }
+    }
+
     if (lastReportedRef.current === key) return;
     lastReportedRef.current = key;
-    onFrameSelect(record);
+    onFrameSelect?.(record);
   }, [selectedShapeIds, frames, editor, onFrameSelect]);
+
+  return null;
+}
+
+/**
+ * FP-4a: reports the currently-selected ELEMENT (canvas-originated: a real
+ * hit-test click, or a `text-edit`-adjacent selection set inside
+ * `edit-mode-layer.tsx`) up to the caller — see
+ * `StudioCanvasProps.onElementSelect`'s doc. Reads `useSelectionStore`
+ * directly (module-level zustand, no React-context boundary needed) rather
+ * than requiring `edit-mode-layer.tsx` to accept yet another prop; dedupes
+ * on a composite key so it only fires when the reported selection actually
+ * changes, mirroring `FrameSelectionBridge`'s own dedupe pattern.
+ */
+function ElementSelectionBridge({
+  onElementSelect,
+}: {
+  onElementSelect: (selection: ElementSelection | null) => void;
+}): null {
+  const editModeFrame = useSelectionStore((s) => s.editModeFrame);
+  const selectedUid = useSelectionStore((s) => s.selectedUids[0] ?? null);
+  const lastReportedRef = React.useRef<string | null>(null);
+
+  React.useEffect(() => {
+    const selection: ElementSelection | null =
+      editModeFrame && selectedUid
+        ? { fileFolder: editModeFrame.fileFolder, framePath: editModeFrame.framePath, uid: selectedUid }
+        : null;
+    const key = selection ? `${selection.fileFolder}::${selection.framePath}::${selection.uid}` : null;
+    if (lastReportedRef.current === key) return;
+    lastReportedRef.current = key;
+    onElementSelect(selection);
+  }, [editModeFrame, selectedUid, onElementSelect]);
 
   return null;
 }

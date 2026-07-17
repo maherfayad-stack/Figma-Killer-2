@@ -3,6 +3,7 @@ import {
   type HitInfo,
   type Rect,
   type StudioToBridgeMessage,
+  type TextEditExit,
 } from '@ccs/bridge';
 
 /**
@@ -33,10 +34,21 @@ export interface BridgeConnectionOptions {
    * `subscribe-rects` for whatever's currently selected (playbook §4/P2
    * pitfall: rect subscriptions don't survive a hard iframe reload). */
   onReady?: (frame: string) => void;
+  /** FP-4a (`.orchestrator/FEATURE-PARITY-PLAN.md` §2 FP-4): fires whenever
+   * an in-progress in-place text edit ends inside this connection's iframe
+   * — however it ended (Enter/blur commit, or Esc cancel). Unsolicited,
+   * exactly mirroring the bridge's own `text-edit-exit` message (see
+   * `@ccs/bridge`'s `protocol.ts`/`text-edit.ts`). */
+  onTextEditExit?: (exit: TextEditExit) => void;
   /** Injectable for tests; defaults to the real global `window`. Only
    * `addEventListener`/`removeEventListener` are used. */
   win?: Pick<Window, 'addEventListener' | 'removeEventListener'>;
 }
+
+/** FP-4a: `enterTextEdit`'s resolved outcome — mirrors the bridge's
+ * `text-edit-entered`/`text-edit-rejected` reply pair as a single
+ * discriminated result rather than two separate promise shapes. */
+export type EnterTextEditResult = { ok: true; text: string } | { ok: false; reason: string };
 
 export interface BridgeConnection {
   hitTest(x: number, y: number): Promise<HitInfo | null>;
@@ -45,6 +57,12 @@ export interface BridgeConnection {
   unsubscribeRects(): void;
   setHover(uid: string | null): void;
   setSelection(uids: string[]): void;
+  /** FP-4a: requests the bridge turn `uid`'s node `contentEditable` inside
+   * the iframe. Resolves once the bridge replies `text-edit-entered` (ok)
+   * or `text-edit-rejected` (not editable — dynamic-locked, a component
+   * usage site, not a text leaf, etc.). Ending the edit is NOT driven from
+   * here — see `onTextEditExit`. */
+  enterTextEdit(uid: string): Promise<EnterTextEditResult>;
   dispose(): void;
 }
 
@@ -55,11 +73,12 @@ function nextRequestId(prefix: string): string {
 }
 
 export function connectBridge(options: BridgeConnectionOptions): BridgeConnection {
-  const { iframeWindow, onRectsUpdate, onReady } = options;
+  const { iframeWindow, onRectsUpdate, onReady, onTextEditExit } = options;
   const win = options.win ?? window;
 
   const pendingHitTest = new Map<string, (hit: HitInfo | null) => void>();
   const pendingReportRects = new Map<string, (rects: Record<string, Rect | null>) => void>();
+  const pendingTextEdit = new Map<string, (result: EnterTextEditResult) => void>();
 
   function send(message: StudioToBridgeMessage): void {
     // Target origin '*' mirrors `bridge.ts`'s own `send()` — the studio
@@ -95,6 +114,23 @@ export function connectBridge(options: BridgeConnectionOptions): BridgeConnectio
       case 'ready':
         onReady?.(message.frame);
         return;
+      case 'text-edit-entered': {
+        const resolve = pendingTextEdit.get(message.requestId);
+        if (!resolve) return;
+        pendingTextEdit.delete(message.requestId);
+        resolve({ ok: true, text: message.text });
+        return;
+      }
+      case 'text-edit-rejected': {
+        const resolve = pendingTextEdit.get(message.requestId);
+        if (!resolve) return;
+        pendingTextEdit.delete(message.requestId);
+        resolve({ ok: false, reason: message.reason });
+        return;
+      }
+      case 'text-edit-exit':
+        onTextEditExit?.(message);
+        return;
     }
   }
 
@@ -127,10 +163,18 @@ export function connectBridge(options: BridgeConnectionOptions): BridgeConnectio
     setSelection(uids) {
       send({ source: 'ccs-studio', type: 'set-selection', uids });
     },
+    enterTextEdit(uid) {
+      const requestId = nextRequestId('enter-text-edit');
+      return new Promise((resolve) => {
+        pendingTextEdit.set(requestId, resolve);
+        send({ source: 'ccs-studio', type: 'enter-text-edit', requestId, uid });
+      });
+    },
     dispose() {
       win.removeEventListener('message', onMessage as EventListener);
       pendingHitTest.clear();
       pendingReportRects.clear();
+      pendingTextEdit.clear();
     },
   };
 }

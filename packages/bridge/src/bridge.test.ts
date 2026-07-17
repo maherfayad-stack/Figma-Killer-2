@@ -184,4 +184,65 @@ describe('bridge — hit-test / report-rects / origin validation', () => {
 
     expect(fakeParent.postMessage).not.toHaveBeenCalled();
   });
+
+  describe('FP-4a — enter-text-edit', () => {
+    it('replies text-edit-entered for a plain text-leaf node, then text-edit-exit on Enter', () => {
+      document.body.innerHTML = `<p data-uid="${BUTTON_UID}">Click me</p>`;
+      handle = installBridge();
+      (fakeParent.postMessage as ReturnType<typeof vi.fn>).mockClear();
+
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: { source: 'ccs-studio', type: 'enter-text-edit', requestId: 'te-1', uid: BUTTON_UID },
+          source: fakeParent,
+        }),
+      );
+
+      const [entered] = (fakeParent.postMessage as ReturnType<typeof vi.fn>).mock.calls[0]!;
+      expect(entered).toEqual({
+        source: 'ccs-bridge',
+        type: 'text-edit-entered',
+        requestId: 'te-1',
+        uid: BUTTON_UID,
+        text: 'Click me',
+      });
+
+      const el = document.querySelector(`[data-uid="${BUTTON_UID}"]`) as HTMLElement;
+      el.textContent = 'Clicked!';
+      el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+
+      const [exit] = (fakeParent.postMessage as ReturnType<typeof vi.fn>).mock.calls[1]!;
+      expect(exit).toEqual({
+        source: 'ccs-bridge',
+        type: 'text-edit-exit',
+        uid: BUTTON_UID,
+        committed: true,
+        text: 'Clicked!',
+      });
+    });
+
+    it('replies text-edit-rejected for a dynamic-locked node — no contenteditable applied', () => {
+      document.body.innerHTML = `<p data-uid="${BUTTON_UID}" data-dynamic="true">Item</p>`;
+      handle = installBridge();
+      (fakeParent.postMessage as ReturnType<typeof vi.fn>).mockClear();
+
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: { source: 'ccs-studio', type: 'enter-text-edit', requestId: 'te-2', uid: BUTTON_UID },
+          source: fakeParent,
+        }),
+      );
+
+      const [message] = (fakeParent.postMessage as ReturnType<typeof vi.fn>).mock.calls[0]!;
+      expect(message).toEqual({
+        source: 'ccs-bridge',
+        type: 'text-edit-rejected',
+        requestId: 'te-2',
+        uid: BUTTON_UID,
+        reason: 'dynamic-locked',
+      });
+      const el = document.querySelector(`[data-uid="${BUTTON_UID}"]`) as HTMLElement;
+      expect(el.getAttribute('contenteditable')).toBeNull();
+    });
+  });
 });

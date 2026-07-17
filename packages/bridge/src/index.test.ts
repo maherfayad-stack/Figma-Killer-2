@@ -19,4 +19,8 @@ describe('@ccs/bridge public API surface', () => {
     expect(pkg.StudioToBridgeMessageSchema).toBeDefined();
     expect(pkg.BridgeToStudioMessageSchema).toBeDefined();
   });
+
+  it('exports the FP-4a text-edit controller', () => {
+    expect(typeof pkg.createTextEditController).toBe('function');
+  });
 });

@@ -1,12 +1,30 @@
 import * as React from 'react';
 import { createShapeId, useValue, type Editor } from 'tldraw';
-import type { HitInfo } from '@ccs/bridge';
+import type { HitInfo, TextEditExit } from '@ccs/bridge';
 import type { CanvasFrameRecord } from './project-wiring.js';
 import { getRegisteredFrameIframe, onFrameIframeRegistryChange } from './frame-shape.js';
 import { useSelectionStore, onUidRemap, type HoverState, type SelectionState } from './selection-store.js';
 import { connectBridge, type BridgeConnection } from './bridge-client.js';
 import { iframeRectToScreenBox, screenPointToIframePoint } from './bridge-geometry.js';
-import type { Box, CameraState } from './geometry.js';
+import { boxToScreenBox, type Box, type CameraState } from './geometry.js';
+
+/** FP-4a (`.orchestrator/FEATURE-PARITY-PLAN.md` §2 FP-4): reported up to
+ * `StudioCanvas`/the caller when an in-place text edit commits (Enter or
+ * blur with real text; Esc-cancel never reaches this — the bridge restores
+ * the original text itself and reports `committed:false`, which this layer
+ * simply discards, see `handleTextEditExit` below). The CALLER (studio
+ * chrome) owns emitting the actual `set-text` `CanvasOp` — this package
+ * never sends ops itself (it has no `sendOp`/daemon-ops connection; only
+ * `@ccs/canvas`'s own geometry/create-frame control-ws, per
+ * `StudioCanvas.tsx`'s module doc), matching this task's brief: "the bridge
+ * reports the committed text back to the parent, which sends the existing
+ * `set-text` op over the daemon control-ws". */
+export interface CommitTextRequest {
+  fileFolder: string;
+  framePath: string;
+  uid: string;
+  text: string;
+}
 
 /** Display name for a hit-test result — see `HoverState.name`'s doc for
  * why this can't be derived from `uid` alone. */
@@ -25,7 +43,7 @@ function nameFromHit(hit: HitInfo): string {
  * overlay in screen space" (playbook wording) independently testable and
  * keeps the math in one pure, non-React module.
  *
- * ## Why a full-canvas capture div, not the iframe itself, drives hit-testing
+ * ## Why a capture div, not the iframe itself, drives hit-testing
  * The playbook prompt says the edit-mode frame's iframe gets
  * `pointer-events: auto` (implemented in `frame-shape.tsx`) and mouse-move
  * "over frame" triggers `hit-test`. In a real browser this can't literally
@@ -39,25 +57,41 @@ function nameFromHit(hit: HitInfo): string {
  * crosses that boundary, which is exactly what the FROZEN bridge protocol
  * is for). So the only way for the studio to know the pointer's (x,y) at
  * all is to capture the mouse event on the STUDIO side. This component does
- * that with one transparent, `pointer-events:auto` div that exactly covers
- * the canvas container (only while a frame is in edit mode), converts the
- * event's own `offsetX`/`offsetY` (already relative to that div's — and
- * therefore the container's — top-left, since the div is `inset:0` of the
- * same `position:relative` container `StudioCanvas` renders) through
- * `screenPointToIframePoint`, and sends the resulting iframe-space point as
- * a `hit-test` request. This deliberately sits ABOVE the iframe (as the
- * last-rendered sibling), so the iframe's own `pointer-events:auto` (set by
- * `frame-shape.tsx` per the playbook prompt) is currently inert for P2 —
- * flagged as a CR in the worker report: it's wired and ready for a future
- * phase that needs the iframe to receive events directly (e.g. in-place
- * text editing), but P2's actual interaction model is capture-overlay +
- * postMessage, the only approach the browser's cross-origin model and the
- * FROZEN protocol actually allow.
+ * that with one transparent, `pointer-events:auto` div, converts the
+ * event's own `offsetX`/`offsetY` through `screenPointToIframePoint`, and
+ * sends the resulting iframe-space point as a `hit-test` request.
+ *
+ * FP-4a UPDATE (`.orchestrator/FEATURE-PARITY-PLAN.md` §2 FP-4): P2 sized
+ * this div `inset:0` of the whole canvas container. FP-4a resizes/positions
+ * it to exactly the ACTIVE frame's own on-screen box instead (`geometry.ts`'s
+ * `boxToScreenBox`) — a P2 whole-canvas overlay would swallow a click meant
+ * to select a DIFFERENT frame (or empty canvas) the instant one frame
+ * became active, which is fatal to "frictionless" multi-frame select
+ * (`StudioCanvas.tsx`'s `FrameSelectionBridge` now activates a frame on a
+ * plain single click, no double-click gate — see that file's doc): a click
+ * outside the active frame's box now falls straight through to tldraw's own
+ * shape hit-testing underneath, exactly like before any frame was ever
+ * activated. The FROZEN bridge protocol/geometry math is unchanged; only
+ * this div's CSS position/size and the resulting `offsetX/offsetY` ->
+ * container-relative-screen-point translation moved.
+ *
+ * P2's iframe `pointer-events:auto`-while-inert reservation (flagged in the
+ * original worker report as "wired and ready for a future phase that needs
+ * the iframe to receive events directly, e.g. in-place text editing") is
+ * FP-4a's `editingUid` state below: while a text edit is in progress this
+ * overlay drops to `pointer-events:none` so the iframe (already `auto`
+ * whenever it's the edit-mode frame) receives real clicks/keystrokes
+ * directly — the only way `contentEditable` can actually work cross-origin.
  */
 
 export interface EditModeLayerProps {
   editor: Editor;
   frames: CanvasFrameRecord[];
+  /** FP-4a: called once per committed in-place text edit (never for a
+   * cancelled one) — see {@link CommitTextRequest}'s doc. Optional so
+   * existing callers/tests that don't care about text-editing keep
+   * compiling unchanged (additive prop). */
+  onCommitText?: ((request: CommitTextRequest) => void) | undefined;
 }
 
 function exitEditModeAndRestoreCamera(editor: Editor): void {
@@ -75,7 +109,7 @@ function frameBoxOf(record: CanvasFrameRecord): Box {
   return { x: record.x, y: record.y, w: record.w, h: record.h };
 }
 
-export function EditModeLayer({ editor, frames }: EditModeLayerProps): React.ReactElement {
+export function EditModeLayer({ editor, frames, onCommitText }: EditModeLayerProps): React.ReactElement {
   const editModeFrame = useSelectionStore((s) => s.editModeFrame);
   const hover = useSelectionStore((s) => s.hover);
   const selectedUids = useSelectionStore((s) => s.selectedUids);
@@ -83,6 +117,17 @@ export function EditModeLayer({ editor, frames }: EditModeLayerProps): React.Rea
   const breadcrumb = useSelectionStore((s) => s.breadcrumb);
 
   const camera = useValue<CameraState>('ccs-edit-mode-camera', () => editor.getCamera(), [editor]);
+
+  // FP-4a: `uid` of the node currently being in-place-edited (contentEditable
+  // inside the iframe), or `null`. While non-null the capture overlay stops
+  // intercepting pointer events (see the overlay's `pointerEvents` below) so
+  // the REAL click/keyboard input the browser dispatches to the (cross-
+  // origin) iframe reaches its own document directly — this is the "iframe
+  // pointer-events:auto wired-but-inert, reserved for P3/in-place text edit"
+  // reservation AUDIT-5 flagged, now actually used: the iframe already has
+  // `pointer-events:auto` while it's the edit-mode frame (`frame-shape.tsx`);
+  // this layer just needs to get OUT OF THE WAY of it during an edit.
+  const [editingUid, setEditingUid] = React.useState<string | null>(null);
 
   // Re-render whenever a frame's iframe (re)registers/unregisters (e.g. the
   // edit-mode frame flips live<->screenshot, or first mounts its iframe
@@ -99,6 +144,30 @@ export function EditModeLayer({ editor, frames }: EditModeLayerProps): React.Rea
   const frameBox = editModeRecord ? frameBoxOf(editModeRecord) : null;
   const iframeEl = editModeFrame ? getRegisteredFrameIframe(editModeFrame.shapeId) : null;
 
+  // FP-4a: the capture overlay is now sized/positioned to exactly the
+  // active frame's on-screen box (see the render return's doc for why) —
+  // computed once per render here so both the pointer handlers below (which
+  // must translate the overlay-local `offsetX/offsetY` back to
+  // container-relative screen coordinates before calling
+  // `screenPointToIframePoint`) and the JSX use the exact same value.
+  const overlayScreenBox = frameBox ? boxToScreenBox(camera, frameBox) : null;
+
+  // FP-4a: the bridge's autonomous exit report (Enter/blur commit, or Esc
+  // cancel — see `text-edit.ts`'s doc). Reads `editModeFrame` fresh via
+  // `.getState()` (not the outer closure) so this is correct even if it
+  // fires from a connection opened several renders ago (same defensive
+  // pattern the pre-existing `onReady`/uid-remap handlers already use).
+  const handleTextEditExit = React.useCallback(
+    (exit: TextEditExit) => {
+      setEditingUid((current) => (current === exit.uid ? null : current));
+      if (!exit.committed || exit.text === null) return; // Esc-cancel — bridge already restored the DOM; no op.
+      const frame = useSelectionStore.getState().editModeFrame;
+      if (!frame) return;
+      onCommitText?.({ fileFolder: frame.fileFolder, framePath: frame.framePath, uid: exit.uid, text: exit.text });
+    },
+    [onCommitText],
+  );
+
   // --- bridge connection lifecycle: one connection per edit-mode iframe ---
   const connectionRef = React.useRef<BridgeConnection | null>(null);
   const connectedWindowRef = React.useRef<Window | null>(null);
@@ -109,6 +178,10 @@ export function EditModeLayer({ editor, frames }: EditModeLayerProps): React.Rea
     connectionRef.current?.dispose();
     connectionRef.current = null;
     connectedWindowRef.current = win;
+    // A reconnect (new/reloaded iframe) invalidates any in-progress edit's
+    // DOM state — drop back to hit-test-capture mode rather than leaving
+    // the overlay permanently pointer-events:none.
+    setEditingUid(null);
     if (!win) return;
 
     const connection = connectBridge({
@@ -124,8 +197,12 @@ export function EditModeLayer({ editor, frames }: EditModeLayerProps): React.Rea
         // currently selected so selection survives a hard HMR reload, not
         // just the in-place-module-swap case (playbook §4/P2 pitfall).
         const currentSelection = useSelectionStore.getState().selectedUids;
-        if (currentSelection.length > 0) connectionRef.current?.subscribeRects(currentSelection);
+        if (currentSelection.length > 0) {
+          connectionRef.current?.subscribeRects(currentSelection);
+          connectionRef.current?.setSelection(currentSelection);
+        }
       },
+      onTextEditExit: handleTextEditExit,
     });
     connectionRef.current = connection;
 
@@ -133,7 +210,34 @@ export function EditModeLayer({ editor, frames }: EditModeLayerProps): React.Rea
       connection.dispose();
       if (connectedWindowRef.current === win) connectedWindowRef.current = null;
     };
-  }, [iframeEl]);
+  }, [iframeEl, handleTextEditExit]);
+
+  // FP-4a (`.orchestrator/FEATURE-PARITY-PLAN.md` §2 FP-4, two-way sync
+  // bullet): keeps the bridge's live-rect subscription + in-iframe
+  // highlight in sync with `selectedUids`, regardless of WHERE the
+  // selection came from. A canvas-originated click (`handleClick`/
+  // `handleDoubleClick` above) already sends `subscribeRects`/`setSelection`
+  // inline — redundant-but-harmless here for that case. What this effect
+  // makes possible is an EXTERNALLY-driven selection (`StudioCanvas.tsx`'s
+  // `selectNode` handle method, called from a Layers-panel row click): it
+  // starts with `rect:null` (no hit-test ever ran for it) and no inline
+  // bridge call — this is the only place that subscribes/backfills its rect
+  // via `report-rects`, closing the AUDIT-FP1 carry-forward's sibling gap
+  // (Layers -> canvas highlight, not just Layers -> tldraw selection).
+  React.useEffect(() => {
+    const connection = connectionRef.current;
+    if (!connection || selectedUids.length === 0) return;
+    connection.subscribeRects(selectedUids);
+    connection.setSelection(selectedUids);
+    const uidsMissingRect = selectedUids.filter((uid) => !selections[uid]?.rect);
+    if (uidsMissingRect.length === 0) return;
+    void connection.reportRects(uidsMissingRect).then((rects) => {
+      for (const uid of uidsMissingRect) {
+        const rect = rects[uid];
+        if (rect !== undefined) useSelectionStore.getState().updateSelectionRect(uid, rect);
+      }
+    });
+  }, [selectedUids, selections, iframeEl]);
 
   // --- Esc exits edit mode (camera unlocks + restores) --------------------
   React.useEffect(() => {
@@ -186,11 +290,18 @@ export function EditModeLayer({ editor, frames }: EditModeLayerProps): React.Rea
   // --- input capture (see module doc for why this, not the iframe itself) -
   const hoverRequestSeq = React.useRef(0);
 
+  // Overlay-local `offsetX`/`offsetY` (relative to the resized-to-the-frame
+  // capture div's own top-left, see the render return's doc) -> the
+  // container-relative screen point `screenPointToIframePoint` expects —
+  // add back the overlay's own screen-space offset (`overlayScreenBox.x/y`).
   const handleMouseMove = React.useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
       const connection = connectionRef.current;
-      if (!frameBox || !connection) return;
-      const screenPoint = { x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY };
+      if (!frameBox || !connection || !overlayScreenBox) return;
+      const screenPoint = {
+        x: e.nativeEvent.offsetX + overlayScreenBox.x,
+        y: e.nativeEvent.offsetY + overlayScreenBox.y,
+      };
       const point = screenPointToIframePoint(camera, frameBox, screenPoint);
       const seq = (hoverRequestSeq.current += 1);
       void connection.hitTest(point.x, point.y).then((hit) => {
@@ -202,7 +313,7 @@ export function EditModeLayer({ editor, frames }: EditModeLayerProps): React.Rea
         connection.setHover(hit?.uid ?? null);
       });
     },
-    [frameBox, camera],
+    [frameBox, camera, overlayScreenBox],
   );
 
   const handleMouseLeave = React.useCallback(() => {
@@ -213,10 +324,10 @@ export function EditModeLayer({ editor, frames }: EditModeLayerProps): React.Rea
   const handleClick = React.useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
       const connection = connectionRef.current;
-      if (!frameBox || !connection) return;
+      if (!frameBox || !connection || !overlayScreenBox) return;
       const point = screenPointToIframePoint(camera, frameBox, {
-        x: e.nativeEvent.offsetX,
-        y: e.nativeEvent.offsetY,
+        x: e.nativeEvent.offsetX + overlayScreenBox.x,
+        y: e.nativeEvent.offsetY + overlayScreenBox.y,
       });
       void connection.hitTest(point.x, point.y).then((hit) => {
         if (hit) {
@@ -236,7 +347,70 @@ export function EditModeLayer({ editor, frames }: EditModeLayerProps): React.Rea
         }
       });
     },
-    [frameBox, camera],
+    [frameBox, camera, overlayScreenBox],
+  );
+
+  /**
+   * FP-4a double-click: text-edit entry, or (on an empty-background hit) a
+   * fallback that reproduces the classic "double-click a frame to zoom into
+   * it" gesture. Reachable here (not just via `CcsFrameShapeUtil.
+   * onDoubleClick`) because once a frame is ACTIVE (see the frictionless
+   * single-click activation in `StudioCanvas.tsx`'s `FrameSelectionBridge`),
+   * this layer's own overlay — not tldraw's shape — is what receives the
+   * second click of a fast double-click; `onDoubleClick` on the tldraw shape
+   * itself is left completely untouched and still fires for the FIRST
+   * double-click on a frame that isn't active yet (before this overlay
+   * exists over it) — both paths land on the same "zoomed in + active"
+   * outcome, so neither flow regresses the other.
+   *
+   * BUG FOUND VIA LIVE DOGFOOD (fixed here): a frame zoomed out far enough to
+   * still be in `screenshot` render mode (`viewport-cull.ts`) has no live
+   * iframe yet, so `connectionRef.current` is `null` — the classic "double-
+   * click a small/distant frame to zoom into it" gesture MUST still work in
+   * that case (there's nothing to hit-test against anyway), so the
+   * no-connection branch always falls back to `zoomToBounds` rather than
+   * silently no-op'ing. Confirmed live: `CcsFrameShapeUtil.onDoubleClick`
+   * itself can lose the race for a frame's FIRST-ever interaction too — the
+   * frictionless single-click activation (`FrameSelectionBridge`) mounts
+   * this overlay fast enough that the SECOND physical click of even a real
+   * (non-synthetic) double-click often lands on the overlay, not the tldraw
+   * shape — so this fallback is the one path both a first-time and a
+   * repeat double-click-to-zoom reliably go through now.
+   */
+  const handleDoubleClick = React.useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      if (!frameBox || !overlayScreenBox || editingUid) return;
+      const connection = connectionRef.current;
+      if (!connection) {
+        editor.zoomToBounds(frameBox, { animation: { duration: 200 } });
+        return;
+      }
+      const point = screenPointToIframePoint(camera, frameBox, {
+        x: e.nativeEvent.offsetX + overlayScreenBox.x,
+        y: e.nativeEvent.offsetY + overlayScreenBox.y,
+      });
+      void connection.hitTest(point.x, point.y).then((hit) => {
+        if (!hit) {
+          editor.zoomToBounds(frameBox, { animation: { duration: 200 } });
+          return;
+        }
+        if (hit.dynamic) return; // dynamic-locked — real code, not editable here.
+        void connection.enterTextEdit(hit.uid).then((result) => {
+          if (!result.ok) return; // component-instance / not-a-text-leaf / already-editing — no-op.
+          setEditingUid(hit.uid);
+          useSelectionStore.getState().setSelection({
+            uid: hit.uid,
+            rect: hit.rect,
+            dynamic: hit.dynamic,
+            component: hit.component,
+            breadcrumb: hit.breadcrumb,
+          });
+          connection.subscribeRects([hit.uid]);
+          connection.setSelection([hit.uid]);
+        });
+      });
+    },
+    [frameBox, camera, overlayScreenBox, editingUid, editor],
   );
 
   /**
@@ -293,14 +467,23 @@ export function EditModeLayer({ editor, frames }: EditModeLayerProps): React.Rea
 
   return (
     <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 5, fontFamily: 'system-ui, sans-serif' }}>
-      {editModeFrame && frameBox && (
+      {editModeFrame && overlayScreenBox && (
         <div
           data-testid="ccs-edit-mode-capture"
           onMouseMove={handleMouseMove}
           onMouseLeave={handleMouseLeave}
           onClick={handleClick}
+          onDoubleClick={handleDoubleClick}
           onWheel={handleWheel}
-          style={{ position: 'absolute', inset: 0, pointerEvents: 'auto', cursor: 'crosshair' }}
+          style={{
+            position: 'absolute',
+            left: overlayScreenBox.x,
+            top: overlayScreenBox.y,
+            width: overlayScreenBox.w,
+            height: overlayScreenBox.h,
+            pointerEvents: editingUid ? 'none' : 'auto',
+            cursor: 'crosshair',
+          }}
         />
       )}
 

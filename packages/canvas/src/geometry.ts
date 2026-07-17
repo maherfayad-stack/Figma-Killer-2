@@ -86,6 +86,20 @@ export function screenPointToPageSpace(camera: CameraState, point: Point): Point
   return { x: point.x / camera.z - camera.x, y: point.y / camera.z - camera.y };
 }
 
+/** Page-space box (e.g. a frame's own `x/y/w/h`) -> screen space, applying
+ * the camera transform (same convention as `pagePointToScreenSpace`).
+ * FP-4a (`.orchestrator/FEATURE-PARITY-PLAN.md` §2 FP-4): used to size the
+ * edit-mode capture overlay to exactly the ACTIVE frame's on-screen bounds
+ * (rather than the whole canvas container) so clicking a DIFFERENT frame —
+ * or empty canvas outside any frame — reaches tldraw's own shape hit-
+ * testing/selection underneath instead of being swallowed by the overlay
+ * (see `edit-mode-layer.tsx`'s module doc for why this matters for
+ * frictionless multi-frame select). */
+export function boxToScreenBox(camera: CameraState, box: Box): Box {
+  const topLeft = pagePointToScreenSpace(camera, { x: box.x, y: box.y });
+  return { x: topLeft.x, y: topLeft.y, w: box.w * camera.z, h: box.h * camera.z };
+}
+
 /** The page-space rectangle currently visible on screen, given the camera
  * and the viewport's screen-space size (used by viewport culling). */
 export function screenViewportToPageBounds(camera: CameraState, screenSize: { w: number; h: number }): Box {

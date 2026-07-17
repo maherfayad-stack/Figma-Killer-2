@@ -30,3 +30,20 @@ export function findParent(root: TreeNode, uid: string): TreeParentInfo | null {
   }
   return null;
 }
+
+/** FP-4a (`.orchestrator/FEATURE-PARITY-PLAN.md` §2 FP-4, two-way selection
+ * sync bullet): the full ancestor chain from `root` to `uid` INCLUSIVE
+ * (outermost -> innermost, root first) — `null` if `uid` isn't in this
+ * tree. Used to build a `SelectNodeRequest.breadcrumb` (`@ccs/canvas`) from
+ * the studio's own live `TreeNode` tree when a Layers-panel selection needs
+ * to drive the canvas's bridge/overlay breadcrumb, mirroring the ORDER
+ * `@ccs/bridge`'s own `buildBreadcrumb` produces from the DOM side (same
+ * "outermost -> innermost, ending with the target node" convention). */
+export function findPath(root: TreeNode, uid: string): TreeNode[] | null {
+  if (root.uid === uid) return [root];
+  for (const child of root.children) {
+    const nested = findPath(child, uid);
+    if (nested) return [root, ...nested];
+  }
+  return null;
+}

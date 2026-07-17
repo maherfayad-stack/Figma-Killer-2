@@ -104,6 +104,30 @@ export const SetSelectionRequestSchema = z
   .strict();
 export type SetSelectionRequest = z.infer<typeof SetSelectionRequestSchema>;
 
+/**
+ * FP-4a (`.orchestrator/FEATURE-PARITY-PLAN.md` §2 FP-4, first two bullets)
+ * ADDITIVE message: "double-click a text element -> the bridge turns that
+ * node contentEditable in the iframe". The studio never touches the
+ * iframe's DOM directly (cross-origin) — it only names the target `uid`
+ * (already known from a prior `hit-test`/`set-selection`) and the bridge
+ * decides locally whether that node is actually a safe contentEditable
+ * target (non-`dynamic`, a text-bearing leaf, not a component-instance
+ * usage site — see `@ccs/bridge`'s `text-edit.ts`), replying with either
+ * `text-edit-entered` or `text-edit-rejected`. This is a NEW message kind
+ * added to the existing `StudioToBridgeMessageSchema` discriminated union —
+ * every previously-frozen member (`hit-test`, `report-rects`, etc.) is
+ * unchanged (verbatim), per ADR-0016's additive-only amendment for P3+.
+ */
+export const EnterTextEditRequestSchema = z
+  .object({
+    source: z.literal('ccs-studio'),
+    type: z.literal('enter-text-edit'),
+    requestId: z.string(),
+    uid: z.string(),
+  })
+  .strict();
+export type EnterTextEditRequest = z.infer<typeof EnterTextEditRequestSchema>;
+
 export const StudioToBridgeMessageSchema = z.discriminatedUnion('type', [
   HitTestRequestSchema,
   ReportRectsRequestSchema,
@@ -111,6 +135,7 @@ export const StudioToBridgeMessageSchema = z.discriminatedUnion('type', [
   UnsubscribeRectsRequestSchema,
   SetHoverRequestSchema,
   SetSelectionRequestSchema,
+  EnterTextEditRequestSchema,
 ]);
 export type StudioToBridgeMessage = z.infer<typeof StudioToBridgeMessageSchema>;
 
@@ -154,10 +179,66 @@ export const ReadySchema = z
   .strict();
 export type Ready = z.infer<typeof ReadySchema>;
 
+/**
+ * FP-4a — bridge's reply to a successful `enter-text-edit`: the node is now
+ * `contentEditable` and focused inside the iframe; `text` is its original
+ * text content at the moment editing began (the studio doesn't need it for
+ * correctness — the bridge itself restores on Esc-cancel — but it's useful
+ * for callers that want to show/log the pre-edit value).
+ */
+export const TextEditEnteredSchema = z
+  .object({
+    source: z.literal('ccs-bridge'),
+    type: z.literal('text-edit-entered'),
+    requestId: z.string(),
+    uid: z.string(),
+    text: z.string(),
+  })
+  .strict();
+export type TextEditEntered = z.infer<typeof TextEditEnteredSchema>;
+
+/** FP-4a — bridge's reply when `uid` isn't a safe contentEditable target
+ * (dynamic-locked, a component-instance usage site, not a text leaf, a
+ * void element, unknown uid, or an edit already in progress). */
+export const TextEditRejectedSchema = z
+  .object({
+    source: z.literal('ccs-bridge'),
+    type: z.literal('text-edit-rejected'),
+    requestId: z.string(),
+    uid: z.string(),
+    reason: z.string(),
+  })
+  .strict();
+export type TextEditRejected = z.infer<typeof TextEditRejectedSchema>;
+
+/**
+ * FP-4a — an UNSOLICITED event (no `requestId`; not a reply to any one
+ * studio request) the bridge sends the instant an in-progress text edit
+ * ends, however it ended: Enter or blur (`committed: true`, `text` = the
+ * final content to write back via the existing `set-text` `CanvasOp`) or
+ * Esc (`committed: false`, `text: null` — the bridge already restored the
+ * original content in the iframe's DOM itself; the studio must NOT emit any
+ * op). The studio uses this to know when it's safe to resume normal
+ * hit-test capture over that frame (see `edit-mode-layer.tsx`).
+ */
+export const TextEditExitSchema = z
+  .object({
+    source: z.literal('ccs-bridge'),
+    type: z.literal('text-edit-exit'),
+    uid: z.string(),
+    committed: z.boolean(),
+    text: z.string().nullable(),
+  })
+  .strict();
+export type TextEditExit = z.infer<typeof TextEditExitSchema>;
+
 export const BridgeToStudioMessageSchema = z.discriminatedUnion('type', [
   HitTestResultSchema,
   RectsResultSchema,
   RectsUpdateSchema,
   ReadySchema,
+  TextEditEnteredSchema,
+  TextEditRejectedSchema,
+  TextEditExitSchema,
 ]);
 export type BridgeToStudioMessage = z.infer<typeof BridgeToStudioMessageSchema>;

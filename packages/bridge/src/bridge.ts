@@ -2,6 +2,7 @@ import { performHitTest } from './hit-test.js';
 import { reportRects } from './rects.js';
 import { createRectsSubscription } from './subscribe.js';
 import { setHover, setSelection } from './highlight.js';
+import { createTextEditController } from './text-edit.js';
 import {
   StudioToBridgeMessageSchema,
   type BridgeToStudioMessage,
@@ -66,6 +67,20 @@ export function installBridge(options: InstallBridgeOptions = {}): BridgeHandle 
     },
   });
 
+  // FP-4a: one text-edit controller per bridge instance — `onExit` fires
+  // autonomously (Enter/blur/Esc all resolve inside the iframe, with no
+  // further studio->bridge round trip needed to END an edit; see
+  // `text-edit.ts`'s module doc).
+  const textEdit = createTextEditController((result) => {
+    send(win, {
+      source: 'ccs-bridge',
+      type: 'text-edit-exit',
+      uid: result.uid,
+      committed: result.committed,
+      text: result.text,
+    });
+  }, win);
+
   function handleStudioMessage(message: StudioToBridgeMessage): void {
     switch (message.type) {
       case 'hit-test': {
@@ -101,6 +116,27 @@ export function installBridge(options: InstallBridgeOptions = {}): BridgeHandle 
       }
       case 'set-selection': {
         setSelection(message.uids, win.document);
+        return;
+      }
+      case 'enter-text-edit': {
+        const result = textEdit.enter(message.uid, win.document);
+        if (result.ok) {
+          send(win, {
+            source: 'ccs-bridge',
+            type: 'text-edit-entered',
+            requestId: message.requestId,
+            uid: message.uid,
+            text: result.text,
+          });
+        } else {
+          send(win, {
+            source: 'ccs-bridge',
+            type: 'text-edit-rejected',
+            requestId: message.requestId,
+            uid: message.uid,
+            reason: result.reason,
+          });
+        }
         return;
       }
     }

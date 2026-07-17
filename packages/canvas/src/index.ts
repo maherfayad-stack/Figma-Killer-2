@@ -20,7 +20,15 @@ export type {
   CreateFrameRequest,
   DuplicateFrameFn,
   DuplicateFrameRequest,
+  SelectNodeRequest,
+  ElementSelection,
 } from './StudioCanvas.js';
+// FP-4a: `CommitTextRequest` is defined in `edit-mode-layer.ts` (not
+// `StudioCanvas.ts`) since that's the module that actually produces it —
+// re-exported here so callers of `StudioCanvasProps.onCommitText` (an
+// `EditModeLayer`-sourced type re-used verbatim by `StudioCanvas`) get it
+// from this package's one public entry point, same as everything else.
+export type { CommitTextRequest } from './edit-mode-layer.js';
 
 export type { CanvasFrameRecord } from './project-wiring.js';
 export type { Box, CameraState, Point } from './geometry.js';

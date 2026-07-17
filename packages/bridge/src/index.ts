@@ -28,6 +28,13 @@ export {
   DATA_DYNAMIC_ATTR,
   DATA_COMPONENT_ATTR,
 } from './dom.js';
+export {
+  createTextEditController,
+  type TextEditController,
+  type TextEditEnterResult,
+  type TextEditExitResult,
+  type TextEditRejectReason,
+} from './text-edit.js';
 
 export {
   StudioToBridgeMessageSchema,
@@ -46,8 +53,12 @@ export {
   type UnsubscribeRectsRequest,
   type SetHoverRequest,
   type SetSelectionRequest,
+  type EnterTextEditRequest,
   type HitTestResult,
   type RectsResult,
   type RectsUpdate,
   type Ready,
+  type TextEditEntered,
+  type TextEditRejected,
+  type TextEditExit,
 } from './protocol.js';
