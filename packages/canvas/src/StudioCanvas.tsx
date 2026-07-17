@@ -36,6 +36,8 @@ import {
 } from './edit-mode-layer.js';
 import { emitUidRemap, useSelectionStore } from './selection-store.js';
 import { shiftPanDelta } from './wheel-gesture.js';
+import { iframeRectToPageBox } from './bridge-geometry.js';
+import type { Box } from './geometry.js';
 
 /**
  * `StudioCanvas` — the package's public entry point (playbook §4/P1). All
@@ -171,6 +173,25 @@ export interface StudioCanvasHandle {
    * (`set-selection`, `subscribe-rects`) once that frame's bridge
    * connection is available. A no-op if no matching frame is known. */
   selectNode(request: SelectNodeRequest): void;
+  /** FIX 5 (human dogfood: "when I click the icon in the side pane of any
+   * layer I want it to get me directly to that element in the canvas" —
+   * Penpot `layers.cljs`/`layer_item.cljs` parity: the layer row's TYPE
+   * ICON is a distinct "zoom to this node" affordance, separate from a
+   * plain row click which only selects). Selects/activates exactly like
+   * {@link selectNode}, then frames the camera on the ELEMENT itself once
+   * its rect resolves via the bridge (the same `report-rects` round trip
+   * `selectNode`'s own doc describes) — falling back to framing the OWNING
+   * FRAME's bounds if the rect never resolves in time (a `dynamic` node
+   * whose bridge selection never streams a rect, a frame whose bridge
+   * connection is still spinning up, etc.), so this always ends in
+   * something visibly framed rather than leaving the camera untouched. A
+   * no-op if no matching frame is currently known. */
+  zoomToNode(request: SelectNodeRequest): void;
+  /** FIX 5: the BOARD-row equivalent of {@link zoomToNode} — selects the
+   * frame (like {@link selectFrame}) and immediately frames the camera on
+   * its full bounds (no bridge round trip needed; a board's own geometry
+   * is already known). A no-op if no matching frame is currently known. */
+  zoomToFrame(fileFolder: string, framePath: string): void;
   /** FP-INS-b (Inspect / code tab): requests `uid`'s CURATED computed CSS
    * (see `@ccs/bridge`'s `computed-style.ts`) through whichever frame is
    * CURRENTLY the edit-mode frame's live bridge connection (the same
@@ -188,6 +209,30 @@ export interface StudioCanvasHandle {
  * waits for a daemon reply before giving up — a stuck daemon/connection
  * should surface as a UI error, not hang forever. */
 const CREATE_FRAME_TIMEOUT_MS = 10_000;
+
+/** FIX 5: bound on how long `zoomToNode` waits for the bridge to resolve a
+ * fresh rect for the requested uid before giving up and framing the OWNING
+ * FRAME's bounds instead — a dynamic node (bridge never streams a rect for
+ * it) or a frame whose bridge connection is still spinning up must still
+ * end in something visibly framed rather than leaving the camera
+ * untouched forever. */
+const ZOOM_TO_NODE_TIMEOUT_MS = 1_500;
+
+/** FIX 5 (AUDIT-FIXW1 major remediation): hard cap on the zoom level
+ * `zoomToNode` will drive the camera to. Without this, a tiny nested
+ * element (e.g. a small icon or a one-word `<span>`) would zoom to 800%+
+ * to "fill" the viewport — disorienting, and it balloons the active
+ * frame's on-screen box far past the viewport (which is what let the
+ * edit-mode capture overlay grow to cover everything). `tldraw`'s
+ * `zoomToBounds` takes `zoom = Math.min(opts.targetZoom, fitZoom)`
+ * (verified against the installed 5.2.4 `Editor.zoomToBounds`), so passing
+ * this as `targetZoom` clamps a would-be huge zoom down to 200% while
+ * still zooming OUT to fit a large element that doesn't fit at 200%. */
+const ZOOM_TO_NODE_MAX_ZOOM = 2;
+/** FIX 5: screen-space padding (`tldraw` `zoomToBounds` `inset`, total
+ * across both edges) so a framed element has breathing room rather than
+ * sitting edge-to-edge. */
+const ZOOM_TO_NODE_INSET_PX = 160;
 
 export interface StudioCanvasProps {
   /** Control-ws URL, e.g. `ws://127.0.0.1:4700` (ADR-0012/0013). */
@@ -799,6 +844,67 @@ export function StudioCanvas({
     });
   }, []);
 
+  /** FIX 5 `StudioCanvasHandle.zoomToFrame` — see its own doc. Synchronous:
+   * a board's bounds are already fully known from its `CanvasFrameRecord`,
+   * no bridge round trip needed. */
+  const zoomToFrameOnCanvas = React.useCallback((fileFolder: string, framePath: string) => {
+    const editor = editorRef.current;
+    const record = framesRef.current.find((r) => r.fileFolder === fileFolder && r.framePath === framePath);
+    if (!editor || !record) return;
+    editor.select(shapeIdForRecordId(record.id));
+    editor.zoomToBounds({ x: record.x, y: record.y, w: record.w, h: record.h }, { animation: { duration: 200 } });
+  }, []);
+
+  /** FIX 5 `StudioCanvasHandle.zoomToNode` — see its own doc. Reuses
+   * `selectNodeOnCanvas` verbatim for the select/activate half, then waits
+   * (bounded by `ZOOM_TO_NODE_TIMEOUT_MS`) for `edit-mode-layer.tsx`'s own
+   * selection-sync effect to backfill `selections[uid].rect` via its
+   * `report-rects` bridge round trip (see that effect's doc) — the FIRST
+   * fresh rect for this exact uid resolves the camera move; whichever
+   * happens first (a rect arrives, or the timeout elapses) settles it
+   * exactly once, never both. */
+  const zoomToNodeOnCanvas = React.useCallback(
+    (request: SelectNodeRequest) => {
+      const editor = editorRef.current;
+      const record = framesRef.current.find(
+        (r) => r.fileFolder === request.fileFolder && r.framePath === request.framePath,
+      );
+      if (!editor || !record) return;
+
+      selectNodeOnCanvas(request);
+
+      const frameBox: Box = { x: record.x, y: record.y, w: record.w, h: record.h };
+      let settled = false;
+      const unsubscribe = useSelectionStore.subscribe((state) => {
+        if (settled) return;
+        const selection = state.selections[request.uid];
+        if (!selection?.rect) return;
+        settled = true;
+        clearTimeout(timer);
+        unsubscribe();
+        // FIX 5 (AUDIT-FIXW1): clamp to `ZOOM_TO_NODE_MAX_ZOOM` + pad, so a
+        // tiny element frames at a sane zoom instead of 800%+ (which also
+        // kept the edit-mode overlay from ballooning over the panels).
+        editor.zoomToBounds(iframeRectToPageBox(selection.rect, frameBox), {
+          targetZoom: ZOOM_TO_NODE_MAX_ZOOM,
+          inset: ZOOM_TO_NODE_INSET_PX,
+          animation: { duration: 200 },
+        });
+      });
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        unsubscribe();
+        editor.zoomToBounds(frameBox, {
+          targetZoom: ZOOM_TO_NODE_MAX_ZOOM,
+          inset: ZOOM_TO_NODE_INSET_PX,
+          animation: { duration: 200 },
+        });
+      }, ZOOM_TO_NODE_TIMEOUT_MS);
+    },
+    [selectNodeOnCanvas],
+  );
+
   // --- FP-1: hand the caller a plain camera-control handle ---------------
   // (`.orchestrator/FEATURE-PARITY-PLAN.md` §2 item 3 — the zoom widget +
   // keymap drive the camera through this, never a tldraw `Editor` directly,
@@ -817,13 +923,23 @@ export function StudioCanvas({
       createFrame,
       selectFrame: selectFrameOnCanvas,
       selectNode: selectNodeOnCanvas,
+      zoomToNode: zoomToNodeOnCanvas,
+      zoomToFrame: zoomToFrameOnCanvas,
       requestComputedStyle: (uid: string) => {
         const fn = computedStyleRequesterRef.current;
         if (!fn) return Promise.resolve({ ok: false, reason: 'not-found' } as ComputedStyleResult);
         return fn(uid);
       },
     });
-  }, [editorReady, onReady, createFrame, selectFrameOnCanvas, selectNodeOnCanvas]);
+  }, [
+    editorReady,
+    onReady,
+    createFrame,
+    selectFrameOnCanvas,
+    selectNodeOnCanvas,
+    zoomToNodeOnCanvas,
+    zoomToFrameOnCanvas,
+  ]);
 
   // --- FP-1: shift+wheel horizontal-pan gap fix ---------------------------
   // See `wheel-gesture.ts`'s module doc for the full "why": tldraw's own
@@ -837,13 +953,39 @@ export function StudioCanvas({
   // one case — every other wheel gesture (plain wheel, ctrl/meta-wheel zoom,
   // a platform that already reports a real `deltaX`) is left untouched and
   // falls through to tldraw's native handling unchanged.
+  //
+  // FIX 4 (`.orchestrator/PENPOT-FIDELITY-SPEC.md` §5.9 canvas dogfood):
+  // ctrl/meta+wheel over the canvas is the browser's OWN "zoom the whole
+  // page" gesture — the browser only skips its native zoom when SOME
+  // listener in the event's path calls `preventDefault()` on a
+  // non-passive wheel listener. tldraw's own wheel handling does that for
+  // ITS bubble-phase listener when it's actually reached, but this
+  // package's capture-phase listener (registered on `containerRef`, an
+  // ANCESTOR of tldraw's own container) runs first and — before this fix
+  // — only ever called `preventDefault()` for the shift-pan case, leaving
+  // a ctrl/meta+wheel event free to reach the browser's native zoom
+  // handling in the gap before tldraw's own listener runs (and in any
+  // case where tldraw's own handling doesn't end up owning the event,
+  // e.g. while the edit-mode overlay in `edit-mode-layer.tsx` is the
+  // actual event target — see that module's `handleWheel` doc). Fixed by
+  // preventing the browser default HERE, unconditionally, for any
+  // ctrl/meta-held wheel — WITHOUT `stopPropagation()`, so the event still
+  // bubbles down to tldraw's (or the edit-mode overlay's) own zoom-at-
+  // cursor handling, which is left completely untouched by this branch.
   React.useEffect(() => {
     const container = containerRef.current;
     const editor = editorRef.current;
     if (!container || !editor || !editorReady) return;
 
     function onWheelCapture(e: WheelEvent): void {
-      if (!e.shiftKey || e.ctrlKey || e.metaKey || e.altKey || e.deltaX !== 0) return;
+      if (e.ctrlKey || e.metaKey) {
+        // Block ONLY the browser's native page-zoom default; let the event
+        // keep propagating so tldraw's own zoom-at-cursor handling (or the
+        // edit-mode overlay's `handleWheel`) still runs normally.
+        e.preventDefault();
+        return;
+      }
+      if (!e.shiftKey || e.altKey || e.deltaX !== 0) return;
       e.preventDefault();
       e.stopPropagation();
       const delta = shiftPanDelta(e.deltaX, e.deltaY);

@@ -7,6 +7,7 @@ import {
   type ElementSelection,
   type ReorderNodeRequest,
   type CommitFreeDragRequest,
+  type SelectNodeRequest,
 } from '@ccs/canvas';
 import { Tabs } from '@ccs/ui';
 import { isNodeUid } from '@ccs/protocol';
@@ -161,6 +162,12 @@ function WorkspaceShellInner({
   const fileFolder = useWorkspaceStore((s) => s.fileFolder);
   const framePath = useWorkspaceStore((s) => s.framePath);
   const selectedUid = useWorkspaceStore((s) => s.selectedUid);
+  // FIX 5 (human dogfood: layer type-icon click = zoom-to-node): one-shot
+  // requests bumped by `LayersPanel`'s icon click handlers — see
+  // `workspace-store.ts`'s own doc for why each is a monotonic `{..., seq}`
+  // record rather than a plain boolean.
+  const zoomToNodeRequest = useWorkspaceStore((s) => s.zoomToNodeRequest);
+  const zoomToFrameRequest = useWorkspaceStore((s) => s.zoomToFrameRequest);
   // NOTE (same fix `Inspector.tsx`/`use-tool-actions.ts` document): call the
   // getters INSIDE the selector so zustand subscribes to the COMPUTED value.
   const selectedNode = useWorkspaceStore((s) => s.selectedNode());
@@ -195,36 +202,77 @@ function WorkspaceShellInner({
   // Direction #2 (studio -> canvas). Two independent "last pushed" refs
   // (frame-only vs. element) because a board-only Layers selection and an
   // element selection push through two different `StudioCanvasHandle`
-  // methods (`selectFrame` vs. `selectNode`, see that file's doc).
+  // methods (`selectFrame` vs. `selectNode`, see that file's doc). FIX 5
+  // adds two more refs tracking the last-CONSUMED `seq` of each zoom
+  // request, independent of the select-only dedupe above them — an icon
+  // click's zoom must still fire even when it lands on the ALREADY-selected
+  // frame/element (where the plain `frameKey`/`elementKey` dedupe below
+  // would otherwise treat it as a no-op).
   const lastPushedFrameKeyRef = React.useRef<string | null>(null);
   const lastPushedElementKeyRef = React.useRef<string | null>(null);
+  const lastZoomFrameSeqRef = React.useRef(0);
+  const lastZoomNodeSeqRef = React.useRef(0);
 
   React.useEffect(() => {
     if (!canvasHandle || !fileFolder || !framePath) return;
     const frameKey = `${fileFolder}::${framePath}`;
 
     if (!selectedUid) {
+      if (
+        zoomToFrameRequest &&
+        zoomToFrameRequest.fileFolder === fileFolder &&
+        zoomToFrameRequest.framePath === framePath &&
+        zoomToFrameRequest.seq !== lastZoomFrameSeqRef.current
+      ) {
+        lastZoomFrameSeqRef.current = zoomToFrameRequest.seq;
+        lastPushedFrameKeyRef.current = frameKey;
+        canvasHandle.zoomToFrame(fileFolder, framePath);
+        return;
+      }
       if (lastPushedFrameKeyRef.current === frameKey) return;
       lastPushedFrameKeyRef.current = frameKey;
       canvasHandle.selectFrame(fileFolder, framePath);
       return;
     }
 
-    const elementKey = `${frameKey}::${selectedUid}`;
-    if (lastPushedElementKeyRef.current === elementKey) return;
     if (!selectedNode || !currentTree) return;
-    lastPushedElementKeyRef.current = elementKey;
-    lastPushedFrameKeyRef.current = frameKey; // selectNode also selects the owning frame's shape.
     const path = findPath(currentTree, selectedUid) ?? [];
-    canvasHandle.selectNode({
+    const request: SelectNodeRequest = {
       fileFolder,
       framePath,
       uid: selectedUid,
       dynamic: selectedNode.dynamic,
       component: selectedNode.component ?? null,
       breadcrumb: path.map((n) => ({ uid: n.uid, name: n.component ?? n.tag ?? '(text)' })),
-    });
-  }, [canvasHandle, fileFolder, framePath, selectedUid, selectedNode, currentTree]);
+    };
+
+    // FIX 5: an icon-click zoom-to-node request for the CURRENTLY selected
+    // element always re-runs via `zoomToNode` (bypassing the `elementKey`
+    // dedupe below) — Penpot parity: re-clicking the icon on an
+    // already-selected element still re-frames the camera on it.
+    if (zoomToNodeRequest && zoomToNodeRequest.uid === selectedUid && zoomToNodeRequest.seq !== lastZoomNodeSeqRef.current) {
+      lastZoomNodeSeqRef.current = zoomToNodeRequest.seq;
+      lastPushedElementKeyRef.current = `${frameKey}::${selectedUid}`;
+      lastPushedFrameKeyRef.current = frameKey;
+      canvasHandle.zoomToNode(request);
+      return;
+    }
+
+    const elementKey = `${frameKey}::${selectedUid}`;
+    if (lastPushedElementKeyRef.current === elementKey) return;
+    lastPushedElementKeyRef.current = elementKey;
+    lastPushedFrameKeyRef.current = frameKey; // selectNode also selects the owning frame's shape.
+    canvasHandle.selectNode(request);
+  }, [
+    canvasHandle,
+    fileFolder,
+    framePath,
+    selectedUid,
+    selectedNode,
+    currentTree,
+    zoomToNodeRequest,
+    zoomToFrameRequest,
+  ]);
 
   // FP-4a in-place text editing: the bridge (inside the iframe) reports a
   // COMMITTED edit's final text up through `@ccs/canvas`; this is where it

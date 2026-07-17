@@ -32,6 +32,8 @@ export function LayersPanel(): React.ReactElement {
   const expandedUids = useWorkspaceStore((s) => s.expandedUids);
   const selectFrame = useWorkspaceStore((s) => s.selectFrame);
   const selectNode = useWorkspaceStore((s) => s.selectNode);
+  const zoomToNode = useWorkspaceStore((s) => s.zoomToNode);
+  const zoomToFrame = useWorkspaceStore((s) => s.zoomToFrame);
   const toggleExpanded = useWorkspaceStore((s) => s.toggleExpanded);
   // NOTE (same pitfall `Inspector.tsx`/this file's own prior version
   // documents for `currentTree()`/`selectedNode()`): subscribe to the
@@ -113,18 +115,27 @@ export function LayersPanel(): React.ReactElement {
             }}
             renderRow={(row, { selected }) => {
               if (row.data.kind === 'board') {
+                const frame = row.data.frame;
                 return (
                   <BoardRow
-                    frame={row.data.frame}
+                    frame={frame}
                     selected={selected}
                     hidden={hiddenIds.has(row.id)}
                     locked={lockedIds.has(row.id)}
                     onToggleHidden={() => toggleInSet(setHiddenIds, row.id)}
                     onToggleLocked={() => toggleInSet(setLockedIds, row.id)}
+                    onZoomToNode={() => {
+                      // FIX 5 (board-row icon): select AND navigate the
+                      // canvas to this board's own bounds — the board-row
+                      // equivalent of an element row's icon click below.
+                      selectFrame(frame.fileFolder, frame.framePath);
+                      zoomToFrame(frame.fileFolder, frame.framePath);
+                    }}
                   />
                 );
               }
               const node = row.data.node;
+              const frame = row.data.frame;
               return (
                 <ContextMenu items={() => contextItemsFor(node)}>
                   <ElementRow
@@ -134,6 +145,19 @@ export function LayersPanel(): React.ReactElement {
                     locked={lockedIds.has(node.uid)}
                     onToggleHidden={() => toggleInSet(setHiddenIds, node.uid)}
                     onToggleLocked={() => toggleInSet(setLockedIds, node.uid)}
+                    onZoomToNode={() => {
+                      // FIX 5 (human dogfood): clicking the layer's TYPE
+                      // ICON is a distinct "zoom to this element" affordance
+                      // (Penpot `layers.cljs`/`layer_item.cljs` parity) —
+                      // select the owning board + this node (same as a
+                      // plain row click would) AND additionally request the
+                      // canvas navigate/frame the element in view. A plain
+                      // click anywhere ELSE on the row (handled by `Tree`'s
+                      // own `onSelect` above) still only selects.
+                      selectFrame(frame.fileFolder, frame.framePath);
+                      selectNode(node.uid);
+                      zoomToNode(node.uid);
+                    }}
                   />
                 </ContextMenu>
               );
@@ -227,7 +251,8 @@ function BoardRow({
   locked,
   onToggleHidden,
   onToggleLocked,
-}: HideLockProps & { frame: FrameSummary; selected: boolean }): React.ReactElement {
+  onZoomToNode,
+}: HideLockProps & { frame: FrameSummary; selected: boolean; onZoomToNode: () => void }): React.ReactElement {
   return (
     <span
       style={{
@@ -241,10 +266,48 @@ function BoardRow({
         fontWeight: 600,
       }}
     >
-      <Icon name="board" size={16} />
+      <ZoomToNodeIcon icon="board" label={`Zoom to board ${frame.name}`} onZoomToNode={onZoomToNode} />
       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{frame.name}</span>
       <HideLockButtons hidden={hidden} locked={locked} onToggleHidden={onToggleHidden} onToggleLocked={onToggleLocked} />
     </span>
+  );
+}
+
+/** FIX 5: the layer row's type icon, wrapped as its OWN click target
+ * (`e.stopPropagation()` — same pattern `HideLockButtons`'s own buttons
+ * already use to keep a click on THEM from also re-triggering the row's
+ * `Tree`-level `onSelect`) — a click here means "zoom to this", distinct
+ * from a click anywhere else on the row (which only selects). */
+function ZoomToNodeIcon({
+  icon,
+  label,
+  color,
+  onZoomToNode,
+}: {
+  icon: IconName;
+  label: string;
+  color?: string;
+  onZoomToNode: () => void;
+}): React.ReactElement {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      onClick={(e) => {
+        e.stopPropagation();
+        onZoomToNode();
+      }}
+      style={{
+        all: 'unset',
+        display: 'inline-flex',
+        cursor: 'zoom-in',
+        flexShrink: 0,
+        color,
+      }}
+    >
+      <Icon name={icon} size={16} style={{ color }} />
+    </button>
   );
 }
 
@@ -255,14 +318,20 @@ function ElementRow({
   locked,
   onToggleHidden,
   onToggleLocked,
-}: HideLockProps & { node: TreeNode; selected: boolean }): React.ReactElement {
+  onZoomToNode,
+}: HideLockProps & { node: TreeNode; selected: boolean; onZoomToNode: () => void }): React.ReactElement {
   let color = 'var(--ccs-text)';
   if (node.kind === 'component-instance') color = 'var(--ccs-accent-component)';
   if (selected) color = 'var(--ccs-accent)';
 
   return (
     <span style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1, minInlineSize: 0, opacity: hidden ? 0.4 : 1 }}>
-      <Icon name={iconForNode(node)} size={16} style={{ color, flexShrink: 0 }} />
+      <ZoomToNodeIcon
+        icon={iconForNode(node)}
+        label={`Zoom to ${node.component ?? node.tag ?? 'element'}`}
+        color={color}
+        onZoomToNode={onZoomToNode}
+      />
       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color }}>
         {node.component ?? node.tag ?? '(text)'}
       </span>

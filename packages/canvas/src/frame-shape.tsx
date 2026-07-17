@@ -11,10 +11,10 @@ import {
   type TLBaseShape,
   type TLResizeInfo,
 } from 'tldraw';
-import { decideRenderMode } from './viewport-cull.js';
+import { selectLiveFrames, DEFAULT_MAX_LIVE_FRAMES, type FrameRenderMode } from './viewport-cull.js';
 import { captureFrameScreenshot } from './screenshot-capture.js';
 import type { ScreenshotCache } from './screenshot-cache.js';
-import { FRAME_CHROME_HEADER_HEIGHT } from './geometry.js';
+import { FRAME_CHROME_HEADER_HEIGHT, type Box } from './geometry.js';
 import { useSelectionStore } from './selection-store.js';
 
 /**
@@ -57,6 +57,15 @@ declare module 'tldraw' {
 }
 
 export const CCS_FRAME_SHAPE_TYPE = 'ccs-frame' as const;
+
+/** FIX 6 (AUDIT-FIXW1 blocker remediation) tuning — see the
+ * `isLiveByBudget` `useValue` in `CcsFrameShapeComponent`. `MAX_LIVE_FRAMES`
+ * is the hard cap on simultaneously-live iframes that keeps the 20-frame
+ * 60fps perf gate green; `CULL_MARGIN_FACTOR` keeps a frame just past the
+ * viewport edge eligible (smooth panning) as a fraction of the current
+ * viewport size (so it means the same thing at any zoom). */
+const FIX6_MAX_LIVE_FRAMES = DEFAULT_MAX_LIVE_FRAMES;
+const FIX6_CULL_MARGIN_FACTOR = 0.3;
 
 /** Provides the shared `ScreenshotCache` instance down to shape component
  * instances. A cache isn't JSON-serializable/zod-validatable shape state
@@ -132,36 +141,55 @@ function CcsFrameShapeComponent({ shape }: { shape: CcsFrameShape }): React.Reac
   // top-level overlay rather than by this iframe directly (cross-origin
   // iframes never receive the parent's native mouse events either way).
   const isEditModeFrame = useSelectionStore((s) => s.editModeFrame?.shapeId === shape.id);
+  // FIX 6: the edit-mode frame's shape id, subscribed globally (not just
+  // "is it ME") — so EVERY frame re-renders when edit mode changes, and each
+  // recomputes `isLiveByBudget` below with the correct `alwaysLive` frame
+  // occupying one slot of the live budget. Without this, a non-edit-mode
+  // frame wouldn't re-render when another frame entered edit mode and so
+  // wouldn't yield its live slot.
+  const editModeShapeId = useSelectionStore((s) => s.editModeFrame?.shapeId ?? null);
 
   const frameBox = React.useMemo(
     () => ({ x: shape.x, y: shape.y, w: shape.props.w, h: shape.props.h }),
     [shape.x, shape.y, shape.props.w, shape.props.h],
   );
 
-  // Perf gate (playbook §4/P1): reactive live/screenshot decision, driven
-  // by tldraw's own viewport-page-bounds + zoom signals (re-runs whenever
-  // either changes, i.e. every pan/zoom tick) rather than a manual
-  // resize/scroll listener.
-  const viewportRenderMode = useValue(
-    `ccs-frame-render-mode-${shape.id}`,
-    () => decideRenderMode(editor.getViewportPageBounds(), editor.getZoomLevel(), frameBox),
-    [editor, frameBox],
+  // FIX 6 (AUDIT-FIXW1 blocker remediation): is THIS frame in the bounded
+  // live set? `selectLiveFrames` (see its own doc in `viewport-cull.ts`)
+  // makes ONE decision over ALL `ccs-frame` shapes on the page — at most
+  // `FIX6_MAX_LIVE_FRAMES` may be live, the ones nearest the viewport
+  // centre among those intersecting the (margin-expanded) viewport, with
+  // the edit-mode frame forced in and counting toward the cap. This is the
+  // hard bound that keeps the 20-frame 60fps perf gate green: no matter how
+  // far the camera zooms out (so that all 20 frames are visible at once),
+  // only the nearest `FIX6_MAX_LIVE_FRAMES` mount a live iframe; the rest
+  // render a labeled placeholder (never a live iframe, never blank).
+  //
+  // Reactive via `useValue`: reading `editor.getViewportPageBounds()` +
+  // `editor.getCurrentPageShapes()` (both tldraw reactive signals) re-runs
+  // this every pan/zoom tick and whenever a frame is added/moved; the
+  // `editModeShapeId` dep re-runs it on edit-mode changes.
+  const isLiveByBudget = useValue(
+    `ccs-frame-live-${shape.id}`,
+    () => {
+      const viewportPageBounds = editor.getViewportPageBounds();
+      const cullMarginPage = Math.max(viewportPageBounds.w, viewportPageBounds.h) * FIX6_CULL_MARGIN_FACTOR;
+      const boxes = new Map<string, Box>();
+      for (const s of editor.getCurrentPageShapes()) {
+        if (s.type === CCS_FRAME_SHAPE_TYPE) {
+          const f = s as CcsFrameShape;
+          boxes.set(f.id, { x: f.x, y: f.y, w: f.props.w, h: f.props.h });
+        }
+      }
+      const live = selectLiveFrames(viewportPageBounds, boxes, {
+        maxLive: FIX6_MAX_LIVE_FRAMES,
+        alwaysLive: editModeShapeId,
+        cullMarginPage,
+      });
+      return live.has(shape.id);
+    },
+    [editor, frameBox, editModeShapeId, shape.id],
   );
-
-  // FP-INS-b (AUDIT-FPINSb major fix): the ONE frame currently in edit mode
-  // is ALWAYS rendered live, overriding the zoom/viewport cull. Rationale: an
-  // edit-mode frame is being actively inspected/edited (its element selected
-  // in the Layers panel, its computed CSS shown in the Inspect tab), and ALL
-  // of that depends on a live iframe + bridge connection (`edit-mode-layer.
-  // tsx` only opens a bridge on a REGISTERED — i.e. live — iframe, and the
-  // registry is only populated in `'live'` mode below). Before this, opening
-  // a multi-frame project (open-time `zoomToFit()` puts every frame under the
-  // 30% screenshot threshold) then selecting a node via Layers left the
-  // frame a static screenshot with no bridge, so the Inspect tab's
-  // computed-CSS request resolved `not-found` forever. Perf stays bounded:
-  // only the SINGLE edit-mode frame is force-lived; every other frame still
-  // obeys the ordinary viewport/zoom cull (`viewportRenderMode` above).
-  const renderMode = isEditModeFrame ? 'live' : viewportRenderMode;
 
   const iframeRef = React.useRef<HTMLIFrameElement | null>(null);
   // `capturedUrl` only ever holds a screenshot THIS component captured
@@ -170,10 +198,27 @@ function CcsFrameShapeComponent({ shape }: { shape: CcsFrameShape }): React.Reac
   // already in the shared cache from an earlier mount/session is read
   // directly during render instead (`cachedUrl` below), so there's no
   // "show cached immediately" setState to avoid a blank flash.
+  //
+  // FIX 6 note: today `screenshotUrl` is effectively always `null` — a
+  // real screenshot requires reading the iframe's DOM, which is cross-
+  // origin (studio :5173 vs frame dev-server :5200+) so
+  // `screenshot-capture.ts`'s `iframe.contentDocument` read is always
+  // `null` and capture is a silent no-op. The capture wiring below is kept
+  // (harmless) so it lights up automatically once the follow-up bridge-side
+  // rasterization workstream (which also delivers FP-6 export) provides a
+  // real cross-origin screenshot; until then, a non-live frame shows the
+  // labeled placeholder (see the render return), never a blank box.
   const [capturedUrl, setCapturedUrl] = React.useState<string | null>(null);
   const wasLiveRef = React.useRef(false);
   const cachedUrl = screenshotCache?.get(shape.id)?.dataUrl ?? null;
   const screenshotUrl = capturedUrl ?? cachedUrl;
+
+  // FP-INS-b (AUDIT-FPINSb): the ONE edit-mode frame is ALWAYS live (its
+  // Inspect-tab computed CSS + bridge depend on a live iframe). It's also
+  // forced into `selectLiveFrames`'s result via `alwaysLive`, so this
+  // explicit branch is belt-and-suspenders — the render-mode guarantee is
+  // stated here directly and does not depend on the selector.
+  const renderMode: FrameRenderMode = isEditModeFrame || isLiveByBudget ? 'live' : 'screenshot';
 
   React.useEffect(() => {
     if (renderMode === 'screenshot' && wasLiveRef.current && iframeRef.current && screenshotCache) {
@@ -277,10 +322,51 @@ function CcsFrameShapeComponent({ shape }: { shape: CcsFrameShape }): React.Reac
             style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
           />
         ) : (
-          <div style={{ width: '100%', height: '100%', background: '#f4f4f5' }} />
+          // FIX 6 (AUDIT-FIXW1 blocker remediation): a LABELED placeholder,
+          // not a blank grey void. A frame that's culled / over the live cap
+          // and has no real screenshot yet (cross-origin capture can't
+          // produce one until the follow-up bridge-rasterization workstream)
+          // still visibly reads as a BOARD — its name centered on a bordered
+          // card — so the human's "I want the frames nearly all the time
+          // showing" holds even for the far/over-cap frames, while the live
+          // iframe count stays hard-capped for perf.
+          <FramePlaceholder name={shape.props.name} />
         )}
       </div>
     </HTMLContainer>
+  );
+}
+
+/** FIX 6: lightweight labeled placeholder for a non-live, not-yet-captured
+ * frame (see the render return's doc). Pure presentational — no iframe, no
+ * capture, negligible cost, so having many of these on-screen at once (the
+ * far frames in a large project) does not affect the perf gate. */
+function FramePlaceholder({ name }: { name: string }): React.ReactElement {
+  return (
+    <div
+      data-testid="ccs-frame-placeholder"
+      style={{
+        width: '100%',
+        height: '100%',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 8,
+        boxSizing: 'border-box',
+        background: '#fafafa',
+        color: '#71717a',
+        fontFamily: 'system-ui, sans-serif',
+        fontSize: 14,
+        fontWeight: 500,
+        textAlign: 'center',
+        overflow: 'hidden',
+        userSelect: 'none',
+      }}
+    >
+      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>
+        {name}
+      </span>
+    </div>
   );
 }
 

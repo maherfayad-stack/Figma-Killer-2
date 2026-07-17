@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { computeFrameRenderMode, computeRenderModes } from './viewport-cull.js';
+import { computeFrameRenderMode, computeRenderModes, selectLiveFrames, DEFAULT_MAX_LIVE_FRAMES } from './viewport-cull.js';
 import type { Box, CameraState } from './geometry.js';
 
 const IDENTITY_CAMERA: CameraState = { x: 0, y: 0, z: 1 };
@@ -70,5 +70,62 @@ describe('computeRenderModes (batch, 20-frame perf scenario)', () => {
     const frames = new Map<string, Box>([['a', { x: 0, y: 0, w: 100, h: 100 }]]);
     const batch = computeRenderModes({ x: 0, y: 0, z: 0.1 }, VIEWPORT, frames);
     expect(batch.get('a')).toBe('screenshot');
+  });
+});
+
+describe('selectLiveFrames (FIX 6 bounded live set)', () => {
+  // Page-space viewport of [0,1000]x[0,800] (matches VIEWPORT at z=1, pan 0).
+  const VP: Box = { x: 0, y: 0, w: 1000, h: 800 };
+
+  it('keeps every frame live when there are fewer than the cap and all are on-screen', () => {
+    const frames = new Map<string, Box>([
+      ['a', { x: 0, y: 0, w: 200, h: 200 }],
+      ['b', { x: 300, y: 0, w: 200, h: 200 }],
+      ['c', { x: 600, y: 0, w: 200, h: 200 }],
+    ]);
+    const live = selectLiveFrames(VP, frames, { maxLive: 8 });
+    expect(live).toEqual(new Set(['a', 'b', 'c']));
+  });
+
+  it('hard-caps the live set at maxLive, keeping the frames nearest the viewport centre', () => {
+    // 20 frames laid left-to-right; viewport centre is at page (500,400).
+    const frames = new Map<string, Box>();
+    for (let i = 0; i < 20; i++) frames.set(`f${i}`, { x: i * 60, y: 350, w: 50, h: 50 });
+    const live = selectLiveFrames(VP, frames, { maxLive: 4, cullMarginPage: 100_000 });
+    expect(live.size).toBe(4);
+    // Frame centres nearest (500,400): x-centre = i*60+25. Closest to 500 are
+    // i=8 (505), i=7 (445), i=9 (565), i=6 (385) — the 4 nearest.
+    expect(live).toEqual(new Set(['f8', 'f7', 'f9', 'f6']));
+  });
+
+  it('excludes frames outside the (margin-expanded) viewport', () => {
+    const frames = new Map<string, Box>([
+      ['near', { x: 100, y: 100, w: 100, h: 100 }],
+      ['far', { x: 50_000, y: 50_000, w: 100, h: 100 }],
+    ]);
+    const live = selectLiveFrames(VP, frames, { maxLive: 8 });
+    expect(live).toEqual(new Set(['near']));
+  });
+
+  it('a positive cullMarginPage keeps a just-offscreen frame live', () => {
+    const frames = new Map<string, Box>([['edge', { x: 1050, y: 0, w: 100, h: 100 }]]);
+    expect(selectLiveFrames(VP, frames, { maxLive: 8 })).toEqual(new Set());
+    expect(selectLiveFrames(VP, frames, { maxLive: 8, cullMarginPage: 200 })).toEqual(new Set(['edge']));
+  });
+
+  it('always includes the alwaysLive (edit-mode) frame even if off-screen, and it counts toward the cap', () => {
+    const frames = new Map<string, Box>();
+    for (let i = 0; i < 5; i++) frames.set(`f${i}`, { x: i * 60, y: 350, w: 50, h: 50 });
+    frames.set('editing', { x: 90_000, y: 90_000, w: 50, h: 50 }); // far off-screen
+    const live = selectLiveFrames(VP, frames, { maxLive: 3, alwaysLive: 'editing', cullMarginPage: 100_000 });
+    expect(live.has('editing')).toBe(true);
+    expect(live.size).toBe(3); // editing + the 2 nearest on-screen frames
+  });
+
+  it('defaults maxLive to DEFAULT_MAX_LIVE_FRAMES', () => {
+    const frames = new Map<string, Box>();
+    for (let i = 0; i < 20; i++) frames.set(`f${i}`, { x: i * 40, y: 380, w: 30, h: 30 });
+    const live = selectLiveFrames(VP, frames, { cullMarginPage: 100_000 });
+    expect(live.size).toBe(DEFAULT_MAX_LIVE_FRAMES);
   });
 });

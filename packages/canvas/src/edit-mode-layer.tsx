@@ -940,7 +940,20 @@ export function EditModeLayer({
   );
 
   return (
-    <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 5, fontFamily: 'system-ui, sans-serif' }}>
+    // FIX 5 (AUDIT-FIXW1 major remediation): `overflow: hidden` CLIPS every
+    // child — crucially the `pointer-events:auto` capture div below — to
+    // this wrapper's box, which is `inset:0` of `StudioCanvas`'s own canvas
+    // container (the middle grid column only). When a frame is zoomed in far
+    // enough that its on-screen box (`overlayScreenBox`) is larger than the
+    // viewport, the capture div used to overflow this container and cover the
+    // Layers/Inspector panels too, swallowing every click there until Esc.
+    // Clipping to the canvas region means a click on a panel (which lives in
+    // a DIFFERENT grid column, outside this container) is never intercepted —
+    // you can click another Layers row / the Inspector immediately after a
+    // zoom-to-node, no Escape needed. (FIX 5's zoom clamp above also bounds
+    // how large the box can get, but this makes the scoping robust regardless
+    // of zoom.)
+    <div style={{ position: 'absolute', inset: 0, overflow: 'hidden', pointerEvents: 'none', zIndex: 5, fontFamily: 'system-ui, sans-serif' }}>
       {editModeFrame && overlayScreenBox && (
         <div
           data-testid="ccs-edit-mode-capture"

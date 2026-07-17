@@ -40,9 +40,32 @@ export interface WorkspaceSelectionState {
    * project-relative wire convention). Replaces the P5-WIP mock fixture
    * lookup. */
   trees: Record<string, TreeNode>;
+  /** FIX 5 (human dogfood: "when I click the icon in the side pane of any
+   * layer I want it to get me directly to that element in the canvas" —
+   * Penpot `layers.cljs`/`layer_item.cljs` parity). Bumped by a Layers-
+   * panel row's TYPE-ICON click (distinct from a plain row click, which
+   * only selects via `selectNode` below) — `WorkspaceShell.tsx`'s studio->
+   * canvas sync effect watches this and calls
+   * `StudioCanvasHandle.zoomToNode` instead of `.selectNode` for exactly
+   * one render when it changes. A monotonic `seq` (not a boolean) so
+   * re-clicking the SAME element's icon twice in a row still re-triggers
+   * the zoom — a boolean flipping true->true wouldn't register as a
+   * change. */
+  zoomToNodeRequest: { uid: string; seq: number } | null;
+  /** The BOARD-row equivalent of `zoomToNodeRequest` — a Layers-panel
+   * board row's icon click. */
+  zoomToFrameRequest: { fileFolder: string; framePath: string; seq: number } | null;
 
   selectFrame: (fileFolder: string, framePath: string) => void;
   selectNode: (uid: string) => void;
+  /** FIX 5: records a request to zoom the canvas to `uid` — see
+   * `zoomToNodeRequest`'s own doc. Callers combine this with `selectFrame`/
+   * `selectNode` (a row's icon click means BOTH "select this" and "zoom to
+   * this"). */
+  zoomToNode: (uid: string) => void;
+  /** FIX 5: the board-row equivalent of `zoomToNode` — see
+   * `zoomToFrameRequest`'s own doc. */
+  zoomToFrame: (fileFolder: string, framePath: string) => void;
   clearSelection: () => void;
   toggleExpanded: (uid: string) => void;
   setTool: (tool: ToolId) => void;
@@ -65,12 +88,22 @@ export const useWorkspaceStore = create<WorkspaceSelectionState>((set, get) => (
   activeTool: 'select',
   clipboardUid: null,
   trees: {},
+  zoomToNodeRequest: null,
+  zoomToFrameRequest: null,
 
   selectFrame(fileFolder, framePath) {
     set({ fileFolder, framePath, selectedUid: null });
   },
   selectNode(uid) {
     set({ selectedUid: uid });
+  },
+  zoomToNode(uid) {
+    set((state) => ({ zoomToNodeRequest: { uid, seq: (state.zoomToNodeRequest?.seq ?? 0) + 1 } }));
+  },
+  zoomToFrame(fileFolder, framePath) {
+    set((state) => ({
+      zoomToFrameRequest: { fileFolder, framePath, seq: (state.zoomToFrameRequest?.seq ?? 0) + 1 },
+    }));
   },
   clearSelection() {
     set({ selectedUid: null });

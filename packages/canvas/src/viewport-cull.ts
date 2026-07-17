@@ -83,3 +83,85 @@ export function computeRenderModes<Id extends string>(
   }
   return result;
 }
+
+/**
+ * FIX 6 (AUDIT-FIXW1 blocker remediation) — the PERF-SAFE, cross-origin-
+ * honest live-set selector. `decideRenderMode` above (unchanged, still
+ * frozen + tested) makes an independent per-frame yes/no call, which — with
+ * the widened thresholds the first FIX 6 attempt used, and no working
+ * cross-origin screenshot to fall back to — let an unbounded number of
+ * frames render live at once (breaking the 20-frame 60fps gate). This
+ * function instead makes ONE decision over ALL frames and hands back the
+ * bounded set that may be live: at most `maxLive` frames, chosen as the ones
+ * NEAREST the viewport CENTER among those intersecting the (optionally
+ * margin-expanded) viewport. Everything else renders a lightweight labeled
+ * placeholder (see `frame-shape.tsx`), never a live iframe.
+ *
+ * Why center-distance (not just "intersects viewport"): when the camera is
+ * zoomed out far enough that MORE than `maxLive` frames are visible at once,
+ * we must still pick a bounded subset — the ones under the cursor/centre are
+ * the ones a user is most likely looking at, so they win the live budget.
+ *
+ * `alwaysLive` (the single FP-INS-b edit-mode frame) is forced into the set
+ * and COUNTS toward `maxLive`, so the total live iframe count is hard-capped
+ * at `maxLive` no matter what — that cap is what keeps the perf gate green.
+ *
+ * NOTE: real screenshots for the culled frames are a SEPARATE follow-up
+ * workstream (bridge-side rasterization, which also delivers FP-6 export) —
+ * a cross-origin `iframe.contentDocument` read (`screenshot-capture.ts`)
+ * is always `null` between the studio origin and a frame's dev-server
+ * origin, so no screenshot can be produced here today. Until then the
+ * non-live frames show the labeled placeholder.
+ */
+export const DEFAULT_MAX_LIVE_FRAMES = 8;
+
+export interface SelectLiveFramesOptions<Id> {
+  /** Hard cap on simultaneously-live frames (default
+   * {@link DEFAULT_MAX_LIVE_FRAMES}). `alwaysLive` counts toward it. */
+  maxLive?: number;
+  /** The one frame that must always be live regardless of viewport/cap
+   * (the FP-INS-b edit-mode frame). Included even if it doesn't intersect
+   * the viewport; still counts toward `maxLive`. */
+  alwaysLive?: Id | null;
+  /** Page-space margin added around the viewport before the intersection
+   * test, so a frame just past the edge can still be a live candidate
+   * (smooth panning). Default 0. */
+  cullMarginPage?: number;
+}
+
+export function selectLiveFrames<Id>(
+  viewportPageBounds: Box,
+  frames: ReadonlyMap<Id, Box>,
+  options: SelectLiveFramesOptions<Id> = {},
+): Set<Id> {
+  const maxLive = options.maxLive ?? DEFAULT_MAX_LIVE_FRAMES;
+  const alwaysLive = options.alwaysLive ?? null;
+  const expanded = expandBox(viewportPageBounds, options.cullMarginPage ?? 0);
+  const centerX = viewportPageBounds.x + viewportPageBounds.w / 2;
+  const centerY = viewportPageBounds.y + viewportPageBounds.h / 2;
+
+  const live = new Set<Id>();
+  let budget = maxLive;
+  if (alwaysLive !== null && frames.has(alwaysLive)) {
+    live.add(alwaysLive);
+    budget -= 1;
+  }
+  if (budget <= 0) return live;
+
+  const candidates: { id: Id; dist: number }[] = [];
+  for (const [id, box] of frames) {
+    if (id === alwaysLive) continue; // already counted
+    if (!boxesIntersect(expanded, box)) continue;
+    const fx = box.x + box.w / 2;
+    const fy = box.y + box.h / 2;
+    // Squared distance — monotonic, avoids a sqrt per frame.
+    candidates.push({ id, dist: (fx - centerX) ** 2 + (fy - centerY) ** 2 });
+  }
+  candidates.sort((a, b) => a.dist - b.dist);
+  for (const { id } of candidates) {
+    if (budget <= 0) break;
+    live.add(id);
+    budget -= 1;
+  }
+  return live;
+}
