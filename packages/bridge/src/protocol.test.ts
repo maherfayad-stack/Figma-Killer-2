@@ -12,6 +12,8 @@ describe('bridge <-> studio protocol schemas (ADR-0016)', () => {
       { source: 'ccs-studio', type: 'set-hover', uid: null },
       { source: 'ccs-studio', type: 'set-selection', uids: [] },
       { source: 'ccs-studio', type: 'enter-text-edit', requestId: 'r3', uid: 'src/frames/Hero.tsx:d0' },
+      { source: 'ccs-studio', type: 'report-parent-layout', requestId: 'r4', uid: 'a' },
+      { source: 'ccs-studio', type: 'resolve-free-drop', requestId: 'r5', uid: 'a', targetX: 10, targetY: 20 },
     ];
     for (const message of messages) {
       expect(StudioToBridgeMessageSchema.safeParse(message).success).toBe(true);
@@ -61,6 +63,48 @@ describe('bridge <-> studio protocol schemas (ADR-0016)', () => {
       { source: 'ccs-bridge', type: 'text-edit-rejected', requestId: 'r3', uid: 'a', reason: 'dynamic-locked' },
       { source: 'ccs-bridge', type: 'text-edit-exit', uid: 'a', committed: true, text: 'Hello world' },
       { source: 'ccs-bridge', type: 'text-edit-exit', uid: 'a', committed: false, text: null },
+      {
+        source: 'ccs-bridge',
+        type: 'parent-layout-result',
+        requestId: 'r4',
+        uid: 'a',
+        result: {
+          ok: true,
+          info: {
+            mode: 'flex',
+            axis: 'row',
+            parentUid: 'p',
+            parentPositioned: false,
+            parentRect: { x: 0, y: 0, width: 10, height: 10 },
+            index: 0,
+            siblingUids: ['a', 'b'],
+          },
+        },
+      },
+      {
+        source: 'ccs-bridge',
+        type: 'parent-layout-result',
+        requestId: 'r4',
+        uid: 'a',
+        result: { ok: false, reason: 'dynamic-locked' },
+      },
+      {
+        source: 'ccs-bridge',
+        type: 'free-drop-result',
+        requestId: 'r5',
+        uid: 'a',
+        result: {
+          ok: true,
+          info: { addClasses: ['absolute'], removeClasses: [], parentUid: 'p', parentAddClasses: ['relative'] },
+        },
+      },
+      {
+        source: 'ccs-bridge',
+        type: 'free-drop-result',
+        requestId: 'r5',
+        uid: 'a',
+        result: { ok: false, reason: 'not-found' },
+      },
     ];
     for (const message of messages) {
       expect(BridgeToStudioMessageSchema.safeParse(message).success).toBe(true);
@@ -73,6 +117,42 @@ describe('bridge <-> studio protocol schemas (ADR-0016)', () => {
         source: 'ccs-studio',
         type: 'unsubscribe-rects',
         somethingElse: true,
+      }).success,
+    ).toBe(false);
+  });
+
+  it('FP-4b: rejects report-parent-layout/resolve-free-drop missing required fields or with extras', () => {
+    expect(
+      StudioToBridgeMessageSchema.safeParse({ source: 'ccs-studio', type: 'report-parent-layout', requestId: 'r1' })
+        .success,
+    ).toBe(false); // missing uid
+    expect(
+      StudioToBridgeMessageSchema.safeParse({
+        source: 'ccs-studio',
+        type: 'resolve-free-drop',
+        requestId: 'r1',
+        uid: 'a',
+        targetX: 1,
+        targetY: 2,
+        extra: true,
+      }).success,
+    ).toBe(false);
+    expect(
+      BridgeToStudioMessageSchema.safeParse({
+        source: 'ccs-bridge',
+        type: 'parent-layout-result',
+        requestId: 'r1',
+        uid: 'a',
+        result: { ok: true }, // missing info
+      }).success,
+    ).toBe(false);
+    expect(
+      BridgeToStudioMessageSchema.safeParse({
+        source: 'ccs-bridge',
+        type: 'free-drop-result',
+        requestId: 'r1',
+        uid: 'a',
+        result: { ok: false, reason: 'not-a-real-reason' },
       }).success,
     ).toBe(false);
   });

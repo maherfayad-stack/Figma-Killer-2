@@ -1,12 +1,19 @@
 import * as React from 'react';
 import { createShapeId, useValue, type Editor } from 'tldraw';
-import type { HitInfo, TextEditExit } from '@ccs/bridge';
+import type { HitInfo, LayoutAxis, Rect, TextEditExit } from '@ccs/bridge';
 import type { CanvasFrameRecord } from './project-wiring.js';
 import { getRegisteredFrameIframe, onFrameIframeRegistryChange } from './frame-shape.js';
 import { useSelectionStore, onUidRemap, type HoverState, type SelectionState } from './selection-store.js';
 import { connectBridge, type BridgeConnection } from './bridge-client.js';
-import { iframeRectToScreenBox, screenPointToIframePoint } from './bridge-geometry.js';
-import { boxToScreenBox, type Box, type CameraState } from './geometry.js';
+import { iframeRectToScreenBox, boxToBridgeRect, screenPointToIframePoint } from './bridge-geometry.js';
+import { boxToScreenBox, type Box, type CameraState, type Point } from './geometry.js';
+import {
+  computeReorderDropIndex,
+  dropIndicatorBox,
+  distance,
+  DRAG_THRESHOLD_PX,
+  type SiblingRect,
+} from './drag-geometry.js';
 
 /** FP-4a (`.orchestrator/FEATURE-PARITY-PLAN.md` §2 FP-4): reported up to
  * `StudioCanvas`/the caller when an in-place text edit commits (Enter or
@@ -24,6 +31,147 @@ export interface CommitTextRequest {
   framePath: string;
   uid: string;
   text: string;
+}
+
+/**
+ * FP-4b (D-EDIT context-aware drag-to-move, `.orchestrator/
+ * FEATURE-PARITY-PLAN.md` §2 FP-4 third bullet) — the REORDER branch's
+ * commit: the dragged element's parent is flex/grid (LIVE-detected via the
+ * bridge), so a drop re-sorts within it. `newParentUid`/`index` map
+ * DIRECTLY onto the existing, frozen `move-node` `CanvasOp` — this package
+ * never sends ops itself (same architecture as `CommitTextRequest`); the
+ * caller (studio chrome) emits `{t:'move-node', uid, newParentUid, index}`
+ * verbatim. No coordinates are ever involved in this branch.
+ */
+export interface ReorderNodeRequest {
+  fileFolder: string;
+  framePath: string;
+  uid: string;
+  newParentUid: string;
+  index: number;
+}
+
+/**
+ * FP-4b — the FREE-DRAG branch's commit: the dragged element's parent is
+ * NOT flex/grid, so the drop writes absolute positioning into source. Both
+ * class lists map directly onto the existing, frozen `set-classes`
+ * `CanvasOp` — the caller emits ONE `set-classes` for `uid`
+ * (`addClasses`/`removeClasses`) and, when `parentAddClasses` is non-empty,
+ * a SECOND `set-classes` for `parentUid` (adds `relative` so the absolute
+ * child is actually contained — see `@ccs/bridge`'s `free-drop.ts`). Two
+ * separate ops (two undo steps) rather than a batched op — the frozen
+ * `CanvasOp`/daemon op-application surface has no multi-op envelope; a
+ * disclosed, minor divergence from "one user gesture, one undo step".
+ */
+export interface CommitFreeDragRequest {
+  fileFolder: string;
+  framePath: string;
+  uid: string;
+  addClasses: string[];
+  removeClasses: string[];
+  parentUid: string | null;
+  parentAddClasses: string[];
+}
+
+// --- FP-4b drag-gesture state machine --------------------------------------
+// Lives in this module (not a separate file) because it's tightly coupled to
+// this component's own render (ghost/drop-indicator overlays) and its
+// existing bridge-connection ref — see the component's own doc for the full
+// gesture walkthrough (armed -> resolving -> reorder|free -> commit).
+
+interface IdleDrag {
+  phase: 'idle';
+}
+
+interface ArmedDrag {
+  phase: 'armed';
+  uid: string;
+  fileFolder: string;
+  framePath: string;
+  pointerId: number;
+  startScreen: Point;
+  /** The dragged element's OWN rect (iframe space) at drag start — captured
+   * once here so the FREE branch doesn't need a second bridge round trip
+   * just to learn its starting position (the selection overlay already
+   * tracks this live via `rects-update`). */
+  startRectIframe: Rect;
+  /** `true` once the `report-parent-layout` (+ possibly `report-rects`)
+   * round trip has been kicked off — guards against re-firing it on every
+   * subsequent `pointermove` while it's still in flight. */
+  resolving: boolean;
+}
+
+interface ReorderDrag {
+  phase: 'reorder';
+  uid: string;
+  fileFolder: string;
+  framePath: string;
+  pointerId: number;
+  parentUid: string;
+  axis: LayoutAxis;
+  /** DOM-ordered, EXCLUDING the dragged uid — matches `move-node`'s own
+   * index semantics (`packages/ast-engine/src/apply-op.ts`'s
+   * `applyMoveNodeOp`: `siblingsExcludingTarget`). */
+  siblings: SiblingRect[];
+  /** This uid's index within the FULL sibling list (incl. itself) at drag
+   * start — used as the "dropped back in its original slot" no-op check. */
+  originalIndex: number;
+  parentRect: Rect;
+  dropIndex: number;
+}
+
+interface FreeDrag {
+  phase: 'free';
+  uid: string;
+  fileFolder: string;
+  framePath: string;
+  pointerId: number;
+  startScreen: Point;
+  currentScreen: Point;
+  startRectIframe: Rect;
+}
+
+type DragState = IdleDrag | ArmedDrag | ReorderDrag | FreeDrag;
+
+const IDLE_DRAG: DragState = { phase: 'idle' };
+
+const GHOST_COLOR = '#f59e0b';
+
+function GhostOverlay({ box }: { box: Box }): React.ReactElement {
+  return (
+    <div
+      data-testid="ccs-drag-ghost"
+      style={{
+        position: 'absolute',
+        left: box.x,
+        top: box.y,
+        width: box.w,
+        height: box.h,
+        border: `2px dashed ${GHOST_COLOR}`,
+        background: 'rgba(245, 158, 11, 0.14)',
+        boxSizing: 'border-box',
+        pointerEvents: 'none',
+      }}
+    />
+  );
+}
+
+function DropIndicatorOverlay({ box }: { box: Box }): React.ReactElement {
+  return (
+    <div
+      data-testid="ccs-drop-indicator"
+      style={{
+        position: 'absolute',
+        left: box.x,
+        top: box.y,
+        width: box.w,
+        height: box.h,
+        background: GHOST_COLOR,
+        borderRadius: 2,
+        pointerEvents: 'none',
+      }}
+    />
+  );
 }
 
 /** Display name for a hit-test result — see `HoverState.name`'s doc for
@@ -92,6 +240,13 @@ export interface EditModeLayerProps {
    * existing callers/tests that don't care about text-editing keep
    * compiling unchanged (additive prop). */
   onCommitText?: ((request: CommitTextRequest) => void) | undefined;
+  /** FP-4b (D-EDIT): called once per completed REORDER drop (a drop that
+   * actually changed position — a drop back into the same slot is a no-op,
+   * never calls this). See {@link ReorderNodeRequest}'s doc. */
+  onReorderNode?: ((request: ReorderNodeRequest) => void) | undefined;
+  /** FP-4b (D-EDIT): called once per completed FREE-DRAG drop. See
+   * {@link CommitFreeDragRequest}'s doc. */
+  onCommitFreeDrag?: ((request: CommitFreeDragRequest) => void) | undefined;
 }
 
 function exitEditModeAndRestoreCamera(editor: Editor): void {
@@ -109,7 +264,13 @@ function frameBoxOf(record: CanvasFrameRecord): Box {
   return { x: record.x, y: record.y, w: record.w, h: record.h };
 }
 
-export function EditModeLayer({ editor, frames, onCommitText }: EditModeLayerProps): React.ReactElement {
+export function EditModeLayer({
+  editor,
+  frames,
+  onCommitText,
+  onReorderNode,
+  onCommitFreeDrag,
+}: EditModeLayerProps): React.ReactElement {
   const editModeFrame = useSelectionStore((s) => s.editModeFrame);
   const hover = useSelectionStore((s) => s.hover);
   const selectedUids = useSelectionStore((s) => s.selectedUids);
@@ -128,6 +289,26 @@ export function EditModeLayer({ editor, frames, onCommitText }: EditModeLayerPro
   // `pointer-events:auto` while it's the edit-mode frame (`frame-shape.tsx`);
   // this layer just needs to get OUT OF THE WAY of it during an edit.
   const [editingUid, setEditingUid] = React.useState<string | null>(null);
+
+  // FP-4b: the primary selection, computed up-front (moved ahead of the
+  // former render-only usage) — the drag gesture's pointer-down handler
+  // needs to know it synchronously to decide "did this pointer-down land on
+  // the CURRENTLY SELECTED element" (D-EDIT's own scoping: "on pointer-down
+  // + drag on a SELECTED element" — an unselected element never starts a
+  // drag; a plain click still selects it as before).
+  const primaryUid = selectedUids[0];
+  const primarySelection: SelectionState | undefined = primaryUid ? selections[primaryUid] : undefined;
+
+  // FP-4b (D-EDIT context-aware drag-to-move) — see the module-level
+  // `DragState` doc for the full shape. `dragOccurredRef` suppresses the
+  // native `click` that always fires right after a pointerup, even after a
+  // real drag gesture (a browser's `click` event doesn't care how far the
+  // pointer moved between down/up) — without this, every completed drag
+  // would ALSO re-run `handleClick`'s hit-test+select against whatever now
+  // happens to be under the pointer.
+  const [dragState, setDragState] = React.useState<DragState>(IDLE_DRAG);
+  const dragOccurredRef = React.useRef(false);
+  const latestScreenPointRef = React.useRef<Point | null>(null);
 
   // Re-render whenever a frame's iframe (re)registers/unregisters (e.g. the
   // edit-mode frame flips live<->screenshot, or first mounts its iframe
@@ -240,14 +421,25 @@ export function EditModeLayer({ editor, frames, onCommitText }: EditModeLayerPro
   }, [selectedUids, selections, iframeEl]);
 
   // --- Esc exits edit mode (camera unlocks + restores) --------------------
+  // FP-4b: Esc during an ACTIVE drag (armed/reorder/free) cancels only the
+  // drag (no commit, ghost/indicator disappears) and does NOT also exit
+  // edit mode in the same keystroke — a second Esc (now that dragState is
+  // idle again) exits edit mode as before. Mirrors the existing text-edit
+  // Esc-cancel precedent (`text-edit.ts`): Esc always backs out of the
+  // MOST LOCAL in-progress gesture first.
   React.useEffect(() => {
     if (!editModeFrame) return;
     function onKeyDown(e: KeyboardEvent): void {
-      if (e.key === 'Escape') exitEditModeAndRestoreCamera(editor);
+      if (e.key !== 'Escape') return;
+      if (dragState.phase !== 'idle') {
+        setDragState(IDLE_DRAG);
+        return;
+      }
+      exitEditModeAndRestoreCamera(editor);
     }
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [editModeFrame, editor]);
+  }, [editModeFrame, editor, dragState]);
 
   // --- robustness: if the edit-mode frame's shape vanishes from under us
   // (e.g. deleted while editing), don't get stuck in a locked-camera limbo.
@@ -294,14 +486,22 @@ export function EditModeLayer({ editor, frames, onCommitText }: EditModeLayerPro
   // capture div's own top-left, see the render return's doc) -> the
   // container-relative screen point `screenPointToIframePoint` expects —
   // add back the overlay's own screen-space offset (`overlayScreenBox.x/y`).
+  // FP-4b: factored out as `toScreenPoint` so the drag-gesture handlers
+  // below reuse the EXACT same conversion basis (required for the drag
+  // threshold's distance check to be meaningful).
+  const toScreenPoint = React.useCallback(
+    (e: React.PointerEvent<HTMLDivElement>): Point | null => {
+      if (!overlayScreenBox) return null;
+      return { x: e.nativeEvent.offsetX + overlayScreenBox.x, y: e.nativeEvent.offsetY + overlayScreenBox.y };
+    },
+    [overlayScreenBox],
+  );
+
   const handleMouseMove = React.useCallback(
-    (e: React.MouseEvent<HTMLDivElement>) => {
+    (e: React.PointerEvent<HTMLDivElement>) => {
       const connection = connectionRef.current;
-      if (!frameBox || !connection || !overlayScreenBox) return;
-      const screenPoint = {
-        x: e.nativeEvent.offsetX + overlayScreenBox.x,
-        y: e.nativeEvent.offsetY + overlayScreenBox.y,
-      };
+      const screenPoint = toScreenPoint(e);
+      if (!frameBox || !connection || !screenPoint) return;
       const point = screenPointToIframePoint(camera, frameBox, screenPoint);
       const seq = (hoverRequestSeq.current += 1);
       void connection.hitTest(point.x, point.y).then((hit) => {
@@ -313,16 +513,30 @@ export function EditModeLayer({ editor, frames, onCommitText }: EditModeLayerPro
         connection.setHover(hit?.uid ?? null);
       });
     },
-    [frameBox, camera, overlayScreenBox],
+    [frameBox, camera, toScreenPoint],
   );
 
   const handleMouseLeave = React.useCallback(() => {
+    // FP-4b: a stray `mouseleave` (the pointer visually leaving the overlay
+    // div's box) must NOT clear the ghost/drop-indicator mid-drag — pointer
+    // CAPTURE (see `handlePointerDown`) keeps `pointermove`/`pointerup`
+    // targeting this element regardless, so the drag itself is unaffected;
+    // this guard only concerns the (unrelated) hover-outline state.
+    if (dragState.phase !== 'idle') return;
     useSelectionStore.getState().setHover(null);
     connectionRef.current?.setHover(null);
-  }, []);
+  }, [dragState.phase]);
 
   const handleClick = React.useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
+      // FP-4b: a completed drag/reorder/free-drag gesture's pointerup is
+      // immediately followed by the browser's own native `click` (which
+      // fires regardless of how far the pointer moved between down/up) —
+      // suppress exactly that one synthetic re-selection, once.
+      if (dragOccurredRef.current) {
+        dragOccurredRef.current = false;
+        return;
+      }
       const connection = connectionRef.current;
       if (!frameBox || !connection || !overlayScreenBox) return;
       const point = screenPointToIframePoint(camera, frameBox, {
@@ -349,6 +563,232 @@ export function EditModeLayer({ editor, frames, onCommitText }: EditModeLayerPro
     },
     [frameBox, camera, overlayScreenBox],
   );
+
+  /**
+   * FP-4b (D-EDIT context-aware drag-to-move) — the full gesture:
+   *
+   * 1. **pointerdown** (`handlePointerDown`): only ARMS a potential drag if
+   *    the pointer landed within the CURRENTLY SELECTED element's own
+   *    screen box (checked via the already-known `primarySelection.rect` —
+   *    no hit-test round trip needed for this decision) and that selection
+   *    isn't `dynamic`-locked. Anything else (nothing selected, pointer
+   *    outside it, dynamic) leaves `dragState` idle — the native
+   *    click/dblclick handlers proceed exactly as before, unaffected.
+   * 2. **pointermove while armed** (`handlePointerMoveCapture`): below
+   *    `DRAG_THRESHOLD_PX` of movement, nothing happens yet — this is the
+   *    "small movement still registers as a SELECT" guarantee (the
+   *    eventual native `click` on pointerup does the selecting, same as
+   *    always). Once the threshold is crossed, kicks off ONE
+   *    `report-parent-layout` bridge round trip (guarded by `resolving` so
+   *    it only fires once) to learn the REAL, LIVE parent layout mode.
+   * 3. **branch resolution**: `mode !== 'none'` AND an addressable
+   *    `parentUid` -> fetches sibling rects (`report-rects`, reused
+   *    verbatim) and transitions to `reorder`. `mode === 'none'` ->
+   *    transitions to `free` using the already-known starting rect (no
+   *    extra round trip). `mode !== 'none'` but `parentUid` is `null` (an
+   *    unaddressable real DOM parent — component-instance/fragment
+   *    boundary, see `@ccs/bridge`'s `parent-layout.ts`) -> drag is
+   *    DISABLED for this gesture (falls back to idle; disclosed
+   *    carry-forward, see worker report) rather than guessing.
+   * 4. **pointermove while reorder/free**: recomputes the drop
+   *    index/ghost position on every move (pure, local — `drag-
+   *    geometry.ts`), no further bridge calls.
+   * 5. **pointerup**: `armed` (never crossed threshold) resolves to a
+   *    no-op — the native `click` fires normally right after, selecting
+   *    whatever's under the pointer, exactly like before this feature
+   *    existed. `reorder`/`free` commit (if the drop actually changed
+   *    anything) via `onReorderNode`/`onCommitFreeDrag` and mark
+   *    `dragOccurredRef` so the trailing native `click` is suppressed.
+   */
+  const handlePointerDown = React.useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (editingUid || dragState.phase !== 'idle' || !editModeFrame) return;
+      if (!primarySelection || primarySelection.dynamic || !primarySelection.rect) return;
+      if (!frameBox) return;
+      const point = toScreenPoint(e);
+      if (!point) return;
+      const selectionScreenBox = iframeRectToScreenBox(camera, frameBox, primarySelection.rect);
+      const withinSelection =
+        point.x >= selectionScreenBox.x &&
+        point.x <= selectionScreenBox.x + selectionScreenBox.w &&
+        point.y >= selectionScreenBox.y &&
+        point.y <= selectionScreenBox.y + selectionScreenBox.h;
+      if (!withinSelection) return; // pointer-down landed elsewhere — let the normal click/select flow handle it.
+
+      e.currentTarget.setPointerCapture(e.pointerId);
+      setDragState({
+        phase: 'armed',
+        uid: primarySelection.uid,
+        fileFolder: editModeFrame.fileFolder,
+        framePath: editModeFrame.framePath,
+        pointerId: e.pointerId,
+        startScreen: point,
+        startRectIframe: primarySelection.rect,
+        resolving: false,
+      });
+    },
+    [editingUid, dragState.phase, editModeFrame, primarySelection, frameBox, camera, toScreenPoint],
+  );
+
+  const handlePointerMoveCapture = React.useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      const point = toScreenPoint(e);
+      if (point) latestScreenPointRef.current = point;
+
+      if (dragState.phase === 'idle') {
+        handleMouseMove(e);
+        return;
+      }
+      if (!point || !frameBox) return;
+
+      if (dragState.phase === 'armed') {
+        if (dragState.resolving) return; // already kicked off the parent-layout round trip
+        if (distance(dragState.startScreen, point) < DRAG_THRESHOLD_PX) return;
+
+        const connection = connectionRef.current;
+        const { uid } = dragState;
+        if (!connection) {
+          setDragState(IDLE_DRAG);
+          return;
+        }
+        setDragState((current) => (current.phase === 'armed' && current.uid === uid ? { ...current, resolving: true } : current));
+
+        void connection.reportParentLayout(uid).then(async (result) => {
+          if (!result.ok) {
+            setDragState((current) => (current.phase === 'armed' && current.uid === uid ? IDLE_DRAG : current));
+            return;
+          }
+          const { info } = result;
+
+          if (info.mode === 'none') {
+            setDragState((current) => {
+              if (current.phase !== 'armed' || current.uid !== uid) return current;
+              const pointer = latestScreenPointRef.current ?? current.startScreen;
+              return {
+                phase: 'free',
+                uid,
+                fileFolder: current.fileFolder,
+                framePath: current.framePath,
+                pointerId: current.pointerId,
+                startScreen: current.startScreen,
+                currentScreen: pointer,
+                startRectIframe: current.startRectIframe,
+              };
+            });
+            return;
+          }
+
+          if (!info.parentUid) {
+            // Real DOM parent is flex/grid but isn't itself addressable
+            // (component-instance/fragment boundary) — `move-node` has no
+            // valid `newParentUid` to target. Disabled, not guessed.
+            setDragState((current) => (current.phase === 'armed' && current.uid === uid ? IDLE_DRAG : current));
+            return;
+          }
+
+          const rects = await connection.reportRects(info.siblingUids);
+          const siblings: SiblingRect[] = info.siblingUids
+            .filter((siblingUid) => siblingUid !== uid)
+            .flatMap((siblingUid) => {
+              const rect = rects[siblingUid];
+              return rect ? [{ uid: siblingUid, rect }] : [];
+            });
+          const pointerIframe = screenPointToIframePoint(camera, frameBox, latestScreenPointRef.current ?? point);
+          const dropIndex = computeReorderDropIndex(info.axis, siblings, pointerIframe);
+
+          setDragState((current) =>
+            current.phase === 'armed' && current.uid === uid
+              ? {
+                  phase: 'reorder',
+                  uid,
+                  fileFolder: current.fileFolder,
+                  framePath: current.framePath,
+                  pointerId: current.pointerId,
+                  parentUid: info.parentUid!,
+                  axis: info.axis,
+                  siblings,
+                  originalIndex: info.index,
+                  parentRect: info.parentRect,
+                  dropIndex,
+                }
+              : current,
+          );
+        });
+        return;
+      }
+
+      if (dragState.phase === 'reorder') {
+        const iframePoint = screenPointToIframePoint(camera, frameBox, point);
+        const dropIndex = computeReorderDropIndex(dragState.axis, dragState.siblings, iframePoint);
+        if (dropIndex !== dragState.dropIndex) setDragState({ ...dragState, dropIndex });
+        return;
+      }
+
+      if (dragState.phase === 'free') {
+        setDragState({ ...dragState, currentScreen: point });
+      }
+    },
+    [dragState, frameBox, camera, toScreenPoint, handleMouseMove],
+  );
+
+  const handlePointerUp = React.useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (dragState.phase === 'idle') return;
+      e.currentTarget.releasePointerCapture?.(e.pointerId);
+
+      if (dragState.phase === 'armed') {
+        // Never crossed the threshold (or the async resolution hadn't
+        // settled yet) — this was just a click. Reset and let the native
+        // `click` event (which fires next) select as usual.
+        setDragState(IDLE_DRAG);
+        return;
+      }
+
+      dragOccurredRef.current = true; // suppress the trailing native click
+      const finished = dragState;
+      setDragState(IDLE_DRAG);
+
+      if (finished.phase === 'reorder') {
+        if (finished.dropIndex === finished.originalIndex) return; // dropped back in its own slot — no-op
+        onReorderNode?.({
+          fileFolder: finished.fileFolder,
+          framePath: finished.framePath,
+          uid: finished.uid,
+          newParentUid: finished.parentUid,
+          index: finished.dropIndex,
+        });
+        return;
+      }
+
+      if (finished.phase === 'free') {
+        const connection = connectionRef.current;
+        if (!connection) return;
+        const dx = (finished.currentScreen.x - finished.startScreen.x) / camera.z;
+        const dy = (finished.currentScreen.y - finished.startScreen.y) / camera.z;
+        const targetX = finished.startRectIframe.x + dx;
+        const targetY = finished.startRectIframe.y + dy;
+        void connection.resolveFreeDrop(finished.uid, targetX, targetY).then((result) => {
+          if (!result.ok) return;
+          onCommitFreeDrag?.({
+            fileFolder: finished.fileFolder,
+            framePath: finished.framePath,
+            uid: finished.uid,
+            addClasses: result.info.addClasses,
+            removeClasses: result.info.removeClasses,
+            parentUid: result.info.parentUid,
+            parentAddClasses: result.info.parentAddClasses,
+          });
+        });
+      }
+    },
+    [dragState, camera, onReorderNode, onCommitFreeDrag],
+  );
+
+  const handlePointerCancel = React.useCallback(() => {
+    // e.g. the OS/browser yanks pointer capture (alt-tab mid-drag) — cancel
+    // without committing anything, same as an Esc-cancel.
+    setDragState(IDLE_DRAG);
+  }, []);
 
   /**
    * FP-4a double-click: text-edit entry, or (on an empty-background hit) a
@@ -462,15 +902,15 @@ export function EditModeLayer({ editor, frames, onCommitText }: EditModeLayerPro
     [editor],
   );
 
-  const primaryUid = selectedUids[0];
-  const primarySelection: SelectionState | undefined = primaryUid ? selections[primaryUid] : undefined;
-
   return (
     <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 5, fontFamily: 'system-ui, sans-serif' }}>
       {editModeFrame && overlayScreenBox && (
         <div
           data-testid="ccs-edit-mode-capture"
-          onMouseMove={handleMouseMove}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMoveCapture}
+          onPointerUp={handlePointerUp}
+          onPointerCancel={handlePointerCancel}
           onMouseLeave={handleMouseLeave}
           onClick={handleClick}
           onDoubleClick={handleDoubleClick}
@@ -487,12 +927,37 @@ export function EditModeLayer({ editor, frames, onCommitText }: EditModeLayerPro
         />
       )}
 
-      {hover && frameBox && (
+      {/* FP-4b: hover/selection outlines are suppressed while a drag gesture
+          is active (armed-but-below-threshold still shows them normally —
+          only `reorder`/`free` replace them with their own affordance
+          below) so the ghost/drop-indicator is the only moving visual. */}
+      {dragState.phase === 'idle' && hover && frameBox && (
         <HoverOverlay camera={camera} frameBox={frameBox} hover={hover} />
       )}
 
-      {primarySelection && primarySelection.rect && frameBox && (
+      {dragState.phase === 'idle' && primarySelection && primarySelection.rect && frameBox && (
         <SelectionOverlay camera={camera} frameBox={frameBox} selection={primarySelection} />
+      )}
+
+      {dragState.phase === 'free' && frameBox && (
+        <GhostOverlay
+          box={(() => {
+            const startBox = iframeRectToScreenBox(camera, frameBox, dragState.startRectIframe);
+            const dx = dragState.currentScreen.x - dragState.startScreen.x;
+            const dy = dragState.currentScreen.y - dragState.startScreen.y;
+            return { x: startBox.x + dx, y: startBox.y + dy, w: startBox.w, h: startBox.h };
+          })()}
+        />
+      )}
+
+      {dragState.phase === 'reorder' && frameBox && (
+        <DropIndicatorOverlay
+          box={iframeRectToScreenBox(
+            camera,
+            frameBox,
+            boxToBridgeRect(dropIndicatorBox(dragState.axis, dragState.siblings, dragState.dropIndex, dragState.parentRect)),
+          )}
+        />
       )}
 
       {editModeFrame && (

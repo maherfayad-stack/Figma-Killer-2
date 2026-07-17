@@ -36,12 +36,22 @@ export {
   type TextEditRejectReason,
 } from './text-edit.js';
 
+// FP-4b (D-EDIT: context-aware drag-to-move) — see each module's own doc.
+export { computeParentLayout } from './parent-layout.js';
+export { resolveFreeDrop } from './free-drop.js';
+
 export {
   StudioToBridgeMessageSchema,
   BridgeToStudioMessageSchema,
   RectSchema,
   HitInfoSchema,
   BreadcrumbEntrySchema,
+  LayoutModeSchema,
+  LayoutAxisSchema,
+  ParentLayoutInfoSchema,
+  ParentLayoutResultSchema,
+  FreeDropInfoSchema,
+  FreeDropResultSchema,
   type Rect,
   type BreadcrumbEntry,
   type HitInfo,
@@ -54,6 +64,8 @@ export {
   type SetHoverRequest,
   type SetSelectionRequest,
   type EnterTextEditRequest,
+  type ReportParentLayoutRequest,
+  type ResolveFreeDropRequest,
   type HitTestResult,
   type RectsResult,
   type RectsUpdate,
@@ -61,4 +73,12 @@ export {
   type TextEditEntered,
   type TextEditRejected,
   type TextEditExit,
+  type LayoutMode,
+  type LayoutAxis,
+  type ParentLayoutInfo,
+  type ParentLayoutResult,
+  type ParentLayoutResultReply,
+  type FreeDropInfo,
+  type FreeDropResult,
+  type FreeDropResultReply,
 } from './protocol.js';

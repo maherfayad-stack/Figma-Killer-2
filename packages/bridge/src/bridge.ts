@@ -3,6 +3,8 @@ import { reportRects } from './rects.js';
 import { createRectsSubscription } from './subscribe.js';
 import { setHover, setSelection } from './highlight.js';
 import { createTextEditController } from './text-edit.js';
+import { computeParentLayout } from './parent-layout.js';
+import { resolveFreeDrop } from './free-drop.js';
 import {
   StudioToBridgeMessageSchema,
   type BridgeToStudioMessage,
@@ -137,6 +139,26 @@ export function installBridge(options: InstallBridgeOptions = {}): BridgeHandle 
             reason: result.reason,
           });
         }
+        return;
+      }
+      case 'report-parent-layout': {
+        send(win, {
+          source: 'ccs-bridge',
+          type: 'parent-layout-result',
+          requestId: message.requestId,
+          uid: message.uid,
+          result: computeParentLayout(message.uid, win.document),
+        });
+        return;
+      }
+      case 'resolve-free-drop': {
+        send(win, {
+          source: 'ccs-bridge',
+          type: 'free-drop-result',
+          requestId: message.requestId,
+          uid: message.uid,
+          result: resolveFreeDrop(message.uid, message.targetX, message.targetY, win.document),
+        });
         return;
       }
     }

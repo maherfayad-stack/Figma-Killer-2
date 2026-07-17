@@ -245,4 +245,144 @@ describe('bridge — hit-test / report-rects / origin validation', () => {
       expect(el.getAttribute('contenteditable')).toBeNull();
     });
   });
+
+  describe('FP-4b — report-parent-layout / resolve-free-drop (D-EDIT context-aware drag)', () => {
+    it('report-parent-layout: flex parent -> mode "flex", correct axis + sibling order', () => {
+      document.body.innerHTML = `
+        <section data-uid="parent" style="display:flex;flex-direction:row">
+          <h1 data-uid="a">A</h1>
+          <p data-uid="b">B</p>
+        </section>
+      `;
+      handle = installBridge();
+      (fakeParent.postMessage as ReturnType<typeof vi.fn>).mockClear();
+
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: { source: 'ccs-studio', type: 'report-parent-layout', requestId: 'pl-1', uid: 'b' },
+          source: fakeParent,
+        }),
+      );
+
+      const [message] = (fakeParent.postMessage as ReturnType<typeof vi.fn>).mock.calls[0]!;
+      expect(message).toEqual({
+        source: 'ccs-bridge',
+        type: 'parent-layout-result',
+        requestId: 'pl-1',
+        uid: 'b',
+        result: {
+          ok: true,
+          info: {
+            mode: 'flex',
+            axis: 'row',
+            parentUid: 'parent',
+            parentPositioned: false,
+            parentRect: expect.objectContaining({ x: expect.any(Number) }),
+            index: 1,
+            siblingUids: ['a', 'b'],
+          },
+        },
+      });
+    });
+
+    it('report-parent-layout: plain (non-flex/grid) parent -> mode "none" (FREE-DRAG branch)', () => {
+      document.body.innerHTML = `<div data-uid="parent"><span data-uid="a">A</span></div>`;
+      handle = installBridge();
+      (fakeParent.postMessage as ReturnType<typeof vi.fn>).mockClear();
+
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: { source: 'ccs-studio', type: 'report-parent-layout', requestId: 'pl-2', uid: 'a' },
+          source: fakeParent,
+        }),
+      );
+
+      const [message] = (fakeParent.postMessage as ReturnType<typeof vi.fn>).mock.calls[0]!;
+      expect(message.result.ok).toBe(true);
+      expect(message.result.info.mode).toBe('none');
+    });
+
+    it('report-parent-layout: rejects a dynamic-locked node (defense in depth)', () => {
+      document.body.innerHTML = `<div style="display:flex"><span data-uid="a" data-dynamic="true">A</span></div>`;
+      handle = installBridge();
+      (fakeParent.postMessage as ReturnType<typeof vi.fn>).mockClear();
+
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: { source: 'ccs-studio', type: 'report-parent-layout', requestId: 'pl-3', uid: 'a' },
+          source: fakeParent,
+        }),
+      );
+
+      const [message] = (fakeParent.postMessage as ReturnType<typeof vi.fn>).mock.calls[0]!;
+      expect(message).toEqual({
+        source: 'ccs-bridge',
+        type: 'parent-layout-result',
+        requestId: 'pl-3',
+        uid: 'a',
+        result: { ok: false, reason: 'dynamic-locked' },
+      });
+    });
+
+    it('resolve-free-drop: resolves absolute + start/top classes for the dragged node', () => {
+      document.body.innerHTML = `<div data-uid="parent"><span data-uid="a">A</span></div>`;
+      const parent = document.querySelector('[data-uid="parent"]') as HTMLElement;
+      const el = document.querySelector('[data-uid="a"]') as HTMLElement;
+      vi.spyOn(parent, 'getBoundingClientRect').mockReturnValue({
+        x: 0, y: 0, width: 400, height: 300, top: 0, left: 0, right: 400, bottom: 300, toJSON: () => ({}),
+      } as DOMRect);
+      vi.spyOn(el, 'getBoundingClientRect').mockReturnValue({
+        x: 0, y: 0, width: 80, height: 20, top: 0, left: 0, right: 80, bottom: 20, toJSON: () => ({}),
+      } as DOMRect);
+
+      handle = installBridge();
+      (fakeParent.postMessage as ReturnType<typeof vi.fn>).mockClear();
+
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: { source: 'ccs-studio', type: 'resolve-free-drop', requestId: 'fd-1', uid: 'a', targetX: 50, targetY: 30 },
+          source: fakeParent,
+        }),
+      );
+
+      const [message] = (fakeParent.postMessage as ReturnType<typeof vi.fn>).mock.calls[0]!;
+      expect(message).toEqual({
+        source: 'ccs-bridge',
+        type: 'free-drop-result',
+        requestId: 'fd-1',
+        uid: 'a',
+        result: {
+          ok: true,
+          info: {
+            addClasses: ['absolute', 'start-[50px]', 'top-[30px]'],
+            removeClasses: [],
+            parentUid: 'parent',
+            parentAddClasses: ['relative'],
+          },
+        },
+      });
+    });
+
+    it('resolve-free-drop: rejects a dynamic-locked node', () => {
+      document.body.innerHTML = `<div><span data-uid="a" data-dynamic="true">A</span></div>`;
+      handle = installBridge();
+      (fakeParent.postMessage as ReturnType<typeof vi.fn>).mockClear();
+
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: { source: 'ccs-studio', type: 'resolve-free-drop', requestId: 'fd-2', uid: 'a', targetX: 0, targetY: 0 },
+          source: fakeParent,
+        }),
+      );
+
+      const [message] = (fakeParent.postMessage as ReturnType<typeof vi.fn>).mock.calls[0]!;
+      expect(message).toEqual({
+        source: 'ccs-bridge',
+        type: 'free-drop-result',
+        requestId: 'fd-2',
+        uid: 'a',
+        result: { ok: false, reason: 'dynamic-locked' },
+      });
+    });
+  });
 });

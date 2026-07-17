@@ -1,6 +1,8 @@
 import {
   BridgeToStudioMessageSchema,
+  type FreeDropResult,
   type HitInfo,
+  type ParentLayoutResult,
   type Rect,
   type StudioToBridgeMessage,
   type TextEditExit,
@@ -63,6 +65,17 @@ export interface BridgeConnection {
    * usage site, not a text leaf, etc.). Ending the edit is NOT driven from
    * here — see `onTextEditExit`. */
   enterTextEdit(uid: string): Promise<EnterTextEditResult>;
+  /** FP-4b (D-EDIT context-aware drag-to-move): asks the bridge whether
+   * `uid`'s real DOM parent is a flex/grid container (LIVE, from computed
+   * style) — see `@ccs/bridge`'s `parent-layout.ts`. Drives which drag
+   * branch (reorder vs free) `edit-mode-layer.tsx` takes. */
+  reportParentLayout(uid: string): Promise<ParentLayoutResult>;
+  /** FP-4b: the FREE-DRAG branch's commit-time call — `targetX`/`targetY`
+   * are the dragged element's intended top-left, in IFRAME space (same
+   * convention as `HitInfo.rect`). Resolves with the RTL-aware position
+   * classes to write back via `set-classes` — see `@ccs/bridge`'s
+   * `free-drop.ts`. */
+  resolveFreeDrop(uid: string, targetX: number, targetY: number): Promise<FreeDropResult>;
   dispose(): void;
 }
 
@@ -79,6 +92,8 @@ export function connectBridge(options: BridgeConnectionOptions): BridgeConnectio
   const pendingHitTest = new Map<string, (hit: HitInfo | null) => void>();
   const pendingReportRects = new Map<string, (rects: Record<string, Rect | null>) => void>();
   const pendingTextEdit = new Map<string, (result: EnterTextEditResult) => void>();
+  const pendingParentLayout = new Map<string, (result: ParentLayoutResult) => void>();
+  const pendingFreeDrop = new Map<string, (result: FreeDropResult) => void>();
 
   function send(message: StudioToBridgeMessage): void {
     // Target origin '*' mirrors `bridge.ts`'s own `send()` — the studio
@@ -131,6 +146,20 @@ export function connectBridge(options: BridgeConnectionOptions): BridgeConnectio
       case 'text-edit-exit':
         onTextEditExit?.(message);
         return;
+      case 'parent-layout-result': {
+        const resolve = pendingParentLayout.get(message.requestId);
+        if (!resolve) return;
+        pendingParentLayout.delete(message.requestId);
+        resolve(message.result);
+        return;
+      }
+      case 'free-drop-result': {
+        const resolve = pendingFreeDrop.get(message.requestId);
+        if (!resolve) return;
+        pendingFreeDrop.delete(message.requestId);
+        resolve(message.result);
+        return;
+      }
     }
   }
 
@@ -170,11 +199,27 @@ export function connectBridge(options: BridgeConnectionOptions): BridgeConnectio
         send({ source: 'ccs-studio', type: 'enter-text-edit', requestId, uid });
       });
     },
+    reportParentLayout(uid) {
+      const requestId = nextRequestId('report-parent-layout');
+      return new Promise((resolve) => {
+        pendingParentLayout.set(requestId, resolve);
+        send({ source: 'ccs-studio', type: 'report-parent-layout', requestId, uid });
+      });
+    },
+    resolveFreeDrop(uid, targetX, targetY) {
+      const requestId = nextRequestId('resolve-free-drop');
+      return new Promise((resolve) => {
+        pendingFreeDrop.set(requestId, resolve);
+        send({ source: 'ccs-studio', type: 'resolve-free-drop', requestId, uid, targetX, targetY });
+      });
+    },
     dispose() {
       win.removeEventListener('message', onMessage as EventListener);
       pendingHitTest.clear();
       pendingReportRects.clear();
       pendingTextEdit.clear();
+      pendingParentLayout.clear();
+      pendingFreeDrop.clear();
     },
   };
 }

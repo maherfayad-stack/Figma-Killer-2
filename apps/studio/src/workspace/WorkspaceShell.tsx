@@ -1,6 +1,13 @@
 import * as React from 'react';
 import 'tldraw/tldraw.css';
-import { StudioCanvas, type StudioCanvasHandle, type CanvasFrameRecord, type ElementSelection } from '@ccs/canvas';
+import {
+  StudioCanvas,
+  type StudioCanvasHandle,
+  type CanvasFrameRecord,
+  type ElementSelection,
+  type ReorderNodeRequest,
+  type CommitFreeDragRequest,
+} from '@ccs/canvas';
 import { Tabs } from '@ccs/ui';
 import { isNodeUid } from '@ccs/protocol';
 import { DaemonConnectionProvider, useDaemonConnection } from '../engine/daemon-connection.js';
@@ -210,6 +217,44 @@ function WorkspaceShellInner({
     [sendOp],
   );
 
+  // FP-4b (D-EDIT context-aware drag-to-move,
+  // `.orchestrator/FEATURE-PARITY-PLAN.md` §2 FP-4 third bullet): `@ccs/
+  // canvas`'s `EditModeLayer` does the ENTIRE gesture (mode detection via
+  // the bridge, threshold, ghost/drop-indicator) and only ever reports a
+  // COMPLETED, already-decided drop up here — this is where it becomes the
+  // existing, FROZEN `CanvasOp`s (never a new op), same architecture as
+  // `handleCommitText` above (`@ccs/canvas` never sends ops itself).
+  //
+  // REORDER branch: `ReorderNodeRequest`'s fields map 1:1 onto `move-node`
+  // (`{t:'move-node', uid, newParentUid, index}`) — no coordinates, DOM
+  // order + layout props alone own position, exactly as D-EDIT specifies.
+  const handleReorderNode = React.useCallback(
+    (request: ReorderNodeRequest) => {
+      if (!isNodeUid(request.uid) || !isNodeUid(request.newParentUid)) return;
+      sendOp({ t: 'move-node', uid: request.uid, newParentUid: request.newParentUid, index: request.index });
+    },
+    [sendOp],
+  );
+
+  // FREE-DRAG branch: `CommitFreeDragRequest`'s class lists map 1:1 onto
+  // `set-classes` — ONE `set-classes` for the dragged node itself
+  // (absolute + logical inset classes), and a SECOND `set-classes` for the
+  // parent ONLY when `parentAddClasses` is non-empty (adds `relative` so
+  // the dropped element is actually contained — see `@ccs/bridge`'s
+  // `free-drop.ts`). Two ops / two undo steps rather than one batched op —
+  // the frozen `CanvasOp` surface has no multi-op envelope; a disclosed,
+  // minor divergence noted in the worker report.
+  const handleCommitFreeDrag = React.useCallback(
+    (request: CommitFreeDragRequest) => {
+      if (!isNodeUid(request.uid)) return;
+      sendOp({ t: 'set-classes', uid: request.uid, add: request.addClasses, remove: request.removeClasses });
+      if (request.parentUid && request.parentAddClasses.length > 0 && isNodeUid(request.parentUid)) {
+        sendOp({ t: 'set-classes', uid: request.parentUid, add: request.parentAddClasses, remove: [] });
+      }
+    },
+    [sendOp],
+  );
+
   return (
     <div
       className="ccs-root"
@@ -273,6 +318,8 @@ function WorkspaceShellInner({
               onFrameSelect={handleFrameSelect}
               onElementSelect={handleElementSelect}
               onCommitText={handleCommitText}
+              onReorderNode={handleReorderNode}
+              onCommitFreeDrag={handleCommitFreeDrag}
             />
             <Toolbar onOpenComponentPalette={openComponentPalette} canvasHandle={canvasHandle} />
           </div>

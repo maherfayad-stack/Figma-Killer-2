@@ -186,4 +186,76 @@ describe('connectBridge', () => {
       expect(onTextEditExit).toHaveBeenCalledWith(exit);
     });
   });
+
+  describe('FP-4b — reportParentLayout / resolveFreeDrop', () => {
+    it('reportParentLayout sends a ccs-studio report-parent-layout request and resolves from the matching reply', async () => {
+      const { iframeWindow, connection } = setup();
+      const promise = connection.reportParentLayout('a');
+      const sent = iframeWindow.posted[0] as { type: string; requestId: string; uid: string };
+      expect(sent).toMatchObject({ source: 'ccs-studio', type: 'report-parent-layout', uid: 'a' });
+
+      const info = {
+        mode: 'flex' as const,
+        axis: 'row' as const,
+        parentUid: 'p',
+        parentPositioned: false,
+        parentRect: { x: 0, y: 0, width: 10, height: 10 },
+        index: 0,
+        siblingUids: ['a', 'b'],
+      };
+      iframeWindow.emitFromBridge({
+        source: 'ccs-bridge',
+        type: 'parent-layout-result',
+        requestId: sent.requestId,
+        uid: 'a',
+        result: { ok: true, info },
+      });
+      await expect(promise).resolves.toEqual({ ok: true, info });
+    });
+
+    it('reportParentLayout resolves not-ok with the reason', async () => {
+      const { iframeWindow, connection } = setup();
+      const promise = connection.reportParentLayout('a');
+      const sent = iframeWindow.posted[0] as { requestId: string };
+      iframeWindow.emitFromBridge({
+        source: 'ccs-bridge',
+        type: 'parent-layout-result',
+        requestId: sent.requestId,
+        uid: 'a',
+        result: { ok: false, reason: 'dynamic-locked' },
+      });
+      await expect(promise).resolves.toEqual({ ok: false, reason: 'dynamic-locked' });
+    });
+
+    it('resolveFreeDrop sends a ccs-studio resolve-free-drop request with targetX/targetY and resolves from the matching reply', async () => {
+      const { iframeWindow, connection } = setup();
+      const promise = connection.resolveFreeDrop('a', 100, 200);
+      const sent = iframeWindow.posted[0] as { type: string; requestId: string; uid: string; targetX: number; targetY: number };
+      expect(sent).toMatchObject({ source: 'ccs-studio', type: 'resolve-free-drop', uid: 'a', targetX: 100, targetY: 200 });
+
+      const info = { addClasses: ['absolute', 'start-[100px]', 'top-[200px]'], removeClasses: [], parentUid: 'p', parentAddClasses: ['relative'] };
+      iframeWindow.emitFromBridge({
+        source: 'ccs-bridge',
+        type: 'free-drop-result',
+        requestId: sent.requestId,
+        uid: 'a',
+        result: { ok: true, info },
+      });
+      await expect(promise).resolves.toEqual({ ok: true, info });
+    });
+
+    it('resolveFreeDrop resolves not-ok with the reason', async () => {
+      const { iframeWindow, connection } = setup();
+      const promise = connection.resolveFreeDrop('a', 0, 0);
+      const sent = iframeWindow.posted[0] as { requestId: string };
+      iframeWindow.emitFromBridge({
+        source: 'ccs-bridge',
+        type: 'free-drop-result',
+        requestId: sent.requestId,
+        uid: 'a',
+        result: { ok: false, reason: 'not-found' },
+      });
+      await expect(promise).resolves.toEqual({ ok: false, reason: 'not-found' });
+    });
+  });
 });

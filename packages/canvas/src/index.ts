@@ -29,6 +29,10 @@ export type {
 // `EditModeLayer`-sourced type re-used verbatim by `StudioCanvas`) get it
 // from this package's one public entry point, same as everything else.
 export type { CommitTextRequest } from './edit-mode-layer.js';
+// FP-4b (D-EDIT context-aware drag-to-move) — same pattern as
+// `CommitTextRequest` above: defined in `edit-mode-layer.ts`, re-exported
+// here for `StudioCanvasProps.onReorderNode`/`.onCommitFreeDrag` callers.
+export type { ReorderNodeRequest, CommitFreeDragRequest } from './edit-mode-layer.js';
 
 export type { CanvasFrameRecord } from './project-wiring.js';
 export type { Box, CameraState, Point } from './geometry.js';

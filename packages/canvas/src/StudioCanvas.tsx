@@ -27,7 +27,12 @@ import {
   type CcsFrameShape,
 } from './frame-shape.js';
 import { frameSourcePath, isValidFrameName } from './new-frame.js';
-import { EditModeLayer, type CommitTextRequest } from './edit-mode-layer.js';
+import {
+  EditModeLayer,
+  type CommitFreeDragRequest,
+  type CommitTextRequest,
+  type ReorderNodeRequest,
+} from './edit-mode-layer.js';
 import { emitUidRemap, useSelectionStore } from './selection-store.js';
 import { shiftPanDelta } from './wheel-gesture.js';
 
@@ -215,6 +220,15 @@ export interface StudioCanvasProps {
    * `CanvasOp` over ITS OWN daemon-ops connection — this package never
    * sends `CanvasOp`s itself. */
   onCommitText?: (request: CommitTextRequest) => void;
+  /** FP-4b (D-EDIT context-aware drag-to-move) — fires once per completed
+   * REORDER drop (flex/grid parent). The caller emits the existing
+   * `move-node` `CanvasOp` — see `edit-mode-layer.tsx`'s
+   * `ReorderNodeRequest` doc. This package never sends ops itself. */
+  onReorderNode?: (request: ReorderNodeRequest) => void;
+  /** FP-4b — fires once per completed FREE-DRAG drop (non-layout parent).
+   * The caller emits the existing `set-classes` `CanvasOp`(s) — see
+   * `edit-mode-layer.tsx`'s `CommitFreeDragRequest` doc. */
+  onCommitFreeDrag?: (request: CommitFreeDragRequest) => void;
 }
 
 const CONTAINER_STYLE: React.CSSProperties = { position: 'relative', width: '100%', height: '100%' };
@@ -276,6 +290,8 @@ export function StudioCanvas({
   onFrameSelect,
   onElementSelect,
   onCommitText,
+  onReorderNode,
+  onCommitFreeDrag,
 }: StudioCanvasProps): React.ReactElement {
   const [frames, setFrames] = React.useState<CanvasFrameRecord[]>([]);
   const [editorReady, setEditorReady] = React.useState(false);
@@ -903,7 +919,15 @@ export function StudioCanvas({
       <ScreenshotCacheContext.Provider value={screenshotCache}>
         <Tldraw shapeUtils={shapeUtils} components={MINIMAL_COMPONENTS} overrides={overrides} onMount={handleMount} />
       </ScreenshotCacheContext.Provider>
-      {mountedEditor && <EditModeLayer editor={mountedEditor} frames={frames} onCommitText={onCommitText} />}
+      {mountedEditor && (
+        <EditModeLayer
+          editor={mountedEditor}
+          frames={frames}
+          onCommitText={onCommitText}
+          onReorderNode={onReorderNode}
+          onCommitFreeDrag={onCommitFreeDrag}
+        />
+      )}
       {mountedEditor && onZoomChange && <ZoomReporter editor={mountedEditor} onZoomChange={onZoomChange} />}
       {mountedEditor && (
         // FP-4a: this bridge now ALSO drives frictionless frame activation

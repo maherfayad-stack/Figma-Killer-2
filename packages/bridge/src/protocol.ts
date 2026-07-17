@@ -128,6 +128,54 @@ export const EnterTextEditRequestSchema = z
   .strict();
 export type EnterTextEditRequest = z.infer<typeof EnterTextEditRequestSchema>;
 
+/**
+ * FP-4b (`.orchestrator/FEATURE-PARITY-PLAN.md` §2 FP-4 third bullet,
+ * D-EDIT decision in §0/§5) ADDITIVE message: "on pointer-down + drag on a
+ * selected element, the bridge reports the parent's layout mode (flex/grid
+ * vs not), detected LIVE from the parent's computed style". The studio
+ * names a `uid` it already knows (the current selection); the bridge reads
+ * that node's REAL DOM `.parentElement` (not necessarily itself a
+ * `data-uid` node — a component-instance boundary or a JSX fragment can sit
+ * in between, see `parent-layout.ts`'s module doc) and reports its
+ * `display`, so the caller can pick the reorder-vs-free-drag branch. New
+ * member of the existing `StudioToBridgeMessageSchema` discriminated union
+ * — every previously-frozen member is unchanged (verbatim).
+ */
+export const ReportParentLayoutRequestSchema = z
+  .object({
+    source: z.literal('ccs-studio'),
+    type: z.literal('report-parent-layout'),
+    requestId: z.string(),
+    uid: z.string(),
+  })
+  .strict();
+export type ReportParentLayoutRequest = z.infer<typeof ReportParentLayoutRequestSchema>;
+
+/**
+ * FP-4b — the FREE-DRAG branch's commit-time request: "on drop, commit
+ * absolute positioning into source". The studio computes the intended
+ * final on-screen position (via its own existing camera/geometry math —
+ * unchanged, no new geometry primitive) and converts it to IFRAME-space
+ * pixel coordinates (same space `hit-test`/`report-rects` already use)
+ * before sending — the bridge then does the CSS-computed-style-dependent
+ * part (logical inline-start/RTL resolution, which class strings to
+ * add/remove) since only it has `getComputedStyle` access, per `free-
+ * drop.ts`'s module doc.
+ */
+export const ResolveFreeDropRequestSchema = z
+  .object({
+    source: z.literal('ccs-studio'),
+    type: z.literal('resolve-free-drop'),
+    requestId: z.string(),
+    uid: z.string(),
+    /** Intended top-left of the dragged element, in IFRAME CSS-pixel space
+     * (same convention as `HitInfo.rect`). */
+    targetX: z.number(),
+    targetY: z.number(),
+  })
+  .strict();
+export type ResolveFreeDropRequest = z.infer<typeof ResolveFreeDropRequestSchema>;
+
 export const StudioToBridgeMessageSchema = z.discriminatedUnion('type', [
   HitTestRequestSchema,
   ReportRectsRequestSchema,
@@ -136,6 +184,8 @@ export const StudioToBridgeMessageSchema = z.discriminatedUnion('type', [
   SetHoverRequestSchema,
   SetSelectionRequestSchema,
   EnterTextEditRequestSchema,
+  ReportParentLayoutRequestSchema,
+  ResolveFreeDropRequestSchema,
 ]);
 export type StudioToBridgeMessage = z.infer<typeof StudioToBridgeMessageSchema>;
 
@@ -232,6 +282,136 @@ export const TextEditExitSchema = z
   .strict();
 export type TextEditExit = z.infer<typeof TextEditExitSchema>;
 
+/**
+ * FP-4b: `report-parent-layout`'s reply. `LayoutModeSchema`'s `'none'`
+ * means the parent is neither flex nor grid (`display` is anything else —
+ * `block`, `inline`, `grid`... wait: NOT grid — plain block/inline/etc.) —
+ * the FREE-DRAG branch. `'flex'`/`'grid'` cover the standard AND
+ * `inline-*` variants (an `inline-flex`/`inline-grid` container still lays
+ * its children out on flex/grid rules — the REORDER branch). `axis` is only
+ * meaningful when `mode !== 'none'` (still always populated for schema
+ * simplicity — see `parent-layout.ts`'s doc for how it's derived: computed
+ * `flex-direction` for flex, computed `grid-auto-flow` for grid).
+ *
+ * `ok:false` mirrors `text-edit-rejected`'s pattern (defense-in-depth,
+ * same editable-surface contract as `text-edit.ts`): `'not-found'` (unknown
+ * uid), `'no-parent'` (the uid'd node has no real DOM parent element at
+ * all — practically unreachable but defensive), `'dynamic-locked'` (the
+ * DRAGGED node itself is `.map()`-generated — matches this task's hard
+ * constraint "a dynamic node must NOT be draggable/committable", enforced
+ * bridge-side too, not just by the studio never starting a drag on one).
+ */
+export const LayoutModeSchema = z.enum(['flex', 'grid', 'none']);
+export type LayoutMode = z.infer<typeof LayoutModeSchema>;
+
+export const LayoutAxisSchema = z.enum(['row', 'column']);
+export type LayoutAxis = z.infer<typeof LayoutAxisSchema>;
+
+export const ParentLayoutInfoSchema = z
+  .object({
+    mode: LayoutModeSchema,
+    axis: LayoutAxisSchema,
+    /** The parent element's own `data-uid`, or `null` if the real DOM
+     * parent isn't itself an addressable tagged node (component-instance
+     * boundary / fragment ancestor — see `parent-layout.ts`'s doc). A
+     * `null` parentUid means `move-node` has no valid `newParentUid` to
+     * target, so the caller cannot commit a reorder here even if `mode` is
+     * `flex`/`grid` — disclosed carry-forward, see worker report. */
+    parentUid: z.string().nullable(),
+    /** Whether the parent's OWN computed `position` is already non-static
+     * (`relative`/`absolute`/`fixed`/`sticky`) — the FREE-DRAG branch uses
+     * this to decide whether it also needs to add `relative` to the parent
+     * so the dropped element's `absolute` positioning is actually contained
+     * within it (else it'd position against a further, unrelated ancestor). */
+    parentPositioned: z.boolean(),
+    parentRect: RectSchema,
+    /** This uid's own index within `siblingUids` (DOM order) — lets the
+     * caller compute a "dropped back in its original slot" no-op without a
+     * second round trip. */
+    index: z.number().int().nonnegative(),
+    /** Every DIRECT CHILD of the parent that carries `data-uid`, in real
+     * DOM order, INCLUDING this uid itself. Feeds `report-rects` (existing,
+     * reused verbatim) so the caller can compute sibling positions for the
+     * drop-indicator line / target index without a new rect primitive. */
+    siblingUids: z.array(z.string()),
+  })
+  .strict();
+export type ParentLayoutInfo = z.infer<typeof ParentLayoutInfoSchema>;
+
+export const ParentLayoutResultSchema = z.discriminatedUnion('ok', [
+  z.object({ ok: z.literal(true), info: ParentLayoutInfoSchema }).strict(),
+  z
+    .object({
+      ok: z.literal(false),
+      reason: z.enum(['not-found', 'no-parent', 'dynamic-locked']),
+    })
+    .strict(),
+]);
+export type ParentLayoutResult = z.infer<typeof ParentLayoutResultSchema>;
+
+export const ParentLayoutResultReplySchema = z
+  .object({
+    source: z.literal('ccs-bridge'),
+    type: z.literal('parent-layout-result'),
+    requestId: z.string(),
+    uid: z.string(),
+    result: ParentLayoutResultSchema,
+  })
+  .strict();
+export type ParentLayoutResultReply = z.infer<typeof ParentLayoutResultReplySchema>;
+
+/**
+ * FP-4b: `resolve-free-drop`'s reply — the bridge-computed positioning
+ * classes (RTL-aware, see `free-drop.ts`'s doc) for the studio to write
+ * back via the EXISTING `set-classes` `CanvasOp` (never a new op). `ok:false`
+ * mirrors `ParentLayoutResult`'s reasons (same editable-surface contract).
+ */
+export const FreeDropInfoSchema = z
+  .object({
+    /** Classes to ADD to the dragged node itself (e.g. `['absolute',
+     * 'start-[120px]', 'top-[48px]']` — Tailwind logical inset utilities,
+     * RTL-correct: `start`/`end` map to `inset-inline-start`/`-end`, which
+     * the browser itself flips under `dir="rtl"`, not a manual left/right
+     * swap). */
+    addClasses: z.array(z.string()),
+    /** Classes to REMOVE from the dragged node — any position-managing
+     * class this feature itself previously wrote (a prior free-drag drop),
+     * so re-dragging doesn't accumulate stale `top-[..]`/`start-[..]`
+     * classes. Never touches any OTHER class the node already had. */
+    removeClasses: z.array(z.string()),
+    /** The parent's own `data-uid`, or `null` if unaddressable (see
+     * `ParentLayoutInfo.parentUid`'s doc) — `parentAddClasses` is only
+     * ever non-empty when this is non-null. */
+    parentUid: z.string().nullable(),
+    /** `['relative']` when the parent's computed position was static (so
+     * the new `absolute` child is actually contained within it), else `[]`. */
+    parentAddClasses: z.array(z.string()),
+  })
+  .strict();
+export type FreeDropInfo = z.infer<typeof FreeDropInfoSchema>;
+
+export const FreeDropResultSchema = z.discriminatedUnion('ok', [
+  z.object({ ok: z.literal(true), info: FreeDropInfoSchema }).strict(),
+  z
+    .object({
+      ok: z.literal(false),
+      reason: z.enum(['not-found', 'no-parent', 'dynamic-locked']),
+    })
+    .strict(),
+]);
+export type FreeDropResult = z.infer<typeof FreeDropResultSchema>;
+
+export const FreeDropResultReplySchema = z
+  .object({
+    source: z.literal('ccs-bridge'),
+    type: z.literal('free-drop-result'),
+    requestId: z.string(),
+    uid: z.string(),
+    result: FreeDropResultSchema,
+  })
+  .strict();
+export type FreeDropResultReply = z.infer<typeof FreeDropResultReplySchema>;
+
 export const BridgeToStudioMessageSchema = z.discriminatedUnion('type', [
   HitTestResultSchema,
   RectsResultSchema,
@@ -240,5 +420,7 @@ export const BridgeToStudioMessageSchema = z.discriminatedUnion('type', [
   TextEditEnteredSchema,
   TextEditRejectedSchema,
   TextEditExitSchema,
+  ParentLayoutResultReplySchema,
+  FreeDropResultReplySchema,
 ]);
 export type BridgeToStudioMessage = z.infer<typeof BridgeToStudioMessageSchema>;
