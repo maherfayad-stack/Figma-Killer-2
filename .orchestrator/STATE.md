@@ -561,3 +561,20 @@ W4b-3b Layout re-audit + align-content noConfidentDefault); then honest-stub wir
 DECISION for human (blend-mode/visibility/lock/per-corner radius — wire to real data or
 leave as disabled stubs?); then PANEL 3+ chrome (left dock/headers/toolbar/dashboard);
 FIX-W5 frame-nesting-<div>; FIX-W6 comments; bridge-rasterization (held).
+
+### ROUND-5 progress (2026-07-19) — UI passes now STATIC-gated only (human tests; see memory ui-changes-human-tests)
+- FIX-W4b-6 COMPLETE (tag `fix-w4b-6-complete`): Penpot +/add model for Fill/Stroke/
+  Shadow (empty+title-bar-+ until added, − removes; present-vs-empty from computed
+  style for Fill/Shadow, session-hint for Stroke). Static-gated (109/109), frozen 0-diff.
+- FIX-W4b-7 COMPLETE (tag `fix-w4b-7-complete`): wired blend-mode (mix-blend-*),
+  per-corner radius (rounded-tl/tr/br/bl-[..] toggle), aspect-lock (co-scale W/H).
+  Static-gated (129/129), frozen 0-diff.
+- BOTH awaiting HUMAN dogfood (paused pipeline here to avoid stacking untested passes).
+- **FIX-W4b-8 (last stub: visibility + lock) — NEEDS DESIGN STEER before dispatch:**
+  Visibility(eye) is a clean UI win = toggle the `hidden` (display:none) class via
+  set-classes. LOCK is NOT a CSS class — needs editor state (a Set<uid> of locked
+  nodes) in the studio workspace-store that the selection/edit-mode-layer respects;
+  studio-local (no frozen-protocol change), but it's functional (selection-blocking),
+  touches canvas edit layer + layers panel. Surface to human: proceed with that design
+  or defer lock. Then: final STRICT side-by-side sweep (R5-3 remaining 1:1 deltas +
+  deferred W4b-3b re-check + align-content noConfidentDefault).
