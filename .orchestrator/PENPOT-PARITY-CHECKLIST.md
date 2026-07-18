@@ -1,0 +1,71 @@
+# PENPOT PARITY CHECKLIST — drive the studio to near-1:1 with real Penpot
+
+Human directive (2026-07-18, dogfood round 4/4b, WITH side-by-side screenshots):
+"make a step where this is gonna be as faithful and as close and nearly 1:1 100%
+the same as penpot in every aspect."
+
+**Acceptance gate for EVERY parity workstream:** a real-browser SIDE-BY-SIDE
+screenshot of our panel next to the referenced real Penpot panel (source at
+`../penpot`), that a fresh adversarial auditor agrees "reads as near-identical to
+Penpot" — density, grouping, iconography, widget shapes, labels, behavior. NOT
+merely "the control exists." Cite the exact Penpot `.cljs`/`.scss` for each element.
+
+**Honest limit (disclose, don't fake):** Penpot is ClojureScript + SVG shapes; we
+are code-first React + real DOM. A few Inspect *values* differ by nature (we read
+real computed DOM, not vector geometry). Match everything else — look, density,
+widgets, tooling, curation — as close as the stack allows; where a true 1:1 isn't
+possible, say so in the workstream report rather than fabricating parity.
+
+Ground truth: real Penpot right-pane = `../penpot/frontend/src/app/main/ui/
+workspace/sidebar/options.cljs` + `options/menus/*.cljs`+`*.scss`; Inspect =
+`.../viewport/*`/`ui/viewer/inspect/*` + `attributes/*.cljs`. Icons (317) at
+`../penpot/frontend/resources/images/icons/*.svg` (MPL-2.0 © KALEIDOS; attribute).
+
+---
+
+## PANEL 1 — DESIGN tab (right pane)  [status: partial — W4/W4b-1/W4b-2 done]
+DONE: section stack + order (FIX-W4); per-node-type context-awareness + honest
+current-values (W4b-1); real Penpot icons + icon-button align groups + swatch/hex
+chips + real disclosure chevrons (W4b-2).
+
+GAPS (round-4) → **FIX-W4b-3** (3 focused sub-workers, sequential):
+- [ ] **W4b-3a — Size & Position + frame sizing.** Ref `options/menus/measures.cljs`
+      +`.scss`, frame size-presets. Direct editable numeric **W / H / X / Y** (not
+      Auto/Custom two-step dropdowns) writing arbitrary values (`w-[508px]` etc.);
+      **rotation** + **corner radius** numeric + independent-corners toggle; a
+      **Size presets** dropdown + **device-type icons** (phone/tablet) with real
+      device dimensions. Absorbs the device-preset half of old FIX-W5.
+- [ ] **W4b-3b — LAYOUT declutter.** Ref `options/menus/layout_container.cljs`+
+      `.scss`. Rebuild as Penpot's COMPACT cluster: align-grid + direction arrows +
+      wrap toggle in ~2 tight rows, then small icon numeric fields for gap/padding
+      (per-side toggle). Kill the tall labelled-dropdown-per-property layout.
+- [ ] **W4b-3c — Color control.** Ref `options/menus/fill.cljs`+`color_row.cljs`+
+      `components/color_bullet`. A real color widget: swatch + editable **HEX**
+      (CUSTOM colors → `bg-[#RRGGBB]`) + opacity %; a picker POPOVER with the token
+      palette that is **SEARCHABLE** and shows color-**preview swatches**; "Show in
+      exports"/remove affordances. Same widget reused for Fill/Stroke/Typography.
+
+## PANEL 2 — INSPECT tab (right pane)  [status: BROKEN + not Penpot-clean]
+GAPS (round-4b) → **FIX-W4b-4** (subsumes old FIX-W2):
+- [ ] **BUG: NODE + FRAME code blocks stuck on "Loading…"** (read-source round-trip
+      hangs though report-computed-style works). Diagnose + fix so code loads
+      reliably; honest error state if a read genuinely fails (no infinite spinner).
+- [ ] **Curate + clean like Penpot** (ref `ui/viewer/inspect/*` +
+      `attributes/*.cljs`): Board/node name header; a "Layer info" row with a
+      HEX/Styles toggle; friendly GROUPED label:value (Size & Position; Fill =
+      swatch + #hex + % + copy; Layout = Display / Flex direction / Flex wrap /
+      Align items / Align content / Justify content) — NOT a raw dump of every
+      computed CSS property. Keep the CODE (JSX) + per-block Copy.
+
+## PANEL 3+ — broader chrome (future parity rounds, after right pane)
+- [ ] Left dock (Pages/Layers) row anatomy vs `sidebar/layers*`.
+- [ ] Headers / toolbar / dashboard vs their Penpot counterparts.
+- [ ] Assets & Tokens panels.
+(Scope: right pane FIRST — the active complaint — then expand outward.)
+
+---
+
+## Execution order (SEQUENTIAL, limit-resilient small workers)
+1. gate W4b-2 (icons, in-flight) → 2. W4b-3a → 3. W4b-3b → 4. W4b-3c → 5. W4b-4
+(Inspect clean + fix Loading… bug). Each: worker → fresh adversarial audit whose
+gate is the side-by-side visual match → orchestrator commit + tag. Then Panel 3+.

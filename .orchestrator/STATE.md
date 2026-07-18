@@ -493,3 +493,21 @@ Layout declutter (Penpot compact cluster) → W4b-3c color control (custom hex +
 + searchable token palette + preview swatches). W4b-2's real Penpot icons + icon-
 button groups are the foundation these build on. FIX-W5 remainder (create-frame-
 inside-frame → nested <div>) stays separate.
+
+## DOGFOOD ROUND 4b (human, 2026-07-18) — Inspect tab + the 1:1 mandate
+Human screenshot of Penpot Inspect vs ours + directive "make a step where this is
+gonna be nearly 1:1 100% the same as penpot in every aspect."
+- **CONFIRMED BUG (FIX-W2 is NOT resolved):** our Inspect tab NODE + FRAME code
+  blocks are stuck on "Loading…" (read-source round-trip hangs; report-computed-
+  style works). FIX-W2 reclassified from "await retry" to a real bug → folded into
+  FIX-W4b-4.
+- **Inspect not Penpot-clean:** ours dumps RAW computed CSS; Penpot curates (Board
+  header + Layer info HEX/Styles toggle + friendly grouped Size/Fill/Layout labels).
+- **1:1 MANDATE:** established `.orchestrator/PENPOT-PARITY-CHECKLIST.md` as the
+  driving artifact. Acceptance gate for every parity workstream = a real-browser
+  SIDE-BY-SIDE screenshot a fresh auditor agrees "reads as near-identical to Penpot"
+  (density/grouping/icons/widgets/labels/behavior), not "the control exists." Honest
+  limit disclosed (Penpot=cljs+SVG vs ours=React+real-DOM; some Inspect VALUES differ
+  by nature). Scope right-pane FIRST (Design PANEL-1 + Inspect PANEL-2), then chrome.
+- FIX-W4b-4 = Inspect Penpot-clean curation + fix the Loading… read-source bug
+  (subsumes FIX-W2). Runs after W4b-3a/b/c per the checklist order.
