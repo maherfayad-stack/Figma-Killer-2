@@ -432,3 +432,20 @@ Additive Panel `icon` prop. Frozen surfaces zero-diff; @ccs/studio 58/58 + @ccs/
 Penpot design-parity). Audit intel confirmed: context-awareness is BINARY today
 (board selection = empty state), read-values all defaults, Inspect h-scroll root
 cause = CssRows flex min-width:0 miss, right-dock min-width hardcoded 318px.
+
+### FIX-W8 — COMPLETE (orchestrator self-verified, tag `fix-w8-complete`) 2026-07-18
+Round-3 R3-4: frames' internal scrollbar. CROSS-ORIGIN iframes → parent can't
+style frame scrollbars → fix lives in the frame-app global CSS (templates/file-app/
+src/index.css, inherited by every create-file project; files/demo mirrored for the
+running demo). `* {scrollbar-width:none}` + `*::-webkit-scrollbar{display:none}` —
+hides the BAR only, overflow untouched so scroll still works, no content clipped.
+"Eliminate" reduces to "hide" (no safe general way to remove overflow w/o clipping).
+frame-shape.tsx/canvas zero-diff. Self-verified (trivial pure-CSS + worker DOM-proof)
+rather than a full fresh audit, to conserve the account session limit — disclosed.
+
+### ROUND-3 STATUS: W7 ✅ (gated) · W8 ✅ (gated) · W4b = NEXT (the headline).
+Remaining round-3: FIX-W4b — full Penpot design-parity right pane (real ported
+Penpot SVG icons w/ MPL attribution + per-node-type context-awareness driven off
+options.cljs + read-current-values via the existing report-computed-style bridge).
+Then original round-2 leftovers: FIX-W2 (inspect-load, await human retry), FIX-W5
+(frame nesting + device presets), FIX-W6 (comments), bridge-rasterization (held).
