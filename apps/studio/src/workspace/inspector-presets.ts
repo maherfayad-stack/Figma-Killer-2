@@ -558,6 +558,292 @@ export function hexForColorValue(value: string): string | undefined {
   return TAILWIND_500_HEX[name];
 }
 
+// --- FIX-W4b-3c — real color control (Fill/Stroke/Typography color) ------
+//
+// Replaces the plain `colorGroup()` <Select> (`GroupSelect`'s `swatchHex`
+// row above — now UNUSED by any color caller, kept on `GroupSelect` itself
+// only as a harmless, still-typed no-op path for whatever future non-color
+// caller might want a swatch-annotated select; not deleted purely to avoid
+// churning that shared helper's public shape) with a real Penpot
+// `color_row.cljs`/`color_bullet.cljs`-anatomy control: a swatch bullet +
+// editable hex field + opacity %, and (via `Inspector.tsx`'s `ColorControl`,
+// the DOM-touching half that can't live in this dependency-free file) a
+// picker popover with an HSV area + hue slider + a searchable palette of DS
+// tokens (`@ccs/tokens`, via the FROZEN `EngineApi.tokensForProperty`) AND
+// this file's own pre-existing Tailwind named palette (`colorGroup`) side by
+// side — so nothing the OLD `<Select>` could write is lost, custom hex is
+// newly possible, and DS tokens are newly discoverable+searchable. Every
+// function below is pure (no DOM) so it's unit-testable here; the one place
+// that genuinely needs the DOM (normalizing a LIVE computed color string —
+// `rgb()`/`oklch()`/anything CSS-legal — into a hex swatch) is
+// `Inspector.tsx`'s own `cssColorToHex`, which calls into these.
+
+/** Validates + normalizes a user-typed hex string (`#abc`, `abc`, `#aabbcc`,
+ * `aabbcc`, any case) to a canonical lowercase 6-digit `#rrggbb`, or `null`
+ * for anything that isn't a valid 3- or 6-digit hex triplet (garbage input
+ * is REJECTED, never silently coerced to a guessed color — same honesty
+ * policy as this file's numeric arbitrary-value fields, which also decline
+ * to write on a non-finite value). */
+export function normalizeHex(input: string): string | null {
+  const trimmed = input.trim();
+  const six = /^#?([0-9a-fA-F]{6})$/.exec(trimmed);
+  if (six?.[1]) return `#${six[1].toLowerCase()}`;
+  const three = /^#?([0-9a-fA-F]{3})$/.exec(trimmed);
+  if (three?.[1]) {
+    const [r, g, b] = three[1].toLowerCase().split('');
+    return `#${r}${r}${g}${g}${b}${b}`;
+  }
+  return null;
+}
+
+export interface RgbColor {
+  r: number;
+  g: number;
+  b: number;
+}
+
+export interface HsvColor {
+  h: number;
+  s: number;
+  v: number;
+}
+
+/** `null` for anything `normalizeHex` itself rejects — never a guessed
+ * fallback color. */
+export function hexToRgb(hex: string): RgbColor | null {
+  const normalized = normalizeHex(hex);
+  if (!normalized) return null;
+  const int = Number.parseInt(normalized.slice(1), 16);
+  return { r: (int >> 16) & 255, g: (int >> 8) & 255, b: int & 255 };
+}
+
+function clampByte(n: number): number {
+  return Math.max(0, Math.min(255, Math.round(n)));
+}
+
+export function rgbToHex({ r, g, b }: RgbColor): string {
+  return `#${[r, g, b].map((c) => clampByte(c).toString(16).padStart(2, '0')).join('')}`;
+}
+
+/** Standard RGB->HSV (`s`/`v` returned as 0-100 PERCENTAGES, matching this
+ * control's own SV-square/opacity-field convention, not the 0-1 unit
+ * interval most textbook formulas use). */
+export function rgbToHsv({ r, g, b }: RgbColor): HsvColor {
+  const rn = r / 255;
+  const gn = g / 255;
+  const bn = b / 255;
+  const max = Math.max(rn, gn, bn);
+  const min = Math.min(rn, gn, bn);
+  const d = max - min;
+  let h = 0;
+  if (d !== 0) {
+    if (max === rn) h = 60 * (((gn - bn) / d) % 6);
+    else if (max === gn) h = 60 * ((bn - rn) / d + 2);
+    else h = 60 * ((rn - gn) / d + 4);
+  }
+  if (h < 0) h += 360;
+  const s = max === 0 ? 0 : d / max;
+  return { h, s: s * 100, v: max * 100 };
+}
+
+export function hsvToRgb({ h, s, v }: HsvColor): RgbColor {
+  const sn = s / 100;
+  const vn = v / 100;
+  const c = vn * sn;
+  const hp = (((h % 360) + 360) % 360) / 60;
+  const x = c * (1 - Math.abs((hp % 2) - 1));
+  const [r1, g1, b1] =
+    hp < 1
+      ? [c, x, 0]
+      : hp < 2
+        ? [x, c, 0]
+        : hp < 3
+          ? [0, c, x]
+          : hp < 4
+            ? [0, x, c]
+            : hp < 5
+              ? [x, 0, c]
+              : [c, 0, x];
+  const m = vn - c;
+  return { r: (r1 + m) * 255, g: (g1 + m) * 255, b: (b1 + m) * 255 };
+}
+
+export function clamp01(n: number): number {
+  return Math.max(0, Math.min(1, n));
+}
+
+/** Minimal, PURE camelCase->kebab-case duplicate of `@ccs/tokens`'
+ * `kebab.ts`, for a DS color token NAME only (`aqua100` -> `aqua-100`,
+ * matching `emit-tailwind-preset.ts`'s own `colors[kebabCase(t.name)]` key —
+ * so `bg-${tokenClassName(name)}` is the SAME Tailwind class that preset
+ * actually extends `theme.colors` with). NOT an import of `@ccs/tokens`
+ * runtime: `real-engine-api.ts`'s own module doc establishes that package's
+ * real (ts-morph/fs-bound) code must never enter this browser bundle — a
+ * tiny, independently-tested duplicate is the established precedent (that
+ * same file duplicates `CSS_PROPERTY_GROUPS`' prop-name list for an
+ * identical reason). */
+export function tokenClassName(tokenName: string): string {
+  return tokenName
+    .replace(/([a-z0-9])([A-Z])/g, '$1-$2')
+    .replace(/([A-Za-z])(\d)/g, '$1-$2')
+    .toLowerCase();
+}
+
+/** Appends Tailwind's `/NN` alpha modifier to a base color class, UNLESS
+ * `alphaPct` is `null` or `>= 100` (fully opaque === Tailwind's own default,
+ * so the modifier is a needless no-op class the same way `arbitrarySizeEdit`
+ * et al. only ever write the ONE class actually needed). `alphaPct` is
+ * clamped/rounded to a valid 0-100 integer first — a stray out-of-range or
+ * fractional value from a numeric `<input>` never produces invalid Tailwind
+ * like `bg-[#3b82f6]/137.5`. */
+export function colorClassWithAlpha(baseClass: string, alphaPct: number | null): string {
+  if (alphaPct === null) return baseClass;
+  const pct = Math.max(0, Math.min(100, Math.round(alphaPct)));
+  if (pct >= 100) return baseClass;
+  return `${baseClass}/${pct}`;
+}
+
+/** The `set-classes` add/remove pair for THIS control's write, given the
+ * base class it resolved (a custom `${prefix}-[#hex]`, a DS-token
+ * `${prefix}-${tokenClassName}`, or a legacy named `${prefix}-blue-500`/
+ * `${prefix}-transparent` — `ColorControl` in `Inspector.tsx` builds whichever
+ * applies) plus this SAME control's own previously-written class this
+ * session, if any (`previousWritten`, from the session hint cache — see
+ * `serializeColorHint`/`parseColorHint` below). Unlike `resolveClassEdit`'s
+ * colorGroup path (which lists EVERY named palette class as a remove
+ * candidate, since it has no better source), this only needs its own last
+ * write: `bg-color`/`text-color`/`border-color` are TRACKED conflict groups
+ * in `@ccs/ast-engine`'s `tailwind-groups.ts` (confirmed: `^bg-.+$` etc.
+ * match any custom/token/named color class, none of them hit that table's
+ * more-specific carve-outs like `bg-opacity-*`/`bg-none`), so the daemon's
+ * own `mergeClassNames` already evicts ANY pre-existing same-group class on
+ * `add` — including ones this session's hint cache never saw (e.g. a class
+ * already on the node from a previous page load). Explicitly removing our
+ * own last write too is just belt-and-suspenders for the one case group
+ * eviction can't help with: this exact class already being present verbatim
+ * (a no-op re-add, which `mergeClassNames` short-circuits before eviction
+ * ever runs) needs no removal at all — `!== cls` guards that. */
+export function resolveColorWrite(
+  baseClassNoAlpha: string,
+  alphaPct: number | null,
+  previousWritten: string | null,
+): ClassEdit {
+  const cls = colorClassWithAlpha(baseClassNoAlpha, alphaPct);
+  const remove = previousWritten && previousWritten !== cls ? [previousWritten] : [];
+  return { add: [cls], remove };
+}
+
+/** The full state `ColorControl` needs to redraw itself from a session hint
+ * alone (no re-parsing of a written Tailwind class string required —
+ * `written` is kept purely as `resolveColorWrite`'s `previousWritten`
+ * remove-candidate, `hex`/`alphaPct`/`baseClass` are what the UI actually
+ * reads). */
+export interface ColorControlValue {
+  /** Always a real `#rrggbb` — even for a DS-token pick, this is that
+   * token's OWN resolved color (for the swatch/hex-field preview), never a
+   * guess. Empty string `''` means "no color" (the `none`/transparent
+   * pick). */
+  hex: string;
+  /** 0-100; 100 = fully opaque / no `/NN` modifier written. */
+  alphaPct: number;
+  /** The class this value would write WITHOUT an alpha suffix — re-combined
+   * with a NEW `alphaPct` when only the opacity field changes, so adjusting
+   * opacity alone doesn't silently convert a token/named pick into a raw hex
+   * arbitrary value. */
+  baseClass: string;
+  /** The exact class last sent via `set-classes` (`baseClass` + alpha
+   * suffix) — this control's own `previousWritten` remove-candidate next
+   * time (see `resolveColorWrite`'s doc). */
+  written: string;
+}
+
+export function serializeColorHint(value: ColorControlValue): string {
+  return JSON.stringify(value);
+}
+
+/** `undefined`/unparsable/shape-mismatched input -> `null` (never a
+ * fabricated value) — same honesty contract every other parse function in
+ * this file follows (`parseArbitraryValue`, etc.). */
+export function parseColorHint(raw: string | undefined): ColorControlValue | null {
+  if (!raw) return null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (
+      parsed !== null &&
+      typeof parsed === 'object' &&
+      typeof (parsed as Partial<ColorControlValue>).hex === 'string' &&
+      typeof (parsed as Partial<ColorControlValue>).alphaPct === 'number' &&
+      typeof (parsed as Partial<ColorControlValue>).baseClass === 'string' &&
+      typeof (parsed as Partial<ColorControlValue>).written === 'string'
+    ) {
+      return parsed as ColorControlValue;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export interface ColorPaletteEntry {
+  key: string;
+  label: string;
+  /** `undefined` for a palette entry this file can't resolve a swatch color
+   * for (should not happen in practice — every `colorGroup` preset except
+   * `none` has a `TAILWIND_500_HEX`/literal entry, and every DS token's
+   * `resolveTokenHex` callback is expected to resolve its own real value —
+   * but never fabricated if it can't). */
+  hex: string | undefined;
+  /** The class to write (WITHOUT an alpha suffix — `ColorControl` combines
+   * it with the live opacity field via `colorClassWithAlpha`). */
+  baseClass: string;
+}
+
+/** Builds the searchable palette `ColorControl`'s picker popover renders:
+ * DS color tokens (`tokens`, from the FROZEN `EngineApi.tokensForProperty`
+ * — real Almosafer DS tokens once P4 lands, the mock adapter's small color
+ * set until then) FIRST, then this file's own pre-existing named Tailwind
+ * palette (`colorGroup`) — so nothing the control it replaces could already
+ * write is lost. `resolveTokenHex` is injected (rather than this file
+ * reaching for a color-parsing helper itself) because a token's raw `value`
+ * isn't guaranteed to already be a hex literal (the real `@ccs/tokens`
+ * catalog can emit any CSS-legal color string) — turning THAT into a
+ * guaranteed hex needs the DOM-canvas normalization trick that only
+ * `Inspector.tsx`'s `cssColorToHex` can do (this file stays dependency-free,
+ * per its own module doc). */
+export function buildColorPalette(
+  prefix: 'bg' | 'text' | 'border',
+  tokens: readonly { name: string; value: string }[],
+  resolveTokenHex: (value: string) => string | undefined,
+): ColorPaletteEntry[] {
+  const tokenEntries: ColorPaletteEntry[] = tokens.map((t) => ({
+    key: `token:${t.name}`,
+    label: t.name,
+    hex: resolveTokenHex(t.value),
+    baseClass: `${prefix}-${tokenClassName(t.name)}`,
+  }));
+  const namedEntries: ColorPaletteEntry[] = colorGroup(prefix).presets.map((p) => ({
+    key: `named:${p.value}`,
+    label: p.label,
+    hex: hexForColorValue(p.value),
+    baseClass: p.add[0] ?? `${prefix}-transparent`,
+  }));
+  return [...tokenEntries, ...namedEntries];
+}
+
+/** Case-insensitive substring filter over a palette's own `label` — the
+ * "SEARCH" the human's own complaint asked for ("even no search in that").
+ * Empty/whitespace-only `query` returns every entry (a fresh copy, not the
+ * same array reference, so a caller memoizing on it sees a real change were
+ * it to ever matter). */
+export function filterColorPalette(
+  entries: readonly ColorPaletteEntry[],
+  query: string,
+): ColorPaletteEntry[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return [...entries];
+  return entries.filter((e) => e.label.toLowerCase().includes(q));
+}
+
 // --- Border & radius (border_radius.cljs + border) -----------------------
 
 export const RADIUS_GROUP: ClassPresetGroup = {

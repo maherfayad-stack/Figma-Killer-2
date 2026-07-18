@@ -29,25 +29,35 @@ import {
   arbitraryRotateEdit,
   arbitrarySizeEdit,
   BORDER_WIDTH_GROUP,
+  buildColorPalette,
+  clamp01,
   type ClassEdit,
   type ClassPresetGroup,
-  colorGroup,
+  type ColorControlValue,
   DEVICE_PRESETS,
   DEVICE_QUICK_PRESETS,
   type DevicePreset,
   DIRECTION_GROUP,
+  filterColorPalette,
   FONT_WEIGHT_GROUP,
   GROW_GROUP,
-  hexForColorValue,
+  hexToRgb,
+  hsvToRgb,
   JUSTIFY_GROUP,
   LEADING_GROUP,
+  normalizeHex,
   OPACITY_GROUP,
   ORDER_GROUP,
   parseArbitraryValue,
+  parseColorHint,
   POSITION_GROUP,
   POSITION_REMOVE_EXTRA,
   resolveClassEdit,
+  resolveColorWrite,
+  rgbToHex,
+  rgbToHsv,
   SELF_ALIGN_GROUP,
+  serializeColorHint,
   SHADOW_GROUP,
   TEXT_ALIGN_GROUP,
   TEXT_SIZE_GROUP,
@@ -270,6 +280,35 @@ import {
  *    labeled buttons ("Phone"/"Tablet"/"Desktop"), the same "no icon beats a
  *    wrong one" honesty policy this file's icon-lookup functions (`justify
  *    Icon`, etc.) already apply.
+ *
+ * ## FIX-W4b-3c — real color control (Fill/Stroke/Typography color)
+ * Replaces the plain `colorGroup()`-backed `GroupSelect` (+ its `swatchHex`
+ * chip) on all three color rows with `ColorControl` — a Penpot `color_row.
+ * cljs`/`color_bullet.cljs`-anatomy control (swatch bullet + editable hex +
+ * opacity %), whose bullet opens a `colorpicker.cljs`-anatomy popover: a
+ * hand-rolled SV+hue picker (`ColorSvHuePicker`, plain CSS gradients +
+ * Pointer Events — no new npm dependency) plus a SEARCHABLE palette merging
+ * real DS color tokens (`@ccs/tokens`, via the frozen `EngineApi.
+ * tokensForProperty`) with this file's pre-existing named Tailwind palette,
+ * every entry a real preview swatch. Directly answers the human's own
+ * dogfood complaint verbatim: "I can't put custom colors just dropdown from
+ * our tokens, and also there is no search in that and even no preview of the
+ * colors." A custom/picked hex writes an ARBITRARY `${prefix}-[#rrggbb]`
+ * class (`bg-`/`text-`/`border-`, mirroring FIX-W4b-3a's `w-[Npx]`
+ * convention); a token pick writes `${prefix}-${tokenClassName}` (the SAME
+ * Tailwind key `@ccs/tokens`' own `emitTailwindPreset` extends `theme.colors`
+ * with); opacity is Tailwind's `/NN` alpha modifier on whichever class is
+ * active. The bullet/hex seed from the element's REAL current computed color
+ * (`ComputedStyleContext`, already curated by `@ccs/bridge`'s existing
+ * `COLOR_PROPS` list — zero protocol/bridge diff) via `cssColorToHex`, which
+ * normalizes ANY CSS-legal color string (`rgb()`/`oklch()`/`color(...)`/
+ * named keywords) using the browser's own Canvas 2D color-serialization
+ * (see that function's own doc) — honest, never fabricated. See
+ * `ColorControl`'s own doc for the full "uncontrolled until touched"
+ * precedence and `inspector-presets.ts`'s own module doc for every pure
+ * helper backing this (`resolveColorWrite`, `buildColorPalette`,
+ * `serializeColorHint`/`parseColorHint`, the hex<->rgb<->hsv conversions).
+ * Size&Position, Layout, and every other control are UNTOUCHED by this pass.
  */
 export interface InspectorProps {
   /** `null` until `StudioCanvas`'s `onReady` fires (mirrors `InspectPanel`'s
@@ -762,9 +801,15 @@ function GroupSelect({
    * Penpot's free-numeric field, but still carries the same property glyph). */
   leadingIcon?: IconName | undefined;
   /** FIX-W4b-2: renders a Penpot `color_bullet`-style swatch chip + hex value
-   * ABOVE the select (Fill/Stroke/Typography-color rows — see
-   * `inspector-presets.ts`'s `hexForColorValue`). Only passed by
-   * color-backed groups. */
+   * ABOVE the select. UNUSED as of FIX-W4b-3c: Fill/Stroke/Typography-color
+   * (this prop's only 3 callers) were replaced with the dedicated
+   * `ColorControl` (custom hex + picker + searchable token palette — see
+   * that function's own doc for why a plain `<Select>` could no longer
+   * satisfy the human's own "no custom colors / no search / no preview"
+   * complaint). Left on `GroupSelect` itself, still fully wired, in case a
+   * future non-color swatch-backed group ever needs it — removing a shared
+   * helper's still-functional optional prop merely because its callers
+   * moved on isn't this workstream's scope (color controls only). */
   swatchHex?: (value: string) => string | undefined;
 }): React.ReactElement {
   const { sendOp } = useDaemonConnection();
@@ -949,6 +994,393 @@ function GroupButtons({
         })}
       </div>
       {cssProp && <CurrentValueLine cssProp={cssProp} group={group} />}
+    </div>
+  );
+}
+
+/** FIX-W4b-3c — normalizes ANY CSS-legal color string (the bridge's REAL
+ * computed `rgb()`/`rgba()`/`oklch()`/`color(...)`/named-keyword value, or a
+ * DS token's raw catalog value) into a guaranteed hex + alpha% pair, using
+ * the browser's OWN color engine instead of hand-parsing every CSS color
+ * syntax — no new npm dependency (the constraint this workstream's brief
+ * explicitly holds to), and honestly handles formats (`oklch()`,
+ * `color(...)`) `inspector-presets.ts`'s dependency-free `normalizeHex`
+ * cannot.
+ *
+ * CORRECTED mid-implementation by this pass's own real-browser dogfood: the
+ * first version read `ctx.fillStyle` back as a STRING and regex-matched
+ * `#rrggbb`/`rgba(...)`, on the (wrong, empirically disproven) assumption
+ * that the HTML Canvas 2D "serialization of a color" always collapses to
+ * one of those two forms. It does NOT on current Chromium (confirmed:
+ * `ctx.fillStyle = 'oklch(0.588 0.158 241.966)'` then reading `ctx.
+ * fillStyle` back yields THE SAME oklch() STRING verbatim, not a `#rrggbb`)
+ * — so a `background-color: oklch(...)` node (a completely normal computed
+ * value in a modern browser, and exactly what this dogfood run hit on
+ * Hero.tsx's `bg-sky-600` button) silently failed to resolve, leaving the
+ * hex field BLANK instead of `#0284c7`. Fixed by never re-parsing the
+ * fillStyle STRING at all: instead, PAINT one pixel with it and read the
+ * pixel back via `getImageData` — canvas pixel storage is always
+ * un-premultiplied 8-bit sRGB regardless of the input color space (per the
+ * same spec), so this works identically for `oklch()`, `lab()`, `color()`,
+ * `hsl()`, hex, or a named keyword, with no format-specific parsing at all.
+ * Still detects an INVALID input (the fillStyle setter silently keeps its
+ * PRIOR value on parse failure) via a sentinel prime, returning `null`
+ * rather than fabricating a color for it — same honesty policy as every
+ * other parse function in this file. DOM-dependent (this is exactly why it
+ * lives here, not in the dependency-free `inspector-presets.ts` — see that
+ * file's own module doc). */
+function cssColorToHex(raw: string): { hex: string; alphaPct: number } | null {
+  if (typeof document === 'undefined') return null;
+  const canvas = document.createElement('canvas');
+  canvas.width = 1;
+  canvas.height = 1;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+  const sentinel = '#010203';
+  ctx.fillStyle = sentinel;
+  ctx.fillStyle = raw;
+  if (ctx.fillStyle === sentinel && raw.trim().toLowerCase() !== sentinel) return null;
+  ctx.clearRect(0, 0, 1, 1);
+  ctx.fillRect(0, 0, 1, 1);
+  const pixel = ctx.getImageData(0, 0, 1, 1).data;
+  const [r, g, b, a] = pixel;
+  if (r === undefined || g === undefined || b === undefined || a === undefined) return null;
+  return { hex: rgbToHex({ r, g, b }), alphaPct: Math.round((a / 255) * 100) };
+}
+
+/** FIX-W4b-3c — the hand-rolled visual picker (`colorpicker/hsva.cljs` +
+ * `colorpicker/ramp.cljs`'s SV-area + hue-slider anatomy; NOT a new npm
+ * dependency, per this workstream's hard constraint — plain CSS gradients +
+ * Pointer Events). `hex` is the control's current color (drives both the
+ * SV-square's own hue backdrop and the two thumbs' positions); `onChange`
+ * fires with a new hex on every drag, letting the caller combine it with the
+ * live opacity field exactly like every other color-source write. */
+function ColorSvHuePicker({ hex, onChange }: { hex: string; onChange: (hex: string) => void }): React.ReactElement {
+  const rgb = hexToRgb(hex) ?? { r: 59, g: 130, b: 246 };
+  const hsv = rgbToHsv(rgb);
+
+  function fromSv(e: React.PointerEvent<HTMLDivElement>): void {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const s = clamp01((e.clientX - rect.left) / rect.width) * 100;
+    const v = (1 - clamp01((e.clientY - rect.top) / rect.height)) * 100;
+    onChange(rgbToHex(hsvToRgb({ h: hsv.h, s, v })));
+  }
+
+  function fromHue(e: React.PointerEvent<HTMLDivElement>): void {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const h = clamp01((e.clientX - rect.left) / rect.width) * 360;
+    onChange(rgbToHex(hsvToRgb({ h, s: hsv.s, v: hsv.v })));
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div
+        aria-label="Saturation and value"
+        onPointerDown={(e) => {
+          e.currentTarget.setPointerCapture(e.pointerId);
+          fromSv(e);
+        }}
+        onPointerMove={(e) => {
+          if (e.buttons !== 1) return;
+          fromSv(e);
+        }}
+        style={{
+          position: 'relative',
+          inlineSize: '100%',
+          blockSize: 120,
+          borderRadius: 'var(--ccs-radius-sm)',
+          background: `linear-gradient(to top, #000, transparent), linear-gradient(to right, #fff, hsl(${hsv.h}, 100%, 50%))`,
+          border: '1px solid var(--ccs-border)',
+          cursor: 'crosshair',
+          touchAction: 'none',
+        }}
+      >
+        <span
+          aria-hidden
+          style={{
+            position: 'absolute',
+            insetInlineStart: `${hsv.s}%`,
+            insetBlockStart: `${100 - hsv.v}%`,
+            transform: 'translate(-50%, -50%)',
+            inlineSize: 10,
+            blockSize: 10,
+            borderRadius: '50%',
+            border: '2px solid #fff',
+            boxShadow: '0 0 0 1px rgba(0,0,0,0.6)',
+            pointerEvents: 'none',
+          }}
+        />
+      </div>
+      <div
+        aria-label="Hue"
+        onPointerDown={(e) => {
+          e.currentTarget.setPointerCapture(e.pointerId);
+          fromHue(e);
+        }}
+        onPointerMove={(e) => {
+          if (e.buttons !== 1) return;
+          fromHue(e);
+        }}
+        style={{
+          position: 'relative',
+          inlineSize: '100%',
+          blockSize: 14,
+          borderRadius: 9999,
+          background: 'linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00)',
+          border: '1px solid var(--ccs-border)',
+          cursor: 'pointer',
+          touchAction: 'none',
+        }}
+      >
+        <span
+          aria-hidden
+          style={{
+            position: 'absolute',
+            insetInlineStart: `${(hsv.h / 360) * 100}%`,
+            insetBlockStart: '50%',
+            transform: 'translate(-50%, -50%)',
+            inlineSize: 14,
+            blockSize: 14,
+            borderRadius: '50%',
+            border: '2px solid #fff',
+            boxShadow: '0 0 0 1px rgba(0,0,0,0.6)',
+            background: hex,
+            pointerEvents: 'none',
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
+const COLOR_SWATCH_NONE_BG =
+  'repeating-conic-gradient(var(--ccs-bg-input) 0% 25%, var(--ccs-bg-panel-raised) 0% 50%) 0 0/8px 8px';
+
+/** FIX-W4b-3c — replaces the old `GroupSelect`+`swatchHex` plain `<Select>`
+ * for Fill/Stroke/Typography color with a real Penpot `color_row.cljs`/
+ * `color_bullet.cljs`-anatomy control: a swatch bullet (real current color,
+ * never fabricated — see `cssColorToHex`) + an editable hex field (accepts
+ * ANY custom hex, written as an arbitrary `${prefix}-[#rrggbb]` class) + an
+ * opacity % field (Tailwind's `/NN` alpha modifier). Clicking the bullet
+ * opens a `colorpicker.cljs`-anatomy popover: a hand-rolled SV+hue picker
+ * (`ColorSvHuePicker`) plus a SEARCHABLE palette combining real DS color
+ * tokens (`@ccs/tokens`, via the frozen `EngineApi.tokensForProperty` — see
+ * `buildColorPalette`'s own doc) and this file's pre-existing named Tailwind
+ * palette, each rendered as a real preview swatch — closing the human's own
+ * three complaints verbatim ("can't put custom colors", "just dropdown from
+ * our tokens", "no search... no preview of the colors").
+ *
+ * Same "uncontrolled until touched" precedence every other FIX-W4b-1/3a
+ * control in this file uses (`touched ?? hinted ?? live-seed`): a session hint
+ * (`serializeColorHint`/`parseColorHint`, THIS control's own last write) wins
+ * once set, otherwise the element's REAL current computed color
+ * (`ComputedStyleContext` + `cssColorToHex`) is shown, otherwise an honest
+ * empty/"none" state — never a fabricated default. */
+function ColorControl({
+  node,
+  prefix,
+  cssProp,
+  label,
+  readOnly,
+}: {
+  node: TreeNode;
+  prefix: 'bg' | 'text' | 'border';
+  cssProp: 'background-color' | 'color' | 'border-color';
+  label: string;
+  readOnly: boolean;
+}): React.ReactElement {
+  const { sendOp } = useDaemonConnection();
+  const engine = useEngineApi();
+  const computed = React.useContext(ComputedStyleContext);
+  const hintKey = `${prefix}-color`;
+
+  const [touched, setTouched] = React.useState<ColorControlValue | null>(null);
+  const [open, setOpen] = React.useState(false);
+  const [query, setQuery] = React.useState('');
+  const [hexDraft, setHexDraft] = React.useState<string | null>(null);
+  const [alphaDraft, setAlphaDraft] = React.useState<string | null>(null);
+  const popoverRef = React.useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    if (!open) return;
+    function onDocMouseDown(e: MouseEvent): void {
+      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener('mousedown', onDocMouseDown);
+    return () => document.removeEventListener('mousedown', onDocMouseDown);
+  }, [open]);
+
+  const hintedRaw = getClassHint(node.uid, hintKey);
+  const hinted = parseColorHint(hintedRaw);
+  const liveSeed = resolveCurrentValue(computed, cssProp);
+  const liveHex = liveSeed !== 'loading' && liveSeed !== 'unset' ? cssColorToHex(liveSeed.raw) : null;
+
+  const active = touched ?? hinted;
+  const displayHex = active?.hex ?? liveHex?.hex ?? null;
+  const displayAlpha = active?.alphaPct ?? liveHex?.alphaPct ?? 100;
+  const displayBaseClass = active?.baseClass ?? (displayHex ? `${prefix}-[${displayHex}]` : null);
+  const previousWritten = active?.written ?? null;
+
+  const tokens = engine.tokensForProperty(cssProp);
+  const palette = React.useMemo(
+    () => buildColorPalette(prefix, tokens, (value) => normalizeHex(value) ?? cssColorToHex(value)?.hex),
+    [prefix, tokens],
+  );
+  const filtered = filterColorPalette(palette, query);
+
+  function applyWrite(baseClass: string, hex: string, alphaPct: number): void {
+    const edit = resolveColorWrite(baseClass, alphaPct, previousWritten);
+    const written = edit.add[0];
+    if (!written) return;
+    const next: ColorControlValue = {
+      hex,
+      alphaPct: Math.max(0, Math.min(100, Math.round(alphaPct))),
+      baseClass,
+      written,
+    };
+    setTouched(next);
+    setHexDraft(null);
+    setAlphaDraft(null);
+    if (readOnly) return;
+    setClassHint(node.uid, hintKey, serializeColorHint(next));
+    sendOp({ t: 'set-classes', uid: node.uid, add: edit.add, remove: edit.remove });
+  }
+
+  const swatchBg = displayHex || COLOR_SWATCH_NONE_BG;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <span style={{ fontSize: 'var(--ccs-font-size-xs)', color: 'var(--ccs-text-muted)' }}>{label}</span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, position: 'relative' }}>
+        <button
+          type="button"
+          aria-label={`${label} — open color picker`}
+          aria-expanded={open}
+          disabled={readOnly}
+          onClick={() => setOpen((o) => !o)}
+          title={displayHex ?? 'none'}
+          style={{
+            inlineSize: 22,
+            blockSize: 22,
+            borderRadius: 'var(--ccs-radius-sm)',
+            border: '1px solid var(--ccs-border)',
+            background: swatchBg,
+            flexShrink: 0,
+            padding: 0,
+            cursor: readOnly ? 'default' : 'pointer',
+          }}
+        />
+        <div style={{ flex: 1, minInlineSize: 0 }}>
+          <Input
+            value={hexDraft ?? displayHex ?? ''}
+            disabled={readOnly}
+            placeholder="none"
+            onChange={(e) => setHexDraft(e.target.value)}
+            onBlur={() => {
+              if (hexDraft === null) return;
+              const normalized = normalizeHex(hexDraft);
+              setHexDraft(null);
+              if (!normalized) return;
+              applyWrite(`${prefix}-[${normalized}]`, normalized, displayAlpha);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') e.currentTarget.blur();
+            }}
+          />
+        </div>
+        <div style={{ inlineSize: 56 }}>
+          <Input
+            type="number"
+            min={0}
+            max={100}
+            disabled={readOnly || !displayHex}
+            value={alphaDraft ?? String(displayAlpha)}
+            onChange={(e) => setAlphaDraft(e.target.value)}
+            onBlur={() => {
+              if (alphaDraft === null) return;
+              const n = Number(alphaDraft);
+              setAlphaDraft(null);
+              if (!Number.isFinite(n) || !displayBaseClass || !displayHex) return;
+              applyWrite(displayBaseClass, displayHex, n);
+            }}
+          />
+        </div>
+        {open && (
+          <div
+            ref={popoverRef}
+            style={{
+              position: 'absolute',
+              insetBlockStart: '100%',
+              insetInlineStart: 0,
+              zIndex: 1000,
+              marginBlockStart: 4,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 8,
+              inlineSize: 220,
+              padding: 10,
+              background: 'var(--ccs-bg-overlay)',
+              border: '1px solid var(--ccs-border-strong)',
+              borderRadius: 'var(--ccs-radius-md)',
+              boxShadow: 'var(--ccs-shadow-overlay)',
+            }}
+          >
+            <ColorSvHuePicker
+              hex={displayHex ?? '#3b82f6'}
+              onChange={(hex) => applyWrite(`${prefix}-[${hex}]`, hex, displayAlpha)}
+            />
+            <Input
+              leadingIcon="search"
+              placeholder="Search tokens…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(6, 1fr)',
+                gap: 6,
+                maxBlockSize: 140,
+                overflowY: 'auto',
+              }}
+            >
+              {filtered.map((entry) => (
+                <button
+                  key={entry.key}
+                  type="button"
+                  title={entry.label}
+                  aria-label={entry.label}
+                  onClick={() => {
+                    applyWrite(entry.baseClass, entry.hex ?? '', entry.hex === undefined ? 100 : displayAlpha);
+                    setOpen(false);
+                  }}
+                  style={{
+                    inlineSize: 24,
+                    blockSize: 24,
+                    padding: 0,
+                    borderRadius: 'var(--ccs-radius-sm)',
+                    border: '1px solid var(--ccs-border)',
+                    background: entry.hex ?? COLOR_SWATCH_NONE_BG,
+                    cursor: 'pointer',
+                  }}
+                />
+              ))}
+              {filtered.length === 0 && (
+                <span
+                  style={{
+                    gridColumn: '1 / -1',
+                    fontSize: 'var(--ccs-font-size-xs)',
+                    color: 'var(--ccs-text-subtle)',
+                  }}
+                >
+                  No matches
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+      <CurrentValueLine cssProp={cssProp} />
     </div>
   );
 }
@@ -1901,7 +2333,6 @@ function LayoutItemSection({ node, readOnly }: { node: TreeNode; readOnly: boole
 // --- Typography (typography.cljs) ----------------------------------------
 
 function TypographySection({ node, readOnly }: { node: TreeNode; readOnly: boolean }): React.ReactElement {
-  const textColorGroup = React.useMemo(() => colorGroup('text'), []);
   // FIX-W4b-2: this app's own `dir` (playbook §5.9/ADR-0022 RTL-first) — read
   // once per render (no listener: the document's writing direction doesn't
   // flip mid-session in this tool) so `textAlignIcon` shows the physically
@@ -1957,15 +2388,7 @@ function TypographySection({ node, readOnly }: { node: TreeNode; readOnly: boole
           cssProp="text-align"
           iconFor={(v) => textAlignIcon(v, isRtl)}
         />
-        <GroupSelect
-          node={node}
-          group={textColorGroup}
-          label="Color"
-          fallback="none"
-          readOnly={readOnly}
-          cssProp="color"
-          swatchHex={hexForColorValue}
-        />
+        <ColorControl node={node} prefix="text" cssProp="color" label="Color" readOnly={readOnly} />
       </div>
     </Panel>
   );
@@ -1978,19 +2401,16 @@ function FillSection({ node, readOnly }: { node: TreeNode; readOnly: boolean }):
   const engine = useEngineApi();
   const [tokenName, setTokenName] = React.useState('');
   const tokens = engine.tokensForProperty('background-color');
-  const bgColorGroup = React.useMemo(() => colorGroup('bg'), []);
 
   return (
     <Panel title="Fill" id="inspector-fill" icon="swatches">
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <GroupSelect
+        <ColorControl
           node={node}
-          group={bgColorGroup}
-          label="Background"
-          fallback="none"
-          readOnly={readOnly}
+          prefix="bg"
           cssProp="background-color"
-          swatchHex={hexForColorValue}
+          label="Background"
+          readOnly={readOnly}
         />
         <Select
           label="Bind token"
@@ -2025,7 +2445,6 @@ function FillSection({ node, readOnly }: { node: TreeNode; readOnly: boolean }):
 
 function StrokeSection({ node, readOnly }: { node: TreeNode; readOnly: boolean }): React.ReactElement {
   const { sendOp } = useDaemonConnection();
-  const borderColorGroup = React.useMemo(() => colorGroup('border'), []);
   // Lazy initializer only — this section is always uniquely `key`-ed by
   // `Inspector` (see its own doc), same reasoning as `GroupSelect`.
   const [hasBorder, setHasBorder] = React.useState(() => getClassHint(node.uid, 'border-enabled') === 'on');
@@ -2060,15 +2479,7 @@ function StrokeSection({ node, readOnly }: { node: TreeNode; readOnly: boolean }
               readOnly={readOnly}
               leadingIcon="stroke-size"
             />
-            <GroupSelect
-              node={node}
-              group={borderColorGroup}
-              label="Color"
-              fallback="none"
-              readOnly={readOnly}
-              cssProp="border-color"
-              swatchHex={hexForColorValue}
-            />
+            <ColorControl node={node} prefix="border" cssProp="border-color" label="Color" readOnly={readOnly} />
           </>
         )}
       </div>

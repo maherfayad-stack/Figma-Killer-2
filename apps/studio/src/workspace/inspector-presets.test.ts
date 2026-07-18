@@ -6,18 +6,31 @@ import {
   arbitraryPaddingLinkedEdit,
   arbitraryPaddingSideEdit,
   arbitrarySizeEdit,
+  buildColorPalette,
+  clamp01,
+  colorClassWithAlpha,
   colorGroup,
   DIRECTION_GROUP,
+  filterColorPalette,
   GAP_GROUP,
+  hexToRgb,
+  hsvToRgb,
   JUSTIFY_GROUP,
+  normalizeHex,
   OPACITY_GROUP,
   ORDER_GROUP,
+  parseColorHint,
   POSITION_GROUP,
   RADIUS_GROUP,
   resolveClassEdit,
+  resolveColorWrite,
+  rgbToHex,
+  rgbToHsv,
   SELF_ALIGN_GROUP,
+  serializeColorHint,
   SHADOW_GROUP,
   TEXT_SIZE_GROUP,
+  tokenClassName,
   WIDTH_GROUP,
 } from './inspector-presets.js';
 
@@ -187,5 +200,137 @@ describe('arbitraryInsetEdit', () => {
 
   it('is a no-op remove when nothing previously written', () => {
     expect(arbitraryInsetEdit('top', 10, null).remove).toEqual([]);
+  });
+});
+
+describe('normalizeHex', () => {
+  it('accepts a 6-digit hex with or without a leading #, lowercasing it', () => {
+    expect(normalizeHex('#3B82F6')).toBe('#3b82f6');
+    expect(normalizeHex('3B82F6')).toBe('#3b82f6');
+  });
+
+  it('expands a 3-digit shorthand hex', () => {
+    expect(normalizeHex('#abc')).toBe('#aabbcc');
+    expect(normalizeHex('ABC')).toBe('#aabbcc');
+  });
+
+  it('rejects garbage input rather than guessing', () => {
+    expect(normalizeHex('not-a-color')).toBeNull();
+    expect(normalizeHex('#12345')).toBeNull();
+    expect(normalizeHex('')).toBeNull();
+  });
+});
+
+describe('hex <-> rgb <-> hsv round trips', () => {
+  it('hexToRgb decodes a known color', () => {
+    expect(hexToRgb('#3b82f6')).toEqual({ r: 59, g: 130, b: 246 });
+  });
+
+  it('hexToRgb rejects invalid hex', () => {
+    expect(hexToRgb('nope')).toBeNull();
+  });
+
+  it('rgbToHex re-encodes the same known color', () => {
+    expect(rgbToHex({ r: 59, g: 130, b: 246 })).toBe('#3b82f6');
+  });
+
+  it('rgbToHex clamps and rounds out-of-range channel values', () => {
+    expect(rgbToHex({ r: -10, g: 300, b: 127.6 })).toBe('#00ff80');
+  });
+
+  it('rgb -> hsv -> rgb round-trips a pure color', () => {
+    const rgb = { r: 59, g: 130, b: 246 };
+    const hsv = rgbToHsv(rgb);
+    const back = hsvToRgb(hsv);
+    expect(Math.round(back.r)).toBe(rgb.r);
+    expect(Math.round(back.g)).toBe(rgb.g);
+    expect(Math.round(back.b)).toBe(rgb.b);
+  });
+
+  it('white/black have zero saturation, differing only in value', () => {
+    expect(rgbToHsv({ r: 255, g: 255, b: 255 })).toEqual({ h: 0, s: 0, v: 100 });
+    expect(rgbToHsv({ r: 0, g: 0, b: 0 })).toEqual({ h: 0, s: 0, v: 0 });
+  });
+});
+
+describe('colorClassWithAlpha', () => {
+  it('omits the /NN modifier at 100 (or null) — Tailwind default, no needless class', () => {
+    expect(colorClassWithAlpha('bg-blue-500', 100)).toBe('bg-blue-500');
+    expect(colorClassWithAlpha('bg-blue-500', null)).toBe('bg-blue-500');
+  });
+
+  it('appends the rounded /NN modifier for a genuine partial value', () => {
+    expect(colorClassWithAlpha('bg-blue-500', 50)).toBe('bg-blue-500/50');
+    expect(colorClassWithAlpha('bg-blue-500', -20)).toBe('bg-blue-500/0');
+  });
+
+  it('clamps an out-of-range value >= 100 to the no-modifier case too', () => {
+    expect(colorClassWithAlpha('bg-blue-500', 137.6)).toBe('bg-blue-500');
+  });
+});
+
+describe('resolveColorWrite', () => {
+  it('writes the base class + alpha modifier, no remove when nothing previous', () => {
+    const edit = resolveColorWrite('bg-[#3b82f6]', 50, null);
+    expect(edit.add).toEqual(['bg-[#3b82f6]/50']);
+    expect(edit.remove).toEqual([]);
+  });
+
+  it('evicts this control\'s own previous write on change', () => {
+    const edit = resolveColorWrite('bg-aqua-100', null, 'bg-[#3b82f6]/50');
+    expect(edit.add).toEqual(['bg-aqua-100']);
+    expect(edit.remove).toEqual(['bg-[#3b82f6]/50']);
+  });
+
+  it('never removes the class it just re-added (no-op re-pick)', () => {
+    const edit = resolveColorWrite('bg-blue-500', 100, 'bg-blue-500');
+    expect(edit.add).toEqual(['bg-blue-500']);
+    expect(edit.remove).toEqual([]);
+  });
+});
+
+describe('tokenClassName', () => {
+  it('kebab-cases a camelCase/numeric DS token name for a Tailwind class suffix', () => {
+    expect(tokenClassName('aqua100')).toBe('aqua-100');
+    expect(tokenClassName('whiteStatic')).toBe('white-static');
+  });
+});
+
+describe('serializeColorHint / parseColorHint', () => {
+  const value = { hex: '#3b82f6', alphaPct: 50, baseClass: 'bg-[#3b82f6]', written: 'bg-[#3b82f6]/50' };
+
+  it('round-trips a value through JSON', () => {
+    expect(parseColorHint(serializeColorHint(value))).toEqual(value);
+  });
+
+  it('returns null for undefined, garbage, or shape-mismatched input — never a fabricated value', () => {
+    expect(parseColorHint(undefined)).toBeNull();
+    expect(parseColorHint('not json')).toBeNull();
+    expect(parseColorHint(JSON.stringify({ hex: '#000' }))).toBeNull();
+    expect(parseColorHint(JSON.stringify(null))).toBeNull();
+  });
+});
+
+describe('buildColorPalette / filterColorPalette', () => {
+  it('builds token entries first, then the named Tailwind palette, prefixed correctly', () => {
+    const palette = buildColorPalette('bg', [{ name: 'aqua100', value: '#00bcd4' }], () => '#00bcd4');
+    expect(palette[0]).toEqual({ key: 'token:aqua100', label: 'aqua100', hex: '#00bcd4', baseClass: 'bg-aqua-100' });
+    expect(palette.some((e) => e.key === 'named:none' && e.baseClass === 'bg-transparent')).toBe(true);
+    expect(palette.some((e) => e.key === 'named:blue-500' && e.baseClass === 'bg-blue-500')).toBe(true);
+  });
+
+  it('filterColorPalette matches case-insensitively on label, substring anywhere', () => {
+    const palette = buildColorPalette('bg', [{ name: 'aqua100', value: '#00bcd4' }], () => '#00bcd4');
+    expect(filterColorPalette(palette, 'AQUA').map((e) => e.key)).toEqual(['token:aqua100']);
+    expect(filterColorPalette(palette, '').length).toBe(palette.length);
+    expect(filterColorPalette(palette, 'zzz-no-match')).toEqual([]);
+  });
+});
+
+describe('clamp01', () => {
+  it('clamps to the unit interval', () => {
+    expect(clamp01(-1)).toBe(0);
+    expect(clamp01(2)).toBe(1);
+    expect(clamp01(0.5)).toBe(0.5);
   });
 });
