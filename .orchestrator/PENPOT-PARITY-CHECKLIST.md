@@ -95,3 +95,24 @@ numeric grid row, section title-bar w/ affordance, header row), applied consiste
 Behavior from W4b-1..3c UNCHANGED. Gate: side-by-side vs the target above reads
 genuinely Penpot. This is the pass that should finally close the human's "not 1:1" gap
 for the Design tab.
+
+---
+## DOGFOOD ROUND 5 (human, 2026-07-19) — "design still not there, make it 1:1" + concrete asks
+Human dogfooded W4b-5 and: "still not there yet, make it 1:1"; PLUS two concrete:
+- **R5-1 (+/add model):** "fill and others have a + icon — not all the options are
+  present with none like it's done now." Penpot FILL/STROKE/SHADOW sections have a
+  header **+** to ADD the property (section is EMPTY until added), and a **−** to
+  remove — NOT always-shown-with-a-none-value. → FIX-W4b-6: give Fill/Stroke/Shadow
+  the Penpot header-+ affordance mapped to real CSS (Fill=background-color add/remove;
+  Stroke=border add/remove [there's already a Border checkbox — reconcile]; Shadow=
+  box-shadow shadow-* add/remove). Cite fill.cljs/shadow.cljs/stroke.cljs title-bars.
+- **R5-2 (wire the stubs — human chose ALL THREE):** blend-mode → mix-blend-* classes;
+  per-corner radius + aspect-lock (W/H proportion co-scale); visibility (eye) + lock →
+  needs NEW per-node hidden/locked state (bigger — touches tree/canvas/bridge, careful
+  scope). → FIX-W4b-7 (blend + per-corner + aspect-lock, Inspector-local) then
+  FIX-W4b-8 (visibility+lock, needs editor state).
+- **R5-3 (overall 1:1):** design still not fully there — keep closing visual deltas vs
+  the human's Penpot screenshots each pass; the final holistic sweep must be strict.
+
+Order: W4b-6 (+/add model) → W4b-7 (blend/per-corner/aspect-lock) → W4b-8 (visibility+
+lock) → final strict side-by-side sweep. All gated on visual match to Penpot.
