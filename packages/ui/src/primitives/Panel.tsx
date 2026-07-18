@@ -1,9 +1,18 @@
 import * as React from 'react';
+import { Icon, type IconName } from '../icons/Icon.js';
 
 /**
  * Panel — a dock section (playbook §2.1/§2.2/§2.3: left sidebar / right
  * sidebar sections). Collapsible header, logical-property padding so it
  * reads correctly under `dir="rtl"`.
+ *
+ * `icon` (FIX-W4, Inspector Penpot-faithful restructure): purely ADDITIVE and
+ * optional — every existing call site that omits it renders byte-identical
+ * header markup to before (`{icon && ...}` short-circuits to nothing). Added
+ * so `Inspector.tsx`'s section stack can place each section's icon exactly
+ * where real Penpot's `title-bar*` component puts it — leading the title
+ * text, inside the same clickable collapse toggle — instead of duplicating
+ * `Panel`'s header chrome in a one-off local wrapper.
  */
 export interface PanelProps {
   title: string;
@@ -12,9 +21,11 @@ export interface PanelProps {
   actions?: React.ReactNode;
   /** Stable id used for e2e/test hooks (`data-panel`). */
   id?: string;
+  /** Leading icon in the header, before `title` (Penpot `title-bar*` shape). */
+  icon?: IconName;
 }
 
-export function Panel({ title, children, defaultCollapsed = false, actions, id }: PanelProps): React.ReactElement {
+export function Panel({ title, children, defaultCollapsed = false, actions, id, icon }: PanelProps): React.ReactElement {
   const [collapsed, setCollapsed] = React.useState(defaultCollapsed);
   const bodyId = React.useId();
   return (
@@ -58,6 +69,7 @@ export function Panel({ title, children, defaultCollapsed = false, actions, id }
           >
             ▾
           </span>
+          {icon && <Icon name={icon} size={12} aria-hidden />}
           {title}
         </button>
         {actions && (

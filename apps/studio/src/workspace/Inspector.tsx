@@ -45,20 +45,68 @@ import {
 
 /**
  * Inspector (right sidebar, playbook §2.3 / PENPOT-FIDELITY-SPEC §5.5,
- * expanded FP-INS-a `.orchestrator/FEATURE-PARITY-PLAN.md`): a fixed,
- * ordered stack of independently-collapsible `Panel` sections mirroring
- * Penpot's real Design-tab option-menu order (`penpot/frontend/src/app/
- * main/ui/workspace/sidebar/options/menus/`) — `Layer` (identity) →
- * `Content` (text) → `Size & position` (`measures.cljs`) → `Layout
- * container` (`layout_container.cljs`) → `Layout item` (`layout_item.cljs`)
- * → `Typography` (`typography.cljs`) → `Fill` (`fill.cljs`) → `Border &
- * radius` (`border_radius.cljs` + border) → `Shadow` (`shadow.cljs`) →
- * `Opacity` → `Component props` (`component.cljs`, instances only) → `Code`
- * (Open in IDE, any node). DROPPED as vector-only/out of scope per this
- * task's brief: `stroke.cljs`, `blur.cljs`, `bool.cljs`, `constraints.cljs`,
- * `svg_attrs.cljs`, `frame_grid.cljs`, `color_selection.cljs`,
- * `grid_cell.cljs`, `interactions.cljs`, and `measures.cljs`'s rotation
- * field (no vector rotation on a DOM element in this tool).
+ * originally FP-INS-a, reworked FIX-W4 for a second, more literally
+ * Penpot-faithful pass — every structural decision below is cited against
+ * the real Penpot source cloned at `../penpot`, specifically
+ * `frontend/src/app/main/ui/workspace/sidebar/options/`):
+ *
+ * ## Section stack & ordering
+ * A fixed, ordered stack of independently-collapsible `Panel` sections.
+ * `options/shapes/rect.cljs` and `options/shapes/text.cljs` both render, in
+ * this exact order: `layer-menu*` → `measures-menu*` → `layout-container-
+ * menu*` → (`grid-cell`) → `layout-item-menu*` → `constraints-menu*` →
+ * [`text-menu*` for text shapes only] → `fill-menu*` → `stroke-menu*` →
+ * `shadow-menu*` → `blur-menu*` → `exports-menu*`. This file's stack mirrors
+ * that: `Layer` → `Content` (this tool's own text-edit affordance, no
+ * Penpot equivalent — Penpot edits text in-canvas, not via a menu) →
+ * `Size & position` (`measures.cljs`) → `Layout container`
+ * (`layout_container.cljs`) → `Layout item` (`layout_item.cljs`) →
+ * `Typography` (`text.cljs`'s `text-menu*`, text-capable nodes only) →
+ * `Fill` (`fill.cljs`) → `Stroke` (`stroke.cljs`) → `Shadow`
+ * (`shadow.cljs`) → `Code` (this tool's own Inspect/dev-mode affordance,
+ * any node). DROPPED as vector-only/out of scope per this task's brief:
+ * `blur.cljs`, `bool.cljs`, `constraints.cljs`, `svg_attrs.cljs`,
+ * `frame_grid.cljs`, `color_selection.cljs`, `grid_cell.cljs`,
+ * `interactions.cljs`, `exports.cljs`, and `measures.cljs`'s rotation field
+ * (no vector rotation on a DOM element in this tool).
+ *
+ * ## Two structural consolidations vs. the prior (FP-INS-a) pass, both
+ * fixing a literal fidelity gap found by re-reading the real source this
+ * time round:
+ * - **Opacity moved INTO `Layer`, no longer its own bottom-of-stack Panel.**
+ *   `options/menus/layer.cljs` itself owns `:opacity`/`:blend-mode` (see
+ *   its `layer-attrs` def and `handle-opacity-change`) — in real Penpot,
+ *   opacity is a Layer-row control, not a separate menu. `LayerSection`
+ *   below renders it (gated off for component instances, see below).
+ * - **Radius moved INTO `Size & position`, out of the old "Border & radius"
+ *   Panel; that Panel is renamed `Stroke`.** `options/menus/measures.cljs`
+ *   literally `:require`s and renders `border-radius-menu*` INSIDE itself
+ *   (`[:> border-radius-menu* {...}]` inside `measures-menu*`'s own body) —
+ *   corner radius is part of the Size panel in real Penpot, never its own
+ *   section. Border WIDTH/COLOR is a wholly separate real section,
+ *   `stroke.cljs` (`stroke-menu*`), rendered after `Fill` — this file's old
+ *   combined "Border & radius" Panel conflated the two; they're now split
+ *   to match.
+ *
+ * ## Component instance = props only (item 7d)
+ * When the selected node is a component instance (`node.kind ===
+ * 'component-instance'`, e.g. an inserted `<Badge/>` surfaced as
+ * `ds:Badge`), every CSS section (`Size & position` through `Shadow`,
+ * `Content`, `Opacity`) is suppressed — ONLY `Layer` (bare identity, no
+ * opacity control), `ComponentPropsSection` (`component.cljs`'s own prop-
+ * pill panel, adapted), and `Code` render. This is a DELIBERATE divergence
+ * from real Penpot, where a component *copy* still gets the full geometry/
+ * fill/stroke stack as shape-level overrides (`component.cljs`'s own
+ * `main-instance?`/copy distinction is about detach/swap, not about hiding
+ * the rest of the option stack). It diverges because this tool is
+ * code-first: an instance here is literally a `<Badge .../>` JSX call, and
+ * this file's controls can only write `className`/prop attributes onto
+ * that ONE call site — there is no shape-level style-override layer sitting
+ * between the instance and the component's own internal render the way
+ * Penpot's vector shape model provides, so offering Fill/Stroke/etc. controls
+ * on an instance would silently no-op or hit the wrong element. Confirmed
+ * against `component.cljs`'s header (`i/component`/`i/component-copy`) for
+ * this section's icon.
  *
  * Every control still emits ONLY the existing, frozen `set-classes`/
  * `set-prop`/`set-text` `CanvasOp`s (via `useDaemonConnection().sendOp`,
@@ -68,12 +116,21 @@ import {
  * existing protocol/bridge channel exposes a node's live Tailwind classes to
  * `apps/studio` — see that file's module doc for the full CR).
  *
- * A `data-dynamic` node (this phase's behavior CHANGE from the prior P5
- * pass, per this task's brief): the FULL section stack still renders (so
- * "shows values" is genuinely true — Penpot itself always shows a locked
- * shape's real properties, just non-editable), but every control is
+ * A `data-dynamic` node: the FULL (non-instance) section stack still
+ * renders (so "shows values" is genuinely true — Penpot itself always shows
+ * a locked shape's real properties, just non-editable), but every control is
  * `disabled` and never calls `sendOp` — `readOnly` is threaded down from the
  * top-level branch below into every section.
+ *
+ * ## Icons
+ * `@ccs/ui`'s vendored Penpot icon set (`packages/ui/src/icons/registry.ts`)
+ * is deliberately small (~30 icons, not Penpot's full sprite) — no new icon
+ * assets were added here (hard constraint: reuse the existing set). Each
+ * section below is given the CLOSEST existing icon with a real semantic
+ * match; sections with no reasonable match (`Stroke`, `Shadow`) render
+ * without one rather than force a wrong icon. `Layer`'s icon is the node's
+ * own type icon (`iconForNode`, shown in its body, matching how Penpot's
+ * layer row icon IS the shape-type icon — no separate generic glyph).
  */
 export function Inspector(): React.ReactElement {
   // NOTE (bug found via this phase's own e2e acceptance run): the selector
@@ -111,16 +168,27 @@ export function Inspector(): React.ReactElement {
   }
 
   const readOnly = node.dynamic;
+  // Item 7d: a component instance gets ONLY its identity (no opacity) +
+  // props + code — see this file's module doc for the full rationale. Every
+  // other gate below (`canHoldText`/`canBeContainer`/`hasParent`) is now
+  // irrelevant for an instance since the render below short-circuits past
+  // them entirely, but they're left un-narrowed (still computed from
+  // `node.kind` alone) since they're equally used by the non-instance branch.
+  const isInstance = node.kind === 'component-instance';
   const canHoldText = node.kind === 'element' || node.kind === 'text';
-  // Layout-container: any non-text, non-fragment node can become (or
-  // already be) a flex/grid container — Penpot itself offers an explicit
-  // "+ Add flex layout" shape-menu action for shapes that AREN'T yet
-  // containers (confirmed via `layout_container.cljs`'s
-  // "workspace.shape.menu.add-layout" string), so this section is a
-  // "configure/add layout" affordance, not gated on already-being one (this
-  // Inspector has no live read of the node's current `display`, see
-  // `inspector-class-hints.ts`'s module doc).
-  const canBeContainer = node.kind === 'element' || node.kind === 'component-instance';
+  // Layout-container: `rect.cljs`/`frame.cljs` render `layout-container-menu*`
+  // unconditionally, and `text.cljs` does too (real Penpot lets a text shape
+  // become a flex/grid container) — so this gate is "any node with a real DOM
+  // element to apply `display` to", i.e. everything except a `fragment`
+  // (no single element to attach the class to) — matching that unconditional
+  // real-source behavior rather than the previous, narrower `element`-only
+  // gate. Penpot additionally offers an explicit "+ Add flex layout"
+  // shape-menu action for shapes that AREN'T yet containers (confirmed via
+  // `layout_container.cljs`'s "workspace.shape.menu.add-layout" string), so
+  // this section is a "configure/add layout" affordance, not gated on
+  // already-being one (this Inspector has no live read of the node's current
+  // `display`, see `inspector-class-hints.ts`'s module doc).
+  const canBeContainer = node.kind === 'element' || node.kind === 'text';
   // Layout-item: shown whenever the node has an addressable parent (i.e.
   // isn't the tree root) — real Penpot gates this on "is a flex/grid CHILD",
   // which likewise isn't live-readable here (same disclosed gap).
@@ -153,21 +221,25 @@ export function Inspector(): React.ReactElement {
   // its own stable id, so it's unique among its siblings again.
   return (
     <>
-      <LayerSection node={node} />
+      <LayerSection node={node} showOpacity={!isInstance} readOnly={readOnly} />
       {readOnly && <DynamicBanner node={node} nodeOps={nodeOps} />}
-      {canHoldText && <ContentSection key={`content-${node.uid}`} node={node} readOnly={readOnly} />}
-      <SizePositionSection key={`size-position-${node.uid}`} node={node} readOnly={readOnly} />
-      {canBeContainer && (
-        <LayoutContainerSection key={`layout-container-${node.uid}`} node={node} readOnly={readOnly} />
-      )}
-      {hasParent && <LayoutItemSection key={`layout-item-${node.uid}`} node={node} readOnly={readOnly} />}
-      {canHoldText && <TypographySection key={`typography-${node.uid}`} node={node} readOnly={readOnly} />}
-      <FillSection key={`fill-${node.uid}`} node={node} readOnly={readOnly} />
-      <BorderRadiusSection key={`border-radius-${node.uid}`} node={node} readOnly={readOnly} />
-      <ShadowSection key={`shadow-${node.uid}`} node={node} readOnly={readOnly} />
-      <OpacitySection key={`opacity-${node.uid}`} node={node} readOnly={readOnly} />
-      {node.kind === 'component-instance' && (
+      {isInstance ? (
+        // Item 7d: ONLY the props panel — every CSS section below is
+        // suppressed entirely (not just disabled) for a component instance.
         <ComponentPropsSection key={`component-props-${node.uid}`} node={node} readOnly={readOnly} />
+      ) : (
+        <>
+          {canHoldText && <ContentSection key={`content-${node.uid}`} node={node} readOnly={readOnly} />}
+          <SizePositionSection key={`size-position-${node.uid}`} node={node} readOnly={readOnly} />
+          {canBeContainer && (
+            <LayoutContainerSection key={`layout-container-${node.uid}`} node={node} readOnly={readOnly} />
+          )}
+          {hasParent && <LayoutItemSection key={`layout-item-${node.uid}`} node={node} readOnly={readOnly} />}
+          {canHoldText && <TypographySection key={`typography-${node.uid}`} node={node} readOnly={readOnly} />}
+          <FillSection key={`fill-${node.uid}`} node={node} readOnly={readOnly} />
+          <StrokeSection key={`stroke-${node.uid}`} node={node} readOnly={readOnly} />
+          <ShadowSection key={`shadow-${node.uid}`} node={node} readOnly={readOnly} />
+        </>
       )}
       <CodeSection node={node} nodeOps={nodeOps} />
     </>
@@ -186,14 +258,31 @@ function iconForNode(node: TreeNode): IconName {
 }
 
 /** Layer — read-only identity block (name/tag + uid + a type icon), Penpot's
- * `layer.cljs` section adapted: no vector geometry, just AST identity. */
-function LayerSection({ node }: { node: TreeNode }): React.ReactElement {
+ * `layer.cljs` section adapted: no vector geometry, just AST identity. Its
+ * own Panel header carries no separate static icon — the body's per-node
+ * `iconForNode` icon IS the section's icon here, matching how Penpot's own
+ * layer row icon is always the shape-type icon, never a generic glyph.
+ *
+ * `showOpacity` (false for a component instance, item 7d): `layer.cljs`
+ * itself owns the opacity/blend-mode control (see this file's module doc),
+ * so it's rendered here, in `Layer`, rather than a separate bottom-of-stack
+ * Panel — but suppressed for an instance since opacity is a CSS override
+ * this tool can't safely apply to a component's internals either. */
+function LayerSection({
+  node,
+  showOpacity,
+  readOnly,
+}: {
+  node: TreeNode;
+  showOpacity: boolean;
+  readOnly: boolean;
+}): React.ReactElement {
   const label = node.component ?? node.tag ?? '(text)';
   const color = node.kind === 'component-instance' ? 'var(--ccs-accent-component)' : 'var(--ccs-text)';
 
   return (
     <Panel title="Layer" id="inspector-layer">
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, minInlineSize: 0 }}>
           <Icon name={iconForNode(node)} size={16} style={{ color, flexShrink: 0 }} />
           <span
@@ -219,6 +308,9 @@ function LayerSection({ node }: { node: TreeNode }): React.ReactElement {
         >
           {node.uid}
         </span>
+        {showOpacity && (
+          <GroupSelect node={node} group={OPACITY_GROUP} label="Opacity" fallback="100" readOnly={readOnly} />
+        )}
       </div>
     </Panel>
   );
@@ -257,7 +349,7 @@ function DynamicBanner({ node, nodeOps }: { node: TreeNode; nodeOps: NodeOps }):
  * `dynamic`) can jump to its real source location. */
 function CodeSection({ node, nodeOps }: { node: TreeNode; nodeOps: NodeOps }): React.ReactElement {
   return (
-    <Panel title="Code" id="inspector-code" defaultCollapsed>
+    <Panel title="Code" id="inspector-code" icon="document" defaultCollapsed>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         <dl style={{ margin: 0, fontSize: 'var(--ccs-font-size-xs)', color: 'var(--ccs-text-subtle)' }}>
           <dt>uid</dt>
@@ -278,7 +370,7 @@ function ContentSection({ node, readOnly }: { node: TreeNode; readOnly: boolean 
   const [text, setText] = React.useState('');
 
   return (
-    <Panel title="Content" id="inspector-content">
+    <Panel title="Content" id="inspector-content" icon="text">
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -446,7 +538,7 @@ function ArbitraryPxInput({
   );
 }
 
-// --- Size & position (measures.cljs) ------------------------------------
+// --- Size & position (measures.cljs, radius included — see module doc) --
 
 function SizePositionSection({ node, readOnly }: { node: TreeNode; readOnly: boolean }): React.ReactElement {
   const { sendOp } = useDaemonConnection();
@@ -455,7 +547,7 @@ function SizePositionSection({ node, readOnly }: { node: TreeNode; readOnly: boo
   const [position, setPosition] = React.useState(() => getClassHint(node.uid, POSITION_GROUP.key) ?? 'static');
 
   return (
-    <Panel title="Size & position" id="inspector-size-position">
+    <Panel title="Size & position" id="inspector-size-position" icon="expand">
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         <div style={{ display: 'flex', gap: 8 }}>
           <div style={{ flex: 1 }}>
@@ -522,6 +614,11 @@ function SizePositionSection({ node, readOnly }: { node: TreeNode; readOnly: boo
             </div>
           </div>
         )}
+        {/* Radius (`border_radius.cljs`'s `border-radius-menu*`, embedded
+         * directly inside `measures-menu*` in real Penpot — see this file's
+         * module doc for the citation — hence living here, not in the old
+         * "Border & radius" Panel (now just `Stroke`, below). */}
+        <GroupSelect node={node} group={RADIUS_GROUP} label="Radius" fallback="none" readOnly={readOnly} />
       </div>
     </Panel>
   );
@@ -531,7 +628,7 @@ function SizePositionSection({ node, readOnly }: { node: TreeNode; readOnly: boo
 
 function LayoutContainerSection({ node, readOnly }: { node: TreeNode; readOnly: boolean }): React.ReactElement {
   return (
-    <Panel title="Layout container" id="inspector-layout-container">
+    <Panel title="Layout container" id="inspector-layout-container" icon="board">
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         <GroupButtons node={node} group={DIRECTION_GROUP} label="Direction" fallback="row" readOnly={readOnly} />
         <GroupButtons node={node} group={WRAP_GROUP} label="Wrap" fallback="nowrap" readOnly={readOnly} />
@@ -571,7 +668,7 @@ function LayoutContainerSection({ node, readOnly }: { node: TreeNode; readOnly: 
 
 function LayoutItemSection({ node, readOnly }: { node: TreeNode; readOnly: boolean }): React.ReactElement {
   return (
-    <Panel title="Layout item" id="inspector-layout-item">
+    <Panel title="Layout item" id="inspector-layout-item" icon="arrow">
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         <GroupSelect node={node} group={GROW_GROUP} label="Flex" fallback="none" readOnly={readOnly} />
         <GroupButtons
@@ -592,7 +689,7 @@ function LayoutItemSection({ node, readOnly }: { node: TreeNode; readOnly: boole
 function TypographySection({ node, readOnly }: { node: TreeNode; readOnly: boolean }): React.ReactElement {
   const textColorGroup = React.useMemo(() => colorGroup('text'), []);
   return (
-    <Panel title="Typography" id="inspector-typography">
+    <Panel title="Typography" id="inspector-typography" icon="text-typography">
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         <div style={{ display: 'flex', gap: 8 }}>
           <div style={{ flex: 1 }}>
@@ -645,7 +742,7 @@ function FillSection({ node, readOnly }: { node: TreeNode; readOnly: boolean }):
   const bgColorGroup = React.useMemo(() => colorGroup('bg'), []);
 
   return (
-    <Panel title="Fill" id="inspector-fill">
+    <Panel title="Fill" id="inspector-fill" icon="swatches">
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         <GroupSelect node={node} group={bgColorGroup} label="Background" fallback="none" readOnly={readOnly} />
         <Select
@@ -675,9 +772,11 @@ function FillSection({ node, readOnly }: { node: TreeNode; readOnly: boolean }):
   );
 }
 
-// --- Border & radius (border_radius.cljs + border) -----------------------
+// --- Stroke (stroke.cljs) — border width/color; radius lives in
+// Size & position now, matching real Penpot's `measures.cljs` embedding
+// (see this file's module doc) -----------------------------------------
 
-function BorderRadiusSection({ node, readOnly }: { node: TreeNode; readOnly: boolean }): React.ReactElement {
+function StrokeSection({ node, readOnly }: { node: TreeNode; readOnly: boolean }): React.ReactElement {
   const { sendOp } = useDaemonConnection();
   const borderColorGroup = React.useMemo(() => colorGroup('border'), []);
   // Lazy initializer only — this section is always uniquely `key`-ed by
@@ -685,9 +784,8 @@ function BorderRadiusSection({ node, readOnly }: { node: TreeNode; readOnly: boo
   const [hasBorder, setHasBorder] = React.useState(() => getClassHint(node.uid, 'border-enabled') === 'on');
 
   return (
-    <Panel title="Border & radius" id="inspector-border-radius">
+    <Panel title="Stroke" id="inspector-stroke">
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <GroupSelect node={node} group={RADIUS_GROUP} label="Radius" fallback="none" readOnly={readOnly} />
         <Checkbox
           label="Border"
           checked={hasBorder}
@@ -728,16 +826,6 @@ function ShadowSection({ node, readOnly }: { node: TreeNode; readOnly: boolean }
   return (
     <Panel title="Shadow" id="inspector-shadow">
       <GroupSelect node={node} group={SHADOW_GROUP} label="Shadow" fallback="none" readOnly={readOnly} />
-    </Panel>
-  );
-}
-
-// --- Opacity ---------------------------------------------------------------
-
-function OpacitySection({ node, readOnly }: { node: TreeNode; readOnly: boolean }): React.ReactElement {
-  return (
-    <Panel title="Opacity" id="inspector-opacity">
-      <GroupSelect node={node} group={OPACITY_GROUP} label="Opacity" fallback="100" readOnly={readOnly} />
     </Panel>
   );
 }
@@ -813,7 +901,7 @@ function ComponentPropsSection({
   const entries = Object.entries(schema.props);
 
   return (
-    <Panel title={`${componentName} props`} id="inspector-component-props">
+    <Panel title={`${componentName} props`} id="inspector-component-props" icon="component">
       {/* A clean, ordered LIST of the instance's props (the human's own
        * ask — see this task's module doc): one row per prop, its name as
        * the row label, required props flagged, divided like Penpot's own
