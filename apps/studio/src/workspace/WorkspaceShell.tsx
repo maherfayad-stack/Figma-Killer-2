@@ -438,7 +438,11 @@ function WorkspaceShellInner({
               value={rightTab}
               onValueChange={setRightTab}
               items={[
-                { id: 'design', label: 'Design', content: <Inspector /> },
+                {
+                  id: 'design',
+                  label: 'Design',
+                  content: <Inspector canvasHandle={canvasHandle} bridgeGeneration={bridgeGeneration} />,
+                },
                 {
                   id: 'inspect',
                   label: 'Inspect',
