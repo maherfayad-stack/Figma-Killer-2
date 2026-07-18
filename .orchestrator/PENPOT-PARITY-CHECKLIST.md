@@ -69,3 +69,29 @@ GAPS (round-4b) → **FIX-W4b-4** (subsumes old FIX-W2):
 1. gate W4b-2 (icons, in-flight) → 2. W4b-3a → 3. W4b-3b → 4. W4b-3c → 5. W4b-4
 (Inspect clean + fix Loading… bug). Each: worker → fresh adversarial audit whose
 gate is the side-by-side visual match → orchestrator commit + tag. Then Panel 3+.
+
+---
+## PENPOT VISUAL SPEC (extracted 2026-07-18 — the reference the anatomy passes lacked)
+Human: "still not 100% 1:1 like penpot at all, not even close." Root cause: W4b-1..3c
+made controls FUNCTIONALLY correct + anatomy-faithful but styled with OUR tokens, not
+Penpot's rendered look. Extracted from ../penpot ds/ + refactor/themes:
+- **Theme (dark):** panel bg #18181a; muted label/secondary #8f9da3; accent teal
+  #00d1b8; input/segmented bg = --color-background-tertiary (a lighter gray); values
+  white. (color-defs.scss + themes/default-theme.scss)
+- **Spacing scale:** --sp-xs 4 / --sp-s 8 / --sp-m 12 / --sp-l 16 / --sp-xl 20 px.
+- **Controls:** 32px height, radius $br-8 = 8px. (ds/controls/*.scss, ds/_borders.scss)
+- **Segmented icon groups** (align/direction/justify) = ONE rounded tertiary-bg
+  container (border-radius 8, gap sp-xs), buttons INSIDE, active = teal — NOT separate
+  bordered buttons (radio_buttons.scss).
+- **Size rows** = 3-col grid [input][input][action]: W+H+lock one row, X+Y next,
+  gap sp-xs, margin-bottom sp-s (measures.scss).
+- **MISSING header row:** blend-mode dropdown + opacity + eye + lock on one row.
+- Sections carry +/⋮/− add-remove affordances; FILL has "Show in exports" + a
+  Selected-colors section; also BLUR/GUIDES/EXPORT.
+
+### FIX-W4b-5 — Design-tab HOLISTIC visual match (in flight) → re-skin to the spec above:
+Penpot theme vars scoped to inspector + shared primitives (segmented pill, paired
+numeric grid row, section title-bar w/ affordance, header row), applied consistently.
+Behavior from W4b-1..3c UNCHANGED. Gate: side-by-side vs the target above reads
+genuinely Penpot. This is the pass that should finally close the human's "not 1:1" gap
+for the Design tab.
