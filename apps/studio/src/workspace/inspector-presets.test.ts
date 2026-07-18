@@ -1,16 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import {
   ALIGN_ITEMS_GROUP,
+  arbitraryCornerRadiusEdit,
   arbitraryGapEdit,
   arbitraryInsetEdit,
   arbitraryPaddingLinkedEdit,
   arbitraryPaddingSideEdit,
   arbitrarySizeEdit,
+  BLEND_MODE_GROUP,
   BORDER_WIDTH_GROUP,
   buildColorPalette,
   clamp01,
   colorClassWithAlpha,
   colorGroup,
+  consolidateRadiusFromCorners,
+  coScaleDimension,
   DIRECTION_GROUP,
   FILL_DEFAULT_CLASS,
   filterColorPalette,
@@ -21,6 +25,7 @@ import {
   normalizeHex,
   OPACITY_GROUP,
   ORDER_GROUP,
+  parseBorderRadiusCorners,
   parseColorHint,
   POSITION_GROUP,
   RADIUS_GROUP,
@@ -343,6 +348,134 @@ describe('clamp01', () => {
     expect(clamp01(-1)).toBe(0);
     expect(clamp01(2)).toBe(1);
     expect(clamp01(0.5)).toBe(0.5);
+  });
+});
+
+describe('FIX-W4b-7 item 1 — BLEND_MODE_GROUP', () => {
+  it('"normal" adds nothing and evicts every mix-blend-* candidate', () => {
+    const edit = resolveClassEdit(BLEND_MODE_GROUP, 'normal');
+    expect(edit.add).toEqual([]);
+    expect(edit.remove).toEqual(expect.arrayContaining(['mix-blend-multiply', 'mix-blend-luminosity']));
+  });
+
+  it('choosing "multiply" adds mix-blend-multiply and evicts every OTHER blend candidate (self-contained, ast-engine has no mix-blend group)', () => {
+    const edit = resolveClassEdit(BLEND_MODE_GROUP, 'multiply');
+    expect(edit.add).toEqual(['mix-blend-multiply']);
+    expect(edit.remove).toEqual(
+      expect.arrayContaining(['mix-blend-screen', 'mix-blend-overlay', 'mix-blend-color-dodge', 'mix-blend-hue']),
+    );
+    expect(edit.remove).not.toContain('mix-blend-multiply');
+  });
+
+  it('switching between two non-normal modes never leaves both classes behind', () => {
+    const toScreen = resolveClassEdit(BLEND_MODE_GROUP, 'screen');
+    expect(toScreen.add).toEqual(['mix-blend-screen']);
+    expect(toScreen.remove).toContain('mix-blend-multiply');
+  });
+
+  it('covers every Penpot blend-mode name (16 total, incl. normal)', () => {
+    expect(BLEND_MODE_GROUP.presets.map((p) => p.value)).toEqual([
+      'normal',
+      'multiply',
+      'screen',
+      'overlay',
+      'darken',
+      'lighten',
+      'color-dodge',
+      'color-burn',
+      'hard-light',
+      'soft-light',
+      'difference',
+      'exclusion',
+      'hue',
+      'saturation',
+      'color',
+      'luminosity',
+    ]);
+  });
+});
+
+describe('FIX-W4b-7 item 2 — independent corner radius', () => {
+  it('arbitraryCornerRadiusEdit writes rounded-<corner>-[Npx] and evicts every named single-radius preset', () => {
+    const edit = arbitraryCornerRadiusEdit('tl', 12, null, null);
+    expect(edit.add).toEqual(['rounded-tl-[12px]']);
+    expect(edit.remove).toEqual(expect.arrayContaining(RADIUS_GROUP.presets.map((p) => p.add[0])));
+  });
+
+  it('evicts a previous SINGLE arbitrary radius when first switching into corner mode', () => {
+    const edit = arbitraryCornerRadiusEdit('tr', 8, null, 'rounded-[10px]');
+    expect(edit.add).toEqual(['rounded-tr-[8px]']);
+    expect(edit.remove).toContain('rounded-[10px]');
+  });
+
+  it('evicts this SAME corner\'s previous arbitrary value on re-edit, never itself', () => {
+    const edit = arbitraryCornerRadiusEdit('br', 20, 'rounded-br-[8px]', null);
+    expect(edit.add).toEqual(['rounded-br-[20px]']);
+    expect(edit.remove).toContain('rounded-br-[8px]');
+    expect(edit.remove).not.toContain('rounded-br-[20px]');
+  });
+
+  it('a different corner\'s previous class never leaks into an unrelated corner\'s remove list', () => {
+    const edit = arbitraryCornerRadiusEdit('bl', 4, null, null);
+    expect(edit.remove).not.toContain('rounded-tl-[12px]');
+  });
+
+  it('consolidateRadiusFromCorners writes ONE rounded-[Npx] from the top-left value and clears every written corner', () => {
+    const edit = consolidateRadiusFromCorners(16, ['rounded-tl-[16px]', 'rounded-tr-[8px]', null, 'rounded-bl-[4px]']);
+    expect(edit.add).toEqual(['rounded-[16px]']);
+    expect(edit.remove).toEqual(
+      expect.arrayContaining(['rounded-tl-[16px]', 'rounded-tr-[8px]', 'rounded-bl-[4px]']),
+    );
+  });
+
+  it('consolidateRadiusFromCorners is a no-op remove when no corner was ever written', () => {
+    expect(consolidateRadiusFromCorners(10, [null, null, null, null]).remove).toEqual([]);
+  });
+
+  it('parseBorderRadiusCorners: a single token seeds all 4 corners the same', () => {
+    expect(parseBorderRadiusCorners('10px')).toEqual({ tl: 10, tr: 10, br: 10, bl: 10 });
+  });
+
+  it('parseBorderRadiusCorners: 4 tokens map to tl/tr/br/bl in CSS shorthand order', () => {
+    expect(parseBorderRadiusCorners('10px 20px 30px 40px')).toEqual({ tl: 10, tr: 20, br: 30, bl: 40 });
+  });
+
+  it('parseBorderRadiusCorners: 2 tokens fold to tl=br, tr=bl (CSS shorthand repeat rule)', () => {
+    expect(parseBorderRadiusCorners('10px 20px')).toEqual({ tl: 10, tr: 20, br: 10, bl: 20 });
+  });
+
+  it('parseBorderRadiusCorners: 3 tokens fold tr=bl (CSS shorthand repeat rule)', () => {
+    expect(parseBorderRadiusCorners('10px 20px 30px')).toEqual({ tl: 10, tr: 20, br: 30, bl: 20 });
+  });
+
+  it('parseBorderRadiusCorners rejects an elliptical (/-separated) radius, never guessing', () => {
+    expect(parseBorderRadiusCorners('10px 20px / 5px 10px')).toBeNull();
+  });
+
+  it('parseBorderRadiusCorners rejects a non-px unit or garbage, never guessing', () => {
+    expect(parseBorderRadiusCorners('1em')).toBeNull();
+    expect(parseBorderRadiusCorners('')).toBeNull();
+    expect(parseBorderRadiusCorners('10px 20px 30px 40px 50px')).toBeNull();
+  });
+});
+
+describe('FIX-W4b-7 item 3 — coScaleDimension (aspect-ratio lock)', () => {
+  it('editing W scales H to preserve the current W:H ratio', () => {
+    expect(coScaleDimension('w', 200, 100, 50)).toBe(100); // 2:1 ratio, new W=200 -> H=100
+  });
+
+  it('editing H scales W to preserve the current W:H ratio', () => {
+    expect(coScaleDimension('h', 100, 100, 50)).toBe(200); // 2:1 ratio, new H=100 -> W=200
+  });
+
+  it('rounds to the nearest whole pixel', () => {
+    expect(coScaleDimension('w', 100, 300, 200)).toBe(67); // 3:2 ratio -> 66.67 rounds to 67
+  });
+
+  it('returns null (never a fabricated write) for a non-finite or non-positive basis', () => {
+    expect(coScaleDimension('w', 100, 0, 50)).toBeNull();
+    expect(coScaleDimension('w', 100, Number.NaN, 50)).toBeNull();
+    expect(coScaleDimension('w', -10, 100, 50)).toBeNull();
   });
 });
 

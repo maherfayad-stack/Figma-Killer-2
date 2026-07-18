@@ -196,6 +196,137 @@ export function arbitraryRadiusEdit(px: number, previousArbitrary: string | null
   return { add: [cls], remove };
 }
 
+// --- FIX-W4b-7 item 2 — independent corner radius (`border_radius.cljs`'s
+// `radius-4` multi-corner mode, toggled by its own `i/corner-radius` icon
+// button — the STUB `SizePositionSection`'s "Independent corners" button was
+// left as this pass's own carry-forward) --------------------------------
+
+export type RadiusCorner = 'tl' | 'tr' | 'br' | 'bl';
+
+/** Penpot's own field order for its 4-corner mode: `r1`=top-left,
+ * `r2`=top-right, `r3`=bottom-right, `r4`=bottom-left — mirrored here so
+ * `consolidateRadiusFromCorners`'s "which corner wins" choice below has a
+ * real citation, not an arbitrary pick. */
+export const RADIUS_CORNERS: readonly RadiusCorner[] = ['tl', 'tr', 'br', 'bl'];
+
+/** One corner's own arbitrary radius class (`rounded-tl-[Npx]` etc). Each of
+ * `rounded-tl-*`/`rounded-tr-*`/`rounded-br-*`/`rounded-bl-*` is its OWN
+ * tracked `@ccs/ast-engine` conflict group (`tailwind-groups.ts`'s
+ * `rounded-(tl|tr|bl|br)-.+` rule, confirmed by reading that file for this
+ * task — DIFFERENT from the bare `rounded`/`rounded-[Npx]` group the single-
+ * radius field writes), so the daemon already evicts a stale SAME-corner
+ * value on its own; what it can NOT evict is the unrelated single-radius
+ * class possibly still on the node from before independent-corners mode was
+ * switched on — this function's own `remove` list clears that client-side,
+ * the same self-contained-remove-candidate pattern `arbitraryRadiusEdit`
+ * above already uses against `RADIUS_GROUP`'s named presets (ast-engine is
+ * frozen; this workstream may not add a `rounded` <-> `rounded-tl` cross-
+ * group entry there). */
+export function arbitraryCornerRadiusEdit(
+  corner: RadiusCorner,
+  px: number,
+  previousCornerArbitrary: string | null,
+  previousSingleArbitrary: string | null,
+): ClassEdit {
+  const cls = `rounded-${corner}-[${Math.round(px)}px]`;
+  const namedSingleCandidates = RADIUS_GROUP.presets.flatMap((p) => p.add);
+  const remove = [
+    ...namedSingleCandidates,
+    ...(previousSingleArbitrary ? [previousSingleArbitrary] : []),
+    ...(previousCornerArbitrary && previousCornerArbitrary !== cls ? [previousCornerArbitrary] : []),
+  ];
+  return { add: [cls], remove };
+}
+
+/** Toggling independent-corners mode back OFF. NOTE this is a genuine
+ * ADAPTATION, not a literal port: real Penpot's `r1`/`r2`/`r3`/`r4` are
+ * always-present shape attributes (`toggle-radius-mode` only flips a local
+ * `radius-expanded` UI boolean — re-read against `border_radius.cljs` for
+ * this task; the single field, when collapsed, is a REACTIVE "are all 4
+ * equal?" readout of those same 4 attributes, never a destructive merge).
+ * This tool's Tailwind-class model has no such always-present-4-attributes
+ * layer — `rounded-[Npx]` and `rounded-tl-[Npx]`/etc. are structurally
+ * DIFFERENT classes, so switching representations genuinely must pick ONE
+ * value to carry forward. This function picks the TOP-LEFT corner's own
+ * current value (Penpot's own field order still gives `r1`/top-left
+ * precedence — see `RADIUS_CORNERS`'s doc for the citation) — never an
+ * average of all 4, which could be a number NO corner ever actually had,
+ * the exact kind of fabricated value this file's honesty policy declines to
+ * invent elsewhere (`resolveCurrentValue`'s module doc). Removes every
+ * corner class this session actually wrote (`previousCornerArbitraries` — a
+ * corner never touched this session is simply `null`, already a no-op
+ * remove-candidate). */
+export function consolidateRadiusFromCorners(
+  topLeftPx: number,
+  previousCornerArbitraries: readonly (string | null)[],
+): ClassEdit {
+  const cls = `rounded-[${Math.round(topLeftPx)}px]`;
+  const remove = previousCornerArbitraries.filter((c): c is string => !!c);
+  return { add: [cls], remove };
+}
+
+/** Honest LIVE seed for the 4 corner fields the instant independent-corners
+ * mode is switched ON — parses the ONE curated bridge computed-style prop
+ * that exists for radius at all (`border-radius`, confirmed against
+ * `packages/bridge/src/computed-style.ts`'s `GEOMETRY_PROPS`; no per-corner
+ * curated prop exists, and this workstream's hard constraint forbids adding
+ * one). The CSSOM computed-style serialization of the `border-radius`
+ * SHORTHAND already reports each of the 4 corners' real values whenever they
+ * differ (e.g. `"10px 20px 30px 40px"`, never silently collapsed to one
+ * number) — so reading them back out here is a real value read, not a
+ * guess. Returns `null` for anything this can't confidently parse (an
+ * elliptical `/`-separated radius, a non-px unit, 0 or >4 tokens) — never a
+ * fabricated corner value; `SizePositionSection`'s own call site falls back
+ * to replicating whatever SINGLE radius value it already has across all 4
+ * corners instead (still a real value, just less precise per-corner). */
+export function parseBorderRadiusCorners(
+  raw: string,
+): { tl: number; tr: number; br: number; bl: number } | null {
+  if (raw.includes('/')) return null;
+  const tokens = raw.trim().split(/\s+/).filter(Boolean);
+  if (tokens.length < 1 || tokens.length > 4) return null;
+  const nums: number[] = [];
+  for (const token of tokens) {
+    const match = /^(-?\d+(?:\.\d+)?)px$/.exec(token);
+    if (!match?.[1]) return null;
+    nums.push(Number(match[1]));
+  }
+  const [a, b, c, d] = nums;
+  if (a === undefined) return null;
+  if (tokens.length === 1) return { tl: a, tr: a, br: a, bl: a };
+  if (b === undefined) return null;
+  if (tokens.length === 2) return { tl: a, tr: b, br: a, bl: b };
+  if (c === undefined) return null;
+  if (tokens.length === 3) return { tl: a, tr: b, br: c, bl: b };
+  if (d === undefined) return null;
+  return { tl: a, tr: b, br: c, bl: d };
+}
+
+// --- FIX-W4b-7 item 3 — aspect-ratio lock (W/H proportion lock, `measures.
+// cljs`'s `proportion-lock` toggle — the STUB `SizePositionSection`'s W/H
+// lock icon was left as this pass's own carry-forward) --------------------
+
+/** Co-scale math for the W/H proportion lock: given the CURRENT (pre-edit)
+ * live width/height — the ratio to preserve — and a NEW value just committed
+ * for `editedAxis`, returns the OTHER axis's new value, rounded to the
+ * nearest whole pixel (every numeric field this file writes is integer px —
+ * `arbitrarySizeEdit` et al. all `Math.round`). Returns `null` (never a
+ * fabricated ratio/write) when the ratio can't be computed — a non-finite or
+ * non-positive `currentW`/`currentH`/`newValue` — so a caller with no real
+ * W/H to base a ratio on simply leaves the other axis untouched rather than
+ * writing a nonsensical `w-[Infinitypx]`/`h-[NaNpx]`. */
+export function coScaleDimension(
+  editedAxis: 'w' | 'h',
+  newValue: number,
+  currentW: number,
+  currentH: number,
+): number | null {
+  if (![currentW, currentH, newValue].every((n) => Number.isFinite(n) && n > 0)) return null;
+  const ratio = currentW / currentH;
+  const result = editedAxis === 'w' ? newValue / ratio : newValue * ratio;
+  return Number.isFinite(result) ? Math.round(result) : null;
+}
+
 // --- Layout container (layout_container.cljs: direction, wrap, justify,
 // align, gap, padding) ----------------------------------------------------
 
@@ -952,6 +1083,47 @@ export const SHADOW_GROUP: ClassPresetGroup = {
 export const OPACITY_GROUP: ClassPresetGroup = {
   key: 'opacity',
   presets: [0, 25, 50, 75, 100].map((v) => ({ value: String(v), label: `${v}%`, add: [`opacity-${v}`] })),
+};
+
+// --- FIX-W4b-7 item 1 — Layer blend mode (layer.cljs's blend-mode dropdown,
+// sitting on the same Layer-header row as Opacity above) — the STUB
+// `LayerHeaderRow`'s disabled "Normal"-only <select> was left as this pass's
+// own carry-forward -------------------------------------------------------
+
+/** Penpot's own blend-mode list (`layer.cljs`'s `blend-modes` set) mapped to
+ * Tailwind's `mix-blend-*` utilities, in the same order. `mix-blend-*` is
+ * NOT in `@ccs/ast-engine`'s `tailwind-groups.ts` conflict table (confirmed
+ * by reading that file for this task: no `mix-blend` entry anywhere, and
+ * the one regex rule that LOOKS similar — `bg-(clip|origin|blend)-.+` —
+ * matches Tailwind's UNRELATED `bg-blend-*` background-blend-mode utilities,
+ * not this property) — so, like `SELF_ALIGN_GROUP`/`ORDER_GROUP` above, this
+ * group relies entirely on `resolveClassEdit`'s own self-contained remove-
+ * candidate list (every OTHER blend preset's class) for eviction, never the
+ * ast-engine table (frozen). "Normal" adds NOTHING (Tailwind does have a
+ * literal `mix-blend-normal` utility, but the CSS property's own INITIAL
+ * value already IS `normal`) — matching this file's existing "empty means
+ * no class, not an explicit reset class" policy
+ * (`resolveRemoveFillEdit`/`resolveRemoveShadowEdit`). */
+export const BLEND_MODE_GROUP: ClassPresetGroup = {
+  key: 'blend-mode',
+  presets: [
+    { value: 'normal', label: 'Normal', add: [] },
+    { value: 'multiply', label: 'Multiply', add: ['mix-blend-multiply'] },
+    { value: 'screen', label: 'Screen', add: ['mix-blend-screen'] },
+    { value: 'overlay', label: 'Overlay', add: ['mix-blend-overlay'] },
+    { value: 'darken', label: 'Darken', add: ['mix-blend-darken'] },
+    { value: 'lighten', label: 'Lighten', add: ['mix-blend-lighten'] },
+    { value: 'color-dodge', label: 'Color dodge', add: ['mix-blend-color-dodge'] },
+    { value: 'color-burn', label: 'Color burn', add: ['mix-blend-color-burn'] },
+    { value: 'hard-light', label: 'Hard light', add: ['mix-blend-hard-light'] },
+    { value: 'soft-light', label: 'Soft light', add: ['mix-blend-soft-light'] },
+    { value: 'difference', label: 'Difference', add: ['mix-blend-difference'] },
+    { value: 'exclusion', label: 'Exclusion', add: ['mix-blend-exclusion'] },
+    { value: 'hue', label: 'Hue', add: ['mix-blend-hue'] },
+    { value: 'saturation', label: 'Saturation', add: ['mix-blend-saturation'] },
+    { value: 'color', label: 'Color', add: ['mix-blend-color'] },
+    { value: 'luminosity', label: 'Luminosity', add: ['mix-blend-luminosity'] },
+  ],
 };
 
 // --- FIX-W4b-6 — Penpot's "+/add" model for Fill/Stroke/Shadow ------------

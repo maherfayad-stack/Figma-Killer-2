@@ -31,6 +31,7 @@ import {
 import {
   ALIGN_CONTENT_GROUP,
   ALIGN_ITEMS_GROUP,
+  arbitraryCornerRadiusEdit,
   arbitraryGapEdit,
   arbitraryInsetEdit,
   arbitraryPaddingLinkedEdit,
@@ -38,12 +39,15 @@ import {
   arbitraryRadiusEdit,
   arbitraryRotateEdit,
   arbitrarySizeEdit,
+  BLEND_MODE_GROUP,
   BORDER_WIDTH_GROUP,
   buildColorPalette,
   clamp01,
   type ClassEdit,
   type ClassPresetGroup,
   type ColorControlValue,
+  consolidateRadiusFromCorners,
+  coScaleDimension,
   DEVICE_PRESETS,
   DEVICE_QUICK_PRESETS,
   type DevicePreset,
@@ -60,9 +64,12 @@ import {
   OPACITY_GROUP,
   ORDER_GROUP,
   parseArbitraryValue,
+  parseBorderRadiusCorners,
   parseColorHint,
   POSITION_GROUP,
   POSITION_REMOVE_EXTRA,
+  RADIUS_CORNERS,
+  type RadiusCorner,
   resolveAddFillEdit,
   resolveAddShadowEdit,
   resolveAddStrokeEdit,
@@ -388,6 +395,56 @@ import {
  * as this pass's own carry-forward, same "single-valued adaptation of an
  * array-shaped Penpot control" precedent `arbitraryGapEdit`'s own doc
  * already sets (one combined `gap-*`, not Penpot's row/column-gap pair).
+ *
+ * ## FIX-W4b-7 — wires 3 previously-STUBBED controls to real functionality
+ * Human dogfood round-5 (R5-2): three `StubIconButton`s / a disabled
+ * `<select>` from earlier passes are made real, Inspector-local only
+ * (Fill/Stroke/Shadow, Layout, and Typography are untouched):
+ *  1. **Blend mode** (`LayerHeaderRow`) — was a disabled `<select>` with only
+ *     "Normal". Now a real `GroupSelect` bound to `BLEND_MODE_GROUP`
+ *     (`inspector-presets.ts`), Penpot's own `layer.cljs` blend-mode list
+ *     mapped 1:1 to Tailwind's `mix-blend-*` utilities. No curated bridge
+ *     computed prop exists for `mix-blend-mode` (`@ccs/bridge`'s
+ *     `computed-style.ts`, confirmed no entry) and this workstream may not
+ *     add one — so like every OTHER no-cssProp `GroupSelect` in this file,
+ *     it follows the session-hint + honest-fallback pattern (`'normal'`,
+ *     which is CSS's own literal initial value for this property, not a
+ *     guess). `mix-blend-*` isn't in ast-engine's conflict table either
+ *     (confirmed: no entry, and `bg-blend-*` is an unrelated property) — the
+ *     group's own `resolveClassEdit` remove-candidate list handles eviction
+ *     entirely client-side, same self-contained pattern `SELF_ALIGN_GROUP`/
+ *     `ORDER_GROUP` already use.
+ *  2. **Independent corner radius** (`SizePositionSection`) — was a
+ *     permanently-disabled `StubIconButton`. Now a real `ToggleIconButton`:
+ *     OFF keeps the existing single Radius field; ON swaps it for 4 per-
+ *     corner fields (`arbitraryCornerRadiusEdit` -> `rounded-tl-/-tr-/-br-/
+ *     -bl-[Npx]`, each its own tracked ast-engine conflict group), seeded
+ *     from a real per-corner parse of the curated `border-radius` computed
+ *     value when possible (`parseBorderRadiusCorners`) else the current
+ *     single value replicated to all 4 (still real, less precise) else
+ *     honest blank. Toggling back OFF re-consolidates via
+ *     `consolidateRadiusFromCorners` (Penpot's own top-left-corner
+ *     convention) — but ONLY writes anything if a corner was actually
+ *     edited this session; otherwise it's a pure no-op UI-mode flip (never a
+ *     fabricated "reset" write). See `toggleIndependentCorners`'s own doc.
+ *  3. **Aspect-ratio (W/H proportion) lock** (`SizePositionSection`) — was a
+ *     permanently-disabled `StubIconButton`. Now a real `ToggleIconButton`;
+ *     while locked, committing either W or H field co-scales the other via
+ *     `coScaleDimension` (`inspector-presets.ts`), preserving the CURRENT
+ *     live W:H ratio (own-last-write-wins, else session hint, else the
+ *     element's real computed size — `resolveRatioBasis`, never a
+ *     fabricated ratio). `ArbitraryPxInput` gained two small opt-in props
+ *     (`valueOverride`/`onCommitted`, every EXISTING caller unaffected) so
+ *     the un-edited sibling field visibly reflects the co-scaled value the
+ *     instant it's written, mirroring `FrameSizeSection`'s own pre-existing
+ *     `override`-state pattern for the identical "own write must out-rank a
+ *     stale computed-style seed" problem.
+ *
+ * Left as this pass's own disclosed carry-forwards (out of the 3-item
+ * scope): `LayerHeaderRow`'s eye/lock toggles (no per-node visibility/lock
+ * STATE on `TreeNode` to read or write) and `FrameSizeSection`'s own W/H
+ * proportion-lock stub (a board's W/H write path, `setFrameGeometry`, has no
+ * co-scaling concept implemented).
  */
 export interface InspectorProps {
   /** `null` until `StudioCanvas`'s `onReady` fires (mirrors `InspectPanel`'s
@@ -762,20 +819,39 @@ function LayerSection({
  * control, alone on its own row — one of the biggest single visual gaps this
  * pass's brief named explicitly ("WE ARE MISSING THIS").
  *
- * Blend-mode and the eye/lock toggles are honest, DISABLED stubs (see
- * `StubIconButton`'s doc for the "disabled beats a fabricated no-op" policy
- * this file already applies elsewhere): `inspector-presets.ts` has no
- * blend-mode class table, and `TreeNode` carries no per-node visibility/lock
- * STATE to read or write — inventing controls that looked wired but silently
- * no-opped would be worse than honestly disabled ones. Opacity itself is
- * functionally UNCHANGED: still the exact same `GroupSelect`/`OPACITY_GROUP`
- * control (same session-hint read/write, same `set-classes` op) — only its
- * new opt-in `compact` prop changes ITS OWN rendering to fit one row. */
+ * FIX-W4b-7 item 1: blend-mode is now REAL, wired to `BLEND_MODE_GROUP`
+ * (`inspector-presets.ts`) via the SAME `GroupSelect` every other class-
+ * preset dropdown in this file uses — no `cssProp` is passed (and `compact`
+ * suppresses `CurrentValueLine` regardless): `@ccs/bridge`'s curated
+ * `report-computed-style` list has no `mix-blend-mode` entry (confirmed
+ * against `computed-style.ts`'s `GEOMETRY_PROPS`/`LAYOUT_PROPS`/etc, none of
+ * which carry it), and adding one is a `packages/bridge` change this
+ * workstream's hard constraints forbid — so this control follows the
+ * session-hint + honest-fallback pattern (`getClassHint(...) ?? 'normal'`)
+ * every no-cssProp `GroupSelect` caller already uses (`GROW_GROUP`,
+ * `SELF_ALIGN_GROUP`, `ORDER_GROUP` below). `'normal'` is not a guess: CSS's
+ * own `mix-blend-mode` INITIAL value literally IS `normal`, so a never-
+ * touched node honestly starting there is a real equivalence, not a
+ * fabricated one (same reasoning `FillSection`/`ShadowSection`'s own module
+ * doc already gives for `background-color: transparent`/`box-shadow: none`).
+ *
+ * The eye/lock toggles remain honest, DISABLED stubs (see `StubIconButton`'s
+ * doc for the "disabled beats a fabricated no-op" policy): `TreeNode`
+ * carries no per-node visibility/lock STATE to read or write at all — out of
+ * this workstream's 3-item scope. Opacity itself is functionally UNCHANGED:
+ * still the exact same `GroupSelect`/`OPACITY_GROUP` control. */
 function LayerHeaderRow({ node, readOnly }: { node: TreeNode; readOnly: boolean }): React.ReactElement {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--ccs-space-1)' }}>
       <div style={{ flex: '1 1 0', minInlineSize: 0 }}>
-        <Select aria-label="Blend mode" value="normal" disabled options={[{ value: 'normal', label: 'Normal' }]} />
+        <GroupSelect
+          node={node}
+          group={BLEND_MODE_GROUP}
+          label="Blend mode"
+          fallback="normal"
+          readOnly={readOnly}
+          compact
+        />
       </div>
       <div style={{ inlineSize: 72, flexShrink: 0 }}>
         <GroupSelect node={node} group={OPACITY_GROUP} label="Opacity" fallback="100" readOnly={readOnly} compact />
@@ -1718,6 +1794,8 @@ function ArbitraryPxInput({
   cssProp,
   unit = 'px',
   untrackedCaption,
+  valueOverride,
+  onCommitted,
 }: {
   node: TreeNode;
   hintKey: string;
@@ -1736,6 +1814,26 @@ function ArbitraryPxInput({
    * an honest "this control has no live readout" caption (rotation only),
    * never silence and never a fabricated value. */
   untrackedCaption?: string | undefined;
+  /** FIX-W4b-7 items 2/3 — an external value that outranks BOTH the session
+   * hint and the live computed-style seed, mirroring `FrameGeometryInput`'s
+   * own `valueOverride` (same "own last write wins, re-render the sibling"
+   * problem: a PARENT section just wrote this field's class on this field's
+   * behalf — the aspect-ratio lock co-scaling the OTHER axis, or independent-
+   * corners seeding all 4 corner fields at once — and needs this display to
+   * reflect that new value immediately, without waiting on a stale
+   * `ComputedStyleContext` re-fetch). `undefined` (the default for every
+   * EXISTING caller, unaffected) means "no override, use the normal hinted/
+   * seeded value"; `null` means "override says: show blank" (independent-
+   * corners' own honest "not known yet" case); a number is the override
+   * value itself. */
+  valueOverride?: number | null | undefined;
+  /** FIX-W4b-7 items 2/3 — fires after this field's OWN `set-classes` write
+   * completes, with the committed value and the exact class written (if
+   * any) — lets a PARENT section layer additional behavior (aspect-ratio
+   * co-scaling the sibling axis; tracking a corner's own last value for
+   * re-consolidation) without duplicating this function's own hint-read/
+   * hint-write/`sendOp` wiring. Every EXISTING caller omits it, unaffected. */
+  onCommitted?: ((value: number, written: string | undefined) => void) | undefined;
 }): React.ReactElement {
   const { sendOp } = useDaemonConnection();
   const computed = React.useContext(ComputedStyleContext);
@@ -1743,13 +1841,14 @@ function ArbitraryPxInput({
   const hinted = getClassHint(node.uid, hintKey) ?? null;
   const hintedValue = hinted ? parseArbitraryValue(hinted) : null;
   const seededText = React.useMemo(() => {
+    if (valueOverride !== undefined) return valueOverride === null ? '' : String(valueOverride);
     if (hintedValue !== null) return String(hintedValue);
     if (seed !== 'loading' && seed !== 'unset') {
       const n = Math.round(parseFloat(seed.raw));
       if (Number.isFinite(n)) return String(n);
     }
     return '';
-  }, [hintedValue, seed]);
+  }, [valueOverride, hintedValue, seed]);
   // "Uncontrolled until touched" — see this function's own doc.
   const [dirtyText, setDirtyText] = React.useState<string | null>(null);
   const text = dirtyText ?? seededText;
@@ -1773,6 +1872,7 @@ function ArbitraryPxInput({
           const written = edit.add[0];
           if (written) setClassHint(node.uid, hintKey, written);
           sendOp({ t: 'set-classes', uid: node.uid, add: edit.add, remove: edit.remove });
+          onCommitted?.(value, written);
         }}
       />
       {cssProp ? (
@@ -1825,17 +1925,21 @@ function MeasureRow({
 }
 
 /** FIX-W4b-5 — a cosmetic-only Penpot-style icon affordance for a control
- * this pass does NOT wire up (proportion lock, independent-corners): both
- * are genuine Penpot icon/tooltip pairs (`measures.cljs`'s `:icon (if
- * proportion-lock "lock" "unlock")`; `border_radius.cljs`'s corner-mode
- * toggle reuses its own `i/corner-radius` glyph — cited inline at each call
- * site), rendered `disabled` so the control is honestly inert rather than
- * silently no-opping on click — same "disabled + honest beats a fabricated
- * no-op" policy `ArbitraryPxInput`'s own `readOnly` wiring already follows
- * elsewhere in this file. CARRY-FORWARD to actually wire (see worker
- * report): proportion-lock would need this section to scale the OTHER
- * dimension on a W/H edit; independent-corners would need four separate
- * per-corner radius fields. Neither exists in `inspector-presets.ts` today. */
+ * this file does NOT wire up, rendered `disabled` so it's honestly inert
+ * rather than silently no-opping on click — same "disabled + honest beats a
+ * fabricated no-op" policy `ArbitraryPxInput`'s own `readOnly` wiring already
+ * follows elsewhere in this file.
+ *
+ * FIX-W4b-7 update: the element-facing `SizePositionSection`'s own W/H
+ * proportion-lock and independent-corners buttons — the two calls this
+ * function used to back — are now REAL (`ToggleIconButton`, below), see that
+ * section's own doc. `StubIconButton` remains in use for controls genuinely
+ * OUT of this workstream's 3-item scope: `LayerHeaderRow`'s eye/lock toggles
+ * (`TreeNode` carries no per-node visibility/lock STATE to read or write at
+ * all) and `FrameSizeSection`'s own proportion-lock stub (a BOARD's W/H
+ * write path, `StudioCanvasHandle.setFrameGeometry`, has no co-scaling
+ * concept implemented — a disclosed carry-forward, not this pass's job to
+ * add). */
 function StubIconButton({ icon, title }: { icon: IconName; title: string }): React.ReactElement {
   return (
     <button
@@ -1908,15 +2012,201 @@ function PanelIconButton({
   );
 }
 
+/** FIX-W4b-7 — the enabled counterpart to `StubIconButton` for a boolean MODE
+ * toggle (not an add/remove action, so `PanelIconButton` isn't the right
+ * shape either): the W/H aspect-ratio proportion-lock, and the Size &
+ * position independent-corners toggle, both of which `StubIconButton` used
+ * to render as honest, permanently-disabled stubs before this workstream
+ * wired them up. Same 28×28 hit target/placement as `StubIconButton` (this
+ * lives in `MeasureRow`'s own action column), `aria-pressed` reflects
+ * `active`, and the active state gets `--ccs-accent` foreground +
+ * `--ccs-bg-panel-raised` background — the same two tokens this file already
+ * uses elsewhere (`FrameContextBanner`'s icon; the color-swatch checkerboard
+ * background) — as a real depressed/selected treatment, not a new invented
+ * color. */
+function ToggleIconButton({
+  icon,
+  title,
+  active,
+  disabled,
+  onClick,
+}: {
+  icon: IconName;
+  title: string;
+  active: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+}): React.ReactElement {
+  return (
+    <button
+      type="button"
+      title={title}
+      aria-label={title}
+      aria-pressed={active}
+      disabled={disabled}
+      onClick={onClick}
+      style={{
+        all: 'unset',
+        boxSizing: 'border-box',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        inlineSize: 28,
+        blockSize: 28,
+        borderRadius: 'calc(var(--ccs-radius) - 2px)',
+        color: disabled ? 'var(--ccs-text-subtle)' : active ? 'var(--ccs-accent)' : 'var(--ccs-text-muted)',
+        background: active ? 'var(--ccs-bg-panel-raised)' : 'transparent',
+        cursor: disabled ? 'not-allowed' : 'pointer',
+      }}
+    >
+      <Icon name={icon} size={16} />
+    </button>
+  );
+}
+
 // --- Size & position (measures.cljs, radius + rotation included — see
 // module doc's FIX-W4b-3a section) ---------------------------------------
 
+const SIZE_HINT_KEY: Record<'w' | 'h', string> = { w: 'size-w-custom', h: 'size-h-custom' };
+const SIZE_CSS_PROP: Record<'w' | 'h', string> = { w: 'width', h: 'height' };
+
+/** FIX-W4b-7 item 3 — the ratio basis for ONE axis (W or H), used by the
+ * aspect-ratio lock to compute the OTHER axis on an edit. Precedence: this
+ * session's own freshest cross-axis write (`override`, set the instant
+ * either W/H field's aspect-locked commit fires) else this session's own
+ * class hint (`getClassHint` — "own last write wins", the same precedence
+ * every other control in this file already follows) else the element's REAL
+ * computed value (`ComputedStyleContext`, honest live fallback). Returns
+ * `null` — never a fabricated ratio — when none of the three resolve to a
+ * finite, positive number (so `SizePositionSection`'s own caller simply
+ * skips co-scaling rather than writing a nonsense class). */
+function resolveRatioBasis(
+  override: number | undefined,
+  hintClass: string | undefined,
+  computed: ComputedLookup | null,
+  cssProp: string,
+): number | null {
+  if (override !== undefined) return override;
+  const hinted = hintClass ? parseArbitraryValue(hintClass) : null;
+  if (hinted !== null) return hinted;
+  const seed = resolveCurrentValue(computed, cssProp);
+  if (seed === 'loading' || seed === 'unset') return null;
+  const n = parseFloat(seed.raw);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+const CORNER_LABEL: Record<RadiusCorner, string> = {
+  tl: 'Top-left',
+  tr: 'Top-right',
+  br: 'Bottom-right',
+  bl: 'Bottom-left',
+};
+
+function cornerHintKey(corner: RadiusCorner): string {
+  return `radius-${corner}-custom`;
+}
+
 function SizePositionSection({ node, readOnly }: { node: TreeNode; readOnly: boolean }): React.ReactElement {
   const { sendOp } = useDaemonConnection();
+  const computed = React.useContext(ComputedStyleContext);
   // Lazy initializer only — this section is always uniquely `key`-ed by
   // `Inspector` (see its own doc), same reasoning as `GroupSelect`.
   const [position, setPosition] = React.useState(() => getClassHint(node.uid, POSITION_GROUP.key) ?? 'static');
   const canPositionXY = position === 'absolute';
+
+  // FIX-W4b-7 item 3 — aspect-ratio (W/H proportion) lock. `aspectLocked`
+  // restarts OFF on every fresh node selection (this section remounts per-
+  // uid — see the file's own module doc), matching `LayoutContainerSection`'s
+  // own `paddingMode`'s "transient UI choice, not a written value" reasoning.
+  // `sizeOverride` is this session's own freshest W/H write (typed directly,
+  // or co-scaled onto the OTHER axis by this lock) — threaded into both
+  // `ArbitraryPxInput`s as `valueOverride` so the field the user did NOT type
+  // into still visibly updates the instant its sibling commits (the same
+  // "own last write wins, re-render the sibling" problem `FrameSizeSection`'s
+  // own `override` state already solves for the board W/H path, reused here
+  // for the element-facing path).
+  const [aspectLocked, setAspectLocked] = React.useState(false);
+  const [sizeOverride, setSizeOverride] = React.useState<{ w: number | undefined; h: number | undefined }>({
+    w: undefined,
+    h: undefined,
+  });
+
+  const commitSize = (axis: 'w' | 'h', px: number): void => {
+    if (aspectLocked) {
+      const otherAxis: 'w' | 'h' = axis === 'w' ? 'h' : 'w';
+      const basisThis = resolveRatioBasis(sizeOverride[axis], getClassHint(node.uid, SIZE_HINT_KEY[axis]), computed, SIZE_CSS_PROP[axis]);
+      const basisOther = resolveRatioBasis(
+        sizeOverride[otherAxis],
+        getClassHint(node.uid, SIZE_HINT_KEY[otherAxis]),
+        computed,
+        SIZE_CSS_PROP[otherAxis],
+      );
+      if (basisThis !== null && basisOther !== null) {
+        const currentW = axis === 'w' ? basisThis : basisOther;
+        const currentH = axis === 'w' ? basisOther : basisThis;
+        const otherPx = coScaleDimension(axis, px, currentW, currentH);
+        if (otherPx !== null) {
+          const otherHintKey = SIZE_HINT_KEY[otherAxis];
+          const previous = getClassHint(node.uid, otherHintKey) ?? null;
+          const edit = arbitrarySizeEdit(otherAxis, otherPx, previous);
+          const written = edit.add[0];
+          if (written) setClassHint(node.uid, otherHintKey, written);
+          sendOp({ t: 'set-classes', uid: node.uid, add: edit.add, remove: edit.remove });
+          setSizeOverride((prev) => ({ ...prev, [otherAxis]: otherPx }));
+        }
+      }
+    }
+    setSizeOverride((prev) => ({ ...prev, [axis]: px }));
+  };
+
+  // FIX-W4b-7 item 2 — independent per-corner radius toggle. Same
+  // remount-per-node lifetime as `aspectLocked` above.
+  const [independentCorners, setIndependentCorners] = React.useState(false);
+  const [cornerOverride, setCornerOverride] = React.useState<Record<RadiusCorner, number | null | undefined>>({
+    tl: undefined,
+    tr: undefined,
+    br: undefined,
+    bl: undefined,
+  });
+
+  const toggleIndependentCorners = (): void => {
+    if (readOnly) return;
+    if (!independentCorners) {
+      // Turning ON — NO write, just switches the UI mode + seeds the 4
+      // corner fields' displayed values (see `parseBorderRadiusCorners`'s
+      // own doc for the seed precedence: the real per-corner parse of the
+      // curated `border-radius` computed value, else the current single-
+      // radius field's own value replicated to all 4 corners, else honest
+      // blank — never a corner value no source ever actually reported).
+      const rawBorderRadius = computed?.get('border-radius');
+      const parsed = rawBorderRadius ? parseBorderRadiusCorners(rawBorderRadius) : null;
+      if (parsed) {
+        setCornerOverride(parsed);
+      } else {
+        const singleHinted = getClassHint(node.uid, 'radius-custom');
+        const singleFromHint = singleHinted ? parseArbitraryValue(singleHinted) : null;
+        const singleFromSeed = rawBorderRadius ? Math.round(parseFloat(rawBorderRadius)) : NaN;
+        const single = singleFromHint ?? (Number.isFinite(singleFromSeed) ? singleFromSeed : null);
+        setCornerOverride({ tl: single, tr: single, br: single, bl: single });
+      }
+      setIndependentCorners(true);
+      return;
+    }
+    // Turning OFF — re-consolidate ONLY if at least one corner was actually
+    // written this session; otherwise there is nothing to reconsolidate and
+    // flipping back is a pure UI-mode change with ZERO writes (never a
+    // fabricated "reset" write) — see `consolidateRadiusFromCorners`'s doc.
+    const cornerHints = RADIUS_CORNERS.map((c) => getClassHint(node.uid, cornerHintKey(c)) ?? null);
+    setIndependentCorners(false);
+    if (cornerHints.every((h) => h === null)) return;
+    const firstHint = cornerHints[0];
+    const topLeft = cornerOverride.tl ?? (firstHint ? parseArbitraryValue(firstHint) : null);
+    if (topLeft === null || topLeft === undefined) return;
+    const edit = consolidateRadiusFromCorners(topLeft, cornerHints);
+    const written = edit.add[0];
+    if (written) setClassHint(node.uid, 'radius-custom', written);
+    sendOp({ t: 'set-classes', uid: node.uid, add: edit.add, remove: edit.remove });
+  };
 
   return (
     <Panel title="Size & position" id="inspector-size-position">
@@ -1928,35 +2218,47 @@ function SizePositionSection({ node, readOnly }: { node: TreeNode; readOnly: boo
          * `arbitrarySizeEdit`'s remove-candidate list (`inspector-
          * presets.ts`) — entering a number here still evicts a stale
          * `w-full` etc. — they're just no longer a separate control. */}
-        {/* FIX-W4b-5: `measures.cljs`'s own 3-col `.element-set` grid (see
-         * `MeasureRow`'s doc) — the 3rd column is the section's proportion-
-         * lock icon (`:icon (if proportion-lock "lock" "unlock")`), rendered
-         * here as an honest disabled stub (see `StubIconButton`'s doc for why
-         * it isn't wired this pass). */}
+        {/* FIX-W4b-7 item 3: the 3rd column is now a REAL proportion-lock
+         * toggle (`ToggleIconButton`, `measures.cljs`'s own `:icon (if
+         * proportion-lock "lock" "unlock")`) — while locked, committing
+         * EITHER field co-scales the other to preserve the current W:H
+         * ratio (`coScaleDimension`, `inspector-presets.ts`). */}
         <MeasureRow
           left={
             <ArbitraryPxInput
               node={node}
-              hintKey="size-w-custom"
+              hintKey={SIZE_HINT_KEY.w}
               label="W"
               readOnly={readOnly}
               icon="character-w"
               cssProp="width"
               buildEdit={(px, previous) => arbitrarySizeEdit('w', px, previous)}
+              valueOverride={sizeOverride.w}
+              onCommitted={(px) => commitSize('w', px)}
             />
           }
           right={
             <ArbitraryPxInput
               node={node}
-              hintKey="size-h-custom"
+              hintKey={SIZE_HINT_KEY.h}
               label="H"
               readOnly={readOnly}
               icon="character-h"
               cssProp="height"
               buildEdit={(px, previous) => arbitrarySizeEdit('h', px, previous)}
+              valueOverride={sizeOverride.h}
+              onCommitted={(px) => commitSize('h', px)}
             />
           }
-          action={<StubIconButton icon="unlock" title="Lock proportions" />}
+          action={
+            <ToggleIconButton
+              icon={aspectLocked ? 'lock' : 'unlock'}
+              title={aspectLocked ? 'Unlock proportions' : 'Lock proportions'}
+              active={aspectLocked}
+              disabled={readOnly}
+              onClick={() => setAspectLocked((v) => !v)}
+            />
+          }
         />
         <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
           <Select
@@ -2024,10 +2326,14 @@ function SizePositionSection({ node, readOnly }: { node: TreeNode; readOnly: boo
          * value. Radius (`border_radius.cljs`'s `border-radius-menu*`,
          * embedded directly inside `measures-menu*` in real Penpot — see this
          * file's module doc for the citation — hence living here, not in the
-         * old "Border & radius" Panel, now just `Stroke`). 3rd column: the
-         * independent-corners toggle (`border_radius.cljs` reuses its own
-         * `i/corner-radius` glyph for this — see `StubIconButton`'s doc for
-         * why it's an honest disabled stub, not wired, this pass). */}
+         * old "Border & radius" Panel, now just `Stroke`). 3rd column:
+         * FIX-W4b-7 item 2 — a REAL independent-corners toggle
+         * (`border_radius.cljs`'s own `radius-4` mode, reusing its own
+         * `i/corner-radius` glyph): ON swaps the single Radius field for 4
+         * per-corner fields below (`arbitraryCornerRadiusEdit`), OFF
+         * re-consolidates them back into one (`consolidateRadiusFromCorners`)
+         * — see `toggleIndependentCorners`'s own doc for exactly when each
+         * direction writes vs. is a pure no-op UI change. */}
         <MeasureRow
           left={
             <ArbitraryPxInput
@@ -2042,18 +2348,60 @@ function SizePositionSection({ node, readOnly }: { node: TreeNode; readOnly: boo
             />
           }
           right={
-            <ArbitraryPxInput
-              node={node}
-              hintKey="radius-custom"
-              label="Radius"
-              readOnly={readOnly}
+            independentCorners ? (
+              <span
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  blockSize: 'var(--ccs-row-height)',
+                  fontSize: 'var(--ccs-font-size-xs)',
+                  color: 'var(--ccs-text-subtle)',
+                }}
+              >
+                4 corners below
+              </span>
+            ) : (
+              <ArbitraryPxInput
+                node={node}
+                hintKey="radius-custom"
+                label="Radius"
+                readOnly={readOnly}
+                icon="corner-radius"
+                cssProp="border-radius"
+                buildEdit={(px, previous) => arbitraryRadiusEdit(px, previous)}
+              />
+            )
+          }
+          action={
+            <ToggleIconButton
               icon="corner-radius"
-              cssProp="border-radius"
-              buildEdit={(px, previous) => arbitraryRadiusEdit(px, previous)}
+              title={independentCorners ? 'Use single radius' : 'Independent corners'}
+              active={independentCorners}
+              disabled={readOnly}
+              onClick={toggleIndependentCorners}
             />
           }
-          action={<StubIconButton icon="corner-radius" title="Independent corners" />}
         />
+        {independentCorners && (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--ccs-space-1)' }}>
+            {RADIUS_CORNERS.map((corner) => (
+              <ArbitraryPxInput
+                key={corner}
+                node={node}
+                hintKey={cornerHintKey(corner)}
+                label={CORNER_LABEL[corner]}
+                readOnly={readOnly}
+                icon="corner-radius"
+                untrackedCaption="Current: not tracked (per corner)"
+                valueOverride={cornerOverride[corner]}
+                buildEdit={(px, previous) =>
+                  arbitraryCornerRadiusEdit(corner, px, previous, getClassHint(node.uid, 'radius-custom') ?? null)
+                }
+                onCommitted={(px) => setCornerOverride((prev) => ({ ...prev, [corner]: px }))}
+              />
+            ))}
+          </div>
+        )}
       </div>
     </Panel>
   );
@@ -2122,9 +2470,11 @@ function FrameSizeSection({
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {/* FIX-W4b-5: same `measures.cljs` 3-col `.element-set` grid as the
          * element-facing `SizePositionSection` above (see `MeasureRow`'s
-         * doc) — the proportion-lock stub is equally honest-inert here (a
-         * board's W/H write path, `setFrameGeometry`, has no proportion-lock
-         * concept implemented either). */}
+         * doc). UNLIKE that section's own W/H lock (wired FIX-W4b-7 — see
+         * `StubIconButton`'s doc), this board-facing lock stays an honest,
+         * disabled `StubIconButton`: a board's W/H write path
+         * (`setFrameGeometry`) has no co-scaling concept implemented,
+         * disclosed as a carry-forward, not this pass's job to add. */}
         <MeasureRow
           left={
             <FrameGeometryInput
