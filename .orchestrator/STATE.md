@@ -396,3 +396,39 @@ screenshots + FP-6 raster export) → FIX-W4 (Inspector Penpot structure+icons i
 presets item 8) → FIX-W6 (comments FP-5 faithful item 2). FIX-W2 (Inspect-tab
 loading item 3) likely already resolved by fresh daemon + FP-INS-b/FIX-W1 — AWAIT
 human retry before spending a worker.
+
+## DOGFOOD ROUND 3 (human, 2026-07-18) — 4 asks → FIX-W4b/W7/W8
+Filed while FIX-W4 (Inspector reorder + instance-props-only) was mid-audit. These
+RAISE THE BAR on the right pane and add a canvas ask:
+- **R3-1 → FIX-W4b (big):** right pane must be "100% the same as Penpot" AND genuinely
+  CONTEXT-AWARE by node type (focus text → text controls; focus frame → frame controls;
+  element → element controls) AND "actually works" = reflect the focused element's ACTUAL
+  CURRENT values, not neutral defaults. => promote the deferred read-current-values
+  (reuse FP-INS-b `report-computed-style` bridge msg) to CORE + drive per-node-type
+  section visibility off Penpot `options.cljs` + tighten visual fidelity to the real
+  `menus/*.scss` widget/row anatomy. Builds on FIX-W4.
+- **R3-2 → FIX-W7:** Inspect tab sometimes gets huge width → horizontal scroll. Containment
+  bug (long unwrapped JSX line / CSS value not inside an overflow-x:auto box). The pane body
+  must never scroll horizontally; wide content scrolls inside its own box.
+- **R3-3 → FIX-W7:** pane resize MIN-WIDTH is too large — make the smallest allowed pane
+  width WAY smaller (loosen the clamp in the resize hook).
+- **R3-4 → FIX-W8:** frames on the canvas sometimes show an INTERNAL scrollbar. Eliminate
+  the internal scroll where feasible (size-to-content), and where content genuinely
+  overflows, HIDE the scrollbar (scrollbar-width:none / ::-webkit-scrollbar{display:none})
+  while keeping it scrollable. Canvas/frame-rendering (frame-shape / frame-app template).
+
+Planned sequence (SEQUENTIAL, after FIX-W4 gates): FIX-W7 (quick: resize min-width +
+Inspect horizontal-scroll) → FIX-W8 (frame internal scrollbar) → FIX-W4b (context-aware +
+read-current-values + Penpot visual fidelity — the headline). Quick fixes first to relieve
+daily friction and de-risk against re-hitting the account session limit mid-worker.
+
+### FIX-W4 — COMPLETE (AUDIT-FIXW4 PASS, tag `fix-w4-complete`, commit `ce805e8`) 2026-07-18
+Inspector Penpot-faithful reorder + component-instance = props-only (round-2 items
+1 + 7d). Section stack now mirrors Penpot options/shapes order; Opacity→Layer,
+Radius→Size&position, Stroke split out; header icons; instance renders ONLY Layer+
+Props+Code with CSS sections STRUCTURALLY UNMOUNTED (audit probed count()===0).
+Additive Panel `icon` prop. Frozen surfaces zero-diff; @ccs/studio 58/58 + @ccs/ui
+20/20; lint+typecheck green. This is the STEPPING STONE for FIX-W4b (round-3 full
+Penpot design-parity). Audit intel confirmed: context-awareness is BINARY today
+(board selection = empty state), read-values all defaults, Inspect h-scroll root
+cause = CssRows flex min-width:0 miss, right-dock min-width hardcoded 318px.
