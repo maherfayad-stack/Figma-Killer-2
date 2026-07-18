@@ -14,8 +14,14 @@ license is available at:
 
   http://mozilla.org/MPL/2.0/
 
-Only the ~29 icons listed in `.orchestrator/PENPOT-FIDELITY-SPEC.md` §3
-were vendored (not Penpot's full ~317-icon set). Files were copied
+Initially the ~29 icons listed in `.orchestrator/PENPOT-FIDELITY-SPEC.md` §3
+were vendored (not Penpot's full ~317-icon set). FIX-W4b-2 (Inspector visual-
+parity pass) added ~44 more, all still Penpot originals copied unmodified
+from the same upstream path — the section-header, flex/grid layout
+(direction/wrap/align-items/justify-content/align-self), text-align, and
+measures (character-w/h/x/y, corner-radius) glyphs, plus drop-shadow/
+inner-shadow/stroke-size and the real arrow-right/arrow-down disclosure-
+chevron icons Penpot's own `title-bar*` component uses. Files were copied
 unmodified; `registry.ts` is a mechanical extraction of each file's `d`
 path attribute (see the header comment in that file) and is itself a
 derivative subject to the same MPL-2.0 terms as the source SVGs.

@@ -350,6 +350,46 @@ export function colorGroup(prefix: 'bg' | 'text' | 'border'): ClassPresetGroup {
   };
 }
 
+/** FIX-W4b-2 — Penpot's `fill.cljs`/`stroke.cljs`/typography color rows all
+ * pair a `color_bullet` swatch chip + the hex value next to the picker
+ * (never a bare dropdown). This tool has no live color-picker (a
+ * Tailwind-class-preset `<Select>` stands in for it, an already-disclosed
+ * FIX-W4/FP-INS-a adaptation — see this module's own doc), but the swatch +
+ * hex ROW ANATOMY is still reproducible: Tailwind's default palette is a
+ * fixed, known set of hex values, so every `colorGroup()` preset value maps
+ * to a real, correct swatch color, not a guess. Shade `-500` matches what
+ * `colorGroup` always emits. */
+const TAILWIND_500_HEX: Record<(typeof COLOR_NAMES)[number], string> = {
+  slate: '#64748b',
+  red: '#ef4444',
+  orange: '#f97316',
+  amber: '#f59e0b',
+  yellow: '#eab308',
+  lime: '#84cc16',
+  green: '#22c55e',
+  emerald: '#10b981',
+  teal: '#14b8a6',
+  cyan: '#06b6d4',
+  sky: '#0ea5e9',
+  blue: '#3b82f6',
+  indigo: '#6366f1',
+  violet: '#8b5cf6',
+  purple: '#a855f7',
+  pink: '#ec4899',
+  rose: '#f43f5e',
+};
+
+/** Resolves a `colorGroup()` preset `value` ('none' | 'white' | 'black' |
+ * `${name}-500`) to a real CSS color for a swatch chip, or `undefined` for
+ * 'none' (rendered as an empty/checkerboard chip by the caller). */
+export function hexForColorValue(value: string): string | undefined {
+  if (value === 'none') return undefined;
+  if (value === 'white') return '#ffffff';
+  if (value === 'black') return '#000000';
+  const name = value.replace(/-500$/, '') as (typeof COLOR_NAMES)[number];
+  return TAILWIND_500_HEX[name];
+}
+
 // --- Border & radius (border_radius.cljs + border) -----------------------
 
 export const RADIUS_GROUP: ClassPresetGroup = {

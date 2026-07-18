@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { Icon, type IconName } from '../icons/Icon.js';
 
 /**
  * Select — a native `<select>` styled to match the chrome tokens.
@@ -23,10 +24,16 @@ export interface SelectOption {
 export interface SelectProps extends Omit<React.SelectHTMLAttributes<HTMLSelectElement>, 'children'> {
   label?: string;
   options: SelectOption[];
+  /** FIX-W4b-2: a leading glyph INSIDE the field, matching `Input`'s own
+   * `leadingIcon` (see that file's doc) — used where a Penpot measures
+   * control (e.g. corner radius) is a preset dropdown in this tool rather
+   * than Penpot's free-numeric input, but should still carry the same
+   * property glyph. Purely additive/optional. */
+  leadingIcon?: IconName | undefined;
 }
 
 export const Select = React.forwardRef<HTMLSelectElement, SelectProps>(function Select(
-  { label, options, style, id, ...rest },
+  { label, options, leadingIcon, style, id, ...rest },
   ref,
 ) {
   const autoId = React.useId();
@@ -40,29 +47,47 @@ export const Select = React.forwardRef<HTMLSelectElement, SelectProps>(function 
       {label && (
         <span style={{ fontSize: 'var(--ccs-font-size-xs)', color: 'var(--ccs-text-muted)' }}>{label}</span>
       )}
-      <select
-        ref={ref}
-        id={selectId}
-        style={{
-          inlineSize: '100%',
-          background: 'var(--ccs-bg-input)',
-          color: 'var(--ccs-text)',
-          border: '1px solid var(--ccs-border)',
-          borderRadius: 'var(--ccs-radius-sm)',
-          paddingInline: 8,
-          paddingBlock: 5,
-          fontSize: 'var(--ccs-font-size-sm)',
-          fontFamily: 'inherit',
-          ...style,
-        }}
-        {...rest}
-      >
-        {options.map((opt) => (
-          <option key={opt.value} value={opt.value}>
-            {opt.label}
-          </option>
-        ))}
-      </select>
+      <span style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+        <select
+          ref={ref}
+          id={selectId}
+          style={{
+            inlineSize: '100%',
+            background: 'var(--ccs-bg-input)',
+            color: 'var(--ccs-text)',
+            border: '1px solid var(--ccs-border)',
+            borderRadius: 'var(--ccs-radius-sm)',
+            paddingInlineStart: leadingIcon ? 26 : 8,
+            paddingInlineEnd: 8,
+            paddingBlock: 5,
+            fontSize: 'var(--ccs-font-size-sm)',
+            fontFamily: 'inherit',
+            ...style,
+          }}
+          {...rest}
+        >
+          {options.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
+        {leadingIcon && (
+          <span
+            aria-hidden
+            style={{
+              position: 'absolute',
+              insetInlineStart: 8,
+              display: 'flex',
+              alignItems: 'center',
+              color: 'var(--ccs-text-subtle)',
+              pointerEvents: 'none',
+            }}
+          >
+            <Icon name={leadingIcon} size={12} />
+          </span>
+        )}
+      </span>
     </label>
   );
 });

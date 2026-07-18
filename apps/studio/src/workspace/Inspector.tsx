@@ -30,6 +30,7 @@ import {
   GAP_GROUP,
   GROW_GROUP,
   HEIGHT_GROUP,
+  hexForColorValue,
   JUSTIFY_GROUP,
   LEADING_GROUP,
   OPACITY_GROUP,
@@ -131,15 +132,39 @@ import {
  * `disabled` and never calls `sendOp` — `readOnly` is threaded down from the
  * top-level branch below into every section.
  *
- * ## Icons
+ * ## Icons (FIX-W4b-2 rework — see that workstream's own report for the full
+ * before/after)
  * `@ccs/ui`'s vendored Penpot icon set (`packages/ui/src/icons/registry.ts`)
- * is deliberately small (~30 icons, not Penpot's full sprite) — no new icon
- * assets were added here (hard constraint: reuse the existing set). Each
- * section below is given the CLOSEST existing icon with a real semantic
- * match; sections with no reasonable match (`Stroke`, `Shadow`) render
- * without one rather than force a wrong icon. `Layer`'s icon is the node's
- * own type icon (`iconForNode`, shown in its body, matching how Penpot's
- * layer row icon IS the shape-type icon — no separate generic glyph).
+ * grew from ~30 to ~74 genuine Penpot SVGs this pass (still copied verbatim
+ * from `../penpot/frontend/resources/images/icons/*.svg`, MPL-2.0, see
+ * `packages/ui/src/icons/NOTICE`). Two corrections from FIX-W4's assumption
+ * that every Penpot options-menu section carries a leading header icon —
+ * re-reading the real source (`app.main.ui.components.title-bar`'s
+ * `title-bar*`) shows it does NOT: the ONLY icon its collapsible header ever
+ * renders is the disclosure chevron itself (`arrow-right`/`arrow-down`,
+ * swapped by `collapsed` state — `packages/ui/src/primitives/Panel.tsx` now
+ * reproduces that exactly, replacing its prior hardcoded "▾" text glyph).
+ * So: (a) `Panel`'s optional `icon` prop is now used ONLY where a genuine
+ * Penpot glyph exists for that section's own header slot (`Fill`=`swatches`,
+ * `Typography`=`text-typography`, `Stroke`=`stroke-size`, `Shadow`=
+ * `drop-shadow` — all real Penpot artwork correctly depicting that section's
+ * CONCEPT, even where upstream itself renders them in a different chrome
+ * location, e.g. the Assets-panel group header rather than this title-bar;
+ * disclosed, not silently invented); (b) FIX-W4's `expand`/`board`/`arrow`
+ * header icons on `Size & position`/`Layout container`/`Layout item` are
+ * DROPPED (no genuine Penpot equivalent — `board` and `arrow` were the
+ * "closest existing glyph" this file's own prior doc admitted to; per this
+ * file's own honesty policy for `Stroke`/`Shadow`, applied consistently:
+ * no icon beats a wrong one), except `Layout container` which gets
+ * `flex` (Penpot's own flex/grid-layout glyph — a real conceptual match this
+ * pass newly vendored). `Layer`'s icon is still the node's own type icon
+ * (`iconForNode`, shown in its body, matching how Penpot's layer row icon IS
+ * the shape-type icon — no separate generic glyph). The CONTROL-level icons
+ * (flex-direction/align/justify/align-self/text-align icon-button groups,
+ * W/H/X/Y/radius leading glyphs, fill/stroke/typography color swatches) are
+ * where the bulk of this pass's genuine Penpot iconography now lives — see
+ * `GroupButtons`, `ArbitraryPxInput`, and `GroupSelect`'s `swatchHex` prop
+ * below, each cited against its real Penpot source file.
  *
  * ## FIX-W4b-1 — context-aware sections + real current values
  * Two additions on top of the FIX-W4 stack above (closing the human's own
@@ -622,6 +647,8 @@ function GroupSelect({
   readOnly,
   onEdit,
   cssProp,
+  leadingIcon,
+  swatchHex,
 }: {
   node: TreeNode;
   group: ClassPresetGroup;
@@ -639,6 +666,16 @@ function GroupSelect({
    * flex-grow, align-self, order, border-width) — those get no readout rather
    * than a misleading one. */
   cssProp?: string;
+  /** FIX-W4b-2: a leading glyph INSIDE the `<Select>` (Penpot's
+   * `measures.cljs` numeric-input-wrapper icon, e.g. `corner-radius` for
+   * Radius — this tool's Radius control is a Tailwind-preset dropdown, not
+   * Penpot's free-numeric field, but still carries the same property glyph). */
+  leadingIcon?: IconName | undefined;
+  /** FIX-W4b-2: renders a Penpot `color_bullet`-style swatch chip + hex value
+   * ABOVE the select (Fill/Stroke/Typography-color rows — see
+   * `inspector-presets.ts`'s `hexForColorValue`). Only passed by
+   * color-backed groups. */
+  swatchHex?: (value: string) => string | undefined;
 }): React.ReactElement {
   const { sendOp } = useDaemonConnection();
   // Lazy initializer only — the section this control lives in is always
@@ -648,14 +685,43 @@ function GroupSelect({
   // reset-effect (which `react-hooks/set-state-in-effect` — active in this
   // repo's eslint config — flags as a cascading-render smell).
   const [value, setValue] = React.useState(() => getClassHint(node.uid, group.key) ?? fallback);
+  const hex = swatchHex?.(value);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+      {swatchHex && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span
+            aria-hidden
+            title={hex ?? 'none'}
+            style={{
+              inlineSize: 18,
+              blockSize: 18,
+              borderRadius: 'var(--ccs-radius-sm)',
+              border: '1px solid var(--ccs-border)',
+              background:
+                hex ??
+                'repeating-conic-gradient(var(--ccs-bg-input) 0% 25%, var(--ccs-bg-panel-raised) 0% 50%) 0 0/8px 8px',
+              flexShrink: 0,
+            }}
+          />
+          <span
+            style={{
+              fontSize: 'var(--ccs-font-size-xs)',
+              color: 'var(--ccs-text-subtle)',
+              fontFamily: 'var(--ccs-font-mono)',
+            }}
+          >
+            {hex ?? 'none'}
+          </span>
+        </div>
+      )}
       <Select
         label={label}
         value={value}
         disabled={readOnly}
         options={optionsFor(group)}
+        leadingIcon={leadingIcon}
         onChange={(e) => {
           const next = e.target.value;
           setValue(next);
@@ -672,8 +738,20 @@ function GroupSelect({
 
 /** A row of segmented `Button`s bound to a `ClassPresetGroup` — Penpot's
  * `radio-buttons` icon-toggle pattern (`layout_container.cljs`'s direction/
- * align/justify rows), reproduced with the existing `Button` primitive's
- * `active` state rather than a new primitive. */
+ * align/justify rows, `layout_item.cljs`'s align-self row, `typography.cljs`'s
+ * text-align row), reproduced with the existing `Button` primitive's `active`
+ * state rather than a new primitive.
+ *
+ * FIX-W4b-2: real Penpot renders these buttons ICON-ONLY (no visible text,
+ * just a tooltip) — `get-layout-flex-icon`/`get-layout-grid-icon` in
+ * `layout_container.cljs` pick the glyph. `iconFor` reproduces that: when it
+ * returns an `IconName` for a preset, the button renders that icon (+
+ * `title`/`aria-label` = the preset's label, for the same tooltip/a11y
+ * Penpot's own `radio-button`'s `:title` gives it) instead of the text label.
+ * Presets `iconFor` returns `undefined` for (no genuine Penpot glyph exists,
+ * e.g. `align-items`'s `baseline`/`stretch` — Penpot's own `align-row` only
+ * ever offers start/center/end) fall back to the plain text button, same
+ * honesty policy as this file's section-header icons. */
 function GroupButtons({
   node,
   group,
@@ -681,6 +759,8 @@ function GroupButtons({
   fallback,
   readOnly,
   cssProp,
+  iconFor,
+  onValueChange,
 }: {
   node: TreeNode;
   group: ClassPresetGroup;
@@ -690,6 +770,16 @@ function GroupButtons({
   /** See `GroupSelect`'s `cssProp` — same FIX-W4b-1 Part B real-value
    * readout, for the segmented-button controls. */
   cssProp?: string;
+  /** See this function's own doc. */
+  iconFor?: (value: string) => IconName | undefined;
+  /** Fires on every choice (including the initial one is NOT replayed — this
+   * mirrors `useState`'s own initializer semantics) — lets a PARENT section
+   * mirror the live value without making this component controlled (every
+   * other prop stays exactly as before). Used by `LayoutContainerSection` to
+   * track `Direction` so its sibling `Justify`/`Align items` rows can pick
+   * the matching row/column Penpot icon set (`justifyIcon`/`alignItemsIcon`
+   * both take an `isColumn` flag — see their own doc). */
+  onValueChange?: (value: string) => void;
 }): React.ReactElement {
   const { sendOp } = useDaemonConnection();
   // Lazy initializer only — see `GroupSelect`'s matching comment: the
@@ -700,45 +790,173 @@ function GroupButtons({
     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
       <span style={{ fontSize: 'var(--ccs-font-size-xs)', color: 'var(--ccs-text-muted)' }}>{label}</span>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-        {group.presets.map((preset) => (
-          <Button
-            key={preset.value}
-            type="button"
-            size="sm"
-            variant="secondary"
-            active={value === preset.value}
-            disabled={readOnly}
-            onClick={() => {
-              setValue(preset.value);
-              if (readOnly) return;
-              const edit = resolveClassEdit(group, preset.value);
-              setClassHint(node.uid, group.key, preset.value);
-              sendOp({ t: 'set-classes', uid: node.uid, add: edit.add, remove: edit.remove });
-            }}
-          >
-            {preset.label}
-          </Button>
-        ))}
+        {group.presets.map((preset) => {
+          const icon = iconFor?.(preset.value);
+          return (
+            <Button
+              key={preset.value}
+              type="button"
+              size="sm"
+              variant="secondary"
+              active={value === preset.value}
+              disabled={readOnly}
+              title={preset.label}
+              aria-label={icon ? preset.label : undefined}
+              onClick={() => {
+                setValue(preset.value);
+                onValueChange?.(preset.value);
+                if (readOnly) return;
+                const edit = resolveClassEdit(group, preset.value);
+                setClassHint(node.uid, group.key, preset.value);
+                sendOp({ t: 'set-classes', uid: node.uid, add: edit.add, remove: edit.remove });
+              }}
+            >
+              {icon ? <Icon name={icon} size={12} /> : preset.label}
+            </Button>
+          );
+        })}
       </div>
       {cssProp && <CurrentValueLine cssProp={cssProp} group={group} />}
     </div>
   );
 }
 
+// --- FIX-W4b-2 icon lookups — one per `GroupButtons`/`GroupSelect` consumer
+// below, each cited against the real Penpot source function/component that
+// picks that exact glyph set, so every mapping here is traceable rather than
+// invented. All row/column switching is driven by the CONTAINER's own live
+// `Direction` choice (`isColumn`, computed once in `LayoutContainerSection`
+// and threaded to its own Justify/Align-items rows) — the one case with a
+// real column variant available AND a live value to switch on. -------------
+
+/** `layout_container.cljs`'s `dir-icons-refactor` — note real Penpot reuses
+ * its own `grid-row` glyph for flex-direction `:row` (not a dedicated
+ * "flex-row" icon); reproduced as-is rather than substituting a "nicer" icon
+ * that wouldn't actually be what Penpot renders. */
+function directionIcon(value: string): IconName | undefined {
+  switch (value) {
+    case 'row':
+      return 'grid-row';
+    case 'row-reverse':
+      return 'row-reverse';
+    case 'col':
+      return 'column';
+    case 'col-reverse':
+      return 'column-reverse';
+    default:
+      return undefined;
+  }
+}
+
+/** `layout_container.cljs`'s `wrap-row` — Penpot only toggles two states
+ * (wrap/nowrap) with one `wrap` glyph; this tool's `WRAP_GROUP` additionally
+ * offers `wrap-reverse` (a real Tailwind utility Penpot's own control doesn't
+ * expose), which reuses the same glyph — the tooltip (`title`) is what
+ * disambiguates it, same as `nowrap` getting no icon at all (Penpot's toggle
+ * has no distinct "nowrap" glyph either). */
+function wrapIcon(value: string): IconName | undefined {
+  return value === 'wrap' || value === 'wrap-reverse' ? 'wrap' : undefined;
+}
+
+/** `layout_container.cljs`'s `get-layout-flex-icon` for `:justify-content` —
+ * `JUSTIFY_GROUP`'s 6 values (start/center/end/between/around/evenly) match
+ * Penpot's row/column icon sets 1:1. */
+function justifyIcon(value: string, isColumn: boolean): IconName | undefined {
+  const suffix = isColumn ? 'column' : 'row';
+  switch (value) {
+    case 'start':
+    case 'center':
+    case 'end':
+      return `justify-content-${suffix}-${value}` as IconName;
+    case 'between':
+      return `justify-content-${suffix}-between` as IconName;
+    case 'around':
+      return `justify-content-${suffix}-around` as IconName;
+    case 'evenly':
+      return `justify-content-${suffix}-evenly` as IconName;
+    default:
+      return undefined;
+  }
+}
+
+/** `layout_container.cljs`'s `get-layout-flex-icon` for `:align-items` —
+ * Penpot's own `align-row` only ever offers start/center/end (3 buttons, no
+ * baseline/stretch glyph exists upstream); `ALIGN_ITEMS_GROUP`'s extra
+ * `baseline`/`stretch` values (real Tailwind utilities Penpot's flex
+ * align-row doesn't surface) fall back to a plain text button rather than a
+ * fabricated icon. */
+function alignItemsIcon(value: string, isColumn: boolean): IconName | undefined {
+  if (value !== 'start' && value !== 'center' && value !== 'end') return undefined;
+  return `align-items-${isColumn ? 'column' : 'row'}-${value}` as IconName;
+}
+
+/** `layout_container.cljs`'s `get-layout-flex-icon` for `:align-self` —
+ * ALWAYS the ROW-variant glyph set (`align-self-row-left/-center/-right`,
+ * `auto`->`remove`). Real Penpot switches to the COLUMN set
+ * (`align-self-column-top/-center/-bottom`) when the shape's PARENT is a
+ * column-direction flex container; this section (`LayoutItemSection`) has no
+ * live read of its parent's direction (a disclosed pre-existing gap, same
+ * root cause `inspector-class-hints.ts`'s module doc gives for why this file
+ * can't read a node's current classes at all) — row is the common-case
+ * default. `stretch`/`baseline` have no Penpot align-self glyph either, same
+ * as `align-items` above. */
+function alignSelfIcon(value: string): IconName | undefined {
+  switch (value) {
+    case 'auto':
+      return 'remove';
+    case 'start':
+      return 'align-self-row-left';
+    case 'center':
+      return 'align-self-row-center';
+    case 'end':
+      return 'align-self-row-right';
+    default:
+      return undefined;
+  }
+}
+
+/** `typography.cljs`'s text-align row (`text-align-left`/`-center`/`-right`/
+ * `text-justify`). `TEXT_ALIGN_GROUP`'s values are LOGICAL (`start`/`end`,
+ * this file's own RTL convention — see `inspector-presets.ts`'s module doc)
+ * but Penpot's icons are PHYSICAL left/right glyphs, so `isRtl` swaps which
+ * physical glyph represents `start`/`end` — otherwise a `dir="rtl"` document
+ * would show a "left-aligned lines" glyph for a control that's actually
+ * right-aligning the text. */
+function textAlignIcon(value: string, isRtl: boolean): IconName | undefined {
+  switch (value) {
+    case 'start':
+      return isRtl ? 'text-align-right' : 'text-align-left';
+    case 'end':
+      return isRtl ? 'text-align-left' : 'text-align-right';
+    case 'center':
+      return 'text-align-center';
+    case 'justify':
+      return 'text-justify';
+    default:
+      return undefined;
+  }
+}
+
 /** A numeric px `Input` for an arbitrary-value class (`w-[Npx]`,
  * `start-[Npx]`, ...) — the open-ended counterpart to `GroupSelect`/
- * `GroupButtons` for controls with no fixed enum. */
+ * `GroupButtons` for controls with no fixed enum.
+ *
+ * FIX-W4b-2 `icon`: Penpot's `measures.cljs` numeric-input-wrapper carries a
+ * leading property glyph on every one of these (`i/character-w`/`-h`/`-x`/
+ * `-y`) — forwarded to `Input`'s own `leadingIcon` (see that primitive's doc). */
 function ArbitraryPxInput({
   node,
   hintKey,
   label,
   buildEdit,
+  icon,
 }: {
   node: TreeNode;
   hintKey: string;
   label: string;
   readOnly: boolean;
   buildEdit: (px: number, previous: string | null) => ClassEdit;
+  icon?: IconName | undefined;
 }): React.ReactElement {
   const { sendOp } = useDaemonConnection();
   const [text, setText] = React.useState('');
@@ -748,6 +966,7 @@ function ArbitraryPxInput({
       label={label}
       type="number"
       placeholder="px"
+      leadingIcon={icon}
       value={text}
       onChange={(e) => setText(e.target.value)}
       onBlur={() => {
@@ -772,7 +991,7 @@ function SizePositionSection({ node, readOnly }: { node: TreeNode; readOnly: boo
   const [position, setPosition] = React.useState(() => getClassHint(node.uid, POSITION_GROUP.key) ?? 'static');
 
   return (
-    <Panel title="Size & position" id="inspector-size-position" icon="expand">
+    <Panel title="Size & position" id="inspector-size-position">
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         <div style={{ display: 'flex', gap: 8 }}>
           <div style={{ flex: 1 }}>
@@ -784,6 +1003,7 @@ function SizePositionSection({ node, readOnly }: { node: TreeNode; readOnly: boo
               hintKey="size-w-custom"
               label="Custom W"
               readOnly={readOnly}
+              icon="character-w"
               buildEdit={(px, previous) => arbitrarySizeEdit('w', px, previous)}
             />
           </div>
@@ -798,6 +1018,7 @@ function SizePositionSection({ node, readOnly }: { node: TreeNode; readOnly: boo
               hintKey="size-h-custom"
               label="Custom H"
               readOnly={readOnly}
+              icon="character-h"
               buildEdit={(px, previous) => arbitrarySizeEdit('h', px, previous)}
             />
           </div>
@@ -828,6 +1049,7 @@ function SizePositionSection({ node, readOnly }: { node: TreeNode; readOnly: boo
                 hintKey="inset-start"
                 label="X (start)"
                 readOnly={readOnly}
+                icon="character-x"
                 buildEdit={(px, previous) => arbitraryInsetEdit('start', px, previous)}
               />
             </div>
@@ -837,6 +1059,7 @@ function SizePositionSection({ node, readOnly }: { node: TreeNode; readOnly: boo
                 hintKey="inset-top"
                 label="Y (top)"
                 readOnly={readOnly}
+                icon="character-y"
                 buildEdit={(px, previous) => arbitraryInsetEdit('top', px, previous)}
               />
             </div>
@@ -846,7 +1069,15 @@ function SizePositionSection({ node, readOnly }: { node: TreeNode; readOnly: boo
          * directly inside `measures-menu*` in real Penpot — see this file's
          * module doc for the citation — hence living here, not in the old
          * "Border & radius" Panel (now just `Stroke`, below). */}
-        <GroupSelect node={node} group={RADIUS_GROUP} label="Radius" fallback="none" readOnly={readOnly} cssProp="border-radius" />
+        <GroupSelect
+          node={node}
+          group={RADIUS_GROUP}
+          label="Radius"
+          fallback="none"
+          readOnly={readOnly}
+          cssProp="border-radius"
+          leadingIcon="corner-radius"
+        />
       </div>
     </Panel>
   );
@@ -855,19 +1086,54 @@ function SizePositionSection({ node, readOnly }: { node: TreeNode; readOnly: boo
 // --- Layout container (layout_container.cljs) ---------------------------
 
 function LayoutContainerSection({ node, readOnly }: { node: TreeNode; readOnly: boolean }): React.ReactElement {
+  // FIX-W4b-2: mirrors the live `Direction` choice (see `GroupButtons`'
+  // `onValueChange` doc) purely so `Justify`/`Align items` below can pick
+  // Penpot's matching row/column icon set — `layout_container.cljs`'s own
+  // `get-layout-flex-icon` takes the same `is-column` flag from this exact
+  // container's `layout-flex-dir`. Lazy initializer mirrors `GroupButtons`'
+  // own (reads the SAME hint key, so both start in sync).
+  const [direction, setDirection] = React.useState(() => getClassHint(node.uid, DIRECTION_GROUP.key) ?? 'row');
+  const isColumn = direction === 'col' || direction === 'col-reverse';
+
   return (
-    <Panel title="Layout container" id="inspector-layout-container" icon="board">
+    <Panel title="Layout container" id="inspector-layout-container" icon="flex">
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        <GroupButtons node={node} group={DIRECTION_GROUP} label="Direction" fallback="row" readOnly={readOnly} cssProp="flex-direction" />
-        <GroupButtons node={node} group={WRAP_GROUP} label="Wrap" fallback="nowrap" readOnly={readOnly} cssProp="flex-wrap" />
-        <GroupSelect node={node} group={JUSTIFY_GROUP} label="Justify" fallback="start" readOnly={readOnly} cssProp="justify-content" />
-        <GroupSelect
+        <GroupButtons
+          node={node}
+          group={DIRECTION_GROUP}
+          label="Direction"
+          fallback="row"
+          readOnly={readOnly}
+          cssProp="flex-direction"
+          iconFor={directionIcon}
+          onValueChange={setDirection}
+        />
+        <GroupButtons
+          node={node}
+          group={WRAP_GROUP}
+          label="Wrap"
+          fallback="nowrap"
+          readOnly={readOnly}
+          cssProp="flex-wrap"
+          iconFor={wrapIcon}
+        />
+        <GroupButtons
+          node={node}
+          group={JUSTIFY_GROUP}
+          label="Justify"
+          fallback="start"
+          readOnly={readOnly}
+          cssProp="justify-content"
+          iconFor={(v) => justifyIcon(v, isColumn)}
+        />
+        <GroupButtons
           node={node}
           group={ALIGN_ITEMS_GROUP}
           label="Align items"
           fallback="stretch"
           readOnly={readOnly}
           cssProp="align-items"
+          iconFor={(v) => alignItemsIcon(v, isColumn)}
         />
         <GroupSelect node={node} group={GAP_GROUP} label="Gap" fallback="0" readOnly={readOnly} cssProp="gap" />
         <span style={{ fontSize: 'var(--ccs-font-size-xs)', color: 'var(--ccs-text-subtle)' }}>Padding</span>
@@ -897,7 +1163,7 @@ function LayoutContainerSection({ node, readOnly }: { node: TreeNode; readOnly: 
 
 function LayoutItemSection({ node, readOnly }: { node: TreeNode; readOnly: boolean }): React.ReactElement {
   return (
-    <Panel title="Layout item" id="inspector-layout-item" icon="arrow">
+    <Panel title="Layout item" id="inspector-layout-item">
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         <GroupSelect node={node} group={GROW_GROUP} label="Flex" fallback="none" readOnly={readOnly} />
         <GroupButtons
@@ -906,6 +1172,7 @@ function LayoutItemSection({ node, readOnly }: { node: TreeNode; readOnly: boole
           label="Align self"
           fallback="auto"
           readOnly={readOnly}
+          iconFor={alignSelfIcon}
         />
         <GroupSelect node={node} group={ORDER_GROUP} label="Order" fallback="none" readOnly={readOnly} />
       </div>
@@ -917,6 +1184,12 @@ function LayoutItemSection({ node, readOnly }: { node: TreeNode; readOnly: boole
 
 function TypographySection({ node, readOnly }: { node: TreeNode; readOnly: boolean }): React.ReactElement {
   const textColorGroup = React.useMemo(() => colorGroup('text'), []);
+  // FIX-W4b-2: this app's own `dir` (playbook §5.9/ADR-0022 RTL-first) — read
+  // once per render (no listener: the document's writing direction doesn't
+  // flip mid-session in this tool) so `textAlignIcon` shows the physically
+  // correct Penpot glyph for the logical `start`/`end` values — see that
+  // function's own doc.
+  const isRtl = typeof document !== 'undefined' && document.documentElement.dir === 'rtl';
   return (
     <Panel title="Typography" id="inspector-typography" icon="text-typography">
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -957,8 +1230,24 @@ function TypographySection({ node, readOnly }: { node: TreeNode; readOnly: boole
             />
           </div>
         </div>
-        <GroupButtons node={node} group={TEXT_ALIGN_GROUP} label="Align" fallback="start" readOnly={readOnly} cssProp="text-align" />
-        <GroupSelect node={node} group={textColorGroup} label="Color" fallback="none" readOnly={readOnly} cssProp="color" />
+        <GroupButtons
+          node={node}
+          group={TEXT_ALIGN_GROUP}
+          label="Align"
+          fallback="start"
+          readOnly={readOnly}
+          cssProp="text-align"
+          iconFor={(v) => textAlignIcon(v, isRtl)}
+        />
+        <GroupSelect
+          node={node}
+          group={textColorGroup}
+          label="Color"
+          fallback="none"
+          readOnly={readOnly}
+          cssProp="color"
+          swatchHex={hexForColorValue}
+        />
       </div>
     </Panel>
   );
@@ -976,7 +1265,15 @@ function FillSection({ node, readOnly }: { node: TreeNode; readOnly: boolean }):
   return (
     <Panel title="Fill" id="inspector-fill" icon="swatches">
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <GroupSelect node={node} group={bgColorGroup} label="Background" fallback="none" readOnly={readOnly} cssProp="background-color" />
+        <GroupSelect
+          node={node}
+          group={bgColorGroup}
+          label="Background"
+          fallback="none"
+          readOnly={readOnly}
+          cssProp="background-color"
+          swatchHex={hexForColorValue}
+        />
         <Select
           label="Bind token"
           value={tokenName}
@@ -1016,7 +1313,7 @@ function StrokeSection({ node, readOnly }: { node: TreeNode; readOnly: boolean }
   const [hasBorder, setHasBorder] = React.useState(() => getClassHint(node.uid, 'border-enabled') === 'on');
 
   return (
-    <Panel title="Stroke" id="inspector-stroke">
+    <Panel title="Stroke" id="inspector-stroke" icon="stroke-size">
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         <Checkbox
           label="Border"
@@ -1037,7 +1334,14 @@ function StrokeSection({ node, readOnly }: { node: TreeNode; readOnly: boolean }
         />
         {hasBorder && (
           <>
-            <GroupSelect node={node} group={BORDER_WIDTH_GROUP} label="Width" fallback="1" readOnly={readOnly} />
+            <GroupSelect
+              node={node}
+              group={BORDER_WIDTH_GROUP}
+              label="Width"
+              fallback="1"
+              readOnly={readOnly}
+              leadingIcon="stroke-size"
+            />
             <GroupSelect
               node={node}
               group={borderColorGroup}
@@ -1045,6 +1349,7 @@ function StrokeSection({ node, readOnly }: { node: TreeNode; readOnly: boolean }
               fallback="none"
               readOnly={readOnly}
               cssProp="border-color"
+              swatchHex={hexForColorValue}
             />
           </>
         )}
@@ -1057,7 +1362,7 @@ function StrokeSection({ node, readOnly }: { node: TreeNode; readOnly: boolean }
 
 function ShadowSection({ node, readOnly }: { node: TreeNode; readOnly: boolean }): React.ReactElement {
   return (
-    <Panel title="Shadow" id="inspector-shadow">
+    <Panel title="Shadow" id="inspector-shadow" icon="drop-shadow">
       <GroupSelect node={node} group={SHADOW_GROUP} label="Shadow" fallback="none" readOnly={readOnly} cssProp="box-shadow" />
     </Panel>
   );

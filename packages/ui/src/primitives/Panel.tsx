@@ -59,16 +59,12 @@ export function Panel({ title, children, defaultCollapsed = false, actions, id, 
             cursor: 'pointer',
           }}
         >
-          <span
-            aria-hidden
-            style={{
-              display: 'inline-block',
-              transform: collapsed ? 'rotate(-90deg)' : 'rotate(0deg)',
-              transition: 'transform 120ms ease',
-            }}
-          >
-            ▾
-          </span>
+          {/* FIX-W4b-2: real Penpot disclosure icons — its own `title-bar*`
+           * (`app.main.ui.components.title-bar`) swaps between the vendored
+           * `arrow-right`/`arrow-down` glyphs by `collapsed` state rather than
+           * rotating one chevron; reproduced exactly (no CSS rotate) instead
+           * of this file's prior hardcoded "▾" text glyph. */}
+          <Icon name={collapsed ? 'arrow-right' : 'arrow-down'} size={12} aria-hidden style={{ flexShrink: 0 }} />
           {icon && <Icon name={icon} size={12} aria-hidden />}
           {title}
         </button>

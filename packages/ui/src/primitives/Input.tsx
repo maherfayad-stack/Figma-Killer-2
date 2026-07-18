@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { Icon, type IconName } from '../icons/Icon.js';
 
 /**
  * Input / NumberField — token-aware inspector inputs (playbook §2.3
@@ -13,10 +14,17 @@ export interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> 
   /** Renders a small token chip instead of the raw value when this field is
    * bound to a design token (playbook §2.3 token-aware inputs). */
   tokenBinding?: { name: string; value: string } | null;
+  /** FIX-W4b-2: a leading glyph INSIDE the field, at the LOGICAL start —
+   * Penpot's own `numeric-input-wrapper*` puts a property glyph (`character-w`
+   * /`character-h`/`character-x`/`character-y`/`corner-radius`/...) here for
+   * every measures/layout numeric field (see `measures.cljs`). Purely
+   * additive/optional: omitted at every pre-existing call site, so those
+   * render byte-identical to before. */
+  leadingIcon?: IconName | undefined;
 }
 
 export const Input = React.forwardRef<HTMLInputElement, InputProps>(function Input(
-  { label, trailing, tokenBinding, style, className, id, ...rest },
+  { label, trailing, tokenBinding, leadingIcon, style, className, id, ...rest },
   ref,
 ) {
   const autoId = React.useId();
@@ -70,11 +78,27 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(function Inp
               paddingBlock: 5,
               fontSize: 'var(--ccs-font-size-sm)',
               fontFamily: 'inherit',
+              paddingInlineStart: leadingIcon ? 26 : 8,
               paddingInlineEnd: trailing ? 24 : 8,
               ...style,
             }}
             {...rest}
           />
+        )}
+        {leadingIcon && (
+          <span
+            aria-hidden
+            style={{
+              position: 'absolute',
+              insetInlineStart: 8,
+              display: 'flex',
+              alignItems: 'center',
+              color: 'var(--ccs-text-subtle)',
+              pointerEvents: 'none',
+            }}
+          >
+            <Icon name={leadingIcon} size={12} />
+          </span>
         )}
         {trailing && (
           <span style={{ position: 'absolute', insetInlineEnd: 4, display: 'flex', alignItems: 'center' }}>
