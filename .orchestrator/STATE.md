@@ -540,3 +540,24 @@ Asia/Riyadh. Next queued work needs a worker → BLOCKED until reset:
 (real Penpot icons) W4b-3a ✅ (Size&Position+device presets) W4b-3b ✅ self-verified
 (Layout cluster). REMAINING for "1:1": W4b-3c color, W4b-4 Inspect+Loading fix, final
 sweep. Human's standing note: Design AND Inspect tabs not yet 1:1 — EXPECTED, tracked.
+
+### FIX-W4b-5 — COMPLETE (AUDIT PASS visual bar + remediation, tag `fix-w4b-5-complete`) 2026-07-19
+Design-tab HOLISTIC Penpot visual re-skin (round-4 "not even close" escalation).
+Root cause: theme tokens (32px/8px/accent/bg) were DECLARED but Input/Select never
+applied them (~26px/4px) + icon groups were separate buttons not segmented pills +
+missing header row + loose grid. Fixed: SegmentedGroup pill primitive, Input/Select
+real 32px/8px (shared — no regress), MeasureRow 3-col grid, LayerHeaderRow (blend/
+opacity/eye/lock), honest disabled stubs. Remediation: Typography Align seedFromLive +
+noConfidentDefault for Align-self (no fabricated highlight). Audit CSS-level-verified
+"genuinely close to Penpot 1:1 now." Behavior from W4b-1..3c UNCHANGED.
+
+### ⚠️ MONTHLY spend limit hit twice this session (raised each time). If a worker dies
+with "monthly spend limit", it's the account cap — raise at claude.ai/settings/usage;
+resume the same agent via SendMessage (context intact).
+
+### RIGHT-PANE PARITY ~COMPLETE: Design tab (W4/W4b-1/2/3a/3b/3c/5) + Inspect tab
+(W4b-4). REMAINING: final holistic side-by-side sweep (independent, covers deferred
+W4b-3b Layout re-audit + align-content noConfidentDefault); then honest-stub wiring
+DECISION for human (blend-mode/visibility/lock/per-corner radius — wire to real data or
+leave as disabled stubs?); then PANEL 3+ chrome (left dock/headers/toolbar/dashboard);
+FIX-W5 frame-nesting-<div>; FIX-W6 comments; bridge-rasterization (held).
