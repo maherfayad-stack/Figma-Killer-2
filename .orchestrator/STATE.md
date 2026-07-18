@@ -449,3 +449,22 @@ Penpot SVG icons w/ MPL attribution + per-node-type context-awareness driven off
 options.cljs + read-current-values via the existing report-computed-style bridge).
 Then original round-2 leftovers: FIX-W2 (inspect-load, await human retry), FIX-W5
 (frame nesting + device presets), FIX-W6 (comments), bridge-rasterization (held).
+
+### FIX-W4b-1 — COMPLETE (AUDIT-FIXW4b-1 PASS, tag `fix-w4b-1-complete`) 2026-07-18
+Round-3 R3-1 FUNCTIONAL half. Per-node-type context-aware sections (text/element/
+fragment/instance/frame each a DIFFERENT verified data-panel subset, cited to Penpot
+options/shapes/*.cljs) + frame/board selection now shows frame-level controls (was
+the empty "Select a layer" state) + read-current-values via the EXISTING report-
+computed-style bridge with a strict NO-FABRICATION rule (raw computed value or
+honest loading/not-set; keyword-label only on exact CSS equivalence; numeric scales
+never reverse-mapped). Audit fabrication-hunt found ZERO false values (byte-identical
+to getComputedStyle). 5 new files in apps/studio/workspace; frozen packages/ zero-
+diff; @ccs/studio 73/73; FIX-W4 preserved. Carry-forward: ast-engine buildTree never
+emits kind:'text' (tag-based bridge used); board readouts may show "loading…" if the
+frame bridge isn't live (honest, never fabricated).
+
+### ROUND-3 STATUS: W7 ✅ · W8 ✅ · W4b-1 ✅ (functional) · W4b-2 = NEXT (visual parity).
+W4b-2: port the real Penpot SVG icons (317 at penpot/frontend/resources/images/
+icons/*.svg, MPL-2.0 © KALEIDOS — carry attribution) into the studio icon registry
+for each Inspector section/control, and replicate the menus/*.scss widget/row/header
+anatomy in CSS for the "100% same design/look as Penpot" ask. Builds on W4b-1.
