@@ -72,16 +72,29 @@ async function copyToClipboard(text: string): Promise<boolean> {
   }
 }
 
+/** FIX-W4b-4 (Part A): the tri-state a `read-source` fetch can be in.
+ * Previously `InspectContent` collapsed `{ok:false}` (a genuine daemon
+ * rejection — unknown file-folder, containment-reject, read failure — or a
+ * client-side timeout) down to the exact same `null` used for "haven't
+ * fetched yet", so `CodeBlock` had no way to tell "still loading" apart from
+ * "this failed" and rendered "Loading…" FOREVER for both — the human
+ * dogfood bug ("stuck permanently on Loading…"). This explicit status field
+ * is the fix: a genuine failure now renders its own error state (never an
+ * infinite spinner), bounded by `daemon-connection.tsx`'s
+ * `READ_SOURCE_TIMEOUT_MS` even in the worst case (daemon never replies at
+ * all). */
+type SourceLoadState = { status: 'loading' } | { status: 'ready'; source: string } | { status: 'error'; reason: string };
+
 /** Penpot `code_block.cljs` + `copy-button*`, adapted: a labeled `<pre>`
- * code surface with a "Copy" button. `code: null` means "still loading /
- * unavailable" (e.g. the daemon isn't connected yet, or the read was
- * rejected) — rendered as a muted placeholder, Copy disabled, never a blank
- * flash of empty content that could be mistaken for "this node has no
- * code". The code surface itself is always LTR content (source code), even
- * though this component's own chrome (labels/buttons) is logical-property
- * RTL-aware, per this task's hard constraint. */
-function CodeBlock({ label, code, testId }: { label: string; code: string | null; testId: string }): React.ReactElement {
+ * code surface with a "Copy" button. `state.status === 'loading'` is the
+ * ONLY case rendered as "Loading…" — a genuine failure (`'error'`) gets its
+ * own honest message instead, per this task's hard constraint. The code
+ * surface itself is always LTR content (source code), even though this
+ * component's own chrome (labels/buttons) is logical-property RTL-aware,
+ * per this task's hard constraint. */
+function CodeBlock({ label, state, testId }: { label: string; state: SourceLoadState; testId: string }): React.ReactElement {
   const [justCopied, setJustCopied] = React.useState(false);
+  const code = state.status === 'ready' ? state.source : null;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minInlineSize: 0 }}>
@@ -139,31 +152,88 @@ function CodeBlock({ label, code, testId }: { label: string; code: string | null
           paddingInline: 'var(--ccs-space-2)',
           paddingBlock: 'var(--ccs-space-2)',
           background: 'var(--ccs-bg-deepest)',
-          border: '1px solid var(--ccs-border)',
+          border: state.status === 'error' ? '1px solid var(--ccs-danger)' : '1px solid var(--ccs-border)',
           borderRadius: 'var(--ccs-radius-sm)',
           fontFamily: 'var(--ccs-font-mono)',
           fontSize: 'var(--ccs-font-size-xs)',
           lineHeight: 1.5,
-          color: code ? 'var(--ccs-text-accent)' : 'var(--ccs-text-subtle)',
+          color: state.status === 'ready' ? 'var(--ccs-text-accent)' : state.status === 'error' ? 'var(--ccs-danger-fg)' : 'var(--ccs-text-subtle)',
           whiteSpace: 'pre-wrap',
           wordBreak: 'break-word',
         }}
       >
-        {code ?? 'Loading…'}
+        {state.status === 'ready' ? state.source : state.status === 'error' ? `Couldn't load source: ${state.reason}` : 'Loading…'}
       </pre>
     </div>
   );
 }
 
+/** FIX-W4b-4 (Part B): Penpot's own section names for these four groups —
+ * `inspect.attributes.size` ("Size and position", `attributes/geometry.
+ * cljs`), `"Layout"` (`attributes/layout.cljs`, no i18n key — literal
+ * string), `inspect.attributes.fill` ("Fill", `attributes/fill.cljs`), and
+ * `inspect.attributes.typography` (`attributes/text.cljs`). The `color`
+ * group is renamed "Fill" (not "Color") to match — it gets a swatch below,
+ * same as Penpot's `fill.cljs`/`common.cljs` `color-row`. */
 const GROUP_LABEL: Record<ComputedStyleRow['group'], string> = {
   layout: 'Layout',
   geometry: 'Size & position',
   typography: 'Typography',
-  color: 'Color',
+  color: 'Fill',
 };
 
-/** Penpot's `attributes/*.cljs` grouped attribute rows, adapted: label/value
- * pairs grouped by section, monospace value column. */
+/** Penpot `attributes/common.cljs`'s `get-css-rule-humanized`: split the raw
+ * CSS property on `-`, join with spaces, capitalize only the FIRST letter of
+ * the resulting phrase (not every word) — `"background-color"` ->
+ * `"Background color"`, `"border-radius"` -> `"Border radius"`. Applied only
+ * to the DISPLAYED label; `Copy CSS`'s clipboard text below still emits the
+ * real `row.prop` so the copied text stays valid CSS. */
+function humanizeCssProp(prop: string): string {
+  const phrase = prop.split('-').join(' ');
+  return phrase.length === 0 ? phrase : phrase[0]!.toUpperCase() + phrase.slice(1);
+}
+
+/** A value is a fully-transparent color (Penpot's `fill.cljs` still shows
+ * the swatch for these — via `color-bullet*`'s own checkerboard "no color"
+ * pattern — rather than hiding the row) when computed as `rgba(r, g, b, 0)`
+ * or the literal keyword. */
+function isTransparentCssColor(value: string): boolean {
+  return value === 'transparent' || /,\s*0\s*\)\s*$/.test(value);
+}
+
+/** Penpot `common.cljs`'s `color-row` swatch — adapted to this task's `--ccs-
+ * *` tokens: a small square filled with the row's own resolved color value
+ * (no hex/rgb parsing needed — the browser already resolved it via
+ * `getComputedStyle`, so the raw CSS color string IS a valid `background`).
+ * A fully-transparent value gets Penpot's own checkerboard "no color"
+ * treatment (`Inspector.tsx`'s `COLOR_SWATCH_NONE_BG`, same pattern) instead
+ * of an invisible swatch that could be mistaken for a rendering bug. */
+function FillSwatch({ value }: { value: string }): React.ReactElement {
+  return (
+    <span
+      aria-hidden
+      style={{
+        display: 'inline-block',
+        inlineSize: 12,
+        blockSize: 12,
+        borderRadius: 3,
+        border: '1px solid var(--ccs-border)',
+        flexShrink: 0,
+        background: isTransparentCssColor(value)
+          ? 'repeating-conic-gradient(var(--ccs-bg-input) 0% 25%, var(--ccs-bg-panel-raised) 0% 50%) 0 0/6px 6px'
+          : value,
+      }}
+    />
+  );
+}
+
+/** Penpot's `attributes/*.cljs` grouped attribute rows, adapted: a curated,
+ * FRIENDLY label/value view (title-cased property names, a Fill swatch),
+ * grouped exactly like Penpot's own section split (Size and position /
+ * Layout / Fill / Typography) — never the raw ~300-entry
+ * `CSSStyleDeclaration` dump the FEATURE-PARITY-PLAN brief explicitly warns
+ * against (this component already only ever receives the curated subset
+ * `@ccs/bridge`'s `computed-style.ts` reports, per that module's own doc). */
 function CssRows({ rows }: { rows: ComputedStyleRow[] | null }): React.ReactElement {
   if (!rows) {
     return (
@@ -209,6 +279,7 @@ function CssRows({ rows }: { rows: ComputedStyleRow[] | null }): React.ReactElem
               style={{
                 display: 'flex',
                 justifyContent: 'space-between',
+                alignItems: 'center',
                 gap: 8,
                 fontSize: 'var(--ccs-font-size-xs)',
                 paddingBlock: 2,
@@ -218,11 +289,10 @@ function CssRows({ rows }: { rows: ComputedStyleRow[] | null }): React.ReactElem
               <span
                 style={{
                   color: 'var(--ccs-text-muted)',
-                  fontFamily: 'var(--ccs-font-mono)',
                   flexShrink: 0,
                 }}
               >
-                {row.prop}
+                {humanizeCssProp(row.prop)}
               </span>
               {/* FIX-W7 (R3-2): this is the row that was overflowing the whole
                   right dock — a long comma-separated `font-family` stack is
@@ -237,18 +307,28 @@ function CssRows({ rows }: { rows: ComputedStyleRow[] | null }): React.ReactElem
                   theory. */}
               <span
                 style={{
-                  color: 'var(--ccs-text)',
-                  fontFamily: 'var(--ccs-font-mono)',
-                  textAlign: 'end',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
                   maxInlineSize: '60%',
                   minInlineSize: 0,
                 }}
-                title={row.value}
               >
-                {row.value}
+                {group === 'color' && <FillSwatch value={row.value} />}
+                <span
+                  style={{
+                    color: 'var(--ccs-text)',
+                    fontFamily: 'var(--ccs-font-mono)',
+                    textAlign: 'end',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    minInlineSize: 0,
+                  }}
+                  title={row.value}
+                >
+                  {row.value}
+                </span>
               </span>
             </div>
           ))}
@@ -315,22 +395,50 @@ function InspectContent({
   const { requestReadSource } = useDaemonConnection();
   const nodeOps = useNodeOps();
 
-  const [nodeSource, setNodeSource] = React.useState<string | null>(null);
-  const [frameSource, setFrameSource] = React.useState<string | null>(null);
+  // FIX-W4b-4 (Part A — ROOT CAUSE): this used to be `React.useState<string |
+  // null>(null)`, and the effect below collapsed EVERY non-success outcome
+  // (`{ok:false}` from an unknown file-folder, a containment-reject, a real
+  // read failure, OR `daemon-connection.tsx`'s own 10s client-side timeout)
+  // down to that same `null` — indistinguishable from "haven't fetched yet".
+  // `CodeBlock` rendered `code ?? 'Loading…'`, so a genuine failure looked
+  // EXACTLY like a still-pending fetch: "Loading…" forever, with no way for
+  // a human watching the screen to tell "still working" from "broken". That
+  // is the human dogfood bug. `SourceLoadState` fixes this at the state-shape
+  // level: `'loading'` is the ONLY state that renders "Loading…"; a genuine
+  // failure is now its own `'error'` state with the daemon's own `reason`
+  // string, so it can never be silently confused with still-loading again —
+  // and since `requestReadSource` ALWAYS settles within
+  // `READ_SOURCE_TIMEOUT_MS` (10s) even if the daemon never replies at all,
+  // this is also a hard upper bound on how long "Loading…" can show, by
+  // construction, not by hoping the round trip happens to complete.
+  const [nodeSource, setNodeSource] = React.useState<SourceLoadState>({ status: 'loading' });
+  const [frameSource, setFrameSource] = React.useState<SourceLoadState>({ status: 'loading' });
   const [cssRows, setCssRows] = React.useState<ComputedStyleRow[] | null>(null);
 
   // Source reads go through the daemon control-ws, which is connected
   // independently of any frame's bridge — so a plain mount-time fetch (keyed
   // on the node/frame via this component's `key={node.uid}` remount) is
   // correct and never needs the bridge-generation retry the CSS fetch below
-  // does.
+  // does. Deliberately does NOT reset `nodeSource`/`frameSource` back to
+  // `{status:'loading'}` synchronously at the top of this effect body (that
+  // would be a lint-flagged `setState`-in-effect-body cascade, `react-hooks/
+  // set-state-in-effect`) — the `useState` initializer above already starts
+  // both at `'loading'`, and a genuinely new node/frame selection remounts
+  // this whole component via `key={node.uid}` (`InspectPanel`'s doc above),
+  // so this effect only re-runs WITHOUT remounting when `requestReadSource`
+  // itself changes identity (a daemon (re)connect) — in which case keeping
+  // the last-known-good `'ready'`/`'error'` state visible until the retry
+  // resolves is strictly better UX than flashing back to "Loading…", the
+  // same last-known-good philosophy the CSS effect below already documents.
   React.useEffect(() => {
     let cancelled = false;
     void requestReadSource(fileFolder, framePath, node.uid).then((result) => {
-      if (!cancelled) setNodeSource(result.ok ? result.source : null);
+      if (cancelled) return;
+      setNodeSource(result.ok ? { status: 'ready', source: result.source } : { status: 'error', reason: result.reason });
     });
     void requestReadSource(fileFolder, framePath).then((result) => {
-      if (!cancelled) setFrameSource(result.ok ? result.source : null);
+      if (cancelled) return;
+      setFrameSource(result.ok ? { status: 'ready', source: result.source } : { status: 'error', reason: result.reason });
     });
     return () => {
       cancelled = true;
@@ -373,8 +481,8 @@ function InspectContent({
     <>
       <Panel title="Code" id="inspect-code">
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16, minInlineSize: 0 }}>
-          <CodeBlock label={nodeLabel} code={nodeSource} testId="inspect-node-code" />
-          <CodeBlock label={frameLabel} code={frameSource} testId="inspect-frame-code" />
+          <CodeBlock label={nodeLabel} state={nodeSource} testId="inspect-node-code" />
+          <CodeBlock label={frameLabel} state={frameSource} testId="inspect-frame-code" />
         </div>
       </Panel>
 
