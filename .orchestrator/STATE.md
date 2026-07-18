@@ -511,3 +511,32 @@ gonna be nearly 1:1 100% the same as penpot in every aspect."
   by nature). Scope right-pane FIRST (Design PANEL-1 + Inspect PANEL-2), then chrome.
 - FIX-W4b-4 = Inspect Penpot-clean curation + fix the Loading… read-source bug
   (subsumes FIX-W2). Runs after W4b-3a/b/c per the checklist order.
+
+### FIX-W4b-3b — COMMITTED self-verified (tag `fix-w4b-3b-complete`), INDEPENDENT AUDIT DEFERRED 2026-07-18
+Round-4 R4-1 LAYOUT declutter → Penpot compact cluster (align-items+direction+wrap
+row / justify row / align-content-only-when-wrapping row / gap+linked-padding row);
++20 real Penpot icons; FIXED the W4b-2 active-state carry-forward (GroupButtons
+`seedFromLive` → highlight matches real computed value). Frozen zero-diff; @ccs/studio
+82/82, @ccs/ui 20/20, lint+typecheck green.
+**⚠️ DEFERRED:** the independent adversarial BROWSER audit was blocked TWICE by the
+account session limit (process-exit interrupt, then session-cap resets 9:10pm
+Asia/Riyadh). I orchestrator-self-verified (static gates + worker's own live
+getComputedStyle cross-checks + disk diffs) and committed to lock the work in.
+**TODO on next session/after reset: run a fresh independent browser audit of W4b-3b**
+(side-by-side vs Penpot layout_container + active-state-vs-getComputedStyle) as extra
+confirmation before treating the LAYOUT parity item as fully closed.
+
+### ⛔ SESSION-LIMIT BLOCK (2026-07-18): cannot spawn/resume ANY agent until ~9:10pm
+Asia/Riyadh. Next queued work needs a worker → BLOCKED until reset:
+- FIX-W4b-3c (color control: custom hex + picker + searchable token palette +
+  preview swatches — R4-3) [NEXT worker]
+- FIX-W4b-4 (Inspect tab: FIX the read-source "Loading…" bug [user re-confirmed it's
+  STILL broken via screenshot] + curate clean like Penpot — subsumes FIX-W2)
+- deferred W4b-3b independent audit (above)
+- then final HOLISTIC side-by-side parity sweep of Design+Inspect tabs (human noted
+  repeatedly "still not 1:1 100% like penpot"), then PANEL 3+ chrome, FIX-W5/W6.
+
+**Right-pane parity progress:** W4 ✅ W4b-1 ✅ (context-aware+live values) W4b-2 ✅
+(real Penpot icons) W4b-3a ✅ (Size&Position+device presets) W4b-3b ✅ self-verified
+(Layout cluster). REMAINING for "1:1": W4b-3c color, W4b-4 Inspect+Loading fix, final
+sweep. Human's standing note: Design AND Inspect tabs not yet 1:1 — EXPECTED, tracked.
