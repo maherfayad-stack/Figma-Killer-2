@@ -1,7 +1,17 @@
 import * as React from 'react';
 import type { TreeNode } from '@ccs/protocol';
 import type { StudioCanvasHandle } from '@ccs/canvas';
-import { Panel, Input, Select, Checkbox, Button, Icon, type IconName, type SelectOption } from '@ccs/ui';
+import {
+  Panel,
+  Input,
+  Select,
+  Checkbox,
+  Button,
+  Icon,
+  SegmentedGroup,
+  type IconName,
+  type SelectOption,
+} from '@ccs/ui';
 import { useDaemonConnection } from '../engine/daemon-connection.js';
 import { useEngineApi } from '../engine/engine-api-context.js';
 import { useWorkspaceStore } from './workspace-store.js';
@@ -671,11 +681,39 @@ function LayerSection({
         >
           {node.uid}
         </span>
-        {showOpacity && (
-          <GroupSelect node={node} group={OPACITY_GROUP} label="Opacity" fallback="100" readOnly={readOnly} cssProp="opacity" />
-        )}
+        {showOpacity && <LayerHeaderRow node={node} readOnly={readOnly} />}
       </div>
     </Panel>
+  );
+}
+
+/** FIX-W4b-5 — Penpot's own Layer-row header (`layer.cljs`): a blend-mode
+ * dropdown + opacity field + visibility toggle + lock toggle, all on ONE
+ * compact row. The PRIOR rendering here (FIX-W4/W4b-1) had only the Opacity
+ * control, alone on its own row — one of the biggest single visual gaps this
+ * pass's brief named explicitly ("WE ARE MISSING THIS").
+ *
+ * Blend-mode and the eye/lock toggles are honest, DISABLED stubs (see
+ * `StubIconButton`'s doc for the "disabled beats a fabricated no-op" policy
+ * this file already applies elsewhere): `inspector-presets.ts` has no
+ * blend-mode class table, and `TreeNode` carries no per-node visibility/lock
+ * STATE to read or write — inventing controls that looked wired but silently
+ * no-opped would be worse than honestly disabled ones. Opacity itself is
+ * functionally UNCHANGED: still the exact same `GroupSelect`/`OPACITY_GROUP`
+ * control (same session-hint read/write, same `set-classes` op) — only its
+ * new opt-in `compact` prop changes ITS OWN rendering to fit one row. */
+function LayerHeaderRow({ node, readOnly }: { node: TreeNode; readOnly: boolean }): React.ReactElement {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--ccs-space-1)' }}>
+      <div style={{ flex: '1 1 0', minInlineSize: 0 }}>
+        <Select aria-label="Blend mode" value="normal" disabled options={[{ value: 'normal', label: 'Normal' }]} />
+      </div>
+      <div style={{ inlineSize: 72, flexShrink: 0 }}>
+        <GroupSelect node={node} group={OPACITY_GROUP} label="Opacity" fallback="100" readOnly={readOnly} compact />
+      </div>
+      <StubIconButton icon="shown" title="Show/hide layer" />
+      <StubIconButton icon="unlock" title="Lock layer" />
+    </div>
   );
 }
 
@@ -778,6 +816,7 @@ function GroupSelect({
   cssProp,
   leadingIcon,
   swatchHex,
+  compact,
 }: {
   node: TreeNode;
   group: ClassPresetGroup;
@@ -811,6 +850,15 @@ function GroupSelect({
    * helper's still-functional optional prop merely because its callers
    * moved on isn't this workstream's scope (color controls only). */
   swatchHex?: (value: string) => string | undefined;
+  /** FIX-W4b-5 — used ONLY by `LayerHeaderRow`'s Opacity slot: Penpot's real
+   * Layer-row header (`layer.cljs`) packs blend-mode + opacity + eye + lock
+   * onto ONE compact row with no per-control label text, unlike every other
+   * `GroupSelect` consumer (which each get their own labelled row). Opt-in,
+   * defaulting to `false` — every EXISTING caller renders byte-identically:
+   * still the same label text, same `CurrentValueLine`, same `sendOp`/hint
+   * wiring, just skipping the label span + current-value readout to fit one
+   * row (the label survives as the control's `aria-label` for a11y). */
+  compact?: boolean;
 }): React.ReactElement {
   const { sendOp } = useDaemonConnection();
   // Lazy initializer only — the section this control lives in is always
@@ -852,7 +900,8 @@ function GroupSelect({
         </div>
       )}
       <Select
-        label={label}
+        label={compact ? undefined : label}
+        aria-label={compact ? label : undefined}
         value={value}
         disabled={readOnly}
         options={optionsFor(group)}
@@ -866,7 +915,7 @@ function GroupSelect({
           sendOp({ t: 'set-classes', uid: node.uid, add: edit.add, remove: edit.remove });
         }}
       />
-      {cssProp && <CurrentValueLine cssProp={cssProp} group={group} />}
+      {!compact && cssProp && <CurrentValueLine cssProp={cssProp} group={group} />}
     </div>
   );
 }
@@ -898,6 +947,8 @@ function GroupButtons({
   onValueChange,
   hideLabel,
   seedFromLive,
+  extended,
+  noConfidentDefault,
 }: {
   node: TreeNode;
   group: ClassPresetGroup;
@@ -943,6 +994,32 @@ function GroupButtons({
    * byte-identically to before; `LayoutContainerSection` alone passes `true`
    * for its cssProp-backed rows (Align items/Direction/Wrap/Justify). */
   seedFromLive?: boolean;
+  /** FIX-W4b-5 — Penpot's `radio-buttons*` `extended` modifier
+   * (`radio_buttons.scss`'s `.wrapper.extended`/`.button.extended`): the
+   * pill's buttons flex-grow to fill its FULL row width. Real Penpot sets
+   * this on a row that has the whole row to itself (`layout_container.
+   * cljs`'s `justify-content-row`/`align-content-row`) but NOT on a row that
+   * shares its horizontal space with siblings (`align-row`/`direction-row`/
+   * `wrap-row` all sit side-by-side in one flex line — `LayoutContainer
+   * Section`'s own "first-row" — stretching any ONE of them would just steal
+   * width from the others). Defaults to `false` (compact, content-sized
+   * pill) so every caller that doesn't pass it renders unchanged. */
+  extended?: boolean;
+  /** FIX-W4b-5b (audit bug fix) — for a group with NO curated bridge
+   * computed-style property at all (`align-self`/`align-content`: `@ccs/
+   * bridge`'s `computed-style.ts` `LAYOUT_PROPS` has neither), `seedFromLive`
+   * can never fire, so the OLD unconditional `?? fallback` always highlighted
+   * a specific button (e.g. Align-self's `fallback="auto"`) with NO way to
+   * know if that's the element's real value — a confidently-WRONG chip is
+   * worse than none, and this file's own honesty policy elsewhere (`Current:
+   * not tracked` captions, `StubIconButton`) already treats "disabled/absent
+   * beats a fabricated answer" as the rule. Opt-in, defaulting to `false` (a
+   * cssProp-backed row that DOES seed live, e.g. Typography's Align, is
+   * unaffected either way since `liveSeed` or a real session `touched`/
+   * `hinted` value wins first) — when true AND none of `touched`/`hinted`/
+   * `liveSeed` have a value yet, NO button renders active at all, rather
+   * than falling back to `fallback`. */
+  noConfidentDefault?: boolean;
 }): React.ReactElement {
   const { sendOp } = useDaemonConnection();
   const computed = React.useContext(ComputedStyleContext);
@@ -959,40 +1036,50 @@ function GroupButtons({
   const [touched, setTouched] = React.useState<string | null>(null);
   const hinted = getClassHint(node.uid, group.key);
   const liveSeed = seedFromLive && cssProp ? resolveCurrentPresetValue(computed, cssProp, group) : null;
-  const value = touched ?? hinted ?? liveSeed ?? fallback;
+  // FIX-W4b-5b: `noConfidentDefault` drops the trailing `?? fallback` — see
+  // this prop's own doc for why (no curated bridge prop exists to ever
+  // confirm `fallback` is actually true for THIS element).
+  const value = touched ?? hinted ?? liveSeed ?? (noConfidentDefault ? null : fallback);
 
+  // FIX-W4b-5: real Penpot renders this whole row as ONE segmented pill
+  // (`ds/controls/radio_buttons.scss`'s `.wrapper` — a single rounded
+  // `--color-background-tertiary` container with the option buttons INSIDE
+  // it, the active one picked out via `--color-background-quaternary` bg +
+  // teal `--color-accent-primary` fg), not a row of separately bordered/
+  // backgrounded `Button`s (the prior FIX-W4/W4b-2 rendering) — see
+  // `SegmentedGroup`'s own doc for the full citation. `extended` mirrors
+  // Penpot's own modifier of the same name: a lone full-width row (Justify
+  // content has no sibling row sharing its horizontal space) stretches its
+  // buttons to fill the pill, while a cluster sharing a row with siblings
+  // (Align items/Direction/Wrap) stays compact.
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }} title={hideLabel ? label : undefined}>
       {!hideLabel && (
         <span style={{ fontSize: 'var(--ccs-font-size-xs)', color: 'var(--ccs-text-muted)' }}>{label}</span>
       )}
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-        {group.presets.map((preset) => {
+      <SegmentedGroup
+        aria-label={hideLabel ? label : undefined}
+        extended={extended}
+        items={group.presets.map((preset) => {
           const icon = iconFor?.(preset.value);
-          return (
-            <Button
-              key={preset.value}
-              type="button"
-              size="sm"
-              variant="secondary"
-              active={value === preset.value}
-              disabled={readOnly}
-              title={preset.label}
-              aria-label={icon ? preset.label : undefined}
-              onClick={() => {
-                setTouched(preset.value);
-                onValueChange?.(preset.value);
-                if (readOnly) return;
-                const edit = resolveClassEdit(group, preset.value);
-                setClassHint(node.uid, group.key, preset.value);
-                sendOp({ t: 'set-classes', uid: node.uid, add: edit.add, remove: edit.remove });
-              }}
-            >
-              {icon ? <Icon name={icon} size={12} /> : preset.label}
-            </Button>
-          );
+          return {
+            value: preset.value,
+            active: value === preset.value,
+            disabled: readOnly,
+            title: preset.label,
+            ariaLabel: icon ? preset.label : undefined,
+            content: icon ? <Icon name={icon} size={16} /> : preset.label,
+            onClick: () => {
+              setTouched(preset.value);
+              onValueChange?.(preset.value);
+              if (readOnly) return;
+              const edit = resolveClassEdit(group, preset.value);
+              setClassHint(node.uid, group.key, preset.value);
+              sendOp({ t: 'set-classes', uid: node.uid, add: edit.add, remove: edit.remove });
+            },
+          };
         })}
-      </div>
+      />
       {cssProp && <CurrentValueLine cssProp={cssProp} group={group} />}
     </div>
   );
@@ -1632,6 +1719,79 @@ function ArbitraryPxInput({
   );
 }
 
+/** FIX-W4b-5 — Penpot's own `measures.cljs`/`measures.scss` `.element-set`
+ * grid: `grid-template-columns: [input-width][input-width][sp-xxxl action
+ * column]`, `gap: sp-xs(4px)`. Every paired numeric row this file renders
+ * (W/H, X/Y, Rotation/Radius, and `FrameSizeSection`'s own W/H) shares this
+ * exact 3-column shape — `action` is that row's own icon-button (proportion
+ * lock / — / independent-corners), not a free-floating sibling. `action`
+ * omitted (X/Y has no third control in real Penpot's `.position` row either)
+ * still reserves the column so the input columns above/below it stay
+ * pixel-aligned across rows, matching Penpot's shared-grid visual rhythm. */
+function MeasureRow({
+  left,
+  right,
+  action,
+}: {
+  left: React.ReactNode;
+  right: React.ReactNode;
+  action?: React.ReactNode;
+}): React.ReactElement {
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr var(--ccs-space-7)', gap: 'var(--ccs-space-1)' }}>
+      <div>{left}</div>
+      <div>{right}</div>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          blockSize: 'var(--ccs-row-height)',
+        }}
+      >
+        {action}
+      </div>
+    </div>
+  );
+}
+
+/** FIX-W4b-5 — a cosmetic-only Penpot-style icon affordance for a control
+ * this pass does NOT wire up (proportion lock, independent-corners): both
+ * are genuine Penpot icon/tooltip pairs (`measures.cljs`'s `:icon (if
+ * proportion-lock "lock" "unlock")`; `border_radius.cljs`'s corner-mode
+ * toggle reuses its own `i/corner-radius` glyph — cited inline at each call
+ * site), rendered `disabled` so the control is honestly inert rather than
+ * silently no-opping on click — same "disabled + honest beats a fabricated
+ * no-op" policy `ArbitraryPxInput`'s own `readOnly` wiring already follows
+ * elsewhere in this file. CARRY-FORWARD to actually wire (see worker
+ * report): proportion-lock would need this section to scale the OTHER
+ * dimension on a W/H edit; independent-corners would need four separate
+ * per-corner radius fields. Neither exists in `inspector-presets.ts` today. */
+function StubIconButton({ icon, title }: { icon: IconName; title: string }): React.ReactElement {
+  return (
+    <button
+      type="button"
+      disabled
+      title={title}
+      aria-label={title}
+      style={{
+        all: 'unset',
+        boxSizing: 'border-box',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        inlineSize: 28,
+        blockSize: 28,
+        borderRadius: 'calc(var(--ccs-radius) - 2px)',
+        color: 'var(--ccs-text-subtle)',
+        cursor: 'not-allowed',
+      }}
+    >
+      <Icon name={icon} size={16} />
+    </button>
+  );
+}
+
 // --- Size & position (measures.cljs, radius + rotation included — see
 // module doc's FIX-W4b-3a section) ---------------------------------------
 
@@ -1652,8 +1812,13 @@ function SizePositionSection({ node, readOnly }: { node: TreeNode; readOnly: boo
          * `arbitrarySizeEdit`'s remove-candidate list (`inspector-
          * presets.ts`) — entering a number here still evicts a stale
          * `w-full` etc. — they're just no longer a separate control. */}
-        <div style={{ display: 'flex', gap: 8 }}>
-          <div style={{ flex: 1 }}>
+        {/* FIX-W4b-5: `measures.cljs`'s own 3-col `.element-set` grid (see
+         * `MeasureRow`'s doc) — the 3rd column is the section's proportion-
+         * lock icon (`:icon (if proportion-lock "lock" "unlock")`), rendered
+         * here as an honest disabled stub (see `StubIconButton`'s doc for why
+         * it isn't wired this pass). */}
+        <MeasureRow
+          left={
             <ArbitraryPxInput
               node={node}
               hintKey="size-w-custom"
@@ -1663,8 +1828,8 @@ function SizePositionSection({ node, readOnly }: { node: TreeNode; readOnly: boo
               cssProp="width"
               buildEdit={(px, previous) => arbitrarySizeEdit('w', px, previous)}
             />
-          </div>
-          <div style={{ flex: 1 }}>
+          }
+          right={
             <ArbitraryPxInput
               node={node}
               hintKey="size-h-custom"
@@ -1674,8 +1839,9 @@ function SizePositionSection({ node, readOnly }: { node: TreeNode; readOnly: boo
               cssProp="height"
               buildEdit={(px, previous) => arbitrarySizeEdit('h', px, previous)}
             />
-          </div>
-        </div>
+          }
+          action={<StubIconButton icon="unlock" title="Lock proportions" />}
+        />
         <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
           <Select
             label="Position"
@@ -1707,8 +1873,12 @@ function SizePositionSection({ node, readOnly }: { node: TreeNode; readOnly: boo
          * mismatch under `dir="rtl"` inherited from `@ccs/bridge`'s existing
          * curated prop list (no logical-inset computed prop exists there),
          * not new to this pass. */}
-        <div style={{ display: 'flex', gap: 8 }}>
-          <div style={{ flex: 1 }}>
+        {/* X/Y — no 3rd action in real Penpot's `.position` row either (see
+         * `MeasureRow`'s doc: the column is reserved-but-empty here purely to
+         * keep this row's inputs aligned with the W/H/Rotation-Radius rows
+         * above/below it). */}
+        <MeasureRow
+          left={
             <ArbitraryPxInput
               node={node}
               hintKey="inset-start"
@@ -1718,8 +1888,8 @@ function SizePositionSection({ node, readOnly }: { node: TreeNode; readOnly: boo
               cssProp="left"
               buildEdit={(px, previous) => arbitraryInsetEdit('start', px, previous)}
             />
-          </div>
-          <div style={{ flex: 1 }}>
+          }
+          right={
             <ArbitraryPxInput
               node={node}
               hintKey="inset-top"
@@ -1729,15 +1899,21 @@ function SizePositionSection({ node, readOnly }: { node: TreeNode; readOnly: boo
               cssProp="top"
               buildEdit={(px, previous) => arbitraryInsetEdit('top', px, previous)}
             />
-          </div>
-        </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          {/* Rotation — FIX-W4b-3a, NEW (see module doc for why FIX-W4's
-           * drop of this field is reversed). No curated computed source
-           * exists yet (disclosed gap, see `ArbitraryPxInput`'s own doc), so
-           * this always shows an honest "not tracked" rather than a
-           * fabricated current value. */}
-          <div style={{ flex: 1 }}>
+          }
+        />
+        {/* Rotation — FIX-W4b-3a, NEW (see module doc for why FIX-W4's drop of
+         * this field is reversed). No curated computed source exists yet
+         * (disclosed gap, see `ArbitraryPxInput`'s own doc), so this always
+         * shows an honest "not tracked" rather than a fabricated current
+         * value. Radius (`border_radius.cljs`'s `border-radius-menu*`,
+         * embedded directly inside `measures-menu*` in real Penpot — see this
+         * file's module doc for the citation — hence living here, not in the
+         * old "Border & radius" Panel, now just `Stroke`). 3rd column: the
+         * independent-corners toggle (`border_radius.cljs` reuses its own
+         * `i/corner-radius` glyph for this — see `StubIconButton`'s doc for
+         * why it's an honest disabled stub, not wired, this pass). */}
+        <MeasureRow
+          left={
             <ArbitraryPxInput
               node={node}
               hintKey="rotate-custom"
@@ -1748,16 +1924,8 @@ function SizePositionSection({ node, readOnly }: { node: TreeNode; readOnly: boo
               untrackedCaption="Current: not tracked"
               buildEdit={(deg, previous) => arbitraryRotateEdit(deg, previous)}
             />
-          </div>
-          {/* Radius (`border_radius.cljs`'s `border-radius-menu*`, embedded
-           * directly inside `measures-menu*` in real Penpot — see this
-           * file's module doc for the citation — hence living here, not in
-           * the old "Border & radius" Panel (now just `Stroke`, below).
-           * FIX-W4b-3a: reworked from a preset-only `<Select>` to a direct
-           * numeric field, matching Penpot's own free-numeric radius input.
-           * Penpot's INDEPENDENT-CORNERS toggle (`border_radius.cljs`'s
-           * per-corner mode) is CARRY-FORWARD — see the worker report. */}
-          <div style={{ flex: 1 }}>
+          }
+          right={
             <ArbitraryPxInput
               node={node}
               hintKey="radius-custom"
@@ -1767,8 +1935,9 @@ function SizePositionSection({ node, readOnly }: { node: TreeNode; readOnly: boo
               cssProp="border-radius"
               buildEdit={(px, previous) => arbitraryRadiusEdit(px, previous)}
             />
-          </div>
-        </div>
+          }
+          action={<StubIconButton icon="corner-radius" title="Independent corners" />}
+        />
       </div>
     </Panel>
   );
@@ -1835,8 +2004,13 @@ function FrameSizeSection({
   return (
     <Panel title="Size & position" id="inspector-size-position">
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <div style={{ flex: 1 }}>
+        {/* FIX-W4b-5: same `measures.cljs` 3-col `.element-set` grid as the
+         * element-facing `SizePositionSection` above (see `MeasureRow`'s
+         * doc) — the proportion-lock stub is equally honest-inert here (a
+         * board's W/H write path, `setFrameGeometry`, has no proportion-lock
+         * concept implemented either). */}
+        <MeasureRow
+          left={
             <FrameGeometryInput
               label="W"
               icon="character-w"
@@ -1845,8 +2019,8 @@ function FrameSizeSection({
               valueOverride={override.w}
               onCommit={(w) => applyGeometry({ w })}
             />
-          </div>
-          <div style={{ flex: 1 }}>
+          }
+          right={
             <FrameGeometryInput
               label="H"
               icon="character-h"
@@ -1855,8 +2029,9 @@ function FrameSizeSection({
               valueOverride={override.h}
               onCommit={(h) => applyGeometry({ h })}
             />
-          </div>
-        </div>
+          }
+          action={<StubIconButton icon="unlock" title="Lock proportions" />}
+        />
         {/* Size presets + device-type quick-selects (item 3) — cited against
          * Penpot's own `app.main.constants/size-presets` catalog, see
          * `inspector-presets.ts`'s own module doc for the full citation +
@@ -2078,6 +2253,7 @@ function LayoutContainerSection({ node, readOnly }: { node: TreeNode; readOnly: 
           iconFor={(v) => justifyIcon(v, isColumn)}
           hideLabel
           seedFromLive
+          extended
         />
         {/* Penpot's `third-row`: align-content, ONLY while wrapping — no
          * curated computed-style prop exists for `align-content` (bridge/
@@ -2092,6 +2268,7 @@ function LayoutContainerSection({ node, readOnly }: { node: TreeNode; readOnly: 
             readOnly={readOnly}
             iconFor={(v) => alignContentIcon(v, isColumn)}
             hideLabel
+            extended
           />
         )}
         {/* Penpot's `forth-row`: gap + padding as compact icon numeric
@@ -2315,6 +2492,18 @@ function LayoutItemSection({ node, readOnly }: { node: TreeNode; readOnly: boole
          * (margin isn't modeled at all) — out of this pass's "declutter the
          * existing controls" scope, flagged as carry-forward in the worker
          * report rather than silently expanded here. */}
+        {/* FIX-W4b-5b (audit bug): `align-self` has NO curated bridge
+         * computed-style prop (`@ccs/bridge`'s `computed-style.ts`
+         * `LAYOUT_PROPS` list — confirmed, no entry), so this row can never
+         * `seedFromLive` and had no `CurrentValueLine` to disagree with
+         * either — but the OLD unconditional `fallback="auto"` still always
+         * highlighted the "auto"/remove chip regardless of the element's
+         * real `align-self`, a confidently-WRONG-or-right-by-luck highlight
+         * with zero way to verify it. `noConfidentDefault` drops that
+         * fallback highlight entirely: no chip shows active until the user
+         * actually clicks one THIS session (same "disabled/absent beats a
+         * fabricated answer" honesty policy this file already applies to
+         * `StubIconButton`/untracked captions). */}
         <GroupButtons
           node={node}
           group={SELF_ALIGN_GROUP}
@@ -2323,6 +2512,7 @@ function LayoutItemSection({ node, readOnly }: { node: TreeNode; readOnly: boole
           readOnly={readOnly}
           iconFor={alignSelfIcon}
           hideLabel
+          noConfidentDefault
         />
         <GroupSelect node={node} group={ORDER_GROUP} label="Order" fallback="none" readOnly={readOnly} />
       </div>
@@ -2379,6 +2569,20 @@ function TypographySection({ node, readOnly }: { node: TreeNode; readOnly: boole
             />
           </div>
         </div>
+        {/* FIX-W4b-5b (audit bug): `text-align` IS in the bridge's curated
+         * computed-style list (`@ccs/bridge`'s `computed-style.ts`
+         * `TYPOGRAPHY_PROPS`) — this row was missing `seedFromLive`
+         * entirely, so its at-rest highlight was ALWAYS `fallback`
+         * ("start"), regardless of the element's real `text-align`, while
+         * the `CurrentValueLine` right below it honestly showed the real
+         * value — a visible pill-vs-caption disagreement on ANY
+         * center/right/justify-aligned text node (confirmed live: a
+         * `text-align: center` h1 highlighted "Start" while its caption read
+         * "Current: Center (center)"). `seedFromLive` makes the highlight
+         * follow the exact same `touched ?? hinted ?? liveSeed ?? fallback`
+         * precedence every OTHER cssProp-backed row in this file already
+         * uses (`LayoutContainerSection`'s Align items/Direction/Wrap/
+         * Justify). */}
         <GroupButtons
           node={node}
           group={TEXT_ALIGN_GROUP}
@@ -2387,6 +2591,7 @@ function TypographySection({ node, readOnly }: { node: TreeNode; readOnly: boole
           readOnly={readOnly}
           cssProp="text-align"
           iconFor={(v) => textAlignIcon(v, isRtl)}
+          seedFromLive
         />
         <ColorControl node={node} prefix="text" cssProp="color" label="Color" readOnly={readOnly} />
       </div>

@@ -48,8 +48,8 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(function Inp
               alignItems: 'center',
               gap: 6,
               paddingInline: 8,
-              paddingBlock: 5,
-              borderRadius: 'var(--ccs-radius-sm)',
+              blockSize: 'var(--ccs-row-height)', // FIX-W4b-5: match the sibling raw-<input>'s 32px row height
+              borderRadius: 'var(--ccs-radius)', // FIX-W4b-5: Penpot's $br-8 standard control radius
               background: 'var(--ccs-bg-input)',
               border: '1px solid var(--ccs-border)',
               fontSize: 'var(--ccs-font-size-sm)',
@@ -70,12 +70,24 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(function Inp
             className="ccs-input"
             style={{
               inlineSize: '100%',
+              // FIX-W4b-5: Penpot's own control anatomy (`../penpot/frontend/
+              // src/app/main/ui/ds/buttons/_buttons.scss`'s `%base-button`
+              // `--button-height: $sz-32`, and every `ds/controls/*.scss`
+              // input/select sharing that same 32px row height) — was
+              // `paddingBlock: 5` (an unfixed ~26px), never actually hitting
+              // the 32px `--ccs-row-height` token `tokens.css` already
+              // declared as "the Penpot standard". `blockSize` fixes the row
+              // height explicitly; native `<input>`/`<select>` text vertical-
+              // centers on its own once height is set, no paddingBlock needed.
+              blockSize: 'var(--ccs-row-height)',
               background: 'var(--ccs-bg-input)',
               color: 'var(--ccs-text)',
               border: '1px solid var(--ccs-border)',
-              borderRadius: 'var(--ccs-radius-sm)',
+              // FIX-W4b-5: Penpot's `$br-8` standard control radius (`ds/
+              // _borders.scss`) — was `--ccs-radius-sm` (4px, Penpot's SMALLER
+              // radius, not the one its own numeric/text inputs use).
+              borderRadius: 'var(--ccs-radius)',
               paddingInline: 8,
-              paddingBlock: 5,
               fontSize: 'var(--ccs-font-size-sm)',
               fontFamily: 'inherit',
               paddingInlineStart: leadingIcon ? 26 : 8,

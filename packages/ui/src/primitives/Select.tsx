@@ -22,7 +22,12 @@ export interface SelectOption {
 }
 
 export interface SelectProps extends Omit<React.SelectHTMLAttributes<HTMLSelectElement>, 'children'> {
-  label?: string;
+  // FIX-W4b-5: explicit `| undefined` (not just `label?:`) — under this
+  // repo's `exactOptionalPropertyTypes`, `label?: string` alone rejects a
+  // call site that passes `label={compact ? undefined : label}` (a real,
+  // intentional "no label" case, e.g. `Inspector.tsx`'s `GroupSelect`
+  // `compact` mode), not just omission of the prop entirely.
+  label?: string | undefined;
   options: SelectOption[];
   /** FIX-W4b-2: a leading glyph INSIDE the field, matching `Input`'s own
    * `leadingIcon` (see that file's doc) — used where a Penpot measures
@@ -56,10 +61,14 @@ export const Select = React.forwardRef<HTMLSelectElement, SelectProps>(function 
             background: 'var(--ccs-bg-input)',
             color: 'var(--ccs-text)',
             border: '1px solid var(--ccs-border)',
-            borderRadius: 'var(--ccs-radius-sm)',
+            // FIX-W4b-5: Penpot's `$br-8` standard control radius (was the
+            // smaller `--ccs-radius-sm`) + explicit 32px row height (was an
+            // unfixed ~26px `paddingBlock: 5`) — see `Input.tsx`'s matching
+            // fix for the full citation (`ds/_borders.scss`/`_buttons.scss`).
+            borderRadius: 'var(--ccs-radius)',
+            blockSize: 'var(--ccs-row-height)',
             paddingInlineStart: leadingIcon ? 26 : 8,
             paddingInlineEnd: 8,
-            paddingBlock: 5,
             fontSize: 'var(--ccs-font-size-sm)',
             fontFamily: 'inherit',
             ...style,

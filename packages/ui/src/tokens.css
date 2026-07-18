@@ -32,6 +32,17 @@
   --ccs-bg-input: #212426;
   --ccs-bg-overlay: #1b1b1eF2;
   --ccs-canvas-backdrop: #bfbfbf; /* NEW — Penpot color-canvas, frames sit on this gray */
+  /* NEW (FIX-W4b-5) — Penpot's own `--color-background-tertiary`/
+   * `--color-background-quaternary` dark-theme roles (`../penpot/frontend/
+   * src/app/main/ui/ds/colors.scss`'s `:global(.dark)` block: tertiary =
+   * `$gray-900` = #212426, quaternary = `$gray-800` = #2e3434) — a segmented
+   * icon-group pill's wrapper bg (tertiary) and its active-item bg
+   * (quaternary). Named for THAT semantic role, even though the underlying
+   * hex is identical to `--ccs-bg-input`/`--ccs-border` respectively (kept as
+   * distinct tokens, not aliased to those, so intent stays legible at the
+   * call site — see `SegmentedGroup.tsx`'s own doc). */
+  --ccs-bg-tertiary: #212426;
+  --ccs-bg-quaternary: #2e3434;
 
   /* --- borders --- */
   --ccs-border: #2e3434;
