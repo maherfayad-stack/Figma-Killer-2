@@ -20,16 +20,20 @@ import {
 import {
   ALIGN_ITEMS_GROUP,
   arbitraryInsetEdit,
+  arbitraryRadiusEdit,
+  arbitraryRotateEdit,
   arbitrarySizeEdit,
   BORDER_WIDTH_GROUP,
   type ClassEdit,
   type ClassPresetGroup,
   colorGroup,
+  DEVICE_PRESETS,
+  DEVICE_QUICK_PRESETS,
+  type DevicePreset,
   DIRECTION_GROUP,
   FONT_WEIGHT_GROUP,
   GAP_GROUP,
   GROW_GROUP,
-  HEIGHT_GROUP,
   hexForColorValue,
   JUSTIFY_GROUP,
   LEADING_GROUP,
@@ -40,16 +44,15 @@ import {
   PADDING_GROUP,
   PADDING_START_GROUP,
   PADDING_TOP_GROUP,
+  parseArbitraryValue,
   POSITION_GROUP,
   POSITION_REMOVE_EXTRA,
-  RADIUS_GROUP,
   resolveClassEdit,
   SELF_ALIGN_GROUP,
   SHADOW_GROUP,
   TEXT_ALIGN_GROUP,
   TEXT_SIZE_GROUP,
   TRACKING_GROUP,
-  WIDTH_GROUP,
   WRAP_GROUP,
 } from './inspector-presets.js';
 
@@ -77,8 +80,11 @@ import {
  * any node). DROPPED as vector-only/out of scope per this task's brief:
  * `blur.cljs`, `bool.cljs`, `constraints.cljs`, `svg_attrs.cljs`,
  * `frame_grid.cljs`, `color_selection.cljs`, `grid_cell.cljs`,
- * `interactions.cljs`, `exports.cljs`, and `measures.cljs`'s rotation field
- * (no vector rotation on a DOM element in this tool).
+ * `interactions.cljs`, `exports.cljs`. `measures.cljs`'s rotation field —
+ * previously dropped here too ("no vector rotation on a DOM element in this
+ * tool") — is REINSTATED by FIX-W4b-3a: a DOM element's `transform:
+ * rotate()` is a real, settable CSS property, so the earlier drop was
+ * overly conservative; see `SizePositionSection`'s own doc.
  *
  * ## Two structural consolidations vs. the prior (FP-INS-a) pass, both
  * fixing a literal fidelity gap found by re-reading the real source this
@@ -204,6 +210,67 @@ import {
  * token; the exact honesty rule (incl. why numeric scales like `36px` are
  * shown raw, never guessed back to `text-4xl`) lives in
  * `inspector-computed-values.ts`'s module doc.
+ *
+ * ## FIX-W4b-3a — Size & position: direct numeric fields + frame geometry +
+ * device presets
+ * Reworks `Size & position` alone (LAYOUT/COLOR untouched, per this
+ * workstream's own brief) against `measures.cljs`/`measures.scss`:
+ *  - **W/H/X/Y/Radius/Rotation are now direct numeric `<input>`s**, not the
+ *    old Auto/Custom two-step `<Select>` + arbitrary-input pair (W/H/radius)
+ *    or a class-only, unseeded pair (X/Y) — matching Penpot's own plain
+ *    editable-number fields. Every one is SEEDED from the real computed
+ *    value (item 4's honesty ask, extending FIX-W4b-1 Part B to this
+ *    section specifically) via `ArbitraryPxInput`'s "uncontrolled until
+ *    touched" pattern (see that function's own doc for why this isn't a
+ *    `useEffect` reset). Rotation is NEW (see the module doc's "dropped"
+ *    list above for why the old drop was reversed) and has NO curated
+ *    computed source (`@ccs/bridge`'s `GEOMETRY_PROPS` has no `transform`
+ *    entry — a disclosed, out-of-scope-for-this-pass gap, flagged in the
+ *    worker report rather than silently adding a bridge prop), so it always
+ *    shows an honest "Current: not tracked" instead of a fabricated readout.
+ *  - **X/Y are ALWAYS rendered now** (previously hidden entirely unless
+ *    already `absolute`) — disabled + honestly seeded (never a silent no-op
+ *    write) when the node is in-flow `static`, editable once `absolute`,
+ *    per this task's own "disabled + honest value beats a no-op" directive.
+ *    Written as Tailwind's LOGICAL `start-[Npx]`/physical `top-[Npx]`
+ *    (unchanged RTL convention, see `inspector-presets.ts`'s module doc) —
+ *    NOTE the seed itself reads the CURATED `left`/`top` computed props
+ *    (physical; `@ccs/bridge` has no logical-inset curated prop), a
+ *    disclosed mismatch for an RTL document (the shown seed can read
+ *    mirrored vs. the logical class actually written) carried forward from
+ *    FIX-W4b-1's own bridge curation, not new to this pass.
+ *  - **Radius** keeps `RADIUS_GROUP`'s named presets ONLY as `arbitrary
+ *    RadiusEdit`'s remove-candidate list (so entering a number still evicts
+ *    a stale `rounded-lg`, etc.) — the control itself is now Penpot's own
+ *    free-numeric field. Penpot's INDEPENDENT-CORNERS toggle
+ *    (`border_radius.cljs`'s per-corner mode) is CARRY-FORWARD, not built
+ *    this pass — see the worker report.
+ *  - **FRAME/board W/H** (item 1's other half) now genuinely WRITES the
+ *    board's `.studio/canvas.json` geometry, via a NEW, ADDITIVE
+ *    `StudioCanvasHandle.setFrameGeometry` method (see that method's own doc
+ *    in `@ccs/canvas`'s `StudioCanvas.tsx` for the full citation + why this
+ *    was flagged, not silently added, as a change outside this workstream's
+ *    strict `apps/studio/src/workspace/` file scope) — reusing the EXISTING
+ *    `set-geometry` daemon wire message the canvas's own drag/resize commit
+ *    already sends (ADR-0013), zero `@ccs/protocol` diff, zero new
+ *    control-message. `FrameSizeSection` (frame-only; the element-facing
+ *    `SizePositionSection` above is UNCHANGED for this write path) is a
+ *    deliberately SEPARATE component from `SizePositionSection` — a board's
+ *    W/H writes through a wholly different mechanism (daemon geometry, not
+ *    `set-classes`), so branching one shared component per-field would cost
+ *    more clarity than the two components' modest field-list overlap saves.
+ *    Frame X/Y (the board's canvas position) is OUT of this pass's scope —
+ *    see the worker report's own note on why (no DOM-observable seed for it
+ *    exists the way W/H's iframe-identity trick gives for free).
+ *  - **Size presets + device-type quick-selects** (item 3, `FrameSizeSection`
+ *    only) — `inspector-presets.ts`'s `DEVICE_PRESETS`/`DEVICE_QUICK_PRESETS`,
+ *    cited verbatim against Penpot's own `app.main.constants/size-presets`
+ *    catalog. NO device-type icons: Penpot's own preset list is text-only
+ *    (confirmed against `measures.cljs`'s `on-preset-selected` markup, no
+ *    icon element at all) — so `DEVICE_QUICK_PRESETS` render as plain
+ *    labeled buttons ("Phone"/"Tablet"/"Desktop"), the same "no icon beats a
+ *    wrong one" honesty policy this file's icon-lookup functions (`justify
+ *    Icon`, etc.) already apply.
  */
 export interface InspectorProps {
   /** `null` until `StudioCanvas`'s `onReady` fires (mirrors `InspectPanel`'s
@@ -236,6 +303,12 @@ export function Inspector({ canvasHandle, bridgeGeneration }: InspectorProps): R
   const node = useWorkspaceStore((s) => s.selectedNode());
   const currentTree = useWorkspaceStore((s) => s.currentTree());
   const framePath = useWorkspaceStore((s) => s.framePath);
+  // FIX-W4b-3a: threaded through to `FrameInspector` -> `FrameSizeSection` so
+  // a board's W/H/device-preset writes can address it via
+  // `StudioCanvasHandle.setFrameGeometry(fileFolder, framePath, ...)` — the
+  // same `(fileFolder, framePath)` pair every other by-frame handle method
+  // (`selectFrame`/`zoomToFrame`) already takes.
+  const fileFolder = useWorkspaceStore((s) => s.fileFolder);
   const nodeOps = useNodeOps();
 
   // FIX-W4b-1 Part A (frame/board selection): a Layers-panel board row (or a
@@ -255,7 +328,15 @@ export function Inspector({ canvasHandle, bridgeGeneration }: InspectorProps): R
 
   if (!node) {
     if (frameRootNode && framePath) {
-      return <FrameInspector node={frameRootNode} framePath={framePath} computed={computed} />;
+      return (
+        <FrameInspector
+          node={frameRootNode}
+          framePath={framePath}
+          fileFolder={fileFolder}
+          canvasHandle={canvasHandle}
+          computed={computed}
+        />
+      );
     }
     return (
       <Panel title="Design" id="inspector">
@@ -402,10 +483,14 @@ export function Inspector({ canvasHandle, bridgeGeneration }: InspectorProps): R
 function FrameInspector({
   node,
   framePath,
+  fileFolder,
+  canvasHandle,
   computed,
 }: {
   node: TreeNode;
   framePath: string;
+  fileFolder: string | null;
+  canvasHandle: StudioCanvasHandle | null;
   computed: ComputedLookup | null;
 }): React.ReactElement {
   const nodeOps = useNodeOps();
@@ -414,7 +499,13 @@ function FrameInspector({
     <ComputedStyleContext.Provider value={computed}>
       <FrameContextBanner framePath={framePath} />
       <LayerSection node={node} showOpacity readOnly={readOnly} />
-      <SizePositionSection key={`size-position-${node.uid}`} node={node} readOnly={readOnly} />
+      <FrameSizeSection
+        key={`size-position-${node.uid}`}
+        fileFolder={fileFolder}
+        framePath={framePath}
+        canvasHandle={canvasHandle}
+        readOnly={readOnly}
+      />
       <LayoutContainerSection key={`layout-container-${node.uid}`} node={node} readOnly={readOnly} />
       <FillSection key={`fill-${node.uid}`} node={node} readOnly={readOnly} />
       <CodeSection node={node} nodeOps={nodeOps} />
@@ -937,88 +1028,153 @@ function textAlignIcon(value: string, isRtl: boolean): IconName | undefined {
   }
 }
 
-/** A numeric px `Input` for an arbitrary-value class (`w-[Npx]`,
- * `start-[Npx]`, ...) — the open-ended counterpart to `GroupSelect`/
- * `GroupButtons` for controls with no fixed enum.
+/** A numeric field for an arbitrary-value class (`w-[Npx]`, `start-[Npx]`,
+ * `rotate-[Ndeg]`, ...) — the open-ended counterpart to `GroupSelect`/
+ * `GroupButtons` for controls with no fixed enum. Rewritten FIX-W4b-3a to
+ * close two gaps the original (FIX-W4b-2) version had:
+ *  - **`readOnly` is now actually WIRED.** The original destructured it into
+ *    its own prop TYPE but never READ it in the function body, so a
+ *    `dynamic`-locked node's W/H/X/Y fields were silently never disabled —
+ *    caught while implementing this task's own honesty requirement (item 4)
+ *    below, fixed here rather than left in place now that it's noticed.
+ *  - **The field now SEEDS from the node's real current value** (`cssProp`,
+ *    FIX-W4b-1 Part B) instead of always starting blank. "Uncontrolled until
+ *    touched": while this field has never been edited THIS session (no
+ *    `hintKey` hint recorded yet), its displayed value is DERIVED live from
+ *    `ComputedStyleContext` on every render — so it naturally corrects
+ *    itself the moment the async computed-style fetch resolves, with no
+ *    `useEffect` needed (a synchronous "reset on prop change" effect is what
+ *    this repo's `react-hooks/set-state-in-effect` lint rule forbids as a
+ *    cascading-render smell — this sidesteps that by never resetting
+ *    anything: the seed is just what renders when `dirtyText` is `null`).
+ *    The FIRST keystroke latches `dirtyText`, and from then on the field
+ *    behaves exactly as the original did (its own last write wins, matching
+ *    every other control's `getClassHint(...) ?? fallback` precedence).
  *
  * FIX-W4b-2 `icon`: Penpot's `measures.cljs` numeric-input-wrapper carries a
  * leading property glyph on every one of these (`i/character-w`/`-h`/`-x`/
- * `-y`) — forwarded to `Input`'s own `leadingIcon` (see that primitive's doc). */
+ * `-y`/`i/corner-radius`, and FIX-W4b-3a's own `i/rotation`) — forwarded to
+ * `Input`'s own `leadingIcon` (see that primitive's doc). */
 function ArbitraryPxInput({
   node,
   hintKey,
   label,
   buildEdit,
   icon,
+  readOnly,
+  cssProp,
+  unit = 'px',
+  untrackedCaption,
 }: {
   node: TreeNode;
   hintKey: string;
   label: string;
   readOnly: boolean;
-  buildEdit: (px: number, previous: string | null) => ClassEdit;
+  buildEdit: (value: number, previous: string | null) => ClassEdit;
   icon?: IconName | undefined;
+  /** FIX-W4b-3a: the curated computed-style property this field mirrors/
+   * seeds from (see `CurrentValueLine`'s own doc) — `undefined` when no
+   * curated prop exists for this control (rotation: `@ccs/bridge`'s curated
+   * `GEOMETRY_PROPS` list has no `transform` entry, a disclosed gap, see the
+   * worker report). */
+  cssProp?: string | undefined;
+  unit?: 'px' | 'deg';
+  /** Shown instead of a `CurrentValueLine` when `cssProp` is `undefined` —
+   * an honest "this control has no live readout" caption (rotation only),
+   * never silence and never a fabricated value. */
+  untrackedCaption?: string | undefined;
 }): React.ReactElement {
   const { sendOp } = useDaemonConnection();
-  const [text, setText] = React.useState('');
+  const computed = React.useContext(ComputedStyleContext);
+  const seed = cssProp ? resolveCurrentValue(computed, cssProp) : ('unset' as const);
+  const hinted = getClassHint(node.uid, hintKey) ?? null;
+  const hintedValue = hinted ? parseArbitraryValue(hinted) : null;
+  const seededText = React.useMemo(() => {
+    if (hintedValue !== null) return String(hintedValue);
+    if (seed !== 'loading' && seed !== 'unset') {
+      const n = Math.round(parseFloat(seed.raw));
+      if (Number.isFinite(n)) return String(n);
+    }
+    return '';
+  }, [hintedValue, seed]);
+  // "Uncontrolled until touched" — see this function's own doc.
+  const [dirtyText, setDirtyText] = React.useState<string | null>(null);
+  const text = dirtyText ?? seededText;
 
   return (
-    <Input
-      label={label}
-      type="number"
-      placeholder="px"
-      leadingIcon={icon}
-      value={text}
-      onChange={(e) => setText(e.target.value)}
-      onBlur={() => {
-        const px = Number(text);
-        if (!Number.isFinite(px)) return;
-        const previous = getClassHint(node.uid, hintKey) ?? null;
-        const edit = buildEdit(px, previous);
-        const written = edit.add[0];
-        if (written) setClassHint(node.uid, hintKey, written);
-        sendOp({ t: 'set-classes', uid: node.uid, add: edit.add, remove: edit.remove });
-      }}
-    />
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+      <Input
+        label={label}
+        type="number"
+        placeholder={unit}
+        leadingIcon={icon}
+        disabled={readOnly}
+        value={text}
+        onChange={(e) => setDirtyText(e.target.value)}
+        onBlur={() => {
+          if (readOnly || text.trim() === '') return;
+          const value = Number(text);
+          if (!Number.isFinite(value)) return;
+          const previous = getClassHint(node.uid, hintKey) ?? null;
+          const edit = buildEdit(value, previous);
+          const written = edit.add[0];
+          if (written) setClassHint(node.uid, hintKey, written);
+          sendOp({ t: 'set-classes', uid: node.uid, add: edit.add, remove: edit.remove });
+        }}
+      />
+      {cssProp ? (
+        <CurrentValueLine cssProp={cssProp} />
+      ) : (
+        untrackedCaption && (
+          <span style={{ fontSize: 'var(--ccs-font-size-xs)', color: 'var(--ccs-text-subtle)' }}>
+            {untrackedCaption}
+          </span>
+        )
+      )}
+    </div>
   );
 }
 
-// --- Size & position (measures.cljs, radius included — see module doc) --
+// --- Size & position (measures.cljs, radius + rotation included — see
+// module doc's FIX-W4b-3a section) ---------------------------------------
 
 function SizePositionSection({ node, readOnly }: { node: TreeNode; readOnly: boolean }): React.ReactElement {
   const { sendOp } = useDaemonConnection();
   // Lazy initializer only — this section is always uniquely `key`-ed by
   // `Inspector` (see its own doc), same reasoning as `GroupSelect`.
   const [position, setPosition] = React.useState(() => getClassHint(node.uid, POSITION_GROUP.key) ?? 'static');
+  const canPositionXY = position === 'absolute';
 
   return (
     <Panel title="Size & position" id="inspector-size-position">
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {/* W/H — FIX-W4b-3a: direct numeric fields (Penpot's own plain
+         * editable number), replacing the old Auto/Custom two-step
+         * `<Select>` + arbitrary-input pair. `WIDTH_GROUP`/`HEIGHT_GROUP`'s
+         * named presets (`w-auto`/`w-full`/...) still exist as
+         * `arbitrarySizeEdit`'s remove-candidate list (`inspector-
+         * presets.ts`) — entering a number here still evicts a stale
+         * `w-full` etc. — they're just no longer a separate control. */}
         <div style={{ display: 'flex', gap: 8 }}>
-          <div style={{ flex: 1 }}>
-            <GroupSelect node={node} group={WIDTH_GROUP} label="Width" fallback="auto" readOnly={readOnly} cssProp="width" />
-          </div>
           <div style={{ flex: 1 }}>
             <ArbitraryPxInput
               node={node}
               hintKey="size-w-custom"
-              label="Custom W"
+              label="W"
               readOnly={readOnly}
               icon="character-w"
+              cssProp="width"
               buildEdit={(px, previous) => arbitrarySizeEdit('w', px, previous)}
             />
-          </div>
-        </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <div style={{ flex: 1 }}>
-            <GroupSelect node={node} group={HEIGHT_GROUP} label="Height" fallback="auto" readOnly={readOnly} cssProp="height" />
           </div>
           <div style={{ flex: 1 }}>
             <ArbitraryPxInput
               node={node}
               hintKey="size-h-custom"
-              label="Custom H"
+              label="H"
               readOnly={readOnly}
               icon="character-h"
+              cssProp="height"
               buildEdit={(px, previous) => arbitrarySizeEdit('h', px, previous)}
             />
           </div>
@@ -1041,45 +1197,277 @@ function SizePositionSection({ node, readOnly }: { node: TreeNode; readOnly: boo
           />
           <CurrentValueLine cssProp="position" group={POSITION_GROUP} />
         </div>
-        {position === 'absolute' && (
-          <div style={{ display: 'flex', gap: 8 }}>
-            <div style={{ flex: 1 }}>
-              <ArbitraryPxInput
-                node={node}
-                hintKey="inset-start"
-                label="X (start)"
-                readOnly={readOnly}
-                icon="character-x"
-                buildEdit={(px, previous) => arbitraryInsetEdit('start', px, previous)}
-              />
-            </div>
-            <div style={{ flex: 1 }}>
-              <ArbitraryPxInput
-                node={node}
-                hintKey="inset-top"
-                label="Y (top)"
-                readOnly={readOnly}
-                icon="character-y"
-                buildEdit={(px, previous) => arbitraryInsetEdit('top', px, previous)}
-              />
-            </div>
+        {/* X/Y — FIX-W4b-3a: ALWAYS rendered now (previously hidden entirely
+         * unless already `absolute`) — Penpot always shows a shape's x/y.
+         * Disabled (but still honestly seeded, never a silent no-op write)
+         * while the node is in-flow `static`: its real `left`/`top` computed
+         * values exist, but a plain inset write wouldn't meaningfully move a
+         * normal-flow element, so this follows the task's own "disabled +
+         * honest value beats a no-op" directive rather than writing anyway.
+         * NOTE: the seed reads the CURATED `left`/`top` computed props
+         * (physical) while the write is Tailwind's LOGICAL `start-[Npx]`
+         * (RTL convention, `inspector-presets.ts`'s module doc) — a disclosed
+         * mismatch under `dir="rtl"` inherited from `@ccs/bridge`'s existing
+         * curated prop list (no logical-inset computed prop exists there),
+         * not new to this pass. */}
+        <div style={{ display: 'flex', gap: 8 }}>
+          <div style={{ flex: 1 }}>
+            <ArbitraryPxInput
+              node={node}
+              hintKey="inset-start"
+              label="X"
+              readOnly={readOnly || !canPositionXY}
+              icon="character-x"
+              cssProp="left"
+              buildEdit={(px, previous) => arbitraryInsetEdit('start', px, previous)}
+            />
           </div>
-        )}
-        {/* Radius (`border_radius.cljs`'s `border-radius-menu*`, embedded
-         * directly inside `measures-menu*` in real Penpot — see this file's
-         * module doc for the citation — hence living here, not in the old
-         * "Border & radius" Panel (now just `Stroke`, below). */}
-        <GroupSelect
-          node={node}
-          group={RADIUS_GROUP}
-          label="Radius"
-          fallback="none"
-          readOnly={readOnly}
-          cssProp="border-radius"
-          leadingIcon="corner-radius"
-        />
+          <div style={{ flex: 1 }}>
+            <ArbitraryPxInput
+              node={node}
+              hintKey="inset-top"
+              label="Y"
+              readOnly={readOnly || !canPositionXY}
+              icon="character-y"
+              cssProp="top"
+              buildEdit={(px, previous) => arbitraryInsetEdit('top', px, previous)}
+            />
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          {/* Rotation — FIX-W4b-3a, NEW (see module doc for why FIX-W4's
+           * drop of this field is reversed). No curated computed source
+           * exists yet (disclosed gap, see `ArbitraryPxInput`'s own doc), so
+           * this always shows an honest "not tracked" rather than a
+           * fabricated current value. */}
+          <div style={{ flex: 1 }}>
+            <ArbitraryPxInput
+              node={node}
+              hintKey="rotate-custom"
+              label="Rotation"
+              readOnly={readOnly}
+              icon="rotation"
+              unit="deg"
+              untrackedCaption="Current: not tracked"
+              buildEdit={(deg, previous) => arbitraryRotateEdit(deg, previous)}
+            />
+          </div>
+          {/* Radius (`border_radius.cljs`'s `border-radius-menu*`, embedded
+           * directly inside `measures-menu*` in real Penpot — see this
+           * file's module doc for the citation — hence living here, not in
+           * the old "Border & radius" Panel (now just `Stroke`, below).
+           * FIX-W4b-3a: reworked from a preset-only `<Select>` to a direct
+           * numeric field, matching Penpot's own free-numeric radius input.
+           * Penpot's INDEPENDENT-CORNERS toggle (`border_radius.cljs`'s
+           * per-corner mode) is CARRY-FORWARD — see the worker report. */}
+          <div style={{ flex: 1 }}>
+            <ArbitraryPxInput
+              node={node}
+              hintKey="radius-custom"
+              label="Radius"
+              readOnly={readOnly}
+              icon="corner-radius"
+              cssProp="border-radius"
+              buildEdit={(px, previous) => arbitraryRadiusEdit(px, previous)}
+            />
+          </div>
+        </div>
       </div>
     </Panel>
+  );
+}
+
+const DEVICE_CATEGORY_LABEL: Record<DevicePreset['category'], string> = {
+  phone: 'Phone',
+  tablet: 'Tablet',
+  desktop: 'Desktop',
+};
+
+/** FIX-W4b-3a item 1 (frame/board branch) — writes the BOARD's geometry via
+ * `StudioCanvasHandle.setFrameGeometry` (see that method's own doc for the
+ * write path: the SAME `set-geometry` daemon message the drag/resize commit
+ * already sends), NOT `set-classes` — a board's W/H is `.studio/canvas.json`
+ * geometry (`FrameEntry.w/h`), not a Tailwind class on its root element, so
+ * this is deliberately a SEPARATE component from the element-facing
+ * `SizePositionSection` above rather than one component branching per field
+ * on every single control.
+ *
+ * Seed values: the board's `<iframe>` is sized to EXACTLY its `w`×`h`
+ * (`@ccs/canvas`'s `geometry.ts` module doc: "iframe space and frame space
+ * are identical, no internal CSS scaling") — so the root element's OWN
+ * computed `width`/`height` (the same curated FIX-W4b-1 Part B bridge round
+ * trip every other control uses) is a reliable, honest read of the board's
+ * real current size, with zero new plumbing. Frame X/Y (the board's
+ * position on the infinite canvas) has no such DOM-observable equivalent and
+ * is OUT of this section's scope — see the worker report's own note. */
+function FrameSizeSection({
+  fileFolder,
+  framePath,
+  canvasHandle,
+  readOnly,
+}: {
+  fileFolder: string | null;
+  framePath: string;
+  canvasHandle: StudioCanvasHandle | null;
+  readOnly: boolean;
+}): React.ReactElement {
+  const canWrite = !readOnly && canvasHandle !== null && fileFolder !== null;
+  // FIX-W4b-3a (bug found via this task's own dogfood run): a geometry write
+  // (either field commits below, or a size-preset/device-quick-preset pick)
+  // does NOT change `activeUid`/`bridgeGeneration`, so `useComputedStyle`
+  // never re-fetches — `FrameGeometryInput`'s own `ComputedStyleContext`
+  // seed would otherwise go STALE the instant a write commits (confirmed
+  // live: after clicking "Phone", the W/H fields kept showing the board's
+  // PREVIOUS size until manually reselecting it), directly violating this
+  // task's own item-4 honesty rule. `override` is the "own last write wins"
+  // fix, lifted HERE (not per-`FrameGeometryInput`) so a PRESET click (which
+  // writes BOTH axes from a single button, outside either field's own local
+  // state) also updates both fields' displayed value, not just the one a
+  // user might have typed into directly.
+  const [override, setOverride] = React.useState<{ w: number | null; h: number | null }>({ w: null, h: null });
+
+  const applyGeometry = React.useCallback(
+    (patch: { w?: number; h?: number }) => {
+      if (!canWrite || !fileFolder || !canvasHandle) return;
+      canvasHandle.setFrameGeometry(fileFolder, framePath, patch);
+      setOverride((prev) => ({ w: patch.w ?? prev.w, h: patch.h ?? prev.h }));
+    },
+    [canWrite, fileFolder, framePath, canvasHandle],
+  );
+
+  return (
+    <Panel title="Size & position" id="inspector-size-position">
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <div style={{ flex: 1 }}>
+            <FrameGeometryInput
+              label="W"
+              icon="character-w"
+              cssProp="width"
+              disabled={!canWrite}
+              valueOverride={override.w}
+              onCommit={(w) => applyGeometry({ w })}
+            />
+          </div>
+          <div style={{ flex: 1 }}>
+            <FrameGeometryInput
+              label="H"
+              icon="character-h"
+              cssProp="height"
+              disabled={!canWrite}
+              valueOverride={override.h}
+              onCommit={(h) => applyGeometry({ h })}
+            />
+          </div>
+        </div>
+        {/* Size presets + device-type quick-selects (item 3) — cited against
+         * Penpot's own `app.main.constants/size-presets` catalog, see
+         * `inspector-presets.ts`'s own module doc for the full citation +
+         * why there are no device-type ICONS (Penpot's own list is
+         * text-only). */}
+        <Select
+          label="Size presets"
+          value=""
+          disabled={!canWrite}
+          options={[
+            { value: '', label: 'Choose a device…' },
+            ...DEVICE_PRESETS.map((p) => ({ value: p.value, label: `${p.label} — ${p.w}×${p.h}` })),
+          ]}
+          onChange={(e) => {
+            const preset = DEVICE_PRESETS.find((p) => p.value === e.target.value);
+            if (preset) applyGeometry({ w: preset.w, h: preset.h });
+          }}
+        />
+        <div style={{ display: 'flex', gap: 4 }}>
+          {DEVICE_QUICK_PRESETS.map((preset) => (
+            <Button
+              key={preset.value}
+              type="button"
+              size="sm"
+              variant="secondary"
+              disabled={!canWrite}
+              title={`${preset.label} — ${preset.w}×${preset.h}`}
+              onClick={() => applyGeometry({ w: preset.w, h: preset.h })}
+            >
+              {DEVICE_CATEGORY_LABEL[preset.category]}
+            </Button>
+          ))}
+        </div>
+      </div>
+    </Panel>
+  );
+}
+
+/** A numeric W/H field for `FrameSizeSection`, seeded from the board root's
+ * REAL current computed size (see that section's own doc). No session-hint
+ * cache needed here (unlike `ArbitraryPxInput`): this component is always
+ * freshly mounted per board selection (`FrameSizeSection`'s own `key`, set
+ * by its caller, `FrameInspector`), so plain "uncontrolled until touched"
+ * local state is enough — there's no cross-remount session state to
+ * preserve since a board write isn't a `set-classes` class hint.
+ * `valueOverride` (FIX-W4b-3a bug fix, see `FrameSizeSection`'s own doc)
+ * takes precedence over the (potentially stale) computed-style seed once
+ * EITHER this field or its sibling (via a size preset) has committed a
+ * write this session — still never a fabricated value, just this
+ * component's own most recent real write standing in for a re-fetch the
+ * bridge round trip doesn't automatically provide. */
+function FrameGeometryInput({
+  label,
+  icon,
+  cssProp,
+  disabled,
+  valueOverride,
+  onCommit,
+}: {
+  label: string;
+  icon: IconName;
+  cssProp: string;
+  disabled: boolean;
+  valueOverride: number | null;
+  onCommit: (px: number) => void;
+}): React.ReactElement {
+  const computed = React.useContext(ComputedStyleContext);
+  const seed = resolveCurrentValue(computed, cssProp);
+  const seededText = React.useMemo(() => {
+    if (valueOverride !== null) return String(valueOverride);
+    if (seed === 'loading' || seed === 'unset') return '';
+    const n = Math.round(parseFloat(seed.raw));
+    return Number.isFinite(n) ? String(n) : '';
+  }, [valueOverride, seed]);
+  const [dirtyText, setDirtyText] = React.useState<string | null>(null);
+  const text = dirtyText ?? seededText;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+      <Input
+        label={label}
+        type="number"
+        placeholder="px"
+        leadingIcon={icon}
+        disabled={disabled}
+        value={text}
+        onChange={(e) => setDirtyText(e.target.value)}
+        onBlur={() => {
+          if (disabled || text.trim() === '') return;
+          const value = Number(text);
+          if (!Number.isFinite(value)) return;
+          onCommit(value);
+        }}
+      />
+      {/* FIX-W4b-3a bug fix (see this function's own doc): NOT the generic
+       * `CurrentValueLine` (it reads `ComputedStyleContext` directly, which
+       * goes stale the instant a geometry write commits, with no re-fetch
+       * trigger to correct it — confirmed live: it kept showing the board's
+       * PREVIOUS size after a preset click). This caption instead mirrors
+       * the SAME override-aware value the input itself displays, so the two
+       * can never visibly disagree. */}
+      <span
+        data-testid={`inspector-current-${cssProp}`}
+        style={{ fontSize: 'var(--ccs-font-size-xs)', color: 'var(--ccs-text-subtle)' }}
+      >
+        {valueOverride !== null ? `Current: ${valueOverride}px` : formatCurrentValue(seed)}
+      </span>
+    </div>
   );
 }
 

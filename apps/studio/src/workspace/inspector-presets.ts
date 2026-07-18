@@ -153,6 +153,49 @@ export function arbitraryInsetEdit(
   return { add: [cls], remove };
 }
 
+/** FIX-W4b-3a — extracts the bracketed number out of an arbitrary-value
+ * class this file itself wrote (`w-[240px]` -> `240`, `rotate-[45deg]` ->
+ * `45`) so a numeric `<input>` can be re-seeded with the SESSION HINT's own
+ * last-written value (same "own last write wins" precedence
+ * `inspector-class-hints.ts`'s module doc already establishes for every
+ * other control) rather than starting blank on every remount. Returns `null`
+ * for a class this pattern doesn't match (e.g. a stale non-arbitrary preset
+ * class somehow left in the hint cache). */
+const ARBITRARY_VALUE_RE = /\[(-?\d+(?:\.\d+)?)(?:px|deg)\]/;
+export function parseArbitraryValue(cls: string): number | null {
+  const match = ARBITRARY_VALUE_RE.exec(cls);
+  return match ? Number(match[1]) : null;
+}
+
+/** FIX-W4b-3a item 2 — rotation, newly added (FIX-W4's module doc dropped it
+ * as "no vector rotation on a DOM element in this tool"; re-reading the human
+ * ask, a DOM element's `transform: rotate()` is a real, settable CSS
+ * property, so this reverses that drop). `measures.cljs`'s rotation field is
+ * a free numeric degrees input — mirrored here as an arbitrary
+ * `rotate-[Ndeg]` class, same shape as `arbitraryInsetEdit`. */
+export function arbitraryRotateEdit(deg: number, previousArbitrary: string | null): ClassEdit {
+  const cls = `rotate-[${Math.round(deg)}deg]`;
+  const remove = previousArbitrary && previousArbitrary !== cls ? [previousArbitrary] : [];
+  return { add: [cls], remove };
+}
+
+/** FIX-W4b-3a item 2 — corner radius, reworked from `RADIUS_GROUP`'s preset-
+ * only `<Select>` to a direct numeric field: real Penpot's `border_radius.
+ * cljs` is a free numeric px input (plus a 4-corner toggle this pass defers,
+ * see the worker report's carry-forward section), not a fixed enum. Kept
+ * alongside (not replacing) `RADIUS_GROUP` so its preset `add` classes still
+ * populate this edit's `remove` list — re-entering a numeric radius must
+ * still evict a previously-chosen NAMED preset (`rounded-lg`, etc.), exactly
+ * how `arbitrarySizeEdit` already treats `WIDTH_GROUP`/`HEIGHT_GROUP`. */
+export function arbitraryRadiusEdit(px: number, previousArbitrary: string | null): ClassEdit {
+  const cls = `rounded-[${Math.round(px)}px]`;
+  const namedCandidates = RADIUS_GROUP.presets.flatMap((p) => p.add);
+  const remove = [...namedCandidates, ...(previousArbitrary ? [previousArbitrary] : [])].filter(
+    (c) => c !== cls,
+  );
+  return { add: [cls], remove };
+}
+
 // --- Layout container (layout_container.cljs: direction, wrap, justify,
 // align, gap, padding) ----------------------------------------------------
 
@@ -417,6 +460,65 @@ export const BORDER_WIDTH_GROUP: ClassPresetGroup = {
     { value: '8', label: '8px', add: ['border-8'] },
   ],
 };
+
+// --- Board size presets (FIX-W4b-3a item 3, frames/boards only) -----------
+//
+// Cited verbatim (name + width + height) against real Penpot's own board
+// size-preset catalog, `app.main.constants/size-presets` (`../penpot/
+// frontend/src/app/main/constants.cljs`) — the exact list `measures.cljs`'s
+// "Size presets" dropdown searches/renders (`filter-size-presets`,
+// `on-preset-selected` -> `update-dimensions` on BOTH width and height at
+// once, same as selecting one of these does here). This is a CURATED SUBSET
+// of Penpot's full ~60-entry catalog (which also spans PRINT/SOCIAL MEDIA
+// sizes, out of this task's "device" scope) — kept to the same vendor
+// categories Penpot itself groups by (APPLE/ANDROID/WEB/MIXED), one or two
+// representative entries each.
+//
+// No device-type ICONS: Penpot's own preset list renders `:preset-name`/
+// `:preset-size` text spans only (`measures.cljs`'s `on-preset-selected`
+// `:li` markup, re-read for this task) — there is no phone/tablet/desktop
+// GLYPH anywhere in real Penpot to vend, so `DEVICE_QUICK_PRESETS` below
+// render as plain labeled buttons, the same "no icon beats a wrong one"
+// honesty policy `Inspector.tsx`'s icon-lookup functions already document.
+export interface DevicePreset {
+  value: string;
+  label: string;
+  w: number;
+  h: number;
+  category: 'phone' | 'tablet' | 'desktop';
+}
+
+export const DEVICE_PRESETS: readonly DevicePreset[] = [
+  // APPLE
+  { value: 'iphone-16', label: 'iPhone 16', w: 393, h: 852, category: 'phone' },
+  { value: 'iphone-13-14', label: 'iPhone 13/14', w: 390, h: 844, category: 'phone' },
+  { value: 'iphone-se', label: 'iPhone SE', w: 320, h: 568, category: 'phone' },
+  { value: 'ipad', label: 'iPad', w: 768, h: 1024, category: 'tablet' },
+  { value: 'ipad-pro-11', label: 'iPad Pro 11in', w: 834, h: 1194, category: 'tablet' },
+  { value: 'macbook-pro-14', label: 'MacBook Pro 14in', w: 1512, h: 982, category: 'desktop' },
+  // ANDROID
+  { value: 'android-mobile', label: 'Android Mobile', w: 360, h: 640, category: 'phone' },
+  { value: 'pixel-7-pro', label: 'Google Pixel 7 Pro', w: 412, h: 892, category: 'phone' },
+  { value: 'android-tablet', label: 'Android Tablet', w: 768, h: 1024, category: 'tablet' },
+  // WEB / MIXED
+  { value: 'web-1280', label: 'Web 1280', w: 1280, h: 800, category: 'desktop' },
+  { value: 'web-1920', label: 'Web 1920', w: 1920, h: 1080, category: 'desktop' },
+  { value: 'desktop-wireframe', label: 'Desktop/Wireframe', w: 1440, h: 1024, category: 'desktop' },
+];
+
+/** One representative preset per device-TYPE quick-select button — the
+ * closest thing this tool has to Penpot's own phone/tablet/desktop grouping,
+ * without fabricating icons for a distinction Penpot itself doesn't
+ * illustrate (see this section's own module doc). Looked up by `value`
+ * (not array index) so reordering `DEVICE_PRESETS` above can never silently
+ * point this at the wrong entry. */
+export const DEVICE_QUICK_PRESETS: readonly DevicePreset[] = (
+  ['iphone-13-14', 'ipad', 'desktop-wireframe'] as const
+).map((value) => {
+  const preset = DEVICE_PRESETS.find((p) => p.value === value);
+  if (!preset) throw new Error(`@ccs/studio: DEVICE_PRESETS is missing quick-preset "${value}"`);
+  return preset;
+});
 
 // --- Shadow (shadow.cljs: nearest Tailwind preset, not arbitrary vector) --
 

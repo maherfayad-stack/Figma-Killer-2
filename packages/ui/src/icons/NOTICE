@@ -25,3 +25,7 @@ chevron icons Penpot's own `title-bar*` component uses. Files were copied
 unmodified; `registry.ts` is a mechanical extraction of each file's `d`
 path attribute (see the header comment in that file) and is itself a
 derivative subject to the same MPL-2.0 terms as the source SVGs.
+
+FIX-W4b-3a (Size & position rework) added one more: `rotation`, copied
+unmodified from the same upstream path (`frontend/resources/images/icons/
+rotation.svg`), for the new rotation numeric field's leading glyph.

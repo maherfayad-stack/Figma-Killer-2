@@ -192,6 +192,22 @@ export interface StudioCanvasHandle {
    * its full bounds (no bridge round trip needed; a board's own geometry
    * is already known). A no-op if no matching frame is currently known. */
   zoomToFrame(fileFolder: string, framePath: string): void;
+  /** FIX-W4b-3a (Inspector "Size & position" for a selected BOARD): writes
+   * `(fileFolder, framePath)`'s geometry through the SAME `set-geometry`
+   * daemon write (ADR-0013) the drag/resize commit effect already sends —
+   * see this method's implementation doc for why it takes a `Partial<Box>`
+   * (any omitted axis is filled in from the frame's current, already-known
+   * geometry, never reset to 0). CR (flagged, not silent): this is the one
+   * method on this handle added OUTSIDE the strict "Inspector + its own
+   * helpers" file scope that workstream's brief enumerated — the existing
+   * `set-geometry` wire message (unchanged) was only ever reachable from
+   * INSIDE this component's own drag-commit effect; no `StudioCanvasHandle`
+   * seam previously let an external caller (the Inspector) drive it from a
+   * typed numeric value / preset instead of a pointer gesture. Zero
+   * `@ccs/protocol` diff, zero new control-message — purely an additive
+   * method on this already-imperative, non-frozen handle, same category of
+   * change as every other method already here. */
+  setFrameGeometry(fileFolder: string, framePath: string, geometry: Partial<Box>): void;
   /** FP-INS-b (Inspect / code tab): requests `uid`'s CURATED computed CSS
    * (see `@ccs/bridge`'s `computed-style.ts`) through whichever frame is
    * CURRENTLY the edit-mode frame's live bridge connection (the same
@@ -905,6 +921,41 @@ export function StudioCanvas({
     [selectNodeOnCanvas],
   );
 
+  /** FIX-W4b-3a `StudioCanvasHandle.setFrameGeometry` — see that method's own
+   * doc. Reuses the EXACT SAME `sendSetGeometry` daemon write the drag/resize
+   * commit effect above (`onFrameGeometryCommitted`) already sends — this is
+   * just a second CALLER of it, driven by the Inspector's numeric W/H fields
+   * and device-size presets instead of a tldraw drag gesture. Also mirrors
+   * that effect's own `setFrames` update: the EXISTING `CanvasFrameRecord[]
+   * -> tldraw FrameShape sync` effect (above) then reflects the new size
+   * onto the tldraw shape itself on its own — no direct `editor.updateShape`
+   * call needed here, so this stays a plain data update, not a tldraw-API
+   * call (keeping `StudioCanvasHandle`'s "hand the caller a plain, tldraw-
+   * independent handle" contract, §5.4). `geometry` is a PARTIAL box
+   * (`Partial<Box>`, not a full `Box`) precisely because the Inspector only
+   * ever knows the axis it's actually editing (its numeric W/H fields have
+   * no live read of the board's canvas X/Y — see the worker report's
+   * "frame X/Y" scope note) — any omitted field is filled in from the
+   * frame's OWN current record here, so a W/H-only edit can never silently
+   * reset the board's canvas position. A no-op if no matching frame is
+   * currently known (mirrors every other by-`(fileFolder,framePath)` lookup
+   * method on this handle, e.g. `selectFrame`/`zoomToFrame`). */
+  const setFrameGeometryOnCanvas = React.useCallback(
+    (fileFolder: string, framePath: string, geometry: Partial<Box>) => {
+      const record = framesRef.current.find((r) => r.fileFolder === fileFolder && r.framePath === framePath);
+      if (!record) return;
+      const next: Box = {
+        x: geometry.x ?? record.x,
+        y: geometry.y ?? record.y,
+        w: geometry.w ?? record.w,
+        h: geometry.h ?? record.h,
+      };
+      clientRef.current?.sendSetGeometry(fileFolder, framePath, next);
+      setFrames((prev) => prev.map((r) => (r.id === record.id ? { ...r, ...next } : r)));
+    },
+    [],
+  );
+
   // --- FP-1: hand the caller a plain camera-control handle ---------------
   // (`.orchestrator/FEATURE-PARITY-PLAN.md` §2 item 3 — the zoom widget +
   // keymap drive the camera through this, never a tldraw `Editor` directly,
@@ -925,6 +976,7 @@ export function StudioCanvas({
       selectNode: selectNodeOnCanvas,
       zoomToNode: zoomToNodeOnCanvas,
       zoomToFrame: zoomToFrameOnCanvas,
+      setFrameGeometry: setFrameGeometryOnCanvas,
       requestComputedStyle: (uid: string) => {
         const fn = computedStyleRequesterRef.current;
         if (!fn) return Promise.resolve({ ok: false, reason: 'not-found' } as ComputedStyleResult);
@@ -935,6 +987,7 @@ export function StudioCanvas({
     editorReady,
     onReady,
     createFrame,
+    setFrameGeometryOnCanvas,
     selectFrameOnCanvas,
     selectNodeOnCanvas,
     zoomToNodeOnCanvas,

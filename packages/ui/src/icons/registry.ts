@@ -83,6 +83,9 @@ export const ICON_PATHS = {
   "stroke-size": "m12.333 6.667h-8.666c-.184 0-.334.149-.334.333s.15.333.334.333h8.666c.184 0 .334-.149.334-.333s-.15-.333-.334-.333zm-9-5.334h9.334m-.667 11.334h-8c-.368 0-.667.298-.667.666s.299.667.667.667h8c.368 0 .667-.299.667-.667s-.299-.666-.667-.666z",
   "arrow-right": "m6 12 4-4-4-4",
   "arrow-down": "m4 6 4 4 4-4",
+
+  // --- FIX-W4b-3a addition (Size & position rotation field) — see NOTICE --
+  "rotation": "m2 2v6 6h6 6m-6 0c0-3.314-2.686-6-6-6",
 } as const;
 
 export type IconName = keyof typeof ICON_PATHS;
