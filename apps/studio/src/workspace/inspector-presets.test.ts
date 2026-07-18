@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   ALIGN_ITEMS_GROUP,
+  arbitraryGapEdit,
   arbitraryInsetEdit,
+  arbitraryPaddingLinkedEdit,
+  arbitraryPaddingSideEdit,
   arbitrarySizeEdit,
   colorGroup,
   DIRECTION_GROUP,
@@ -113,6 +116,60 @@ describe('arbitrarySizeEdit', () => {
 
   it('rounds fractional pixel input', () => {
     expect(arbitrarySizeEdit('h', 199.6, null).add).toEqual(['h-[200px]']);
+  });
+});
+
+describe('arbitraryGapEdit', () => {
+  it('builds a bracketed gap class and removes every named gap-scale preset', () => {
+    const edit = arbitraryGapEdit(16, null);
+    expect(edit.add).toEqual(['gap-[16px]']);
+    expect(edit.remove).toEqual(expect.arrayContaining(GAP_GROUP.presets.map((p) => p.add[0])));
+  });
+
+  it('re-entering a value removes the PREVIOUS arbitrary gap class too', () => {
+    const edit = arbitraryGapEdit(24, 'gap-[16px]');
+    expect(edit.add).toEqual(['gap-[24px]']);
+    expect(edit.remove).toContain('gap-[16px]');
+  });
+});
+
+describe('arbitraryPaddingSideEdit', () => {
+  it('top writes the physical pt-[Npx] class', () => {
+    expect(arbitraryPaddingSideEdit('top', 12, []).add).toEqual(['pt-[12px]']);
+  });
+
+  it('start/end write the LOGICAL ps-[Npx]/pe-[Npx] classes, not physical pl-/pr-', () => {
+    expect(arbitraryPaddingSideEdit('start', 8, []).add).toEqual(['ps-[8px]']);
+    expect(arbitraryPaddingSideEdit('end', 8, []).add).toEqual(['pe-[8px]']);
+  });
+
+  it('evicts a previously-cached value passed in (e.g. a stale linked-mode class on the same side)', () => {
+    const edit = arbitraryPaddingSideEdit('top', 20, ['pt-[8px]', null]);
+    expect(edit.remove).toContain('pt-[8px]');
+    expect(edit.add).toEqual(['pt-[20px]']);
+  });
+
+  it('never removes the class it just added', () => {
+    const edit = arbitraryPaddingSideEdit('bottom', 4, ['pb-[4px]']);
+    expect(edit.remove).not.toContain('pb-[4px]');
+  });
+});
+
+describe('arbitraryPaddingLinkedEdit', () => {
+  it('vertical adds BOTH pt-[Npx] and pb-[Npx] (Penpot simple-mode fold-back, not a py- shorthand)', () => {
+    const edit = arbitraryPaddingLinkedEdit('vertical', 16, [null, null]);
+    expect(edit.add).toEqual(['pt-[16px]', 'pb-[16px]']);
+  });
+
+  it('horizontal adds the LOGICAL ps-[Npx]/pe-[Npx] pair, not a physical px- shorthand', () => {
+    const edit = arbitraryPaddingLinkedEdit('horizontal', 10, [null, null]);
+    expect(edit.add).toEqual(['ps-[10px]', 'pe-[10px]']);
+  });
+
+  it('evicts prior per-side values when folding two independent sides back into one linked value', () => {
+    const edit = arbitraryPaddingLinkedEdit('vertical', 12, ['pt-[4px]', 'pb-[8px]']);
+    expect(edit.remove).toEqual(expect.arrayContaining(['pt-[4px]', 'pb-[8px]']));
+    expect(edit.add).toEqual(['pt-[12px]', 'pb-[12px]']);
   });
 });
 

@@ -256,6 +256,131 @@ export const PADDING_BOTTOM_GROUP: ClassPresetGroup = {
   presets: scale('pb', SPACING_SCALE),
 };
 
+/** `layout_container.cljs`'s `align-content-row`/`align-content-row` —
+ * Tailwind's `content-*` utilities (cross-axis alignment of wrapped flex
+ * lines). Real Penpot only shows this row when the container is wrapping
+ * (`(= :wrap wrap-type)`) — `LayoutContainerSection` reproduces that gate. */
+export const ALIGN_CONTENT_GROUP: ClassPresetGroup = {
+  key: 'align-content',
+  presets: [
+    { value: 'start', label: 'Start', add: ['content-start'] },
+    { value: 'center', label: 'Center', add: ['content-center'] },
+    { value: 'end', label: 'End', add: ['content-end'] },
+    { value: 'between', label: 'Space between', add: ['content-between'] },
+    { value: 'around', label: 'Space around', add: ['content-around'] },
+    { value: 'evenly', label: 'Space evenly', add: ['content-evenly'] },
+  ],
+};
+
+/** FIX-W4b-3b — Gap as a direct numeric field (Penpot's own free-numeric
+ * `gap-section*`), mirroring `arbitrarySizeEdit`'s pattern: `GAP_GROUP`'s
+ * named scale presets still exist, purely as this edit's remove-candidate
+ * list (so entering a number still evicts a stale `gap-4`, etc). Penpot
+ * itself splits this into TWO fields (row-gap/column-gap, each its own CSS
+ * property) — this tool keeps ONE combined field writing Tailwind's plain
+ * `gap-*` (which sets both axes at once), per this workstream's brief; a
+ * split row/column-gap pair would need `gap-x-*`/`gap-y-*` and is a
+ * disclosed carry-forward, not built this pass. */
+export function arbitraryGapEdit(px: number, previousArbitrary: string | null): ClassEdit {
+  const cls = `gap-[${clampNonNegativePx(px)}px]`;
+  const namedCandidates = GAP_GROUP.presets.flatMap((p) => p.add);
+  const remove = [...namedCandidates, ...(previousArbitrary ? [previousArbitrary] : [])].filter(
+    (c) => c !== cls,
+  );
+  return { add: [cls], remove };
+}
+
+/** FIX-W4b-3b remediation — Penpot's own gap/padding numeric fields are
+ * `:min 0` (`gap-section*`/`padding-section*`, re-read for this fix): a
+ * negative value is not a smaller gap/padding, it's invalid CSS-adjacent
+ * nonsense (`gap-[-50px]` compiles but never matches Penpot's own clamped
+ * behavior). Rounds AND floors at 0; non-finite input (a stray `NaN` from a
+ * blank/garbage numeric field slipping past its caller's own `Number.
+ * isFinite` guard) collapses to `0` rather than emitting `gap-[NaNpx]`. */
+function clampNonNegativePx(px: number): number {
+  if (!Number.isFinite(px)) return 0;
+  return Math.max(0, Math.round(px));
+}
+
+/** FIX-W4b-3b — Padding as direct numeric fields (Penpot's own free-numeric
+ * `padding-section*`), reworked from the old 3-tier all/start-end/top-bottom
+ * `<Select>` stack to match Penpot's REAL 2-mode model exactly: a "simple"
+ * (linked) mode with 2 fields — vertical (top+bottom, always equal) and
+ * horizontal (start+end, always equal) — and a "multiple" (per-side) mode
+ * with 4 independent fields, toggled by one button
+ * (`layout_container.cljs`'s `padding-toggle`/`i/padding-extended`).
+ *
+ * `PaddingSide` covers all 4 physical/logical directions this tool ever
+ * writes. Horizontal uses the LOGICAL `ps-*`/`pe-*` prefixes (not Penpot's
+ * own physical left/right numbering, `p2`/`p4`) — this file's own module doc
+ * already establishes `ps-*`/`pe-*` as the ONLY horizontal-spacing prefix
+ * this codebase writes (RTL-first, ADR-0022); vertical stays PHYSICAL
+ * (`pt-*`/`pb-*`), same as every other control here. */
+export type PaddingSide = 'top' | 'bottom' | 'start' | 'end';
+
+const PADDING_SIDE_PREFIX: Record<PaddingSide, string> = {
+  top: 'pt',
+  bottom: 'pb',
+  start: 'ps',
+  end: 'pe',
+};
+
+/** Every named padding preset this file has EVER offered (including the
+ * dropped "all sides" `PADDING_GROUP` — kept only as a remove-candidate
+ * source now, no longer surfaced as its own control, see
+ * `LayoutContainerSection`'s doc) — the full remove-candidate baseline for
+ * every padding write below, since `p-*`/`ps-*`/`pe-*`/`pt-*`/`pb-*` are all
+ * untracked by `@ccs/ast-engine`'s conflict-group table (this file's own
+ * module doc). */
+const PADDING_NAMED_CANDIDATES = [
+  PADDING_GROUP,
+  PADDING_START_GROUP,
+  PADDING_END_GROUP,
+  PADDING_TOP_GROUP,
+  PADDING_BOTTOM_GROUP,
+].flatMap((g) => g.presets.flatMap((p) => p.add));
+
+/** One independent side ("multiple"/per-side mode). `previousArbitraries`
+ * must include every OTHER padding hint this section currently has cached
+ * for THIS side (its own prior value, plus — since switching from "simple"
+ * mode can leave a linked class on this same side — the linked edit's own
+ * prior class) so toggling Penpot's simple/multiple mode never leaves two
+ * classes stacked on the same box side. */
+export function arbitraryPaddingSideEdit(
+  side: PaddingSide,
+  px: number,
+  previousArbitraries: readonly (string | null)[],
+): ClassEdit {
+  const cls = `${PADDING_SIDE_PREFIX[side]}-[${Math.round(px)}px]`;
+  const remove = [
+    ...PADDING_NAMED_CANDIDATES,
+    ...previousArbitraries.filter((c): c is string => !!c),
+  ].filter((c) => c !== cls);
+  return { add: [cls], remove };
+}
+
+/** Linked axis ("simple" mode) — mirrors `layout_container.cljs`'s own
+ * `simple-padding-selection*`, which fires its `on-p1-change`/`on-p2-change`
+ * against BOTH sides of that axis (`#{:p1 :p3}`/`#{:p2 :p4}`) in one write,
+ * not a single shorthand class — reproduced here as TWO arbitrary classes
+ * added together (`pt-[Npx]` + `pb-[Npx]`, or `ps-[Npx]` + `pe-[Npx]`)
+ * rather than Tailwind's `py-*`/`px-*` shorthand, so the logical `ps-*`/
+ * `pe-*` convention holds for the horizontal case even in linked mode (a
+ * bare `px-[Npx]` would be physical — see `PaddingSide`'s own doc). */
+export function arbitraryPaddingLinkedEdit(
+  axis: 'vertical' | 'horizontal',
+  px: number,
+  previousArbitraries: readonly (string | null)[],
+): ClassEdit {
+  const sides: PaddingSide[] = axis === 'vertical' ? ['top', 'bottom'] : ['start', 'end'];
+  const add = sides.map((s) => `${PADDING_SIDE_PREFIX[s]}-[${Math.round(px)}px]`);
+  const remove = [
+    ...PADDING_NAMED_CANDIDATES,
+    ...previousArbitraries.filter((c): c is string => !!c),
+  ].filter((c) => !add.includes(c));
+  return { add, remove };
+}
+
 // --- Layout item (layout_item.cljs: grow, align-self, order) ------------
 
 export const GROW_GROUP: ClassPresetGroup = {

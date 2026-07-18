@@ -81,6 +81,30 @@ export function resolveCurrentValue(
   return { raw, label: match?.label ?? null };
 }
 
+/** FIX-W4b-3b — resolves the matching preset's `value` (NOT its `label`,
+ * unlike `resolveCurrentValue`) for a live computed value, e.g.
+ * `resolveCurrentPresetValue(lookup, 'flex-direction', DIRECTION_GROUP)`
+ * returns `'col'` when the live `flex-direction` is `column`. This exists
+ * ONLY to seed a `GroupButtons` control's ACTIVE/highlighted button from the
+ * element's REAL current value — closing the exact gap the W4b-2 audit
+ * flagged: that control's highlight used to come from a session hint/
+ * fallback ALONE, so it could show a DIFFERENT button highlighted than the
+ * `CurrentValueLine` right below it honestly reported. Returns `null`
+ * (never a guess) when the bridge hasn't answered, the prop is unset, or no
+ * preset's value matches — same honesty rule `resolveCurrentValue` already
+ * follows, just surfacing the preset's `value` instead of its `label`. */
+export function resolveCurrentPresetValue(
+  lookup: ComputedLookup | null,
+  prop: string,
+  group: ClassPresetGroup,
+): string | null {
+  const value = resolveCurrentValue(lookup, prop, group);
+  if (value === 'loading' || value === 'unset') return null;
+  const aliased = KEYWORD_ALIASES[value.raw] ?? value.raw;
+  const match = group.presets.find((p) => p.value === value.raw || p.value === aliased);
+  return match?.value ?? null;
+}
+
 /** Renders a `CurrentValue` as the short line every control shows under it
  * (`Inspector.tsx`'s `CurrentValueLine`) — split out as a pure function so
  * the display text itself is unit-testable without React. */

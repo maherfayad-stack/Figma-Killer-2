@@ -14,12 +14,17 @@ import { useComputedStyle } from './use-computed-style.js';
 import {
   buildComputedLookup,
   formatCurrentValue,
+  resolveCurrentPresetValue,
   resolveCurrentValue,
   type ComputedLookup,
 } from './inspector-computed-values.js';
 import {
+  ALIGN_CONTENT_GROUP,
   ALIGN_ITEMS_GROUP,
+  arbitraryGapEdit,
   arbitraryInsetEdit,
+  arbitraryPaddingLinkedEdit,
+  arbitraryPaddingSideEdit,
   arbitraryRadiusEdit,
   arbitraryRotateEdit,
   arbitrarySizeEdit,
@@ -32,18 +37,12 @@ import {
   type DevicePreset,
   DIRECTION_GROUP,
   FONT_WEIGHT_GROUP,
-  GAP_GROUP,
   GROW_GROUP,
   hexForColorValue,
   JUSTIFY_GROUP,
   LEADING_GROUP,
   OPACITY_GROUP,
   ORDER_GROUP,
-  PADDING_BOTTOM_GROUP,
-  PADDING_END_GROUP,
-  PADDING_GROUP,
-  PADDING_START_GROUP,
-  PADDING_TOP_GROUP,
   parseArbitraryValue,
   POSITION_GROUP,
   POSITION_REMOVE_EXTRA,
@@ -852,6 +851,8 @@ function GroupButtons({
   cssProp,
   iconFor,
   onValueChange,
+  hideLabel,
+  seedFromLive,
 }: {
   node: TreeNode;
   group: ClassPresetGroup;
@@ -871,15 +872,55 @@ function GroupButtons({
    * the matching row/column Penpot icon set (`justifyIcon`/`alignItemsIcon`
    * both take an `isColumn` flag — see their own doc). */
   onValueChange?: (value: string) => void;
+  /** FIX-W4b-3b — real Penpot's `radio-buttons` rows (`layout_container.
+   * cljs`'s `direction-row-flex`/`align-row`/`justify-content-row`/etc.)
+   * carry NO visible group label at all, only per-button tooltips (`title`)
+   * — confirmed against that file's own markup, no label element anywhere
+   * near them. This file's ORIGINAL (FIX-W4) row always rendered one for
+   * every consumer (Typography's text-align, Layout-item's align-self),
+   * which is fine there (each is the section's only row), but stacking FIVE
+   * of these labelled rows in `LayoutContainerSection` is exactly the
+   * "spread into tall, verbose... rows" the human's dogfood flagged — so
+   * this pass adds an opt-in `hideLabel`, defaulting to `false` (every
+   * EXISTING caller — Typography/Layout-item — is unchanged), and
+   * `LayoutContainerSection` alone passes `true`, relying on each button's
+   * own `title` tooltip for the same identification Penpot itself gives. */
+  hideLabel?: boolean;
+  /** FIX-W4b-3b — when true (and `cssProp` is set), the highlighted button
+   * BEFORE the user clicks anything this session is seeded from the
+   * element's REAL current computed value (`resolveCurrentPresetValue`)
+   * instead of always starting at `fallback` — closes the exact "highlight
+   * disagrees with the honest `CurrentValueLine` right below it" gap the
+   * W4b-2 audit flagged (that highlight used to come from a session hint or
+   * a hardcoded fallback ALONE, never the live value). Opt-in, defaulting to
+   * unset/`false`, so every EXISTING caller (Typography's text-align,
+   * Layout-item's align-self — neither touched by this pass) renders
+   * byte-identically to before; `LayoutContainerSection` alone passes `true`
+   * for its cssProp-backed rows (Align items/Direction/Wrap/Justify). */
+  seedFromLive?: boolean;
 }): React.ReactElement {
   const { sendOp } = useDaemonConnection();
-  // Lazy initializer only — see `GroupSelect`'s matching comment: the
-  // enclosing section is always uniquely `key`-ed by `Inspector`.
-  const [value, setValue] = React.useState(() => getClassHint(node.uid, group.key) ?? fallback);
+  const computed = React.useContext(ComputedStyleContext);
+  // `touched`: this session's own click on THIS control, if any — ALWAYS
+  // wins once set, mirroring the original component's sticky `useState`
+  // exactly. Before any click, the active value is recomputed EVERY RENDER
+  // (not baked into a one-shot lazy `useState` initializer) so it can react
+  // to the computed-style bridge reply arriving ASYNCHRONOUSLY after mount —
+  // the same "uncontrolled until touched" reasoning `ArbitraryPxInput`'s own
+  // doc gives (a lazy initializer would race that fetch and freeze at
+  // whatever was available at mount time — `null`/"loading" almost always,
+  // since the bridge round-trip is never synchronous — which is exactly how
+  // this bug shipped the first time).
+  const [touched, setTouched] = React.useState<string | null>(null);
+  const hinted = getClassHint(node.uid, group.key);
+  const liveSeed = seedFromLive && cssProp ? resolveCurrentPresetValue(computed, cssProp, group) : null;
+  const value = touched ?? hinted ?? liveSeed ?? fallback;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-      <span style={{ fontSize: 'var(--ccs-font-size-xs)', color: 'var(--ccs-text-muted)' }}>{label}</span>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }} title={hideLabel ? label : undefined}>
+      {!hideLabel && (
+        <span style={{ fontSize: 'var(--ccs-font-size-xs)', color: 'var(--ccs-text-muted)' }}>{label}</span>
+      )}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
         {group.presets.map((preset) => {
           const icon = iconFor?.(preset.value);
@@ -894,7 +935,7 @@ function GroupButtons({
               title={preset.label}
               aria-label={icon ? preset.label : undefined}
               onClick={() => {
-                setValue(preset.value);
+                setTouched(preset.value);
                 onValueChange?.(preset.value);
                 if (readOnly) return;
                 const edit = resolveClassEdit(group, preset.value);
@@ -979,6 +1020,30 @@ function justifyIcon(value: string, isColumn: boolean): IconName | undefined {
 function alignItemsIcon(value: string, isColumn: boolean): IconName | undefined {
   if (value !== 'start' && value !== 'center' && value !== 'end') return undefined;
   return `align-items-${isColumn ? 'column' : 'row'}-${value}` as IconName;
+}
+
+/** FIX-W4b-3b — `layout_container.cljs`'s `get-layout-flex-icon` for
+ * `:align-content` (the cross-axis-alignment-of-wrapped-lines row, only
+ * shown while `Wrap` is active — see `LayoutContainerSection`'s own gate).
+ * Unlike `align-items`, Penpot's `align-content-row`/`align-content-column`
+ * genuinely offer all 6 `ALIGN_CONTENT_GROUP` values (start/center/end/
+ * between/around/evenly) — no text-button fallback needed here. */
+function alignContentIcon(value: string, isColumn: boolean): IconName | undefined {
+  const suffix = isColumn ? 'column' : 'row';
+  switch (value) {
+    case 'start':
+    case 'center':
+    case 'end':
+      return `align-content-${suffix}-${value}` as IconName;
+    case 'between':
+      return `align-content-${suffix}-between` as IconName;
+    case 'around':
+      return `align-content-${suffix}-around` as IconName;
+    case 'evenly':
+      return `align-content-${suffix}-evenly` as IconName;
+    default:
+      return undefined;
+  }
 }
 
 /** `layout_container.cljs`'s `get-layout-flex-icon` for `:align-self` —
@@ -1471,79 +1536,333 @@ function FrameGeometryInput({
   );
 }
 
-// --- Layout container (layout_container.cljs) ---------------------------
+// --- Layout container (layout_container.cljs) — FIX-W4b-3b compact rework
+//
+// Rebuilt against `layout_container.cljs`'s real `flex-layout-menu` structure
+// (its four DOM rows, cited inline below) instead of the old FIX-W4 stack of
+// six fully-labelled, one-control-per-row blocks — the "spread into tall,
+// verbose... rows" the human's own Penpot-vs-ours dogfood flagged. No
+// protocol/bridge change: every control still emits the SAME `set-classes`
+// op, just via `arbitraryGapEdit`/`arbitraryPaddingSideEdit`/
+// `arbitraryPaddingLinkedEdit` (new, `inspector-presets.ts`) for Gap/Padding
+// specifically (numeric parity, mirroring how FIX-W4b-3a reworked Size &
+// position's W/H from a preset `<Select>` to a direct field) and the
+// existing `GAP_GROUP`/`PADDING_*_GROUP` tables purely as remove-candidate
+// baselines now (see those exports' own doc). ------------------------------
 
 function LayoutContainerSection({ node, readOnly }: { node: TreeNode; readOnly: boolean }): React.ReactElement {
-  // FIX-W4b-2: mirrors the live `Direction` choice (see `GroupButtons`'
-  // `onValueChange` doc) purely so `Justify`/`Align items` below can pick
-  // Penpot's matching row/column icon set — `layout_container.cljs`'s own
-  // `get-layout-flex-icon` takes the same `is-column` flag from this exact
-  // container's `layout-flex-dir`. Lazy initializer mirrors `GroupButtons`'
-  // own (reads the SAME hint key, so both start in sync).
-  const [direction, setDirection] = React.useState(() => getClassHint(node.uid, DIRECTION_GROUP.key) ?? 'row');
+  // FIX-W4b-3b: mirrors the live `Direction`/`Wrap` choice so `Justify`/
+  // `Align items`/`Align content` below can pick Penpot's matching row/
+  // column icon set (`layout_container.cljs`'s own `get-layout-flex-icon`
+  // takes the same `is-column` flag from this exact container's
+  // `layout-flex-dir`) and so `Align content` is gated correctly. This
+  // computes the EXACT SAME `touched ?? hinted ?? liveSeed ?? fallback`
+  // formula the `DIRECTION_GROUP`/`WRAP_GROUP` `GroupButtons` instances below
+  // use internally (see that component's own `seedFromLive` doc) — kept as
+  // an explicit local mirror (rather than reading the child's internal state)
+  // so this section can pick an icon set BEFORE those children render.
+  // Without this mirror ALSO reading the live value, a fresh node whose real
+  // `flex-direction` is `column` would show the DIRECTION button correctly
+  // highlighted "Column" (once `GroupButtons` itself is fixed) while
+  // `Justify`/`Align items` still rendered ROW-variant icons — the exact
+  // kind of disagreement this whole pass fixes, just one level up.
+  const computed = React.useContext(ComputedStyleContext);
+  const [directionTouched, setDirectionTouched] = React.useState<string | null>(null);
+  const direction =
+    directionTouched ??
+    getClassHint(node.uid, DIRECTION_GROUP.key) ??
+    resolveCurrentPresetValue(computed, 'flex-direction', DIRECTION_GROUP) ??
+    'row';
   const isColumn = direction === 'col' || direction === 'col-reverse';
+  const [wrapTouched, setWrapTouched] = React.useState<string | null>(null);
+  const wrap =
+    wrapTouched ??
+    getClassHint(node.uid, WRAP_GROUP.key) ??
+    resolveCurrentPresetValue(computed, 'flex-wrap', WRAP_GROUP) ??
+    'nowrap';
+  const isWrapping = wrap !== 'nowrap';
+  // Penpot's own padding-mode toggle (`i/padding-extended`, simple/multiple)
+  // — a transient UI choice, not a written value, so plain component state
+  // is enough (no class-hint entry): switching NODES remounts this whole
+  // section fresh (see the file's own per-uid `key` doc), so this always
+  // restarts at Penpot's own default ("simple"/linked).
+  const [paddingMode, setPaddingMode] = React.useState<'linked' | 'sides'>('linked');
+  // FIX-W4b-2's `isRtl` pattern (see `TypographySection`/`textAlignIcon`),
+  // reused here so the per-side Start/End padding fields show the physically
+  // correct Penpot `padding-left`/`padding-right` glyph for the logical
+  // `ps-*`/`pe-*` class they actually write.
+  const isRtl = typeof document !== 'undefined' && document.documentElement.dir === 'rtl';
 
   return (
     <Panel title="Layout container" id="inspector-layout-container" icon="flex">
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        <GroupButtons
-          node={node}
-          group={DIRECTION_GROUP}
-          label="Direction"
-          fallback="row"
-          readOnly={readOnly}
-          cssProp="flex-direction"
-          iconFor={directionIcon}
-          onValueChange={setDirection}
-        />
-        <GroupButtons
-          node={node}
-          group={WRAP_GROUP}
-          label="Wrap"
-          fallback="nowrap"
-          readOnly={readOnly}
-          cssProp="flex-wrap"
-          iconFor={wrapIcon}
-        />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {/* Penpot's `first-row`: align-items(3) + direction(4) + wrap(1),
+         * side by side, icon-only (see `GroupButtons`'s `hideLabel` doc). */}
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          <GroupButtons
+            node={node}
+            group={ALIGN_ITEMS_GROUP}
+            label="Align items"
+            fallback="stretch"
+            readOnly={readOnly}
+            cssProp="align-items"
+            iconFor={(v) => alignItemsIcon(v, isColumn)}
+            hideLabel
+            seedFromLive
+          />
+          <GroupButtons
+            node={node}
+            group={DIRECTION_GROUP}
+            label="Direction"
+            fallback="row"
+            readOnly={readOnly}
+            cssProp="flex-direction"
+            iconFor={directionIcon}
+            onValueChange={setDirectionTouched}
+            hideLabel
+            seedFromLive
+          />
+          <GroupButtons
+            node={node}
+            group={WRAP_GROUP}
+            label="Wrap"
+            fallback="nowrap"
+            readOnly={readOnly}
+            cssProp="flex-wrap"
+            iconFor={wrapIcon}
+            onValueChange={setWrapTouched}
+            hideLabel
+            seedFromLive
+          />
+        </div>
+        {/* Penpot's `second-row`: justify-content, full width, icon-only. */}
         <GroupButtons
           node={node}
           group={JUSTIFY_GROUP}
-          label="Justify"
+          label="Justify content"
           fallback="start"
           readOnly={readOnly}
           cssProp="justify-content"
           iconFor={(v) => justifyIcon(v, isColumn)}
+          hideLabel
+          seedFromLive
         />
-        <GroupButtons
-          node={node}
-          group={ALIGN_ITEMS_GROUP}
-          label="Align items"
-          fallback="stretch"
-          readOnly={readOnly}
-          cssProp="align-items"
-          iconFor={(v) => alignItemsIcon(v, isColumn)}
-        />
-        <GroupSelect node={node} group={GAP_GROUP} label="Gap" fallback="0" readOnly={readOnly} cssProp="gap" />
-        <span style={{ fontSize: 'var(--ccs-font-size-xs)', color: 'var(--ccs-text-subtle)' }}>Padding</span>
-        <GroupSelect node={node} group={PADDING_GROUP} label="All sides" fallback="0" readOnly={readOnly} />
-        <div style={{ display: 'flex', gap: 8 }}>
-          <div style={{ flex: 1 }}>
-            <GroupSelect node={node} group={PADDING_START_GROUP} label="Start" fallback="0" readOnly={readOnly} />
+        {/* Penpot's `third-row`: align-content, ONLY while wrapping — no
+         * curated computed-style prop exists for `align-content` (bridge/
+         * protocol frozen, see this section's module doc), so no
+         * `cssProp`/`CurrentValueLine` here, same honesty rule as rotation. */}
+        {isWrapping && (
+          <GroupButtons
+            node={node}
+            group={ALIGN_CONTENT_GROUP}
+            label="Align content"
+            fallback="start"
+            readOnly={readOnly}
+            iconFor={(v) => alignContentIcon(v, isColumn)}
+            hideLabel
+          />
+        )}
+        {/* Penpot's `forth-row`: gap + padding as compact icon numeric
+         * fields, plus the padding simple/multiple toggle button. */}
+        <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+          <div style={{ flex: 1, minInlineSize: 64 }}>
+            <ArbitraryPxInput
+              node={node}
+              hintKey="gap"
+              label="Gap"
+              icon="gap-horizontal"
+              readOnly={readOnly}
+              cssProp="gap"
+              buildEdit={(px, prev) => arbitraryGapEdit(px, prev)}
+            />
           </div>
-          <div style={{ flex: 1 }}>
-            <GroupSelect node={node} group={PADDING_END_GROUP} label="End" fallback="0" readOnly={readOnly} />
-          </div>
+          {paddingMode === 'linked' && (
+            <>
+              <div style={{ flex: 1, minInlineSize: 64 }}>
+                <PaddingField
+                  node={node}
+                  label="Vertical"
+                  icon="padding-top-bottom"
+                  readOnly={readOnly}
+                  hintKeys={['padding-top', 'padding-bottom']}
+                  buildEdit={(px) =>
+                    arbitraryPaddingLinkedEdit('vertical', px, [
+                      getClassHint(node.uid, 'padding-top') ?? null,
+                      getClassHint(node.uid, 'padding-bottom') ?? null,
+                    ])
+                  }
+                />
+              </div>
+              <div style={{ flex: 1, minInlineSize: 64 }}>
+                <PaddingField
+                  node={node}
+                  label="Horizontal"
+                  icon="padding-left-right"
+                  readOnly={readOnly}
+                  hintKeys={['padding-start', 'padding-end']}
+                  buildEdit={(px) =>
+                    arbitraryPaddingLinkedEdit('horizontal', px, [
+                      getClassHint(node.uid, 'padding-start') ?? null,
+                      getClassHint(node.uid, 'padding-end') ?? null,
+                    ])
+                  }
+                />
+              </div>
+            </>
+          )}
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            active={paddingMode === 'sides'}
+            disabled={readOnly}
+            title={paddingMode === 'sides' ? 'Link padding (simple)' : 'Independent sides (multiple)'}
+            aria-label="Toggle independent padding sides"
+            onClick={() => setPaddingMode((m) => (m === 'sides' ? 'linked' : 'sides'))}
+          >
+            <Icon name="padding-extended" size={12} />
+          </Button>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <div style={{ flex: 1 }}>
-            <GroupSelect node={node} group={PADDING_TOP_GROUP} label="Top" fallback="0" readOnly={readOnly} />
-          </div>
-          <div style={{ flex: 1 }}>
-            <GroupSelect node={node} group={PADDING_BOTTOM_GROUP} label="Bottom" fallback="0" readOnly={readOnly} />
-          </div>
-        </div>
+        {paddingMode === 'sides' && (
+          <>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <div style={{ flex: 1 }}>
+                <PaddingField
+                  node={node}
+                  label="Top"
+                  icon="padding-top"
+                  readOnly={readOnly}
+                  hintKeys={['padding-top']}
+                  buildEdit={(px) =>
+                    arbitraryPaddingSideEdit('top', px, [getClassHint(node.uid, 'padding-bottom') ?? null])
+                  }
+                />
+              </div>
+              <div style={{ flex: 1 }}>
+                <PaddingField
+                  node={node}
+                  label="Bottom"
+                  icon="padding-bottom"
+                  readOnly={readOnly}
+                  hintKeys={['padding-bottom']}
+                  buildEdit={(px) =>
+                    arbitraryPaddingSideEdit('bottom', px, [getClassHint(node.uid, 'padding-top') ?? null])
+                  }
+                />
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <div style={{ flex: 1 }}>
+                <PaddingField
+                  node={node}
+                  label="Start"
+                  icon={isRtl ? 'padding-right' : 'padding-left'}
+                  readOnly={readOnly}
+                  hintKeys={['padding-start']}
+                  buildEdit={(px) =>
+                    arbitraryPaddingSideEdit('start', px, [getClassHint(node.uid, 'padding-end') ?? null])
+                  }
+                />
+              </div>
+              <div style={{ flex: 1 }}>
+                <PaddingField
+                  node={node}
+                  label="End"
+                  icon={isRtl ? 'padding-left' : 'padding-right'}
+                  readOnly={readOnly}
+                  hintKeys={['padding-end']}
+                  buildEdit={(px) =>
+                    arbitraryPaddingSideEdit('end', px, [getClassHint(node.uid, 'padding-start') ?? null])
+                  }
+                />
+              </div>
+            </div>
+          </>
+        )}
       </div>
     </Panel>
+  );
+}
+
+/** FIX-W4b-3b — one padding numeric field (`layout_container.cljs`'s
+ * `padding-section*` sub-fields). A bespoke lean sibling of
+ * `ArbitraryPxInput` rather than a reuse of it: padding has NO curated
+ * computed-style property at all (`@ccs/bridge`'s `computed-style.ts`
+ * `LAYOUT_PROPS` list has no `padding-*` entry — a disclosed, protocol-
+ * frozen gap this task's own HARD CONSTRAINTS forbid fixing here, see the
+ * worker report), so every field is seeded ONLY from its own session
+ * hint(s), never a fabricated live value — an honest static "Not tracked"
+ * caption always shows instead of a `CurrentValueLine`, the same treatment
+ * `ArbitraryPxInput` already gives Rotation. `hintKeys` is plural
+ * specifically so Penpot's own simple/multiple padding-mode toggle can
+ * SHARE hint keys across both representations of the same box side (linked
+ * "Vertical" writes BOTH `padding-top` and `padding-bottom`; per-side "Top"/
+ * "Bottom" each read/write their own one of those same two keys) — so
+ * toggling modes mid-session never loses or desyncs a value the user
+ * already entered, matching Penpot's own `(= p1 p3)` simple-mode-fold-back
+ * behavior (`layout_item.cljs`'s `margin-simple*`/this file's
+ * `simple-padding-selection*`, re-read for this task). */
+function PaddingField({
+  node,
+  label,
+  icon,
+  hintKeys,
+  buildEdit,
+  readOnly,
+}: {
+  node: TreeNode;
+  label: string;
+  icon: IconName;
+  hintKeys: readonly string[];
+  /** Resolves this field's `set-classes` add/remove pair for a committed
+   * pixel value. The caller closes over `node` to read whatever OTHER
+   * padding hints it needs for eviction — see
+   * `arbitraryPaddingSideEdit`/`arbitraryPaddingLinkedEdit`'s own docs. */
+  buildEdit: (px: number) => ClassEdit;
+  readOnly: boolean;
+}): React.ReactElement {
+  const { sendOp } = useDaemonConnection();
+  // Seed from the first of `hintKeys` that already has a value (see this
+  // function's own doc on why there can be more than one) — no live
+  // computed-style prop exists for padding, so this is the only seed source.
+  let seededText = '';
+  for (const key of hintKeys) {
+    const hinted = getClassHint(node.uid, key);
+    const n = hinted ? parseArbitraryValue(hinted) : null;
+    if (n !== null) {
+      seededText = String(n);
+      break;
+    }
+  }
+  // "Uncontrolled until touched" — see `ArbitraryPxInput`'s own doc for why
+  // this isn't a `useEffect` reset.
+  const [dirtyText, setDirtyText] = React.useState<string | null>(null);
+  const text = dirtyText ?? seededText;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+      <Input
+        label={label}
+        type="number"
+        placeholder="px"
+        leadingIcon={icon}
+        disabled={readOnly}
+        value={text}
+        onChange={(e) => setDirtyText(e.target.value)}
+        onBlur={() => {
+          if (readOnly || text.trim() === '') return;
+          const value = Number(text);
+          if (!Number.isFinite(value)) return;
+          const edit = buildEdit(value);
+          hintKeys.forEach((key, i) => {
+            const cls = edit.add[i] ?? edit.add[0];
+            if (cls) setClassHint(node.uid, key, cls);
+          });
+          sendOp({ t: 'set-classes', uid: node.uid, add: edit.add, remove: edit.remove });
+        }}
+      />
+      <span style={{ fontSize: 'var(--ccs-font-size-xs)', color: 'var(--ccs-text-subtle)' }}>Not tracked</span>
+    </div>
   );
 }
 
@@ -1554,6 +1873,16 @@ function LayoutItemSection({ node, readOnly }: { node: TreeNode; readOnly: boole
     <Panel title="Layout item" id="inspector-layout-item">
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         <GroupSelect node={node} group={GROW_GROUP} label="Flex" fallback="none" readOnly={readOnly} />
+        {/* FIX-W4b-3b: dropped the visible "Align self" label for the same
+         * density reason `LayoutContainerSection`'s icon rows dropped
+         * theirs — `layout_item.cljs`'s own `align-self-row` carries no
+         * label either, just per-button tooltips (see `GroupButtons`'s
+         * `hideLabel` doc). Penpot's fuller `layout_item.cljs` (fix/fill/
+         * auto sizing behavior + margin simple/multiple) is a materially
+         * larger rework with no Tailwind-preset equivalent in this file yet
+         * (margin isn't modeled at all) — out of this pass's "declutter the
+         * existing controls" scope, flagged as carry-forward in the worker
+         * report rather than silently expanded here. */}
         <GroupButtons
           node={node}
           group={SELF_ALIGN_GROUP}
@@ -1561,6 +1890,7 @@ function LayoutItemSection({ node, readOnly }: { node: TreeNode; readOnly: boole
           fallback="auto"
           readOnly={readOnly}
           iconFor={alignSelfIcon}
+          hideLabel
         />
         <GroupSelect node={node} group={ORDER_GROUP} label="Order" fallback="none" readOnly={readOnly} />
       </div>

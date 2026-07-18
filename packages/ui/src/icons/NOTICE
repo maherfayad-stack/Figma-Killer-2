@@ -29,3 +29,12 @@ derivative subject to the same MPL-2.0 terms as the source SVGs.
 FIX-W4b-3a (Size & position rework) added one more: `rotation`, copied
 unmodified from the same upstream path (`frontend/resources/images/icons/
 rotation.svg`), for the new rotation numeric field's leading glyph.
+
+FIX-W4b-3b (Layout container compact rework) added 20 more, all still Penpot
+originals copied unmodified from the same upstream path: `gap-horizontal`,
+`padding-top`/`padding-bottom`/`padding-left`/`padding-right`/
+`padding-top-bottom`/`padding-left-right`/`padding-extended` (the gap and
+padding numeric fields' leading glyphs + the simple/multiple padding-mode
+toggle), and the 12 `align-content-row-*`/`align-content-column-*` icons
+(start/center/end/between/around/evenly × row/column) for the new
+Align-content control shown when Wrap is active.
