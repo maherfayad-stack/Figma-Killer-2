@@ -468,3 +468,28 @@ W4b-2: port the real Penpot SVG icons (317 at penpot/frontend/resources/images/
 icons/*.svg, MPL-2.0 © KALEIDOS — carry attribution) into the studio icon registry
 for each Inspector section/control, and replicate the menus/*.scss widget/row/header
 anatomy in CSS for the "100% same design/look as Penpot" ask. Builds on W4b-1.
+
+## DOGFOOD ROUND 4 (human, 2026-07-18, WITH side-by-side Penpot-vs-ours screenshots) → FIX-W4b-3
+Human compared Penpot's Design panel to ours and said "it's not there yet ... see how
+complicated ours vs penpot." Ours is functional but far less clean/dense/capable.
+Concrete gaps (from the screenshots):
+- **R4-1 (Layout too cluttered):** Penpot's LAYOUT is a COMPACT cluster — one 3×3
+  align-grid + direction arrows + wrap toggle in ~2 tight rows, then small icon
+  numeric fields for gap/padding. Ours spreads Direction/Wrap/Justify/Align/Gap into
+  big labelled dropdowns/button-rows (tall, verbose). Rebuild dense like Penpot.
+- **R4-2 (frame sizing not real):** Penpot has DIRECT editable W/H/X/Y numbers +
+  rotation + radius + a "Size presets" dropdown + device-type icons (phone/tablet).
+  Ours uses clunky Width[Auto▾]+"Custom W px" two-step dropdowns, no presets/devices.
+  Give direct numeric inputs (write w-[..]/h-[..]/arbitrary) + size presets + device
+  dimensions. ABSORBS the device-preset half of FIX-W5 (item 8).
+- **R4-3 (color control weak):** "I can't put custom colors just dropdown from our
+  tokens, no search, no preview." Fill/color is a token DROPDOWN only. Need a real
+  Penpot color widget: swatch + editable HEX (custom colors → bg-[#..]), a picker
+  popover, the token palette SEARCHABLE, and color-PREVIEW swatches in the list.
+
+→ FIX-W4b-3 refinement, 3 focused sub-workers (small = limit-resilient), SEQUENTIAL
+after W4b-2 (icons) gates: W4b-3a Size&Position+frame-sizing+device presets → W4b-3b
+Layout declutter (Penpot compact cluster) → W4b-3c color control (custom hex + picker
++ searchable token palette + preview swatches). W4b-2's real Penpot icons + icon-
+button groups are the foundation these build on. FIX-W5 remainder (create-frame-
+inside-frame → nested <div>) stays separate.
