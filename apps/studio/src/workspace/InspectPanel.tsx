@@ -84,8 +84,17 @@ function CodeBlock({ label, code, testId }: { label: string; code: string | null
   const [justCopied, setJustCopied] = React.useState(false);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minInlineSize: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, minInlineSize: 0 }}>
+        {/* FIX-W7 (R3-2): the last offender found by dogfooding at the new
+            narrow min-width — `label` is often a path with no spaces
+            (`Frame — src/frames/Frame4.tsx`), an unbreakable run with
+            no natural wrap point. As a flex item with `overflow: visible`
+            (the default), its automatic min-width was that whole run's
+            width, forcing this row (and everything up to the dock) wider
+            than the pane at small sizes. Same ellipsis treatment as the
+            CSS-row values above: `minInlineSize: 0` lets it actually
+            shrink, `overflow/textOverflow/whiteSpace` clip it instead. */}
         <span
           style={{
             fontSize: 'var(--ccs-font-size-xs)',
@@ -93,7 +102,12 @@ function CodeBlock({ label, code, testId }: { label: string; code: string | null
             color: 'var(--ccs-text-muted)',
             textTransform: 'uppercase',
             letterSpacing: '0.04em',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+            minInlineSize: 0,
           }}
+          title={label}
         >
           {label}
         </span>
@@ -120,6 +134,7 @@ function CodeBlock({ label, code, testId }: { label: string; code: string | null
         style={{
           margin: 0,
           maxBlockSize: 240,
+          minInlineSize: 0,
           overflow: 'auto',
           paddingInline: 'var(--ccs-space-2)',
           paddingBlock: 'var(--ccs-space-2)',
@@ -171,9 +186,12 @@ function CssRows({ rows }: { rows: ComputedStyleRow[] | null }): React.ReactElem
   }
 
   return (
-    <div data-testid="inspect-css-rows" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+    <div
+      data-testid="inspect-css-rows"
+      style={{ display: 'flex', flexDirection: 'column', gap: 12, minInlineSize: 0 }}
+    >
       {[...byGroup.entries()].map(([group, groupRows]) => (
-        <div key={group} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <div key={group} style={{ display: 'flex', flexDirection: 'column', gap: 4, minInlineSize: 0 }}>
           <span
             style={{
               fontSize: 'var(--ccs-font-size-xs)',
@@ -194,9 +212,29 @@ function CssRows({ rows }: { rows: ComputedStyleRow[] | null }): React.ReactElem
                 gap: 8,
                 fontSize: 'var(--ccs-font-size-xs)',
                 paddingBlock: 2,
+                minInlineSize: 0,
               }}
             >
-              <span style={{ color: 'var(--ccs-text-muted)', fontFamily: 'var(--ccs-font-mono)' }}>{row.prop}</span>
+              <span
+                style={{
+                  color: 'var(--ccs-text-muted)',
+                  fontFamily: 'var(--ccs-font-mono)',
+                  flexShrink: 0,
+                }}
+              >
+                {row.prop}
+              </span>
+              {/* FIX-W7 (R3-2): this is the row that was overflowing the whole
+                  right dock — a long comma-separated `font-family` stack is
+                  `nowrap` + ellipsis, but a flex child's default
+                  `min-inline-size: auto` refuses to shrink below its OWN
+                  content width no matter what `maxInlineSize` says, so the
+                  ellipsis never actually triggered; it just pushed this row
+                  (and everything above it up to the dock) wider. Explicit
+                  `minInlineSize: 0` overrides that default so the `60%` cap
+                  + `overflow:hidden` + `textOverflow:ellipsis` combination
+                  can actually clip, instead of only being reachable in
+                  theory. */}
               <span
                 style={{
                   color: 'var(--ccs-text)',
@@ -206,6 +244,7 @@ function CssRows({ rows }: { rows: ComputedStyleRow[] | null }): React.ReactElem
                   textOverflow: 'ellipsis',
                   whiteSpace: 'nowrap',
                   maxInlineSize: '60%',
+                  minInlineSize: 0,
                 }}
                 title={row.value}
               >
@@ -333,14 +372,14 @@ function InspectContent({
   return (
     <>
       <Panel title="Code" id="inspect-code">
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16, minInlineSize: 0 }}>
           <CodeBlock label={nodeLabel} code={nodeSource} testId="inspect-node-code" />
           <CodeBlock label={frameLabel} code={frameSource} testId="inspect-frame-code" />
         </div>
       </Panel>
 
       <Panel title="CSS" id="inspect-css">
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, minInlineSize: 0 }}>
           <CssRows rows={cssRows} />
           <Button
             variant="secondary"

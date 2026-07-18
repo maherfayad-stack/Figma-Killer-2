@@ -97,12 +97,17 @@ function WorkspaceShellInner({
   useWorkspaceKeymap();
   useTreeSnapshotSync();
 
-  // FP-2 (spec §2.2): left panel 318–500px, right panel 318–768px,
+  // FP-2 (spec §2.2): left panel 180–500px, right panel 180–768px,
   // persisted per-project (`projectId`) in localStorage — see
   // `use-resize.ts`'s module doc for the Penpot `resize.cljs` mechanics
   // this reimplements.
-  const left = useResize({ projectId, panelId: 'left', initial: 318, min: 318, max: 500 });
-  const right = useResize({ projectId, panelId: 'right', initial: 318, min: 318, max: 768 });
+  // FIX-W7 (R3-3, human dogfood: "make the smallest width way smaller"):
+  // floor lowered from 318 (== `initial`, so panels literally couldn't
+  // shrink at all) to 180 — both docks, for consistency, though the human
+  // hit this on the right dock specifically. `initial` unchanged at 318;
+  // this only widens how far EITHER edge can be dragged narrower.
+  const left = useResize({ projectId, panelId: 'left', initial: 318, min: 180, max: 500 });
+  const right = useResize({ projectId, panelId: 'right', initial: 318, min: 180, max: 768 });
 
   // FP-1 (`.orchestrator/FEATURE-PARITY-PLAN.md` §2): camera-control handle
   // from `StudioCanvas.onReady` + the live zoom % from `onZoomChange` — see
@@ -355,10 +360,22 @@ function WorkspaceShellInner({
             display: 'flex',
             flexDirection: 'column',
             minBlockSize: 0,
+            minInlineSize: 0,
           }}
         >
           <LeftHeader fileName={fileName} onBackToDashboard={onBackToDashboard} onRenameFile={onRenameFile} />
-          <div style={{ flex: 1, display: 'flex', minBlockSize: 0 }}>
+          {/* FIX-W7 (R3-2): `flexDirection: 'column'` is load-bearing, not
+              cosmetic — without it this div defaults to ROW, making `Tabs`'s
+              own root div (packages/ui, not ours to edit) a flex item along
+              a HORIZONTAL main axis, where its default `min-width: auto`
+              refuses to shrink below its content's min-content width (the
+              tabpanel's widest descendant, e.g. a long CSS value or code
+              line) — the exact flexbox "won't shrink" pitfall, one level
+              above where `InspectPanel.tsx`'s own `minInlineSize: 0` chain
+              can reach. Column direction makes `Tabs` a cross-axis
+              (stretch) item instead, which gets a DEFINITE width from this
+              div regardless of its content. */}
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minBlockSize: 0, minInlineSize: 0 }}>
             <Tabs
               ariaLabel="Left dock"
               value={leftTab}
@@ -408,10 +425,14 @@ function WorkspaceShellInner({
             display: 'flex',
             flexDirection: 'column',
             minBlockSize: 0,
+            minInlineSize: 0,
           }}
         >
           <RightHeader zoomPercent={zoomPercent} canvasHandle={canvasHandle} />
-          <div style={{ flex: 1, display: 'flex', minBlockSize: 0 }}>
+          {/* FIX-W7 (R3-2): see the matching comment on the left dock's
+              analogous wrapper above — `flexDirection: 'column'` here is
+              THE fix for the Inspect-tab horizontal-overflow bug. */}
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minBlockSize: 0, minInlineSize: 0 }}>
             <Tabs
               ariaLabel="Right dock"
               value={rightTab}
