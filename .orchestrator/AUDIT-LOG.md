@@ -470,3 +470,15 @@ MINOR: opacity Input has no Enter→blur commit handler (Tab/click-away needed),
 Gates: eslint exit 0 (no eslint-disable), tsc clean (both projects), vitest 103/103 (10 files, +full pure-helper unit coverage). packages/ zero-diff; no package.json/lockfile diff (no new dep); diff confined to Inspector.tsx + inspector-presets.ts(+test). Fixtures restored, servers torn down, no commit by auditor.
 **ORCHESTRATOR ACTION → PASS, MERGE. Committed `<see fix-w4b-3c-complete>`. Tag `fix-w4b-3c-complete`.**
 DESIGN-TAB PARITY now essentially complete: W4b-1 (context+values) · W4b-2 (icons) · W4b-3a (Size&Position+devices) · W4b-3b (Layout cluster) · W4b-3c (color). NEXT: W4b-4 Inspect tab (Loading… fix + curation).
+
+### AUDIT-FIXW4b-4 — Inspect tab Loading… fix + Penpot-clean curation · 2026-07-18
+Auditor: fresh agent (Sonnet 5, not the author) · Ref: uncommitted InspectPanel.tsx on `fix-w4b-3c-complete` · Live real daemon+studio+headless Chromium + CDP ws trace.
+Verdict: **PASS** (all 5 items, 0 regressions).
+1. Loading bug: h1/p/button/dynamic-Cell/Frame4-root all loaded real source, never stuck. CDP Network.webSocketFrame trace: read-source→read-source-result 5-19ms. Hunted residual infinite-spinner: rapid 6-click switching + Design↔Inspect tab-flapping → always correct final source, no leaks, no permanent-Loading path. SourceLoadState cleanly separates loading/ready/error. (Minor: StrictMode dev double-invoke fires the pair twice — harmless.)
+2. Honest error: killed daemon mid-session → both blocks held Loading then at EXACTLY 10s flipped to red "Couldn't load source: timed out waiting for the daemon", Copy disabled; CSS kept last-known-good. Recovery needs page reload (ws-ops-client has no auto-reconnect — PRE-EXISTING, out of scope).
+3. Curation: color→"Fill", humanized labels (background-color→"Background color"), FillSwatch solid + checkerboard-for-transparent; Copy-CSS emits RAW valid `prop: value;` (not humanized) — constraint met.
+4. FIX-W7: Frame4 dock scrollWidth===clientWidth at 317 and at 180px min; long font-family clipped internally, no page h-scroll.
+5. Design tab unchanged.
+Gates: lint 0 (no eslint-disable), typecheck clean, test 103/103. packages/ zero-diff; only InspectPanel.tsx modified; fixtures untouched; scratch drivers deleted; servers torn down.
+**ORCHESTRATOR ACTION → PASS, MERGE. Committed `<see fix-w4b-4-complete>`. Tag `fix-w4b-4-complete`.**
+NOTE: committed InspectPanel.tsx ONLY (W4b-5 Design-tab visual rebuild running concurrently on Inspector.tsx/packages-ui — its changes left uncommitted, orthogonal file set).
