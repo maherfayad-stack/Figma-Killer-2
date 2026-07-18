@@ -20,3 +20,28 @@
    drops an empty box representing nothing" bug. Every NEW `pnpm create-
    file` project inherits this from the template so the bug can't recur. */
 @import 'design-system/dist/index.css';
+/* FIX-W8: hide the internal scrollbar CHROME inside every frame, without
+   removing scroll capability. Frames are rendered as CROSS-ORIGIN iframes
+   (studio :5173 embeds frame dev servers on :5200+) — the studio/canvas
+   parent document can never reach into a cross-origin iframe's document to
+   style its scrollbar (same-origin policy; this is the same fact that bit
+   the earlier screenshot-capture workstream, see `frame-shape.tsx`'s
+   `screenshotUrl` doc). So this MUST live in the frame app's own global
+   CSS, which every `pnpm create-file` project inherits from this template
+   (same distribution mechanism as the `design-system/dist/index.css`
+   import above).
+   `*` (not just `html, body`) so ANY internal scroll container a frame's
+   own layout introduces — not just the document root — also loses its
+   visible bar; `overflow`/`overflow-x`/`overflow-y` on those elements are
+   untouched, so wheel/keyboard/programmatic scrolling still works and no
+   content becomes unreachable. Only the scrollbar's rendering is
+   suppressed, never `overflow: hidden` — that would clip content, which
+   is explicitly NOT what's wanted here. */
+* {
+  scrollbar-width: none; /* Firefox */
+}
+*::-webkit-scrollbar {
+  display: none; /* Chromium/WebKit (incl. Windows Chromium used to verify this fix) */
+  width: 0;
+  height: 0;
+}
