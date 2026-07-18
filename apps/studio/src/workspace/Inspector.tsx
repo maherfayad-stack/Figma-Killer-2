@@ -48,6 +48,7 @@ import {
   DEVICE_QUICK_PRESETS,
   type DevicePreset,
   DIRECTION_GROUP,
+  FILL_DEFAULT_CLASS,
   filterColorPalette,
   FONT_WEIGHT_GROUP,
   GROW_GROUP,
@@ -62,13 +63,21 @@ import {
   parseColorHint,
   POSITION_GROUP,
   POSITION_REMOVE_EXTRA,
+  resolveAddFillEdit,
+  resolveAddShadowEdit,
+  resolveAddStrokeEdit,
   resolveClassEdit,
   resolveColorWrite,
+  resolveRemoveFillEdit,
+  resolveRemoveShadowEdit,
+  resolveRemoveStrokeEdit,
   rgbToHex,
   rgbToHsv,
   SELF_ALIGN_GROUP,
   serializeColorHint,
+  SHADOW_DEFAULT_VALUE,
   SHADOW_GROUP,
+  STROKE_DEFAULT_COLOR_CLASS,
   TEXT_ALIGN_GROUP,
   TEXT_SIZE_GROUP,
   TRACKING_GROUP,
@@ -319,6 +328,66 @@ import {
  * helper backing this (`resolveColorWrite`, `buildColorPalette`,
  * `serializeColorHint`/`parseColorHint`, the hex<->rgb<->hsv conversions).
  * Size&Position, Layout, and every other control are UNTOUCHED by this pass.
+ *
+ * ## FIX-W4b-6 — Penpot "+/add" model for Fill/Stroke/Shadow
+ * Human dogfood round-5: "fill and others have a + icon — not all the
+ * options are present with none like it's done now." Real Penpot's own
+ * `fill.cljs`/`stroke.cljs`/`shadow.cljs` render each section EMPTY (a
+ * title-bar with a trailing `i/add` icon-button, no value control at all)
+ * until clicked — this file's PRIOR rendering always showed the control with
+ * a "none"/default value instead, which is exactly the gap. `FillSection`/
+ * `StrokeSection`/`ShadowSection` are rewritten to that add-model: `Panel`'s
+ * existing `actions` slot (already the exact header-trailing-icon shape
+ * Penpot's own `title-bar*` action prop is) carries a `PanelIconButton`
+ * (`i/add`) ONLY while empty; once added, the body shows the existing
+ * `ColorControl`/`GroupSelect` row (unchanged internals — FIX-W4/W4b-3c
+ * controls are reused, not rebuilt) plus a row-trailing `PanelIconButton`
+ * (`i/remove`). See `inspector-presets.ts`'s own "FIX-W4b-6" section for the
+ * exact `ClassEdit` each `+`/`-` resolves to (`resolveAddFillEdit`/
+ * `resolveRemoveFillEdit`, etc.) — this file only wires them to `sendOp` +
+ * the session hint cache, same pattern every other control here already
+ * uses.
+ *
+ * ### Present-vs-empty: real state, not a guess — with one disclosed gap
+ * `FillSection` and `ShadowSection` gate on the element's REAL computed
+ * style (`ComputedStyleContext`, the existing FP-INS-b `report-computed-
+ * style` round-trip — zero bridge diff): `background-color`'s CSS-spec
+ * INITIAL value is the literal keyword `transparent`, and `box-shadow`'s is
+ * literally `none` — both hard equivalences (not reverse-mapped guesses), so
+ * "live value differs from that keyword" is a legitimate "has a fill/shadow"
+ * signal. A never-touched-this-session element that already carries a real
+ * background or shadow therefore renders the ROW straight away, seeded from
+ * its real value (`ColorControl`'s own existing live-seed precedence for
+ * Fill; `GroupSelect`'s `cssProp="box-shadow"` `CurrentValueLine` shows the
+ * literal raw value for Shadow — see the worker report for why the preset
+ * *dropdown* itself can't be honestly reverse-mapped from a raw `box-shadow`
+ * string without risking the exact "numeric/themeable-scale guess" this
+ * codebase's `inspector-computed-values.ts` module doc already declines to
+ * make elsewhere, e.g. font-size).
+ *
+ * `StrokeSection` COULD NOT get the same live-computed-style treatment:
+ * `@ccs/bridge`'s curated `report-computed-style` list (`computed-style.ts`)
+ * has `border-color` but no `border-width`/`border-style`, and — unlike
+ * `background-color`/`box-shadow` — `border-color`'s CSS-spec initial value
+ * is `currentColor` (an OPAQUE resolved color in the ordinary case), so its
+ * mere presence is NOT a reliable "has a visible border" signal (a
+ * border-less element and a `border-4 border-black` element can report the
+ * identical computed `border-color`). Extending that curated list is a
+ * `packages/bridge` change, which this workstream's hard constraints
+ * explicitly forbid ("no protocol/bridge change"). `StrokeSection` therefore
+ * keeps this section's PRE-EXISTING session-hint-only detection (the same
+ * `border-enabled` hint the old checkbox already used) rather than
+ * fabricating an unreliable live check — disclosed as a carry-forward in the
+ * worker report, not silently worked around.
+ *
+ * ### No multi-value array model
+ * Real Penpot's `+` can be clicked repeatedly (shapes carry an ARRAY of
+ * fills/strokes/shadows); this tool's fill/stroke/shadow are each a SINGLE
+ * DOM CSS property (`background-color`/`border`/`box-shadow`), so each
+ * section holds at most one row — `+` only appears while empty. Disclosed
+ * as this pass's own carry-forward, same "single-valued adaptation of an
+ * array-shaped Penpot control" precedent `arbitraryGapEdit`'s own doc
+ * already sets (one combined `gap-*`, not Penpot's row/column-gap pair).
  */
 export interface InspectorProps {
   /** `null` until `StudioCanvas`'s `onReady` fires (mirrors `InspectPanel`'s
@@ -1792,6 +1861,53 @@ function StubIconButton({ icon, title }: { icon: IconName; title: string }): Rea
   );
 }
 
+/** FIX-W4b-6 — the enabled counterpart to `StubIconButton` above: real
+ * Penpot's `title-bar*` trailing `icon-button*` (`i/add`, `fill.cljs`/
+ * `stroke.cljs`/`shadow.cljs`'s `on-add`) and each row's own `i/remove`
+ * (`on-remove`). Used for BOTH — a section's header `+` while empty, and a
+ * row's trailing `-` once a value exists — so the click target/size/hover
+ * chrome is identical everywhere Penpot itself reuses `icon-button*` for
+ * this exact add/remove pair. `disabled` still renders (never hidden) with
+ * the same "disabled beats invisible" honesty policy `StubIconButton`
+ * itself follows — real Penpot's own `add-fill`/`add-stroke` button is
+ * likewise always rendered, just `:disabled` when it can't add. */
+function PanelIconButton({
+  icon,
+  title,
+  onClick,
+  disabled,
+}: {
+  icon: IconName;
+  title: string;
+  onClick: () => void;
+  disabled?: boolean;
+}): React.ReactElement {
+  return (
+    <button
+      type="button"
+      title={title}
+      aria-label={title}
+      disabled={disabled}
+      onClick={onClick}
+      style={{
+        all: 'unset',
+        boxSizing: 'border-box',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        inlineSize: 24,
+        blockSize: 24,
+        flexShrink: 0,
+        borderRadius: 'calc(var(--ccs-radius) - 2px)',
+        color: disabled ? 'var(--ccs-text-subtle)' : 'var(--ccs-text-muted)',
+        cursor: disabled ? 'not-allowed' : 'pointer',
+      }}
+    >
+      <Icon name={icon} size={12} />
+    </button>
+  );
+}
+
 // --- Size & position (measures.cljs, radius + rotation included — see
 // module doc's FIX-W4b-3a section) ---------------------------------------
 
@@ -2599,105 +2715,233 @@ function TypographySection({ node, readOnly }: { node: TreeNode; readOnly: boole
   );
 }
 
-// --- Fill (fill.cljs) — background color + the existing token-bind ------
+// --- Fill (fill.cljs) — FIX-W4b-6 add-model: EMPTY (title + `+`) until a
+// background exists; then the existing `ColorControl` row (+ token-bind) and
+// a `-` to remove. Present-vs-empty is REAL state, not a guess — see this
+// file's own FIX-W4b-6 module-doc section for the full citation. ----------
 
 function FillSection({ node, readOnly }: { node: TreeNode; readOnly: boolean }): React.ReactElement {
   const { sendOp } = useDaemonConnection();
   const engine = useEngineApi();
+  const computed = React.useContext(ComputedStyleContext);
   const [tokenName, setTokenName] = React.useState('');
   const tokens = engine.tokensForProperty('background-color');
+  const hintKey = 'bg-color';
+
+  // `touched` (this control's own click, THIS render lifetime) wins first —
+  // same "own last write wins" precedence every other control in this file
+  // uses. Otherwise the `bg-color` session hint (`ColorControl`'s own cache
+  // — `onRemove` below writes an empty-hex sentinel so a stale "has fill"
+  // hint can't resurrect the row after removal). Otherwise the element's
+  // REAL computed `background-color`: CSS's own initial value for this
+  // property IS the literal keyword `transparent`, so "non-transparent" is a
+  // hard equivalence, never a guess (contrast `StrokeSection`'s doc, which
+  // has no such property to check).
+  const [touched, setTouched] = React.useState<boolean | null>(null);
+  const hinted = parseColorHint(getClassHint(node.uid, hintKey));
+  const live = resolveCurrentValue(computed, 'background-color');
+  const liveHex = live !== 'loading' && live !== 'unset' ? cssColorToHex(live.raw) : null;
+  const liveHasFill = liveHex !== null && liveHex.alphaPct > 0;
+  const hasFill = touched ?? (hinted !== null ? hinted.hex !== '' : liveHasFill);
+
+  function onAdd(): void {
+    setTouched(true);
+    if (readOnly) return;
+    const edit = resolveAddFillEdit();
+    sendOp({ t: 'set-classes', uid: node.uid, add: edit.add, remove: edit.remove });
+    setClassHint(
+      node.uid,
+      hintKey,
+      serializeColorHint({ hex: '#ffffff', alphaPct: 100, baseClass: FILL_DEFAULT_CLASS, written: FILL_DEFAULT_CLASS }),
+    );
+  }
+
+  function onRemove(): void {
+    setTouched(false);
+    if (readOnly) return;
+    // Best-effort `written` when this session never touched the control
+    // (a live-only pre-existing fill): falls back to the arbitrary-hex class
+    // that would reproduce the same color, which will no-op if the node's
+    // REAL class is a differently-spelled named preset (e.g. `bg-sky-600`)
+    // — the same "no live className read" gap `inspector-class-hints.ts`'s
+    // own module doc already discloses (worker report: carry-forward).
+    const written = hinted?.written ?? (liveHex ? `bg-[${liveHex.hex}]` : FILL_DEFAULT_CLASS);
+    const edit = resolveRemoveFillEdit(written);
+    sendOp({ t: 'set-classes', uid: node.uid, add: edit.add, remove: edit.remove });
+    setClassHint(node.uid, hintKey, serializeColorHint({ hex: '', alphaPct: 100, baseClass: '', written: '' }));
+  }
 
   return (
-    <Panel title="Fill" id="inspector-fill" icon="swatches">
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <ColorControl
-          node={node}
-          prefix="bg"
-          cssProp="background-color"
-          label="Background"
-          readOnly={readOnly}
-        />
-        <Select
-          label="Bind token"
-          value={tokenName}
-          disabled={readOnly}
-          onChange={(e) => setTokenName(e.target.value)}
-          options={[{ value: '', label: 'Choose a token…' }, ...tokens.map((t) => ({ value: t.name, label: t.name }))]}
-        />
-        <Button
-          variant="secondary"
-          size="sm"
-          disabled={!tokenName || readOnly}
-          onClick={() => {
-            // CR (mock-adapter wire shape, see engine-api.ts's module doc):
-            // the real token->class/var mapping is P4 scope (ADR-0019
-            // decision 6: `{token}` set-prop is P3-"unsupported" until
-            // then). This proves the CLIENT emits the correct op shape;
-            // the daemon may legitimately answer `op-rejected`.
-            sendOp({ t: 'set-prop', uid: node.uid, name: 'data-token-fill', value: { token: tokenName } });
-          }}
-        >
-          Bind
-        </Button>
-      </div>
+    <Panel
+      title="Fill"
+      id="inspector-fill"
+      icon="swatches"
+      actions={!hasFill ? <PanelIconButton icon="add" title="Add fill" onClick={onAdd} disabled={readOnly} /> : undefined}
+    >
+      {hasFill && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6 }}>
+            <div style={{ flex: 1, minInlineSize: 0 }}>
+              <ColorControl node={node} prefix="bg" cssProp="background-color" label="Background" readOnly={readOnly} />
+            </div>
+            <PanelIconButton icon="remove" title="Remove fill" onClick={onRemove} disabled={readOnly} />
+          </div>
+          <Select
+            label="Bind token"
+            value={tokenName}
+            disabled={readOnly}
+            onChange={(e) => setTokenName(e.target.value)}
+            options={[{ value: '', label: 'Choose a token…' }, ...tokens.map((t) => ({ value: t.name, label: t.name }))]}
+          />
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={!tokenName || readOnly}
+            onClick={() => {
+              // CR (mock-adapter wire shape, see engine-api.ts's module doc):
+              // the real token->class/var mapping is P4 scope (ADR-0019
+              // decision 6: `{token}` set-prop is P3-"unsupported" until
+              // then). This proves the CLIENT emits the correct op shape;
+              // the daemon may legitimately answer `op-rejected`.
+              sendOp({ t: 'set-prop', uid: node.uid, name: 'data-token-fill', value: { token: tokenName } });
+            }}
+          >
+            Bind
+          </Button>
+        </div>
+      )}
     </Panel>
   );
 }
 
-// --- Stroke (stroke.cljs) — border width/color; radius lives in
-// Size & position now, matching real Penpot's `measures.cljs` embedding
-// (see this file's module doc) -----------------------------------------
+// --- Stroke (stroke.cljs) — FIX-W4b-6 add-model, reconciled from the old
+// "Border" checkbox. Radius stays in Size & position (unchanged, matching
+// real Penpot's `measures.cljs` embedding). Present-vs-empty here stays
+// SESSION-HINT-ONLY (not live-computed-style, unlike Fill/Shadow) — see this
+// file's own FIX-W4b-6 module-doc section for why (`border-width`/`-style`
+// aren't in the frozen bridge's curated computed-style list, and
+// `border-color` alone can't reliably signal "has a visible border"). ------
 
 function StrokeSection({ node, readOnly }: { node: TreeNode; readOnly: boolean }): React.ReactElement {
   const { sendOp } = useDaemonConnection();
-  // Lazy initializer only — this section is always uniquely `key`-ed by
-  // `Inspector` (see its own doc), same reasoning as `GroupSelect`.
-  const [hasBorder, setHasBorder] = React.useState(() => getClassHint(node.uid, 'border-enabled') === 'on');
+  const [touched, setTouched] = React.useState<boolean | null>(null);
+  const hasStroke = touched ?? getClassHint(node.uid, 'border-enabled') === 'on';
+
+  function onAdd(): void {
+    setTouched(true);
+    setClassHint(node.uid, 'border-enabled', 'on');
+    if (readOnly) return;
+    const edit = resolveAddStrokeEdit();
+    sendOp({ t: 'set-classes', uid: node.uid, add: edit.add, remove: edit.remove });
+    setClassHint(node.uid, BORDER_WIDTH_GROUP.key, '1');
+    setClassHint(
+      node.uid,
+      'border-color',
+      serializeColorHint({
+        hex: '#000000',
+        alphaPct: 100,
+        baseClass: STROKE_DEFAULT_COLOR_CLASS,
+        written: STROKE_DEFAULT_COLOR_CLASS,
+      }),
+    );
+  }
+
+  function onRemove(): void {
+    setTouched(false);
+    setClassHint(node.uid, 'border-enabled', 'off');
+    if (readOnly) return;
+    const colorHint = parseColorHint(getClassHint(node.uid, 'border-color'));
+    const colorWritten = colorHint?.written ?? STROKE_DEFAULT_COLOR_CLASS;
+    const edit = resolveRemoveStrokeEdit(colorWritten);
+    sendOp({ t: 'set-classes', uid: node.uid, add: edit.add, remove: edit.remove });
+    setClassHint(node.uid, 'border-color', serializeColorHint({ hex: '', alphaPct: 100, baseClass: '', written: '' }));
+  }
 
   return (
-    <Panel title="Stroke" id="inspector-stroke" icon="stroke-size">
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <Checkbox
-          label="Border"
-          checked={hasBorder}
-          disabled={readOnly}
-          onChange={(e) => {
-            const checked = e.target.checked;
-            setHasBorder(checked);
-            if (readOnly) return;
-            setClassHint(node.uid, 'border-enabled', checked ? 'on' : 'off');
-            if (checked) {
-              sendOp({ t: 'set-classes', uid: node.uid, add: ['border'], remove: [] });
-            } else {
-              const widthClasses = BORDER_WIDTH_GROUP.presets.flatMap((p) => p.add);
-              sendOp({ t: 'set-classes', uid: node.uid, add: [], remove: widthClasses });
-            }
-          }}
-        />
-        {hasBorder && (
-          <>
-            <GroupSelect
-              node={node}
-              group={BORDER_WIDTH_GROUP}
-              label="Width"
-              fallback="1"
-              readOnly={readOnly}
-              leadingIcon="stroke-size"
-            />
-            <ColorControl node={node} prefix="border" cssProp="border-color" label="Color" readOnly={readOnly} />
-          </>
-        )}
-      </div>
+    <Panel
+      title="Stroke"
+      id="inspector-stroke"
+      icon="stroke-size"
+      actions={
+        !hasStroke ? <PanelIconButton icon="add" title="Add stroke" onClick={onAdd} disabled={readOnly} /> : undefined
+      }
+    >
+      {hasStroke && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6 }}>
+            <div style={{ flex: 1, minInlineSize: 0 }}>
+              <GroupSelect
+                node={node}
+                group={BORDER_WIDTH_GROUP}
+                label="Width"
+                fallback="1"
+                readOnly={readOnly}
+                leadingIcon="stroke-size"
+              />
+            </div>
+            <PanelIconButton icon="remove" title="Remove stroke" onClick={onRemove} disabled={readOnly} />
+          </div>
+          <ColorControl node={node} prefix="border" cssProp="border-color" label="Color" readOnly={readOnly} />
+        </div>
+      )}
     </Panel>
   );
 }
 
-// --- Shadow (shadow.cljs) --------------------------------------------------
+// --- Shadow (shadow.cljs) — FIX-W4b-6 add-model. Present-vs-empty IS real
+// computed-style state: `box-shadow`'s CSS-spec initial value is literally
+// `none`, a hard equivalence like Fill's `transparent` check (see this
+// file's own FIX-W4b-6 module-doc section). -------------------------------
 
 function ShadowSection({ node, readOnly }: { node: TreeNode; readOnly: boolean }): React.ReactElement {
+  const { sendOp } = useDaemonConnection();
+  const computed = React.useContext(ComputedStyleContext);
+  const [touched, setTouched] = React.useState<boolean | null>(null);
+  const hinted = getClassHint(node.uid, SHADOW_GROUP.key);
+  const live = resolveCurrentValue(computed, 'box-shadow');
+  const liveHasShadow = live !== 'loading' && live !== 'unset' && live.raw !== 'none';
+  const hasShadow = touched ?? (hinted !== undefined ? hinted !== 'none' : liveHasShadow);
+
+  function onAdd(): void {
+    setTouched(true);
+    if (readOnly) return;
+    const edit = resolveAddShadowEdit();
+    sendOp({ t: 'set-classes', uid: node.uid, add: edit.add, remove: edit.remove });
+    setClassHint(node.uid, SHADOW_GROUP.key, SHADOW_DEFAULT_VALUE);
+  }
+
+  function onRemove(): void {
+    setTouched(false);
+    if (readOnly) return;
+    const edit = resolveRemoveShadowEdit();
+    sendOp({ t: 'set-classes', uid: node.uid, add: edit.add, remove: edit.remove });
+    setClassHint(node.uid, SHADOW_GROUP.key, 'none');
+  }
+
   return (
-    <Panel title="Shadow" id="inspector-shadow" icon="drop-shadow">
-      <GroupSelect node={node} group={SHADOW_GROUP} label="Shadow" fallback="none" readOnly={readOnly} cssProp="box-shadow" />
+    <Panel
+      title="Shadow"
+      id="inspector-shadow"
+      icon="drop-shadow"
+      actions={
+        !hasShadow ? <PanelIconButton icon="add" title="Add shadow" onClick={onAdd} disabled={readOnly} /> : undefined
+      }
+    >
+      {hasShadow && (
+        <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6 }}>
+          <div style={{ flex: 1, minInlineSize: 0 }}>
+            <GroupSelect
+              node={node}
+              group={SHADOW_GROUP}
+              label="Shadow"
+              fallback={SHADOW_DEFAULT_VALUE}
+              readOnly={readOnly}
+              cssProp="box-shadow"
+            />
+          </div>
+          <PanelIconButton icon="remove" title="Remove shadow" onClick={onRemove} disabled={readOnly} />
+        </div>
+      )}
     </Panel>
   );
 }

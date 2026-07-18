@@ -953,3 +953,90 @@ export const OPACITY_GROUP: ClassPresetGroup = {
   key: 'opacity',
   presets: [0, 25, 50, 75, 100].map((v) => ({ value: String(v), label: `${v}%`, add: [`opacity-${v}`] })),
 };
+
+// --- FIX-W4b-6 — Penpot's "+/add" model for Fill/Stroke/Shadow ------------
+//
+// Real Penpot (`fill.cljs`/`stroke.cljs`/`shadow.cljs`) renders each of these
+// sections EMPTY — title-bar + a trailing `+`/add icon-button, no value row
+// at all — until the human clicks `+`; a value row then appears with a
+// `-`/remove action next to it (`icon-button*` with `i/remove`, `on-remove`/
+// `remove-fill`/`remove-stroke`/`update-shapes #(dissoc % :shadow)`). This
+// tool has no multi-fill/-stroke/-shadow ARRAY model — `background-color`/
+// `border`/`box-shadow` are each a SINGLE CSS property on a DOM element, not
+// Penpot's per-shape array of fill/stroke/shadow objects — so unlike real
+// Penpot ("+ can be clicked repeatedly to add MORE rows, each independently
+// removable"), here `+` is offered only while the section is empty and each
+// section holds AT MOST one row: the closest DOM-first adaptation of the
+// add-model to a single-valued CSS property (disclosed as a carry-forward in
+// the worker report, same "no leak from a single-value model into a
+// promised-but-unbuilt array UI" caution `inspector-presets.ts`'s own
+// existing controls already follow elsewhere, e.g. `arbitraryGapEdit`'s
+// deliberately-single combined `gap-*` vs Penpot's row/column-gap pair).
+//
+// Each add/remove pair below is a pure `ClassEdit`, kept out of
+// `Inspector.tsx` for the same reason every other class-editing helper in
+// this file is — independently unit-testable without a DOM/React harness
+// (this file's own module doc).
+
+/** Fill's `+` default — a real, visible white background (Penpot's own
+ * `fill.cljs` `default-color` is opaque black, but a black default would be
+ * invisible against this tool's dark canvas chrome either way; "a visible,
+ * sensible default" is this task's own explicit brief wording). */
+export const FILL_DEFAULT_CLASS = 'bg-white';
+
+export function resolveAddFillEdit(): ClassEdit {
+  return { add: [FILL_DEFAULT_CLASS], remove: [] };
+}
+
+/** Fill's `-`: strips exactly the class this control itself last wrote
+ * (`written`, from the `bg-color` session hint / `ColorControl`'s own
+ * precedence) — back to NO `bg-*` class at all (Penpot's own `dc/remove-
+ * fill`), never an explicit `bg-transparent` reset class (matching this
+ * section's own "empty means no control, not a none-valued one" brief). */
+export function resolveRemoveFillEdit(written: string): ClassEdit {
+  return { add: [], remove: [written] };
+}
+
+/** Stroke's `+` default (`stroke.cljs`'s `cts/default-stroke`: 1px solid
+ * black) — `border` (`BORDER_WIDTH_GROUP`'s own `'1'` preset) + `border-
+ * black` (`colorGroup('border')`'s own `'black'` preset), so the row this
+ * reveals (`GroupSelect`+`BORDER_WIDTH_GROUP` / `ColorControl`) starts from
+ * real preset values either control's own hint-cache already recognizes. */
+export const STROKE_DEFAULT_WIDTH_CLASS = 'border';
+export const STROKE_DEFAULT_COLOR_CLASS = 'border-black';
+
+export function resolveAddStrokeEdit(): ClassEdit {
+  return { add: [STROKE_DEFAULT_WIDTH_CLASS, STROKE_DEFAULT_COLOR_CLASS], remove: [] };
+}
+
+/** Stroke's `-`: strips every `BORDER_WIDTH_GROUP` candidate (covers
+ * whichever width preset is actually active — same "every candidate, not
+ * just the default" reasoning `resolveClassEdit` itself already uses) plus
+ * `colorWritten` (the border-color `ColorControl`'s own last-written class,
+ * or this section's own default if the color was never touched). */
+export function resolveRemoveStrokeEdit(colorWritten: string): ClassEdit {
+  const widthClasses = BORDER_WIDTH_GROUP.presets.flatMap((p) => p.add);
+  return { add: [], remove: [...widthClasses, colorWritten] };
+}
+
+/** Shadow's `+` default — `SHADOW_GROUP`'s own `'md'` preset (Penpot's
+ * `shadow.cljs` `create-shadow` default is a 4px/4px/4px/0 drop shadow; the
+ * closest single Tailwind preset to that offset/blur is `shadow-md`). Reuses
+ * `resolveClassEdit` so the exact same every-other-shadow-candidate remove
+ * list this group's own `<Select>` already relies on applies here too. */
+export const SHADOW_DEFAULT_VALUE = 'md';
+
+export function resolveAddShadowEdit(): ClassEdit {
+  return resolveClassEdit(SHADOW_GROUP, SHADOW_DEFAULT_VALUE);
+}
+
+/** Shadow's `-`: strips every real shadow-CASTING candidate (every
+ * `SHADOW_GROUP` class except `shadow-none`, which casts no shadow anyway —
+ * removing it too would be harmless but pointless) — back to NO `shadow-*`
+ * class at all, i.e. the browser's own `box-shadow: none` initial value,
+ * never an explicit `shadow-none` reset class (same "empty means no class,
+ * not an explicit none-value class" policy `resolveRemoveFillEdit` follows). */
+export function resolveRemoveShadowEdit(): ClassEdit {
+  const remove = SHADOW_GROUP.presets.filter((p) => p.value !== 'none').flatMap((p) => p.add);
+  return { add: [], remove };
+}

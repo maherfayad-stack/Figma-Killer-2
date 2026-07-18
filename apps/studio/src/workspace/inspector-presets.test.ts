@@ -6,11 +6,13 @@ import {
   arbitraryPaddingLinkedEdit,
   arbitraryPaddingSideEdit,
   arbitrarySizeEdit,
+  BORDER_WIDTH_GROUP,
   buildColorPalette,
   clamp01,
   colorClassWithAlpha,
   colorGroup,
   DIRECTION_GROUP,
+  FILL_DEFAULT_CLASS,
   filterColorPalette,
   GAP_GROUP,
   hexToRgb,
@@ -22,13 +24,22 @@ import {
   parseColorHint,
   POSITION_GROUP,
   RADIUS_GROUP,
+  resolveAddFillEdit,
+  resolveAddShadowEdit,
+  resolveAddStrokeEdit,
   resolveClassEdit,
   resolveColorWrite,
+  resolveRemoveFillEdit,
+  resolveRemoveShadowEdit,
+  resolveRemoveStrokeEdit,
   rgbToHex,
   rgbToHsv,
   SELF_ALIGN_GROUP,
   serializeColorHint,
+  SHADOW_DEFAULT_VALUE,
   SHADOW_GROUP,
+  STROKE_DEFAULT_COLOR_CLASS,
+  STROKE_DEFAULT_WIDTH_CLASS,
   TEXT_SIZE_GROUP,
   tokenClassName,
   WIDTH_GROUP,
@@ -332,5 +343,49 @@ describe('clamp01', () => {
     expect(clamp01(-1)).toBe(0);
     expect(clamp01(2)).toBe(1);
     expect(clamp01(0.5)).toBe(0.5);
+  });
+});
+
+describe('FIX-W4b-6 — Fill/Stroke/Shadow add/remove edits', () => {
+  it('resolveAddFillEdit: `+` writes exactly bg-white, nothing to remove', () => {
+    expect(FILL_DEFAULT_CLASS).toBe('bg-white');
+    expect(resolveAddFillEdit()).toEqual({ add: ['bg-white'], remove: [] });
+  });
+
+  it('resolveRemoveFillEdit: `-` strips exactly the class it was given, adds nothing', () => {
+    expect(resolveRemoveFillEdit('bg-[#3b82f6]/50')).toEqual({ add: [], remove: ['bg-[#3b82f6]/50'] });
+    expect(resolveRemoveFillEdit('bg-sky-600')).toEqual({ add: [], remove: ['bg-sky-600'] });
+  });
+
+  it('resolveAddStrokeEdit: `+` writes border + border-black, nothing to remove', () => {
+    expect(STROKE_DEFAULT_WIDTH_CLASS).toBe('border');
+    expect(STROKE_DEFAULT_COLOR_CLASS).toBe('border-black');
+    expect(resolveAddStrokeEdit()).toEqual({ add: ['border', 'border-black'], remove: [] });
+  });
+
+  it('resolveRemoveStrokeEdit: `-` strips every BORDER_WIDTH_GROUP candidate plus the given color class', () => {
+    const edit = resolveRemoveStrokeEdit('border-red-500');
+    expect(edit.add).toEqual([]);
+    expect(edit.remove).toEqual(
+      expect.arrayContaining([...BORDER_WIDTH_GROUP.presets.flatMap((p) => p.add), 'border-red-500']),
+    );
+  });
+
+  it('resolveAddShadowEdit: `+` writes shadow-md and evicts every other shadow candidate', () => {
+    expect(SHADOW_DEFAULT_VALUE).toBe('md');
+    const edit = resolveAddShadowEdit();
+    expect(edit.add).toEqual(['shadow-md']);
+    expect(edit.remove).toEqual(
+      expect.arrayContaining(['shadow-none', 'shadow-sm', 'shadow', 'shadow-lg', 'shadow-xl', 'shadow-2xl', 'shadow-inner']),
+    );
+  });
+
+  it('resolveRemoveShadowEdit: `-` strips every real shadow-casting class, adds nothing, never re-adds shadow-none', () => {
+    const edit = resolveRemoveShadowEdit();
+    expect(edit.add).toEqual([]);
+    expect(edit.remove).toEqual(
+      expect.arrayContaining(['shadow-sm', 'shadow', 'shadow-md', 'shadow-lg', 'shadow-xl', 'shadow-2xl', 'shadow-inner']),
+    );
+    expect(edit.remove).not.toContain('shadow-none');
   });
 });
