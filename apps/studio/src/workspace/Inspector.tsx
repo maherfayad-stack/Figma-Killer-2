@@ -23,7 +23,6 @@ import { isTextFocused } from './inspector-node-kind.js';
 import { useComputedStyle } from './use-computed-style.js';
 import {
   buildComputedLookup,
-  formatCurrentValue,
   resolveCurrentPresetValue,
   resolveCurrentValue,
   type ComputedLookup,
@@ -239,12 +238,16 @@ import {
  * real computed CSS; `ComputedStyleContext` makes that lookup available to
  * every control without threading it through eight section prop lists; each
  * control whose Tailwind group maps to a curated computed property (see
- * `@ccs/bridge`'s `computed-style.ts` for the curated list) renders a
- * `CurrentValueLine` under it. The readout is ALWAYS the element's REAL
- * computed value (or an honest "not set"/"loading…") — never a fabricated
- * token; the exact honesty rule (incl. why numeric scales like `36px` are
- * shown raw, never guessed back to `text-4xl`) lives in
- * `inspector-computed-values.ts`'s module doc.
+ * `@ccs/bridge`'s `computed-style.ts` for the curated list) SEEDS its
+ * field/selection from that real value. The seed is ALWAYS the element's REAL
+ * computed value (or an honest "not set"/"loading…" while unresolved) — never
+ * a fabricated token; the exact honesty rule (incl. why numeric scales like
+ * `36px` are shown raw, never guessed back to `text-4xl`) lives in
+ * `inspector-computed-values.ts`'s module doc. (W4b-9: this used to ALSO
+ * render a separate "Current: …" caption line under the control — deleted,
+ * audit rule A2 — the live value now lives ONLY inside the field/selection
+ * itself, matching real Penpot's `measures.cljs`/`layer.cljs`/etc., which
+ * have no secondary text node under any control.)
  *
  * ## FIX-W4b-3a — Size & position: direct numeric fields + frame geometry +
  * device presets
@@ -365,12 +368,12 @@ import {
  * signal. A never-touched-this-session element that already carries a real
  * background or shadow therefore renders the ROW straight away, seeded from
  * its real value (`ColorControl`'s own existing live-seed precedence for
- * Fill; `GroupSelect`'s `cssProp="box-shadow"` `CurrentValueLine` shows the
- * literal raw value for Shadow — see the worker report for why the preset
- * *dropdown* itself can't be honestly reverse-mapped from a raw `box-shadow`
- * string without risking the exact "numeric/themeable-scale guess" this
- * codebase's `inspector-computed-values.ts` module doc already declines to
- * make elsewhere, e.g. font-size).
+ * Fill). Shadow's own `GroupSelect` preset dropdown has NO such live seed —
+ * see the worker report for why the preset itself can't be honestly
+ * reverse-mapped from a raw `box-shadow` string without risking the exact
+ * "numeric/themeable-scale guess" this codebase's `inspector-computed-
+ * values.ts` module doc already declines to make elsewhere, e.g. font-size —
+ * only the section's own present-vs-empty gate above reads the live value.
  *
  * `StrokeSection` COULD NOT get the same live-computed-style treatment:
  * `@ccs/bridge`'s curated `report-computed-style` list (`computed-style.ts`)
@@ -460,9 +463,10 @@ export interface InspectorProps {
 }
 
 /** Makes the selected node's REAL computed-style lookup available to every
- * control (via `CurrentValueLine`) without threading a prop through all eight
- * sections. `null` = "not fetched yet / bridge not connected" (rendered as
- * "loading…"), an empty-ish `Map` = "fetched, but this prop isn't set". */
+ * control (each control reads it directly to seed its own field/selection)
+ * without threading a prop through all eight sections. `null` = "not fetched
+ * yet / bridge not connected" (rendered as "loading…"), an empty-ish `Map` =
+ * "fetched, but this prop isn't set". */
 const ComputedStyleContext = React.createContext<ComputedLookup | null>(null);
 
 export function Inspector({ canvasHandle, bridgeGeneration }: InspectorProps): React.ReactElement {
@@ -525,7 +529,13 @@ export function Inspector({ canvasHandle, bridgeGeneration }: InspectorProps): R
           }}
         >
           <Icon name="move" size={32} style={{ color: 'var(--ccs-text-subtle)' }} />
-          <p style={{ color: 'var(--ccs-text-subtle)', fontSize: 'var(--ccs-font-size-sm)', margin: 0 }}>
+          <p
+            style={{
+              color: 'var(--ccs-text-subtle)',
+              fontSize: 'var(--ccs-font-size-sm)',
+              margin: 0,
+            }}
+          >
             Select a layer to inspect it.
           </p>
         </div>
@@ -599,7 +609,11 @@ export function Inspector({ canvasHandle, bridgeGeneration }: InspectorProps): R
         // Item 7d (FIX-W4, PRESERVED): ONLY the props panel — every CSS
         // section is suppressed entirely (not just disabled) for a component
         // instance.
-        <ComponentPropsSection key={`component-props-${node.uid}`} node={node} readOnly={readOnly} />
+        <ComponentPropsSection
+          key={`component-props-${node.uid}`}
+          node={node}
+          readOnly={readOnly}
+        />
       ) : isFragment ? (
         // fragment/group (`options/shapes/group.cljs`) — group-level only:
         // Size&position + Layout item. No Fill/Stroke/Shadow/Typography (a
@@ -607,14 +621,24 @@ export function Inspector({ canvasHandle, bridgeGeneration }: InspectorProps): R
         // set-classes/set-prop on it).
         <>
           <SizePositionSection key={`size-position-${node.uid}`} node={node} readOnly={readOnly} />
-          {hasParent && <LayoutItemSection key={`layout-item-${node.uid}`} node={node} readOnly={readOnly} />}
+          {hasParent && (
+            <LayoutItemSection key={`layout-item-${node.uid}`} node={node} readOnly={readOnly} />
+          )}
         </>
       ) : textFocused ? (
         // text-focused (`options/shapes/text.cljs`) — lean text subset:
         // Content + Size&position + Typography + Fill + Stroke + Shadow. NO
         // Layout-container/-item (kept text-focused per this task's brief).
         <>
-          <ContentSection key={`content-${node.uid}`} node={node} readOnly={readOnly} />
+          {/* W4b-9: `<ContentSection>` removed from the render stack here —
+           * real Penpot's Design tab has no text-editing affordance at all
+           * (text content is edited in-place on canvas). This tool already
+           * has that real on-canvas path too (`WorkspaceShell.tsx`'s
+           * `handleCommitText`, FP-4a, sends the SAME `set-text` op) — so
+           * `ContentSection` was a redundant SECOND text-edit surface, not
+           * the only one; removing it does not remove text-editing itself.
+           * The function def is kept intact (not deleted) per this
+           * workstream's own reversibility constraint. */}
           <SizePositionSection key={`size-position-${node.uid}`} node={node} readOnly={readOnly} />
           <TypographySection key={`typography-${node.uid}`} node={node} readOnly={readOnly} />
           <FillSection key={`fill-${node.uid}`} node={node} readOnly={readOnly} />
@@ -625,19 +649,30 @@ export function Inspector({ canvasHandle, bridgeGeneration }: InspectorProps): R
         // generic element (`options/shapes/rect.cljs`) — the full FIX-W4
         // stack, UNCHANGED.
         <>
-          {canHoldText && <ContentSection key={`content-${node.uid}`} node={node} readOnly={readOnly} />}
+          {/* W4b-9: `<ContentSection>` removed here too, same reason as the
+           * text-focused branch above — def kept, call site dropped. */}
           <SizePositionSection key={`size-position-${node.uid}`} node={node} readOnly={readOnly} />
           {canBeContainer && (
-            <LayoutContainerSection key={`layout-container-${node.uid}`} node={node} readOnly={readOnly} />
+            <LayoutContainerSection
+              key={`layout-container-${node.uid}`}
+              node={node}
+              readOnly={readOnly}
+            />
           )}
-          {hasParent && <LayoutItemSection key={`layout-item-${node.uid}`} node={node} readOnly={readOnly} />}
-          {canHoldText && <TypographySection key={`typography-${node.uid}`} node={node} readOnly={readOnly} />}
+          {hasParent && (
+            <LayoutItemSection key={`layout-item-${node.uid}`} node={node} readOnly={readOnly} />
+          )}
+          {canHoldText && (
+            <TypographySection key={`typography-${node.uid}`} node={node} readOnly={readOnly} />
+          )}
           <FillSection key={`fill-${node.uid}`} node={node} readOnly={readOnly} />
           <StrokeSection key={`stroke-${node.uid}`} node={node} readOnly={readOnly} />
           <ShadowSection key={`shadow-${node.uid}`} node={node} readOnly={readOnly} />
         </>
       )}
-      <CodeSection node={node} nodeOps={nodeOps} />
+      {/* W4b-9: `<CodeSection>` (this tool's own dev-mode/"Open in IDE"
+       * affordance, not a real Penpot Design-tab section at all) removed
+       * from the render stack — def kept intact, call site dropped. */}
     </ComputedStyleContext.Provider>
   );
 }
@@ -667,7 +702,6 @@ function FrameInspector({
   canvasHandle: StudioCanvasHandle | null;
   computed: ComputedLookup | null;
 }): React.ReactElement {
-  const nodeOps = useNodeOps();
   const readOnly = node.dynamic;
   return (
     <ComputedStyleContext.Provider value={computed}>
@@ -680,9 +714,15 @@ function FrameInspector({
         canvasHandle={canvasHandle}
         readOnly={readOnly}
       />
-      <LayoutContainerSection key={`layout-container-${node.uid}`} node={node} readOnly={readOnly} />
+      <LayoutContainerSection
+        key={`layout-container-${node.uid}`}
+        node={node}
+        readOnly={readOnly}
+      />
       <FillSection key={`fill-${node.uid}`} node={node} readOnly={readOnly} />
-      <CodeSection node={node} nodeOps={nodeOps} />
+      {/* W4b-9: `<CodeSection>` (and this component's own `nodeOps` — used
+       * for nothing else) removed from the render stack, same reason as the
+       * element-facing `Inspector` above. */}
     </ComputedStyleContext.Provider>
   );
 }
@@ -706,7 +746,9 @@ function FrameContextBanner({ framePath }: { framePath: string }): React.ReactEl
       }}
     >
       <Icon name="board" size={16} style={{ color: 'var(--ccs-accent)', flexShrink: 0 }} />
-      <span style={{ fontSize: 'var(--ccs-font-size-sm)', fontWeight: 600, color: 'var(--ccs-text)' }}>
+      <span
+        style={{ fontSize: 'var(--ccs-font-size-sm)', fontWeight: 600, color: 'var(--ccs-text)' }}
+      >
         Board — frame-level controls
       </span>
       <span
@@ -727,23 +769,15 @@ function FrameContextBanner({ framePath }: { framePath: string }): React.ReactEl
   );
 }
 
-/** FIX-W4b-1 Part B — renders the selected element's REAL current value for
- * one CSS property under a control. Reads the shared `ComputedStyleContext`
- * (populated from the existing FP-INS-b bridge round-trip). Shows an honest
- * "loading…"/"not set" rather than any fabricated token — the resolution +
- * honesty rules live in `inspector-computed-values.ts`. */
-function CurrentValueLine({ cssProp, group }: { cssProp: string; group?: ClassPresetGroup }): React.ReactElement {
-  const computed = React.useContext(ComputedStyleContext);
-  const value = resolveCurrentValue(computed, cssProp, group);
-  return (
-    <span
-      data-testid={`inspector-current-${cssProp}`}
-      style={{ fontSize: 'var(--ccs-font-size-xs)', color: 'var(--ccs-text-subtle)' }}
-    >
-      {formatCurrentValue(value)}
-    </span>
-  );
-}
+// W4b-9 (audit rule A2) — the FIX-W4b-1 Part B "current value caption" helper
+// component (rendered the selected element's REAL current value for one CSS
+// property under a control) and every render call site were deleted here:
+// real Penpot (`measures.cljs`/`layer.cljs`/`fill.cljs`/etc.) has no
+// secondary "Current: …" text node under any control at all — the live
+// value lives ONLY in the control's own field/selection (still seeded from
+// `ComputedStyleContext` via `resolveCurrentValue`/`resolveCurrentPresetValue`,
+// unchanged — see `inspector-computed-values.ts`'s module doc for the
+// honesty rule those two still follow).
 
 /** Mirrors `LayersPanel`'s `iconForNode` (kept as a small local duplicate —
  * this file is scoped to `Inspector.tsx` only, no shared-helper extraction). */
@@ -777,39 +811,45 @@ function LayerSection({
   readOnly: boolean;
 }): React.ReactElement {
   const label = node.component ?? node.tag ?? '(text)';
-  const color = node.kind === 'component-instance' ? 'var(--ccs-accent-component)' : 'var(--ccs-text)';
+  const color =
+    node.kind === 'component-instance' ? 'var(--ccs-accent-component)' : 'var(--ccs-text)';
 
+  // W4b-9 (audit rule A3) — `layer.cljs` is a BARE `.element-set-content`
+  // block in real Penpot: no `title-bar*`, no "Layer" heading, no chevron.
+  // Un-Panel'd here to match (a plain `<div>` with the same border/padding
+  // rhythm every OTHER section's body already uses, just with no header).
+  // The `node.uid` mono readout is ALSO deleted (A3) — real `layer.cljs`
+  // shows no uid at all; that line was purely this tool's own debug
+  // affordance, never a Penpot-sourced element.
   return (
-    <Panel title="Layer" id="inspector-layer">
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, minInlineSize: 0 }}>
-          <Icon name={iconForNode(node)} size={16} style={{ color, flexShrink: 0 }} />
-          <span
-            style={{
-              fontSize: 'var(--ccs-font-size-sm)',
-              fontWeight: 500,
-              color,
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            {label}
-          </span>
-        </div>
+    <div
+      data-panel="inspector-layer"
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 8,
+        paddingInline: 'var(--ccs-space-3)',
+        paddingBlock: 'var(--ccs-space-3)',
+        borderBlockEnd: '1px solid var(--ccs-border)',
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, minInlineSize: 0 }}>
+        <Icon name={iconForNode(node)} size={16} style={{ color, flexShrink: 0 }} />
         <span
           style={{
-            fontSize: 'var(--ccs-font-size-xs)',
-            color: 'var(--ccs-text-subtle)',
-            fontFamily: 'var(--ccs-font-mono)',
-            wordBreak: 'break-all',
+            fontSize: 'var(--ccs-font-size-sm)',
+            fontWeight: 500,
+            color,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
           }}
         >
-          {node.uid}
+          {label}
         </span>
-        {showOpacity && <LayerHeaderRow node={node} readOnly={readOnly} />}
       </div>
-    </Panel>
+      {showOpacity && <LayerHeaderRow node={node} readOnly={readOnly} />}
+    </div>
   );
 }
 
@@ -821,8 +861,7 @@ function LayerSection({
  *
  * FIX-W4b-7 item 1: blend-mode is now REAL, wired to `BLEND_MODE_GROUP`
  * (`inspector-presets.ts`) via the SAME `GroupSelect` every other class-
- * preset dropdown in this file uses — no `cssProp` is passed (and `compact`
- * suppresses `CurrentValueLine` regardless): `@ccs/bridge`'s curated
+ * preset dropdown in this file uses — no `cssProp` is passed: `@ccs/bridge`'s curated
  * `report-computed-style` list has no `mix-blend-mode` entry (confirmed
  * against `computed-style.ts`'s `GEOMETRY_PROPS`/`LAYOUT_PROPS`/etc, none of
  * which carry it), and adding one is a `packages/bridge` change this
@@ -840,7 +879,13 @@ function LayerSection({
  * carries no per-node visibility/lock STATE to read or write at all — out of
  * this workstream's 3-item scope. Opacity itself is functionally UNCHANGED:
  * still the exact same `GroupSelect`/`OPACITY_GROUP` control. */
-function LayerHeaderRow({ node, readOnly }: { node: TreeNode; readOnly: boolean }): React.ReactElement {
+function LayerHeaderRow({
+  node,
+  readOnly,
+}: {
+  node: TreeNode;
+  readOnly: boolean;
+}): React.ReactElement {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--ccs-space-1)' }}>
       <div style={{ flex: '1 1 0', minInlineSize: 0 }}>
@@ -854,7 +899,14 @@ function LayerHeaderRow({ node, readOnly }: { node: TreeNode; readOnly: boolean 
         />
       </div>
       <div style={{ inlineSize: 72, flexShrink: 0 }}>
-        <GroupSelect node={node} group={OPACITY_GROUP} label="Opacity" fallback="100" readOnly={readOnly} compact />
+        <GroupSelect
+          node={node}
+          group={OPACITY_GROUP}
+          label="Opacity"
+          fallback="100"
+          readOnly={readOnly}
+          compact
+        />
       </div>
       <StubIconButton icon="shown" title="Show/hide layer" />
       <StubIconButton icon="unlock" title="Lock layer" />
@@ -866,7 +918,13 @@ function LayerHeaderRow({ node, readOnly }: { node: TreeNode; readOnly: boolean 
  * `dynamic` node — same message/affordance the prior pass showed instead of
  * the whole stack, kept verbatim, just relocated now that the sections
  * beneath it also render (disabled) rather than being suppressed. */
-function DynamicBanner({ node, nodeOps }: { node: TreeNode; nodeOps: NodeOps }): React.ReactElement {
+function DynamicBanner({
+  node,
+  nodeOps,
+}: {
+  node: TreeNode;
+  nodeOps: NodeOps;
+}): React.ReactElement {
   return (
     <div
       data-testid="dynamic-readonly"
@@ -880,9 +938,9 @@ function DynamicBanner({ node, nodeOps }: { node: TreeNode; nodeOps: NodeOps }):
       }}
     >
       <p style={{ fontSize: 'var(--ccs-font-size-sm)', color: 'var(--ccs-text-muted)', margin: 0 }}>
-        <strong style={{ color: 'var(--ccs-locked)' }}>Dynamic node</strong> — generated in code
-        (<code>.map()</code>/conditional). Every section below shows its values read-only; edit its logic
-        in the source file.
+        <strong style={{ color: 'var(--ccs-locked)' }}>Dynamic node</strong> — generated in code (
+        <code>.map()</code>/conditional). Every section below shows its values read-only; edit its
+        logic in the source file.
       </p>
       <Button variant="secondary" size="sm" onClick={() => nodeOps.openInIde(node)}>
         Open in IDE
@@ -892,14 +950,37 @@ function DynamicBanner({ node, nodeOps }: { node: TreeNode; nodeOps: NodeOps }):
 }
 
 /** Code — Penpot's Inspect/dev-mode affordance, adapted: any node (not just
- * `dynamic`) can jump to its real source location. */
-function CodeSection({ node, nodeOps }: { node: TreeNode; nodeOps: NodeOps }): React.ReactElement {
+ * `dynamic`) can jump to its real source location.
+ *
+ * W4b-9: no longer rendered in the Design section stack (real Penpot's
+ * Design tab has no such section) — kept `export`ed rather than deleted, per
+ * this workstream's own reversibility constraint (also keeps
+ * `noUnusedLocals` from flagging an intentionally-unreferenced function). */
+export function CodeSection({
+  node,
+  nodeOps,
+}: {
+  node: TreeNode;
+  nodeOps: NodeOps;
+}): React.ReactElement {
   return (
     <Panel title="Code" id="inspector-code" icon="document" defaultCollapsed>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <dl style={{ margin: 0, fontSize: 'var(--ccs-font-size-xs)', color: 'var(--ccs-text-subtle)' }}>
+        <dl
+          style={{
+            margin: 0,
+            fontSize: 'var(--ccs-font-size-xs)',
+            color: 'var(--ccs-text-subtle)',
+          }}
+        >
           <dt>uid</dt>
-          <dd style={{ marginInlineStart: 0, fontFamily: 'var(--ccs-font-mono)', wordBreak: 'break-all' }}>
+          <dd
+            style={{
+              marginInlineStart: 0,
+              fontFamily: 'var(--ccs-font-mono)',
+              wordBreak: 'break-all',
+            }}
+          >
             {node.uid}
           </dd>
         </dl>
@@ -911,7 +992,18 @@ function CodeSection({ node, nodeOps }: { node: TreeNode; nodeOps: NodeOps }): R
   );
 }
 
-function ContentSection({ node, readOnly }: { node: TreeNode; readOnly: boolean }): React.ReactElement {
+/** W4b-9: no longer rendered in the Design section stack (real Penpot's
+ * Design tab has no text-editing section; on-canvas in-place editing,
+ * `WorkspaceShell.tsx`'s `handleCommitText`, is the real path — see the
+ * Design-stack removal's own comment) — kept `export`ed rather than
+ * deleted, same reversibility reasoning as `CodeSection` above. */
+export function ContentSection({
+  node,
+  readOnly,
+}: {
+  node: TreeNode;
+  readOnly: boolean;
+}): React.ReactElement {
   const { sendOp } = useDaemonConnection();
   const [text, setText] = React.useState('');
 
@@ -958,7 +1050,6 @@ function GroupSelect({
   fallback,
   readOnly,
   onEdit,
-  cssProp,
   leadingIcon,
   swatchHex,
   compact,
@@ -972,13 +1063,6 @@ function GroupSelect({
    * needs to merge in extra remove-candidates (e.g. `Position`'s
    * `relative`/`fixed`/`sticky`). */
   onEdit?: (value: string) => ClassEdit;
-  /** FIX-W4b-1 Part B: the curated computed-style property this control maps
-   * to (`@ccs/bridge`'s `computed-style.ts` list). When set, a
-   * `CurrentValueLine` renders under the control showing the element's REAL
-   * value. Omitted for controls with no curated computed property (padding,
-   * flex-grow, align-self, order, border-width) — those get no readout rather
-   * than a misleading one. */
-  cssProp?: string;
   /** FIX-W4b-2: a leading glyph INSIDE the `<Select>` (Penpot's
    * `measures.cljs` numeric-input-wrapper icon, e.g. `corner-radius` for
    * Radius — this tool's Radius control is a Tailwind-preset dropdown, not
@@ -1000,9 +1084,9 @@ function GroupSelect({
    * onto ONE compact row with no per-control label text, unlike every other
    * `GroupSelect` consumer (which each get their own labelled row). Opt-in,
    * defaulting to `false` — every EXISTING caller renders byte-identically:
-   * still the same label text, same `CurrentValueLine`, same `sendOp`/hint
-   * wiring, just skipping the label span + current-value readout to fit one
-   * row (the label survives as the control's `aria-label` for a11y). */
+   * still the same label text, same `sendOp`/hint wiring, just skipping the
+   * label span to fit one row (the label survives as the control's
+   * `aria-label` for a11y). */
   compact?: boolean;
 }): React.ReactElement {
   const { sendOp } = useDaemonConnection();
@@ -1060,7 +1144,6 @@ function GroupSelect({
           sendOp({ t: 'set-classes', uid: node.uid, add: edit.add, remove: edit.remove });
         }}
       />
-      {!compact && cssProp && <CurrentValueLine cssProp={cssProp} group={group} />}
     </div>
   );
 }
@@ -1131,9 +1214,9 @@ function GroupButtons({
    * BEFORE the user clicks anything this session is seeded from the
    * element's REAL current computed value (`resolveCurrentPresetValue`)
    * instead of always starting at `fallback` — closes the exact "highlight
-   * disagrees with the honest `CurrentValueLine` right below it" gap the
-   * W4b-2 audit flagged (that highlight used to come from a session hint or
-   * a hardcoded fallback ALONE, never the live value). Opt-in, defaulting to
+   * disagrees with the element's real value" gap the W4b-2 audit flagged
+   * (that highlight used to come from a session hint or a hardcoded fallback
+   * ALONE, never the live value). Opt-in, defaulting to
    * unset/`false`, so every EXISTING caller (Typography's text-align,
    * Layout-item's align-self — neither touched by this pass) renders
    * byte-identically to before; `LayoutContainerSection` alone passes `true`
@@ -1180,7 +1263,8 @@ function GroupButtons({
   // this bug shipped the first time).
   const [touched, setTouched] = React.useState<string | null>(null);
   const hinted = getClassHint(node.uid, group.key);
-  const liveSeed = seedFromLive && cssProp ? resolveCurrentPresetValue(computed, cssProp, group) : null;
+  const liveSeed =
+    seedFromLive && cssProp ? resolveCurrentPresetValue(computed, cssProp, group) : null;
   // FIX-W4b-5b: `noConfidentDefault` drops the trailing `?? fallback` — see
   // this prop's own doc for why (no curated bridge prop exists to ever
   // confirm `fallback` is actually true for THIS element).
@@ -1198,9 +1282,14 @@ function GroupButtons({
   // buttons to fill the pill, while a cluster sharing a row with siblings
   // (Align items/Direction/Wrap) stays compact.
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }} title={hideLabel ? label : undefined}>
+    <div
+      style={{ display: 'flex', flexDirection: 'column', gap: 4 }}
+      title={hideLabel ? label : undefined}
+    >
       {!hideLabel && (
-        <span style={{ fontSize: 'var(--ccs-font-size-xs)', color: 'var(--ccs-text-muted)' }}>{label}</span>
+        <span style={{ fontSize: 'var(--ccs-font-size-xs)', color: 'var(--ccs-text-muted)' }}>
+          {label}
+        </span>
       )}
       <SegmentedGroup
         aria-label={hideLabel ? label : undefined}
@@ -1225,7 +1314,6 @@ function GroupButtons({
           };
         })}
       />
-      {cssProp && <CurrentValueLine cssProp={cssProp} group={group} />}
     </div>
   );
 }
@@ -1287,7 +1375,13 @@ function cssColorToHex(raw: string): { hex: string; alphaPct: number } | null {
  * SV-square's own hue backdrop and the two thumbs' positions); `onChange`
  * fires with a new hex on every drag, letting the caller combine it with the
  * live opacity field exactly like every other color-source write. */
-function ColorSvHuePicker({ hex, onChange }: { hex: string; onChange: (hex: string) => void }): React.ReactElement {
+function ColorSvHuePicker({
+  hex,
+  onChange,
+}: {
+  hex: string;
+  onChange: (hex: string) => void;
+}): React.ReactElement {
   const rgb = hexToRgb(hex) ?? { r: 59, g: 130, b: 246 };
   const hsv = rgbToHsv(rgb);
 
@@ -1445,7 +1539,8 @@ function ColorControl({
   const hintedRaw = getClassHint(node.uid, hintKey);
   const hinted = parseColorHint(hintedRaw);
   const liveSeed = resolveCurrentValue(computed, cssProp);
-  const liveHex = liveSeed !== 'loading' && liveSeed !== 'unset' ? cssColorToHex(liveSeed.raw) : null;
+  const liveHex =
+    liveSeed !== 'loading' && liveSeed !== 'unset' ? cssColorToHex(liveSeed.raw) : null;
 
   const active = touched ?? hinted;
   const displayHex = active?.hex ?? liveHex?.hex ?? null;
@@ -1455,7 +1550,12 @@ function ColorControl({
 
   const tokens = engine.tokensForProperty(cssProp);
   const palette = React.useMemo(
-    () => buildColorPalette(prefix, tokens, (value) => normalizeHex(value) ?? cssColorToHex(value)?.hex),
+    () =>
+      buildColorPalette(
+        prefix,
+        tokens,
+        (value) => normalizeHex(value) ?? cssColorToHex(value)?.hex,
+      ),
     [prefix, tokens],
   );
   const filtered = filterColorPalette(palette, query);
@@ -1482,7 +1582,9 @@ function ColorControl({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-      <span style={{ fontSize: 'var(--ccs-font-size-xs)', color: 'var(--ccs-text-muted)' }}>{label}</span>
+      <span style={{ fontSize: 'var(--ccs-font-size-xs)', color: 'var(--ccs-text-muted)' }}>
+        {label}
+      </span>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, position: 'relative' }}>
         <button
           type="button"
@@ -1583,7 +1685,11 @@ function ColorControl({
                   title={entry.label}
                   aria-label={entry.label}
                   onClick={() => {
-                    applyWrite(entry.baseClass, entry.hex ?? '', entry.hex === undefined ? 100 : displayAlpha);
+                    applyWrite(
+                      entry.baseClass,
+                      entry.hex ?? '',
+                      entry.hex === undefined ? 100 : displayAlpha,
+                    );
                     setOpen(false);
                   }}
                   style={{
@@ -1612,7 +1718,6 @@ function ColorControl({
           </div>
         )}
       </div>
-      <CurrentValueLine cssProp={cssProp} />
     </div>
   );
 }
@@ -1793,7 +1898,6 @@ function ArbitraryPxInput({
   readOnly,
   cssProp,
   unit = 'px',
-  untrackedCaption,
   valueOverride,
   onCommitted,
 }: {
@@ -1804,16 +1908,15 @@ function ArbitraryPxInput({
   buildEdit: (value: number, previous: string | null) => ClassEdit;
   icon?: IconName | undefined;
   /** FIX-W4b-3a: the curated computed-style property this field mirrors/
-   * seeds from (see `CurrentValueLine`'s own doc) — `undefined` when no
-   * curated prop exists for this control (rotation: `@ccs/bridge`'s curated
-   * `GEOMETRY_PROPS` list has no `transform` entry, a disclosed gap, see the
-   * worker report). */
+   * seeds from — `undefined` when no curated prop exists for this control
+   * (rotation: `@ccs/bridge`'s curated `GEOMETRY_PROPS` list has no
+   * `transform` entry, a disclosed gap, see the worker report). W4b-9: this
+   * used to ALSO drive a "Current: …" caption under the field (or, when
+   * `undefined`, an honest "Current: not tracked" caption) — both deleted
+   * (audit rule A2); `cssProp` now ONLY feeds the seed above, never a
+   * rendered caption. */
   cssProp?: string | undefined;
   unit?: 'px' | 'deg';
-  /** Shown instead of a `CurrentValueLine` when `cssProp` is `undefined` —
-   * an honest "this control has no live readout" caption (rotation only),
-   * never silence and never a fabricated value. */
-  untrackedCaption?: string | undefined;
   /** FIX-W4b-7 items 2/3 — an external value that outranks BOTH the session
    * hint and the live computed-style seed, mirroring `FrameGeometryInput`'s
    * own `valueOverride` (same "own last write wins, re-render the sibling"
@@ -1875,15 +1978,6 @@ function ArbitraryPxInput({
           onCommitted?.(value, written);
         }}
       />
-      {cssProp ? (
-        <CurrentValueLine cssProp={cssProp} />
-      ) : (
-        untrackedCaption && (
-          <span style={{ fontSize: 'var(--ccs-font-size-xs)', color: 'var(--ccs-text-subtle)' }}>
-            {untrackedCaption}
-          </span>
-        )
-      )}
     </div>
   );
 }
@@ -1896,7 +1990,18 @@ function ArbitraryPxInput({
  * lock / — / independent-corners), not a free-floating sibling. `action`
  * omitted (X/Y has no third control in real Penpot's `.position` row either)
  * still reserves the column so the input columns above/below it stay
- * pixel-aligned across rows, matching Penpot's shared-grid visual rhythm. */
+ * pixel-aligned across rows, matching Penpot's shared-grid visual rhythm.
+ *
+ * W4b-9 (audit rule A4 — column-align W/H/X/Y, Penpot's own CSS `subgrid`,
+ * `measures.scss:160`): this ALREADY satisfies it. Every W/H row, X/Y row,
+ * and Rotation/Radius row in `SizePositionSection`/`FrameSizeSection` renders
+ * through this ONE shared component with this ONE literal
+ * `gridTemplateColumns` string — since they're direct vertical siblings in
+ * the same fixed-width column, each grid independently resolves to IDENTICAL
+ * pixel column widths, so the W column lines up above the X column (and H
+ * above Y) without needing real CSS `subgrid` (not a `Panel`/layout-affecting
+ * primitive change, just this one already-shared component). Nothing to
+ * change here — flagging it so this isn't mistaken for an overlooked rule. */
 function MeasureRow({
   left,
   right,
@@ -1907,7 +2012,13 @@ function MeasureRow({
   action?: React.ReactNode;
 }): React.ReactElement {
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr var(--ccs-space-7)', gap: 'var(--ccs-space-1)' }}>
+    <div
+      style={{
+        display: 'grid',
+        gridTemplateColumns: '1fr 1fr var(--ccs-space-7)',
+        gap: 'var(--ccs-space-1)',
+      }}
+    >
       <div>{left}</div>
       <div>{right}</div>
       <div
@@ -2054,7 +2165,11 @@ function ToggleIconButton({
         inlineSize: 28,
         blockSize: 28,
         borderRadius: 'calc(var(--ccs-radius) - 2px)',
-        color: disabled ? 'var(--ccs-text-subtle)' : active ? 'var(--ccs-accent)' : 'var(--ccs-text-muted)',
+        color: disabled
+          ? 'var(--ccs-text-subtle)'
+          : active
+            ? 'var(--ccs-accent)'
+            : 'var(--ccs-text-muted)',
         background: active ? 'var(--ccs-bg-panel-raised)' : 'transparent',
         cursor: disabled ? 'not-allowed' : 'pointer',
       }}
@@ -2106,12 +2221,20 @@ function cornerHintKey(corner: RadiusCorner): string {
   return `radius-${corner}-custom`;
 }
 
-function SizePositionSection({ node, readOnly }: { node: TreeNode; readOnly: boolean }): React.ReactElement {
+function SizePositionSection({
+  node,
+  readOnly,
+}: {
+  node: TreeNode;
+  readOnly: boolean;
+}): React.ReactElement {
   const { sendOp } = useDaemonConnection();
   const computed = React.useContext(ComputedStyleContext);
   // Lazy initializer only — this section is always uniquely `key`-ed by
   // `Inspector` (see its own doc), same reasoning as `GroupSelect`.
-  const [position, setPosition] = React.useState(() => getClassHint(node.uid, POSITION_GROUP.key) ?? 'static');
+  const [position, setPosition] = React.useState(
+    () => getClassHint(node.uid, POSITION_GROUP.key) ?? 'static',
+  );
   const canPositionXY = position === 'absolute';
 
   // FIX-W4b-7 item 3 — aspect-ratio (W/H proportion) lock. `aspectLocked`
@@ -2126,7 +2249,10 @@ function SizePositionSection({ node, readOnly }: { node: TreeNode; readOnly: boo
   // own `override` state already solves for the board W/H path, reused here
   // for the element-facing path).
   const [aspectLocked, setAspectLocked] = React.useState(false);
-  const [sizeOverride, setSizeOverride] = React.useState<{ w: number | undefined; h: number | undefined }>({
+  const [sizeOverride, setSizeOverride] = React.useState<{
+    w: number | undefined;
+    h: number | undefined;
+  }>({
     w: undefined,
     h: undefined,
   });
@@ -2134,7 +2260,12 @@ function SizePositionSection({ node, readOnly }: { node: TreeNode; readOnly: boo
   const commitSize = (axis: 'w' | 'h', px: number): void => {
     if (aspectLocked) {
       const otherAxis: 'w' | 'h' = axis === 'w' ? 'h' : 'w';
-      const basisThis = resolveRatioBasis(sizeOverride[axis], getClassHint(node.uid, SIZE_HINT_KEY[axis]), computed, SIZE_CSS_PROP[axis]);
+      const basisThis = resolveRatioBasis(
+        sizeOverride[axis],
+        getClassHint(node.uid, SIZE_HINT_KEY[axis]),
+        computed,
+        SIZE_CSS_PROP[axis],
+      );
       const basisOther = resolveRatioBasis(
         sizeOverride[otherAxis],
         getClassHint(node.uid, SIZE_HINT_KEY[otherAxis]),
@@ -2162,7 +2293,9 @@ function SizePositionSection({ node, readOnly }: { node: TreeNode; readOnly: boo
   // FIX-W4b-7 item 2 — independent per-corner radius toggle. Same
   // remount-per-node lifetime as `aspectLocked` above.
   const [independentCorners, setIndependentCorners] = React.useState(false);
-  const [cornerOverride, setCornerOverride] = React.useState<Record<RadiusCorner, number | null | undefined>>({
+  const [cornerOverride, setCornerOverride] = React.useState<
+    Record<RadiusCorner, number | null | undefined>
+  >({
     tl: undefined,
     tr: undefined,
     br: undefined,
@@ -2208,202 +2341,217 @@ function SizePositionSection({ node, readOnly }: { node: TreeNode; readOnly: boo
     sendOp({ t: 'set-classes', uid: node.uid, add: edit.add, remove: edit.remove });
   };
 
+  // W4b-9 (audit rule A3) — `measures.cljs` is a BARE `.element-set` block in
+  // real Penpot: no `title-bar*`, no "Size & position" heading, no chevron.
+  // Un-Panel'd here to match (a plain `<div>` with the same border/padding
+  // rhythm every other section's body already uses, just with no header).
   return (
-    <Panel title="Size & position" id="inspector-size-position">
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {/* W/H — FIX-W4b-3a: direct numeric fields (Penpot's own plain
-         * editable number), replacing the old Auto/Custom two-step
-         * `<Select>` + arbitrary-input pair. `WIDTH_GROUP`/`HEIGHT_GROUP`'s
-         * named presets (`w-auto`/`w-full`/...) still exist as
-         * `arbitrarySizeEdit`'s remove-candidate list (`inspector-
-         * presets.ts`) — entering a number here still evicts a stale
-         * `w-full` etc. — they're just no longer a separate control. */}
-        {/* FIX-W4b-7 item 3: the 3rd column is now a REAL proportion-lock
-         * toggle (`ToggleIconButton`, `measures.cljs`'s own `:icon (if
-         * proportion-lock "lock" "unlock")`) — while locked, committing
-         * EITHER field co-scales the other to preserve the current W:H
-         * ratio (`coScaleDimension`, `inspector-presets.ts`). */}
-        <MeasureRow
-          left={
-            <ArbitraryPxInput
-              node={node}
-              hintKey={SIZE_HINT_KEY.w}
-              label="W"
-              readOnly={readOnly}
-              icon="character-w"
-              cssProp="width"
-              buildEdit={(px, previous) => arbitrarySizeEdit('w', px, previous)}
-              valueOverride={sizeOverride.w}
-              onCommitted={(px) => commitSize('w', px)}
-            />
-          }
-          right={
-            <ArbitraryPxInput
-              node={node}
-              hintKey={SIZE_HINT_KEY.h}
-              label="H"
-              readOnly={readOnly}
-              icon="character-h"
-              cssProp="height"
-              buildEdit={(px, previous) => arbitrarySizeEdit('h', px, previous)}
-              valueOverride={sizeOverride.h}
-              onCommitted={(px) => commitSize('h', px)}
-            />
-          }
-          action={
-            <ToggleIconButton
-              icon={aspectLocked ? 'lock' : 'unlock'}
-              title={aspectLocked ? 'Unlock proportions' : 'Lock proportions'}
-              active={aspectLocked}
-              disabled={readOnly}
-              onClick={() => setAspectLocked((v) => !v)}
-            />
-          }
-        />
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-          <Select
-            label="Position"
-            value={position}
-            disabled={readOnly}
-            options={optionsFor(POSITION_GROUP)}
-            onChange={(e) => {
-              const next = e.target.value;
-              setPosition(next);
-              if (readOnly) return;
-              const edit = resolveClassEdit(POSITION_GROUP, next);
-              edit.remove = [...edit.remove, ...POSITION_REMOVE_EXTRA];
-              setClassHint(node.uid, POSITION_GROUP.key, next);
-              sendOp({ t: 'set-classes', uid: node.uid, add: edit.add, remove: edit.remove });
-            }}
+    <div
+      data-panel="inspector-size-position"
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 8,
+        paddingInline: 'var(--ccs-space-3)',
+        paddingBlock: 'var(--ccs-space-3)',
+        borderBlockEnd: '1px solid var(--ccs-border)',
+      }}
+    >
+      {/* W/H — FIX-W4b-3a: direct numeric fields (Penpot's own plain
+       * editable number), replacing the old Auto/Custom two-step
+       * `<Select>` + arbitrary-input pair. `WIDTH_GROUP`/`HEIGHT_GROUP`'s
+       * named presets (`w-auto`/`w-full`/...) still exist as
+       * `arbitrarySizeEdit`'s remove-candidate list (`inspector-
+       * presets.ts`) — entering a number here still evicts a stale
+       * `w-full` etc. — they're just no longer a separate control. */}
+      {/* FIX-W4b-7 item 3: the 3rd column is now a REAL proportion-lock
+       * toggle (`ToggleIconButton`, `measures.cljs`'s own `:icon (if
+       * proportion-lock "lock" "unlock")`) — while locked, committing
+       * EITHER field co-scales the other to preserve the current W:H
+       * ratio (`coScaleDimension`, `inspector-presets.ts`). */}
+      <MeasureRow
+        left={
+          <ArbitraryPxInput
+            node={node}
+            hintKey={SIZE_HINT_KEY.w}
+            label="W"
+            readOnly={readOnly}
+            icon="character-w"
+            cssProp="width"
+            buildEdit={(px, previous) => arbitrarySizeEdit('w', px, previous)}
+            valueOverride={sizeOverride.w}
+            onCommitted={(px) => commitSize('w', px)}
           />
-          <CurrentValueLine cssProp="position" group={POSITION_GROUP} />
-        </div>
-        {/* X/Y — FIX-W4b-3a: ALWAYS rendered now (previously hidden entirely
-         * unless already `absolute`) — Penpot always shows a shape's x/y.
-         * Disabled (but still honestly seeded, never a silent no-op write)
-         * while the node is in-flow `static`: its real `left`/`top` computed
-         * values exist, but a plain inset write wouldn't meaningfully move a
-         * normal-flow element, so this follows the task's own "disabled +
-         * honest value beats a no-op" directive rather than writing anyway.
-         * NOTE: the seed reads the CURATED `left`/`top` computed props
-         * (physical) while the write is Tailwind's LOGICAL `start-[Npx]`
-         * (RTL convention, `inspector-presets.ts`'s module doc) — a disclosed
-         * mismatch under `dir="rtl"` inherited from `@ccs/bridge`'s existing
-         * curated prop list (no logical-inset computed prop exists there),
-         * not new to this pass. */}
-        {/* X/Y — no 3rd action in real Penpot's `.position` row either (see
-         * `MeasureRow`'s doc: the column is reserved-but-empty here purely to
-         * keep this row's inputs aligned with the W/H/Rotation-Radius rows
-         * above/below it). */}
-        <MeasureRow
-          left={
-            <ArbitraryPxInput
-              node={node}
-              hintKey="inset-start"
-              label="X"
-              readOnly={readOnly || !canPositionXY}
-              icon="character-x"
-              cssProp="left"
-              buildEdit={(px, previous) => arbitraryInsetEdit('start', px, previous)}
-            />
-          }
-          right={
-            <ArbitraryPxInput
-              node={node}
-              hintKey="inset-top"
-              label="Y"
-              readOnly={readOnly || !canPositionXY}
-              icon="character-y"
-              cssProp="top"
-              buildEdit={(px, previous) => arbitraryInsetEdit('top', px, previous)}
-            />
-          }
+        }
+        right={
+          <ArbitraryPxInput
+            node={node}
+            hintKey={SIZE_HINT_KEY.h}
+            label="H"
+            readOnly={readOnly}
+            icon="character-h"
+            cssProp="height"
+            buildEdit={(px, previous) => arbitrarySizeEdit('h', px, previous)}
+            valueOverride={sizeOverride.h}
+            onCommitted={(px) => commitSize('h', px)}
+          />
+        }
+        action={
+          <ToggleIconButton
+            icon={aspectLocked ? 'lock' : 'unlock'}
+            title={aspectLocked ? 'Unlock proportions' : 'Lock proportions'}
+            active={aspectLocked}
+            disabled={readOnly}
+            onClick={() => setAspectLocked((v) => !v)}
+          />
+        }
+      />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <Select
+          label="Position"
+          value={position}
+          disabled={readOnly}
+          options={optionsFor(POSITION_GROUP)}
+          onChange={(e) => {
+            const next = e.target.value;
+            setPosition(next);
+            if (readOnly) return;
+            const edit = resolveClassEdit(POSITION_GROUP, next);
+            edit.remove = [...edit.remove, ...POSITION_REMOVE_EXTRA];
+            setClassHint(node.uid, POSITION_GROUP.key, next);
+            sendOp({ t: 'set-classes', uid: node.uid, add: edit.add, remove: edit.remove });
+          }}
         />
-        {/* Rotation — FIX-W4b-3a, NEW (see module doc for why FIX-W4's drop of
-         * this field is reversed). No curated computed source exists yet
-         * (disclosed gap, see `ArbitraryPxInput`'s own doc), so this always
-         * shows an honest "not tracked" rather than a fabricated current
-         * value. Radius (`border_radius.cljs`'s `border-radius-menu*`,
-         * embedded directly inside `measures-menu*` in real Penpot — see this
-         * file's module doc for the citation — hence living here, not in the
-         * old "Border & radius" Panel, now just `Stroke`). 3rd column:
-         * FIX-W4b-7 item 2 — a REAL independent-corners toggle
-         * (`border_radius.cljs`'s own `radius-4` mode, reusing its own
-         * `i/corner-radius` glyph): ON swaps the single Radius field for 4
-         * per-corner fields below (`arbitraryCornerRadiusEdit`), OFF
-         * re-consolidates them back into one (`consolidateRadiusFromCorners`)
-         * — see `toggleIndependentCorners`'s own doc for exactly when each
-         * direction writes vs. is a pure no-op UI change. */}
-        <MeasureRow
-          left={
-            <ArbitraryPxInput
-              node={node}
-              hintKey="rotate-custom"
-              label="Rotation"
-              readOnly={readOnly}
-              icon="rotation"
-              unit="deg"
-              untrackedCaption="Current: not tracked"
-              buildEdit={(deg, previous) => arbitraryRotateEdit(deg, previous)}
-            />
-          }
-          right={
-            independentCorners ? (
-              <span
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  blockSize: 'var(--ccs-row-height)',
-                  fontSize: 'var(--ccs-font-size-xs)',
-                  color: 'var(--ccs-text-subtle)',
-                }}
-              >
-                4 corners below
-              </span>
-            ) : (
-              <ArbitraryPxInput
-                node={node}
-                hintKey="radius-custom"
-                label="Radius"
-                readOnly={readOnly}
-                icon="corner-radius"
-                cssProp="border-radius"
-                buildEdit={(px, previous) => arbitraryRadiusEdit(px, previous)}
-              />
-            )
-          }
-          action={
-            <ToggleIconButton
-              icon="corner-radius"
-              title={independentCorners ? 'Use single radius' : 'Independent corners'}
-              active={independentCorners}
-              disabled={readOnly}
-              onClick={toggleIndependentCorners}
-            />
-          }
-        />
-        {independentCorners && (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--ccs-space-1)' }}>
-            {RADIUS_CORNERS.map((corner) => (
-              <ArbitraryPxInput
-                key={corner}
-                node={node}
-                hintKey={cornerHintKey(corner)}
-                label={CORNER_LABEL[corner]}
-                readOnly={readOnly}
-                icon="corner-radius"
-                untrackedCaption="Current: not tracked (per corner)"
-                valueOverride={cornerOverride[corner]}
-                buildEdit={(px, previous) =>
-                  arbitraryCornerRadiusEdit(corner, px, previous, getClassHint(node.uid, 'radius-custom') ?? null)
-                }
-                onCommitted={(px) => setCornerOverride((prev) => ({ ...prev, [corner]: px }))}
-              />
-            ))}
-          </div>
-        )}
       </div>
-    </Panel>
+      {/* X/Y — FIX-W4b-3a: ALWAYS rendered now (previously hidden entirely
+       * unless already `absolute`) — Penpot always shows a shape's x/y.
+       * Disabled (but still honestly seeded, never a silent no-op write)
+       * while the node is in-flow `static`: its real `left`/`top` computed
+       * values exist, but a plain inset write wouldn't meaningfully move a
+       * normal-flow element, so this follows the task's own "disabled +
+       * honest value beats a no-op" directive rather than writing anyway.
+       * NOTE: the seed reads the CURATED `left`/`top` computed props
+       * (physical) while the write is Tailwind's LOGICAL `start-[Npx]`
+       * (RTL convention, `inspector-presets.ts`'s module doc) — a disclosed
+       * mismatch under `dir="rtl"` inherited from `@ccs/bridge`'s existing
+       * curated prop list (no logical-inset computed prop exists there),
+       * not new to this pass. */}
+      {/* X/Y — no 3rd action in real Penpot's `.position` row either (see
+       * `MeasureRow`'s doc: the column is reserved-but-empty here purely to
+       * keep this row's inputs aligned with the W/H/Rotation-Radius rows
+       * above/below it). */}
+      <MeasureRow
+        left={
+          <ArbitraryPxInput
+            node={node}
+            hintKey="inset-start"
+            label="X"
+            readOnly={readOnly || !canPositionXY}
+            icon="character-x"
+            cssProp="left"
+            buildEdit={(px, previous) => arbitraryInsetEdit('start', px, previous)}
+          />
+        }
+        right={
+          <ArbitraryPxInput
+            node={node}
+            hintKey="inset-top"
+            label="Y"
+            readOnly={readOnly || !canPositionXY}
+            icon="character-y"
+            cssProp="top"
+            buildEdit={(px, previous) => arbitraryInsetEdit('top', px, previous)}
+          />
+        }
+      />
+      {/* Rotation — FIX-W4b-3a, NEW (see module doc for why FIX-W4's drop of
+       * this field is reversed). No curated computed source exists yet
+       * (disclosed gap, see `ArbitraryPxInput`'s own doc) — W4b-9: this used
+       * to show an honest "Current: not tracked" caption in that case;
+       * deleted per audit rule A2 (no caption line at all, tracked or not).
+       * Radius (`border_radius.cljs`'s `border-radius-menu*`,
+       * embedded directly inside `measures-menu*` in real Penpot — see this
+       * file's module doc for the citation — hence living here, not in the
+       * old "Border & radius" Panel, now just `Stroke`). 3rd column:
+       * FIX-W4b-7 item 2 — a REAL independent-corners toggle
+       * (`border_radius.cljs`'s own `radius-4` mode, reusing its own
+       * `i/corner-radius` glyph): ON swaps the single Radius field for 4
+       * per-corner fields below (`arbitraryCornerRadiusEdit`), OFF
+       * re-consolidates them back into one (`consolidateRadiusFromCorners`)
+       * — see `toggleIndependentCorners`'s own doc for exactly when each
+       * direction writes vs. is a pure no-op UI change. */}
+      <MeasureRow
+        left={
+          <ArbitraryPxInput
+            node={node}
+            hintKey="rotate-custom"
+            label="Rotation"
+            readOnly={readOnly}
+            icon="rotation"
+            unit="deg"
+            buildEdit={(deg, previous) => arbitraryRotateEdit(deg, previous)}
+          />
+        }
+        right={
+          independentCorners ? (
+            <span
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                blockSize: 'var(--ccs-row-height)',
+                fontSize: 'var(--ccs-font-size-xs)',
+                color: 'var(--ccs-text-subtle)',
+              }}
+            >
+              4 corners below
+            </span>
+          ) : (
+            <ArbitraryPxInput
+              node={node}
+              hintKey="radius-custom"
+              label="Radius"
+              readOnly={readOnly}
+              icon="corner-radius"
+              cssProp="border-radius"
+              buildEdit={(px, previous) => arbitraryRadiusEdit(px, previous)}
+            />
+          )
+        }
+        action={
+          <ToggleIconButton
+            icon="corner-radius"
+            title={independentCorners ? 'Use single radius' : 'Independent corners'}
+            active={independentCorners}
+            disabled={readOnly}
+            onClick={toggleIndependentCorners}
+          />
+        }
+      />
+      {independentCorners && (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--ccs-space-1)' }}>
+          {RADIUS_CORNERS.map((corner) => (
+            <ArbitraryPxInput
+              key={corner}
+              node={node}
+              hintKey={cornerHintKey(corner)}
+              label={CORNER_LABEL[corner]}
+              readOnly={readOnly}
+              icon="corner-radius"
+              valueOverride={cornerOverride[corner]}
+              buildEdit={(px, previous) =>
+                arbitraryCornerRadiusEdit(
+                  corner,
+                  px,
+                  previous,
+                  getClassHint(node.uid, 'radius-custom') ?? null,
+                )
+              }
+              onCommitted={(px) => setCornerOverride((prev) => ({ ...prev, [corner]: px }))}
+            />
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -2454,7 +2602,10 @@ function FrameSizeSection({
   // writes BOTH axes from a single button, outside either field's own local
   // state) also updates both fields' displayed value, not just the one a
   // user might have typed into directly.
-  const [override, setOverride] = React.useState<{ w: number | null; h: number | null }>({ w: null, h: null });
+  const [override, setOverride] = React.useState<{ w: number | null; h: number | null }>({
+    w: null,
+    h: null,
+  });
 
   const applyGeometry = React.useCallback(
     (patch: { w?: number; h?: number }) => {
@@ -2465,74 +2616,84 @@ function FrameSizeSection({
     [canWrite, fileFolder, framePath, canvasHandle],
   );
 
+  // W4b-9 (audit rule A3) — same bare-block treatment as the element-facing
+  // `SizePositionSection` above: no `title-bar*`, no heading, no chevron.
   return (
-    <Panel title="Size & position" id="inspector-size-position">
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {/* FIX-W4b-5: same `measures.cljs` 3-col `.element-set` grid as the
-         * element-facing `SizePositionSection` above (see `MeasureRow`'s
-         * doc). UNLIKE that section's own W/H lock (wired FIX-W4b-7 — see
-         * `StubIconButton`'s doc), this board-facing lock stays an honest,
-         * disabled `StubIconButton`: a board's W/H write path
-         * (`setFrameGeometry`) has no co-scaling concept implemented,
-         * disclosed as a carry-forward, not this pass's job to add. */}
-        <MeasureRow
-          left={
-            <FrameGeometryInput
-              label="W"
-              icon="character-w"
-              cssProp="width"
-              disabled={!canWrite}
-              valueOverride={override.w}
-              onCommit={(w) => applyGeometry({ w })}
-            />
-          }
-          right={
-            <FrameGeometryInput
-              label="H"
-              icon="character-h"
-              cssProp="height"
-              disabled={!canWrite}
-              valueOverride={override.h}
-              onCommit={(h) => applyGeometry({ h })}
-            />
-          }
-          action={<StubIconButton icon="unlock" title="Lock proportions" />}
-        />
-        {/* Size presets + device-type quick-selects (item 3) — cited against
-         * Penpot's own `app.main.constants/size-presets` catalog, see
-         * `inspector-presets.ts`'s own module doc for the full citation +
-         * why there are no device-type ICONS (Penpot's own list is
-         * text-only). */}
-        <Select
-          label="Size presets"
-          value=""
-          disabled={!canWrite}
-          options={[
-            { value: '', label: 'Choose a device…' },
-            ...DEVICE_PRESETS.map((p) => ({ value: p.value, label: `${p.label} — ${p.w}×${p.h}` })),
-          ]}
-          onChange={(e) => {
-            const preset = DEVICE_PRESETS.find((p) => p.value === e.target.value);
-            if (preset) applyGeometry({ w: preset.w, h: preset.h });
-          }}
-        />
-        <div style={{ display: 'flex', gap: 4 }}>
-          {DEVICE_QUICK_PRESETS.map((preset) => (
-            <Button
-              key={preset.value}
-              type="button"
-              size="sm"
-              variant="secondary"
-              disabled={!canWrite}
-              title={`${preset.label} — ${preset.w}×${preset.h}`}
-              onClick={() => applyGeometry({ w: preset.w, h: preset.h })}
-            >
-              {DEVICE_CATEGORY_LABEL[preset.category]}
-            </Button>
-          ))}
-        </div>
+    <div
+      data-panel="inspector-size-position"
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 8,
+        paddingInline: 'var(--ccs-space-3)',
+        paddingBlock: 'var(--ccs-space-3)',
+        borderBlockEnd: '1px solid var(--ccs-border)',
+      }}
+    >
+      {/* FIX-W4b-5: same `measures.cljs` 3-col `.element-set` grid as the
+       * element-facing `SizePositionSection` above (see `MeasureRow`'s
+       * doc). UNLIKE that section's own W/H lock (wired FIX-W4b-7 — see
+       * `StubIconButton`'s doc), this board-facing lock stays an honest,
+       * disabled `StubIconButton`: a board's W/H write path
+       * (`setFrameGeometry`) has no co-scaling concept implemented,
+       * disclosed as a carry-forward, not this pass's job to add. */}
+      <MeasureRow
+        left={
+          <FrameGeometryInput
+            label="W"
+            icon="character-w"
+            cssProp="width"
+            disabled={!canWrite}
+            valueOverride={override.w}
+            onCommit={(w) => applyGeometry({ w })}
+          />
+        }
+        right={
+          <FrameGeometryInput
+            label="H"
+            icon="character-h"
+            cssProp="height"
+            disabled={!canWrite}
+            valueOverride={override.h}
+            onCommit={(h) => applyGeometry({ h })}
+          />
+        }
+        action={<StubIconButton icon="unlock" title="Lock proportions" />}
+      />
+      {/* Size presets + device-type quick-selects (item 3) — cited against
+       * Penpot's own `app.main.constants/size-presets` catalog, see
+       * `inspector-presets.ts`'s own module doc for the full citation +
+       * why there are no device-type ICONS (Penpot's own list is
+       * text-only). */}
+      <Select
+        label="Size presets"
+        value=""
+        disabled={!canWrite}
+        options={[
+          { value: '', label: 'Choose a device…' },
+          ...DEVICE_PRESETS.map((p) => ({ value: p.value, label: `${p.label} — ${p.w}×${p.h}` })),
+        ]}
+        onChange={(e) => {
+          const preset = DEVICE_PRESETS.find((p) => p.value === e.target.value);
+          if (preset) applyGeometry({ w: preset.w, h: preset.h });
+        }}
+      />
+      <div style={{ display: 'flex', gap: 4 }}>
+        {DEVICE_QUICK_PRESETS.map((preset) => (
+          <Button
+            key={preset.value}
+            type="button"
+            size="sm"
+            variant="secondary"
+            disabled={!canWrite}
+            title={`${preset.label} — ${preset.w}×${preset.h}`}
+            onClick={() => applyGeometry({ w: preset.w, h: preset.h })}
+          >
+            {DEVICE_CATEGORY_LABEL[preset.category]}
+          </Button>
+        ))}
       </div>
-    </Panel>
+    </div>
   );
 }
 
@@ -2592,19 +2753,6 @@ function FrameGeometryInput({
           onCommit(value);
         }}
       />
-      {/* FIX-W4b-3a bug fix (see this function's own doc): NOT the generic
-       * `CurrentValueLine` (it reads `ComputedStyleContext` directly, which
-       * goes stale the instant a geometry write commits, with no re-fetch
-       * trigger to correct it — confirmed live: it kept showing the board's
-       * PREVIOUS size after a preset click). This caption instead mirrors
-       * the SAME override-aware value the input itself displays, so the two
-       * can never visibly disagree. */}
-      <span
-        data-testid={`inspector-current-${cssProp}`}
-        style={{ fontSize: 'var(--ccs-font-size-xs)', color: 'var(--ccs-text-subtle)' }}
-      >
-        {valueOverride !== null ? `Current: ${valueOverride}px` : formatCurrentValue(seed)}
-      </span>
     </div>
   );
 }
@@ -2623,7 +2771,13 @@ function FrameGeometryInput({
 // existing `GAP_GROUP`/`PADDING_*_GROUP` tables purely as remove-candidate
 // baselines now (see those exports' own doc). ------------------------------
 
-function LayoutContainerSection({ node, readOnly }: { node: TreeNode; readOnly: boolean }): React.ReactElement {
+function LayoutContainerSection({
+  node,
+  readOnly,
+}: {
+  node: TreeNode;
+  readOnly: boolean;
+}): React.ReactElement {
   // FIX-W4b-3b: mirrors the live `Direction`/`Wrap` choice so `Justify`/
   // `Align items`/`Align content` below can pick Penpot's matching row/
   // column icon set (`layout_container.cljs`'s own `get-layout-flex-icon`
@@ -2723,8 +2877,8 @@ function LayoutContainerSection({ node, readOnly }: { node: TreeNode; readOnly: 
         />
         {/* Penpot's `third-row`: align-content, ONLY while wrapping — no
          * curated computed-style prop exists for `align-content` (bridge/
-         * protocol frozen, see this section's module doc), so no
-         * `cssProp`/`CurrentValueLine` here, same honesty rule as rotation. */}
+         * protocol frozen, see this section's module doc), so no `cssProp`
+         * (and, per audit rule A2, no caption either way). */}
         {isWrapping && (
           <GroupButtons
             node={node}
@@ -2791,7 +2945,9 @@ function LayoutContainerSection({ node, readOnly }: { node: TreeNode; readOnly: 
             variant="secondary"
             active={paddingMode === 'sides'}
             disabled={readOnly}
-            title={paddingMode === 'sides' ? 'Link padding (simple)' : 'Independent sides (multiple)'}
+            title={
+              paddingMode === 'sides' ? 'Link padding (simple)' : 'Independent sides (multiple)'
+            }
             aria-label="Toggle independent padding sides"
             onClick={() => setPaddingMode((m) => (m === 'sides' ? 'linked' : 'sides'))}
           >
@@ -2809,7 +2965,9 @@ function LayoutContainerSection({ node, readOnly }: { node: TreeNode; readOnly: 
                   readOnly={readOnly}
                   hintKeys={['padding-top']}
                   buildEdit={(px) =>
-                    arbitraryPaddingSideEdit('top', px, [getClassHint(node.uid, 'padding-bottom') ?? null])
+                    arbitraryPaddingSideEdit('top', px, [
+                      getClassHint(node.uid, 'padding-bottom') ?? null,
+                    ])
                   }
                 />
               </div>
@@ -2821,7 +2979,9 @@ function LayoutContainerSection({ node, readOnly }: { node: TreeNode; readOnly: 
                   readOnly={readOnly}
                   hintKeys={['padding-bottom']}
                   buildEdit={(px) =>
-                    arbitraryPaddingSideEdit('bottom', px, [getClassHint(node.uid, 'padding-top') ?? null])
+                    arbitraryPaddingSideEdit('bottom', px, [
+                      getClassHint(node.uid, 'padding-top') ?? null,
+                    ])
                   }
                 />
               </div>
@@ -2835,7 +2995,9 @@ function LayoutContainerSection({ node, readOnly }: { node: TreeNode; readOnly: 
                   readOnly={readOnly}
                   hintKeys={['padding-start']}
                   buildEdit={(px) =>
-                    arbitraryPaddingSideEdit('start', px, [getClassHint(node.uid, 'padding-end') ?? null])
+                    arbitraryPaddingSideEdit('start', px, [
+                      getClassHint(node.uid, 'padding-end') ?? null,
+                    ])
                   }
                 />
               </div>
@@ -2847,7 +3009,9 @@ function LayoutContainerSection({ node, readOnly }: { node: TreeNode; readOnly: 
                   readOnly={readOnly}
                   hintKeys={['padding-end']}
                   buildEdit={(px) =>
-                    arbitraryPaddingSideEdit('end', px, [getClassHint(node.uid, 'padding-start') ?? null])
+                    arbitraryPaddingSideEdit('end', px, [
+                      getClassHint(node.uid, 'padding-start') ?? null,
+                    ])
                   }
                 />
               </div>
@@ -2866,9 +3030,13 @@ function LayoutContainerSection({ node, readOnly }: { node: TreeNode; readOnly: 
  * `LAYOUT_PROPS` list has no `padding-*` entry — a disclosed, protocol-
  * frozen gap this task's own HARD CONSTRAINTS forbid fixing here, see the
  * worker report), so every field is seeded ONLY from its own session
- * hint(s), never a fabricated live value — an honest static "Not tracked"
- * caption always shows instead of a `CurrentValueLine`, the same treatment
- * `ArbitraryPxInput` already gives Rotation. `hintKeys` is plural
+ * hint(s), never a fabricated live value. NOTE (FIX-W4b-9b): this used to
+ * also render its own static "Not tracked" caption below the field, left
+ * AS-IS by W4b-9 as out of that workstream's scope; that caption has now
+ * been removed here (same banned caption pattern W4b-9's rule A2 removed
+ * everywhere else, flagged live by the human) — the field itself, its
+ * seeding, and its write path are unchanged.
+ * `hintKeys` is plural
  * specifically so Penpot's own simple/multiple padding-mode toggle can
  * SHARE hint keys across both representations of the same box side (linked
  * "Vertical" writes BOTH `padding-top` and `padding-bottom`; per-side "Top"/
@@ -2936,18 +3104,29 @@ function PaddingField({
           sendOp({ t: 'set-classes', uid: node.uid, add: edit.add, remove: edit.remove });
         }}
       />
-      <span style={{ fontSize: 'var(--ccs-font-size-xs)', color: 'var(--ccs-text-subtle)' }}>Not tracked</span>
     </div>
   );
 }
 
 // --- Layout item (layout_item.cljs) --------------------------------------
 
-function LayoutItemSection({ node, readOnly }: { node: TreeNode; readOnly: boolean }): React.ReactElement {
+function LayoutItemSection({
+  node,
+  readOnly,
+}: {
+  node: TreeNode;
+  readOnly: boolean;
+}): React.ReactElement {
   return (
     <Panel title="Layout item" id="inspector-layout-item">
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        <GroupSelect node={node} group={GROW_GROUP} label="Flex" fallback="none" readOnly={readOnly} />
+        <GroupSelect
+          node={node}
+          group={GROW_GROUP}
+          label="Flex"
+          fallback="none"
+          readOnly={readOnly}
+        />
         {/* FIX-W4b-3b: dropped the visible "Align self" label for the same
          * density reason `LayoutContainerSection`'s icon rows dropped
          * theirs — `layout_item.cljs`'s own `align-self-row` carries no
@@ -2961,8 +3140,7 @@ function LayoutItemSection({ node, readOnly }: { node: TreeNode; readOnly: boole
         {/* FIX-W4b-5b (audit bug): `align-self` has NO curated bridge
          * computed-style prop (`@ccs/bridge`'s `computed-style.ts`
          * `LAYOUT_PROPS` list — confirmed, no entry), so this row can never
-         * `seedFromLive` and had no `CurrentValueLine` to disagree with
-         * either — but the OLD unconditional `fallback="auto"` still always
+         * `seedFromLive` — but the OLD unconditional `fallback="auto"` still always
          * highlighted the "auto"/remove chip regardless of the element's
          * real `align-self`, a confidently-WRONG-or-right-by-luck highlight
          * with zero way to verify it. `noConfidentDefault` drops that
@@ -2980,7 +3158,13 @@ function LayoutItemSection({ node, readOnly }: { node: TreeNode; readOnly: boole
           hideLabel
           noConfidentDefault
         />
-        <GroupSelect node={node} group={ORDER_GROUP} label="Order" fallback="none" readOnly={readOnly} />
+        <GroupSelect
+          node={node}
+          group={ORDER_GROUP}
+          label="Order"
+          fallback="none"
+          readOnly={readOnly}
+        />
       </div>
     </Panel>
   );
@@ -2988,7 +3172,13 @@ function LayoutItemSection({ node, readOnly }: { node: TreeNode; readOnly: boole
 
 // --- Typography (typography.cljs) ----------------------------------------
 
-function TypographySection({ node, readOnly }: { node: TreeNode; readOnly: boolean }): React.ReactElement {
+function TypographySection({
+  node,
+  readOnly,
+}: {
+  node: TreeNode;
+  readOnly: boolean;
+}): React.ReactElement {
   // FIX-W4b-2: this app's own `dir` (playbook §5.9/ADR-0022 RTL-first) — read
   // once per render (no listener: the document's writing direction doesn't
   // flip mid-session in this tool) so `textAlignIcon` shows the physically
@@ -3000,7 +3190,13 @@ function TypographySection({ node, readOnly }: { node: TreeNode; readOnly: boole
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         <div style={{ display: 'flex', gap: 8 }}>
           <div style={{ flex: 1 }}>
-            <GroupSelect node={node} group={TEXT_SIZE_GROUP} label="Size" fallback="base" readOnly={readOnly} cssProp="font-size" />
+            <GroupSelect
+              node={node}
+              group={TEXT_SIZE_GROUP}
+              label="Size"
+              fallback="base"
+              readOnly={readOnly}
+            />
           </div>
           <div style={{ flex: 1 }}>
             <GroupSelect
@@ -3009,7 +3205,6 @@ function TypographySection({ node, readOnly }: { node: TreeNode; readOnly: boole
               label="Weight"
               fallback="normal"
               readOnly={readOnly}
-              cssProp="font-weight"
             />
           </div>
         </div>
@@ -3021,7 +3216,6 @@ function TypographySection({ node, readOnly }: { node: TreeNode; readOnly: boole
               label="Line height"
               fallback="normal"
               readOnly={readOnly}
-              cssProp="line-height"
             />
           </div>
           <div style={{ flex: 1 }}>
@@ -3031,7 +3225,6 @@ function TypographySection({ node, readOnly }: { node: TreeNode; readOnly: boole
               label="Letter spacing"
               fallback="normal"
               readOnly={readOnly}
-              cssProp="letter-spacing"
             />
           </div>
         </div>
@@ -3039,16 +3232,11 @@ function TypographySection({ node, readOnly }: { node: TreeNode; readOnly: boole
          * computed-style list (`@ccs/bridge`'s `computed-style.ts`
          * `TYPOGRAPHY_PROPS`) — this row was missing `seedFromLive`
          * entirely, so its at-rest highlight was ALWAYS `fallback`
-         * ("start"), regardless of the element's real `text-align`, while
-         * the `CurrentValueLine` right below it honestly showed the real
-         * value — a visible pill-vs-caption disagreement on ANY
-         * center/right/justify-aligned text node (confirmed live: a
-         * `text-align: center` h1 highlighted "Start" while its caption read
-         * "Current: Center (center)"). `seedFromLive` makes the highlight
-         * follow the exact same `touched ?? hinted ?? liveSeed ?? fallback`
-         * precedence every OTHER cssProp-backed row in this file already
-         * uses (`LayoutContainerSection`'s Align items/Direction/Wrap/
-         * Justify). */}
+         * ("start"), regardless of the element's real `text-align`. `seedFromLive`
+         * makes the highlight follow the exact same
+         * `touched ?? hinted ?? liveSeed ?? fallback` precedence every OTHER
+         * cssProp-backed row in this file already uses
+         * (`LayoutContainerSection`'s Align items/Direction/Wrap/Justify). */}
         <GroupButtons
           node={node}
           group={TEXT_ALIGN_GROUP}
@@ -3065,12 +3253,70 @@ function TypographySection({ node, readOnly }: { node: TreeNode; readOnly: boole
   );
 }
 
+/** W4b-9 (audit rule A1) — Penpot's shared `title-bar*` add-model
+ * (`ui/components/title_bar.cljs:14-42`; `fill.cljs:200-267`/`stroke.cljs`/
+ * `shadow.cljs:140-185` each wrap their own body in it): an EMPTY section
+ * renders `.title-only` — the label + a single `+` action, and NO chevron at
+ * all (there's nothing to expand/collapse yet); a POPULATED section is a
+ * normal collapsible `Panel` (chevron + body), with its own per-row `-`
+ * remove action living INSIDE the body (matching all three cited files —
+ * the `-` is a ROW action, not a header action). `FillSection`/
+ * `StrokeSection`/`ShadowSection` below already toggled their header's `+`
+ * action via `Panel`'s pre-existing `actions` prop (FIX-W4b-6); this wrapper
+ * additionally toggles `Panel`'s new `collapsible` prop so the EMPTY state
+ * also loses its chevron, closing the last gap audit rule A1 flagged. */
+function AddableSection({
+  title,
+  id,
+  icon,
+  hasValue,
+  addTitle,
+  onAdd,
+  readOnly,
+  children,
+}: {
+  title: string;
+  // Required (not optional) — every real caller (Fill/Stroke/Shadow) always
+  // supplies both, and `exactOptionalPropertyTypes` (this repo's tsconfig)
+  // would otherwise reject forwarding a possibly-`undefined` local straight
+  // through to `Panel`'s own (genuinely optional) `id`/`icon` props.
+  id: string;
+  icon: IconName;
+  hasValue: boolean;
+  addTitle: string;
+  onAdd: () => void;
+  readOnly: boolean;
+  children?: React.ReactNode;
+}): React.ReactElement {
+  return (
+    <Panel
+      title={title}
+      id={id}
+      icon={icon}
+      collapsible={hasValue}
+      actions={
+        !hasValue ? (
+          <PanelIconButton icon="add" title={addTitle} onClick={onAdd} disabled={readOnly} />
+        ) : undefined
+      }
+    >
+      {hasValue ? children : null}
+    </Panel>
+  );
+}
+
 // --- Fill (fill.cljs) — FIX-W4b-6 add-model: EMPTY (title + `+`) until a
 // background exists; then the existing `ColorControl` row (+ token-bind) and
 // a `-` to remove. Present-vs-empty is REAL state, not a guess — see this
 // file's own FIX-W4b-6 module-doc section for the full citation. ----------
 
-function FillSection({ node, readOnly }: { node: TreeNode; readOnly: boolean }): React.ReactElement {
+function FillSection({
+  node,
+  readOnly,
+}: {
+  node: TreeNode;
+  readOnly: boolean;
+}): React.ReactElement {
   const { sendOp } = useDaemonConnection();
   const engine = useEngineApi();
   const computed = React.useContext(ComputedStyleContext);
@@ -3102,7 +3348,12 @@ function FillSection({ node, readOnly }: { node: TreeNode; readOnly: boolean }):
     setClassHint(
       node.uid,
       hintKey,
-      serializeColorHint({ hex: '#ffffff', alphaPct: 100, baseClass: FILL_DEFAULT_CLASS, written: FILL_DEFAULT_CLASS }),
+      serializeColorHint({
+        hex: '#ffffff',
+        alphaPct: 100,
+        baseClass: FILL_DEFAULT_CLASS,
+        written: FILL_DEFAULT_CLASS,
+      }),
     );
   }
 
@@ -3118,49 +3369,73 @@ function FillSection({ node, readOnly }: { node: TreeNode; readOnly: boolean }):
     const written = hinted?.written ?? (liveHex ? `bg-[${liveHex.hex}]` : FILL_DEFAULT_CLASS);
     const edit = resolveRemoveFillEdit(written);
     sendOp({ t: 'set-classes', uid: node.uid, add: edit.add, remove: edit.remove });
-    setClassHint(node.uid, hintKey, serializeColorHint({ hex: '', alphaPct: 100, baseClass: '', written: '' }));
+    setClassHint(
+      node.uid,
+      hintKey,
+      serializeColorHint({ hex: '', alphaPct: 100, baseClass: '', written: '' }),
+    );
   }
 
   return (
-    <Panel
+    <AddableSection
       title="Fill"
       id="inspector-fill"
       icon="swatches"
-      actions={!hasFill ? <PanelIconButton icon="add" title="Add fill" onClick={onAdd} disabled={readOnly} /> : undefined}
+      hasValue={hasFill}
+      addTitle="Add fill"
+      onAdd={onAdd}
+      readOnly={readOnly}
     >
-      {hasFill && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6 }}>
-            <div style={{ flex: 1, minInlineSize: 0 }}>
-              <ColorControl node={node} prefix="bg" cssProp="background-color" label="Background" readOnly={readOnly} />
-            </div>
-            <PanelIconButton icon="remove" title="Remove fill" onClick={onRemove} disabled={readOnly} />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6 }}>
+          <div style={{ flex: 1, minInlineSize: 0 }}>
+            <ColorControl
+              node={node}
+              prefix="bg"
+              cssProp="background-color"
+              label="Background"
+              readOnly={readOnly}
+            />
           </div>
-          <Select
-            label="Bind token"
-            value={tokenName}
+          <PanelIconButton
+            icon="remove"
+            title="Remove fill"
+            onClick={onRemove}
             disabled={readOnly}
-            onChange={(e) => setTokenName(e.target.value)}
-            options={[{ value: '', label: 'Choose a token…' }, ...tokens.map((t) => ({ value: t.name, label: t.name }))]}
           />
-          <Button
-            variant="secondary"
-            size="sm"
-            disabled={!tokenName || readOnly}
-            onClick={() => {
-              // CR (mock-adapter wire shape, see engine-api.ts's module doc):
-              // the real token->class/var mapping is P4 scope (ADR-0019
-              // decision 6: `{token}` set-prop is P3-"unsupported" until
-              // then). This proves the CLIENT emits the correct op shape;
-              // the daemon may legitimately answer `op-rejected`.
-              sendOp({ t: 'set-prop', uid: node.uid, name: 'data-token-fill', value: { token: tokenName } });
-            }}
-          >
-            Bind
-          </Button>
         </div>
-      )}
-    </Panel>
+        <Select
+          label="Bind token"
+          value={tokenName}
+          disabled={readOnly}
+          onChange={(e) => setTokenName(e.target.value)}
+          options={[
+            { value: '', label: 'Choose a token…' },
+            ...tokens.map((t) => ({ value: t.name, label: t.name })),
+          ]}
+        />
+        <Button
+          variant="secondary"
+          size="sm"
+          disabled={!tokenName || readOnly}
+          onClick={() => {
+            // CR (mock-adapter wire shape, see engine-api.ts's module doc):
+            // the real token->class/var mapping is P4 scope (ADR-0019
+            // decision 6: `{token}` set-prop is P3-"unsupported" until
+            // then). This proves the CLIENT emits the correct op shape;
+            // the daemon may legitimately answer `op-rejected`.
+            sendOp({
+              t: 'set-prop',
+              uid: node.uid,
+              name: 'data-token-fill',
+              value: { token: tokenName },
+            });
+          }}
+        >
+          Bind
+        </Button>
+      </div>
+    </AddableSection>
   );
 }
 
@@ -3172,7 +3447,13 @@ function FillSection({ node, readOnly }: { node: TreeNode; readOnly: boolean }):
 // aren't in the frozen bridge's curated computed-style list, and
 // `border-color` alone can't reliably signal "has a visible border"). ------
 
-function StrokeSection({ node, readOnly }: { node: TreeNode; readOnly: boolean }): React.ReactElement {
+function StrokeSection({
+  node,
+  readOnly,
+}: {
+  node: TreeNode;
+  readOnly: boolean;
+}): React.ReactElement {
   const { sendOp } = useDaemonConnection();
   const [touched, setTouched] = React.useState<boolean | null>(null);
   const hasStroke = touched ?? getClassHint(node.uid, 'border-enabled') === 'on';
@@ -3204,37 +3485,51 @@ function StrokeSection({ node, readOnly }: { node: TreeNode; readOnly: boolean }
     const colorWritten = colorHint?.written ?? STROKE_DEFAULT_COLOR_CLASS;
     const edit = resolveRemoveStrokeEdit(colorWritten);
     sendOp({ t: 'set-classes', uid: node.uid, add: edit.add, remove: edit.remove });
-    setClassHint(node.uid, 'border-color', serializeColorHint({ hex: '', alphaPct: 100, baseClass: '', written: '' }));
+    setClassHint(
+      node.uid,
+      'border-color',
+      serializeColorHint({ hex: '', alphaPct: 100, baseClass: '', written: '' }),
+    );
   }
 
   return (
-    <Panel
+    <AddableSection
       title="Stroke"
       id="inspector-stroke"
       icon="stroke-size"
-      actions={
-        !hasStroke ? <PanelIconButton icon="add" title="Add stroke" onClick={onAdd} disabled={readOnly} /> : undefined
-      }
+      hasValue={hasStroke}
+      addTitle="Add stroke"
+      onAdd={onAdd}
+      readOnly={readOnly}
     >
-      {hasStroke && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6 }}>
-            <div style={{ flex: 1, minInlineSize: 0 }}>
-              <GroupSelect
-                node={node}
-                group={BORDER_WIDTH_GROUP}
-                label="Width"
-                fallback="1"
-                readOnly={readOnly}
-                leadingIcon="stroke-size"
-              />
-            </div>
-            <PanelIconButton icon="remove" title="Remove stroke" onClick={onRemove} disabled={readOnly} />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6 }}>
+          <div style={{ flex: 1, minInlineSize: 0 }}>
+            <GroupSelect
+              node={node}
+              group={BORDER_WIDTH_GROUP}
+              label="Width"
+              fallback="1"
+              readOnly={readOnly}
+              leadingIcon="stroke-size"
+            />
           </div>
-          <ColorControl node={node} prefix="border" cssProp="border-color" label="Color" readOnly={readOnly} />
+          <PanelIconButton
+            icon="remove"
+            title="Remove stroke"
+            onClick={onRemove}
+            disabled={readOnly}
+          />
         </div>
-      )}
-    </Panel>
+        <ColorControl
+          node={node}
+          prefix="border"
+          cssProp="border-color"
+          label="Color"
+          readOnly={readOnly}
+        />
+      </div>
+    </AddableSection>
   );
 }
 
@@ -3243,7 +3538,13 @@ function StrokeSection({ node, readOnly }: { node: TreeNode; readOnly: boolean }
 // `none`, a hard equivalence like Fill's `transparent` check (see this
 // file's own FIX-W4b-6 module-doc section). -------------------------------
 
-function ShadowSection({ node, readOnly }: { node: TreeNode; readOnly: boolean }): React.ReactElement {
+function ShadowSection({
+  node,
+  readOnly,
+}: {
+  node: TreeNode;
+  readOnly: boolean;
+}): React.ReactElement {
   const { sendOp } = useDaemonConnection();
   const computed = React.useContext(ComputedStyleContext);
   const [touched, setTouched] = React.useState<boolean | null>(null);
@@ -3269,30 +3570,33 @@ function ShadowSection({ node, readOnly }: { node: TreeNode; readOnly: boolean }
   }
 
   return (
-    <Panel
+    <AddableSection
       title="Shadow"
       id="inspector-shadow"
       icon="drop-shadow"
-      actions={
-        !hasShadow ? <PanelIconButton icon="add" title="Add shadow" onClick={onAdd} disabled={readOnly} /> : undefined
-      }
+      hasValue={hasShadow}
+      addTitle="Add shadow"
+      onAdd={onAdd}
+      readOnly={readOnly}
     >
-      {hasShadow && (
-        <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6 }}>
-          <div style={{ flex: 1, minInlineSize: 0 }}>
-            <GroupSelect
-              node={node}
-              group={SHADOW_GROUP}
-              label="Shadow"
-              fallback={SHADOW_DEFAULT_VALUE}
-              readOnly={readOnly}
-              cssProp="box-shadow"
-            />
-          </div>
-          <PanelIconButton icon="remove" title="Remove shadow" onClick={onRemove} disabled={readOnly} />
+      <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6 }}>
+        <div style={{ flex: 1, minInlineSize: 0 }}>
+          <GroupSelect
+            node={node}
+            group={SHADOW_GROUP}
+            label="Shadow"
+            fallback={SHADOW_DEFAULT_VALUE}
+            readOnly={readOnly}
+          />
         </div>
-      )}
-    </Panel>
+        <PanelIconButton
+          icon="remove"
+          title="Remove shadow"
+          onClick={onRemove}
+          disabled={readOnly}
+        />
+      </div>
+    </AddableSection>
   );
 }
 
@@ -3374,7 +3678,14 @@ function ComponentPropsSection({
        * dense `component.cljs` rows rather than a free-form form. */}
       <ul
         data-testid="component-props-list"
-        style={{ display: 'flex', flexDirection: 'column', gap: 8, margin: 0, padding: 0, listStyle: 'none' }}
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 8,
+          margin: 0,
+          padding: 0,
+          listStyle: 'none',
+        }}
       >
         {entries.map(([propName, entry]) => (
           <li

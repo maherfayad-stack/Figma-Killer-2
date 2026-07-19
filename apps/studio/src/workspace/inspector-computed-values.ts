@@ -89,7 +89,7 @@ export function resolveCurrentValue(
  * element's REAL current value — closing the exact gap the W4b-2 audit
  * flagged: that control's highlight used to come from a session hint/
  * fallback ALONE, so it could show a DIFFERENT button highlighted than the
- * `CurrentValueLine` right below it honestly reported. Returns `null`
+ * element's actual live value. Returns `null`
  * (never a guess) when the bridge hasn't answered, the prop is unset, or no
  * preset's value matches — same honesty rule `resolveCurrentValue` already
  * follows, just surfacing the preset's `value` instead of its `label`. */
@@ -105,11 +105,11 @@ export function resolveCurrentPresetValue(
   return match?.value ?? null;
 }
 
-/** Renders a `CurrentValue` as the short line every control shows under it
- * (`Inspector.tsx`'s `CurrentValueLine`) — split out as a pure function so
- * the display text itself is unit-testable without React. */
-export function formatCurrentValue(value: CurrentValue): string {
-  if (value === 'loading') return 'Current: loading…';
-  if (value === 'unset') return 'Current: not set';
-  return value.label ? `Current: ${value.label} (${value.raw})` : `Current: ${value.raw}`;
-}
+// W4b-9 (audit rule A2 — "no secondary text node under any control", cited
+// against `measures.cljs`/`layer.cljs`/`fill.cljs`/etc.): the caption-
+// formatting export that used to render a "Current: …" caption line under
+// ~15 controls was deleted here, along with every render call site in
+// `Inspector.tsx` (that file's own caption-line component). `resolveCurrentValue` and
+// `resolveCurrentPresetValue` above are UNCHANGED and still do all the real
+// work: seeding a field/selection from the element's real computed style —
+// only the redundant, separately-rendered caption text is gone.

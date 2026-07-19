@@ -33,4 +33,18 @@ describe('Input', () => {
     const chip = container.querySelector('[data-testid="token-chip"]');
     expect(chip?.textContent).toContain('color.primary');
   });
+
+  it('FIX-W4b-9b: with a leadingIcon, hides the visible label and carries it as aria-label instead', () => {
+    mount(<Input label="W" leadingIcon="character-w" defaultValue="100" onChange={() => {}} />);
+    expect(container.textContent).not.toContain('W');
+    const input = container.querySelector('input');
+    expect(input?.getAttribute('aria-label')).toBe('W');
+  });
+
+  it('FIX-W4b-9b: without a leadingIcon, keeps rendering the visible label (unchanged)', () => {
+    mount(<Input label="Class" defaultValue="flex" onChange={() => {}} />);
+    expect(container.textContent).toContain('Class');
+    const input = container.querySelector('input');
+    expect(input?.getAttribute('aria-label')).toBeNull();
+  });
 });

@@ -38,24 +38,30 @@ export interface SelectProps extends Omit<React.SelectHTMLAttributes<HTMLSelectE
 }
 
 export const Select = React.forwardRef<HTMLSelectElement, SelectProps>(function Select(
-  { label, options, leadingIcon, style, id, ...rest },
+  { label, options, leadingIcon, style, id, 'aria-label': ariaLabelProp, ...rest },
   ref,
 ) {
   const autoId = React.useId();
   const selectId = id ?? autoId;
+  // FIX-W4b-9b: an explicit caller-supplied `aria-label` (e.g. `Inspector.
+  // tsx`'s `GroupSelect` `compact` mode) always wins; otherwise, when
+  // `leadingIcon` hides the visible label span below, fall back to `label`
+  // as the accessible name so a11y is never silently dropped.
+  const ariaLabel = ariaLabelProp ?? (leadingIcon ? label : undefined);
   return (
     <label
       className="ccs-field"
       htmlFor={selectId}
       style={{ display: 'flex', flexDirection: 'column', gap: 4, minInlineSize: 0 }}
     >
-      {label && (
+      {label && !leadingIcon && (
         <span style={{ fontSize: 'var(--ccs-font-size-xs)', color: 'var(--ccs-text-muted)' }}>{label}</span>
       )}
       <span style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
         <select
           ref={ref}
           id={selectId}
+          aria-label={ariaLabel}
           style={{
             inlineSize: '100%',
             background: 'var(--ccs-bg-input)',

@@ -24,18 +24,23 @@ export interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> 
 }
 
 export const Input = React.forwardRef<HTMLInputElement, InputProps>(function Input(
-  { label, trailing, tokenBinding, leadingIcon, style, className, id, ...rest },
+  { label, trailing, tokenBinding, leadingIcon, style, className, id, 'aria-label': ariaLabelProp, ...rest },
   ref,
 ) {
   const autoId = React.useId();
   const inputId = id ?? autoId;
+  // FIX-W4b-9b: an explicit caller-supplied `aria-label` always wins;
+  // otherwise, when `leadingIcon` hides the visible label span above, fall
+  // back to `label` as the accessible name so a11y is never silently
+  // dropped (mirrors `Select.tsx`'s identical rule).
+  const ariaLabel = ariaLabelProp ?? (leadingIcon ? label : undefined);
   return (
     <label
       className={['ccs-field', className].filter(Boolean).join(' ')}
       htmlFor={inputId}
       style={{ display: 'flex', flexDirection: 'column', gap: 4, minInlineSize: 0 }}
     >
-      {label && (
+      {label && !leadingIcon && (
         <span style={{ fontSize: 'var(--ccs-font-size-xs)', color: 'var(--ccs-text-muted)' }}>{label}</span>
       )}
       <span style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
@@ -68,6 +73,7 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(function Inp
             ref={ref}
             id={inputId}
             className="ccs-input"
+            aria-label={ariaLabel}
             style={{
               inlineSize: '100%',
               // FIX-W4b-5: Penpot's own control anatomy (`../penpot/frontend/

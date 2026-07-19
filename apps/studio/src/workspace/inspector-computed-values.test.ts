@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ComputedStyleRow } from '@ccs/canvas';
-import {
-  buildComputedLookup,
-  formatCurrentValue,
-  resolveCurrentValue,
-} from './inspector-computed-values.js';
+import { buildComputedLookup, resolveCurrentValue } from './inspector-computed-values.js';
 import { DIRECTION_GROUP, TEXT_SIZE_GROUP, JUSTIFY_GROUP } from './inspector-presets.js';
 
 const rows = (entries: Array<[string, string]>): ComputedStyleRow[] =>
@@ -33,7 +29,10 @@ describe('inspector-computed-values', () => {
 
     it('ALWAYS returns the raw computed value when present', () => {
       const lookup = buildComputedLookup(rows([['font-size', '36px']]));
-      expect(resolveCurrentValue(lookup, 'font-size', TEXT_SIZE_GROUP)).toEqual({ raw: '36px', label: null });
+      expect(resolveCurrentValue(lookup, 'font-size', TEXT_SIZE_GROUP)).toEqual({
+        raw: '36px',
+        label: null,
+      });
     });
 
     it('never reverse-maps a NUMERIC scale to a token (36px is NOT guessed back to text-4xl)', () => {
@@ -56,15 +55,8 @@ describe('inspector-computed-values', () => {
       expect(result).toEqual({ raw: 'flex-start', label: 'Start' });
     });
   });
-
-  describe('formatCurrentValue', () => {
-    it('renders loading / not set honestly', () => {
-      expect(formatCurrentValue('loading')).toBe('Current: loading…');
-      expect(formatCurrentValue('unset')).toBe('Current: not set');
-    });
-    it('renders raw-only and labelled forms', () => {
-      expect(formatCurrentValue({ raw: '36px', label: null })).toBe('Current: 36px');
-      expect(formatCurrentValue({ raw: 'column', label: 'Column' })).toBe('Current: Column (column)');
-    });
-  });
+  // W4b-9: the "Current: …" caption-renderer export and its tests were
+  // deleted here — `Inspector.tsx` no longer renders that caption anywhere
+  // (audit rule A2). `resolveCurrentValue`/`resolveCurrentPresetValue` above
+  // are unchanged and still fully covered.
 });
