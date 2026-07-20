@@ -14,6 +14,7 @@ import {
 } from '@ccs/ui';
 import { useDaemonConnection } from '../engine/daemon-connection.js';
 import { useEngineApi } from '../engine/engine-api-context.js';
+import { findNodeByUid } from '../engine/tree-fixtures.js';
 import { useWorkspaceStore } from './workspace-store.js';
 import { useNodeOps, type NodeOps } from './use-node-ops.js';
 import { findParent } from '../engine/tree-nav.js';
@@ -469,17 +470,30 @@ export interface InspectorProps {
  * "fetched, but this prop isn't set". */
 const ComputedStyleContext = React.createContext<ComputedLookup | null>(null);
 
-export function Inspector({ canvasHandle, bridgeGeneration }: InspectorProps): React.ReactElement {
-  // NOTE (bug found via this phase's own e2e acceptance run): the selector
-  // must CALL `selectedNode()` INSIDE the zustand selector callback, not
-  // outside it. `useWorkspaceStore((s) => s.selectedNode)` subscribes to the
-  // FUNCTION reference (stable forever — zustand's default `Object.is`
-  // equality never sees it change), so the Inspector never re-rendered on
-  // selection changes; invoking it as `(s) => s.selectedNode()` subscribes
-  // to the COMPUTED NODE, whose reference genuinely changes when the
-  // selected uid changes, giving zustand a real diff to react to.
-  const node = useWorkspaceStore((s) => s.selectedNode());
-  const currentTree = useWorkspaceStore((s) => s.currentTree());
+export const Inspector = React.memo(function Inspector({ canvasHandle, bridgeGeneration }: InspectorProps): React.ReactElement {
+  // PERF (Phase 0, fix 1): the PRIOR version called `(s) => s.selectedNode())`/
+  // `(s) => s.currentTree())` directly inside the zustand selector — i.e. the
+  // selector itself invoked a store GETTER FUNCTION. `currentTree()` is a
+  // cheap O(1) map lookup, but `selectedNode()` runs a full tree traversal
+  // (`findNodeByUid`, `tree-fixtures.ts`). Because zustand calls every
+  // selector once per store mutation (to check whether ITS OWN slice
+  // changed), that traversal re-ran on EVERY unrelated state change
+  // (`activeTool`, `expandedUids`, `zoomToNodeRequest`, etc.), not just when
+  // the selection or tree actually changed. Fixed by selecting only
+  // primitive/reference fields here (`selectedUid`, and the CURRENT frame's
+  // tree slice via a plain `trees[framePath]` lookup — narrower than the
+  // whole `trees` record, so an unrelated frame's tree update doesn't
+  // re-render this Inspector either) and deriving `node` via
+  // `React.useMemo`, keyed on those two primitives — same selection
+  // behavior, traversal only re-runs when it can actually change.
+  const selectedUid = useWorkspaceStore((s) => s.selectedUid);
+  const currentTree = useWorkspaceStore((s) =>
+    s.framePath ? (s.trees[s.framePath] ?? null) : null,
+  );
+  const node = React.useMemo(
+    () => (selectedUid && currentTree ? findNodeByUid(currentTree, selectedUid) : null),
+    [selectedUid, currentTree],
+  );
   const framePath = useWorkspaceStore((s) => s.framePath);
   // FIX-W4b-3a: threaded through to `FrameInspector` -> `FrameSizeSection` so
   // a board's W/H/device-preset writes can address it via
@@ -675,7 +689,7 @@ export function Inspector({ canvasHandle, bridgeGeneration }: InspectorProps): R
        * from the render stack — def kept intact, call site dropped. */}
     </ComputedStyleContext.Provider>
   );
-}
+});
 
 /** FIX-W4b-1 Part A — the FRAME/board inspector (`options/shapes/frame.cljs`
  * subset: `layer-menu*` + `measures-menu*` + `layout-container-menu*` +
@@ -689,7 +703,7 @@ export function Inspector({ canvasHandle, bridgeGeneration }: InspectorProps): R
  * a JSX fragment (default export returns `<>…</>`); its geometry/fill
  * controls will then no-op via an `op-rejected` (ast-engine refuses fragment
  * attribute writes) — an acceptable edge, most frames root in a real element. */
-function FrameInspector({
+const FrameInspector = React.memo(function FrameInspector({
   node,
   framePath,
   fileFolder,
@@ -725,13 +739,13 @@ function FrameInspector({
        * element-facing `Inspector` above. */}
     </ComputedStyleContext.Provider>
   );
-}
+});
 
 /** A small informational banner atop the frame inspector so it's visually
  * unambiguous that a BOARD (not a leaf element) is selected and these are
  * frame-LEVEL controls (Penpot's own frame options are headed by the board's
  * own layer row; this is the closest lean equivalent). */
-function FrameContextBanner({ framePath }: { framePath: string }): React.ReactElement {
+const FrameContextBanner = React.memo(function FrameContextBanner({ framePath }: { framePath: string }): React.ReactElement {
   const name = framePath.split(/[\\/]/).pop() ?? framePath;
   return (
     <div
@@ -767,7 +781,7 @@ function FrameContextBanner({ framePath }: { framePath: string }): React.ReactEl
       </span>
     </div>
   );
-}
+});
 
 // W4b-9 (audit rule A2) — the FIX-W4b-1 Part B "current value caption" helper
 // component (rendered the selected element's REAL current value for one CSS
@@ -801,7 +815,7 @@ function iconForNode(node: TreeNode): IconName {
  * so it's rendered here, in `Layer`, rather than a separate bottom-of-stack
  * Panel — but suppressed for an instance since opacity is a CSS override
  * this tool can't safely apply to a component's internals either. */
-function LayerSection({
+const LayerSection = React.memo(function LayerSection({
   node,
   showOpacity,
   readOnly,
@@ -851,7 +865,7 @@ function LayerSection({
       {showOpacity && <LayerHeaderRow node={node} readOnly={readOnly} />}
     </div>
   );
-}
+});
 
 /** FIX-W4b-5 — Penpot's own Layer-row header (`layer.cljs`): a blend-mode
  * dropdown + opacity field + visibility toggle + lock toggle, all on ONE
@@ -879,7 +893,7 @@ function LayerSection({
  * carries no per-node visibility/lock STATE to read or write at all — out of
  * this workstream's 3-item scope. Opacity itself is functionally UNCHANGED:
  * still the exact same `GroupSelect`/`OPACITY_GROUP` control. */
-function LayerHeaderRow({
+const LayerHeaderRow = React.memo(function LayerHeaderRow({
   node,
   readOnly,
 }: {
@@ -912,13 +926,13 @@ function LayerHeaderRow({
       <StubIconButton icon="unlock" title="Lock layer" />
     </div>
   );
-}
+});
 
 /** Standalone (non-`Panel`) banner shown above the section stack for a
  * `dynamic` node — same message/affordance the prior pass showed instead of
  * the whole stack, kept verbatim, just relocated now that the sections
  * beneath it also render (disabled) rather than being suppressed. */
-function DynamicBanner({
+const DynamicBanner = React.memo(function DynamicBanner({
   node,
   nodeOps,
 }: {
@@ -947,7 +961,7 @@ function DynamicBanner({
       </Button>
     </div>
   );
-}
+});
 
 /** Code — Penpot's Inspect/dev-mode affordance, adapted: any node (not just
  * `dynamic`) can jump to its real source location.
@@ -956,7 +970,7 @@ function DynamicBanner({
  * Design tab has no such section) — kept `export`ed rather than deleted, per
  * this workstream's own reversibility constraint (also keeps
  * `noUnusedLocals` from flagging an intentionally-unreferenced function). */
-export function CodeSection({
+export const CodeSection = React.memo(function CodeSection({
   node,
   nodeOps,
 }: {
@@ -990,14 +1004,14 @@ export function CodeSection({
       </div>
     </Panel>
   );
-}
+});
 
 /** W4b-9: no longer rendered in the Design section stack (real Penpot's
  * Design tab has no text-editing section; on-canvas in-place editing,
  * `WorkspaceShell.tsx`'s `handleCommitText`, is the real path — see the
  * Design-stack removal's own comment) — kept `export`ed rather than
  * deleted, same reversibility reasoning as `CodeSection` above. */
-export function ContentSection({
+export const ContentSection = React.memo(function ContentSection({
   node,
   readOnly,
 }: {
@@ -1030,7 +1044,7 @@ export function ContentSection({
       </form>
     </Panel>
   );
-}
+});
 
 // --- shared row-level control helpers ---------------------------------
 
@@ -1043,7 +1057,7 @@ function optionsFor(group: ClassPresetGroup): SelectOption[] {
  * change writes BOTH the hint cache and the real `set-classes` op. Every
  * group-backed dropdown in this file goes through this one helper so the
  * hint-read/hint-write/sendOp wiring is written exactly once. */
-function GroupSelect({
+const GroupSelect = React.memo(function GroupSelect({
   node,
   group,
   label,
@@ -1146,7 +1160,7 @@ function GroupSelect({
       />
     </div>
   );
-}
+});
 
 /** A row of segmented `Button`s bound to a `ClassPresetGroup` — Penpot's
  * `radio-buttons` icon-toggle pattern (`layout_container.cljs`'s direction/
@@ -1164,7 +1178,7 @@ function GroupSelect({
  * e.g. `align-items`'s `baseline`/`stretch` — Penpot's own `align-row` only
  * ever offers start/center/end) fall back to the plain text button, same
  * honesty policy as this file's section-header icons. */
-function GroupButtons({
+const GroupButtons = React.memo(function GroupButtons({
   node,
   group,
   label,
@@ -1316,7 +1330,7 @@ function GroupButtons({
       />
     </div>
   );
-}
+});
 
 /** FIX-W4b-3c — normalizes ANY CSS-legal color string (the bridge's REAL
  * computed `rgb()`/`rgba()`/`oklch()`/`color(...)`/named-keyword value, or a
@@ -1375,7 +1389,7 @@ function cssColorToHex(raw: string): { hex: string; alphaPct: number } | null {
  * SV-square's own hue backdrop and the two thumbs' positions); `onChange`
  * fires with a new hex on every drag, letting the caller combine it with the
  * live opacity field exactly like every other color-source write. */
-function ColorSvHuePicker({
+const ColorSvHuePicker = React.memo(function ColorSvHuePicker({
   hex,
   onChange,
 }: {
@@ -1477,7 +1491,7 @@ function ColorSvHuePicker({
       </div>
     </div>
   );
-}
+});
 
 const COLOR_SWATCH_NONE_BG =
   'repeating-conic-gradient(var(--ccs-bg-input) 0% 25%, var(--ccs-bg-panel-raised) 0% 50%) 0 0/8px 8px';
@@ -1502,7 +1516,7 @@ const COLOR_SWATCH_NONE_BG =
  * once set, otherwise the element's REAL current computed color
  * (`ComputedStyleContext` + `cssColorToHex`) is shown, otherwise an honest
  * empty/"none" state — never a fabricated default. */
-function ColorControl({
+const ColorControl = React.memo(function ColorControl({
   node,
   prefix,
   cssProp,
@@ -1720,7 +1734,7 @@ function ColorControl({
       </div>
     </div>
   );
-}
+});
 
 // --- FIX-W4b-2 icon lookups — one per `GroupButtons`/`GroupSelect` consumer
 // below, each cited against the real Penpot source function/component that
@@ -1889,7 +1903,7 @@ function textAlignIcon(value: string, isRtl: boolean): IconName | undefined {
  * leading property glyph on every one of these (`i/character-w`/`-h`/`-x`/
  * `-y`/`i/corner-radius`, and FIX-W4b-3a's own `i/rotation`) — forwarded to
  * `Input`'s own `leadingIcon` (see that primitive's doc). */
-function ArbitraryPxInput({
+const ArbitraryPxInput = React.memo(function ArbitraryPxInput({
   node,
   hintKey,
   label,
@@ -1980,7 +1994,7 @@ function ArbitraryPxInput({
       />
     </div>
   );
-}
+});
 
 /** FIX-W4b-5 — Penpot's own `measures.cljs`/`measures.scss` `.element-set`
  * grid: `grid-template-columns: [input-width][input-width][sp-xxxl action
@@ -2002,7 +2016,7 @@ function ArbitraryPxInput({
  * above Y) without needing real CSS `subgrid` (not a `Panel`/layout-affecting
  * primitive change, just this one already-shared component). Nothing to
  * change here — flagging it so this isn't mistaken for an overlooked rule. */
-function MeasureRow({
+const MeasureRow = React.memo(function MeasureRow({
   left,
   right,
   action,
@@ -2033,7 +2047,7 @@ function MeasureRow({
       </div>
     </div>
   );
-}
+});
 
 /** FIX-W4b-5 — a cosmetic-only Penpot-style icon affordance for a control
  * this file does NOT wire up, rendered `disabled` so it's honestly inert
@@ -2051,7 +2065,7 @@ function MeasureRow({
  * write path, `StudioCanvasHandle.setFrameGeometry`, has no co-scaling
  * concept implemented — a disclosed carry-forward, not this pass's job to
  * add). */
-function StubIconButton({ icon, title }: { icon: IconName; title: string }): React.ReactElement {
+const StubIconButton = React.memo(function StubIconButton({ icon, title }: { icon: IconName; title: string }): React.ReactElement {
   return (
     <button
       type="button"
@@ -2074,7 +2088,7 @@ function StubIconButton({ icon, title }: { icon: IconName; title: string }): Rea
       <Icon name={icon} size={16} />
     </button>
   );
-}
+});
 
 /** FIX-W4b-6 — the enabled counterpart to `StubIconButton` above: real
  * Penpot's `title-bar*` trailing `icon-button*` (`i/add`, `fill.cljs`/
@@ -2086,7 +2100,7 @@ function StubIconButton({ icon, title }: { icon: IconName; title: string }): Rea
  * the same "disabled beats invisible" honesty policy `StubIconButton`
  * itself follows — real Penpot's own `add-fill`/`add-stroke` button is
  * likewise always rendered, just `:disabled` when it can't add. */
-function PanelIconButton({
+const PanelIconButton = React.memo(function PanelIconButton({
   icon,
   title,
   onClick,
@@ -2121,7 +2135,7 @@ function PanelIconButton({
       <Icon name={icon} size={12} />
     </button>
   );
-}
+});
 
 /** FIX-W4b-7 — the enabled counterpart to `StubIconButton` for a boolean MODE
  * toggle (not an add/remove action, so `PanelIconButton` isn't the right
@@ -2135,7 +2149,7 @@ function PanelIconButton({
  * uses elsewhere (`FrameContextBanner`'s icon; the color-swatch checkerboard
  * background) — as a real depressed/selected treatment, not a new invented
  * color. */
-function ToggleIconButton({
+const ToggleIconButton = React.memo(function ToggleIconButton({
   icon,
   title,
   active,
@@ -2177,7 +2191,7 @@ function ToggleIconButton({
       <Icon name={icon} size={16} />
     </button>
   );
-}
+});
 
 // --- Size & position (measures.cljs, radius + rotation included — see
 // module doc's FIX-W4b-3a section) ---------------------------------------
@@ -2221,7 +2235,7 @@ function cornerHintKey(corner: RadiusCorner): string {
   return `radius-${corner}-custom`;
 }
 
-function SizePositionSection({
+const SizePositionSection = React.memo(function SizePositionSection({
   node,
   readOnly,
 }: {
@@ -2553,7 +2567,7 @@ function SizePositionSection({
       )}
     </div>
   );
-}
+});
 
 const DEVICE_CATEGORY_LABEL: Record<DevicePreset['category'], string> = {
   phone: 'Phone',
@@ -2578,7 +2592,7 @@ const DEVICE_CATEGORY_LABEL: Record<DevicePreset['category'], string> = {
  * real current size, with zero new plumbing. Frame X/Y (the board's
  * position on the infinite canvas) has no such DOM-observable equivalent and
  * is OUT of this section's scope — see the worker report's own note. */
-function FrameSizeSection({
+const FrameSizeSection = React.memo(function FrameSizeSection({
   fileFolder,
   framePath,
   canvasHandle,
@@ -2695,7 +2709,7 @@ function FrameSizeSection({
       </div>
     </div>
   );
-}
+});
 
 /** A numeric W/H field for `FrameSizeSection`, seeded from the board root's
  * REAL current computed size (see that section's own doc). No session-hint
@@ -2710,7 +2724,7 @@ function FrameSizeSection({
  * write this session — still never a fabricated value, just this
  * component's own most recent real write standing in for a re-fetch the
  * bridge round trip doesn't automatically provide. */
-function FrameGeometryInput({
+const FrameGeometryInput = React.memo(function FrameGeometryInput({
   label,
   icon,
   cssProp,
@@ -2755,7 +2769,7 @@ function FrameGeometryInput({
       />
     </div>
   );
-}
+});
 
 // --- Layout container (layout_container.cljs) — FIX-W4b-3b compact rework
 //
@@ -2771,7 +2785,7 @@ function FrameGeometryInput({
 // existing `GAP_GROUP`/`PADDING_*_GROUP` tables purely as remove-candidate
 // baselines now (see those exports' own doc). ------------------------------
 
-function LayoutContainerSection({
+const LayoutContainerSection = React.memo(function LayoutContainerSection({
   node,
   readOnly,
 }: {
@@ -3021,7 +3035,7 @@ function LayoutContainerSection({
       </div>
     </Panel>
   );
-}
+});
 
 /** FIX-W4b-3b — one padding numeric field (`layout_container.cljs`'s
  * `padding-section*` sub-fields). A bespoke lean sibling of
@@ -3045,7 +3059,7 @@ function LayoutContainerSection({
  * already entered, matching Penpot's own `(= p1 p3)` simple-mode-fold-back
  * behavior (`layout_item.cljs`'s `margin-simple*`/this file's
  * `simple-padding-selection*`, re-read for this task). */
-function PaddingField({
+const PaddingField = React.memo(function PaddingField({
   node,
   label,
   icon,
@@ -3106,11 +3120,11 @@ function PaddingField({
       />
     </div>
   );
-}
+});
 
 // --- Layout item (layout_item.cljs) --------------------------------------
 
-function LayoutItemSection({
+const LayoutItemSection = React.memo(function LayoutItemSection({
   node,
   readOnly,
 }: {
@@ -3168,11 +3182,11 @@ function LayoutItemSection({
       </div>
     </Panel>
   );
-}
+});
 
 // --- Typography (typography.cljs) ----------------------------------------
 
-function TypographySection({
+const TypographySection = React.memo(function TypographySection({
   node,
   readOnly,
 }: {
@@ -3251,7 +3265,7 @@ function TypographySection({
       </div>
     </Panel>
   );
-}
+});
 
 /** W4b-9 (audit rule A1) — Penpot's shared `title-bar*` add-model
  * (`ui/components/title_bar.cljs:14-42`; `fill.cljs:200-267`/`stroke.cljs`/
@@ -3265,7 +3279,7 @@ function TypographySection({
  * action via `Panel`'s pre-existing `actions` prop (FIX-W4b-6); this wrapper
  * additionally toggles `Panel`'s new `collapsible` prop so the EMPTY state
  * also loses its chevron, closing the last gap audit rule A1 flagged. */
-function AddableSection({
+const AddableSection = React.memo(function AddableSection({
   title,
   id,
   icon,
@@ -3303,14 +3317,14 @@ function AddableSection({
       {hasValue ? children : null}
     </Panel>
   );
-}
+});
 
 // --- Fill (fill.cljs) — FIX-W4b-6 add-model: EMPTY (title + `+`) until a
 // background exists; then the existing `ColorControl` row (+ token-bind) and
 // a `-` to remove. Present-vs-empty is REAL state, not a guess — see this
 // file's own FIX-W4b-6 module-doc section for the full citation. ----------
 
-function FillSection({
+const FillSection = React.memo(function FillSection({
   node,
   readOnly,
 }: {
@@ -3437,7 +3451,7 @@ function FillSection({
       </div>
     </AddableSection>
   );
-}
+});
 
 // --- Stroke (stroke.cljs) — FIX-W4b-6 add-model, reconciled from the old
 // "Border" checkbox. Radius stays in Size & position (unchanged, matching
@@ -3447,7 +3461,7 @@ function FillSection({
 // aren't in the frozen bridge's curated computed-style list, and
 // `border-color` alone can't reliably signal "has a visible border"). ------
 
-function StrokeSection({
+const StrokeSection = React.memo(function StrokeSection({
   node,
   readOnly,
 }: {
@@ -3531,14 +3545,14 @@ function StrokeSection({
       </div>
     </AddableSection>
   );
-}
+});
 
 // --- Shadow (shadow.cljs) — FIX-W4b-6 add-model. Present-vs-empty IS real
 // computed-style state: `box-shadow`'s CSS-spec initial value is literally
 // `none`, a hard equivalence like Fill's `transparent` check (see this
 // file's own FIX-W4b-6 module-doc section). -------------------------------
 
-function ShadowSection({
+const ShadowSection = React.memo(function ShadowSection({
   node,
   readOnly,
 }: {
@@ -3598,7 +3612,7 @@ function ShadowSection({
       </div>
     </AddableSection>
   );
-}
+});
 
 // --- Component props (component.cljs) — "just a list of its props" ------
 
@@ -3655,7 +3669,7 @@ function controlFor(
   );
 }
 
-function ComponentPropsSection({
+const ComponentPropsSection = React.memo(function ComponentPropsSection({
   node,
   readOnly,
 }: {
@@ -3710,4 +3724,4 @@ function ComponentPropsSection({
       </ul>
     </Panel>
   );
-}
+});

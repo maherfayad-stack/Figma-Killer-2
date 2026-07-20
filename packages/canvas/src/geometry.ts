@@ -136,3 +136,63 @@ export function boxToFrameEntry(framePath: string, box: Box): FrameEntry {
 export function boxesEqual(a: Box, b: Box): boolean {
   return a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h;
 }
+
+/** Options for {@link computeCameraToFitBounds}. */
+export interface FitBoundsOptions {
+  /** Upper bound on the resulting zoom — `zoom = Math.min(fitZoom,
+   * targetZoom)`. Omit (or `Infinity`) to fit exactly with no cap. Mirrors
+   * tldraw@5.2.4's own `Editor.zoomToBounds({ targetZoom })` clamping
+   * behavior, verified against that installed version by `StudioCanvas.tsx`
+   * (`ZOOM_TO_NODE_MAX_ZOOM`'s doc comment there). */
+  targetZoom?: number;
+  /** Total screen-space padding subtracted from the viewport before
+   * fitting, split evenly across both edges of each axis (an `inset` of
+   * 160 leaves 80px of breathing room on every side) — same convention as
+   * tldraw's own `zoomToBounds({ inset })`, reused verbatim by
+   * `StudioCanvas.tsx`'s `ZOOM_TO_NODE_INSET_PX`. Default 0 (fit edge to
+   * edge). */
+  inset?: number;
+}
+
+/** Computes the camera (`{x, y, z}`) that fits `box` into a viewport of
+ * `viewportSize`, replicating tldraw's `Editor.zoomToBounds` semantics that
+ * `StudioCanvas.tsx` currently relies on (see that file's `zoomToNode`/
+ * `zoomToFrame` and `ZOOM_TO_NODE_MAX_ZOOM`/`ZOOM_TO_NODE_INSET_PX` doc
+ * comments — this function is the pure-math replacement for
+ * `editor.zoomToBounds`).
+ *
+ * Steps: shrink the viewport by `inset` (split evenly per edge), compute
+ * the zoom that fits `box` into what's left on BOTH axes (the smaller of
+ * the two wins, so the box's aspect ratio is preserved and nothing is
+ * cropped), clamp that to `targetZoom` if given, then center the camera on
+ * `box`'s midpoint at that zoom (so `pagePointToScreenSpace` of the box's
+ * center equals the viewport's center).
+ *
+ * A zero-area `box` (both `w` and `h` are 0 — e.g. fitting a single point)
+ * has no well-defined fit zoom on either axis; falls back to `targetZoom`
+ * (or 1 if that's also unset) rather than dividing by zero, still centering
+ * on the point.
+ */
+export function computeCameraToFitBounds(
+  box: Box,
+  viewportSize: { w: number; h: number },
+  options: FitBoundsOptions = {},
+): CameraState {
+  const inset = options.inset ?? 0;
+  const availableW = Math.max(0, viewportSize.w - inset);
+  const availableH = Math.max(0, viewportSize.h - inset);
+
+  const widthZoom = box.w > 0 ? availableW / box.w : Infinity;
+  const heightZoom = box.h > 0 ? availableH / box.h : Infinity;
+  const fitZoom = Math.min(widthZoom, heightZoom);
+  const targetZoom = options.targetZoom ?? Infinity;
+  const zoom = Number.isFinite(fitZoom) ? Math.min(fitZoom, targetZoom) : (options.targetZoom ?? 1);
+
+  const centerX = box.x + box.w / 2;
+  const centerY = box.y + box.h / 2;
+  return {
+    x: viewportSize.w / 2 / zoom - centerX,
+    y: viewportSize.h / 2 / zoom - centerY,
+    z: zoom,
+  };
+}

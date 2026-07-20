@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { createRoot } from 'react-dom/client';
-import { StudioCanvas } from '../src/index.js';
+import { StudioCanvas, type StudioCanvasHandle } from '../src/index.js';
 import 'tldraw/tldraw.css';
 
 /**
@@ -32,8 +32,35 @@ const daemonUrl = `ws://127.0.0.1:${daemonPort}`;
 const root = document.getElementById('root');
 if (!root) throw new Error('dev harness: #root not found');
 
+/**
+ * TEST-ONLY HOOK (not production wiring — `apps/studio` never imports this
+ * file). `acceptance.spec.ts`'s test (a) needs to bring the `Hero` frame
+ * into view/selection before asserting on its live iframe, matching what a
+ * real user editing `Hero.tsx` would actually do (look at Hero), rather
+ * than relying on it incidentally landing in `viewport-cull.ts`'s
+ * nearest-8-to-viewport-center live budget after the perf fixture's extra
+ * frames get tiled in around it by the mount-time `zoomToFit`. `onReady`
+ * (`StudioCanvasHandle`, playbook §5.4 engine-agnostic camera-control
+ * surface — identical shape for both the tldraw and custom engines) is
+ * the least-invasive existing hook that already exposes exactly what's
+ * needed (`zoomToFrame(fileFolder, framePath)`) — stashing it on `window`
+ * here, rather than inventing new test-only wiring, lets the Playwright
+ * test drive it via `page.evaluate`.
+ */
+declare global {
+  interface Window {
+    __ccsHandle?: StudioCanvasHandle;
+  }
+}
+
 createRoot(root).render(
   <React.StrictMode>
-    <StudioCanvas daemonUrl={daemonUrl} style={{ width: '100vw', height: '100vh' }} />
+    <StudioCanvas
+      daemonUrl={daemonUrl}
+      style={{ width: '100vw', height: '100vh' }}
+      onReady={(handle) => {
+        window.__ccsHandle = handle;
+      }}
+    />
   </React.StrictMode>,
 );

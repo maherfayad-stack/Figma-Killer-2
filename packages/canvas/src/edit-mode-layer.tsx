@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { createShapeId, useValue, type Editor } from 'tldraw';
 import type { ComputedStyleResult, HitInfo, LayoutAxis, Rect, TextEditExit } from '@ccs/bridge';
 import type { CanvasFrameRecord } from './project-wiring.js';
 import { getRegisteredFrameIframe, onFrameIframeRegistryChange } from './frame-shape.js';
@@ -14,6 +13,73 @@ import {
   DRAG_THRESHOLD_PX,
   type SiblingRect,
 } from './drag-geometry.js';
+
+/**
+ * Sub-workstream 2d-i (`.orchestrator/CANVAS-ENGINE-DESIGN.md`) — the ONLY
+ * thing this file needs from whatever engine is mounting it, narrowed down
+ * from tldraw's full `Editor` to exactly the four calls this file actually
+ * makes (confirmed by reading every `editor.*` call site below before this
+ * refactor). Reading the current camera is deliberately NOT part of this
+ * interface — the caller passes the live camera in as a plain `camera:
+ * CameraState` prop instead (see `EditModeLayerProps.camera`'s doc), so this
+ * file has no signal-reading concern at all, tldraw's `useValue` included.
+ *
+ * The tldraw-backed adapter satisfying this today is built inline at
+ * `StudioCanvas.tsx`'s `<EditModeLayer>` call site (a small object literal
+ * wrapping the real `Editor`) — see that file for the concrete
+ * implementation. A future custom-engine adapter (sub-workstream 2d-ii)
+ * wraps `camera-store.ts`'s `setCamera`/`zoomToBounds` actions the same way;
+ * `dispatchWheel` is the one method that may not need a literal equivalent
+ * there (see its own doc below).
+ */
+export interface CanvasCameraHandle {
+  /** Restores a previously-captured camera — used ONLY for the Esc-exits-
+   * edit-mode camera restore (`exitEditModeAndRestoreCamera` below), which
+   * is why `opts` only ever needs an optional animation duration (the one
+   * shape this file's single caller passes: `{ animation: { duration: 200
+   * } }`). Mirrors tldraw's own `Editor.setCamera(camera, opts)` signature
+   * exactly, narrowed to what's used. */
+  setCamera(camera: CameraState, opts?: { animation?: { duration: number } }): void;
+  /** Frames `box` into the viewport, used by the double-click-to-zoom
+   * fallback (`handleDoubleClick` below, both the no-connection branch and
+   * the empty-hit-test branch). Mirrors tldraw's own
+   * `Editor.zoomToBounds(bounds, opts)`, narrowed the same way as
+   * `setCamera` above — this file never passes a `targetZoom`/`inset`, so
+   * those aren't part of this interface (a caller-side adapter is free to
+   * pass its own defaults for them). */
+  zoomToBounds(box: Box, opts?: { animation?: { duration: number } }): void;
+  /** Forwards a wheel gesture the capture overlay (`handleWheel` below)
+   * intercepted so the underlying engine's OWN wheel handling still applies
+   * — see `handleWheel`'s doc comment for the full "why forward at all"
+   * rationale (this overlay sits ABOVE the canvas with `pointer-events:
+   * auto`, which would otherwise swallow every wheel event the instant a
+   * frame enters edit mode). The shape here is exactly what tldraw's
+   * `Editor.dispatch({type:'wheel', ...})` needs (point/delta each carry a
+   * `z` component — `delta.z` is how tldraw reads ctrl/alt/meta-modified
+   * wheel as a ZOOM amount, not `delta.y`; `point.z` is always 0, tldraw's
+   * own wheel-event convention) plus the four modifier keys and the
+   * `accelKey` tldraw derives from them — nothing here is invented, it's a
+   * direct capture of what `handleWheel` used to pass to `dispatch`
+   * inline. FLAG for 2d-ii: the custom engine (`camera-gestures.ts`'s
+   * `classifyWheelGesture`) owns wheel handling directly against real DOM
+   * events already and has no second (engine-internal) wheel handler to
+   * route around, so its adapter may not need this "re-dispatch a
+   * synthetic event" indirection at all — it could instead call
+   * `camera-store.ts`'s pan/zoom actions straight from THIS file's
+   * `handleWheel`, with `dispatchWheel` becoming a thin one-line shim (or
+   * removed if `handleWheel` itself is restructured then). Not decided
+   * here on purpose — this pass only narrows the interface without
+   * changing behavior. */
+  dispatchWheel(event: {
+    point: { x: number; y: number; z: number };
+    delta: { x: number; y: number; z: number };
+    shiftKey: boolean;
+    altKey: boolean;
+    ctrlKey: boolean;
+    metaKey: boolean;
+    accelKey: boolean;
+  }): void;
+}
 
 /** FP-4a (`.orchestrator/FEATURE-PARITY-PLAN.md` §2 FP-4): reported up to
  * `StudioCanvas`/the caller when an in-place text edit commits (Enter or
@@ -233,7 +299,36 @@ function nameFromHit(hit: HitInfo): string {
  */
 
 export interface EditModeLayerProps {
-  editor: Editor;
+  /** Imperative camera actions this layer needs from whatever engine is
+   * mounting it — see {@link CanvasCameraHandle}'s own doc. Replaces the
+   * old `editor: Editor` prop 1:1 in effect (every former `editor.*` call
+   * below now reads `cameraHandle.*` instead), narrowed so this file has
+   * zero tldraw import. */
+  cameraHandle: CanvasCameraHandle;
+  /** The CURRENT camera, read reactively. Sub-workstream 2d-i replaced
+   * tldraw's `useValue('ccs-edit-mode-camera', () => editor.getCamera(),
+   * [editor])` signal-subscription with this plain prop: `useValue` is
+   * tldraw's own signal->React bridge and has no engine-agnostic
+   * equivalent, but this component never actually needs a SUBSCRIPTION —
+   * it just needs the current value at render time, and a prop that
+   * changes on every camera move already re-renders this component exactly
+   * as often as `useValue` did (the caller is expected to re-render on
+   * every camera change, same as `StudioCanvas.tsx`'s own tldraw-editor
+   * render loop already does today for its other camera-dependent JSX).
+   * This also means `CanvasCameraHandle` itself never needs a `getCamera()`
+   * method — reading and mutating the camera are now two separate
+   * concerns, which is the smaller, more explicit interface the brief
+   * asked for. */
+  camera: CameraState;
+  /** Maps a `CanvasFrameRecord.id` to whatever id convention
+   * `editModeFrame.shapeId` (`selection-store.ts`'s `EditModeFrameRef.
+   * shapeId`) actually uses, so this file never imports `createShapeId`
+   * from `tldraw` itself. The tldraw-backed caller passes tldraw's own
+   * `createShapeId`; a future custom-engine caller can pass plain identity
+   * (`(id) => id`) once `EditModeFrameRef.shapeId` stores a real
+   * `CanvasFrameRecord.id` directly instead of a tldraw shape id — see
+   * `editModeRecord`'s `useMemo` below, the only call site. */
+  frameIdToShapeId: (recordId: string) => string;
   frames: CanvasFrameRecord[];
   /** FP-4a: called once per committed in-place text edit (never for a
    * cancelled one) — see {@link CommitTextRequest}'s doc. Optional so
@@ -259,14 +354,14 @@ export interface EditModeLayerProps {
   onBridgeConnectionChange?: ((requestComputedStyle: ((uid: string) => Promise<ComputedStyleResult>) | null) => void) | undefined;
 }
 
-function exitEditModeAndRestoreCamera(editor: Editor): void {
+function exitEditModeAndRestoreCamera(cameraHandle: CanvasCameraHandle): void {
   // `setCameraOptions({isLocked:false})` is deliberately NOT called here —
   // entry never locks the camera (see `CcsFrameShapeUtil.onDoubleClick`'s
   // doc comment for why); this only restores whatever camera was active
   // before edit mode was entered.
   const result = useSelectionStore.getState().exitEditMode();
   if (result?.previousCamera) {
-    editor.setCamera(result.previousCamera, { animation: { duration: 200 } });
+    cameraHandle.setCamera(result.previousCamera, { animation: { duration: 200 } });
   }
 }
 
@@ -275,7 +370,9 @@ function frameBoxOf(record: CanvasFrameRecord): Box {
 }
 
 export function EditModeLayer({
-  editor,
+  cameraHandle,
+  camera,
+  frameIdToShapeId,
   frames,
   onCommitText,
   onReorderNode,
@@ -287,8 +384,6 @@ export function EditModeLayer({
   const selectedUids = useSelectionStore((s) => s.selectedUids);
   const selections = useSelectionStore((s) => s.selections);
   const breadcrumb = useSelectionStore((s) => s.breadcrumb);
-
-  const camera = useValue<CameraState>('ccs-edit-mode-camera', () => editor.getCamera(), [editor]);
 
   // FP-4a: `uid` of the node currently being in-place-edited (contentEditable
   // inside the iframe), or `null`. While non-null the capture overlay stops
@@ -330,8 +425,8 @@ export function EditModeLayer({
 
   const editModeRecord = React.useMemo(() => {
     if (!editModeFrame) return null;
-    return frames.find((r) => createShapeId(r.id) === editModeFrame.shapeId) ?? null;
-  }, [frames, editModeFrame]);
+    return frames.find((r) => frameIdToShapeId(r.id) === editModeFrame.shapeId) ?? null;
+  }, [frames, editModeFrame, frameIdToShapeId]);
 
   const frameBox = editModeRecord ? frameBoxOf(editModeRecord) : null;
   const iframeEl = editModeFrame ? getRegisteredFrameIframe(editModeFrame.shapeId) : null;
@@ -472,17 +567,17 @@ export function EditModeLayer({
         setDragState(IDLE_DRAG);
         return;
       }
-      exitEditModeAndRestoreCamera(editor);
+      exitEditModeAndRestoreCamera(cameraHandle);
     }
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [editModeFrame, editor, dragState]);
+  }, [editModeFrame, cameraHandle, dragState]);
 
   // --- robustness: if the edit-mode frame's shape vanishes from under us
   // (e.g. deleted while editing), don't get stuck in a locked-camera limbo.
   React.useEffect(() => {
-    if (editModeFrame && !editModeRecord) exitEditModeAndRestoreCamera(editor);
-  }, [editModeFrame, editModeRecord, editor]);
+    if (editModeFrame && !editModeRecord) exitEditModeAndRestoreCamera(cameraHandle);
+  }, [editModeFrame, editModeRecord, cameraHandle]);
 
   // --- FROZEN uid-remap DaemonEvent handler (playbook §4/P2 pitfall,
   // ADR-0016: "unmapped-but-present uid -> keep; absent -> mark detached").
@@ -859,7 +954,7 @@ export function EditModeLayer({
       if (!frameBox || !overlayScreenBox || editingUid) return;
       const connection = connectionRef.current;
       if (!connection) {
-        editor.zoomToBounds(frameBox, { animation: { duration: 200 } });
+        cameraHandle.zoomToBounds(frameBox, { animation: { duration: 200 } });
         return;
       }
       const point = screenPointToIframePoint(camera, frameBox, {
@@ -868,7 +963,7 @@ export function EditModeLayer({
       });
       void connection.hitTest(point.x, point.y).then((hit) => {
         if (!hit) {
-          editor.zoomToBounds(frameBox, { animation: { duration: 200 } });
+          cameraHandle.zoomToBounds(frameBox, { animation: { duration: 200 } });
           return;
         }
         if (hit.dynamic) return; // dynamic-locked — real code, not editable here.
@@ -887,7 +982,7 @@ export function EditModeLayer({
         });
       });
     },
-    [frameBox, camera, overlayScreenBox, editingUid, editor],
+    [frameBox, camera, overlayScreenBox, editingUid, cameraHandle],
   );
 
   /**
@@ -898,12 +993,16 @@ export function EditModeLayer({
    * resolution the same as click/move), breaking ordinary pan/zoom for the
    * whole canvas the instant edit mode starts (caught empirically: P1's
    * established Ctrl+wheel zoom gesture had zero effect here before this
-   * handler existed). Forwarded via `editor.dispatch` — tldraw's own
-   * documented "feed a synthetic event into the state machine" API — rather
-   * than re-dispatching a native DOM `WheelEvent` at tldraw's container,
-   * since this overlay isn't a DOM descendant of tldraw's own canvas
-   * container to bubble a re-dispatched native event into anyway (they're
-   * siblings under `StudioCanvas`'s wrapper).
+   * handler existed). Forwarded via `cameraHandle.dispatchWheel` (sub-
+   * workstream 2d-i: was `editor.dispatch` directly — tldraw's own
+   * documented "feed a synthetic event into the state machine" API — now
+   * routed through the narrow {@link CanvasCameraHandle} interface so this
+   * file has zero tldraw import; the tldraw-backed adapter at
+   * `StudioCanvas.tsx`'s call site forwards this verbatim to
+   * `editor.dispatch`) rather than re-dispatching a native DOM `WheelEvent`
+   * at tldraw's container, since this overlay isn't a DOM descendant of
+   * tldraw's own canvas container to bubble a re-dispatched native event
+   * into anyway (they're siblings under `StudioCanvas`'s wrapper).
    *
    * The `delta` shape is NOT "just pass deltaX/deltaY through" — verified
    * empirically (an initial naive `{x:deltaX,y:deltaY,z:0}` version
@@ -914,7 +1013,11 @@ export function EditModeLayer({
    * helper, which folds a modifier-held `deltaY` into `deltaZ` (clamped to
    * +/-10, /100) instead of `deltaY` directly, because real trackpad
    * pinch-to-zoom is reported by the browser as a ctrl-modified wheel event.
-   * Replicated inline below since that helper isn't exported.
+   * Replicated inline below since that helper isn't exported. This whole
+   * computation is UNCHANGED by the 2d-i refactor — only the final call
+   * (`editor.dispatch({type:'wheel',...})` -> `cameraHandle.dispatchWheel
+   * ({...})`, same object contents minus the tldraw-specific `type`/`name`
+   * envelope fields) moved.
    */
   const handleWheel = React.useCallback(
     (e: React.WheelEvent<HTMLDivElement>) => {
@@ -924,9 +1027,7 @@ export function EditModeLayer({
       const deltaZ = hasZoomModifier
         ? (Math.abs(native.deltaY) > ZOOM_STEP_CLAMP ? ZOOM_STEP_CLAMP * Math.sign(native.deltaY) : native.deltaY) / 100
         : 0;
-      editor.dispatch({
-        type: 'wheel',
-        name: 'wheel',
+      cameraHandle.dispatchWheel({
         point: { x: native.clientX, y: native.clientY, z: 0 },
         delta: { x: -native.deltaX, y: -native.deltaY, z: -deltaZ },
         shiftKey: e.shiftKey,
@@ -936,7 +1037,7 @@ export function EditModeLayer({
         accelKey: e.ctrlKey || e.metaKey,
       });
     },
-    [editor],
+    [cameraHandle],
   );
 
   return (

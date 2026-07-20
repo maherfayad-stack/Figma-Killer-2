@@ -15,6 +15,7 @@ import { DaemonConnectionProvider, useDaemonConnection } from '../engine/daemon-
 import { EngineApiContext } from '../engine/engine-api-context.js';
 import type { EngineApi } from '../engine/engine-api.js';
 import { findPath } from '../engine/tree-nav.js';
+import { findNodeByUid } from '../engine/tree-fixtures.js';
 import { useWorkspaceStore } from './workspace-store.js';
 import { useComponentInsert } from './use-component-insert.js';
 import { useWorkspaceKeymap } from './use-workspace-keymap.js';
@@ -173,10 +174,21 @@ function WorkspaceShellInner({
   // record rather than a plain boolean.
   const zoomToNodeRequest = useWorkspaceStore((s) => s.zoomToNodeRequest);
   const zoomToFrameRequest = useWorkspaceStore((s) => s.zoomToFrameRequest);
-  // NOTE (same fix `Inspector.tsx`/`use-tool-actions.ts` document): call the
-  // getters INSIDE the selector so zustand subscribes to the COMPUTED value.
-  const selectedNode = useWorkspaceStore((s) => s.selectedNode());
-  const currentTree = useWorkspaceStore((s) => s.currentTree());
+  // PERF (Phase 0, fix 1 — see `Inspector.tsx`'s matching doc for the full
+  // before/after): the prior `(s) => s.selectedNode())`/`(s) => s.currentTree())`
+  // selectors called the store's getter FUNCTIONS from inside the zustand
+  // selector itself, so `selectedNode()`'s full tree traversal
+  // (`findNodeByUid`) re-ran on EVERY store mutation, not just selection/tree
+  // changes. Fixed by selecting only primitive fields (`selectedUid` is
+  // already selected above; the current frame's tree slice, a plain `trees[
+  // framePath]` lookup) and deriving `selectedNode` via `React.useMemo`.
+  const currentTree = useWorkspaceStore((s) =>
+    s.framePath ? (s.trees[s.framePath] ?? null) : null,
+  );
+  const selectedNode = React.useMemo(
+    () => (selectedUid && currentTree ? findNodeByUid(currentTree, selectedUid) : null),
+    [selectedUid, currentTree],
+  );
   const { sendOp } = useDaemonConnection();
 
   const handleFrameSelect = React.useCallback(

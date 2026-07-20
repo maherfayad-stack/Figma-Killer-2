@@ -578,3 +578,350 @@ FIX-W5 frame-nesting-<div>; FIX-W6 comments; bridge-rasterization (held).
   touches canvas edit layer + layers panel. Surface to human: proceed with that design
   or defer lock. Then: final STRICT side-by-side sweep (R5-3 remaining 1:1 deltas +
   deferred W4b-3b re-check + align-content noConfidentDefault).
+
+---
+
+## NEW TRACK (2026-07-20): tldraw removal + perf hardening — runs INDEPENDENTLY of the Penpot design-tab track above (do not conflate; FIX-W4b-8 + final sweep still pending, untouched by this track)
+
+Human ask: full perf audit of the app + assessment of substituting tldraw without losing
+features, then a plan to execute both. Audit found: canvas perf engineering is already
+solid (viewport-cull hard-caps live iframes at 8, ~117fps @ 20 frames measured, gate
+green) — no perf emergency in the canvas engine itself. Real findings: (a) zustand
+selector-as-traversal antipattern in Inspector.tsx/WorkspaceShell.tsx re-running tree
+walks on every store mutation; (b) LayersPanel over-subscribes to the whole `trees`
+record; (c) zero React.memo anywhere in the repo; (d) the e2e perf-gate harness itself
+is broken (design-system import unresolvable under its ephemeral daemon), so the fps
+gate isn't actually exercised in CI; (e) tldraw's own actual API surface used here is
+narrow (camera pan/zoom, one custom box shape wrapping an iframe, marquee/click
+selection, resize handles — NONE of its vector/shape-library richness), the package
+already enforces a strict abstraction boundary (`packages/canvas`'s public `index.ts`
+leaks zero tldraw types — this is independently re-verified almost every audit pass),
+and the real driver for removal is licensing cost (ADR-0005: $6,000/yr Business
+License to remove the "made with tldraw" watermark, currently shipping watermarked
+under Hobby), not performance.
+
+**Plan (6 phases, written out in full to the human, approved):**
+- Phase 0 — perf quick wins (the 4 findings above), apps/studio + e2e harness only, zero tldraw/canvas-engine changes.
+- Phase 1 — design note: map every tldraw API used (enumerated via a dedicated research pass) to a plain custom-engine replacement; decide CSS-transform DOM camera approach.
+- Phase 2 — build the replacement engine inside packages/canvas (camera store, gesture handlers, plain FrameShape component) behind a temporary `CCS_CANVAS_ENGINE=tldraw|custom` env flag; `viewport-cull.ts`/`geometry.ts`/`bridge-geometry.ts`/`drag-geometry.ts`/`wheel-gesture.ts` are ALREADY tldraw-independent pure modules — reuse verbatim; `StudioCanvasHandle`'s public interface does not change, so apps/studio needs zero edits.
+- Phase 3 — parity verification: existing e2e acceptance/p2-selection specs + manual dogfood checklist (pan/zoom/marquee/resize/edit-mode/keyboard shortcuts) against the new engine.
+- Phase 4 — cutover: delete tldraw-backed path + flag, drop the `tldraw` dependency from packages/canvas + apps/studio + the pnpm-workspace catalog, remove `tldraw/tldraw.css` import, resolve ADR-0005, update playbook architecture references, remeasure bundle size.
+- Phase 5 — follow-on, parallel-safe perf hardening: Vite dev-server pool LRU cap (sync-daemon has no cap on simultaneous dev-server processes today — the one genuinely open scale risk), bridge-side screenshot rasterization (postMessage, replaces the cross-origin `contentDocument` read that can never succeed), Inspector.tsx decomposition (deferred until the Penpot-parity FIX-W4b-8 + final sweep above lands, to avoid restructuring a file that's about to change anyway).
+
+**Standing rules for this track — same as the rest of the project:** workers = Sonnet 5
+(`model: sonnet`); run workers SEQUENTIALLY, one phase-worker at a time (session-limit
+double-burn risk on parallel heavy workers — see [[session-limit-clean-respawn]]);
+ALWAYS `git log`/`git status` reconcile after each worker returns, before proceeding
+(workers self-commit despite instructions — [[workers-self-commit]]); orchestrator
+(this session) owns all git ops + phase tags; any user-visible/UI-behavior change in
+this track must be dogfooded in a real browser before being called done, not just
+green automated gates ([[dogfood-ui-before-gating]]) — Phase 0 is pure perf refactor
+with no visible behavior change so it's exempted from browser dogfood, but Phase 2/3
+(the new canvas engine) is NOT exempted and must get a real browser pass before cutover.
+
+**Status:** Phase 0 worker dispatched 2026-07-20.
+
+### Phase 0 — COMPLETE (orchestrator-verified 2026-07-20, no tag — pure perf refactor, no phase-gate ceremony for this track's small phases)
+Git-reconciled clean: no self-commit (HEAD unchanged at 6b057c4), diff scoped to exactly
+`apps/studio/src/workspace/{Inspector,WorkspaceShell}.tsx`, `packages/ui/src/primitives/
+Tree.tsx`, `packages/canvas/e2e/tests/acceptance.spec.ts` — zero touches to `packages/
+canvas/src` (tldraw itself), as required. Orchestrator independently re-ran (not just
+trusted the worker's report): `@ccs/studio` typecheck ✅ + 127/127 tests ✅; `@ccs/ui`
+typecheck ✅ + 22/22 tests ✅; diffs spot-read and confirmed correct (selector fix,
+memo wrapping, e2e config change all match intent).
+- **Fix 1 (zustand selector-as-traversal) ✅** — Inspector.tsx + WorkspaceShell.tsx now
+  select primitives (`selectedUid`, `trees[framePath]`) and derive via `useMemo`.
+  **Fast-follow found, not yet fixed:** the identical antipattern also lives in
+  `InspectPanel.tsx:345` and `use-tool-actions.ts:76-77` — small follow-up candidate,
+  not urgent (out of this pass's scope by design).
+- **Fix 2 (LayersPanel subscription) — NOT changed, judgment call accepted.** Worker
+  traced it: `Tree.tsx`'s `flattenTree` needs every board's tree just to compute
+  `hasChildren` for the collapse arrow, even collapsed — narrowing the subscription
+  would break the multi-board Layers view; also zustand v5 (installed) dropped
+  selector+equalityFn entirely. Orchestrator agrees this is not actually a bug, just a
+  necessary cost of correct rendering — accepted as-is, closes this finding.
+- **Fix 3 (React.memo) ✅** — 29 Inspector section components + `Tree.tsx`'s row
+  extracted to a memoized `TreeRowItem`. Caveat (undisputed, real): `LayersPanel.tsx`
+  still passes fresh inline closures as row props each render, so the memo only pays
+  off for `Tree`'s own scroll-driven re-renders, not parent re-renders — a real
+  follow-up, logged, not chased this pass.
+- **Fix 4 (e2e perf-gate harness) — PARTIALLY fixed, one bug remains, DEFERRED to
+  Phase 2/3 on purpose.** Root cause #1 (`design-system` unresolvable — missing
+  `studioMode: true` on the e2e harness's `openProject` call) is genuinely fixed and
+  orchestrator-reproduced: `acceptance.spec.ts` now boots with the same studio Vite
+  config `demo:daemon` always used. **Root cause #2, newly discovered, NOT fixed:**
+  orchestrator re-ran `pnpm --filter @ccs/canvas run test:e2e` after the fix and
+  confirmed test (a) still fails — `iframe[title="Hero"]` never appears. This is a
+  REAL, separate, pre-existing bug in `packages/canvas/src/StudioCanvas.tsx`'s
+  interaction between the mount-time `zoomToFit` (frames camera on the FULL bounding
+  box of all 20+ frames once the perf-test fixture adds 18 extra frames) and
+  `viewport-cull.ts`'s `selectLiveFrames` hard cap (nearest 8 to viewport CENTER) —
+  Hero's fixed seed position isn't guaranteed to rank in the nearest-8 once the
+  bounding-box center shifts with 18 more tiled frames added, so it silently renders
+  as a placeholder instead of a live iframe, failing the test's very first assertion.
+  **Deliberately NOT fixed in Phase 0** (out of that phase's "don't touch packages/
+  canvas/src" scope) — logged here so it's fixed as part of **Phase 2/3 below**, since
+  that's exactly the code being rewritten there anyway, and a green e2e perf gate is
+  needed as the baseline BEFORE cutover verification. Likely fix: have the test zoom
+  to Hero specifically after mount (matching what a real user editing Hero would do)
+  rather than relying on incidental nearest-to-fit-all-center ranking — decide exact
+  approach during Phase 2/3, not before.
+
+## Phase 1 — design note (orchestrator-authored, no worker needed for pure scoping) — see `.orchestrator/CANVAS-ENGINE-DESIGN.md`
+Maps every tldraw API surface in use today to its custom-engine replacement; the
+CSS-transform DOM camera decision; the new module list inside `packages/canvas/src`;
+the `CCS_CANVAS_ENGINE=tldraw|custom` flag strategy so `apps/studio` needs zero edits
+(`StudioCanvasHandle`'s public interface is unchanged). Read that file before
+dispatching Phase 2 workers.
+
+**Next:** dispatch Phase 2a (camera store + gesture handlers, pure logic + unit tests,
+no rendering yet) as the first Sonnet 5 worker for the actual engine build.
+
+### Phase 2a — COMPLETE (orchestrator-verified 2026-07-20)
+Git-reconciled clean: no self-commit, `geometry.ts` diff is purely additive (+60/-0,
+one new `computeCameraToFitBounds`/`FitBoundsOptions` export), plus two new files
+`camera-store.ts` + `camera-gestures.ts` (and their `.test.ts` companions) — nothing
+else touched. Orchestrator independently re-ran (not just trusted the report):
+`@ccs/canvas` typecheck ✅, test ✅ **234/234** (16 files, includes every pre-existing
+suite untouched and still green). Hand-verified the core math myself: `zoomAtPoint`
+and `pan` both correctly satisfy the `screen = (page + camera) * z` convention
+`geometry.ts` already established (worked through the algebra by hand — checks out).
+`computeCameraToFitBounds` replicates tldraw's `zoomToBounds({targetZoom, inset})`
+clamp/center semantics that `StudioCanvas.tsx` currently relies on.
+- Delivers: `camera-store.ts` (zustand: camera/frames/selectedIds + pan/zoomAtPoint/
+  zoomIn/zoomOut/resetZoom/zoomToBounds/zoomToFit/zoomToSelection/select/
+  clearSelection) and `camera-gestures.ts` (`classifyWheelGesture` + a
+  `createPanDragController` state machine for space/middle-drag pan). Both pure logic,
+  zero DOM coupling (wheel/pointer events modeled as plain-object shapes, not real DOM
+  types), zero tldraw import, not yet wired into anything live.
+- **Flagged for the Phase 3 parity-verification pass** (not bugs, disclosed
+  assumptions where tldraw's real internal isn't discoverable from this repo):
+  `ZOOM_STEP_FACTOR=1.25`/reciprocal 0.8 for zoomIn/zoomOut click-steps; `MIN_ZOOM=0.02`/
+  `MAX_ZOOM=16` absolute bounds; the `factor = 1 - deltaZ` multiplicative model for
+  ctrl/meta+wheel zoom (the `deltaZ` derivation itself IS verified, reused from
+  `edit-mode-layer.tsx`'s already tldraw-checked `ZOOM_STEP_CLAMP`); and the "plain
+  wheel = vertical-pan-only" simplification (today's tldraw fallthrough actually pans
+  both axes on a diagonal trackpad scroll — worth checking whether that matters
+  before cutover).
+
+**Next:** dispatch Phase 2b (FrameShape + Canvas.tsx rendering behind
+`CCS_CANVAS_ENGINE` flag, isolated dev harness, still not wired into the real
+`StudioCanvas.tsx`) as the next Sonnet 5 worker.
+
+### Phase 2b — COMPLETE (orchestrator-verified 2026-07-20)
+Git-reconciled clean: no self-commit, diff is exactly the new `FrameShape.tsx` +
+`Canvas.tsx` + a new isolated dev harness (`dev/custom-engine-harness.{tsx,html}` +
+`dev/custom-engine-vite.config.ts`) + one additive line in `packages/canvas/
+package.json` (`demo:custom-engine` script) — nothing else touched, no orphaned dev
+server left running (checked `ps aux`, confirmed clean). Orchestrator independently
+re-ran: typecheck ✅, lint ✅, test ✅ 234/234 (unchanged baseline, this workstream is
+rendering not logic). Hand-verified the camera transform formula myself (`Canvas.tsx`
+line ~256): `translate3d(camera.x*z, camera.y*z, 0) scale(z)` with `transformOrigin:
+'0 0'` — algebra checks out against `geometry.ts`'s `screen=(page+camera)*z`
+convention. Looked at the worker's own screenshot evidence
+(`harness-multi-frame.png`) myself: Hero/Pricing/Aad all render live, side-by-side,
+real content, at the reported zoomed-out state — confirms the worker's claim, not
+just trusting the text report.
+- Delivers: `FrameShape.tsx` (plain component, ports the current tldraw version's
+  render logic 1:1 — chrome header, `content-visibility`/`contain` perf CSS, sandboxed
+  iframe always `pointer-events:none` for now, labeled placeholder fallback; explicitly
+  skips screenshot-capture/cache, matching that it's a still-unresolved, separately-
+  tracked concern in the tldraw version too) and `Canvas.tsx` (root container + CSS-
+  transformed "world" div, `ResizeObserver`-measured viewport size, `selectLiveFrames`
+  wired in unchanged, `classifyWheelGesture` + `createPanDragController` wired to real
+  DOM events, `frames` prop → `setFrames` sync).
+- Real behavioral proof (not just visual): the worker dispatched actual `WheelEvent`/
+  `PointerEvent` sequences and read `world.style.transform` before/after — a
+  `(-150,-80)` drag-pan shifted the transform's translate by exactly that amount
+  regardless of zoom (proves the pan math is zoom-independent as designed).
+- **Open items carried to 2d/Phase 3:** wheel-zoom clamp (`MIN_ZOOM`/`MAX_ZOOM`) is
+  applied in `Canvas.tsx`'s own wheel handler, not inside `camera-store.ts`'s
+  `zoomAtPoint` itself — confirm this split is intentional when 2d wires the real
+  thing. Same Phase-2a-flagged assumptions (zoom step factor, deltaZ curve, plain-
+  wheel-vertical-only) still apply, unchanged by this pass.
+
+**Next:** dispatch Phase 2c (selection: marquee/click/shift-click + resize handles)
+as the next Sonnet 5 worker — still isolated, not yet wired into `StudioCanvas.tsx`.
+
+### Phase 2c — COMPLETE (orchestrator-verified 2026-07-20; worker died mid-task on an
+environment restart, RESUMED via SendMessage from its saved transcript rather than
+discarded — see [[session-limit-clean-respawn]]: file timestamps showed complete,
+sequential progress through the whole brief ending at the dev-harness extension, so
+this was "substantial coherent progress," not a stall — resume was the right call,
+confirmed correct in hindsight since the resume needed only re-verification, not
+rework)
+Git-reconciled clean: no self-commit, no orphaned dev server (port 5556 confirmed
+free). Orchestrator independently re-ran: typecheck ✅, lint ✅, test ✅ **281/281**
+(18 files, +47 new tests). Looked at the worker's own screenshots myself: `04-click-
+select-hero.png` shows a clean blue selection outline + all 8 resize handles (4
+corner + 4 edge) exactly at Hero's boundary; `06-marquee-drag.png` shows a proper
+light-blue rubber-band rectangle spanning exactly Hero+Pricing with Aad correctly
+excluded — both match the text report precisely.
+- Delivers: `selection-gestures.ts` (click/shift-click-toggle/marquee, returns a
+  result type from `onPointerMove` rather than an injected callback — a lint-driven
+  design choice, documented), `resize-gestures.ts` (pure `computeResizedBox` + all 8
+  handles, no 4-corner simplification taken), `frame-geometry-commit.ts` (mirrors the
+  tldraw version's `onFrameGeometryCommitted` pub-sub exactly, so 2d can subscribe the
+  same way). `camera-store.ts` gained one additive `setFrameBox` action.
+  Multi-select-move-together was implemented (not simplified to single-frame).
+- Confirmed via direct behavioral proof, not just visuals: drag-move computed exactly
+  `screenDelta/zoom` in page space; resize-from-corner kept the opposite corner fixed;
+  geometry-commit fired exactly once per gesture with the correct final box; space+drag
+  pan over a selected frame still pans camera and leaves selection untouched (no
+  conflict with 2b's pan gestures).
+- **Open item for 2d:** if the `frames` prop's identity changes mid-drag (e.g. a
+  daemon sync landing while a user is mid-move), the sync effect's `setFrames` would
+  clobber the in-progress local edit — flagged, not resolved here; 2d must either
+  guard against this or confirm it's not actually reachable in the real integration.
+
+**Next:** dispatch Phase 2d — the real wiring, SPLIT into 2d-i (make `edit-mode-
+layer.tsx` engine-agnostic, mechanical, zero tldraw-path behavior change) and 2d-ii
+(the actual custom-engine assembly) — split decided given 2d's size and the 2c
+mid-task interruption scare.
+
+### Phase 2d-i — COMPLETE (orchestrator-verified 2026-07-20)
+Git-reconciled clean: no self-commit; diff is exactly `edit-mode-layer.tsx`
+(+155/-29, now zero tldraw imports) + one small, unavoidable adapter in
+`StudioCanvas.tsx` (+74/-1: a new `EditModeLayerBridge` leaf component + its one call
+site) — nothing else touched. Orchestrator independently re-ran: typecheck ✅, lint
+✅, test ✅ 281/281 (unchanged). **Critical regression check, independently re-run
+myself:** `test:e2e` shows the exact same 2 pre-existing failures, byte-identical
+error messages/locators, as documented before this refactor — zero new failures.
+Read the `StudioCanvas.tsx` diff myself: `EditModeLayerBridge` forwards
+`setCamera`/`zoomToBounds`/`dispatch({type:'wheel',...})` to the real `editor.*`
+verbatim — a pure reshape, not a behavior change.
+- `EditModeLayer` now takes `cameraHandle: CanvasCameraHandle` (`setCamera`/
+  `zoomToBounds`/`dispatchWheel`) + a plain `camera: CameraState` prop (the `useValue`
+  subscription moved OUT to the caller) + `frameIdToShapeId: (id) => string` (replaces
+  the direct `createShapeId` call) — zero tldraw imports remain in this file.
+- **Open design question flagged for 2d-ii, not yet decided:** the tldraw path needs
+  `dispatchWheel`'s synthetic-re-dispatch trick because `EditModeLayer`'s capture
+  overlay is a DOM sibling of `<Tldraw>`, outside its container subtree, so a wheel
+  event on the overlay never bubbles into tldraw's own listener without the manual
+  forward. The custom engine's `Canvas.tsx` (2b) owns wheel handling directly via a
+  native listener on ITS OWN container — if 2d-ii nests the overlay INSIDE that same
+  container (a DOM restructuring tldraw's constraints never allowed, but which we're
+  free to choose now), the synthetic-dispatch indirection may not be needed at all.
+  2d-ii's call, document whichever way it goes.
+
+**Next:** dispatch Phase 2d-ii — the actual custom-engine assembly. Real integration,
+not isolated. Full real-browser dogfood of the custom-engine path required before
+calling this done (not just green gates — [[dogfood-ui-before-gating]]), though the
+REAL `apps/studio` default stays `tldraw` until Phase 3 signs off — 2d-ii's dogfood
+happens against the isolated `demo:custom-engine` harness extended to mount the full
+assembly (edit-mode, selection, zoom reporting), not against the real app yet.
+
+### Phase 2d-ii — COMPLETE (orchestrator-verified 2026-07-20 — highest-risk sub-
+workstream in this whole track, came through clean)
+Git-reconciled clean: no self-commit, no orphaned processes, `files/demo` fixture
+restored to its pre-dogfood state (only the original 3 frames remain on disk, verified
+myself via `find`). `edit-mode-layer.tsx`'s diff confirmed byte-identical to 2d-i's own
+(+155/-29, untouched by this worker, as claimed). `StudioCanvas.tsx` (was ~1427 lines)
+is now a 62-line dispatcher; `index.ts` (public exports) confirmed UNCHANGED — still
+imports from `./StudioCanvas.js`, which re-exports every type exactly as before, so
+`apps/studio` needs zero edits. Orchestrator independently re-ran: typecheck ✅, lint
+✅, test ✅ 281/281 (unchanged). **The critical check, independently re-run myself:**
+`test:e2e` shows the exact same 2 pre-existing failures, byte-identical error
+messages/locators — zero regression from restructuring ~1400 lines. Read the new
+`StudioCanvas.tsx` dispatcher myself: reads `import.meta.env.VITE_CCS_CANVAS_ENGINE`
+once, fails SAFE to `'tldraw'` for anything other than the literal `'custom'` — sound
+default-safety design. Looked at the worker's own screenshots: `ce-01-loaded.png`
+shows all 3 real frames rendering through `CustomEngineCanvas` (with the "+ New Frame"
+button, confirming `NewFrameForm` wired in); `ce-11-after-duplicate.png` shows a real
+daemon-created "HeroCopy3" frame with the edit-mode banner ("Hero — click an element
+to select · Esc to exit") and resize handles all functioning against the NEW
+`CustomEditModeLayerBridge` adapter — real, working edit-mode/bridge integration on
+the custom engine, not just camera/rendering.
+- Delivers the full split: `studio-canvas-types.ts` (shared contract), `use-studio-
+  canvas-daemon.ts` (engine-agnostic daemon/frames/createFrame/duplicateFrame/
+  setFrameGeometry/requestComputedStyle hook), `NewFrameForm.tsx` + `element-
+  selection-bridge.tsx` (shared UI), `TldrawEngineCanvas.tsx` (mechanical extraction,
+  behavior-frozen), `CustomEngineCanvas.tsx` (new assembly: `Canvas.tsx` + `camera-
+  store.ts` + `frame-geometry-commit.ts` + a new `CustomEditModeLayerBridge`).
+- **Design resolution for 2d-i's open question:** kept `EditModeLayer`'s overlay a
+  DOM sibling of `<Canvas>` (identical shape to the tldraw path) rather than nesting
+  it inside — `dispatchWheel` doesn't need DOM re-dispatch at all in the custom
+  engine, it algebraically inverts the overlay's pre-computed `{point,delta}` straight
+  into `camera-store`'s `pan`/`zoomAtPoint` calls. Verified live (zoom-at-cursor and
+  pan both work correctly through the overlay).
+- **Disclosed, intentional simplifications in the custom engine** (not bugs, not
+  hidden): no phantom-frame guard (unnecessary — no native-duplicate path exists to
+  guard against once we own creation fully), no `ScreenshotCacheContext` (FrameShape.
+  tsx from 2b never implemented capture, matching that gap), no camera-move
+  animations (tldraw's `{animation:{duration}}` options are currently no-ops on the
+  custom engine's instant camera-store writes).
+- Real behavioral proof beyond the screenshots: zoom-to-fit-on-open fires once
+  (camera z≈0.31, not the default 1), resize/drag-move page-space math verified
+  exact, geometry-commit persisted to real `.studio/canvas.json` on disk, Cmd/Ctrl+D
+  triggered a REAL `duplicate-frame` daemon call (new `.tsx` + registry + canvas.json
+  entry, HMR-confirmed) — not a stub.
+- **One flagged-not-blocking caveat:** one dogfood run saw Esc not fire on the very
+  first keypress immediately after a resize-drag pointer-capture release (fired on
+  immediate retry) — looked like Playwright/CDP input-dispatch timing noise, not
+  reproduced on a plain click→Esc, and `edit-mode-layer.tsx` itself is unchanged/
+  shared by both engines so this isn't an engine-specific regression. Worth a human
+  sanity check during Phase 3's real dogfood, not blocking.
+
+## Phase 3 — parity verification (next)
+Custom engine is now feature-complete and independently verified in isolation. Phase
+3's job: (1) fix the two pre-existing e2e bugs for real (the viewport-cull/zoomToFit
+interaction in `acceptance.spec.ts`, and the Playwright strict-mode locator ambiguity
+in `p2-selection.spec.ts`) so there's a genuinely clean e2e baseline to certify
+against; (2) run the FULL e2e acceptance + p2-selection suites against the CUSTOM
+engine (not just the isolated harness) and get them green; (3) real human-quality
+browser dogfood of the actual `apps/studio` with `VITE_CCS_CANVAS_ENGINE=custom` set,
+side-by-side against the `tldraw` default, screenshots, checking the Esc-timing
+caveat above and the disclosed simplifications (no animation, no screenshot capture)
+for whether they're actually acceptable UX gaps or need addressing before cutover;
+(4) run the 20-frame fps perf benchmark against the custom engine and compare to the
+tldraw baseline (~117fps). `apps/studio`'s REAL default stays `tldraw` throughout
+Phase 3 — flipping it is Phase 4's job, gated on Phase 3's sign-off.
+
+### ⛔ SESSION PAUSED 2026-07-20 (Anthropic session-limit warning at 97%, human said
+stop) — Phase 3a is PARTIAL, worker killed mid-investigation, NOT fully verified.
+
+**What IS fully done + orchestrator-verified, safe to build on:** everything through
+Phase 2d-ii (see entries above) — perf quick-wins, the full custom canvas engine
+(camera/gestures/rendering/selection/resize/edit-mode, all behind
+`CCS_CANVAS_ENGINE`/`VITE_CCS_CANVAS_ENGINE`, default `'tldraw'`, zero change to
+`apps/studio`'s real behavior). Every one of those phases was independently
+re-verified by the orchestrator (typecheck/lint/test/e2e re-run + diffs read + real
+screenshots inspected), not just trusted from worker reports.
+
+**Phase 3a — PARTIAL, confirmed via a live transcript peek before the kill (worker
+was killed via TaskStop, not graceful — its OWN final report never arrived):**
+- **Bug 1 (viewport-cull/zoomToFit) — FIXED and CONFIRMED**: a fresh `test:e2e` run
+  (seen live) showed test (a) `✓ passed`. Fix approach and exact diff NOT yet reviewed
+  by the orchestrator — read `packages/canvas/e2e/tests/acceptance.spec.ts` and
+  `packages/canvas/dev/main.tsx` (both show as modified) before trusting further.
+- **Bug 2 (Playwright strict-mode locator ambiguity) — MOSTLY fixed**: root cause was
+  actually TWO always-present-vs-transient chrome-header/placeholder-label elements
+  (not "chrome label vs iframe content" as originally hypothesized) — fixed via
+  `.first()` at 3 call sites in `p2-selection.spec.ts`, confirmed tests (f)(g)(h)(i)(j)(k)
+  now PASS in the same live run.
+- **⚠️ TWO NEW FAILURES SURFACED, UNRESOLVED — READ THIS BEFORE ASSUMING 2d-ii HAS NO
+  REGRESSIONS:** unblocking test (a) let the suite run further than any previous
+  attempt this whole track — and tests (b) ("dragging a frame updates
+  `.studio/canvas.json`") and (l) ("Esc exits edit mode") FAILED, having never been
+  reached/observed in ANY prior e2e run in this entire track (they were always hidden
+  behind test (a)'s cascading `beforeAll` failure). **This means every earlier
+  "zero regression, same 2 known failures" verification claim in this file (Phase
+  2d-i, 2d-ii) was only ever checking the tests that actually RAN — (b)/(c)/(d)/(e)/
+  (l)/(h-k) were silently skipped every single time, never proven passing OR failing
+  post-refactor.** Whether (b)/(l)'s failures are (a) genuinely NEW regressions from
+  the 2d-ii `StudioCanvas.tsx` split, or (b) pre-existing bugs that simply never had
+  a chance to surface before — is UNKNOWN. Do not treat 2d-ii as fully regression-free
+  until this is resolved. Test (b)'s failure: drag doesn't update `canvas.json` within
+  5s. Test (l)'s failure: `getByTestId('ccs-edit-mode-capture')` not found after
+  double-click, inside the SAME `enterEditModeByHeader` helper that tests (f)/(g)
+  used successfully moments earlier in the same run — inconsistent, worth checking
+  for a timing/state-leakage issue between tests (shared `page`/`daemon` across the
+  file?) before assuming it's a real bug.
+
+**Immediate next step on resume:** do NOT resume the killed worker (context is
+mid-diagnosis, not mid-implementation — a fresh worker re-reading this note is
+cleaner). Read the diffs to `acceptance.spec.ts`/`p2-selection.spec.ts`/`dev/main.tsx`
+first, decide whether bug-1's fix is sound, then investigate (b)/(l) as a NEW,
+separate task — check test isolation/ordering in both spec files first (shared module-
+scope `page`/`daemon` state across `test()` blocks in the same file is the most likely
+culprit for an inconsistent edit-mode-entry failure like this).

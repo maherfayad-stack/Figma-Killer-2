@@ -154,7 +154,33 @@ test.beforeAll(async ({ browser }) => {
   context = await browser.newContext();
   page = await context.newPage();
   await page.goto(`http://127.0.0.1:${HARNESS_PORT}/?daemonPort=${daemon.daemonPort}`);
-  await expect(page.getByText(SELECTION_FIXTURE_NAME, { exact: true })).toBeAttached({ timeout: 15_000 });
+  // Bug fix (Phase 3 parity-verification baseline): `getByText(exact)` here
+  // used to resolve to TWO elements — Playwright strict-mode violation,
+  // reproduced empirically:
+  //   1) <div>SelectionFixture</div> — the frame's own chrome header label
+  //      (`frame-shape.tsx`/`FrameShape.tsx`, `{shape.props.name}`/`{name}`,
+  //      always rendered regardless of live/placeholder state).
+  //   2) <span>SelectionFixture</span> — `FramePlaceholder`'s label, which
+  //      renders ONLY while this frame is in `viewport-cull.ts`'s
+  //      non-"live" (placeholder/screenshot) render mode — i.e. transiently,
+  //      right after `page.goto` before the mount-time `zoomToFit` settles
+  //      the camera onto a state where SelectionFixture (seeded far out at
+  //      x=7200) intersects the live-frame budget.
+  // Both elements are OUTSIDE any iframe (the fixture's own `<h1>` content
+  // lives in a cross-origin iframe, which a plain `page` locator can never
+  // reach anyway — only `frameLocator` pierces it), so the ambiguity is
+  // between these two DOM siblings, not "chrome label vs. fixture content"
+  // as first guessed. `.first()` deterministically resolves to the chrome
+  // header: in both engines' JSX the header `div` is always the FIRST child
+  // rendered (before the live-iframe-or-placeholder body), so it's earlier
+  // in DOM/document order than the placeholder's `span` whenever both are
+  // present — a structural invariant of `frame-shape.tsx`/`FrameShape.tsx`,
+  // not an incidental/order-dependent guess. This is also exactly the
+  // element every downstream test actually wants: `enterEditModeByHeader`
+  // (below) pans/double-clicks this same "header" locator to enter edit
+  // mode, which only makes sense against the always-present chrome header,
+  // never the transient placeholder label.
+  await expect(page.getByText(SELECTION_FIXTURE_NAME, { exact: true }).first()).toBeAttached({ timeout: 15_000 });
 });
 
 test.afterAll(async () => {
@@ -245,7 +271,11 @@ async function clickCenter(target: Page, locator: Locator, iframeTitle?: string)
  * (different) camera tick once the mouse event actually fires, landing on
  * the wrong node — caught empirically while writing this spec. */
 async function enterEditModeByHeader(target: Page, frameName: string): Promise<void> {
-  const header = target.getByText(frameName, { exact: true });
+  // `.first()` — see the top `beforeAll`'s doc: this locator can otherwise
+  // resolve to 2 elements (the chrome header + a transiently-rendered
+  // `FramePlaceholder` label), and the header (always DOM-order-first) is
+  // the one this helper actually means to pan to and double-click.
+  const header = target.getByText(frameName, { exact: true }).first();
   await panUntilOnScreen(target, header);
   await dblclickCenter(target, header);
   await expect(target.getByTestId('ccs-edit-mode-capture')).toBeVisible({ timeout: 5_000 });
@@ -424,7 +454,9 @@ test('(k) the overlay is positioned correctly at two different zoom levels', asy
 
 test('(l) Esc exits edit mode: pointer-events revert and the P1 pan/zoom gesture still works afterward', async () => {
   await enterEditModeByHeader(page, SELECTION_FIXTURE_NAME);
-  const header = page.getByText(SELECTION_FIXTURE_NAME, { exact: true });
+  // `.first()` — see the top `beforeAll`'s doc: pins this to the chrome
+  // header (always DOM-order-first), not the transient placeholder label.
+  const header = page.getByText(SELECTION_FIXTURE_NAME, { exact: true }).first();
 
   await exitEditMode(page);
   await expect(page.getByTestId('ccs-breadcrumb-bar')).toHaveCount(0);

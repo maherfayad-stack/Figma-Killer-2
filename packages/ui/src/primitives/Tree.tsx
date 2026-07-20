@@ -54,7 +54,39 @@ export function Tree<T>({
   const containerRef = React.useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = React.useState(0);
   const [viewportHeight, setViewportHeight] = React.useState(400);
-  const [dragId, setDragId] = React.useState<string | null>(null);
+  // Only the setter is used directly (the current drag id is read via the
+  // functional-update form inside `handleDrop` below, so `handleDrop` itself
+  // doesn't need `dragId` in its own dependency array) — the read half of
+  // this tuple is intentionally discarded.
+  const [, setDragId] = React.useState<string | null>(null);
+
+  // PERF (Phase 0, fix 3): stable per-Tree-render callbacks handed to the
+  // memoized `TreeRowItem` below. Scrolling only changes `scrollTop`/
+  // `viewportHeight` (this component's OWN state) — it does NOT re-run
+  // `Tree`'s parent, so `onSelect`/`onToggleExpand`/`onReorder`/`renderRow`
+  // (this component's OWN props) stay referentially identical across a
+  // scroll-driven re-render, and so do these two handlers (their deps are
+  // just `onReorder`, itself unchanged in that scenario) — so a row that
+  // stays mounted across a small scroll delta (the common case, since
+  // `absoluteIndex` is a row's fixed position in the full `rows` array, not
+  // a function of scroll offset) genuinely skips re-rendering instead of
+  // reconstructing on every scroll tick.
+  const handleDragStart = React.useCallback((id: string) => setDragId(id), []);
+  const handleDragOver = React.useCallback(
+    (e: React.DragEvent<HTMLDivElement>) => {
+      if (onReorder) e.preventDefault();
+    },
+    [onReorder],
+  );
+  const handleDrop = React.useCallback(
+    (targetId: string) => {
+      setDragId((prev) => {
+        if (onReorder && prev && prev !== targetId) onReorder(prev, targetId);
+        return null;
+      });
+    },
+    [onReorder],
+  );
 
   React.useEffect(() => {
     const el = containerRef.current;
@@ -111,70 +143,131 @@ export function Tree<T>({
           const selected = row.id === selectedId;
           const expanded = expandedIds.has(row.id);
           return (
-            <div
+            <TreeRowItem
               key={row.id}
-              role="treeitem"
-              aria-selected={selected}
-              aria-expanded={row.hasChildren ? expanded : undefined}
-              aria-level={row.depth + 1}
-              data-row-id={row.id}
+              row={row}
+              absoluteIndex={absoluteIndex}
+              rowHeight={rowHeight}
+              selected={selected}
+              expanded={expanded}
               draggable={Boolean(onReorder)}
-              onDragStart={() => setDragId(row.id)}
-              onDragOver={(e) => onReorder && e.preventDefault()}
-              onDrop={() => {
-                if (onReorder && dragId && dragId !== row.id) onReorder(dragId, row.id);
-                setDragId(null);
-              }}
-              onClick={() => onSelect(row.id)}
-              style={{
-                position: 'absolute',
-                insetBlockStart: absoluteIndex * rowHeight,
-                insetInlineStart: 0,
-                insetInlineEnd: 0,
-                blockSize: rowHeight,
-                display: 'flex',
-                alignItems: 'center',
-                paddingInlineStart: 8 + row.depth * 14,
-                paddingInlineEnd: 8,
-                gap: 4,
-                fontSize: 'var(--ccs-font-size-sm)',
-                background: selected ? 'var(--ccs-bg-selected)' : 'transparent',
-                borderInlineStart: selected ? '2px solid var(--ccs-accent)' : '2px solid transparent',
-                cursor: 'pointer',
-              }}
-            >
-              {row.hasChildren ? (
-                <button
-                  type="button"
-                  aria-label={expanded ? 'Collapse' : 'Expand'}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onToggleExpand(row.id);
-                  }}
-                  style={{
-                    all: 'unset',
-                    display: 'inline-flex',
-                    inlineSize: 14,
-                    blockSize: 14,
-                    cursor: 'pointer',
-                    color: 'var(--ccs-text-muted)',
-                    transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)',
-                    transition: 'transform 100ms ease',
-                  }}
-                >
-                  ▸
-                </button>
-              ) : (
-                <span style={{ inlineSize: 14 }} />
-              )}
-              {renderRow(row, { selected, expanded })}
-            </div>
+              onSelect={onSelect}
+              onToggleExpand={onToggleExpand}
+              onDragStart={handleDragStart}
+              onDragOver={handleDragOver}
+              onDrop={handleDrop}
+              renderRow={renderRow}
+            />
           );
         })}
       </div>
     </div>
   );
 }
+
+/** A single row, extracted from `Tree`'s own render and wrapped in
+ * `React.memo` (Phase 0, fix 3) so a row that stays mounted across a small
+ * scroll delta (its `absoluteIndex` is fixed — a row's position in the
+ * FULL `rows` array, not a function of scroll offset) skips re-rendering
+ * entirely instead of reconstructing on every scroll tick. Every prop here
+ * is exactly what the inline JSX it replaces used to close over; behavior
+ * is unchanged. NOTE (disclosed, not chased down this pass): `onSelect`/
+ * `onToggleExpand`/`onReorder`/`renderRow` are `Tree`'s own props — if
+ * `LayersPanel` (the current sole caller) passes fresh inline closures for
+ * these on every ITS OWN render, this memo only pays off for
+ * `Tree`-internal (scroll-driven) re-renders, not ones triggered by
+ * `LayersPanel` re-rendering; making those callbacks stable is a larger,
+ * separate refactor. Generic over `T` like `Tree` itself — `React.memo`
+ * would otherwise erase that generic, so the memoized value is cast back to
+ * the un-memoized function's own (generic) type, a standard, safe pattern
+ * for memoizing a generic component (the runtime behavior is identical;
+ * only the compile-time type is restored). */
+function TreeRowItemImpl<T>({
+  row,
+  absoluteIndex,
+  rowHeight,
+  selected,
+  expanded,
+  draggable,
+  onSelect,
+  onToggleExpand,
+  onDragStart,
+  onDragOver,
+  onDrop,
+  renderRow,
+}: {
+  row: FlatTreeRow<T>;
+  absoluteIndex: number;
+  rowHeight: number;
+  selected: boolean;
+  expanded: boolean;
+  draggable: boolean;
+  onSelect: (id: string) => void;
+  onToggleExpand: (id: string) => void;
+  onDragStart: (id: string) => void;
+  onDragOver: (e: React.DragEvent<HTMLDivElement>) => void;
+  onDrop: (id: string) => void;
+  renderRow: (row: FlatTreeRow<T>, state: { selected: boolean; expanded: boolean }) => React.ReactNode;
+}): React.ReactElement {
+  return (
+    <div
+      role="treeitem"
+      aria-selected={selected}
+      aria-expanded={row.hasChildren ? expanded : undefined}
+      aria-level={row.depth + 1}
+      data-row-id={row.id}
+      draggable={draggable}
+      onDragStart={() => onDragStart(row.id)}
+      onDragOver={onDragOver}
+      onDrop={() => onDrop(row.id)}
+      onClick={() => onSelect(row.id)}
+      style={{
+        position: 'absolute',
+        insetBlockStart: absoluteIndex * rowHeight,
+        insetInlineStart: 0,
+        insetInlineEnd: 0,
+        blockSize: rowHeight,
+        display: 'flex',
+        alignItems: 'center',
+        paddingInlineStart: 8 + row.depth * 14,
+        paddingInlineEnd: 8,
+        gap: 4,
+        fontSize: 'var(--ccs-font-size-sm)',
+        background: selected ? 'var(--ccs-bg-selected)' : 'transparent',
+        borderInlineStart: selected ? '2px solid var(--ccs-accent)' : '2px solid transparent',
+        cursor: 'pointer',
+      }}
+    >
+      {row.hasChildren ? (
+        <button
+          type="button"
+          aria-label={expanded ? 'Collapse' : 'Expand'}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleExpand(row.id);
+          }}
+          style={{
+            all: 'unset',
+            display: 'inline-flex',
+            inlineSize: 14,
+            blockSize: 14,
+            cursor: 'pointer',
+            color: 'var(--ccs-text-muted)',
+            transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)',
+            transition: 'transform 100ms ease',
+          }}
+        >
+          ▸
+        </button>
+      ) : (
+        <span style={{ inlineSize: 14 }} />
+      )}
+      {renderRow(row, { selected, expanded })}
+    </div>
+  );
+}
+
+const TreeRowItem = React.memo(TreeRowItemImpl) as typeof TreeRowItemImpl;
 
 /** Flattens a rooted tree into `FlatTreeRow[]`, honoring `expandedIds` —
  * shared helper so `apps/studio` doesn't reimplement the walk per panel. */

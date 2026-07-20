@@ -103,6 +103,22 @@ test.beforeAll(async () => {
     projectRoot: REPO_ROOT,
     daemonPortStart: DAEMON_PORT_START,
     frameServerPortStart: FRAME_SERVER_PORT_START,
+    // PERF-PHASE-0 FIX 4 — root cause of the `beforeAll` failure this fixed:
+    // without `studioMode: true`, `openProject` boots every file-folder's
+    // Vite dev server with ONLY that file-folder's own, un-overlaid
+    // `vite.config.ts` (the P0 standalone-contract default —
+    // `daemon.ts`'s own doc on this option). `writeStudioViteConfig`
+    // (`studio-vite-config.ts`) is what adds the `resolve.alias` mapping the
+    // bare `design-system` specifier to the built `<projectRoot>/design-
+    // system/dist/*` output, and it only runs when `studioMode` is on — so
+    // `files/demo/src/frames/Hero.tsx`'s `import { Accolade } from
+    // 'design-system'` (and `Aad.tsx`'s identical import) was unresolvable,
+    // crashing the Hero frame before this suite's very first
+    // `page.frameLocator('iframe[title="Hero"]')` assertion in the
+    // `beforeAll` below could ever pass. `demo:daemon` (`dev/run-daemon.ts`)
+    // already passes `studioMode: true` for exactly this reason (see its own
+    // doc) — this brings the e2e harness's daemon boot in line with it.
+    studioMode: true,
   });
   console.log(`[e2e] real daemon up: control-ws ws://127.0.0.1:${daemon.daemonPort}`);
   for (const ff of daemon.fileFolders) {
@@ -155,6 +171,40 @@ test.beforeAll(async ({ browser }) => {
   await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: `http://127.0.0.1:${HARNESS_PORT}` });
   page = await context.newPage();
   await page.goto(`http://127.0.0.1:${HARNESS_PORT}/?daemonPort=${daemon.daemonPort}`);
+
+  // Bug fix (Phase 3 parity-verification baseline, see .orchestrator/STATE.md
+  // Phase 0 FIX 4 + Phase 3 kickoff note): this `beforeAll` used to assert on
+  // `iframe[title="Hero"]` immediately after `page.goto`, relying on Hero
+  // incidentally ranking in `viewport-cull.ts`'s nearest-8-to-viewport-center
+  // live budget once the mount-time `zoomToFit` frames the camera on the
+  // bounding box of ALL ~22 frames (Hero + Pricing + Aad + the 18
+  // `PERF_EXTRA_FRAME_COUNT` frames + the ADR-0015 `DupSourceName` fixture
+  // added above). That's not guaranteed — Hero's fixed seed position isn't
+  // guaranteed to be among the nearest 8 to the shifted fit-all center, so it
+  // could silently render as a placeholder instead of a live iframe, and
+  // `iframe[title="Hero"]` would never appear. This is a genuine product
+  // behavior gap (the cull cap is correct and intentionally NOT weakened
+  // here — see `DEFAULT_MAX_LIVE_FRAMES` in `viewport-cull.ts`), but the
+  // right fix belongs in this test's setup: a real user editing `Hero.tsx`
+  // would actually be LOOKING AT Hero (selected/zoomed to it), not trusting
+  // that it randomly lands in a fit-all-of-22-frames' nearest-8 group. So,
+  // matching that real user action, explicitly zoom the camera to Hero via
+  // `StudioCanvasHandle.zoomToFrame` (identical shape on both the tldraw and
+  // custom engines, playbook §5.4) — stashed on `window.__ccsHandle` by
+  // `dev/main.tsx`'s test-only `onReady` hook (see that file's own doc) —
+  // BEFORE asserting on its content, guaranteeing Hero is the nearest frame
+  // to its own viewport center regardless of how many other frames this
+  // suite's fixtures add.
+  await page.waitForFunction(() => Boolean((window as unknown as { __ccsHandle?: unknown }).__ccsHandle));
+  await page.waitForTimeout(500);
+  await page.screenshot({ path: 'test-results/DEBUG-post-mount-pre-zoomtoframe.png' });
+  await page.evaluate(() => {
+    (window as unknown as { __ccsHandle: { zoomToFrame: (fileFolder: string, framePath: string) => void } }).__ccsHandle.zoomToFrame(
+      'demo',
+      'src/frames/Hero.tsx',
+    );
+  });
+
   await expect(page.frameLocator('iframe[title="Hero"]').locator('h1')).toHaveText(
     'Plan your next trip effortlessly',
     { timeout: 15_000 },
