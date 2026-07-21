@@ -18,7 +18,14 @@ import {
 } from './resize-gestures.js';
 import { emitFrameGeometryCommitted } from './frame-geometry-commit.js';
 import { selectLiveFrames, DEFAULT_MAX_LIVE_FRAMES } from './viewport-cull.js';
-import { boxToScreenBox, screenPointToPageSpace, screenViewportToPageBounds, type Box, type Point } from './geometry.js';
+import {
+  boxToScreenBox,
+  screenPointToPageSpace,
+  screenViewportToPageBounds,
+  type Box,
+  type CameraState,
+  type Point,
+} from './geometry.js';
 
 /**
  * Sub-workstream 2b (`.orchestrator/CANVAS-ENGINE-DESIGN.md`) — `Canvas.tsx`
@@ -142,6 +149,37 @@ export interface CanvasProps {
   frames: CanvasFrame[];
   className?: string;
   style?: React.CSSProperties;
+  /**
+   * Phase 3b (`.orchestrator/CANVAS-ENGINE-DESIGN.md`'s Phase 2 mapping
+   * table: "`onDoubleClick` -> edit mode ... Plain `onDoubleClick` prop on
+   * `FrameShape.tsx`") — fired when a native browser `dblclick` lands on a
+   * frame (resolved the same `data-ccs-frame-id` way `handlePointerDown`
+   * hit-tests, and past the same `isResizeHandleTarget` guard). `Canvas`
+   * itself already snaps the camera to the frame's bounds (mirroring
+   * `frame-shape.tsx`'s tldraw `CcsFrameShapeUtil.onDoubleClick`'s
+   * `editor.zoomToBounds` call — see `handleDoubleClick` below) since that's
+   * squarely this file's own camera-store concern; this callback exists so
+   * the CALLER can additionally record `selection-store.ts`'s
+   * `editModeFrame` with the daemon-facing `fileFolder`/`framePath` this
+   * engine-agnostic file deliberately doesn't carry (see `CanvasFrame`'s own
+   * doc for why — same reasoning applies here).
+   *
+   * `previousCamera` is the camera snapshot from BEFORE `zoomToBounds` was
+   * applied — deliberately captured first (see `handleDoubleClick`'s own
+   * comment for why the ORDER here matters): `selection-store.ts`'s
+   * `enterEditMode` records whatever camera it's given as the value Esc
+   * restores on exit, and tldraw's own `CcsFrameShapeUtil.onDoubleClick`
+   * reads `editor.getCamera()` BEFORE its own `zoomToBounds` call for
+   * exactly this reason — get this backwards and every edit-mode exit
+   * "restores" to the just-zoomed-in view instead of undoing it, which
+   * silently ratchets the camera in tighter on every double-click a test
+   * (or a real user) performs, never zooming back out. Confirmed
+   * empirically: getting this wrong here didn't fail the double-click test
+   * itself, only a LATER one (`panUntilOnScreen` timing out trying to
+   * reach a different, far-away frame from a camera that never zoomed back
+   * out) — a good reminder that this ordering bug is easy to miss by only
+   * testing the immediate gesture in isolation. */
+  onFrameDoubleClick?: (frameId: string, previousCamera: CameraState) => void;
 }
 
 const CONTAINER_STYLE: React.CSSProperties = {
@@ -157,7 +195,7 @@ function clampZoom(z: number): number {
   return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z));
 }
 
-export function Canvas({ frames, className, style }: CanvasProps): React.ReactElement {
+export function Canvas({ frames, className, style, onFrameDoubleClick }: CanvasProps): React.ReactElement {
   const containerRef = React.useRef<HTMLDivElement | null>(null);
 
   const camera = useCameraStore((s) => s.camera);
@@ -314,6 +352,52 @@ export function Canvas({ frames, className, style }: CanvasProps): React.ReactEl
     return hit ? hit.getAttribute('data-ccs-frame-id') : null;
   }
 
+  /**
+   * Phase 3b fix: whether a native pointer event's `target` landed on one of
+   * `ResizeHandles`' own overlay divs (`data-ccs-resize-handle`, set below).
+   *
+   * Root cause this guards against: `ResizeHandles` renders each handle as a
+   * FIXED SCREEN-SPACE size (`HANDLE_SIZE = 8px`), positioned via
+   * `resizeHandleScreenPoint` — the 'n' (north/top-edge) handle sits at the
+   * selected frame's horizontal center, right at its top edge, which is
+   * exactly where a click on `FrameShape.tsx`'s chrome header (which spans
+   * the frame's full width, vertically centered a few px below the frame's
+   * top edge) lands. At a typical zoomed-out camera (routine once more than
+   * a couple of frames are on screen — the whole `viewport-cull.ts` design
+   * assumes many frames fit in one viewport), the header's ON-SCREEN height
+   * shrinks with zoom while the handle's 8px hit-box does NOT (it's rendered
+   * in screen space, a sibling of the transformed world div, same as
+   * `resizeHandleScreenPoint`'s own doc explains) — so the handle's hit-box
+   * ends up covering the header's vertical center, and the handle (being
+   *`zIndex: 10`, painted after the frame) wins the browser's hit-test.
+   *
+   * `ResizeHandles`' own `onPointerDown` already calls `e.stopPropagation()`
+   * on the React `SyntheticEvent`, but that does NOT stop THIS file's own
+   * plain `el.addEventListener('pointerdown', ...)` below from also
+   * running: `containerRef.current` (where that listener lives) is a DOM
+   * ANCESTOR of the handle, strictly BETWEEN the handle and wherever React's
+   * root-delegated listener is attached, so the native bubble phase reaches
+   * this file's listener FIRST, before React's synthetic dispatch (and
+   * therefore before `stopPropagation()`) ever runs. Confirmed empirically:
+   * without this guard, a double-click on a zoomed-out frame's header
+   * lands its SECOND pointerdown on the 'n' handle, which
+   * `frameIdFromEventTarget` (rightly) doesn't recognize as a frame hit, so
+   * `selectionController` treats it as an empty-background click and
+   * `clearSelection()`s on the matching pointerup — silently undoing the
+   * FIRST click's selection (and the edit-mode entry it triggered) a moment
+   * later, which is exactly the bug that made
+   * `p2-selection.spec.ts`'s double-click test flake/fail on this engine.
+   *
+   * The fix: recognize a resize-handle target explicitly and bail out of
+   * `handlePointerDown` before either `panController` or
+   * `selectionController` sees the event at all — the handle's own
+   * `onPointerDown` (a normal React prop, still dispatched independently)
+   * remains the sole owner of starting its resize gesture.
+   */
+  function isResizeHandleTarget(target: EventTarget | null): boolean {
+    return target instanceof Element && target.closest('[data-ccs-resize-handle]') !== null;
+  }
+
   // --- click/shift-click/marquee/drag-to-move: one native-listener effect
   // -------------------------------------------------------------------------
   // See this file's module doc ("Why native addEventListener, not JSX
@@ -343,6 +427,13 @@ export function Canvas({ frames, className, style }: CanvasProps): React.ReactEl
     }
 
     function handlePointerDown(e: PointerEvent): void {
+      // See `isResizeHandleTarget`'s doc above — a resize handle's own
+      // `onPointerDown` owns this event entirely; letting it fall through
+      // to `selectionController` below would misread it as an empty-
+      // background click (the handle has no `data-ccs-frame-id` ancestor)
+      // and clear whatever's currently selected.
+      if (isResizeHandleTarget(e.target)) return;
+
       const hitFrameId = frameIdFromEventTarget(e.target);
 
       const started = panController.onPointerDown({
@@ -451,6 +542,83 @@ export function Canvas({ frames, className, style }: CanvasProps): React.ReactEl
       el.removeEventListener('pointercancel', handlePointerUp);
     };
   }, [panController, selectionController, resizeController, toPoints, moveStateBox]);
+
+  // --- Phase 3b: double-click a frame -> zoom-to-bounds + notify the caller
+  // -------------------------------------------------------------------------
+  // Native `dblclick`, not hand-rolled two-clicks-within-a-window detection:
+  // the browser already does exactly this timing/target-matching work (and
+  // does it consistently with every other double-click affordance on the
+  // page), so there's no reason to reimplement it. `onFrameDoubleClick` is
+  // read via a ref (not a `useEffect` dependency) so this listener is
+  // registered exactly once per mount, same "stable native listener, fresh
+  // callback read at call time" shape `screenSizeRef`/`toPoints` already use
+  // elsewhere in this file — the prop's identity is free to change every
+  // render (`CustomEngineCanvas.tsx`'s call site doesn't need to memoize it)
+  // without tearing down and re-adding the DOM listener.
+  const onFrameDoubleClickRef = React.useRef(onFrameDoubleClick);
+  React.useEffect(() => {
+    onFrameDoubleClickRef.current = onFrameDoubleClick;
+  }, [onFrameDoubleClick]);
+
+  React.useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    function handleDoubleClick(e: MouseEvent): void {
+      // Resolving the frame under a double-click is NOT simply
+      // `frameIdFromEventTarget(e.target)`: the FIRST of the two clicks
+      // already ran through `handlePointerDown` above and (for a
+      // previously-unselected frame — the common case this whole gesture
+      // exists for) selected it, which immediately renders `ResizeHandles`
+      // over it (this engine's "frictionless single-click activation" —
+      // see `CameraFrameSelectionSync`'s doc — means "selected" and "in
+      // edit mode" are the same state, so this happens on every fresh
+      // double-click, not just an edge case). If the SECOND click's screen
+      // position happens to land inside one of those handles' small
+      // screen-space hit-boxes (routine at the zoomed-OUT camera levels a
+      // multi-frame project starts at — see `isResizeHandleTarget`'s doc),
+      // the handle's own `setPointerCapture` redirects the browser's
+      // derived `click`/`dblclick` events to TARGET THE HANDLE, not the
+      // frame underneath — confirmed empirically (without this fallback,
+      // `e.target` resolves to `[data-testid="ccs-resize-handle-n"]` and a
+      // naive bail-out here would silently skip the zoom-to-bounds this
+      // whole handler exists to perform, which in turn leaves the camera at
+      // the zoomed-out scale that CAUSED the handle collision in the first
+      // place — a self-perpetuating bug).
+      //
+      // Since `ResizeHandles` only ever renders for the SOLE selected
+      // frame (`Canvas`'s own render, `soleSelectedId`), a resize-handle
+      // target is unambiguous: it can only belong to that one frame. Fall
+      // back to it instead of bailing out.
+      const hitFrameId = isResizeHandleTarget(e.target)
+        ? (Array.from(useCameraStore.getState().selectedIds)[0] ?? null)
+        : frameIdFromEventTarget(e.target);
+      if (!hitFrameId) return;
+
+      // Captured BEFORE `zoomToBounds` runs, on purpose — see
+      // `CanvasProps.onFrameDoubleClick`'s own doc for why getting this
+      // ordering backwards is a real, easy-to-miss bug (it doesn't fail
+      // THIS gesture, only a later edit-mode exit's camera restore).
+      const previousCamera = useCameraStore.getState().camera;
+
+      // Mirrors `frame-shape.tsx`'s tldraw `CcsFrameShapeUtil.onDoubleClick`:
+      // snap the camera to fit this frame's current box. `camera-store.ts`
+      // has no move-animation support yet (2a/2b never built easing — see
+      // `CustomEngineCanvas.tsx`'s own disclosed-simplifications doc), so
+      // this is an instant jump rather than tldraw's `{animation:{duration:
+      // 200}}` tween — a known, already-disclosed gap, not something new
+      // introduced here.
+      const box = useCameraStore.getState().frames.get(hitFrameId);
+      if (box) {
+        useCameraStore.getState().zoomToBounds(box, screenSizeRef.current);
+      }
+
+      onFrameDoubleClickRef.current?.(hitFrameId, previousCamera);
+    }
+
+    el.addEventListener('dblclick', handleDoubleClick);
+    return () => el.removeEventListener('dblclick', handleDoubleClick);
+  }, []);
 
   // --- wheel gestures (classifyWheelGesture: ctrl/meta=zoom, shift=h-pan,
   // plain=v-pan) -----------------------------------------------------------
@@ -625,15 +793,30 @@ function ResizeHandles({
           <div
             key={handle}
             data-testid={`ccs-resize-handle-${handle}`}
+            // Phase 3b fix: read by `isResizeHandleTarget` above —
+            // `handlePointerDown`'s native container-level listener bails
+            // out entirely for any target under one of these divs, rather
+            // than relying on `stopPropagation()` below to keep it from
+            // running (that assumption turned out to be WRONG: a plain
+            // `addEventListener` on `containerRef` — an ANCESTOR of this
+            // handle, and of wherever React's own root-delegated listener
+            // attaches — fires during the native bubble phase before
+            // React's synthetic dispatch (and therefore this
+            // `stopPropagation()`) ever runs, so the container-level
+            // listener saw every resize-handle pointerdown regardless; see
+            // `isResizeHandleTarget`'s own doc for the full empirical
+            // trace of the bug this caused).
+            data-ccs-resize-handle="true"
             // `stopPropagation` on EVERY pointer event here, not just
             // pointerdown: once `onPointerDown` calls `setPointerCapture`,
             // the browser redirects subsequent move/up events to this
             // element but they still BUBBLE normally afterward — without
             // this, they'd also reach `Canvas.tsx`'s own container-level
-            // native listener (harmless double-dispatch in practice, since
-            // that listener's own controllers all no-op for a pointerId
-            // they never saw a matching pointerdown for, but stopping it
-            // here is the correct, un-redundant behavior).
+            // native listener. That listener's own controllers all no-op
+            // for a pointerId they never saw a matching (non-bailed-out)
+            // pointerdown for, so this remains harmless-but-correct
+            // belt-and-suspenders now that `handlePointerDown` itself also
+            // bails out via `data-ccs-resize-handle` above.
             onPointerDown={(e) => {
               e.stopPropagation();
               onHandlePointerDown(handle, e);

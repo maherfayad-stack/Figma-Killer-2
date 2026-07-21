@@ -989,3 +989,52 @@ the custom engine specifically (only `acceptance.spec.ts` test (d) exercises thi
 already passing — but worth a dedicated look at custom-engine-specific fps numbers
 if they weren't already captured). `apps/studio`'s REAL default stays `tldraw` until
 Phase 3b signs off; flipping it is Phase 4's job.
+
+### Phase 3b-i — STOPPED BY USER, WORK-IN-PROGRESS, NOT COMPLETE (2026-07-21)
+User explicitly asked to stop the in-flight worker immediately ("no just stop it now
+and document and commit") rather than let it run to a finished/verified state. This
+section documents exactly what was on disk at the moment of stopping — it is a
+checkpoint, NOT a completion record. Do not treat any of this as green.
+
+**What the worker was doing:** implementing double-click → edit-mode entry for the
+custom engine, to close the `p2-selection.spec.ts` gap flagged at the end of Phase 3a.
+
+**State at stop time (orchestrator-verified via `git status`/`ps aux` immediately
+after `TaskStop`):**
+- No orphaned dev-server/Playwright processes from this task — clean.
+- No rogue self-commits — all work is uncommitted in the working tree, exactly as
+  instructed ("Run NO git commands whatsoever").
+- Modified: `packages/canvas/src/Canvas.tsx` (+195/-9), `CustomEngineCanvas.tsx`
+  (+53/-1), `FrameShape.tsx` (+33), `edit-mode-layer.tsx` (+29/-0).
+- New, untracked: `packages/canvas/src/custom-frame-iframe-registry.ts` (54 lines) —
+  by its name, almost certainly a custom-engine analogue of the tldraw path's
+  iframe-registry pattern, letting `edit-mode-layer.tsx` reach the active frame's
+  iframe without an engine-specific import. **Not read/reviewed by the orchestrator.**
+- Last observed test output before stopping (from the worker's live e2e run, NOT an
+  orchestrator-independent re-run): on `VITE_CCS_CANVAS_ENGINE=custom`,
+  `acceptance.spec.ts` was passing 5/5 (a, b, c, e, d), consistent with Phase 3a's
+  already-established baseline. `p2-selection.spec.ts` test (f)/(g) — double-click
+  enters edit mode; hover/click/breadcrumb — was FAILING, with debug output showing
+  a `captureBox`/`headingBox` mismatch (`captureBox {x:900,y:316.25,w:180,h:112.5}`
+  vs `headingBox {x:900.25,y:319.625,w:180,h:3}`), suggesting the edit-mode capture
+  overlay and the rendered heading disagree about the node's box. The worker was
+  mid-diagnosis of this exact failure when stopped — no fix had landed yet.
+- **None of typecheck/lint/unit-test/e2e were independently re-run by the orchestrator
+  after stopping** — per the user's instruction to stop and document immediately,
+  not to spend further tool-time verifying. The diffs above are UNVERIFIED and may
+  not even typecheck cleanly.
+
+**Bottom line:** Phase 3b-i is NOT done. The custom engine still does not have a
+working double-click → edit-mode entry path. The diffs on disk represent real,
+directionally-plausible progress (new registry module + wiring through 4 existing
+files) but are neither working nor verified. They are being committed as-is so the
+work is not lost, under a WIP-labeled commit — the next resumption of this phase
+should start by (a) independently running typecheck/lint/test/e2e on this exact
+commit to see what state it's actually in, (b) reading the 4 modified files' diffs
+in full (none of them have been read by the orchestrator in this session), then
+(c) continuing the (f)/(g) diagnosis from the `captureBox`/`headingBox` mismatch
+noted above.
+
+**Explicitly deferred, unchanged from before:** Phase 3b-ii (real `apps/studio`
+dogfood + header-redrag gap check), Phase 4 (cutover), Phase 5 (perf hardening).
+None of these are started. `apps/studio`'s real default remains `tldraw`.

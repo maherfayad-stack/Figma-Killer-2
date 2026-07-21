@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { FRAME_CHROME_HEADER_HEIGHT } from './geometry.js';
+import { setRegisteredFrameIframe } from './custom-frame-iframe-registry.js';
 
 /**
  * Sub-workstream 2b (`.orchestrator/CANVAS-ENGINE-DESIGN.md`'s Phase 2
@@ -45,6 +46,21 @@ import { FRAME_CHROME_HEADER_HEIGHT } from './geometry.js';
  * cross-component relay entirely (no event handler needed here at all —
  * `Canvas.tsx`'s listener sits on an ANCESTOR element and reads this
  * attribute directly off whatever native `event.target` bubbled up to it).
+ *
+ * Phase 3b fix: the "iframe registry pub-sub" WAS dropped by 2b (per the
+ * bullet list above) but turned out not to be optional — `edit-mode-
+ * layer.tsx` (shared by both engines) needs SOME way to reach the current
+ * edit-mode frame's live `<iframe>` element to open a bridge connection on
+ * it, and until this fix it only ever read tldraw's OWN registry
+ * (hardcoded import from `frame-shape.tsx`), so on this engine the bridge
+ * connection never opened (hover/selection/breadcrumb all silently no-op).
+ * This component now registers into `custom-frame-iframe-registry.ts` — its
+ * own small module-level pub-sub, structurally identical to
+ * `frame-shape.tsx`'s but with zero tldraw involvement — the same way
+ * `CcsFrameShapeComponent` always has, and `edit-mode-layer.tsx` reads from
+ * it via a new optional prop pair (`getFrameIframe`/`onFrameIframeChange`,
+ * see that file's own doc) that `CustomEngineCanvas.tsx`'s
+ * `CustomEditModeLayerBridge` supplies.
  */
 
 export interface FrameShapeProps {
@@ -112,6 +128,22 @@ function FramePlaceholder({ name }: { name: string }): React.ReactElement {
  * screen position; it just renders its own box's contents.
  */
 export function FrameShape({ id, x, y, w, h, name, devServerUrl, live, selected }: FrameShapeProps): React.ReactElement {
+  // Phase 3b fix: `edit-mode-layer.tsx` needs this frame's live `<iframe>`
+  // element (by `id`, no shape-id indirection on this engine) to open a
+  // bridge connection on it while it's the edit-mode frame — mirrors
+  // `frame-shape.tsx`'s tldraw `CcsFrameShapeComponent`'s own "P2/WS-B
+  // iframe registry" effect exactly, just against this engine's OWN
+  // registry (`custom-frame-iframe-registry.ts`) rather than that
+  // tldraw-specific one. Runs after every render so it always reflects the
+  // CURRENT `iframeRef.current` (refs are committed before effects run),
+  // registering only while `live` (a placeholder/screenshot frame has no
+  // iframe to register), and clearing on unmount/going non-live.
+  const iframeRef = React.useRef<HTMLIFrameElement | null>(null);
+  React.useEffect(() => {
+    setRegisteredFrameIframe(id, live ? iframeRef.current : null);
+    return () => setRegisteredFrameIframe(id, null);
+  }, [id, live]);
+
   return (
     <div
       data-ccs-frame-id={id}
@@ -159,6 +191,7 @@ export function FrameShape({ id, x, y, w, h, name, devServerUrl, live, selected 
       <div style={{ position: 'relative', flex: 1, overflow: 'hidden' }}>
         {live ? (
           <iframe
+            ref={iframeRef}
             src={devServerUrl}
             title={name}
             // Security (playbook §5.8, ported from frame-shape.tsx):

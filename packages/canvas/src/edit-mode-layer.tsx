@@ -352,6 +352,26 @@ export interface EditModeLayerProps {
    * can hand one out. Optional so existing callers/tests compile unchanged
    * (additive prop, same pattern as `onCommitText`/`onReorderNode`). */
   onBridgeConnectionChange?: ((requestComputedStyle: ((uid: string) => Promise<ComputedStyleResult>) | null) => void) | undefined;
+  /**
+   * Phase 3b fix: looks up the edit-mode frame's live `<iframe>` element (by
+   * `editModeFrame.shapeId`) so this file can open a bridge connection on
+   * it. **Optional, defaulting to the tldraw-path's own
+   * `getRegisteredFrameIframe`/`onFrameIframeRegistryChange` (imported
+   * below from `./frame-shape.js`)** — this file used to call those two
+   * directly, unconditionally, which is itself a tldraw-specific coupling
+   * this "engine-agnostic" file was never actually free of (2d-i's own
+   * "zero tldraw imports" claim only checked TYPE imports, not this runtime
+   * one). Rather than risk changing `TldrawEngineCanvas.tsx` (off-limits per
+   * this task's boundaries) to pass an explicit prop, the default argument
+   * below preserves the exact existing tldraw-path behavior for any caller
+   * that doesn't pass these two — `CustomEngineCanvas.tsx`'s
+   * `CustomEditModeLayerBridge` is the only caller that DOES, supplying its
+   * own parallel registry (`custom-frame-iframe-registry.ts`) that `FrameShape.
+   * tsx` (2b) populates the same way `frame-shape.tsx`'s
+   * `CcsFrameShapeComponent` populates the tldraw one. */
+  getFrameIframe?: (shapeId: string) => HTMLIFrameElement | null;
+  /** Companion to {@link EditModeLayerProps.getFrameIframe} — see its doc. */
+  onFrameIframeChange?: (listener: () => void) => () => void;
 }
 
 function exitEditModeAndRestoreCamera(cameraHandle: CanvasCameraHandle): void {
@@ -378,6 +398,11 @@ export function EditModeLayer({
   onReorderNode,
   onCommitFreeDrag,
   onBridgeConnectionChange,
+  // Defaults preserve the tldraw path's exact pre-existing behavior — see
+  // `EditModeLayerProps.getFrameIframe`'s doc for why these two specific
+  // functions (not a narrower/different pair) are the default.
+  getFrameIframe = getRegisteredFrameIframe,
+  onFrameIframeChange = onFrameIframeRegistryChange,
 }: EditModeLayerProps): React.ReactElement {
   const editModeFrame = useSelectionStore((s) => s.editModeFrame);
   const hover = useSelectionStore((s) => s.hover);
@@ -421,7 +446,7 @@ export function EditModeLayer({
   // after entering edit mode before the iframe has painted) so this layer
   // picks up the DOM node to open a bridge connection on.
   const [, bumpRegistryTick] = React.useReducer((n: number) => n + 1, 0);
-  React.useEffect(() => onFrameIframeRegistryChange(bumpRegistryTick), []);
+  React.useEffect(() => onFrameIframeChange(bumpRegistryTick), [onFrameIframeChange]);
 
   const editModeRecord = React.useMemo(() => {
     if (!editModeFrame) return null;
@@ -429,7 +454,7 @@ export function EditModeLayer({
   }, [frames, editModeFrame, frameIdToShapeId]);
 
   const frameBox = editModeRecord ? frameBoxOf(editModeRecord) : null;
-  const iframeEl = editModeFrame ? getRegisteredFrameIframe(editModeFrame.shapeId) : null;
+  const iframeEl = editModeFrame ? getFrameIframe(editModeFrame.shapeId) : null;
 
   // FP-4a: the capture overlay is now sized/positioned to exactly the
   // active frame's on-screen box (see the render return's doc for why) —

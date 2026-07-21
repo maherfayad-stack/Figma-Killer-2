@@ -4,9 +4,10 @@ import { Canvas, type CanvasFrame } from './Canvas.js';
 import { useCameraStore, MIN_ZOOM, MAX_ZOOM } from './camera-store.js';
 import { onFrameGeometryCommitted } from './frame-geometry-commit.js';
 import { EditModeLayer, type CanvasCameraHandle } from './edit-mode-layer.js';
+import { getRegisteredFrameIframe, onFrameIframeRegistryChange } from './custom-frame-iframe-registry.js';
 import { useSelectionStore } from './selection-store.js';
 import { iframeRectToPageBox } from './bridge-geometry.js';
-import type { Box } from './geometry.js';
+import type { Box, CameraState } from './geometry.js';
 import type { CanvasFrameRecord } from './project-wiring.js';
 import { useStudioCanvasDaemon } from './use-studio-canvas-daemon.js';
 import { NewFrameForm } from './NewFrameForm.js';
@@ -215,6 +216,44 @@ export function CustomEngineCanvas({
     });
   }, []);
 
+  /**
+   * Phase 3b `Canvas.tsx`'s `onFrameDoubleClick` adapter — the counterpart
+   * to `frame-shape.tsx`'s tldraw `CcsFrameShapeUtil.onDoubleClick`. `Canvas.
+   * tsx` itself already snapped the camera to the frame's bounds before
+   * calling this (that half is a pure camera-store concern it owns
+   * directly); this callback supplies the other half `onDoubleClick`
+   * originally did — recording `selection-store.ts`'s `editModeFrame` with
+   * the daemon-facing `fileFolder`/`framePath` `Canvas.tsx` deliberately
+   * doesn't carry (see `CanvasFrame`'s own doc). Calls `select`/
+   * `enterEditMode` directly (byte-for-byte the same shape
+   * `CcsFrameShapeUtil.onDoubleClick` uses) rather than relying solely on
+   * `CameraFrameSelectionSync`'s below "frictionless single-click
+   * activation" to do it implicitly — the first of a double-click's two
+   * clicks already triggers that path today, so this is belt-and-suspenders
+   * (matches tldraw's own real behavior too: its `onDoubleClick` calls
+   * `enterEditMode` unconditionally even though `FrameSelectionBridge`'s
+   * single-click activation usually already did), not a new mechanism.
+   *
+   * `previousCamera` is `Canvas.tsx`'s PRE-zoom snapshot (see its own doc on
+   * `CanvasProps.onFrameDoubleClick`) — used here instead of re-reading
+   * `useCameraStore.getState().camera`, which by the time this callback
+   * runs already reflects the just-applied `zoomToBounds`. Recording the
+   * POST-zoom camera as the edit-mode-exit restore target would make Esc a
+   * no-op zoom-wise, permanently ratcheting the camera in tighter on every
+   * double-click instead of ever zooming back out — a real bug caught
+   * empirically (it didn't fail this gesture, only a LATER test trying to
+   * reach a far-away frame from a camera that never zoomed back out).
+   */
+  const handleFrameDoubleClick = React.useCallback((frameId: string, previousCamera: CameraState) => {
+    const record = framesRef.current.find((r) => r.id === frameId);
+    if (!record) return;
+    useCameraStore.getState().select([record.id]);
+    useSelectionStore.getState().enterEditMode(
+      { shapeId: record.id, fileFolder: record.fileFolder, framePath: record.framePath },
+      { x: previousCamera.x, y: previousCamera.y, z: previousCamera.z },
+    );
+  }, []);
+
   /** FIX 5 `StudioCanvasHandle.zoomToFrame` — see its own doc. Synchronous,
    * same as the tldraw path: a board's bounds are already fully known from
    * its `CanvasFrameRecord`, no bridge round trip needed. */
@@ -356,7 +395,11 @@ export function CustomEngineCanvas({
 
   return (
     <div ref={containerRef} className={className} style={{ ...CONTAINER_STYLE, ...style }}>
-      <Canvas frames={canvasFrames} style={{ width: '100%', height: '100%' }} />
+      <Canvas
+        frames={canvasFrames}
+        onFrameDoubleClick={handleFrameDoubleClick}
+        style={{ width: '100%', height: '100%' }}
+      />
       <CustomEditModeLayerBridge
         frames={frames}
         containerRef={containerRef}
@@ -483,6 +526,12 @@ function CustomEditModeLayerBridge({
       onReorderNode={onReorderNode}
       onCommitFreeDrag={onCommitFreeDrag}
       onBridgeConnectionChange={onBridgeConnectionChange}
+      // Phase 3b fix: without these, `EditModeLayer` falls back to its
+      // default (the tldraw-only registry in `frame-shape.tsx`), which
+      // `FrameShape.tsx` never populates — see `custom-frame-iframe-
+      // registry.ts`'s own module doc for the full story.
+      getFrameIframe={getRegisteredFrameIframe}
+      onFrameIframeChange={onFrameIframeRegistryChange}
     />
   );
 }
