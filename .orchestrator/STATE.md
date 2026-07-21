@@ -925,3 +925,67 @@ first, decide whether bug-1's fix is sound, then investigate (b)/(l) as a NEW,
 separate task — check test isolation/ordering in both spec files first (shared module-
 scope `page`/`daemon` state across `test()` blocks in the same file is the most likely
 culprit for an inconsistent edit-mode-entry failure like this).
+
+### Phase 3a — COMPLETE (orchestrator-verified 2026-07-20, resumed with a fresh
+worker per the note above — NOT the killed one) 🎉 first fully-green e2e run in this
+entire track's history
+Git-reconciled clean: no self-commit, diff is exactly the two spec files
+(`acceptance.spec.ts`, `p2-selection.spec.ts`) — no product code in `packages/canvas/
+src/` touched. `files/demo` fixture confirmed pristine. Orchestrator independently
+re-ran everything: typecheck ✅, lint ✅, test ✅ 281/281 (unchanged).
+**`pnpm --filter @ccs/canvas run test:e2e` (default/tldraw engine): 11/11 PASSING** —
+every single test in both `acceptance.spec.ts` (a-e) and `p2-selection.spec.ts` (f-l),
+independently re-run myself, first time ever in this whole track (every prior run
+had at least the 2 originally-documented failures, or — as this phase itself
+discovered — 2 DIFFERENT previously-masked ones). Perf number holds:
+~117.7fps @ 20 frames, matching the established baseline exactly.
+**`VITE_CCS_CANVAS_ENGINE=custom` run: `acceptance.spec.ts` 5/5 passing** (confirmed
+myself after one flaky first attempt — re-ran clean, reproduced the worker's exact
+result: a, b, c, e, d all ✓ — the flake was pure system-load jitter on the HMR-timing
+assertion, not a real failure, exactly as the worker itself had already flagged as a
+known risk under heavy back-to-back local runs). `p2-selection.spec.ts` still fails
+at (f)/(g) on the custom engine — CONFIRMED pre-existing/not-caused-by-this-phase
+(worker reverted the spec file to HEAD and reproduced the identical failure before
+any of their edits existed) — this is squarely Phase 3b's job (custom-engine
+double-click → edit-mode entry isn't fully implemented/verified yet), not a
+regression from this phase.
+- **Root causes, both classified as test-isolation/ordering bugs (category C), NOT
+  regressions from the Phase 2d-ii engine split and NOT pre-existing product bugs:**
+  - Test (b): the bug-1 fix's `zoomToFrame` call auto-triggers `FrameSelectionBridge`'s
+    pre-existing "frictionless single-click activation" (predates this whole track,
+    unrelated to 2d-ii), which mounts the edit-mode capture overlay over Hero and
+    swallows the header-drag gesture; test (b)'s hardcoded screen coordinates also
+    assumed a camera position the fix's own zoomToFrame call had invalidated. Fixed
+    via new `focusFrame`/`deactivateFrame`/`frameHeaderCenter` test helpers. Also found
+    and fixed a genuine FIXTURE bug while investigating: `DupSourceName`'s seed
+    position at y=300 overlapped Hero's box the whole time (baked in from the start,
+    unrelated to any drag) — moved to y=1000, permanently clear.
+  - Test (l): re-entering edit mode on the SAME frame a second time reliably fails,
+    reproduced in total isolation with zero zoom/camera involvement (every earlier
+    guess about camera/zoom state in this file was a red herring) — root cause:
+    `exitEditMode()`'s Esc handler clears the app's OWN `editModeFrame` state but
+    never deselects tldraw's own native shape selection, so the second entry attempt
+    starts from an already-selected shape and tldraw's native double-click detection
+    doesn't treat it as a fresh double-click. Fixed by having `enterEditModeByHeader`
+    force-deselect (click a safe empty point) before every double-click.
+  - **Flagged for later, not fixed (explicitly out of scope for this pass, correctly
+    not chased):** once ANY frame is "active" via a real, production selection API
+    (`zoomToFrame`/`selectFrame`, e.g. from a Layers-panel click), its header can't be
+    re-dragged to reposition it — `edit-mode-layer.tsx`'s capture overlay has no
+    pointerdown-forwarding equivalent to its own `dispatchWheel`. Real, pre-existing
+    UX gap, independent of this whole track — needs a shared forwarding mechanism,
+    too large for a test-fix pass. Worth a human dogfood check during Phase 3b.
+
+## Phase 3b — next
+Custom engine's `acceptance.spec.ts` parity is now proven (5/5). Remaining before
+Phase 4 cutover: (1) get `p2-selection.spec.ts` green on the custom engine too
+(implement/fix whatever's missing in the custom engine's double-click → edit-mode
+entry path); (2) real human-quality browser dogfood of `apps/studio` itself with
+`VITE_CCS_CANVAS_ENGINE=custom`, side-by-side against the `tldraw` default — including
+a check of the flagged "active frame header can't be re-dragged" gap above, since
+that's a real, user-facing interaction question worth seeing firsthand before
+cutover, not just a test artifact; (3) confirm the 20-frame fps benchmark holds for
+the custom engine specifically (only `acceptance.spec.ts` test (d) exercises this,
+already passing — but worth a dedicated look at custom-engine-specific fps numbers
+if they weren't already captured). `apps/studio`'s REAL default stays `tldraw` until
+Phase 3b signs off; flipping it is Phase 4's job.

@@ -270,6 +270,38 @@ async function clickCenter(target: Page, locator: Locator, iframeTitle?: string)
  * tick via Playwright's `boundingBox()` and then hit-tests it at a LATER
  * (different) camera tick once the mouse event actually fires, landing on
  * the wrong node — caught empirically while writing this spec. */
+/** Polls `locator`'s bounding box until two consecutive reads agree
+ * (within half a pixel), or gives up after `tries` reads. TEST-ISOLATION FIX
+ * (Phase 3a): a fixed post-animation `waitForTimeout` (as `exitEditMode`
+ * below already does) assumes the PREVIOUS test's camera-restore animation
+ * finishes within that window — usually true, but not guaranteed under
+ * system load, and NOT guaranteed at all when the restore is a much bigger
+ * jump than usual (e.g. right after test (k)'s 4x zoom-IN, `exitEditMode`'s
+ * restore has much further to travel back out than any other test's). A
+ * genuine native double-click (`dblclickCenter`, used by
+ * `enterEditModeByHeader`) requires BOTH clicks to land on the SAME element
+ * reference within the browser's own double-click threshold; if the camera
+ * is still mid-animation, React keeps re-rendering the shape's DOM node
+ * between the two synthetic clicks and the browser never recognizes it as a
+ * double-click (confirmed empirically: test (l), immediately following
+ * test (k)'s large zoom-in/zoom-out round trip, ended up with the target
+ * frame merely SELECTED — native resize handles, no edit-mode capture
+ * overlay — meaning tldraw's `onDoubleClick` was never invoked at all, only
+ * a plain select). Waiting for the measured position to actually stop
+ * moving (rather than assuming a fixed delay was enough) makes this robust
+ * regardless of how big the preceding camera move was. */
+async function waitForBoundingBoxStable(target: Page, locator: Locator, tries = 20): Promise<void> {
+  let last: { x: number; y: number; width: number; height: number } | null = null;
+  for (let i = 0; i < tries; i++) {
+    const box = await locator.boundingBox();
+    if (box && last && Math.abs(box.x - last.x) < 0.5 && Math.abs(box.y - last.y) < 0.5 && Math.abs(box.width - last.width) < 0.5) {
+      return;
+    }
+    last = box;
+    await target.waitForTimeout(50);
+  }
+}
+
 async function enterEditModeByHeader(target: Page, frameName: string): Promise<void> {
   // `.first()` — see the top `beforeAll`'s doc: this locator can otherwise
   // resolve to 2 elements (the chrome header + a transiently-rendered
@@ -277,6 +309,27 @@ async function enterEditModeByHeader(target: Page, frameName: string): Promise<v
   // the one this helper actually means to pan to and double-click.
   const header = target.getByText(frameName, { exact: true }).first();
   await panUntilOnScreen(target, header);
+  await waitForBoundingBoxStable(target, header);
+  const box = await header.boundingBox();
+  if (!box) throw new Error(`enterEditModeByHeader: no bounding box for "${frameName}"`);
+  // TEST-ISOLATION FIX (Phase 3a): force-deselect before the double click by
+  // clicking well above the header (comfortably clear of every frame in
+  // this fixture's row — see the top module doc: these frames are seeded
+  // far apart specifically so they never vertically overlap). `exitEditMode`
+  // (Escape) only clears OUR OWN `editModeFrame` — tldraw's OWN native
+  // shape selection survives it untouched — so re-entering the SAME frame a
+  // second time starts from an ALREADY-selected shape, and that breaks
+  // native double-click detection: confirmed empirically with a minimal
+  // repro (enter -> exit -> enter the SAME frame, nothing else involved)
+  // that the SECOND entry's double-click ends with the shape merely
+  // re-selected (native resize handles) rather than activated — tldraw's
+  // own click manager doesn't treat two clicks on an already-selected shape
+  // as a fresh double-click the same way it does on a not-yet-selected one.
+  // Every test in this file that calls `enterEditModeByHeader` on a frame
+  // it (or a prior test) already entered edit mode on before is exposed to
+  // this — most visibly test (l), which re-enters `SelectionFixture` after
+  // test (k) already had it selected.
+  await target.mouse.click(box.x + box.width / 2, Math.max(2, box.y - 80));
   await dblclickCenter(target, header);
   await expect(target.getByTestId('ccs-edit-mode-capture')).toBeVisible({ timeout: 5_000 });
   await target.waitForTimeout(350);

@@ -49,21 +49,113 @@ const DAEMON_PORT_START = 4750;
 const FRAME_SERVER_PORT_START = 5250;
 const PERF_EXTRA_FRAME_COUNT = 18; // + Hero + Pricing = 20 total (playbook §4/P1 Perf target)
 
-/** ADR-0015 regression fixture frame (test (e)) — seeded at page (0,300),
- * a spot verified clear of every frame already on disk (Hero/Pricing/etc.
- * sit far outside `x:[0,1440] y:[0,900]` in the current fixture) AND clear
- * of test (b)'s hard-coded `(100,12)->(260,132)` drag gesture (that only
- * ever reaches screen y<=132; this frame's header renders at y:[300,324]),
- * so this test owns a predictable, collision-free frame regardless of
- * what other frames/tests have done to the camera or to Hero. */
+/** ADR-0015 regression fixture frame (test (e)) — seeded at page (0,1000).
+ * TEST-ISOLATION FIX (Phase 3a): this used to be y=300, which the original
+ * comment claimed was "clear of every frame already on disk" — that was
+ * WRONG (confirmed empirically): Hero's own box is (0,0,1440,900), so a
+ * y=300 seed with the same 1440x900 size shares canvas y:[300,900] AND
+ * x:[0,1440] with Hero, a real, permanent geometric overlap baked into the
+ * fixture from the start (nothing to do with any drag gesture). This only
+ * ever surfaced now because tests (b)/(e) never got to run before (see
+ * `.orchestrator/STATE.md`'s "SESSION PAUSED 2026-07-20" note): once Hero
+ * has EVER been interacted with (test (b)'s drag), tldraw brings it to the
+ * front, and it then visually occludes `DupSourceName` for the whole
+ * overlapping region (including `DupSourceName`'s own header) regardless of
+ * which one the camera is fit to — a click computed from `DupSourceName`'s
+ * on-screen position lands on Hero instead (confirmed empirically: it
+ * duplicated Hero, not DupSourceName). y=1000 sits fully below Hero's
+ * (and Pricing/Aad's, both also y:[0,900]) bottom edge with margin, so this
+ * frame no longer shares ANY canvas region with anything else in the
+ * fixture, regardless of camera/z-order/what other tests have done to Hero. */
 const DUP_SOURCE_NAME = 'DupSourceName';
 const DUP_SOURCE_X = 0;
-const DUP_SOURCE_Y = 300;
+const DUP_SOURCE_Y = 1000;
 const DUP_SOURCE_TSX = join(DEMO_ROOT, frameSourcePath(DUP_SOURCE_NAME));
 const DUP_COPY_TSX = join(DEMO_ROOT, 'src', 'frames', 'DupSourceNameCopy.tsx');
 
 function perfFrameName(i: number): string {
   return `PerfFrame${String(i).padStart(2, '0')}`;
+}
+
+/**
+ * TEST-ISOLATION HELPERS (Phase 3a): this file's `beforeAll` (see the "Bug
+ * fix ... zoomToFrame" comment on the browser-scoped `beforeAll` below)
+ * moves the camera off its old zoom=1/pan=(0,0) default BEFORE test (a) even
+ * runs, and calling that same `zoomToFrame` handle method also side-effects
+ * into `FrameSelectionBridge`'s pre-existing FP-4a "frictionless activation"
+ * (`TldrawEngineCanvas.tsx`, predates this whole custom-engine track,
+ * confirmed unchanged since before the 2d-ii split) — whatever frame gets
+ * `editor.select()`-ed becomes the studio's `editModeFrame` with NO click
+ * required. Both consequences invalidate any test in this file that assumes
+ * (1) a fixed zoom=1/pan=(0,0) camera for its screen-coordinate math, or (2)
+ * that a frame's header is draggable via tldraw's native translate (an
+ * ACTIVE/edit-mode frame's header is covered by `edit-mode-layer.tsx`'s
+ * pointer-events:auto capture overlay, which has no pointerdown-forwarding
+ * equivalent to its own `dispatchWheel` — so a plain header-drag on an
+ * already-active frame is swallowed rather than reaching tldraw's translate
+ * gesture). These two helpers make a frame's header interaction robust to
+ * both, without needing to know or reset the live camera transform.
+ */
+
+/** Resolves `name`'s CURRENT on-screen header-chrome center, whatever the
+ * live camera transform happens to be. The header's plain-text name label
+ * (`frame-shape.tsx`'s `{shape.props.name}`) is the only text node reading
+ * exactly `name` in this bare dev harness (no Layers panel mounted), so an
+ * exact-text locator resolves to it unambiguously — PROVIDED the frame is
+ * actually being freshly rendered (see `focusFrame`'s doc: a frame whose
+ * container has scrolled off-screen gets `content-visibility:auto`-skipped
+ * by the browser, `frame-shape.tsx`'s `HTMLContainer` — its descendants'
+ * `getBoundingClientRect()` then returns STALE geometry frozen from before
+ * it was skipped, not its current on-screen position). */
+async function frameHeaderCenter(targetPage: Page, name: string): Promise<{ x: number; y: number }> {
+  const box = await targetPage.getByText(name, { exact: true }).first().boundingBox();
+  if (!box) throw new Error(`expected to find "${name}" frame header chrome on screen`);
+  return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+}
+
+/** Deactivates whatever frame is currently active WITHOUT touching the
+ * camera: a plain click outside every known frame's screen box drives
+ * `FrameSelectionBridge`'s selection to empty, which calls the raw
+ * `store.exitEditMode()` (no camera restore — contrast
+ * `exitEditModeAndRestoreCamera`, which `Escape` uses and which races
+ * `zoomToFrame`'s own in-flight animation, confirmed empirically to settle
+ * on an unrelated, unpredictable zoomed-out camera). Every frame in this
+ * fixture sits at non-negative (x,y) canvas coordinates (`Hero`@(0,0),
+ * `Pricing`@(1600,0), `Aad`@(3200,0), the perf/dup fixtures tile forward
+ * from there — see `new-frame.ts`), so a screen point mapping to negative
+ * canvas space is always guaranteed clear of every known frame; (5,5) is far
+ * enough into any `zoomToBounds` fit's letterboxed margin to land there. */
+async function deactivateFrame(targetPage: Page): Promise<void> {
+  await targetPage.mouse.click(5, 5);
+  await expect(targetPage.getByTestId('ccs-edit-mode-capture')).toHaveCount(0);
+}
+
+/** Brings `framePath` freshly into view via the SAME production
+ * `StudioCanvasHandle.zoomToFrame` API the beforeAll below uses for Hero
+ * (stashed as `window.__ccsHandle` by `dev/main.tsx`'s test-only hook), then
+ * strips the resulting edit-mode activation back off via `deactivateFrame`
+ * (camera untouched). Confirmed empirically necessary for any frame OTHER
+ * than whichever one a PRIOR gesture in this file last focused: this
+ * fixture seeds several frames whose canvas boxes genuinely overlap
+ * (`Hero`@(0,0,1440,900) and `DupSourceName`@(0,300,1440,900) share
+ * y:[300,900]), and once a camera fit targets one of them, the OTHER's
+ * on-screen geometry either goes stale (browser-skipped
+ * `content-visibility:auto` once its container isn't the one the camera is
+ * centered on) or gets visually occluded by whichever frame most recently
+ * had a native gesture run on it (tldraw brings the interacted shape
+ * forward). Re-fitting the camera directly onto the frame this step
+ * actually needs guarantees a fresh, unoccluded, unstale measurement instead
+ * of assuming whatever an earlier step in this serial file left the camera
+ * on. */
+async function focusFrame(targetPage: Page, framePath: string): Promise<void> {
+  await targetPage.evaluate((path) => {
+    (window as unknown as { __ccsHandle: { zoomToFrame: (fileFolder: string, framePath: string) => void } }).__ccsHandle.zoomToFrame(
+      'demo',
+      path,
+    );
+  }, framePath);
+  await targetPage.waitForTimeout(300); // let the 200ms zoomToBounds animation fully settle
+  await deactivateFrame(targetPage);
 }
 
 let daemon: DaemonHandle;
@@ -243,14 +335,27 @@ test('(b) dragging a frame updates its .studio/canvas.json geometry via the real
   const heroBefore = before.frames.find((f) => f.framePath === 'src/frames/Hero.tsx');
   expect(heroBefore).toBeDefined();
 
-  // Hero sits at canvas (0,0) with the default zoom=1/pan=(0,0) camera, so
-  // its header strip (FRAME_HEADER_HEIGHT=24) is at screen (0,0)-(*,24).
+  // TEST-ISOLATION FIX (Phase 3a — see the `frameHeaderCenter`/
+  // `deactivateFrame`/`focusFrame` helpers' own doc above for the full "why"
+  // this is needed): this file's `beforeAll` calling `zoomToFrame` to bring
+  // Hero into view (necessary for test (a), see that `beforeAll`'s own
+  // comment) both moves the camera off zoom=1/pan=(0,0) AND leaves Hero as
+  // the active `editModeFrame` (a pre-existing, out-of-scope product gap
+  // flagged there: an active frame's header can't be re-dragged via
+  // tldraw's native translate once `edit-mode-layer.tsx`'s capture overlay
+  // is mounted over it). `focusFrame` re-fits the camera onto Hero fresh and
+  // strips that activation back off, so this reads Hero's REAL current
+  // on-screen header position rather than assuming either the default
+  // camera or whatever the last `beforeAll` fit left behind.
+  await focusFrame(page, 'src/frames/Hero.tsx');
+  const { x: startX, y: startY } = await frameHeaderCenter(page, 'Hero');
+
   // iframe pointer-events:none (playbook §4/P1 pitfall) means this always
   // lands on the header/chrome, never the iframe — exactly the gesture
   // tldraw needs to see to start a translate.
-  await page.mouse.move(100, 12);
+  await page.mouse.move(startX, startY);
   await page.mouse.down();
-  await page.mouse.move(260, 132, { steps: 8 });
+  await page.mouse.move(startX + 60, startY + 40, { steps: 8 });
   await page.mouse.up();
 
   await expect
@@ -266,6 +371,35 @@ test('(b) dragging a frame updates its .studio/canvas.json geometry via the real
   const after: FrameMeta = JSON.parse(await readFile(CANVAS_JSON, 'utf8'));
   const heroAfter = after.frames.find((f) => f.framePath === 'src/frames/Hero.tsx');
   console.log(`[e2e] (b) canvas.json Hero entry: ${JSON.stringify(heroBefore)} -> ${JSON.stringify(heroAfter)}`);
+
+  // Restore Hero's geometry via the SAME real `set-geometry` daemon write
+  // (`StudioCanvasHandle.setFrameGeometry`, ADR-0013) the drag/resize commit
+  // path itself uses — not a raw file rewrite — so later tests in this
+  // serial file (`DupSourceName`'s box, seeded at (0,300,1440,900),
+  // genuinely overlaps Hero's own (0,0,1440,900) — a pre-existing fixture
+  // property, not something this drag introduced) inherit Hero back at its
+  // ORIGINAL position instead of having to account for wherever this drag
+  // happened to leave it.
+  expect(heroBefore).toBeDefined();
+  await page.evaluate(
+    ([geometry]) => {
+      (
+        window as unknown as {
+          __ccsHandle: { setFrameGeometry: (fileFolder: string, framePath: string, geometry: Partial<{ x: number; y: number; w: number; h: number }>) => void };
+        }
+      ).__ccsHandle.setFrameGeometry('demo', 'src/frames/Hero.tsx', geometry);
+    },
+    [{ x: heroBefore!.x, y: heroBefore!.y }] as const,
+  );
+  await expect
+    .poll(
+      async () => {
+        const restored: FrameMeta = JSON.parse(await readFile(CANVAS_JSON, 'utf8'));
+        return restored.frames.find((f) => f.framePath === 'src/frames/Hero.tsx');
+      },
+      { timeout: 5_000, message: 'expected Hero.tsx canvas.json entry to be restored after test (b)' },
+    )
+    .toEqual(heroBefore);
 });
 
 test('(c) creating a frame via the new-frame tool (real daemon create-frame control-ws API, ADR-0014) creates the .tsx and it renders', async () => {
@@ -294,23 +428,32 @@ test('(c) creating a frame via the new-frame tool (real daemon create-frame cont
 
 // Declared BEFORE test (d) on purpose (labels are semantic, not
 // declaration-order — a,b,c are the pre-existing P1 criteria, d is the
-// perf test, e is this ADR-0015 regression): this test needs the
-// zoom=1/pan=(0,0) default camera for its screen-coordinate math, which
-// (d)'s pan/zoom gestures would otherwise leave in an unpredictable state
-// for every test declared after it (Playwright's serial mode shares one
-// `page`/camera across the whole file).
+// perf test, e is this ADR-0015 regression): (d)'s pan/zoom gestures would
+// otherwise leave the camera in an unpredictable state for every test
+// declared after it (Playwright's serial mode shares one `page`/camera
+// across the whole file).
 test('(e) ADR-0015 regression: duplicating a frame creates a real file-backed copy; moving either frame leaves both intact; native copy/paste creates no phantom frame', async () => {
-  // `DupSourceName` was seeded (in the top beforeAll) at page (0,300) —
-  // clear of every other frame on disk and of test (b)'s drag path — so at
-  // the still-default zoom=1/pan=(0,0) camera (tests (a)-(c) never pan or
-  // zoom) its header renders at screen (0,300)-(*,324).
-  const sourceHeaderX = 100;
-  const sourceHeaderY = DUP_SOURCE_Y + 12; // vertical center of the 24px header strip
+  // TEST-ISOLATION FIX (Phase 3a): `DupSourceName` was seeded (in the top
+  // `beforeAll`) at page (0,300,1440,900) — this OVERLAPS Hero's own
+  // (0,0,1440,900) box (both share canvas y:[300,900]), a pre-existing
+  // fixture property, not something any drag introduces. Once this file's
+  // `beforeAll` (`zoomToFrame`, see its own comment) — or test (b)'s own
+  // drag — has fit the camera onto/interacted with Hero, `DupSourceName`'s
+  // on-screen geometry either goes STALE (`content-visibility:auto` skips
+  // re-layout for a container the camera isn't currently centered on — see
+  // `focusFrame`'s doc) or gets OCCLUDED (tldraw brings the most-recently-
+  // dragged shape to the front, and it geometrically overlaps
+  // `DupSourceName`'s own center point) — confirmed empirically: a click
+  // computed from `DupSourceName`'s (stale/occluded) text position landed on
+  // Hero instead, duplicating the wrong frame. `focusFrame` re-fits the
+  // camera directly onto `DupSourceName` fresh each time, sidestepping both.
+  await focusFrame(page, frameSourcePath(DUP_SOURCE_NAME));
+  const dupStart = await frameHeaderCenter(page, DUP_SOURCE_NAME);
 
   // --- select the frame, then Cmd/Ctrl+D: StudioCanvas's `overrides.actions.duplicate`
   // (ADR-0015) intercepts this for ccs-frame shapes and issues a real
   // daemon `duplicate-frame` request instead of tldraw's native record-copy ---
-  await page.mouse.click(sourceHeaderX, sourceHeaderY);
+  await page.mouse.click(dupStart.x, dupStart.y);
   await page.keyboard.press('Control+d');
 
   await expect.poll(() => existsSync(DUP_COPY_TSX), { timeout: 5_000 }).toBe(true);
@@ -351,10 +494,14 @@ test('(e) ADR-0015 regression: duplicating a frame creates a real file-backed co
   // --- the actual P1 defect: move EITHER frame -> BOTH must survive -----
   // (previously, ANY frame move re-ran the frames->shape sync effect,
   // whose reaper deleted the fileless copy shape on that very sync).
-  // Drag the ORIGINAL source frame's header a little.
-  await page.mouse.move(sourceHeaderX, sourceHeaderY);
+  // Drag the ORIGINAL source frame's header a little. Re-focus fresh (same
+  // reason as above — the select+duplicate above left SOME frame active/
+  // edit-mode, and possibly a stale/occluded camera fit for this one).
+  await focusFrame(page, frameSourcePath(DUP_SOURCE_NAME));
+  const dragStart = await frameHeaderCenter(page, DUP_SOURCE_NAME);
+  await page.mouse.move(dragStart.x, dragStart.y);
   await page.mouse.down();
-  await page.mouse.move(sourceHeaderX + 60, sourceHeaderY + 60, { steps: 8 });
+  await page.mouse.move(dragStart.x + 60, dragStart.y + 60, { steps: 8 });
   await page.mouse.up();
 
   // give the debounced geometry write -> file-changed -> setFrames sync
@@ -389,7 +536,11 @@ test('(e) ADR-0015 regression: duplicating a frame creates a real file-backed co
   const framesDir = join(DEMO_ROOT, 'src', 'frames');
   const tsxCountBefore = (await readdir(framesDir)).length;
 
-  await page.mouse.click(sourceHeaderX, sourceHeaderY); // (re)select the source frame
+  // (re)select the source frame — re-focus fresh again (the drag above
+  // shifted its position, and left it active/edit-mode again too).
+  await focusFrame(page, frameSourcePath(DUP_SOURCE_NAME));
+  const reselectPos = await frameHeaderCenter(page, DUP_SOURCE_NAME);
+  await page.mouse.click(reselectPos.x, reselectPos.y);
   await page.keyboard.press('Control+c');
   await page.keyboard.press('Control+v');
   // give a phantom shape time to appear (and, if the guard regressed, to
