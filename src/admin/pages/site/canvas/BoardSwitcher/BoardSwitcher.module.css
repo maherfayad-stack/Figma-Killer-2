@@ -1,12 +1,15 @@
 /**
- * BoardSwitcher — top-center floating chrome, untransformed (viewport-
- * anchored) canvas chrome. Same stacking tier as `BoardNotesToolbar`
- * (bottom-left "+ Sticky note") so both sit above the transform layer and
- * the plugin overlay layer, below floating panels.
+ * BoardSwitcher — bottom-center floating, untransformed (viewport-anchored)
+ * canvas chrome. Kept OUT of the top-center band because `CanvasNotch` (the
+ * "+ Add" / view controls) owns that spot at the same z-tier — a top-center
+ * switcher sat on top of the notch's actions. Bottom-center is the clear band:
+ * `BoardNotesToolbar` ("+ Sticky note" / "+ Doc") is bottom-left and the AI
+ * panel is bottom-right. Same stacking tier as those (above the transform +
+ * plugin overlay layers, below floating panels).
  */
 .switcher {
     position: absolute;
-    top: var(--space-2xl);
+    bottom: var(--space-2xl);
     left: 50%;
     transform: translateX(-50%);
     z-index: 53;
