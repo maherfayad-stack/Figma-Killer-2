@@ -2,50 +2,49 @@
   "version": 1,
   "boards": [
     {
-      "id": "b1",
-      "name": "Flow A",
+      "id": "281d03d8-23b1-47e3-88c7-c39eb10dcd34",
+      "name": "Board 1",
       "frames": [
         {
-          "pageId": "index",
+          "pageId": "about",
           "x": 0,
           "y": 0
         },
         {
-          "pageId": "home",
-          "x": 1313.70703125,
-          "y": 947.6182098388672
-        },
-        {
-          "pageId": "about",
-          "x": 172.14393327608326,
-          "y": 62.316483783033476
-        },
-        {
           "pageId": "catalog",
-          "x": 1271.933837890625,
-          "y": 43.636383056640625
+          "x": 1104,
+          "y": 0
+        },
+        {
+          "pageId": "home",
+          "x": 0,
+          "y": 880
         }
       ],
-      "notes": [
+      "notes": [],
+      "docs": [
         {
-          "id": "n1",
-          "x": 377.6663823397781,
-          "y": -88.92898136136878,
-          "w": 200,
-          "h": 120,
-          "text": "Start here",
-          "color": "yellow"
-        },
-        {
-          "id": "4b248a9a-f1fb-417b-9859-e8a59871583b",
-          "x": 179.48959026888758,
-          "y": -89.75716669003225,
-          "w": 180,
-          "h": 120,
-          "text": "ttttty",
-          "color": "pink"
+          "id": "6faa9886-7cb2-4c0d-90b1-403debd5e5f4",
+          "x": -600.0000610351562,
+          "y": 149.7520294189453,
+          "w": 320,
+          "h": 200,
+          "markdown": "asdasdasdasdas"
         }
       ]
+    },
+    {
+      "id": "28a20b20-c76c-4ce8-92f7-bb4369f5dcde",
+      "name": "Board 2",
+      "frames": [
+        {
+          "pageId": "about",
+          "x": 0,
+          "y": 0
+        }
+      ],
+      "notes": [],
+      "docs": []
     }
   ]
 }
