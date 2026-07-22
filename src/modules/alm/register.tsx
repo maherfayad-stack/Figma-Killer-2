@@ -40,8 +40,13 @@ interface ComponentSpec {
 }
 const manifest = manifestJson as { components: ComponentSpec[] }
 
-/** Conservative first-slice subset — simple, low-risk components to prove the flow. */
-const SAFE_SUBSET = new Set(['Button', 'Chip', 'Tag', 'Badge', 'Accolade', 'Separator'])
+/**
+ * Overlay/portal components that render detached from the canvas flow and would
+ * be confusing as inline placeable modules — excluded from the palette for now.
+ * Everything else in the manifest is registered (the ErrorBoundary keeps any
+ * component that needs richer props from breaking the canvas).
+ */
+const EXCLUDE = new Set(['Dialog', 'BottomSheet', 'ActionSheet', 'Snackbar', 'Tooltip'])
 
 // ---------------------------------------------------------------------------
 // Error boundary so a throwing design-system component degrades to a label
@@ -117,7 +122,7 @@ function makeComponent(name: string): React.FC<ModuleComponentProps> {
 
 let registered = 0
 for (const spec of manifest.components) {
-  if (!SAFE_SUBSET.has(spec.name)) continue
+  if (EXCLUDE.has(spec.name)) continue
   const propsSchema = buildPropsSchema(spec.props)
   const mod = {
     id: `alm.${spec.name}`,
