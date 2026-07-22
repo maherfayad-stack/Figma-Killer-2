@@ -5,7 +5,7 @@ export default function About() {
     <div>
       <Chip label="About us" state="default" />
       <Badge count={3} />
-      <Button label="Contact" variant="secondary" />
+      <Button label="Contact" variant="gpay-card" />
     </div>
   )
 }

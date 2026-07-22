@@ -5,9 +5,9 @@ export default function Catalog() {
 
   return (
     <div>
-      <p>Catalog</p>
-      <Button label="View catalog" variant="destructive" />
-      <ul>
+      <p>{"Catalog"}</p>
+      <Button label="View catalog" variant="primary-inverted" dir="rtl" size="small" />
+      <ul tag="h5">
         {items.map((i) => (
           <li key={i}>{i}</li>
         ))}
