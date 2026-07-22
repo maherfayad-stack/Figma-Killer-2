@@ -1,0 +1,51 @@
+/**
+ * BoardSwitcher — top-center floating chrome, untransformed (viewport-
+ * anchored) canvas chrome. Same stacking tier as `BoardNotesToolbar`
+ * (bottom-left "+ Sticky note") so both sit above the transform layer and
+ * the plugin overlay layer, below floating panels.
+ */
+.switcher {
+    position: absolute;
+    top: var(--space-2xl);
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 53;
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+    padding: var(--space-2xs);
+    background: var(--bg-surface-2);
+    border-radius: var(--panel-radius);
+    box-shadow: var(--shadow-panel-drop);
+}
+
+.chips {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3xs);
+}
+
+.chip {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4xs);
+}
+
+.chipInput {
+    width: 120px;
+}
+
+.deleteButton {
+    color: var(--text-subtle);
+}
+
+.deleteButton:hover {
+    color: var(--danger-light);
+}
+
+.divider {
+    align-self: stretch;
+    width: 1px;
+    margin: var(--space-3xs) 0;
+    background: var(--border);
+}

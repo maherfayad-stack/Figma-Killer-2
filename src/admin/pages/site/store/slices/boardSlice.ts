@@ -7,11 +7,17 @@
  * the server. Only meaningful in studio mode (`?studio`) — the CMS flow never
  * touches this slice.
  *
- * Frames: `board.frames` only stores POSITIONS (`{ pageId, x, y }`) — WHICH
- * frames exist is derived from `site.pages` by `BoardFramesLayer`, which
- * falls back to a default grid slot for any page without a saved position.
- * `setFramePosition` upserts a position (works for both "first drag" and
- * subsequent moves), so no separate add/reconcile action is needed.
+ * Frames: `board.frames` is the source of truth for which pages are curated
+ * onto a board — `BoardFramesLayer` renders exactly this list (resolved
+ * against `site.pages`), not "every page". `addFrame` / `seedFramesForActiveBoard`
+ * add membership at a default grid slot; `setFramePosition` upserts a
+ * position (works for both "first drag" and subsequent moves); `removeFrame`
+ * drops membership without touching the underlying page.
+ *
+ * Boards are plural: `addBoard` / `renameBoard` / `removeBoard` /
+ * `setActiveBoard` manage the `BoardsFile`'s board list and which one is
+ * active. A board's `frames` are its own — switching boards changes which
+ * curated set of pages the canvas shows.
  *
  * All mutations route through the pure `@core/studio-board` transforms
  * (`upsertBoard`, `upsertNote`, `moveNote`, `removeNote`, `upsertFrame`,
@@ -25,12 +31,15 @@ import {
   createBoard,
   createBoardsFile,
   upsertBoard,
+  removeBoard as removeBoardFromFile,
+  renameBoard as renameBoardOnBoard,
   upsertNote,
   moveNote as moveNoteOnBoard,
   removeNote as removeNoteFromBoard,
   upsertFrame,
   removeFrame as removeFrameFromBoard,
 } from '@core/studio-board'
+import { defaultFramePosition } from '@site/canvas/BoardFramesLayer/frameGrid'
 
 const DEFAULT_NOTE_COLOR: NoteColor = 'yellow'
 const DEFAULT_NOTE_WIDTH = 180
@@ -52,6 +61,20 @@ interface BoardSlice {
    * on the next auto-save.
    */
   loadBoards: (file: BoardsFile) => void
+  /**
+   * Create a new board (empty frames/notes), make it active, and return its
+   * id. `name` defaults to the next unique "Board N".
+   */
+  addBoard: (name?: string) => string
+  /** Rename a board. No-op for an unknown id. */
+  renameBoard: (boardId: string, name: string) => void
+  /**
+   * Delete a board. If it was active, activity switches to the first
+   * remaining board. Never removes the last board (no-op).
+   */
+  removeBoard: (boardId: string) => void
+  /** Switch which board is active. No-op for an unknown id. */
+  setActiveBoard: (boardId: string) => void
   /** Create a sticky note at (x, y) on the active board. No-op with no active board. */
   addNote: (x: number, y: number) => void
   /** Reposition a note on the active board. */
@@ -70,6 +93,18 @@ interface BoardSlice {
   setFramePosition: (pageId: string, x: number, y: number) => void
   /** Remove a page's saved frame position from the active board. */
   removeFrame: (pageId: string) => void
+  /**
+   * Add a `BoardFrame` for `pageId` to the ACTIVE board at a default grid
+   * slot. No-op if the page is already a frame on the board, or there is no
+   * active board.
+   */
+  addFrame: (pageId: string) => void
+  /**
+   * Add frames (grid layout) for every `pageId` not already present on the
+   * ACTIVE board. Used for the one-time default-board seed. No-op with no
+   * active board or when every id is already a frame.
+   */
+  seedFramesForActiveBoard: (pageIds: string[]) => void
   /** Clear the dirty flag after a successful save. */
   markBoardsClean: () => void
 }
@@ -82,6 +117,14 @@ declare module '@site/store/types' {
 function getActiveBoard(boards: BoardsFile, activeBoardId: string | null): Board | null {
   if (!activeBoardId) return null
   return boards.boards.find((b) => b.id === activeBoardId) ?? null
+}
+
+/** Next unused "Board N" name — skips numbers already taken by another board. */
+function nextDefaultBoardName(boards: Board[]): string {
+  const names = new Set(boards.map((b) => b.name))
+  let n = 1
+  while (names.has(`Board ${n}`)) n++
+  return `Board ${n}`
 }
 
 export const createBoardSlice: EditorStoreSliceCreator<BoardSlice> = (set, get) => ({
@@ -109,6 +152,42 @@ export const createBoardSlice: EditorStoreSliceCreator<BoardSlice> = (set, get) 
       boardsDirty: true,
       activeBoardId: board.id,
     })
+  },
+
+  addBoard: (name) => {
+    const { boards } = get()
+    const board = createBoard(crypto.randomUUID(), name ?? nextDefaultBoardName(boards.boards))
+    set({
+      boards: upsertBoard(boards, board),
+      activeBoardId: board.id,
+      boardsDirty: true,
+    })
+    return board.id
+  },
+
+  renameBoard: (boardId, name) => {
+    const { boards } = get()
+    const board = boards.boards.find((b) => b.id === boardId)
+    if (!board) return
+    set({ boards: upsertBoard(boards, renameBoardOnBoard(board, name)), boardsDirty: true })
+  },
+
+  removeBoard: (boardId) => {
+    const { boards, activeBoardId } = get()
+    // Never remove the last board — the studio canvas always needs one.
+    if (boards.boards.length <= 1) return
+    if (!boards.boards.some((b) => b.id === boardId)) return
+
+    const nextBoards = removeBoardFromFile(boards, boardId)
+    const nextActiveBoardId =
+      activeBoardId === boardId ? nextBoards.boards[0]?.id ?? null : activeBoardId
+    set({ boards: nextBoards, activeBoardId: nextActiveBoardId, boardsDirty: true })
+  },
+
+  setActiveBoard: (boardId) => {
+    const { boards } = get()
+    if (!boards.boards.some((b) => b.id === boardId)) return
+    set({ activeBoardId: boardId })
   },
 
   addNote: (x, y) => {
@@ -178,6 +257,30 @@ export const createBoardSlice: EditorStoreSliceCreator<BoardSlice> = (set, get) 
     const board = getActiveBoard(boards, activeBoardId)
     if (!board) return
     set({ boards: upsertBoard(boards, removeFrameFromBoard(board, pageId)), boardsDirty: true })
+  },
+
+  addFrame: (pageId) => {
+    const { boards, activeBoardId } = get()
+    const board = getActiveBoard(boards, activeBoardId)
+    if (!board) return
+    if (board.frames.some((f) => f.pageId === pageId)) return
+    const { x, y } = defaultFramePosition(board.frames.length)
+    set({ boards: upsertBoard(boards, upsertFrame(board, { pageId, x, y })), boardsDirty: true })
+  },
+
+  seedFramesForActiveBoard: (pageIds) => {
+    const { boards, activeBoardId } = get()
+    const board = getActiveBoard(boards, activeBoardId)
+    if (!board) return
+    const existingIds = new Set(board.frames.map((f) => f.pageId))
+    const missingIds = pageIds.filter((id) => !existingIds.has(id))
+    if (missingIds.length === 0) return
+
+    const nextBoard = missingIds.reduce((acc, pageId, i) => {
+      const { x, y } = defaultFramePosition(board.frames.length + i)
+      return upsertFrame(acc, { pageId, x, y })
+    }, board)
+    set({ boards: upsertBoard(boards, nextBoard), boardsDirty: true })
   },
 
   markBoardsClean: () => set({ boardsDirty: false }),

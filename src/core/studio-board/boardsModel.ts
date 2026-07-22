@@ -21,6 +21,10 @@ export function removeBoard(file: BoardsFile, boardId: string): BoardsFile {
   return { ...file, boards: file.boards.filter((b) => b.id !== boardId) }
 }
 
+export function renameBoard(board: Board, name: string): Board {
+  return { ...board, name }
+}
+
 export function upsertNote(board: Board, note: StickyNote): Board {
   const index = board.notes.findIndex((n) => n.id === note.id)
   const notes =

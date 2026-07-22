@@ -8,6 +8,7 @@ import {
   removeBoard,
   removeFrame,
   removeNote,
+  renameBoard,
   serializeBoardsFile,
   upsertBoard,
   upsertFrame,
@@ -74,6 +75,28 @@ describe('removeBoard', () => {
     removeBoard(file, 'b1')
     expect(file.boards).toBe(originalBoardsRef)
     expect(file.boards).toHaveLength(1)
+  })
+})
+
+describe('renameBoard', () => {
+  test('returns a board with the new name', () => {
+    const board = createBoard('b1', 'Old Name')
+    const result = renameBoard(board, 'New Name')
+    expect(result).toEqual({ id: 'b1', name: 'New Name', frames: [], notes: [] })
+  })
+
+  test('does not mutate the input board', () => {
+    const board = createBoard('b1', 'Old Name')
+    renameBoard(board, 'New Name')
+    expect(board.name).toBe('Old Name')
+  })
+
+  test('preserves frames and notes', () => {
+    let board = createBoard('b1', 'Old Name')
+    board = upsertFrame(board, { pageId: 'p1', x: 1, y: 2 })
+    const result = renameBoard(board, 'New Name')
+    expect(result.frames).toEqual(board.frames)
+    expect(result.name).toBe('New Name')
   })
 })
 

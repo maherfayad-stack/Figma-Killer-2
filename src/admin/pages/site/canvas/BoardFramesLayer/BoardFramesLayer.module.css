@@ -57,3 +57,42 @@
     padding: var(--space-4xs) var(--space-2xs);
     border-radius: var(--radius-sm);
 }
+
+.removeButton {
+    margin-left: auto;
+    color: var(--text-subtle);
+}
+
+.removeButton:hover {
+    color: var(--danger-light);
+}
+
+/* Rendered in place of frames when the active board has zero. Sits at the
+   layer's origin — a plain child of the transformed layer, so it pans/zooms
+   with the board like a frame would, instead of viewport-fixed chrome. */
+.emptyState {
+    position: absolute;
+    left: 0;
+    top: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-l);
+    width: 360px;
+    padding: var(--space-6xl);
+    text-align: center;
+    background: var(--bg-surface-2);
+    border-radius: var(--panel-radius);
+    box-shadow: var(--shadow-panel-drop);
+}
+
+.emptyStateTitle {
+    font-size: var(--text-l);
+    font-weight: 600;
+    color: var(--text);
+}
+
+.emptyStateBody {
+    font-size: var(--text-s);
+    color: var(--text-muted);
+}

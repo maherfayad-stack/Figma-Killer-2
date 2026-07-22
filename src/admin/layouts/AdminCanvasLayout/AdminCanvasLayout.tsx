@@ -50,6 +50,7 @@ import { fsCodemodAdapter } from '@site/studio/fsCodemodAdapter'
 import { fetchBoards, saveBoards } from '@site/studio/boardsApi'
 import { syncStudioModeFromUrl } from '@site/studio/studioMode'
 import { createBoardsFile } from '@core/studio-board'
+import { selectActiveBoard } from '@site/store/slices/boardSlice'
 import { pushToast } from '@ui/components/Toast'
 import { getErrorMessage } from '@core/utils/errorMessage'
 import { useAdminUi } from '@admin/state/adminUi'
@@ -177,6 +178,7 @@ export function AdminCanvasLayout() {
     enabled: true,
   })
   useStudioBoardsPersistence(studioMode)
+  useStudioDefaultBoardSeed(studioMode)
   // Keep the open page in lockstep with the URL: consume `?page=<slug>` on
   // load, and mirror the active page's slug back into the address bar so it's
   // directly linkable.
@@ -384,6 +386,50 @@ function useStudioBoardsPersistence(studioMode: boolean): void {
       clearTimeout(timer)
     }
   }, [studioMode])
+}
+
+/**
+ * One-time default-board seed.
+ *
+ * `BoardFramesLayer` now renders exactly `board.frames` — an empty board
+ * renders an empty-state card, not "every page". That's correct for a
+ * NEW board (a 2nd+ board should start blank; the whole point of multiple
+ * boards is that each curates its own subset of pages), but it would
+ * REGRESS the board a Studio user is already using: before per-board frame
+ * membership existed, that board's (empty) `frames` meant "show every
+ * page", so today it's showing every page with no saved frames at all.
+ *
+ * Fix: the very first time the sole/default board is seen with zero frames
+ * (and at least one page exists to seed), populate it with a frame for
+ * every current page — reproducing the old "show every page" behavior as a
+ * real, persisted `board.frames` list. `boards.boards.length === 1` is the
+ * signal that distinguishes this from a deliberately-empty 2nd/3rd board a
+ * user just created via `addBoard` — those are never auto-seeded, so they
+ * stay intentionally blank until the user adds frames themselves.
+ *
+ * Naturally idempotent, no ref/flag needed: once the seed lands, the active
+ * board's `frames.length` is no longer 0, so the condition is false on every
+ * subsequent run of this effect for the rest of the session (and boards.json
+ * persists it, so it never re-triggers on reload either).
+ */
+function useStudioDefaultBoardSeed(studioMode: boolean): void {
+  const boardsLoaded = useEditorStore((s) => s.boardsLoaded)
+  const boardCount = useEditorStore((s) => s.boards.boards.length)
+  const activeBoard = useEditorStore(selectActiveBoard)
+  const activeBoardFrameCount = activeBoard?.frames.length ?? null
+  const pageCount = useEditorStore((s) => s.site?.pages.length ?? 0)
+
+  useEffect(() => {
+    if (!studioMode) return
+    if (!boardsLoaded) return
+    if (boardCount !== 1) return
+    if (activeBoardFrameCount !== 0) return
+    if (pageCount === 0) return
+
+    const pageIds = useEditorStore.getState().site?.pages.map((p) => p.id) ?? []
+    if (pageIds.length === 0) return
+    useEditorStore.getState().seedFramesForActiveBoard(pageIds)
+  }, [studioMode, boardsLoaded, boardCount, activeBoardFrameCount, pageCount])
 }
 
 function usePostPaintEditorBodyGate(): boolean {

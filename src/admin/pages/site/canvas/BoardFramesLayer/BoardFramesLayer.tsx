@@ -1,22 +1,32 @@
 /**
- * BoardFramesLayer — studio-mode multi-frame board (Phase 1, Increment 1B
- * Piece 2). Renders every page in `site.pages` as its own freely-positioned,
- * fully-editable frame on the board, instead of the single-page breakpoint
- * frames CanvasTransformLayer renders for CMS / Visual Component editing.
+ * BoardFramesLayer — studio-mode multi-frame board. Renders the ACTIVE
+ * board's CURATED set of pages (`board.frames`) as freely-positioned,
+ * fully-editable frames, instead of the single-page breakpoint frames
+ * CanvasTransformLayer renders for CMS / Visual Component editing.
  *
- * Position: read from the active board's `BoardFrame` (`board.frames`,
- * keyed by `pageId`) when one has been saved, otherwise a default 2-column
- * grid slot derived from the page's index in `site.pages`. `site.pages` is
- * the source of truth for WHICH frames exist — `board.frames` only stores
- * positions — so a page with no saved frame still renders (at its grid
- * default) and persists a real position the moment it's dragged, via
- * `setFramePosition` (boardSlice).
+ * Frame membership: `board.frames` is the source of truth for WHICH pages
+ * appear on this board — different boards can curate different subsets of
+ * `site.pages` (different flows/screens). Each `BoardFrame` is resolved
+ * against `site.pages` by `pageId`; a frame whose page has since been
+ * deleted is silently skipped. Membership is managed by `boardSlice`'s
+ * `addFrame` / `seedFramesForActiveBoard` / `removeFrame` — this component
+ * only reads `board.frames`, it never invents a page that isn't on the list
+ * (see `AddFramePicker` for adding one, and the per-frame "×" for removing
+ * one).
+ *
+ * Position: every `BoardFrame` on the list carries a saved `x`/`y` (assigned
+ * at add-time by `defaultFramePosition`, `@site/canvas/BoardFramesLayer/frameGrid`)
+ * and persists a new one the moment it's dragged, via `setFramePosition`
+ * (boardSlice).
+ *
+ * Empty state: a board with zero frames (e.g. a freshly-created board) shows
+ * a centered card instead of a blank canvas, with its own `AddFramePicker` so
+ * the first frame is one click away.
  *
  * Per-frame content: each frame wraps its `BreakpointFrame` in a
  * `CanvasPageContext.Provider value={page.id}>`, so `NodeRenderer` resolves
  * that frame's content against ITS OWN page (`selectCanvasPageFor`) instead
- * of falling back to the single active document — the keystone piece 1
- * landed this without touching NodeRenderer/CanvasContexts again here.
+ * of falling back to the single active document.
  *
  * Activation + edit routing: a page becomes the one editing machinery acts
  * on (`mutateActiveTree` → `resolveActiveTreeTarget`) via `activePageId`.
@@ -49,8 +59,12 @@ import { useRef, type CSSProperties, type PointerEvent as ReactPointerEvent } fr
 import { useEditorStore } from '@site/store/store'
 import { selectActiveBoard } from '@site/store/slices/boardSlice'
 import type { Breakpoint, Page } from '@core/page-tree'
+import type { BoardFrame } from '@core/studio-board'
+import { Button } from '@ui/components/Button'
+import { CloseIcon } from 'pixel-art-icons/icons/close'
 import { CanvasPageContext } from '../CanvasContexts'
 import { BreakpointFrame } from '../BreakpointFrame'
+import { AddFramePicker } from './AddFramePicker'
 import styles from './BoardFramesLayer.module.css'
 
 /** Shared synthetic breakpoint every studio frame renders at — see the
@@ -63,44 +77,46 @@ const STUDIO_BREAKPOINT: Breakpoint = {
   icon: 'monitor',
 }
 
-const FRAME_WIDTH = 1024
-const FRAME_HEIGHT = 800
-const FRAME_GAP = 80
-const GRID_COLUMNS = 2
-
-/** Default grid slot for a page with no saved `BoardFrame` position yet. */
-function defaultFramePosition(index: number): { x: number; y: number } {
-  const col = index % GRID_COLUMNS
-  const row = Math.floor(index / GRID_COLUMNS)
-  return { x: col * (FRAME_WIDTH + FRAME_GAP), y: row * (FRAME_HEIGHT + FRAME_GAP) }
-}
-
 export function BoardFramesLayer() {
   const board = useEditorStore(selectActiveBoard)
   const pages = useEditorStore((s) => s.site?.pages ?? [])
   const activePageId = useEditorStore((s) => s.activePageId)
   const openPageInCanvas = useEditorStore((s) => s.openPageInCanvas)
   const setFramePosition = useEditorStore((s) => s.setFramePosition)
+  const removeFrame = useEditorStore((s) => s.removeFrame)
 
   if (!board) return null
 
+  // board.frames is membership — resolve each against site.pages and drop
+  // any frame whose page no longer exists (deleted since it was added).
+  const framesWithPages = board.frames
+    .map((frame) => ({ frame, page: pages.find((p) => p.id === frame.pageId) }))
+    .filter(
+      (entry): entry is { frame: BoardFrame; page: Page } => entry.page !== undefined,
+    )
+
   return (
     <div className={styles.layer} data-testid="board-frames-layer">
-      {pages.map((page, index) => {
-        const saved = board.frames.find((f) => f.pageId === page.id)
-        const { x, y } = saved ?? defaultFramePosition(index)
-        return (
+      {framesWithPages.length === 0 ? (
+        <div className={styles.emptyState}>
+          <p className={styles.emptyStateTitle}>No screens on this board yet</p>
+          <p className={styles.emptyStateBody}>Add a page to start laying out this flow.</p>
+          <AddFramePicker />
+        </div>
+      ) : (
+        framesWithPages.map(({ frame, page }) => (
           <BoardFrameView
             key={page.id}
             page={page}
-            x={x}
-            y={y}
+            x={frame.x}
+            y={frame.y}
             isActive={page.id === activePageId}
             onActivate={() => openPageInCanvas(page.id)}
             onMove={(nx, ny) => setFramePosition(page.id, nx, ny)}
+            onRemove={() => removeFrame(page.id)}
           />
-        )
-      })}
+        ))
+      )}
     </div>
   )
 }
@@ -120,9 +136,10 @@ interface BoardFrameViewProps {
   isActive: boolean
   onActivate: () => void
   onMove: (x: number, y: number) => void
+  onRemove: () => void
 }
 
-function BoardFrameView({ page, x, y, isActive, onActivate, onMove }: BoardFrameViewProps) {
+function BoardFrameView({ page, x, y, isActive, onActivate, onMove, onRemove }: BoardFrameViewProps) {
   const dragRef = useRef<DragState | null>(null)
 
   // Capture phase — fires before the frame's own node-click handling, so
@@ -173,6 +190,21 @@ function BoardFrameView({ page, x, y, isActive, onActivate, onMove }: BoardFrame
       >
         <span className={styles.title}>{page.title}</span>
         {isActive && <span className={styles.activeBadge}>Active</span>}
+        <Button
+          variant="ghost"
+          size="micro"
+          iconOnly
+          className={styles.removeButton}
+          aria-label={`Remove ${page.title} from this board`}
+          tooltip="Remove from board"
+          // Removing membership is a pointerdown target inside the drag
+          // handle — stop the event reaching the header's own drag/activate
+          // handlers so a click on "×" never starts a frame drag.
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={onRemove}
+        >
+          <CloseIcon size={11} aria-hidden="true" />
+        </Button>
       </div>
       <CanvasPageContext.Provider value={page.id}>
         <BreakpointFrame
