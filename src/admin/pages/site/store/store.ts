@@ -253,6 +253,21 @@ export const selectActiveCanvasPage = (s: EditorStore): Page | null => {
 }
 
 /**
+ * Resolve the canvas page for a specific `pageId`, or the active canvas
+ * document when `pageId` is `null`.
+ *
+ * Board frames render several real pages simultaneously, so `NodeRenderer`
+ * resolves each node against the page of the FRAME it lives in (supplied via
+ * `CanvasPageContext`) rather than the single active document. Passing
+ * `pageId === null` reproduces the pre-board single-document behavior exactly,
+ * which is what every CMS/VC frame does (no `CanvasPageContext` provider).
+ */
+export const selectCanvasPageFor = (s: EditorStore, pageId: string | null): Page | null => {
+  if (!pageId) return selectActiveCanvasPage(s)
+  return s.site?.pages.find((p) => p.id === pageId) ?? null
+}
+
+/**
  * Select the currently selected PageNode.
  *
  * Uses selectActiveCanvasPage so this works in BOTH page mode and VC canvas mode.

@@ -24,6 +24,14 @@ export const CanvasViewportActionsContext =
   createContext<CanvasViewportActionsContextValue | null>(null)
 
 export const CanvasBreakpointContext = createContext<string | undefined>(undefined)
+/**
+ * The page id whose tree the current frame renders. `null` (the default, used
+ * by every CMS/VC frame) means "resolve the active canvas document" — i.e.
+ * pre-board behavior. Board frames render multiple pages at once, so each frame
+ * provides its own page id here and `NodeRenderer` resolves node content against
+ * it instead of the single active document. See `selectCanvasPageFor`.
+ */
+export const CanvasPageContext = createContext<string | null>(null)
 export const CanvasTemplateContext = createContext<TemplateRenderDataContext | undefined>(undefined)
 /** Final srcDoc document owned by the nearest IframeFrameSurface. */
 export const CanvasDocumentContext = createContext<Document | null>(null)

@@ -22,7 +22,7 @@
 import { memo, use, useLayoutEffect, useRef, useSyncExternalStore } from 'react'
 import type { InlineEditBinding } from '@core/module-engine'
 import { readInlineEditableText, seedInlineEditableContent } from '@modules/base/shared/inlineText'
-import { useEditorStore, selectActiveCanvasPage } from '@site/store/store'
+import { useEditorStore, selectCanvasPageFor } from '@site/store/store'
 import { resolveProps } from '@core/page-tree'
 import { registry } from '@core/module-engine'
 import type { NodeWrapperProps as NodeWrapperPropsType } from '@core/module-engine'
@@ -31,7 +31,7 @@ import type { PageNode } from '@core/page-tree'
 import { WarningDiamondSolidIcon } from 'pixel-art-icons/icons/warning-diamond-solid'
 import { ErrorBoundary } from '@ui/components/ErrorBoundary'
 import { ModuleSandboxFrame } from './ModuleSandboxFrame'
-import { CanvasBreakpointContext, CanvasSelectionContext, CanvasTemplateContext } from './CanvasContexts'
+import { CanvasBreakpointContext, CanvasPageContext, CanvasSelectionContext, CanvasTemplateContext } from './CanvasContexts'
 import {
   addEditorFormPreviewProps,
   resolveEditorFormPreviewState,
@@ -54,9 +54,14 @@ interface NodeRendererProps {
 // React Compiler exception #2: memo() re-render bailout on a hot, recursive
 // per-node canvas renderer (O(N) critical path) — kept intentionally.
 export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererProps) {
+  // The page this frame renders. `null` (no CanvasPageContext provider) means
+  // "the active canvas document" — every CMS/VC frame. Board frames provide a
+  // page id so this NodeRenderer resolves against that frame's own page.
+  const contextPageId = use(CanvasPageContext)
   // Per-node subscription — editing this node's props only re-renders THIS component.
-  // Uses selectActiveCanvasPage (Task #438) so VC canvas mode works alongside page mode.
-  const node = useEditorStore((s) => selectActiveCanvasPage(s)?.nodes[nodeId] ?? null)
+  // Uses selectCanvasPageFor so VC canvas mode (pageId null) works alongside
+  // board multi-frame mode (pageId set).
+  const node = useEditorStore((s) => selectCanvasPageFor(s, contextPageId)?.nodes[nodeId] ?? null)
   const breakpointId = use(CanvasBreakpointContext)
   const templateContext = use(CanvasTemplateContext)
 
@@ -106,7 +111,7 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
   const editorFormPreviewState = useEditorStore((s) => resolveEditorFormPreviewState(s, nodeId))
   const editorFormPreviewSuccessMessage = useEditorStore((s) => resolveEditorFormPreviewSuccessMessage(s, nodeId))
   const mcClassName = useEditorStore((s) => {
-    const canvasNode = selectActiveCanvasPage(s)?.nodes[nodeId]
+    const canvasNode = selectCanvasPageFor(s, contextPageId)?.nodes[nodeId]
     const preview = s.previewClassAssignment?.nodeId === nodeId ? s.previewClassAssignment : null
     return getCanvasNodeClassName(canvasNode?.classIds, preview, nodeId, s.site?.styleRules)
   })
@@ -117,7 +122,7 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
     // Imperative store access is correct here (event handler, not render path).
     const state = useEditorStore.getState()
     if (state.activeDocument?.kind !== 'visualComponent') {
-      const page = selectActiveCanvasPage(state)
+      const page = selectCanvasPageFor(state, contextPageId)
       if (page) {
         const enclosing = findEnclosingComponentRef(
           page.nodes as Record<string, AnnotatedPageNode>,
@@ -142,7 +147,7 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
       // B3 — VC lock-down: clamp hover ring to the ref node for VC body nodes.
       const state = useEditorStore.getState()
       if (state.activeDocument?.kind !== 'visualComponent') {
-        const page = selectActiveCanvasPage(state)
+        const page = selectCanvasPageFor(state, contextPageId)
         if (page) {
           const enclosing = findEnclosingComponentRef(
             page.nodes as Record<string, AnnotatedPageNode>,
