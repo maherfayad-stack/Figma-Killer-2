@@ -26,6 +26,7 @@ import styles from './AdminCanvasLayout.module.css'
 // shell. The toolbar/chrome can paint without block definitions or loop
 // sources; CanvasRoot and PropertiesPanel need them.
 import '@modules/base'
+import '@modules/alm/register'
 import '@core/loops/sources'
 
 const ImportHtmlModal = lazy(() =>

@@ -73,6 +73,7 @@ import { createPortal } from 'react-dom'
 import { cn } from '@ui/cn'
 import { ClassStyleInjector } from './ClassStyleInjector'
 import { UserStylesheetInjector } from './UserStylesheetInjector'
+import { AlmDesignSystemCssInjector } from './AlmDesignSystemCssInjector'
 import { EditorChromeInjector } from './EditorChromeInjector'
 import { RuntimeScriptInjector } from './RuntimeScriptInjector'
 import type { InjectableRuntimeScript } from './useRuntimeScriptBuild'
@@ -656,6 +657,8 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
               <CanvasDocumentContext.Provider value={iframeDoc}>
                 {/* Editor-chrome stylesheet — UNLAYERED so it beats @layer user-authored author CSS */}
                 <EditorChromeInjector targetDocument={iframeDoc} parentDocument={document} />
+                {/* Design-system CSS (tokens + component styles) so @alm-design modules render styled */}
+                <AlmDesignSystemCssInjector targetDocument={iframeDoc} />
                 {/* Author CSS — both wrapped in @layer user-authored inside the injectors */}
                 <ClassStyleInjector targetDocument={iframeDoc} viewport={viewport} />
                 <UserStylesheetInjector targetDocument={iframeDoc} viewport={viewport} />
