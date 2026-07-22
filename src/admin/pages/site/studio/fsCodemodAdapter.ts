@@ -18,29 +18,34 @@
  * server (same-origin in prod behind Caddy).
  */
 import type { IPersistenceAdapter, SaveSiteOptions } from '@core/persistence/types'
-import type { Page, SiteDocument } from '@core/page-tree'
+import { type SiteDocument, PageSchema } from '@core/page-tree'
+import { apiRequest } from '@core/http'
+import { Type } from '@core/utils/typeboxHelpers'
 import { createDefaultSiteDocument } from '@site/store/slices/site/defaults'
 
 /** Node ids from page-parser are `relFile:line:col` — a decodable source location. */
 const SOURCE_NODE_ID = /^.+:\d+:\d+$/
 
-interface StudioLoadResponse {
-  dir: string
-  pages: Page[]
-}
+/** GET /admin/api/studio/load — every source-derived page in the workspace. */
+const StudioLoadResponseSchema = Type.Object({
+  dir: Type.String(),
+  pages: Type.Array(PageSchema),
+})
+
+/** POST /admin/api/studio/save — count of props written back to source. */
+const StudioSaveResponseSchema = Type.Object({
+  ok: Type.Boolean(),
+  written: Type.Number(),
+})
 
 /** Remembered from the last load so saveSite can tell the server which folder to write. */
 let loadedDir: string | null = null
 
-async function fetchServerPages(): Promise<StudioLoadResponse> {
-  const res = await fetch('/admin/api/studio/load', { credentials: 'same-origin' })
-  if (!res.ok) throw new Error(`studio load failed: HTTP ${res.status}`)
-  return (await res.json()) as StudioLoadResponse
-}
-
 export const fsCodemodAdapter: IPersistenceAdapter = {
   async loadSite(): Promise<SiteDocument | undefined> {
-    const { dir, pages } = await fetchServerPages()
+    const { dir, pages } = await apiRequest('/admin/api/studio/load', {
+      schema: StudioLoadResponseSchema,
+    })
     loadedDir = dir
     // Wrap the source-derived pages in a valid default site shell (breakpoints,
     // settings, framework, …) — every workspace page becomes a board frame.
@@ -67,12 +72,10 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
     }
     if (edits.length === 0) return
 
-    const res = await fetch('/admin/api/studio/save', {
+    await apiRequest('/admin/api/studio/save', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'same-origin',
-      body: JSON.stringify({ dir: loadedDir, edits }),
+      body: { dir: loadedDir, edits },
+      schema: StudioSaveResponseSchema,
     })
-    if (!res.ok) throw new Error(`studio save failed: HTTP ${res.status}`)
   },
 }

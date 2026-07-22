@@ -24,9 +24,35 @@ import { parsePageFile } from '@core/page-parser'
 import { parsedPageToSitePage } from '@core/studio-sync/parsedPageToSitePage'
 import { setJsxProp } from '@core/ast-codemods'
 import { createBoardsFile, parseBoardsFile, serializeBoardsFile, type BoardsFile } from '@core/studio-board'
-import { jsonResponse } from '../http'
+import { Type } from '@core/utils/typeboxHelpers'
+import { badRequest, jsonResponse, readValidatedBody } from '../http'
 
 const NODE_LOC_ID = /^(.*):(\d+):(\d+)$/
+
+/** Body of POST /admin/api/studio/save — a batch of prop writebacks. */
+const SaveBodySchema = Type.Object({
+  dir: Type.Optional(Type.String()),
+  edits: Type.Optional(
+    Type.Array(
+      Type.Object({
+        nodeId: Type.String(),
+        prop: Type.String(),
+        value: Type.Union([Type.String(), Type.Number(), Type.Boolean()]),
+      }),
+    ),
+  ),
+})
+
+/**
+ * Body of POST /admin/api/studio/boards. `boards` stays `Unknown` at the
+ * boundary because `parseBoardsFile` is the real validator — it defensively
+ * coerces any payload into a well-formed BoardsFile — so there is no parallel
+ * TypeBox mirror of the board model to drift.
+ */
+const BoardsPostBodySchema = Type.Object({
+  dir: Type.Optional(Type.String()),
+  boards: Type.Unknown(),
+})
 
 /** Map a parsed node to an Instatic moduleId (design-system → alm.*, host tags → base.*). */
 function resolveModuleId(node: { kind: 'element' | 'component'; name: string }): string {
@@ -58,11 +84,6 @@ export function pageIdFromFileName(fileName: string): string {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
   return slug.length > 0 ? slug : 'page'
-}
-
-interface SaveBody {
-  dir?: string
-  edits?: Array<{ nodeId: string; prop: string; value: string | number | boolean }>
 }
 
 export async function tryServeStudio(
@@ -101,7 +122,8 @@ export async function tryServeStudio(
 
   if (pathname === '/admin/api/studio/save' && req.method === 'POST') {
     try {
-      const body = (await req.json()) as SaveBody
+      const body = await readValidatedBody(req, SaveBodySchema)
+      if (!body) return badRequest('invalid save body')
       const dir = resolve(body.dir ?? defaultWorkspaceDir())
       let written = 0
       for (const edit of body.edits ?? []) {
@@ -132,7 +154,8 @@ export async function tryServeStudio(
 
   if (pathname === '/admin/api/studio/boards' && req.method === 'POST') {
     try {
-      const body = (await req.json()) as { dir?: string; boards?: unknown }
+      const body = await readValidatedBody(req, BoardsPostBodySchema)
+      if (!body) return badRequest('invalid boards body')
       const dir = resolve(body.dir ?? defaultWorkspaceDir())
       const file = join(dir, '.studio', 'boards.json')
       // Re-parse the incoming payload so we only ever write a valid, normalized file.
