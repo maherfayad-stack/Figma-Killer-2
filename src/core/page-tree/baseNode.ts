@@ -87,6 +87,14 @@ export const BaseNodeSchema = Type.Object({
   // When true, cannot be selected or moved in the editor
   locked: Type.Optional(Type.Boolean()),
 
+  // Present only for a SOURCE/dynamic lock (propagated from the page-parser's
+  // `.map`/ternary/`&&`/spread subtree detection — see `ParsedNode.lockReason`
+  // in `@core/page-parser/types`). Distinct from the manual "layer lock"
+  // above (`locked`, DnD-only): edit actions gate on THIS field being truthy
+  // to refuse programmatic prop/style mutation of dynamic surfaces, while
+  // `locked` alone keeps its existing selection/move-only semantics.
+  lockReason: Type.Optional(Type.String()),
+
   // When true, hidden on the canvas (still present in the tree)
   hidden: Type.Optional(Type.Boolean()),
 
@@ -189,6 +197,7 @@ export function parseBaseNodeFields(r: Record<string, unknown>, path: string): B
     classIds: Array.isArray(r.classIds) ? onlyStrings(r.classIds) : [],
     ...(typeof r.label === 'string' ? { label: r.label } : {}),
     ...(typeof r.locked === 'boolean' ? { locked: r.locked } : {}),
+    ...(typeof r.lockReason === 'string' ? { lockReason: r.lockReason } : {}),
     ...(typeof r.hidden === 'boolean' ? { hidden: r.hidden } : {}),
     ...(propBindings !== undefined ? { propBindings } : {}),
     ...(Object.keys(inlineStyles).length > 0 ? { inlineStyles } : {}),

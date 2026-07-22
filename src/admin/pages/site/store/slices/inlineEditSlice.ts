@@ -36,8 +36,9 @@ interface InlineEditSlice {
   /**
    * Start a session for `nodeId` in `breakpointId`'s frame. No-ops when the
    * module doesn't declare `inlineTextEdit`, the node has children
-   * (base.link renders children instead of `text`), the prop is dynamically
-   * bound, or the stored value isn't a string (corrupt tree → console.warn).
+   * (base.link renders children instead of `text`), the node is
+   * source-locked (`lockReason`), the prop is dynamically bound, or the
+   * stored value isn't a string (corrupt tree → console.warn).
    */
   startInlineEdit: (nodeId: string, breakpointId: string) => void
   /** Live per-keystroke commit — one coalesced undo entry per session. */
@@ -71,6 +72,11 @@ export const createInlineEditSlice: EditorStoreSliceCreator<InlineEditSlice> = (
     if (def?.editorRuntime?.sandbox && !def.trusted) return
     // A node rendering children doesn't render its text prop (base.link).
     if (node.children.length > 0) return
+    // Source-locked (dynamic) nodes — propagated from the page-parser's
+    // `.map`/ternary/`&&`/spread subtree detection — are not editable inline.
+    // Keyed on `lockReason` (not `locked` alone) so the manual DnD-only
+    // "layer lock" keeps its existing semantics.
+    if (node.lockReason) return
     // A dynamically-bound prop isn't literal-editable — the binding would
     // overwrite every keystroke in the canvas preview.
     if (node.dynamicBindings?.[spec.prop]) return

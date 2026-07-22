@@ -317,6 +317,14 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
         (tree) => {
           const node = tree.nodes[nodeId]
           if (!node) throw new Error(`[PageTree] Node "${nodeId}" not found`)
+          // Source-locked (dynamic) nodes — `.map`/ternary/`&&`/spread subtrees
+          // propagated from the page-parser — are not programmatically
+          // editable. Keyed on `lockReason` (truthy only for THIS kind of
+          // lock), not `locked` alone, so the manual DnD-only "layer lock"
+          // keeps its existing selection/move-only semantics. Silent no-op:
+          // this action is also called programmatically (agent, plugins), so
+          // a toast here would be noise, not user feedback.
+          if (node.lockReason) return false
           if (!recordPatchChanges(node.props, patch)) return false
           updateNodeProps(tree, nodeId, patch)
           return true
@@ -329,6 +337,8 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
       mutateActiveTree((tree) => {
         const node = tree.nodes[nodeId]
         if (!node) throw new Error(`[PageTree] Node "${nodeId}" not found`)
+        // Same source-lock guard as `updateNodeProps` above.
+        if (node.lockReason) return false
         const next: Record<string, unknown> = { ...(node.inlineStyles ?? {}) }
         let changed = false
         for (const [key, value] of Object.entries(patch)) {

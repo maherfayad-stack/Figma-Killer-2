@@ -41,6 +41,13 @@ export function parsedPageToSitePage(parsed: ParsedPage, opts: ParsedPageToSiteP
       children: [...node.children],
       classIds: [],
       breakpointOverrides: {},
+      // Propagate the page-parser's source/dynamic lock (`.map`/ternary/`&&`/
+      // spread subtree detection) onto the built PageNode so the editor's
+      // edit-guard checks (nodeActions, inlineEditSlice) can refuse to mutate
+      // these nodes. Distinct from the manual "layer lock" the editor itself
+      // toggles — see `lockReason`'s doc comment in `page-tree/baseNode.ts`.
+      ...(node.locked ? { locked: true } : {}),
+      ...(node.lockReason ? { lockReason: node.lockReason } : {}),
     }
   }
 

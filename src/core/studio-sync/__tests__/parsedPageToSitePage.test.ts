@@ -64,6 +64,46 @@ test('parsedPageToSitePage wraps parsed roots under a synthetic base.body node',
   expect(() => parsePage(result, 0)).not.toThrow()
 })
 
+test('parsedPageToSitePage propagates locked + lockReason from a locked ParsedNode', () => {
+  const LOCKED_ID = 'Home.tsx:7:12'
+  const lockedParsed: ParsedPage = {
+    rootIds: [DIV_ID],
+    nodes: {
+      ...parsed.nodes,
+      [DIV_ID]: {
+        ...parsed.nodes[DIV_ID]!,
+        children: [BUTTON_ID, LOCKED_ID],
+      },
+      [LOCKED_ID]: {
+        id: LOCKED_ID,
+        kind: 'component',
+        name: 'Card',
+        props: {},
+        children: [],
+        loc: { file: 'Home.tsx', line: 7, col: 12 },
+        locked: true,
+        lockReason: 'rendered inside a .map(...) callback',
+      },
+    },
+  }
+
+  const result = parsedPageToSitePage(lockedParsed, {
+    pageId: 'home',
+    slug: 'home',
+    title: 'Home',
+    resolveModuleId,
+  })
+
+  const lockedNode = result.nodes[LOCKED_ID]
+  expect(lockedNode.locked).toBe(true)
+  expect(lockedNode.lockReason).toBe('rendered inside a .map(...) callback')
+
+  // An unlocked parsed node carries neither field.
+  const buttonNode = result.nodes[BUTTON_ID]
+  expect(buttonNode.locked).toBeUndefined()
+  expect(buttonNode.lockReason).toBeUndefined()
+})
+
 test('parsedPageToSitePage handles an empty page', () => {
   const empty: ParsedPage = { rootIds: [], nodes: {} }
   const result = parsedPageToSitePage(empty, {
