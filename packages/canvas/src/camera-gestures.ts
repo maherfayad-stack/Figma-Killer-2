@@ -74,14 +74,21 @@ const DEFAULT_ZOOM_DELTA_CLAMP = 10;
  *   `shiftPanDelta` (reused, not reimplemented) so the platform-dependent
  *   deltaX/deltaY gap (see `wheel-gesture.ts`'s module doc) is handled
  *   identically to today.
- * - otherwise -> plain vertical pan (`dx: 0`). FLAG: this is a deliberate
- *   simplification per this sub-workstream's brief ("plain wheel =
- *   vertical pan") — a plain (unmodified) wheel event today actually falls
- *   through untouched to tldraw's OWN bubble-phase handler, which pans
- *   using BOTH raw deltas (real trackpad two-finger diagonal scroll would
- *   pan diagonally, not just vertically). Whether the new engine should
- *   preserve that full 2-axis pan for the no-modifier case is a parity
- *   question for a later verification pass, not decided here.
+ * - otherwise -> plain 2-axis pan, using BOTH raw deltas directly
+ *   (`dx: -deltaX, dy: -deltaY`). Phase 3b resolved the parity question this
+ *   doc used to FLAG as deferred ("plain wheel = vertical pan only, dx: 0"):
+ *   tldraw's own bubble-phase handler for an unmodified wheel event pans
+ *   using both raw deltas (a real trackpad two-finger diagonal scroll pans
+ *   diagonally, not just vertically), and `p2-selection.spec.ts`'s test (l)
+ *   (Esc-exit -> ordinary wheel pan still works) exercises exactly a
+ *   horizontal-only wheel (`page.mouse.wheel(300, 0)`, i.e. `deltaX=300,
+ *   deltaY=0`) expecting real on-screen movement — confirmed empirically
+ *   that the old `dx: 0` simplification made that a silent no-op on this
+ *   engine (only reachable/verified once Phase 3b's double-click fix let
+ *   this file's `test.describe.configure({mode:'serial'})` suite actually
+ *   reach test (l) instead of skipping it after (f)/(g) failed). No
+ *   modifier-branch behavior changes: shift-held and ctrl/meta-held wheels
+ *   are unaffected, only the plain (no-modifier) case gains its `dx`.
  *
  * For BOTH pan branches, the returned `dx`/`dy` are the negation of the
  * wheel delta (`-deltaX`/`-deltaY`) — standard "scroll" convention:
@@ -102,7 +109,11 @@ export function classifyWheelGesture(event: WheelEventLike, options: ClassifyWhe
     const delta = shiftPanDelta(event.deltaX, event.deltaY);
     return { type: 'pan', dx: -delta.x, dy: -delta.y };
   }
-  return { type: 'pan', dx: 0, dy: -event.deltaY };
+  // `|| 0` normalizes a `-0` result (when `deltaX`/`deltaY` is exactly `0`)
+  // to plain `0` — otherwise `-event.deltaX`/`-event.deltaY` produces
+  // negative zero, which `toEqual`'s `Object.is`-based comparison treats as
+  // distinct from `0` (caught by this file's own unit tests).
+  return { type: 'pan', dx: -event.deltaX || 0, dy: -event.deltaY || 0 };
 }
 
 // --- space+drag / middle-drag panning --------------------------------

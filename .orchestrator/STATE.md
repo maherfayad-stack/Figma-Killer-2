@@ -1038,3 +1038,86 @@ noted above.
 **Explicitly deferred, unchanged from before:** Phase 3b-ii (real `apps/studio`
 dogfood + header-redrag gap check), Phase 4 (cutover), Phase 5 (perf hardening).
 None of these are started. `apps/studio`'s real default remains `tldraw`.
+
+### Phase 3b-i — COMPLETE (orchestrator-verified 2026-07-22)
+Resumed from the `c1d1adc` WIP checkpoint with a fresh worker (the checkpoint's
+diffs were correct as-is; no rework was needed on them). Custom engine's
+`p2-selection.spec.ts` (f)-(l) now passes in full, closing the gap left open at the
+end of Phase 3a.
+
+**What the checkpoint's pre-existing diffs actually did (read in full by the
+orchestrator this session, not just trusted from the worker's report):**
+- `Canvas.tsx`: added `onFrameDoubleClick` (native `dblclick` listener ->
+  zoom-to-bounds + callback with the frame id and the **pre-zoom** camera, so
+  edit-mode-exit restores correctly instead of ratcheting zoom in on every
+  double-click). Also fixed the actual root cause of the (f)/(g) failure: at
+  zoomed-out camera levels, `ResizeHandles`' fixed-8px screen-space hit-boxes
+  overlap the selected frame's chrome header (the 'n' handle sits right at the
+  frame's top edge), and — because `Canvas.tsx`'s container-level native
+  `pointerdown` listener is an ANCESTOR of the handles and therefore fires during
+  the native bubble phase BEFORE React's synthetic `stopPropagation()` ever runs
+  — the second click of a double-click was landing on a resize handle, being
+  misread as an empty-background click, and silently clearing the just-made
+  selection a moment later. Fixed via a new `data-ccs-resize-handle` marker +
+  `isResizeHandleTarget()` guard that both `handlePointerDown` and the new
+  `dblclick` handler check first (with a same-frame fallback in the dblclick
+  case, since `ResizeHandles` only ever renders for the sole selected frame).
+- `custom-frame-iframe-registry.ts` (new, 54 lines): the custom engine's own
+  module-level iframe pub-sub — `edit-mode-layer.tsx` was, despite 2d-i's "zero
+  tldraw imports" claim, still calling `frame-shape.tsx`'s TLDRAW-ONLY registry
+  directly at runtime (a coupling that claim never actually checked, since it
+  only covered type imports). This is the clean engine-owned equivalent.
+- `FrameShape.tsx`: registers/clears each live frame's `<iframe>` element into
+  the new registry via a ref + effect, mirroring the tldraw path's own component.
+- `edit-mode-layer.tsx`: added optional `getFrameIframe`/`onFrameIframeChange`
+  props, **defaulting to the tldraw path's existing registry functions** — so
+  `TldrawEngineCanvas.tsx` (deliberately untouched) keeps its exact prior
+  behavior with zero changes, while `CustomEngineCanvas.tsx` is the only caller
+  that supplies the new custom-engine registry instead.
+- `CustomEngineCanvas.tsx`: `handleFrameDoubleClick` adapter wiring the above into
+  `selection-store.ts`'s `select`/`enterEditMode`, plus passing the new registry
+  functions into `EditModeLayer`.
+
+**What the resumed worker found and fixed on top:** with (f)/(g) fixed,
+`p2-selection.spec.ts`'s `test.describe.configure({mode:'serial'})` let test (l)
+actually RUN for the first time on the custom engine (previously silently
+skipped, not passed, once (f)/(g) failed — worth remembering for any future
+"already passing" claim about a serial suite with an earlier failing test). Test
+(l) does a pure horizontal, no-modifier `page.mouse.wheel(300, 0)` and asserts
+real camera movement; it was a silent no-op. Root cause: `camera-gestures.ts`'s
+`classifyWheelGesture` hardcoded `dx: 0` for the plain-wheel branch — a
+deliberate, already-disclosed Phase 2a simplification ("plain wheel = vertical
+pan only... parity question for later") that turned out to be a real gap, not
+just a documented risk. Fixed to 2-axis pan (`dx: -deltaX, dy: -deltaY`, `|| 0`
+to normalize `-0`), matching tldraw's real bubble-phase wheel handling. Updated
+the one unit test that had explicitly asserted the old vertical-only behavior.
+Orchestrator read this diff in full — small, correct, well-reasoned.
+
+**Orchestrator-independent verification (2026-07-22, separate from both the
+checkpoint's and the resumed worker's own runs):**
+- `git status`/`git log` reconciled clean both before and after reading diffs:
+  no rogue commits, exactly the 2 expected uncommitted files
+  (`camera-gestures.ts`, `camera-gestures.test.ts`) on top of the `c1d1adc`
+  checkpoint's already-committed 5 files.
+- Read all 6 changed/new files' full diffs personally (not just the worker's
+  description of them) — reasoning holds up, no concerns.
+- `typecheck`: clean. `lint`: clean. `test` (vitest): **281/281 passed, 18/18
+  files** — matches the worker's report exactly.
+- **`VITE_CCS_CANVAS_ENGINE=custom pnpm --filter @ccs/canvas run test:e2e`:
+  11/11 PASSING** — every test in `acceptance.spec.ts` (a-e) AND
+  `p2-selection.spec.ts` (f-l), independently re-run myself. First full green
+  on the custom engine across BOTH e2e files in this track's history.
+- **`pnpm --filter @ccs/canvas run test:e2e` (default/tldraw engine): 11/11
+  PASSING** — zero regressions, independently re-run myself.
+- Confirmed via `lsof` that none of the canvas e2e ports (4750/4850/5556/5557/
+  5250/5350) have listeners left open — no orphaned dev servers.
+
+**Remaining known, already-disclosed gaps (not new, not blocking):** custom
+engine's camera transitions (including the new double-click zoom-to-bounds) are
+instant, no easing — a Phase 2a/2b gap, tests account for it. The "active frame
+header can't be re-dragged" UX gap flagged at the end of Phase 3a remains
+unfixed and is explicitly Phase 3b-ii's job to dogfood-check, not this one's.
+
+**Phase 3b-i is DONE.** Per explicit user instruction, stopping here — Phase
+3b-ii (real `apps/studio` dogfood), Phase 4 (cutover), and Phase 5 (perf
+hardening) are NOT started and require a new go-ahead.

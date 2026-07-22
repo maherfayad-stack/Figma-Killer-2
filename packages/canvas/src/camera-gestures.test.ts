@@ -21,7 +21,7 @@ function wheelEvent(overrides: Partial<WheelEventLike>): WheelEventLike {
 }
 
 describe('classifyWheelGesture', () => {
-  describe('plain wheel (no modifiers) -> vertical pan', () => {
+  describe('plain wheel (no modifiers) -> 2-axis pan', () => {
     it('scrolling down (positive deltaY) pans dy negative (content moves up)', () => {
       expect(classifyWheelGesture(wheelEvent({ deltaY: 100 }))).toEqual({ type: 'pan', dx: 0, dy: -100 });
     });
@@ -30,8 +30,13 @@ describe('classifyWheelGesture', () => {
       expect(classifyWheelGesture(wheelEvent({ deltaY: -50 }))).toEqual({ type: 'pan', dx: 0, dy: 50 });
     });
 
-    it('deltaX is ignored for a plain wheel event (vertical-only pan per this workstream brief)', () => {
-      expect(classifyWheelGesture(wheelEvent({ deltaX: 30, deltaY: 10 }))).toEqual({ type: 'pan', dx: 0, dy: -10 });
+    // Phase 3b: plain (unmodified) wheel now uses BOTH raw deltas — see
+    // `classifyWheelGesture`'s own doc for why the old "deltaX is ignored"
+    // behavior this test used to assert was a real gap, not intended
+    // long-term behavior (`p2-selection.spec.ts` test (l) needs a purely
+    // horizontal, no-modifier wheel to actually pan the camera).
+    it('deltaX pans dx negative for a plain wheel event, same convention as deltaY', () => {
+      expect(classifyWheelGesture(wheelEvent({ deltaX: 30, deltaY: 10 }))).toEqual({ type: 'pan', dx: -30, dy: -10 });
     });
   });
 
