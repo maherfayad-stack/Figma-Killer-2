@@ -2,12 +2,13 @@
  * Studio source-writeback endpoints — the filesystem side of the
  * "canvas edit ⇄ real .tsx source" loop.
  *
- *   GET  /studio/load?dir=<abs>&page=<rel>
+ *   GET  /admin/api/studio/load?dir=<abs>&page=<rel>
  *       Parse a real React page file into an Instatic `Page`. Node ids are
  *       `relFile:line:col` (from page-parser), so the client can later ask us
  *       to write a specific node's prop straight back to source.
+ *       (Under /admin/api so the Vite dev proxy forwards it to the :3001 server.)
  *
- *   POST /studio/save   body: { dir, edits: [{ nodeId, prop, value }] }
+ *   POST /admin/api/studio/save   body: { dir, edits: [{ nodeId, prop, value }] }
  *       Decode each nodeId back to a source location and rewrite that JSX
  *       attribute via the ts-morph codemod. Synthetic nodes (e.g. the
  *       `index:body` root) don't match the loc pattern and are skipped.
@@ -51,7 +52,7 @@ export async function tryServeStudio(
   url: URL,
   pathname: string,
 ): Promise<Response | null> {
-  if (pathname === '/studio/load' && req.method === 'GET') {
+  if (pathname === '/admin/api/studio/load' && req.method === 'GET') {
     try {
       const dir = resolve(url.searchParams.get('dir') ?? defaultWorkspaceDir())
       const rel = url.searchParams.get('page') ?? 'pages/Home.tsx'
@@ -71,7 +72,7 @@ export async function tryServeStudio(
     }
   }
 
-  if (pathname === '/studio/save' && req.method === 'POST') {
+  if (pathname === '/admin/api/studio/save' && req.method === 'POST') {
     try {
       const body = (await req.json()) as SaveBody
       const dir = resolve(body.dir ?? defaultWorkspaceDir())

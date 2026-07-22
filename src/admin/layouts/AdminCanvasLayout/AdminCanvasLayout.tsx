@@ -46,6 +46,7 @@ import { useSiteEditorUrlSync } from '@admin/pages/site/hooks/useSiteEditorUrlSy
 import { useEditorLayoutPersistence } from '@admin/pages/site/hooks/useEditorLayoutPersistence'
 import { useEditorStore } from '@admin/pages/site/store/store'
 import { cmsAdapter } from '@core/persistence/cms'
+import { fsCodemodAdapter } from '@site/studio/fsCodemodAdapter'
 import { useAdminUi } from '@admin/state/adminUi'
 import { useInstalledEditorPlugins } from '@admin/pages/plugins/hooks/useInstalledEditorPlugins'
 import { usePluginEventBridge } from '@admin/pages/plugins/hooks/usePluginEventBridge'
@@ -160,7 +161,11 @@ export function AdminCanvasLayout() {
     canEditStyle: canEditStyleFlag,
   }
   // J12 — wire persistence: load, auto-save, toolbar Save, Cmd+S.
-  const persistence = usePersistence('default', cmsAdapter, {
+  // `?studio` opts into the filesystem-as-truth adapter (loads/saves a real
+  // .tsx via /admin/api/studio); without it, the normal CMS/DB adapter is used.
+  const studioMode =
+    typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('studio')
+  const persistence = usePersistence('default', studioMode ? fsCodemodAdapter : cmsAdapter, {
     markNewSiteUnsaved: true,
     enabled: true,
   })
