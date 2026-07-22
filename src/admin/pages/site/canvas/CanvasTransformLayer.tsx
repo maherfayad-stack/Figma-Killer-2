@@ -12,10 +12,13 @@
 import type { Ref } from 'react'
 import { DEFAULT_BREAKPOINTS, type Page, type Breakpoint } from '@core/page-tree'
 import type { TemplateRenderDataContext } from '@core/templates/dynamicBindings'
+import { useEditorStore } from '@site/store/store'
+import { selectActiveBoard } from '@site/store/slices/boardSlice'
 import { BreakpointFrame } from './BreakpointFrame'
 import { CanvasFrameSkeletonFrame } from '@admin/shared/CanvasFrameSkeleton'
 import type { InjectableRuntimeScript } from './useRuntimeScriptBuild'
 import { BoardNotesLayer } from './BoardNotesLayer'
+import { BoardFramesLayer } from './BoardFramesLayer'
 import styles from './CanvasTransformLayer.module.css'
 
 interface CanvasTransformLayerProps {
@@ -49,6 +52,12 @@ export function CanvasTransformLayer({
   }
   const fallbackBreakpoints = framedBreakpoints.length > 0 ? framedBreakpoints : DEFAULT_BREAKPOINTS
 
+  // Studio board mode: an active board means we're rendering the multi-frame
+  // board (Phase 1, Increment 1B) — every workspace page as its own
+  // positioned frame — instead of this single page's breakpoint frames. `null`
+  // (CMS / Visual Component editing, the default) renders exactly as before.
+  const activeBoard = useEditorStore(selectActiveBoard)
+
   return (
     <div
       ref={ref}
@@ -59,7 +68,9 @@ export function CanvasTransformLayer({
       // blank at scale/low zoom. See WILL_CHANGE_RELEASE_MS in useCanvas.ts.
       className={styles.transformLayer}
     >
-      {page ? (
+      {activeBoard ? (
+        <BoardFramesLayer />
+      ) : page ? (
         // Only breakpoints flagged for a preview frame render an iframe on the
         // canvas (`previewFrame !== false`; undefined = framed for back-compat).
         // Frame-less breakpoints are still selectable editing contexts in the
@@ -94,8 +105,9 @@ export function CanvasTransformLayer({
       )}
 
       {/* Studio-mode sticky-notes overlay. Mounted last so it paints above the
-          breakpoint frames, and inside the transform layer so it inherits the
-          pan/zoom transform. Self-gates on active board — safe to always mount. */}
+          breakpoint/board frames, and inside the transform layer so it
+          inherits the pan/zoom transform. Self-gates on active board — safe to
+          always mount in both the board and non-board paths. */}
       <BoardNotesLayer />
     </div>
   )

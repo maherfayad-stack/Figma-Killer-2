@@ -3,8 +3,9 @@
  * and save back to, a real React page on disk (via the /admin/api/studio
  * server endpoints), instead of the SQLite CMS draft.
  *
- *   loadSite  → GET  /admin/api/studio/load   → a source-derived Instatic Page,
- *               wrapped in a default SiteDocument shell.
+ *   loadSite  → GET  /admin/api/studio/load   → every source-derived Instatic
+ *               Page in the workspace's `pages/` dir, wrapped in a default
+ *               SiteDocument shell (multi-frame board — Phase 1 Increment 1B).
  *   saveSite  → POST /admin/api/studio/save   → prop edits for every
  *               source-backed node (id = `relFile:line:col`) written back to
  *               the .tsx via the server-side ts-morph codemod.
@@ -25,13 +26,13 @@ const SOURCE_NODE_ID = /^.+:\d+:\d+$/
 
 interface StudioLoadResponse {
   dir: string
-  page: Page
+  pages: Page[]
 }
 
 /** Remembered from the last load so saveSite can tell the server which folder to write. */
 let loadedDir: string | null = null
 
-async function fetchServerPage(): Promise<StudioLoadResponse> {
+async function fetchServerPages(): Promise<StudioLoadResponse> {
   const res = await fetch('/admin/api/studio/load', { credentials: 'same-origin' })
   if (!res.ok) throw new Error(`studio load failed: HTTP ${res.status}`)
   return (await res.json()) as StudioLoadResponse
@@ -39,12 +40,12 @@ async function fetchServerPage(): Promise<StudioLoadResponse> {
 
 export const fsCodemodAdapter: IPersistenceAdapter = {
   async loadSite(): Promise<SiteDocument | undefined> {
-    const { dir, page } = await fetchServerPage()
+    const { dir, pages } = await fetchServerPages()
     loadedDir = dir
-    // Wrap the source-derived page in a valid default site shell (breakpoints,
-    // settings, framework, …) and make it the single homepage.
+    // Wrap the source-derived pages in a valid default site shell (breakpoints,
+    // settings, framework, …) — every workspace page becomes a board frame.
     const site = createDefaultSiteDocument('Studio')
-    site.pages = [page]
+    site.pages = pages
     return site
   },
 

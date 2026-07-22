@@ -1,12 +1,13 @@
 /**
  * boardSlice — unit tests
  *
- * Verifies the studio-mode sticky-notes board slice:
+ * Verifies the studio-mode board slice (sticky notes + page frames):
  *   - loadBoards creates a default board (and marks dirty) for an empty file
  *   - loadBoards sets the active board to the first board in a non-empty file
  *   - addNote / moveNote / updateNoteText / setNoteColor / removeNote mutate
  *     the active board via the pure @core/studio-board transforms and flip
  *     boardsDirty
+ *   - setFramePosition / removeFrame do the same for `board.frames`
  *   - markBoardsClean clears the dirty flag
  *   - selectActiveBoard resolves the right board (or null)
  */
@@ -157,6 +158,62 @@ describe('removeNote', () => {
 
     expect(selectActiveBoard(state())!.notes).toHaveLength(0)
     expect(state().boardsDirty).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// setFramePosition / removeFrame
+// ---------------------------------------------------------------------------
+
+describe('setFramePosition', () => {
+  it('inserts a new frame position on the active board and marks dirty', () => {
+    state().loadBoards(createBoardsFile())
+    state().markBoardsClean()
+
+    state().setFramePosition('home', 100, 200)
+
+    const board = selectActiveBoard(state())
+    expect(board?.frames).toHaveLength(1)
+    expect(board?.frames[0]).toEqual({ pageId: 'home', x: 100, y: 200 })
+    expect(state().boardsDirty).toBe(true)
+  })
+
+  it('updates an existing frame position instead of duplicating it', () => {
+    state().loadBoards(createBoardsFile())
+    state().setFramePosition('home', 100, 200)
+    state().markBoardsClean()
+
+    state().setFramePosition('home', 42, 84)
+
+    const board = selectActiveBoard(state())
+    expect(board?.frames).toHaveLength(1)
+    expect(board?.frames[0]).toEqual({ pageId: 'home', x: 42, y: 84 })
+    expect(state().boardsDirty).toBe(true)
+  })
+
+  it('is a no-op with no active board', () => {
+    state().setFramePosition('home', 0, 0)
+    expect(selectActiveBoard(state())).toBeNull()
+    expect(state().boardsDirty).toBe(false)
+  })
+})
+
+describe('removeFrame', () => {
+  it('removes a page\'s frame position from the active board', () => {
+    state().loadBoards(createBoardsFile())
+    state().setFramePosition('home', 100, 200)
+    state().markBoardsClean()
+
+    state().removeFrame('home')
+
+    expect(selectActiveBoard(state())?.frames).toHaveLength(0)
+    expect(state().boardsDirty).toBe(true)
+  })
+
+  it('is a no-op with no active board', () => {
+    state().removeFrame('home')
+    expect(selectActiveBoard(state())).toBeNull()
+    expect(state().boardsDirty).toBe(false)
   })
 })
 

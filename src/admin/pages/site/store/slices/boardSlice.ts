@@ -1,5 +1,5 @@
 /**
- * boardSlice — Studio board overlay state (sticky notes).
+ * boardSlice — Studio board overlay state (sticky notes + page frames).
  *
  * Owns the editor-side view of `<workspace>/.studio/boards.json`: the parsed
  * `BoardsFile`, which board is currently active, and a dirty flag the
@@ -7,10 +7,17 @@
  * the server. Only meaningful in studio mode (`?studio`) — the CMS flow never
  * touches this slice.
  *
+ * Frames: `board.frames` only stores POSITIONS (`{ pageId, x, y }`) — WHICH
+ * frames exist is derived from `site.pages` by `BoardFramesLayer`, which
+ * falls back to a default grid slot for any page without a saved position.
+ * `setFramePosition` upserts a position (works for both "first drag" and
+ * subsequent moves), so no separate add/reconcile action is needed.
+ *
  * All mutations route through the pure `@core/studio-board` transforms
- * (`upsertBoard`, `upsertNote`, `moveNote`, `removeNote`, …) rather than
- * hand-mutating `Board` / `BoardsFile` objects, so this slice stays a thin
- * translation from store actions to the pure board model.
+ * (`upsertBoard`, `upsertNote`, `moveNote`, `removeNote`, `upsertFrame`,
+ * `removeFrame`, …) rather than hand-mutating `Board` / `BoardsFile` objects,
+ * so this slice stays a thin translation from store actions to the pure
+ * board model.
  */
 import type { EditorStoreSliceCreator, EditorStore } from '@site/store/types'
 import type { Board, BoardsFile, NoteColor, StickyNote } from '@core/studio-board'
@@ -21,6 +28,8 @@ import {
   upsertNote,
   moveNote as moveNoteOnBoard,
   removeNote as removeNoteFromBoard,
+  upsertFrame,
+  removeFrame as removeFrameFromBoard,
 } from '@core/studio-board'
 
 const DEFAULT_NOTE_COLOR: NoteColor = 'yellow'
@@ -53,6 +62,14 @@ interface BoardSlice {
   setNoteColor: (noteId: string, color: NoteColor) => void
   /** Delete a note from the active board. */
   removeNote: (noteId: string) => void
+  /**
+   * Persist a page's frame position on the active board — inserts a new
+   * `BoardFrame` if the page has none yet, updates it otherwise. No-op with
+   * no active board.
+   */
+  setFramePosition: (pageId: string, x: number, y: number) => void
+  /** Remove a page's saved frame position from the active board. */
+  removeFrame: (pageId: string) => void
   /** Clear the dirty flag after a successful save. */
   markBoardsClean: () => void
 }
@@ -147,6 +164,20 @@ export const createBoardSlice: EditorStoreSliceCreator<BoardSlice> = (set, get) 
     const board = getActiveBoard(boards, activeBoardId)
     if (!board) return
     set({ boards: upsertBoard(boards, removeNoteFromBoard(board, noteId)), boardsDirty: true })
+  },
+
+  setFramePosition: (pageId, x, y) => {
+    const { boards, activeBoardId } = get()
+    const board = getActiveBoard(boards, activeBoardId)
+    if (!board) return
+    set({ boards: upsertBoard(boards, upsertFrame(board, { pageId, x, y })), boardsDirty: true })
+  },
+
+  removeFrame: (pageId) => {
+    const { boards, activeBoardId } = get()
+    const board = getActiveBoard(boards, activeBoardId)
+    if (!board) return
+    set({ boards: upsertBoard(boards, removeFrameFromBoard(board, pageId)), boardsDirty: true })
   },
 
   markBoardsClean: () => set({ boardsDirty: false }),

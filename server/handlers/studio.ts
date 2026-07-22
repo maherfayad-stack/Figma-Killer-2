@@ -2,10 +2,13 @@
  * Studio source-writeback endpoints — the filesystem side of the
  * "canvas edit ⇄ real .tsx source" loop.
  *
- *   GET  /admin/api/studio/load?dir=<abs>&page=<rel>
- *       Parse a real React page file into an Instatic `Page`. Node ids are
- *       `relFile:line:col` (from page-parser), so the client can later ask us
- *       to write a specific node's prop straight back to source.
+ *   GET  /admin/api/studio/load?dir=<abs>
+ *       Scan the workspace's `pages/` directory for `*.tsx` files and parse
+ *       EVERY one into an Instatic `Page` (multi-frame board — Phase 1
+ *       Increment 1B). Node ids stay `relFile:line:col` (from page-parser),
+ *       so the client can later ask us to write a specific node's prop
+ *       straight back to source, and the save handler below needs no changes
+ *       to keep working across multiple pages.
  *       (Under /admin/api so the Vite dev proxy forwards it to the :3001 server.)
  *
  *   POST /admin/api/studio/save   body: { dir, edits: [{ nodeId, prop, value }] }
@@ -15,7 +18,7 @@
  *
  * page-parser and ast-codemods run here (Node/ts-morph), not in the browser.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { parsePageFile } from '@core/page-parser'
 import { parsedPageToSitePage } from '@core/studio-sync/parsedPageToSitePage'
@@ -42,6 +45,21 @@ function defaultWorkspaceDir(): string {
   return join(process.cwd(), 'studio-workspace')
 }
 
+/**
+ * Derive a stable, unique page id (also used as the slug) from a page file's
+ * basename — "Home.tsx" -> "home", "About.tsx" -> "about", "MyPage.tsx" ->
+ * "my-page". Pure so it's unit-testable without touching the filesystem.
+ */
+export function pageIdFromFileName(fileName: string): string {
+  const base = fileName.replace(/\.tsx$/, '')
+  const slug = base
+    .replace(/([a-z0-9])([A-Z])/g, '$1-$2')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+  return slug.length > 0 ? slug : 'page'
+}
+
 interface SaveBody {
   dir?: string
   edits?: Array<{ nodeId: string; prop: string; value: string | number | boolean }>
@@ -56,18 +74,26 @@ export async function tryServeStudio(
   if (pathname === '/admin/api/studio/load' && req.method === 'GET') {
     try {
       const dir = resolve(url.searchParams.get('dir') ?? defaultWorkspaceDir())
-      const rel = url.searchParams.get('page') ?? 'pages/Home.tsx'
-      const file = join(dir, rel)
-      if (!existsSync(file)) return jsonResponse({ error: `page not found: ${file}` }, { status: 404 })
+      const pagesDir = join(dir, 'pages')
+      if (!existsSync(pagesDir)) return jsonResponse({ dir, pages: [] })
 
-      const parsed = parsePageFile(file, dir)
-      const page = parsedPageToSitePage(parsed, {
-        pageId: 'index',
-        slug: 'index',
-        title: 'Home',
-        resolveModuleId,
+      const fileNames = readdirSync(pagesDir)
+        .filter((name) => name.endsWith('.tsx'))
+        .sort()
+
+      const pages = fileNames.map((fileName) => {
+        const file = join(pagesDir, fileName)
+        const parsed = parsePageFile(file, dir)
+        const pageId = pageIdFromFileName(fileName)
+        return parsedPageToSitePage(parsed, {
+          pageId,
+          slug: pageId,
+          title: fileName.replace(/\.tsx$/, ''),
+          resolveModuleId,
+        })
       })
-      return jsonResponse({ dir, page })
+
+      return jsonResponse({ dir, pages })
     } catch (err) {
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
     }

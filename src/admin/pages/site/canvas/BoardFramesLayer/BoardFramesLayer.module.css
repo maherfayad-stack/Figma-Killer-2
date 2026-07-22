@@ -1,0 +1,59 @@
+/**
+ * BoardFramesLayer — positioning root for studio-mode page frames.
+ *
+ * Mirrors BoardNotesLayer's pattern: an absolutely-positioned layer at the
+ * transform layer's origin so every frame's `--frame-x`/`--frame-y` (set
+ * inline by BoardFramesLayer.tsx) is a plain board coordinate. Unlike the
+ * notes layer, frames need pointer interaction at the layer level too (drag
+ * handle, activate-on-click), so this layer does not disable pointer-events.
+ */
+.layer {
+    position: absolute;
+    top: 0;
+    left: 0;
+}
+
+.frame {
+    position: absolute;
+    left: var(--frame-x);
+    top: var(--frame-y);
+    display: flex;
+    flex-direction: column;
+    width: max-content;
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-panel-drop);
+}
+
+.header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-xs);
+    padding: var(--space-2xs) var(--space-s);
+    background: var(--bg-surface-2);
+    border-radius: var(--radius) var(--radius) 0 0;
+    cursor: grab;
+    user-select: none;
+}
+
+.header:active {
+    cursor: grabbing;
+}
+
+.frame[data-active='true'] .header {
+    box-shadow: var(--canvas-selection-ring);
+}
+
+.title {
+    font-size: var(--text-s);
+    font-weight: 600;
+    color: var(--text);
+}
+
+.activeBadge {
+    font-size: var(--text-xs);
+    color: var(--info-text);
+    background: var(--bg-surface-3);
+    padding: var(--space-4xs) var(--space-2xs);
+    border-radius: var(--radius-sm);
+}
