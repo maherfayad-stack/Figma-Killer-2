@@ -1,0 +1,15 @@
+/**
+ * BoardDocsLayer — positioning root for markdown doc blocks.
+ *
+ * Absolutely positioned at the transform layer's origin so every doc
+ * block's `left`/`top` (set inline by DocBlockView) is in board coordinates.
+ * Taken out of flow so it never affects the transform layer's flex layout of
+ * breakpoint frames. `pointer-events: none` on the layer itself — individual
+ * doc blocks opt back in.
+ */
+.layer {
+    position: absolute;
+    top: 0;
+    left: 0;
+    pointer-events: none;
+}

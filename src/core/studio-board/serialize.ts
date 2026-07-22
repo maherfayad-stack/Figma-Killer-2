@@ -1,4 +1,4 @@
-import type { Board, BoardFrame, BoardsFile, NoteColor, StickyNote } from './types'
+import type { Board, BoardFrame, BoardsFile, DocBlock, NoteColor, StickyNote } from './types'
 
 const NOTE_COLORS: NoteColor[] = ['yellow', 'green', 'blue', 'pink', 'gray']
 
@@ -36,6 +36,18 @@ function coerceNote(raw: unknown): StickyNote | undefined {
   return { id, x, y, w, h, text, color }
 }
 
+function coerceDoc(raw: unknown): DocBlock | undefined {
+  if (!isPlainObject(raw)) return undefined
+  const id = raw.id
+  if (typeof id !== 'string' || id.length === 0) return undefined
+  const x = typeof raw.x === 'number' ? raw.x : 0
+  const y = typeof raw.y === 'number' ? raw.y : 0
+  const w = typeof raw.w === 'number' ? raw.w : 320
+  const h = typeof raw.h === 'number' ? raw.h : 200
+  const markdown = typeof raw.markdown === 'string' ? raw.markdown : ''
+  return { id, x, y, w, h, markdown }
+}
+
 function coerceBoard(raw: unknown): Board | undefined {
   if (!isPlainObject(raw)) return undefined
   const id = raw.id
@@ -49,8 +61,13 @@ function coerceBoard(raw: unknown): Board | undefined {
   const notes: StickyNote[] = Array.isArray(raw.notes)
     ? raw.notes.map(coerceNote).filter((n): n is StickyNote => n !== undefined)
     : []
+  // `docs` is new — existing boards.json files predate it. Missing or
+  // malformed input defaults to an empty list rather than failing the parse.
+  const docs: DocBlock[] = Array.isArray(raw.docs)
+    ? raw.docs.map(coerceDoc).filter((d): d is DocBlock => d !== undefined)
+    : []
 
-  return { id, name, frames, notes }
+  return { id, name, frames, notes, docs }
 }
 
 export function parseBoardsFile(raw: unknown): BoardsFile {

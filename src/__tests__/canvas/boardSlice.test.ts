@@ -7,6 +7,8 @@
  *   - addNote / moveNote / updateNoteText / setNoteColor / removeNote mutate
  *     the active board via the pure @core/studio-board transforms and flip
  *     boardsDirty
+ *   - addDoc / moveDoc / updateDocMarkdown / removeDoc do the same for
+ *     board.docs (markdown documentation blocks)
  *   - setFramePosition / removeFrame do the same for `board.frames`
  *   - markBoardsClean clears the dirty flag
  *   - selectActiveBoard resolves the right board (or null)
@@ -291,6 +293,106 @@ describe('removeNote', () => {
 
     expect(selectActiveBoard(state())!.notes).toHaveLength(0)
     expect(state().boardsDirty).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// addDoc / moveDoc / updateDocMarkdown / removeDoc
+// ---------------------------------------------------------------------------
+
+describe('addDoc', () => {
+  it('adds a doc block to the active board and marks dirty', () => {
+    state().loadBoards(createBoardsFile())
+    state().addDoc(100, 200)
+
+    const board = selectActiveBoard(state())
+    expect(board).not.toBeNull()
+    expect(board?.docs).toHaveLength(1)
+    const doc = board?.docs[0]
+    expect(doc?.x).toBe(100)
+    expect(doc?.y).toBe(200)
+    expect(doc?.w).toBe(320)
+    expect(doc?.h).toBe(200)
+    expect(doc?.markdown).toBe('')
+    expect(state().boardsDirty).toBe(true)
+  })
+
+  it('is a no-op with no active board', () => {
+    state().addDoc(0, 0)
+    expect(selectActiveBoard(state())).toBeNull()
+    expect(state().boardsDirty).toBe(false)
+  })
+})
+
+describe('moveDoc', () => {
+  it('updates a doc block\'s coordinates', () => {
+    state().loadBoards(createBoardsFile())
+    state().addDoc(0, 0)
+    const docId = selectActiveBoard(state())!.docs[0].id
+    state().markBoardsClean()
+
+    state().moveDoc(docId, 42, 84)
+
+    const doc = selectActiveBoard(state())!.docs[0]
+    expect(doc.x).toBe(42)
+    expect(doc.y).toBe(84)
+    expect(state().boardsDirty).toBe(true)
+  })
+
+  it('is a no-op with no active board', () => {
+    state().moveDoc('missing', 0, 0)
+    expect(selectActiveBoard(state())).toBeNull()
+    expect(state().boardsDirty).toBe(false)
+  })
+})
+
+describe('updateDocMarkdown', () => {
+  it('updates a doc block\'s markdown', () => {
+    state().loadBoards(createBoardsFile())
+    state().addDoc(0, 0)
+    const docId = selectActiveBoard(state())!.docs[0].id
+    state().markBoardsClean()
+
+    state().updateDocMarkdown(docId, '# hello board')
+
+    expect(selectActiveBoard(state())!.docs[0].markdown).toBe('# hello board')
+    expect(state().boardsDirty).toBe(true)
+  })
+
+  it('is a no-op for an unknown doc id', () => {
+    state().loadBoards(createBoardsFile())
+    state().markBoardsClean()
+
+    state().updateDocMarkdown('missing', 'nope')
+
+    expect(selectActiveBoard(state())!.docs).toHaveLength(0)
+    expect(state().boardsDirty).toBe(false)
+  })
+
+  it('is a no-op with no active board', () => {
+    state().updateDocMarkdown('missing', 'nope')
+    expect(selectActiveBoard(state())).toBeNull()
+    expect(state().boardsDirty).toBe(false)
+  })
+})
+
+describe('removeDoc', () => {
+  it('removes a doc block from the active board', () => {
+    state().loadBoards(createBoardsFile())
+    state().addDoc(0, 0)
+    const docId = selectActiveBoard(state())!.docs[0].id
+    state().markBoardsClean()
+
+    state().removeDoc(docId)
+
+    expect(selectActiveBoard(state())!.docs).toHaveLength(0)
+    expect(state().boardsDirty).toBe(true)
+  })
+
+  it('is a no-op with no active board', () => {
+    state().removeDoc('missing')
+    expect(selectActiveBoard(state())).toBeNull()
+    expect(state().boardsDirty).toBe(false)
   })
 })
 

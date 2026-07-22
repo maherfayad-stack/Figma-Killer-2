@@ -1,5 +1,5 @@
 /**
- * BoardNotesToolbar — bottom-left floating action button, untransformed
+ * BoardNotesToolbar — bottom-left floating action bar, untransformed
  * (viewport-anchored) canvas chrome. Same stacking tier as CanvasModeToggle /
  * CanvasNotch so it sits above the transform layer and the plugin overlay
  * layer, below floating panels.
@@ -9,4 +9,6 @@
     bottom: var(--space-2xl);
     left: var(--space-2xl);
     z-index: 53;
+    display: flex;
+    gap: var(--space-xs);
 }

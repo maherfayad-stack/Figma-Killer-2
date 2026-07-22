@@ -1,11 +1,11 @@
-import type { Board, BoardFrame, BoardsFile, StickyNote } from './types'
+import type { Board, BoardFrame, BoardsFile, DocBlock, StickyNote } from './types'
 
 export function createBoardsFile(): BoardsFile {
   return { version: 1, boards: [] }
 }
 
 export function createBoard(id: string, name: string): Board {
-  return { id, name, frames: [], notes: [] }
+  return { id, name, frames: [], notes: [], docs: [] }
 }
 
 export function upsertBoard(file: BoardsFile, board: Board): BoardsFile {
@@ -43,6 +43,26 @@ export function moveNote(board: Board, noteId: string, x: number, y: number): Bo
 
 export function removeNote(board: Board, noteId: string): Board {
   return { ...board, notes: board.notes.filter((n) => n.id !== noteId) }
+}
+
+export function upsertDoc(board: Board, doc: DocBlock): Board {
+  const index = board.docs.findIndex((d) => d.id === doc.id)
+  const docs =
+    index === -1
+      ? [...board.docs, doc]
+      : board.docs.map((d, i) => (i === index ? doc : d))
+  return { ...board, docs }
+}
+
+export function moveDoc(board: Board, docId: string, x: number, y: number): Board {
+  const index = board.docs.findIndex((d) => d.id === docId)
+  if (index === -1) return board
+  const docs = board.docs.map((d, i) => (i === index ? { ...d, x, y } : d))
+  return { ...board, docs }
+}
+
+export function removeDoc(board: Board, docId: string): Board {
+  return { ...board, docs: board.docs.filter((d) => d.id !== docId) }
 }
 
 export function upsertFrame(board: Board, frame: BoardFrame): Board {

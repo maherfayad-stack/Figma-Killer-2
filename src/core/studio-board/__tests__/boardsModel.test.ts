@@ -2,19 +2,22 @@ import { describe, expect, test } from 'bun:test'
 import {
   createBoard,
   createBoardsFile,
+  moveDoc,
   moveFrame,
   moveNote,
   parseBoardsFile,
   removeBoard,
+  removeDoc,
   removeFrame,
   removeNote,
   renameBoard,
   serializeBoardsFile,
   upsertBoard,
+  upsertDoc,
   upsertFrame,
   upsertNote,
 } from '../index'
-import type { Board, BoardFrame, BoardsFile, StickyNote } from '../types'
+import type { Board, BoardFrame, BoardsFile, DocBlock, StickyNote } from '../types'
 
 describe('create helpers', () => {
   test('createBoardsFile returns empty file', () => {
@@ -27,6 +30,7 @@ describe('create helpers', () => {
       name: 'My Board',
       frames: [],
       notes: [],
+      docs: [],
     })
   })
 })
@@ -82,7 +86,7 @@ describe('renameBoard', () => {
   test('returns a board with the new name', () => {
     const board = createBoard('b1', 'Old Name')
     const result = renameBoard(board, 'New Name')
-    expect(result).toEqual({ id: 'b1', name: 'New Name', frames: [], notes: [] })
+    expect(result).toEqual({ id: 'b1', name: 'New Name', frames: [], notes: [], docs: [] })
   })
 
   test('does not mutate the input board', () => {
@@ -170,6 +174,75 @@ describe('removeNote', () => {
   })
 })
 
+const doc = (overrides: Partial<DocBlock> = {}): DocBlock => ({
+  id: 'd1',
+  x: 0,
+  y: 0,
+  w: 320,
+  h: 200,
+  markdown: '# hello',
+  ...overrides,
+})
+
+describe('upsertDoc', () => {
+  test('adds a new doc', () => {
+    const board = createBoard('b1', 'Board 1')
+    const result = upsertDoc(board, doc())
+    expect(result.docs).toEqual([doc()])
+  })
+
+  test('replaces a doc with the same id', () => {
+    const board = upsertDoc(createBoard('b1', 'Board 1'), doc())
+    const replacement = doc({ markdown: 'updated' })
+    const result = upsertDoc(board, replacement)
+    expect(result.docs).toEqual([replacement])
+    expect(result.docs).toHaveLength(1)
+  })
+
+  test('does not mutate the input board', () => {
+    const board = createBoard('b1', 'Board 1')
+    const originalDocsRef = board.docs
+    upsertDoc(board, doc())
+    expect(board.docs).toBe(originalDocsRef)
+    expect(board.docs).toHaveLength(0)
+  })
+})
+
+describe('moveDoc', () => {
+  test('updates coordinates', () => {
+    const board = upsertDoc(createBoard('b1', 'Board 1'), doc())
+    const result = moveDoc(board, 'd1', 42, 99)
+    expect(result.docs[0]).toEqual(doc({ x: 42, y: 99 }))
+  })
+
+  test('is a no-op for a missing id', () => {
+    const board = upsertDoc(createBoard('b1', 'Board 1'), doc())
+    const result = moveDoc(board, 'missing', 42, 99)
+    expect(result).toBe(board)
+  })
+
+  test('does not mutate the input board', () => {
+    const board = upsertDoc(createBoard('b1', 'Board 1'), doc())
+    const snapshot = JSON.parse(JSON.stringify(board))
+    moveDoc(board, 'd1', 42, 99)
+    expect(board).toEqual(snapshot)
+  })
+})
+
+describe('removeDoc', () => {
+  test('drops the doc with the given id', () => {
+    const board = upsertDoc(createBoard('b1', 'Board 1'), doc())
+    const result = removeDoc(board, 'd1')
+    expect(result.docs).toEqual([])
+  })
+
+  test('is a no-op for a missing id', () => {
+    const board = upsertDoc(createBoard('b1', 'Board 1'), doc())
+    const result = removeDoc(board, 'missing')
+    expect(result.docs).toEqual(board.docs)
+  })
+})
+
 const frame = (overrides: Partial<BoardFrame> = {}): BoardFrame => ({
   pageId: 'p1',
   x: 0,
@@ -234,6 +307,7 @@ describe('serialize round-trip', () => {
     let board = createBoard('b1', 'Board 1')
     board = upsertFrame(board, frame({ pageId: 'home', x: 100, y: 200 }))
     board = upsertNote(board, note({ id: 'n1', text: 'note text', color: 'pink' }))
+    board = upsertDoc(board, doc({ id: 'd1', markdown: '# doc text' }))
     const file: BoardsFile = upsertBoard(createBoardsFile(), board)
 
     const serialized = serializeBoardsFile(file)
@@ -290,6 +364,11 @@ describe('parseBoardsFile tolerance', () => {
             { id: 'n2', color: 'not-a-color', w: 'nope' }, // invalid color/w coerced to defaults
             {}, // missing id -> dropped
           ],
+          docs: [
+            { id: 'd1' }, // coerced to defaults
+            { id: 'd2', w: 'nope', markdown: 123 }, // invalid w/markdown coerced to defaults
+            {}, // missing id -> dropped
+          ],
         },
       ],
     }
@@ -299,7 +378,7 @@ describe('parseBoardsFile tolerance', () => {
     expect(result.boards).toHaveLength(2)
 
     const good = result.boards.find((b) => b.id === 'good')
-    expect(good).toEqual({ id: 'good', name: 'Good Board', frames: [], notes: [] })
+    expect(good).toEqual({ id: 'good', name: 'Good Board', frames: [], notes: [], docs: [] })
 
     const partial = result.boards.find((b) => b.id === 'partial') as Board
     expect(partial.frames).toEqual([
@@ -310,6 +389,32 @@ describe('parseBoardsFile tolerance', () => {
       { id: 'n1', x: 0, y: 0, w: 200, h: 120, text: '', color: 'yellow' },
       { id: 'n2', x: 0, y: 0, w: 200, h: 120, text: '', color: 'yellow' },
     ])
+    expect(partial.docs).toEqual([
+      { id: 'd1', x: 0, y: 0, w: 320, h: 200, markdown: '' },
+      { id: 'd2', x: 0, y: 0, w: 320, h: 200, markdown: '' },
+    ])
+  })
+
+  test('board missing the docs key entirely (pre-existing boards.json) parses with an empty docs list', () => {
+    const raw = {
+      version: 1,
+      boards: [{ id: 'legacy', name: 'Legacy Board', frames: [], notes: [] }],
+    }
+
+    const result = parseBoardsFile(raw)
+    expect(result.boards).toEqual([
+      { id: 'legacy', name: 'Legacy Board', frames: [], notes: [], docs: [] },
+    ])
+  })
+
+  test('a board with a malformed (non-array) docs field parses with an empty docs list', () => {
+    const raw = {
+      version: 1,
+      boards: [{ id: 'b1', name: 'Board 1', frames: [], notes: [], docs: 'not-an-array' }],
+    }
+
+    const result = parseBoardsFile(raw)
+    expect(result.boards[0].docs).toEqual([])
   })
 
   test('an object with boards not an array returns empty boards file', () => {

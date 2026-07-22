@@ -17,11 +17,22 @@ export interface BoardFrame {
   y: number
 }
 
+// a markdown-authored documentation card, rendered as canvas furniture
+export interface DocBlock {
+  id: string
+  x: number
+  y: number
+  w: number
+  h: number
+  markdown: string
+}
+
 export interface Board {
   id: string
   name: string
   frames: BoardFrame[]
   notes: StickyNote[]
+  docs: DocBlock[]
 }
 
 export interface BoardsFile {

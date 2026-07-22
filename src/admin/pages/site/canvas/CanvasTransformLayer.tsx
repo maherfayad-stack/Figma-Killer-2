@@ -18,6 +18,7 @@ import { BreakpointFrame } from './BreakpointFrame'
 import { CanvasFrameSkeletonFrame } from '@admin/shared/CanvasFrameSkeleton'
 import type { InjectableRuntimeScript } from './useRuntimeScriptBuild'
 import { BoardNotesLayer } from './BoardNotesLayer'
+import { BoardDocsLayer } from './BoardDocsLayer'
 import { BoardFramesLayer } from './BoardFramesLayer'
 import styles from './CanvasTransformLayer.module.css'
 
@@ -109,6 +110,10 @@ export function CanvasTransformLayer({
           inherits the pan/zoom transform. Self-gates on active board — safe to
           always mount in both the board and non-board paths. */}
       <BoardNotesLayer />
+      {/* Studio-mode markdown doc-block overlay — same mounting rationale as
+          BoardNotesLayer above (paints above frames, inherits pan/zoom,
+          self-gates on active board). */}
+      <BoardDocsLayer />
     </div>
   )
 }

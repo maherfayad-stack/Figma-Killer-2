@@ -1,5 +1,5 @@
 /**
- * boardSlice — Studio board overlay state (sticky notes + page frames).
+ * boardSlice — Studio board overlay state (sticky notes + doc blocks + page frames).
  *
  * Owns the editor-side view of `<workspace>/.studio/boards.json`: the parsed
  * `BoardsFile`, which board is currently active, and a dirty flag the
@@ -14,19 +14,23 @@
  * position (works for both "first drag" and subsequent moves); `removeFrame`
  * drops membership without touching the underlying page.
  *
+ * Doc blocks: `board.docs` mirrors the sticky-note shape exactly (`addDoc` /
+ * `moveDoc` / `updateDocMarkdown` / `removeDoc`) — markdown-authored
+ * documentation cards rendered by `BoardDocsLayer`/`DocBlockView`.
+ *
  * Boards are plural: `addBoard` / `renameBoard` / `removeBoard` /
  * `setActiveBoard` manage the `BoardsFile`'s board list and which one is
  * active. A board's `frames` are its own — switching boards changes which
  * curated set of pages the canvas shows.
  *
  * All mutations route through the pure `@core/studio-board` transforms
- * (`upsertBoard`, `upsertNote`, `moveNote`, `removeNote`, `upsertFrame`,
- * `removeFrame`, …) rather than hand-mutating `Board` / `BoardsFile` objects,
- * so this slice stays a thin translation from store actions to the pure
- * board model.
+ * (`upsertBoard`, `upsertNote`, `moveNote`, `removeNote`, `upsertDoc`,
+ * `moveDoc`, `removeDoc`, `upsertFrame`, `removeFrame`, …) rather than
+ * hand-mutating `Board` / `BoardsFile` objects, so this slice stays a thin
+ * translation from store actions to the pure board model.
  */
 import type { EditorStoreSliceCreator, EditorStore } from '@site/store/types'
-import type { Board, BoardsFile, NoteColor, StickyNote } from '@core/studio-board'
+import type { Board, BoardsFile, DocBlock, NoteColor, StickyNote } from '@core/studio-board'
 import {
   createBoard,
   createBoardsFile,
@@ -36,6 +40,9 @@ import {
   upsertNote,
   moveNote as moveNoteOnBoard,
   removeNote as removeNoteFromBoard,
+  upsertDoc,
+  moveDoc as moveDocOnBoard,
+  removeDoc as removeDocFromBoard,
   upsertFrame,
   removeFrame as removeFrameFromBoard,
 } from '@core/studio-board'
@@ -44,6 +51,8 @@ import { defaultFramePosition } from '@site/canvas/BoardFramesLayer/frameGrid'
 const DEFAULT_NOTE_COLOR: NoteColor = 'yellow'
 const DEFAULT_NOTE_WIDTH = 180
 const DEFAULT_NOTE_HEIGHT = 120
+const DEFAULT_DOC_WIDTH = 320
+const DEFAULT_DOC_HEIGHT = 200
 
 interface BoardSlice {
   /** The parsed `.studio/boards.json` contents. */
@@ -85,6 +94,14 @@ interface BoardSlice {
   setNoteColor: (noteId: string, color: NoteColor) => void
   /** Delete a note from the active board. */
   removeNote: (noteId: string) => void
+  /** Create a doc block at (x, y) on the active board. No-op with no active board. */
+  addDoc: (x: number, y: number) => void
+  /** Reposition a doc block on the active board. */
+  moveDoc: (docId: string, x: number, y: number) => void
+  /** Update a doc block's markdown content. */
+  updateDocMarkdown: (docId: string, markdown: string) => void
+  /** Delete a doc block from the active board. */
+  removeDoc: (docId: string) => void
   /**
    * Persist a page's frame position on the active board — inserts a new
    * `BoardFrame` if the page has none yet, updates it otherwise. No-op with
@@ -243,6 +260,48 @@ export const createBoardSlice: EditorStoreSliceCreator<BoardSlice> = (set, get) 
     const board = getActiveBoard(boards, activeBoardId)
     if (!board) return
     set({ boards: upsertBoard(boards, removeNoteFromBoard(board, noteId)), boardsDirty: true })
+  },
+
+  addDoc: (x, y) => {
+    const { boards, activeBoardId } = get()
+    const board = getActiveBoard(boards, activeBoardId)
+    if (!board) return
+
+    const doc: DocBlock = {
+      id: crypto.randomUUID(),
+      x,
+      y,
+      w: DEFAULT_DOC_WIDTH,
+      h: DEFAULT_DOC_HEIGHT,
+      markdown: '',
+    }
+    set({ boards: upsertBoard(boards, upsertDoc(board, doc)), boardsDirty: true })
+  },
+
+  moveDoc: (docId, x, y) => {
+    const { boards, activeBoardId } = get()
+    const board = getActiveBoard(boards, activeBoardId)
+    if (!board) return
+    set({ boards: upsertBoard(boards, moveDocOnBoard(board, docId, x, y)), boardsDirty: true })
+  },
+
+  updateDocMarkdown: (docId, markdown) => {
+    const { boards, activeBoardId } = get()
+    const board = getActiveBoard(boards, activeBoardId)
+    if (!board) return
+    const existing = board.docs.find((d) => d.id === docId)
+    if (!existing) return
+    set({
+      boards: upsertBoard(boards, upsertDoc(board, { ...existing, markdown })),
+      boardsDirty: true,
+    })
+  },
+
+  removeDoc: (docId) => {
+    const { boards, activeBoardId } = get()
+    const board = getActiveBoard(boards, activeBoardId)
+    if (!board) return
+    set({ boards: upsertBoard(boards, removeDocFromBoard(board, docId)), boardsDirty: true })
   },
 
   setFramePosition: (pageId, x, y) => {
