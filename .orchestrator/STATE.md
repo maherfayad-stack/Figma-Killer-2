@@ -1121,3 +1121,70 @@ unfixed and is explicitly Phase 3b-ii's job to dogfood-check, not this one's.
 **Phase 3b-i is DONE.** Per explicit user instruction, stopping here — Phase
 3b-ii (real `apps/studio` dogfood), Phase 4 (cutover), and Phase 5 (perf
 hardening) are NOT started and require a new go-ahead.
+
+### Phase 3b-ii — COMPLETE (orchestrator-verified 2026-07-22): real human dogfood
+Done directly by the orchestrator (not delegated to a worker), via gstack's
+`browse` headless-Chromium skill against a REAL, non-test instance: `pnpm
+--filter @ccs/canvas run demo:daemon` (real `openProject` against this repo's
+`files/demo`, daemon on `ws://127.0.0.1:4700`) + `VITE_CCS_CANVAS_ENGINE=custom
+pnpm --filter @ccs/studio dev` (port 5174), opened at
+`http://localhost:5174/?daemonPort=4700`.
+
+**What worked, confirmed by eye (screenshots), not just green tests:**
+- Dashboard renders correctly, "Demo" project card present, "Open" flow works,
+  `daemon: connected` status bar visible.
+- Workspace loads with the custom engine: Layers panel lists Aad/Hero/Pricing,
+  canvas renders all 3 frames at their real geometry, matching the tldraw
+  path's visual layout.
+- Layers panel's "Zoom to board" (the production `zoomToFrame`/select API)
+  correctly zooms and selects a frame; the Design/Inspector panel populates
+  with real frame-level controls (W/H, layout container, fill) — the daemon
+  round-trip is real, not stubbed.
+- A REAL native `dblclick` (dispatched as a genuine `PointerEvent`/`MouseEvent`
+  via injected JS, not just Playwright's synthetic action, to be sure the
+  actual browser gesture path is exercised) on a frame correctly zoomed to its
+  bounds AND selected it — confirms Phase 3b-i's fix works outside the test
+  harness too.
+- Dragging a frame's header when it is NOT selected/active works correctly:
+  measured the frame's `getBoundingClientRect()` before and after a scripted
+  pointerdown→move→move→pointerup sequence on its header, and it moved by
+  exactly the injected delta (~+100,+80px). Confirms baseline drag-to-move is
+  fully functional on the custom engine in a real browser, not just under
+  Playwright.
+
+**Confirmed, human-verified: the flagged "active frame header can't be
+re-dragged" gap is REAL on the custom engine too (not tldraw-specific):**
+after selecting Hero via "Zoom to board" (the same production selection path
+a Layers-panel click uses), the element at the header's screen coordinates
+resolved to `[data-testid="ccs-edit-mode-capture"]` — the edit-mode capture
+overlay — instead of the frame's own header div. The identical
+pointerdown→move→move→pointerup sequence that successfully dragged the
+frame moments earlier (when unselected) produced ZERO movement
+(`getBoundingClientRect()` identical before/after) once the frame was active.
+This is a genuine, reproducible UX gap, not a test artifact or a tldraw-only
+issue — `edit-mode-layer.tsx`'s capture overlay (shared by both engines) has
+no pointerdown-forwarding equivalent to its own `dispatchWheel`, exactly as
+flagged at the end of Phase 3a. **Not fixed in this pass** — this was a
+verification/scoping task, not a fix task; the shared forwarding mechanism it
+needs is real follow-on work, not yet scheduled to a phase.
+
+**Noted, NOT a regression or engine-related:** the real `files/demo` fixture's
+`Pricing.tsx` frame throws a pre-existing React hydration console error/warning
+(`<p>` cannot contain a nested `<div>`, from `ds:VisualCard`'s markup) — visible
+in both engines identically, unrelated to this whole track, a pre-existing
+content bug in the demo fixture. Not investigated further (out of scope).
+
+**Cleanup:** `files/` is entirely gitignored, so the manual drag test's
+geometry write to `files/demo/.studio/canvas.json` has no repo impact
+(confirmed via `git status --short files/demo`: clean). All dev processes
+(daemon, per-frame Vite servers, studio Vite server) killed and confirmed via
+`lsof` — no orphaned listeners on ports 4700/5174/5200.
+
+**Phase 3b-ii is DONE.** Both open items from Phase 3b's plan are resolved:
+(1) custom-engine `p2-selection.spec.ts` parity — done in 3b-i; (2) real
+dogfood + header-redrag gap check — done here, gap CONFIRMED REAL (shared,
+not new, not fixed). Item (3) (custom-engine fps) was already covered by
+`acceptance.spec.ts` test (d), which passed on the custom engine in both 3a
+and 3b-i's e2e runs (~115-118fps @ 20 frames, matching the established
+baseline). **Phase 3b as a whole is now COMPLETE.** Phase 4 (tldraw cutover)
+and Phase 5 (perf hardening) remain NOT started, pending a new go-ahead.
