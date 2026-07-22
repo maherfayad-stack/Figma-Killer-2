@@ -91,14 +91,14 @@ function resolvePackageRoot(): string {
 }
 
 function buildProps(name: string, catalog: DesignSystemCatalog): PropSpec[] {
-  let propNames: string[] | null = null
+  let propNames: string[] | null
   try {
     propNames = catalog.propsFor(name)
   } catch {
     propNames = null
   }
 
-  let doc: string | null = null
+  let doc: string | null
   try {
     doc = catalog.apiDoc(name)
   } catch {

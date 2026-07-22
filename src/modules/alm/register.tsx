@@ -53,7 +53,7 @@ const EXCLUDE = new Set(['Dialog', 'BottomSheet', 'ActionSheet', 'Snackbar', 'To
 // instead of taking down the canvas iframe.
 // ---------------------------------------------------------------------------
 class AlmErrorBoundary extends React.Component<
-  { name: string; children: React.ReactNode },
+  React.PropsWithChildren<{ name: string }>,
   { failed: boolean }
 > {
   state = { failed: false }

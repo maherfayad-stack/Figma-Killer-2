@@ -107,7 +107,18 @@ export interface ModuleInsertionContext {
   isTemplate: boolean
   /** The active document tree already contains a `base.outlet`. */
   hasOutlet: boolean
+  /**
+   * Studio (filesystem-as-truth) mode. In studio the only insertable palette
+   * entries are the code-backed design-system components (category
+   * `'Design System'`); Instatic's built-in `base.*` block modules stay
+   * registered as renderers for host HTML in the parsed source, but are hidden
+   * from every picker surface so authors compose only with real components.
+   */
+  isStudio: boolean
 }
+
+/** Category assigned to every code-backed design-system module (see `src/modules/alm/register.tsx`). */
+const DESIGN_SYSTEM_CATEGORY = 'Design System'
 
 type ModuleAvailability =
   | { kind: 'insertable' }
@@ -131,6 +142,9 @@ export function moduleAvailability(
   context: ModuleInsertionContext,
 ): ModuleAvailability {
   if (HIDDEN_MODULE_IDS.has(mod.id)) return { kind: 'hidden' }
+  // Studio mode: only design-system components are user-insertable; the built-in
+  // Instatic block modules are host-HTML renderers, not palette entries.
+  if (context.isStudio && mod.category !== DESIGN_SYSTEM_CATEGORY) return { kind: 'hidden' }
   if (mod.id === 'base.slot-outlet' && !context.isVCMode) return { kind: 'hidden' }
   if (mod.id === 'base.outlet') {
     if (context.isVCMode) {

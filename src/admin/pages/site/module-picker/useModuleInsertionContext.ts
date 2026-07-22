@@ -11,10 +11,13 @@ export function useModuleInsertionContext(): ModuleInsertionContext {
   const activeDocument = useEditorStore((s) => s.activeDocument)
   const canvasPage = useEditorStore(selectActiveCanvasPage)
   const isVCMode = activeDocument?.kind === 'visualComponent'
+  const isStudio =
+    typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('studio')
   return {
     isVCMode,
     activeVcId: activeDocument?.kind === 'visualComponent' ? activeDocument.vcId : null,
     isTemplate: !isVCMode && canvasPage !== null && isTemplatePage(canvasPage),
     hasOutlet: canvasPage !== null && treeHasOutlet(canvasPage),
+    isStudio,
   }
 }

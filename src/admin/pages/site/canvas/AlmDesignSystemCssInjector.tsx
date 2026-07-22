@@ -17,7 +17,6 @@
  */
 import { useEffect } from 'react'
 // Vite `?inline` yields the processed CSS as a default string export.
-// @ts-expect-error - virtual `?inline` module has no ambient type here
 import dsCss from '@alm-design/design-system/dist/index.css?inline'
 
 const STYLE_TAG_ID = 'alm-design-system-css'

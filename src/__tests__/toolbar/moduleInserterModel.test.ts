@@ -26,9 +26,10 @@ function mod(id: string, category: string, name = id): RegistryModuleForInserter
   return { id, category, name, description: `${name} description` }
 }
 
-const PAGE_CTX: ModuleInsertionContext = { isVCMode: false, activeVcId: null, isTemplate: false, hasOutlet: false }
-const TEMPLATE_CTX: ModuleInsertionContext = { isVCMode: false, activeVcId: null, isTemplate: true, hasOutlet: false }
-const VC_CTX: ModuleInsertionContext = { isVCMode: true, activeVcId: 'vc-1', isTemplate: false, hasOutlet: false }
+const PAGE_CTX: ModuleInsertionContext = { isVCMode: false, activeVcId: null, isTemplate: false, hasOutlet: false, isStudio: false }
+const TEMPLATE_CTX: ModuleInsertionContext = { isVCMode: false, activeVcId: null, isTemplate: true, hasOutlet: false, isStudio: false }
+const VC_CTX: ModuleInsertionContext = { isVCMode: true, activeVcId: 'vc-1', isTemplate: false, hasOutlet: false, isStudio: false }
+const STUDIO_CTX: ModuleInsertionContext = { isVCMode: false, activeVcId: null, isTemplate: false, hasOutlet: false, isStudio: true }
 
 beforeEach(() => {
   localStorage.clear()
@@ -51,6 +52,23 @@ describe('module inserter model', () => {
 
     const vcModeIds = getVisibleModuleItems(modules, VC_CTX).map((item) => item.id)
     expect(vcModeIds).toEqual(['base.container', 'base.slot-outlet', 'base.text'])
+  })
+
+  it('hides every built-in Instatic block from the palette in studio mode, keeping only design-system components', () => {
+    const modules = [
+      mod('base.container', 'Layout', 'Container'),
+      mod('base.text', 'Typography', 'Text'),
+      mod('base.button', 'Interactive', 'Button'),
+      mod('alm.Button', 'Design System', 'Button'),
+      mod('alm.Chip', 'Design System', 'Chip'),
+    ]
+
+    const studioIds = getVisibleModuleItems(modules, STUDIO_CTX).map((item) => item.id)
+    expect(studioIds).toEqual(['alm.Button', 'alm.Chip'])
+
+    // The same base modules remain insertable in ordinary (CMS) page mode.
+    const pageIds = getVisibleModuleItems(modules, PAGE_CTX).map((item) => item.id)
+    expect(pageIds).toEqual(['base.container', 'base.text', 'base.button', 'alm.Button', 'alm.Chip'])
   })
 
   it('keeps the content outlet visible but disabled outside an insertable template context', () => {
