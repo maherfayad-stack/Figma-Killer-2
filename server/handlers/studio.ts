@@ -11,10 +11,15 @@
  *       to keep working across multiple pages.
  *       (Under /admin/api so the Vite dev proxy forwards it to the :3001 server.)
  *
- *   POST /admin/api/studio/save   body: { dir, edits: [{ nodeId, prop, value }] }
- *       Decode each nodeId back to a source location and rewrite that JSX
- *       attribute via the ts-morph codemod. Synthetic nodes (e.g. the
- *       `index:body` root) don't match the loc pattern and are skipped.
+ *   POST /admin/api/studio/save   body: { dir, edits: StudioEdit[] }
+ *       A batch of typed edits (`kind: 'prop' | 'text' | 'style'`). Each edit's
+ *       nodeId is decoded back to a source location and dispatched to the
+ *       matching `ast-codemods` writer (`setJsxProp` / `setJsxText` /
+ *       `setJsxStyle`) via `applyStudioEdit`. Synthetic nodes (e.g. the
+ *       `index:body` root) don't match the loc pattern and are skipped. Each
+ *       edit is applied independently — one codemod throwing (e.g. a text
+ *       edit landing on an element with mixed children) is logged and
+ *       skipped rather than aborting the whole batch.
  *
  * page-parser and ast-codemods run here (Node/ts-morph), not in the browser.
  */
@@ -22,25 +27,43 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { dirname, join, resolve } from 'node:path'
 import { parsePageFile } from '@core/page-parser'
 import { parsedPageToSitePage } from '@core/studio-sync/parsedPageToSitePage'
-import { setJsxProp } from '@core/ast-codemods'
+import { setJsxProp, setJsxStyle, setJsxText } from '@core/ast-codemods'
 import { createBoardsFile, parseBoardsFile, serializeBoardsFile, type BoardsFile } from '@core/studio-board'
-import { Type } from '@core/utils/typeboxHelpers'
+import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { badRequest, jsonResponse, readValidatedBody } from '../http'
 
 const NODE_LOC_ID = /^(.*):(\d+):(\d+)$/
 
-/** Body of POST /admin/api/studio/save — a batch of prop writebacks. */
+/** One prop attribute writeback — `setJsxProp`. */
+const PropEditSchema = Type.Object({
+  kind: Type.Literal('prop'),
+  nodeId: Type.String(),
+  prop: Type.String(),
+  value: Type.Union([Type.String(), Type.Number(), Type.Boolean()]),
+})
+
+/** One element-text-children writeback — `setJsxText`. */
+const TextEditSchema = Type.Object({
+  kind: Type.Literal('text'),
+  nodeId: Type.String(),
+  text: Type.String(),
+})
+
+/** One `style={{ ... }}` merge writeback — `setJsxStyle`. */
+const StyleEditSchema = Type.Object({
+  kind: Type.Literal('style'),
+  nodeId: Type.String(),
+  style: Type.Record(Type.String(), Type.Union([Type.String(), Type.Number()])),
+})
+
+/** Discriminated union of every studio edit kind — `kind` is the discriminator. */
+const StudioEditSchema = Type.Union([PropEditSchema, TextEditSchema, StyleEditSchema])
+export type StudioEdit = Static<typeof StudioEditSchema>
+
+/** Body of POST /admin/api/studio/save — a batch of typed source writebacks. */
 const SaveBodySchema = Type.Object({
   dir: Type.Optional(Type.String()),
-  edits: Type.Optional(
-    Type.Array(
-      Type.Object({
-        nodeId: Type.String(),
-        prop: Type.String(),
-        value: Type.Union([Type.String(), Type.Number(), Type.Boolean()]),
-      }),
-    ),
-  ),
+  edits: Type.Optional(Type.Array(StudioEditSchema)),
 })
 
 /**
@@ -65,6 +88,62 @@ function resolveModuleId(node: { kind: 'element' | 'component'; name: string }):
   if (tag === 'a') return 'base.link'
   if (tag === 'img') return 'base.image'
   return 'base.text'
+}
+
+/**
+ * Map a resolved moduleId to the single prop key its module's
+ * `inlineTextEdit` declares. MUST stay in sync with the base modules'
+ * `inlineTextEdit.prop` (`src/modules/base/{text,button,link}/index.ts`) —
+ * the browser-side `fsCodemodAdapter` reads the same contract off the actual
+ * module registry (`@core/module-engine`), which this server-side handler
+ * intentionally does not import (page-parser/ast-codemods run here in Node,
+ * decoupled from the browser module bundle). `alm.*` design-system
+ * components declare no `inlineTextEdit` — out of scope for source
+ * writeback this slice.
+ */
+function resolveTextProp(moduleId: string): string | null {
+  switch (moduleId) {
+    case 'base.text':
+      return 'text'
+    case 'base.button':
+      return 'label'
+    case 'base.link':
+      return 'text'
+    default:
+      return null
+  }
+}
+
+/**
+ * Applies one typed studio edit to the .tsx source under `dir`, dispatching
+ * on `edit.kind` to the matching `ast-codemods` writer. Extracted as a pure
+ * helper (dir + edit in, codemod side effect out) so it's unit-testable
+ * against temp fixture files without a full Request/Response round trip.
+ *
+ * Returns `false` for a synthetic node id (e.g. the `index:body` root) that
+ * has no source location — nothing to write, not an error. Returns `true`
+ * once the matching codemod has written the file. Propagates whatever the
+ * underlying codemod throws (e.g. `JsxTextTargetError`, `JsxStyleTargetError`)
+ * for a real source location it refuses to touch — callers decide whether to
+ * skip-and-log or let it bubble.
+ */
+export function applyStudioEdit(dir: string, edit: StudioEdit): boolean {
+  const m = NODE_LOC_ID.exec(edit.nodeId)
+  if (!m) return false // synthetic node (e.g. body) — no source location
+  const [, rel, line, col] = m
+  const loc = { file: join(dir, rel), line: Number(line), col: Number(col) }
+
+  switch (edit.kind) {
+    case 'prop':
+      setJsxProp({ ...loc, prop: edit.prop, value: edit.value })
+      return true
+    case 'text':
+      setJsxText({ ...loc, text: edit.text })
+      return true
+    case 'style':
+      setJsxStyle({ ...loc, style: edit.style })
+      return true
+  }
 }
 
 function defaultWorkspaceDir(): string {
@@ -111,6 +190,7 @@ export async function tryServeStudio(
           slug: pageId,
           title: fileName.replace(/\.tsx$/, ''),
           resolveModuleId,
+          resolveTextProp,
         })
       })
 
@@ -126,13 +206,19 @@ export async function tryServeStudio(
       if (!body) return badRequest('invalid save body')
       const dir = resolve(body.dir ?? defaultWorkspaceDir())
       let written = 0
+      let skipped = 0
       for (const edit of body.edits ?? []) {
-        const m = NODE_LOC_ID.exec(edit.nodeId)
-        if (!m) continue // synthetic node (e.g. body) — no source location
-        const [, rel, line, col] = m
-        setJsxProp({ file: join(dir, rel), line: Number(line), col: Number(col), prop: edit.prop, value: edit.value })
-        written += 1
+        try {
+          if (applyStudioEdit(dir, edit)) written += 1
+        } catch (err) {
+          // One edit's codemod refusing to write (e.g. mixed-content text
+          // target, non-object-literal style attribute) must not abort the
+          // rest of the batch.
+          console.error('[studio]', err)
+          skipped += 1
+        }
       }
+      if (skipped > 0) console.error(`[studio] save: ${written} written, ${skipped} skipped`)
       return jsonResponse({ ok: true, written })
     } catch (err) {
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })

@@ -36,12 +36,18 @@ function resolveModuleId({ kind, name }: { kind: 'element' | 'component'; name: 
   return 'base.text'
 }
 
+/** No text prop known for any module id in these base tests, unless overridden per-test. */
+function resolveTextProp(): string | null {
+  return null
+}
+
 test('parsedPageToSitePage wraps parsed roots under a synthetic base.body node', () => {
   const result = parsedPageToSitePage(parsed, {
     pageId: 'home',
     slug: 'home',
     title: 'Home',
     resolveModuleId,
+    resolveTextProp,
   })
 
   const bodyId = 'home:body'
@@ -92,6 +98,7 @@ test('parsedPageToSitePage propagates locked + lockReason from a locked ParsedNo
     slug: 'home',
     title: 'Home',
     resolveModuleId,
+    resolveTextProp,
   })
 
   const lockedNode = result.nodes[LOCKED_ID]
@@ -111,10 +118,104 @@ test('parsedPageToSitePage handles an empty page', () => {
     slug: 'blank',
     title: 'Blank',
     resolveModuleId,
+    resolveTextProp,
   })
 
   expect(result.rootNodeId).toBe('blank:body')
   expect(result.nodes['blank:body'].children).toEqual([])
   expect(Object.keys(result.nodes).length).toBe(1)
   expect(() => parsePage(result, 0)).not.toThrow()
+})
+
+test('parsedPageToSitePage maps captured text onto the module\'s declared text prop', () => {
+  const TEXT_ID = 'Home.tsx:8:4'
+  const textParsed: ParsedPage = {
+    rootIds: [TEXT_ID],
+    nodes: {
+      [TEXT_ID]: {
+        id: TEXT_ID,
+        kind: 'component',
+        name: 'Button',
+        props: {},
+        children: [],
+        loc: { file: 'Home.tsx', line: 8, col: 4 },
+        locked: false,
+        text: 'Click me',
+      },
+    },
+  }
+
+  const resolveTextPropForButton = (moduleId: string): string | null =>
+    moduleId === 'alm.Button' ? 'label' : null
+
+  const result = parsedPageToSitePage(textParsed, {
+    pageId: 'home',
+    slug: 'home',
+    title: 'Home',
+    resolveModuleId,
+    resolveTextProp: resolveTextPropForButton,
+  })
+
+  expect(result.nodes[TEXT_ID].props.label).toBe('Click me')
+})
+
+test('parsedPageToSitePage prefers an explicit attribute over captured text for the same prop', () => {
+  const TEXT_ID = 'Home.tsx:9:4'
+  const textParsed: ParsedPage = {
+    rootIds: [TEXT_ID],
+    nodes: {
+      [TEXT_ID]: {
+        id: TEXT_ID,
+        kind: 'component',
+        name: 'Button',
+        props: { label: 'FromAttribute' },
+        children: [],
+        loc: { file: 'Home.tsx', line: 9, col: 4 },
+        locked: false,
+        text: 'FromChildText',
+      },
+    },
+  }
+
+  const resolveTextPropForButton = (moduleId: string): string | null =>
+    moduleId === 'alm.Button' ? 'label' : null
+
+  const result = parsedPageToSitePage(textParsed, {
+    pageId: 'home',
+    slug: 'home',
+    title: 'Home',
+    resolveModuleId,
+    resolveTextProp: resolveTextPropForButton,
+  })
+
+  expect(result.nodes[TEXT_ID].props.label).toBe('FromAttribute')
+})
+
+test('parsedPageToSitePage leaves props untouched when resolveTextProp returns null', () => {
+  const TEXT_ID = 'Home.tsx:10:4'
+  const textParsed: ParsedPage = {
+    rootIds: [TEXT_ID],
+    nodes: {
+      [TEXT_ID]: {
+        id: TEXT_ID,
+        kind: 'component',
+        name: 'Chip',
+        props: {},
+        children: [],
+        loc: { file: 'Home.tsx', line: 10, col: 4 },
+        locked: false,
+        text: 'New',
+      },
+    },
+  }
+
+  const result = parsedPageToSitePage(textParsed, {
+    pageId: 'home',
+    slug: 'home',
+    title: 'Home',
+    resolveModuleId,
+    resolveTextProp,
+  })
+
+  expect(result.nodes[TEXT_ID].props).toEqual({})
 })

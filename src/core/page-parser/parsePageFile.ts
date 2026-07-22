@@ -230,9 +230,11 @@ function processElement(
   const lockReason = inheritedLocked ? inheritedReason : hasSpread ? SPREAD_LOCK_REASON : undefined
 
   const props = extractProps(attributes)
-  const children = Node.isJsxElement(element)
-    ? processChildren(element.getJsxChildren(), ctx, locked, lockReason)
-    : []
+  const rawChildren = Node.isJsxElement(element) ? element.getJsxChildren() : []
+  const children = Node.isJsxElement(element) ? processChildren(rawChildren, ctx, locked, lockReason) : []
+  // Only capture text for editable-surface elements — a locked/dynamic node
+  // has no writeback path, so leaving `text` unset avoids implying otherwise.
+  const text = locked ? undefined : extractSingleText(rawChildren)
 
   const node: ParsedNode = {
     id,
@@ -243,6 +245,7 @@ function processElement(
     loc,
     locked,
     ...(lockReason ? { lockReason } : {}),
+    ...(text !== undefined ? { text } : {}),
   }
   ctx.nodes[id] = node
 
@@ -290,6 +293,36 @@ function extractProps(attributes: (JsxAttribute | JsxSpreadAttribute)[]): Record
   }
 
   return result
+}
+
+/**
+ * When an element's only meaningful child is a single non-whitespace text
+ * node — either raw JSX text or a `{"..."}` / `{'...'}` string-literal
+ * expression container — returns that trimmed string. Elements with element
+ * children, more than one meaningful child, or a non-literal/mixed
+ * expression return `undefined` (their `children` are walked structurally by
+ * `processChildren` instead, exactly as before this capture existed).
+ *
+ * Mirrors `assertTextOnlyChildren` in `../ast-codemods/setJsxText` — a
+ * captured `text` is always a shape that codemod is willing to overwrite.
+ */
+function extractSingleText(children: Node[]): string | undefined {
+  if (children.length !== 1) return undefined
+  const only = children[0]!
+
+  if (Node.isJsxText(only)) {
+    const text = only.getText().trim()
+    return text.length > 0 ? text : undefined
+  }
+
+  if (Node.isJsxExpression(only)) {
+    const expression = only.getExpression()
+    if (expression !== undefined && Node.isStringLiteral(expression)) {
+      return expression.getLiteralValue()
+    }
+  }
+
+  return undefined
 }
 
 /**

@@ -6,9 +6,11 @@
  *   loadSite  → GET  /admin/api/studio/load   → every source-derived Instatic
  *               Page in the workspace's `pages/` dir, wrapped in a default
  *               SiteDocument shell (multi-frame board — Phase 1 Increment 1B).
- *   saveSite  → POST /admin/api/studio/save   → prop edits for every
- *               source-backed node (id = `relFile:line:col`) written back to
- *               the .tsx via the server-side ts-morph codemod.
+ *   saveSite  → POST /admin/api/studio/save   → a batch of typed edits
+ *               (`kind: 'prop' | 'text' | 'style'`) for every source-backed
+ *               node (id = `relFile:line:col`), written back to the .tsx via
+ *               the server-side ts-morph codemods (`setJsxProp` / `setJsxText`
+ *               / `setJsxStyle`).
  *
  * Wired in only when the editor is opened with `?studio` (see AdminCanvasLayout);
  * the normal DB-backed editor is untouched. This is the filesystem-as-truth
@@ -22,6 +24,7 @@ import { type SiteDocument, PageSchema } from '@core/page-tree'
 import { apiRequest } from '@core/http'
 import { Type } from '@core/utils/typeboxHelpers'
 import { createDefaultSiteDocument } from '@site/store/slices/site/defaults'
+import { registry } from '@core/module-engine'
 
 /** Node ids from page-parser are `relFile:line:col` — a decodable source location. */
 const SOURCE_NODE_ID = /^.+:\d+:\d+$/
@@ -32,7 +35,7 @@ const StudioLoadResponseSchema = Type.Object({
   pages: Type.Array(PageSchema),
 })
 
-/** POST /admin/api/studio/save — count of props written back to source. */
+/** POST /admin/api/studio/save — count of edits written back to source. */
 const StudioSaveResponseSchema = Type.Object({
   ok: Type.Boolean(),
   written: Type.Number(),
@@ -40,6 +43,26 @@ const StudioSaveResponseSchema = Type.Object({
 
 /** Remembered from the last load so saveSite can tell the server which folder to write. */
 let loadedDir: string | null = null
+
+/**
+ * One studio edit — mirrors the discriminated union `server/handlers/studio.ts`
+ * validates (`SaveBodySchema`/`StudioEdit`). Kept as a local mirror rather than
+ * a shared import: this file runs in the browser, the server file runs in
+ * Node/ts-morph, and the two sides only need to agree on the JSON wire shape.
+ */
+type StudioEditPayload =
+  | { kind: 'prop'; nodeId: string; prop: string; value: string | number | boolean }
+  | { kind: 'text'; nodeId: string; text: string }
+  | { kind: 'style'; nodeId: string; style: Record<string, string | number> }
+
+/** Narrows a node's `inlineStyles` bag down to the string/number values `setJsxStyle` can write. */
+function literalInlineStyles(inlineStyles: Record<string, unknown> | undefined): Record<string, string | number> {
+  const style: Record<string, string | number> = {}
+  for (const [key, value] of Object.entries(inlineStyles ?? {})) {
+    if (typeof value === 'string' || typeof value === 'number') style[key] = value
+  }
+  return style
+}
 
 export const fsCodemodAdapter: IPersistenceAdapter = {
   async loadSite(): Promise<SiteDocument | undefined> {
@@ -55,21 +78,47 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
   },
 
   async saveSite(site: SiteDocument, _opts: SaveSiteOptions = {}): Promise<void> {
-    // Collect current literal props for every source-backed node across all
-    // pages. Re-writing unchanged props is idempotent, so we don't need a
-    // per-prop diff for this first pass. Synthetic nodes (e.g. `index:body`)
-    // don't match the loc pattern and are skipped server-side anyway.
-    const edits: Array<{ nodeId: string; prop: string; value: string | number | boolean }> = []
+    // Collect current literal props + inline styles for every source-backed
+    // node across all pages. Re-writing unchanged values is idempotent, so we
+    // don't need a per-field diff for this first pass. Synthetic nodes (e.g.
+    // `index:body`) don't match the loc pattern and are skipped server-side.
+    const edits: StudioEditPayload[] = []
+
     for (const page of site.pages) {
       for (const node of Object.values(page.nodes)) {
         if (!SOURCE_NODE_ID.test(node.id)) continue
+
+        // The module's declared inline-text-edit prop (if any) routes that
+        // one prop as a `text` edit (rewrites the element's text children)
+        // instead of a `prop` edit (rewrites an attribute) — capturing it as
+        // an attribute would corrupt the source (e.g. `label="Click me"` on a
+        // <Button> whose label is really its text child).
+        const textProp = registry.get(node.moduleId)?.inlineTextEdit?.prop
+
         for (const [prop, value] of Object.entries(node.props ?? {})) {
-          if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
-            edits.push({ nodeId: node.id, prop, value })
+          if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') continue
+          if (prop === textProp) {
+            edits.push({ kind: 'text', nodeId: node.id, text: String(value) })
+          } else {
+            edits.push({ kind: 'prop', nodeId: node.id, prop, value })
+          }
+        }
+
+        // Inline color/shadow edits write a `style={{}}` attribute onto the
+        // source element. Only safe for `base.*` nodes: their source element
+        // IS the host tag at this location, so a literal `style` prop lands
+        // where the editor expects it. `alm.*` design-system components may
+        // not forward a `style` prop to their root element at all — out of
+        // scope for source writeback this slice.
+        if (node.moduleId.startsWith('base.')) {
+          const style = literalInlineStyles(node.inlineStyles)
+          if (Object.keys(style).length > 0) {
+            edits.push({ kind: 'style', nodeId: node.id, style })
           }
         }
       }
     }
+
     if (edits.length === 0) return
 
     await apiRequest('/admin/api/studio/save', {

@@ -28,6 +28,18 @@ export interface ParsedNode {
   /** true = rendered but not structurally/prop editable (dynamic surface). */
   locked: boolean
   lockReason?: string
+  /**
+   * The element's text content, captured ONLY when its meaningful children
+   * are exactly one non-whitespace `JsxText` node or one string-literal
+   * expression container (`{"..."}` / `{'...'}`) — the same "text-only leaf"
+   * shape `../ast-codemods/setJsxText` is willing to overwrite. Elements with
+   * element children, more than one meaningful child, or a non-literal
+   * expression child get no `text` (their `children` are still walked
+   * structurally as before). Absent for locked/dynamic-surface nodes.
+   * Trimmed of leading/trailing whitespace only (approximates JSX's own
+   * insignificant-whitespace collapsing).
+   */
+  text?: string
 }
 
 export interface ParsedPage {

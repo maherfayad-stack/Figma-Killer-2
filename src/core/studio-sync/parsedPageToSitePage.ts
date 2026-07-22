@@ -18,6 +18,15 @@ export interface ParsedPageToSitePageOptions {
    *  stays decoupled from the design-system list. e.g. component "Button" -> "alm.Button",
    *  element "div" -> "base.container". */
   resolveModuleId: (node: Pick<ParsedNode, 'kind' | 'name'>) => string
+  /**
+   * Maps a resolved moduleId to the single prop key its module's
+   * `inlineTextEdit` declares (`base.text` -> 'text', `base.button` -> 'label',
+   * `base.link` -> 'text'), or `null` when the module has no known text prop
+   * (e.g. every `alm.*` design-system component — out of scope for source
+   * writeback this slice). Pure/injected for the same decoupling reason as
+   * `resolveModuleId`.
+   */
+  resolveTextProp: (moduleId: string) => string | null
 }
 
 export function parsedPageToSitePage(parsed: ParsedPage, opts: ParsedPageToSitePageOptions): Page {
@@ -34,10 +43,23 @@ export function parsedPageToSitePage(parsed: ParsedPage, opts: ParsedPageToSiteP
 
   const nodes: Record<string, PageNode> = { [bodyId]: bodyNode }
   for (const [id, node] of Object.entries(parsed.nodes)) {
+    const moduleId = opts.resolveModuleId({ kind: node.kind, name: node.name })
+    const props: Record<string, string | number | boolean> = { ...node.props }
+
+    // Map captured element text onto the module's declared text prop — but
+    // an explicit attribute always wins (e.g. `<Button label="x">y</Button>`
+    // is a real, if odd, source shape; the attribute is the author's intent).
+    if (node.text !== undefined) {
+      const textProp = opts.resolveTextProp(moduleId)
+      if (textProp !== null && !(textProp in props)) {
+        props[textProp] = node.text
+      }
+    }
+
     nodes[id] = {
       id,
-      moduleId: opts.resolveModuleId({ kind: node.kind, name: node.name }),
-      props: { ...node.props },
+      moduleId,
+      props,
       children: [...node.children],
       classIds: [],
       breakpointOverrides: {},

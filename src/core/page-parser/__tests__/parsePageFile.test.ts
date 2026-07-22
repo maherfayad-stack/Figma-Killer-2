@@ -166,6 +166,108 @@ describe('parsePageFile', () => {
     expect(icon.locked).toBe(true)
   })
 
+  it('captures a single-text-child element\'s text onto ParsedNode.text', () => {
+    const source = [
+      'export default function Page() {',
+      '  return <p>Hello</p>',
+      '}',
+      '',
+    ].join('\n')
+    const file = writeFixture('single-text.tsx', source)
+
+    const page = parsePageFile(file, tmpDir)
+
+    const p = byName(page, 'p')
+    expect(p.text).toBe('Hello')
+    expect(p.children).toEqual([])
+  })
+
+  it('captures a component\'s single-text child onto ParsedNode.text', () => {
+    const source = [
+      'export default function Page() {',
+      '  return <Button>Click me</Button>',
+      '}',
+      '',
+    ].join('\n')
+    const file = writeFixture('component-text.tsx', source)
+
+    const page = parsePageFile(file, tmpDir)
+
+    const button = byName(page, 'Button')
+    expect(button.text).toBe('Click me')
+  })
+
+  it('captures a string-literal expression container as text', () => {
+    const source = [
+      'export default function Page() {',
+      '  return <p>{"Hello"}</p>',
+      '}',
+      '',
+    ].join('\n')
+    const file = writeFixture('expr-container-text.tsx', source)
+
+    const page = parsePageFile(file, tmpDir)
+
+    const p = byName(page, 'p')
+    expect(p.text).toBe('Hello')
+  })
+
+  it('does not capture text for mixed content (element + text)', () => {
+    const source = [
+      'export default function Page() {',
+      '  return <div><span/>x</div>',
+      '}',
+      '',
+    ].join('\n')
+    const file = writeFixture('mixed-content.tsx', source)
+
+    const page = parsePageFile(file, tmpDir)
+
+    const div = byName(page, 'div')
+    expect(div.text).toBeUndefined()
+  })
+
+  it('does not capture text for a nested-element-only child', () => {
+    const source = [
+      'export default function Page() {',
+      '  return <div><span>Hi</span></div>',
+      '}',
+      '',
+    ].join('\n')
+    const file = writeFixture('nested-element-only.tsx', source)
+
+    const page = parsePageFile(file, tmpDir)
+
+    const div = byName(page, 'div')
+    expect(div.text).toBeUndefined()
+    // The nested <span> itself still gets its own single-text-child capture.
+    const span = byName(page, 'span')
+    expect(span.text).toBe('Hi')
+  })
+
+  it('does not capture text for a locked (dynamic-surface) element', () => {
+    const source = [
+      'interface Item { id: string; title: string }',
+      'export default function Page({ items }: { items: Item[] }) {',
+      '  return (',
+      '    <div>',
+      '      {items.map((it) => (',
+      '        <Card key={it.id}>Static label</Card>',
+      '      ))}',
+      '    </div>',
+      '  )',
+      '}',
+      '',
+    ].join('\n')
+    const file = writeFixture('locked-text.tsx', source)
+
+    const page = parsePageFile(file, tmpDir)
+
+    const card = byName(page, 'Card')
+    expect(card.locked).toBe(true)
+    expect(card.text).toBeUndefined()
+  })
+
   it('returns an empty page for a file with no component/JSX', () => {
     const file = writeFixture('no-component.tsx', 'export const x = 1\n')
 
