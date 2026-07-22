@@ -2,6 +2,21 @@
 
 **Branch:** `instatic-fork`. Builds on [INSTATIC-FORK-PLAN.md](INSTATIC-FORK-PLAN.md) (four-seam fork) and the adapter-swap / commit-on-idle model.
 
+## Status (2026-07-23)
+
+| Phase | Scope | State |
+|---|---|---|
+| 0 | Adapter-swap spike (node↔source loop) | ✅ Done — `e3c6b49`, `60ba657` |
+| 1 | Board layer MVP + sticky notes | ✅ Done — `11c9e77`, `f7183df` |
+| 2 | Component manifest + in-place props | ✅ Done — `01ae6ad`, `e1d3ac3` |
+| 3 | Visual style editing → source | ✅ Done — `77d4188`, `dd2b3e8` |
+| 4 | Multiple boards + documentation | ✅ Done — `321ff35`, `aa5379c` |
+| 5 | Performance pass | ⏳ **Next** — not started |
+
+**Dogfood fixes landed on top of the phase work:** studio mode made sticky so it stops reverting to CMS breakpoints (`13ec847`); board switcher moved to bottom-center to clear the canvas notch (`9c6df05`).
+
+Phases 1–4 are functionally complete and awaiting a full human dogfood pass. Phase 5 (performance) and the backlog below are the remaining work. **See "Phase 5 — detailed plan" and "Backlog / known limitations" at the bottom of this doc for the actionable next steps.**
+
 ## The five things we're building
 1. An infinite canvas you can drop **sticky notes / annotations** onto, holding **multiple frames that are real React pages**.
 2. **Components with editable props in place** that react instantly.
@@ -114,4 +129,51 @@ One real component in one frame → click resolves to `.tsx` line → edit a pro
 4. **Concurrent edit** — a page being canvas-edited is canvas-owned until idle commit; external edits reconcile via the reload event.
 
 ## First action
-Run **Phase 0**. It is shared with the fork plan and de-risks the entire product. Everything else builds on a proven node↔source loop.
+Run **Phase 0**. It is shared with the fork plan and de-risks the entire product. Everything else builds on a proven node↔source loop. — ✅ done; the loop is proven, all of Phases 0–4 ride on it.
+
+---
+
+## Phase 5 — detailed plan (performance + focus)
+
+Phase 5 has two halves: **(A) make the board fast with many frames**, and **(B) strip the CMS chrome so the shell reads as a design-canvas tool, not a CMS.** Do A first (it's the stated gate); B is the "make it feel like the product" cleanup.
+
+### 5A — Frame virtualization
+**Problem:** every `BoardFrame` mounts a live `BreakpointFrame` (an iframe + full `NodeRenderer` tree). A board with dozens of frames mounts dozens of iframes → slow pan/zoom, high memory.
+**Plan:**
+1. In `BoardFramesLayer`, compute each frame's board-space rect (x/y + frame width/height) and intersect it against the current viewport rect (derive from `pan`/`zoom` + container size — the same geometry `canvasOverlayGeometry.ts` already uses).
+2. Mount the real `BreakpointFrame` only for frames intersecting an inflated viewport (viewport + ~1 screen margin so scrolling doesn't pop). For offscreen frames, render a lightweight placeholder — reuse `CanvasFrameSkeletonFrame` if it fits, else a plain sized `<div>` with the page title.
+3. Keep the drag header + `data-page-id` + `--frame-x/--frame-y` on the placeholder so position, activation, and the "×" still work without the iframe mounted.
+4. Preserve per-frame identity: keep `key={page.id}` so React remounts the iframe cleanly when a frame re-enters the viewport.
+**Gate:** a board with ~30 frames pans/zooms smoothly; only visible frames have iframes (verify via DOM iframe count).
+
+### 5B — Autosave cadence + write-loop safety
+**Problem:** boards autosave on an 800 ms debounce; the CMS page adapter commits on a ~30 s idle. Studio source writeback should feel snappy without thrashing the file watcher.
+**Plan:**
+1. Confirm the studio source commit path (`fsCodemodAdapter.saveSite` → `/admin/api/studio/save`) uses the idle-commit machinery and that the reload/watch event clears the dirty flag so a write doesn't re-trigger a write (the "write→watch→write loop" risk called out in the plan). Add a guard/test if not already covered.
+2. Keep boards' 800 ms debounce (already has the snapshot-identity check from `f7183df` that prevents dropping edits made mid-flight). Do **not** lower it below the round-trip time.
+3. Verify overlay RAF discipline: `BreakpointSelectionOverlay`'s loop must only arm when there is visible overlay work (`hasOverlayWork`). Board-object drags (sticky/doc/frame) already run on pointer-capture handlers, not the RAF loop — confirm no board object forces the RAF loop to stay hot when idle.
+**Gate:** edit text/prop on a frame → source updates within a beat, no observable write-loop, no dropped board edits.
+
+### 5C — Strip CMS chrome → design-canvas focus
+**Problem:** the shell still exposes CMS-only workspaces/controls that don't belong in a design tool. `cf71a89` already hid the built-in `base.*` block modules from the palette; this finishes the job at the shell level.
+**Plan (audit first, then cut):**
+1. Enumerate what the shell shows in studio mode vs. CMS mode (workspaces, top-bar actions, explorer sections). Decide per item: keep, hide-in-studio, or delete.
+2. Route studio/CMS divergence through the existing `isStudioMode()` helper (`studio/studioMode.ts`) — do not fork components; gate at render.
+3. Candidates to hide/simplify in studio: publish/CMS-only top-bar actions, Posts/Pages/Templates/Components explorer grouping (studio thinks in boards + frames, not CMS document types), any settings that assume DB-backed content.
+**Gate:** entering `?studio` presents a board-first UI with no dangling CMS affordances; leaving it restores the full CMS.
+
+---
+
+## Backlog / known limitations (post-v1, not Phase 5 blockers)
+
+These surfaced during implementation and dogfooding. None block the Phase 5 gate; capture them so they aren't lost.
+
+1. **Per-frame breakpoint chrome.** Every studio frame shares one synthetic breakpoint id (`STUDIO_BREAKPOINT.id === 'studio'`, see `BoardFramesLayer.tsx`), so breakpoint-*keyed* chrome (collapsed state, "open in live", toolbar highlight) is not per-frame-correct. Selection rings ARE correct (queried by node id). Revisit if per-frame breakpoints are needed. `centerOnBreakpointFrame` also collides on the shared id.
+2. **`alm.*` text + style writeback.** Text/inline-style codemods (`setJsxText`/`setJsxStyle`) round-trip for `base.*` nodes; design-system (`alm.*`) components may not forward `style` or declare an editable text prop, so those edits may not project to source. Needs a per-component editable-surface declaration.
+3. **Connectors / arrows.** The board object union was scoped for `frame | sticky | doc`; connectors/arrows (in the original Req-4 sketch) are not built.
+4. **Frame default sizing.** New frames use a fixed grid height (~800px) from `frameGrid`; frames don't size to their content.
+5. **Optional studio toggle in the toolbar.** Studio mode is entered via `?studio` (now sticky via localStorage). A visible on/off toggle in the toolbar would be friendlier than editing the URL.
+
+## Pre-existing failures (NOT from this work — do not "fix")
+- `toolbar.test.ts` ENOENT — repo path contains a space (`Figma Killer 2` → `%20`), a fork-base path issue.
+- `button-primitive-usage.test.ts` BTN-3 — ~17 fork-base Instatic files use bare `<button>`; allowlist debt inherited from the Instatic base, not introduced here.
