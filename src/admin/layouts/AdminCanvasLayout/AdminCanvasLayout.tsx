@@ -48,6 +48,8 @@ import { useEditorStore } from '@admin/pages/site/store/store'
 import { cmsAdapter } from '@core/persistence/cms'
 import { fsCodemodAdapter } from '@site/studio/fsCodemodAdapter'
 import { fetchBoards, saveBoards } from '@site/studio/boardsApi'
+import { syncStudioModeFromUrl } from '@site/studio/studioMode'
+import { createBoardsFile } from '@core/studio-board'
 import { pushToast } from '@ui/components/Toast'
 import { getErrorMessage } from '@core/utils/errorMessage'
 import { useAdminUi } from '@admin/state/adminUi'
@@ -166,8 +168,10 @@ export function AdminCanvasLayout() {
   // J12 — wire persistence: load, auto-save, toolbar Save, Cmd+S.
   // `?studio` opts into the filesystem-as-truth adapter (loads/saves a real
   // .tsx via /admin/api/studio); without it, the normal CMS/DB adapter is used.
-  const studioMode =
-    typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('studio')
+  // Resolved once on mount (a lazy initializer, not memoization): it also
+  // persists `?studio` intent so a later param-less navigation/refresh doesn't
+  // silently drop back to the CMS adapter. See `studioMode.ts`.
+  const [studioMode] = useState(() => syncStudioModeFromUrl())
   const persistence = usePersistence('default', studioMode ? fsCodemodAdapter : cmsAdapter, {
     markNewSiteUnsaved: true,
     enabled: true,
@@ -312,6 +316,11 @@ function useStudioBoardsPersistence(studioMode: boolean): void {
       })
       .catch((err) => {
         if (cancelled) return
+        // A boards-load failure must NOT silently fall the canvas back to the
+        // single-page breakpoint frames — in studio the board is the canvas.
+        // Seed an empty boards file (loadBoards creates a default board), so
+        // the multi-frame board still renders; surface the failure as a toast.
+        useEditorStore.getState().loadBoards(createBoardsFile())
         pushToast({
           kind: 'error',
           title: 'Failed to load boards',

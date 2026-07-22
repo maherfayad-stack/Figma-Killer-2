@@ -86,6 +86,7 @@ import { useCanvasReorderDrag } from './useCanvasReorderDrag'
 import { useCanvasTreeLadderOverlay } from './CanvasTreeLadderOverlay'
 import { CanvasNodeElementCache } from './canvasNodeLookup'
 import { InPlaceInspector } from './InPlaceInspector'
+import { isStudioMode } from '@site/studio/studioMode'
 import {
   createCanvasOverlayMeasureSession,
   unionCanvasOverlayRects,
@@ -230,8 +231,7 @@ export function BreakpointSelectionOverlay({
   // frame's iframe actually contains the selected node's element (checked via
   // the measured rect in the RAF tick below) is the one that renders it — the
   // same per-frame resolution the selection ring already relies on.
-  const isStudio = new URLSearchParams(window.location.search).has('studio')
-  const showInspector = isStudio && selectedNodeIds.length === 1
+  const showInspector = isStudioMode() && selectedNodeIds.length === 1
   const inspectorNodeId = showInspector ? selectedNodeIds[0] : null
 
   // Prefer the canvas root as the portal target so overlay chrome sits inside
