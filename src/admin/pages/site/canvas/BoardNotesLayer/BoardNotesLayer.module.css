@@ -1,0 +1,15 @@
+/**
+ * BoardNotesLayer — positioning root for sticky notes.
+ *
+ * Absolutely positioned at the transform layer's origin so every note's
+ * `left`/`top` (set inline by StickyNoteView) is in board coordinates. Taken
+ * out of flow so it never affects the transform layer's flex layout of
+ * breakpoint frames. `pointer-events: none` on the layer itself — individual
+ * notes opt back in.
+ */
+.layer {
+    position: absolute;
+    top: 0;
+    left: 0;
+    pointer-events: none;
+}

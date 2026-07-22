@@ -15,6 +15,7 @@ import type { TemplateRenderDataContext } from '@core/templates/dynamicBindings'
 import { BreakpointFrame } from './BreakpointFrame'
 import { CanvasFrameSkeletonFrame } from '@admin/shared/CanvasFrameSkeleton'
 import type { InjectableRuntimeScript } from './useRuntimeScriptBuild'
+import { BoardNotesLayer } from './BoardNotesLayer'
 import styles from './CanvasTransformLayer.module.css'
 
 interface CanvasTransformLayerProps {
@@ -91,6 +92,11 @@ export function CanvasTransformLayer({
           />
         ))
       )}
+
+      {/* Studio-mode sticky-notes overlay. Mounted last so it paints above the
+          breakpoint frames, and inside the transform layer so it inherits the
+          pan/zoom transform. Self-gates on active board — safe to always mount. */}
+      <BoardNotesLayer />
     </div>
   )
 }

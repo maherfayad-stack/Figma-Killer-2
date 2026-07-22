@@ -295,6 +295,21 @@
     --plugins-hero-tint-a: rgba(35, 92, 72, 0.32);
     --plugins-hero-tint-b: rgba(49, 64, 94, 0.24);
     --canvas-live-scrim: rgba(24, 24, 27, 0.82);
+
+    /* Board sticky notes (Studio board overlay) — identity color picker.
+       Reuses the existing accent scale rather than inventing a parallel
+       color vocabulary; "gray" is achromatic by design (two-layer color
+       model — a note's color is identity, nothing more). */
+    --note-yellow: var(--accent-7);
+    --note-yellow-tint: var(--accent-7-10);
+    --note-green: var(--accent-6);
+    --note-green-tint: var(--accent-6-10);
+    --note-blue: var(--accent-3);
+    --note-blue-tint: var(--accent-3-10);
+    --note-pink: var(--accent-5);
+    --note-pink-tint: var(--accent-5-10);
+    --note-gray: var(--text-subtle);
+    --note-gray-tint: var(--overlay-10);
 }
 
 :root[data-editor-text-scale='small'],

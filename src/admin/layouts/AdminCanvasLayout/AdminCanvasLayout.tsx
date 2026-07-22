@@ -47,6 +47,9 @@ import { useEditorLayoutPersistence } from '@admin/pages/site/hooks/useEditorLay
 import { useEditorStore } from '@admin/pages/site/store/store'
 import { cmsAdapter } from '@core/persistence/cms'
 import { fsCodemodAdapter } from '@site/studio/fsCodemodAdapter'
+import { fetchBoards, saveBoards } from '@site/studio/boardsApi'
+import { pushToast } from '@ui/components/Toast'
+import { getErrorMessage } from '@core/utils/errorMessage'
 import { useAdminUi } from '@admin/state/adminUi'
 import { useInstalledEditorPlugins } from '@admin/pages/plugins/hooks/useInstalledEditorPlugins'
 import { usePluginEventBridge } from '@admin/pages/plugins/hooks/usePluginEventBridge'
@@ -58,7 +61,7 @@ import {
 import { LazyChunkBoundary } from '@admin/lib/LazyChunkBoundary'
 import { prewarmedLazy } from '@admin/lib/prewarmedLazy'
 import styles from './AdminCanvasLayout.module.css'
-import { lazy, Suspense, useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { useCurrentAdminUser } from '@admin/sessionContext'
 import {
   canEditContent as accessCanEditContent,
@@ -169,6 +172,7 @@ export function AdminCanvasLayout() {
     markNewSiteUnsaved: true,
     enabled: true,
   })
+  useStudioBoardsPersistence(studioMode)
   // Keep the open page in lockstep with the URL: consume `?page=<slug>` on
   // load, and mirror the active page's slug back into the address bar so it's
   // directly linkable.
@@ -275,6 +279,102 @@ export function AdminCanvasLayout() {
       </div>
     </EditorPermissionsProvider>
   )
+}
+
+/** Debounce delay before an auto-save fires after a board mutation. */
+const BOARDS_AUTOSAVE_DEBOUNCE_MS = 800
+
+/**
+ * Studio-mode sticky-notes board persistence.
+ *
+ * Load: once, on mount when `studioMode` is true — fetches `.studio/boards.json`
+ * (server default workspace) and hydrates `boardSlice` via `loadBoards`.
+ *
+ * Auto-save: subscribes to `boardsDirty` and, ~800ms after it flips to `true`,
+ * saves the current `boards` back to the server and clears the flag. A ref
+ * guards against overlapping saves rather than a full save queue — acceptable
+ * for this MVP because a save always reads the latest `boards` at fire time,
+ * so a save that starts while another is in flight still lands the freshest
+ * state on its own next tick.
+ *
+ * Entirely inert outside studio mode — the CMS flow never touches this slice.
+ */
+function useStudioBoardsPersistence(studioMode: boolean): void {
+  const savingRef = useRef(false)
+
+  useEffect(() => {
+    if (!studioMode) return undefined
+
+    let cancelled = false
+    fetchBoards()
+      .then((file) => {
+        if (!cancelled) useEditorStore.getState().loadBoards(file)
+      })
+      .catch((err) => {
+        if (cancelled) return
+        pushToast({
+          kind: 'error',
+          title: 'Failed to load boards',
+          body: getErrorMessage(err, 'Unknown error loading studio boards'),
+        })
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [studioMode])
+
+  useEffect(() => {
+    if (!studioMode) return undefined
+
+    let timer: ReturnType<typeof setTimeout> | undefined
+
+    const runSave = () => {
+      if (savingRef.current) return
+      savingRef.current = true
+      // Snapshot the exact object being persisted. Every board mutation replaces
+      // `boards` with a new reference (the pure @core/studio-board transforms are
+      // immutable), so identity tells us whether an edit landed mid-flight.
+      const snapshot = useEditorStore.getState().boards
+      saveBoards(snapshot)
+        .then(() => {
+          const st = useEditorStore.getState()
+          if (st.boards === snapshot) {
+            // Nothing changed during the save — safe to clear the dirty flag.
+            st.markBoardsClean()
+          } else {
+            // Edits arrived while this save was in flight; keep `boardsDirty`
+            // set and reschedule so the newer state persists too.
+            clearTimeout(timer)
+            timer = setTimeout(runSave, BOARDS_AUTOSAVE_DEBOUNCE_MS)
+          }
+        })
+        .catch((err) => {
+          pushToast({
+            kind: 'error',
+            title: 'Failed to save boards',
+            body: getErrorMessage(err, 'Unknown error saving studio boards'),
+          })
+        })
+        .finally(() => {
+          savingRef.current = false
+        })
+    }
+
+    const unsubscribe = useEditorStore.subscribe(
+      (s) => s.boardsDirty,
+      (dirty) => {
+        if (!dirty) return
+        clearTimeout(timer)
+        timer = setTimeout(runSave, BOARDS_AUTOSAVE_DEBOUNCE_MS)
+      },
+    )
+
+    return () => {
+      unsubscribe()
+      clearTimeout(timer)
+    }
+  }, [studioMode])
 }
 
 function usePostPaintEditorBodyGate(): boolean {

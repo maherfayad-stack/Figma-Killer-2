@@ -18,6 +18,7 @@ import { createClipboardSlice } from './slices/clipboardSlice'
 import { createInlineEditSlice } from './slices/inlineEditSlice'
 import { createLayoutsSlice } from './slices/layoutsSlice'
 import { createSaveTrackingSlice } from './slices/saveTrackingSlice'
+import { createBoardSlice } from './slices/boardSlice'
 import { bindPluginRuntimeStoreApi } from '@core/plugins/runtime'
 import { useAdminUi } from '@admin/state/adminUi'
 import { readWorkspaceLayout, workspaceFromPathname } from '@admin/state/workspaceLayoutStorage'
@@ -41,6 +42,7 @@ import { restoreStoredSiteEditorLayout } from '@site/layout/siteEditorLayoutPers
  *   - inlineEditSlice:     canvas inline text edit session (double-click to edit)
  *   - layoutsSlice:        user-saved layouts (save / insert / rename / delete)
  *   - saveTrackingSlice:   unsaved-changes flag + patch-derived save-dirty accumulator
+ *   - boardSlice:          studio-mode sticky-notes board overlay (Increment 1A)
  *
  * The combined `EditorStore` type lives in `./types` so each slice can import
  * it without going through this module — that's how the historical
@@ -77,6 +79,7 @@ export const useEditorStore = create<EditorStore>()(
         ...createInlineEditSlice(...args),
         ...createLayoutsSlice(...args),
         ...createSaveTrackingSlice(...args),
+        ...createBoardSlice(...args),
       }),
       { enableAutoFreeze: true },
     )

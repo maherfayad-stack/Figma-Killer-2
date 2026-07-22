@@ -46,6 +46,7 @@ import { CanvasSelectionContext, CanvasViewportActionsContext } from './CanvasCo
 // stopgap before the iframe cut-over. See
 // `docs/features/canvas-iframe-per-frame.md`.
 import { PluginCanvasOverlayLayer } from './PluginCanvasOverlayLayer'
+import { BoardNotesToolbar } from './BoardNotesLayer'
 import { CanvasRenameDialog } from './CanvasRenameDialog'
 import { useCanvasRenameDialog } from './useCanvasRenameDialog'
 import { CanvasLayerContextMenu } from './CanvasLayerContextMenu'
@@ -533,6 +534,11 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
           plugin code shouldn't paint over the visitor preview.
         */}
           {!isLive && editable && <PluginCanvasOverlayLayer />}
+
+          {/* Studio-mode "+ Sticky note" button — untransformed canvas chrome,
+              a sibling of the transform layer so it never scales with pan/zoom.
+              Self-gates on active board (no-op outside studio mode). */}
+          {!isLive && editable && <BoardNotesToolbar />}
 
           {!isLive && editable && contextMenu.position && (
             <CanvasLayerContextMenu

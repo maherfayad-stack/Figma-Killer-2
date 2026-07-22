@@ -1,0 +1,103 @@
+/**
+ * StickyNoteView — sticky note card.
+ * Uses design tokens from globals.css (no hardcoded colours).
+ *
+ * Position/size come from `--note-x` / `--note-y` / `--note-w` / `--note-h`,
+ * set inline (dynamic per-note geometry) by StickyNoteView.tsx.
+ */
+.note {
+    position: absolute;
+    left: var(--note-x);
+    top: var(--note-y);
+    width: var(--note-w);
+    height: var(--note-h);
+    display: flex;
+    flex-direction: column;
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-panel-drop);
+    pointer-events: auto;
+    cursor: grab;
+    overflow: hidden;
+}
+
+.note:active {
+    cursor: grabbing;
+}
+
+.note[data-note-color='yellow'] {
+    background: var(--note-yellow-tint);
+    outline: 1px solid var(--note-yellow);
+}
+
+.note[data-note-color='green'] {
+    background: var(--note-green-tint);
+    outline: 1px solid var(--note-green);
+}
+
+.note[data-note-color='blue'] {
+    background: var(--note-blue-tint);
+    outline: 1px solid var(--note-blue);
+}
+
+.note[data-note-color='pink'] {
+    background: var(--note-pink-tint);
+    outline: 1px solid var(--note-pink);
+}
+
+.note[data-note-color='gray'] {
+    background: var(--note-gray-tint);
+    outline: 1px solid var(--note-gray);
+}
+
+/* Chrome (swatches + delete) — hidden until the note is hovered/focused, so
+   the board reads clean at rest. */
+.chrome {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-xs);
+    padding: var(--space-3xs) var(--space-2xs);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 120ms ease;
+}
+
+.note:hover .chrome,
+.note:focus-within .chrome {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.swatches {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4xs);
+}
+
+/* Button's own size-micro.iconOnly rule owns the 18×18 square footprint —
+   this only fills it with the note's identity color. Repeats the class in
+   the hover/active selectors to out-specificity Button's own
+   `.variant-ghost:hover` / `:active` background rules (same specificity tier,
+   without `!important`) so the swatch never flashes gray on hover. */
+.swatch,
+.swatch.swatch:hover,
+.swatch.swatch:active {
+    background: var(--swatch-color);
+}
+
+.swatch[aria-pressed='true'] {
+    box-shadow: inset 0 0 0 2px var(--bg-surface);
+}
+
+.text {
+    flex: 1;
+    padding: var(--space-2xs) var(--space-xs) var(--space-xs);
+    font-size: var(--text-s);
+    line-height: 1.35;
+    color: var(--text);
+    overflow: auto;
+    outline: none;
+    cursor: text;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
