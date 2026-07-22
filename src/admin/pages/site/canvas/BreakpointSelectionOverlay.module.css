@@ -267,6 +267,25 @@
     padding-left: var(--space-s);
 }
 
+/* Positioning wrapper for the in-place mini-inspector (studio mode, single
+   design-system component selected). Owns position only — the panel's visual
+   chrome (background, radius, shadow, scroll) lives in
+   InPlaceInspector.module.css. Anchored just below the selection ring by
+   `positionInspector`, so it never overlaps `.selectionToolbar` above. */
+.inspectorAnchor {
+    top: 0;
+    left: 0;
+    z-index: 51;
+}
+
+.inspectorAnchor[data-canvas-inspector-mode="scoped"] {
+    position: absolute;
+}
+
+.inspectorAnchor[data-canvas-inspector-mode="fixed"] {
+    position: fixed;
+}
+
 .dragToolbarButton {
     cursor: grab;
 }

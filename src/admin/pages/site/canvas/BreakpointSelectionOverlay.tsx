@@ -85,6 +85,7 @@ import { CanvasInsertModuleButton } from './CanvasInsertModuleButton'
 import { useCanvasReorderDrag } from './useCanvasReorderDrag'
 import { useCanvasTreeLadderOverlay } from './CanvasTreeLadderOverlay'
 import { CanvasNodeElementCache } from './canvasNodeLookup'
+import { InPlaceInspector } from './InPlaceInspector'
 import {
   createCanvasOverlayMeasureSession,
   unionCanvasOverlayRects,
@@ -94,6 +95,7 @@ import {
   dropIndicatorStyle,
   hideOverlayElement,
   measureSelectorHighlightRects,
+  positionInspector,
   positionOverlayElement,
   positionToolbar,
   rectStyle,
@@ -186,6 +188,7 @@ export function BreakpointSelectionOverlay({
   // from React state — there's no node-id list to map over.
   const selectorHighlightRef = useRef<HTMLDivElement>(null)
   const toolbarRef = useRef<HTMLDivElement>(null)
+  const inspectorRef = useRef<HTMLDivElement>(null)
   const [portalCanvasRoot, setPortalCanvasRoot] = useState<HTMLElement | null>(null)
   // nodeId → rendered iframe element, reused across RAF ticks so the
   // steady-state tick never pays a per-frame `querySelector` document scan.
@@ -218,6 +221,18 @@ export function BreakpointSelectionOverlay({
     permissions.canEditStructure &&
     selectedNodeIds.length > 0 &&
     activeBreakpointId === breakpointId
+
+  // In-place mini-inspector (Phase 2): studio-only, single-select only. Unlike
+  // `showToolbar` above, this deliberately does NOT gate on
+  // `activeBreakpointId === breakpointId` — every studio board frame shares
+  // the same synthetic 'studio' breakpoint id (see BoardFramesLayer's KNOWN
+  // LIMITATION), so that check can't distinguish frames. Instead, whichever
+  // frame's iframe actually contains the selected node's element (checked via
+  // the measured rect in the RAF tick below) is the one that renders it — the
+  // same per-frame resolution the selection ring already relies on.
+  const isStudio = new URLSearchParams(window.location.search).has('studio')
+  const showInspector = isStudio && selectedNodeIds.length === 1
+  const inspectorNodeId = showInspector ? selectedNodeIds[0] : null
 
   // Prefer the canvas root as the portal target so overlay chrome sits inside
   // the canvas's stacking + clipping context. The root is captured into state
@@ -286,6 +301,7 @@ export function BreakpointSelectionOverlay({
       hideOverlayElement(hoverRef.current)
       syncSelectorHighlightRings(selectorHighlightRef.current, null)
       hideOverlayElement(toolbarRef.current)
+      hideOverlayElement(inspectorRef.current)
       return
     }
 
@@ -295,11 +311,18 @@ export function BreakpointSelectionOverlay({
 
     const ringPlacements: Array<{ ring: HTMLDivElement | null; rect: CanvasOverlayRect | null }> = []
     let toolbarUnion: CanvasOverlayRect | null = null
+    // The inspector reuses the SAME rect already measured for the selected
+    // node's ring — no second `getBoundingClientRect` pass. `null` here means
+    // this frame's iframe doesn't contain the selected node's element, which
+    // is exactly how the inspector ends up rendered in only the one studio
+    // board frame that owns it.
+    let inspectorRect: CanvasOverlayRect | null = null
     for (const id of selectedNodeIds) {
       trackedIds.add(id)
       const rect = session.measure(elementCache.resolve(iframeDoc, id))
       ringPlacements.push({ ring: ringRefs.current?.get(id) ?? null, rect })
       if (showToolbar && rect) toolbarUnion = unionCanvasOverlayRects(toolbarUnion, rect)
+      if (inspectorNodeId && id === inspectorNodeId) inspectorRect = rect
     }
 
     const hoverId = showHover ? hoverRingNodeId : null
@@ -323,6 +346,12 @@ export function BreakpointSelectionOverlay({
     positionToolbar(
       toolbarRef.current,
       showToolbar ? toolbarUnion : null,
+      session.canvasRect,
+      { left: session.scrollLeft, top: session.scrollTop },
+    )
+    positionInspector(
+      inspectorRef.current,
+      inspectorNodeId ? inspectorRect : null,
       session.canvasRect,
       { left: session.scrollLeft, top: session.scrollTop },
     )
@@ -453,6 +482,28 @@ export function BreakpointSelectionOverlay({
     </div>
   ) : null
 
+  // Studio-only mini-inspector (Phase 2): anchored just below the selection
+  // ring by the RAF tick's `positionInspector` call above, using the same
+  // measured rect the ring already used. `InPlaceInspector` independently
+  // bails to null for a non-`alm.*` node, so this wrapper mounts for any
+  // single studio selection and the component itself decides whether to
+  // render anything.
+  const inspector = inspectorNodeId ? (
+    <div
+      ref={inspectorRef}
+      className={styles.inspectorAnchor}
+      data-canvas-in-place-inspector="true"
+      data-canvas-inspector-mode={toolbarMode}
+      // Same rationale as the toolbar's onClick guard: the inspector is
+      // portaled into the canvas root, whose background click clears the
+      // selection — without this guard, clicking a control inside it would
+      // bubble up and clear the selection mid-edit.
+      onClick={(event) => event.stopPropagation()}
+    >
+      <InPlaceInspector nodeId={inspectorNodeId} />
+    </div>
+  ) : null
+
   return (
     <>
       {/* Drop indicators stay inside the breakpoint viewport — they only
@@ -480,6 +531,7 @@ export function BreakpointSelectionOverlay({
       </div>
       {rings && createPortal(rings, portalTarget)}
       {toolbar && createPortal(toolbar, portalTarget)}
+      {inspector && createPortal(inspector, portalTarget)}
       {treeLadder.portal}
     </>
   )

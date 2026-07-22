@@ -12,6 +12,7 @@ import type {
 import styles from './BreakpointSelectionOverlay.module.css'
 
 const TOOLBAR_VERTICAL_OFFSET = 30
+const INSPECTOR_VERTICAL_GAP = 12
 
 /**
  * Last placement applied per overlay element ('hidden' or the exact rect).
@@ -212,6 +213,72 @@ export function positionToolbar(
   toolbar.style.left = `${placement.x}px`
   toolbar.style.top = `${placement.y}px`
   appliedOverlayPlacements.set(toolbar, placement)
+}
+
+/**
+ * Anchor the in-place mini-inspector just BELOW the selected node's measured
+ * rect — `positionToolbar` anchors its chrome ABOVE the selection
+ * (`TOOLBAR_VERTICAL_OFFSET`), so anchoring below keeps the two from ever
+ * overlapping. `rect` is the SAME rect already measured this tick for the
+ * node's selection ring (studio's single-select gate means there is exactly
+ * one) — no second measure/`getBoundingClientRect` pass. Hides when there is
+ * no measurable rect (the node isn't in THIS frame's iframe — the mechanism
+ * that scopes the inspector to whichever studio board frame holds the
+ * selected node) or when the selection sits entirely outside the canvas
+ * root's visible area, mirroring `positionToolbar`'s out-of-bounds rule.
+ */
+export function positionInspector(
+  inspector: HTMLDivElement | null,
+  rect: CanvasOverlayRect | null,
+  canvasRect: DOMRect | null,
+  scroll: { left: number; top: number },
+): void {
+  if (!inspector) return
+  if (!rect) {
+    hideOverlayElement(inspector)
+    return
+  }
+
+  if (canvasRect) {
+    const visibleLeft = scroll.left
+    const visibleRight = scroll.left + canvasRect.width
+    const visibleTop = scroll.top
+    const visibleBottom = scroll.top + canvasRect.height
+    const elementFullyOutOfBounds =
+      rect.x + rect.width <= visibleLeft ||
+      rect.x >= visibleRight ||
+      rect.y + rect.height <= visibleTop ||
+      rect.y >= visibleBottom
+    if (elementFullyOutOfBounds) {
+      hideOverlayElement(inspector)
+      return
+    }
+  }
+
+  if (canvasRect && inspector.style.display === 'none') inspector.style.display = ''
+  let x = rect.x
+  if (canvasRect) {
+    const gutter = 4
+    const minX = scroll.left + gutter
+    const maxX = Math.max(minX, scroll.left + canvasRect.width - inspector.offsetWidth - gutter)
+    x = Math.min(Math.max(x, minX), maxX)
+  }
+
+  const placement: CanvasOverlayRect = {
+    x,
+    y: rect.y + rect.height + INSPECTOR_VERTICAL_GAP,
+    width: rect.width,
+    height: rect.height,
+  }
+  const prev = appliedOverlayPlacements.get(inspector)
+  if (prev !== undefined && prev !== 'hidden' && prev.x === placement.x && prev.y === placement.y) {
+    return
+  }
+
+  inspector.style.display = ''
+  inspector.style.left = `${placement.x}px`
+  inspector.style.top = `${placement.y}px`
+  appliedOverlayPlacements.set(inspector, placement)
 }
 
 export function dropIndicatorStyle(target: CanvasDropTarget): CSSProperties {
