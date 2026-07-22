@@ -15,11 +15,12 @@
  *
  * page-parser and ast-codemods run here (Node/ts-morph), not in the browser.
  */
-import { existsSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
 import { parsePageFile } from '@core/page-parser'
 import { parsedPageToSitePage } from '@core/studio-sync/parsedPageToSitePage'
 import { setJsxProp } from '@core/ast-codemods'
+import { createBoardsFile, parseBoardsFile, serializeBoardsFile, type BoardsFile } from '@core/studio-board'
 import { jsonResponse } from '../http'
 
 const NODE_LOC_ID = /^(.*):(\d+):(\d+)$/
@@ -85,6 +86,34 @@ export async function tryServeStudio(
         written += 1
       }
       return jsonResponse({ ok: true, written })
+    } catch (err) {
+      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+    }
+  }
+
+  // Board spatial metadata (frames + sticky notes) — editor-owned, lives in
+  // <dir>/.studio/boards.json. Never affects the app runtime.
+  if (pathname === '/admin/api/studio/boards' && req.method === 'GET') {
+    try {
+      const dir = resolve(url.searchParams.get('dir') ?? defaultWorkspaceDir())
+      const file = join(dir, '.studio', 'boards.json')
+      const boards = existsSync(file) ? parseBoardsFile(readFileSync(file, 'utf8')) : createBoardsFile()
+      return jsonResponse({ dir, boards })
+    } catch (err) {
+      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+    }
+  }
+
+  if (pathname === '/admin/api/studio/boards' && req.method === 'POST') {
+    try {
+      const body = (await req.json()) as { dir?: string; boards?: unknown }
+      const dir = resolve(body.dir ?? defaultWorkspaceDir())
+      const file = join(dir, '.studio', 'boards.json')
+      // Re-parse the incoming payload so we only ever write a valid, normalized file.
+      const boards: BoardsFile = parseBoardsFile(body.boards)
+      mkdirSync(dirname(file), { recursive: true })
+      writeFileSync(file, serializeBoardsFile(boards))
+      return jsonResponse({ ok: true, boards })
     } catch (err) {
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
     }

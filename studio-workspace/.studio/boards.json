@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "boards": [
+    {
+      "id": "b1",
+      "name": "Flow A",
+      "frames": [
+        {
+          "pageId": "index",
+          "x": 0,
+          "y": 0
+        }
+      ],
+      "notes": [
+        {
+          "id": "n1",
+          "x": 40,
+          "y": 40,
+          "w": 200,
+          "h": 120,
+          "text": "Start here",
+          "color": "yellow"
+        }
+      ]
+    }
+  ]
+}
