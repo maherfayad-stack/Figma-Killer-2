@@ -15,7 +15,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { applyStudioEdit, pageIdFromFileName } from '../studio'
+import { applyStudioEdit, collectWorkspaceFiles, pageIdFromFileName } from '../studio'
 
 describe('pageIdFromFileName', () => {
   it('lowercases a simple basename', () => {
@@ -129,5 +129,93 @@ describe('applyStudioEdit', () => {
       applyStudioEdit(tmpDir, { kind: 'text', nodeId: `mixed.tsx:${line}:${col}`, text: 'Bye' }),
     ).toThrow()
     expect(fs.readFileSync(file, 'utf8')).toBe(source)
+  })
+})
+
+/**
+ * collectWorkspaceFiles — pure(ish) dir-in/file-list-out walk that backs
+ * GET /admin/api/studio/download (Phase 6D — "Download the code"). Tested
+ * directly against a temp fixture tree, same pattern as `applyStudioEdit`.
+ */
+describe('collectWorkspaceFiles', () => {
+  let tmpDir: string
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-download-'))
+  })
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  function write(relPath: string, contents: string): void {
+    const full = path.join(tmpDir, ...relPath.split('/'))
+    fs.mkdirSync(path.dirname(full), { recursive: true })
+    fs.writeFileSync(full, contents, 'utf8')
+  }
+
+  function relPaths(files: { relPath: string }[]): string[] {
+    return files.map((f) => f.relPath).sort()
+  }
+
+  it('includes real source files, preserving relative paths and contents', () => {
+    write('pages/Home.tsx', 'export default function Home() { return null }')
+    write('components/Button.tsx', 'export function Button() { return null }')
+    write('components/Button.module.css', '.btn { color: red; }')
+
+    const files = collectWorkspaceFiles(tmpDir)
+
+    expect(relPaths(files)).toEqual([
+      'components/Button.module.css',
+      'components/Button.tsx',
+      'pages/Home.tsx',
+    ])
+    const home = files.find((f) => f.relPath === 'pages/Home.tsx')
+    expect(home?.contents.toString('utf8')).toBe('export default function Home() { return null }')
+  })
+
+  it('excludes .studio/ (editor-owned spatial metadata, not app code)', () => {
+    write('pages/Home.tsx', 'x')
+    write('.studio/boards.json', '{}')
+
+    const files = collectWorkspaceFiles(tmpDir)
+
+    expect(relPaths(files)).toEqual(['pages/Home.tsx'])
+  })
+
+  it('excludes node_modules/, .git/, dist/, .next/, .turbo/', () => {
+    write('pages/Home.tsx', 'x')
+    write('node_modules/some-dep/index.js', 'x')
+    write('.git/HEAD', 'x')
+    write('dist/bundle.js', 'x')
+    write('.next/build-manifest.json', 'x')
+    write('.turbo/cache/entry', 'x')
+
+    const files = collectWorkspaceFiles(tmpDir)
+
+    expect(relPaths(files)).toEqual(['pages/Home.tsx'])
+  })
+
+  it('skips a file over the maxFileBytes cap whole, rather than truncating it', () => {
+    write('pages/Home.tsx', 'x')
+    write('assets/huge.bin', 'y'.repeat(2048))
+
+    const files = collectWorkspaceFiles(tmpDir, { maxFileBytes: 1024 })
+
+    expect(relPaths(files)).toEqual(['pages/Home.tsx'])
+  })
+
+  it('stops collecting once maxFiles is reached, without throwing', () => {
+    write('pages/A.tsx', 'a')
+    write('pages/B.tsx', 'b')
+    write('pages/C.tsx', 'c')
+
+    const files = collectWorkspaceFiles(tmpDir, { maxFiles: 2 })
+
+    expect(files.length).toBe(2)
+  })
+
+  it('returns an empty list for an empty directory (no crash)', () => {
+    expect(collectWorkspaceFiles(tmpDir)).toEqual([])
   })
 })

@@ -21,16 +21,30 @@
  *       edit landing on an element with mixed children) is logged and
  *       skipped rather than aborting the whole batch.
  *
+ *   GET  /admin/api/studio/download?dir=<abs>
+ *       Phase 6D — "Download the code". NOT codegen: the filesystem is
+ *       already the source of truth, so this just zips it up.
+ *       `collectWorkspaceFiles` walks `dir` and returns every real source
+ *       file (relPath + contents), applying a fixed exclusion/size/count
+ *       policy (see its doc comment). The handler zips the result with
+ *       `fflate` and streams it back as `application/zip`. If the workspace
+ *       already has a `package.json` it is included as-is; otherwise a
+ *       minimal one recording the `@alm-design/design-system` dependency is
+ *       synthesized so `bun install && bun run dev` works in the unzipped
+ *       copy. `node_modules` is never bundled either way.
+ *
  * page-parser and ast-codemods run here (Node/ts-morph), not in the browser.
  */
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync, type Dirent } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
+import { zipSync, strToU8 } from 'fflate'
 import { parsePageFile } from '@core/page-parser'
 import { parsedPageToSitePage } from '@core/studio-sync/parsedPageToSitePage'
 import { setJsxProp, setJsxStyle, setJsxText } from '@core/ast-codemods'
 import { createBoardsFile, parseBoardsFile, serializeBoardsFile, type BoardsFile } from '@core/studio-board'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { badRequest, jsonResponse, readValidatedBody } from '../http'
+import { binaryResponse } from '../binary'
 
 const NODE_LOC_ID = /^(.*):(\d+):(\d+)$/
 
@@ -150,6 +164,104 @@ function defaultWorkspaceDir(): string {
   return join(process.cwd(), 'studio-workspace')
 }
 
+/** One real source file collected from the workspace for the download zip. */
+export interface WorkspaceFile {
+  /** Path relative to the workspace root, using `/` separators (zip-safe). */
+  relPath: string
+  contents: Buffer
+}
+
+interface CollectWorkspaceFilesOptions {
+  /** Files larger than this are skipped outright — never partially included. */
+  maxFileBytes?: number
+  /** Total file count cap — collection stops (not truncates a file) once hit. */
+  maxFiles?: number
+}
+
+/** Skip these directories entirely — never descended into, anywhere in the tree. */
+const EXCLUDED_DIR_NAMES = new Set(['.studio', '.git', 'node_modules', 'dist', '.next', '.turbo'])
+
+const DEFAULT_MAX_FILE_BYTES = 5 * 1024 * 1024 // 5 MB — generous for source/text/small assets
+const DEFAULT_MAX_FILES = 5000
+
+/**
+ * Recursively collects every real source file under `dir` for the "Download
+ * code" export (Phase 6D). Pure-ish (dir + options in, file list out) so it's
+ * unit-testable against a temp fixture directory without a Request/Response
+ * round trip — mirrors `applyStudioEdit`'s testing shape.
+ *
+ * Exclusions (decisions, not oversights):
+ *   - `.studio/`     — editor-owned spatial metadata (boards.json). Not app code.
+ *   - `.git/`, `node_modules/`, `dist/`, `.next/`, `.turbo/` — VCS internals,
+ *     installed deps, and build output. Never authored, never bundled.
+ *   - Symlinks       — never followed, so a symlink can't walk the export
+ *     outside `dir` (path-traversal guard alongside the fact that every
+ *     collected path is built from a `readdirSync` of `dir` itself).
+ *   - Oversized files (> `maxFileBytes`) — skipped whole, never truncated.
+ *
+ * Everything else under `dir` is included verbatim — `.tsx`/`.ts`/`.css`/
+ * `.json`/`.js` source and ordinary asset files — preserving relative paths.
+ * Stops collecting (does not throw) once `maxFiles` is reached; the caller
+ * still gets a valid, if partial, zip rather than an unbounded one.
+ */
+export function collectWorkspaceFiles(
+  dir: string,
+  options: CollectWorkspaceFilesOptions = {},
+): WorkspaceFile[] {
+  const maxFileBytes = options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES
+  const maxFiles = options.maxFiles ?? DEFAULT_MAX_FILES
+  const results: WorkspaceFile[] = []
+
+  function walk(currentDir: string, relDir: string): void {
+    if (results.length >= maxFiles) return
+    let entries: Dirent[]
+    try {
+      entries = readdirSync(currentDir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const entry of entries) {
+      if (results.length >= maxFiles) return
+      // Never follow symlinks — the export must stay confined to `dir`.
+      if (entry.isSymbolicLink()) continue
+      const entryRelPath = relDir ? `${relDir}/${entry.name}` : entry.name
+      if (entry.isDirectory()) {
+        if (EXCLUDED_DIR_NAMES.has(entry.name)) continue
+        walk(join(currentDir, entry.name), entryRelPath)
+        continue
+      }
+      if (!entry.isFile()) continue
+      const filePath = join(currentDir, entry.name)
+      let size: number
+      try {
+        size = statSync(filePath).size
+      } catch {
+        continue
+      }
+      if (size > maxFileBytes) continue // skip whole — never emit a partial file
+      results.push({ relPath: entryRelPath, contents: readFileSync(filePath) })
+    }
+  }
+
+  walk(dir, '')
+  return results
+}
+
+/** Minimal package.json synthesized when the workspace ships none of its own. */
+function synthesizedPackageJson(): Uint8Array {
+  return strToU8(
+    `${JSON.stringify(
+      {
+        name: 'studio-workspace',
+        private: true,
+        dependencies: { '@alm-design/design-system': '*' },
+      },
+      null,
+      2,
+    )}\n`,
+  )
+}
+
 /**
  * Derive a stable, unique page id (also used as the slug) from a page file's
  * basename — "Home.tsx" -> "home", "About.tsx" -> "about", "MyPage.tsx" ->
@@ -250,6 +362,44 @@ export async function tryServeStudio(
       writeFileSync(file, serializeBoardsFile(boards))
       return jsonResponse({ ok: true, boards })
     } catch (err) {
+      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+    }
+  }
+
+  // "Download the code" (Phase 6D) — zip the real .tsx source + local
+  // component/style files. Not codegen: the workspace's filesystem IS the
+  // source of truth, so this endpoint only packages what's already there.
+  if (pathname === '/admin/api/studio/download' && req.method === 'GET') {
+    try {
+      const dir = resolve(url.searchParams.get('dir') ?? defaultWorkspaceDir())
+      if (!existsSync(dir)) {
+        return jsonResponse({ error: `Workspace directory not found: ${dir}` }, { status: 404 })
+      }
+
+      const files = collectWorkspaceFiles(dir)
+      const zipInput: Record<string, Uint8Array> = {}
+      let hasPackageJson = false
+      for (const file of files) {
+        zipInput[file.relPath] = file.contents
+        if (file.relPath === 'package.json') hasPackageJson = true
+      }
+      // The design-system dependency (`@alm-design/design-system`) is an npm
+      // package, never bundled as source — record it in package.json instead
+      // so `bun install` resolves it. Only synthesize one when the workspace
+      // doesn't already ship its own (which is included as-is, above).
+      if (!hasPackageJson) {
+        zipInput['package.json'] = synthesizedPackageJson()
+      }
+
+      const zipped = zipSync(zipInput)
+      return binaryResponse(zipped, {
+        headers: {
+          'content-type': 'application/zip',
+          'content-disposition': 'attachment; filename="studio-workspace.zip"',
+        },
+      })
+    } catch (err) {
+      console.error('[studio]', err)
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
     }
   }

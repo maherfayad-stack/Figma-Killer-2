@@ -41,6 +41,7 @@
 import { Toolbar } from '@admin/pages/site/toolbar/Toolbar'
 import { ZoomControls } from '@admin/pages/site/toolbar/ZoomControls'
 import { PublishButton } from '@admin/pages/site/toolbar/PublishButton'
+import { DownloadCodeButton } from '@admin/pages/site/toolbar/DownloadCodeButton'
 import { useEditorAppearancePreferences } from '@admin/pages/site/preferences/editorPreferences'
 import { usePersistence } from '@admin/pages/site/hooks/usePersistence'
 import { useSiteEditorUrlSync } from '@admin/pages/site/hooks/useSiteEditorUrlSync'
@@ -252,13 +253,13 @@ export function AdminCanvasLayout() {
               <ZoomControls />
               {/* Publish targets the CMS publish pipeline (static-artefact
                   bake + publish-version bump) — meaningless in Studio, whose
-                  source of truth is the on-disk .tsx and whose export story
-                  is the future "Download code" (Phase 6D, not built yet).
-                  Hide the whole action group (Publish + Save draft + status
-                  pill) rather than leave a dangling CMS affordance. Studio's
-                  own commit-on-idle autosave (STUDIO_AUTOSAVE_DELAY_MS) keeps
-                  source in sync without a manual save button. */}
-              {!studioMode && (
+                  source of truth is the on-disk .tsx. Hide the whole action
+                  group (Publish + Save draft + status pill) rather than leave
+                  a dangling CMS affordance. Studio's own commit-on-idle
+                  autosave (STUDIO_AUTOSAVE_DELAY_MS) keeps source in sync
+                  without a manual save button; its own export story is
+                  DownloadCodeButton below (Phase 6D). */}
+              {studioMode ? <DownloadCodeButton /> : (
                 <PublishButton
                   enabled={canPublishPages}
                   onSave={canSaveSite ? persistence.saveSite : undefined}
