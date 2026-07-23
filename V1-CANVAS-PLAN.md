@@ -11,7 +11,8 @@
 | 2 | Component manifest + in-place props | ✅ Done — `01ae6ad`, `e1d3ac3` |
 | 3 | Visual style editing → source | ✅ Done — `77d4188`, `dd2b3e8` |
 | 4 | Multiple boards + documentation | ✅ Done — `321ff35`, `aa5379c` |
-| 5 | Performance pass | ⏳ **Next** — not started |
+| 5 | Performance pass | 🚧 In progress — 5A done (`376cd75`), 5B/5C pending |
+| 6 | Design tab UI, canvas DnD, Inspect tab, code export | 📋 Planned — see "Phase 6" below |
 
 **Dogfood fixes landed on top of the phase work:** studio mode made sticky so it stops reverting to CMS breakpoints (`13ec847`); board switcher moved to bottom-center to clear the canvas notch (`9c6df05`).
 
@@ -161,6 +162,49 @@ Phase 5 has two halves: **(A) make the board fast with many frames**, and **(B) 
 2. Route studio/CMS divergence through the existing `isStudioMode()` helper (`studio/studioMode.ts`) — do not fork components; gate at render.
 3. Candidates to hide/simplify in studio: publish/CMS-only top-bar actions, Posts/Pages/Templates/Components explorer grouping (studio thinks in boards + frames, not CMS document types), any settings that assume DB-backed content.
 **Gate:** entering `?studio` presents a board-first UI with no dangling CMS affordances; leaving it restores the full CMS.
+
+---
+
+## Phase 6 — Design tab UI, canvas DnD, Inspect tab, code export
+
+The "make it feel like a real design tool" phase. Four independent slices — 6A/6B are polish on existing surfaces, 6C/6D are new capability. Each is separately shippable; **6C and 6D are the two that add genuinely new user-facing power, so prefer them if time is short.**
+
+### 6A — Design tab UI pass
+**Today:** the right-hand design surfaces already exist and are schema-driven — `panels/PropertiesPanel` (per-node props), plus `ColorsPanel`, `TypographyPanel`, `SpacingPanel`, `FrameworkPanel`, `FrameworkScalePanel`, and the control set in `property-controls/` (`ColorControl`, `TokenizedColorField`, `TokenAwareInput`, `FontFamilyControl`, `NumberControl`, …). They were built for CMS editing and read dense.
+**Plan:**
+1. Audit the design tab against a designer's mental model: group controls into legible sections (Layout / Typography / Fill & Stroke / Effects), collapse rarely-used ones, and give each control a consistent label/affordance rhythm.
+2. Tighten the visual system — spacing scale, section headers, control heights — using existing tokens only (`--bg-*`, `--text-*`, `--border*`, `--space-*`, `--radius`, `--panel-radius`). No new hex.
+3. Make token-bound values obvious: when a color/spacing value resolves to a design token, show the token name, not just the raw value (`TokenAwareInput`/`TokenizedColorField` already know this — surface it consistently).
+4. Keep every control on the `src/ui/` primitives (`Button`, `Input`, `Select`, `Switch`, `ColorInput`). No bespoke controls.
+**Gate:** selecting a node shows a scannable, grouped design tab; token-bound values read as tokens; all existing edits still round-trip to source.
+
+### 6B — Canvas drag & drop
+**Today:** DnD runs on `@dnd-kit/core`; canvas-specific behavior is documented in [`docs/reference/canvas-dnd.md`](docs/reference/canvas-dnd.md), with `useCanvasReorderDrag.ts` handling reorder + edge auto-pan. Board-level drags (frames, sticky notes, doc blocks) use raw pointer-capture with `screenDelta / zoom`, deliberately separate from dnd-kit.
+**Plan:**
+1. **Drop precision:** clearer insertion indicators when dragging a module into the tree — show the exact insertion line and the target parent, at any zoom.
+2. **Board-level snapping:** alignment guides + snap-to-edge/center when dragging frames, sticky notes, and doc blocks, so boards stay tidy. Snap logic should be a **pure function** (input: dragged rect + peer rects + threshold → adjusted position + guide lines) so it is unit-testable without a browser, mirroring `frameVirtualization.ts`.
+3. **Multi-select drag** for board furniture (marquee or shift-click), moving several objects together.
+4. Keep the two drag systems separate — do NOT migrate board furniture onto dnd-kit just for symmetry; pointer-capture is correct there.
+**Gate:** dropping a module lands exactly where the indicator showed at any zoom; frames/notes snap and show guides; multi-select moves as one.
+
+### 6C — Inspect tab (colors + CSS properties)
+**New capability.** A read-only "Inspect" panel for the selected node — the Figma-inspect / devtools-style view: resolved colors as swatches, typography, spacing/box model, and the effective CSS.
+**Plan:**
+1. New `panels/InspectPanel/`, registered alongside the existing panels (mounted via `AdminCanvasEditorBody.tsx`; panel layout state lives in `site/layout/siteEditorLayoutPersistence.ts`).
+2. **Read computed styles from inside the frame's iframe.** The plumbing already exists: `CanvasDocumentContext` (the frame's `Document`) and `CanvasFrameElementContext` (the iframe element) in `CanvasContexts.ts`; resolve the selected node's element by node id and call `getComputedStyle`. Do NOT re-derive styles from the node tree — the whole point is showing what actually rendered.
+3. Present: color swatches (with copy-to-clipboard of hex/rgb **and** the design-token name when the value matches a token), typography (family/size/weight/line-height), box model (margin/padding/size), and a raw CSS block.
+4. **Recompute on a settled selection, not on a RAF loop.** Read once per selection/style change; do not add a hot polling loop (respect the `hasOverlayWork` discipline established in Phase 5).
+5. Copy affordances everywhere — copying a value is the primary use of an inspect panel.
+**Gate:** select any node on a frame → Inspect shows its real rendered colors/typography/box model; token-matched colors display the token name; every value is copyable.
+
+### 6D — Download the code
+**New capability, and the thesis paying off:** because the filesystem is the source of truth, "download the code" is not a codegen step — the real `.tsx` already exists on disk.
+**Plan:**
+1. Server endpoint under the existing studio handler family (`server/handlers/studio.ts`, sibling of `/load`, `/save`, `/boards`) that streams a **zip** of the workspace source: `studio-workspace/pages/*.tsx` plus any local component/style files the pages import.
+2. Decide and document the boundary: ship the page sources + local components; do **not** bundle `node_modules` — the design-system dependency (`@alm-design/design-system`) is an npm package, so emit a minimal `package.json` recording it instead.
+3. Client trigger in the toolbar ("Download code"), fetched through `@core/http` — use `apiBlobRequest` (the authenticated binary-response entry), validate the MIME type, then save the blob. **No raw `fetch`.**
+4. Exclude editor-owned spatial metadata (`.studio/boards.json`) from the export — it is not app code. Mention it in the doc so the omission is a decision, not an oversight.
+**Gate:** click Download code → a zip of real, runnable page source lands; unzipping and `bun install && bun run dev` in a scratch dir renders the same pages.
 
 ---
 
