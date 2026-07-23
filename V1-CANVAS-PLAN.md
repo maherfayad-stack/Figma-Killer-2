@@ -12,7 +12,8 @@
 | 3 | Visual style editing → source | ✅ Done — `77d4188`, `dd2b3e8` |
 | 4 | Multiple boards + documentation | ✅ Done — `321ff35`, `aa5379c` |
 | 5 | Performance pass | 🚧 In progress — 5A done (`376cd75`), 5B/5C pending |
-| 6 | Design tab UI, canvas DnD, Inspect tab, code export | 📋 Planned — see "Phase 6" below |
+| 6 | Design tab UI, canvas DnD, Inspect tab, code export, resizable frames + device presets | 📋 Planned — see "Phase 6" below |
+| 7 | Multi-file backend, MCP React-app import, GitHub-link import | 📋 Planned — see "Phase 7" below |
 
 **Dogfood fixes landed on top of the phase work:** studio mode made sticky so it stops reverting to CMS breakpoints (`13ec847`); board switcher moved to bottom-center to clear the canvas notch (`9c6df05`).
 
@@ -206,6 +207,65 @@ The "make it feel like a real design tool" phase. Four independent slices — 6A
 4. Exclude editor-owned spatial metadata (`.studio/boards.json`) from the export — it is not app code. Mention it in the doc so the omission is a decision, not an oversight.
 **Gate:** click Download code → a zip of real, runnable page source lands; unzipping and `bun install && bun run dev` in a scratch dir renders the same pages.
 
+### 6E — Resizable frames + device-size presets
+
+**New capability.** Give each board frame its own size: drag-resize on the canvas, and a **device-size preset picker at the top of the design tab** (the Penpot pattern — pick "iPhone 16", "iPad Pro 11in", "Web 1280", etc., and the frame snaps to that size).
+
+**Prerequisite — per-frame size in the model.** Frames are currently locked to shared constants (`FRAME_WIDTH = 1024`, `FRAME_HEIGHT = 800` in `frameGrid.ts`) and every frame renders at one synthetic `STUDIO_BREAKPOINT` (width 1024, in `BoardFramesLayer.tsx`). This must become per-frame:
+1. Extend `BoardFrame` in `@core/studio-board` (`{ pageId, x, y }` → add `width?`, `height?`). **Additive + tolerant parse** — `parseBoardsFile` must default missing sizes to the current 1024×800 so existing `boards.json` files keep working (no migration, no data loss). Keep transforms pure/immutable.
+2. `BoardFramesLayer` reads each frame's own `width`/`height` (falling back to the constants) instead of the shared values — for the render box, the virtualization rect (`frameVirtualization.ts` already takes width/height), and the per-frame breakpoint width fed to `BreakpointFrame`.
+3. New `boardSlice` action `setFrameSize(pageId, width, height)`, persisted through the existing 800 ms boards autosave (with its snapshot-identity guard).
+
+**Device presets.** Mirror Penpot's list **verbatim** for fidelity — source of truth is `../penpot/frontend/src/app/main/constants.cljs` (`size-presets`), grouped Apple / Android / Microsoft / reMarkable / Web / Mixed / Print (see [[penpot-source-reference-map]]). Port it to a pure TS constant module (e.g. `src/core/studio-board/devicePresets.ts` or a canvas-local module), each entry `{ group, name, width, height }`. No logic, just data — trivially testable.
+
+**Canvas resize.**
+1. Resize handles on the selected frame (corner + edge). Reuse the board's pointer-capture + `screenDelta / zoom` pattern (same as frame drag in `BoardFrameView`) so it tracks the cursor 1:1 at any zoom. Factor the resize math (anchor + delta + min-size clamp → new rect) into a **pure function** so it unit-tests without a browser.
+2. Live-resize updates the in-memory frame; commit on pointer-up via `setFrameSize`.
+3. Sensible min size; optional shift-to-keep-aspect.
+
+**Design-tab preset picker.**
+1. A `Select` (from `src/ui/`) at the top of the design tab, grouped by the preset categories, plus editable W/H number inputs (`NumberControl`) showing the frame's current size.
+2. Choosing a preset or editing W/H calls `setFrameSize`. Show the active preset name when the frame's size matches one exactly; show "Custom" otherwise.
+3. Only meaningful for a selected **frame** (board context) — hide/disable in CMS mode via `isStudioMode()`.
+
+**Gate:** select a frame → design tab shows its size + a device-preset picker; pick "iPhone 16" and the frame snaps to 393×852; drag a corner to resize freely; both persist to `boards.json` and survive reload; old boards without sizes still open at 1024×800.
+
+---
+
+## Phase 7 — Real projects: multi-file backend, MCP import, GitHub import
+
+The largest architectural leap: go from a curated flat `studio-workspace/pages/*.tsx` demo to **loading real, existing React apps**. Three slices, strictly ordered — 7A is the foundation the other two require.
+
+### 7A — Multi-file project backend
+**Today:** the studio backend is single-directory and flat. `GET /admin/api/studio/load` scans `studio-workspace/pages/*.tsx` and returns `{ dir, pages }`; `parsePageFile` (`@core/page-parser`) parses one page in isolation; source writeback (`applyStudioEdit`) codemods a single file. Real apps are trees of files with local component imports, shared modules, and nested routes.
+**Plan:**
+1. **Workspace model.** Replace the flat scan with a project model that walks a configurable root: discover page/route files, local components they import, and shared modules — respecting `tsconfig` path aliases and ignoring `node_modules`/build output. Persist the resolved file graph so the editor knows which file owns which node.
+2. **Node identity stays file-scoped.** The `relFile:line:col` node id already namespaces by file — extend the loader so `relFile` is a workspace-relative path across the whole tree, not just `pages/`. Codemods already target a file + position; point them at the resolved path.
+3. **Component resolution.** When a page imports a local component, resolve and parse it so its props/tree are available to the inspector and (where editable) writeback — distinguish **local, editable** components from **npm-package** components (`@alm-design/design-system`), which stay read-only prop surfaces.
+4. **Boundaries.** Every new endpoint validates with TypeBox via `readValidatedBody`; responses go through the `{ error }` envelope; client reads via `apiRequest`. No raw `fetch`, no `as` at boundaries.
+5. **Docs.** Update the studio/fork docs to describe the multi-file workspace model.
+**Gate:** point the studio at a multi-file React project (pages + local components + shared modules); pages render as frames; selecting a node resolves to the correct file; edits write to the right file; npm-package components are read-only, local ones editable.
+
+### 7B — GitHub-link import
+**New capability.** Paste a GitHub repo URL → the app pulls it in as a studio workspace.
+**Plan:**
+1. Server endpoint (studio handler family) that, given a repo URL (+ optional branch/subdir), fetches the source into a workspace directory. Prefer a **tarball download of a ref** over a full `git clone` where possible (lighter, no history); support private repos only via an explicit user-supplied token, never a baked-in credential.
+2. Hand the fetched tree to the 7A workspace loader — import is just "fetch source, then load it as a project." Do NOT build a second parsing path.
+3. **Safety:** treat imported source as untrusted input. Nothing from an imported repo executes on the server; parsing is static (ts-morph / `@core/page-parser`) and the QuickJS sandbox rules for any plugin-like code still apply. Cap repo size / file count and report what was skipped (no silent truncation).
+4. Client: a "Import from GitHub" entry (URL input + optional branch/subdir), fetched through `@core/http`; progress + a clear error envelope on failure (bad URL, private without token, too large).
+**Gate:** paste a public React repo URL → it imports, loads as a workspace (via 7A), and its pages render as frames; a bad/oversized/private-without-token URL fails with a clear toasted message, not a crash.
+
+### 7C — MCP: import React apps into the system
+**New capability, riding existing infra.** Instatic already exposes its CMS tools over MCP at `/_instatic/mcp` (`server/ai/mcp/`, per-connector bearer tokens, the `(userId, scope)` live workspace bridge — see [`docs/features/mcp-connectors.md`](docs/features/mcp-connectors.md)). Add an MCP tool so an external agent (Claude Code, Codex) can import a React app into a studio workspace programmatically.
+**Plan:**
+1. New MCP tool (e.g. `studio_import_project`) in the MCP server, thin over the 7A/7B import path — accept either a GitHub URL (reuse 7B) or a set of files, land them in a workspace, return the workspace/board summary. **Reuse the import engine; do not fork it into the MCP layer.**
+2. Respect the existing MCP contract: `@modelcontextprotocol/sdk` is allowed **only** under `server/ai/mcp/`; the tool is capability-gated like the other write tools; edits stay drafts until an explicit publish/commit call. Reads route in-process; anything mutating the live workspace goes through the `editorBridge` to the connector owner's open workspace.
+3. Validate the tool's input/output with TypeBox (the MCP layer already passes schemas as JSON Schema — no zod).
+4. **Docs.** Add the new tool to `docs/features/mcp-connectors.md` in the same change.
+**Gate:** from an external MCP client, call the import tool with a repo URL → the project lands as a studio workspace and is editable in the owner's open session; the tool honors capability gating and the draft-until-publish rule.
+
+> **Sequencing note:** 7A must land before 7B and 7C — both are "fetch source, then load via 7A." Building either import path against the old flat loader would create a second workspace model to later reconcile, which CLAUDE.md's "no duplicate old/new paths" rule forbids.
+
 ---
 
 ## Backlog / known limitations (post-v1, not Phase 5 blockers)
@@ -215,7 +275,7 @@ These surfaced during implementation and dogfooding. None block the Phase 5 gate
 1. **Per-frame breakpoint chrome.** Every studio frame shares one synthetic breakpoint id (`STUDIO_BREAKPOINT.id === 'studio'`, see `BoardFramesLayer.tsx`), so breakpoint-*keyed* chrome (collapsed state, "open in live", toolbar highlight) is not per-frame-correct. Selection rings ARE correct (queried by node id). Revisit if per-frame breakpoints are needed. `centerOnBreakpointFrame` also collides on the shared id.
 2. **`alm.*` text + style writeback.** Text/inline-style codemods (`setJsxText`/`setJsxStyle`) round-trip for `base.*` nodes; design-system (`alm.*`) components may not forward `style` or declare an editable text prop, so those edits may not project to source. Needs a per-component editable-surface declaration.
 3. **Connectors / arrows.** The board object union was scoped for `frame | sticky | doc`; connectors/arrows (in the original Req-4 sketch) are not built.
-4. **Frame default sizing.** New frames use a fixed grid height (~800px) from `frameGrid`; frames don't size to their content.
+4. **Frame default sizing.** ✅ Addressed by **Phase 6E** (per-frame width/height + resize + device presets). Until 6E ships, new frames use the fixed 1024×800 from `frameGrid`.
 5. **Optional studio toggle in the toolbar.** Studio mode is entered via `?studio` (now sticky via localStorage). A visible on/off toggle in the toolbar would be friendlier than editing the URL.
 
 ## Pre-existing failures (NOT from this work — do not "fix")
