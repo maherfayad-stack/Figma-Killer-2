@@ -79,21 +79,39 @@ import { BreakpointFrame } from '../BreakpointFrame'
 import { AddFramePicker } from './AddFramePicker'
 import { FRAME_WIDTH, FRAME_HEIGHT } from './frameGrid'
 import { FRAME_VIEWPORT_MARGIN, isFrameOnScreen } from './frameVirtualization'
+import { resizeFrameRect, MIN_FRAME_SIZE, type FrameResizeRect, type ResizeHandle } from './frameResize'
 import styles from './BoardFramesLayer.module.css'
 
-/** Header height (board units) added to `FRAME_HEIGHT` for the on-screen
- * intersection test, so the drag header itself isn't cut off the rect. */
+/** Header height (board units) added to the frame's own height for the
+ * on-screen intersection test, so the drag header itself isn't cut off the
+ * rect. */
 const FRAME_HEADER_HEIGHT = 48
 
-/** Shared synthetic breakpoint every studio frame renders at — see the
- * "KNOWN LIMITATION" note above for what per-frame chrome this costs. */
-const STUDIO_BREAKPOINT: Breakpoint = {
+/**
+ * Shared chrome every studio frame's synthetic breakpoint carries — see the
+ * "KNOWN LIMITATION" note above for what per-frame chrome this costs. Only
+ * `width` varies per frame (Phase 6E — resizable frames); each frame builds
+ * its own `Breakpoint` via `buildStudioBreakpoint` below instead of sharing
+ * one hardcoded 1024px width.
+ */
+const STUDIO_BREAKPOINT_BASE = {
   id: 'studio',
   label: 'Studio',
-  width: 1024,
   mediaQuery: '(max-width: 1024px)',
   icon: 'monitor',
+} as const
+
+/** This frame's synthetic breakpoint, sized to ITS OWN board width. */
+function buildStudioBreakpoint(width: number): Breakpoint {
+  return { ...STUDIO_BREAKPOINT_BASE, width }
 }
+
+/**
+ * Every resize handle a frame renders. Cursor-per-handle is a CSS concern
+ * (`[data-handle="..."]` selectors in `BoardFramesLayer.module.css`), not a
+ * JS-driven inline style.
+ */
+const RESIZE_HANDLES: ResizeHandle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']
 
 export function BoardFramesLayer() {
   const board = useEditorStore(selectActiveBoard)
@@ -101,6 +119,7 @@ export function BoardFramesLayer() {
   const activePageId = useEditorStore((s) => s.activePageId)
   const openPageInCanvas = useEditorStore((s) => s.openPageInCanvas)
   const setFramePosition = useEditorStore((s) => s.setFramePosition)
+  const setFrameSize = useEditorStore((s) => s.setFrameSize)
   const removeFrame = useEditorStore((s) => s.removeFrame)
   const zoom = useEditorStore((s) => s.zoom)
   const panX = useEditorStore((s) => s.panX)
@@ -146,8 +165,13 @@ export function BoardFramesLayer() {
         </div>
       ) : (
         framesWithPages.map(({ frame, page }) => {
+          // Per-frame size (Phase 6E) — a frame without a saved width/height
+          // falls back to the shared 1024x800 default, so pre-6E boards.json
+          // files render unchanged.
+          const width = frame.width ?? FRAME_WIDTH
+          const height = frame.height ?? FRAME_HEIGHT
           const isOnScreen = isFrameOnScreen(
-            { x: frame.x, y: frame.y, width: FRAME_WIDTH, height: FRAME_HEIGHT + FRAME_HEADER_HEIGHT },
+            { x: frame.x, y: frame.y, width, height: height + FRAME_HEADER_HEIGHT },
             { panX, panY, zoom, width: viewportSize.width, height: viewportSize.height },
             FRAME_VIEWPORT_MARGIN,
           )
@@ -157,10 +181,13 @@ export function BoardFramesLayer() {
               page={page}
               x={frame.x}
               y={frame.y}
+              width={width}
+              height={height}
               isActive={page.id === activePageId}
               isOnScreen={isOnScreen}
               onActivate={() => openPageInCanvas(page.id)}
               onMove={(nx, ny) => setFramePosition(page.id, nx, ny)}
+              onResize={(nw, nh) => setFrameSize(page.id, nw, nh)}
               onRemove={() => removeFrame(page.id)}
             />
           )
@@ -178,19 +205,47 @@ interface DragState {
   frameY: number
 }
 
+interface ResizeDragState {
+  pointerId: number
+  handle: ResizeHandle
+  startClientX: number
+  startClientY: number
+  /** The frame's full rect at drag-start — the pure `resizeFrameRect` anchor. */
+  anchor: FrameResizeRect
+}
+
 interface BoardFrameViewProps {
   page: Page
   x: number
   y: number
+  /** This frame's own board-space size — Phase 6E (falls back to
+   * `FRAME_WIDTH`/`FRAME_HEIGHT` upstream in `BoardFramesLayer`, so this
+   * component always receives a concrete size). */
+  width: number
+  height: number
   isActive: boolean
   isOnScreen: boolean
   onActivate: () => void
   onMove: (x: number, y: number) => void
+  onResize: (width: number, height: number) => void
   onRemove: () => void
 }
 
-function BoardFrameView({ page, x, y, isActive, isOnScreen, onActivate, onMove, onRemove }: BoardFrameViewProps) {
+function BoardFrameView({
+  page,
+  x,
+  y,
+  width,
+  height,
+  isActive,
+  isOnScreen,
+  onActivate,
+  onMove,
+  onResize,
+  onRemove,
+}: BoardFrameViewProps) {
   const dragRef = useRef<DragState | null>(null)
+  const resizeRef = useRef<ResizeDragState | null>(null)
 
   // Capture phase — fires before the frame's own node-click handling, so
   // `activePageId` is already switched to this page by the time selection
@@ -221,6 +276,42 @@ function BoardFrameView({ page, x, y, isActive, isOnScreen, onActivate, onMove, 
 
   const endDrag = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (dragRef.current?.pointerId === e.pointerId) dragRef.current = null
+  }
+
+  // Resize handles — same pointer-capture + screenDelta/zoom pattern as the
+  // header drag above, so a handle tracks the cursor 1:1 at any zoom. The
+  // geometry itself (which edges move, the min-size clamp) is the pure
+  // `resizeFrameRect` — this handler only converts screen pixels to board
+  // units and applies the result via the existing `onMove` (position) /
+  // `onResize` (size) callbacks.
+  const handleResizePointerDown = (handle: ResizeHandle) => (e: ReactPointerEvent<HTMLDivElement>) => {
+    // A handle sits inside the frame's own pointerdown-capture region — stop
+    // it reaching `handleActivateCapture`/the header's drag handlers so
+    // grabbing a handle never also starts a move-drag.
+    e.stopPropagation()
+    e.currentTarget.setPointerCapture(e.pointerId)
+    resizeRef.current = {
+      pointerId: e.pointerId,
+      handle,
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      anchor: { x, y, width, height },
+    }
+  }
+
+  const handleResizePointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = resizeRef.current
+    if (!drag || drag.pointerId !== e.pointerId) return
+    const zoom = useEditorStore.getState().zoom
+    const dx = (e.clientX - drag.startClientX) / zoom
+    const dy = (e.clientY - drag.startClientY) / zoom
+    const next = resizeFrameRect(drag.anchor, drag.handle, dx, dy, MIN_FRAME_SIZE)
+    if (next.x !== drag.anchor.x || next.y !== drag.anchor.y) onMove(next.x, next.y)
+    onResize(next.width, next.height)
+  }
+
+  const endResize = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (resizeRef.current?.pointerId === e.pointerId) resizeRef.current = null
   }
 
   return (
@@ -256,22 +347,46 @@ function BoardFrameView({ page, x, y, isActive, isOnScreen, onActivate, onMove, 
           <CloseIcon size={11} aria-hidden="true" />
         </Button>
       </div>
-      {isOnScreen ? (
-        <CanvasPageContext.Provider value={page.id}>
-          <BreakpointFrame
-            page={page}
-            breakpoint={STUDIO_BREAKPOINT}
-            isActive={isActive}
-            onActivate={onActivate}
-          />
-        </CanvasPageContext.Provider>
-      ) : (
-        <div
-          className={styles.offscreenPlaceholder}
-          data-testid="board-frame-placeholder"
-          style={{ '--frame-w': `${FRAME_WIDTH}px`, '--frame-h': `${FRAME_HEIGHT}px` } as CSSProperties}
-        >
-          <span className={styles.offscreenPlaceholderTitle}>{page.title}</span>
+      {/* Sized to the frame's OWN width/height (Phase 6E) — a real "device
+          box" for both the live iframe and the offscreen placeholder, so
+          resize handles have a consistent box to anchor to regardless of
+          on-screen state. Content taller than `height` scrolls inside. */}
+      <div
+        className={styles.frameBody}
+        style={{ '--frame-w': `${width}px`, '--frame-h': `${height}px` } as CSSProperties}
+      >
+        {isOnScreen ? (
+          <CanvasPageContext.Provider value={page.id}>
+            <BreakpointFrame
+              page={page}
+              breakpoint={buildStudioBreakpoint(width)}
+              isActive={isActive}
+              onActivate={onActivate}
+            />
+          </CanvasPageContext.Provider>
+        ) : (
+          <div className={styles.offscreenPlaceholder} data-testid="board-frame-placeholder">
+            <span className={styles.offscreenPlaceholderTitle}>{page.title}</span>
+          </div>
+        )}
+      </div>
+      {/* Resize handles — active frame only, mirroring the selection ring's
+          own active-only visibility. Corners resize both axes; edges resize
+          one. See frameResize.ts for the geometry. */}
+      {isActive && (
+        <div className={styles.resizeHandles} aria-hidden="true">
+          {RESIZE_HANDLES.map((handle) => (
+            <div
+              key={handle}
+              className={styles.resizeHandle}
+              data-handle={handle}
+              data-testid={`board-frame-resize-${handle}`}
+              onPointerDown={handleResizePointerDown(handle)}
+              onPointerMove={handleResizePointerMove}
+              onPointerUp={endResize}
+              onPointerCancel={endResize}
+            />
+          ))}
         </div>
       )}
     </div>

@@ -10,11 +10,17 @@ export interface StickyNote {
   color: NoteColor
 }
 
-// a page rendered as a frame at (x,y)
+// a page rendered as a frame at (x,y). `width`/`height` are optional — a
+// frame without them falls back to the shared `FRAME_WIDTH`/`FRAME_HEIGHT`
+// defaults (`@site/canvas/BoardFramesLayer/frameGrid`) at render time, so
+// pre-6E `boards.json` files keep opening at their original 1024×800 size
+// with no migration needed.
 export interface BoardFrame {
   pageId: string
   x: number
   y: number
+  width?: number
+  height?: number
 }
 
 // a markdown-authored documentation card, rendered as canvas furniture

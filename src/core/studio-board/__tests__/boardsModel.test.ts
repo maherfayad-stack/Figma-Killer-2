@@ -11,6 +11,7 @@ import {
   removeFrame,
   removeNote,
   renameBoard,
+  resizeFrame,
   serializeBoardsFile,
   upsertBoard,
   upsertDoc,
@@ -302,6 +303,39 @@ describe('removeFrame', () => {
   })
 })
 
+describe('resizeFrame', () => {
+  test('sets width/height on a frame with none yet', () => {
+    const board = upsertFrame(createBoard('b1', 'Board 1'), frame())
+    const result = resizeFrame(board, 'p1', 393, 852)
+    expect(result.frames[0]).toEqual(frame({ width: 393, height: 852 }))
+  })
+
+  test('overwrites an existing width/height', () => {
+    const board = upsertFrame(createBoard('b1', 'Board 1'), frame({ width: 1024, height: 800 }))
+    const result = resizeFrame(board, 'p1', 834, 1194)
+    expect(result.frames[0]).toEqual(frame({ width: 834, height: 1194 }))
+  })
+
+  test('is a no-op for a missing pageId', () => {
+    const board = upsertFrame(createBoard('b1', 'Board 1'), frame())
+    const result = resizeFrame(board, 'missing', 393, 852)
+    expect(result).toBe(board)
+  })
+
+  test('does not mutate the input board', () => {
+    const board = upsertFrame(createBoard('b1', 'Board 1'), frame())
+    const snapshot = JSON.parse(JSON.stringify(board))
+    resizeFrame(board, 'p1', 393, 852)
+    expect(board).toEqual(snapshot)
+  })
+
+  test('leaves x/y untouched', () => {
+    const board = upsertFrame(createBoard('b1', 'Board 1'), frame({ x: 10, y: 20 }))
+    const result = resizeFrame(board, 'p1', 393, 852)
+    expect(result.frames[0]).toEqual({ pageId: 'p1', x: 10, y: 20, width: 393, height: 852 })
+  })
+})
+
 describe('serialize round-trip', () => {
   test('parseBoardsFile(serializeBoardsFile(f)) deep-equals f', () => {
     let board = createBoard('b1', 'Board 1')
@@ -427,5 +461,68 @@ describe('parseBoardsFile tolerance', () => {
   test('accepts an already-parsed object (not just a string)', () => {
     const file: BoardsFile = { version: 1, boards: [createBoard('b1', 'Board 1')] }
     expect(parseBoardsFile(file)).toEqual(file)
+  })
+})
+
+describe('parseBoardsFile — frame width/height (Phase 6E)', () => {
+  test('a frame missing width/height parses with neither key present (falls back to FRAME_WIDTH/HEIGHT at render time)', () => {
+    const raw = {
+      version: 1,
+      boards: [{ id: 'legacy', name: 'Legacy Board', frames: [{ pageId: 'p1', x: 0, y: 0 }], notes: [], docs: [] }],
+    }
+    const result = parseBoardsFile(raw)
+    const parsedFrame = result.boards[0].frames[0]
+    expect(parsedFrame).toEqual({ pageId: 'p1', x: 0, y: 0 })
+    expect('width' in parsedFrame).toBe(false)
+    expect('height' in parsedFrame).toBe(false)
+  })
+
+  test('a frame with a valid width/height keeps them', () => {
+    const raw = {
+      version: 1,
+      boards: [
+        {
+          id: 'b1',
+          name: 'Board 1',
+          frames: [{ pageId: 'p1', x: 0, y: 0, width: 393, height: 852 }],
+          notes: [],
+          docs: [],
+        },
+      ],
+    }
+    const result = parseBoardsFile(raw)
+    expect(result.boards[0].frames[0]).toEqual({ pageId: 'p1', x: 0, y: 0, width: 393, height: 852 })
+  })
+
+  test('a zero, negative, or non-numeric width/height is dropped (not coerced to a default)', () => {
+    const raw = {
+      version: 1,
+      boards: [
+        {
+          id: 'b1',
+          name: 'Board 1',
+          frames: [
+            { pageId: 'p1', x: 0, y: 0, width: 0, height: 852 },
+            { pageId: 'p2', x: 0, y: 0, width: -100, height: 852 },
+            { pageId: 'p3', x: 0, y: 0, width: 'nope', height: 852 },
+          ],
+          notes: [],
+          docs: [],
+        },
+      ],
+    }
+    const result = parseBoardsFile(raw)
+    for (const frame of result.boards[0].frames) {
+      expect('width' in frame).toBe(false)
+      expect(frame.height).toBe(852)
+    }
+  })
+
+  test('serialize round-trip preserves width/height', () => {
+    let board = createBoard('b1', 'Board 1')
+    board = upsertFrame(board, frame({ pageId: 'home', width: 393, height: 852 }))
+    const file: BoardsFile = upsertBoard(createBoardsFile(), board)
+    const parsed = parseBoardsFile(serializeBoardsFile(file))
+    expect(parsed).toEqual(file)
   })
 })

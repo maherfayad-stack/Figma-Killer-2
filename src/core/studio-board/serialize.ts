@@ -20,7 +20,15 @@ function coerceFrame(raw: unknown): BoardFrame | undefined {
   if (typeof pageId !== 'string' || pageId.length === 0) return undefined
   const x = typeof raw.x === 'number' ? raw.x : 0
   const y = typeof raw.y === 'number' ? raw.y : 0
-  return { pageId, x, y }
+  const frame: BoardFrame = { pageId, x, y }
+  // width/height are additive (Phase 6E) — omit them entirely when absent or
+  // invalid rather than baking in a default here, so the render layer's own
+  // `?? FRAME_WIDTH` / `?? FRAME_HEIGHT` fallback is the single source of
+  // truth for "no saved size yet" and old boards.json files round-trip
+  // byte-for-byte instead of gaining a synthesized width/height on next save.
+  if (typeof raw.width === 'number' && raw.width > 0) frame.width = raw.width
+  if (typeof raw.height === 'number' && raw.height > 0) frame.height = raw.height
+  return frame
 }
 
 function coerceNote(raw: unknown): StickyNote | undefined {

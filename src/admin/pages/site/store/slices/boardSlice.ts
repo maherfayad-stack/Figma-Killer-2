@@ -11,7 +11,10 @@
  * onto a board — `BoardFramesLayer` renders exactly this list (resolved
  * against `site.pages`), not "every page". `addFrame` / `seedFramesForActiveBoard`
  * add membership at a default grid slot; `setFramePosition` upserts a
- * position (works for both "first drag" and subsequent moves); `removeFrame`
+ * position (works for both "first drag" and subsequent moves); `setFrameSize`
+ * (Phase 6E) persists a frame's own width/height (canvas drag-resize or the
+ * design tab's device-preset picker) — a frame without a saved size renders
+ * at the shared `FRAME_WIDTH`/`FRAME_HEIGHT` default; `removeFrame`
  * drops membership without touching the underlying page.
  *
  * Doc blocks: `board.docs` mirrors the sticky-note shape exactly (`addDoc` /
@@ -45,6 +48,7 @@ import {
   removeDoc as removeDocFromBoard,
   upsertFrame,
   removeFrame as removeFrameFromBoard,
+  resizeFrame,
 } from '@core/studio-board'
 import { defaultFramePosition } from '@site/canvas/BoardFramesLayer/frameGrid'
 
@@ -108,6 +112,13 @@ interface BoardSlice {
    * no active board.
    */
   setFramePosition: (pageId: string, x: number, y: number) => void
+  /**
+   * Persist a page's frame size (Phase 6E — resizable frames + device
+   * presets) on the active board. No-op with no active board, or if the
+   * page has no frame yet (unlike `setFramePosition`, resize never creates a
+   * frame — `addFrame`/`seedFramesForActiveBoard` own frame creation).
+   */
+  setFrameSize: (pageId: string, width: number, height: number) => void
   /** Remove a page's saved frame position from the active board. */
   removeFrame: (pageId: string) => void
   /**
@@ -309,6 +320,13 @@ export const createBoardSlice: EditorStoreSliceCreator<BoardSlice> = (set, get) 
     const board = getActiveBoard(boards, activeBoardId)
     if (!board) return
     set({ boards: upsertBoard(boards, upsertFrame(board, { pageId, x, y })), boardsDirty: true })
+  },
+
+  setFrameSize: (pageId, width, height) => {
+    const { boards, activeBoardId } = get()
+    const board = getActiveBoard(boards, activeBoardId)
+    if (!board) return
+    set({ boards: upsertBoard(boards, resizeFrame(board, pageId, width, height)), boardsDirty: true })
   },
 
   removeFrame: (pageId) => {

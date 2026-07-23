@@ -81,6 +81,14 @@ export function moveFrame(board: Board, pageId: string, x: number, y: number): B
   return { ...board, frames }
 }
 
+/** No-op for a missing pageId, mirroring `moveFrame`. */
+export function resizeFrame(board: Board, pageId: string, width: number, height: number): Board {
+  const index = board.frames.findIndex((f) => f.pageId === pageId)
+  if (index === -1) return board
+  const frames = board.frames.map((f, i) => (i === index ? { ...f, width, height } : f))
+  return { ...board, frames }
+}
+
 export function removeFrame(board: Board, pageId: string): Board {
   return { ...board, frames: board.frames.filter((f) => f.pageId !== pageId) }
 }

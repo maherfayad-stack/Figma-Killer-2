@@ -12,7 +12,7 @@
 | 3 | Visual style editing → source | ✅ Done — `77d4188`, `dd2b3e8` |
 | 4 | Multiple boards + documentation | ✅ Done — `321ff35`, `aa5379c` |
 | 5 | Performance pass | 🚧 In progress — 5A done (`376cd75`), 5B done, 5C pending |
-| 6 | Design tab UI, canvas DnD, Inspect tab, code export, resizable frames + device presets | 📋 Planned — see "Phase 6" below |
+| 6 | Design tab UI, canvas DnD, Inspect tab, code export, resizable frames + device presets | 🚧 In progress — 6E done, 6A–6D planned — see "Phase 6" below |
 | 7 | Multi-file backend, MCP React-app import, GitHub-link import | 📋 Planned — see "Phase 7" below |
 
 **Dogfood fixes landed on top of the phase work:** studio mode made sticky so it stops reverting to CMS breakpoints (`13ec847`); board switcher moved to bottom-center to clear the canvas notch (`9c6df05`).
@@ -219,9 +219,16 @@ The "make it feel like a real design tool" phase. Four independent slices — 6A
 4. Exclude editor-owned spatial metadata (`.studio/boards.json`) from the export — it is not app code. Mention it in the doc so the omission is a decision, not an oversight.
 **Gate:** click Download code → a zip of real, runnable page source lands; unzipping and `bun install && bun run dev` in a scratch dir renders the same pages.
 
-### 6E — Resizable frames + device-size presets
+### 6E — Resizable frames + device-size presets ✅ Done
 
 **New capability.** Give each board frame its own size: drag-resize on the canvas, and a **device-size preset picker at the top of the design tab** (the Penpot pattern — pick "iPhone 16", "iPad Pro 11in", "Web 1280", etc., and the frame snaps to that size).
+
+**Findings (done):**
+1. `BoardFrame.width`/`.height` are optional fields (`src/core/studio-board/types.ts`); `coerceFrame` (`serialize.ts`) only sets them when the raw value is a positive number, otherwise omitting the keys entirely rather than baking in 1024×800 — the 1024×800 fallback lives once, at render time (`BoardFramesLayer`'s `frame.width ?? FRAME_WIDTH`), so it's the single source of truth for "no saved size" and old `boards.json` files round-trip byte-for-byte.
+2. `resizeFrame(board, pageId, width, height)` (`boardsModel.ts`) mirrors `moveFrame`'s no-op-on-missing-pageId shape; `boardSlice.setFrameSize` is its store-facing action, wired through the existing 800 ms autosave untouched.
+3. Device presets ported to `src/core/studio-board/devicePresets.ts` — 65 devices across the seven documented groups (Apple 30, Android 13, Microsoft 3, reMarkable 2, Web 4, Mixed 4, Print 9), read directly from `../penpot/frontend/src/app/main/constants.cljs`'s `size-presets`. Penpot's trailing "SOCIAL MEDIA" group is intentionally not ported (out of scope — this picker targets screen/print form factors). `findMatchingPreset(width, height)` is the pure exact-match lookup `FrameSizePanel` uses to decide "named preset" vs. "Custom".
+4. Resize handles: all 8 (4 corners + 4 edge midpoints), gated on the active frame, in `BoardFrameView` (`BoardFramesLayer.tsx`). Geometry is the pure `resizeFrameRect` (`frameResize.ts`, `MIN_FRAME_SIZE = 200`) — it returns the frame's next full rect (x/y/width/height) so a north/west-edge drag can re-anchor position via the existing `onMove` callback in the same gesture that resizes via `onResize`. Live-resize updates continuously on every `pointermove` (not just pointer-up), mirroring the existing frame-DRAG handler's own always-live update — the 800 ms boards autosave is what "settles" the write, not the drag handler. Shift-to-keep-aspect was skipped (optional in the plan; not worth the added complexity for this pass).
+5. `FrameSizePanel` (`panels/PropertiesPanel/`) renders at the top of the design tab, gated on `isStudioMode()` + the active page resolving to a frame on the active board. `PropertiesPanel`'s own top-level visibility gate was widened by one clause (`isActiveBoardFrame`) so the panel — and this picker — stays open on a bare frame activation, before any node inside it is selected; `PropertiesPanelBody` still renders its normal "select an element" empty state underneath in that case.
 
 **Prerequisite — per-frame size in the model.** Frames are currently locked to shared constants (`FRAME_WIDTH = 1024`, `FRAME_HEIGHT = 800` in `frameGrid.ts`) and every frame renders at one synthetic `STUDIO_BREAKPOINT` (width 1024, in `BoardFramesLayer.tsx`). This must become per-frame:
 1. Extend `BoardFrame` in `@core/studio-board` (`{ pageId, x, y }` → add `width?`, `height?`). **Additive + tolerant parse** — `parseBoardsFile` must default missing sizes to the current 1024×800 so existing `boards.json` files keep working (no migration, no data loss). Keep transforms pure/immutable.
@@ -287,7 +294,7 @@ These surfaced during implementation and dogfooding. None block the Phase 5 gate
 1. **Per-frame breakpoint chrome.** Every studio frame shares one synthetic breakpoint id (`STUDIO_BREAKPOINT.id === 'studio'`, see `BoardFramesLayer.tsx`), so breakpoint-*keyed* chrome (collapsed state, "open in live", toolbar highlight) is not per-frame-correct. Selection rings ARE correct (queried by node id). Revisit if per-frame breakpoints are needed. `centerOnBreakpointFrame` also collides on the shared id.
 2. **`alm.*` text + style writeback.** Text/inline-style codemods (`setJsxText`/`setJsxStyle`) round-trip for `base.*` nodes; design-system (`alm.*`) components may not forward `style` or declare an editable text prop, so those edits may not project to source. Needs a per-component editable-surface declaration.
 3. **Connectors / arrows.** The board object union was scoped for `frame | sticky | doc`; connectors/arrows (in the original Req-4 sketch) are not built.
-4. **Frame default sizing.** ✅ Addressed by **Phase 6E** (per-frame width/height + resize + device presets). Until 6E ships, new frames use the fixed 1024×800 from `frameGrid`.
+4. **Frame default sizing.** ✅ Shipped in **Phase 6E** (per-frame width/height + drag-resize + device-size presets — see the "6E" findings above). A frame with no saved size still renders at the fixed 1024×800 from `frameGrid` — that fallback is intentional, not a gap.
 5. **Optional studio toggle in the toolbar.** Studio mode is entered via `?studio` (now sticky via localStorage). A visible on/off toggle in the toolbar would be friendlier than editing the URL.
 
 ## Pre-existing failures (NOT from this work — do not "fix")

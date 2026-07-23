@@ -7,6 +7,11 @@
  * - Auto-opens when selectedNodeId becomes non-null and closes on deselection.
  * - Independent panel with its own visibility state — NOT a tab in a shared shell.
  *   AI assistant (AgentPanel) is a separate independent floating panel. (Guideline #410)
+ * - Phase 6E: also stays open (with no node selected) when the active page is
+ *   a studio board frame, so `FrameSizePanel`'s device-size picker is visible
+ *   the moment a frame is activated — see the `isActiveBoardFrame` check
+ *   below. `PropertiesPanelBody` still shows its own "select an element"
+ *   empty state underneath in that case.
  *
  * Unified icon-rail design (Task #unified-panel):
  *   - StyleCategoryRail is the primary navigation for the panel's lower half.
@@ -36,12 +41,15 @@ import { usePropertiesPanelAutoOpen } from './usePropertiesPanelAutoOpen'
 import { usePropertiesPanelData } from './usePropertiesPanelData'
 import { renderModuleTabContent } from './renderModuleTabContent'
 import { PropertiesPanelBody } from './PropertiesPanelBody'
+import { FrameSizePanel } from './FrameSizePanel'
 import { NodeHeader } from './NodeHeader'
 import { SelectorHeader } from './SelectorHeader'
 import { MultiSelectionHeader } from './MultiSelectionInspector'
 import { MultiSelectorHeader } from './MultiSelectorInspector'
 import { type ClassPickerHandle } from './ClassPicker'
 import { useEditorStore } from '@site/store/store'
+import { selectActiveBoard } from '@site/store/slices/boardSlice'
+import { isStudioMode } from '@site/studio/studioMode'
 import { PanelHeader } from '@admin/shared/PanelHeader'
 import { useDraggablePanel } from '@admin/shared/FloatingWindow'
 import { Button } from '@ui/components/Button'
@@ -75,6 +83,14 @@ export function PropertiesPanel({ variant = 'floating' }: PropertiesPanelProps) 
 
   const data = usePropertiesPanelData()
 
+  // ── Phase 6E: keep the panel open on a bare board-frame activation (no
+  // node selected yet) so `FrameSizePanel` is reachable the moment a frame
+  // is clicked, not only once something inside it is also selected. ────────
+  const activeBoard = useEditorStore(selectActiveBoard)
+  const activePageId = useEditorStore((s) => s.activePageId)
+  const isActiveBoardFrame =
+    isStudioMode() && !!activeBoard && activeBoard.frames.some((f) => f.pageId === activePageId)
+
   // ── ClassPicker ref — for the locked-state 'Add class' CTA ────────────────
   const classPickerRef = useRef<ClassPickerHandle>(null)
   const handleFocusClassPicker = () => {
@@ -106,7 +122,10 @@ export function PropertiesPanel({ variant = 'floating' }: PropertiesPanelProps) 
 
   if (
     data.collapsed ||
-    (!data.selectedNodeId && !data.selectedSelectorClass && !data.isSelectorMultiSelect)
+    (!data.selectedNodeId &&
+      !data.selectedSelectorClass &&
+      !data.isSelectorMultiSelect &&
+      !isActiveBoardFrame)
   ) {
     return null
   }
@@ -189,6 +208,7 @@ export function PropertiesPanel({ variant = 'floating' }: PropertiesPanelProps) 
         aria-label="Properties editor"
         className={styles.propertiesPanel}
       >
+        <FrameSizePanel />
         <PropertiesPanelBody
           selectedSelectorClass={data.selectedSelectorClass}
           selectedSelectorClassId={data.selectedSelectorClassId}
