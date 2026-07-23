@@ -17,7 +17,13 @@
 | 6D | Download code (zip export) | ✅ Done — `f8cde7d` |
 | 6E | Resizable frames + device presets | ✅ Done — `4fc43c5` |
 | 6A | Design tab UI polish pass | ⏸️ Pending — deferred (taste-driven; wants human dogfood eye) |
-| 7 | Multi-file backend, GitHub-link import, MCP React-app import | ⏸️ Pending — blocked on monthly spend limit (hit 2026-07-24) |
+| 7A | Multi-file workspace loader + local/package component resolution | ✅ Done — `2077c52` |
+| 7B | GitHub-link import | 📋 Next |
+| 7C | MCP React-app import | 📋 Planned |
+
+**Dogfood bug fixes (2026-07-24):** resized frame no longer resets on move (`5ef4e66`); edits no longer silently revert after a line-shifting codemod (`a260e70`); source `style={{}}` now renders on the canvas (`1b79996`).
+
+> **⚠️ Fidelity gap worth doing before/alongside 7B–7C:** the canvas parses `.tsx` and re-renders it, so fidelity is bounded by what the parser captures. Inline `style={{…}}` now renders (`1b79996`), but **`className` / external-CSS / CSS-module styling does not**, nor do non-literal style values (`gap`, `fn()`). Most real-world React apps style via `className`, so imported apps (7B/7C) will render largely unstyled until this is addressed. Tracked as backlog item 6 below.
 
 **Dogfood fixes landed on top of the phase work:** studio mode made sticky so it stops reverting to CMS breakpoints (`13ec847`); board switcher moved to bottom-center to clear the canvas notch (`9c6df05`).
 
@@ -323,6 +329,8 @@ These surfaced during implementation and dogfooding. None block the Phase 5 gate
 3. **Connectors / arrows.** The board object union was scoped for `frame | sticky | doc`; connectors/arrows (in the original Req-4 sketch) are not built.
 4. **Frame default sizing.** ✅ Shipped in **Phase 6E** (per-frame width/height + drag-resize + device-size presets — see the "6E" findings above). A frame with no saved size still renders at the fixed 1024×800 from `frameGrid` — that fallback is intentional, not a gap.
 5. **Optional studio toggle in the toolbar.** Studio mode is entered via `?studio` (now sticky via localStorage). A visible on/off toggle in the toolbar would be friendlier than editing the URL.
+6. **`className` / CSS-file style fidelity (high value).** The parser captures literal props and inline `style={{…}}` only. Styling via `className` + a CSS/CSS-module/Tailwind file is **not** resolved, so such elements render unstyled on the canvas. Also unresolved: non-literal style values (identifier refs, `fn()` calls) inside a `style` object. This is the largest remaining fidelity gap and gates how useful 7B/7C imports are, since most real apps style via `className`.
+7. **Local components aren't editable trees yet.** 7A resolves and classifies local components but does not parse them into their own canvas-editable trees — a local component still renders as an opaque node.
 6. **Multi-select drag for board furniture** (deferred from Phase 6B). Marquee-select or shift-click across frames/sticky notes/doc blocks, then drag the group together — `moveNodes`-style multi-move, but for board furniture instead of page-tree nodes. Snapping (`computeSnap`) already handles a single dragged rect against peers; a multi-select drag would need to decide how the group snaps as a unit (e.g. snap the group's bounding box, not each member independently).
 7. **Tree drop-indicator precision** (deferred from Phase 6B). Clearer insertion indicators when dragging a module into the page tree — the exact insertion line and target parent at any zoom. This is the `@dnd-kit`-based reorder system (`useCanvasReorderDrag.ts`), a different drag system from the board-furniture pointer-capture snapping shipped in 6B; left untouched per the 6B scoping.
 
