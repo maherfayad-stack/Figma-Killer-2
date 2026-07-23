@@ -67,6 +67,26 @@
     color: var(--danger-light);
 }
 
+/* Static stand-in for an offscreen frame's body — no iframe, no animation.
+   Sized to the frame's board dimensions (`--frame-w`/`--frame-h`, set inline
+   by BoardFramesLayer.tsx) so the frame's footprint on the board doesn't
+   visibly change when the real iframe mounts/unmounts as it crosses the
+   viewport margin. */
+.offscreenPlaceholder {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: var(--frame-w);
+    height: var(--frame-h);
+    background: var(--bg-surface);
+    border-radius: 0 0 var(--radius) var(--radius);
+}
+
+.offscreenPlaceholderTitle {
+    font-size: var(--text-s);
+    color: var(--text-subtle);
+}
+
 /* Rendered in place of frames when the active board has zero. Sits at the
    layer's origin — a plain child of the transformed layer, so it pans/zooms
    with the board like a frame would, instead of viewport-fixed chrome. */

@@ -52,20 +52,38 @@
  * each frame's own iframe document by node id, not by breakpoint id. Revisit
  * if per-frame breakpoint chrome becomes necessary.
  *
+ * Virtualization: a live `BreakpointFrame` (iframe + full `NodeRenderer`
+ * tree) is only mounted for frames whose board-space rect intersects the
+ * current viewport, inflated by `FRAME_VIEWPORT_MARGIN` (see
+ * `frameVirtualization.ts`) so scrolling/panning doesn't pop iframes in and
+ * out right at the edge. Offscreen frames render a static placeholder body
+ * instead — no iframe, no animation. Only the BODY is swapped: the outer
+ * `.frame` div, its position (`--frame-x/--frame-y`), the drag header,
+ * title, active badge, and remove button all stay mounted and functional on
+ * placeholders too, so position, activation, drag, and removal work
+ * regardless of on-screen state. `key={page.id}` on the list ensures React
+ * cleanly (re)mounts a fresh iframe when a frame re-enters the viewport.
+ *
  * Self-gates on `selectActiveBoard`: renders nothing outside studio board
  * mode, so `CanvasTransformLayer` can always mount it without an extra check.
  */
-import { useRef, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
+import { useContext, useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
 import { useEditorStore } from '@site/store/store'
 import { selectActiveBoard } from '@site/store/slices/boardSlice'
 import type { Breakpoint, Page } from '@core/page-tree'
 import type { BoardFrame } from '@core/studio-board'
 import { Button } from '@ui/components/Button'
 import { CloseIcon } from 'pixel-art-icons/icons/close'
-import { CanvasPageContext } from '../CanvasContexts'
+import { CanvasPageContext, CanvasViewportActionsContext } from '../CanvasContexts'
 import { BreakpointFrame } from '../BreakpointFrame'
 import { AddFramePicker } from './AddFramePicker'
+import { FRAME_WIDTH, FRAME_HEIGHT } from './frameGrid'
+import { FRAME_VIEWPORT_MARGIN, isFrameOnScreen } from './frameVirtualization'
 import styles from './BoardFramesLayer.module.css'
+
+/** Header height (board units) added to `FRAME_HEIGHT` for the on-screen
+ * intersection test, so the drag header itself isn't cut off the rect. */
+const FRAME_HEADER_HEIGHT = 48
 
 /** Shared synthetic breakpoint every studio frame renders at — see the
  * "KNOWN LIMITATION" note above for what per-frame chrome this costs. */
@@ -84,6 +102,29 @@ export function BoardFramesLayer() {
   const openPageInCanvas = useEditorStore((s) => s.openPageInCanvas)
   const setFramePosition = useEditorStore((s) => s.setFramePosition)
   const removeFrame = useEditorStore((s) => s.removeFrame)
+  const zoom = useEditorStore((s) => s.zoom)
+  const panX = useEditorStore((s) => s.panX)
+  const panY = useEditorStore((s) => s.panY)
+
+  // The untransformed canvas root's client size — this layer's ancestor
+  // applies `translate(panX, panY) scale(zoom)`, so the root's own box is
+  // the screen-space viewport that frame rects are tested against (see
+  // `frameVirtualization.ts`'s module doc for the coordinate math).
+  const viewportActions = useContext(CanvasViewportActionsContext)
+  const [viewportSize, setViewportSize] = useState(() => ({
+    width: window.innerWidth,
+    height: window.innerHeight,
+  }))
+
+  useEffect(() => {
+    const root = viewportActions?.canvasRootRef.current
+    if (!root) return
+    const syncSize = () => setViewportSize({ width: root.clientWidth, height: root.clientHeight })
+    syncSize()
+    const observer = new ResizeObserver(syncSize)
+    observer.observe(root)
+    return () => observer.disconnect()
+  }, [viewportActions])
 
   if (!board) return null
 
@@ -104,18 +145,26 @@ export function BoardFramesLayer() {
           <AddFramePicker />
         </div>
       ) : (
-        framesWithPages.map(({ frame, page }) => (
-          <BoardFrameView
-            key={page.id}
-            page={page}
-            x={frame.x}
-            y={frame.y}
-            isActive={page.id === activePageId}
-            onActivate={() => openPageInCanvas(page.id)}
-            onMove={(nx, ny) => setFramePosition(page.id, nx, ny)}
-            onRemove={() => removeFrame(page.id)}
-          />
-        ))
+        framesWithPages.map(({ frame, page }) => {
+          const isOnScreen = isFrameOnScreen(
+            { x: frame.x, y: frame.y, width: FRAME_WIDTH, height: FRAME_HEIGHT + FRAME_HEADER_HEIGHT },
+            { panX, panY, zoom, width: viewportSize.width, height: viewportSize.height },
+            FRAME_VIEWPORT_MARGIN,
+          )
+          return (
+            <BoardFrameView
+              key={page.id}
+              page={page}
+              x={frame.x}
+              y={frame.y}
+              isActive={page.id === activePageId}
+              isOnScreen={isOnScreen}
+              onActivate={() => openPageInCanvas(page.id)}
+              onMove={(nx, ny) => setFramePosition(page.id, nx, ny)}
+              onRemove={() => removeFrame(page.id)}
+            />
+          )
+        })
       )}
     </div>
   )
@@ -134,12 +183,13 @@ interface BoardFrameViewProps {
   x: number
   y: number
   isActive: boolean
+  isOnScreen: boolean
   onActivate: () => void
   onMove: (x: number, y: number) => void
   onRemove: () => void
 }
 
-function BoardFrameView({ page, x, y, isActive, onActivate, onMove, onRemove }: BoardFrameViewProps) {
+function BoardFrameView({ page, x, y, isActive, isOnScreen, onActivate, onMove, onRemove }: BoardFrameViewProps) {
   const dragRef = useRef<DragState | null>(null)
 
   // Capture phase — fires before the frame's own node-click handling, so
@@ -206,14 +256,24 @@ function BoardFrameView({ page, x, y, isActive, onActivate, onMove, onRemove }: 
           <CloseIcon size={11} aria-hidden="true" />
         </Button>
       </div>
-      <CanvasPageContext.Provider value={page.id}>
-        <BreakpointFrame
-          page={page}
-          breakpoint={STUDIO_BREAKPOINT}
-          isActive={isActive}
-          onActivate={onActivate}
-        />
-      </CanvasPageContext.Provider>
+      {isOnScreen ? (
+        <CanvasPageContext.Provider value={page.id}>
+          <BreakpointFrame
+            page={page}
+            breakpoint={STUDIO_BREAKPOINT}
+            isActive={isActive}
+            onActivate={onActivate}
+          />
+        </CanvasPageContext.Provider>
+      ) : (
+        <div
+          className={styles.offscreenPlaceholder}
+          data-testid="board-frame-placeholder"
+          style={{ '--frame-w': `${FRAME_WIDTH}px`, '--frame-h': `${FRAME_HEIGHT}px` } as CSSProperties}
+        >
+          <span className={styles.offscreenPlaceholderTitle}>{page.title}</span>
+        </div>
+      )}
     </div>
   )
 }
