@@ -7,6 +7,7 @@ import { DatabaseSolidIcon } from 'pixel-art-icons/icons/database-solid'
 import { BoxStackSolidIcon } from 'pixel-art-icons/icons/box-stack-solid'
 import { PaintBucketSolidIcon } from 'pixel-art-icons/icons/paint-bucket-solid'
 import { ColorsSwatchSolidIcon } from 'pixel-art-icons/icons/colors-swatch-solid'
+import { EyeSolidIcon } from 'pixel-art-icons/icons/eye-solid'
 import { Button } from '@ui/components/Button'
 import { assignRailAccents, railTintVar, type RailAccent } from '@ui/railAccent'
 import { pluginRuntime } from '@core/plugins/runtime'
@@ -59,6 +60,12 @@ const PRIMARY_RAIL_ITEMS: PrimaryRailItem[] = [
     icon: BoxStackSolidIcon,
     iconName: 'box-stack',
   },
+  {
+    id: 'inspect',
+    label: 'Inspect',
+    icon: EyeSolidIcon,
+    iconName: 'eye-solid',
+  },
 ]
 
 const GLOBAL_RAIL_ITEMS: PrimaryRailItem[] = [
@@ -93,6 +100,7 @@ export function PanelRail({
   const selectorsOpen = useEditorStore((s) => s.selectorsPanelOpen)
   const frameworkOpen = useEditorStore((s) => s.frameworkPanelOpen)
   const dependenciesOpen = useEditorStore((s) => s.dependenciesPanelOpen)
+  const inspectOpen = useEditorStore((s) => s.inspectPanelOpen)
   const agentOpen = useEditorStore((s) => s.isAgentOpen)
   const activePluginPanelId = useEditorStore((s) => s.activePluginPanelId)
 
@@ -117,13 +125,14 @@ export function PanelRail({
     selectors: selectorsOpen,
     framework: frameworkOpen,
     dependencies: dependenciesOpen,
+    inspect: inspectOpen,
   } satisfies Record<LeftSidebarPanelId, boolean>
 
   // Read-only callers (Viewer / Client) see only the Explorer panel (the
   // Layers / Pages / Media navigation surfaces). Style/runtime editing panels
   // only appear when the user can edit structure. The AI assistant follows
   // `ai.chat`, independent of editability.
-  const READ_ONLY_RAIL_IDS = new Set<LeftSidebarPanelId>(['explorer'])
+  const READ_ONLY_RAIL_IDS = new Set<LeftSidebarPanelId>(['explorer', 'inspect'])
   const visiblePrimaryItems = editable
     ? PRIMARY_RAIL_ITEMS
     : PRIMARY_RAIL_ITEMS.filter((item) => READ_ONLY_RAIL_IDS.has(item.id))

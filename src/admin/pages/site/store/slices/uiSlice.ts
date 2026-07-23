@@ -12,6 +12,7 @@ export type LeftSidebarPanelId =
   | 'selectors'
   | 'framework'
   | 'dependencies'
+  | 'inspect'
   | 'agent'
 /** Tabs inside the consolidated Framework panel. */
 export type FrameworkPanelTab = 'home' | 'colors' | 'typography' | 'spacing'
@@ -119,6 +120,9 @@ interface UiSlice {
   /** Whether the Manage Core Framework dialog is open. */
   frameworkManagerOpen: boolean
   dependenciesPanelOpen: boolean
+  /** Read-only "what actually rendered" panel — computed colors/typography/
+   *  box model/CSS for the selected node (Phase 6C). */
+  inspectPanelOpen: boolean
 
   /**
    * Plugin-registered editor panel currently open in the left sidebar, or
@@ -168,6 +172,7 @@ interface UiSlice {
   setFrameworkPanelTab: (tab: FrameworkPanelTab) => void
   setFrameworkManagerOpen: (open: boolean) => void
   setDependenciesPanelOpen: (open: boolean) => void
+  setInspectPanelOpen: (open: boolean) => void
   setLeftSidebarPanel: (panel: LeftSidebarPanelId | null) => void
   toggleLeftSidebarPanel: (panel: LeftSidebarPanelId) => void
 
@@ -286,6 +291,7 @@ function getActiveLeftSidebarPanel(state: EditorStore): LeftSidebarPanelId | nul
   if (state.selectorsPanelOpen) return 'selectors'
   if (state.frameworkPanelOpen) return 'framework'
   if (state.dependenciesPanelOpen) return 'dependencies'
+  if (state.inspectPanelOpen) return 'inspect'
   if (state.isAgentOpen) return 'agent'
   return null
 }
@@ -315,6 +321,7 @@ export const createUiSlice: EditorStoreSliceCreator<UiSlice> = (set, get) => ({
   frameworkPanelTab: 'home',
   frameworkManagerOpen: false,
   dependenciesPanelOpen: false,
+  inspectPanelOpen: false,
   activePluginPanelId: null,
   codeEditorPanelOpen: false,
   activeEditorFileId: null,
@@ -437,12 +444,15 @@ export const createUiSlice: EditorStoreSliceCreator<UiSlice> = (set, get) => ({
 
   setDependenciesPanelOpen: (open) => set({ dependenciesPanelOpen: open }),
 
+  setInspectPanelOpen: (open) => set({ inspectPanelOpen: open }),
+
   setLeftSidebarPanel: (panel) =>
     set((state) => {
       state.explorerPanelOpen = panel === 'explorer'
       state.selectorsPanelOpen = panel === 'selectors'
       state.frameworkPanelOpen = panel === 'framework'
       state.dependenciesPanelOpen = panel === 'dependencies'
+      state.inspectPanelOpen = panel === 'inspect'
       state.isAgentOpen = panel === 'agent'
       // Built-in panels are mutually exclusive with plugin panels.
       state.activePluginPanelId = null
@@ -466,6 +476,7 @@ export const createUiSlice: EditorStoreSliceCreator<UiSlice> = (set, get) => ({
       state.selectorsPanelOpen = false
       state.frameworkPanelOpen = false
       state.dependenciesPanelOpen = false
+      state.inspectPanelOpen = false
       state.isAgentOpen = false
       state.activePluginPanelId = panelId
     }),

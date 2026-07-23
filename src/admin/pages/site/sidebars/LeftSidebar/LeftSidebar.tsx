@@ -5,6 +5,7 @@ import { AgentStoreProvider } from '@admin/ai/AgentStoreContext'
 import { FrameworkPanel } from '@site/panels/FrameworkPanel'
 import { ExplorerPanel } from '@site/panels/ExplorerPanel'
 import { DependenciesPanel } from '@site/panels/DependenciesPanel'
+import { InspectPanel } from '@site/panels/InspectPanel'
 import { PanelRail } from '@site/sidebars/PanelRail'
 import { PluginEditorPanel } from '@site/panels/PluginEditorPanel'
 import { SelectorsPanel } from '@site/panels/SelectorsPanel'
@@ -30,6 +31,7 @@ function selectActiveLeftSidebarPanel(state: ReturnType<typeof useEditorStore.ge
   if (state.selectorsPanelOpen) return 'selectors'
   if (state.frameworkPanelOpen) return 'framework'
   if (state.dependenciesPanelOpen) return 'dependencies'
+  if (state.inspectPanelOpen) return 'inspect'
   if (state.isAgentOpen) return 'agent'
   return null
 }
@@ -59,7 +61,7 @@ interface LeftSidebarProps {
  * navigational / view surfaces. Anything not in this set is editing-only
  * and is dropped from the rail (and its panel mount) when `editable=false`.
  */
-const READ_ONLY_RAIL_IDS: ReadonlySet<LeftSidebarPanelId> = new Set(['explorer'])
+const READ_ONLY_RAIL_IDS: ReadonlySet<LeftSidebarPanelId> = new Set(['explorer', 'inspect'])
 
 export function LeftSidebar({
   workspace = 'site',
@@ -124,6 +126,12 @@ export function LeftSidebar({
               (e.g. TreeNode disables drag + context menu via `editable`). */}
           <div className={styles.panelMount} hidden={effectiveActivePanel !== 'explorer'}>
             <ExplorerPanel editable={editable} />
+          </div>
+          {/* Read-only "what actually rendered" inspector (Phase 6C) — same
+              tier as Explorer: useful in both CMS and studio, no structural
+              edit capability required. */}
+          <div className={styles.panelMount} hidden={effectiveActivePanel !== 'inspect'}>
+            <InspectPanel />
           </div>
           {/* Editor-only panels — only mounted when the caller can perform
               structural edits. Mounting them for non-editors would expose

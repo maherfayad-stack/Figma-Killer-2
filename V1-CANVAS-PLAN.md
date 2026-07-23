@@ -200,7 +200,7 @@ The "make it feel like a real design tool" phase. Four independent slices — 6A
 4. Keep the two drag systems separate — do NOT migrate board furniture onto dnd-kit just for symmetry; pointer-capture is correct there.
 **Gate:** dropping a module lands exactly where the indicator showed at any zoom; frames/notes snap and show guides; multi-select moves as one.
 
-### 6C — Inspect tab (colors + CSS properties)
+### 6C — Inspect tab (colors + CSS properties) ✅ Done
 **New capability.** A read-only "Inspect" panel for the selected node — the Figma-inspect / devtools-style view: resolved colors as swatches, typography, spacing/box model, and the effective CSS.
 **Plan:**
 1. New `panels/InspectPanel/`, registered alongside the existing panels (mounted via `AdminCanvasEditorBody.tsx`; panel layout state lives in `site/layout/siteEditorLayoutPersistence.ts`).
@@ -209,6 +209,13 @@ The "make it feel like a real design tool" phase. Four independent slices — 6A
 4. **Recompute on a settled selection, not on a RAF loop.** Read once per selection/style change; do not add a hot polling loop (respect the `hasOverlayWork` discipline established in Phase 5).
 5. Copy affordances everywhere — copying a value is the primary use of an inspect panel.
 **Gate:** select any node on a frame → Inspect shows its real rendered colors/typography/box model; token-matched colors display the token name; every value is copyable.
+
+**Findings (done):**
+1. **Mounting deviated from the plan** — instead of a bespoke mount in `AdminCanvasEditorBody.tsx`, `InspectPanel` is registered as a 5th `PanelRail` / `LeftSidebar` item (`uiSlice.ts`'s `LeftSidebarPanelId`), the same consolidated-panel mechanism Selectors/Framework/Dependencies already use. It's read-only, so it joins Explorer in `READ_ONLY_RAIL_IDS` (both rail files) and stays visible for non-editing callers — the only panel besides Explorer that does.
+2. **Element resolution deviated from the plan too** — `CanvasDocumentContext`/`CanvasFrameElementContext` are canvas-tree-only contexts; `InspectPanel` lives in the sidebar, outside that tree, so there's no provider to consume. Used the already-general `findRenderedCanvasNodes(nodeId)` (`canvas/canvasNodeLookup.ts`) instead — the same lookup the plugin host and `ClassPicker`'s selector picker already use to resolve a node id to its live element(s) across every mounted breakpoint frame. When more than one frame has rendered the node, the one whose `data-breakpoint-id` matches the active breakpoint is preferred.
+3. **No effect, no RAF, no polling** — the computed-style read (`useInspectComputedStyle`) is a plain synchronous render-time read (mirrors the existing `useClassPickerDerivedState` → `findRenderedCanvasNodeElement` pattern), gated only by the store subscriptions the component itself declares (`selectedNodeId`, the selected node object, `activeBreakpointId`). It naturally recomputes exactly when one of those changes and never on an unrelated store update.
+4. **Token matching is exact-only and color-format-agnostic** — `inspectModel.ts`'s `canonicalColorKey` normalizes hex/rgb(a)/hsl(a) to an rgba channel tuple before comparing a computed value against every `generateFrameworkColorVariableSets(...).light` entry, so `#2563eb` on the node and `rgb(37, 99, 235)` on the token still match. No fuzzy/nearest-color matching — a miss just shows the raw computed value.
+5. Pure model + color-parsing logic lives in `panels/InspectPanel/inspectModel.ts`, unit-tested at `src/__tests__/panels/inspectModel.test.ts` (matching the repo's centralized panel-test convention, not a panel-local `__tests__/`).
 
 ### 6D — Download the code
 **New capability, and the thesis paying off:** because the filesystem is the source of truth, "download the code" is not a codegen step — the real `.tsx` already exists on disk.

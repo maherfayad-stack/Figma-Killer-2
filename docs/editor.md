@@ -515,7 +515,7 @@ Canvas-internal values are not CSS tokens — they are raw integers intentionall
 
 42px-wide vertical strip on the far left. Primary navigation panels sit in the top group; global workspace actions such as the AI assistant are pinned to the bottom group. Each button gets an automatic rail tint from its full panel identity, with repeats avoided inside the visible rail group, and opens a panel in the left sidebar. Implementation: `src/admin/pages/site/sidebars/PanelRail/PanelRail.module.css`.
 
-The primary rail group is, in order: **Explorer** (`database-solid` icon, `gold` accent — carried over from the standalone Layers rail button it replaced), **Framework**, **Selectors**, **Dependencies**. The AI assistant lives alone in the bottom global group. Read-only callers (Viewer / Client) see only the Explorer rail button — the structural Framework / Selectors / Dependencies panels and the agent are dropped from both the rail and their panel mounts.
+The primary rail group is, in order: **Explorer** (`database-solid` icon, `gold` accent — carried over from the standalone Layers rail button it replaced), **Framework**, **Selectors**, **Dependencies**, **Inspect**. The AI assistant lives alone in the bottom global group. Read-only callers (Viewer / Client) see only the Explorer and Inspect rail buttons — both are navigation/inspection surfaces, not editing tools — while the structural Framework / Selectors / Dependencies panels and the agent are dropped from both the rail and their panel mounts.
 
 ### Left sidebar
 
@@ -530,6 +530,7 @@ Opens the rail-selected panel:
 - `FrameworkPanel` — site-level design tokens (the Core Framework) in one panel with **Overview / Colors / Type / Space** tabs. Its "Manage framework" button opens `FrameworkManagerDialog`, a declarative state picker (Full framework / Variables only / None) that reconciles the framework to the chosen target. Sits **above** Selectors in the rail.
 - `SelectorsPanel` — CSS class library
 - `DependenciesPanel` — site package.json / `bun install`
+- `InspectPanel` (Phase 6C) — read-only "what actually rendered" view for the selected node: computed color swatches (copyable, with the design-token name when a value matches one exactly), typography, box model, and the raw effective CSS as a copyable block. Reads REAL computed styles from inside the canvas iframe via `getComputedStyle` — never re-derived from the node tree. Element resolution reuses `findRenderedCanvasNodes` (`canvas/canvasNodeLookup.ts`), preferring the frame whose `data-breakpoint-id` matches the active breakpoint. The read is synchronous at render time (no effect, no RAF loop) and only re-runs when `selectedNodeId`, the selected node's own object reference (Mutative gives it a new reference whenever its own props/inlineStyles/classIds change), or the active breakpoint change — so it won't auto-refresh for edits to something the node merely *inherits* from (a shared class rule, an ancestor's inline style). Pure transform lives in `panels/InspectPanel/inspectModel.ts` (`buildInspectModel`), unit-tested without a browser. Read-only, so — unlike Selectors/Framework/Dependencies — it stays on the rail and mounted for non-editing callers too.
 - `PluginEditorPanel` — plugin-provided editor panels
 - `AgentPanel` — AI assistant
 
