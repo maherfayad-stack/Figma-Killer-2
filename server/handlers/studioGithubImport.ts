@@ -42,7 +42,7 @@
  * through ts-morph (`/admin/api/studio/load`), same as any other workspace.
  */
 import { dirname, join, resolve } from 'node:path'
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { unzipSync, type Unzipped } from 'fflate'
 import {
   EXCLUDED_WORKSPACE_DIR_NAMES,
@@ -339,10 +339,21 @@ export async function runGithubImport(
 
   const targetDir = resolve(options.dir ?? defaultGithubImportDir(owner, repo))
 
-  // This directory IS the explicit target of the import (never the
-  // hand-authored studio-workspace/), so clearing it before repopulating is
-  // safe and keeps a re-import of the same repo from leaving stale files
-  // behind after an upstream rename/delete.
+  // Clearing the target keeps a re-import of the same repo from leaving stale
+  // files behind after an upstream rename/delete. That is only safe because
+  // the target is derived server-side from the parsed repo — `dir` is an
+  // internal (test-only) option and is NOT part of the request schema, so no
+  // caller can turn this into an arbitrary recursive delete.
+  //
+  // Defense in depth: a `.studio/` directory marks a hand-authored studio
+  // workspace (boards, sticky notes — user data with no other copy). Refuse to
+  // clear one no matter who asked, rather than trusting the caller.
+  if (existsSync(join(targetDir, '.studio'))) {
+    throw new GithubImportError(
+      `Refusing to import into ${targetDir}: it is an existing studio workspace (has a .studio/ directory). Imports must target their own directory.`,
+      400,
+    )
+  }
   rmSync(targetDir, { recursive: true, force: true })
   mkdirSync(targetDir, { recursive: true })
 

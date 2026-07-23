@@ -206,6 +206,22 @@ describe('runGithubImport', () => {
     expect(fs.existsSync(path.join(tmpDir, 'package.json'))).toBe(true)
   })
 
+  it('refuses to clear a target that is a hand-authored studio workspace (.studio/ present)', async () => {
+    // Data-loss guard: `.studio/` marks a real workspace (boards, sticky
+    // notes — user data with no other copy). Import must never wipe one, no
+    // matter which caller supplied the target.
+    fs.mkdirSync(path.join(tmpDir, '.studio'), { recursive: true })
+    fs.writeFileSync(path.join(tmpDir, '.studio', 'boards.json'), '{"version":1,"boards":[]}')
+    const zip = buildFakeZipball({ 'pages/Home.tsx': 'export default function Home() { return null }' })
+    const fetchImpl = (async () => fakeZipResponse(zip)) as typeof fetch
+
+    await expect(
+      runGithubImport({ url: 'https://github.com/acme/widgets', dir: tmpDir }, { fetchImpl }),
+    ).rejects.toThrow(/existing studio workspace/)
+    // The user's board data survived.
+    expect(fs.existsSync(path.join(tmpDir, '.studio', 'boards.json'))).toBe(true)
+  })
+
   it('clears a pre-existing target directory before repopulating it', async () => {
     fs.writeFileSync(path.join(tmpDir, 'stale.txt'), 'leftover from a previous import')
     const zip = buildFakeZipball({ 'pages/Home.tsx': 'export default function Home() { return null }' })

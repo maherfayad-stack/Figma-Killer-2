@@ -124,18 +124,23 @@ const BoardsPostBodySchema = Type.Object({
 })
 
 /**
- * Body of POST /admin/api/studio/import-github (Phase 7B). `dir` is an
- * escape hatch over the default `studio-workspace-imports/<owner>-<repo>`
- * target — not part of the documented client contract, mainly useful for
- * tests. `token`, when present, is forwarded as a Bearer credential and never
- * logged or echoed back.
+ * Body of POST /admin/api/studio/import-github (Phase 7B).
+ *
+ * Deliberately has NO `dir` field. `runGithubImport` clears its target
+ * directory before repopulating it, so a caller-supplied target would be an
+ * arbitrary recursive-delete primitive driven by a request body. The import
+ * target is therefore always derived server-side from the parsed repo
+ * (`studio-workspace-imports/<owner>-<repo>`); `runGithubImport`'s `dir`
+ * option stays internal (tests only) and is never sourced from the wire.
+ *
+ * `token`, when present, is forwarded as a Bearer credential and never logged
+ * or echoed back.
  */
 const GithubImportBodySchema = Type.Object({
   url: Type.String(),
   ref: Type.Optional(Type.String()),
   subdir: Type.Optional(Type.String()),
   token: Type.Optional(Type.String()),
-  dir: Type.Optional(Type.String()),
 })
 
 /** Map a parsed node to an Instatic moduleId (design-system → alm.*, host tags → base.*). */
@@ -496,7 +501,15 @@ export async function tryServeStudio(
     try {
       const body = await readValidatedBody(req, GithubImportBodySchema)
       if (!body) return badRequest('invalid import body')
-      const result = await runGithubImport(body)
+      // Pass the wire fields explicitly — never spread the body, so a future
+      // schema addition can't silently reach `runGithubImport`'s internal
+      // `dir` option (which its target-clearing step would act on).
+      const result = await runGithubImport({
+        url: body.url,
+        ref: body.ref,
+        subdir: body.subdir,
+        token: body.token,
+      })
       return jsonResponse({ ok: true, ...result })
     } catch (err) {
       console.error('[studio]', err)

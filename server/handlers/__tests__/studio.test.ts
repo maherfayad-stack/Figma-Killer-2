@@ -501,7 +501,10 @@ describe('POST /admin/api/studio/import-github — Phase 7B route wiring', () =>
     expect(fetchCalled).toBe(false)
   })
 
-  it('imports a fake zipball end to end and returns { ok, dir, files, skipped }', async () => {
+  it('imports a fake zipball end to end, deriving the target server-side and IGNORING a caller-supplied dir', async () => {
+    // Security regression: the import clears its target before repopulating,
+    // so honouring a request-body `dir` would be an arbitrary recursive-delete
+    // primitive. The target must always be derived from the parsed repo.
     const zip = zipSync({
       'acme-widgets-abc1/pages/Home.tsx': strToU8('export default function Home() { return null }'),
     })
@@ -518,7 +521,18 @@ describe('POST /admin/api/studio/import-github — Phase 7B route wiring', () =>
 
     expect(res!.status).toBe(200)
     const body = (await res!.json()) as { ok: boolean; dir: string; files: number; skipped: number }
-    expect(body).toEqual({ ok: true, dir: tmpDir, files: 1, skipped: 0 })
-    expect(fs.existsSync(path.join(tmpDir, 'pages', 'Home.tsx'))).toBe(true)
+    try {
+      expect(body.ok).toBe(true)
+      expect(body.files).toBe(1)
+      expect(body.skipped).toBe(0)
+      // Server-derived target, NOT the caller's tmpDir.
+      expect(body.dir).not.toBe(tmpDir)
+      expect(body.dir.split(path.sep).join('/')).toContain('studio-workspace-imports/acme-widgets')
+      expect(fs.existsSync(path.join(body.dir, 'pages', 'Home.tsx'))).toBe(true)
+      // The caller-supplied directory was never touched.
+      expect(fs.existsSync(path.join(tmpDir, 'pages'))).toBe(false)
+    } finally {
+      fs.rmSync(body.dir, { recursive: true, force: true })
+    }
   })
 })
