@@ -11,9 +11,13 @@
 | 2 | Component manifest + in-place props | ✅ Done — `01ae6ad`, `e1d3ac3` |
 | 3 | Visual style editing → source | ✅ Done — `77d4188`, `dd2b3e8` |
 | 4 | Multiple boards + documentation | ✅ Done — `321ff35`, `aa5379c` |
-| 5 | Performance pass | 🚧 In progress — 5A done (`376cd75`), 5B done, 5C pending |
-| 6 | Design tab UI, canvas DnD, Inspect tab, code export, resizable frames + device presets | 🚧 In progress — 6C, 6D, 6E done, 6B board-level snapping done (drop precision + multi-select deferred to backlog), 6A planned — see "Phase 6" below |
-| 7 | Multi-file backend, MCP React-app import, GitHub-link import | 📋 Planned — see "Phase 7" below |
+| 5 | Performance pass | ✅ Done — 5A `376cd75`, 5B `8ed4961`, 5C `f1a4ee4` |
+| 6B | Canvas DnD — snap + alignment guides | ✅ Done — `5f7ee54` (multi-select + tree drop-indicator deferred to backlog) |
+| 6C | Inspect tab (computed colors/type/box/CSS) | ✅ Done — `15f9638` |
+| 6D | Download code (zip export) | ✅ Done — `f8cde7d` |
+| 6E | Resizable frames + device presets | ✅ Done — `4fc43c5` |
+| 6A | Design tab UI polish pass | ⏸️ Pending — deferred (taste-driven; wants human dogfood eye) |
+| 7 | Multi-file backend, GitHub-link import, MCP React-app import | ⏸️ Pending — blocked on monthly spend limit (hit 2026-07-24) |
 
 **Dogfood fixes landed on top of the phase work:** studio mode made sticky so it stops reverting to CMS breakpoints (`13ec847`); board switcher moved to bottom-center to clear the canvas notch (`9c6df05`).
 
