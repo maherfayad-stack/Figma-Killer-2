@@ -273,6 +273,15 @@ describe('upsertFrame', () => {
     expect(board.frames).toBe(originalFramesRef)
     expect(board.frames).toHaveLength(0)
   })
+
+  test('merges a partial update, preserving unmentioned fields (width/height)', () => {
+    // Regression: a resized frame kept its size, then a position-only update
+    // (setFramePosition passes just { pageId, x, y }) dropped width/height,
+    // snapping the frame back to the render default on the next drag.
+    const sized = upsertFrame(createBoard('b1', 'Board 1'), frame({ width: 393, height: 852 }))
+    const moved = upsertFrame(sized, { pageId: 'p1', x: 40, y: 60 })
+    expect(moved.frames[0]).toEqual({ pageId: 'p1', x: 40, y: 60, width: 393, height: 852 })
+  })
 })
 
 describe('moveFrame', () => {

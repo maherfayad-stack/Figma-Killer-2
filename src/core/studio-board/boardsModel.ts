@@ -65,12 +65,16 @@ export function removeDoc(board: Board, docId: string): Board {
   return { ...board, docs: board.docs.filter((d) => d.id !== docId) }
 }
 
-export function upsertFrame(board: Board, frame: BoardFrame): Board {
+export function upsertFrame(board: Board, frame: Partial<BoardFrame> & { pageId: string }): Board {
   const index = board.frames.findIndex((f) => f.pageId === frame.pageId)
   const frames =
     index === -1
-      ? [...board.frames, frame]
-      : board.frames.map((f, i) => (i === index ? frame : f))
+      ? [...board.frames, { ...frame, x: frame.x ?? 0, y: frame.y ?? 0 }]
+      : // MERGE on update — a partial upsert (e.g. `setFramePosition` passing
+        // only `{ pageId, x, y }`) must preserve fields it doesn't mention,
+        // notably `width`/`height`. Replacing the frame outright dropped a
+        // resized frame's size the moment it was moved.
+        board.frames.map((f, i) => (i === index ? { ...f, ...frame } : f))
   return { ...board, frames }
 }
 
