@@ -80,6 +80,7 @@ import { AddFramePicker } from './AddFramePicker'
 import { FRAME_WIDTH, FRAME_HEIGHT } from './frameGrid'
 import { FRAME_VIEWPORT_MARGIN, isFrameOnScreen } from './frameVirtualization'
 import { resizeFrameRect, MIN_FRAME_SIZE, type FrameResizeRect, type ResizeHandle } from './frameResize'
+import { computeSnap, collectPeerRects, SNAP_THRESHOLD_BOARD_UNITS } from '../boardSnapping'
 import styles from './BoardFramesLayer.module.css'
 
 /** Header height (board units) added to the frame's own height for the
@@ -271,11 +272,23 @@ function BoardFrameView({
     const zoom = useEditorStore.getState().zoom
     const dx = (e.clientX - drag.startClientX) / zoom
     const dy = (e.clientY - drag.startClientY) / zoom
-    onMove(drag.frameX + dx, drag.frameY + dy)
+    const rawX = drag.frameX + dx
+    const rawY = drag.frameY + dy
+
+    // Snap to the OTHER furniture on the board (Phase 6B) — every other
+    // frame, note, and doc, excluding this frame's own page.
+    const board = selectActiveBoard(useEditorStore.getState())
+    const peers = board ? collectPeerRects(board, { kind: 'frame', pageId: page.id }) : []
+    const snapped = computeSnap({ x: rawX, y: rawY, width, height }, peers, SNAP_THRESHOLD_BOARD_UNITS)
+    useEditorStore.getState().setBoardSnapGuides(snapped.guides)
+    onMove(snapped.x, snapped.y)
   }
 
   const endDrag = (e: ReactPointerEvent<HTMLDivElement>) => {
-    if (dragRef.current?.pointerId === e.pointerId) dragRef.current = null
+    if (dragRef.current?.pointerId === e.pointerId) {
+      dragRef.current = null
+      useEditorStore.getState().setBoardSnapGuides([])
+    }
   }
 
   // Resize handles — same pointer-capture + screenDelta/zoom pattern as the

@@ -27,6 +27,8 @@ import type { DocBlock } from '@core/studio-board'
 import { renderMarkdownToHtml } from '@core/markdown/renderMarkdown'
 import { sanitizeRichtext } from '@core/sanitize'
 import { useEditorStore } from '@site/store/store'
+import { selectActiveBoard } from '@site/store/slices/boardSlice'
+import { computeSnap, collectPeerRects, SNAP_THRESHOLD_BOARD_UNITS } from '../boardSnapping'
 import { Button } from '@ui/components/Button'
 import { CloseIcon } from 'pixel-art-icons/icons/close'
 import styles from './DocBlockView.module.css'
@@ -79,11 +81,27 @@ export function DocBlockView({ doc }: DocBlockViewProps) {
     const zoom = useEditorStore.getState().zoom
     const dx = (e.clientX - drag.startClientX) / zoom
     const dy = (e.clientY - drag.startClientY) / zoom
-    moveDoc(doc.id, drag.docX + dx, drag.docY + dy)
+    const rawX = drag.docX + dx
+    const rawY = drag.docY + dy
+
+    // Snap to the OTHER furniture on the board (Phase 6B) — every other
+    // frame, note, and doc, excluding this doc block itself.
+    const board = selectActiveBoard(useEditorStore.getState())
+    const peers = board ? collectPeerRects(board, { kind: 'doc', id: doc.id }) : []
+    const snapped = computeSnap(
+      { x: rawX, y: rawY, width: doc.w, height: doc.h },
+      peers,
+      SNAP_THRESHOLD_BOARD_UNITS,
+    )
+    useEditorStore.getState().setBoardSnapGuides(snapped.guides)
+    moveDoc(doc.id, snapped.x, snapped.y)
   }
 
   const endDrag = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (dragRef.current?.pointerId === e.pointerId) dragRef.current = null
+    if (dragRef.current?.pointerId === e.pointerId) {
+      dragRef.current = null
+      useEditorStore.getState().setBoardSnapGuides([])
+    }
   }
 
   const handleDoubleClick = (e: React.MouseEvent<HTMLDivElement>) => {

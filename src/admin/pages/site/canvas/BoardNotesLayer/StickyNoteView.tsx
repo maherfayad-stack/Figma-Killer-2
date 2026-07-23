@@ -18,6 +18,8 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import type { StickyNote, NoteColor } from '@core/studio-board'
 import { useEditorStore } from '@site/store/store'
+import { selectActiveBoard } from '@site/store/slices/boardSlice'
+import { computeSnap, collectPeerRects, SNAP_THRESHOLD_BOARD_UNITS } from '../boardSnapping'
 import { Button } from '@ui/components/Button'
 import styles from './StickyNoteView.module.css'
 
@@ -72,11 +74,27 @@ export function StickyNoteView({ note }: StickyNoteViewProps) {
     const zoom = useEditorStore.getState().zoom
     const dx = (e.clientX - drag.startClientX) / zoom
     const dy = (e.clientY - drag.startClientY) / zoom
-    moveNote(note.id, drag.noteX + dx, drag.noteY + dy)
+    const rawX = drag.noteX + dx
+    const rawY = drag.noteY + dy
+
+    // Snap to the OTHER furniture on the board (Phase 6B) — every other
+    // frame, note, and doc, excluding this note itself.
+    const board = selectActiveBoard(useEditorStore.getState())
+    const peers = board ? collectPeerRects(board, { kind: 'note', id: note.id }) : []
+    const snapped = computeSnap(
+      { x: rawX, y: rawY, width: note.w, height: note.h },
+      peers,
+      SNAP_THRESHOLD_BOARD_UNITS,
+    )
+    useEditorStore.getState().setBoardSnapGuides(snapped.guides)
+    moveNote(note.id, snapped.x, snapped.y)
   }
 
   const endDrag = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (dragRef.current?.pointerId === e.pointerId) dragRef.current = null
+    if (dragRef.current?.pointerId === e.pointerId) {
+      dragRef.current = null
+      useEditorStore.getState().setBoardSnapGuides([])
+    }
   }
 
   const handleDoubleClick = (e: React.MouseEvent<HTMLDivElement>) => {

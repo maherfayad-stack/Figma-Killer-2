@@ -254,6 +254,11 @@
        a selection. */
     --canvas-selector-ring: inset 0 0 0 1px #ff8800;
     --canvas-selector-ring-color: #ff8800;
+    /* Board snap guide (Phase 6B): the thin alignment line drawn while
+       dragging a frame/sticky-note/doc-block into alignment with its
+       neighbors. A fourth neon identity distinct from the selection (green),
+       hover (pink), and selector (orange) rings above. */
+    --canvas-snap-guide-color: #00c8ff;
     /* Shared diagonal-stripe pattern used by every module's canvas empty
        state (image, video, content, loop, container, slot-outlet, VC ref
        placeholders). Strictly achromatic — colours derived from

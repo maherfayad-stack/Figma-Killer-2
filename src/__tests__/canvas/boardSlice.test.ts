@@ -25,6 +25,7 @@ function resetBoardState() {
     activeBoardId: null,
     boardsLoaded: false,
     boardsDirty: false,
+    boardSnapGuides: [],
   })
 }
 
@@ -545,6 +546,30 @@ describe('markBoardsClean', () => {
     state().markBoardsClean()
 
     expect(state().boardsDirty).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// setBoardSnapGuides
+// ---------------------------------------------------------------------------
+
+describe('setBoardSnapGuides', () => {
+  it('replaces the transient guides without touching boardsDirty', () => {
+    state().loadBoards(createBoardsFile())
+    state().markBoardsClean()
+
+    state().setBoardSnapGuides([{ axis: 'x', position: 100, start: 0, end: 50 }])
+
+    expect(state().boardSnapGuides).toEqual([{ axis: 'x', position: 100, start: 0, end: 50 }])
+    expect(state().boardsDirty).toBe(false)
+  })
+
+  it('clears guides back to empty', () => {
+    state().setBoardSnapGuides([{ axis: 'y', position: 10, start: 0, end: 20 }])
+
+    state().setBoardSnapGuides([])
+
+    expect(state().boardSnapGuides).toEqual([])
   })
 })
 

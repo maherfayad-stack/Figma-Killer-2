@@ -31,9 +31,18 @@
  * `moveDoc`, `removeDoc`, `upsertFrame`, `removeFrame`, …) rather than
  * hand-mutating `Board` / `BoardsFile` objects, so this slice stays a thin
  * translation from store actions to the pure board model.
+ *
+ * Snap guides (Phase 6B): `boardSnapGuides` is a TRANSIENT UI field — the
+ * alignment guide lines `BoardGuidesLayer` draws while a frame/note/doc is
+ * mid-drag. It intentionally lives as its own top-level store field, NOT
+ * inside `boards`/`BoardsFile`, so it never reaches `serializeBoardsFile` or
+ * the boards auto-save effect (`AdminCanvasLayout`'s `useStudioBoardsPersistence`
+ * only ever reads/writes `boards`). `setBoardSnapGuides` never flips
+ * `boardsDirty` for the same reason — guides are drawn, not persisted.
  */
 import type { EditorStoreSliceCreator, EditorStore } from '@site/store/types'
 import type { Board, BoardsFile, DocBlock, NoteColor, StickyNote } from '@core/studio-board'
+import type { SnapGuide } from '@site/canvas/boardSnapping'
 import {
   createBoard,
   createBoardsFile,
@@ -67,6 +76,12 @@ interface BoardSlice {
   boardsLoaded: boolean
   /** True when `boards` has unsaved changes the auto-save effect must flush. */
   boardsDirty: boolean
+  /**
+   * Transient alignment guide lines for the furniture piece currently being
+   * dragged (Phase 6B). Empty outside of an active drag. NOT persisted — see
+   * the module doc's "Snap guides" note.
+   */
+  boardSnapGuides: SnapGuide[]
 
   /**
    * Hydrate from a freshly-fetched `BoardsFile`. An empty file gets a default
@@ -135,6 +150,12 @@ interface BoardSlice {
   seedFramesForActiveBoard: (pageIds: string[]) => void
   /** Clear the dirty flag after a successful save. */
   markBoardsClean: () => void
+  /**
+   * Replace the active drag's snap guides (Phase 6B). Pass `[]` to clear —
+   * furniture drag handlers do this on pointer-up/cancel. Never touches
+   * `boardsDirty`: guides are drawn, not persisted.
+   */
+  setBoardSnapGuides: (guides: SnapGuide[]) => void
 }
 
 declare module '@site/store/types' {
@@ -160,6 +181,7 @@ export const createBoardSlice: EditorStoreSliceCreator<BoardSlice> = (set, get) 
   activeBoardId: null,
   boardsLoaded: false,
   boardsDirty: false,
+  boardSnapGuides: [],
 
   loadBoards: (file) => {
     if (file.boards.length > 0) {
@@ -361,8 +383,13 @@ export const createBoardSlice: EditorStoreSliceCreator<BoardSlice> = (set, get) 
   },
 
   markBoardsClean: () => set({ boardsDirty: false }),
+
+  setBoardSnapGuides: (guides) => set({ boardSnapGuides: guides }),
 })
 
 /** Select the active board (or `null` — not studio mode / not loaded yet). */
 export const selectActiveBoard = (s: EditorStore): Board | null =>
   getActiveBoard(s.boards, s.activeBoardId)
+
+/** Select the active drag's snap guides (empty outside of a drag). */
+export const selectBoardSnapGuides = (s: EditorStore): SnapGuide[] => s.boardSnapGuides

@@ -20,6 +20,7 @@ import type { InjectableRuntimeScript } from './useRuntimeScriptBuild'
 import { BoardNotesLayer } from './BoardNotesLayer'
 import { BoardDocsLayer } from './BoardDocsLayer'
 import { BoardFramesLayer } from './BoardFramesLayer'
+import { BoardGuidesLayer } from './BoardGuidesLayer'
 import styles from './CanvasTransformLayer.module.css'
 
 interface CanvasTransformLayerProps {
@@ -114,6 +115,10 @@ export function CanvasTransformLayer({
           BoardNotesLayer above (paints above frames, inherits pan/zoom,
           self-gates on active board). */}
       <BoardDocsLayer />
+      {/* Snap-alignment guide lines (Phase 6B) — mounted last so they paint
+          above every other board layer while a frame/note/doc is mid-drag.
+          Self-gates on there being active guides; safe to always mount. */}
+      <BoardGuidesLayer />
     </div>
   )
 }

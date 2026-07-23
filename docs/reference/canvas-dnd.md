@@ -180,6 +180,22 @@ Gated by `task414-wrap-to-container.test.ts` and `multiWrapDefaults.test.ts` —
 
 ---
 
+## Board furniture drag + snap-to-peer guides (Studio)
+
+Studio-mode board furniture — frames (`BoardFramesLayer`), sticky notes (`BoardNotesLayer`), and doc blocks (`BoardDocsLayer`) — is a **second, deliberately separate drag system** from the `@dnd-kit/core` topology above. Each furniture view (`BoardFrameView`, `StickyNoteView`, `DocBlockView`) drags itself via raw pointer-capture on its own header/body (`setPointerCapture` + `screenDelta / zoom`), not `useDraggable`. Do not migrate this onto `@dnd-kit` — pointer-capture is correct here (see `useCanvasReorderDrag.ts`'s module doc for why the tree-reorder system stays on dnd-kit instead).
+
+**Snap-to-peer alignment (Phase 6B).** While dragging a frame/note/doc, its move handler snaps the raw new position to the closest aligned edge/center of every OTHER piece of furniture on the active board, and draws the alignment guide(s) it snapped to:
+
+- **`computeSnap(dragged, peers, threshold)`** — the pure core, `src/admin/pages/site/canvas/boardSnapping.ts`. For each axis (x, y) independently, it checks the dragged rect's start/center/end against every peer's start/center/end, picks the closest pair within `threshold` board units (closest wins; at most one snap per axis), and returns the adjusted top-left position plus a `SnapGuide` per matched axis. No peers, or no match within threshold, leaves that axis untouched. Pure — no React, no DOM — unit-tested in `src/__tests__/canvas/boardSnapping.test.ts` the same way `frameResize.ts`/`frameVirtualization.ts` are.
+- **`collectPeerRects(board, dragged)`** — flattens a board's frames/notes/docs into the flat `SnapRect[]` peer list, excluding whichever object is being dragged. Frames without a saved size fall back to `FRAME_WIDTH`/`FRAME_HEIGHT`, mirroring `BoardFramesLayer`'s own render-time fallback.
+- **Threshold:** `SNAP_THRESHOLD_BOARD_UNITS = 8` — a fixed board-unit distance, not a screen-pixel feel divided by zoom. Simpler, and board furniture rarely sits near the threshold at extreme zoom in practice.
+- **Guides are transient, not persisted.** `boardSnapGuides` (`boardSlice`) is a top-level store field holding the active drag's `SnapGuide[]`, separate from `boards`/`BoardsFile` — it never reaches `serializeBoardsFile` or the boards auto-save effect, and `setBoardSnapGuides` never flips `boardsDirty`. Each move handler calls `setBoardSnapGuides(snapped.guides)`; pointer-up/cancel clears it (`setBoardSnapGuides([])`).
+- **`BoardGuidesLayer`** (`canvas/BoardGuidesLayer/`) renders the active guides as thin lines, mounted last inside `CanvasTransformLayer` so it paints above every furniture layer and inherits the pan/zoom transform for free. `pointer-events: none` throughout — guides are purely visual. Line color is the `--canvas-snap-guide-color` token (globals.css) — a fourth canvas-affordance identity distinct from the selection/hover/selector rings.
+
+**Deferred from this pass** (see the plan's backlog): multi-select drag for board furniture (marquee/shift-click, moving several objects together), and drop-precision improvements to the tree-reorder system (`useCanvasReorderDrag.ts`) — a different drag system, out of scope here.
+
+---
+
 ## Cookbook
 
 ### Drop a new module from the picker
@@ -260,6 +276,9 @@ Don't add raw `dragstart` / `dragend` listeners — `@dnd-kit` owns those. If yo
   - `src/admin/pages/site/panels/MediaExplorerPanel/mediaCanvasInsertion.ts` — media asset → base module/defaults mapping
   - `src/admin/pages/site/store/insertLocation.ts` — `InsertLocation` shape
   - `src/core/page-tree/mutations.ts` — `insertNode`, `moveNode`, `moveNodes`, `wrapNode`
+  - `src/admin/pages/site/canvas/boardSnapping.ts` — `computeSnap`, `collectPeerRects` (Studio board furniture snap-to-peer, Phase 6B)
+  - `src/admin/pages/site/canvas/BoardGuidesLayer/` — renders the active snap guides
+  - `src/admin/pages/site/store/slices/boardSlice.ts` — `boardSnapGuides` / `setBoardSnapGuides` (transient, not persisted)
 - Gate tests:
   - `src/__tests__/architecture/task414-wrap-to-container.test.ts`
   - `src/__tests__/architecture/canvas-aware-selectors.test.ts`

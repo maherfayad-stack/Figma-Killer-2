@@ -12,7 +12,7 @@
 | 3 | Visual style editing → source | ✅ Done — `77d4188`, `dd2b3e8` |
 | 4 | Multiple boards + documentation | ✅ Done — `321ff35`, `aa5379c` |
 | 5 | Performance pass | 🚧 In progress — 5A done (`376cd75`), 5B done, 5C pending |
-| 6 | Design tab UI, canvas DnD, Inspect tab, code export, resizable frames + device presets | 🚧 In progress — 6C, 6D, 6E done, 6A–6B planned — see "Phase 6" below |
+| 6 | Design tab UI, canvas DnD, Inspect tab, code export, resizable frames + device presets | 🚧 In progress — 6C, 6D, 6E done, 6B board-level snapping done (drop precision + multi-select deferred to backlog), 6A planned — see "Phase 6" below |
 | 7 | Multi-file backend, MCP React-app import, GitHub-link import | 📋 Planned — see "Phase 7" below |
 
 **Dogfood fixes landed on top of the phase work:** studio mode made sticky so it stops reverting to CMS breakpoints (`13ec847`); board switcher moved to bottom-center to clear the canvas notch (`9c6df05`).
@@ -191,7 +191,7 @@ The "make it feel like a real design tool" phase. Four independent slices — 6A
 4. Keep every control on the `src/ui/` primitives (`Button`, `Input`, `Select`, `Switch`, `ColorInput`). No bespoke controls.
 **Gate:** selecting a node shows a scannable, grouped design tab; token-bound values read as tokens; all existing edits still round-trip to source.
 
-### 6B — Canvas drag & drop
+### 6B — Canvas drag & drop 🔄 Board-level snapping done; drop precision + multi-select deferred
 **Today:** DnD runs on `@dnd-kit/core`; canvas-specific behavior is documented in [`docs/reference/canvas-dnd.md`](docs/reference/canvas-dnd.md), with `useCanvasReorderDrag.ts` handling reorder + edge auto-pan. Board-level drags (frames, sticky notes, doc blocks) use raw pointer-capture with `screenDelta / zoom`, deliberately separate from dnd-kit.
 **Plan:**
 1. **Drop precision:** clearer insertion indicators when dragging a module into the tree — show the exact insertion line and the target parent, at any zoom.
@@ -199,6 +199,14 @@ The "make it feel like a real design tool" phase. Four independent slices — 6A
 3. **Multi-select drag** for board furniture (marquee or shift-click), moving several objects together.
 4. Keep the two drag systems separate — do NOT migrate board furniture onto dnd-kit just for symmetry; pointer-capture is correct there.
 **Gate:** dropping a module lands exactly where the indicator showed at any zoom; frames/notes snap and show guides; multi-select moves as one.
+
+**Findings (board-level snapping, done):**
+1. **Only slice 2 (board-level snapping) shipped this pass** — scoped deliberately to keep the PR coherent. Slice 1 (drop precision on the tree/module-insertion indicator, `useCanvasReorderDrag.ts`) and slice 3 (multi-select drag for board furniture) are **not built**; both moved to the backlog below rather than half-implemented alongside snapping.
+2. **`computeSnap(dragged, peers, threshold)`** (`src/admin/pages/site/canvas/boardSnapping.ts`) is the pure core, exactly as scoped: per axis, checks the dragged rect's start/center/end against every peer's start/center/end, snaps to the closest match within `threshold` (closest wins, at most one snap per axis), and returns the adjusted `x`/`y` plus 0–2 `SnapGuide`s. Unit-tested in `src/__tests__/canvas/boardSnapping.test.ts` (no peers, left-edge align, center-to-center align — using a differently-sized peer so it isn't indistinguishable from an edge match, both-axes align, just-outside-threshold, closest-of-several-wins, guide-span union). `collectPeerRects(board, dragged)` is the one non-pure-math helper — flattens a board's frames/notes/docs into `SnapRect[]`, excluding the dragged object.
+3. **Threshold: `SNAP_THRESHOLD_BOARD_UNITS = 8`, fixed board units** (not a screen-pixel feel divided by zoom) — simpler, and in practice board furniture rarely sits near the threshold at extreme zoom. Noted as a deliberate simplification, not a placeholder.
+4. **Guides are transient, never persisted.** `boardSnapGuides` (`boardSlice`) is a sibling top-level store field to `boards`/`BoardsFile`, not a member of it — `serializeBoardsFile` only ever sees a `BoardsFile`, so it is structurally impossible for guides to leak into `boards.json`. `setBoardSnapGuides` never touches `boardsDirty`, so the 800 ms boards auto-save (`AdminCanvasLayout`) never fires from a guide update.
+5. **`BoardGuidesLayer`** (`canvas/BoardGuidesLayer/`) mounts last inside `CanvasTransformLayer`, after `BoardDocsLayer`, so guides paint above every furniture layer while inheriting pan/zoom for free (same pattern as `BoardNotesLayer`/`BoardDocsLayer`). New token `--canvas-snap-guide-color` (globals.css) — a fourth canvas-affordance identity color alongside the selection/hover/selector rings.
+6. **Wiring:** each of `BoardFrameView`, `StickyNoteView`, `DocBlockView`'s existing pointer-capture move handler now computes the raw new `x`/`y` as before, then calls `collectPeerRects` + `computeSnap`, publishes the guides via `setBoardSnapGuides`, and passes the SNAPPED `x`/`y` to the existing move action (`setFramePosition` / `moveNote` / `moveDoc`). Pointer-up/cancel clears guides. Frame RESIZE (the 8-handle drag from Phase 6E) was intentionally left unsnapped — the plan scoped snapping to position drags, not resize.
 
 ### 6C — Inspect tab (colors + CSS properties) ✅ Done
 **New capability.** A read-only "Inspect" panel for the selected node — the Figma-inspect / devtools-style view: resolved colors as swatches, typography, spacing/box model, and the effective CSS.
@@ -311,6 +319,8 @@ These surfaced during implementation and dogfooding. None block the Phase 5 gate
 3. **Connectors / arrows.** The board object union was scoped for `frame | sticky | doc`; connectors/arrows (in the original Req-4 sketch) are not built.
 4. **Frame default sizing.** ✅ Shipped in **Phase 6E** (per-frame width/height + drag-resize + device-size presets — see the "6E" findings above). A frame with no saved size still renders at the fixed 1024×800 from `frameGrid` — that fallback is intentional, not a gap.
 5. **Optional studio toggle in the toolbar.** Studio mode is entered via `?studio` (now sticky via localStorage). A visible on/off toggle in the toolbar would be friendlier than editing the URL.
+6. **Multi-select drag for board furniture** (deferred from Phase 6B). Marquee-select or shift-click across frames/sticky notes/doc blocks, then drag the group together — `moveNodes`-style multi-move, but for board furniture instead of page-tree nodes. Snapping (`computeSnap`) already handles a single dragged rect against peers; a multi-select drag would need to decide how the group snaps as a unit (e.g. snap the group's bounding box, not each member independently).
+7. **Tree drop-indicator precision** (deferred from Phase 6B). Clearer insertion indicators when dragging a module into the page tree — the exact insertion line and target parent at any zoom. This is the `@dnd-kit`-based reorder system (`useCanvasReorderDrag.ts`), a different drag system from the board-furniture pointer-capture snapping shipped in 6B; left untouched per the 6B scoping.
 
 ## Pre-existing failures (NOT from this work — do not "fix")
 - `toolbar.test.ts` ENOENT — repo path contains a space (`Figma Killer 2` → `%20`), a fork-base path issue.
