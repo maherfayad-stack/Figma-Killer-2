@@ -14,6 +14,7 @@ import { Button } from '@ui/components/Button'
 import { pushToast } from '@ui/components/Toast'
 import { getErrorMessage } from '@core/utils/errorMessage'
 import { downloadStudioCode } from '@site/studio/downloadStudioCode'
+import { getStudioWorkspaceDir } from '@site/studio/studioWorkspaceDir'
 
 export function DownloadCodeButton() {
   const [busy, setBusy] = useState(false)
@@ -22,7 +23,7 @@ export function DownloadCodeButton() {
     if (busy) return
     setBusy(true)
     try {
-      await downloadStudioCode()
+      await downloadStudioCode({ dir: getStudioWorkspaceDir() })
     } catch (err) {
       pushToast({
         kind: 'error',

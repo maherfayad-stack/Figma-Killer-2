@@ -1,6 +1,7 @@
 /**
  * Shared workspace directory-walk primitive — used both by the server-side
- * "download the code" zip export (`server/handlers/studio.ts`) and by
+ * "download the code" zip export (`server/handlers/studio.ts`), the GitHub
+ * import writer (`server/handlers/studioGithubImport.ts`), and by
  * `componentSources.ts`'s multi-file ts-morph `Project` (which must not add
  * build output / dependency source as if it were app code). One exclusion
  * list, reused everywhere a studio workspace is walked recursively, per
@@ -18,6 +19,17 @@ export const EXCLUDED_WORKSPACE_DIR_NAMES: ReadonlySet<string> = new Set([
   '.next',
   '.turbo',
 ])
+
+/**
+ * Shared workspace size caps — one number reused by every operation that
+ * copies a whole studio workspace around (the download zip in
+ * `collectWorkspaceFiles`, and the GitHub import writer's per-file /
+ * file-count guards). Files larger than `WORKSPACE_MAX_FILE_BYTES` are
+ * skipped outright, never partially included/written; collection/import
+ * stops (does not throw) once `WORKSPACE_MAX_FILES` is reached.
+ */
+export const WORKSPACE_MAX_FILE_BYTES = 5 * 1024 * 1024 // 5 MB — generous for source/text/small assets
+export const WORKSPACE_MAX_FILES = 5000
 
 /**
  * Recursively lists every real file under `dir` as a POSIX-separated path

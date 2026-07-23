@@ -18,7 +18,7 @@
 | 6E | Resizable frames + device presets | ✅ Done — `4fc43c5` |
 | 6A | Design tab UI polish pass | ⏸️ Pending — deferred (taste-driven; wants human dogfood eye) |
 | 7A | Multi-file workspace loader + local/package component resolution | ✅ Done — `2077c52` |
-| 7B | GitHub-link import | 📋 Next |
+| 7B | GitHub-link import | ✅ Done — `server/handlers/studioGithubImport.ts` (SHA to be filled in a follow-up `docs(studio): mark 7B done` commit, matching the 7A convention above) |
 | 7C | MCP React-app import | 📋 Planned |
 
 **Dogfood bug fixes (2026-07-24):** resized frame no longer resets on move (`5ef4e66`); edits no longer silently revert after a line-shifting codemod (`a260e70`); source `style={{}}` now renders on the canvas (`1b79996`).
@@ -298,14 +298,43 @@ The largest architectural leap: go from a curated flat `studio-workspace/pages/*
 5. **Docs.** Update the studio/fork docs to describe the multi-file workspace model.
 **Gate:** point the studio at a multi-file React project (pages + local components + shared modules); pages render as frames; selecting a node resolves to the correct file; edits write to the right file; npm-package components are read-only, local ones editable.
 
-### 7B — GitHub-link import
-**New capability.** Paste a GitHub repo URL → the app pulls it in as a studio workspace.
-**Plan:**
-1. Server endpoint (studio handler family) that, given a repo URL (+ optional branch/subdir), fetches the source into a workspace directory. Prefer a **tarball download of a ref** over a full `git clone` where possible (lighter, no history); support private repos only via an explicit user-supplied token, never a baked-in credential.
-2. Hand the fetched tree to the 7A workspace loader — import is just "fetch source, then load it as a project." Do NOT build a second parsing path.
-3. **Safety:** treat imported source as untrusted input. Nothing from an imported repo executes on the server; parsing is static (ts-morph / `@core/page-parser`) and the QuickJS sandbox rules for any plugin-like code still apply. Cap repo size / file count and report what was skipped (no silent truncation).
-4. Client: a "Import from GitHub" entry (URL input + optional branch/subdir), fetched through `@core/http`; progress + a clear error envelope on failure (bad URL, private without token, too large).
-**Gate:** paste a public React repo URL → it imports, loads as a workspace (via 7A), and its pages render as frames; a bad/oversized/private-without-token URL fails with a clear toasted message, not a crash.
+### 7B — GitHub-link import ✅ Done
+**Paste a GitHub repo URL → the app pulls it in as a studio workspace.**
+
+`server/handlers/studioGithubImport.ts` owns the whole fetch-and-write step, kept
+as a sibling file to (not a rewrite of) `server/handlers/studio.ts`:
+
+1. **`parseGithubRepoUrl`** (pure) — `https://github.com/<owner>/<repo>` only
+   (`.git` suffix / trailing slash / extra path segments like `/tree/main`
+   tolerated); anything else (wrong host, bad protocol, unsafe owner/repo
+   chars) is rejected before any network call.
+2. **`buildGithubZipballUrl`** — the GitHub REST zipball endpoint
+   (`/repos/{owner}/{repo}/zipball/{ref}`, `ref` defaulting to `HEAD`) rather
+   than `codeload.github.com`, so the default branch never has to be guessed.
+   Private repos: `token` is forwarded as `Authorization: Bearer <token>` —
+   never read from env, never logged.
+3. **`resolveZipEntryRelPath`** (pure) — strips the zipball's top-level
+   `<repo>-<sha>/` folder, applies optional `subdir` scoping, and rejects
+   path traversal / excluded dirs (`EXCLUDED_WORKSPACE_DIR_NAMES`, shared with
+   the 6D download export via `@core/page-parser`). Runs inside `unzipSync`'s
+   `filter` callback — fflate skips inflation entirely for rejected entries,
+   which is also the zip-bomb mitigation (paired with a per-file cap
+   `WORKSPACE_MAX_FILE_BYTES`, a file-count cap `WORKSPACE_MAX_FILES`, and an
+   aggregate uncompressed-bytes cap). The compressed download itself is
+   size-capped before being fully buffered.
+4. The target is a **repo-scoped** `studio-workspace-imports/<owner>-<repo>/`
+   directory — never the hand-authored `studio-workspace/` — cleared and
+   repopulated on each import (safe: this directory IS the explicit target).
+5. `POST /admin/api/studio/import-github` (`readValidatedBody` + the `{error}`
+   envelope) is the only new route; it is a thin wrapper over
+   `runGithubImport` — no parsing happens here. The client
+   (`ImportGithubDialog` → `importGithubProject`) then calls the SAME
+   `/admin/api/studio/load?dir=<returned dir>` every other studio workspace
+   uses — import is "fetch source, then load it via 7A," not a second parsing
+   path. `studioWorkspaceDir` (new, sticky like `studioMode`) is what makes
+   load/save/boards/download agree on which on-disk directory is active after
+   an import switches it.
+**Gate:** paste a public React repo URL → it imports, loads as a workspace (via 7A), and its pages render as frames; a bad/oversized/private-without-token URL fails with a clear toasted message, not a crash. ✅
 
 ### 7C — MCP: import React apps into the system
 **New capability, riding existing infra.** Instatic already exposes its CMS tools over MCP at `/_instatic/mcp` (`server/ai/mcp/`, per-connector bearer tokens, the `(userId, scope)` live workspace bridge — see [`docs/features/mcp-connectors.md`](docs/features/mcp-connectors.md)). Add an MCP tool so an external agent (Claude Code, Codex) can import a React app into a studio workspace programmatically.

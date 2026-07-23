@@ -16,6 +16,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
+import { zipSync, strToU8 } from 'fflate'
 import {
   applyStudioEdit,
   assignPageIds,
@@ -462,5 +463,62 @@ describe('GET /admin/api/studio/load — Phase 7A multi-file workspace', () => {
 
     expect(body.pages).toEqual([])
     expect(body.componentSources).toEqual({})
+  })
+})
+
+describe('POST /admin/api/studio/import-github — Phase 7B route wiring', () => {
+  let tmpDir: string
+  let originalFetch: typeof fetch
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-import-route-'))
+    originalFetch = globalThis.fetch
+  })
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+    globalThis.fetch = originalFetch
+  })
+
+  it('returns 400 with an { error } envelope for a non-GitHub URL, without touching the network', async () => {
+    let fetchCalled = false
+    globalThis.fetch = (async () => {
+      fetchCalled = true
+      throw new Error('should not be called')
+    }) as typeof fetch
+
+    const url = new URL('http://localhost/admin/api/studio/import-github')
+    const req = new Request(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ url: 'https://example.com/not/github' }),
+    })
+    const res = await tryServeStudio(req, undefined, url, url.pathname)
+
+    expect(res!.status).toBe(400)
+    const body = (await res!.json()) as { error: string }
+    expect(body.error).toContain('GitHub')
+    expect(fetchCalled).toBe(false)
+  })
+
+  it('imports a fake zipball end to end and returns { ok, dir, files, skipped }', async () => {
+    const zip = zipSync({
+      'acme-widgets-abc1/pages/Home.tsx': strToU8('export default function Home() { return null }'),
+    })
+    globalThis.fetch = (async () =>
+      new Response(zip, { status: 200, headers: { 'content-length': String(zip.byteLength) } })) as typeof fetch
+
+    const url = new URL('http://localhost/admin/api/studio/import-github')
+    const req = new Request(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ url: 'https://github.com/acme/widgets', dir: tmpDir }),
+    })
+    const res = await tryServeStudio(req, undefined, url, url.pathname)
+
+    expect(res!.status).toBe(200)
+    const body = (await res!.json()) as { ok: boolean; dir: string; files: number; skipped: number }
+    expect(body).toEqual({ ok: true, dir: tmpDir, files: 1, skipped: 0 })
+    expect(fs.existsSync(path.join(tmpDir, 'pages', 'Home.tsx'))).toBe(true)
   })
 })

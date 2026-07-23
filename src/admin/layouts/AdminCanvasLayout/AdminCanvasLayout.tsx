@@ -42,6 +42,7 @@ import { Toolbar } from '@admin/pages/site/toolbar/Toolbar'
 import { ZoomControls } from '@admin/pages/site/toolbar/ZoomControls'
 import { PublishButton } from '@admin/pages/site/toolbar/PublishButton'
 import { DownloadCodeButton } from '@admin/pages/site/toolbar/DownloadCodeButton'
+import { ImportGithubButton } from '@admin/pages/site/toolbar/ImportGithubButton'
 import { useEditorAppearancePreferences } from '@admin/pages/site/preferences/editorPreferences'
 import { usePersistence } from '@admin/pages/site/hooks/usePersistence'
 import { useSiteEditorUrlSync } from '@admin/pages/site/hooks/useSiteEditorUrlSync'
@@ -51,11 +52,13 @@ import { cmsAdapter } from '@core/persistence/cms'
 import { fsCodemodAdapter, STUDIO_AUTOSAVE_DELAY_MS } from '@site/studio/fsCodemodAdapter'
 import { fetchBoards, saveBoards } from '@site/studio/boardsApi'
 import { syncStudioModeFromUrl } from '@site/studio/studioMode'
+import { getStudioWorkspaceDir } from '@site/studio/studioWorkspaceDir'
 import { createBoardsFile } from '@core/studio-board'
 import { selectActiveBoard } from '@site/store/slices/boardSlice'
 import { pushToast } from '@ui/components/Toast'
 import { getErrorMessage } from '@core/utils/errorMessage'
 import { useAdminUi } from '@admin/state/adminUi'
+import { CMS_SITE_RELOAD_EVENT } from '@admin/state/adminEvents'
 import { useInstalledEditorPlugins } from '@admin/pages/plugins/hooks/useInstalledEditorPlugins'
 import { usePluginEventBridge } from '@admin/pages/plugins/hooks/usePluginEventBridge'
 import { AdminSectionNavigation } from '@admin/shared/AdminSectionNavigation'
@@ -259,7 +262,12 @@ export function AdminCanvasLayout() {
                   autosave (STUDIO_AUTOSAVE_DELAY_MS) keeps source in sync
                   without a manual save button; its own export story is
                   DownloadCodeButton below (Phase 6D). */}
-              {studioMode ? <DownloadCodeButton /> : (
+              {studioMode ? (
+                <>
+                  <ImportGithubButton />
+                  <DownloadCodeButton />
+                </>
+              ) : (
                 <PublishButton
                   enabled={canPublishPages}
                   onSave={canSaveSite ? persistence.saveSite : undefined}
@@ -308,8 +316,15 @@ const BOARDS_AUTOSAVE_DEBOUNCE_MS = 800
 /**
  * Studio-mode sticky-notes board persistence.
  *
- * Load: once, on mount when `studioMode` is true — fetches `.studio/boards.json`
- * (server default workspace) and hydrates `boardSlice` via `loadBoards`.
+ * Load: on mount when `studioMode` is true, and again every time
+ * `CMS_SITE_RELOAD_EVENT` fires — fetches `.studio/boards.json` for the
+ * ACTIVE workspace dir (`getStudioWorkspaceDir()`; `undefined` = server
+ * default) and hydrates `boardSlice` via `loadBoards`. Re-running on the
+ * reload event matters for GitHub import (Phase 7B): importing switches the
+ * active dir and fires this same event so the page tree reloads
+ * (`fsCodemodAdapter`) — boards must follow to the new dir too, or the next
+ * auto-save below would silently write board data into the PREVIOUS
+ * workspace's `.studio/boards.json`.
  *
  * Auto-save: subscribes to `boardsDirty` and, ~800ms after it flips to `true`,
  * saves the current `boards` back to the server and clears the flag. A ref
@@ -327,26 +342,33 @@ function useStudioBoardsPersistence(studioMode: boolean): void {
     if (!studioMode) return undefined
 
     let cancelled = false
-    fetchBoards()
-      .then((file) => {
-        if (!cancelled) useEditorStore.getState().loadBoards(file)
-      })
-      .catch((err) => {
-        if (cancelled) return
-        // A boards-load failure must NOT silently fall the canvas back to the
-        // single-page breakpoint frames — in studio the board is the canvas.
-        // Seed an empty boards file (loadBoards creates a default board), so
-        // the multi-frame board still renders; surface the failure as a toast.
-        useEditorStore.getState().loadBoards(createBoardsFile())
-        pushToast({
-          kind: 'error',
-          title: 'Failed to load boards',
-          body: getErrorMessage(err, 'Unknown error loading studio boards'),
+
+    function load() {
+      fetchBoards(getStudioWorkspaceDir())
+        .then((file) => {
+          if (!cancelled) useEditorStore.getState().loadBoards(file)
         })
-      })
+        .catch((err) => {
+          if (cancelled) return
+          // A boards-load failure must NOT silently fall the canvas back to the
+          // single-page breakpoint frames — in studio the board is the canvas.
+          // Seed an empty boards file (loadBoards creates a default board), so
+          // the multi-frame board still renders; surface the failure as a toast.
+          useEditorStore.getState().loadBoards(createBoardsFile())
+          pushToast({
+            kind: 'error',
+            title: 'Failed to load boards',
+            body: getErrorMessage(err, 'Unknown error loading studio boards'),
+          })
+        })
+    }
+
+    load()
+    window.addEventListener(CMS_SITE_RELOAD_EVENT, load)
 
     return () => {
       cancelled = true
+      window.removeEventListener(CMS_SITE_RELOAD_EVENT, load)
     }
   }, [studioMode])
 
@@ -362,7 +384,7 @@ function useStudioBoardsPersistence(studioMode: boolean): void {
       // `boards` with a new reference (the pure @core/studio-board transforms are
       // immutable), so identity tells us whether an edit landed mid-flight.
       const snapshot = useEditorStore.getState().boards
-      saveBoards(snapshot)
+      saveBoards(snapshot, getStudioWorkspaceDir())
         .then(() => {
           const st = useEditorStore.getState()
           if (st.boards === snapshot) {

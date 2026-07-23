@@ -26,6 +26,7 @@ import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { createDefaultSiteDocument } from '@site/store/slices/site/defaults'
 import { registry } from '@core/module-engine'
 import { requestCmsSiteReload } from '@admin/state/adminEvents'
+import { getStudioWorkspaceDir } from './studioWorkspaceDir'
 
 /** Node ids from page-parser are `relFile:line:col` — a decodable source location. */
 const SOURCE_NODE_ID = /^.+:\d+:\d+$/
@@ -124,8 +125,13 @@ function literalInlineStyles(inlineStyles: Record<string, unknown> | undefined):
 
 export const fsCodemodAdapter: IPersistenceAdapter = {
   async loadSite(): Promise<SiteDocument | undefined> {
+    // A GitHub import (Phase 7B) points this at studio-workspace-imports/… —
+    // see studioWorkspaceDir's doc comment for why every studio client call
+    // must agree on the same active dir.
+    const overrideDir = getStudioWorkspaceDir()
     const { dir, pages, componentSources: sources } = await apiRequest('/admin/api/studio/load', {
       schema: StudioLoadResponseSchema,
+      query: overrideDir ? { dir: overrideDir } : undefined,
     })
     loadedDir = dir
     componentSources = sources

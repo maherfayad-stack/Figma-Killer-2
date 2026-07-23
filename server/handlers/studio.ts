@@ -33,6 +33,17 @@
  *       edit landing on an element with mixed children) is logged and
  *       skipped rather than aborting the whole batch.
  *
+ *   POST /admin/api/studio/import-github   body: { url, ref?, subdir?, token?, dir? }
+ *       Phase 7B — GitHub-link import. Fetches the repo's zipball
+ *       (`server/handlers/studioGithubImport.ts` owns URL parsing, the
+ *       fetch, the zip-entry safety/size guards, and the write) into a
+ *       repo-scoped `studio-workspace-imports/<owner>-<repo>/` directory —
+ *       never the hand-authored `studio-workspace/` — and returns
+ *       `{ ok, dir, files, skipped }`. The client then calls this same
+ *       `/admin/api/studio/load?dir=<returned dir>` to load it: import is
+ *       "fetch source, then load it via the existing multi-file loader," not
+ *       a second parsing path.
+ *
  *   GET  /admin/api/studio/download?dir=<abs>
  *       Phase 6D — "Download the code". NOT codegen: the filesystem is
  *       already the source of truth, so this just zips it up.
@@ -55,6 +66,8 @@ import {
   listWorkspaceFiles,
   parsePageFile,
   resolveComponentSources,
+  WORKSPACE_MAX_FILE_BYTES,
+  WORKSPACE_MAX_FILES,
   type ComponentSource,
 } from '@core/page-parser'
 import { parsedPageToSitePage } from '@core/studio-sync/parsedPageToSitePage'
@@ -63,6 +76,7 @@ import { createBoardsFile, parseBoardsFile, serializeBoardsFile, type BoardsFile
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { badRequest, jsonResponse, readValidatedBody } from '../http'
 import { binaryResponse } from '../binary'
+import { GithubImportError, runGithubImport } from './studioGithubImport'
 
 const NODE_LOC_ID = /^(.*):(\d+):(\d+)$/
 
@@ -107,6 +121,21 @@ const SaveBodySchema = Type.Object({
 const BoardsPostBodySchema = Type.Object({
   dir: Type.Optional(Type.String()),
   boards: Type.Unknown(),
+})
+
+/**
+ * Body of POST /admin/api/studio/import-github (Phase 7B). `dir` is an
+ * escape hatch over the default `studio-workspace-imports/<owner>-<repo>`
+ * target — not part of the documented client contract, mainly useful for
+ * tests. `token`, when present, is forwarded as a Bearer credential and never
+ * logged or echoed back.
+ */
+const GithubImportBodySchema = Type.Object({
+  url: Type.String(),
+  ref: Type.Optional(Type.String()),
+  subdir: Type.Optional(Type.String()),
+  token: Type.Optional(Type.String()),
+  dir: Type.Optional(Type.String()),
 })
 
 /** Map a parsed node to an Instatic moduleId (design-system → alm.*, host tags → base.*). */
@@ -216,9 +245,6 @@ interface CollectWorkspaceFilesOptions {
   maxFiles?: number
 }
 
-const DEFAULT_MAX_FILE_BYTES = 5 * 1024 * 1024 // 5 MB — generous for source/text/small assets
-const DEFAULT_MAX_FILES = 5000
-
 /**
  * Recursively collects every real source file under `dir` for the "Download
  * code" export (Phase 6D). Pure-ish (dir + options in, file list out) so it's
@@ -240,8 +266,8 @@ export function collectWorkspaceFiles(
   dir: string,
   options: CollectWorkspaceFilesOptions = {},
 ): WorkspaceFile[] {
-  const maxFileBytes = options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES
-  const maxFiles = options.maxFiles ?? DEFAULT_MAX_FILES
+  const maxFileBytes = options.maxFileBytes ?? WORKSPACE_MAX_FILE_BYTES
+  const maxFiles = options.maxFiles ?? WORKSPACE_MAX_FILES
   const results: WorkspaceFile[] = []
 
   for (const relPath of listWorkspaceFiles(dir)) {
@@ -459,6 +485,24 @@ export async function tryServeStudio(
       writeFileSync(file, serializeBoardsFile(boards))
       return jsonResponse({ ok: true, boards })
     } catch (err) {
+      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+    }
+  }
+
+  // GitHub-link import (Phase 7B) — fetch a repo's zipball into its own
+  // studio-workspace-imports/<owner>-<repo>/ directory. Real work lives in
+  // studioGithubImport.ts; this route is just body validation + error mapping.
+  if (pathname === '/admin/api/studio/import-github' && req.method === 'POST') {
+    try {
+      const body = await readValidatedBody(req, GithubImportBodySchema)
+      if (!body) return badRequest('invalid import body')
+      const result = await runGithubImport(body)
+      return jsonResponse({ ok: true, ...result })
+    } catch (err) {
+      console.error('[studio]', err)
+      if (err instanceof GithubImportError) {
+        return jsonResponse({ error: err.message }, { status: err.status })
+      }
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
     }
   }
