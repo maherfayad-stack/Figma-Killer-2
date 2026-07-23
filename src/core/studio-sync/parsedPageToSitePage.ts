@@ -70,6 +70,10 @@ export function parsedPageToSitePage(parsed: ParsedPage, opts: ParsedPageToSiteP
       // toggles — see `lockReason`'s doc comment in `page-tree/baseNode.ts`.
       ...(node.locked ? { locked: true } : {}),
       ...(node.lockReason ? { lockReason: node.lockReason } : {}),
+      // Carry the source `style={{…}}` through so the canvas renders the real
+      // inline styles (`NodeRenderer` reads `node.inlineStyles`). Without this
+      // an authored flex/gap/etc. layout is invisible on the board.
+      ...(node.inlineStyles ? { inlineStyles: node.inlineStyles } : {}),
     }
   }
 

@@ -57,6 +57,34 @@ describe('parsePageFile', () => {
     expect(div.children).toContain(button.id)
   })
 
+  it('captures a style={{…}} object literal into inlineStyles (literal entries only)', () => {
+    const source = [
+      'const gap = 8',
+      'export default function Page() {',
+      '  return (',
+      '    <div style={{ display: "flex", flexDirection: "column", marginTop: 40, gap, background: accent() }}>',
+      '      <span>hi</span>',
+      '    </div>',
+      '  )',
+      '}',
+      '',
+    ].join('\n')
+    const file = writeFixture('inline-styles.tsx', source)
+
+    const div = byName(parsePageFile(file, tmpDir), 'div')
+    // String + numeric literals captured; `gap` (identifier) and
+    // `background: accent()` (call) skipped, matching extractProps' policy.
+    expect(div.inlineStyles).toEqual({ display: 'flex', flexDirection: 'column', marginTop: 40 })
+  })
+
+  it('leaves inlineStyles absent for an element with no style attribute', () => {
+    const file = writeFixture(
+      'no-style.tsx',
+      'export default function Page() {\n  return <div>hi</div>\n}\n',
+    )
+    expect(byName(parsePageFile(file, tmpDir), 'div').inlineStyles).toBeUndefined()
+  })
+
   it('captures numeric/boolean literal props and skips non-literal props', () => {
     const source = [
       'export default function Page() {',

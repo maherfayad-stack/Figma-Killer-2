@@ -230,6 +230,7 @@ function processElement(
   const lockReason = inheritedLocked ? inheritedReason : hasSpread ? SPREAD_LOCK_REASON : undefined
 
   const props = extractProps(attributes)
+  const inlineStyles = extractInlineStyles(attributes)
   const rawChildren = Node.isJsxElement(element) ? element.getJsxChildren() : []
   const children = Node.isJsxElement(element) ? processChildren(rawChildren, ctx, locked, lockReason) : []
   // Only capture text for editable-surface elements — a locked/dynamic node
@@ -246,6 +247,7 @@ function processElement(
     locked,
     ...(lockReason ? { lockReason } : {}),
     ...(text !== undefined ? { text } : {}),
+    ...(inlineStyles !== undefined ? { inlineStyles } : {}),
   }
   ctx.nodes[id] = node
 
@@ -288,11 +290,59 @@ function extractProps(attributes: (JsxAttribute | JsxSpreadAttribute)[]): Record
       }
       // Any other expression kind (identifier, call, template, object, …)
       // is not a literal — intentionally skipped (still present in source,
-      // just not captured as an editable prop).
+      // just not captured as an editable prop). The `style={{…}}` object is
+      // captured separately by `extractInlineStyles` so the canvas can render
+      // the authored inline styles.
     }
   }
 
   return result
+}
+
+/**
+ * Flatten an element's `style={{ … }}` object-literal attribute into its
+ * literal (string/number) entries, so the canvas renders the inline styles
+ * actually authored in source (`node.inlineStyles` → `NodeRenderer`). Mirrors
+ * `extractProps`' literal-only policy: a property whose value isn't a
+ * string/number literal (an identifier, `var(--x)` call, nested object,
+ * spread, …) is skipped rather than guessed at. Returns `undefined` when
+ * there's no `style` attribute, it isn't a plain object literal, or it has no
+ * literal entries.
+ */
+function extractInlineStyles(
+  attributes: (JsxAttribute | JsxSpreadAttribute)[],
+): Record<string, string | number> | undefined {
+  const styleAttr = attributes.find(
+    (a): a is JsxAttribute => Node.isJsxAttribute(a) && a.getNameNode().getText() === 'style',
+  )
+  if (!styleAttr) return undefined
+
+  const initializer = styleAttr.getInitializer()
+  if (initializer === undefined || !Node.isJsxExpression(initializer)) return undefined
+  const expression = initializer.getExpression()
+  if (expression === undefined || !Node.isObjectLiteralExpression(expression)) return undefined
+
+  const styles: Record<string, string | number> = {}
+  for (const property of expression.getProperties()) {
+    if (!Node.isPropertyAssignment(property)) continue // skip shorthand / spread / methods
+    const nameNode = property.getNameNode()
+    const key = Node.isIdentifier(nameNode)
+      ? nameNode.getText()
+      : Node.isStringLiteral(nameNode)
+        ? nameNode.getLiteralValue()
+        : null
+    if (key === null) continue // computed keys are not statically known
+    const valueNode = property.getInitializer()
+    if (valueNode === undefined) continue
+    if (Node.isStringLiteral(valueNode)) {
+      styles[key] = valueNode.getLiteralValue()
+    } else if (Node.isNumericLiteral(valueNode)) {
+      styles[key] = valueNode.getLiteralValue()
+    }
+    // Non-literal values (var refs, calls, nested objects) are skipped.
+  }
+
+  return Object.keys(styles).length > 0 ? styles : undefined
 }
 
 /**

@@ -22,6 +22,14 @@ export interface ParsedNode {
   name: string
   /** Literal attributes only — non-literal expression props are skipped. */
   props: Record<string, string | number | boolean>
+  /**
+   * The element's `style={{ … }}` object-literal attribute, flattened to its
+   * literal (string/number) entries so the canvas can render the real
+   * inline styles authored in source. Non-literal values (identifiers, calls,
+   * spreads) inside the object are skipped. Absent when the element has no
+   * `style` attribute or none of its entries are literals.
+   */
+  inlineStyles?: Record<string, string | number>
   /** Child node ids, in source order. */
   children: string[]
   loc: NodeLoc
