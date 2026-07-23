@@ -129,6 +129,26 @@ function resolveTextProp(moduleId: string): string | null {
 }
 
 /**
+ * Order a save batch BOTTOM-TO-TOP: descending line, then descending column.
+ * Node ids encode a `line:col` source location, and a codemod can change a
+ * file's line count (e.g. `setJsxStyle` collapsing a multiline `style={{…}}`
+ * to one line). Applying the lowest positions first guarantees an edit can
+ * never invalidate the source location of another edit still pending in the
+ * same batch. Edits whose id has no decodable location (synthetic nodes like
+ * `index:body`) sort last — `applyStudioEdit` no-ops on them anyway. Pure, so
+ * the ordering is unit-testable without touching the filesystem.
+ */
+export function orderStudioEditsForApply<T extends { nodeId: string }>(edits: readonly T[]): T[] {
+  return [...edits].sort((a, b) => {
+    const la = NODE_LOC_ID.exec(a.nodeId)
+    const lb = NODE_LOC_ID.exec(b.nodeId)
+    if (!la) return 1
+    if (!lb) return -1
+    return Number(lb[2]) - Number(la[2]) || Number(lb[3]) - Number(la[3])
+  })
+}
+
+/**
  * Applies one typed studio edit to the .tsx source under `dir`, dispatching
  * on `edit.kind` to the matching `ast-codemods` writer. Extracted as a pure
  * helper (dir + edit in, codemod side effect out) so it's unit-testable
@@ -317,9 +337,29 @@ export async function tryServeStudio(
       const body = await readValidatedBody(req, SaveBodySchema)
       if (!body) return badRequest('invalid save body')
       const dir = resolve(body.dir ?? defaultWorkspaceDir())
+      const edits = body.edits ?? []
+
+      // Apply edits bottom-to-top so a line-count-changing codemod can't
+      // invalidate another edit's location mid-batch (see the helper's doc).
+      const ordered = orderStudioEditsForApply(edits)
+
+      // Snapshot each touched file's line count so we can tell the client
+      // whether any write shifted line numbers. If so, the client's in-memory
+      // `line:col` node ids are now stale against disk and it must re-parse to
+      // re-sync them (see `shifted` handling in fsCodemodAdapter).
+      const touchedFiles = new Set<string>()
+      for (const edit of ordered) {
+        const m = NODE_LOC_ID.exec(edit.nodeId)
+        if (m) touchedFiles.add(join(dir, m[1]))
+      }
+      const lineCountBefore = new Map<string, number>()
+      for (const file of touchedFiles) {
+        lineCountBefore.set(file, existsSync(file) ? readFileSync(file, 'utf8').split('\n').length : 0)
+      }
+
       let written = 0
       let skipped = 0
-      for (const edit of body.edits ?? []) {
+      for (const edit of ordered) {
         try {
           if (applyStudioEdit(dir, edit)) written += 1
         } catch (err) {
@@ -330,8 +370,18 @@ export async function tryServeStudio(
           skipped += 1
         }
       }
+
+      let shifted = false
+      for (const file of touchedFiles) {
+        const after = existsSync(file) ? readFileSync(file, 'utf8').split('\n').length : 0
+        if (after !== lineCountBefore.get(file)) {
+          shifted = true
+          break
+        }
+      }
+
       if (skipped > 0) console.error(`[studio] save: ${written} written, ${skipped} skipped`)
-      return jsonResponse({ ok: true, written })
+      return jsonResponse({ ok: true, written, skipped, shifted })
     } catch (err) {
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
     }

@@ -15,7 +15,44 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { applyStudioEdit, collectWorkspaceFiles, pageIdFromFileName } from '../studio'
+import {
+  applyStudioEdit,
+  collectWorkspaceFiles,
+  orderStudioEditsForApply,
+  pageIdFromFileName,
+} from '../studio'
+
+describe('orderStudioEditsForApply', () => {
+  it('sorts bottom-to-top: descending line, then descending column', () => {
+    const edits = [
+      { nodeId: 'Home.tsx:5:6' },
+      { nodeId: 'Home.tsx:11:8' },
+      { nodeId: 'Home.tsx:5:20' },
+      { nodeId: 'Home.tsx:12:8' },
+    ]
+    expect(orderStudioEditsForApply(edits).map((e) => e.nodeId)).toEqual([
+      'Home.tsx:12:8',
+      'Home.tsx:11:8',
+      'Home.tsx:5:20',
+      'Home.tsx:5:6',
+    ])
+  })
+
+  it('sorts synthetic-location nodes (no line:col) last', () => {
+    const edits = [{ nodeId: 'index:body' }, { nodeId: 'Home.tsx:3:4' }]
+    expect(orderStudioEditsForApply(edits).map((e) => e.nodeId)).toEqual([
+      'Home.tsx:3:4',
+      'index:body',
+    ])
+  })
+
+  it('does not mutate the input array', () => {
+    const edits = [{ nodeId: 'Home.tsx:1:1' }, { nodeId: 'Home.tsx:9:1' }]
+    const before = [...edits]
+    orderStudioEditsForApply(edits)
+    expect(edits).toEqual(before)
+  })
+})
 
 describe('pageIdFromFileName', () => {
   it('lowercases a simple basename', () => {

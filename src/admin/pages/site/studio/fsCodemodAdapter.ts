@@ -25,6 +25,7 @@ import { apiRequest } from '@core/http'
 import { Type } from '@core/utils/typeboxHelpers'
 import { createDefaultSiteDocument } from '@site/store/slices/site/defaults'
 import { registry } from '@core/module-engine'
+import { requestCmsSiteReload } from '@admin/state/adminEvents'
 
 /** Node ids from page-parser are `relFile:line:col` — a decodable source location. */
 const SOURCE_NODE_ID = /^.+:\d+:\d+$/
@@ -35,10 +36,17 @@ const StudioLoadResponseSchema = Type.Object({
   pages: Type.Array(PageSchema),
 })
 
-/** POST /admin/api/studio/save — count of edits written back to source. */
+/**
+ * POST /admin/api/studio/save response. `shifted` is true when a write changed
+ * a file's line count (e.g. `setJsxStyle` collapsing a multiline `style={{…}}`
+ * to one line) — the in-memory `line:col` node ids are then stale against disk
+ * and must be re-derived by re-parsing (see the `shifted` branch in saveSite).
+ */
 const StudioSaveResponseSchema = Type.Object({
   ok: Type.Boolean(),
   written: Type.Number(),
+  skipped: Type.Number(),
+  shifted: Type.Boolean(),
 })
 
 /** Remembered from the last load so saveSite can tell the server which folder to write. */
@@ -137,10 +145,21 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
 
     if (edits.length === 0) return
 
-    await apiRequest('/admin/api/studio/save', {
+    const result = await apiRequest('/admin/api/studio/save', {
       method: 'POST',
       body: { dir: loadedDir, edits },
       schema: StudioSaveResponseSchema,
     })
+
+    // A write shifted line numbers, so every `line:col` node id below that
+    // point is now stale against disk. Re-parse the workspace to re-derive
+    // fresh ids (`requestCmsSiteReload` → usePersistence reload → loadSite),
+    // otherwise the NEXT edit on a shifted node would target the wrong source
+    // location and silently fail. The reload also clears the unsaved flag, so
+    // it can't loop into another save (there is no file watcher — a studio
+    // write never re-enters as an external change). Rare in practice: source
+    // formatting stabilizes after the first normalizing write, so `shifted`
+    // is false on subsequent idempotent saves.
+    if (result.shifted) requestCmsSiteReload()
   },
 }

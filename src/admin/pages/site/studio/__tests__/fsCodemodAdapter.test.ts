@@ -34,7 +34,7 @@ describe('fsCodemodAdapter.saveSite — write-loop safety', () => {
     globalThis.fetch = originalFetch
   })
 
-  function stubFetch(response: unknown = { ok: true, written: 1 }) {
+  function stubFetch(response: unknown = { ok: true, written: 1, skipped: 0, shifted: false }) {
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input.toString()
       calls.push({
