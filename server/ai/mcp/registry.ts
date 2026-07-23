@@ -4,7 +4,9 @@
  *
  * Two execution classes are exposed:
  *   - server-resolved tools (content reads + `site_list_documents` +
- *     `site_read_styles`) run in-process and work with NO editor open;
+ *     `site_read_styles` + `studio_import_project`, a thin adapter over the
+ *     Phase 7B GitHub import engine) run in-process and work with NO editor
+ *     open;
  *   - browser tools (structure edits, HTML/CSS authoring, design tokens, page
  *     lifecycle, content CRUD, code assets, live-DOM reads) are relayed to the
  *     connector owner's matching open Site or Content workspace via the live
@@ -31,6 +33,7 @@ import { styleMcpTools } from './tools/styleTools'
 import { contextMcpTools } from './tools/contextTool'
 import { documentMcpTools } from './tools/documentTools'
 import { createPublishMcpTool, type McpPublishRuntime } from './tools/publishTool'
+import { studioImportMcpTools } from './tools/studioImportTool'
 
 // Server-resolved site read tools whose handlers read the browser-posted
 // `ctx.snapshot`, which is null over MCP — they'd return nothing or throw.
@@ -51,6 +54,7 @@ function allMcpTools(runtime?: McpPublishRuntime): AiTool[] {
     ...contextMcpTools,
     ...styleMcpTools,
     ...documentMcpTools,
+    ...studioImportMcpTools,
     createPublishMcpTool(runtime),
     ...contentTools,
     ...siteTools,
