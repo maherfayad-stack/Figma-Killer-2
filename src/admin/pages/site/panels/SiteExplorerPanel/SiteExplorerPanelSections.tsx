@@ -2,6 +2,7 @@ import type { KeyboardEvent, MouseEvent } from 'react'
 import { FilePlusSolidIcon } from 'pixel-art-icons/icons/file-plus-solid'
 import { PaintBucketSolidIcon } from 'pixel-art-icons/icons/paint-bucket-solid'
 import { CodeIcon } from 'pixel-art-icons/icons/code'
+import { isStudioMode } from '@site/studio/studioMode'
 import type { SiteExplorerSectionId } from '@core/page-tree'
 import { SiteExplorerTreeSection, type SiteExplorerInlineRenameTarget } from './SiteExplorerTreeSection'
 import type { SiteExplorerDndState } from './SiteExplorerDndScope'
@@ -124,7 +125,15 @@ export function SiteExplorerPanelSections({
         />
       )}
 
-      {sectionGroup === 'site' && templateTreeModel && (
+      {/* Templates and Components are CMS document types (`page.template`,
+          `site.visualComponents`) with no filesystem-truth counterpart in
+          Studio — `fsCodemodAdapter` never populates either, and creating
+          one here wouldn't write back to any `.tsx` on disk (only
+          source-backed `relFile:line:col` nodes round-trip). Hiding both
+          sections avoids a dangling "create" affordance that silently loses
+          its work; "Pages" stays — it's the only way to see/rename/delete
+          the workspace's pages by name, board membership aside. */}
+      {sectionGroup === 'site' && templateTreeModel && !isStudioMode() && (
         <SiteExplorerTreeSection
           title="Templates"
           count={templatePageCount}
@@ -148,7 +157,7 @@ export function SiteExplorerPanelSections({
         />
       )}
 
-      {sectionGroup === 'site' && componentTreeModel && (
+      {sectionGroup === 'site' && componentTreeModel && !isStudioMode() && (
         <SiteExplorerTreeSection
           title="Components"
           count={componentCount}

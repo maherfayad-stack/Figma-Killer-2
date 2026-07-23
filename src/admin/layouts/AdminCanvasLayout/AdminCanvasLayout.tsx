@@ -250,11 +250,21 @@ export function AdminCanvasLayout() {
           rightSlot={(
             <>
               <ZoomControls />
-              <PublishButton
-                enabled={canPublishPages}
-                onSave={canSaveSite ? persistence.saveSite : undefined}
-                saveStatus={persistence.saveStatus}
-              />
+              {/* Publish targets the CMS publish pipeline (static-artefact
+                  bake + publish-version bump) — meaningless in Studio, whose
+                  source of truth is the on-disk .tsx and whose export story
+                  is the future "Download code" (Phase 6D, not built yet).
+                  Hide the whole action group (Publish + Save draft + status
+                  pill) rather than leave a dangling CMS affordance. Studio's
+                  own commit-on-idle autosave (STUDIO_AUTOSAVE_DELAY_MS) keeps
+                  source in sync without a manual save button. */}
+              {!studioMode && (
+                <PublishButton
+                  enabled={canPublishPages}
+                  onSave={canSaveSite ? persistence.saveSite : undefined}
+                  saveStatus={persistence.saveStatus}
+                />
+              )}
             </>
           )}
         />
