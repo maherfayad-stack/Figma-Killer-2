@@ -46,10 +46,22 @@ interface ParseContext {
 const DYNAMIC_LOCK_REASON = 'dynamic — rendered in code'
 const SPREAD_LOCK_REASON = 'spread props'
 
-export function parsePageFile(file: string, appDir: string): ParsedPage {
+/**
+ * `project` defaults to a fresh, single-file `Project` (this file only) —
+ * exactly the isolated behavior every existing caller relies on. Pass a
+ * shared, workspace-wide `Project` (`../page-parser` → `createWorkspaceProject`)
+ * when parsing every page of one workspace load, so cross-file imports (a
+ * page importing a local component) can later be resolved against the SAME
+ * parsed `SourceFile` via `resolveComponentSources` — a fresh per-file
+ * Project can't see other files at all.
+ */
+export function parsePageFile(
+  file: string,
+  appDir: string,
+  project: Project = new Project({ useInMemoryFileSystem: false }),
+): ParsedPage {
   try {
-    const project = new Project({ useInMemoryFileSystem: false })
-    const sourceFile = project.addSourceFileAtPath(file)
+    const sourceFile = project.getSourceFile(file) ?? project.addSourceFileAtPath(file)
     const relFile = path.relative(appDir, path.resolve(file)).split(path.sep).join('/')
 
     const componentDecl = findComponentDeclaration(sourceFile)

@@ -22,7 +22,7 @@
 import type { IPersistenceAdapter, SaveSiteOptions } from '@core/persistence/types'
 import { type SiteDocument, PageSchema } from '@core/page-tree'
 import { apiRequest } from '@core/http'
-import { Type } from '@core/utils/typeboxHelpers'
+import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { createDefaultSiteDocument } from '@site/store/slices/site/defaults'
 import { registry } from '@core/module-engine'
 import { requestCmsSiteReload } from '@admin/state/adminEvents'
@@ -30,10 +30,29 @@ import { requestCmsSiteReload } from '@admin/state/adminEvents'
 /** Node ids from page-parser are `relFile:line:col` — a decodable source location. */
 const SOURCE_NODE_ID = /^.+:\d+:\d+$/
 
+/**
+ * One `kind: 'component'` node's classification (Phase 7A — multi-file
+ * workspace backend): **local** components resolve to a real file inside the
+ * workspace (recorded as a workspace-relative path); **package** components
+ * come from a bare specifier (an npm dependency, e.g.
+ * `@alm-design/design-system`) and stay a read-only prop surface this slice.
+ * Mirrors `ComponentSource` in `@core/page-parser` (server-only ts-morph
+ * module) — this file runs in the browser, so it only needs to agree on the
+ * JSON wire shape, not import the server-side type.
+ */
+const ComponentSourceSchema = Type.Union([
+  Type.Object({ kind: Type.Literal('local'), file: Type.String() }),
+  Type.Object({ kind: Type.Literal('package'), specifier: Type.String() }),
+])
+
+export type ComponentSource = Static<typeof ComponentSourceSchema>
+
 /** GET /admin/api/studio/load — every source-derived page in the workspace. */
 const StudioLoadResponseSchema = Type.Object({
   dir: Type.String(),
   pages: Type.Array(PageSchema),
+  /** Keyed by node id (`relFile:line:col`) — only `kind: 'component'` nodes appear. */
+  componentSources: Type.Record(Type.String(), ComponentSourceSchema),
 })
 
 /**
@@ -51,6 +70,21 @@ const StudioSaveResponseSchema = Type.Object({
 
 /** Remembered from the last load so saveSite can tell the server which folder to write. */
 let loadedDir: string | null = null
+
+/**
+ * Remembered from the last load — local-vs-package classification for every
+ * `kind: 'component'` node in the workspace, keyed by node id. Consumed by
+ * future inspector/property-panel UI that needs to tell a local (editable)
+ * component apart from a read-only npm-package one (Phase 7A only resolves
+ * and classifies; rendering local components as their own editable canvas
+ * modules is deferred — see V1-CANVAS-PLAN.md's Phase 7A backlog note).
+ */
+let componentSources: Record<string, ComponentSource> = {}
+
+/** The current workspace's local-vs-package classification for every component node, from the last load. */
+export function getStudioComponentSources(): Record<string, ComponentSource> {
+  return componentSources
+}
 
 /**
  * Studio's idle-commit cadence — how long the canvas waits after the last
@@ -90,10 +124,11 @@ function literalInlineStyles(inlineStyles: Record<string, unknown> | undefined):
 
 export const fsCodemodAdapter: IPersistenceAdapter = {
   async loadSite(): Promise<SiteDocument | undefined> {
-    const { dir, pages } = await apiRequest('/admin/api/studio/load', {
+    const { dir, pages, componentSources: sources } = await apiRequest('/admin/api/studio/load', {
       schema: StudioLoadResponseSchema,
     })
     loadedDir = dir
+    componentSources = sources
     // Wrap the source-derived pages in a valid default site shell (breakpoints,
     // settings, framework, …) — every workspace page becomes a board frame.
     const site = createDefaultSiteDocument('Studio')

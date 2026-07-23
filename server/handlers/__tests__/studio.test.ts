@@ -1,10 +1,11 @@
 /**
- * studio.ts — unit tests for the pure pageId-derivation helper and the typed
- * studio-edit dispatch helper.
+ * studio.ts — unit tests for the pure pageId-derivation helper, the
+ * recursive page-discovery walk (Phase 7A — multi-file workspace backend),
+ * and the typed studio-edit dispatch helper.
  *
- * `pageIdFromFileName` turns a page file's basename into the stable,
- * unique `pageId`/`slug` the multi-page `/admin/api/studio/load` scan uses
- * (Phase 1, Increment 1B — multi-frame board).
+ * `pageIdFromRelPath`/`assignPageIds` turn a page file's path (relative to
+ * the workspace's `pages/` dir) into the stable, unique `pageId`/`slug` the
+ * multi-page `/admin/api/studio/load` scan uses.
  *
  * `applyStudioEdit` is the pure dir+edit→codemod dispatch the POST
  * /admin/api/studio/save handler runs per edit (Phase 3, Slice B) — tested
@@ -17,9 +18,12 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import {
   applyStudioEdit,
+  assignPageIds,
   collectWorkspaceFiles,
+  discoverPageFiles,
   orderStudioEditsForApply,
-  pageIdFromFileName,
+  pageIdFromRelPath,
+  tryServeStudio,
 } from '../studio'
 
 describe('orderStudioEditsForApply', () => {
@@ -54,29 +58,133 @@ describe('orderStudioEditsForApply', () => {
   })
 })
 
-describe('pageIdFromFileName', () => {
+describe('pageIdFromRelPath', () => {
   it('lowercases a simple basename', () => {
-    expect(pageIdFromFileName('Home.tsx')).toBe('home')
+    expect(pageIdFromRelPath('Home.tsx')).toBe('home')
   })
 
   it('lowercases another simple basename', () => {
-    expect(pageIdFromFileName('About.tsx')).toBe('about')
+    expect(pageIdFromRelPath('About.tsx')).toBe('about')
   })
 
   it('kebab-cases a multi-word PascalCase basename', () => {
-    expect(pageIdFromFileName('MyPage.tsx')).toBe('my-page')
+    expect(pageIdFromRelPath('MyPage.tsx')).toBe('my-page')
   })
 
   it('collapses non-alphanumeric separators to a single dash', () => {
-    expect(pageIdFromFileName('Contact Us.tsx')).toBe('contact-us')
+    expect(pageIdFromRelPath('Contact Us.tsx')).toBe('contact-us')
   })
 
   it('strips leading/trailing dashes produced by punctuation at the edges', () => {
-    expect(pageIdFromFileName('_Home_.tsx')).toBe('home')
+    expect(pageIdFromRelPath('_Home_.tsx')).toBe('home')
   })
 
   it('falls back to "page" for a basename with no alphanumeric characters', () => {
-    expect(pageIdFromFileName('___.tsx')).toBe('page')
+    expect(pageIdFromRelPath('___.tsx')).toBe('page')
+  })
+
+  it('kebab-cases a nested PascalCase path, joining segments with a dash', () => {
+    expect(pageIdFromRelPath('marketing/Landing.tsx')).toBe('marketing-landing')
+  })
+
+  it('kebab-cases every segment of a deeply-nested path', () => {
+    expect(pageIdFromRelPath('MarketingSite/subPages/ContactUs.tsx')).toBe('marketing-site-sub-pages-contact-us')
+  })
+
+  it('is stable regardless of which OS-style separators produced the POSIX relPath', () => {
+    // discoverPageFiles always hands relPath as POSIX ('/'), never '\\' — this
+    // just pins that the function itself only ever splits on '/'.
+    expect(pageIdFromRelPath('a/b/Home.tsx')).toBe('a-b-home')
+  })
+})
+
+describe('assignPageIds', () => {
+  it('assigns each distinct relPath its own pageIdFromRelPath result when there is no collision', () => {
+    const ids = assignPageIds(['Home.tsx', 'About.tsx', 'marketing/Landing.tsx'])
+    expect(ids.get('Home.tsx')).toBe('home')
+    expect(ids.get('About.tsx')).toBe('about')
+    expect(ids.get('marketing/Landing.tsx')).toBe('marketing-landing')
+  })
+
+  it('disambiguates a collision with a numeric suffix, in input order', () => {
+    // Both slugify to "marketing-landing".
+    const ids = assignPageIds(['Marketing/Landing.tsx', 'marketing-landing.tsx'])
+    expect(ids.get('Marketing/Landing.tsx')).toBe('marketing-landing')
+    expect(ids.get('marketing-landing.tsx')).toBe('marketing-landing-2')
+  })
+
+  it('is deterministic for a given input ordering — same input, same output', () => {
+    const relPaths = ['a.tsx', 'A.tsx', 'a/a.tsx']
+    const first = assignPageIds(relPaths)
+    const second = assignPageIds(relPaths)
+    expect([...first.entries()]).toEqual([...second.entries()])
+  })
+
+  it('never produces duplicate ids across the whole assigned set', () => {
+    const ids = assignPageIds(['x.tsx', 'X.tsx', 'x/x.tsx', 'x-x.tsx'])
+    const values = [...ids.values()]
+    expect(new Set(values).size).toBe(values.length)
+  })
+})
+
+/**
+ * discoverPageFiles — recursive page discovery (Phase 7A). Tested against a
+ * temp fixture tree, same pattern as `collectWorkspaceFiles`.
+ */
+describe('discoverPageFiles', () => {
+  let tmpDir: string
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-discover-'))
+  })
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  function write(relPath: string, contents: string): void {
+    const full = path.join(tmpDir, ...relPath.split('/'))
+    fs.mkdirSync(path.dirname(full), { recursive: true })
+    fs.writeFileSync(full, contents, 'utf8')
+  }
+
+  it('finds a flat top-level page file', () => {
+    write('Home.tsx', 'x')
+    expect(discoverPageFiles(tmpDir)).toEqual(['Home.tsx'])
+  })
+
+  it('finds a nested page file inside a route/page subdirectory', () => {
+    write('Home.tsx', 'x')
+    write('marketing/Landing.tsx', 'x')
+    expect(discoverPageFiles(tmpDir)).toEqual(['Home.tsx', 'marketing/Landing.tsx'])
+  })
+
+  it('finds arbitrarily deep nesting', () => {
+    write('a/b/c/Deep.tsx', 'x')
+    expect(discoverPageFiles(tmpDir)).toEqual(['a/b/c/Deep.tsx'])
+  })
+
+  it('ignores non-.tsx files sitting alongside page files', () => {
+    write('Home.tsx', 'x')
+    write('Home.module.css', 'x')
+    write('README.md', 'x')
+    expect(discoverPageFiles(tmpDir)).toEqual(['Home.tsx'])
+  })
+
+  it('excludes node_modules/, .git/, dist/, .next/, .turbo/, .studio/', () => {
+    write('Home.tsx', 'x')
+    write('node_modules/some-dep/Fake.tsx', 'x')
+    write('.git/HEAD', 'x')
+    write('dist/Fake.tsx', 'x')
+    write('.next/Fake.tsx', 'x')
+    write('.turbo/Fake.tsx', 'x')
+    write('.studio/Fake.tsx', 'x')
+    expect(discoverPageFiles(tmpDir)).toEqual(['Home.tsx'])
+  })
+
+  it('returns an empty list when the pages dir has no .tsx files', () => {
+    write('README.md', 'x')
+    expect(discoverPageFiles(tmpDir)).toEqual([])
   })
 })
 
@@ -254,5 +362,105 @@ describe('collectWorkspaceFiles', () => {
 
   it('returns an empty list for an empty directory (no crash)', () => {
     expect(collectWorkspaceFiles(tmpDir)).toEqual([])
+  })
+})
+
+/**
+ * GET /admin/api/studio/load — end-to-end over a real temp workspace tree
+ * (Phase 7A): recursive nested-page discovery, collision-free page ids,
+ * local-vs-package component classification, and the node-id round trip
+ * (`relFile:line:col` for a NESTED file resolves back to that exact file).
+ */
+describe('GET /admin/api/studio/load — Phase 7A multi-file workspace', () => {
+  let tmpDir: string
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-load-'))
+  })
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  function write(relPath: string, contents: string): void {
+    const full = path.join(tmpDir, ...relPath.split('/'))
+    fs.mkdirSync(path.dirname(full), { recursive: true })
+    fs.writeFileSync(full, contents, 'utf8')
+  }
+
+  it('discovers a nested page, classifies its local/package components, and node ids round-trip to the nested file', async () => {
+    write(
+      'pages/Home.tsx',
+      ['export default function Home() {', '  return <div>Home</div>', '}', ''].join('\n'),
+    )
+    write('components/Header.tsx', 'export default function Header() { return null }')
+    write(
+      'pages/marketing/Landing.tsx',
+      [
+        "import Header from '../../components/Header'",
+        "import { Button } from '@alm-design/design-system'",
+        'export default function Landing() {',
+        '  return (',
+        '    <div>',
+        '      <Header />',
+        '      <Button label="Go" />',
+        '    </div>',
+        '  )',
+        '}',
+        '',
+      ].join('\n'),
+    )
+
+    const url = new URL(`http://localhost/admin/api/studio/load?dir=${encodeURIComponent(tmpDir)}`)
+    const req = new Request(url)
+    const res = await tryServeStudio(req, undefined, url, url.pathname)
+    expect(res).not.toBeNull()
+
+    const body = (await res!.json()) as {
+      dir: string
+      pages: Array<{ id: string; nodes: Record<string, { id: string; moduleId: string }> }>
+      componentSources: Record<string, { kind: string; file?: string; specifier?: string }>
+    }
+
+    // Collision-free, path-aware page ids — "Home.tsx" -> "home",
+    // "marketing/Landing.tsx" -> "marketing-landing".
+    expect(body.pages.map((p) => p.id).sort()).toEqual(['home', 'marketing-landing'])
+
+    const landing = body.pages.find((p) => p.id === 'marketing-landing')!
+    const nodeByModule = (moduleId: string) =>
+      Object.values(landing.nodes).find((n) => n.moduleId === moduleId)!.id
+
+    // Local component: import resolves inside the workspace.
+    const headerNodeId = nodeByModule('alm.Header')
+    expect(body.componentSources[headerNodeId]).toEqual({ kind: 'local', file: 'components/Header.tsx' })
+
+    // Package component: bare specifier, stays a read-only prop surface.
+    const buttonNodeId = nodeByModule('alm.Button')
+    expect(body.componentSources[buttonNodeId]).toEqual({
+      kind: 'package',
+      specifier: '@alm-design/design-system',
+    })
+
+    // Node identity stays file-scoped: the div's id is namespaced by the
+    // NESTED file's workspace-relative path, not a flattened basename.
+    const divNodeId = nodeByModule('base.container')
+    expect(divNodeId.startsWith('pages/marketing/Landing.tsx:')).toBe(true)
+
+    // Round trip: applying an edit against that node id must write to the
+    // exact nested file `relFile:line:col` encodes.
+    const wrote = applyStudioEdit(tmpDir, { kind: 'prop', nodeId: divNodeId, prop: 'data-test', value: 'ok' })
+    expect(wrote).toBe(true)
+    const written = fs.readFileSync(path.join(tmpDir, 'pages', 'marketing', 'Landing.tsx'), 'utf8')
+    expect(written).toContain('data-test="ok"')
+  })
+
+  it('returns an empty page list and empty componentSources when the workspace has no pages/ dir', async () => {
+    const url = new URL(`http://localhost/admin/api/studio/load?dir=${encodeURIComponent(tmpDir)}`)
+    const req = new Request(url)
+    const res = await tryServeStudio(req, undefined, url, url.pathname)
+    const body = (await res!.json()) as { dir: string; pages: unknown[]; componentSources: Record<string, unknown> }
+
+    expect(body.pages).toEqual([])
+    expect(body.componentSources).toEqual({})
   })
 })

@@ -3,12 +3,24 @@
  * "canvas edit ⇄ real .tsx source" loop.
  *
  *   GET  /admin/api/studio/load?dir=<abs>
- *       Scan the workspace's `pages/` directory for `*.tsx` files and parse
- *       EVERY one into an Instatic `Page` (multi-frame board — Phase 1
- *       Increment 1B). Node ids stay `relFile:line:col` (from page-parser),
- *       so the client can later ask us to write a specific node's prop
- *       straight back to source, and the save handler below needs no changes
- *       to keep working across multiple pages.
+ *       Recursively walks the workspace's `pages/` directory (Phase 7A —
+ *       multi-file project backend; nested route/page dirs like
+ *       `pages/marketing/Landing.tsx` are discovered, not just a flat
+ *       top-level scan) and parses EVERY `.tsx` file into an Instatic `Page`
+ *       (multi-frame board). Node ids stay `relFile:line:col`
+ *       (from page-parser), `relFile` always relative to the WORKSPACE ROOT
+ *       (not the pages dir), so the client can ask us to write a specific
+ *       node's prop straight back to source no matter how deep its file
+ *       sits, and the save handler below needs no changes to keep working.
+ *       Every page is parsed against one shared, workspace-wide ts-morph
+ *       `Project` (`createWorkspaceProject`) so a page's local-component
+ *       imports resolve to real files elsewhere in the tree;
+ *       `resolveComponentSources` classifies each `kind: 'component'` node as
+ *       **local** (import resolves inside the workspace — recorded as a
+ *       workspace-relative file path) or **package** (an npm dependency like
+ *       `@alm-design/design-system`, read-only prop surface). The merged
+ *       classification for every page is returned as `componentSources`,
+ *       keyed by node id.
  *       (Under /admin/api so the Vite dev proxy forwards it to the :3001 server.)
  *
  *   POST /admin/api/studio/save   body: { dir, edits: StudioEdit[] }
@@ -35,10 +47,16 @@
  *
  * page-parser and ast-codemods run here (Node/ts-morph), not in the browser.
  */
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync, type Dirent } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { zipSync, strToU8 } from 'fflate'
-import { parsePageFile } from '@core/page-parser'
+import {
+  createWorkspaceProject,
+  listWorkspaceFiles,
+  parsePageFile,
+  resolveComponentSources,
+  type ComponentSource,
+} from '@core/page-parser'
 import { parsedPageToSitePage } from '@core/studio-sync/parsedPageToSitePage'
 import { setJsxProp, setJsxStyle, setJsxText } from '@core/ast-codemods'
 import { createBoardsFile, parseBoardsFile, serializeBoardsFile, type BoardsFile } from '@core/studio-board'
@@ -198,9 +216,6 @@ interface CollectWorkspaceFilesOptions {
   maxFiles?: number
 }
 
-/** Skip these directories entirely — never descended into, anywhere in the tree. */
-const EXCLUDED_DIR_NAMES = new Set(['.studio', '.git', 'node_modules', 'dist', '.next', '.turbo'])
-
 const DEFAULT_MAX_FILE_BYTES = 5 * 1024 * 1024 // 5 MB — generous for source/text/small assets
 const DEFAULT_MAX_FILES = 5000
 
@@ -210,19 +225,16 @@ const DEFAULT_MAX_FILES = 5000
  * unit-testable against a temp fixture directory without a Request/Response
  * round trip — mirrors `applyStudioEdit`'s testing shape.
  *
- * Exclusions (decisions, not oversights):
- *   - `.studio/`     — editor-owned spatial metadata (boards.json). Not app code.
- *   - `.git/`, `node_modules/`, `dist/`, `.next/`, `.turbo/` — VCS internals,
- *     installed deps, and build output. Never authored, never bundled.
- *   - Symlinks       — never followed, so a symlink can't walk the export
- *     outside `dir` (path-traversal guard alongside the fact that every
- *     collected path is built from a `readdirSync` of `dir` itself).
- *   - Oversized files (> `maxFileBytes`) — skipped whole, never truncated.
+ * The recursive walk + exclusion rule (`.studio/`, `.git/`, `node_modules/`,
+ * `dist/`, `.next/`, `.turbo/`, never following symlinks) is shared with the
+ * Phase 7A workspace-discovery walk via `listWorkspaceFiles`
+ * (`@core/page-parser`) — one exclusion list, not a duplicated one per
+ * call site.
  *
- * Everything else under `dir` is included verbatim — `.tsx`/`.ts`/`.css`/
- * `.json`/`.js` source and ordinary asset files — preserving relative paths.
- * Stops collecting (does not throw) once `maxFiles` is reached; the caller
- * still gets a valid, if partial, zip rather than an unbounded one.
+ * Beyond that shared walk, this function adds: oversized files (> `maxFileBytes`)
+ * are skipped whole, never truncated; collection stops (does not throw) once
+ * `maxFiles` is reached, so the caller still gets a valid, if partial, zip
+ * rather than an unbounded one.
  */
 export function collectWorkspaceFiles(
   dir: string,
@@ -232,38 +244,19 @@ export function collectWorkspaceFiles(
   const maxFiles = options.maxFiles ?? DEFAULT_MAX_FILES
   const results: WorkspaceFile[] = []
 
-  function walk(currentDir: string, relDir: string): void {
-    if (results.length >= maxFiles) return
-    let entries: Dirent[]
+  for (const relPath of listWorkspaceFiles(dir)) {
+    if (results.length >= maxFiles) break
+    const filePath = join(dir, ...relPath.split('/'))
+    let size: number
     try {
-      entries = readdirSync(currentDir, { withFileTypes: true })
+      size = statSync(filePath).size
     } catch {
-      return
+      continue
     }
-    for (const entry of entries) {
-      if (results.length >= maxFiles) return
-      // Never follow symlinks — the export must stay confined to `dir`.
-      if (entry.isSymbolicLink()) continue
-      const entryRelPath = relDir ? `${relDir}/${entry.name}` : entry.name
-      if (entry.isDirectory()) {
-        if (EXCLUDED_DIR_NAMES.has(entry.name)) continue
-        walk(join(currentDir, entry.name), entryRelPath)
-        continue
-      }
-      if (!entry.isFile()) continue
-      const filePath = join(currentDir, entry.name)
-      let size: number
-      try {
-        size = statSync(filePath).size
-      } catch {
-        continue
-      }
-      if (size > maxFileBytes) continue // skip whole — never emit a partial file
-      results.push({ relPath: entryRelPath, contents: readFileSync(filePath) })
-    }
+    if (size > maxFileBytes) continue // skip whole — never emit a partial file
+    results.push({ relPath, contents: readFileSync(filePath) })
   }
 
-  walk(dir, '')
   return results
 }
 
@@ -283,18 +276,65 @@ function synthesizedPackageJson(): Uint8Array {
 }
 
 /**
- * Derive a stable, unique page id (also used as the slug) from a page file's
- * basename — "Home.tsx" -> "home", "About.tsx" -> "about", "MyPage.tsx" ->
- * "my-page". Pure so it's unit-testable without touching the filesystem.
+ * Recursively discovers every page file under the workspace's `pages/`
+ * directory (Phase 7A — nested route/page dirs like
+ * `pages/marketing/Landing.tsx`, not just a flat top-level scan), returning
+ * POSIX paths relative to `pagesDir`, in deterministic sorted order (shared
+ * walk/exclusion rule with `collectWorkspaceFiles` via `listWorkspaceFiles`).
  */
-export function pageIdFromFileName(fileName: string): string {
-  const base = fileName.replace(/\.tsx$/, '')
-  const slug = base
-    .replace(/([a-z0-9])([A-Z])/g, '$1-$2')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
+export function discoverPageFiles(pagesDir: string): string[] {
+  return listWorkspaceFiles(pagesDir).filter((relPath) => relPath.endsWith('.tsx'))
+}
+
+/**
+ * Derive a stable page id (also used as the slug) from a page file's path,
+ * relative to the workspace's `pages/` dir — kebab-casing every path segment
+ * and joining with `-` so nested files don't collide with a differently-
+ * nested one that merely shares a basename: "Home.tsx" -> "home",
+ * "MyPage.tsx" -> "my-page", "marketing/Landing.tsx" -> "marketing-landing".
+ * Pure so it's unit-testable without touching the filesystem.
+ *
+ * Two DIFFERENT relPaths can still slugify to the same string (e.g.
+ * "Marketing/Landing.tsx" and "marketing-landing.tsx" both ->
+ * "marketing-landing") — `assignPageIds` is the layer that guarantees
+ * uniqueness across a whole discovered set; this function only derives the
+ * per-path slug.
+ */
+export function pageIdFromRelPath(relPath: string): string {
+  const segments = relPath.split('/').filter((segment) => segment.length > 0)
+  const slug = segments
+    .map((segment, i) => {
+      const base = i === segments.length - 1 ? segment.replace(/\.tsx$/, '') : segment
+      return base
+        .replace(/([a-z0-9])([A-Z])/g, '$1-$2')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+    })
+    .filter((segment) => segment.length > 0)
+    .join('-')
   return slug.length > 0 ? slug : 'page'
+}
+
+/**
+ * Assigns a unique pageId (also used as the slug) to each entry of
+ * `relPaths`, processed in the given order. `pageIdFromRelPath` is
+ * deterministic per path, but two different nested paths can slugify to the
+ * same string (see its doc comment) — on a collision, every path after the
+ * first gets a numeric suffix (`-2`, `-3`, …), so ids stay unique for a given
+ * input ordering. Pure; callers get reproducible ids by passing a
+ * consistently-ordered list (`discoverPageFiles` already returns sorted paths).
+ */
+export function assignPageIds(relPaths: readonly string[]): Map<string, string> {
+  const seenCounts = new Map<string, number>()
+  const assigned = new Map<string, string>()
+  for (const relPath of relPaths) {
+    const base = pageIdFromRelPath(relPath)
+    const seen = seenCounts.get(base) ?? 0
+    seenCounts.set(base, seen + 1)
+    assigned.set(relPath, seen === 0 ? base : `${base}-${seen + 1}`)
+  }
+  return assigned
 }
 
 export async function tryServeStudio(
@@ -307,26 +347,33 @@ export async function tryServeStudio(
     try {
       const dir = resolve(url.searchParams.get('dir') ?? defaultWorkspaceDir())
       const pagesDir = join(dir, 'pages')
-      if (!existsSync(pagesDir)) return jsonResponse({ dir, pages: [] })
+      if (!existsSync(pagesDir)) return jsonResponse({ dir, pages: [], componentSources: {} })
 
-      const fileNames = readdirSync(pagesDir)
-        .filter((name) => name.endsWith('.tsx'))
-        .sort()
+      const relPaths = discoverPageFiles(pagesDir)
+      const pageIds = assignPageIds(relPaths)
 
-      const pages = fileNames.map((fileName) => {
-        const file = join(pagesDir, fileName)
-        const parsed = parsePageFile(file, dir)
-        const pageId = pageIdFromFileName(fileName)
+      // One shared, workspace-wide ts-morph Project so a page's local
+      // component imports resolve to real files elsewhere in the tree —
+      // a fresh per-file Project (parsePageFile's own default) can't see
+      // across files at all. See createWorkspaceProject's doc comment.
+      const project = createWorkspaceProject(dir)
+      const componentSources: Record<string, ComponentSource> = {}
+
+      const pages = relPaths.map((relPath) => {
+        const file = join(pagesDir, ...relPath.split('/'))
+        const pageId = pageIds.get(relPath)!
+        const parsed = parsePageFile(file, dir, project)
+        Object.assign(componentSources, resolveComponentSources(project, file, dir, parsed))
         return parsedPageToSitePage(parsed, {
           pageId,
           slug: pageId,
-          title: fileName.replace(/\.tsx$/, ''),
+          title: relPath.split('/').pop()!.replace(/\.tsx$/, ''),
           resolveModuleId,
           resolveTextProp,
         })
       })
 
-      return jsonResponse({ dir, pages })
+      return jsonResponse({ dir, pages, componentSources })
     } catch (err) {
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
     }
