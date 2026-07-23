@@ -11,7 +11,7 @@
 | 2 | Component manifest + in-place props | ✅ Done — `01ae6ad`, `e1d3ac3` |
 | 3 | Visual style editing → source | ✅ Done — `77d4188`, `dd2b3e8` |
 | 4 | Multiple boards + documentation | ✅ Done — `321ff35`, `aa5379c` |
-| 5 | Performance pass | 🚧 In progress — 5A done (`376cd75`), 5B/5C pending |
+| 5 | Performance pass | 🚧 In progress — 5A done (`376cd75`), 5B done, 5C pending |
 | 6 | Design tab UI, canvas DnD, Inspect tab, code export, resizable frames + device presets | 📋 Planned — see "Phase 6" below |
 | 7 | Multi-file backend, MCP React-app import, GitHub-link import | 📋 Planned — see "Phase 7" below |
 
@@ -155,6 +155,11 @@ Phase 5 has two halves: **(A) make the board fast with many frames**, and **(B) 
 2. Keep boards' 800 ms debounce (already has the snapshot-identity check from `f7183df` that prevents dropping edits made mid-flight). Do **not** lower it below the round-trip time.
 3. Verify overlay RAF discipline: `BreakpointSelectionOverlay`'s loop must only arm when there is visible overlay work (`hasOverlayWork`). Board-object drags (sticky/doc/frame) already run on pointer-capture handlers, not the RAF loop — confirm no board object forces the RAF loop to stay hot when idle.
 **Gate:** edit text/prop on a frame → source updates within a beat, no observable write-loop, no dropped board edits.
+
+**Findings (done):**
+1. **No write→watch→write loop, and there is no filesystem watcher at all.** Neither Vite's dev server (`studio-workspace/pages/**` is never `import`ed into the client module graph, so writes there don't touch HMR) nor the Bun backend (`server/handlers/studio.ts` reads pages via `node:fs` at request time — no `fs.watch`/chokidar anywhere in `server/`) observes studio page writes. The only reload path while the editor is mounted is the explicit `CMS_SITE_RELOAD_EVENT`, fired solely by `requestCmsSiteReload()` call sites (manual save-and-reload, plugin install) — never by `usePersistence` or either persistence adapter's `saveSite`. Pinned by `src/admin/pages/site/studio/__tests__/fsCodemodAdapter.test.ts` (a save issues exactly one `POST /admin/api/studio/save`, never a `GET /admin/api/studio/load`) and `src/__tests__/persistence/writeLoopSafety.test.tsx` (the reload handler clears `hasUnsavedChanges`, even from a dirty state, instead of leaving/re-setting it — so a reload can never immediately re-arm autosave).
+2. **Studio's commit cadence was inherited from the CMS's user-configurable, default-30s auto-save preference** (`usePersistence` read `readAutoSaveDelayMs()` unconditionally for both adapters). Fixed by adding an `options.autoSaveDelayMs` override to `usePersistence`, wired from `AdminCanvasLayout` to `STUDIO_AUTOSAVE_DELAY_MS` (2s, exported from `fsCodemodAdapter.ts`) only in studio mode; the CMS path is untouched and still reads the preference (default 30s). 2s sits mid-band of the ~1.5-3s target, well above the actual same-machine round trip (a ts-morph codemod POST, tens of ms), and coalesces bursts of edits into one write. Pinned by `src/__tests__/persistence/autoSaveCadence.test.ts` (pure, timer-free unit test of the override-precedence rule).
+3. **Overlay RAF discipline was already correct — no change made.** `BreakpointSelectionOverlay`'s tick loop is gated by `if (!hasOverlayWork) return`, and `hasOverlayWork` is derived only from `showToolbar`/`showSelectorHighlight`/`showRings` + selection/hover state — no board-object concept. Board object drags (`BoardFramesLayer`, `DocBlockView`, `StickyNoteView`) all move via `setPointerCapture` pointer handlers and contain no `requestAnimationFrame` call, so they cannot force the loop to stay armed while idle. Pinned by `src/__tests__/canvas/overlayRafDiscipline.test.ts` (source-shape check).
 
 ### 5C — Strip CMS chrome → design-canvas focus
 **Problem:** the shell still exposes CMS-only workspaces/controls that don't belong in a design tool. `cf71a89` already hid the built-in `base.*` block modules from the palette; this finishes the job at the shell level.

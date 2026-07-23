@@ -31,7 +31,8 @@
  * - CodeEditorPanel (Task #432) — center-stage, code editing
  *
  * J12: usePersistence handles CMS draft load on mount, preference-gated
- * 30s auto-save, toolbar Save, and Cmd+S immediate save.
+ * auto-save (default 30s; Studio mode overrides to a fixed 2s cadence — see
+ * STUDIO_AUTOSAVE_DELAY_MS), toolbar Save, and Cmd+S immediate save.
  *
  * Agent Panel: Phase D AI assistant — self-contained floating panel (Guideline #410).
  * Authenticates via ambient Claude Code credentials through the local Bun server.
@@ -46,7 +47,7 @@ import { useSiteEditorUrlSync } from '@admin/pages/site/hooks/useSiteEditorUrlSy
 import { useEditorLayoutPersistence } from '@admin/pages/site/hooks/useEditorLayoutPersistence'
 import { useEditorStore } from '@admin/pages/site/store/store'
 import { cmsAdapter } from '@core/persistence/cms'
-import { fsCodemodAdapter } from '@site/studio/fsCodemodAdapter'
+import { fsCodemodAdapter, STUDIO_AUTOSAVE_DELAY_MS } from '@site/studio/fsCodemodAdapter'
 import { fetchBoards, saveBoards } from '@site/studio/boardsApi'
 import { syncStudioModeFromUrl } from '@site/studio/studioMode'
 import { createBoardsFile } from '@core/studio-board'
@@ -176,6 +177,9 @@ export function AdminCanvasLayout() {
   const persistence = usePersistence('default', studioMode ? fsCodemodAdapter : cmsAdapter, {
     markNewSiteUnsaved: true,
     enabled: true,
+    // Studio bypasses the CMS's user-configurable (default 30s) autosave
+    // delay in favor of a fixed, snappy cadence — see STUDIO_AUTOSAVE_DELAY_MS.
+    autoSaveDelayMs: studioMode ? STUDIO_AUTOSAVE_DELAY_MS : undefined,
   })
   useStudioBoardsPersistence(studioMode)
   useStudioDefaultBoardSeed(studioMode)

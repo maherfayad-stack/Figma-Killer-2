@@ -4,9 +4,15 @@
  * Responsibilities:
  *  1. LOAD on mount  — loads the single CMS draft site document; falls back to
  *     creating a fresh blank draft when the CMS has no draft yet.
- *  2. AUTO-SAVE      — when enabled in preferences, debounced 30 s after the
+ *  2. AUTO-SAVE      — when enabled in preferences, debounced after the
  *     `hasUnsavedChanges` flag transitions to true. Timer is properly reset on
- *     each new change so that rapid edits collapse into a single save.
+ *     each new change so that rapid edits collapse into a single save. The
+ *     delay is the user-configurable CMS preference (default 30 s, see
+ *     `readAutoSaveDelayMs`) UNLESS the caller passes `options.autoSaveDelayMs`
+ *     — the Site editor shell does this for Studio mode, which has no exposed
+ *     autosave-delay setting and instead uses a fixed, snappier cadence
+ *     (`STUDIO_AUTOSAVE_DELAY_MS` in `studio/fsCodemodAdapter.ts`) so source
+ *     writeback feels immediate. See `resolveAutoSaveDelayMs` below.
  *  3. MANUAL SAVE    — returned as a stable callback for toolbar Save and used
  *     by Cmd+S / Ctrl+S. Resets the unsaved-changes flag.
  *
@@ -108,13 +114,24 @@ function applyDefaultBreakpointPreference(
   useEditorStore.getState().setActiveBreakpoint(preferredId)
 }
 
+/**
+ * Resolve the auto-save idle delay: an explicit `overrideMs` (Studio's fixed,
+ * snappy cadence) wins; otherwise fall back to the user's CMS preference.
+ * Pulled out as a pure function so the precedence rule is unit-testable
+ * without mounting the hook or waiting on real timers.
+ */
+export function resolveAutoSaveDelayMs(overrideMs?: number): number {
+  return overrideMs ?? readAutoSaveDelayMs()
+}
+
 export function usePersistence(
   requestedSiteId = 'default',
   adapter: IPersistenceAdapter = cmsAdapter,
-  options: { markNewSiteUnsaved?: boolean; enabled?: boolean } = {},
+  options: { markNewSiteUnsaved?: boolean; enabled?: boolean; autoSaveDelayMs?: number } = {},
 ): PersistenceController {
   const markNewSiteUnsaved = options.markNewSiteUnsaved ?? false
   const enabled = options.enabled ?? true
+  const autoSaveDelayMsOverride = options.autoSaveDelayMs
   const [saveStatus, setSaveStatus] = useState<PersistenceSaveStatus>(
     enabled ? { state: 'loading' } : { state: 'saved' },
   )
@@ -361,11 +378,12 @@ export function usePersistence(
       // Read the delay each time auto-save is scheduled — toggling the
       // preference re-fires `subscribeToEditorPrefsChanged` which calls back
       // into this scheduler, so the next scheduled tick uses the fresh value.
+      // `autoSaveDelayMsOverride` (Studio) always wins over the preference.
       timer = setTimeout(() => {
         void saveCurrentSite().catch((err) => {
           console.error('[persistence] Auto-save failed:', err)
         })
-      }, readAutoSaveDelayMs())
+      }, resolveAutoSaveDelayMs(autoSaveDelayMsOverride))
     }
 
     const unsub = useEditorStore.subscribe(
@@ -418,7 +436,7 @@ export function usePersistence(
         })
       }
     }
-  }, [enabled, saveCurrentSite])
+  }, [enabled, saveCurrentSite, autoSaveDelayMsOverride])
 
   // ─── Immediate-save requests ───────────────────────────────────────────────
   // Deliberate, discrete save actions (e.g. "Save as layout") dispatch

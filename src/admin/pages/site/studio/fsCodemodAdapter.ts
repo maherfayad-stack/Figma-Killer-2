@@ -45,6 +45,22 @@ const StudioSaveResponseSchema = Type.Object({
 let loadedDir: string | null = null
 
 /**
+ * Studio's idle-commit cadence — how long the canvas waits after the last
+ * edit before writing source back through `saveSite`. Deliberately snappier
+ * than the CMS's user-configurable, default-30s cadence (see
+ * `readAutoSaveDelayMs` in `preferences/editorPreferences.ts`): a design
+ * canvas needs source to "follow" an edit within a beat, and studio has no
+ * exposed autosave-delay setting to protect. 2s sits in the middle of the
+ * ~1.5-3s target band — long enough that a burst of keystrokes (typing a
+ * heading) or a drag gesture collapses into one write instead of one per
+ * keystroke, short enough to feel immediate. It stays well above the actual
+ * round trip (a same-machine HTTP POST + ts-morph codemod over a handful of
+ * `.tsx` files, typically tens of milliseconds), so there's no risk of a
+ * save queueing up before the previous one lands.
+ */
+export const STUDIO_AUTOSAVE_DELAY_MS = 2_000
+
+/**
  * One studio edit — mirrors the discriminated union `server/handlers/studio.ts`
  * validates (`SaveBodySchema`/`StudioEdit`). Kept as a local mirror rather than
  * a shared import: this file runs in the browser, the server file runs in
