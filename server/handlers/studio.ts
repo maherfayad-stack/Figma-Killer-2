@@ -56,13 +56,24 @@
  *       synthesized so `bun install && bun run dev` works in the unzipped
  *       copy. `node_modules` is never bundled either way.
  *
+ *   GET  /admin/api/studio/projects
+ *       Lists every on-disk studio project the dashboard's Projects widget
+ *       can open: the default hand-authored workspace (`studio-workspace/`,
+ *       when it exists) plus one entry per immediate subdirectory of
+ *       `studio-workspace-imports/` (Phase 7B imports). Read-only — this
+ *       endpoint never creates, clears, or writes a directory. The listing
+ *       logic itself lives in `listStudioProjects`, a pure(ish) dir-in/
+ *       project-list-out helper so it's unit-testable against a temp
+ *       fixture tree, same pattern as `collectWorkspaceFiles`.
+ *
  * page-parser and ast-codemods run here (Node/ts-morph), not in the browser.
  */
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { zipSync, strToU8 } from 'fflate'
 import {
   createWorkspaceProject,
+  EXCLUDED_WORKSPACE_DIR_NAMES,
   listWorkspaceFiles,
   parsePageFile,
   resolveComponentSources,
@@ -234,6 +245,76 @@ export function applyStudioEdit(dir: string, edit: StudioEdit): boolean {
 
 function defaultWorkspaceDir(): string {
   return join(process.cwd(), 'studio-workspace')
+}
+
+/** Root directory GitHub-imported studio projects (Phase 7B) live under. */
+function importsRootDir(): string {
+  return join(process.cwd(), 'studio-workspace-imports')
+}
+
+/** One on-disk studio project the dashboard's Projects widget can open. */
+export interface StudioProjectSummary {
+  /** Absolute directory path — passed straight to `setStudioWorkspaceDir`. */
+  dir: string
+  /** Display name. The default workspace gets a fixed label; imports use their directory name. */
+  name: string
+  /** `'workspace'` for the single hand-authored default; `'import'` for a GitHub import. */
+  kind: 'workspace' | 'import'
+  /** Number of `.tsx` files discovered under `<dir>/pages/` — reuses `discoverPageFiles`. */
+  pageCount: number
+}
+
+/** `.tsx` page count for a project directory, 0 when it has no `pages/` dir at all. */
+function pageCountFor(dir: string): number {
+  const pagesDir = join(dir, 'pages')
+  return existsSync(pagesDir) ? discoverPageFiles(pagesDir).length : 0
+}
+
+/**
+ * Lists every on-disk studio project under `workspaceDir` (the single
+ * hand-authored default workspace) and `importsRootDir` (one subdirectory
+ * per GitHub import, Phase 7B). Pure-ish (two dir paths in, project list
+ * out — only reads the filesystem, never writes) so it's unit-testable
+ * against a temp fixture tree without a full Request/Response round trip,
+ * mirroring `collectWorkspaceFiles`/`discoverPageFiles`'s testing shape.
+ *
+ * Neither root existing is an error — a fresh install with no workspace yet
+ * (or one that has never imported a repo) simply yields fewer entries, down
+ * to an empty list. Only real directories are considered: a stray file
+ * sitting directly in `importsRootDir` is skipped, and the shared
+ * `EXCLUDED_WORKSPACE_DIR_NAMES` walk policy keeps this in lockstep with
+ * every other place a studio directory tree gets walked. Import entries are
+ * sorted by directory name for a deterministic response.
+ */
+export function listStudioProjects(workspaceDir: string, importsDir: string): StudioProjectSummary[] {
+  const projects: StudioProjectSummary[] = []
+
+  if (existsSync(workspaceDir) && statSync(workspaceDir).isDirectory()) {
+    projects.push({
+      dir: workspaceDir,
+      name: 'My workspace',
+      kind: 'workspace',
+      pageCount: pageCountFor(workspaceDir),
+    })
+  }
+
+  if (existsSync(importsDir)) {
+    const entries = readdirSync(importsDir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && !EXCLUDED_WORKSPACE_DIR_NAMES.has(entry.name))
+      .sort((a, b) => a.name.localeCompare(b.name))
+
+    for (const entry of entries) {
+      const dir = join(importsDir, entry.name)
+      projects.push({
+        dir,
+        name: entry.name,
+        kind: 'import',
+        pageCount: pageCountFor(dir),
+      })
+    }
+  }
+
+  return projects
 }
 
 /** One real source file collected from the workspace for the download zip. */
@@ -516,6 +597,18 @@ export async function tryServeStudio(
       if (err instanceof GithubImportError) {
         return jsonResponse({ error: err.message }, { status: err.status })
       }
+      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+    }
+  }
+
+  // List every on-disk studio project for the dashboard's Projects widget.
+  // Read-only: never creates, clears, or writes a directory.
+  if (pathname === '/admin/api/studio/projects' && req.method === 'GET') {
+    try {
+      const projects = listStudioProjects(defaultWorkspaceDir(), importsRootDir())
+      return jsonResponse({ projects })
+    } catch (err) {
+      console.error('[studio]', err)
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
     }
   }

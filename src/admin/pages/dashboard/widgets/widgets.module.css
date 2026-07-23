@@ -193,6 +193,52 @@
     margin-top: var(--space-4xs);
 }
 
+/* ── Projects widget ───────────────────────────────────────────────── */
+.projectList {
+    display: grid;
+    gap: 0;
+    margin-top: auto;
+}
+
+.projectRow {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--space-m);
+    padding: var(--space-m) 0;
+    border-top: 1px solid var(--border);
+}
+
+.projectRow:first-of-type {
+    border-top: 0;
+}
+
+.projectInfo {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4xs);
+    min-width: 0;
+}
+
+.projectName {
+    display: flex;
+    align-items: center;
+    gap: var(--space-s);
+    font-size: var(--text-s);
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.projectMeta {
+    font-family: var(--font-mono);
+    font-size: var(--text-2xs);
+    color: var(--text-disabled);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
 /* ── Tiny status dot ───────────────────────────────────────────────── */
 .dot {
     width: 6px;

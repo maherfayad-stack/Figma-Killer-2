@@ -47,6 +47,7 @@ src/admin/pages/dashboard/
     ├── PagesWidget.tsx
     ├── PluginsWidget.tsx
     ├── PostsWidget.tsx
+    ├── ProjectsWidget.tsx
     ├── PublishQueueWidget.tsx
     ├── StatusWidget.tsx
     ├── StorageWidget.tsx
@@ -140,8 +141,9 @@ interface DashboardWidgetDefinition {
 | `plugins`  | 4             | 6 × 5         | mint  | Installed plugin counts and lifecycle-state rows |
 | `domain`   | 3             | 6 × 3         | sky   | Local primary-domain and HTTPS verification rows |
 | `ai-usage` | 3             | Library only  | lilac | This-month AI spend, chats, top scope, and daily spend sparkline |
+| `projects` | 4             | Library only  | lilac | Every on-disk studio project (default workspace + GitHub imports) with an Open action |
 
-`Registry span` is the widget's `defaultSize`, used when the user drops it from the Block Library. `Seeded layout` is the fresh-user grid in `useDashboardLayout.ts`; `ai-usage` is first-party but intentionally starts in the Block Library instead of the default grid.
+`Registry span` is the widget's `defaultSize`, used when the user drops it from the Block Library. `Seeded layout` is the fresh-user grid in `useDashboardLayout.ts`; `ai-usage` and `projects` are first-party but intentionally start in the Block Library instead of the default grid.
 
 Each widget renderer composes the shared `<Widget>` primitive and receives only `{ span, editing }` from the grid. Data-backed widgets fetch through their own hook (`usePagesStats`, `useStorageStats`, `usePublishLineupStats`, ...), not through one aggregate dashboard request.
 
@@ -237,6 +239,7 @@ Non-CMS first-party widgets:
 | `ai-usage` | `listAiAudit(startOfMonthIso())` -> `/admin/api/ai/audit` | Maps a 403 from missing `ai.audit.read` to a no-permission empty state. |
 | `domain` | Local component rows | Shows the current placeholder primary-domain / HTTPS rows. |
 | `status` | Local component rows | Shows the current placeholder site/build/backup/plugin status rows. |
+| `projects` | `useStudioProjects()` -> `GET /admin/api/studio/projects` | Lists on-disk studio projects (`server/handlers/studio.ts`'s `listStudioProjects`), not a CMS dashboard domain endpoint. Opening a project calls `setStudioWorkspaceDir` then navigates to `/admin/site?studio`. |
 
 ### Timezone-aware day bucketing
 

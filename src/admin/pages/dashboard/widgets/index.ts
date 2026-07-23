@@ -16,6 +16,7 @@ import { MediaWidget } from './MediaWidget'
 import { PagesWidget } from './PagesWidget'
 import { PluginsWidget } from './PluginsWidget'
 import { PostsWidget } from './PostsWidget'
+import { ProjectsWidget } from './ProjectsWidget'
 import { PublishQueueWidget } from './PublishQueueWidget'
 import { StatusWidget } from './StatusWidget'
 import { StorageWidget } from './StorageWidget'
@@ -26,6 +27,7 @@ import { DashboardSolidIcon } from 'pixel-art-icons/icons/dashboard-solid'
 import { CloudUploadSolidIcon } from 'pixel-art-icons/icons/cloud-upload-solid'
 import { DatabaseSolidIcon } from 'pixel-art-icons/icons/database-solid'
 import { FileTextSolidIcon } from 'pixel-art-icons/icons/file-text-solid'
+import { FolderGlyphIcon } from 'pixel-art-icons/icons/folder-glyph'
 import { GlobeSolidIcon } from 'pixel-art-icons/icons/globe-solid'
 import { ImageSolidIcon } from 'pixel-art-icons/icons/image-solid'
 import { PenSquareSolidIcon } from 'pixel-art-icons/icons/pen-square-solid'
@@ -154,6 +156,17 @@ export function registerFirstPartyDashboardWidgets(): void {
     defaultSize: 3,
     tint: 'sky',
     render: DomainWidget,
+  })
+
+  dashboardWidgetRegistry.register({
+    id: 'projects',
+    ownerId: 'core',
+    name: 'Projects',
+    description: 'Studio workspaces & imports',
+    icon: FolderGlyphIcon,
+    defaultSize: 4,
+    tint: 'lilac',
+    render: ProjectsWidget,
   })
 
   dashboardWidgetRegistry.register({

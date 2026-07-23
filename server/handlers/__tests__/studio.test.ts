@@ -22,6 +22,7 @@ import {
   assignPageIds,
   collectWorkspaceFiles,
   discoverPageFiles,
+  listStudioProjects,
   orderStudioEditsForApply,
   pageIdFromRelPath,
   tryServeStudio,
@@ -363,6 +364,118 @@ describe('collectWorkspaceFiles', () => {
 
   it('returns an empty list for an empty directory (no crash)', () => {
     expect(collectWorkspaceFiles(tmpDir)).toEqual([])
+  })
+})
+
+/**
+ * listStudioProjects — pure(ish) dir-in/project-list-out helper backing
+ * GET /admin/api/studio/projects (the dashboard Projects widget). Tested
+ * against a temp fixture tree, same pattern as `collectWorkspaceFiles`.
+ */
+describe('listStudioProjects', () => {
+  let tmpDir: string
+  let workspaceDir: string
+  let importsDir: string
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-projects-'))
+    workspaceDir = path.join(tmpDir, 'studio-workspace')
+    importsDir = path.join(tmpDir, 'studio-workspace-imports')
+  })
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  function write(relPath: string, contents: string): void {
+    const full = path.join(tmpDir, ...relPath.split('/'))
+    fs.mkdirSync(path.dirname(full), { recursive: true })
+    fs.writeFileSync(full, contents, 'utf8')
+  }
+
+  it('returns an empty list when neither root exists', () => {
+    expect(listStudioProjects(workspaceDir, importsDir)).toEqual([])
+  })
+
+  it('includes the default workspace as kind "workspace" when it exists, with its page count', () => {
+    write('studio-workspace/pages/Home.tsx', 'x')
+    write('studio-workspace/pages/About.tsx', 'x')
+
+    const projects = listStudioProjects(workspaceDir, importsDir)
+
+    expect(projects).toEqual([
+      { dir: workspaceDir, name: 'My workspace', kind: 'workspace', pageCount: 2 },
+    ])
+  })
+
+  it('reports pageCount 0 for a workspace with no pages/ dir', () => {
+    fs.mkdirSync(workspaceDir, { recursive: true })
+
+    const projects = listStudioProjects(workspaceDir, importsDir)
+
+    expect(projects).toEqual([
+      { dir: workspaceDir, name: 'My workspace', kind: 'workspace', pageCount: 0 },
+    ])
+  })
+
+  it('lists one entry per immediate subdirectory of the imports root, kind "import"', () => {
+    write('studio-workspace-imports/acme-widgets/pages/Home.tsx', 'x')
+    write('studio-workspace-imports/other-repo/pages/Home.tsx', 'x')
+    write('studio-workspace-imports/other-repo/pages/About.tsx', 'x')
+
+    const projects = listStudioProjects(workspaceDir, importsDir)
+
+    expect(projects).toEqual([
+      { dir: path.join(importsDir, 'acme-widgets'), name: 'acme-widgets', kind: 'import', pageCount: 1 },
+      { dir: path.join(importsDir, 'other-repo'), name: 'other-repo', kind: 'import', pageCount: 2 },
+    ])
+  })
+
+  it('skips a stray file sitting directly in the imports root', () => {
+    write('studio-workspace-imports/acme-widgets/pages/Home.tsx', 'x')
+    write('studio-workspace-imports/README.md', 'not a project')
+
+    const projects = listStudioProjects(workspaceDir, importsDir)
+
+    expect(projects.map((p) => p.name)).toEqual(['acme-widgets'])
+  })
+
+  it('never descends into an excluded directory name at the imports root (e.g. .git)', () => {
+    write('studio-workspace-imports/.git/HEAD', 'x')
+    write('studio-workspace-imports/acme-widgets/pages/Home.tsx', 'x')
+
+    const projects = listStudioProjects(workspaceDir, importsDir)
+
+    expect(projects.map((p) => p.name)).toEqual(['acme-widgets'])
+  })
+
+  it('combines the default workspace and imports, workspace first', () => {
+    write('studio-workspace/pages/Home.tsx', 'x')
+    write('studio-workspace-imports/acme-widgets/pages/Home.tsx', 'x')
+
+    const projects = listStudioProjects(workspaceDir, importsDir)
+
+    expect(projects.map((p) => p.kind)).toEqual(['workspace', 'import'])
+  })
+})
+
+/**
+ * GET /admin/api/studio/projects — route wiring over `listStudioProjects`.
+ */
+describe('GET /admin/api/studio/projects', () => {
+  it('returns { projects: [] } when running against a cwd with no studio directories', async () => {
+    // The route derives its roots from process.cwd() — this repo's actual
+    // cwd during `bun test` has no studio-workspace-imports/ dir checked in
+    // (that's user dogfooding data), so this just exercises the route
+    // returning valid JSON without asserting exact repo state.
+    const url = new URL('http://localhost/admin/api/studio/projects')
+    const req = new Request(url)
+    const res = await tryServeStudio(req, undefined, url, url.pathname)
+
+    expect(res).not.toBeNull()
+    expect(res!.status).toBe(200)
+    const body = (await res!.json()) as { projects: Array<{ dir: string; kind: string }> }
+    expect(Array.isArray(body.projects)).toBe(true)
   })
 })
 

@@ -340,6 +340,8 @@ as a sibling file to (not a rewrite of) `server/handlers/studio.ts`:
    an import switches it.
 **Gate:** paste a public React repo URL → it imports, loads as a workspace (via 7A), and its pages render as frames; a bad/oversized/private-without-token URL fails with a clear toasted message, not a crash. ✅
 
+**Dashboard Projects widget.** `GET /admin/api/studio/projects` (read-only; `listStudioProjects` in `server/handlers/studio.ts`) lists every on-disk studio project — the default `studio-workspace/` plus one entry per `studio-workspace-imports/<owner>-<repo>/` — with its page count. The admin dashboard's `projects` widget (`src/admin/pages/dashboard/widgets/ProjectsWidget.tsx`, Library-only, not in the seeded default layout) renders the list and opens one via `setStudioWorkspaceDir` + navigating to `/admin/site?studio`, reusing the exact `studioWorkspaceDir`/studio-mode plumbing 7B introduced — no new switching mechanism.
+
 ### 7C — MCP: import React apps into the system
 **New capability, riding existing infra.** Instatic already exposes its CMS tools over MCP at `/_instatic/mcp` (`server/ai/mcp/`, per-connector bearer tokens, the `(userId, scope)` live workspace bridge — see [`docs/features/mcp-connectors.md`](docs/features/mcp-connectors.md)). Add an MCP tool so an external agent (Claude Code, Codex) can import a React app into a studio workspace programmatically.
 **Plan:**
