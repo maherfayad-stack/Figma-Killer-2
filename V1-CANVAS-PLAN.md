@@ -18,10 +18,14 @@
 | 6E | Resizable frames + device presets | ✅ Done — `4fc43c5` |
 | 6A | Design tab UI polish pass | ⏸️ Pending — deferred (taste-driven; wants human dogfood eye) |
 | 7A | Multi-file workspace loader + local/package component resolution | ✅ Done — `2077c52` |
-| 7B | GitHub-link import | ✅ Done — `server/handlers/studioGithubImport.ts` (SHA to be filled in a follow-up `docs(studio): mark 7B done` commit, matching the 7A convention above) |
-| 7C | MCP React-app import | 📋 Planned |
+| 7B | GitHub-link import | ✅ Done — `f1c320c`, `4951d36`; security fix `a9532f5` |
+| 7C | MCP React-app import (`studio_import_project`) | ✅ Done — `fbd8df9` |
 
 **Dogfood bug fixes (2026-07-24):** resized frame no longer resets on move (`5ef4e66`); edits no longer silently revert after a line-shifting codemod (`a260e70`); source `style={{}}` now renders on the canvas (`1b79996`).
+
+**Security fix (2026-07-24, `a9532f5`):** `POST /admin/api/studio/import-github` accepted a `dir` in its request body, which flowed into the import's "clear the target before repopulating" step — an arbitrary recursive delete driven by request input (`dir=studio-workspace` would have wiped the user's hand-authored boards and pages). The target is now always derived server-side from the parsed repo, wire fields are passed explicitly rather than spread, and any directory containing a `.studio/` marker is refused. Both behaviours are pinned by regression tests.
+
+**All planned phases (0–7) are now complete** except **6A** (design-tab polish, deliberately deferred as taste-driven) and the **`className`/CSS fidelity gap** (backlog item 6) — which is the highest-value remaining work, since it gates how useful 7B/7C imports actually are.
 
 > **⚠️ Fidelity gap worth doing before/alongside 7B–7C:** the canvas parses `.tsx` and re-renders it, so fidelity is bounded by what the parser captures. Inline `style={{…}}` now renders (`1b79996`), but **`className` / external-CSS / CSS-module styling does not**, nor do non-literal style values (`gap`, `fn()`). Most real-world React apps style via `className`, so imported apps (7B/7C) will render largely unstyled until this is addressed. Tracked as backlog item 6 below.
 
