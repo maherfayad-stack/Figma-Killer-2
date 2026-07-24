@@ -1,0 +1,52 @@
+/* StudioPagesTree — "Pages" section: every page as a top-level expandable row. */
+
+.section {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-s) var(--space-s) var(--space-3xs);
+}
+
+.heading {
+    font-size: var(--text-2xs);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-subtle);
+}
+
+.scroll {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 0 var(--space-xs) var(--space-s);
+}
+
+.pageRow {
+    display: flex;
+    flex-direction: column;
+}
+
+.renameInput {
+    flex: 1;
+}
+
+/* Indents an expanded page's subtree under its row without relying on each
+ * TreeNode's own depth math — both the active page's embedded `DomPanel` and
+ * a non-active page's `PageLayerSubtree` start their own tree at depth 0, so
+ * the visual nesting comes from this wrapper instead. `flex: 0 0 auto` keeps
+ * it (and the DomPanel/PageLayerSubtree it holds — see DomPanel's
+ * `.panelEmbedded`) sized to its own content: `.pageRow`'s column flex must
+ * never stretch an expanded subtree to fill leftover space, or every
+ * following page row gets pushed toward the bottom of the list. */
+.pageSubtree {
+    flex: 0 0 auto;
+    padding-left: var(--space-l);
+}

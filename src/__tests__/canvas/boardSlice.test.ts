@@ -33,10 +33,10 @@ beforeEach(resetBoardState)
 // `useEditorStore` is a process-wide singleton shared by every test file in
 // this run — without this, whatever board state the LAST test in this file
 // leaves behind (an active board, saved frames, …) leaks into unrelated
-// test files that render `CanvasRoot` (BoardFramesLayer / BoardSwitcher
-// self-gate on there being an active board, so a leaked one makes them
-// render unexpectedly elsewhere). Restore the neutral state on the way out
-// too, not just between tests in this file.
+// test files that render `CanvasRoot` (BoardFramesLayer self-gates on there
+// being an active board, so a leaked one makes it render unexpectedly
+// elsewhere). Restore the neutral state on the way out too, not just between
+// tests in this file.
 afterAll(resetBoardState)
 
 function state() {

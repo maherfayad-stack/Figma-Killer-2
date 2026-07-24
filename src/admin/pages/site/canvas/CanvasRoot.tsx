@@ -47,7 +47,6 @@ import { CanvasSelectionContext, CanvasViewportActionsContext } from './CanvasCo
 // `docs/features/canvas-iframe-per-frame.md`.
 import { PluginCanvasOverlayLayer } from './PluginCanvasOverlayLayer'
 import { BoardNotesToolbar } from './BoardNotesLayer'
-import { BoardSwitcher } from './BoardSwitcher'
 import { CanvasRenameDialog } from './CanvasRenameDialog'
 import { useCanvasRenameDialog } from './useCanvasRenameDialog'
 import { CanvasLayerContextMenu } from './CanvasLayerContextMenu'
@@ -540,11 +539,6 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
               a sibling of the transform layer so it never scales with pan/zoom.
               Self-gates on active board (no-op outside studio mode). */}
           {!isLive && editable && <BoardNotesToolbar />}
-
-          {/* Studio-mode board switcher (create/rename/delete/switch boards +
-              add-frame picker) — same untransformed-chrome pattern as
-              BoardNotesToolbar. Self-gates on active board. */}
-          {!isLive && editable && <BoardSwitcher />}
 
           {!isLive && editable && contextMenu.position && (
             <CanvasLayerContextMenu

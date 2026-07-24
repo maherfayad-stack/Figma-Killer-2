@@ -11,8 +11,8 @@
  * deleted is silently skipped. Membership is managed by `boardSlice`'s
  * `addFrame` / `seedFramesForActiveBoard` / `removeFrame` — this component
  * only reads `board.frames`, it never invents a page that isn't on the list
- * (see `AddFramePicker` for adding one, and the per-frame "×" for removing
- * one).
+ * (see `AddFramePicker` for adding one, and each frame header's right-click
+ * "Remove from board" for removing one).
  *
  * Position: every `BoardFrame` on the list carries a saved `x`/`y` (assigned
  * at add-time by `defaultFramePosition`, `@site/canvas/BoardFramesLayer/frameGrid`)
@@ -40,7 +40,11 @@
  * `StickyNoteView`'s pointer-capture + screenDelta/zoom pattern so it tracks
  * the cursor 1:1 at any zoom level. Both this layer and the header live
  * inside `CanvasTransformLayer`, so frame coordinates are plain board units
- * — the pan/zoom transform is inherited for free.
+ * — the pan/zoom transform is inherited for free. The header's pointerdown
+ * handler only arms drag state for the primary button (`e.button === 0`), so
+ * a right-click falls through untouched to `onContextMenu` — it opens the
+ * header's context menu (Rename / Remove from board) without ever starting
+ * a drag or losing the frame's activation.
  *
  * KNOWN LIMITATION: every studio frame shares one synthetic breakpoint id
  * (`STUDIO_BREAKPOINT.id === 'studio'`), so breakpoint-KEYED chrome inside
@@ -58,22 +62,34 @@
  * `frameVirtualization.ts`) so scrolling/panning doesn't pop iframes in and
  * out right at the edge. Offscreen frames render a static placeholder body
  * instead — no iframe, no animation. Only the BODY is swapped: the outer
- * `.frame` div, its position (`--frame-x/--frame-y`), the drag header,
- * title, active badge, and remove button all stay mounted and functional on
- * placeholders too, so position, activation, drag, and removal work
+ * `.frame` div, its position (`--frame-x/--frame-y`), the drag header, and
+ * its title/rename/context-menu all stay mounted and functional on
+ * placeholders too, so position, activation, drag, rename, and removal work
  * regardless of on-screen state. `key={page.id}` on the list ensures React
  * cleanly (re)mounts a fresh iframe when a frame re-enters the viewport.
  *
  * Self-gates on `selectActiveBoard`: renders nothing outside studio board
  * mode, so `CanvasTransformLayer` can always mount it without an extra check.
  */
-import { useContext, useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
+import {
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
+} from 'react'
+import { createPortal } from 'react-dom'
 import { useEditorStore } from '@site/store/store'
 import { selectActiveBoard } from '@site/store/slices/boardSlice'
 import type { Breakpoint, Page } from '@core/page-tree'
 import type { BoardFrame } from '@core/studio-board'
-import { Button } from '@ui/components/Button'
+import { Input } from '@ui/components/Input'
+import { ContextMenu, ContextMenuItem } from '@ui/components/ContextMenu'
+import { useInlineRename } from '@site/hooks/useInlineRename'
 import { CloseIcon } from 'pixel-art-icons/icons/close'
+import { PenSquareSolidIcon } from 'pixel-art-icons/icons/pen-square-solid'
 import { CanvasPageContext, CanvasViewportActionsContext } from '../CanvasContexts'
 import { BreakpointFrame } from '../BreakpointFrame'
 import { AddFramePicker } from './AddFramePicker'
@@ -122,6 +138,7 @@ export function BoardFramesLayer() {
   const setFramePosition = useEditorStore((s) => s.setFramePosition)
   const setFrameSize = useEditorStore((s) => s.setFrameSize)
   const removeFrame = useEditorStore((s) => s.removeFrame)
+  const renamePage = useEditorStore((s) => s.renamePage)
   const zoom = useEditorStore((s) => s.zoom)
   const panX = useEditorStore((s) => s.panX)
   const panY = useEditorStore((s) => s.panY)
@@ -190,6 +207,7 @@ export function BoardFramesLayer() {
               onMove={(nx, ny) => setFramePosition(page.id, nx, ny)}
               onResize={(nw, nh) => setFrameSize(page.id, nw, nh)}
               onRemove={() => removeFrame(page.id)}
+              onRename={(title) => renamePage(page.id, title)}
             />
           )
         })
@@ -230,6 +248,7 @@ interface BoardFrameViewProps {
   onMove: (x: number, y: number) => void
   onResize: (width: number, height: number) => void
   onRemove: () => void
+  onRename: (title: string) => void
 }
 
 function BoardFrameView({
@@ -244,9 +263,12 @@ function BoardFrameView({
   onMove,
   onResize,
   onRemove,
+  onRename,
 }: BoardFrameViewProps) {
   const dragRef = useRef<DragState | null>(null)
   const resizeRef = useRef<ResizeDragState | null>(null)
+  const rename = useInlineRename({ onCommit: onRename })
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
 
   // Capture phase — fires before the frame's own node-click handling, so
   // `activePageId` is already switched to this page by the time selection
@@ -256,6 +278,10 @@ function BoardFrameView({
   }
 
   const handleHeaderPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    // Only the primary (left) button starts a move-drag — a right-click's
+    // pointerdown must fall through to `onContextMenu` untouched, never
+    // arming drag state (see the module doc's "Drag-to-reposition" note).
+    if (e.button !== 0) return
     e.currentTarget.setPointerCapture(e.pointerId)
     dragRef.current = {
       pointerId: e.pointerId,
@@ -264,6 +290,12 @@ function BoardFrameView({
       frameX: x,
       frameY: y,
     }
+  }
+
+  const handleHeaderContextMenu = (e: ReactMouseEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setContextMenu({ x: e.clientX, y: e.clientY })
   }
 
   const handleHeaderPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
@@ -341,25 +373,54 @@ function BoardFrameView({
         onPointerMove={handleHeaderPointerMove}
         onPointerUp={endDrag}
         onPointerCancel={endDrag}
+        onContextMenu={handleHeaderContextMenu}
+        onDoubleClick={(e) => { e.preventDefault(); e.stopPropagation(); rename.start(page.title) }}
       >
-        <span className={styles.title}>{page.title}</span>
-        {isActive && <span className={styles.activeBadge}>Active</span>}
-        <Button
-          variant="ghost"
-          size="micro"
-          iconOnly
-          className={styles.removeButton}
-          aria-label={`Remove ${page.title} from this board`}
-          tooltip="Remove from board"
-          // Removing membership is a pointerdown target inside the drag
-          // handle — stop the event reaching the header's own drag/activate
-          // handlers so a click on "×" never starts a frame drag.
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={onRemove}
-        >
-          <CloseIcon size={11} aria-hidden="true" />
-        </Button>
+        {/* Name only — no Active badge (active styling is the CSS-driven
+            selection ring on `[data-active='true'] .header`, set above) and
+            no inline "×" (moved to the right-click context menu below). */}
+        {rename.isRenaming ? (
+          <Input
+            ref={rename.inputRef}
+            fieldSize="xs"
+            autoFocus
+            value={rename.value}
+            onChange={(e) => rename.setValue(e.target.value)}
+            onKeyDown={rename.handleKeyDown}
+            onBlur={rename.commit}
+            onPointerDown={(e) => e.stopPropagation()}
+            aria-label={`Rename ${page.title}`}
+            className={styles.titleInput}
+          />
+        ) : (
+          <span className={styles.title}>{page.title}</span>
+        )}
       </div>
+
+      {contextMenu && createPortal(
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          ariaLabel={`${page.title} frame options`}
+          animateExit
+          onClose={() => setContextMenu(null)}
+        >
+          <ContextMenuItem
+            onClick={() => { setContextMenu(null); rename.start(page.title) }}
+          >
+            <span aria-hidden="true"><PenSquareSolidIcon size={13} /></span>
+            Rename
+          </ContextMenuItem>
+          <ContextMenuItem
+            danger
+            onClick={() => { setContextMenu(null); onRemove() }}
+          >
+            <span aria-hidden="true"><CloseIcon size={13} /></span>
+            Remove from board
+          </ContextMenuItem>
+        </ContextMenu>,
+        document.body,
+      )}
       {/* Sized to the frame's OWN width/height (Phase 6E) — a real "device
           box" for both the live iframe and the offscreen placeholder, so
           resize handles have a consistent box to anchor to regardless of

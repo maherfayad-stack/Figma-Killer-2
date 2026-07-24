@@ -1,11 +1,26 @@
 /**
  * DomPanel — the Layers tab of the consolidated `ExplorerPanel`.
  *
- * Renders the full node tree of the active page. It is always mounted as a tab
- * body inside `ExplorerPanel`, which owns the panel shell (header + segmented
- * tabs + close button) and controls visibility. DomPanel therefore has no
- * chrome of its own — no draggable header, no collapse toggle, no width
- * persistence; it fills the sidebar slot the Explorer panel gives it.
+ * Renders the full node tree of the active page. In CMS mode it is mounted
+ * as a tab body inside `ExplorerPanel`, which owns the panel shell (header +
+ * segmented tabs + close button) and controls visibility. DomPanel therefore
+ * has no chrome of its own — no draggable header, no collapse toggle, no
+ * width persistence; it fills the sidebar slot it is given.
+ *
+ * In Studio mode (`isStudioMode()`) this same component is embedded once per
+ * expanded active-page row inside `StudioPagesTree` — see that component's
+ * doc. Two things change there, both gated on `isStudioMode()` below rather
+ * than stripped out (the CMS Layers tab needs the pre-existing behavior
+ * unchanged):
+ *   - The search field + insert-module button row is dropped — at that
+ *     scale a raised toolbar surface is clutter. The `searchQuery`/
+ *     search-mode branch stays fully live for CMS.
+ *   - The root/tree-area no longer fill/scroll their own box (`height: 100%`
+ *     + `overflow-y: auto`, the CMS tab's fill-the-sidebar behavior).
+ *     Embedded in a page ROW, DomPanel must size to its own content instead
+ *     — `StudioPagesTree`'s page list is the single scroll container; a
+ *     second nested scroller (or a box stretching to fill leftover panel
+ *     height) would push every following page row to the bottom.
  *
  * Guideline #357 (Compact UI Density):
  * - Row height: 28px (WCAG touch target NOT required for editor chrome)
@@ -36,6 +51,7 @@ import {
   type DragEndEvent,
 } from '@dnd-kit/core'
 import { createPortal } from 'react-dom'
+import { cn } from '@ui/cn'
 import { useEditorStore, selectActiveCanvasPage } from '@site/store/store'
 import { flattenSubtree } from '@core/page-tree'
 import { getAncestorIds } from '@site/hooks/useTreeWalkOrder'
@@ -55,6 +71,7 @@ import { TreeContainer, TreeIconSlot, TreeLabel, TreeRow } from '@site/ui/Tree'
 import { TagPill } from '@ui/components/TagPill'
 import { useEditorPreference } from '@site/preferences/editorPreferences'
 import { isNarrowEditorChromeViewport } from '@site/layout/responsiveChrome'
+import { isStudioMode } from '@site/studio/studioMode'
 import { SearchBar } from '@ui/components/SearchBar'
 import { SkeletonTree } from '@ui/components/Skeleton'
 import { Button } from '@ui/components/Button'
@@ -143,6 +160,10 @@ function SearchResults({ rows, showTag, showClasses, onSelect }: SearchResultsPr
 // ─── Inner panel (needs context from DomTreeProvider) ─────────────────────────
 
 function DomPanelInner({ editable = true }: { editable?: boolean }) {
+  // Studio embeds this component once per expanded active-page row inside
+  // `StudioPagesTree`, content-sized rather than filling a panel — see the
+  // module doc's "In Studio mode" note for what that changes below.
+  const embedded = isStudioMode()
   const page = useEditorStore(selectActiveCanvasPage)
   const activeDocument = useEditorStore((s) => s.activeDocument)
   const setFocusedPanel = useEditorStore((s) => s.setFocusedPanel)
@@ -396,38 +417,48 @@ function DomPanelInner({ editable = true }: { editable?: boolean }) {
       onKeyDown={handlePanelKeyDown}
       onFocus={() => setFocusedPanel('domTree')}
       onClick={(e) => e.stopPropagation()}
-      className={styles.panel}
+      className={cn(styles.panel, embedded && styles.panelEmbedded)}
     >
       {/* ─── Panel content. The ExplorerPanel shell owns the header + tabs +
           close button, so this body renders chrome-free. ────────────────── */}
       <>
-        <div className={styles.searchRow}>
-          <SearchBar
-            ref={searchInputRef}
-            data-testid="dom-tree-search"
-            value={searchQuery}
-            onValueChange={setSearchQuery}
-            placeholder="Search layers…"
-            aria-label="Search layers"
-            className={styles.searchFill}
-          />
-          {editable && (
-            <Button
-              ref={insertTriggerRef}
-              variant="secondary"
-              size="sm"
-              iconOnly
-              aria-label="Insert module"
-              aria-haspopup="dialog"
-              aria-expanded={insertOpen}
-              tooltip="Insert module"
-              data-testid="dom-tree-insert-module"
-              onClick={() => setInsertOpen(true)}
-            >
-              <AppGridPlusGlyphIcon size={13} aria-hidden="true" />
-            </Button>
-          )}
-        </div>
+        {/* Studio mode drops this row entirely — the Studio Pages/Layers tree
+            embeds this same DomPanel per expanded page row, and a search
+            field + insert button + raised toolbar surface reads as clutter
+            at that scale (studio has no search-across-one-page need; the
+            CMS Layers tab still does, unchanged). The underlying
+            `searchQuery`/`insertOpen` state and the tree-mode/search-mode
+            branch below stay shared — gating the RENDER, not stranding the
+            logic, keeps this one component correct for both modes. */}
+        {!embedded && (
+          <div className={styles.searchRow}>
+            <SearchBar
+              ref={searchInputRef}
+              data-testid="dom-tree-search"
+              value={searchQuery}
+              onValueChange={setSearchQuery}
+              placeholder="Search layers…"
+              aria-label="Search layers"
+              className={styles.searchFill}
+            />
+            {editable && (
+              <Button
+                ref={insertTriggerRef}
+                variant="secondary"
+                size="sm"
+                iconOnly
+                aria-label="Insert module"
+                aria-haspopup="dialog"
+                aria-expanded={insertOpen}
+                tooltip="Insert module"
+                data-testid="dom-tree-insert-module"
+                onClick={() => setInsertOpen(true)}
+              >
+                <AppGridPlusGlyphIcon size={13} aria-hidden="true" />
+              </Button>
+            )}
+          </div>
+        )}
 
         {/* ── Tree / search results — scrollable area ─────────────────────
             onContextMenu fires only for right-clicks on EMPTY space inside
@@ -435,7 +466,7 @@ function DomPanelInner({ editable = true }: { editable?: boolean }) {
             keep their per-row context menu. */}
         <div
           ref={treeAreaRef}
-          className={styles.treeArea}
+          className={cn(styles.treeArea, embedded && styles.treeAreaEmbedded)}
           onContextMenu={handleBackgroundContextMenu}
         >
           {!page ? (

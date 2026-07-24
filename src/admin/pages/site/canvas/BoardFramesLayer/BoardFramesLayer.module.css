@@ -39,7 +39,6 @@
 .header {
     display: flex;
     align-items: center;
-    justify-content: space-between;
     gap: var(--space-xs);
     padding: var(--space-2xs) var(--space-s);
     background: var(--bg-surface-2);
@@ -60,23 +59,13 @@
     font-size: var(--text-s);
     font-weight: 600;
     color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
-.activeBadge {
-    font-size: var(--text-xs);
-    color: var(--info-text);
-    background: var(--bg-surface-3);
-    padding: var(--space-4xs) var(--space-2xs);
-    border-radius: var(--radius-sm);
-}
-
-.removeButton {
-    margin-left: auto;
-    color: var(--text-subtle);
-}
-
-.removeButton:hover {
-    color: var(--danger-light);
+.titleInput {
+    flex: 1;
 }
 
 /* Static stand-in for an offscreen frame's body — no iframe, no animation.

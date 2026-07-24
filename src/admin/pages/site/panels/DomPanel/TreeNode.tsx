@@ -22,7 +22,7 @@
  */
 import { memo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { useEditorStore, selectActiveCanvasPage } from '@site/store/store'
+import { useEditorStore, selectActiveCanvasPage, selectCanvasPageFor } from '@site/store/store'
 import { registry } from '@core/module-engine'
 import {
   getNodeDisplayName,
@@ -30,7 +30,7 @@ import {
   getNodeClassNames,
 } from '@core/page-tree'
 import { useDraggable } from '@dnd-kit/core'
-import { useExpansionStore, useIsNodeExpanded } from './DomTreeContext'
+import { useExpansionStore, useIsNodeExpanded, useDomTreePageId } from './DomTreeContext'
 import { useDomPanelDndContext } from './DomPanelDndContext'
 import { LayerNodeContextMenu } from './LayerNodeContextMenu'
 import { Input } from '@ui/components/Input'
@@ -64,14 +64,21 @@ interface ContextMenuState {
 // rendered for every node in the document; skipping equal-prop re-renders here is
 // an O(N) critical path the React Compiler's within-render memoization can't cover.
 export const TreeNode = memo(function TreeNode({ nodeId, depth, editable = true }: TreeNodeProps) {
+  // Which page's tree this row belongs to. `null` (the default, set by every
+  // plain DomPanel mount) means "the active canvas document" — see
+  // `DomTreePageContext`'s doc comment. The Studio Pages/Layers tree provides
+  // an explicit page id here so a page's rows resolve correctly even before
+  // that page becomes active.
+  const pageId = useDomTreePageId()
+
   // ── Per-node selectors — only THIS node re-renders on its own changes ──────
-  const node = useEditorStore((s) => selectActiveCanvasPage(s)?.nodes[nodeId] ?? null)
+  const node = useEditorStore((s) => selectCanvasPageFor(s, pageId)?.nodes[nodeId] ?? null)
   // Per-node selection: only the rows whose membership flips re-render per
   // selection event. With multi-select, several rows may flip in one event
   // (e.g. shift-click range), but each row still reads only its own boolean.
   const isSelected = useEditorStore((s) => s.selectedNodeIds.includes(nodeId))
   const isHovered = useEditorStore((s) => s.hoveredNodeId === nodeId)
-  const isRoot = useEditorStore((s) => selectActiveCanvasPage(s)?.rootNodeId === nodeId)
+  const isRoot = useEditorStore((s) => selectCanvasPageFor(s, pageId)?.rootNodeId === nodeId)
   // Subscribe to visualComponents so VC renames re-render every ref's tree row
   // (the VC name is part of the resolved displayName for visual-component-ref nodes).
   const visualComponents = useEditorStore((s) => s.site?.visualComponents)
@@ -458,9 +465,11 @@ export const TreeNode = memo(function TreeNode({ nodeId, depth, editable = true 
 import { useEditorStore as useStore } from '@site/store/store'
 
 function ChildrenGroup({ nodeId, depth, editable }: { nodeId: string; depth: number; editable: boolean }) {
+  // Same page-resolution rule as the parent TreeNode — see DomTreePageContext.
+  const pageId = useDomTreePageId()
   // Fall back to a module-level stable empty array: returning a fresh [] from
   // the selector would break referential equality every render (Guideline #239).
-  const children = useStore((s) => selectActiveCanvasPage(s)?.nodes[nodeId]?.children) ?? EMPTY_CHILDREN
+  const children = useStore((s) => selectCanvasPageFor(s, pageId)?.nodes[nodeId]?.children) ?? EMPTY_CHILDREN
 
   return (
     <div role="group">

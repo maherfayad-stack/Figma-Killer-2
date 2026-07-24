@@ -2,9 +2,11 @@
  * AddFramePicker — "+ Frame" trigger that opens a menu of `site.pages` not
  * yet curated onto the active board, so picking one calls `addFrame(pageId)`.
  *
- * Shared by `BoardFramesLayer`'s empty state and `BoardSwitcher` (mounted as
- * viewport chrome) — one component, one menu, so both call sites agree on
- * which pages are "available" without duplicating the filter logic.
+ * Shared by `BoardFramesLayer`'s empty state and `StudioPagesTree`'s section
+ * header (the permanent home for adding a frame once a board already has
+ * some — the empty state alone would strand this action) — one component,
+ * one menu, so both call sites agree on which pages are "available" without
+ * duplicating the filter logic.
  *
  * Self-gates on `selectActiveBoard`: renders nothing outside studio board
  * mode.
@@ -20,12 +22,18 @@ interface AddFramePickerProps {
   label?: string
   variant?: ButtonProps['variant']
   size?: ButtonProps['size']
+  /** Compact icon-only trigger (e.g. a panel section header's "+"). Requires
+   *  `ariaLabel` — falls back to `label` when omitted. */
+  iconOnly?: boolean
+  ariaLabel?: string
 }
 
 export function AddFramePicker({
   label = 'Add frame',
   variant = 'secondary',
   size = 'sm',
+  iconOnly = false,
+  ariaLabel,
 }: AddFramePickerProps) {
   const board = useEditorStore(selectActiveBoard)
   const pages = useEditorStore((s) => s.site?.pages ?? [])
@@ -44,15 +52,17 @@ export function AddFramePicker({
         ref={triggerRef}
         variant={variant}
         size={size}
+        iconOnly={iconOnly}
         disabled={noneAvailable}
-        tooltip={noneAvailable ? 'Every page is already on this board' : undefined}
+        aria-label={iconOnly ? (ariaLabel ?? label) : undefined}
+        tooltip={noneAvailable ? 'Every page is already on this board' : iconOnly ? (ariaLabel ?? label) : undefined}
         aria-haspopup="menu"
         aria-expanded={open}
         active={open}
         onClick={() => setOpen((current) => !current)}
       >
-        <PlusIcon size={12} aria-hidden="true" />
-        <span>{label}</span>
+        <PlusIcon size={iconOnly ? 11 : 12} aria-hidden="true" />
+        {!iconOnly && <span>{label}</span>}
       </Button>
       {open && (
         <ContextMenu
