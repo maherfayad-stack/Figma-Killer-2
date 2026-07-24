@@ -84,7 +84,7 @@ interface BoardRowProps {
 }
 
 function BoardRow({ board, isActive, canDelete, onActivate, onRename, onDelete }: BoardRowProps) {
-  const rename = useInlineRename({ onCommit: onRename })
+  const [rename, renameInputRef] = useInlineRename({ onCommit: onRename })
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
 
   return (
@@ -110,7 +110,7 @@ function BoardRow({ board, isActive, canDelete, onActivate, onRename, onDelete }
       <TreeIconSlot icon={LayoutSolidIcon} iconSize={11} iconColor="var(--text-disabled)" />
       {rename.isRenaming ? (
         <Input
-          ref={rename.inputRef}
+          ref={renameInputRef}
           fieldSize="xs"
           autoFocus
           value={rename.value}

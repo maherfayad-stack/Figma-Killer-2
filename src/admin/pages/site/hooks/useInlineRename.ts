@@ -9,15 +9,37 @@
  *     current name, and selects its text.
  *   - Enter or blur commits the trimmed value (no-op if empty).
  *   - Escape cancels without committing.
+ *
+ * Returns a `[state, inputRef]` tuple rather than one object bundling the
+ * ref together with `value`/`commit`/etc. — `eslint-plugin-react-compiler`'s
+ * ref-safety analysis taints an entire returned object once any of its
+ * fields is a ref, and then flags every OTHER field read from it during
+ * render (`state.value`, `state.commit`, …) as "accessing a ref during
+ * render", even though those fields are plain values/functions. Keeping the
+ * ref a sibling return value instead of a nested field avoids that false
+ * positive; `inputRef` itself is only ever used in the render-safe `ref={…}`
+ * position or read inside callbacks (never during render).
  */
-import { useRef, useState, type KeyboardEvent } from 'react'
+import { useRef, useState, type KeyboardEvent, type RefObject } from 'react'
 
 interface UseInlineRenameOptions {
   /** Called with the trimmed value on commit. Never called with an empty string. */
   onCommit: (trimmedValue: string) => void
 }
 
-export function useInlineRename({ onCommit }: UseInlineRenameOptions) {
+interface UseInlineRenameState {
+  isRenaming: boolean
+  value: string
+  setValue: (value: string) => void
+  start: (currentValue: string) => void
+  commit: () => void
+  cancel: () => void
+  handleKeyDown: (e: KeyboardEvent<HTMLInputElement>) => void
+}
+
+export function useInlineRename(
+  { onCommit }: UseInlineRenameOptions,
+): [UseInlineRenameState, RefObject<HTMLInputElement | null>] {
   const [isRenaming, setIsRenaming] = useState(false)
   const [value, setValue] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
@@ -44,5 +66,5 @@ export function useInlineRename({ onCommit }: UseInlineRenameOptions) {
     if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cancel() }
   }
 
-  return { isRenaming, value, setValue, inputRef, start, commit, cancel, handleKeyDown }
+  return [{ isRenaming, value, setValue, start, commit, cancel, handleKeyDown }, inputRef]
 }
