@@ -34,7 +34,7 @@ import { useState } from 'react'
 import { useEditorStore } from '@site/store/store'
 import type { Page } from '@core/page-tree'
 import { DomPanel, PageLayerSubtree } from '@site/panels/DomPanel'
-import { AddFramePicker } from '@site/canvas/BoardFramesLayer'
+import { AddFramePicker, NewPageButton } from '@site/canvas/BoardFramesLayer'
 import { Input } from '@ui/components/Input'
 import { TreeChevron, TreeContainer, TreeIconSlot, TreeLabel, TreeRow } from '@site/ui/Tree'
 import { FileTextSolidIcon } from 'pixel-art-icons/icons/file-text-solid'
@@ -83,11 +83,15 @@ export function StudioPagesTree({ editable = true }: StudioPagesTreeProps) {
     <div className={styles.section}>
       <div className={styles.header}>
         <span className={styles.heading}>Pages</span>
-        {/* Permanent home for adding a frame to the active board — the
-            `+ Frame` action `BoardSwitcher` used to own. `BoardFramesLayer`
-            only renders `AddFramePicker` in its empty state, so once a board
-            has any frames this header is the only remaining entry point. */}
-        <AddFramePicker iconOnly ariaLabel="Add page to board" size="micro" />
+        {/* Two entry points for populating the board: `NewPageButton` creates a
+            brand-new page file, `AddFramePicker` curates an already-made page
+            onto the active board. `BoardFramesLayer` only renders these in its
+            empty state, so once a board has any frames this header is the only
+            remaining home for them. */}
+        <div className={styles.headerActions}>
+          <NewPageButton iconOnly ariaLabel="New page" size="micro" />
+          <AddFramePicker iconOnly ariaLabel="Add existing page to board" size="micro" />
+        </div>
       </div>
       <TreeContainer ariaLabel="Pages" testId="studio-pages-tree" className={styles.scroll}>
         {pages.map((page) => (

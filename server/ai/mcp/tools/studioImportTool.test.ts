@@ -161,7 +161,7 @@ describe('studio_import_project — handler', () => {
     createdDirs.push(result.dir)
 
     expect(requestedHeaders?.authorization).toBe('Bearer secret-token')
-    expect(result.dir.split(path.sep).join('/')).toContain(`studio-workspace-imports/${owner}-${repo}`)
+    expect(result.dir.split(path.sep).join('/')).toContain(`studio-workspace/${owner}-${repo}`)
     expect(result.files).toBe(2)
     expect(result.skipped).toBe(0)
     expect(result.pageCount).toBe(1)

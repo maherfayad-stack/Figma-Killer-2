@@ -55,9 +55,11 @@ export function AdminRoutes() {
       <Route path="/admin" element={<Navigate to="/admin/dashboard" replace />} />
       <Route path="/admin/dashboard" element={withRouteBoundary(<AdminEntry section="dashboard" />)} />
       <Route path="/admin/site" element={withRouteBoundary(<AdminEntry section="site" />)} />
-      <Route path="/admin/content" element={withRouteBoundary(<AdminEntry section="content" />)} />
-      <Route path="/admin/data" element={withRouteBoundary(<AdminEntry section="data" />)} />
-      <Route path="/admin/media" element={withRouteBoundary(<AdminEntry section="media" />)} />
+      {/* Content / Data / Media are no longer top-level destinations — the app
+          is a studio-first launcher. Their CMS model still powers the site
+          editor (loops, data pickers, publish), but the standalone workspace
+          pages are unreachable: any /admin/content|data|media URL falls through
+          to the catch-all below and redirects to the Overview. */}
       <Route path="/admin/plugins" element={withRouteBoundary(<AdminEntry section="plugins" />)} />
       <Route path="/admin/users" element={withRouteBoundary(<AdminEntry section="users" />)} />
       <Route path="/admin/ai" element={withRouteBoundary(<AdminEntry section="ai" />)} />

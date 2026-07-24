@@ -112,6 +112,17 @@
   background: transparent;
 }
 
+/* Manage links (Plugins / Users) render as router `<Link>` anchors rather
+ * than Button primitives, so they need the flex layout + anchor reset the
+ * Button primitive would otherwise supply. They share every `.navItem` visual
+ * rule above. */
+.navLink {
+  display: flex;
+  align-items: center;
+  text-decoration: none;
+  cursor: pointer;
+}
+
 .navItem:hover {
   color: var(--text);
   background: var(--bg-surface-2);

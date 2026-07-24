@@ -13,7 +13,7 @@
  * a directory listing, not a second ts-morph parse.
  *
  * SECURITY — do not regress: the import target is always derived
- * server-side from the parsed repo (`studio-workspace-imports/<owner>-<repo>`,
+ * server-side from the parsed repo (`studio-workspace/<owner>-<repo>`,
  * `runGithubImport`'s default). `dir` is deliberately NOT part of this tool's
  * input schema — `runGithubImport` clears its target directory before
  * repopulating it, so a caller-supplied target would be an arbitrary
@@ -34,7 +34,7 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { Type } from '@core/utils/typeboxHelpers'
 import type { AiTool, ToolContext } from '../../runtime/types'
-import { discoverPageFiles } from '../../../handlers/studio'
+import { discoverPageFiles } from '../../../handlers/studioProjects'
 import { runGithubImport } from '../../../handlers/studioGithubImport'
 
 const StudioImportInputSchema = Type.Object(
@@ -78,7 +78,7 @@ export const studioImportMcpTools: AiTool[] = [
   {
     name: 'studio_import_project',
     description:
-      'Import a GitHub React app into its own studio workspace directory (studio-workspace-imports/<owner>-<repo>) so it can be opened as a multi-file studio workspace and edited live by the connector owner. Reuses the exact fetch-and-write engine behind the admin "Import from GitHub" dialog. Writes files to disk only — never publishes, and never edits the live page-tree editor directly. After importing, open the Studio UI (Site editor, studio mode) pointed at the returned dir to browse and edit it. Requires site.structure.edit.',
+      'Import a GitHub React app into its own studio workspace directory (studio-workspace/<owner>-<repo>) so it can be opened as a multi-file studio workspace and edited live by the connector owner. Reuses the exact fetch-and-write engine behind the admin "Import from GitHub" dialog. Writes files to disk only — never publishes, and never edits the live page-tree editor directly. After importing, open the Studio UI (Site editor, studio mode) pointed at the returned dir to browse and edit it. Requires site.structure.edit.',
     scope: 'site',
     execution: 'server',
     mutates: true,

@@ -7,14 +7,14 @@
       "frames": [
         {
           "pageId": "about",
-          "x": 0,
-          "y": 0,
+          "x": 530.7212461586353,
+          "y": -35.48896269290145,
           "width": 393,
           "height": 852
         },
         {
           "pageId": "catalog",
-          "x": 1104,
+          "x": 1499.2181723265755,
           "y": 0,
           "width": 393,
           "height": 852
@@ -25,6 +25,11 @@
           "y": 966.4028375977023,
           "width": 393,
           "height": 592.0045728185052
+        },
+        {
+          "pageId": "test",
+          "x": 1008.8246852807401,
+          "y": 999.3717867204955
         }
       ],
       "notes": [
@@ -61,6 +66,19 @@
     {
       "id": "28a20b20-c76c-4ce8-92f7-bb4369f5dcde",
       "name": "Board 2",
+      "frames": [
+        {
+          "pageId": "about",
+          "x": 0,
+          "y": 0
+        }
+      ],
+      "notes": [],
+      "docs": []
+    },
+    {
+      "id": "b08ebb0f-6fde-437d-a950-d5f439aaa5e4",
+      "name": "Board 3",
       "frames": [
         {
           "pageId": "about",

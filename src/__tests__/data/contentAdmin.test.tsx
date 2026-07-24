@@ -4,8 +4,7 @@ import { join } from 'node:path'
 import React, { type ReactNode } from 'react'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter, Route, Routes } from '@admin/lib/routing'
-import { useLocation } from '@admin/lib/routing'
+import { MemoryRouter } from '@admin/lib/routing'
 import { ContentPage } from '@content/ContentPage'
 import { AdminSessionProvider } from '@admin/session'
 import { StepUpProvider } from '@admin/shared/StepUp'
@@ -13,8 +12,6 @@ import { useAdminUi } from '@admin/state/adminUi'
 import { useWorkspaceLayout } from '@admin/state/workspaceLayout'
 import { useEditorStore } from '@site/store/store'
 import { makeSite } from '../fixtures'
-import { Toolbar } from '@site/toolbar/Toolbar'
-import { AdminSectionNavigation } from '@admin/shared/AdminSectionNavigation'
 import type { CmsCurrentUser } from '@core/persistence'
 import { CORE_CAPABILITIES } from '@core/capabilities'
 import { executeContentTool } from '@content/agent/contentBridge'
@@ -193,11 +190,6 @@ function ambientFetchFallback(url: string): Response | undefined {
     return json({ folders: [] })
   }
   return undefined
-}
-
-function LocationProbe() {
-  const location = useLocation()
-  return <output aria-label="current route">{location.pathname}</output>
 }
 
 const now = '2026-05-07T10:00:00.000Z'
@@ -413,167 +405,11 @@ afterEach(() => {
 })
 
 describe('ContentPage', () => {
-  it('uses SPA navigation with active Site and Content labels in the shared toolbar', () => {
-    render(
-      <AdminTestProviders initialEntries={['/admin/site']}>
-        <Routes>
-          <Route
-            path="/admin/site"
-            element={(
-              <>
-                <Toolbar
-                  section="site"
-                  adminNavigationSlot={<AdminSectionNavigation section="site" />}
-                  rightSlot={<span>right</span>}
-                />
-                <LocationProbe />
-              </>
-            )}
-          />
-          <Route
-            path="/admin/content"
-            element={(
-              <>
-                <Toolbar
-                  section="content"
-                  adminNavigationSlot={<AdminSectionNavigation section="content" />}
-                  rightSlot={<span>right</span>}
-                />
-                <LocationProbe />
-              </>
-            )}
-          />
-        </Routes>
-      </AdminTestProviders>,
-    )
-
-    expect(screen.getByText('Site')).toBeDefined()
-    fireEvent.click(screen.getByRole('link', { name: 'Content' }))
-    expect(screen.getByLabelText('current route').textContent).toBe('/admin/content')
-    expect(screen.getByText('Content')).toBeDefined()
-    expect(screen.getByRole('link', { name: 'Site' })).toBeDefined()
-  })
-
-  it('does not delay admin navigation or use route changes to collapse workspace panels', async () => {
-    const transitionStarts: string[] = []
-
-    render(
-      <AdminTestProviders initialEntries={['/admin/site']}>
-        <Routes>
-          <Route
-            path="/admin/site"
-            element={(
-              <>
-                <Toolbar
-                  section="site"
-                  adminNavigationSlot={(
-                    <AdminSectionNavigation
-                      section="site"
-                      onWorkspaceNavigateStart={() => {
-                        transitionStarts.push('content')
-                        return 180
-                      }}
-                    />
-                  )}
-                  rightSlot={<span>site controls</span>}
-                />
-                <LocationProbe />
-              </>
-            )}
-          />
-          <Route
-            path="/admin/content"
-            element={(
-              <>
-                <Toolbar
-                  section="content"
-                  adminNavigationSlot={<AdminSectionNavigation section="content" />}
-                  rightSlot={<span>content controls</span>}
-                />
-                <LocationProbe />
-              </>
-            )}
-          />
-        </Routes>
-      </AdminTestProviders>,
-    )
-
-    fireEvent.click(screen.getByRole('link', { name: 'Content' }))
-
-    expect(transitionStarts).toEqual(['content'])
-    expect(screen.getByLabelText('current route').textContent).toBe('/admin/content')
-    expect(screen.getByText('content controls')).toBeDefined()
-
-    const layoutSource = readFileSync(join(process.cwd(), 'src/admin/layouts/AdminCanvasLayout/AdminCanvasLayout.tsx'), 'utf8')
-    expect(layoutSource).not.toContain('setLeftSidebarPanel(null)')
-    expect(layoutSource).not.toContain('setPropertiesPanel({ collapsed: true })')
-    expect(layoutSource).not.toContain('onBeforeWorkspaceExit')
-  })
-
   it('does not fade or view-transition the central canvas surface during admin navigation', () => {
     const layoutCss = readFileSync(join(process.cwd(), 'src/admin/layouts/AdminCanvasLayout/AdminCanvasLayout.module.css'), 'utf8')
 
     expect(layoutCss).not.toContain('admin-canvas-content')
     expect(layoutCss).not.toMatch(/\.canvasContent\s*\{[^}]*animation:/s)
-  })
-
-  it('waits for async workspace navigation hooks before changing routes', async () => {
-    const transitionStarts: string[] = []
-    let resolveNavigation: (() => void) | null = null
-
-    render(
-      <AdminTestProviders initialEntries={['/admin/site']}>
-        <Routes>
-          <Route
-            path="/admin/site"
-            element={(
-              <>
-                <Toolbar
-                  section="site"
-                  adminNavigationSlot={(
-                    <AdminSectionNavigation
-                      section="site"
-                      onWorkspaceNavigateStart={() => new Promise<void>((resolve) => {
-                        transitionStarts.push('content')
-                        resolveNavigation = resolve
-                      })}
-                    />
-                  )}
-                  rightSlot={<span>site controls</span>}
-                />
-                <LocationProbe />
-              </>
-            )}
-          />
-          <Route
-            path="/admin/content"
-            element={(
-              <>
-                <Toolbar
-                  section="content"
-                  adminNavigationSlot={<AdminSectionNavigation section="content" />}
-                  rightSlot={<span>content controls</span>}
-                />
-                <LocationProbe />
-              </>
-            )}
-          />
-        </Routes>
-      </AdminTestProviders>,
-    )
-
-    fireEvent.click(screen.getByRole('link', { name: 'Content' }))
-
-    expect(transitionStarts).toEqual(['content'])
-    expect(screen.getByLabelText('current route').textContent).toBe('/admin/site')
-    expect(screen.getByText('site controls')).toBeDefined()
-
-    resolveNavigation?.()
-
-    await waitFor(() => {
-      expect(screen.getByLabelText('current route').textContent).toBe('/admin/content')
-    })
-    expect(screen.getByText('content controls')).toBeDefined()
   })
 
   it('keeps loading skeletons visible until content entries finish loading', async () => {

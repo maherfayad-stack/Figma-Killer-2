@@ -69,6 +69,38 @@ const StudioSaveResponseSchema = Type.Object({
   shifted: Type.Boolean(),
 })
 
+/** POST /admin/api/studio/page response — the newly scaffolded page. */
+const StudioCreatePageResponseSchema = Type.Object({
+  ok: Type.Boolean(),
+  relPath: Type.String(),
+  /** Kebab id derived from the file path — the value a board frame references. */
+  pageId: Type.String(),
+  title: Type.String(),
+})
+export type CreatedStudioPage = Static<typeof StudioCreatePageResponseSchema>
+
+/**
+ * Creates a new page (`pages/<Component>.tsx` with a starter component) in the
+ * active project and resolves to its `{ pageId, title }`. Targets the SAME
+ * `dir` every other studio call uses (`getStudioWorkspaceDir`), so the file
+ * lands in the project the canvas is currently showing. `name` is optional —
+ * omit it and the server auto-names the page `Page`, `Page2`, …. Throws
+ * `ApiError` on failure (e.g. a name collision → 409) so the caller can toast
+ * the message. The caller reloads the workspace afterwards
+ * (`requestCmsSiteReload`) to render the new page.
+ */
+export function createStudioPage(name?: string): Promise<CreatedStudioPage> {
+  const overrideDir = getStudioWorkspaceDir()
+  const body: { name?: string; dir?: string } = {}
+  if (name) body.name = name
+  if (overrideDir) body.dir = overrideDir
+  return apiRequest('/admin/api/studio/page', {
+    method: 'POST',
+    body,
+    schema: StudioCreatePageResponseSchema,
+  })
+}
+
 /** Remembered from the last load so saveSite can tell the server which folder to write. */
 let loadedDir: string | null = null
 
@@ -125,9 +157,9 @@ function literalInlineStyles(inlineStyles: Record<string, unknown> | undefined):
 
 export const fsCodemodAdapter: IPersistenceAdapter = {
   async loadSite(): Promise<SiteDocument | undefined> {
-    // A GitHub import (Phase 7B) points this at studio-workspace-imports/… —
-    // see studioWorkspaceDir's doc comment for why every studio client call
-    // must agree on the same active dir.
+    // The active project is a subfolder of studio-workspace/ (hand-authored or
+    // GitHub-imported) — see studioWorkspaceDir's doc comment for why every
+    // studio client call must agree on the same active dir.
     const overrideDir = getStudioWorkspaceDir()
     const { dir, pages, componentSources: sources } = await apiRequest('/admin/api/studio/load', {
       schema: StudioLoadResponseSchema,

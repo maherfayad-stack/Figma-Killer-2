@@ -61,7 +61,6 @@ import { useAdminUi } from '@admin/state/adminUi'
 import { CMS_SITE_RELOAD_EVENT } from '@admin/state/adminEvents'
 import { useInstalledEditorPlugins } from '@admin/pages/plugins/hooks/useInstalledEditorPlugins'
 import { usePluginEventBridge } from '@admin/pages/plugins/hooks/usePluginEventBridge'
-import { AdminSectionNavigation } from '@admin/shared/AdminSectionNavigation'
 import {
   CanvasFrameSkeletonFrame,
   DEFAULT_CANVAS_FRAME_SKELETON_BREAKPOINTS,
@@ -216,10 +215,6 @@ export function AdminCanvasLayout() {
     : null
 
   const loadEditorBody = usePostPaintEditorBodyGate()
-  async function saveBeforeWorkspaceNavigation(): Promise<void> {
-    if (!useEditorStore.getState().hasUnsavedChanges) return
-    await persistence.saveSite()
-  }
 
   return (
     <EditorPermissionsProvider value={permissions}>
@@ -239,13 +234,6 @@ export function AdminCanvasLayout() {
           siteName={siteName}
           faviconUrl={faviconUrl}
           section="site"
-          adminNavigationSlot={(
-            <AdminSectionNavigation
-              section="site"
-              currentUser={currentUser}
-              onWorkspaceNavigateStart={canSaveSite ? saveBeforeWorkspaceNavigation : undefined}
-            />
-          )}
           overlay={previewOpen && (
             <Suspense fallback={null}>
               <PreviewOverlay />

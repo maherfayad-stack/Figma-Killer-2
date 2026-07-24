@@ -93,6 +93,7 @@ import { PenSquareSolidIcon } from 'pixel-art-icons/icons/pen-square-solid'
 import { CanvasPageContext, CanvasViewportActionsContext } from '../CanvasContexts'
 import { BreakpointFrame } from '../BreakpointFrame'
 import { AddFramePicker } from './AddFramePicker'
+import { NewPageButton } from './NewPageButton'
 import { FRAME_WIDTH, FRAME_HEIGHT } from './frameGrid'
 import { FRAME_VIEWPORT_MARGIN, isFrameOnScreen } from './frameVirtualization'
 import { resizeFrameRect, MIN_FRAME_SIZE, type FrameResizeRect, type ResizeHandle } from './frameResize'
@@ -178,8 +179,11 @@ export function BoardFramesLayer() {
       {framesWithPages.length === 0 ? (
         <div className={styles.emptyState}>
           <p className={styles.emptyStateTitle}>No screens on this board yet</p>
-          <p className={styles.emptyStateBody}>Add a page to start laying out this flow.</p>
-          <AddFramePicker />
+          <p className={styles.emptyStateBody}>Create a new page, or add an existing one to start laying out this flow.</p>
+          <div className={styles.emptyStateActions}>
+            <NewPageButton />
+            <AddFramePicker />
+          </div>
         </div>
       ) : (
         framesWithPages.map(({ frame, page }) => {

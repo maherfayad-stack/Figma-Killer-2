@@ -2,8 +2,8 @@
  * useStudioProjects — data hook for the dashboard's Projects widget.
  *
  * Fetches `GET /admin/api/studio/projects`, which lists every on-disk
- * studio project: the default hand-authored workspace (when present) plus
- * one entry per GitHub import (Phase 7B) under `studio-workspace-imports/`.
+ * studio project: one entry per immediate subfolder of `studio-workspace/`,
+ * whether hand-authored or GitHub-imported (Phase 7B) — they all live there.
  * Lives in its own hook (rather than folding into `useDashboardStats.ts`)
  * because it hits a `/admin/api/studio/*` endpoint, not the
  * `/admin/api/cms/dashboard/<domain>` family the other per-widget hooks
@@ -24,7 +24,6 @@ const StudioProjectSchema = Type.Object(
   {
     dir: Type.String(),
     name: Type.String(),
-    kind: Type.Union([Type.Literal('workspace'), Type.Literal('import')]),
     pageCount: Type.Number(),
   },
   { additionalProperties: true },
@@ -36,11 +35,29 @@ const StudioProjectsResponseSchema = Type.Object(
   { additionalProperties: true },
 )
 
-/** Projects widget. One directory read: the default workspace + every GitHub import. */
+const CreateProjectResponseSchema = Type.Object(
+  { project: StudioProjectSchema },
+  { additionalProperties: true },
+)
+
+/** Overview launcher. One directory read: every subfolder of `studio-workspace/`. */
 export function useStudioProjects(): StudioProject[] | null {
   return useAsyncResource(
     (signal) => apiRequest('/admin/api/studio/projects', { schema: StudioProjectsResponseSchema, signal }),
     [],
     { swallowErrors: true },
   ).data?.projects ?? null
+}
+
+/**
+ * Creates a new project (a folder under `studio-workspace/` with a starter
+ * page) and resolves to its summary. Throws `ApiError` on failure (e.g. a
+ * name collision → 409) so the caller can surface the message via a toast.
+ */
+export function createStudioProject(name: string): Promise<StudioProject> {
+  return apiRequest('/admin/api/studio/create', {
+    method: 'POST',
+    body: { name },
+    schema: CreateProjectResponseSchema,
+  }).then((res) => res.project)
 }

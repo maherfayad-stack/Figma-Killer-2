@@ -21,12 +21,11 @@ import {
   applyStudioEdit,
   assignPageIds,
   collectWorkspaceFiles,
-  discoverPageFiles,
-  listStudioProjects,
   orderStudioEditsForApply,
   pageIdFromRelPath,
   tryServeStudio,
 } from '../studio'
+import { discoverPageFiles, listStudioProjects, pageComponentNameFromInput } from '../studioProjects'
 
 describe('orderStudioEditsForApply', () => {
   it('sorts bottom-to-top: descending line, then descending column', () => {
@@ -374,13 +373,11 @@ describe('collectWorkspaceFiles', () => {
  */
 describe('listStudioProjects', () => {
   let tmpDir: string
-  let workspaceDir: string
-  let importsDir: string
+  let projectsRoot: string
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-projects-'))
-    workspaceDir = path.join(tmpDir, 'studio-workspace')
-    importsDir = path.join(tmpDir, 'studio-workspace-imports')
+    projectsRoot = path.join(tmpDir, 'studio-workspace')
   })
 
   afterEach(() => {
@@ -393,69 +390,49 @@ describe('listStudioProjects', () => {
     fs.writeFileSync(full, contents, 'utf8')
   }
 
-  it('returns an empty list when neither root exists', () => {
-    expect(listStudioProjects(workspaceDir, importsDir)).toEqual([])
+  it('returns an empty list when the root does not exist', () => {
+    expect(listStudioProjects(projectsRoot)).toEqual([])
   })
 
-  it('includes the default workspace as kind "workspace" when it exists, with its page count', () => {
-    write('studio-workspace/pages/Home.tsx', 'x')
-    write('studio-workspace/pages/About.tsx', 'x')
+  it('lists one entry per immediate subfolder, with its page count, sorted by name', () => {
+    write('studio-workspace/my-workspace/pages/Home.tsx', 'x')
+    write('studio-workspace/my-workspace/pages/About.tsx', 'x')
+    write('studio-workspace/acme-widgets/pages/Home.tsx', 'x')
 
-    const projects = listStudioProjects(workspaceDir, importsDir)
+    const projects = listStudioProjects(projectsRoot)
 
     expect(projects).toEqual([
-      { dir: workspaceDir, name: 'My workspace', kind: 'workspace', pageCount: 2 },
+      { dir: path.join(projectsRoot, 'acme-widgets'), name: 'acme-widgets', pageCount: 1 },
+      { dir: path.join(projectsRoot, 'my-workspace'), name: 'my-workspace', pageCount: 2 },
     ])
   })
 
-  it('reports pageCount 0 for a workspace with no pages/ dir', () => {
-    fs.mkdirSync(workspaceDir, { recursive: true })
+  it('reports pageCount 0 for a project folder with no pages/ dir', () => {
+    fs.mkdirSync(path.join(projectsRoot, 'empty'), { recursive: true })
 
-    const projects = listStudioProjects(workspaceDir, importsDir)
+    const projects = listStudioProjects(projectsRoot)
 
     expect(projects).toEqual([
-      { dir: workspaceDir, name: 'My workspace', kind: 'workspace', pageCount: 0 },
+      { dir: path.join(projectsRoot, 'empty'), name: 'empty', pageCount: 0 },
     ])
   })
 
-  it('lists one entry per immediate subdirectory of the imports root, kind "import"', () => {
-    write('studio-workspace-imports/acme-widgets/pages/Home.tsx', 'x')
-    write('studio-workspace-imports/other-repo/pages/Home.tsx', 'x')
-    write('studio-workspace-imports/other-repo/pages/About.tsx', 'x')
+  it('skips a stray file sitting directly in the root', () => {
+    write('studio-workspace/acme-widgets/pages/Home.tsx', 'x')
+    write('studio-workspace/README.md', 'not a project')
 
-    const projects = listStudioProjects(workspaceDir, importsDir)
-
-    expect(projects).toEqual([
-      { dir: path.join(importsDir, 'acme-widgets'), name: 'acme-widgets', kind: 'import', pageCount: 1 },
-      { dir: path.join(importsDir, 'other-repo'), name: 'other-repo', kind: 'import', pageCount: 2 },
-    ])
-  })
-
-  it('skips a stray file sitting directly in the imports root', () => {
-    write('studio-workspace-imports/acme-widgets/pages/Home.tsx', 'x')
-    write('studio-workspace-imports/README.md', 'not a project')
-
-    const projects = listStudioProjects(workspaceDir, importsDir)
+    const projects = listStudioProjects(projectsRoot)
 
     expect(projects.map((p) => p.name)).toEqual(['acme-widgets'])
   })
 
-  it('never descends into an excluded directory name at the imports root (e.g. .git)', () => {
-    write('studio-workspace-imports/.git/HEAD', 'x')
-    write('studio-workspace-imports/acme-widgets/pages/Home.tsx', 'x')
+  it('never treats an excluded directory name as a project (e.g. .git)', () => {
+    write('studio-workspace/.git/HEAD', 'x')
+    write('studio-workspace/acme-widgets/pages/Home.tsx', 'x')
 
-    const projects = listStudioProjects(workspaceDir, importsDir)
+    const projects = listStudioProjects(projectsRoot)
 
     expect(projects.map((p) => p.name)).toEqual(['acme-widgets'])
-  })
-
-  it('combines the default workspace and imports, workspace first', () => {
-    write('studio-workspace/pages/Home.tsx', 'x')
-    write('studio-workspace-imports/acme-widgets/pages/Home.tsx', 'x')
-
-    const projects = listStudioProjects(workspaceDir, importsDir)
-
-    expect(projects.map((p) => p.kind)).toEqual(['workspace', 'import'])
   })
 })
 
@@ -464,9 +441,9 @@ describe('listStudioProjects', () => {
  */
 describe('GET /admin/api/studio/projects', () => {
   it('returns { projects: [] } when running against a cwd with no studio directories', async () => {
-    // The route derives its roots from process.cwd() — this repo's actual
-    // cwd during `bun test` has no studio-workspace-imports/ dir checked in
-    // (that's user dogfooding data), so this just exercises the route
+    // The route derives its root from process.cwd()/studio-workspace — this
+    // repo's actual cwd during `bun test` may or may not have project folders
+    // there (that's user dogfooding data), so this just exercises the route
     // returning valid JSON without asserting exact repo state.
     const url = new URL('http://localhost/admin/api/studio/projects')
     const req = new Request(url)
@@ -474,8 +451,97 @@ describe('GET /admin/api/studio/projects', () => {
 
     expect(res).not.toBeNull()
     expect(res!.status).toBe(200)
-    const body = (await res!.json()) as { projects: Array<{ dir: string; kind: string }> }
+    const body = (await res!.json()) as { projects: Array<{ dir: string; name: string; pageCount: number }> }
     expect(Array.isArray(body.projects)).toBe(true)
+  })
+})
+
+/**
+ * pageComponentNameFromInput — user page name → PascalCase component/file name.
+ */
+describe('pageComponentNameFromInput', () => {
+  it('PascalCases multi-word names', () => {
+    expect(pageComponentNameFromInput('contact us')).toBe('ContactUs')
+    expect(pageComponentNameFromInput('  pricing-page ')).toBe('PricingPage')
+  })
+
+  it('preserves internal capitals of a single token', () => {
+    expect(pageComponentNameFromInput('MyPage')).toBe('MyPage')
+  })
+
+  it('prefixes a leading digit so the result is a valid identifier', () => {
+    expect(pageComponentNameFromInput('404 not found')).toBe('Page404NotFound')
+  })
+
+  it('returns empty string when nothing usable remains', () => {
+    expect(pageComponentNameFromInput('  !!! ')).toBe('')
+    expect(pageComponentNameFromInput('')).toBe('')
+  })
+})
+
+/**
+ * POST /admin/api/studio/page — scaffolds a new page file in a project.
+ * Driven against a temp `dir` so the repo's real studio-workspace is untouched.
+ */
+describe('POST /admin/api/studio/page', () => {
+  let tmpDir: string
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-newpage-'))
+  })
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  async function post(body: unknown): Promise<Response> {
+    const url = new URL('http://localhost/admin/api/studio/page')
+    const req = new Request(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    const res = await tryServeStudio(req, undefined, url, url.pathname)
+    expect(res).not.toBeNull()
+    return res!
+  }
+
+  it('writes pages/<Component>.tsx and returns the derived pageId for a supplied name', async () => {
+    const res = await post({ dir: tmpDir, name: 'contact us' })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { ok: boolean; relPath: string; pageId: string; title: string }
+    expect(body).toEqual({ ok: true, relPath: 'ContactUs.tsx', pageId: 'contact-us', title: 'ContactUs' })
+
+    const file = path.join(tmpDir, 'pages', 'ContactUs.tsx')
+    expect(fs.existsSync(file)).toBe(true)
+    const source = fs.readFileSync(file, 'utf8')
+    expect(source).toContain('export default function ContactUs()')
+  })
+
+  it('auto-names Page, Page2, Page3, … when no name is supplied', async () => {
+    const first = (await (await post({ dir: tmpDir })).json()) as { title: string; pageId: string }
+    expect(first).toMatchObject({ title: 'Page', pageId: 'page' })
+    const second = (await (await post({ dir: tmpDir })).json()) as { title: string; pageId: string }
+    expect(second).toMatchObject({ title: 'Page2', pageId: 'page2' })
+    const third = (await (await post({ dir: tmpDir })).json()) as { title: string }
+    expect(third.title).toBe('Page3')
+
+    expect(fs.existsSync(path.join(tmpDir, 'pages', 'Page.tsx'))).toBe(true)
+    expect(fs.existsSync(path.join(tmpDir, 'pages', 'Page2.tsx'))).toBe(true)
+    expect(fs.existsSync(path.join(tmpDir, 'pages', 'Page3.tsx'))).toBe(true)
+  })
+
+  it('auto-names when the supplied name is empty/punctuation-only', async () => {
+    const res = await post({ dir: tmpDir, name: '   ' })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { title: string }
+    expect(body.title).toBe('Page')
+  })
+
+  it('refuses to overwrite an existing page with 409', async () => {
+    await post({ dir: tmpDir, name: 'Home' })
+    const res = await post({ dir: tmpDir, name: 'home' })
+    expect(res.status).toBe(409)
   })
 })
 
@@ -640,7 +706,7 @@ describe('POST /admin/api/studio/import-github — Phase 7B route wiring', () =>
       expect(body.skipped).toBe(0)
       // Server-derived target, NOT the caller's tmpDir.
       expect(body.dir).not.toBe(tmpDir)
-      expect(body.dir.split(path.sep).join('/')).toContain('studio-workspace-imports/acme-widgets')
+      expect(body.dir.split(path.sep).join('/')).toContain('studio-workspace/acme-widgets')
       expect(fs.existsSync(path.join(body.dir, 'pages', 'Home.tsx'))).toBe(true)
       // The caller-supplied directory was never touched.
       expect(fs.existsSync(path.join(tmpDir, 'pages'))).toBe(false)

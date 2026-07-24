@@ -136,9 +136,11 @@ describe('resolveZipEntryRelPath', () => {
 })
 
 describe('defaultGithubImportDir', () => {
-  it('is scoped under studio-workspace-imports/, never studio-workspace/', () => {
+  it('is scoped to its own repo folder under studio-workspace/, never the root', () => {
     const dir = defaultGithubImportDir('acme', 'widgets')
-    expect(dir.split(path.sep).join('/')).toContain('studio-workspace-imports/acme-widgets')
+    const posix = dir.split(path.sep).join('/')
+    expect(posix).toContain('studio-workspace/acme-widgets')
+    expect(posix.endsWith('/studio-workspace')).toBe(false)
   })
 })
 

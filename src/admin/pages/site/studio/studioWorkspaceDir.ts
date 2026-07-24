@@ -1,22 +1,22 @@
 /**
- * studioWorkspaceDir — which on-disk workspace directory Studio mode is
+ * studioWorkspaceDir — which on-disk project directory Studio mode is
  * currently pointed at.
  *
- * `undefined` (the default) means "the server's default workspace"
- * (`studio-workspace/`, see `defaultWorkspaceDir()` in
- * `server/handlers/studio.ts`) — every studio client call that accepts an
- * optional `dir` already treats an omitted value this way.
+ * Every project is an immediate subfolder of `studio-workspace/` (see
+ * `resolveProjectDir` in `server/handlers/studio.ts`). The Overview launcher
+ * sets this to a concrete project dir whenever the user opens one. `undefined`
+ * means "no explicit selection yet" — the server then falls back to the first
+ * project on disk, so a fresh session still lands somewhere real.
  *
- * Set explicitly after a GitHub import (`ImportGithubDialog`): the `dir` the
- * import returned becomes the active workspace, so every subsequent
- * load/save/boards/download call targets the SAME directory the import wrote
- * to, instead of leaving some calls pointed at the previous workspace — a
- * real correctness risk, since a stray `saveBoards()` call would otherwise
- * overwrite the WRONG workspace's `.studio/boards.json`.
+ * Set explicitly by the Overview launcher (and after a GitHub import): the
+ * project's `dir` becomes the active workspace, so every subsequent
+ * load/save/boards/download call targets the SAME directory, instead of
+ * leaving some calls pointed at a different project — a real correctness risk,
+ * since a stray `saveBoards()` call would otherwise overwrite the WRONG
+ * project's `.studio/boards.json`.
  *
  * Persisted (sticky) the same way `studioMode`'s flag is: a refresh keeps
- * browsing the imported project instead of silently reverting to the default
- * workspace.
+ * browsing the same project instead of reverting to the first one.
  */
 const STUDIO_WORKSPACE_DIR_STORAGE_KEY = 'instatic:studio:dir'
 

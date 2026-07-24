@@ -14,6 +14,12 @@
     padding: var(--space-s) var(--space-s) var(--space-3xs);
 }
 
+.headerActions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3xs);
+}
+
 .heading {
     font-size: var(--text-2xs);
     font-weight: 600;

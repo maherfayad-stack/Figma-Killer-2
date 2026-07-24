@@ -140,6 +140,15 @@ const ALLOWLIST = new Set([
   // attached.
   'admin/pages/dashboard/components/BlockLibrary.tsx',
 
+  // ── §8.11 Overview project-launcher cards ───────────────────────────────
+  // DashboardPage (the studio Overview) renders each project as a card-style
+  // tile in a responsive grid: a folder glyph on top, project name, then a
+  // page-count meta line stacked below. The whole surface is the click target
+  // that opens the project. Button's fixed-height inline-flex row layout
+  // cannot represent this stacked card grid — same pattern class as §8.9's
+  // font-picker tiles.
+  'admin/pages/dashboard/DashboardPage.tsx',
+
   // ── §8.8 DataGrid custom CSS-Grid cells ─────────────────────────────────
   // The Data table is a CSS-Grid (display: grid + display: contents on rows)
   // with sticky column / group headers. Two grid-cell types cannot be
@@ -223,7 +232,9 @@ describe('BTN-3 — Button primitive usage gate', () => {
     const violations: string[] = []
 
     for (const file of files) {
-      const rel = relative(SRC_ROOT, file)
+      // Normalize to POSIX separators so the forward-slash ALLOWLIST matches
+      // on Windows too (relative() yields backslash paths there).
+      const rel = relative(SRC_ROOT, file).split('\\').join('/')
 
       // Skip allowlisted files
       if (ALLOWLIST.has(rel)) continue

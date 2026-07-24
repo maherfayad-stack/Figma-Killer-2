@@ -29,7 +29,7 @@
  *      zipball's top-level `<repo>-<sha>/` folder, applies `subdir` scoping,
  *      and runs the same path-traversal / excluded-dir guard the download
  *      export already relies on (`EXCLUDED_WORKSPACE_DIR_NAMES`).
- *   5. The target directory — `studio-workspace-imports/<owner>-<repo>/` by
+ *   5. The target directory — `studio-workspace/<owner>-<repo>/` by
  *      default, never the user's hand-authored `studio-workspace/` — is
  *      cleared and repopulated. Clearing is safe here specifically because
  *      this per-repo directory IS the explicit target of this operation (the
@@ -164,9 +164,14 @@ export function resolveZipEntryRelPath(entryName: string, subdir?: string): stri
   return isSafeRelPath(rel) ? rel : null
 }
 
-/** Default, repo-scoped import target — never the hand-authored `studio-workspace/`. */
+/**
+ * Default, repo-scoped import target — its own project folder under
+ * `studio-workspace/`, alongside every hand-authored project. Never the root
+ * itself: the target is `studio-workspace/<owner>-<repo>/`, so the import's
+ * target-clearing step only ever touches that one project subfolder.
+ */
 export function defaultGithubImportDir(owner: string, repo: string): string {
-  return join(process.cwd(), 'studio-workspace-imports', `${owner}-${repo}`)
+  return join(process.cwd(), 'studio-workspace', `${owner}-${repo}`)
 }
 
 /**
@@ -221,7 +226,7 @@ export interface GithubImportOptions {
   subdir?: string
   /** Sent as `Authorization: Bearer <token>` — never logged, never read from env. */
   token?: string
-  /** Overrides the default `studio-workspace-imports/<owner>-<repo>` target — mainly for tests. */
+  /** Overrides the default `studio-workspace/<owner>-<repo>` target — mainly for tests. */
   dir?: string
 }
 

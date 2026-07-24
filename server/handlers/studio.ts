@@ -37,7 +37,7 @@
  *       Phase 7B — GitHub-link import. Fetches the repo's zipball
  *       (`server/handlers/studioGithubImport.ts` owns URL parsing, the
  *       fetch, the zip-entry safety/size guards, and the write) into a
- *       repo-scoped `studio-workspace-imports/<owner>-<repo>/` directory —
+ *       repo-scoped `studio-workspace/<owner>-<repo>/` directory —
  *       never the hand-authored `studio-workspace/` — and returns
  *       `{ ok, dir, files, skipped }`. The client then calls this same
  *       `/admin/api/studio/load?dir=<returned dir>` to load it: import is
@@ -57,23 +57,32 @@
  *       copy. `node_modules` is never bundled either way.
  *
  *   GET  /admin/api/studio/projects
- *       Lists every on-disk studio project the dashboard's Projects widget
- *       can open: the default hand-authored workspace (`studio-workspace/`,
- *       when it exists) plus one entry per immediate subdirectory of
- *       `studio-workspace-imports/` (Phase 7B imports). Read-only — this
- *       endpoint never creates, clears, or writes a directory. The listing
- *       logic itself lives in `listStudioProjects`, a pure(ish) dir-in/
- *       project-list-out helper so it's unit-testable against a temp
+ *       Lists every on-disk studio project the Overview launcher can open:
+ *       one entry per immediate subfolder of `studio-workspace/`, whether
+ *       hand-authored or GitHub-imported (they all live there now). Read-only
+ *       — this endpoint never creates, clears, or writes a directory. The
+ *       listing logic itself lives in `listStudioProjects`, a pure(ish)
+ *       dir-in/project-list-out helper so it's unit-testable against a temp
  *       fixture tree, same pattern as `collectWorkspaceFiles`.
+ *
+ *   POST /admin/api/studio/create   body: { name }
+ *       Scaffolds a new project: one slugified folder under `studio-workspace/`
+ *       with a starter `pages/Home.tsx`. Returns the created `{ project }`.
+ *
+ *   POST /admin/api/studio/page   body: { dir?, name? }
+ *       Scaffolds a new page in a project: one `pages/<Component>.tsx` starter
+ *       file. `name` is optional — omit it for the one-click "New page" action
+ *       and the server auto-names it `Page`, `Page2`, …. Returns
+ *       `{ ok, relPath, pageId, title }` so the client can drop a board frame
+ *       for it, then reload the workspace to render it.
  *
  * page-parser and ast-codemods run here (Node/ts-morph), not in the browser.
  */
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { zipSync, strToU8 } from 'fflate'
 import {
   createWorkspaceProject,
-  EXCLUDED_WORKSPACE_DIR_NAMES,
   listWorkspaceFiles,
   parsePageFile,
   resolveComponentSources,
@@ -83,6 +92,17 @@ import {
 } from '@core/page-parser'
 import { parsedPageToSitePage } from '@core/studio-sync/parsedPageToSitePage'
 import { setJsxProp, setJsxStyle, setJsxText } from '@core/ast-codemods'
+import {
+  discoverPageFiles,
+  listStudioProjects,
+  nextPageName,
+  pageComponentNameFromInput,
+  projectsRootDir,
+  resolveProjectDir,
+  safeProjectFolderName,
+  starterPage,
+  type StudioProjectSummary,
+} from './studioProjects'
 import { createBoardsFile, parseBoardsFile, serializeBoardsFile, type BoardsFile } from '@core/studio-board'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { badRequest, jsonResponse, readValidatedBody } from '../http'
@@ -134,6 +154,21 @@ const BoardsPostBodySchema = Type.Object({
   boards: Type.Unknown(),
 })
 
+/** Body of POST /admin/api/studio/create — scaffold a new project folder. */
+const CreateProjectBodySchema = Type.Object({
+  name: Type.String(),
+})
+
+/**
+ * Body of POST /admin/api/studio/page — scaffold a new page in a project.
+ * `name` is optional: when omitted (the one-click "New page" action) the server
+ * auto-names it `Page`, `Page2`, ….
+ */
+const CreatePageBodySchema = Type.Object({
+  dir: Type.Optional(Type.String()),
+  name: Type.Optional(Type.String()),
+})
+
 /**
  * Body of POST /admin/api/studio/import-github (Phase 7B).
  *
@@ -141,7 +176,7 @@ const BoardsPostBodySchema = Type.Object({
  * directory before repopulating it, so a caller-supplied target would be an
  * arbitrary recursive-delete primitive driven by a request body. The import
  * target is therefore always derived server-side from the parsed repo
- * (`studio-workspace-imports/<owner>-<repo>`); `runGithubImport`'s `dir`
+ * (`studio-workspace/<owner>-<repo>`); `runGithubImport`'s `dir`
  * option stays internal (tests only) and is never sourced from the wire.
  *
  * `token`, when present, is forwarded as a Bearer credential and never logged
@@ -243,80 +278,6 @@ export function applyStudioEdit(dir: string, edit: StudioEdit): boolean {
   }
 }
 
-function defaultWorkspaceDir(): string {
-  return join(process.cwd(), 'studio-workspace')
-}
-
-/** Root directory GitHub-imported studio projects (Phase 7B) live under. */
-function importsRootDir(): string {
-  return join(process.cwd(), 'studio-workspace-imports')
-}
-
-/** One on-disk studio project the dashboard's Projects widget can open. */
-export interface StudioProjectSummary {
-  /** Absolute directory path — passed straight to `setStudioWorkspaceDir`. */
-  dir: string
-  /** Display name. The default workspace gets a fixed label; imports use their directory name. */
-  name: string
-  /** `'workspace'` for the single hand-authored default; `'import'` for a GitHub import. */
-  kind: 'workspace' | 'import'
-  /** Number of `.tsx` files discovered under `<dir>/pages/` — reuses `discoverPageFiles`. */
-  pageCount: number
-}
-
-/** `.tsx` page count for a project directory, 0 when it has no `pages/` dir at all. */
-function pageCountFor(dir: string): number {
-  const pagesDir = join(dir, 'pages')
-  return existsSync(pagesDir) ? discoverPageFiles(pagesDir).length : 0
-}
-
-/**
- * Lists every on-disk studio project under `workspaceDir` (the single
- * hand-authored default workspace) and `importsRootDir` (one subdirectory
- * per GitHub import, Phase 7B). Pure-ish (two dir paths in, project list
- * out — only reads the filesystem, never writes) so it's unit-testable
- * against a temp fixture tree without a full Request/Response round trip,
- * mirroring `collectWorkspaceFiles`/`discoverPageFiles`'s testing shape.
- *
- * Neither root existing is an error — a fresh install with no workspace yet
- * (or one that has never imported a repo) simply yields fewer entries, down
- * to an empty list. Only real directories are considered: a stray file
- * sitting directly in `importsRootDir` is skipped, and the shared
- * `EXCLUDED_WORKSPACE_DIR_NAMES` walk policy keeps this in lockstep with
- * every other place a studio directory tree gets walked. Import entries are
- * sorted by directory name for a deterministic response.
- */
-export function listStudioProjects(workspaceDir: string, importsDir: string): StudioProjectSummary[] {
-  const projects: StudioProjectSummary[] = []
-
-  if (existsSync(workspaceDir) && statSync(workspaceDir).isDirectory()) {
-    projects.push({
-      dir: workspaceDir,
-      name: 'My workspace',
-      kind: 'workspace',
-      pageCount: pageCountFor(workspaceDir),
-    })
-  }
-
-  if (existsSync(importsDir)) {
-    const entries = readdirSync(importsDir, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory() && !EXCLUDED_WORKSPACE_DIR_NAMES.has(entry.name))
-      .sort((a, b) => a.name.localeCompare(b.name))
-
-    for (const entry of entries) {
-      const dir = join(importsDir, entry.name)
-      projects.push({
-        dir,
-        name: entry.name,
-        kind: 'import',
-        pageCount: pageCountFor(dir),
-      })
-    }
-  }
-
-  return projects
-}
-
 /** One real source file collected from the workspace for the download zip. */
 export interface WorkspaceFile {
   /** Path relative to the workspace root, using `/` separators (zip-safe). */
@@ -388,17 +349,6 @@ function synthesizedPackageJson(): Uint8Array {
 }
 
 /**
- * Recursively discovers every page file under the workspace's `pages/`
- * directory (Phase 7A — nested route/page dirs like
- * `pages/marketing/Landing.tsx`, not just a flat top-level scan), returning
- * POSIX paths relative to `pagesDir`, in deterministic sorted order (shared
- * walk/exclusion rule with `collectWorkspaceFiles` via `listWorkspaceFiles`).
- */
-export function discoverPageFiles(pagesDir: string): string[] {
-  return listWorkspaceFiles(pagesDir).filter((relPath) => relPath.endsWith('.tsx'))
-}
-
-/**
  * Derive a stable page id (also used as the slug) from a page file's path,
  * relative to the workspace's `pages/` dir — kebab-casing every path segment
  * and joining with `-` so nested files don't collide with a differently-
@@ -457,7 +407,7 @@ export async function tryServeStudio(
 ): Promise<Response | null> {
   if (pathname === '/admin/api/studio/load' && req.method === 'GET') {
     try {
-      const dir = resolve(url.searchParams.get('dir') ?? defaultWorkspaceDir())
+      const dir = resolveProjectDir(url.searchParams.get('dir'))
       const pagesDir = join(dir, 'pages')
       if (!existsSync(pagesDir)) return jsonResponse({ dir, pages: [], componentSources: {} })
 
@@ -495,7 +445,7 @@ export async function tryServeStudio(
     try {
       const body = await readValidatedBody(req, SaveBodySchema)
       if (!body) return badRequest('invalid save body')
-      const dir = resolve(body.dir ?? defaultWorkspaceDir())
+      const dir = resolveProjectDir(body.dir)
       const edits = body.edits ?? []
 
       // Apply edits bottom-to-top so a line-count-changing codemod can't
@@ -550,7 +500,7 @@ export async function tryServeStudio(
   // <dir>/.studio/boards.json. Never affects the app runtime.
   if (pathname === '/admin/api/studio/boards' && req.method === 'GET') {
     try {
-      const dir = resolve(url.searchParams.get('dir') ?? defaultWorkspaceDir())
+      const dir = resolveProjectDir(url.searchParams.get('dir'))
       const file = join(dir, '.studio', 'boards.json')
       const boards = existsSync(file) ? parseBoardsFile(readFileSync(file, 'utf8')) : createBoardsFile()
       return jsonResponse({ dir, boards })
@@ -563,7 +513,7 @@ export async function tryServeStudio(
     try {
       const body = await readValidatedBody(req, BoardsPostBodySchema)
       if (!body) return badRequest('invalid boards body')
-      const dir = resolve(body.dir ?? defaultWorkspaceDir())
+      const dir = resolveProjectDir(body.dir)
       const file = join(dir, '.studio', 'boards.json')
       // Re-parse the incoming payload so we only ever write a valid, normalized file.
       const boards: BoardsFile = parseBoardsFile(body.boards)
@@ -576,7 +526,7 @@ export async function tryServeStudio(
   }
 
   // GitHub-link import (Phase 7B) — fetch a repo's zipball into its own
-  // studio-workspace-imports/<owner>-<repo>/ directory. Real work lives in
+  // studio-workspace/<owner>-<repo>/ directory. Real work lives in
   // studioGithubImport.ts; this route is just body validation + error mapping.
   if (pathname === '/admin/api/studio/import-github' && req.method === 'POST') {
     try {
@@ -601,12 +551,63 @@ export async function tryServeStudio(
     }
   }
 
-  // List every on-disk studio project for the dashboard's Projects widget.
-  // Read-only: never creates, clears, or writes a directory.
+  // List every on-disk studio project for the Overview launcher. Read-only:
+  // never creates, clears, or writes a directory.
   if (pathname === '/admin/api/studio/projects' && req.method === 'GET') {
     try {
-      const projects = listStudioProjects(defaultWorkspaceDir(), importsRootDir())
+      const projects = listStudioProjects(projectsRootDir())
       return jsonResponse({ projects })
+    } catch (err) {
+      console.error('[studio]', err)
+      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+    }
+  }
+
+  // Scaffold a new project — one folder under studio-workspace/ with a starter
+  // page. The name is slugified to a filesystem-safe folder (never `..`, never
+  // a separator) so it can't escape the projects root.
+  if (pathname === '/admin/api/studio/create' && req.method === 'POST') {
+    try {
+      const body = await readValidatedBody(req, CreateProjectBodySchema)
+      if (!body) return badRequest('invalid create body')
+      const folder = safeProjectFolderName(body.name)
+      if (!folder) return badRequest('project name must contain at least one letter or digit')
+      const dir = join(projectsRootDir(), folder)
+      if (existsSync(dir)) {
+        return jsonResponse({ error: `A project named "${folder}" already exists.` }, { status: 409 })
+      }
+      const pagesDir = join(dir, 'pages')
+      mkdirSync(pagesDir, { recursive: true })
+      writeFileSync(join(pagesDir, 'Home.tsx'), starterPage('Home'))
+      const project: StudioProjectSummary = { dir, name: folder, pageCount: 1 }
+      return jsonResponse({ project })
+    } catch (err) {
+      console.error('[studio]', err)
+      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+    }
+  }
+
+  // Scaffold a new page in a project — one `pages/<Component>.tsx` starter file.
+  // The name is turned into a PascalCase identifier (never `..`, never a
+  // separator) so it can't escape the project's pages/ dir. Returns the derived
+  // `pageId` (kebab of the file path) so the client can drop a board frame for
+  // it immediately, then reload the workspace to render it.
+  if (pathname === '/admin/api/studio/page' && req.method === 'POST') {
+    try {
+      const body = await readValidatedBody(req, CreatePageBodySchema)
+      if (!body) return badRequest('invalid page body')
+      const dir = resolveProjectDir(body.dir)
+      const pagesDir = join(dir, 'pages')
+      // A supplied name wins; otherwise auto-name `Page`, `Page2`, … (one-click).
+      const componentName = pageComponentNameFromInput(body.name ?? '') || nextPageName(pagesDir)
+      const relPath = `${componentName}.tsx`
+      const file = join(pagesDir, relPath)
+      if (existsSync(file)) {
+        return jsonResponse({ error: `A page named "${componentName}" already exists.` }, { status: 409 })
+      }
+      mkdirSync(pagesDir, { recursive: true })
+      writeFileSync(file, starterPage(componentName))
+      return jsonResponse({ ok: true, relPath, pageId: pageIdFromRelPath(relPath), title: componentName })
     } catch (err) {
       console.error('[studio]', err)
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
@@ -618,7 +619,7 @@ export async function tryServeStudio(
   // source of truth, so this endpoint only packages what's already there.
   if (pathname === '/admin/api/studio/download' && req.method === 'GET') {
     try {
-      const dir = resolve(url.searchParams.get('dir') ?? defaultWorkspaceDir())
+      const dir = resolveProjectDir(url.searchParams.get('dir'))
       if (!existsSync(dir)) {
         return jsonResponse({ error: `Workspace directory not found: ${dir}` }, { status: 404 })
       }

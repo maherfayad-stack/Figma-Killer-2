@@ -183,6 +183,12 @@
     box-shadow: var(--shadow-panel-drop);
 }
 
+.emptyStateActions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-s);
+}
+
 .emptyStateTitle {
     font-size: var(--text-l);
     font-weight: 600;

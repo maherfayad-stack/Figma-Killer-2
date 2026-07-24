@@ -26,6 +26,9 @@ import { SettingsCogSolidIcon } from 'pixel-art-icons/icons/settings-cog-solid'
 import { CommandIcon } from 'pixel-art-icons/icons/command'
 import { UploadIcon } from 'pixel-art-icons/icons/upload'
 import { SlidersHorizontalIcon } from 'pixel-art-icons/icons/sliders-horizontal'
+import { PackageSolidIcon } from 'pixel-art-icons/icons/package-solid'
+import { UsersSolidIcon } from 'pixel-art-icons/icons/users-solid'
+import { Link } from '@admin/lib/routing'
 import { GeneralSection } from './sections/GeneralSection'
 import { PublishingSection } from './sections/PublishingSection'
 import { ShortcutsSection } from './sections/ShortcutsSection'
@@ -45,6 +48,15 @@ const NAV_ITEMS = [
 ] as const
 
 type SectionId = typeof NAV_ITEMS[number]['id']
+
+// Management surfaces that are full admin pages rather than inline settings
+// sections. In the studio-only shell they no longer have a top-nav tab, so
+// Settings is their entry point: clicking one soft-navigates to its route
+// (via the router-safe `<Link>`) and closes the modal.
+const MANAGE_LINKS = [
+  { id: 'plugins', label: 'Plugins', icon: PackageSolidIcon, accent: 'sky',  to: '/admin/plugins' },
+  { id: 'users',   label: 'Users',   icon: UsersSolidIcon,   accent: 'mint', to: '/admin/users'   },
+] as const
 
 // ─── SettingsModal ────────────────────────────────────────────────────────────
 
@@ -184,6 +196,26 @@ export function SettingsModal() {
                   onClick={() => handleSetSection(item.id)}
                 />
               ))}
+            </nav>
+
+            <nav aria-label="Manage" className={s.sectionList}>
+              {MANAGE_LINKS.map((item) => {
+                const LinkIcon = item.icon
+                return (
+                  <Link
+                    key={item.id}
+                    to={item.to}
+                    className={cn(s.navItem, s.navLink)}
+                    data-accent={item.accent}
+                    onClick={handleClose}
+                  >
+                    <span className={s.navIcon} aria-hidden="true">
+                      <LinkIcon size={16} />
+                    </span>
+                    <span className={s.navName}>{item.label}</span>
+                  </Link>
+                )
+              })}
             </nav>
 
             <div className={s.railSpring} />

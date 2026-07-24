@@ -28,13 +28,6 @@
  */
 
 import { useEffect, useState, type ReactNode } from 'react'
-import { ArticleSolidIcon } from 'pixel-art-icons/icons/article-solid'
-import { AiBoxSolidIcon } from 'pixel-art-icons/icons/ai-box-solid'
-import { DashboardSolidIcon } from 'pixel-art-icons/icons/dashboard-solid'
-import { DatabaseSolidIcon } from 'pixel-art-icons/icons/database-solid'
-import { ImagesSolidIcon } from 'pixel-art-icons/icons/images-solid'
-import { LayoutSolidIcon } from 'pixel-art-icons/icons/layout-solid'
-import { PackageSolidIcon } from 'pixel-art-icons/icons/package-solid'
 import { pluginRuntime } from '@core/plugins/runtime'
 import type { RegisteredPluginToolbarButton } from '@core/plugin-sdk'
 import { AccountMenuButton } from '@admin/shared/AccountMenuButton'
@@ -50,17 +43,14 @@ import type { AdminWorkspace } from '@admin/workspace'
 import styles from './Toolbar.module.css'
 import { getErrorMessage } from '@core/utils/errorMessage'
 
-const NAV_ICON_SIZE = 13
-
 interface ToolbarProps {
   /** Site name shown in the brand position. Null renders the loading skeleton. */
   siteName?: string | null
   /** Optional site favicon URL. When set, renders instead of the site-name text. */
   faviconUrl?: string | null
-  /** Active admin section — drives the default nav slot's highlight. */
+  /** Active admin section — the studio-only shell uses it to decide whether
+   *  to show the "Open live page" link (CMS-only). */
   section?: AdminWorkspace
-  /** Replaces the default admin section navigation links. */
-  adminNavigationSlot?: ReactNode
   /**
    * Full-screen overlay siblings rendered before the toolbar header. Used by
    * AdminCanvasLayout to mount the preview overlay (also editor-only and
@@ -91,7 +81,6 @@ export function Toolbar({
   siteName = null,
   faviconUrl = null,
   section = 'site',
-  adminNavigationSlot,
   overlay,
   rightSlot,
 }: ToolbarProps) {
@@ -171,6 +160,10 @@ export function Toolbar({
       >
         {/* ── Left section ────────────────────────────────────────────────── */}
 
+        {/* Brand doubles as the Overview link — clicking the logo returns to
+            the studio project launcher (`/admin/dashboard`). The old top-nav
+            tab row (Site / Content / Data / Media / Plugins / Users) is gone:
+            the app is a studio-first launcher now. */}
         {siteName === null ? (
           <span
             className={styles.siteNameSkeleton}
@@ -179,28 +172,31 @@ export function Toolbar({
           >
             <Skeleton width={76} height={12} radius={999} />
           </span>
-        ) : configuredFaviconUrl ? (
-          <Tooltip content={siteName} side="bottom">
-            <img
-              className={styles.siteFavicon}
-              data-testid="toolbar-site-brand"
-              src={configuredFaviconUrl}
-              alt={`Site: ${siteName}`}
-              draggable={false}
-            />
-          </Tooltip>
         ) : (
-          <Tooltip content={siteName} side="bottom">
-            <span
-              className={styles.siteName}
-              data-testid="toolbar-site-brand"
-              aria-label={`Site: ${siteName}`}
-            >
-              {siteName}
-            </span>
-          </Tooltip>
+          <Link to="/admin/dashboard" className={styles.brandLink} aria-label="Overview">
+            {configuredFaviconUrl ? (
+              <Tooltip content={siteName} side="bottom">
+                <img
+                  className={styles.siteFavicon}
+                  data-testid="toolbar-site-brand"
+                  src={configuredFaviconUrl}
+                  alt={`Site: ${siteName}`}
+                  draggable={false}
+                />
+              </Tooltip>
+            ) : (
+              <Tooltip content={siteName} side="bottom">
+                <span
+                  className={styles.siteName}
+                  data-testid="toolbar-site-brand"
+                  aria-label={`Site: ${siteName}`}
+                >
+                  {siteName}
+                </span>
+              </Tooltip>
+            )}
+          </Link>
         )}
-        {adminNavigationSlot ?? <DefaultAdminNavigation section={section} />}
 
         <div className={styles.workspaceToolbarItems}>
           {pluginButtons.map((button) => {
@@ -269,78 +265,3 @@ export function Toolbar({
   )
 }
 
-function DefaultAdminNavigation({ section }: { section: AdminWorkspace }) {
-  return (
-    <>
-      <DefaultNavSlot
-        to="/admin/dashboard"
-        icon={<DashboardSolidIcon size={NAV_ICON_SIZE} aria-hidden="true" />}
-        label="Dashboard"
-        active={section === 'dashboard'}
-      />
-      <DefaultNavSlot
-        to="/admin/site"
-        icon={<LayoutSolidIcon size={NAV_ICON_SIZE} aria-hidden="true" />}
-        label="Site"
-        active={section === 'site'}
-      />
-      <DefaultNavSlot
-        to="/admin/content"
-        icon={<ArticleSolidIcon size={NAV_ICON_SIZE} aria-hidden="true" />}
-        label="Content"
-        active={section === 'content'}
-      />
-      <DefaultNavSlot
-        to="/admin/data"
-        icon={<DatabaseSolidIcon size={NAV_ICON_SIZE} aria-hidden="true" />}
-        label="Data"
-        active={section === 'data'}
-      />
-      <DefaultNavSlot
-        to="/admin/media"
-        icon={<ImagesSolidIcon size={NAV_ICON_SIZE} aria-hidden="true" />}
-        label="Media"
-        active={section === 'media'}
-      />
-      <DefaultNavSlot
-        to="/admin/plugins"
-        icon={<PackageSolidIcon size={NAV_ICON_SIZE} aria-hidden="true" />}
-        label="Plugins"
-        active={section === 'plugins'}
-      />
-      <DefaultNavSlot
-        to="/admin/ai"
-        icon={<AiBoxSolidIcon size={NAV_ICON_SIZE} aria-hidden="true" />}
-        label="AI"
-        active={section === 'ai'}
-      />
-    </>
-  )
-}
-
-function DefaultNavSlot({
-  to,
-  icon,
-  label,
-  active,
-}: {
-  to: string
-  icon: ReactNode
-  label: string
-  active: boolean
-}) {
-  if (active) {
-    return (
-      <span className={styles.activeSection}>
-        {icon}
-        <span>{label}</span>
-      </span>
-    )
-  }
-  return (
-    <Link className={styles.adminLink} to={to}>
-      {icon}
-      <span>{label}</span>
-    </Link>
-  )
-}

@@ -10,7 +10,6 @@
 
 import { lazy, Suspense, useRef, type CSSProperties, type ReactNode, type SyntheticEvent } from 'react'
 import { Toolbar } from '@site/toolbar/Toolbar'
-import { AdminSectionNavigation } from '@admin/shared/AdminSectionNavigation'
 import { ConfirmDeleteProvider } from '@admin/shared/dialogs/ConfirmDeleteDialog'
 import { SidebarResizeHandle } from '@admin/shared/SidebarResizeHandle'
 import { useEditorAppearancePreferences } from '@site/preferences/editorPreferences'
@@ -80,12 +79,6 @@ export function AdminWorkspaceCanvasLayout({
         siteName={adminUiSiteName}
         faviconUrl={adminUiFaviconUrl}
         section={workspace}
-        adminNavigationSlot={(
-          <AdminSectionNavigation
-            section={workspace}
-            currentUser={currentUser}
-          />
-        )}
         rightSlot={toolbarRightSlot}
       />
 

@@ -14,6 +14,22 @@
     background: var(--bg-body);
 }
 
+/* Brand wrapper — the logo/site-name is the link back to the Overview
+ * project launcher. Inherits colour so the inner name/favicon keep their own
+ * styling; the whole hit area is the anchor. */
+.brandLink {
+    display: inline-flex;
+    align-items: center;
+    text-decoration: none;
+    color: inherit;
+    border-radius: var(--radius-sm);
+}
+
+.brandLink:focus-visible {
+    outline: 2px solid var(--accent-2);
+    outline-offset: 2px;
+}
+
 .siteName {
     display: inline-flex;
     align-items: center;
