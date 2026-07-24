@@ -267,7 +267,7 @@ function BoardFrameView({
 }: BoardFrameViewProps) {
   const dragRef = useRef<DragState | null>(null)
   const resizeRef = useRef<ResizeDragState | null>(null)
-  const rename = useInlineRename({ onCommit: onRename })
+  const [rename, renameInputRef] = useInlineRename({ onCommit: onRename })
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
 
   // Capture phase — fires before the frame's own node-click handling, so
@@ -381,7 +381,7 @@ function BoardFrameView({
             no inline "×" (moved to the right-click context menu below). */}
         {rename.isRenaming ? (
           <Input
-            ref={rename.inputRef}
+            ref={renameInputRef}
             fieldSize="xs"
             autoFocus
             value={rename.value}

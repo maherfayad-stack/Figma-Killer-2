@@ -30,7 +30,7 @@
  * site document. The active page auto-expands the first time it becomes
  * active so opening/switching pages always reveals their layers.
  */
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useEditorStore } from '@site/store/store'
 import type { Page } from '@core/page-tree'
 import { DomPanel, PageLayerSubtree } from '@site/panels/DomPanel'
@@ -54,13 +54,21 @@ export function StudioPagesTree({ editable = true }: StudioPagesTreeProps) {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(
     () => new Set(activePageId ? [activePageId] : []),
   )
+  // Tracks the `activePageId` this component last reacted to — lets the
+  // auto-reveal below run as a render-time state adjustment (React's
+  // documented "adjust state when a prop changes" pattern) instead of an
+  // Effect, which would commit once, then immediately re-render again for a
+  // change already known this render.
+  const [lastSyncedActivePageId, setLastSyncedActivePageId] = useState(activePageId)
 
   // Auto-reveal the active page's tree the moment it becomes active (covers
   // switching pages from the canvas/board, not just from this panel).
-  useEffect(() => {
-    if (!activePageId) return
-    setExpandedIds((prev) => (prev.has(activePageId) ? prev : new Set(prev).add(activePageId)))
-  }, [activePageId])
+  if (activePageId !== lastSyncedActivePageId) {
+    setLastSyncedActivePageId(activePageId)
+    if (activePageId && !expandedIds.has(activePageId)) {
+      setExpandedIds(new Set(expandedIds).add(activePageId))
+    }
+  }
 
   const toggleExpanded = (pageId: string) => {
     setExpandedIds((prev) => {
@@ -110,7 +118,7 @@ interface PageRowProps {
 }
 
 function PageRow({ page, isActive, expanded, editable, onToggleExpand, onActivate, onRename }: PageRowProps) {
-  const rename = useInlineRename({ onCommit: onRename })
+  const [rename, renameInputRef] = useInlineRename({ onCommit: onRename })
 
   // Capture phase — fires before any click inside this row (the header, or a
   // node row in the revealed subtree), so `activePageId` is already this
@@ -143,7 +151,7 @@ function PageRow({ page, isActive, expanded, editable, onToggleExpand, onActivat
         <TreeIconSlot icon={FileTextSolidIcon} iconSize={11} iconColor="var(--text-disabled)" />
         {rename.isRenaming ? (
           <Input
-            ref={rename.inputRef}
+            ref={renameInputRef}
             fieldSize="xs"
             autoFocus
             value={rename.value}
