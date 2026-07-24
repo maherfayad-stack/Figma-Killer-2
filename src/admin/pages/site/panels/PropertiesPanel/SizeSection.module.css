@@ -1,0 +1,56 @@
+/* SizeSection — Figma-style paired-column editor for the Size section.
+ *
+ * width/height and their min/max siblings render as two aligned columns
+ * (width-family on the left, height-family on the right) so the six most
+ * common size fields occupy three compact rows instead of six full-width
+ * ones. Each field carries its label *inside* the leading edge (via the
+ * Input `prefix` slot), matching Figma's "W 1440 / H 732" cells. */
+
+.sizeGrid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-xs);
+}
+
+/* One dimension cell wraps a single in-field-labelled input plus a
+ * hover-revealed clear button overlaid on the trailing edge. */
+.dimCell {
+    position: relative;
+    min-width: 0;
+}
+
+.dimInput {
+    width: 100%;
+}
+
+/* Clear button overlays the trailing edge of the input on hover/focus,
+ * fading in/out so the cell stays compact when idle. Mirrors
+ * PositionSection's .directionClearBtn. */
+.dimClearBtn.dimClearBtn {
+    position: absolute;
+    top: 50%;
+    right: 4px;
+    width: 18px;
+    height: 18px;
+    border-radius: 6px;
+    background: var(--bg-surface-2);
+    border: 1px solid var(--border-muted);
+    color: var(--text-muted);
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(-50%);
+    transition:
+        opacity 100ms ease,
+        background-color 100ms ease,
+        color 100ms ease;
+}
+
+.dimCell:hover .dimClearBtn,
+.dimCell:focus-within .dimClearBtn {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.dimClearBtn.dimClearBtn:hover {
+    color: var(--text);
+}

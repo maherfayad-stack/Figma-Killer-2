@@ -451,13 +451,13 @@ describe('AdminCanvasLayout — permanent panel rail', () => {
       'panel-rail-explorer',
       'panel-rail-framework',
       'panel-rail-selectors',
-      'panel-rail-dependencies',
+      'panel-rail-inspect',
     ])
     expect(primaryButtons.map((button) => button.getAttribute('data-icon'))).toEqual([
       'database-solid',
       'colors-swatch',
       'paint-bucket',
-      'box-stack',
+      'eye-solid',
     ])
     const primaryAccents = primaryButtons.map((button) => button.getAttribute('data-accent'))
     expect(primaryAccents.every(Boolean)).toBe(true)
@@ -517,16 +517,14 @@ describe('AdminCanvasLayout — permanent panel rail', () => {
     expect(useEditorStore.getState().isAgentOpen).toBe(false)
     expect(within(sidebar).getByTestId('explorer-panel')).toBeDefined()
 
-    fireEvent.click(within(rail).getByRole('button', { name: /open dependencies panel/i }))
+    fireEvent.click(within(rail).getByRole('button', { name: /open inspect panel/i }))
 
     expect(sidebar.getAttribute('data-expanded')).toBe('true')
-    expect(sidebar.getAttribute('data-active-panel')).toBe('dependencies')
+    expect(sidebar.getAttribute('data-active-panel')).toBe('inspect')
     expect(sidebar.getAttribute('style')).toContain('--left-sidebar-panel-width: 320px')
-    expect(useEditorStore.getState().dependenciesPanelOpen).toBe(true)
+    expect(useEditorStore.getState().inspectPanelOpen).toBe(true)
     expect(useEditorStore.getState().explorerPanelOpen).toBe(false)
     expect(useEditorStore.getState().isAgentOpen).toBe(false)
-    expect(within(sidebar).getByTestId('dependencies-panel')).toBeDefined()
-    expect(within(sidebar).getByTestId('deps-section')).toBeDefined()
 
     fireEvent.click(within(rail).getByRole('button', { name: /open ai assistant panel/i }))
 
@@ -534,7 +532,7 @@ describe('AdminCanvasLayout — permanent panel rail', () => {
     expect(sidebar.getAttribute('data-active-panel')).toBe('agent')
     expect(sidebar.getAttribute('style')).toContain('--left-sidebar-panel-width: 320px')
     expect(useEditorStore.getState().isAgentOpen).toBe(true)
-    expect(useEditorStore.getState().dependenciesPanelOpen).toBe(false)
+    expect(useEditorStore.getState().inspectPanelOpen).toBe(false)
     expect(useEditorStore.getState().explorerPanelOpen).toBe(false)
     expect(within(sidebar).getByTestId('agent-panel')).toBeDefined()
   })

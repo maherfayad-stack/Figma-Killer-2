@@ -59,6 +59,12 @@ interface TokenAwareInputProps {
   value: string | undefined
   /** Placeholder shown when no value is set. Token-display is applied. */
   placeholder?: string
+  /**
+   * Optional short label rendered inside the field's leading edge (e.g.
+   * `W`, `H`, `Min W`) — the Figma-style in-field label. Purely visual; it
+   * doesn't affect the committed value.
+   */
+  prefix?: string
   /** Token catalog to suggest. Empty array → plain text input behaviour. */
   tokens: ReadonlyArray<Token>
   /** Commit handler — receives the resolved CSS expression or undefined. */
@@ -115,6 +121,7 @@ export function TokenAwareInput({
   id,
   value,
   placeholder,
+  prefix,
   tokens,
   onCommit,
   onPreview,
@@ -248,6 +255,7 @@ export function TokenAwareInput({
         type="text"
         fieldSize={fieldSize}
         value={draft}
+        prefix={prefix}
         placeholder={placeholderDisplay}
         spellCheck={spellCheck}
         autoComplete={autoComplete}

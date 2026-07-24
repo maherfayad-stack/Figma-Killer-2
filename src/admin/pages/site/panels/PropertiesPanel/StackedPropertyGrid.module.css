@@ -1,0 +1,18 @@
+/* StackedPropertyGrid — shared compact layout for the paired property
+ * sections (Typography, Background, Interaction, Layout fallbacks).
+ *
+ * Full-width entries stack a small label above a full-width control; paired
+ * entries put two such stacked cells side by side, so two controls fit per
+ * row like Figma's design panel. */
+
+.grid {
+    display: grid;
+    gap: var(--space-s);
+}
+
+.pairGrid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-s);
+    align-items: start;
+}

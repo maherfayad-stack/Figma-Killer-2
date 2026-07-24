@@ -20,6 +20,10 @@ import { BorderControl } from './BorderControl/BorderControl'
 import { CustomPropertiesSection } from './CustomPropertiesSection'
 import { LayoutSection } from './LayoutSection'
 import { PositionSection } from './PositionSection'
+import { SizeSection } from './SizeSection'
+import { TypographySection } from './TypographySection'
+import { BackgroundSection } from './BackgroundSection'
+import { InteractionSection } from './InteractionSection'
 import {
   CLASS_STYLE_SECTIONS,
   cssPropertyLabel,
@@ -34,6 +38,10 @@ import sectionStyles from '@ui/components/Section/Section.module.css'
 const SPACING_SECTION_ID = 'spacing'
 const LAYOUT_SECTION_ID = 'layout'
 const POSITION_SECTION_ID = 'position'
+const SIZE_SECTION_ID = 'size'
+const TYPOGRAPHY_SECTION_ID = 'typography'
+const BACKGROUND_SECTION_ID = 'background'
+const INTERACTION_SECTION_ID = 'interaction'
 const BORDER_SECTION_ID = 'border'
 
 // ---------------------------------------------------------------------------
@@ -201,6 +209,54 @@ function StyleSectionGroup({
             onChange={onChange}
             onRemove={onRemove}
             onClearProperty={onClearProperty}
+            onPreview={onPreview}
+            onClearPreview={onClearPreview}
+          />
+        ) : section.id === SIZE_SECTION_ID ? (
+          <SizeSection
+            key={activeTab}
+            storedStyles={storedStyles}
+            currentStyles={currentStyles}
+            activeTab={activeTab}
+            onChange={onChange}
+            onRemove={onRemove}
+            onClearProperty={onClearProperty}
+            onPreview={onPreview}
+            onClearPreview={onClearPreview}
+          />
+        ) : section.id === TYPOGRAPHY_SECTION_ID ? (
+          <TypographySection
+            key={activeTab}
+            storedStyles={storedStyles}
+            currentStyles={currentStyles}
+            visibleProperties={section.properties}
+            activeTab={activeTab}
+            onChange={onChange}
+            onRemove={onRemove}
+            onPreview={onPreview}
+            onClearPreview={onClearPreview}
+          />
+        ) : section.id === BACKGROUND_SECTION_ID ? (
+          <BackgroundSection
+            key={activeTab}
+            storedStyles={storedStyles}
+            currentStyles={currentStyles}
+            visibleProperties={section.properties}
+            activeTab={activeTab}
+            onChange={onChange}
+            onRemove={onRemove}
+            onPreview={onPreview}
+            onClearPreview={onClearPreview}
+          />
+        ) : section.id === INTERACTION_SECTION_ID ? (
+          <InteractionSection
+            key={activeTab}
+            storedStyles={storedStyles}
+            currentStyles={currentStyles}
+            visibleProperties={section.properties}
+            activeTab={activeTab}
+            onChange={onChange}
+            onRemove={onRemove}
             onPreview={onPreview}
             onClearPreview={onClearPreview}
           />

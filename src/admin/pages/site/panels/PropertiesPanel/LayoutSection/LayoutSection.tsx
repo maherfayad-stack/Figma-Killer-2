@@ -32,9 +32,9 @@
 import type { CSSPropertyBag } from '@core/page-tree'
 import { LayoutSolidIcon } from 'pixel-art-icons/icons/layout-solid'
 import { Grid2x22SolidIcon } from 'pixel-art-icons/icons/grid-2x2-2-solid'
-import { ClassPropertyRow } from '../ClassPropertyRow'
 import { DropdownSwitcher } from '../DropdownSwitcher'
-import { getEnumOptions, getCSSPropertyDefaultValue } from '../cssControlTypes'
+import { StackedPropertyGrid, type StackedGridEntry } from '../StackedPropertyGrid'
+import { getEnumOptions } from '../cssControlTypes'
 import { hasStyleValue, readString } from '../styleValueUtils'
 import { FlexDirectionControl } from './FlexDirectionControl'
 import { FlexWrapControl } from './FlexWrapControl'
@@ -125,6 +125,16 @@ const FALLBACK_PROPS: ReadonlyArray<keyof CSSPropertyBag> = [
   'overflowY',
 ]
 
+/** Figma-style paired layout for the fallback rows (see StackedPropertyGrid). */
+const FALLBACK_SPEC: ReadonlyArray<StackedGridEntry> = [
+  ['alignSelf', 'justifySelf'],
+  'flex',
+  ['rowGap', 'columnGap'],
+  ['gridColumn', 'gridRow'],
+  'overflow',
+  ['overflowX', 'overflowY'],
+]
+
 /**
  * Properties that only have any effect when *this* element is a flex or
  * grid container. Hidden from the fallback rows when display is anything
@@ -193,12 +203,13 @@ export function LayoutSection({
   const alignItems = readString(currentStyles, 'alignItems')
   const justifyContent = readString(currentStyles, 'justifyContent')
 
-  // Per-property adapter over the patch-shaped preview channel, for the
-  // single-property controls in this section (gap input + fallback rows).
-  const previewProperty = onPreview
-    ? (property: keyof CSSPropertyBag, value: string | number | undefined) =>
-        onPreview({ [property]: value ?? null } as Partial<CSSPropertyBag>)
-    : undefined
+  // Container-only gaps (rowGap / columnGap) only affect flex / grid
+  // containers — drop them from the fallback grid when this element is
+  // neither, so users aren't tempted to fiddle with knobs that do nothing.
+  const isContainer = display === 'flex' || display === 'grid'
+  const visibleFallback = FALLBACK_PROPS.filter(
+    (prop) => !(CONTAINER_ONLY_PROPS.has(prop) && !isContainer),
+  )
 
   return (
     <div className={styles.layoutSection}>
@@ -307,38 +318,19 @@ export function LayoutSection({
           gridTemplateColumns / gridTemplateRows / justifyItems (so those
           never appear as fallback rows) and the flex block owns
           flexDirection / flexWrap / alignItems / justifyContent (likewise
-          absent from FALLBACK_PROPS). Container-only properties (gap,
-          rowGap, columnGap) are skipped when this element isn't a flex
-          or grid container — they have no effect on `display: block` etc. */}
-      {FALLBACK_PROPS.map((prop) => {
-        if (
-          CONTAINER_ONLY_PROPS.has(prop) &&
-          display !== 'flex' &&
-          display !== 'grid'
-        ) {
-          return null
-        }
-        const storedValue = storedStyles[prop]
-        const isSet = hasStyleValue(storedValue)
-        const currentValue = currentStyles[prop]
-        const fallbackValue = hasStyleValue(currentValue)
-          ? currentValue
-          : getCSSPropertyDefaultValue(prop)
-
-        return (
-          <ClassPropertyRow
-            key={`${activeTab}-${String(prop)}`}
-            property={prop}
-            value={isSet ? (storedValue as string | number) : undefined}
-            placeholder={!isSet ? fallbackValue : undefined}
-            isSet={isSet}
-            onChange={onChange}
-            onRemove={onRemove}
-            onPreview={previewProperty}
-            onClearPreview={onClearPreview}
-          />
-        )
-      })}
+          absent from FALLBACK_PROPS). Rendered as the shared Figma-style
+          paired grid; container-only gaps drop out via `visibleFallback`. */}
+      <StackedPropertyGrid
+        spec={FALLBACK_SPEC}
+        visibleProperties={visibleFallback}
+        storedStyles={storedStyles}
+        currentStyles={currentStyles}
+        activeTab={activeTab}
+        onChange={onChange}
+        onRemove={onRemove}
+        onPreview={onPreview}
+        onClearPreview={onClearPreview}
+      />
     </div>
   )
 }

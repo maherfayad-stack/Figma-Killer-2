@@ -4,7 +4,6 @@ import type { LeftSidebarPanelId } from '@site/store/slices/uiSlice'
 import type { IconComponent } from 'pixel-art-icons/types'
 import { AiSettingsSolidIcon } from 'pixel-art-icons/icons/ai-settings-solid'
 import { DatabaseSolidIcon } from 'pixel-art-icons/icons/database-solid'
-import { BoxStackSolidIcon } from 'pixel-art-icons/icons/box-stack-solid'
 import { PaintBucketSolidIcon } from 'pixel-art-icons/icons/paint-bucket-solid'
 import { ColorsSwatchSolidIcon } from 'pixel-art-icons/icons/colors-swatch-solid'
 import { EyeSolidIcon } from 'pixel-art-icons/icons/eye-solid'
@@ -53,12 +52,6 @@ const PRIMARY_RAIL_ITEMS: PrimaryRailItem[] = [
     label: 'Selectors',
     icon: PaintBucketSolidIcon,
     iconName: 'paint-bucket',
-  },
-  {
-    id: 'dependencies',
-    label: 'Dependencies',
-    icon: BoxStackSolidIcon,
-    iconName: 'box-stack',
   },
   {
     id: 'inspect',

@@ -95,3 +95,17 @@
 .propertyRowWrap:focus-within::after {
     opacity: 1;
 }
+
+/* ── Stacked layout (label above control) ─────────────────────────────────
+   The remove button's default anchor is the 100px inline label column, which
+   doesn't exist in stacked cells. Re-anchor it to the row's top-right corner
+   (over the trailing end of the label line) and drop the label-column fade. */
+.propertyRowWrapStacked .removeBtn {
+    top: 0;
+    left: auto;
+    right: 0;
+}
+
+.propertyRowWrapStacked[data-state="set"]::after {
+    display: none;
+}

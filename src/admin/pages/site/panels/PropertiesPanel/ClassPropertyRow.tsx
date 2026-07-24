@@ -51,6 +51,12 @@ interface ClassPropertyRowProps {
   placeholder?: string | number
   fontFamilyValue?: unknown
   isSet?: boolean
+  /**
+   * Row layout. `inline` (default) keeps the 100px side-label column; `stacked`
+   * puts a small label above a full-width control — used by the compact
+   * paired-column sections (e.g. Typography) to fit two controls per row.
+   */
+  layout?: 'inline' | 'stacked'
   onChange: (property: keyof CSSPropertyBag, value: string | number | undefined) => void
   onRemove: (property: keyof CSSPropertyBag) => void
   /**
@@ -71,6 +77,7 @@ export function ClassPropertyRow({
   placeholder,
   fontFamilyValue,
   isSet = true,
+  layout,
   onChange,
   onRemove,
   onPreview,
@@ -165,13 +172,14 @@ export function ClassPropertyRow({
         placeholder={placeholderText}
         onChange={handleControlChange}
         label={label}
+        layout={layout}
         onPreview={onPreview ? (v) => handleControlPreview(String(property), v) : undefined}
         onClearPreview={onClearPreview}
       />
     )
   } else if (tokenSource) {
     control = (
-      <ControlRow propKey={String(property)} label={label}>
+      <ControlRow propKey={String(property)} label={label} layout={layout}>
         <TokenAwareInput
           aria-label={label}
           value={value !== undefined ? String(value) : undefined}
@@ -208,6 +216,7 @@ export function ClassPropertyRow({
           placeholder={placeholderText}
           onChange={handleControlChange}
           label={label}
+          layout={layout}
           onPreview={onPreview ? (v) => handleControlPreview(String(property), v) : undefined}
           onClearPreview={onClearPreview}
         />
@@ -226,6 +235,7 @@ export function ClassPropertyRow({
           placeholder={placeholderText}
           onChange={handleControlChange}
           label={label}
+          layout={layout}
           options={[
             { label: '—', value: '' },
             ...opts.map((o) => ({ label: o, value: o })),
@@ -252,6 +262,7 @@ export function ClassPropertyRow({
           placeholder={placeholderText}
           onChange={handleControlChange}
           label={label}
+          layout={layout}
           nudgeEmptyUnit={nudgeEmptyUnit}
         />
       )
@@ -261,7 +272,11 @@ export function ClassPropertyRow({
 
   return (
     <div
-      className={cn(styles.propertyRowWrap, !isSet && styles.propertyRowUnset)}
+      className={cn(
+        styles.propertyRowWrap,
+        layout === 'stacked' && styles.propertyRowWrapStacked,
+        !isSet && styles.propertyRowUnset,
+      )}
       data-state={isSet ? 'set' : 'unset'}
       data-testid={`css-property-row-${String(property)}`}
     >
