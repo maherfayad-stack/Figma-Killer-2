@@ -1,0 +1,40 @@
+.code-block {
+  position: relative;
+  background: var(--docs-code-bg);
+  border-radius: 0 0 12px 12px;
+  padding: 24px;
+  min-height: 180px;
+}
+
+.code-block__pre {
+  font-family: var(--docs-mono);
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--docs-code-text);
+  white-space: pre;
+  overflow-x: auto;
+  margin: 0;
+}
+
+.code-block__copy {
+  all: unset;
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  font-size: 11px;
+  font-family: var(--docs-font);
+  color: rgba(255,255,255,0.4);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 6px;
+  padding: 5px 10px;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.code-block__copy:hover {
+  color: rgba(255,255,255,0.8);
+  border-color: rgba(255,255,255,0.25);
+}

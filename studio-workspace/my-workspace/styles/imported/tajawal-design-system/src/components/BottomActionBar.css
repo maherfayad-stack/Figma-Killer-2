@@ -1,0 +1,144 @@
+/* iOS and Android share the same layout + structure (`.bottom-action-bar`); they
+   differ only in the surface treatment (`--ios` glass vs `--android` solid) and the
+   payment wallet (Apple Pay vs Google Pay, handled in the JSX). */
+
+/* ── base (shared layout) ── */
+.bottom-action-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding-block: var(--space-sm);
+  padding-inline-start: var(--space-lg);
+  padding-inline-end: var(--space-sm);
+  border-radius: var(--rounded-full);
+  overflow: hidden;
+  width: fit-content;
+  min-width: 343px;
+  text-align: start;
+}
+
+/* ── iOS surface: native liquid-glass ──
+   Same shared --liquid-glass-* tokens as TabBar / GlassButton / BottomSheet:
+   a translucent fill with a background blur + saturation, and the glass shadow
+   (inset top highlight + soft drop). It blurs whatever sits behind the bar. */
+.bottom-action-bar--ios {
+  background: var(--liquid-glass-bg);
+  backdrop-filter: var(--liquid-glass-filter);
+  -webkit-backdrop-filter: var(--liquid-glass-filter);
+  box-shadow: var(--liquid-glass-shadow);
+}
+
+/* ── Android surface: solid (Material) ──
+   Opaque --background-base-default instead of the iOS glass, with the floating
+   sticky-bar elevation + a hairline border so the pill still separates from the
+   content behind it (no blur). */
+.bottom-action-bar--android {
+  background: var(--background-base-default);
+  box-shadow: var(--elevation-floating);
+  border: 0.5px solid var(--border-base-default);
+}
+
+.bottom-action-bar--funnel,
+.bottom-action-bar--payment {
+  padding-inline-start: var(--space);
+}
+
+/* ── back button ── */
+/* The DS IconButton (variant="secondary", size="small") owns its own appearance +
+   states. Only pin it so it doesn't shrink within the bar's flex row. */
+.bottom-action-bar__back {
+  flex-shrink: 0;
+}
+
+/* ── content (starting-price + funnel) ── */
+.bottom-action-bar__content {
+  flex: 1 0 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.bottom-action-bar__from-label {
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-lh);
+  font-weight: var(--type-caption-regular-weight);
+  color: var(--text-base-subtext);
+  margin: 0;
+}
+
+/* ── price ── */
+.bottom-action-bar__price {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2xs);
+  white-space: nowrap;   /* keep the current + struck-through price on one line */
+}
+
+.bottom-action-bar__price-current {
+  font-family: var(--font-body);
+  font-size: var(--type-title-size);
+  font-weight: var(--type-title-weight);
+  line-height: var(--type-title-lh);
+  letter-spacing: var(--type-title-ls);
+  color: var(--text-base-default);
+}
+
+.bottom-action-bar__price-original {
+  font-family: var(--font-body);
+  font-size: var(--type-body-size);
+  font-weight: var(--type-body-regular-weight);
+  line-height: var(--type-body-lh);
+  color: var(--text-base-default);
+  text-decoration: line-through;
+}
+
+.bottom-action-bar__booking-link {
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-lh);
+  font-weight: var(--type-caption-regular-weight);
+  color: var(--text-link-default);
+  white-space: nowrap;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+/* ── payment ── */
+.bottom-action-bar__payment-logo {
+  width: 32px;
+  height: 32px;
+  border-radius: 2px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.bottom-action-bar__payment-logo svg,
+.bottom-action-bar__payment-logo img,
+.bottom-action-bar__apple-pay-logo,
+.bottom-action-bar__apple-pay-logo svg,
+.bottom-action-bar__gpay-logo,
+.bottom-action-bar__gpay-logo svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.bottom-action-bar__payment-method {
+  flex: 1 0 0;
+  min-width: 0;
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-lh);
+  font-weight: var(--type-caption-regular-weight);
+  color: var(--text-base-default);
+  margin: 0;
+}
+
+/* ── action button ── */
+/* The CTA is the shared DS Button — it owns its own appearance/states.
+   Only pin it so it doesn't shrink within the bar's flex row. */
+.bottom-action-bar__btn {
+  flex-shrink: 0;
+}

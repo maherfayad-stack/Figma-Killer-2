@@ -1,0 +1,145 @@
+.prop-controls {
+  border: 1px solid var(--docs-border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--docs-surface);
+}
+
+.prop-controls__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 14px;
+  background: var(--docs-tint);
+  border-bottom: 1px solid var(--docs-border);
+}
+
+.prop-controls__showall {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--docs-text);
+  user-select: none;
+}
+
+.prop-controls__bar-hint {
+  font-size: 11px;
+  color: var(--docs-subtext);
+}
+
+.prop-controls__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.prop-controls__table thead {
+  background: var(--docs-tint);
+}
+
+.prop-controls__table th {
+  text-align: left;
+  padding: 10px 14px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--docs-subtext);
+  border-bottom: 1px solid var(--docs-border);
+}
+
+.prop-controls__table td {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--docs-border);
+  vertical-align: middle;
+}
+
+.prop-controls__table tr:last-child td {
+  border-bottom: none;
+}
+
+/* divider introducing the props that don't apply to the current combination */
+.prop-controls__divider td {
+  padding: 7px 14px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--docs-subtext);
+  background: var(--docs-tint);
+  border-top: 1px solid var(--docs-border);
+}
+
+/* inactive props: visible and editable, but clearly de-emphasised */
+.prop-controls__row--inactive td {
+  opacity: 0.5;
+}
+
+.prop-controls__name {
+  font-family: var(--docs-mono);
+  font-size: 12px;
+  color: var(--docs-accent);
+  background: rgba(11, 160, 183, 0.08);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.prop-controls__required {
+  color: #e04040;
+  margin-left: 3px;
+  font-size: 11px;
+}
+
+.prop-controls__select {
+  appearance: none;
+  background: var(--docs-tint) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23888' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat right 8px center;
+  border: 1px solid var(--docs-border);
+  border-radius: 6px;
+  padding: 5px 28px 5px 8px;
+  font-size: 12px;
+  font-family: var(--docs-font);
+  color: var(--docs-text);
+  cursor: pointer;
+  min-width: 120px;
+}
+
+.prop-controls__input {
+  border: 1px solid var(--docs-border);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-size: 12px;
+  font-family: var(--docs-font);
+  color: var(--docs-text);
+  background: var(--docs-tint);
+  width: 100%;
+  max-width: 200px;
+}
+
+.prop-controls__input:focus, .prop-controls__select:focus {
+  outline: 2px solid var(--docs-accent);
+  outline-offset: 1px;
+}
+
+.prop-controls__toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--docs-subtext);
+}
+
+.prop-controls__static {
+  font-family: var(--docs-mono);
+  font-size: 11px;
+  color: var(--docs-subtext);
+}
+
+.prop-controls__desc {
+  color: var(--docs-subtext);
+  max-width: 320px;
+}

@@ -1,0 +1,161 @@
+.guidelines {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* ─── Two-col layout (when/whenNot, do/don't) ─── */
+.guidelines__cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.guidelines__col {
+  padding: 14px 16px;
+  border-radius: 10px;
+  border: 1px solid var(--docs-border);
+  border-left: 3px solid;
+}
+
+.guidelines__col--do   { border-left-color: #16a34a; }
+.guidelines__col--dont { border-left-color: #e54646; }
+
+.guidelines__col-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin-bottom: 10px;
+}
+
+.guidelines__col--do .guidelines__col-label   { color: #16a34a; }
+.guidelines__col--dont .guidelines__col-label { color: #e54646; }
+
+/* ─── Lists ─── */
+.guidelines__list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.guidelines__list li {
+  font-size: 13px;
+  color: var(--docs-text);
+  padding-left: 14px;
+  position: relative;
+  line-height: 1.55;
+}
+
+.guidelines__list li::before {
+  content: '·';
+  position: absolute;
+  left: 3px;
+  color: var(--docs-subtext);
+}
+
+.guidelines__list--check li::before {
+  content: '?';
+  font-size: 10px;
+  font-weight: 700;
+  top: 1px;
+  color: var(--docs-accent);
+}
+
+/* ─── Blocks (decisions, content rules, examples) ─── */
+.guidelines__block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.guidelines__block-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--docs-subtext);
+}
+
+.guidelines__note {
+  font-size: 13px;
+  color: var(--docs-subtext);
+  line-height: 1.6;
+}
+
+/* ─── Tables — same pattern as PropControls ─── */
+.guidelines__table-wrap {
+  border: 1px solid var(--docs-border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--docs-surface);
+}
+
+.guidelines__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.guidelines__table thead {
+  background: var(--docs-tint);
+}
+
+.guidelines__table th {
+  text-align: left;
+  padding: 10px 14px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--docs-subtext);
+  border-bottom: 1px solid var(--docs-border);
+}
+
+.guidelines__table td {
+  padding: 10px 14px;
+  color: var(--docs-text);
+  border-bottom: 1px solid var(--docs-border);
+  vertical-align: top;
+  line-height: 1.5;
+}
+
+.guidelines__table tr:last-child td { border-bottom: none; }
+
+.guidelines__table code {
+  font-family: var(--docs-mono);
+  font-size: 12px;
+  color: var(--docs-accent);
+  background: rgba(11, 160, 183, 0.08);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+/* ─── Examples table ─── */
+.guidelines__table--examples th:first-child  { color: #16a34a; }
+.guidelines__table--examples th:nth-child(2) { color: #e54646; }
+.guidelines__table--examples td:nth-child(2) { color: var(--docs-subtext); }
+
+.guidelines__why {
+  color: var(--docs-subtext);
+  font-size: 12px;
+}
+
+/* ─── Callout ─── */
+.guidelines__callout {
+  font-size: 13px;
+  color: var(--docs-subtext);
+  background: var(--docs-tint);
+  border-left: 3px solid var(--docs-border);
+  padding: 10px 14px;
+  border-radius: 0 8px 8px 0;
+  line-height: 1.6;
+}
+
+/* ─── Responsive ─── */
+@media (max-width: 600px) {
+  .guidelines__cols { grid-template-columns: 1fr; }
+}
