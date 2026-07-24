@@ -11,6 +11,7 @@
 
     position: relative;
     display: flex;
+    flex-shrink: 0;
     align-items: center;
     height: var(--tree-row-h);
     padding-left: var(--tree-row-pl);

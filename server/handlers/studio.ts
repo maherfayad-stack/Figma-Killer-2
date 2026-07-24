@@ -76,18 +76,24 @@
  *       `{ ok, relPath, pageId, title }` so the client can drop a board frame
  *       for it, then reload the workspace to render it.
  *
+ *   GET  /admin/api/studio/framework?dir=<abs>
+ *       Reads the project's `.studio/framework.json` sidecar (colors/
+ *       typography/spacing/preferences). `{ framework: null }` when nothing
+ *       is stored yet — the client keeps its own default in that case. See
+ *       `studioFramework.ts`'s doc comment for why this file exists.
+ *
+ *   POST /admin/api/studio/framework   body: { dir?, framework }
+ *       Validates `framework` against `FrameworkSettingsSchema` and writes it
+ *       to `.studio/framework.json`. 400 on an invalid shape.
+ *
  * page-parser and ast-codemods run here (Node/ts-morph), not in the browser.
  */
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { zipSync, strToU8 } from 'fflate'
 import {
   createWorkspaceProject,
-  listWorkspaceFiles,
   parsePageFile,
   resolveComponentSources,
-  WORKSPACE_MAX_FILE_BYTES,
-  WORKSPACE_MAX_FILES,
   type ComponentSource,
 } from '@core/page-parser'
 import { parsedPageToSitePage } from '@core/studio-sync/parsedPageToSitePage'
@@ -103,10 +109,11 @@ import {
   starterPage,
   type StudioProjectSummary,
 } from './studioProjects'
+import { readStudioFrameworkFile, writeStudioFrameworkFile } from './studioFramework'
+import { buildStudioDownloadResponse } from './studioDownload'
 import { createBoardsFile, parseBoardsFile, serializeBoardsFile, type BoardsFile } from '@core/studio-board'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { badRequest, jsonResponse, readValidatedBody } from '../http'
-import { binaryResponse } from '../binary'
 import { GithubImportError, runGithubImport } from './studioGithubImport'
 
 const NODE_LOC_ID = /^(.*):(\d+):(\d+)$/
@@ -152,6 +159,16 @@ const SaveBodySchema = Type.Object({
 const BoardsPostBodySchema = Type.Object({
   dir: Type.Optional(Type.String()),
   boards: Type.Unknown(),
+})
+
+/**
+ * Body of POST /admin/api/studio/framework. `framework` stays `Unknown` at
+ * the boundary because `writeStudioFrameworkFile` is the real validator (via
+ * `FrameworkSettingsSchema`) — no parallel mirror to drift.
+ */
+const FrameworkPostBodySchema = Type.Object({
+  dir: Type.Optional(Type.String()),
+  framework: Type.Unknown(),
 })
 
 /** Body of POST /admin/api/studio/create — scaffold a new project folder. */
@@ -276,76 +293,6 @@ export function applyStudioEdit(dir: string, edit: StudioEdit): boolean {
       setJsxStyle({ ...loc, style: edit.style })
       return true
   }
-}
-
-/** One real source file collected from the workspace for the download zip. */
-export interface WorkspaceFile {
-  /** Path relative to the workspace root, using `/` separators (zip-safe). */
-  relPath: string
-  contents: Buffer
-}
-
-interface CollectWorkspaceFilesOptions {
-  /** Files larger than this are skipped outright — never partially included. */
-  maxFileBytes?: number
-  /** Total file count cap — collection stops (not truncates a file) once hit. */
-  maxFiles?: number
-}
-
-/**
- * Recursively collects every real source file under `dir` for the "Download
- * code" export (Phase 6D). Pure-ish (dir + options in, file list out) so it's
- * unit-testable against a temp fixture directory without a Request/Response
- * round trip — mirrors `applyStudioEdit`'s testing shape.
- *
- * The recursive walk + exclusion rule (`.studio/`, `.git/`, `node_modules/`,
- * `dist/`, `.next/`, `.turbo/`, never following symlinks) is shared with the
- * Phase 7A workspace-discovery walk via `listWorkspaceFiles`
- * (`@core/page-parser`) — one exclusion list, not a duplicated one per
- * call site.
- *
- * Beyond that shared walk, this function adds: oversized files (> `maxFileBytes`)
- * are skipped whole, never truncated; collection stops (does not throw) once
- * `maxFiles` is reached, so the caller still gets a valid, if partial, zip
- * rather than an unbounded one.
- */
-export function collectWorkspaceFiles(
-  dir: string,
-  options: CollectWorkspaceFilesOptions = {},
-): WorkspaceFile[] {
-  const maxFileBytes = options.maxFileBytes ?? WORKSPACE_MAX_FILE_BYTES
-  const maxFiles = options.maxFiles ?? WORKSPACE_MAX_FILES
-  const results: WorkspaceFile[] = []
-
-  for (const relPath of listWorkspaceFiles(dir)) {
-    if (results.length >= maxFiles) break
-    const filePath = join(dir, ...relPath.split('/'))
-    let size: number
-    try {
-      size = statSync(filePath).size
-    } catch {
-      continue
-    }
-    if (size > maxFileBytes) continue // skip whole — never emit a partial file
-    results.push({ relPath, contents: readFileSync(filePath) })
-  }
-
-  return results
-}
-
-/** Minimal package.json synthesized when the workspace ships none of its own. */
-function synthesizedPackageJson(): Uint8Array {
-  return strToU8(
-    `${JSON.stringify(
-      {
-        name: 'studio-workspace',
-        private: true,
-        dependencies: { '@alm-design/design-system': '*' },
-      },
-      null,
-      2,
-    )}\n`,
-  )
 }
 
 /**
@@ -525,6 +472,32 @@ export async function tryServeStudio(
     }
   }
 
+  // Framework design-token settings (colors/typography/spacing/preferences)
+  // — editor-owned, lives in <dir>/.studio/framework.json. See
+  // studioFramework.ts's doc comment for why this exists.
+  if (pathname === '/admin/api/studio/framework' && req.method === 'GET') {
+    try {
+      const dir = resolveProjectDir(url.searchParams.get('dir'))
+      const framework = readStudioFrameworkFile(dir)
+      return jsonResponse({ framework })
+    } catch (err) {
+      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+    }
+  }
+
+  if (pathname === '/admin/api/studio/framework' && req.method === 'POST') {
+    try {
+      const body = await readValidatedBody(req, FrameworkPostBodySchema)
+      if (!body) return badRequest('invalid framework body')
+      const dir = resolveProjectDir(body.dir)
+      const result = writeStudioFrameworkFile(dir, body.framework)
+      if (!result.ok) return badRequest(result.message)
+      return jsonResponse({ ok: true, framework: result.value })
+    } catch (err) {
+      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+    }
+  }
+
   // GitHub-link import (Phase 7B) — fetch a repo's zipball into its own
   // studio-workspace/<owner>-<repo>/ directory. Real work lives in
   // studioGithubImport.ts; this route is just body validation + error mapping.
@@ -615,37 +588,12 @@ export async function tryServeStudio(
   }
 
   // "Download the code" (Phase 6D) — zip the real .tsx source + local
-  // component/style files. Not codegen: the workspace's filesystem IS the
-  // source of truth, so this endpoint only packages what's already there.
+  // component/style files. Real work lives in studioDownload.ts; this route
+  // is just dir resolution + error mapping.
   if (pathname === '/admin/api/studio/download' && req.method === 'GET') {
     try {
       const dir = resolveProjectDir(url.searchParams.get('dir'))
-      if (!existsSync(dir)) {
-        return jsonResponse({ error: `Workspace directory not found: ${dir}` }, { status: 404 })
-      }
-
-      const files = collectWorkspaceFiles(dir)
-      const zipInput: Record<string, Uint8Array> = {}
-      let hasPackageJson = false
-      for (const file of files) {
-        zipInput[file.relPath] = file.contents
-        if (file.relPath === 'package.json') hasPackageJson = true
-      }
-      // The design-system dependency (`@alm-design/design-system`) is an npm
-      // package, never bundled as source — record it in package.json instead
-      // so `bun install` resolves it. Only synthesize one when the workspace
-      // doesn't already ship its own (which is included as-is, above).
-      if (!hasPackageJson) {
-        zipInput['package.json'] = synthesizedPackageJson()
-      }
-
-      const zipped = zipSync(zipInput)
-      return binaryResponse(zipped, {
-        headers: {
-          'content-type': 'application/zip',
-          'content-disposition': 'attachment; filename="studio-workspace.zip"',
-        },
-      })
+      return buildStudioDownloadResponse(dir)
     } catch (err) {
       console.error('[studio]', err)
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })

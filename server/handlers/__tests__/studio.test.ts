@@ -20,12 +20,12 @@ import { zipSync, strToU8 } from 'fflate'
 import {
   applyStudioEdit,
   assignPageIds,
-  collectWorkspaceFiles,
   orderStudioEditsForApply,
   pageIdFromRelPath,
   tryServeStudio,
 } from '../studio'
 import { discoverPageFiles, listStudioProjects, pageComponentNameFromInput } from '../studioProjects'
+import { collectWorkspaceFiles } from '../studioDownload'
 
 describe('orderStudioEditsForApply', () => {
   it('sorts bottom-to-top: descending line, then descending column', () => {

@@ -117,8 +117,13 @@ export function buildGithubZipballUrl(owner: string, repo: string, ref?: string)
   return `https://api.github.com/repos/${owner}/${repo}/zipball/${encodeURIComponent(safeRef)}`
 }
 
-/** True when every path segment is a plain name — no traversal, no absolute path, no drive letter. */
-function isSafeRelPath(relPath: string): boolean {
+/**
+ * True when every path segment is a plain name — no traversal, no absolute
+ * path, no drive letter. Exported: shared with `server/handlers/designImport/`
+ * (the npm-tarball fetcher runs the same guard over tar entry names) — one
+ * path-safety primitive, not a second hand-rolled copy.
+ */
+export function isSafeRelPath(relPath: string): boolean {
   if (relPath.length === 0 || relPath.startsWith('/') || relPath.includes('\\')) return false
   const segments = relPath.split('/')
   return segments.every(

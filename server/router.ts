@@ -2,6 +2,7 @@ import { tryHandleAi } from './ai/handlers'
 import { handleMcpHttp, MCP_ENDPOINT_PATH } from './ai/mcp'
 import { handleCmsRequest } from './handlers/cms'
 import { tryServeStudio } from './handlers/studio'
+import { tryServeDesignImport } from './handlers/designImport'
 import type { DbClient } from './db/client'
 import { renderNotFoundResponse, renderPublicResolution } from './publish/publicRouter'
 import { readStaticAsset } from './publish/staticArtefact'
@@ -66,6 +67,9 @@ const routes: readonly RouteHandler[] = [
   tryServeHealth,
   // Studio source-writeback (filesystem ⇄ .tsx). Owns /studio/*.
   tryServeStudio,
+  // Design-token import (colors/typography/spacing + CSS from a GitHub repo
+  // or npm package) — owns /admin/api/design-import/*.
+  tryServeDesignImport,
   // MCP server endpoint — external AI clients (Claude Code, Codex, remote
   // agents) speak the Model Context Protocol here over its own bearer-token
   // auth. Matched before the admin-cookie-gated AI routes since it lives under

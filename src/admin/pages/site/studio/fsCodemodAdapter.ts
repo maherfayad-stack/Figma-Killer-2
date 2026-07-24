@@ -6,11 +6,19 @@
  *   loadSite  → GET  /admin/api/studio/load   → every source-derived Instatic
  *               Page in the workspace's `pages/` dir, wrapped in a default
  *               SiteDocument shell (multi-frame board — Phase 1 Increment 1B).
+ *               `site.settings.framework` (Colors/Typography/Spacing) is then
+ *               overridden from `GET /admin/api/studio/framework`, if the
+ *               project has a persisted `.studio/framework.json` — otherwise
+ *               the default shell's framework settings stand as-is.
  *   saveSite  → POST /admin/api/studio/save   → a batch of typed edits
  *               (`kind: 'prop' | 'text' | 'style'`) for every source-backed
  *               node (id = `relFile:line:col`), written back to the .tsx via
  *               the server-side ts-morph codemods (`setJsxProp` / `setJsxText`
- *               / `setJsxStyle`).
+ *               / `setJsxStyle`). Independently, if `site.settings.framework`
+ *               changed since the last load/save, it's POSTed to
+ *               `/admin/api/studio/framework` — a framework-only edit (no
+ *               node prop/text/style changes) still needs to persist, so this
+ *               does NOT gate on there being any node edits in the batch.
  *
  * Wired in only when the editor is opened with `?studio` (see AdminCanvasLayout);
  * the normal DB-backed editor is untouched. This is the filesystem-as-truth
@@ -23,6 +31,7 @@ import type { IPersistenceAdapter, SaveSiteOptions } from '@core/persistence/typ
 import { type SiteDocument, PageSchema } from '@core/page-tree'
 import { apiRequest } from '@core/http'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
+import { FrameworkSettingsSchema } from '@core/framework-schema'
 import { createDefaultSiteDocument } from '@site/store/slices/site/defaults'
 import { registry } from '@core/module-engine'
 import { requestCmsSiteReload } from '@admin/state/adminEvents'
@@ -101,8 +110,27 @@ export function createStudioPage(name?: string): Promise<CreatedStudioPage> {
   })
 }
 
+/** GET /admin/api/studio/framework response — `null` when nothing is persisted yet. */
+const StudioFrameworkLoadResponseSchema = Type.Object({
+  framework: Type.Union([FrameworkSettingsSchema, Type.Null()]),
+})
+
+/** POST /admin/api/studio/framework response. */
+const StudioFrameworkSaveResponseSchema = Type.Object({
+  ok: Type.Boolean(),
+  framework: FrameworkSettingsSchema,
+})
+
 /** Remembered from the last load so saveSite can tell the server which folder to write. */
 let loadedDir: string | null = null
+
+/**
+ * Serialized `site.settings.framework` as of the last load/save — lets
+ * `saveSite` tell whether the framework settings actually changed this round,
+ * independent of whether there were any per-node prop/text/style edits.
+ * `undefined` means "not yet initialized" (before the first `loadSite` call).
+ */
+let lastSyncedFrameworkJson: string | undefined
 
 /**
  * Remembered from the last load — local-vs-package classification for every
@@ -171,6 +199,17 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
     // settings, framework, …) — every workspace page becomes a board frame.
     const site = createDefaultSiteDocument('Studio')
     site.pages = pages
+
+    // Override the default shell's framework settings with whatever's
+    // persisted for this project, if anything — `null` means no
+    // `.studio/framework.json` yet, so the default stands as-is.
+    const { framework } = await apiRequest('/admin/api/studio/framework', {
+      schema: StudioFrameworkLoadResponseSchema,
+      query: overrideDir ? { dir: overrideDir } : undefined,
+    })
+    if (framework) site.settings.framework = framework
+    lastSyncedFrameworkJson = JSON.stringify(site.settings.framework)
+
     return site
   },
 
@@ -216,23 +255,36 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
       }
     }
 
-    if (edits.length === 0) return
+    if (edits.length > 0) {
+      const result = await apiRequest('/admin/api/studio/save', {
+        method: 'POST',
+        body: { dir: loadedDir, edits },
+        schema: StudioSaveResponseSchema,
+      })
 
-    const result = await apiRequest('/admin/api/studio/save', {
-      method: 'POST',
-      body: { dir: loadedDir, edits },
-      schema: StudioSaveResponseSchema,
-    })
+      // A write shifted line numbers, so every `line:col` node id below that
+      // point is now stale against disk. Re-parse the workspace to re-derive
+      // fresh ids (`requestCmsSiteReload` → usePersistence reload → loadSite),
+      // otherwise the NEXT edit on a shifted node would target the wrong source
+      // location and silently fail. The reload also clears the unsaved flag, so
+      // it can't loop into another save (there is no file watcher — a studio
+      // write never re-enters as an external change). Rare in practice: source
+      // formatting stabilizes after the first normalizing write, so `shifted`
+      // is false on subsequent idempotent saves.
+      if (result.shifted) requestCmsSiteReload()
+    }
 
-    // A write shifted line numbers, so every `line:col` node id below that
-    // point is now stale against disk. Re-parse the workspace to re-derive
-    // fresh ids (`requestCmsSiteReload` → usePersistence reload → loadSite),
-    // otherwise the NEXT edit on a shifted node would target the wrong source
-    // location and silently fail. The reload also clears the unsaved flag, so
-    // it can't loop into another save (there is no file watcher — a studio
-    // write never re-enters as an external change). Rare in practice: source
-    // formatting stabilizes after the first normalizing write, so `shifted`
-    // is false on subsequent idempotent saves.
-    if (result.shifted) requestCmsSiteReload()
+    // Framework settings (Colors/Typography/Spacing) live outside the
+    // per-node edit batch above — sync them independently so a framework-only
+    // change (no node prop/text/style edits at all) still persists.
+    const nextFrameworkJson = JSON.stringify(site.settings.framework)
+    if (nextFrameworkJson !== lastSyncedFrameworkJson) {
+      await apiRequest('/admin/api/studio/framework', {
+        method: 'POST',
+        body: { dir: loadedDir, framework: site.settings.framework },
+        schema: StudioFrameworkSaveResponseSchema,
+      })
+      lastSyncedFrameworkJson = nextFrameworkJson
+    }
   },
 }

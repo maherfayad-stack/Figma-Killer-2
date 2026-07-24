@@ -149,6 +149,15 @@ const ALLOWLIST = new Set([
   // font-picker tiles.
   'admin/pages/dashboard/DashboardPage.tsx',
 
+  // ── §8.12 Boards section collapse toggle ────────────────────────────────
+  // StudioBoardsList's disclosure toggle must render its label in the exact
+  // same compact uppercase-tracking typography (`.heading`) as the sibling
+  // Pages section header, with zero extra padding/min-height, so collapsing
+  // it doesn't shift the panel's established compact header rhythm. Button's
+  // token-driven size system (26px+ min-height, fixed padding scale) doesn't
+  // fit this exact-typography disclosure — same pattern class as §8.2.
+  'admin/pages/site/panels/ExplorerPanel/StudioBoardsList.tsx',
+
   // ── §8.8 DataGrid custom CSS-Grid cells ─────────────────────────────────
   // The Data table is a CSS-Grid (display: grid + display: contents on rows)
   // with sticky column / group headers. Two grid-cell types cannot be

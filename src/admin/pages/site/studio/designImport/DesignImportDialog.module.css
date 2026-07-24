@@ -1,0 +1,93 @@
+.preview {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-l);
+    max-height: 60vh;
+    overflow-y: auto;
+}
+
+.previewSummary {
+    font-size: var(--text-s);
+    color: var(--text-muted);
+}
+
+.group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2xs);
+}
+
+.groupTitle {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2xs);
+    font-size: var(--text-xs);
+    font-weight: 600;
+    color: var(--text);
+    margin: 0;
+}
+
+.groupCount {
+    font-family: var(--font-mono);
+    font-size: var(--text-2xs);
+    color: var(--text-disabled);
+}
+
+.groupList {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.candidateRow {
+    display: flex;
+}
+
+.candidateLabel {
+    display: flex;
+    align-items: center;
+    gap: var(--space-s);
+    width: 100%;
+    padding: var(--space-3xs) var(--space-2xs);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+}
+
+.candidateLabel:hover {
+    background: var(--overlay-10);
+}
+
+/* Dynamic per-candidate color, set inline by the component — the value comes
+ * from imported third-party CSS, never a static design token. A value that's
+ * itself a `var(--...)` reference into the SOURCE stylesheet (not defined
+ * here) simply renders as transparent — expected, not a bug: resolving
+ * cross-file variable references is out of scope for this preview. */
+.swatch {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+    border-radius: var(--radius-sm);
+    background: var(--swatch-color);
+    border: 1px solid var(--border);
+}
+
+.candidateName {
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    color: var(--text);
+    white-space: nowrap;
+}
+
+.candidateValue {
+    flex: 1;
+    min-width: 0;
+    text-align: right;
+    font-family: var(--font-mono);
+    font-size: var(--text-2xs);
+    color: var(--text-disabled);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}

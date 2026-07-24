@@ -1,12 +1,21 @@
 /**
  * StudioPagesTree — the "Pages" section of the Studio explorer panel.
  *
- * Every page in `site.pages` is a top-level, independently expandable row,
- * stacked in normal document flow — an expanded page's subtree occupies
- * exactly the height of its own rows, and this section's own scroll
- * container (`.scroll`) is the ONLY scroller in this column; any leftover
- * space stays empty at the bottom of the list rather than being distributed
- * between rows. Expanding a page reveals its node tree:
+ * Shows only the pages CURATED ONTO THE ACTIVE BOARD (`board.frames`), not
+ * every page in the project — a project can accumulate many pages across
+ * boards, and a board's own page list is what the user is actually working
+ * with. Switching the active board (in `StudioBoardsList` above) narrows this
+ * list to that board's frames; `AddFramePicker` / `NewPageButton` in the
+ * header are how a page joins the active board in the first place. Falls back
+ * to every page while boards haven't loaded yet (`!boardsLoaded`), so there's
+ * no empty flash during the brief window before `.studio/boards.json` returns.
+ *
+ * Each page is a top-level, independently expandable row, stacked in normal
+ * document flow — an expanded page's subtree occupies exactly the height of
+ * its own rows, and this section's own scroll container (`.scroll`) is the
+ * ONLY scroller in this column; any leftover space stays empty at the bottom
+ * of the list rather than being distributed between rows. Expanding a page
+ * reveals its node tree:
  *   - the ACTIVE page renders the full `DomPanel` (drag-and-drop reordering,
  *     background context menu, keyboard nav — everything the old
  *     single-page Layers tab gave you, minus the search/insert row it drops
@@ -32,6 +41,7 @@
  */
 import { useState } from 'react'
 import { useEditorStore } from '@site/store/store'
+import { selectActiveBoard } from '@site/store/slices/boardSlice'
 import type { Page } from '@core/page-tree'
 import { DomPanel, PageLayerSubtree } from '@site/panels/DomPanel'
 import { AddFramePicker, NewPageButton } from '@site/canvas/BoardFramesLayer'
@@ -46,10 +56,19 @@ interface StudioPagesTreeProps {
 }
 
 export function StudioPagesTree({ editable = true }: StudioPagesTreeProps) {
-  const pages = useEditorStore((s) => s.site?.pages ?? [])
+  const allPages = useEditorStore((s) => s.site?.pages ?? [])
+  const board = useEditorStore(selectActiveBoard)
+  const boardsLoaded = useEditorStore((s) => s.boardsLoaded)
   const activePageId = useEditorStore((s) => s.activePageId)
   const openPageInCanvas = useEditorStore((s) => s.openPageInCanvas)
   const renamePage = useEditorStore((s) => s.renamePage)
+
+  // Narrow to the active board's own pages once boards have loaded — see the
+  // doc comment above. `board.frames` order isn't meaningful for reading, so
+  // keep `allPages`' existing (sorted) order rather than the frame array's.
+  const pages = !boardsLoaded || !board
+    ? allPages
+    : allPages.filter((page) => board.frames.some((f) => f.pageId === page.id))
 
   const [expandedIds, setExpandedIds] = useState<Set<string>>(
     () => new Set(activePageId ? [activePageId] : []),
