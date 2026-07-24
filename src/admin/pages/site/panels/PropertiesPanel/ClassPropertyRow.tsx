@@ -34,8 +34,10 @@ import {
   getCSSPropertyTokenSource,
   getEnumOptions,
   cssPropertyLabel,
+  isLengthNudgeProp,
   NUMBER_TYPED_PROPS,
 } from './cssControlTypes'
+import { parseNudgeableValue } from '@site/property-controls/numericNudge'
 import { getFontWeightOptions } from './fontWeightOptions'
 import styles from './ClassPropertyRow.module.css'
 
@@ -236,7 +238,13 @@ export function ClassPropertyRow({
     }
 
     case 'text':
-    default:
+    default: {
+      // Length properties (width, height, gap, insets, border widths/radii, …)
+      // get arrow-key nudging with an empty-field start-from-zero. The unit
+      // follows the placeholder/default value when it carries one, else px.
+      const nudgeEmptyUnit = isLengthNudgeProp(property)
+        ? (parseNudgeableValue(placeholderText ?? '')?.unit ?? 'px')
+        : undefined
       control = (
         <TextControl
           propKey={String(property)}
@@ -244,9 +252,11 @@ export function ClassPropertyRow({
           placeholder={placeholderText}
           onChange={handleControlChange}
           label={label}
+          nudgeEmptyUnit={nudgeEmptyUnit}
         />
       )
       break
+    }
   }
 
   return (

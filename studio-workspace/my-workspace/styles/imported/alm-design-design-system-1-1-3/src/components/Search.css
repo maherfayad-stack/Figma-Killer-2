@@ -1,0 +1,198 @@
+/* ── base ── */
+.search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  width: 100%;
+}
+
+/* ── pill container (shared layout) ── */
+.search__pill {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  box-sizing: border-box;
+  cursor: text;
+}
+
+/* ── iOS — liquid-glass pill ── */
+.search--ios .search__pill {
+  gap: var(--space-sm);
+  height: 44px;
+  padding: 0 var(--space-md);
+  border-radius: var(--rounded-full);
+  background: var(--liquid-glass-bg);
+  backdrop-filter: var(--liquid-glass-filter);
+  -webkit-backdrop-filter: var(--liquid-glass-filter);
+  /* lighter than the shared --liquid-glass-shadow — the small pill needs a softer drop */
+  box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.8), 0 1px 3px rgba(0, 0, 0, 0.05);
+  transition: box-shadow 0.12s ease;
+}
+
+/* ── Android — Material docked search bar ── */
+.search--android .search__pill {
+  gap: var(--space-xs);
+  height: 56px;
+  padding: var(--space-xs);
+  border-radius: 28px;
+  background: var(--background-base-subtle);
+}
+
+/* Android leading/trailing slots — 48px tap target, 24px glyph */
+.search__icon-btn {
+  flex-shrink: 0;
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  padding: 0;
+  border-radius: var(--rounded-full);
+  color: var(--icon-base-subtle);
+}
+
+button.search__icon-btn {
+  cursor: pointer;
+}
+
+button.search__icon-btn:active {
+  background: var(--background-base-pressed);
+}
+
+.search__icon-btn-glyph {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* DS svgs ship a fixed width/height attr — scale them to fill their slot */
+.search__icon svg,
+.search__icon--trailing svg,
+.search__icon-btn-glyph svg,
+.search__clear svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* ── search / mic icons ── */
+.search__icon {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--icon-base-subtle);
+  pointer-events: none;
+}
+
+/* ── native input ── */
+.search__input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  padding: 0;
+  font-family: var(--font-body);
+  font-size: var(--type-body-size);
+  font-weight: var(--type-body-regular-weight);
+  line-height: var(--type-body-lh);
+  color: var(--text-base-default);
+  caret-color: var(--text-link-default);
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.search__input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.search__input::placeholder {
+  color: var(--icon-base-subtle);
+}
+
+/* trailing mic — matches clear button width so the swap causes no layout shift */
+.search__icon--trailing {
+  width: 24px;
+  height: 24px;
+}
+
+/* ── clear button — filled circle × inside the pill ── */
+.search__clear {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: var(--icon-base-subtle);
+  border-radius: 50%;
+}
+
+.search__clear:active {
+  color: var(--icon-base-default);
+}
+
+/* ── close button — liquid glass circle outside the pill ── */
+.search__close {
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: var(--icon-base-default);
+}
+
+/* glass circle visual */
+.search__close-icon {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--liquid-glass-bg);
+  backdrop-filter: var(--liquid-glass-filter);
+  -webkit-backdrop-filter: var(--liquid-glass-filter);
+  box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.8), 0 1px 3px rgba(0, 0, 0, 0.05);
+  transition: background 0.12s ease, box-shadow 0.12s ease;
+}
+
+.search__close-icon svg {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+}
+
+.search__close:active .search__close-icon {
+  background: rgba(255, 255, 255, 0.65);
+  box-shadow:
+    inset 0 0.5px 0 rgba(255, 255, 255, 0.9),
+    0 2px 6px rgba(0, 0, 0, 0.06);
+}
+
+/* ── dark mode close pressed ── */
+@media (prefers-color-scheme: dark) {
+  .search__close:active .search__close-icon {
+    background: rgba(255, 255, 255, 0.18);
+  }
+}
+
+:root[data-theme='dark'] .search__close:active .search__close-icon {
+  background: rgba(255, 255, 255, 0.18);
+}

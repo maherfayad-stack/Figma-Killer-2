@@ -41,6 +41,7 @@ import {
   looksLikeDirectValue,
   isLivePreviewable,
 } from './tokenUtils'
+import { handleNudgeKeydown, parseNudgeableValue } from './numericNudge'
 import styles from './TokenAwareInput.module.css'
 
 // ---------------------------------------------------------------------------
@@ -275,6 +276,23 @@ export function TokenAwareInput({
             setIsEditing(false)
             onDraftClear?.()
             ;(e.target as HTMLInputElement).blur()
+          } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+            // Keyboard nudge: ±1 (plain), ±8 (Shift), ±0.1 (Alt), preserving
+            // the unit. No-op for non-numeric values (var tokens, `auto`,
+            // `calc(...)`), which fall through to the default caret behaviour.
+            // An empty field starts from 0, inheriting the placeholder's unit
+            // when it has one (else px — these are all length fields).
+            const emptyUnit = parseNudgeableValue(placeholder ?? '')?.unit ?? 'px'
+            handleNudgeKeydown(
+              e,
+              draft,
+              (next) => {
+                setDraft(next)
+                onDraftChange?.(next)
+                previewDraft(next)
+              },
+              { emptyUnit },
+            )
           } else if (e.key === 'Tab') {
             // Allow default tab behaviour but commit the current value.
             commit((e.target as HTMLInputElement).value)

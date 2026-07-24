@@ -36,6 +36,7 @@ import { Button } from '@ui/components/Button'
 import { Input } from '@ui/components/Input'
 import { Select } from '@ui/components/Select'
 import { ColorValueInput } from '@site/property-controls/ColorValueInput'
+import { handleNudgeKeydown, parseNudgeableValue } from '@site/property-controls/numericNudge'
 import { useEditorPreference } from '@site/preferences/editorPreferences'
 import { LinkIcon } from 'pixel-art-icons/icons/link'
 import { CloseIcon } from 'pixel-art-icons/icons/close'
@@ -270,6 +271,11 @@ export function BorderControl({
                 placeholder={widthPlaceholder}
                 aria-label={`Border ${borderLinked ? 'all sides' : editSide.toLowerCase()} width`}
                 onChange={(e) => writeSide('Width', e.target.value || undefined)}
+                onKeyDown={(e) =>
+                  handleNudgeKeydown(e, widthValue, (next) => writeSide('Width', next), {
+                    emptyUnit: parseNudgeableValue(widthPlaceholder ?? '')?.unit ?? 'px',
+                  })
+                }
               />
             </FieldRow>
 
@@ -351,6 +357,11 @@ export function BorderControl({
                 placeholder={radiusPlaceholder}
                 aria-label={`Border radius ${radiusLinked ? 'all corners' : cornerLabel(editCorner)}`}
                 onChange={(e) => writeRadius(e.target.value || undefined)}
+                onKeyDown={(e) =>
+                  handleNudgeKeydown(e, radiusValue, (next) => writeRadius(next), {
+                    emptyUnit: parseNudgeableValue(radiusPlaceholder ?? '')?.unit ?? 'px',
+                  })
+                }
               />
             </FieldRow>
           </div>
@@ -375,6 +386,14 @@ export function BorderControl({
             placeholder={pickString(currentStyles.outlineOffset) || '0px'}
             aria-label="Outline offset"
             onChange={(e) => onChange('outlineOffset', e.target.value || undefined)}
+            onKeyDown={(e) =>
+              handleNudgeKeydown(
+                e,
+                pickString(storedStyles.outlineOffset),
+                (next) => onChange('outlineOffset', next),
+                { emptyUnit: parseNudgeableValue(pickString(currentStyles.outlineOffset))?.unit ?? 'px' },
+              )
+            }
           />
         </FieldRow>
       </div>

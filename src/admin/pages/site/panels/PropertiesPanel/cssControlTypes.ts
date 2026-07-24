@@ -157,6 +157,38 @@ export function getCSSPropertyTokenSource(
 }
 
 /**
+ * Properties whose value is a plain CSS length, where arrow-key nudging makes
+ * sense and an empty field should start from `0px`. Excludes props with
+ * special value spaces that a fixed 1/8/0.1 length step would mishandle —
+ * `opacity`/`zIndex` (unitless ratios/integers), `aspectRatio` (`16/9`),
+ * grid templates, `flex`, `transform`, shadows, etc. `fontSize` is absent
+ * here because it nudges through its token-aware input instead.
+ */
+const LENGTH_NUDGE_PROPS = new Set<keyof CSSPropertyBag>([
+  // Size
+  'width', 'height', 'minWidth', 'maxWidth', 'minHeight', 'maxHeight',
+  // Position insets
+  'top', 'right', 'bottom', 'left',
+  // Layout gaps
+  'gap', 'rowGap', 'columnGap',
+  // Spacing longhands
+  'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
+  'marginTop', 'marginRight', 'marginBottom', 'marginLeft',
+  // Typography lengths
+  'lineHeight', 'letterSpacing',
+  // Border widths + radii + outline
+  'borderWidth', 'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth',
+  'borderRadius', 'borderTopLeftRadius', 'borderTopRightRadius',
+  'borderBottomLeftRadius', 'borderBottomRightRadius',
+  'outlineOffset',
+])
+
+/** True when `prop` is a plain-length property eligible for arrow-key nudging. */
+export function isLengthNudgeProp(prop: keyof CSSPropertyBag): boolean {
+  return LENGTH_NUDGE_PROPS.has(prop)
+}
+
+/**
  * Per-property default values for the add-property search.
  *
  * Implements the per-property lookup table from UX Reviewer Contribution #677 (accepted,
