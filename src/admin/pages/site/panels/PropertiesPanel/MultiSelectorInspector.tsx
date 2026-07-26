@@ -103,8 +103,8 @@ export function MultiSelectorInspector({
     const count = editableIds.length
     if (count === 0) return
     confirmDelete({
-      title: 'Delete selectors?',
-      description: `${count} ${count === 1 ? 'selector' : 'selectors'} will be removed from every element that uses them. This can be undone with Ctrl/Cmd+Z.`,
+      title: 'Delete classes?',
+      description: `${count} ${count === 1 ? 'class' : 'classes'} will be removed from every element that uses them. This can be undone with Ctrl/Cmd+Z.`,
       confirmLabel: 'Delete',
       commit: () => deleteClasses(editableIds),
     })
@@ -112,7 +112,7 @@ export function MultiSelectorInspector({
 
   return (
     <div className={styles.root}>
-      <div className={styles.actionBar} role="group" aria-label="Multi-select selector actions">
+      <div className={styles.actionBar} role="group" aria-label="Multi-select class actions">
         <div className={styles.actionRow}>
           <Button
             variant="secondary"
@@ -121,8 +121,8 @@ export function MultiSelectorInspector({
             disabled={editableIds.length === 0}
             tooltip={
               editableIds.length === 0
-                ? 'Locked utility selectors can’t be duplicated'
-                : 'Duplicate selected selectors'
+                ? 'Locked utility classes can’t be duplicated'
+                : 'Duplicate selected classes'
             }
           >
             <CopySolidIcon size={13} aria-hidden="true" />
@@ -135,7 +135,7 @@ export function MultiSelectorInspector({
             disabled={applicableToNode.length === 0}
             tooltip={
               selectedNodeId
-                ? 'Apply selected selectors to the selected element'
+                ? 'Apply selected classes to the selected element'
                 : 'Select an element on the canvas first'
             }
           >
@@ -149,8 +149,8 @@ export function MultiSelectorInspector({
             disabled={editableIds.length === 0}
             tooltip={
               editableIds.length === 0
-                ? 'Locked utility selectors can’t be deleted'
-                : 'Delete selected selectors'
+                ? 'Locked utility classes can’t be deleted'
+                : 'Delete selected classes'
             }
           >
             <TrashSolidIcon size={13} aria-hidden="true" />
@@ -160,7 +160,7 @@ export function MultiSelectorInspector({
       </div>
 
       <div className={styles.listHeader}>
-        Selected selectors ({selectedSelectorClassIds.length})
+        Selected classes ({selectedSelectorClassIds.length})
       </div>
       <div className={styles.list} role="list">
         {rows.map((row) => (
@@ -195,5 +195,5 @@ interface MultiSelectorHeaderProps {
 }
 
 export function MultiSelectorHeader({ count }: MultiSelectorHeaderProps) {
-  return <span>{count} {count === 1 ? 'selector' : 'selectors'} selected</span>
+  return <span>{count} {count === 1 ? 'class' : 'classes'} selected</span>
 }

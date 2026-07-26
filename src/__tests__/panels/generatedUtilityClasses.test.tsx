@@ -135,8 +135,8 @@ describe('generated utility classes in editor panels', () => {
     render(<PropertiesPanel variant="docked" />)
 
     const panel = screen.getByTestId('properties-panel')
-    expect(within(panel).queryByRole('button', { name: /rename selector \.text-primary/i })).toBeNull()
-    expect(within(panel).queryByRole('button', { name: /delete selector \.text-primary/i })).toBeNull()
+    expect(within(panel).queryByRole('button', { name: /rename class \.text-primary/i })).toBeNull()
+    expect(within(panel).queryByRole('button', { name: /delete class \.text-primary/i })).toBeNull()
   })
 
   it('marks generated utilities in the selectors panel and disables editing actions', () => {
@@ -146,7 +146,7 @@ describe('generated utility classes in editor panels', () => {
 
     render(<SelectorsPanel variant="docked" />)
 
-    const row = screen.getByRole('button', { name: /edit selector \.text-primary/i })
+    const row = screen.getByRole('button', { name: /edit class \.text-primary/i })
     expect(within(row).getByText('Utility')).toBeDefined()
 
     fireEvent.contextMenu(row)

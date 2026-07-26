@@ -123,12 +123,14 @@ export function DeleteSelectorDialog({
   onDelete: () => void
 }) {
   const selectorLabel = styleRuleSelector(cls)
+  const isAmbient = cls.kind === 'ambient'
+  const noun = isAmbient ? 'selector' : 'class'
 
   return (
     <Dialog
       open
       onClose={onCancel}
-      title="Delete selector"
+      title={isAmbient ? 'Delete selector' : 'Delete class'}
       tone="danger"
       size="sm"
       footer={
@@ -137,14 +139,14 @@ export function DeleteSelectorDialog({
             Cancel
           </Button>
           <Button variant="destructive" size="sm" type="button" onClick={onDelete}>
-            Delete selector
+            {isAmbient ? 'Delete selector' : 'Delete class'}
           </Button>
         </>
       }
     >
       <p className={styles.dialogCopy}>
         Delete <span className={styles.dialogStrong}>{selectorLabel}</span>?
-        {usage !== null && ` This selector is ${usage.toLowerCase()}.`}
+        {usage !== null && ` This ${noun} is ${usage.toLowerCase()}.`}
       </p>
     </Dialog>
   )

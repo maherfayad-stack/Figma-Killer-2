@@ -448,7 +448,8 @@ function useStudioDefaultBoardSeed(studioMode: boolean): void {
     if (activeBoardFrameCount !== 0) return
     if (pageCount === 0) return
 
-    const pageIds = useEditorStore.getState().site?.pages.map((p) => p.id) ?? []
+    const sitePages = useEditorStore.getState().site?.pages
+    const pageIds = sitePages ? sitePages.map((p) => p.id) : []
     if (pageIds.length === 0) return
     useEditorStore.getState().seedFramesForActiveBoard(pageIds)
   }, [studioMode, boardsLoaded, boardCount, activeBoardFrameCount, pageCount])

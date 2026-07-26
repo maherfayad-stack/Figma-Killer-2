@@ -396,7 +396,7 @@ export async function tryServeStudio(
         })
       })
 
-      return jsonResponse({ dir, pages, componentSources })
+      return jsonResponse({ dir, projectName, pages, componentSources })
     } catch (err) {
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
     }

@@ -131,9 +131,15 @@ function buildStudioBreakpoint(width: number): Breakpoint {
  */
 const RESIZE_HANDLES: ResizeHandle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']
 
+// Stable fallback reference — `?? []` inline would hand back a NEW array every
+// render, which a Zustand selector must never do (breaks useSyncExternalStore's
+// "did this change" check and can spiral into a "Maximum update depth
+// exceeded" render loop once anything downstream reacts to the selected value).
+const EMPTY_PAGES: Page[] = []
+
 export function BoardFramesLayer() {
   const board = useEditorStore(selectActiveBoard)
-  const pages = useEditorStore((s) => s.site?.pages ?? [])
+  const pages = useEditorStore((s) => s.site?.pages ?? EMPTY_PAGES)
   const activePageId = useEditorStore((s) => s.activePageId)
   const openPageInCanvas = useEditorStore((s) => s.openPageInCanvas)
   const setFramePosition = useEditorStore((s) => s.setFramePosition)

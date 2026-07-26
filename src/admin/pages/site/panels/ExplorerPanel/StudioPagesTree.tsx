@@ -51,12 +51,18 @@ import { FileTextSolidIcon } from 'pixel-art-icons/icons/file-text-solid'
 import { useInlineRename } from '@site/hooks/useInlineRename'
 import styles from './StudioPagesTree.module.css'
 
+// Stable fallback reference — `?? []` inline would hand back a NEW array every
+// render, which a Zustand selector must never do (breaks useSyncExternalStore's
+// "did this change" check and can spiral into a "Maximum update depth
+// exceeded" render loop once anything downstream reacts to the selected value).
+const EMPTY_PAGES: Page[] = []
+
 interface StudioPagesTreeProps {
   editable?: boolean
 }
 
 export function StudioPagesTree({ editable = true }: StudioPagesTreeProps) {
-  const allPages = useEditorStore((s) => s.site?.pages ?? [])
+  const allPages = useEditorStore((s) => s.site?.pages ?? EMPTY_PAGES)
   const board = useEditorStore(selectActiveBoard)
   const boardsLoaded = useEditorStore((s) => s.boardsLoaded)
   const activePageId = useEditorStore((s) => s.activePageId)

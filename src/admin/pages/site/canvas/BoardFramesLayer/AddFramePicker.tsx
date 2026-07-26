@@ -14,9 +14,16 @@
 import { useRef, useState } from 'react'
 import { useEditorStore } from '@site/store/store'
 import { selectActiveBoard } from '@site/store/slices/boardSlice'
+import type { Page } from '@core/page-tree'
 import { Button, type ButtonProps } from '@ui/components/Button'
 import { ContextMenu, ContextMenuItem } from '@ui/components/ContextMenu'
 import { PlusIcon } from 'pixel-art-icons/icons/plus'
+
+// Stable fallback reference — `?? []` inline would hand back a NEW array every
+// render, which a Zustand selector must never do (breaks useSyncExternalStore's
+// "did this change" check and can spiral into a "Maximum update depth
+// exceeded" render loop once anything downstream reacts to the selected value).
+const EMPTY_PAGES: Page[] = []
 
 interface AddFramePickerProps {
   label?: string
@@ -36,7 +43,7 @@ export function AddFramePicker({
   ariaLabel,
 }: AddFramePickerProps) {
   const board = useEditorStore(selectActiveBoard)
-  const pages = useEditorStore((s) => s.site?.pages ?? [])
+  const pages = useEditorStore((s) => s.site?.pages ?? EMPTY_PAGES)
   const addFrame = useEditorStore((s) => s.addFrame)
   const [open, setOpen] = useState(false)
   const triggerRef = useRef<HTMLButtonElement>(null)

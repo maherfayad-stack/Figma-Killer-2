@@ -105,8 +105,8 @@ export function SelectorHeader({ cls, usage, onRename, onDelete }: SelectorHeade
               size="xs"
               iconOnly
               onClick={() => setIsEditing(true)}
-              aria-label={`Rename selector ${selectorLabel}`}
-              tooltip="Rename selector"
+              aria-label={`Rename ${isAmbient ? 'selector' : 'class'} ${selectorLabel}`}
+              tooltip={isAmbient ? 'Rename selector' : 'Rename class'}
             >
               <EditSolidIcon size={12} aria-hidden="true" />
             </Button>
@@ -116,8 +116,8 @@ export function SelectorHeader({ cls, usage, onRename, onDelete }: SelectorHeade
               iconOnly
               dangerHover
               onClick={() => setConfirmingDelete(true)}
-              aria-label={`Delete selector ${selectorLabel}`}
-              tooltip="Delete selector"
+              aria-label={`Delete ${isAmbient ? 'selector' : 'class'} ${selectorLabel}`}
+              tooltip={isAmbient ? 'Delete selector' : 'Delete class'}
             >
               <TrashSolidIcon size={12} aria-hidden="true" />
             </Button>

@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "boards": [
+    {
+      "id": "3ecdfbee-daad-4f58-8bab-4af1988a97fb",
+      "name": "Board 1",
+      "frames": [
+        {
+          "pageId": "home",
+          "x": 0,
+          "y": 0
+        }
+      ],
+      "notes": [],
+      "docs": []
+    }
+  ]
+}

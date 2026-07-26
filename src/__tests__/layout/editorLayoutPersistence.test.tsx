@@ -384,7 +384,7 @@ describe('AdminCanvasLayout — permanent panel rail', () => {
     // in the rail. Explorer is open by default, so its rail button reads
     // "Close".
     expect(within(rail).getByRole('button', { name: /close explorer panel/i })).toBeDefined()
-    expect(within(rail).queryByRole('button', { name: /open selectors panel/i })).toBeNull()
+    expect(within(rail).queryByRole('button', { name: /open classes panel/i })).toBeNull()
     expect(within(rail).queryByRole('button', { name: /open colors panel/i })).toBeNull()
     expect(within(rail).queryByRole('button', { name: /open typography panel/i })).toBeNull()
     expect(within(rail).queryByRole('button', { name: /open spacing panel/i })).toBeNull()

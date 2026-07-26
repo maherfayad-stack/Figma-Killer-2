@@ -192,12 +192,12 @@ describe('SelectorHeader delete action', () => {
 
     render(<PropertiesPanel variant="docked" />)
 
-    fireEvent.click(screen.getByRole('button', { name: /delete selector \.class-1/i }))
+    fireEvent.click(screen.getByRole('button', { name: /delete class \.class-1/i }))
 
-    expect(screen.getByRole('alertdialog', { name: /delete selector/i })).toBeDefined()
-    expect(screen.getByText(/this selector is used 1 time/i)).toBeDefined()
+    expect(screen.getByRole('alertdialog', { name: /delete class/i })).toBeDefined()
+    expect(screen.getByText(/this class is used 1 time/i)).toBeDefined()
 
-    fireEvent.click(screen.getByRole('button', { name: /^delete selector$/i }))
+    fireEvent.click(screen.getByRole('button', { name: /^delete class$/i }))
 
     const state = useEditorStore.getState()
     expect(state.site?.styleRules[classId]).toBeUndefined()

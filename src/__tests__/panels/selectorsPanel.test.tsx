@@ -193,10 +193,10 @@ describe('SelectorsPanel', () => {
     )
 
     const panel = screen.getByTestId('selectors-panel')
-    expect(within(panel).getByRole('button', { name: /edit selector \.hero-title/i })).toBeDefined()
-    expect(within(panel).getByRole('button', { name: /edit selector \.cta-button/i })).toBeDefined()
-    expect(within(panel).getByRole('button', { name: /edit selector \.unused-card/i })).toBeDefined()
-    expect(within(panel).getByRole('button', { name: /edit selector \.text-m/i })).toBeDefined()
+    expect(within(panel).getByRole('button', { name: /edit class \.hero-title/i })).toBeDefined()
+    expect(within(panel).getByRole('button', { name: /edit class \.cta-button/i })).toBeDefined()
+    expect(within(panel).getByRole('button', { name: /edit class \.unused-card/i })).toBeDefined()
+    expect(within(panel).getByRole('button', { name: /edit class \.text-m/i })).toBeDefined()
     expect(within(panel).getByText('.hero-title')).toBeDefined()
     expect(within(panel).getByText('.cta-button')).toBeDefined()
     expect(within(panel).getByText('.unused-card')).toBeDefined()
@@ -210,30 +210,30 @@ describe('SelectorsPanel', () => {
     render(<SelectorsPanel variant="docked" />)
 
     const panel = screen.getByTestId('selectors-panel')
-    const filterGroup = within(panel).getByRole('group', { name: /selector type/i })
+    const filterGroup = within(panel).getByRole('group', { name: /class type/i })
     const allButton = within(filterGroup).getByRole('button', { name: /^all$/i })
     const userButton = within(filterGroup).getByRole('button', { name: /^user$/i })
     const utilityButton = within(filterGroup).getByRole('button', { name: /^utility$/i })
 
     expect(allButton.getAttribute('aria-pressed')).toBe('true')
-    expect(within(panel).getByRole('button', { name: /edit selector \.hero-title/i })).toBeDefined()
-    expect(within(panel).getByRole('button', { name: /edit selector \.text-m/i })).toBeDefined()
+    expect(within(panel).getByRole('button', { name: /edit class \.hero-title/i })).toBeDefined()
+    expect(within(panel).getByRole('button', { name: /edit class \.text-m/i })).toBeDefined()
 
     fireEvent.click(userButton)
-    expect(within(panel).getByRole('button', { name: /edit selector \.hero-title/i })).toBeDefined()
-    expect(within(panel).getByRole('button', { name: /edit selector \.cta-button/i })).toBeDefined()
-    expect(within(panel).getByRole('button', { name: /edit selector \.unused-card/i })).toBeDefined()
-    expect(within(panel).queryByRole('button', { name: /edit selector \.text-m/i })).toBeNull()
+    expect(within(panel).getByRole('button', { name: /edit class \.hero-title/i })).toBeDefined()
+    expect(within(panel).getByRole('button', { name: /edit class \.cta-button/i })).toBeDefined()
+    expect(within(panel).getByRole('button', { name: /edit class \.unused-card/i })).toBeDefined()
+    expect(within(panel).queryByRole('button', { name: /edit class \.text-m/i })).toBeNull()
 
     fireEvent.click(utilityButton)
-    expect(within(panel).getByRole('button', { name: /edit selector \.text-m/i })).toBeDefined()
-    expect(within(panel).queryByRole('button', { name: /edit selector \.hero-title/i })).toBeNull()
-    expect(within(panel).queryByRole('button', { name: /edit selector \.cta-button/i })).toBeNull()
-    expect(within(panel).queryByRole('button', { name: /edit selector \.unused-card/i })).toBeNull()
+    expect(within(panel).getByRole('button', { name: /edit class \.text-m/i })).toBeDefined()
+    expect(within(panel).queryByRole('button', { name: /edit class \.hero-title/i })).toBeNull()
+    expect(within(panel).queryByRole('button', { name: /edit class \.cta-button/i })).toBeNull()
+    expect(within(panel).queryByRole('button', { name: /edit class \.unused-card/i })).toBeNull()
 
     fireEvent.click(allButton)
-    expect(within(panel).getByRole('button', { name: /edit selector \.hero-title/i })).toBeDefined()
-    expect(within(panel).getByRole('button', { name: /edit selector \.text-m/i })).toBeDefined()
+    expect(within(panel).getByRole('button', { name: /edit class \.hero-title/i })).toBeDefined()
+    expect(within(panel).getByRole('button', { name: /edit class \.text-m/i })).toBeDefined()
   })
 
   it('combines the User filter with the search query', () => {
@@ -242,13 +242,13 @@ describe('SelectorsPanel', () => {
 
     const panel = screen.getByTestId('selectors-panel')
     fireEvent.click(within(panel).getByRole('button', { name: /^user$/i }))
-    fireEvent.change(within(panel).getByRole('searchbox', { name: /search selectors/i }), {
+    fireEvent.change(within(panel).getByRole('searchbox', { name: /search classes/i }), {
       target: { value: 'cta' },
     })
 
-    expect(within(panel).getByRole('button', { name: /edit selector \.cta-button/i })).toBeDefined()
-    expect(within(panel).queryByRole('button', { name: /edit selector \.hero-title/i })).toBeNull()
-    expect(within(panel).queryByRole('button', { name: /edit selector \.text-m/i })).toBeNull()
+    expect(within(panel).getByRole('button', { name: /edit class \.cta-button/i })).toBeDefined()
+    expect(within(panel).queryByRole('button', { name: /edit class \.hero-title/i })).toBeNull()
+    expect(within(panel).queryByRole('button', { name: /edit class \.text-m/i })).toBeNull()
   })
 
   it('filters to only unused selectors', () => {
@@ -260,10 +260,10 @@ describe('SelectorsPanel', () => {
 
     // unused-card (no nodes) and text-m (no nodes) are unused; hero-title and
     // cta-button are referenced by page nodes.
-    expect(within(panel).getByRole('button', { name: /edit selector \.unused-card/i })).toBeDefined()
-    expect(within(panel).getByRole('button', { name: /edit selector \.text-m/i })).toBeDefined()
-    expect(within(panel).queryByRole('button', { name: /edit selector \.hero-title/i })).toBeNull()
-    expect(within(panel).queryByRole('button', { name: /edit selector \.cta-button/i })).toBeNull()
+    expect(within(panel).getByRole('button', { name: /edit class \.unused-card/i })).toBeDefined()
+    expect(within(panel).getByRole('button', { name: /edit class \.text-m/i })).toBeDefined()
+    expect(within(panel).queryByRole('button', { name: /edit class \.hero-title/i })).toBeNull()
+    expect(within(panel).queryByRole('button', { name: /edit class \.cta-button/i })).toBeNull()
   })
 
   it('searches selector property names and values, not just names', () => {
@@ -271,18 +271,18 @@ describe('SelectorsPanel', () => {
     render(<SelectorsPanel variant="docked" />)
 
     const panel = screen.getByTestId('selectors-panel')
-    const search = within(panel).getByRole('searchbox', { name: /search selectors/i })
+    const search = within(panel).getByRole('searchbox', { name: /search classes/i })
 
     // Property name match: both hero-title (48px) and text-m (16px) set font-size.
     fireEvent.change(search, { target: { value: 'font-size' } })
-    expect(within(panel).getByRole('button', { name: /edit selector \.hero-title/i })).toBeDefined()
-    expect(within(panel).getByRole('button', { name: /edit selector \.text-m/i })).toBeDefined()
-    expect(within(panel).queryByRole('button', { name: /edit selector \.cta-button/i })).toBeNull()
+    expect(within(panel).getByRole('button', { name: /edit class \.hero-title/i })).toBeDefined()
+    expect(within(panel).getByRole('button', { name: /edit class \.text-m/i })).toBeDefined()
+    expect(within(panel).queryByRole('button', { name: /edit class \.cta-button/i })).toBeNull()
 
     // Property name + value match narrows to the one rule with that declaration.
     fireEvent.change(search, { target: { value: 'font-size: 16px' } })
-    expect(within(panel).getByRole('button', { name: /edit selector \.text-m/i })).toBeDefined()
-    expect(within(panel).queryByRole('button', { name: /edit selector \.hero-title/i })).toBeNull()
+    expect(within(panel).getByRole('button', { name: /edit class \.text-m/i })).toBeDefined()
+    expect(within(panel).queryByRole('button', { name: /edit class \.hero-title/i })).toBeNull()
   })
 
   it('multi-selects selectors via row checkboxes and shows the bulk inspector', () => {
@@ -295,13 +295,13 @@ describe('SelectorsPanel', () => {
     )
 
     const panel = screen.getByTestId('selectors-panel')
-    fireEvent.click(within(panel).getByRole('checkbox', { name: /select selector \.hero-title/i }))
+    fireEvent.click(within(panel).getByRole('checkbox', { name: /select class \.hero-title/i }))
     expect(useEditorStore.getState().selectedSelectorClassIds).toEqual(['hero-title'])
-    expect(screen.getByText(/1 selector selected/i)).toBeDefined()
+    expect(screen.getByText(/1 class selected/i)).toBeDefined()
 
-    fireEvent.click(within(panel).getByRole('checkbox', { name: /select selector \.cta-button/i }))
+    fireEvent.click(within(panel).getByRole('checkbox', { name: /select class \.cta-button/i }))
     expect(useEditorStore.getState().selectedSelectorClassIds).toEqual(['hero-title', 'cta-button'])
-    expect(screen.getByText(/2 selectors selected/i)).toBeDefined()
+    expect(screen.getByText(/2 classes selected/i)).toBeDefined()
 
     const propertiesPanel = screen.getByTestId('properties-panel')
     expect(within(propertiesPanel).getByRole('button', { name: /duplicate/i })).toBeDefined()
@@ -324,7 +324,7 @@ describe('SelectorsPanel', () => {
     )
 
     const panel = screen.getByTestId('selectors-panel')
-    fireEvent.click(within(panel).getByRole('checkbox', { name: /select selector \.cta-button/i }))
+    fireEvent.click(within(panel).getByRole('checkbox', { name: /select class \.cta-button/i }))
 
     const propertiesPanel = screen.getByTestId('properties-panel')
     fireEvent.click(within(propertiesPanel).getByRole('button', { name: /^apply$/i }))
@@ -345,7 +345,7 @@ describe('SelectorsPanel', () => {
     const panel = screen.getByTestId('selectors-panel')
     // text-m is a locked generated utility — "locked" must not block applying it
     // to an element (applying utilities is their whole purpose).
-    fireEvent.click(within(panel).getByRole('checkbox', { name: /select selector \.text-m/i }))
+    fireEvent.click(within(panel).getByRole('checkbox', { name: /select class \.text-m/i }))
 
     const propertiesPanel = screen.getByTestId('properties-panel')
     const apply = within(propertiesPanel).getByRole('button', { name: /^apply$/i }) as HTMLButtonElement
@@ -363,7 +363,7 @@ describe('SelectorsPanel', () => {
     // No toolbar until a selection exists.
     expect(within(panel).queryByRole('group', { name: /selection actions/i })).toBeNull()
 
-    fireEvent.click(within(panel).getByRole('checkbox', { name: /select selector \.hero-title/i }))
+    fireEvent.click(within(panel).getByRole('checkbox', { name: /select class \.hero-title/i }))
     const toolbar = within(panel).getByRole('group', { name: /selection actions/i })
     expect(within(toolbar).getByText(/1 selected/i)).toBeDefined()
 
@@ -388,7 +388,7 @@ describe('SelectorsPanel', () => {
 
     const panel = screen.getByTestId('selectors-panel')
     fireEvent.click(within(panel).getByRole('button', { name: /^user$/i }))
-    fireEvent.click(within(panel).getByRole('checkbox', { name: /select selector \.hero-title/i }))
+    fireEvent.click(within(panel).getByRole('checkbox', { name: /select class \.hero-title/i }))
     fireEvent.click(within(panel).getByRole('button', { name: /^select all$/i }))
 
     // text-m (utility) is filtered out, so it is not selected.
@@ -411,8 +411,8 @@ describe('SelectorsPanel', () => {
 
     const panel = screen.getByTestId('selectors-panel')
     // text-1 starts with [hero-title]; apply two more in one batch.
-    fireEvent.click(within(panel).getByRole('checkbox', { name: /select selector \.cta-button/i }))
-    fireEvent.click(within(panel).getByRole('checkbox', { name: /select selector \.text-m/i }))
+    fireEvent.click(within(panel).getByRole('checkbox', { name: /select class \.cta-button/i }))
+    fireEvent.click(within(panel).getByRole('checkbox', { name: /select class \.text-m/i }))
 
     const propertiesPanel = screen.getByTestId('properties-panel')
     fireEvent.click(within(propertiesPanel).getByRole('button', { name: /^apply$/i }))
@@ -436,7 +436,7 @@ describe('SelectorsPanel', () => {
 
     const panel = screen.getByTestId('selectors-panel')
     // text-m is a locked generated utility — neither delete nor duplicate applies.
-    fireEvent.click(within(panel).getByRole('checkbox', { name: /select selector \.text-m/i }))
+    fireEvent.click(within(panel).getByRole('checkbox', { name: /select class \.text-m/i }))
 
     const propertiesPanel = screen.getByTestId('properties-panel')
     // These buttons carry a tooltip, so the Button primitive uses aria-disabled
@@ -447,7 +447,7 @@ describe('SelectorsPanel', () => {
     expect(duplicateBtn().getAttribute('aria-disabled')).toBe('true')
 
     // Add a normal user class → both re-enable (they act on the editable subset).
-    fireEvent.click(within(panel).getByRole('checkbox', { name: /select selector \.cta-button/i }))
+    fireEvent.click(within(panel).getByRole('checkbox', { name: /select class \.cta-button/i }))
     expect(deleteBtn().getAttribute('aria-disabled')).toBeNull()
     expect(duplicateBtn().getAttribute('aria-disabled')).toBeNull()
 
@@ -468,8 +468,8 @@ describe('SelectorsPanel', () => {
     )
 
     const panel = screen.getByTestId('selectors-panel')
-    fireEvent.click(within(panel).getByRole('checkbox', { name: /select selector \.unused-card/i }))
-    fireEvent.click(within(panel).getByRole('checkbox', { name: /select selector \.cta-button/i }))
+    fireEvent.click(within(panel).getByRole('checkbox', { name: /select class \.unused-card/i }))
+    fireEvent.click(within(panel).getByRole('checkbox', { name: /select class \.cta-button/i }))
 
     const propertiesPanel = screen.getByTestId('properties-panel')
     // No ConfirmDeleteProvider in this render → confirmDelete commits immediately.
@@ -492,7 +492,7 @@ describe('SelectorsPanel', () => {
 
     render(<SelectorsPanel variant="docked" />)
     fireEvent.click(screen.getByRole('button', { name: /^utility$/i }))
-    expect(screen.getByText(/no utility selectors yet/i)).toBeDefined()
+    expect(screen.getByText(/no utility classes yet/i)).toBeDefined()
   })
 
   it('shows empty and search-empty states', () => {
@@ -501,27 +501,27 @@ describe('SelectorsPanel', () => {
       site: makeSite({ pages: useEditorStore.getState().site!.pages, styleRules: {} }),
     } as Parameters<typeof useEditorStore.setState>[0])
     render(<SelectorsPanel variant="docked" />)
-    expect(screen.getByText(/no reusable selectors yet/i)).toBeDefined()
+    expect(screen.getByText(/no reusable classes yet/i)).toBeDefined()
 
     cleanup()
     loadSiteWithSelectors()
     render(<SelectorsPanel variant="docked" />)
-    fireEvent.change(screen.getByRole('searchbox', { name: /search selectors/i }), {
+    fireEvent.change(screen.getByRole('searchbox', { name: /search classes/i }), {
       target: { value: 'missing' },
     })
-    expect(screen.getByText(/no selectors match/i)).toBeDefined()
+    expect(screen.getByText(/no classes match/i)).toBeDefined()
   })
 
   it('filters selector rows by search text', () => {
     loadSiteWithSelectors()
     render(<SelectorsPanel variant="docked" />)
 
-    fireEvent.change(screen.getByRole('searchbox', { name: /search selectors/i }), {
+    fireEvent.change(screen.getByRole('searchbox', { name: /search classes/i }), {
       target: { value: 'cta' },
     })
 
-    expect(screen.queryByRole('button', { name: /edit selector \.hero-title/i })).toBeNull()
-    expect(screen.getByRole('button', { name: /edit selector \.cta-button/i })).toBeDefined()
+    expect(screen.queryByRole('button', { name: /edit class \.hero-title/i })).toBeNull()
+    expect(screen.getByRole('button', { name: /edit class \.cta-button/i })).toBeDefined()
   })
 
   it('places the single create action beside search instead of in the panel header', () => {
@@ -529,14 +529,14 @@ describe('SelectorsPanel', () => {
     render(<SelectorsPanel variant="docked" />)
 
     const panel = screen.getByTestId('selectors-panel')
-    const header = within(panel).getByRole('toolbar', { name: 'Selectors panel header' })
-    const search = within(panel).getByRole('searchbox', { name: /search selectors/i })
+    const header = within(panel).getByRole('toolbar', { name: 'Classes panel header' })
+    const search = within(panel).getByRole('searchbox', { name: /search classes/i })
     const searchRow = search.closest('div')?.parentElement
 
-    expect(within(header).queryByRole('button', { name: /create selector/i })).toBeNull()
+    expect(within(header).queryByRole('button', { name: /create class/i })).toBeNull()
     expect(within(panel).queryByRole('button', { name: /create ambient selector/i })).toBeNull()
     expect(searchRow).not.toBeNull()
-    expect(within(searchRow as HTMLElement).getByRole('button', { name: 'Create selector' })).toBeDefined()
+    expect(within(searchRow as HTMLElement).getByRole('button', { name: 'Create class' })).toBeDefined()
   })
 
   it('creates a reusable selector from the search-row create action and opens it for editing', async () => {
@@ -548,7 +548,7 @@ describe('SelectorsPanel', () => {
       </>,
     )
 
-    fireEvent.click(screen.getByRole('button', { name: /create selector/i }))
+    fireEvent.click(screen.getByRole('button', { name: /create class/i }))
     expect(screen.queryByRole('button', { name: /^class$/i })).toBeNull()
     expect(screen.queryByRole('button', { name: /full selector/i })).toBeNull()
     const selectorInput = screen.getByRole('textbox', { name: /^selector$/i })
@@ -567,7 +567,7 @@ describe('SelectorsPanel', () => {
     expect(useEditorStore.getState().propertiesPanel.collapsed).toBe(false)
     const propertiesPanel = screen.getByTestId('properties-panel')
     expect(within(propertiesPanel).getByRole('heading', { name: '.feature-card' })).toBeDefined()
-    expect(within(propertiesPanel).getByRole('button', { name: /rename selector \.feature-card/i })).toBeDefined()
+    expect(within(propertiesPanel).getByRole('button', { name: /rename class \.feature-card/i })).toBeDefined()
     expect(within(propertiesPanel).queryByRole('region', { name: /selector feature-card/i })).toBeNull()
   })
 
@@ -580,7 +580,7 @@ describe('SelectorsPanel', () => {
       </>,
     )
 
-    fireEvent.click(screen.getByRole('button', { name: 'Create selector' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Create class' }))
     fireEvent.change(screen.getByRole('textbox', { name: /^selector$/i }), {
       target: { value: '.feature-card:hover' },
     })
@@ -605,7 +605,7 @@ describe('SelectorsPanel', () => {
     )
 
     const selectorsPanel = screen.getByTestId('selectors-panel')
-    fireEvent.click(within(selectorsPanel).getByRole('button', { name: /edit selector \.hero-title/i }))
+    fireEvent.click(within(selectorsPanel).getByRole('button', { name: /edit class \.hero-title/i }))
 
     expect(within(selectorsPanel).queryByRole('searchbox', { name: /search class style properties to add/i })).toBeNull()
     await waitFor(() => expect(screen.getByTestId('properties-panel')).toBeDefined())
@@ -617,7 +617,7 @@ describe('SelectorsPanel', () => {
     expect(useEditorStore.getState().activeClassId).toBe('hero-title')
     expect(useEditorStore.getState().propertiesPanel.collapsed).toBe(false)
 
-    fireEvent.click(within(propertiesPanel).getByRole('button', { name: /rename selector \.hero-title/i }))
+    fireEvent.click(within(propertiesPanel).getByRole('button', { name: /rename class \.hero-title/i }))
     const classNameInput = within(propertiesPanel).getByRole('textbox', { name: /class name/i })
     expect((classNameInput as HTMLInputElement).value).toBe('.hero-title')
     fireEvent.change(classNameInput, { target: { value: '.feature-heading' } })
@@ -658,7 +658,7 @@ describe('SelectorsPanel', () => {
       </>,
     )
 
-    fireEvent.contextMenu(screen.getByRole('button', { name: /edit selector \.cta-button/i }))
+    fireEvent.contextMenu(screen.getByRole('button', { name: /edit class \.cta-button/i }))
     fireEvent.click(screen.getByRole('menuitem', { name: /^edit$/i }))
 
     await waitFor(() => expect(screen.getByTestId('properties-panel')).toBeDefined())
@@ -675,15 +675,15 @@ describe('SelectorsPanel', () => {
         <PropertiesPanel variant="docked" />
       </>,
     )
-    const row = screen.getByRole('button', { name: /edit selector \.hero-title/i })
+    const row = screen.getByRole('button', { name: /edit class \.hero-title/i })
 
     fireEvent.contextMenu(row, { clientX: 20, clientY: 30 })
-    expect(screen.getByRole('menu', { name: /selector actions/i })).toBeDefined()
+    expect(screen.getByRole('menu', { name: /class actions/i })).toBeDefined()
     expect(screen.getByRole('menuitem', { name: /rename/i })).toBeDefined()
 
     fireEvent.click(document.body)
     fireEvent.keyDown(row, { key: 'ContextMenu' })
-    expect(screen.getByRole('menu', { name: /selector actions/i })).toBeDefined()
+    expect(screen.getByRole('menu', { name: /class actions/i })).toBeDefined()
   })
 
   it('duplicates a selector from the context menu without copying assignments', async () => {
@@ -695,7 +695,7 @@ describe('SelectorsPanel', () => {
       </>,
     )
 
-    fireEvent.contextMenu(screen.getByRole('button', { name: /edit selector \.cta-button/i }))
+    fireEvent.contextMenu(screen.getByRole('button', { name: /edit class \.cta-button/i }))
     fireEvent.click(screen.getByRole('menuitem', { name: /duplicate/i }))
 
     const classes = useEditorStore.getState().site!.styleRules
@@ -712,11 +712,11 @@ describe('SelectorsPanel', () => {
     useEditorStore.setState({ selectedNodeId: textNodeId } as Parameters<typeof useEditorStore.setState>[0])
     render(<SelectorsPanel variant="docked" />)
 
-    fireEvent.contextMenu(screen.getByRole('button', { name: /edit selector \.cta-button/i }))
+    fireEvent.contextMenu(screen.getByRole('button', { name: /edit class \.cta-button/i }))
     fireEvent.click(screen.getByRole('menuitem', { name: /apply to selected element/i }))
     expect(useEditorStore.getState().site!.pages[0].nodes[textNodeId].classIds ?? []).toContain('cta-button')
 
-    fireEvent.contextMenu(screen.getByRole('button', { name: /edit selector \.cta-button/i }))
+    fireEvent.contextMenu(screen.getByRole('button', { name: /edit class \.cta-button/i }))
     fireEvent.click(screen.getByRole('menuitem', { name: /remove from selected element/i }))
     expect(useEditorStore.getState().site!.pages[0].nodes[textNodeId].classIds ?? []).not.toContain('cta-button')
   })
@@ -725,7 +725,7 @@ describe('SelectorsPanel', () => {
     loadSiteWithSelectors()
     render(<SelectorsPanel variant="docked" />)
 
-    fireEvent.contextMenu(screen.getByRole('button', { name: /edit selector \.unused-card/i }))
+    fireEvent.contextMenu(screen.getByRole('button', { name: /edit class \.unused-card/i }))
     fireEvent.click(screen.getByRole('menuitem', { name: /rename/i }))
     const dialogClassNameInput = screen.getByRole('textbox', { name: /class name/i })
     expect((dialogClassNameInput as HTMLInputElement).value).toBe('.unused-card')
@@ -735,16 +735,16 @@ describe('SelectorsPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: /^save$/i }))
     expect(useEditorStore.getState().site!.styleRules['unused-card'].name).toBe('renamed-card')
 
-    fireEvent.contextMenu(screen.getByRole('button', { name: /edit selector \.renamed-card/i }))
+    fireEvent.contextMenu(screen.getByRole('button', { name: /edit class \.renamed-card/i }))
     fireEvent.click(screen.getByRole('menuitem', { name: /delete/i }))
     // Destructive confirmations use role=alertdialog (Dialog primitive,
     // tone="danger"). alertdialog is the correct ARIA role for prompts
     // that interrupt the user with a destructive choice.
-    const deleteDialog = screen.getByRole('alertdialog', { name: /delete selector/i })
+    const deleteDialog = screen.getByRole('alertdialog', { name: /delete class/i })
     expect(deleteDialog.textContent).toContain('Delete .renamed-card?')
     expect(deleteDialog.textContent).not.toContain('renamed-card (')
-    expect(within(deleteDialog).getByText(/this selector is unused/i)).toBeDefined()
-    fireEvent.click(within(deleteDialog).getByRole('button', { name: /delete selector/i }))
+    expect(within(deleteDialog).getByText(/this class is unused/i)).toBeDefined()
+    fireEvent.click(within(deleteDialog).getByRole('button', { name: /delete class/i }))
     expect(useEditorStore.getState().site!.styleRules['unused-card']).toBeUndefined()
   })
 
@@ -763,7 +763,7 @@ describe('SelectorsPanel', () => {
 
     try {
       render(<SelectorsPanel variant="docked" />)
-      fireEvent.contextMenu(screen.getByRole('button', { name: /edit selector \.hero-title/i }))
+      fireEvent.contextMenu(screen.getByRole('button', { name: /edit class \.hero-title/i }))
       fireEvent.click(screen.getByRole('menuitem', { name: /copy selector/i }))
       await Promise.resolve()
       expect(copied).toBe('.hero-title')

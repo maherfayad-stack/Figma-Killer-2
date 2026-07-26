@@ -434,7 +434,7 @@ export function SelectorsPanel({ variant = 'docked' }: SelectorsPanelProps) {
 
       {renameTarget && (
         <SelectorNameDialog
-          title="Rename class"
+          title={renameTarget.kind === 'ambient' ? 'Rename selector' : 'Rename class'}
           initialValue={
             renameTarget.kind === 'ambient'
               ? styleRuleSelector(renameTarget)
@@ -495,7 +495,8 @@ function SelectorRow({
   // `.<escaped-name>`; for ambient rules it is whatever selector the user or
   // CSS importer wrote (e.g. `h1 > span`, `.hero .title`, `a:hover`).
   const selectorLabel = styleRuleSelector(cls)
-  const kindLabel = cls.kind === 'ambient'
+  const isAmbient = cls.kind === 'ambient'
+  const kindLabel = isAmbient
     ? 'Ambient'
     : generatedClassKindLabel(cls)
 
@@ -517,7 +518,7 @@ function SelectorRow({
           onCheckedChange={onToggleSelect}
           boxSize="sm"
           className={styles.rowCheckControl}
-          aria-label={`Select selector ${selectorLabel}`}
+          aria-label={`Select ${isAmbient ? 'selector' : 'class'} ${selectorLabel}`}
         />
       </span>
       <Button
@@ -525,7 +526,7 @@ function SelectorRow({
         size="sm"
         active={active}
         className={styles.rowMain}
-        aria-label={`Edit selector ${selectorLabel}`}
+        aria-label={`Edit ${isAmbient ? 'selector' : 'class'} ${selectorLabel}`}
         onClick={onSelect}
         onContextMenu={onContextMenu}
         onFocus={onHighlight}
@@ -560,7 +561,7 @@ function SelectorRow({
  */
 function SelectorRowsSkeleton() {
   return (
-    <div className={styles.rows} aria-busy="true" aria-label="Loading selectors">
+    <div className={styles.rows} aria-busy="true" aria-label="Loading classes">
       {Array.from({ length: SKELETON_ROW_COUNT }, (_, i) => (
         <div key={i} className={styles.skeletonRow} aria-hidden="true">
           <Skeleton width={13} height={13} radius={3} />

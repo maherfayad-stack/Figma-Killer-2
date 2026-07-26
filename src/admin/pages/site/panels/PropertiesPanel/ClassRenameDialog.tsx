@@ -43,7 +43,7 @@ export function ClassRenameDialog({
     <Dialog
       open
       onClose={onCancel}
-      title="Rename selector"
+      title="Rename class"
       size="sm"
       initialFocusRef={inputRef}
       footer={

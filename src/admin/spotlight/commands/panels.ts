@@ -107,8 +107,8 @@ export function getPanelsCommands(): Command[] {
     // ── Selectors panel ──────────────────────────────────────────────────────
     {
       id: 'panels.toggleSelectors',
-      title: 'Toggle Selectors panel',
-      subtitle: 'Show or hide the CSS selectors panel',
+      title: 'Toggle Classes panel',
+      subtitle: 'Show or hide the classes panel',
       group: 'editor',
       iconName: 'code',
       keywords: ['panel', 'selectors', 'css', 'classes', 'toggle'],
