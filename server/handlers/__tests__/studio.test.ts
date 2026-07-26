@@ -17,13 +17,10 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { zipSync, strToU8 } from 'fflate'
-import {
-  applyStudioEdit,
-  assignPageIds,
-  orderStudioEditsForApply,
-  pageIdFromRelPath,
-  tryServeStudio,
-} from '../studio'
+import { INLINE_ID_SEPARATOR } from '@core/page-parser'
+import { tryServeStudio } from '../studio'
+import { applyStudioEdit, orderStudioEditsForApply } from '../studioWriteback'
+import { assignPageIds, pageIdFromRelPath } from '../studioPageLoad'
 import { discoverPageFiles, listStudioProjects, pageComponentNameFromInput } from '../studioProjects'
 import { collectWorkspaceFiles } from '../studioDownload'
 
@@ -56,6 +53,22 @@ describe('orderStudioEditsForApply', () => {
     const before = [...edits]
     orderStudioEditsForApply(edits)
     expect(edits).toEqual(before)
+  })
+
+  // §2.4 — a composite (inlined) node id encodes TWO source locations
+  // (`callSiteId${INLINE_ID_SEPARATOR}componentNodeId`). `NODE_LOC_ID`'s
+  // greedy `.*` would happily match past the separator and treat the whole
+  // thing as if it decoded to a real line:col, so composite ids must sort
+  // last exactly like synthetic ones — never ranked ahead of a real edit.
+  it('sorts a composite (inlined) node id last, like a synthetic node', () => {
+    const edits = [
+      { nodeId: `Home.tsx:5:6${INLINE_ID_SEPARATOR}components/Icon.tsx:3:5` },
+      { nodeId: 'Home.tsx:11:8' },
+    ]
+    expect(orderStudioEditsForApply(edits).map((e) => e.nodeId)).toEqual([
+      'Home.tsx:11:8',
+      `Home.tsx:5:6${INLINE_ID_SEPARATOR}components/Icon.tsx:3:5`,
+    ])
   })
 })
 
@@ -264,6 +277,27 @@ describe('applyStudioEdit', () => {
   it('returns false (no throw) for a synthetic node id with no source location', () => {
     const result = applyStudioEdit(tmpDir, { kind: 'prop', nodeId: 'home:body', prop: 'x', value: 'y' })
     expect(result).toBe(false)
+  })
+
+  // §2.4 — the risk register's specifically-named test: a composite (inlined)
+  // node id must be a NO-OP, and critically must never write to ANY file —
+  // NODE_LOC_ID's greedy `.*` would otherwise happily match past the
+  // separator, deriving `join(dir, 'prop.tsx:5:6~components/Icon.tsx')` as a
+  // "file" to write `setJsxProp` against, silently corrupting whatever that
+  // garbage path happens to resolve to (or creating it).
+  it('is a no-op for a composite (inlined) node id — never writes to any file', () => {
+    const source = ['export default function App() {', '  return <Button label="Old" />', '}', ''].join('\n')
+    const file = writeFixture('prop.tsx', source)
+    const { line, col } = locateTag(source, 'Button')
+    const before = fs.readFileSync(file, 'utf8')
+    const filesBefore = fs.readdirSync(tmpDir)
+
+    const compositeNodeId = `prop.tsx:${line}:${col}${INLINE_ID_SEPARATOR}components/Icon.tsx:3:5`
+    const result = applyStudioEdit(tmpDir, { kind: 'prop', nodeId: compositeNodeId, prop: 'label', value: 'New' })
+
+    expect(result).toBe(false)
+    expect(fs.readFileSync(file, 'utf8')).toBe(before) // the REAL file is untouched
+    expect(fs.readdirSync(tmpDir)).toEqual(filesBefore) // no garbage file was created either
   })
 
   it('propagates JsxTextTargetError for a mixed-content text target, leaving the file untouched', () => {
@@ -573,7 +607,7 @@ describe('GET /admin/api/studio/load — Phase 7A multi-file workspace', () => {
       'pages/Home.tsx',
       ['export default function Home() {', '  return <div>Home</div>', '}', ''].join('\n'),
     )
-    write('components/Header.tsx', 'export default function Header() { return null }')
+    write('components/Header.tsx', 'export default function Header() { return <span>Header</span> }')
     write(
       'pages/marketing/Landing.tsx',
       [
@@ -611,8 +645,20 @@ describe('GET /admin/api/studio/load — Phase 7A multi-file workspace', () => {
       Object.values(landing.nodes).find((n) => n.moduleId === moduleId)!.id
 
     // Local component: import resolves inside the workspace.
-    const headerNodeId = nodeByModule('alm.Header')
+    // `resolveComponentSources` classifies against the PRE-inline tree (§2.6)
+    // — the call site's id survives inlining unchanged, so it's still the
+    // key `componentSources` reports it under, even though its `moduleId`
+    // is no longer `alm.Header` (its own file's JSX is now inlined in place —
+    // §2 — rather than an "Unknown module" box).
+    const headerNodeId = Object.keys(body.componentSources).find(
+      (id) => body.componentSources[id]?.file === 'components/Header.tsx',
+    )!
     expect(body.componentSources[headerNodeId]).toEqual({ kind: 'local', file: 'components/Header.tsx' })
+    expect(Object.values(landing.nodes).some((n) => n.moduleId === 'alm.Header')).toBe(false)
+    const headerCallSite = landing.nodes[headerNodeId]!
+    expect(headerCallSite.moduleId).toBe('base.container') // promoted (§2.5) — real, editable, wraps the inlined <span>
+    const headerSpan = Object.values(landing.nodes).find((n) => n.moduleId === 'base.text' && n.id.includes('~'))
+    expect(headerSpan).toBeDefined() // Header's own <span> — inlined, locked, composite id
 
     // Package component: bare specifier, stays a read-only prop surface.
     const buttonNodeId = nodeByModule('alm.Button')
@@ -621,9 +667,13 @@ describe('GET /admin/api/studio/load — Phase 7A multi-file workspace', () => {
       specifier: '@alm-design/design-system',
     })
 
-    // Node identity stays file-scoped: the div's id is namespaced by the
-    // NESTED file's workspace-relative path, not a flattened basename.
-    const divNodeId = nodeByModule('base.container')
+    // Node identity stays file-scoped: the OUTER div's id is namespaced by
+    // the NESTED file's workspace-relative path, not a flattened basename —
+    // distinguished from the (also `base.container`) Header call site by not
+    // being a component call site itself.
+    const divNodeId = Object.values(landing.nodes).find(
+      (n) => n.moduleId === 'base.container' && !(n.id in body.componentSources),
+    )!.id
     expect(divNodeId.startsWith('pages/marketing/Landing.tsx:')).toBe(true)
 
     // Round trip: applying an edit against that node id must write to the

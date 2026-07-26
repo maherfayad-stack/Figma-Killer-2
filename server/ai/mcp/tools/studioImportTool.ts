@@ -31,10 +31,9 @@
  * logged, never included in this tool's result, never persisted.
  */
 import { existsSync } from 'node:fs'
-import { join } from 'node:path'
 import { Type } from '@core/utils/typeboxHelpers'
 import type { AiTool, ToolContext } from '../../runtime/types'
-import { discoverPageFiles } from '../../../handlers/studioProjects'
+import { discoverPageFiles, projectPagesDir } from '../../../handlers/studioProjects'
 import { runGithubImport } from '../../../handlers/studioGithubImport'
 
 const StudioImportInputSchema = Type.Object(
@@ -63,14 +62,18 @@ const StudioImportInputSchema = Type.Object(
 )
 
 /**
- * Lists discovered `pages/*.tsx` paths (workspace-relative, sorted) under an
+ * Lists discovered page-file paths (workspace-relative, sorted) under an
  * imported workspace, without parsing them — reuses the Phase 7A
  * `discoverPageFiles` walk purely to summarize what landed for the calling
- * agent. Returns `[]` when the import produced no `pages/` directory at all
- * (e.g. a repo with no recognizable pages, or a `subdir` scoped elsewhere).
+ * agent. Uses `projectPagesDir` (the project's `.studio/meta.json`
+ * `pagesDir` override when present, else the default `pages/`) rather than a
+ * hardcoded `pages/` join, so this stays correct for a workspace whose pages
+ * dir was later overridden. Returns `[]` when the import produced no pages
+ * directory at all (e.g. a repo with no recognizable pages, or a `subdir`
+ * scoped elsewhere).
  */
 export function listImportedPagePaths(workspaceDir: string): string[] {
-  const pagesDir = join(workspaceDir, 'pages')
+  const pagesDir = projectPagesDir(workspaceDir)
   return existsSync(pagesDir) ? discoverPageFiles(pagesDir) : []
 }
 

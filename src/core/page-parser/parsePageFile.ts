@@ -21,9 +21,6 @@ import {
   Node,
   Project,
   SyntaxKind,
-  type ArrowFunction,
-  type FunctionDeclaration,
-  type FunctionExpression,
   type JsxAttribute,
   type JsxElement,
   type JsxSelfClosingElement,
@@ -31,9 +28,9 @@ import {
   type ReturnStatement,
   type SourceFile,
 } from 'ts-morph'
-import type { NodeLoc, ParsedNode, ParsedPage } from './types'
+import type { FunctionLike, NodeLoc, ParsedNode, ParsedPage } from './types'
+import { createEvalScope, evaluateExpression, type EvalScope, type StaticEvalOptions, type StaticValue } from './staticEval'
 
-type FunctionLike = ArrowFunction | FunctionDeclaration | FunctionExpression
 type JsxOpeningLike = JsxElement | JsxSelfClosingElement
 
 interface ParseContext {
@@ -41,10 +38,101 @@ interface ParseContext {
   /** appDir-relative POSIX path, precomputed once per parse. */
   relFile: string
   nodes: Record<string, ParsedNode>
+  /**
+   * Local identifier -> workspace-relative POSIX asset path, for THIS file's
+   * default-imported image specifiers only (`import esimChip from
+   * '../assets/x.png'`). Built once per parse (§5.1) so `extractProps` doesn't
+   * re-walk import declarations per attribute — a page can reference the same
+   * imported image on many elements.
+   */
+  imageImports: Map<string, string>
+  /**
+   * §7 value resolution — present ONLY when the caller opted in (passed
+   * `evalOptions` to `parsePageFile`/`parseJsxTree`). `undefined` for every
+   * existing caller/test: `extractProps`/`extractInlineStyles`/
+   * `extractSingleText` keep their literal-only fast path unconditionally and
+   * simply skip the evaluator fallback when this is absent — zero behaviour
+   * change, zero cost, for a page that only uses literals.
+   */
+  eval?: { scope: EvalScope; options: StaticEvalOptions }
+}
+
+/** A resolved non-literal value, tracked alongside `props`/`inlineStyles`/`text` so `processElement` can lock the node and record `ParsedNode.resolution` — see its doc comment in `./types`. */
+interface Resolution {
+  source: string
+  note?: string
+}
+
+const MAX_RESOLUTION_SOURCE_LENGTH = 80
+
+/** Caps + collapses whitespace in an expression's source text for a `lockReason`/`resolution.source` message — a resolved template literal can otherwise be arbitrarily long. */
+function shortenSource(text: string): string {
+  const collapsed = text.replace(/\s+/g, ' ').trim()
+  return collapsed.length > MAX_RESOLUTION_SOURCE_LENGTH
+    ? `${collapsed.slice(0, MAX_RESOLUTION_SOURCE_LENGTH - 1)}…`
+    : collapsed
+}
+
+/**
+ * Attempts §7's evaluator fallback for one expression node, only when the
+ * caller opted in (`ctx.eval` present). Returns `undefined` on any miss
+ * (unresolved, or opted out) so callers can keep falling through to their
+ * existing "skip it" behaviour unchanged.
+ */
+function tryResolveExpression(expr: Node, ctx: ParseContext): { value: string | number | boolean; note?: string } | undefined {
+  if (!ctx.eval) return undefined
+  const result: StaticValue = evaluateExpression(expr, ctx.eval.scope, ctx.eval.options)
+  if (result.kind !== 'literal' || result.value === null) return undefined
+  return { value: result.value, note: result.note }
+}
+
+/**
+ * Combines a node's STRUCTURAL lock (inherited/`.map`/ternary/spread/svg —
+ * `structuralLocked`/`structuralReason`, exactly what `processElement` always
+ * computed before §7) with any §7 resolutions captured while extracting its
+ * props/style/text. A resolved value is DERIVED — see `ParsedNode.resolution`'s
+ * doc comment for why the node must be locked — so ANY resolution locks the
+ * node even if it wasn't already; a node that was ALREADY locked keeps its
+ * original (more specific) reason and just gains the `resolution` metadata.
+ * With no resolutions at all (the common, evaluator-off case) this returns
+ * EXACTLY `{ locked: structuralLocked, lockReason?: structuralReason }` —
+ * byte-identical to what every call site built manually before §7.
+ */
+function withResolutionLock(
+  structuralLocked: boolean,
+  structuralReason: string | undefined,
+  resolutions: Resolution[],
+): { locked: boolean; lockReason?: string; resolution?: NonNullable<ParsedNode['resolution']> } {
+  const primary = resolutions[0]
+  if (!primary) {
+    return { locked: structuralLocked, ...(structuralReason ? { lockReason: structuralReason } : {}) }
+  }
+  const resolution = { source: shortenSource(primary.source), ...(primary.note ? { note: primary.note } : {}) }
+  if (structuralLocked) {
+    return { locked: true, ...(structuralReason ? { lockReason: structuralReason } : {}), resolution }
+  }
+  return { locked: true, lockReason: `value from ${resolution.source}`, resolution }
 }
 
 const DYNAMIC_LOCK_REASON = 'dynamic — rendered in code'
 const SPREAD_LOCK_REASON = 'spread props'
+const DYNAMIC_SVG_LOCK_REASON = 'dynamic SVG'
+
+const IMAGE_EXTENSION_RE = /\.(png|jpe?g|svg|webp|gif|avif)$/i
+
+/**
+ * Sentinel prefix `extractProps` emits (§5.1) for a prop whose value is a
+ * plain identifier resolving to a default-imported image asset, e.g.
+ * `props.src = 'studio-asset:assets/esim-flow/figma/esim-chip.png'`.
+ *
+ * Deliberately NOT a URL: `@core/page-parser` has no concept of an HTTP route
+ * (it also runs against a bare workspace with no server around it). Rewriting
+ * this into `/admin/api/studio/asset?dir=…&path=…` is the load handler's job
+ * (`server/handlers/studio.ts`), which is the only layer that knows the route
+ * shape and the project's `dir`. Exported so that layer never hardcodes the
+ * prefix string.
+ */
+export const STUDIO_ASSET_SENTINEL = 'studio-asset:'
 
 /**
  * `project` defaults to a fresh, single-file `Project` (this file only) —
@@ -59,6 +147,7 @@ export function parsePageFile(
   file: string,
   appDir: string,
   project: Project = new Project({ useInMemoryFileSystem: false }),
+  evalOptions?: StaticEvalOptions,
 ): ParsedPage {
   try {
     const sourceFile = project.getSourceFile(file) ?? project.addSourceFileAtPath(file)
@@ -70,14 +159,58 @@ export function parsePageFile(
 
     if (!rootExpr) return { rootIds: [], nodes: {} }
 
-    const ctx: ParseContext = { sourceFile, relFile, nodes: {} }
-    const rootIds = collectRootIds(rootExpr, ctx)
-    return { rootIds, nodes: ctx.nodes }
+    return parseJsxTree(rootExpr, sourceFile, relFile, appDir, fn, evalOptions)
   } catch {
     // Never throw on ordinary pages — anything unexpected just yields an
     // empty (unparsed) page rather than a crash for the caller.
     return { rootIds: [], nodes: {} }
   }
+}
+
+/**
+ * Walks `rootExpr` (the JSX a component's return statement produces) into a
+ * `ParsedPage`, exactly the tree-walk `parsePageFile` runs for a whole page —
+ * extracted so `inlineLocalComponents` (§2) can reuse the SAME walk for a
+ * local component's own returned JSX rather than re-implementing
+ * `processElement`/`processChildren`/the locking rules/svg capture/etc.
+ * `relFile` is the workspace-relative POSIX path to attribute produced node
+ * ids and locations to (the component's OWN file when called for inlining,
+ * not the page that references it); `workspaceRoot` is only consulted for
+ * image-import resolution (§5.1) and should stay the same workspace root used
+ * for the whole load so `studio-asset:` sentinels stay workspace-relative.
+ *
+ * Not wrapped in try/catch itself — `parsePageFile` and `inlineLocalComponents`
+ * each own their own top-level guard, since what "failure degrades to" differs
+ * (an empty page vs. leaving one call site un-inlined).
+ *
+ * `componentFn`/`evalOptions` (§7) opt this parse into value resolution:
+ * `componentFn` is the component whose OWN JSX this is (supplies its
+ * component-body `const`/hook-destructuring bindings to the evaluator's
+ * scope — see `createEvalScope`), and `evalOptions` carries the evaluator's
+ * tuning plus the page-wide step budget shared across the whole page load,
+ * including every locally-inlined subtree (`inlineLocalComponents` threads
+ * the SAME `evalOptions` into its own recursive `parseJsxTree` calls). Both
+ * are omitted by every caller that hasn't opted in — `extractProps`/
+ * `extractInlineStyles`/`extractSingleText` then keep their pre-§7 literal-
+ * only behaviour exactly, at zero extra cost.
+ */
+export function parseJsxTree(
+  rootExpr: Node,
+  sourceFile: SourceFile,
+  relFile: string,
+  workspaceRoot: string,
+  componentFn?: FunctionLike,
+  evalOptions?: StaticEvalOptions,
+): ParsedPage {
+  const ctx: ParseContext = {
+    sourceFile,
+    relFile,
+    nodes: {},
+    imageImports: buildImageImportMap(sourceFile, workspaceRoot),
+    ...(evalOptions ? { eval: { scope: createEvalScope(sourceFile, componentFn), options: evalOptions } } : {}),
+  }
+  const rootIds = collectRootIds(rootExpr, ctx)
+  return { rootIds, nodes: ctx.nodes }
 }
 
 // ---------------------------------------------------------------------------
@@ -93,7 +226,7 @@ export function parsePageFile(
  *   3. The first exported function declaration or `const` with a
  *      function/arrow initializer, in source order.
  */
-function findComponentDeclaration(sourceFile: SourceFile): Node | undefined {
+export function findComponentDeclaration(sourceFile: SourceFile): Node | undefined {
   for (const fn of sourceFile.getFunctions()) {
     if (fn.isDefaultExport()) return fn
   }
@@ -128,7 +261,7 @@ function findComponentDeclaration(sourceFile: SourceFile): Node | undefined {
 }
 
 /** Unwraps a `VariableDeclaration` down to its function/arrow initializer. */
-function getFunctionLikeNode(decl: Node): FunctionLike | undefined {
+export function getFunctionLikeNode(decl: Node): FunctionLike | undefined {
   if (Node.isFunctionDeclaration(decl) || Node.isArrowFunction(decl) || Node.isFunctionExpression(decl)) {
     return decl
   }
@@ -151,7 +284,7 @@ function getFunctionLikeNode(decl: Node): FunctionLike | undefined {
  * etc.) are not descended into, since their returns belong to a different
  * component.
  */
-function getReturnedJsxRoot(fn: FunctionLike): Node | undefined {
+export function getReturnedJsxRoot(fn: FunctionLike): Node | undefined {
   const body = fn.getBody()
   if (!body) return undefined
 
@@ -241,34 +374,127 @@ function processElement(
   const locked = inheritedLocked || hasSpread
   const lockReason = inheritedLocked ? inheritedReason : hasSpread ? SPREAD_LOCK_REASON : undefined
 
-  const props = extractProps(attributes)
-  const inlineStyles = extractInlineStyles(attributes)
+  const propsResult = extractProps(attributes, ctx)
+  const styleResult = extractInlineStyles(attributes, ctx)
+
+  // <svg> is captured as one opaque unit for `base.svg` (raw inline markup) —
+  // do NOT recurse into <path>/<circle>/<g>/… below, they are not page-tree
+  // modules. `className`/`style` are still captured above so they reach the
+  // canvas (§4/§6 depend on that).
+  if (kind === 'element' && name.toLowerCase() === 'svg') {
+    const svgText = element.getText()
+    // Embedded JSX expressions (`{...}`) — e.g. a progress ring's
+    // `strokeDashoffset={C*(1-pct/100)}` — mean the captured text is not
+    // valid standalone SVG. Keep the node (so its class/style/position are
+    // still visible) but drop the unusable markup and lock it, rather than
+    // ever emitting broken markup. `.map`/ternary/spread locks upstream, if
+    // any, are superseded by this more specific reason.
+    const dynamic = svgText.includes('{')
+    const svgLock = withResolutionLock(
+      locked || dynamic,
+      dynamic ? DYNAMIC_SVG_LOCK_REASON : lockReason,
+      [...propsResult.resolutions, ...styleResult.resolutions],
+    )
+    const svgNode: ParsedNode = {
+      id,
+      kind,
+      name,
+      props: dynamic ? propsResult.props : { ...propsResult.props, svg: svgText },
+      children: [],
+      loc,
+      locked: svgLock.locked,
+      ...(svgLock.lockReason ? { lockReason: svgLock.lockReason } : {}),
+      ...(styleResult.styles !== undefined ? { inlineStyles: styleResult.styles } : {}),
+      ...(svgLock.resolution ? { resolution: svgLock.resolution } : {}),
+    }
+    ctx.nodes[id] = svgNode
+    return id
+  }
+
   const rawChildren = Node.isJsxElement(element) ? element.getJsxChildren() : []
   const children = Node.isJsxElement(element) ? processChildren(rawChildren, ctx, locked, lockReason) : []
   // Only capture text for editable-surface elements — a locked/dynamic node
   // has no writeback path, so leaving `text` unset avoids implying otherwise.
-  const text = locked ? undefined : extractSingleText(rawChildren)
+  const textResult = locked ? undefined : extractSingleText(rawChildren, ctx)
+  const text = textResult?.text
+
+  const lock = withResolutionLock(locked, lockReason, [
+    ...(textResult?.resolution ? [textResult.resolution] : []),
+    ...propsResult.resolutions,
+    ...styleResult.resolutions,
+  ])
 
   const node: ParsedNode = {
     id,
     kind,
     name,
-    props,
+    props: propsResult.props,
     children,
     loc,
-    locked,
-    ...(lockReason ? { lockReason } : {}),
+    locked: lock.locked,
+    ...(lock.lockReason ? { lockReason: lock.lockReason } : {}),
     ...(text !== undefined ? { text } : {}),
-    ...(inlineStyles !== undefined ? { inlineStyles } : {}),
+    ...(styleResult.styles !== undefined ? { inlineStyles: styleResult.styles } : {}),
+    ...(lock.resolution ? { resolution: lock.resolution } : {}),
   }
   ctx.nodes[id] = node
 
   return id
 }
 
-/** Literal-valued attributes only (mirrors `../ast-codemods/readJsxProps`). */
-function extractProps(attributes: (JsxAttribute | JsxSpreadAttribute)[]): Record<string, string | number | boolean> {
+/**
+ * Maps `sourceFile`'s default-imported identifiers to a workspace-relative
+ * POSIX asset path, for import specifiers that look like an image
+ * (`import esimChip from '../assets/esim-flow/figma/esim-chip.png'`) — §5.1.
+ *
+ * Only RELATIVE specifiers are resolved (this is plain `path` resolution, not
+ * module resolution: ts-morph's `Project` only tracks `.ts/.tsx/.js/.jsx`
+ * files — see `createWorkspaceProject` — so a `.png` specifier never resolves
+ * to a real `SourceFile` the way `classifyImport` in `componentSources.ts`
+ * resolves a component import; there is nothing to reuse there beyond the
+ * containment-check shape, which this mirrors). A bare/aliased specifier
+ * (`@/assets/x.png`) is out of scope — same "small, contained widening" as
+ * the rest of `extractProps`.
+ *
+ * A specifier that resolves outside `workspaceRoot` is dropped rather than
+ * ever handed to a caller as a path — the asset-serving endpoint (§5.3) has
+ * its own containment guard too, but the parser should never manufacture an
+ * escaping path in the first place.
+ */
+function buildImageImportMap(sourceFile: SourceFile, workspaceRoot: string): Map<string, string> {
+  const map = new Map<string, string>()
+  const root = path.resolve(workspaceRoot)
+
+  for (const declaration of sourceFile.getImportDeclarations()) {
+    const defaultImport = declaration.getDefaultImport()
+    if (!defaultImport) continue
+
+    const specifier = declaration.getModuleSpecifierValue()
+    if (!specifier.startsWith('.') || !IMAGE_EXTENSION_RE.test(specifier)) continue
+
+    const absolute = path.resolve(path.dirname(sourceFile.getFilePath()), specifier)
+    const relFromRoot = path.relative(root, absolute)
+    const insideRoot = relFromRoot.length > 0 && !relFromRoot.startsWith('..') && !path.isAbsolute(relFromRoot)
+    if (!insideRoot) continue
+
+    map.set(defaultImport.getText(), relFromRoot.split(path.sep).join('/'))
+  }
+
+  return map
+}
+
+/**
+ * Literal-valued attributes (mirrors `../ast-codemods/readJsxProps`), falling
+ * through to §7's evaluator ONLY when the literal fast path misses AND the
+ * caller opted in (`ctx.eval` present) — zero behaviour change, zero cost,
+ * for a page that only uses literals (§7.8's non-regression guarantee).
+ */
+function extractProps(
+  attributes: (JsxAttribute | JsxSpreadAttribute)[],
+  ctx: ParseContext,
+): { props: Record<string, string | number | boolean>; resolutions: Resolution[] } {
   const result: Record<string, string | number | boolean> = {}
+  const resolutions: Resolution[] = []
 
   for (const attribute of attributes) {
     if (!Node.isJsxAttribute(attribute)) continue // skip {...spread} attributes
@@ -293,48 +519,76 @@ function extractProps(attributes: (JsxAttribute | JsxSpreadAttribute)[]): Record
 
       if (Node.isNumericLiteral(expression)) {
         result[name] = expression.getLiteralValue()
-      } else if (Node.isStringLiteral(expression)) {
-        result[name] = expression.getLiteralValue()
-      } else if (Node.isTrueLiteral(expression)) {
-        result[name] = true
-      } else if (Node.isFalseLiteral(expression)) {
-        result[name] = false
+        continue
       }
-      // Any other expression kind (identifier, call, template, object, …)
-      // is not a literal — intentionally skipped (still present in source,
-      // just not captured as an editable prop). The `style={{…}}` object is
-      // captured separately by `extractInlineStyles` so the canvas can render
-      // the authored inline styles.
+      if (Node.isStringLiteral(expression)) {
+        result[name] = expression.getLiteralValue()
+        continue
+      }
+      if (Node.isTrueLiteral(expression)) {
+        result[name] = true
+        continue
+      }
+      if (Node.isFalseLiteral(expression)) {
+        result[name] = false
+        continue
+      }
+      if (Node.isIdentifier(expression)) {
+        // §5.1 — a bare identifier that resolves to a default-imported image
+        // (`<img src={esimChip}/>`) is captured as a sentinel path rather than
+        // skipped outright, so an imported screen's images can be served
+        // (see STUDIO_ASSET_SENTINEL's doc comment for why this isn't a URL
+        // yet).
+        const assetPath = ctx.imageImports.get(expression.getText())
+        if (assetPath !== undefined) {
+          result[name] = `${STUDIO_ASSET_SENTINEL}${assetPath}`
+          continue
+        }
+      }
+      // Any other expression kind (call, template, object, member access, a
+      // plain identifier that isn't an image import, …) is not a literal —
+      // §7's evaluator gets a shot at it now, still skipped unchanged when
+      // `ctx.eval` is absent. The `style={{…}}` object is captured separately
+      // by `extractInlineStyles` so the canvas can render the authored
+      // inline styles.
+      const resolved = tryResolveExpression(expression, ctx)
+      if (resolved) {
+        result[name] = resolved.value
+        resolutions.push({ source: expression.getText(), note: resolved.note })
+      }
     }
   }
 
-  return result
+  return { props: result, resolutions }
 }
 
 /**
  * Flatten an element's `style={{ … }}` object-literal attribute into its
  * literal (string/number) entries, so the canvas renders the inline styles
  * actually authored in source (`node.inlineStyles` → `NodeRenderer`). Mirrors
- * `extractProps`' literal-only policy: a property whose value isn't a
- * string/number literal (an identifier, `var(--x)` call, nested object,
- * spread, …) is skipped rather than guessed at. Returns `undefined` when
- * there's no `style` attribute, it isn't a plain object literal, or it has no
- * literal entries.
+ * `extractProps`' literal-fast-path-then-evaluator-fallback policy: a
+ * property whose value isn't a string/number literal (an identifier, a
+ * `var(--x)` reference held in a const, a template, …) falls through to §7's
+ * evaluator (still skipped when `ctx.eval` is absent). Returns `styles:
+ * undefined` when there's no `style` attribute, it isn't a plain object
+ * literal, or it has no resolvable entries.
  */
 function extractInlineStyles(
   attributes: (JsxAttribute | JsxSpreadAttribute)[],
-): Record<string, string | number> | undefined {
+  ctx: ParseContext,
+): { styles: Record<string, string | number> | undefined; resolutions: Resolution[] } {
   const styleAttr = attributes.find(
     (a): a is JsxAttribute => Node.isJsxAttribute(a) && a.getNameNode().getText() === 'style',
   )
-  if (!styleAttr) return undefined
+  if (!styleAttr) return { styles: undefined, resolutions: [] }
 
   const initializer = styleAttr.getInitializer()
-  if (initializer === undefined || !Node.isJsxExpression(initializer)) return undefined
+  if (initializer === undefined || !Node.isJsxExpression(initializer)) return { styles: undefined, resolutions: [] }
   const expression = initializer.getExpression()
-  if (expression === undefined || !Node.isObjectLiteralExpression(expression)) return undefined
+  if (expression === undefined || !Node.isObjectLiteralExpression(expression)) return { styles: undefined, resolutions: [] }
 
   const styles: Record<string, string | number> = {}
+  const resolutions: Resolution[] = []
   for (const property of expression.getProperties()) {
     if (!Node.isPropertyAssignment(property)) continue // skip shorthand / spread / methods
     const nameNode = property.getNameNode()
@@ -348,43 +602,63 @@ function extractInlineStyles(
     if (valueNode === undefined) continue
     if (Node.isStringLiteral(valueNode)) {
       styles[key] = valueNode.getLiteralValue()
-    } else if (Node.isNumericLiteral(valueNode)) {
-      styles[key] = valueNode.getLiteralValue()
+      continue
     }
-    // Non-literal values (var refs, calls, nested objects) are skipped.
+    if (Node.isNumericLiteral(valueNode)) {
+      styles[key] = valueNode.getLiteralValue()
+      continue
+    }
+    // Non-literal values (var refs, calls, templates, nested objects) fall
+    // through to §7's evaluator — e.g. a `const accent = 'var(--text-link-default)'`
+    // reference, or `width: \`${pct}%\``. A style value is never boolean, so a
+    // resolved boolean (unlike for `extractProps`) isn't a usable style value.
+    const resolved = tryResolveExpression(valueNode, ctx)
+    if (resolved && typeof resolved.value !== 'boolean') {
+      styles[key] = resolved.value
+      resolutions.push({ source: valueNode.getText(), note: resolved.note })
+    }
   }
 
-  return Object.keys(styles).length > 0 ? styles : undefined
+  return { styles: Object.keys(styles).length > 0 ? styles : undefined, resolutions }
 }
 
 /**
  * When an element's only meaningful child is a single non-whitespace text
  * node — either raw JSX text or a `{"..."}` / `{'...'}` string-literal
- * expression container — returns that trimmed string. Elements with element
- * children, more than one meaningful child, or a non-literal/mixed
- * expression return `undefined` (their `children` are walked structurally by
- * `processChildren` instead, exactly as before this capture existed).
+ * expression container — returns that trimmed string. Falls through to §7's
+ * evaluator when the sole child is some OTHER expression (`{t.homepage.greeting}`,
+ * `` {`${pct}%`} ``, …). Elements with element children, more than one
+ * meaningful child, or an unresolvable expression get no `text` (their
+ * `children` are still walked structurally by `processChildren` instead,
+ * exactly as before this capture existed).
  *
  * Mirrors `assertTextOnlyChildren` in `../ast-codemods/setJsxText` — a
- * captured `text` is always a shape that codemod is willing to overwrite.
+ * captured `text` is always a shape that codemod is willing to overwrite
+ * (§7.6: a RESOLVED text value is additionally always locked, see
+ * `withResolutionLock`, since writing an edit back over the original
+ * expression would destroy it).
  */
-function extractSingleText(children: Node[]): string | undefined {
-  if (children.length !== 1) return undefined
+function extractSingleText(children: Node[], ctx: ParseContext): { text: string | undefined; resolution?: Resolution } {
+  if (children.length !== 1) return { text: undefined }
   const only = children[0]!
 
   if (Node.isJsxText(only)) {
     const text = only.getText().trim()
-    return text.length > 0 ? text : undefined
+    return { text: text.length > 0 ? text : undefined }
   }
 
   if (Node.isJsxExpression(only)) {
     const expression = only.getExpression()
-    if (expression !== undefined && Node.isStringLiteral(expression)) {
-      return expression.getLiteralValue()
+    if (expression !== undefined) {
+      if (Node.isStringLiteral(expression)) return { text: expression.getLiteralValue() }
+      const resolved = tryResolveExpression(expression, ctx)
+      if (resolved) {
+        return { text: String(resolved.value), resolution: { source: expression.getText(), note: resolved.note } }
+      }
     }
   }
 
-  return undefined
+  return { text: undefined }
 }
 
 /**

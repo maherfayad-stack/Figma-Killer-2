@@ -36,6 +36,29 @@ function resolveModuleId({ kind, name }: { kind: 'element' | 'component'; name: 
   return 'base.text'
 }
 
+/** Mirrors `server/handlers/studio.ts`'s real §4.2 resolver, for the promotion tests below. */
+function resolveModuleIdWithChildren({
+  kind,
+  name,
+  children,
+}: {
+  kind: 'element' | 'component'
+  name: string
+  children: string[]
+}): string {
+  if (kind === 'component') return `alm.${name}`
+  const tag = name.toLowerCase()
+  if (['div', 'section', 'main', 'header', 'footer', 'nav', 'article', 'aside'].includes(tag)) {
+    return 'base.container'
+  }
+  if (tag === 'button') return 'base.button'
+  if (tag === 'a') return 'base.link'
+  if (tag === 'img') return 'base.image'
+  if (tag === 'svg') return 'base.svg'
+  if (children.length > 0) return 'base.container'
+  return 'base.text'
+}
+
 /** No text prop known for any module id in these base tests, unless overridden per-test. */
 function resolveTextProp(): string | null {
   return null
@@ -218,4 +241,145 @@ test('parsedPageToSitePage leaves props untouched when resolveTextProp returns n
   })
 
   expect(result.nodes[TEXT_ID].props).toEqual({})
+})
+
+/** Mirrors `server/handlers/studio.ts`'s real §4.2 `resolveTextProp`. */
+function resolveTextPropReal(moduleId: string): string | null {
+  switch (moduleId) {
+    case 'base.text':
+      return 'text'
+    case 'base.button':
+      return 'label'
+    case 'base.link':
+      return 'text'
+    default:
+      return null
+  }
+}
+
+test('§4.4 non-regression: a text-only <p>Hello</p> still resolves to base.text with props.text', () => {
+  const P_ID = 'Home.tsx:11:4'
+  const textOnlyParsed: ParsedPage = {
+    rootIds: [P_ID],
+    nodes: {
+      [P_ID]: {
+        id: P_ID,
+        kind: 'element',
+        name: 'p',
+        props: {},
+        children: [],
+        loc: { file: 'Home.tsx', line: 11, col: 4 },
+        locked: false,
+        text: 'Hello',
+      },
+    },
+  }
+
+  const result = parsedPageToSitePage(textOnlyParsed, {
+    pageId: 'home',
+    slug: 'home',
+    title: 'Home',
+    resolveModuleId: resolveModuleIdWithChildren,
+    resolveTextProp: resolveTextPropReal,
+  })
+
+  const pNode = result.nodes[P_ID]
+  expect(pNode.moduleId).toBe('base.text')
+  expect(pNode.props.text).toBe('Hello')
+  // A base.text leaf carries no promoted-container tag props.
+  expect(pNode.props.tag).toBeUndefined()
+  expect(pNode.props.customTag).toBeUndefined()
+})
+
+test('§4 promotion: a <p> wrapping an element child resolves to base.container, not base.text', () => {
+  const ICON_ID = 'Home.tsx:13:6'
+  const P_ID = 'Home.tsx:12:4'
+  const promotedParsed: ParsedPage = {
+    rootIds: [P_ID],
+    nodes: {
+      [P_ID]: {
+        id: P_ID,
+        kind: 'element',
+        name: 'p',
+        props: {},
+        children: [ICON_ID],
+        loc: { file: 'Home.tsx', line: 12, col: 4 },
+        locked: false,
+      },
+      [ICON_ID]: {
+        id: ICON_ID,
+        kind: 'component',
+        name: 'Icon',
+        props: {},
+        children: [],
+        loc: { file: 'Home.tsx', line: 13, col: 6 },
+        locked: false,
+      },
+    },
+  }
+
+  const result = parsedPageToSitePage(promotedParsed, {
+    pageId: 'home',
+    slug: 'home',
+    title: 'Home',
+    resolveModuleId: resolveModuleIdWithChildren,
+    resolveTextProp: resolveTextPropReal,
+  })
+
+  const pNode = result.nodes[P_ID]
+  // Promoted, not the base.text leaf, or the Icon child would be dropped.
+  expect(pNode.moduleId).toBe('base.container')
+  expect(pNode.children).toEqual([ICON_ID])
+  // The promoted node still carries its real host tag so it doesn't render
+  // as a bare <div> — base.container's `tag` control's built-in list does not
+  // include 'p', so it goes through the 'custom' escape hatch.
+  expect(pNode.props.tag).toBe('custom')
+  expect(pNode.props.customTag).toBe('p')
+})
+
+test('§4.3: a promoted <ul> carries its tag via the built-in select option, not the custom escape hatch', () => {
+  const ICON_ID = 'Home.tsx:15:8'
+  const UL_ID = 'Home.tsx:14:4'
+  // 'ul' is a genuinely built-in choice per `htmlTagControl()`'s options, but
+  // was NOT in the server's old hardcoded 8-tag container list — it only
+  // becomes `base.container` via the new children-based promotion rule. It
+  // should still land on the plain `props.tag` form, not the 'custom' escape
+  // hatch used for tags outside the built-in list (covered by the <p> test
+  // above).
+  const ulParsed: ParsedPage = {
+    rootIds: [UL_ID],
+    nodes: {
+      [UL_ID]: {
+        id: UL_ID,
+        kind: 'element',
+        name: 'ul',
+        props: {},
+        children: [ICON_ID],
+        loc: { file: 'Home.tsx', line: 14, col: 4 },
+        locked: false,
+      },
+      [ICON_ID]: {
+        id: ICON_ID,
+        kind: 'component',
+        name: 'Icon',
+        props: {},
+        children: [],
+        loc: { file: 'Home.tsx', line: 15, col: 8 },
+        locked: false,
+      },
+    },
+  }
+
+  const result = parsedPageToSitePage(ulParsed, {
+    pageId: 'home',
+    slug: 'home',
+    title: 'Home',
+    resolveModuleId: resolveModuleIdWithChildren,
+    resolveTextProp: resolveTextPropReal,
+  })
+
+  const ulNode = result.nodes[UL_ID]
+  expect(ulNode.moduleId).toBe('base.container')
+  expect(ulNode.props.tag).toBe('ul')
+  expect(ulNode.props.customTag).toBeUndefined()
 })

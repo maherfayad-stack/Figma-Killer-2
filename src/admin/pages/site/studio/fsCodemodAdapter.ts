@@ -42,6 +42,20 @@ import { getStudioWorkspaceDir } from './studioWorkspaceDir'
 const SOURCE_NODE_ID = /^.+:\d+:\d+$/
 
 /**
+ * Mirrors `INLINE_ID_SEPARATOR` in `@core/page-parser` (server-only ts-morph
+ * module — see `ComponentSourceSchema`'s doc comment above for why this file
+ * mirrors rather than imports: pulling `@core/page-parser`'s barrel into this
+ * browser bundle drags ts-morph/typescript along with it, which blows the
+ * `AdminCanvasLayout` chunk's `bundle-size-budgets.test.ts` budget by an
+ * order of magnitude — confirmed empirically, not a hypothetical). A node id
+ * containing this literal is an INLINED (composite) id from a locally-inlined
+ * component (§2.4) — it has no single valid writeback location (editing one
+ * instance would silently change every instance sharing that component's
+ * file), so it must never be included in a save batch.
+ */
+const INLINE_ID_SEPARATOR = '~'
+
+/**
  * One `kind: 'component'` node's classification (Phase 7A — multi-file
  * workspace backend): **local** components resolve to a real file inside the
  * workspace (recorded as a workspace-relative path); **package** components
@@ -230,6 +244,10 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
     for (const page of site.pages) {
       for (const node of Object.values(page.nodes)) {
         if (!SOURCE_NODE_ID.test(node.id)) continue
+        // An inlined (composite) node id — from a locally-inlined component,
+        // §2.4 — has no single valid writeback location; `SOURCE_NODE_ID`'s
+        // `.+:\d+:\d+$` would otherwise still match past the separator.
+        if (node.id.includes(INLINE_ID_SEPARATOR)) continue
 
         // The module's declared inline-text-edit prop (if any) routes that
         // one prop as a `text` edit (rewrites the element's text children)

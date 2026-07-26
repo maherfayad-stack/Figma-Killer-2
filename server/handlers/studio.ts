@@ -3,43 +3,56 @@
  * "canvas edit ⇄ real .tsx source" loop.
  *
  *   GET  /admin/api/studio/load?dir=<abs>
- *       Recursively walks the workspace's `pages/` directory (Phase 7A —
- *       multi-file project backend; nested route/page dirs like
- *       `pages/marketing/Landing.tsx` are discovered, not just a flat
- *       top-level scan) and parses EVERY `.tsx` file into an Instatic `Page`
- *       (multi-frame board). Node ids stay `relFile:line:col`
+ *       Recursively walks the project's pages directory — `<dir>/pages` by
+ *       default, or `.studio/meta.json`'s `pagesDir` override for a
+ *       real-world repo whose screens live elsewhere (e.g. `src/screens` —
+ *       see `projectPagesDir`) — (Phase 7A — multi-file project backend;
+ *       nested route/page dirs like `pages/marketing/Landing.tsx` are
+ *       discovered, not just a flat top-level scan) and parses EVERY
+ *       `.tsx`/`.jsx` file into an Instatic `Page` (multi-frame board). Node ids
+ *       stay `relFile:line:col`
  *       (from page-parser), `relFile` always relative to the WORKSPACE ROOT
  *       (not the pages dir), so the client can ask us to write a specific
  *       node's prop straight back to source no matter how deep its file
  *       sits, and the save handler below needs no changes to keep working.
- *       Every page is parsed against one shared, workspace-wide ts-morph
- *       `Project` (`createWorkspaceProject`) so a page's local-component
- *       imports resolve to real files elsewhere in the tree;
- *       `resolveComponentSources` classifies each `kind: 'component'` node as
- *       **local** (import resolves inside the workspace — recorded as a
- *       workspace-relative file path) or **package** (an npm dependency like
- *       `@alm-design/design-system`, read-only prop surface). The merged
- *       classification for every page is returned as `componentSources`,
- *       keyed by node id.
+ *       The parse → local-component-inline → Instatic-`Page` conversion
+ *       pipeline itself — including the `componentSources` local/package
+ *       classification and the `STUDIO_ASSET_SENTINEL` → fetchable-URL
+ *       rewrite (§5.1/§5.2) — lives in `loadStudioPages`; see
+ *       `server/handlers/studioPageLoad.ts`'s module doc for the full
+ *       walkthrough. This route is just dir resolution + error mapping.
  *       (Under /admin/api so the Vite dev proxy forwards it to the :3001 server.)
  *
- *   POST /admin/api/studio/save   body: { dir, edits: StudioEdit[] }
- *       A batch of typed edits (`kind: 'prop' | 'text' | 'style'`). Each edit's
- *       nodeId is decoded back to a source location and dispatched to the
- *       matching `ast-codemods` writer (`setJsxProp` / `setJsxText` /
- *       `setJsxStyle`) via `applyStudioEdit`. Synthetic nodes (e.g. the
- *       `index:body` root) don't match the loc pattern and are skipped. Each
- *       edit is applied independently — one codemod throwing (e.g. a text
- *       edit landing on an element with mixed children) is logged and
- *       skipped rather than aborting the whole batch.
+ *   GET  /admin/api/studio/asset?dir=<abs>&path=<workspace-rel>
+ *       Serves one workspace-relative asset file (an imported page's local
+ *       images — §5) through the existing static-file pipeline. The
+ *       resolution + adversarial-input guarding (absolute/UNC paths, `..`
+ *       traversal on either separator, excluded dir names, symlink escape)
+ *       lives in `resolveStudioAssetResponse` — see
+ *       `server/handlers/studioAsset.ts`'s module doc for the full rationale.
+ *       404 on anything rejected or missing.
  *
- *   POST /admin/api/studio/import-github   body: { url, ref?, subdir?, token?, dir? }
+ *   POST /admin/api/studio/save   body: { dir, edits: StudioEdit[] }
+ *       A batch of typed edits (`kind: 'prop' | 'text' | 'style'`). The edit
+ *       model (`StudioEdit`), the bottom-to-top apply ordering, and the
+ *       per-edit dir+edit→codemod dispatch (`applyStudioEdit`) live in
+ *       `server/handlers/studioWriteback.ts` — see its module doc. Synthetic
+ *       nodes (e.g. the `index:body` root) don't match the loc pattern and
+ *       are skipped. Each edit is applied independently — one codemod
+ *       throwing (e.g. a text edit landing on an element with mixed
+ *       children) is logged and skipped by this route rather than aborting
+ *       the whole batch.
+ *
+ *   POST /admin/api/studio/import-github   body: { url, ref?, subdir?, token?, pagesDir? }
  *       Phase 7B — GitHub-link import. Fetches the repo's zipball
  *       (`server/handlers/studioGithubImport.ts` owns URL parsing, the
  *       fetch, the zip-entry safety/size guards, and the write) into a
  *       repo-scoped `studio-workspace/<owner>-<repo>/` directory —
  *       never the hand-authored `studio-workspace/` — and returns
- *       `{ ok, dir, files, skipped }`. The client then calls this same
+ *       `{ ok, dir, files, skipped }`. `pagesDir`, when given, is written to
+ *       the new project's `.studio/meta.json` (see `GithubImportBodySchema`'s
+ *       doc comment) so a repo whose screens don't live at the default
+ *       `<dir>/pages` is still discoverable. The client then calls this same
  *       `/admin/api/studio/load?dir=<returned dir>` to load it: import is
  *       "fetch source, then load it via the existing multi-file loader," not
  *       a second parsing path.
@@ -86,18 +99,20 @@
  *       Validates `framework` against `FrameworkSettingsSchema` and writes it
  *       to `.studio/framework.json`. 400 on an invalid shape.
  *
- * page-parser and ast-codemods run here (Node/ts-morph), not in the browser.
+ * This module is the HTTP routing layer only — request wiring, body
+ * validation, and error-envelope mapping. The actual page-parser/ast-codemods
+ * work (Node/ts-morph, never the browser) lives in sibling modules by
+ * responsibility: `studioAsset.ts` (asset serving), `studioWriteback.ts`
+ * (source writeback), `studioPageLoad.ts` (the parse pipeline),
+ * `studioProjects.ts`, `studioFramework.ts`, `studioDownload.ts`, and
+ * `studioGithubImport.ts`.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import {
-  createWorkspaceProject,
-  parsePageFile,
-  resolveComponentSources,
-  type ComponentSource,
-} from '@core/page-parser'
-import { parsedPageToSitePage } from '@core/studio-sync/parsedPageToSitePage'
-import { setJsxProp, setJsxStyle, setJsxText } from '@core/ast-codemods'
+import { createBoardsFile, parseBoardsFile, serializeBoardsFile, type BoardsFile } from '@core/studio-board'
+import { Type } from '@core/utils/typeboxHelpers'
+import { badRequest, jsonResponse, readValidatedBody } from '../http'
+import { GithubImportError, parseGithubRepoUrl, runGithubImport } from './studioGithubImport'
 import {
   discoverPageFiles,
   listStudioProjects,
@@ -105,7 +120,9 @@ import {
   nextProjectName,
   pageComponentNameFromInput,
   projectDisplayName,
+  projectPagesDir,
   projectsRootDir,
+  renameProjectDisplayName,
   resolveProjectDir,
   safeProjectFolderName,
   starterPage,
@@ -114,38 +131,14 @@ import {
 } from './studioProjects'
 import { readStudioFrameworkFile, writeStudioFrameworkFile } from './studioFramework'
 import { buildStudioDownloadResponse } from './studioDownload'
-import { createBoardsFile, parseBoardsFile, serializeBoardsFile, type BoardsFile } from '@core/studio-board'
-import { Type, type Static } from '@core/utils/typeboxHelpers'
-import { badRequest, jsonResponse, readValidatedBody } from '../http'
-import { GithubImportError, runGithubImport } from './studioGithubImport'
-
-const NODE_LOC_ID = /^(.*):(\d+):(\d+)$/
-
-/** One prop attribute writeback — `setJsxProp`. */
-const PropEditSchema = Type.Object({
-  kind: Type.Literal('prop'),
-  nodeId: Type.String(),
-  prop: Type.String(),
-  value: Type.Union([Type.String(), Type.Number(), Type.Boolean()]),
-})
-
-/** One element-text-children writeback — `setJsxText`. */
-const TextEditSchema = Type.Object({
-  kind: Type.Literal('text'),
-  nodeId: Type.String(),
-  text: Type.String(),
-})
-
-/** One `style={{ ... }}` merge writeback — `setJsxStyle`. */
-const StyleEditSchema = Type.Object({
-  kind: Type.Literal('style'),
-  nodeId: Type.String(),
-  style: Type.Record(Type.String(), Type.Union([Type.String(), Type.Number()])),
-})
-
-/** Discriminated union of every studio edit kind — `kind` is the discriminator. */
-const StudioEditSchema = Type.Union([PropEditSchema, TextEditSchema, StyleEditSchema])
-export type StudioEdit = Static<typeof StudioEditSchema>
+import { resolveStudioAssetResponse } from './studioAsset'
+import { pageIdFromRelPath, loadStudioPages } from './studioPageLoad'
+import {
+  applyStudioEdit,
+  orderStudioEditsForApply,
+  studioEditFile,
+  StudioEditSchema,
+} from './studioWriteback'
 
 /** Body of POST /admin/api/studio/save — a batch of typed source writebacks. */
 const SaveBodySchema = Type.Object({
@@ -211,153 +204,21 @@ const CreatePageBodySchema = Type.Object({
  *
  * `token`, when present, is forwarded as a Bearer credential and never logged
  * or echoed back.
+ *
+ * `pagesDir`, when present, is NOT forwarded to `runGithubImport` at all — it
+ * has nothing to do with fetching/writing the repo. It's persisted to the
+ * freshly-imported project's `.studio/meta.json` afterwards (§1.1's
+ * `pagesDir` override) so a repo whose screens don't live at the
+ * hand-authored default of `<dir>/pages` (e.g. `src/screens`) is discoverable
+ * without restructuring the imported source.
  */
 const GithubImportBodySchema = Type.Object({
   url: Type.String(),
   ref: Type.Optional(Type.String()),
   subdir: Type.Optional(Type.String()),
   token: Type.Optional(Type.String()),
+  pagesDir: Type.Optional(Type.String()),
 })
-
-/** Map a parsed node to an Instatic moduleId (design-system → alm.*, host tags → base.*). */
-function resolveModuleId(node: { kind: 'element' | 'component'; name: string }): string {
-  if (node.kind === 'component') return `alm.${node.name}`
-  const tag = node.name.toLowerCase()
-  if (['div', 'section', 'main', 'header', 'footer', 'nav', 'article', 'aside'].includes(tag)) {
-    return 'base.container'
-  }
-  if (tag === 'button') return 'base.button'
-  if (tag === 'a') return 'base.link'
-  if (tag === 'img') return 'base.image'
-  return 'base.text'
-}
-
-/**
- * Map a resolved moduleId to the single prop key its module's
- * `inlineTextEdit` declares. MUST stay in sync with the base modules'
- * `inlineTextEdit.prop` (`src/modules/base/{text,button,link}/index.ts`) —
- * the browser-side `fsCodemodAdapter` reads the same contract off the actual
- * module registry (`@core/module-engine`), which this server-side handler
- * intentionally does not import (page-parser/ast-codemods run here in Node,
- * decoupled from the browser module bundle). `alm.*` design-system
- * components declare no `inlineTextEdit` — out of scope for source
- * writeback this slice.
- */
-function resolveTextProp(moduleId: string): string | null {
-  switch (moduleId) {
-    case 'base.text':
-      return 'text'
-    case 'base.button':
-      return 'label'
-    case 'base.link':
-      return 'text'
-    default:
-      return null
-  }
-}
-
-/**
- * Order a save batch BOTTOM-TO-TOP: descending line, then descending column.
- * Node ids encode a `line:col` source location, and a codemod can change a
- * file's line count (e.g. `setJsxStyle` collapsing a multiline `style={{…}}`
- * to one line). Applying the lowest positions first guarantees an edit can
- * never invalidate the source location of another edit still pending in the
- * same batch. Edits whose id has no decodable location (synthetic nodes like
- * `index:body`) sort last — `applyStudioEdit` no-ops on them anyway. Pure, so
- * the ordering is unit-testable without touching the filesystem.
- */
-export function orderStudioEditsForApply<T extends { nodeId: string }>(edits: readonly T[]): T[] {
-  return [...edits].sort((a, b) => {
-    const la = NODE_LOC_ID.exec(a.nodeId)
-    const lb = NODE_LOC_ID.exec(b.nodeId)
-    if (!la) return 1
-    if (!lb) return -1
-    return Number(lb[2]) - Number(la[2]) || Number(lb[3]) - Number(la[3])
-  })
-}
-
-/**
- * Applies one typed studio edit to the .tsx source under `dir`, dispatching
- * on `edit.kind` to the matching `ast-codemods` writer. Extracted as a pure
- * helper (dir + edit in, codemod side effect out) so it's unit-testable
- * against temp fixture files without a full Request/Response round trip.
- *
- * Returns `false` for a synthetic node id (e.g. the `index:body` root) that
- * has no source location — nothing to write, not an error. Returns `true`
- * once the matching codemod has written the file. Propagates whatever the
- * underlying codemod throws (e.g. `JsxTextTargetError`, `JsxStyleTargetError`)
- * for a real source location it refuses to touch — callers decide whether to
- * skip-and-log or let it bubble.
- */
-export function applyStudioEdit(dir: string, edit: StudioEdit): boolean {
-  const m = NODE_LOC_ID.exec(edit.nodeId)
-  if (!m) return false // synthetic node (e.g. body) — no source location
-  const [, rel, line, col] = m
-  const loc = { file: join(dir, rel), line: Number(line), col: Number(col) }
-
-  switch (edit.kind) {
-    case 'prop':
-      setJsxProp({ ...loc, prop: edit.prop, value: edit.value })
-      return true
-    case 'text':
-      setJsxText({ ...loc, text: edit.text })
-      return true
-    case 'style':
-      setJsxStyle({ ...loc, style: edit.style })
-      return true
-  }
-}
-
-/**
- * Derive a stable page id (also used as the slug) from a page file's path,
- * relative to the workspace's `pages/` dir — kebab-casing every path segment
- * and joining with `-` so nested files don't collide with a differently-
- * nested one that merely shares a basename: "Home.tsx" -> "home",
- * "MyPage.tsx" -> "my-page", "marketing/Landing.tsx" -> "marketing-landing".
- * Pure so it's unit-testable without touching the filesystem.
- *
- * Two DIFFERENT relPaths can still slugify to the same string (e.g.
- * "Marketing/Landing.tsx" and "marketing-landing.tsx" both ->
- * "marketing-landing") — `assignPageIds` is the layer that guarantees
- * uniqueness across a whole discovered set; this function only derives the
- * per-path slug.
- */
-export function pageIdFromRelPath(relPath: string): string {
-  const segments = relPath.split('/').filter((segment) => segment.length > 0)
-  const slug = segments
-    .map((segment, i) => {
-      const base = i === segments.length - 1 ? segment.replace(/\.tsx$/, '') : segment
-      return base
-        .replace(/([a-z0-9])([A-Z])/g, '$1-$2')
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-+|-+$/g, '')
-    })
-    .filter((segment) => segment.length > 0)
-    .join('-')
-  return slug.length > 0 ? slug : 'page'
-}
-
-/**
- * Assigns a unique pageId (also used as the slug) to each entry of
- * `relPaths`, processed in the given order. `pageIdFromRelPath` is
- * deterministic per path, but two different nested paths can slugify to the
- * same string (see its doc comment) — on a collision, every path after the
- * first gets a numeric suffix (`-2`, `-3`, …), so ids stay unique for a given
- * input ordering. Pure; callers get reproducible ids by passing a
- * consistently-ordered list (`discoverPageFiles` already returns sorted paths).
- */
-export function assignPageIds(relPaths: readonly string[]): Map<string, string> {
-  const seenCounts = new Map<string, number>()
-  const assigned = new Map<string, string>()
-  for (const relPath of relPaths) {
-    const base = pageIdFromRelPath(relPath)
-    const seen = seenCounts.get(base) ?? 0
-    seenCounts.set(base, seen + 1)
-    assigned.set(relPath, seen === 0 ? base : `${base}-${seen + 1}`)
-  }
-  return assigned
-}
 
 export async function tryServeStudio(
   req: Request,
@@ -369,36 +230,23 @@ export async function tryServeStudio(
     try {
       const dir = resolveProjectDir(url.searchParams.get('dir'))
       const projectName = projectDisplayName(dir)
-      const pagesDir = join(dir, 'pages')
-      if (!existsSync(pagesDir)) return jsonResponse({ dir, projectName, pages: [], componentSources: {} })
-
-      const relPaths = discoverPageFiles(pagesDir)
-      const pageIds = assignPageIds(relPaths)
-
-      // One shared, workspace-wide ts-morph Project so a page's local
-      // component imports resolve to real files elsewhere in the tree —
-      // a fresh per-file Project (parsePageFile's own default) can't see
-      // across files at all. See createWorkspaceProject's doc comment.
-      const project = createWorkspaceProject(dir)
-      const componentSources: Record<string, ComponentSource> = {}
-
-      const pages = relPaths.map((relPath) => {
-        const file = join(pagesDir, ...relPath.split('/'))
-        const pageId = pageIds.get(relPath)!
-        const parsed = parsePageFile(file, dir, project)
-        Object.assign(componentSources, resolveComponentSources(project, file, dir, parsed))
-        return parsedPageToSitePage(parsed, {
-          pageId,
-          slug: pageId,
-          title: relPath.split('/').pop()!.replace(/\.tsx$/, ''),
-          resolveModuleId,
-          resolveTextProp,
-        })
-      })
-
+      const { pages, componentSources } = loadStudioPages(dir)
       return jsonResponse({ dir, projectName, pages, componentSources })
     } catch (err) {
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+    }
+  }
+
+  if (pathname === '/admin/api/studio/asset' && req.method === 'GET') {
+    try {
+      const dir = resolveProjectDir(url.searchParams.get('dir'))
+      const rawPath = url.searchParams.get('path')
+      if (!rawPath) return new Response('Not found', { status: 404 })
+      const response = await resolveStudioAssetResponse(dir, rawPath, req)
+      return response ?? new Response('Not found', { status: 404 })
+    } catch (err) {
+      console.error('[studio]', err)
+      return new Response('Not found', { status: 404 })
     }
   }
 
@@ -419,8 +267,8 @@ export async function tryServeStudio(
       // re-sync them (see `shifted` handling in fsCodemodAdapter).
       const touchedFiles = new Set<string>()
       for (const edit of ordered) {
-        const m = NODE_LOC_ID.exec(edit.nodeId)
-        if (m) touchedFiles.add(join(dir, m[1]))
+        const file = studioEditFile(dir, edit.nodeId)
+        if (file) touchedFiles.add(file)
       }
       const lineCountBefore = new Map<string, number>()
       for (const file of touchedFiles) {
@@ -528,6 +376,14 @@ export async function tryServeStudio(
         subdir: body.subdir,
         token: body.token,
       })
+      // Persist the display name + pagesDir override into the freshly-created
+      // project's meta.json. Safe to write unconditionally here: a successful
+      // runGithubImport means the target had no pre-existing `.studio/` dir
+      // (it refuses to import into one), so this always creates a fresh
+      // meta.json rather than clobbering a prior one.
+      const derivedDisplayName =
+        parseGithubRepoUrl(body.url)?.repo ?? result.dir.split(/[\\/]+/).filter(Boolean).pop() ?? 'Untitled'
+      writeProjectMeta(result.dir, { displayName: derivedDisplayName, pagesDir: body.pagesDir })
       return jsonResponse({ ok: true, ...result })
     } catch (err) {
       console.error('[studio]', err)
@@ -568,7 +424,7 @@ export async function tryServeStudio(
       if (existsSync(dir)) {
         return jsonResponse({ error: `A project named "${folder}" already exists.` }, { status: 409 })
       }
-      const pagesDir = join(dir, 'pages')
+      const pagesDir = projectPagesDir(dir)
       mkdirSync(pagesDir, { recursive: true })
       writeFileSync(join(pagesDir, 'Home.tsx'), starterPage('Home'))
       writeProjectMeta(dir, { displayName })
@@ -592,8 +448,8 @@ export async function tryServeStudio(
       if (!displayName) return badRequest('project name must not be empty')
       const dir = resolveProjectDir(body.dir)
       if (!existsSync(dir)) return jsonResponse({ error: 'Project not found.' }, { status: 404 })
-      writeProjectMeta(dir, { displayName })
-      const pagesDir = join(dir, 'pages')
+      renameProjectDisplayName(dir, displayName)
+      const pagesDir = projectPagesDir(dir)
       const pageCount = existsSync(pagesDir) ? discoverPageFiles(pagesDir).length : 0
       const project: StudioProjectSummary = { dir, name: displayName, pageCount }
       return jsonResponse({ project })
@@ -613,7 +469,7 @@ export async function tryServeStudio(
       const body = await readValidatedBody(req, CreatePageBodySchema)
       if (!body) return badRequest('invalid page body')
       const dir = resolveProjectDir(body.dir)
-      const pagesDir = join(dir, 'pages')
+      const pagesDir = projectPagesDir(dir)
       // A supplied name wins; otherwise auto-name `Page`, `Page2`, … (one-click).
       const componentName = pageComponentNameFromInput(body.name ?? '') || nextPageName(pagesDir)
       const relPath = `${componentName}.tsx`

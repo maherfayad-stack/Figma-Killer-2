@@ -11,7 +11,7 @@
  * wiring rather than growing into a god-module.
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import { EXCLUDED_WORKSPACE_DIR_NAMES, listWorkspaceFiles } from '@core/page-parser'
 
 /**
@@ -38,15 +38,18 @@ export function resolveProjectDir(requested: string | null | undefined): string 
   return listStudioProjects(root)[0]?.dir ?? root
 }
 
+/** File extensions a page file may use — `.tsx` (hand-authored) or `.jsx` (a plain-JS React repo, e.g. a GitHub import). */
+const PAGE_FILE_EXTENSIONS = ['.tsx', '.jsx'] as const
+
 /**
- * Recursively discovers every page file under a workspace's `pages/` directory
+ * Recursively discovers every page file under a workspace's pages directory
  * (Phase 7A — nested route/page dirs like `pages/marketing/Landing.tsx`, not
  * just a flat top-level scan), returning POSIX paths relative to `pagesDir`,
  * in deterministic sorted order (shared walk/exclusion rule with
  * `collectWorkspaceFiles` via `listWorkspaceFiles`).
  */
 export function discoverPageFiles(pagesDir: string): string[] {
-  return listWorkspaceFiles(pagesDir).filter((relPath) => relPath.endsWith('.tsx'))
+  return listWorkspaceFiles(pagesDir).filter((relPath) => PAGE_FILE_EXTENSIONS.some((ext) => relPath.endsWith(ext)))
 }
 
 /** One on-disk studio project — an immediate subfolder of `studio-workspace/`. */
@@ -55,46 +58,87 @@ export interface StudioProjectSummary {
   dir: string
   /** Display name = the folder name. */
   name: string
-  /** Number of `.tsx` files discovered under `<dir>/pages/` (0 when it has none). */
+  /** Number of page files discovered under the project's pages dir (0 when it has none). */
   pageCount: number
 }
 
-/** `.tsx` page count for a project directory, 0 when it has no `pages/` dir at all. */
+/** Page count for a project directory, 0 when its (possibly overridden) pages dir doesn't exist. */
 function pageCountFor(dir: string): number {
-  const pagesDir = join(dir, 'pages')
+  const pagesDir = projectPagesDir(dir)
   return existsSync(pagesDir) ? discoverPageFiles(pagesDir).length : 0
 }
 
 /**
- * Per-project display-name sidecar, alongside the existing `.studio/boards.json`
- * and `.studio/framework.json` conventions. Decouples the user-facing project
- * name from the folder slug: the folder is a stable identifier assigned once at
- * creation time (never renamed — renaming a directory mid-session would
- * invalidate any already-open `studioWorkspaceDir` pointer), while the display
- * name can change freely by just rewriting this small JSON file.
+ * Per-project display-name + page-source sidecar, alongside the existing
+ * `.studio/boards.json` and `.studio/framework.json` conventions.
+ *
+ * `displayName` decouples the user-facing project name from the folder slug:
+ * the folder is a stable identifier assigned once at creation time (never
+ * renamed — renaming a directory mid-session would invalidate any
+ * already-open `studioWorkspaceDir` pointer), while the display name can
+ * change freely by just rewriting this small JSON file.
+ *
+ * `pagesDir` overrides where the project's pages live on disk — a
+ * project-root-relative POSIX path (e.g. `'src/screens'`), for a real-world
+ * repo (a GitHub import, typically) whose screens don't sit at the
+ * hand-authored default of `<dir>/pages`. Optional; `projectPagesDir` is the
+ * only place that should read it. See its doc comment for the containment
+ * guard.
+ *
+ * `previewLocale` (§7.4) is the `preferredKey` the page-parser's static
+ * evaluator uses when it resolves a dictionary indexed by a non-static key
+ * (`translations[lang]`) — e.g. `"en"` picks the English branch instead of
+ * falling back to the object's first key. Optional; unset means "first key in
+ * source order", which is also what an unconfigured project falls back to via
+ * `projectPreviewLocale` below.
  */
 interface StudioProjectMeta {
   displayName: string
+  pagesDir?: string
+  previewLocale?: string
 }
 
 function projectMetaFile(dir: string): string {
   return join(dir, '.studio', 'meta.json')
 }
 
-/** Reads `.studio/meta.json`, or `null` when absent/unparsable (falls back to the folder name). */
-function readProjectMeta(dir: string): StudioProjectMeta | null {
+/**
+ * `pagesDir` override guard: a non-empty string, never absolute, never
+ * containing a `..` segment (on either `/` or `\` separators — the value is
+ * hand-editable JSON, so it can't be trusted to already be POSIX-clean).
+ */
+function isSafePagesDirOverride(value: string): boolean {
+  if (value.trim().length === 0 || isAbsolute(value)) return false
+  return !value.split(/[\\/]+/).some((segment) => segment === '..')
+}
+
+/**
+ * Reads `.studio/meta.json`, or `null` when absent/unparsable. Each field is
+ * accepted independently and tolerantly — a hand-written meta carrying ONLY
+ * `pagesDir` (no `displayName` at all) still yields `{ pagesDir }` here, so
+ * `projectPagesDir`'s override isn't silently lost just because the file
+ * doesn't also set a display name. Callers reading `displayName` already
+ * treat a missing value as "fall back to the folder name"
+ * (`projectDisplayName`), so returning a partial object changes nothing for
+ * them.
+ */
+function readProjectMeta(dir: string): Partial<StudioProjectMeta> | null {
   const file = projectMetaFile(dir)
   if (!existsSync(file)) return null
   try {
     const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'))
-    if (
-      parsed && typeof parsed === 'object' &&
-      'displayName' in parsed && typeof parsed.displayName === 'string' &&
-      parsed.displayName.trim().length > 0
-    ) {
-      return { displayName: parsed.displayName }
+    if (!parsed || typeof parsed !== 'object') return null
+    const meta: Partial<StudioProjectMeta> = {}
+    if ('displayName' in parsed && typeof parsed.displayName === 'string' && parsed.displayName.trim().length > 0) {
+      meta.displayName = parsed.displayName
     }
-    return null
+    if ('pagesDir' in parsed && typeof parsed.pagesDir === 'string' && isSafePagesDirOverride(parsed.pagesDir)) {
+      meta.pagesDir = parsed.pagesDir
+    }
+    if ('previewLocale' in parsed && typeof parsed.previewLocale === 'string' && parsed.previewLocale.trim().length > 0) {
+      meta.previewLocale = parsed.previewLocale
+    }
+    return meta
   } catch {
     return null
   }
@@ -107,9 +151,54 @@ export function writeProjectMeta(dir: string, meta: StudioProjectMeta): void {
   writeFileSync(file, JSON.stringify(meta, null, 2))
 }
 
-/** The project's display name — `.studio/meta.json` if present, else the folder name. */
+/**
+ * Rewrites ONLY the display name in `.studio/meta.json`, preserving whatever
+ * else is already there (a `pagesDir` override from a GitHub import, most
+ * importantly — `writeProjectMeta` itself has no merge semantics, it writes
+ * exactly the object it's given, so a naive `writeProjectMeta(dir, {
+ * displayName })` on rename would silently erase an imported project's page
+ * source override). Used by the rename endpoint.
+ */
+export function renameProjectDisplayName(dir: string, displayName: string): void {
+  writeProjectMeta(dir, { ...(readProjectMeta(dir) ?? {}), displayName })
+}
+
+/**
+ * The project's display name — `.studio/meta.json` if present, else the folder
+ * name. Uses `basename` rather than splitting on `/`: `dir` is an absolute
+ * platform path, so a manual POSIX split yields the whole path back on Windows
+ * instead of the folder name.
+ */
 export function projectDisplayName(dir: string): string {
-  return readProjectMeta(dir)?.displayName ?? dir.split('/').filter(Boolean).pop() ?? dir
+  return readProjectMeta(dir)?.displayName ?? basename(dir) ?? dir
+}
+
+/**
+ * Absolute pages dir for a project: `.studio/meta.json`'s `pagesDir` override
+ * when present and safe, else the default `<dir>/pages`. Belt-and-braces
+ * containment check even though `readProjectMeta` already rejects absolute
+ * paths and `..` segments — a hand-edited `meta.json` gets no other gate
+ * before this value is joined onto a real filesystem path.
+ */
+export function projectPagesDir(dir: string): string {
+  const override = readProjectMeta(dir)?.pagesDir
+  const pagesDir = join(dir, override ?? 'pages')
+  const root = resolve(dir)
+  const resolved = resolve(pagesDir)
+  if (resolved !== root && !resolved.startsWith(root + sep)) {
+    throw new Error(`Resolved pages dir "${resolved}" escapes project directory "${root}"`)
+  }
+  return pagesDir
+}
+
+/**
+ * The project's `previewLocale` (§7.4) — `.studio/meta.json`'s value when
+ * present, else `undefined` (the evaluator's own fallback is then "first key
+ * in source order", which `staticEval.ts`'s `preferredKey` option already
+ * implements when left unset).
+ */
+export function projectPreviewLocale(dir: string): string | undefined {
+  return readProjectMeta(dir)?.previewLocale
 }
 
 /**

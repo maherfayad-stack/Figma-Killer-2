@@ -36,25 +36,38 @@ export type ComponentSource =
   | { kind: 'package'; specifier: string }
 
 /**
- * Builds one ts-morph `Project` covering every `.ts`/`.tsx` file under
- * `workspaceRoot`, excluding `EXCLUDED_WORKSPACE_DIR_NAMES` (never add
+ * Builds one ts-morph `Project` covering every `.ts`/`.tsx`/`.js`/`.jsx` file
+ * under `workspaceRoot`, excluding `EXCLUDED_WORKSPACE_DIR_NAMES` (never add
  * `node_modules`/build output as if it were app source). Loads the
  * workspace's own `tsconfig.json` when it has one, so that workspace's own
  * `paths` aliases resolve too; falls back to ts-morph's defaults otherwise
  * (a workspace with no tsconfig simply has no aliases to resolve — every
  * non-relative import in it is a package import).
+ *
+ * `compilerOptions: { allowJs: true }` is passed explicitly (not just relied
+ * on via a workspace tsconfig) so ts-morph parses `.jsx`/`.js` files at all —
+ * a real-world React repo (the common GitHub-import case) is plain JS more
+ * often than not. ts-morph merges tsconfig-derived compiler options first and
+ * the explicit `compilerOptions` last (explicit wins), so a workspace
+ * tsconfig that sets `allowJs: false` cannot turn this back off. Combined
+ * with `skipAddingFilesFromTsConfig: true` (never let the tsconfig's own
+ * `include`/`exclude` decide which files ts-morph adds — `addSourceFilesAtPaths`
+ * below is the single source of truth for that), the workspace's tsconfig
+ * only ever contributes path-alias resolution, never file selection or the
+ * JS-parsing toggle.
  */
 export function createWorkspaceProject(workspaceRoot: string): Project {
   const tsConfigFilePath = path.join(workspaceRoot, 'tsconfig.json')
   const project = new Project({
     useInMemoryFileSystem: false,
     skipAddingFilesFromTsConfig: true,
+    compilerOptions: { allowJs: true },
     ...(existsSync(tsConfigFilePath) ? { tsConfigFilePath } : {}),
   })
 
   const root = path.resolve(workspaceRoot).split(path.sep).join('/')
   project.addSourceFilesAtPaths([
-    `${root}/**/*.{ts,tsx}`,
+    `${root}/**/*.{ts,tsx,js,jsx}`,
     ...[...EXCLUDED_WORKSPACE_DIR_NAMES].map((name) => `!${root}/**/${name}/**`),
   ])
   return project

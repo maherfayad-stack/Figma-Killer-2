@@ -3,7 +3,7 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { setJsxProp } from '../../ast-codemods'
-import { parsePageFile } from '../parsePageFile'
+import { parsePageFile, STUDIO_ASSET_SENTINEL } from '../parsePageFile'
 import type { ParsedNode, ParsedPage } from '../types'
 
 let tmpDir: string
@@ -18,6 +18,14 @@ afterEach(() => {
 
 function writeFixture(name: string, source: string): string {
   const filePath = path.join(tmpDir, name)
+  fs.writeFileSync(filePath, source, 'utf8')
+  return filePath
+}
+
+/** Like `writeFixture`, but supports a nested relative path (mkdir -p). */
+function writeNestedFixture(relPath: string, source: string): string {
+  const filePath = path.join(tmpDir, ...relPath.split('/'))
+  fs.mkdirSync(path.dirname(filePath), { recursive: true })
   fs.writeFileSync(filePath, source, 'utf8')
   return filePath
 }
@@ -294,6 +302,176 @@ describe('parsePageFile', () => {
     const card = byName(page, 'Card')
     expect(card.locked).toBe(true)
     expect(card.text).toBeUndefined()
+  })
+
+  it('captures a static <svg> verbatim into props.svg and does not recurse into its children', () => {
+    const source = [
+      'export default function Page() {',
+      '  return (',
+      '    <svg className="icon" viewBox="0 0 24 24">',
+      '      <path d="M1 2h3" />',
+      '      <circle cx="1" cy="2" r="3" />',
+      '    </svg>',
+      '  )',
+      '}',
+      '',
+    ].join('\n')
+    const file = writeFixture('static-svg.tsx', source)
+
+    const page = parsePageFile(file, tmpDir)
+
+    expect(page.rootIds.length).toBe(1)
+    const svg = page.nodes[page.rootIds[0]]!
+    expect(svg.name).toBe('svg')
+    expect(svg.kind).toBe('element')
+    expect(svg.children).toEqual([])
+    expect(svg.locked).toBe(false)
+    expect(svg.lockReason).toBeUndefined()
+    expect(svg.props.svg).toContain('<path')
+    // className is still captured as a normal literal prop (§4/§6 need it).
+    expect(svg.props.className).toBe('icon')
+    // <path>/<circle> never become their own ParsedNodes.
+    expect(Object.values(page.nodes).some((n) => n.name === 'path')).toBe(false)
+    expect(Object.values(page.nodes).some((n) => n.name === 'circle')).toBe(false)
+  })
+
+  it('locks a dynamic <svg> (embedded JSX expression) and drops the unusable svg prop', () => {
+    const source = [
+      'export default function Page({ pct }: { pct: number }) {',
+      '  const C = 100',
+      '  return (',
+      '    <svg viewBox="0 0 24 24">',
+      '      <circle strokeDashoffset={C * (1 - pct / 100)} />',
+      '    </svg>',
+      '  )',
+      '}',
+      '',
+    ].join('\n')
+    const file = writeFixture('dynamic-svg.tsx', source)
+
+    const page = parsePageFile(file, tmpDir)
+
+    const svg = page.nodes[page.rootIds[0]]!
+    expect(svg.name).toBe('svg')
+    expect(svg.locked).toBe(true)
+    expect(svg.lockReason).toBe('dynamic SVG')
+    expect(svg.props.svg).toBeUndefined()
+    expect(svg.children).toEqual([])
+  })
+
+  it('resolves a default-imported image identifier to a sentinel-prefixed workspace-relative path (§5.1)', () => {
+    const file = writeNestedFixture(
+      'src/screens/Home.jsx',
+      [
+        "import esimChip from '../assets/esim-flow/figma/esim-chip.png'",
+        'export default function Home() {',
+        '  return <img src={esimChip} alt="chip" />',
+        '}',
+        '',
+      ].join('\n'),
+    )
+
+    const page = parsePageFile(file, tmpDir)
+
+    const img = byName(page, 'img')
+    expect(img.props.src).toBe(`${STUDIO_ASSET_SENTINEL}src/assets/esim-flow/figma/esim-chip.png`)
+    // Untouched literal prop still captured normally alongside it.
+    expect(img.props.alt).toBe('chip')
+  })
+
+  it('resolves the same imported image identifier used on multiple elements', () => {
+    const file = writeNestedFixture(
+      'src/screens/Home.jsx',
+      [
+        "import esimChip from '../assets/esim-chip.png'",
+        'export default function Home() {',
+        '  return (',
+        '    <div>',
+        '      <img src={esimChip} />',
+        '      <img src={esimChip} />',
+        '    </div>',
+        '  )',
+        '}',
+        '',
+      ].join('\n'),
+    )
+
+    const page = parsePageFile(file, tmpDir)
+    const imgs = Object.values(page.nodes).filter((n) => n.name === 'img')
+    expect(imgs).toHaveLength(2)
+    for (const img of imgs) {
+      expect(img.props.src).toBe(`${STUDIO_ASSET_SENTINEL}src/assets/esim-chip.png`)
+    }
+  })
+
+  it('does not resolve a non-image default import (e.g. a local component) to a sentinel', () => {
+    const file = writeNestedFixture(
+      'src/screens/Home.jsx',
+      [
+        "import Header from '../components/Header'",
+        'export default function Home() {',
+        '  return <Header logo={Header} />',
+        '}',
+        '',
+      ].join('\n'),
+    )
+
+    const page = parsePageFile(file, tmpDir)
+    const header = byName(page, 'Header')
+    expect(header.props.logo).toBeUndefined()
+  })
+
+  it('does not resolve an identifier that is not imported at all', () => {
+    const file = writeFixture(
+      'no-import.tsx',
+      [
+        'export default function Page() {',
+        '  const localVar = "x"',
+        '  return <img src={localVar} />',
+        '}',
+        '',
+      ].join('\n'),
+    )
+
+    const page = parsePageFile(file, tmpDir)
+    const img = byName(page, 'img')
+    expect(img.props.src).toBeUndefined()
+  })
+
+  it('drops (does not sentinel) an image import that resolves OUTSIDE the workspace root', () => {
+    // tmpDir/escape.tsx importing '../outside.png' resolves to a path one
+    // level above tmpDir itself — outside the workspace root passed as appDir.
+    const file = writeFixture(
+      'escape.tsx',
+      [
+        "import outside from '../outside.png'",
+        'export default function Page() {',
+        '  return <img src={outside} />',
+        '}',
+        '',
+      ].join('\n'),
+    )
+
+    const page = parsePageFile(file, tmpDir)
+    const img = byName(page, 'img')
+    expect(img.props.src).toBeUndefined()
+  })
+
+  it('does not resolve a bare/aliased (non-relative) image specifier — out of scope for §5.1', () => {
+    const file = writeFixture(
+      'aliased.tsx',
+      [
+        "import icon from '@/assets/icon.png'",
+        'export default function Page() {',
+        '  return <img src={icon} />',
+        '}',
+        '',
+      ].join('\n'),
+    )
+
+    const page = parsePageFile(file, tmpDir)
+    const img = byName(page, 'img')
+    expect(img.props.src).toBeUndefined()
   })
 
   it('returns an empty page for a file with no component/JSX', () => {

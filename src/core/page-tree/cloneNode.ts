@@ -16,7 +16,7 @@ import type { PageNode } from './pageNode'
  * the source:
  *   - `props` — shallow-copied (prop values are content, mutated via replace).
  *   - `breakpointOverrides` — deep-copied one level (per-breakpoint bags).
- *   - `inlineStyles` / `propBindings` / `dynamicBindings` — copied when present.
+ *   - `inlineStyles` / `propBindings` / `dynamicBindings` / `resolution` — copied when present.
  *   - `children` — remapped through `idMap`; ids absent from the map are dropped
  *     (a self-contained subtree has every child in the map, so for well-formed
  *     trees this is a no-op; dangling ids are corrupt data and pruned).
@@ -68,6 +68,7 @@ export function cloneNodeWithRemap(
       Object.entries(node.dynamicBindings).map(([k, v]) => [k, { ...v }]),
     )
   }
+  if (node.resolution) cloned.resolution = { ...node.resolution }
 
   return cloned
 }

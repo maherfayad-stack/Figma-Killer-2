@@ -5,6 +5,19 @@
  * a location is 1-based line, 1-based column of the JSX element's tag-name
  * identifier start — the character immediately after `<`.
  */
+import type { ArrowFunction, FunctionDeclaration, FunctionExpression } from 'ts-morph'
+
+/**
+ * A component's own function node — a `function Foo() {}` declaration, an
+ * arrow (`const Foo = () => {}`), or a function expression assigned to a
+ * `const`. Lives here (not in `parsePageFile.ts`) so `staticEval.ts` can
+ * depend on the type without importing the parser module itself — the parser
+ * imports the evaluator's runtime exports, so a reverse type-only edge back
+ * from parsePageFile would be a needless cycle risk. `parsePageFile.ts`
+ * re-exports this for its existing consumers (`inlineLocalComponents.ts`, the
+ * barrel).
+ */
+export type FunctionLike = ArrowFunction | FunctionDeclaration | FunctionExpression
 
 export interface NodeLoc {
   /** appDir-relative POSIX path. */
@@ -48,6 +61,23 @@ export interface ParsedNode {
    * insignificant-whitespace collapsing).
    */
   text?: string
+  /**
+   * Present only when a value in `props`/`inlineStyles`/`text` came from §7's
+   * static evaluator resolving a non-literal expression (`{t.homepage.greeting}`,
+   * a cross-file `const`, a hook's traced provider value, a dictionary index
+   * with a dynamic key, a resolvable pure-arrow call, …) rather than a literal
+   * already sitting in the source. `source` is the short original expression
+   * text (e.g. `"t.homepage.greeting"`); `note` records a resolution choice
+   * worth surfacing in the editor (e.g. picking a locale/branch for a
+   * dynamically-indexed dictionary — see `staticEval.ts`'s Tier B.4).
+   *
+   * A node carrying `resolution` is always `locked` with a
+   * `lockReason: 'value from <source>'` — writing an edited literal back over
+   * `{t.homepage.greeting}` would silently destroy the original binding in
+   * the user's real source file, so the value is read-only, same principle as
+   * `locked`/`lockReason` above.
+   */
+  resolution?: { source: string; note?: string }
 }
 
 export interface ParsedPage {

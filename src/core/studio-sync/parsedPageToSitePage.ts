@@ -7,6 +7,7 @@
  * CRITICAL Instatic rule: `rootNodeId` must point at a `base.body` node, so
  * this converter synthesises one and hangs the parsed root nodes under it.
  */
+import { CUSTOM_HTML_TAG_VALUE, htmlTagControl } from '@modules/base/utils/htmlTag'
 import type { ParsedPage, ParsedNode } from '../page-parser'
 import type { Page, PageNode } from '../page-tree'
 
@@ -16,8 +17,12 @@ export interface ParsedPageToSitePageOptions {
   title: string
   /** Maps a parsed node to an Instatic moduleId. Pure/injected so this converter
    *  stays decoupled from the design-system list. e.g. component "Button" -> "alm.Button",
-   *  element "div" -> "base.container". */
-  resolveModuleId: (node: Pick<ParsedNode, 'kind' | 'name'>) => string
+   *  element "div" -> "base.container". Also carries `children` so the resolver
+   *  can tell a text-only tag (`<p>Hello</p>`) apart from a text-ish tag that
+   *  actually wraps element/component children (`<p><Icon/></p>`) — the latter
+   *  must resolve to `base.container` or those children would be silently
+   *  dropped by the `base.text` leaf. */
+  resolveModuleId: (node: Pick<ParsedNode, 'kind' | 'name' | 'children'>) => string
   /**
    * Maps a resolved moduleId to the single prop key its module's
    * `inlineTextEdit` declares (`base.text` -> 'text', `base.button` -> 'label',
@@ -28,6 +33,22 @@ export interface ParsedPageToSitePageOptions {
    */
   resolveTextProp: (moduleId: string) => string | null
 }
+
+/**
+ * The built-in tag choices `base.container`'s `tag` select control offers
+ * (read off the shared control rather than re-declaring the list, so this
+ * stays in sync with `base.loop`'s identical picker). Any other tag still
+ * gets preserved, via the control's 'custom' escape hatch.
+ */
+const BUILTIN_CONTAINER_TAGS: ReadonlySet<string> = (() => {
+  const control = htmlTagControl()
+  const options = control.type === 'select' ? control.options : []
+  return new Set(
+    options
+      .map((o) => o.value)
+      .filter((value): value is string => typeof value === 'string' && value !== CUSTOM_HTML_TAG_VALUE),
+  )
+})()
 
 export function parsedPageToSitePage(parsed: ParsedPage, opts: ParsedPageToSitePageOptions): Page {
   const bodyId = `${opts.pageId}:body`
@@ -43,7 +64,7 @@ export function parsedPageToSitePage(parsed: ParsedPage, opts: ParsedPageToSiteP
 
   const nodes: Record<string, PageNode> = { [bodyId]: bodyNode }
   for (const [id, node] of Object.entries(parsed.nodes)) {
-    const moduleId = opts.resolveModuleId({ kind: node.kind, name: node.name })
+    const moduleId = opts.resolveModuleId({ kind: node.kind, name: node.name, children: node.children })
     const props: Record<string, string | number | boolean> = { ...node.props }
 
     // Map captured element text onto the module's declared text prop — but
@@ -53,6 +74,22 @@ export function parsedPageToSitePage(parsed: ParsedPage, opts: ParsedPageToSiteP
       const textProp = opts.resolveTextProp(moduleId)
       if (textProp !== null && !(textProp in props)) {
         props[textProp] = node.text
+      }
+    }
+
+    // A promoted-to-container (or a genuinely container-tagged) element must
+    // keep rendering as its real host tag, or `base.container`'s default
+    // `tag:'div'` would silently turn an `<h1>`/`<li>`/`<section>` into a
+    // `<div>`. `div` needs no override — it's the module's own default.
+    if (moduleId === 'base.container' && node.kind === 'element' && !('tag' in props)) {
+      const tag = node.name.toLowerCase()
+      if (tag !== 'div') {
+        if (BUILTIN_CONTAINER_TAGS.has(tag)) {
+          props.tag = tag
+        } else {
+          props.tag = CUSTOM_HTML_TAG_VALUE
+          props.customTag = tag
+        }
       }
     }
 
@@ -74,6 +111,10 @@ export function parsedPageToSitePage(parsed: ParsedPage, opts: ParsedPageToSiteP
       // inline styles (`NodeRenderer` reads `node.inlineStyles`). Without this
       // an authored flex/gap/etc. layout is invisible on the board.
       ...(node.inlineStyles ? { inlineStyles: node.inlineStyles } : {}),
+      // §7 — carry the static evaluator's provenance through so the editor can
+      // show WHY a resolved node is locked and which branch/note it chose.
+      // Follows the exact `locked`/`lockReason` pattern above.
+      ...(node.resolution ? { resolution: node.resolution } : {}),
     }
   }
 
