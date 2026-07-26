@@ -29,7 +29,8 @@ import {
   type SourceFile,
 } from 'ts-morph'
 import type { FunctionLike, NodeLoc, ParsedNode, ParsedPage } from './types'
-import { createEvalScope, evaluateExpression, type EvalScope, type StaticEvalOptions, type StaticValue } from './staticEval'
+import { createEvalScope, type StaticEvalOptions } from './staticEval'
+import { tryResolveExpression, withResolutionLock, type PageEvalContext, type Resolution } from './resolutionLock'
 
 type JsxOpeningLike = JsxElement | JsxSelfClosingElement
 
@@ -52,66 +53,10 @@ interface ParseContext {
    * existing caller/test: `extractProps`/`extractInlineStyles`/
    * `extractSingleText` keep their literal-only fast path unconditionally and
    * simply skip the evaluator fallback when this is absent — zero behaviour
-   * change, zero cost, for a page that only uses literals.
+   * change, zero cost, for a page that only uses literals. See
+   * `./resolutionLock` for the wiring glue this feeds.
    */
-  eval?: { scope: EvalScope; options: StaticEvalOptions }
-}
-
-/** A resolved non-literal value, tracked alongside `props`/`inlineStyles`/`text` so `processElement` can lock the node and record `ParsedNode.resolution` — see its doc comment in `./types`. */
-interface Resolution {
-  source: string
-  note?: string
-}
-
-const MAX_RESOLUTION_SOURCE_LENGTH = 80
-
-/** Caps + collapses whitespace in an expression's source text for a `lockReason`/`resolution.source` message — a resolved template literal can otherwise be arbitrarily long. */
-function shortenSource(text: string): string {
-  const collapsed = text.replace(/\s+/g, ' ').trim()
-  return collapsed.length > MAX_RESOLUTION_SOURCE_LENGTH
-    ? `${collapsed.slice(0, MAX_RESOLUTION_SOURCE_LENGTH - 1)}…`
-    : collapsed
-}
-
-/**
- * Attempts §7's evaluator fallback for one expression node, only when the
- * caller opted in (`ctx.eval` present). Returns `undefined` on any miss
- * (unresolved, or opted out) so callers can keep falling through to their
- * existing "skip it" behaviour unchanged.
- */
-function tryResolveExpression(expr: Node, ctx: ParseContext): { value: string | number | boolean; note?: string } | undefined {
-  if (!ctx.eval) return undefined
-  const result: StaticValue = evaluateExpression(expr, ctx.eval.scope, ctx.eval.options)
-  if (result.kind !== 'literal' || result.value === null) return undefined
-  return { value: result.value, note: result.note }
-}
-
-/**
- * Combines a node's STRUCTURAL lock (inherited/`.map`/ternary/spread/svg —
- * `structuralLocked`/`structuralReason`, exactly what `processElement` always
- * computed before §7) with any §7 resolutions captured while extracting its
- * props/style/text. A resolved value is DERIVED — see `ParsedNode.resolution`'s
- * doc comment for why the node must be locked — so ANY resolution locks the
- * node even if it wasn't already; a node that was ALREADY locked keeps its
- * original (more specific) reason and just gains the `resolution` metadata.
- * With no resolutions at all (the common, evaluator-off case) this returns
- * EXACTLY `{ locked: structuralLocked, lockReason?: structuralReason }` —
- * byte-identical to what every call site built manually before §7.
- */
-function withResolutionLock(
-  structuralLocked: boolean,
-  structuralReason: string | undefined,
-  resolutions: Resolution[],
-): { locked: boolean; lockReason?: string; resolution?: NonNullable<ParsedNode['resolution']> } {
-  const primary = resolutions[0]
-  if (!primary) {
-    return { locked: structuralLocked, ...(structuralReason ? { lockReason: structuralReason } : {}) }
-  }
-  const resolution = { source: shortenSource(primary.source), ...(primary.note ? { note: primary.note } : {}) }
-  if (structuralLocked) {
-    return { locked: true, ...(structuralReason ? { lockReason: structuralReason } : {}), resolution }
-  }
-  return { locked: true, lockReason: `value from ${resolution.source}`, resolution }
+  eval?: PageEvalContext
 }
 
 const DYNAMIC_LOCK_REASON = 'dynamic — rendered in code'
@@ -551,7 +496,7 @@ function extractProps(
       // `ctx.eval` is absent. The `style={{…}}` object is captured separately
       // by `extractInlineStyles` so the canvas can render the authored
       // inline styles.
-      const resolved = tryResolveExpression(expression, ctx)
+      const resolved = tryResolveExpression(expression, ctx.eval)
       if (resolved) {
         result[name] = resolved.value
         resolutions.push({ source: expression.getText(), note: resolved.note })
@@ -612,7 +557,7 @@ function extractInlineStyles(
     // through to §7's evaluator — e.g. a `const accent = 'var(--text-link-default)'`
     // reference, or `width: \`${pct}%\``. A style value is never boolean, so a
     // resolved boolean (unlike for `extractProps`) isn't a usable style value.
-    const resolved = tryResolveExpression(valueNode, ctx)
+    const resolved = tryResolveExpression(valueNode, ctx.eval)
     if (resolved && typeof resolved.value !== 'boolean') {
       styles[key] = resolved.value
       resolutions.push({ source: valueNode.getText(), note: resolved.note })
@@ -651,7 +596,7 @@ function extractSingleText(children: Node[], ctx: ParseContext): { text: string 
     const expression = only.getExpression()
     if (expression !== undefined) {
       if (Node.isStringLiteral(expression)) return { text: expression.getLiteralValue() }
-      const resolved = tryResolveExpression(expression, ctx)
+      const resolved = tryResolveExpression(expression, ctx.eval)
       if (resolved) {
         return { text: String(resolved.value), resolution: { source: expression.getText(), note: resolved.note } }
       }
