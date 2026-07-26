@@ -83,3 +83,11 @@ docs/superpowers/
 .factory/
 .trae/
 .windsurf/
+.gstack/
+.playwright-mcp/
+.turbo/
+.studio/daemon.json
+.studio/vite/
+
+# Playwright/E2E run output — generated, not source
+test-results/
