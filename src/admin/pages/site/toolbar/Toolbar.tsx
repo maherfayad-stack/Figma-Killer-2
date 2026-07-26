@@ -27,7 +27,7 @@
  * - All interactive children have 44×44px minimum touch targets
  */
 
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { pluginRuntime } from '@core/plugins/runtime'
 import type { RegisteredPluginToolbarButton } from '@core/plugin-sdk'
 import { AccountMenuButton } from '@admin/shared/AccountMenuButton'
@@ -42,6 +42,9 @@ import { cn } from '@ui/cn'
 import type { AdminWorkspace } from '@admin/workspace'
 import styles from './Toolbar.module.css'
 import { getErrorMessage } from '@core/utils/errorMessage'
+import { useAdminUi } from '@admin/state/adminUi'
+import { renameStudioProject } from '@admin/pages/dashboard/hooks/useStudioProjects'
+import { pushToast } from '@ui/components/Toast'
 
 interface ToolbarProps {
   /** Site name shown in the brand position. Null renders the loading skeleton. */
@@ -75,6 +78,83 @@ type PluginButtonStatus = {
 
 function pluginButtonKey(button: RegisteredPluginToolbarButton): string {
   return `${button.pluginId}:${button.id}`
+}
+
+/**
+ * Studio-only subordinate label next to the brand, showing the active
+ * project's DISPLAY name (from `.studio/meta.json` — never the "Studio"
+ * product wordmark `siteName` carries). Double-click swaps in an inline
+ * `<input>`; Enter/blur commits via `renameStudioProject`, Escape reverts.
+ * Renders nothing until `fsCodemodAdapter.loadSite` has populated
+ * `adminUi.studioProject`.
+ */
+function StudioProjectLabel() {
+  const project = useAdminUi((s) => s.studioProject)
+  const setStudioProject = useAdminUi((s) => s.setStudioProject)
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
+  const committingRef = useRef(false)
+
+  if (!project) return null
+
+  function startEditing() {
+    setDraft(project.name)
+    committingRef.current = false
+    setEditing(true)
+  }
+
+  async function commit() {
+    if (committingRef.current) return
+    committingRef.current = true
+    setEditing(false)
+    const previous = project
+    const name = draft.trim()
+    if (!name || name === previous.name) return
+    setStudioProject({ dir: previous.dir, name })
+    try {
+      const updated = await renameStudioProject(previous.dir, name)
+      setStudioProject({ dir: updated.dir, name: updated.name })
+    } catch (err) {
+      console.error('[Toolbar] rename project failed:', err)
+      setStudioProject(previous)
+      pushToast({
+        kind: 'error',
+        title: 'Could not rename project',
+        body: getErrorMessage(err, 'Unknown project error'),
+      })
+    }
+  }
+
+  if (editing) {
+    return (
+      <input
+        autoFocus
+        className={styles.studioProjectNameInput}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onFocus={(e) => e.currentTarget.select()}
+        onBlur={() => void commit()}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') e.currentTarget.blur()
+          else if (e.key === 'Escape') {
+            committingRef.current = true
+            setEditing(false)
+          }
+        }}
+        aria-label="Project name"
+      />
+    )
+  }
+
+  return (
+    <span
+      className={styles.studioProjectName}
+      onDoubleClick={startEditing}
+      title="Double-click to rename"
+    >
+      {project.name}
+    </span>
+  )
 }
 
 export function Toolbar({
@@ -197,6 +277,8 @@ export function Toolbar({
             )}
           </Link>
         )}
+
+        {section === 'site' && isStudioMode() && <StudioProjectLabel />}
 
         <div className={styles.workspaceToolbarItems}>
           {pluginButtons.map((button) => {

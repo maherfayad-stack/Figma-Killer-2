@@ -89,6 +89,19 @@ interface AdminUiState {
    */
   activeLivePath: string | null
   setActiveLivePath: (path: string | null) => void
+
+  /**
+   * The active Studio project's directory + DISPLAY name (from
+   * `.studio/meta.json`, distinct from `siteName` — the "Studio" product
+   * wordmark never changes per-project). `null` outside studio mode and
+   * before the first `/admin/api/studio/load` response lands.
+   *
+   * Populated by `fsCodemodAdapter.loadSite`; the toolbar's inline rename UI
+   * writes through it optimistically, then reconciles with the server's
+   * response (or reverts on failure).
+   */
+  studioProject: { dir: string; name: string } | null
+  setStudioProject: (project: { dir: string; name: string } | null) => void
 }
 
 /**
@@ -151,4 +164,7 @@ export const useAdminUi = create<AdminUiState>((set) => ({
 
   activeLivePath: null,
   setActiveLivePath: (path) => set({ activeLivePath: path }),
+
+  studioProject: null,
+  setStudioProject: (project) => set({ studioProject: project }),
 }))

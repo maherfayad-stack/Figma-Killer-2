@@ -67,6 +67,47 @@
     user-select: none;
 }
 
+/* Studio-only subordinate label next to the brand — the active project's
+ * DISPLAY name (`.studio/meta.json`), editable via double-click. Muted so it
+ * reads as secondary to the site brand, not a second heading. */
+.studioProjectName {
+    display: inline-flex;
+    align-items: center;
+    height: 28px;
+    max-width: 160px;
+    margin-right: var(--space-3xs);
+    padding: 0 var(--space-xs);
+    overflow: hidden;
+    color: var(--text-subtle);
+    font-size: var(--text-xs);
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex-shrink: 0;
+    border-radius: var(--radius-sm);
+    cursor: default;
+}
+
+.studioProjectNameInput {
+    height: 28px;
+    max-width: 160px;
+    margin-right: var(--space-3xs);
+    padding: 0 var(--space-xs);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface-2);
+    color: var(--text);
+    font-size: var(--text-xs);
+    font-weight: 600;
+    font-family: inherit;
+    flex-shrink: 0;
+}
+
+.studioProjectNameInput:focus-visible {
+    outline: 2px solid var(--accent-2);
+    outline-offset: 1px;
+}
+
 .adminLink {
     display: inline-flex;
     align-items: center;

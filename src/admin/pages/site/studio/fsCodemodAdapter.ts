@@ -35,6 +35,7 @@ import { FrameworkSettingsSchema } from '@core/framework-schema'
 import { createDefaultSiteDocument } from '@site/store/slices/site/defaults'
 import { registry } from '@core/module-engine'
 import { requestCmsSiteReload } from '@admin/state/adminEvents'
+import { useAdminUi } from '@admin/state/adminUi'
 import { getStudioWorkspaceDir } from './studioWorkspaceDir'
 
 /** Node ids from page-parser are `relFile:line:col` — a decodable source location. */
@@ -60,6 +61,8 @@ export type ComponentSource = Static<typeof ComponentSourceSchema>
 /** GET /admin/api/studio/load — every source-derived page in the workspace. */
 const StudioLoadResponseSchema = Type.Object({
   dir: Type.String(),
+  /** The project's DISPLAY name (`.studio/meta.json`, falls back to the folder name). */
+  projectName: Type.String(),
   pages: Type.Array(PageSchema),
   /** Keyed by node id (`relFile:line:col`) — only `kind: 'component'` nodes appear. */
   componentSources: Type.Record(Type.String(), ComponentSourceSchema),
@@ -189,12 +192,16 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
     // GitHub-imported) — see studioWorkspaceDir's doc comment for why every
     // studio client call must agree on the same active dir.
     const overrideDir = getStudioWorkspaceDir()
-    const { dir, pages, componentSources: sources } = await apiRequest('/admin/api/studio/load', {
+    const { dir, projectName, pages, componentSources: sources } = await apiRequest('/admin/api/studio/load', {
       schema: StudioLoadResponseSchema,
       query: overrideDir ? { dir: overrideDir } : undefined,
     })
     loadedDir = dir
     componentSources = sources
+    // Distinct from `site.name` (the "Studio" product wordmark, unchanged per
+    // project) — this is the per-project display name shown under the brand
+    // in the toolbar (see Toolbar.tsx's StudioProjectLabel).
+    useAdminUi.getState().setStudioProject({ dir, name: projectName })
     // Wrap the source-derived pages in a valid default site shell (breakpoints,
     // settings, framework, …) — every workspace page becomes a board frame.
     const site = createDefaultSiteDocument('Studio')

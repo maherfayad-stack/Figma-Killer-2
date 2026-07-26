@@ -49,7 +49,7 @@ const PRIMARY_RAIL_ITEMS: PrimaryRailItem[] = [
   },
   {
     id: 'selectors',
-    label: 'Selectors',
+    label: 'Classes',
     icon: PaintBucketSolidIcon,
     iconName: 'paint-bucket',
   },
