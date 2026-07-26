@@ -15,7 +15,7 @@ import { createAuditEvent } from '../../repositories/audit'
 import { clearDefaultForScope, listDefaults, setDefaultForScope } from '../defaults/store'
 import type { ToolScope } from '../runtime/types'
 
-const VALID_SCOPES: ToolScope[] = ['site', 'content', 'data', 'plugin']
+const VALID_SCOPES: ToolScope[] = ['site', 'data', 'plugin']
 
 const PutBodySchema = Type.Object({
   credentialId: Type.String({ minLength: 1 }),

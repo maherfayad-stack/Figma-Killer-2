@@ -22,7 +22,7 @@ import {
   listCmsMediaAssets,
   type CmsMediaAsset,
 } from '@core/persistence/cmsMedia'
-import { blurHashToDataUrl, pickVariantUrl } from '@admin/pages/media/utils/variants'
+import { blurHashToDataUrl, pickVariantUrl } from '@admin/shared/media/utils/variants'
 import s from '../SettingsModal.module.css'
 
 // Lazy-load the media picker modal so the Settings modal opens quickly even
@@ -31,7 +31,7 @@ import s from '../SettingsModal.module.css'
 // picker outside the property panel — paying the ~10 KB price only when the
 // favicon row is touched keeps Settings cheap to open.
 const MediaPickerModal = lazy(() =>
-  import('@admin/pages/media/components/MediaPickerModal/MediaPickerModal').then(
+  import('@admin/shared/media/components/MediaPickerModal/MediaPickerModal').then(
     (m) => ({ default: m.MediaPickerModal }),
   ),
 )

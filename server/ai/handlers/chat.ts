@@ -67,10 +67,6 @@ import {
   type SiteAgentSnapshot,
 } from '../tools/site'
 import {
-  buildContentSystemPrompt,
-  type ContentSnapshot,
-} from '../tools/content'
-import {
   createBridge,
   createConversationsPersister,
   encodeStreamEvent,
@@ -83,7 +79,7 @@ import type {
 } from '../runtime/types'
 import type { AiStreamRequest } from '../drivers/types'
 
-const VALID_SCOPES: ToolScope[] = ['site', 'content', 'data', 'plugin']
+const VALID_SCOPES: ToolScope[] = ['site', 'data', 'plugin']
 const activeChatConversations = new Set<string>()
 const REQUEST_ABORTED = Symbol('request-aborted')
 
@@ -507,9 +503,6 @@ export function buildSystemPromptForScope(
     }
     return buildSiteSystemPrompt(result.value)
   }
-  if (scope === 'content') {
-    return buildContentSystemPrompt((snapshot ?? emptyContentSnapshot()) as ContentSnapshot)
-  }
   // Other scopes don't have system prompts yet. The driver gets a minimal
   // prompt so the conversation isn't completely contextless.
   return [
@@ -537,14 +530,5 @@ function emptySiteAgentSnapshot(): SiteAgentSnapshot {
     } as unknown as SiteAgentSnapshot['site'],
     selectedNodeId: null,
     activeBreakpointId: '',
-  }
-}
-
-function emptyContentSnapshot(): ContentSnapshot {
-  return {
-    collections: [],
-    activeTableId: null,
-    activeDocument: null,
-    currentUser: { id: '', displayName: 'Anonymous', email: '' },
   }
 }

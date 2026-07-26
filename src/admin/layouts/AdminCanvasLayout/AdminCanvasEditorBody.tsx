@@ -155,7 +155,7 @@ function ImportHtmlModalLoading() {
       open={true}
       onClose={closeModal}
       title="Import HTML"
-      eyebrow="Instatic"
+      eyebrow="ALM Figma Killer"
       size="lg"
       className={styles.importHtmlLoadingDialog}
       bodyClassName={styles.importHtmlLoadingBody}

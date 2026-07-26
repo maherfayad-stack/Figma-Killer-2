@@ -1,19 +1,16 @@
 /**
  * Workspace bridge stream — `GET /admin/api/ai/editor-bridge?scope=…`.
  *
- * The Site editor and Content workspace each open their own NDJSON stream so
- * MCP browser tools are relayed to the workspace that owns the tool (see
- * `../editorBridge.ts`). Authenticated by the admin session; each bridge is
- * registered under the session user + scope, so it can only serve that user's
- * own MCP connectors. Results flow back through the existing
+ * The Site editor opens an NDJSON stream so MCP browser tools are relayed to
+ * it (see `../editorBridge.ts`). Authenticated by the admin session; each
+ * bridge is registered under the session user + scope, so it can only serve
+ * that user's own MCP connectors. Results flow back through the existing
  * `POST /admin/api/ai/tool-result` endpoint.
  */
 import { Type, safeParseValue } from '@core/utils/typeboxHelpers'
-import type { CoreCapability } from '@core/capabilities'
 import { jsonResponse } from '../../../http'
 import {
   requireAuthenticatedUser,
-  userHasAnyCapability,
   userHasCapability,
 } from '../../../auth/authz'
 import type { DbClient } from '../../../db/client'
@@ -25,19 +22,7 @@ import {
 const PATH = '/admin/api/ai/editor-bridge'
 const EditorBridgeScopeSchema = Type.Union([
   Type.Literal('site'),
-  Type.Literal('content'),
 ])
-
-// Mirrors the Content workspace entry gate in `src/admin/access.ts` and
-// `requireDataAccess` in the server's data access layer.
-const CONTENT_BRIDGE_CAPABILITIES = [
-  'content.create',
-  'content.edit.own',
-  'content.edit.any',
-  'content.publish.own',
-  'content.publish.any',
-  'content.manage',
-] satisfies CoreCapability[]
 
 export function tryHandleAiEditorBridge(
   req: Request,
@@ -62,7 +47,7 @@ async function handle(req: Request, db: DbClient): Promise<Response> {
   )
   if (!scopeResult.ok) {
     return jsonResponse(
-      { error: 'Query parameter `scope` is required (one of: site, content)' },
+      { error: 'Query parameter `scope` is required (one of: site)' },
       { status: 400 },
     )
   }
@@ -70,10 +55,7 @@ async function handle(req: Request, db: DbClient): Promise<Response> {
 
   // Hosting a bridge requires access to the workspace whose live state the
   // browser tool will read or mutate.
-  const hasWorkspaceAccess = scope === 'site'
-    ? userHasCapability(userOrResponse, 'site.read')
-    : userHasAnyCapability(userOrResponse, CONTENT_BRIDGE_CAPABILITIES)
-  if (!hasWorkspaceAccess) {
+  if (!userHasCapability(userOrResponse, 'site.read')) {
     return jsonResponse({ error: 'Forbidden' }, { status: 403 })
   }
 

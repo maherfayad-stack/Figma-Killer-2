@@ -2,7 +2,7 @@
  * Live editor bridge for MCP.
  *
  * Browser-execution tools (insert HTML, apply CSS, set tokens, manage pages,
- * content CRUD, …) have no server implementation — their logic runs in the
+ * …) have no server implementation — their logic runs in the
  * editor app against the live store. To let an external MCP client use them,
  * the editor holds a long-lived NDJSON stream open while mounted; this module
  * keeps one bridge per user and workspace (the newest open instance wins)
@@ -15,8 +15,7 @@
  * NDJSON the editor reads with `readNdjsonStream`.
  *
  * Security: the registry is keyed by `userId` + workspace scope, so an MCP
- * connector can only ever reach the open workspace of its OWN owner and a
- * content tool can never be dispatched to the site editor (or vice versa).
+ * connector can only ever reach the open workspace of its OWN owner.
  */
 import type { AiBrowserBridge, AiStreamEvent } from '../runtime/types'
 import { createBridge, encodeStreamEvent } from '../runtime'
@@ -27,7 +26,7 @@ interface EditorBridgeEntry {
   destroy: () => void
 }
 
-export type EditorBridgeScope = 'site' | 'content'
+export type EditorBridgeScope = 'site'
 const STREAM_LEASE_MS = 120_000
 
 const byUser = new Map<string, Map<EditorBridgeScope, EditorBridgeEntry>>()
@@ -74,8 +73,7 @@ export function createEditorBridgeStream(
         signal.removeEventListener('abort', cleanup)
         destroyBridge()
 
-        // Only evict if we're still the current bridge for this scope. Keep
-        // the user's other workspace registered until its own stream closes.
+        // Only evict if we're still the current bridge for this scope.
         const liveUserBridges = byUser.get(userId)
         if (liveUserBridges?.get(scope)?.bridgeId === bridgeId) {
           liveUserBridges.delete(scope)
@@ -102,8 +100,7 @@ export function createEditorBridgeStream(
       bridgeId = created.bridgeId
       destroyBridge = created.destroy
 
-      // Newest instance of this workspace wins. The user's other workspace
-      // remains connected, so Site and Content may serve MCP simultaneously.
+      // Newest instance of this workspace wins.
       const userBridges = byUser.get(userId) ?? new Map<EditorBridgeScope, EditorBridgeEntry>()
       const previous = userBridges.get(scope)
       if (previous) previous.destroy()

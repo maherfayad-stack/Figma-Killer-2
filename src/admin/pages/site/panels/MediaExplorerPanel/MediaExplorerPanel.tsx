@@ -33,9 +33,9 @@ import {
   type ExplorerContextMenuItem,
   type ExplorerRenamePayload,
 } from '@site/explorer-actions'
-import { MediaViewerWindow } from '@admin/pages/media/components/MediaViewerWindow/MediaViewerWindow'
-import { useStandaloneMediaEditor } from '@admin/pages/media/hooks/useStandaloneMediaEditor'
-import { subscribeCmsMediaAssetCreated } from '@admin/pages/media/mediaAssetEvents'
+import { MediaViewerWindow } from '@admin/shared/media/components/MediaViewerWindow/MediaViewerWindow'
+import { useStandaloneMediaEditor } from '@admin/shared/media/hooks/useStandaloneMediaEditor'
+import { subscribeCmsMediaAssetCreated } from '@admin/shared/media/mediaAssetEvents'
 import {
   BUCKET_LABELS,
   type MediaBucket,

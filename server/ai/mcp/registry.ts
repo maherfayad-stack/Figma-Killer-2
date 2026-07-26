@@ -3,15 +3,14 @@
  * filtered to the connector's granted capabilities.
  *
  * Two execution classes are exposed:
- *   - server-resolved tools (content reads + `site_list_documents` +
- *     `site_read_styles` + `studio_import_project`, a thin adapter over the
- *     Phase 7B GitHub import engine) run in-process and work with NO editor
- *     open;
+ *   - server-resolved tools (`site_list_documents` + `site_read_styles` +
+ *     `studio_import_project`, a thin adapter over the Phase 7B GitHub import
+ *     engine) run in-process and work with NO editor open;
  *   - browser tools (structure edits, HTML/CSS authoring, design tokens, page
- *     lifecycle, content CRUD, code assets, live-DOM reads) are relayed to the
- *     connector owner's matching open Site or Content workspace via the live
- *     editor bridge (`./editorBridge`). If that workspace is not connected,
- *     the call returns a clear scope-specific error.
+ *     lifecycle, code assets, live-DOM reads) are relayed to the connector
+ *     owner's open Site workspace via the live editor bridge
+ *     (`./editorBridge`). If that workspace is not connected, the call
+ *     returns a clear scope-specific error.
  *
  * The editor's live store is the single source of truth: ALL page editing goes
  * through it (browser tools). There is deliberately no headless DB-mutating
@@ -27,7 +26,6 @@
 import type { CoreCapability } from '@core/capabilities'
 import type { AiTool } from '../runtime/types'
 import { toolAllowedForCapabilities } from '../tools/capabilityGate'
-import { contentTools } from '../tools/content'
 import { siteTools } from '../tools/site'
 import { styleMcpTools } from './tools/styleTools'
 import { contextMcpTools } from './tools/contextTool'
@@ -56,7 +54,6 @@ function allMcpTools(runtime?: McpPublishRuntime): AiTool[] {
     ...documentMcpTools,
     ...studioImportMcpTools,
     createPublishMcpTool(runtime),
-    ...contentTools,
     ...siteTools,
   ]
   const byName = new Map<string, AiTool>()

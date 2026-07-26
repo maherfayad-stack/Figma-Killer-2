@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
-import { useMediaWorkspace } from '@admin/pages/media/hooks/useMediaWorkspace'
+import { useMediaWorkspace } from '@admin/shared/media/hooks/useMediaWorkspace'
 
 const originalFetch = globalThis.fetch
 

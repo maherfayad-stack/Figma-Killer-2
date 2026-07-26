@@ -14,6 +14,7 @@ import type { Command, CommandArg } from '../types'
 import type { AdminWorkspace } from '@admin/workspace'
 import { pluginRuntime } from '@core/plugins/runtime'
 import { queuePendingAction } from '../pendingAction'
+import { useAdminUi } from '@admin/state/adminUi'
 
 /**
  * Built-in plugin-related commands (currently just Install plugin). Kept
@@ -33,7 +34,8 @@ export function getBuiltInPluginCommands(): Command[] {
       capability: 'plugins.install',
       run: (ctx) => {
         queuePendingAction('plugins.install')
-        ctx.navigate('/admin/plugins')
+        ctx.closeSpotlight()
+        useAdminUi.getState().openSettings('plugins')
       },
     },
   ]

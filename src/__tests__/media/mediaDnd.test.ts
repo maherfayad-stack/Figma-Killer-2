@@ -4,7 +4,7 @@ import {
   canMoveFolderTo,
   commitDropPayload,
   type MediaDndTarget,
-} from '@admin/pages/media/utils/mediaDnd'
+} from '@admin/shared/media/utils/mediaDnd'
 import type { CmsMediaFolder } from '@core/persistence/cmsMedia'
 
 function folder(overrides: Partial<CmsMediaFolder> = {}): CmsMediaFolder {

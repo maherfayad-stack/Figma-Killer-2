@@ -21,11 +21,6 @@
 export type AdminWorkspace =
   | 'dashboard'
   | 'site'
-  | 'content'
-  | 'data'
-  | 'media'
-  | 'plugins'
-  | 'users'
   | 'ai'
   | 'pluginPage'
   | 'account'

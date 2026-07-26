@@ -1,8 +1,6 @@
 /**
  * Keep one workspace-scoped MCP browser bridge open while its editor is
- * mounted. Site and Content each provide their own dispatcher, so both
- * workspaces can be connected at the same time without sending a content tool
- * through the site executor (or vice versa).
+ * mounted.
  */
 import { useEffect } from 'react'
 import { Type } from '@core/utils/typeboxHelpers'
@@ -27,7 +25,7 @@ const BridgeEventSchema = Type.Union([
   }),
 ])
 
-export type McpWorkspaceScope = 'site' | 'content'
+export type McpWorkspaceScope = 'site'
 export type McpToolDispatcher = (
   toolName: string,
   input: unknown,

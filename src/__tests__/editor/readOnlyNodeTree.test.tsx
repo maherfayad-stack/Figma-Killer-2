@@ -17,7 +17,7 @@ import React from 'react'
 import { cleanup, render } from '@testing-library/react'
 import type { BaseNode } from '@core/page-tree'
 import { bagToReactStyle, type RenderResolvedMedia } from '@core/publisher'
-import { responsiveBackgroundReactStyle } from '@admin/pages/media/hooks/useResponsiveBackgroundStyle'
+import { responsiveBackgroundReactStyle } from '@admin/shared/media/hooks/useResponsiveBackgroundStyle'
 import { ReadOnlyNodeTree } from '@modules/base/utils/ReadOnlyNodeTree'
 // Self-registering module imports — ReadOnlyNodeTree resolves components via
 // the global registry.

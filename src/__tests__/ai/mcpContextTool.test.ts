@@ -31,12 +31,11 @@ describe('get_context', () => {
 
   it('reports editor disconnected when no bridge is open and lists templates', async () => {
     const out = (await getContext.handler!({}, ctxFor(harness))) as {
-      editor: { siteConnected: boolean; contentConnected: boolean }
+      editor: { siteConnected: boolean }
       templates: unknown[]
       site: { name: string } | null
     }
     expect(out.editor.siteConnected).toBe(false)
-    expect(out.editor.contentConnected).toBe(false)
     expect(Array.isArray(out.templates)).toBe(true)
     expect(out.site).not.toBeNull()
   })
@@ -64,31 +63,17 @@ describe('get_context', () => {
     expect(out.page.wrappedByTemplates).toContain('Shell')
   })
 
-  it('reports Site and Content workspace connections independently', async () => {
+  it('reports the Site workspace connection', async () => {
     const siteCtrl = new AbortController()
-    const contentCtrl = new AbortController()
     createEditorBridgeStream('no-editor-user', 'site', siteCtrl.signal)
 
     try {
       const siteOnly = (await getContext.handler!({}, ctxFor(harness))) as {
-        editor: { siteConnected: boolean; contentConnected: boolean }
+        editor: { siteConnected: boolean }
       }
-      expect(siteOnly.editor).toEqual({
-        siteConnected: true,
-        contentConnected: false,
-      })
-
-      createEditorBridgeStream('no-editor-user', 'content', contentCtrl.signal)
-      const both = (await getContext.handler!({}, ctxFor(harness))) as {
-        editor: { siteConnected: boolean; contentConnected: boolean }
-      }
-      expect(both.editor).toEqual({
-        siteConnected: true,
-        contentConnected: true,
-      })
+      expect(siteOnly.editor).toEqual({ siteConnected: true })
     } finally {
       siteCtrl.abort()
-      contentCtrl.abort()
     }
   })
 })

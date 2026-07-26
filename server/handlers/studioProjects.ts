@@ -10,8 +10,8 @@
  * `studio.ts` (the HTTP endpoint layer) so that file stays focused on request
  * wiring rather than growing into a god-module.
  */
-import { existsSync, readdirSync, statSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
 import { EXCLUDED_WORKSPACE_DIR_NAMES, listWorkspaceFiles } from '@core/page-parser'
 
 /**
@@ -66,6 +66,53 @@ function pageCountFor(dir: string): number {
 }
 
 /**
+ * Per-project display-name sidecar, alongside the existing `.studio/boards.json`
+ * and `.studio/framework.json` conventions. Decouples the user-facing project
+ * name from the folder slug: the folder is a stable identifier assigned once at
+ * creation time (never renamed — renaming a directory mid-session would
+ * invalidate any already-open `studioWorkspaceDir` pointer), while the display
+ * name can change freely by just rewriting this small JSON file.
+ */
+interface StudioProjectMeta {
+  displayName: string
+}
+
+function projectMetaFile(dir: string): string {
+  return join(dir, '.studio', 'meta.json')
+}
+
+/** Reads `.studio/meta.json`, or `null` when absent/unparsable (falls back to the folder name). */
+function readProjectMeta(dir: string): StudioProjectMeta | null {
+  const file = projectMetaFile(dir)
+  if (!existsSync(file)) return null
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'))
+    if (
+      parsed && typeof parsed === 'object' &&
+      'displayName' in parsed && typeof parsed.displayName === 'string' &&
+      parsed.displayName.trim().length > 0
+    ) {
+      return { displayName: parsed.displayName }
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+/** Writes `.studio/meta.json`, creating the `.studio/` sidecar dir if needed. */
+export function writeProjectMeta(dir: string, meta: StudioProjectMeta): void {
+  const file = projectMetaFile(dir)
+  mkdirSync(dirname(file), { recursive: true })
+  writeFileSync(file, JSON.stringify(meta, null, 2))
+}
+
+/** The project's display name — `.studio/meta.json` if present, else the folder name. */
+export function projectDisplayName(dir: string): string {
+  return readProjectMeta(dir)?.displayName ?? dir.split('/').filter(Boolean).pop() ?? dir
+}
+
+/**
  * Lists every studio project: one entry per immediate subfolder of
  * `projectsRoot` (`studio-workspace/`), whether hand-authored or GitHub-
  * imported. Pure-ish (one dir path in, project list out — only reads the
@@ -87,8 +134,24 @@ export function listStudioProjects(projectsRoot: string): StudioProjectSummary[]
     .sort((a, b) => a.name.localeCompare(b.name))
     .map((entry) => {
       const dir = join(projectsRoot, entry.name)
-      return { dir, name: entry.name, pageCount: pageCountFor(dir) }
+      return { dir, name: projectDisplayName(dir), pageCount: pageCountFor(dir) }
     })
+}
+
+/**
+ * Next available auto project name: `Untitled`, then `Untitled 2`, `Untitled 3`,
+ * … — the first that doesn't collide with any existing project's DISPLAY name.
+ * Used when a project is created without a user-supplied name (the one-click
+ * "New project" action), mirroring `nextPageName`'s auto-naming pattern.
+ */
+export function nextProjectName(projectsRoot: string): string {
+  const existingNames = new Set(listStudioProjects(projectsRoot).map((p) => p.name))
+  for (let n = 1; n < 100_000; n++) {
+    const name = n === 1 ? 'Untitled' : `Untitled ${n}`
+    if (!existingNames.has(name)) return name
+  }
+  // Unreachable in practice — 100k untitled projects is not a real case.
+  return `Untitled ${Date.now()}`
 }
 
 /**

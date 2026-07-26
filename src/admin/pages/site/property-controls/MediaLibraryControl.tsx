@@ -29,10 +29,10 @@ import controlRowStyles from '@ui/components/ControlRow/ControlRow.module.css'
 import { Input } from '@ui/components/Input'
 import { SegmentedControl } from '@ui/components/SegmentedControl'
 import { VideoSolidIcon } from 'pixel-art-icons/icons/video-solid'
-import { MediaPickerField } from '@admin/pages/media/components/MediaPickerField'
-import { MediaViewerWindow } from '@admin/pages/media/components/MediaViewerWindow/MediaViewerWindow'
-import { useStandaloneMediaEditor } from '@admin/pages/media/hooks/useStandaloneMediaEditor'
-import { primeCmsMediaAssetCache } from '@admin/pages/media/hooks/useCmsMediaAssetByPath'
+import { MediaPickerField } from '@admin/shared/media/components/MediaPickerField'
+import { MediaViewerWindow } from '@admin/shared/media/components/MediaViewerWindow/MediaViewerWindow'
+import { useStandaloneMediaEditor } from '@admin/shared/media/hooks/useStandaloneMediaEditor'
+import { primeCmsMediaAssetCache } from '@admin/shared/media/hooks/useCmsMediaAssetByPath'
 import styles from './controls.module.css'
 import { getErrorMessage } from '@core/utils/errorMessage'
 
@@ -42,7 +42,7 @@ import { getErrorMessage } from '@core/utils/errorMessage'
 // so paying the modal's ~10 KB price only on first click is the right
 // trade-off. Also lets the `layouts-*.js` bundle-size budget stay tight.
 const MediaPickerModal = lazy(() =>
-  import('@admin/pages/media/components/MediaPickerModal/MediaPickerModal').then(
+  import('@admin/shared/media/components/MediaPickerModal/MediaPickerModal').then(
     (m) => ({ default: m.MediaPickerModal }),
   ),
 )

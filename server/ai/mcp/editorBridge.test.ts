@@ -71,30 +71,6 @@ describe('editor bridge', () => {
     await reader.read().catch(() => {})
   })
 
-  it('keeps Site and Content bridges connected independently for one user', async () => {
-    const userId = `u_${Math.floor(performance.now())}_scoped`
-    const siteCtrl = new AbortController()
-    const contentCtrl = new AbortController()
-    const siteReader = createEditorBridgeStream(userId, 'site', siteCtrl.signal).getReader()
-    const contentReader = createEditorBridgeStream(userId, 'content', contentCtrl.signal).getReader()
-
-    await Promise.all([
-      readUntil(siteReader, (e) => e.type === 'bridgeReady'),
-      readUntil(contentReader, (e) => e.type === 'bridgeReady'),
-    ])
-    expect(hasEditorBridge(userId, 'site')).toBe(true)
-    expect(hasEditorBridge(userId, 'content')).toBe(true)
-
-    siteCtrl.abort()
-    await siteReader.read().catch(() => {})
-    expect(hasEditorBridge(userId, 'site')).toBe(false)
-    expect(hasEditorBridge(userId, 'content')).toBe(true)
-
-    contentCtrl.abort()
-    await contentReader.read().catch(() => {})
-    expect(hasEditorBridge(userId, 'content')).toBe(false)
-  })
-
   it('clears a bridge when the stream consumer cancels without aborting the request', async () => {
     const userId = `u_${Math.floor(performance.now())}_cancelled`
     const ctrl = new AbortController()

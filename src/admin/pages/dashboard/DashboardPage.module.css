@@ -12,17 +12,6 @@
     max-width: 360px;
 }
 
-.createRow {
-    display: flex;
-    align-items: center;
-    gap: var(--space-s);
-    margin-bottom: var(--space-l);
-}
-
-.createRow input {
-    min-width: 240px;
-}
-
 .state {
     color: var(--text-disabled);
     font-size: var(--text-s);

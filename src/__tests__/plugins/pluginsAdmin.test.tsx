@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import React, { type ReactNode } from 'react'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from '@admin/lib/routing'
-import { PluginsPage } from '@plugins/PluginsPage'
+import { PluginsSection } from '@admin/modals/Settings/sections/PluginsSection'
 import { AdminSessionProvider } from '@admin/session'
 import { StepUpProvider } from '@admin/shared/StepUp'
 import { useEditorStore } from '@site/store/store'
@@ -87,7 +87,7 @@ function json(body: unknown, status = 200) {
 
 /**
  * Ambient fetch fallback for endpoints AdminPageLayout calls on mount that
- * the PluginsPage tests don't otherwise care about (site load,
+ * the PluginsSection tests don't otherwise care about (site load,
  * publish-status). The plugins-list endpoint is owned by each test, so it's
  * intentionally NOT in here.
  */
@@ -155,7 +155,7 @@ afterEach(() => {
   cleanup()
 })
 
-describe('PluginsPage', () => {
+describe('PluginsSection', () => {
   it('lists active plugins and can disable or remove them', async () => {
     const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = []
     globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -180,7 +180,7 @@ describe('PluginsPage', () => {
 
     render(
       <Wrapper>
-        <PluginsPage />
+        <PluginsSection />
       </Wrapper>,
     )
 
@@ -230,7 +230,7 @@ describe('PluginsPage', () => {
 
     render(
       <Wrapper>
-        <PluginsPage />
+        <PluginsSection />
       </Wrapper>,
     )
 
@@ -289,7 +289,7 @@ describe('PluginsPage', () => {
 
     render(
       <Wrapper>
-        <PluginsPage />
+        <PluginsSection />
       </Wrapper>,
     )
 
@@ -345,7 +345,7 @@ describe('PluginsPage', () => {
 
     render(
       <Wrapper>
-        <PluginsPage />
+        <PluginsSection />
       </Wrapper>,
     )
 
@@ -397,7 +397,7 @@ describe('PluginsPage', () => {
 
     render(
       <Wrapper>
-        <PluginsPage />
+        <PluginsSection />
       </Wrapper>,
     )
 

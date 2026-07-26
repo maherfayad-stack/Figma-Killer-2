@@ -1,4 +1,4 @@
-import type { DataRow, DataTable } from '@core/data/schemas'
+import type { DataTable } from '@core/data/schemas'
 import type { CmsCurrentUser } from '@core/persistence'
 import type { CoreCapability } from '@core/capabilities'
 import type { AdminWorkspace } from './workspace'
@@ -10,26 +10,6 @@ const SITE_WRITE_CAPABILITIES: CoreCapability[] = [
   'site.structure.edit',
   'site.content.edit',
   'site.style.edit',
-]
-
-const CONTENT_ACCESS_CAPABILITIES: CoreCapability[] = [
-  'content.create',
-  'content.edit.own',
-  'content.edit.any',
-  'content.publish.own',
-  'content.publish.any',
-  'content.manage',
-]
-
-const DATA_WORKSPACE_READ_CAPABILITIES: CoreCapability[] = [
-  'data.custom.tables.read',
-  'data.custom.tables.manage',
-  'data.system.tables.read',
-  'data.system.tables.manage',
-  // Also accept any `content.*` cap so the loop / template pickers in
-  // the site editor can still resolve data tables for someone whose
-  // workspace gate is content rather than data.
-  ...CONTENT_ACCESS_CAPABILITIES,
 ]
 
 const PLUGIN_READ_CAPABILITIES: CoreCapability[] = [
@@ -94,61 +74,9 @@ export function canSaveDraftSite(user: CmsCurrentUser | null): boolean {
   return hasAnyCapability(user, SITE_WRITE_CAPABILITIES)
 }
 
-function ownsDataRow(user: CmsCurrentUser | null, row: DataRow | null): boolean {
-  if (!user || !row) return false
-  return row.authorUserId === user.id || (!row.authorUserId && row.createdByUserId === user.id)
-}
-
-function canAccessContent(user: CmsCurrentUser | null): boolean {
-  return hasAnyCapability(user, CONTENT_ACCESS_CAPABILITIES)
-}
-
-export function canAccessDataRows(user: CmsCurrentUser | null): boolean {
-  return canAccessContent(user)
-}
-
-export function canCreateContent(user: CmsCurrentUser | null): boolean {
-  return hasCapability(user, 'content.create')
-}
-
-export function canManageContentCollections(user: CmsCurrentUser | null): boolean {
-  // Creating / editing custom tables (collections) lives on
-  // `data.custom.tables.manage`. Keep `content.manage` accepted too — historical
-  // installs and the content-row level granted them together.
-  return hasAnyCapability(user, ['data.custom.tables.manage', 'content.manage'])
-}
-
-export function canEditAnyContent(user: CmsCurrentUser | null): boolean {
-  return hasAnyCapability(user, ['content.edit.any', 'content.manage'])
-}
-
-export function canEditContentEntry(user: CmsCurrentUser | null, row: DataRow | null): boolean {
-  return canEditAnyContent(user) || (ownsDataRow(user, row) && hasCapability(user, 'content.edit.own'))
-}
-
-export function canPublishContentEntry(user: CmsCurrentUser | null, row: DataRow | null): boolean {
-  return hasCapability(user, 'content.publish.any') ||
-    (ownsDataRow(user, row) && hasCapability(user, 'content.publish.own'))
-}
-
 // ---------------------------------------------------------------------------
 // Data workspace helpers
 // ---------------------------------------------------------------------------
-
-/** Caller can browse the Data workspace (schema viewer) — any table family. */
-export function canReadDataTables(user: CmsCurrentUser | null): boolean {
-  return hasAnyCapability(user, [
-    'data.custom.tables.read',
-    'data.custom.tables.manage',
-    'data.system.tables.read',
-    'data.system.tables.manage',
-  ])
-}
-
-/** Caller can create custom tables (the "+ New table" affordance). */
-export function canManageDataTables(user: CmsCurrentUser | null): boolean {
-  return hasCapability(user, 'data.custom.tables.manage')
-}
 
 /**
  * Whether the caller may SEE a specific table, by family. System tables
@@ -170,29 +98,9 @@ export function canManageTable(user: CmsCurrentUser | null, table: Pick<DataTabl
   return hasCapability(user, table.system ? 'data.system.tables.manage' : 'data.custom.tables.manage')
 }
 
-/** Caller can move a row from one table to another (`PATCH /rows/:id/table`). */
-export function canMoveDataRow(user: CmsCurrentUser | null): boolean {
-  return hasCapability(user, 'data.rows.move')
-}
-
-/** Caller can export a SiteBundle and read the import preview. */
-export function canExportData(user: CmsCurrentUser | null): boolean {
-  return hasCapability(user, 'data.export')
-}
-
-/** Caller can run an import (replace mode also needs content.manage + step-up server-side). */
-export function canImportData(user: CmsCurrentUser | null): boolean {
-  return hasCapability(user, 'data.import')
-}
-
 // ---------------------------------------------------------------------------
 // Media workspace helpers
 // ---------------------------------------------------------------------------
-
-/** Caller can open the Media workspace and the picker. */
-export function canReadMedia(user: CmsCurrentUser | null): boolean {
-  return hasCapability(user, 'media.read')
-}
 
 /** Caller can upload assets and edit metadata. */
 export function canWriteMedia(user: CmsCurrentUser | null): boolean {
@@ -244,7 +152,8 @@ export function canUseAiChat(user: CmsCurrentUser | null): boolean {
 // Workspace gating
 // ---------------------------------------------------------------------------
 
-function canAccessUsersWorkspace(user: CmsCurrentUser | null): boolean {
+/** Caller can see the Users/Roles/Audit panel in Settings. */
+export function canAccessUsersWorkspace(user: CmsCurrentUser | null): boolean {
   return hasAnyCapability(user, ['users.manage', 'roles.manage', 'audit.read'])
 }
 
@@ -252,11 +161,8 @@ function canAccessAiWorkspace(user: CmsCurrentUser | null): boolean {
   return hasAnyCapability(user, ['ai.providers.manage', 'ai.audit.read'])
 }
 
-function canAccessDataWorkspace(user: CmsCurrentUser | null): boolean {
-  return hasAnyCapability(user, DATA_WORKSPACE_READ_CAPABILITIES)
-}
-
-function canAccessPluginsWorkspace(user: CmsCurrentUser | null): boolean {
+/** Caller can see the Plugins panel in Settings (and plugin-contributed admin pages). */
+export function canAccessPluginsWorkspace(user: CmsCurrentUser | null): boolean {
   return hasAnyCapability(user, PLUGIN_READ_CAPABILITIES)
 }
 
@@ -276,17 +182,8 @@ export function canAccessWorkspace(user: CmsCurrentUser | null, workspace: Admin
       // (structure / content / style) also have site.read on a well-formed
       // role, so this single check is sufficient.
       return hasCapability(user, 'site.read')
-    case 'content':
-      return canAccessContent(user)
-    case 'data':
-      return canAccessDataWorkspace(user)
-    case 'media':
-      return canReadMedia(user)
-    case 'plugins':
     case 'pluginPage':
       return canAccessPluginsWorkspace(user)
-    case 'users':
-      return canAccessUsersWorkspace(user)
     case 'ai':
       return canAccessAiWorkspace(user)
     case 'account':
@@ -300,7 +197,10 @@ export function firstAccessibleWorkspace(user: CmsCurrentUser | null): AdminWork
   // Dashboard comes first — it's the canonical admin home. Falls through to
   // the next accessible workspace for users whose role doesn't grant
   // `dashboard.read` (rare; only happens with hand-edited custom roles).
-  const order: AdminWorkspace[] = ['dashboard', 'site', 'content', 'data', 'media', 'plugins', 'users', 'ai']
+  // 'account' is last: every authenticated user can reach it (no capability
+  // gate), so it's the universal fallback for a role that only holds
+  // Settings-panel capabilities (Plugins/Users) with no routable workspace.
+  const order: AdminWorkspace[] = ['dashboard', 'site', 'ai', 'account']
   return order.find((workspace) => canAccessWorkspace(user, workspace)) ?? null
 }
 
@@ -310,16 +210,6 @@ export function workspacePath(workspace: AdminWorkspace): string {
       return '/admin/dashboard'
     case 'site':
       return '/admin/site'
-    case 'content':
-      return '/admin/content'
-    case 'data':
-      return '/admin/data'
-    case 'media':
-      return '/admin/media'
-    case 'plugins':
-      return '/admin/plugins'
-    case 'users':
-      return '/admin/users'
     case 'ai':
       return '/admin/ai'
     case 'pluginPage':

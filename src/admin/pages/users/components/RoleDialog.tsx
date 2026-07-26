@@ -18,7 +18,7 @@ import { SaveSolidIcon } from 'pixel-art-icons/icons/save-solid'
 import { CapabilityPicker } from '@admin/shared/CapabilityPicker'
 import type { CoreCapability } from '@core/capabilities'
 import dialogStyles from '../../../shared/dialogs/SiteCreateDialog/SiteCreateDialog.module.css'
-import styles from '../UsersPage.module.css'
+import styles from '../users.module.css'
 import type { RoleDialogMode, RoleFormState } from '../types'
 import { CAPABILITY_GROUPS } from '../utils/capabilities'
 

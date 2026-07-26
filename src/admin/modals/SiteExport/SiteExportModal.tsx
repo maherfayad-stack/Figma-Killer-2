@@ -12,7 +12,7 @@ import { useEffect, useState } from 'react'
 import { useAdminUi } from '@admin/state/adminUi'
 import { listCmsDataTables } from '@core/persistence/cmsData'
 import type { DataTableListItem } from '@core/data/schemas'
-import { ExportDialog } from '@admin/pages/data/components/ExportDialog/ExportDialog'
+import { ExportDialog } from '@admin/shared/ExportDialog/ExportDialog'
 
 export function SiteExportModal() {
   const siteExport = useAdminUi((s) => s.siteExport)

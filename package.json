@@ -1,5 +1,5 @@
 {
-  "name": "instatic",
+  "name": "alm-figma-killer",
   "private": true,
   "version": "0.0.11",
   "engines": {
@@ -8,13 +8,12 @@
   "description": "Self-hosted CMS with an integrated visual editor.",
   "author": "David Babinec",
   "license": "MIT",
-  "homepage": "https://instatic.com",
   "repository": {
     "type": "git",
-    "url": "https://github.com/corebunch/instatic.git"
+    "url": "https://github.com/MaherFayad/Figma-Killer-2.git"
   },
   "bugs": {
-    "url": "https://github.com/corebunch/instatic/issues"
+    "url": "https://github.com/MaherFayad/Figma-Killer-2/issues"
   },
   "type": "module",
   "scripts": {

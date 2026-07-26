@@ -8,10 +8,9 @@
  * The Settings modal is global — openable from every admin route — but its
  * General and Publishing sections used to read `site` straight off the heavy
  * editor store (`@site/store/store`). That store is only hydrated by
- * `usePersistence` on the Site editor (AdminCanvasLayout). On Content / Data /
- * Media (AdminWorkspaceCanvasLayout) and Plugins / Users / Account
- * (AdminPageLayout) the editor store's `site` is `null`, so those sections
- * rendered an endless skeleton. Settings was only "global" in name.
+ * `usePersistence` on the Site editor (AdminCanvasLayout). On Plugins / Users /
+ * Account (AdminPageLayout) the editor store's `site` is `null`, so those
+ * sections rendered an endless skeleton. Settings was only "global" in name.
  *
  * Two genuinely different sources of truth
  * ────────────────────────────────────────

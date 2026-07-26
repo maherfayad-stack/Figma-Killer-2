@@ -4,6 +4,7 @@
 
 import type { Command } from '../types'
 import { queuePendingAction } from '../pendingAction'
+import { useAdminUi } from '@admin/state/adminUi'
 
 export function getUsersCommands(): Command[] {
   return [
@@ -19,7 +20,8 @@ export function getUsersCommands(): Command[] {
       capability: 'users.manage',
       run: (ctx) => {
         queuePendingAction('users.invite')
-        ctx.navigate('/admin/users')
+        ctx.closeSpotlight()
+        useAdminUi.getState().openSettings('users')
       },
     },
 
@@ -35,7 +37,8 @@ export function getUsersCommands(): Command[] {
       capability: 'roles.manage',
       run: (ctx) => {
         queuePendingAction('users.newRole')
-        ctx.navigate('/admin/users')
+        ctx.closeSpotlight()
+        useAdminUi.getState().openSettings('users')
       },
     },
   ]

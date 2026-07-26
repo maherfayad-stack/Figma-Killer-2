@@ -62,7 +62,6 @@ describe('ai-driver-shared-helpers gate', () => {
       'server/ai/drivers/types.ts',
       'server/ai/runtime/types.ts',
       'server/ai/tools/site/systemPrompt.ts',
-      'server/ai/tools/content/systemPrompt.ts',
     ]
     const declRe = /SYSTEM_PROMPT_DYNAMIC_BOUNDARY\s*=\s*'__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__'/g
     const declarers = SCAN.filter((f) => declRe.test(read(f)))

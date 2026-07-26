@@ -5,8 +5,16 @@
  * project (each an immediate subfolder of `studio-workspace/`, listed by
  * `GET /admin/api/studio/projects`). Opening a project points Studio at its
  * directory (`setStudioWorkspaceDir`) and jumps into the Site editor's studio
- * canvas; "New project" scaffolds a fresh folder + starter page via
- * `createStudioProject` and drops straight into it.
+ * canvas; "New project" scaffolds a fresh, blank folder + starter page via
+ * `createStudioProject()` (no name prompt — the project starts `Untitled`,
+ * `Untitled 2`, … and is renamed later from the toolbar) and drops straight
+ * into it.
+ *
+ * `requestCmsSiteReload()` is called before every `openProject` (new or
+ * existing) so `usePersistence`'s mount effect doesn't short-circuit on a
+ * still-mounted, previous project's `existingSite` — without it, switching
+ * projects in the same session can leave the previous project's page tree
+ * showing under the new project's directory.
  *
  * This replaced the old CMS widget-grid dashboard: the app now presents as a
  * studio-first project launcher, reached from the toolbar brand (the logo).
@@ -18,10 +26,10 @@ import { AdminPageLayout } from '@admin/layouts/AdminPageLayout'
 import { useAuthenticatedAdminUser } from '@admin/sessionContext'
 import { useAdminNavigate } from '@admin/lib/useAdminNavigate'
 import { Button } from '@ui/components/Button'
-import { Input } from '@ui/components/Input'
 import { SearchBar } from '@ui/components/SearchBar'
 import { pushToast } from '@ui/components/Toast'
 import { getErrorMessage } from '@core/utils/errorMessage'
+import { requestCmsSiteReload } from '@admin/state/adminEvents'
 import { setStudioWorkspaceDir } from '@site/studio/studioWorkspaceDir'
 import {
   createStudioProject,
@@ -43,8 +51,6 @@ export function DashboardPage() {
   const projects = useStudioProjects()
 
   const [query, setQuery] = useState('')
-  const [creating, setCreating] = useState(false)
-  const [newName, setNewName] = useState('')
   const [busy, setBusy] = useState(false)
   // Projects created this session, layered over the fetched list so a new
   // project shows up immediately without waiting for a refetch.
@@ -62,19 +68,19 @@ export function DashboardPage() {
     : merged
 
   function openProject(project: StudioProject) {
+    // Force the next Site-editor mount to reload from disk instead of
+    // short-circuiting on a previous project's still-mounted `existingSite`.
+    requestCmsSiteReload()
     setStudioWorkspaceDir(project.dir)
     navigate('/admin/site?studio')
   }
 
   async function handleCreate() {
-    const name = newName.trim()
-    if (!name || busy) return
+    if (busy) return
     setBusy(true)
     try {
-      const project = await createStudioProject(name)
+      const project = await createStudioProject()
       setCreated((prev) => [...prev, project])
-      setNewName('')
-      setCreating(false)
       openProject(project)
     } catch (err) {
       console.error('[DashboardPage] create project failed:', err)
@@ -102,43 +108,10 @@ export function DashboardPage() {
           aria-label="Search projects"
           className={styles.search}
         />
-        <Button variant="primary" onClick={() => setCreating((v) => !v)} pressed={creating}>
+        <Button variant="primary" onClick={() => void handleCreate()} disabled={busy}>
           <PlusIcon size={12} aria-hidden="true" /> New project
         </Button>
       </div>
-
-      {creating && (
-        <form
-          className={styles.createRow}
-          onSubmit={(e) => {
-            e.preventDefault()
-            void handleCreate()
-          }}
-        >
-          <Input
-            autoFocus
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-            placeholder="Project name"
-            aria-label="New project name"
-            disabled={busy}
-          />
-          <Button type="submit" variant="primary" disabled={busy || newName.trim().length === 0}>
-            Create
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            onClick={() => {
-              setCreating(false)
-              setNewName('')
-            }}
-            disabled={busy}
-          >
-            Cancel
-          </Button>
-        </form>
-      )}
 
       {isLoading ? (
         <p className={styles.state}>Loading projects…</p>

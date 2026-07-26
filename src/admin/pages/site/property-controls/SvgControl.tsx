@@ -29,7 +29,7 @@ import styles from './controls.module.css'
 
 // Lazy so the media-picker stack only loads when the user opens it.
 const MediaPickerModal = lazy(() =>
-  import('@admin/pages/media/components/MediaPickerModal/MediaPickerModal').then(
+  import('@admin/shared/media/components/MediaPickerModal/MediaPickerModal').then(
     (m) => ({ default: m.MediaPickerModal }),
   ),
 )

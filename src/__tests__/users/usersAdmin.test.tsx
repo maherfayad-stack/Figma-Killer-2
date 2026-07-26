@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import type { ReactNode } from 'react'
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from '@admin/lib/routing'
-import { UsersPage } from '@users/UsersPage'
+import { UsersSection } from '@admin/modals/Settings/sections/UsersSection'
 import { AdminSessionProvider } from '@admin/session'
 import { StepUpProvider } from '@admin/shared/StepUp'
 import { useEditorStore } from '@site/store/store'
@@ -265,7 +265,7 @@ afterEach(() => {
   cleanup()
 })
 
-describe('UsersPage', () => {
+describe('UsersSection', () => {
   it('limits a user manager to user management affordances and supporting role options', async () => {
     const calls: string[] = []
     globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -281,7 +281,7 @@ describe('UsersPage', () => {
 
     render(
       <Wrapper user={currentUser(['users.manage'])}>
-        <UsersPage />
+        <UsersSection />
       </Wrapper>,
     )
 
@@ -310,7 +310,7 @@ describe('UsersPage', () => {
 
     render(
       <Wrapper user={currentUser(['roles.manage'])}>
-        <UsersPage />
+        <UsersSection />
       </Wrapper>,
     )
 
@@ -343,7 +343,7 @@ describe('UsersPage', () => {
 
     render(
       <Wrapper user={currentUser(['audit.read'])}>
-        <UsersPage />
+        <UsersSection />
       </Wrapper>,
     )
 
@@ -376,7 +376,7 @@ describe('UsersPage', () => {
 
     render(
       <Wrapper user={currentUser(['audit.read'])}>
-        <UsersPage />
+        <UsersSection />
       </Wrapper>,
     )
 
@@ -397,7 +397,7 @@ describe('UsersPage', () => {
 
     render(
       <Wrapper user={currentUser(['audit.read'])}>
-        <UsersPage />
+        <UsersSection />
       </Wrapper>,
     )
 
@@ -408,7 +408,7 @@ describe('UsersPage', () => {
   it('locks the owner row and exposes edit/reset actions for regular users', async () => {
     render(
       <Wrapper user={currentUser(['users.manage', 'roles.manage', 'audit.read'])}>
-        <UsersPage />
+        <UsersSection />
       </Wrapper>,
     )
 
@@ -460,7 +460,7 @@ describe('UsersPage', () => {
   it('renders roles as a compact table and keeps full capability details in a dialog', async () => {
     render(
       <Wrapper user={currentUser(['users.manage', 'roles.manage', 'audit.read'])}>
-        <UsersPage />
+        <UsersSection />
       </Wrapper>,
     )
 
@@ -521,7 +521,7 @@ describe('UsersPage', () => {
   it('renders audit events as human-readable activity rows', async () => {
     render(
       <Wrapper user={currentUser(['users.manage', 'roles.manage', 'audit.read'])}>
-        <UsersPage />
+        <UsersSection />
       </Wrapper>,
     )
 

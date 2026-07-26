@@ -13,9 +13,9 @@
  * ALLOWLIST (§T-coded):
  *   §T.0  src/ui/components/Tabs/   — the Tabs primitive itself; role="tablist"
  *                                     is its entire job.
- *   §T.1  src/admin/pages/users/UsersPage.tsx — pre-existing custom tablist;
- *         uses a capability-gated Button row built before the Tabs compound
- *         component was introduced.
+ *   §T.1  src/admin/modals/Settings/sections/UsersSection.tsx — pre-existing
+ *         custom tablist (formerly UsersPage.tsx); uses a capability-gated
+ *         Button row built before the Tabs compound component was introduced.
  *   §T.2  src/admin/pages/account/AccountPage.tsx — same pre-existing pattern
  *         as §T.1.
  *   §T.3  src/admin/pages/site/canvas/CanvasModeToggle.tsx — design/preview
@@ -23,9 +23,6 @@
  *         primitive and uses its own compact CSS layout.
  *   §T.4  src/admin/pages/ai/AiPage.tsx — capability-gated Button row pattern
  *         mirroring §T.1.
- *   §T.5  src/admin/pages/content/components/ContentModeToggle/ContentModeToggle.tsx
- *         — Write/Live segmented-control for the content workspace, mirroring
- *         the §T.3 icon-only segmented-pill pattern.
  *
  * Any new file outside the allowlist that introduces role="tablist" fails this
  * test. Fix: use <Tabs> / <TabList> from @instatic/host-ui instead of a
@@ -74,10 +71,10 @@ function collectAllFiles(): string[] {
 /** §T.0 — every file under the Tabs primitive directory is allowed. */
 const TABS_PRIMITIVE_DIR = join(PROJECT_ROOT, 'src/ui/components/Tabs')
 
-/** §T.1–§T.5 — pre-existing custom tablist implementations. */
+/** §T.1–§T.4 — pre-existing custom tablist implementations. */
 const EXACT_ALLOWLIST = new Set<string>([
-  // §T.1 — capability-gated Button row in UsersPage predates the Tabs primitive.
-  join(PROJECT_ROOT, 'src/admin/pages/users/UsersPage.tsx'),
+  // §T.1 — capability-gated Button row, formerly UsersPage, now UsersSection.
+  join(PROJECT_ROOT, 'src/admin/modals/Settings/sections/UsersSection.tsx'),
   // §T.2 — same pre-existing pattern in AccountPage.
   join(PROJECT_ROOT, 'src/admin/pages/account/AccountPage.tsx'),
   // §T.3 — icon-only design/preview toggle; compact fixed layout incompatible
@@ -85,10 +82,6 @@ const EXACT_ALLOWLIST = new Set<string>([
   join(PROJECT_ROOT, 'src/admin/pages/site/canvas/CanvasModeToggle.tsx'),
   // §T.4 — AiPage uses the same capability-gated Button row pattern as UsersPage.
   join(PROJECT_ROOT, 'src/admin/pages/ai/AiPage.tsx'),
-  // §T.5 — Content workspace's Write/Live mode switch mirrors the §T.3
-  // pattern: icon-only, compact fixed layout that the full-width Tabs
-  // style cannot represent.
-  join(PROJECT_ROOT, 'src/admin/pages/content/components/ContentModeToggle/ContentModeToggle.tsx'),
 ])
 
 function isAllowlisted(file: string): boolean {
@@ -179,11 +172,10 @@ describe('No-plugin-tab-shells — role="tablist" must come from the Tabs primit
         lines.join('\n') +
         `\n\n§T-allowlisted files (role="tablist" is acceptable there):\n` +
         `  src/ui/components/Tabs/   (§T.0 — the primitive itself)\n` +
-        `  src/admin/pages/users/UsersPage.tsx   (§T.1)\n` +
+        `  src/admin/modals/Settings/sections/UsersSection.tsx   (§T.1)\n` +
         `  src/admin/pages/account/AccountPage.tsx   (§T.2)\n` +
         `  src/admin/pages/site/canvas/CanvasModeToggle.tsx   (§T.3)\n` +
-        `  src/admin/pages/ai/AiPage.tsx   (§T.4)\n` +
-        `  src/admin/pages/content/components/ContentModeToggle/ContentModeToggle.tsx   (§T.5)`,
+        `  src/admin/pages/ai/AiPage.tsx   (§T.4)`,
     )
   })
 })

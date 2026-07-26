@@ -3,7 +3,7 @@ import {
   SMART_MISSING_ALT,
   SMART_MISSING_TITLE,
   smartFolderPredicate,
-} from '@admin/pages/media/utils/smartFolders'
+} from '@admin/shared/media/utils/smartFolders'
 import type { CmsMediaAsset } from '@core/persistence/cmsMedia'
 
 function asset(overrides: Partial<CmsMediaAsset> = {}): CmsMediaAsset {

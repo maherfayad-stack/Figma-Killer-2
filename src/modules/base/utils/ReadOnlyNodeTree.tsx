@@ -33,7 +33,7 @@ import { registry } from '@core/module-engine'
 import type { NodeWrapperProps as NodeWrapperPropsType } from '@core/module-engine'
 import type { BaseNode, PageNode } from '@core/page-tree'
 import { classNamesForClassIds, resolveProps, type StyleRuleRegistry } from '@core/page-tree'
-import { useResponsiveBackgroundStyle } from '@admin/pages/media/hooks/useResponsiveBackgroundStyle'
+import { useResponsiveBackgroundStyle } from '@admin/shared/media/hooks/useResponsiveBackgroundStyle'
 import {
   effectiveNodeBindings,
   resolveDynamicProps,

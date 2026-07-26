@@ -1,17 +1,17 @@
 import { afterEach, describe, expect, it, mock } from 'bun:test'
 import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react'
 import type { ReactElement } from 'react'
-import { MediaCanvas } from '@admin/pages/media/components/MediaCanvas/MediaCanvas'
-import { MediaFolderPanel } from '@admin/pages/media/components/MediaFolderPanel/MediaFolderPanel'
+import { MediaCanvas } from '@admin/shared/media/components/MediaCanvas/MediaCanvas'
+import { MediaFolderPanel } from '@admin/shared/media/components/MediaFolderPanel/MediaFolderPanel'
 import { AdminSessionProvider } from '@admin/session'
 import {
   FOLDER_ALL,
   type FolderSelection,
   type UseMediaWorkspaceResult,
   useMediaWorkspace,
-} from '@admin/pages/media/hooks/useMediaWorkspace'
-import { buildFolderTree } from '@admin/pages/media/utils/folderTree'
-import { MEDIA_ASSET_DRAG_TYPE } from '@admin/pages/media/utils/mediaDragDrop'
+} from '@admin/shared/media/hooks/useMediaWorkspace'
+import { buildFolderTree } from '@admin/shared/media/utils/folderTree'
+import { MEDIA_ASSET_DRAG_TYPE } from '@admin/shared/media/utils/mediaDragDrop'
 import type { CoreCapability } from '@core/capabilities'
 import type { CmsCurrentUser } from '@core/persistence'
 import type { CmsMediaAsset, CmsMediaFolder } from '@core/persistence/cmsMedia'

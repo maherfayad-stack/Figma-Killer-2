@@ -25,7 +25,6 @@ describe('mcp registry', () => {
     // headless (server-resolved) reads
     expect(names).toContain('site_read_styles') // headless design-system read
     expect(names).toContain('site_publish') // explicit full-site deployment
-    expect(names).toContain('content_list_collections')
     // browser-execution editing (relayed via the editor bridge)
     expect(names).toContain('site_insert_html')
     expect(names).toContain('site_delete_node')
@@ -52,10 +51,9 @@ describe('mcp registry', () => {
     expect(bp!.execution).toBe('server')
   })
 
-  it('prefixes resolve the old site/content list_documents collision into distinct names', () => {
+  it('exposes site_list_documents with no duplicate tool names', () => {
     const names = mcpToolsForCapabilities(FULL).map((t) => t.name)
     expect(names).toContain('site_list_documents')
-    expect(names).toContain('content_list_documents')
     // No tool name appears twice.
     expect(new Set(names).size).toBe(names.length)
   })

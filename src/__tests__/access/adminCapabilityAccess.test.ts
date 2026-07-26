@@ -1,26 +1,16 @@
 import { describe, expect, it } from 'bun:test'
 import type { CoreCapability } from '@core/capabilities'
-import type { DataRow } from '@core/data/schemas'
 import type { CmsCurrentUser } from '@core/persistence'
 import {
+  canAccessPluginsWorkspace,
+  canAccessUsersWorkspace,
   canAccessWorkspace,
-  canCreateContent,
   canDeleteMedia,
-  canEditAnyContent,
   canEditContent,
-  canEditContentEntry,
   canEditStructure,
   canEditStyle,
-  canExportData,
-  canImportData,
-  canManageContentCollections,
-  canManageDataTables,
   canManageTable,
-  canMoveDataRow,
-  canPublishContentEntry,
-  canReadDataTables,
   canReadTable,
-  canReadMedia,
   canReplaceMedia,
   canSaveDraftSite,
   canWriteMedia,
@@ -61,62 +51,32 @@ function user(id: string, capabilities: CoreCapability[]): CmsCurrentUser {
   }
 }
 
-function row(input: {
-  id: string
-  authorUserId: string | null
-  createdByUserId: string | null
-}): DataRow {
-  return {
-    id: input.id,
-    tableId: 'posts',
-    cells: {},
-    slug: input.id,
-    status: 'draft',
-    authorUserId: input.authorUserId,
-    createdByUserId: input.createdByUserId,
-    updatedByUserId: input.createdByUserId,
-    publishedByUserId: null,
-    author: null,
-    createdBy: null,
-    updatedBy: null,
-    publishedBy: null,
-    createdAt: '2026-01-01T00:00:00.000Z',
-    updatedAt: '2026-01-01T00:00:00.000Z',
-    publishedAt: null,
-    scheduledPublishAt: null,
-    deletedAt: null,
-  }
-}
-
 describe('admin capability access helpers', () => {
   it('maps capability families to the expected admin workspaces', () => {
     const operator = user('operator', [
       'dashboard.read',
       'site.read',
       'site.content.edit',
-      'content.create',
-      'data.custom.tables.read',
-      'media.read',
     ])
     expect(canAccessWorkspace(operator, 'dashboard')).toBe(true)
     expect(canAccessWorkspace(operator, 'site')).toBe(true)
-    expect(canAccessWorkspace(operator, 'content')).toBe(true)
-    expect(canAccessWorkspace(operator, 'data')).toBe(true)
-    expect(canAccessWorkspace(operator, 'media')).toBe(true)
-    expect(canAccessWorkspace(operator, 'plugins')).toBe(false)
-    expect(canAccessWorkspace(operator, 'users')).toBe(false)
+    expect(canAccessPluginsWorkspace(operator)).toBe(false)
+    expect(canAccessUsersWorkspace(operator)).toBe(false)
     expect(canAccessWorkspace(operator, 'ai')).toBe(false)
     expect(canAccessWorkspace(operator, 'account')).toBe(true)
     expect(firstAccessibleWorkspace(operator)).toBe('dashboard')
 
+    // Plugins/Users are Settings-modal panels, not routable workspaces —
+    // a role that only holds their capabilities falls through to the
+    // universal 'account' fallback (every authenticated user can reach it).
     const userManager = user('user-manager', ['users.manage'])
-    expect(canAccessWorkspace(userManager, 'users')).toBe(true)
-    expect(firstAccessibleWorkspace(userManager)).toBe('users')
+    expect(canAccessUsersWorkspace(userManager)).toBe(true)
+    expect(firstAccessibleWorkspace(userManager)).toBe('account')
 
     const pluginOperator = user('plugin-operator', ['plugins.lifecycle'])
-    expect(canAccessWorkspace(pluginOperator, 'plugins')).toBe(true)
+    expect(canAccessPluginsWorkspace(pluginOperator)).toBe(true)
     expect(canAccessWorkspace(pluginOperator, 'pluginPage')).toBe(true)
-    expect(firstAccessibleWorkspace(pluginOperator)).toBe('plugins')
+    expect(firstAccessibleWorkspace(pluginOperator)).toBe('account')
 
     const aiAuditor = user('ai-auditor', ['ai.audit.read'])
     expect(canAccessWorkspace(aiAuditor, 'ai')).toBe(true)
@@ -159,40 +119,8 @@ describe('admin capability access helpers', () => {
     expect(canSaveDraftSite(null)).toBe(true)
   })
 
-  it('applies content row ownership and any-scope grants without widening data/media gates', () => {
-    const ownRow = row({ id: 'own', authorUserId: 'author', createdByUserId: 'creator' })
-    const createdRow = row({ id: 'created', authorUserId: null, createdByUserId: 'author' })
-    const otherRow = row({ id: 'other', authorUserId: 'other-author', createdByUserId: 'other' })
-
-    const ownEditor = user('author', ['content.create', 'content.edit.own', 'content.publish.own'])
-    expect(canCreateContent(ownEditor)).toBe(true)
-    expect(canEditContentEntry(ownEditor, ownRow)).toBe(true)
-    expect(canEditContentEntry(ownEditor, createdRow)).toBe(true)
-    expect(canEditContentEntry(ownEditor, otherRow)).toBe(false)
-    expect(canPublishContentEntry(ownEditor, ownRow)).toBe(true)
-    expect(canPublishContentEntry(ownEditor, otherRow)).toBe(false)
-    expect(canEditAnyContent(ownEditor)).toBe(false)
-
-    const contentManager = user('content-manager', ['content.manage'])
-    expect(canEditAnyContent(contentManager)).toBe(true)
-    expect(canManageContentCollections(contentManager)).toBe(true)
-    expect(canEditContentEntry(contentManager, otherRow)).toBe(true)
-    expect(canPublishContentEntry(contentManager, otherRow)).toBe(false)
-
-    const dataManager = user('data-manager', [
-      'data.custom.tables.manage',
-      'data.rows.move',
-      'data.export',
-      'data.import',
-    ])
-    expect(canReadDataTables(dataManager)).toBe(true)
-    expect(canManageDataTables(dataManager)).toBe(true)
-    expect(canManageContentCollections(dataManager)).toBe(true)
-    expect(canMoveDataRow(dataManager)).toBe(true)
-    expect(canExportData(dataManager)).toBe(true)
-    expect(canImportData(dataManager)).toBe(true)
-    expect(canReadMedia(dataManager)).toBe(false)
-
+  it('gates data-table and media capabilities by family, independent of each other', () => {
+    const dataManager = user('data-manager', ['data.custom.tables.manage'])
     // System tables are a separate family: custom-manage does not grant system
     // visibility, and a system-read persona never sees custom tables.
     expect(canReadTable(dataManager, { system: false })).toBe(true)
@@ -201,7 +129,6 @@ describe('admin capability access helpers', () => {
     expect(canManageTable(dataManager, { system: true })).toBe(false)
 
     const systemViewer = user('system-viewer', ['data.system.tables.read'])
-    expect(canReadDataTables(systemViewer)).toBe(true)
     expect(canReadTable(systemViewer, { system: true })).toBe(true)
     expect(canReadTable(systemViewer, { system: false })).toBe(false)
     expect(canManageTable(systemViewer, { system: true })).toBe(false)
@@ -213,10 +140,9 @@ describe('admin capability access helpers', () => {
       'media.delete',
     ])
     expect(hasCapability(mediaOperator, 'media.read')).toBe(true)
-    expect(canReadMedia(mediaOperator)).toBe(true)
     expect(canWriteMedia(mediaOperator)).toBe(true)
     expect(canReplaceMedia(mediaOperator)).toBe(true)
     expect(canDeleteMedia(mediaOperator)).toBe(true)
-    expect(canReadDataTables(mediaOperator)).toBe(false)
+    expect(canReadTable(mediaOperator, { system: false })).toBe(false)
   })
 })

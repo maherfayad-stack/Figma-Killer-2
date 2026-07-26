@@ -30,7 +30,7 @@ import type { CredentialRecord } from '../credentials/types'
 import { listDefaults, setDefaultForScope } from '../defaults/store'
 import type { ToolScope } from '../runtime/types'
 
-const ALL_SCOPES: ToolScope[] = ['site', 'content', 'data', 'plugin']
+const ALL_SCOPES: ToolScope[] = ['site', 'data', 'plugin']
 
 const ProviderId = Type.Union([
   Type.Literal('anthropic'),

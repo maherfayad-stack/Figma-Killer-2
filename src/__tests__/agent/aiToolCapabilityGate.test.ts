@@ -23,7 +23,7 @@ function tool(partial: Partial<AiTool>): AiTool {
   return {
     name: 'x',
     description: 'x',
-    scope: 'content',
+    scope: 'site',
     execution: 'server',
     inputSchema: Type.Object({}),
     ...partial,
@@ -64,34 +64,38 @@ describe('toolAllowedForCapabilities', () => {
 })
 
 describe('selectToolsForScope capability filtering', () => {
-  it('drops list_users for a caller without users.manage', () => {
-    const names = selectToolsForScope('content', ['ai.chat']).map((t) => t.name)
-    expect(names).not.toContain('content_list_users')
+  it('drops site_list_documents for a caller without site.read', () => {
+    const names = selectToolsForScope('site', ['ai.chat']).map((t) => t.name)
+    expect(names).not.toContain('site_list_documents')
   })
 
-  it('keeps list_users for a caller with users.manage', () => {
-    const names = selectToolsForScope('content', ['ai.chat', 'users.manage']).map((t) => t.name)
-    expect(names).toContain('content_list_users')
+  it('keeps site_list_documents for a caller with site.read', () => {
+    const names = selectToolsForScope('site', ['ai.chat', 'site.read']).map((t) => t.name)
+    expect(names).toContain('site_list_documents')
   })
 
-  it('drops document read tools for a caller with only data.custom.tables.read', () => {
-    const names = selectToolsForScope('content', ['ai.chat', 'data.custom.tables.read']).map((t) => t.name)
-    expect(names).not.toContain('content_get_document')
-    expect(names).not.toContain('list_documents')
-    expect(names).not.toContain('content_search_documents')
-    // schema tools stay — they only need a data-table read cap
-    expect(names).toContain('content_list_collections')
+  it('drops structure-editing tools for a caller with only site.read', () => {
+    const names = selectToolsForScope('site', ['ai.chat', 'ai.tools.write', 'site.read']).map((t) => t.name)
+    expect(names).not.toContain('site_insert_html')
+    expect(names).not.toContain('site_delete_node')
+    // read tools stay — they only need site.read
+    expect(names).toContain('site_read_document')
   })
 
-  it('drops list_media for a caller without media.read', () => {
-    const names = selectToolsForScope('content', ['ai.chat']).map((t) => t.name)
-    expect(names).not.toContain('content_list_media')
+  it('keeps structure-editing tools once site.structure.edit is granted', () => {
+    const names = selectToolsForScope('site', [
+      'ai.chat', 'ai.tools.write', 'site.read', 'site.structure.edit',
+    ]).map((t) => t.name)
+    expect(names).toContain('site_insert_html')
+    expect(names).toContain('site_delete_node')
   })
 
   it('still filters write tools by ai.tools.write (existing behaviour preserved)', () => {
-    const withoutWrite = selectToolsForScope('content', ['ai.chat', 'content.manage'])
+    const withoutWrite = selectToolsForScope('site', ['ai.chat', 'site.read', 'site.structure.edit'])
     expect(withoutWrite.every((t) => !t.mutates)).toBe(true)
-    const withWrite = selectToolsForScope('content', ['ai.chat', 'ai.tools.write', 'content.manage'])
+    const withWrite = selectToolsForScope('site', [
+      'ai.chat', 'ai.tools.write', 'site.read', 'site.structure.edit',
+    ])
     expect(withWrite.some((t) => t.mutates)).toBe(true)
   })
 })
@@ -115,7 +119,7 @@ describe('executeAiTool re-check', () => {
       db: {} as never,
       userId: 'u1',
       capabilities: ['ai.chat'] as readonly CoreCapability[],
-      scope: 'content' as const,
+      scope: 'site' as const,
       conversationId: 'c1',
       snapshot: undefined,
     }
@@ -138,7 +142,7 @@ describe('executeAiTool re-check', () => {
       db: {} as never,
       userId: 'u1',
       capabilities: ['ai.chat', 'users.manage'] as readonly CoreCapability[],
-      scope: 'content' as const,
+      scope: 'site' as const,
       conversationId: 'c1',
       snapshot: undefined,
     }

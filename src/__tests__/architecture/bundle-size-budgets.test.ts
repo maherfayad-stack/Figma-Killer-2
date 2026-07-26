@@ -146,31 +146,6 @@ const BUDGETS: ChunkBudget[] = [
       'gzipped). Must stay behind the modal open-state lazy boundary.',
   },
 
-  {
-    prefix: 'AdminWorkspaceCanvasLayout-',
-    maxBytes: 10_000,
-    rationale:
-      'non-site canvas shell for Content/Data/Media. Current ~6 KB raw / ' +
-      '~3 KB gzipped. Must not import Site canvas, PropertiesPanel, DnD, ' +
-      'CodeMirror, or import wizards.',
-  },
-
-  {
-    prefix: 'ContentPage-',
-    maxBytes: 90_000,
-    rationale:
-      'content workspace route after Tiptap/LiveCanvas lazy split. Current ' +
-      '~81 KB raw / ~27 KB gzipped.',
-  },
-
-  {
-    prefix: 'MediaNodeToolbar-',
-    maxBytes: 530_000,
-    rationale:
-      'lazy Tiptap/ProseMirror editor support chunk. Current ~492 KB raw / ' +
-      '~154 KB gzipped; loaded only when the content body editor/live editor mounts.',
-  },
-
   // Admin shell — the lightweight layout for non-canvas admin pages.
   // Must stay TINY: every byte added here ships on every non-editor admin
   // page (Plugins / Users / Account / plugin admin pages).

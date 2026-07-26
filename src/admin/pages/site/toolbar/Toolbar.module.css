@@ -96,21 +96,6 @@
     font-weight: 700;
 }
 
-/* Plugins-error indicator dot — shown next to the Plugins nav label
-   whenever any plugin is currently in `lifecycle_status='error'`. Driven
-   by the live SSE-fed pluginIssuesStore so it lights up the moment a
-   plugin's worker exhausts its crash budget, even when the user is on
-   another admin page. */
-.pluginsErrorDot {
-    display: inline-block;
-    width: 6px;
-    height: 6px;
-    margin-left: var(--space-xs);
-    border-radius: 999px;
-    background: var(--danger);
-    box-shadow: 0 0 0 2px
-        color-mix(in srgb, var(--danger) 30%, transparent);
-}
 
 .workspaceToolbarItems {
     display: flex;

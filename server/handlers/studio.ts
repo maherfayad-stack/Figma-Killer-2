@@ -102,11 +102,14 @@ import {
   discoverPageFiles,
   listStudioProjects,
   nextPageName,
+  nextProjectName,
   pageComponentNameFromInput,
+  projectDisplayName,
   projectsRootDir,
   resolveProjectDir,
   safeProjectFolderName,
   starterPage,
+  writeProjectMeta,
   type StudioProjectSummary,
 } from './studioProjects'
 import { readStudioFrameworkFile, writeStudioFrameworkFile } from './studioFramework'
@@ -171,8 +174,18 @@ const FrameworkPostBodySchema = Type.Object({
   framework: Type.Unknown(),
 })
 
-/** Body of POST /admin/api/studio/create — scaffold a new project folder. */
+/**
+ * Body of POST /admin/api/studio/create — scaffold a new project folder.
+ * `name` is optional: the "New project" dashboard action omits it entirely
+ * (no name-prompt UI) and the server auto-names it `Untitled`, `Untitled 2`, ….
+ */
 const CreateProjectBodySchema = Type.Object({
+  name: Type.Optional(Type.String()),
+})
+
+/** Body of POST /admin/api/studio/rename — change a project's display name. */
+const RenameProjectBodySchema = Type.Object({
+  dir: Type.Optional(Type.String()),
   name: Type.String(),
 })
 
@@ -355,8 +368,9 @@ export async function tryServeStudio(
   if (pathname === '/admin/api/studio/load' && req.method === 'GET') {
     try {
       const dir = resolveProjectDir(url.searchParams.get('dir'))
+      const projectName = projectDisplayName(dir)
       const pagesDir = join(dir, 'pages')
-      if (!existsSync(pagesDir)) return jsonResponse({ dir, pages: [], componentSources: {} })
+      if (!existsSync(pagesDir)) return jsonResponse({ dir, projectName, pages: [], componentSources: {} })
 
       const relPaths = discoverPageFiles(pagesDir)
       const pageIds = assignPageIds(relPaths)
@@ -537,13 +551,18 @@ export async function tryServeStudio(
   }
 
   // Scaffold a new project — one folder under studio-workspace/ with a starter
-  // page. The name is slugified to a filesystem-safe folder (never `..`, never
-  // a separator) so it can't escape the projects root.
+  // page. An explicit name (if any) is slugified to a filesystem-safe folder
+  // (never `..`, never a separator) so it can't escape the projects root; when
+  // omitted, the folder is slugified from an auto-generated "Untitled" name
+  // instead. Either way, the DISPLAY name (which may differ from the folder
+  // once renamed later) is recorded in `.studio/meta.json`.
   if (pathname === '/admin/api/studio/create' && req.method === 'POST') {
     try {
       const body = await readValidatedBody(req, CreateProjectBodySchema)
       if (!body) return badRequest('invalid create body')
-      const folder = safeProjectFolderName(body.name)
+      const requested = body.name?.trim()
+      const displayName = requested || nextProjectName(projectsRootDir())
+      const folder = safeProjectFolderName(displayName)
       if (!folder) return badRequest('project name must contain at least one letter or digit')
       const dir = join(projectsRootDir(), folder)
       if (existsSync(dir)) {
@@ -552,7 +571,31 @@ export async function tryServeStudio(
       const pagesDir = join(dir, 'pages')
       mkdirSync(pagesDir, { recursive: true })
       writeFileSync(join(pagesDir, 'Home.tsx'), starterPage('Home'))
-      const project: StudioProjectSummary = { dir, name: folder, pageCount: 1 }
+      writeProjectMeta(dir, { displayName })
+      const project: StudioProjectSummary = { dir, name: displayName, pageCount: 1 }
+      return jsonResponse({ project })
+    } catch (err) {
+      console.error('[studio]', err)
+      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+    }
+  }
+
+  // Rename a project's DISPLAY name — never touches the folder (a stable
+  // identifier assigned once at creation; renaming it mid-session would
+  // invalidate any already-open `studioWorkspaceDir` pointer). Just rewrites
+  // `.studio/meta.json`.
+  if (pathname === '/admin/api/studio/rename' && req.method === 'POST') {
+    try {
+      const body = await readValidatedBody(req, RenameProjectBodySchema)
+      if (!body) return badRequest('invalid rename body')
+      const displayName = body.name.trim()
+      if (!displayName) return badRequest('project name must not be empty')
+      const dir = resolveProjectDir(body.dir)
+      if (!existsSync(dir)) return jsonResponse({ error: 'Project not found.' }, { status: 404 })
+      writeProjectMeta(dir, { displayName })
+      const pagesDir = join(dir, 'pages')
+      const pageCount = existsSync(pagesDir) ? discoverPageFiles(pagesDir).length : 0
+      const project: StudioProjectSummary = { dir, name: displayName, pageCount }
       return jsonResponse({ project })
     } catch (err) {
       console.error('[studio]', err)

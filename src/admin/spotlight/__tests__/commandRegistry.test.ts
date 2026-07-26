@@ -119,20 +119,20 @@ describe('filterCommands — workspace gate', () => {
   })
 
   it('hides commands targeting a different workspace', () => {
-    const cmd = makeCmd({ workspaces: ['content'] })
+    const cmd = makeCmd({ workspaces: ['plugins'] })
     const result = filterCommands([cmd], makeCtx([], 'site'))
     expect(result).toEqual([])
   })
 
   it("keeps commands with workspaces: ['any'] regardless of current workspace", () => {
     const cmd = makeCmd({ workspaces: ['any'] })
-    const result = filterCommands([cmd], makeCtx([], 'content'))
+    const result = filterCommands([cmd], makeCtx([], 'plugins'))
     expect(result).toEqual([cmd])
   })
 
   it('keeps commands with no workspaces declared', () => {
     const cmd = makeCmd({ workspaces: undefined })
-    const result = filterCommands([cmd], makeCtx([], 'media'))
+    const result = filterCommands([cmd], makeCtx([], 'account'))
     expect(result).toEqual([cmd])
   })
 })
@@ -184,7 +184,7 @@ describe('filterCommands — combined gates', () => {
     })
 
     // Wrong workspace → hidden
-    expect(filterCommands([cmd], { ...makeCtx(['site.style.edit'], 'content') })).toEqual([])
+    expect(filterCommands([cmd], { ...makeCtx(['site.style.edit'], 'plugins') })).toEqual([])
 
     // Right workspace, missing capability → hidden
     expect(filterCommands([cmd], makeCtx(['site.read']))).toEqual([])

@@ -62,8 +62,7 @@ interface AdminUiState {
    *
    * Populated by:
    *   - The Site editor's `usePersistence` hook when it hydrates the full site.
-   *   - The lightweight `useSiteSummary` hook on AdminWorkspaceCanvasLayout
-   *     and AdminPageLayout mount.
+   *   - The lightweight `useSiteSummary` hook on AdminPageLayout mount.
    *
    * Either path writes via `setSiteSummary` so the toolbar always reads
    * from one source regardless of which layout mounted first.

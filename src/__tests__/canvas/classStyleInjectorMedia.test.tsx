@@ -4,7 +4,7 @@ import { act, cleanup, render, waitFor } from '@testing-library/react'
 import { ClassStyleInjector } from '@site/canvas/ClassStyleInjector'
 import { useEditorStore } from '@site/store/store'
 import { classKindSelector, DEFAULT_BREAKPOINTS, type StyleRule } from '@core/page-tree'
-import { refreshCmsMediaAssetCache } from '@admin/pages/media/hooks/useCmsMediaAssetByPath'
+import { refreshCmsMediaAssetCache } from '@admin/shared/media/hooks/useCmsMediaAssetByPath'
 import { makeSite } from '../fixtures'
 
 const originalFetch = globalThis.fetch

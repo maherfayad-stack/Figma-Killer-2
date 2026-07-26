@@ -84,11 +84,6 @@ const ALLOWLIST = new Set([
   'admin/pages/site/property-controls/ToggleControl.tsx',
   'admin/modals/Settings/sections/PreferencesSection.tsx',
 
-  // ── §8.5 Content workspace structured rows and editor canvas controls ───
-  // Content explorer rows reuse full-surface row patterns that Button's
-  // inline-flex sizing would distort.
-  'admin/pages/content/components/ContentExplorerPanel/ContentExplorerPanel.tsx',
-
   // ── §8.6 ARIA tablist tabs ──────────────────────────────────────────────
   // role="tab" buttons inside role="tablist" need a custom tab layout
   // (icon + label, aria-selected, no border, mode-specific active state).
@@ -96,9 +91,6 @@ const ALLOWLIST = new Set([
   // The same pill also hosts the Run-scripts toggle + Refresh and the inline
   // breakpoint switcher, which share the 22px icon-tab geometry.
   'admin/pages/site/canvas/CanvasModeToggle.tsx',
-  // Content workspace's Write / Live mode switch — mirrors the canvas
-  // mode toggle's segmented pill pattern and shares the same constraints.
-  'admin/pages/content/components/ContentModeToggle/ContentModeToggle.tsx',
 
   // ── §8.7 Full-width row disclosure / listbox option custom layouts ──────
   // ColorTokenCard row toggle is a full-width structured row (title + meta,
@@ -158,25 +150,6 @@ const ALLOWLIST = new Set([
   // fit this exact-typography disclosure — same pattern class as §8.2.
   'admin/pages/site/panels/ExplorerPanel/StudioBoardsList.tsx',
 
-  // ── §8.8 DataGrid custom CSS-Grid cells ─────────────────────────────────
-  // The Data table is a CSS-Grid (display: grid + display: contents on rows)
-  // with sticky column / group headers. Two grid-cell types cannot be
-  // expressed with Button's inline-flex layout:
-  //
-  // • DataGridHeaderCell renders role="columnheader" inside a 36px grid
-  //   row with a structured layout (field icon + label + required indicator
-  //   + sort caret). Button does not allow role overrides, and a sticky
-  //   columnheader's grid-cell sizing differs from Button's size tokens.
-  //   This is the same pattern class as §8.6 (custom ARIA role + custom
-  //   structural layout).
-  //
-  // • DataGridGroupHeader is a grid-column-spanning (1 / -1) sticky
-  //   disclosure toggle (status dot + label + count, collapsible).
-  //   This is the exact §8.2 full-width-disclosure pattern, but inside a
-  //   CSS-Grid row rather than a panel section.
-  'admin/pages/data/components/DataGrid/DataGridHeaderCell.tsx',
-  'admin/pages/data/components/DataGrid/DataGridGroupHeader.tsx',
-
   // ── §8.11 BorderControl side / corner picker hit areas ──────────────────
   // The visual border editor's side picker renders four absolutely-positioned
   // thin edge bars (6px wide/tall) inside a 72×72 box, and the radius corner
@@ -213,7 +186,7 @@ const ALLOWLIST = new Set([
   //   include-state dot), identical to §8.12's nav-item / §8.7 pattern;
   // • the "Select all" / "Select none" bulk text links — 11.5px inline text
   //   actions, not the token-driven Button sizes (same as §8.12).
-  'admin/pages/data/components/ExportDialog/ExportDialog.tsx',
+  'admin/shared/ExportDialog/ExportDialog.tsx',
 
   // ── §8.14 Framework state cards ──────────────────────────────────────────
   // FrameworkManagerDialog's state options ("Full framework" / "Variables

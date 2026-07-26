@@ -39,12 +39,12 @@ async function exists(relative: string): Promise<boolean> {
 
 describe('media storage settings panel', () => {
   it('MediaSidebar declares the storage panel id', async () => {
-    const source = await read('src/admin/pages/media/components/MediaSidebar/MediaSidebar.tsx')
+    const source = await read('src/admin/shared/media/components/MediaSidebar/MediaSidebar.tsx')
     expect(source).toMatch(/MediaSidebarPanelId\s*=\s*'folders'\s*\|\s*'storage'/)
   })
 
   it('MediaSidebar renders MediaStoragePanel for the storage panel', async () => {
-    const source = await read('src/admin/pages/media/components/MediaSidebar/MediaSidebar.tsx')
+    const source = await read('src/admin/shared/media/components/MediaSidebar/MediaSidebar.tsx')
     expect(source).toContain('MediaStoragePanel')
     // The render branch must check `activePanel === 'folders'` so the
     // fallback lands on the storage panel; the bare/padded body-mode
@@ -53,12 +53,12 @@ describe('media storage settings panel', () => {
   })
 
   it('storage rail button is gated by storage.elect', async () => {
-    const source = await read('src/admin/pages/media/components/MediaSidebar/MediaSidebar.tsx')
+    const source = await read('src/admin/shared/media/components/MediaSidebar/MediaSidebar.tsx')
     expect(source).toMatch(/hasCapability\(\s*currentUser\s*,\s*'storage\.elect'\s*\)/)
   })
 
   it('panel and server endpoint share the storage.elect gate', async () => {
-    const sidebar = await read('src/admin/pages/media/components/MediaSidebar/MediaSidebar.tsx')
+    const sidebar = await read('src/admin/shared/media/components/MediaSidebar/MediaSidebar.tsx')
     const handler = await read('server/handlers/cms/mediaStorageAdmin.ts')
     expect(sidebar).toContain("'storage.elect'")
     expect(handler).toContain("'storage.elect'")
@@ -76,7 +76,7 @@ describe('media storage settings panel', () => {
 
   it('MediaStoragePanel uses the shared persistence client', async () => {
     const source = await read(
-      'src/admin/pages/media/components/MediaStoragePanel/MediaStoragePanel.tsx',
+      'src/admin/shared/media/components/MediaStoragePanel/MediaStoragePanel.tsx',
     )
     // The panel must NOT call fetch directly — every endpoint is owned
     // by `@core/persistence/cmsMediaStorage` so envelope validation and

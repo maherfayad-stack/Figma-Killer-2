@@ -24,7 +24,7 @@ import type { AiContentBlock, AiToolOutput } from '@core/ai'
  * body, and the per-scope default lookup. Keep it aligned with
  * `server/ai/runtime/types.ts → ToolScope`.
  */
-export type AgentToolScope = 'site' | 'content' | 'data' | 'plugin'
+export type AgentToolScope = 'site' | 'data' | 'plugin'
 
 export interface AgentRenderSnapshotPayload {
   breakpointId: string

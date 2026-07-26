@@ -4,7 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { readFileSync } from 'fs'
 import { SiteExplorerPanel } from '@site/panels/SiteExplorerPanel'
 import { MediaExplorerPanel } from '@site/panels/MediaExplorerPanel'
-import { publishCmsMediaAssetCreated } from '@admin/pages/media/mediaAssetEvents'
+import { publishCmsMediaAssetCreated } from '@admin/shared/media/mediaAssetEvents'
 import { normalizeCmsMediaAsset } from '@core/persistence/cmsMedia'
 import { useEditorStore } from '@site/store/store'
 import { makeNode, makePage, makeSite } from '../fixtures'

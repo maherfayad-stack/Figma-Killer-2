@@ -20,6 +20,8 @@ import { useEffect, useRef } from 'react'
 import { cn } from '@ui/cn'
 import { useEditorStore } from '@site/store/store'
 import { useAdminUi } from '@admin/state/adminUi'
+import { useCurrentAdminUser } from '@admin/sessionContext'
+import { canAccessPluginsWorkspace, canAccessUsersWorkspace } from '@admin/access'
 import { Button } from '@ui/components/Button'
 import { Kbd } from '@ui/components/Kbd'
 import { SettingsCogSolidIcon } from 'pixel-art-icons/icons/settings-cog-solid'
@@ -28,11 +30,12 @@ import { UploadIcon } from 'pixel-art-icons/icons/upload'
 import { SlidersHorizontalIcon } from 'pixel-art-icons/icons/sliders-horizontal'
 import { PackageSolidIcon } from 'pixel-art-icons/icons/package-solid'
 import { UsersSolidIcon } from 'pixel-art-icons/icons/users-solid'
-import { Link } from '@admin/lib/routing'
 import { GeneralSection } from './sections/GeneralSection'
 import { PublishingSection } from './sections/PublishingSection'
 import { ShortcutsSection } from './sections/ShortcutsSection'
 import { PreferencesSection } from './sections/PreferencesSection'
+import { PluginsSection } from './sections/PluginsSection'
+import { UsersSection } from './sections/UsersSection'
 import s from './SettingsModal.module.css'
 
 // ─── Nav items ────────────────────────────────────────────────────────────────
@@ -47,16 +50,19 @@ const NAV_ITEMS = [
   { id: 'preferences', label: 'Preferences', icon: SlidersHorizontalIcon, accent: 'peach' },
 ] as const
 
-type SectionId = typeof NAV_ITEMS[number]['id']
-
-// Management surfaces that are full admin pages rather than inline settings
-// sections. In the studio-only shell they no longer have a top-nav tab, so
-// Settings is their entry point: clicking one soft-navigates to its route
-// (via the router-safe `<Link>`) and closes the modal.
-const MANAGE_LINKS = [
-  { id: 'plugins', label: 'Plugins', icon: PackageSolidIcon, accent: 'sky',  to: '/admin/plugins' },
-  { id: 'users',   label: 'Users',   icon: UsersSolidIcon,   accent: 'mint', to: '/admin/users'   },
+// Management panels — full admin surfaces (plugin management, user/role/audit
+// management) folded into Settings as in-modal panels instead of separate
+// page navigations, so managing them never leaves the surface the operator
+// was already on. Rendered exactly like NAV_ITEMS below the "Manage" divider,
+// gated by the same capability checks the old standalone routes used.
+const MANAGE_ITEMS = [
+  { id: 'plugins', label: 'Plugins', icon: PackageSolidIcon, accent: 'sky' },
+  { id: 'users',   label: 'Users',   icon: UsersSolidIcon,   accent: 'mint' },
 ] as const
+
+const ALL_ITEMS = [...NAV_ITEMS, ...MANAGE_ITEMS]
+
+type SectionId = typeof ALL_ITEMS[number]['id']
 
 // ─── SettingsModal ────────────────────────────────────────────────────────────
 
@@ -76,8 +82,15 @@ export function SettingsModal() {
   // user actually opens settings, never on first paint.
   const setSectionStore = useEditorStore((state) => state.setSettingsSection)
 
+  const currentUser = useCurrentAdminUser()
+  const canSeePlugins = !currentUser || canAccessPluginsWorkspace(currentUser)
+  const canSeeUsers = !currentUser || canAccessUsersWorkspace(currentUser)
+  const manageItems = MANAGE_ITEMS.filter((item) =>
+    item.id === 'plugins' ? canSeePlugins : canSeeUsers,
+  )
+
   const activeSection = normalizeSection(adminUiSection)
-  const activeItem = NAV_ITEMS.find((n) => n.id === activeSection) ?? NAV_ITEMS[0]
+  const activeItem = ALL_ITEMS.find((n) => n.id === activeSection) ?? ALL_ITEMS[0]
   const dialogRef = useRef<HTMLDivElement>(null)
   const navRef = useRef<HTMLElement>(null)
   const triggerRef = useRef<HTMLElement | null>(null)
@@ -198,25 +211,18 @@ export function SettingsModal() {
               ))}
             </nav>
 
-            <nav aria-label="Manage" className={s.sectionList}>
-              {MANAGE_LINKS.map((item) => {
-                const LinkIcon = item.icon
-                return (
-                  <Link
+            {manageItems.length > 0 && (
+              <nav aria-label="Manage" className={s.sectionList}>
+                {manageItems.map((item) => (
+                  <SettingsNavButton
                     key={item.id}
-                    to={item.to}
-                    className={cn(s.navItem, s.navLink)}
-                    data-accent={item.accent}
-                    onClick={handleClose}
-                  >
-                    <span className={s.navIcon} aria-hidden="true">
-                      <LinkIcon size={16} />
-                    </span>
-                    <span className={s.navName}>{item.label}</span>
-                  </Link>
-                )
-              })}
-            </nav>
+                    item={item}
+                    active={activeSection === item.id}
+                    onClick={() => handleSetSection(item.id)}
+                  />
+                ))}
+              </nav>
+            )}
 
             <div className={s.railSpring} />
 
@@ -244,6 +250,8 @@ export function SettingsModal() {
               {activeSection === 'shortcuts'   && <ShortcutsSection />}
               {activeSection === 'publishing'  && <PublishingSection />}
               {activeSection === 'preferences' && <PreferencesSection />}
+              {activeSection === 'plugins'     && <PluginsSection />}
+              {activeSection === 'users'       && <UsersSection />}
             </div>
           </div>
         </div>
@@ -253,7 +261,7 @@ export function SettingsModal() {
 }
 
 function normalizeSection(section: string | null | undefined): SectionId {
-  return NAV_ITEMS.some((item) => item.id === section) ? (section as SectionId) : 'general'
+  return ALL_ITEMS.some((item) => item.id === section) ? (section as SectionId) : 'general'
 }
 
 function SettingsNavButton({
@@ -261,7 +269,7 @@ function SettingsNavButton({
   active,
   onClick,
 }: {
-  item: (typeof NAV_ITEMS)[number]
+  item: (typeof ALL_ITEMS)[number]
   active: boolean
   onClick: () => void
 }) {

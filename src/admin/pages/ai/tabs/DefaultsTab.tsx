@@ -23,11 +23,10 @@ import {
 import { ApiError } from '@core/http'
 import styles from '../AiPage.module.css'
 
-type ToolScope = 'site' | 'content' | 'data' | 'plugin'
-const SCOPES: ToolScope[] = ['site', 'content', 'data', 'plugin']
+type ToolScope = 'site' | 'data' | 'plugin'
+const SCOPES: ToolScope[] = ['site', 'data', 'plugin']
 const SCOPE_DESCRIPTIONS: Record<ToolScope, string> = {
   site: 'Used by the visual site editor chat.',
-  content: 'Used by the content workspace.',
   data: 'Used by the data workspace (Phase 4).',
   plugin: 'Used by api.ai.* calls from plugin code (Phase 5).',
 }

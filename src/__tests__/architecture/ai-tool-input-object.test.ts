@@ -8,12 +8,11 @@
  */
 
 import { describe, expect, it } from 'bun:test'
-import { contentTools } from '../../../server/ai/tools/content'
 import { siteTools } from '../../../server/ai/tools/site'
 
 describe('AI tool input object gate', () => {
   it('every registered tool advertises an object-rooted input schema', () => {
-    for (const tool of [...siteTools, ...contentTools]) {
+    for (const tool of siteTools) {
       expect(
         tool.inputSchema.type,
         `${tool.name} must expose a top-level JSON Schema object`,

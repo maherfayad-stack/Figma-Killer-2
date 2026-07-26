@@ -3,8 +3,8 @@ import {
   uploadCmsMediaAsset,
   type CmsMediaAsset,
 } from '@core/persistence/cmsMedia'
-import { primeCmsMediaAssetCache } from '@admin/pages/media/hooks/useCmsMediaAssetByPath'
-import { publishCmsMediaAssetCreated } from '@admin/pages/media/mediaAssetEvents'
+import { primeCmsMediaAssetCache } from '@admin/shared/media/hooks/useCmsMediaAssetByPath'
+import { publishCmsMediaAssetCreated } from '@admin/shared/media/mediaAssetEvents'
 import type { AgentPreviewImage } from './agentImageTypes'
 
 interface AgentImageActionOptions {
@@ -33,7 +33,7 @@ export async function readAgentImageBlob(
   if (!image.src.startsWith('data:')) {
     const url = new URL(image.src, window.location.href)
     if (url.origin !== window.location.origin) {
-      throw new Error('Only images from this Instatic site can be saved or copied.')
+      throw new Error('Only images from this site can be saved or copied.')
     }
   }
   const blob = await apiBlobRequest(image.src, {

@@ -19,7 +19,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { DataTableListItem } from '@core/data/schemas'
 import { subscribeToasts, type Toast } from '@ui/components/Toast/toastBus'
-import { ExportDialog } from '@admin/pages/data/components/ExportDialog/ExportDialog'
+import { ExportDialog } from '@admin/shared/ExportDialog/ExportDialog'
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 

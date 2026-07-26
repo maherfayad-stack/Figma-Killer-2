@@ -32,7 +32,7 @@ import {
 } from '@admin/plugin-host-hooks'
 import { ensurePluginRuntime } from '@admin/pluginRuntimeBootstrap'
 import { SkeletonBlock, SkeletonRows } from '@ui/components/Skeleton'
-import styles from '../../PluginsPage.module.css'
+import styles from '../../plugins.module.css'
 import { getErrorMessage } from '@core/utils/errorMessage'
 
 // ---------------------------------------------------------------------------

@@ -44,7 +44,7 @@ import {
   type RowActionMenuItem,
 } from '../types'
 import type { UsersPageData } from '../hooks/useUsersPageData'
-import styles from '../UsersPage.module.css'
+import styles from '../users.module.css'
 import { getErrorMessage } from '@core/utils/errorMessage'
 
 interface RolesTabProps {

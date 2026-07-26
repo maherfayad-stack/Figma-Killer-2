@@ -28,10 +28,11 @@ beforeEach(async () => {
     insert into users (id, email, email_normalized, display_name, password_hash, role_id)
     values ('u1', 'u1@example.com', 'u1@example.com', 'User One', 'x', 'owner')
   `
+  await db`insert into site (id, name) values ('default', 'Test Site')`
   token = generateConnectorToken()
   await createConnector(db, {
     userId: 'u1', label: 'Claude Code', type: 'local',
-    capabilities: ['ai.chat', 'ai.tools.write', 'site.read', 'site.structure.edit', 'content.manage', 'data.system.tables.read'],
+    capabilities: ['ai.chat', 'ai.tools.write', 'site.read', 'site.structure.edit', 'data.system.tables.read'],
     tokenHash: await hashConnectorToken(token),
   })
 })
@@ -76,24 +77,23 @@ describe('MCP end-to-end (stateless multi-request, real handler)', () => {
   it('initializes, lists tools, and runs a headless read — the Claude Code flow', async () => {
     const init = await rpc('initialize', INIT_PARAMS)
     expect(init.status).toBe(200)
-    expect(init.json.result?.serverInfo?.name).toBe('instatic')
+    expect(init.json.result?.serverInfo?.name).toBe('alm-figma-killer')
 
     const list = await rpc('tools/list', {})
     const names = (list.json.result?.tools ?? []).map((t) => t.name)
-    expect(names).toContain('content_list_collections') // headless content read
+    expect(names).toContain('site_list_documents') // headless site read
     expect(names).toContain('site_read_styles') // headless design-system read
     expect(names).toContain('site_insert_html') // browser editing tool, relayed to the editor
 
-    const read = await rpc('tools/call', { name: 'content_list_collections', arguments: {} })
+    const read = await rpc('tools/call', { name: 'site_read_styles', arguments: {} })
     expect(read.json.result?.isError).toBeFalsy()
-    expect(JSON.stringify(read.json.result?.content)).toContain('pages')
   })
 
   it('a read-only connector sees reads but no write tools', async () => {
     const readToken = generateConnectorToken()
     await createConnector(db, {
       userId: 'u1', label: 'RO', type: 'remote',
-      capabilities: ['ai.chat', 'site.read', 'content.manage', 'data.system.tables.read'],
+      capabilities: ['ai.chat', 'site.read', 'data.system.tables.read'],
       tokenHash: await hashConnectorToken(readToken),
     })
     const req = (method: string, params: unknown) =>
@@ -111,7 +111,7 @@ describe('MCP end-to-end (stateless multi-request, real handler)', () => {
     const body: RpcResponse = JSON.parse(await listRes!.text())
     const tools = body.result?.tools ?? []
     const names = tools.map((t) => t.name)
-    expect(names).toContain('content_list_collections')
+    expect(names).toContain('site_list_documents')
     expect(names).toContain('site_read_styles')
     expect(names).not.toContain('site_insert_html') // write tool gated out (no ai.tools.write)
     expect(names).not.toContain('mutate_page_tree') // removed entirely

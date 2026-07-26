@@ -40,6 +40,11 @@ const CreateProjectResponseSchema = Type.Object(
   { additionalProperties: true },
 )
 
+const RenameProjectResponseSchema = Type.Object(
+  { project: StudioProjectSchema },
+  { additionalProperties: true },
+)
+
 /** Overview launcher. One directory read: every subfolder of `studio-workspace/`. */
 export function useStudioProjects(): StudioProject[] | null {
   return useAsyncResource(
@@ -51,13 +56,28 @@ export function useStudioProjects(): StudioProject[] | null {
 
 /**
  * Creates a new project (a folder under `studio-workspace/` with a starter
- * page) and resolves to its summary. Throws `ApiError` on failure (e.g. a
- * name collision → 409) so the caller can surface the message via a toast.
+ * page) and resolves to its summary. `name` is optional — omit it for the
+ * one-click "New project" action and the server auto-names it `Untitled`,
+ * `Untitled 2`, …. Throws `ApiError` on failure (e.g. a name collision → 409)
+ * so the caller can surface the message via a toast.
  */
-export function createStudioProject(name: string): Promise<StudioProject> {
+export function createStudioProject(name?: string): Promise<StudioProject> {
   return apiRequest('/admin/api/studio/create', {
     method: 'POST',
     body: { name },
     schema: CreateProjectResponseSchema,
+  }).then((res) => res.project)
+}
+
+/**
+ * Renames a project's DISPLAY name (never its folder) and resolves to the
+ * refreshed summary. Throws `ApiError` on failure so the caller can surface
+ * the message via a toast.
+ */
+export function renameStudioProject(dir: string, name: string): Promise<StudioProject> {
+  return apiRequest('/admin/api/studio/rename', {
+    method: 'POST',
+    body: { dir, name },
+    schema: RenameProjectResponseSchema,
   }).then((res) => res.project)
 }

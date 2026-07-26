@@ -2,7 +2,6 @@
  * Dashboard stats endpoints — per-domain.
  *
  *   GET /admin/api/cms/dashboard/pages
- *   GET /admin/api/cms/dashboard/posts
  *   GET /admin/api/cms/dashboard/media
  *   GET /admin/api/cms/dashboard/plugins
  *   GET /admin/api/cms/dashboard/storage
@@ -23,14 +22,14 @@
  *
  * First-party dashboard readers have fixed scopes. The page header's
  * local range control is not threaded into these endpoints; Pages /
- * Posts / Media counters are point-in-time totals plus their reader's
+ * Media counters are point-in-time totals plus their reader's
  * fixed deltas or histograms.
  *
  * File layout for this folder:
  *   index.ts         — this file: route handler + endpoint registry
  *   types.ts         — every response shape on the wire
  *   shared.ts        — SQL + coercion helpers used by 2+ readers
- *   <widget>.ts      — one file per widget reader (pages, posts, media,
+ *   <widget>.ts      — one file per widget reader (pages, media,
  *                      plugins, publishLineup, activity, storage)
  *
  * One-reader helpers stay co-located in their reader's file so the call
@@ -44,7 +43,6 @@ import { jsonResponse, methodNotAllowed } from '../../../http'
 import { CMS_API_PREFIX, type CmsHandlerOptions } from '../shared'
 import { resolveTimeZone } from '../../../time'
 import { readPagesStats } from './pages'
-import { readPostsStats } from './posts'
 import { readMediaStats } from './media'
 import { readPluginsStats } from './plugins'
 import { readPublishLineup } from './publishLineup'
@@ -83,7 +81,7 @@ interface DashboardEndpoint {
 // a new widget is "new reader file + one row here". The capability
 // rules:
 //
-//   pages / posts / publish-lineup / storage
+//   pages / publish-lineup / storage
 //                       Non-sensitive totals or paths the visitor could
 //                       hit on the public site anyway. Any authenticated
 //                       user can read.
@@ -102,7 +100,6 @@ interface DashboardEndpoint {
 //                       via the dashboard — A2 fix.
 const DASHBOARD_READERS: Record<string, DashboardEndpoint> = {
   'pages':          { reader: readPagesStats,     capability: null },
-  'posts':          { reader: readPostsStats,     capability: null },
   'media':          { reader: readMediaStats,     capability: 'media.read' },
   'plugins':        { reader: readPluginsStats,   capability: 'plugins.read' },
   'storage':        { reader: readStorageStats,   capability: null },

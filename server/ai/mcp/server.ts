@@ -20,7 +20,6 @@ import { getErrorMessage } from '@core/utils/errorMessage'
 import type { AiBrowserBridge, AiTool, AiToolOutput } from '../runtime/types'
 import { executeAiTool } from '../drivers/http/execTool'
 import { mcpToolsForCapabilities } from './registry'
-import { authorizeMcpContentTool } from './contentAuthorization'
 import {
   getEditorBridgeForUser,
   type EditorBridgeScope,
@@ -42,13 +41,12 @@ const NOOP_BRIDGE: AiBrowserBridge = {
 }
 
 const NO_WORKSPACE_MESSAGE: Record<EditorBridgeScope, string> = {
-  site: 'This tool runs in the Instatic Site editor. Open the Site editor in a browser (signed in as the connector owner) and try again.',
-  content: 'This tool runs in the Instatic Content workspace. Open the Content workspace in a browser (signed in as the connector owner) and try again.',
+  site: 'This tool runs in the Site editor. Open the Site editor in a browser (signed in as the connector owner) and try again.',
 }
 
 export function buildMcpServer(ctx: McpServerContext): Server {
   const server = new Server(
-    { name: 'instatic', version: '1.0.0' },
+    { name: 'alm-figma-killer', version: '1.0.0' },
     { capabilities: { tools: {} } },
   )
 
@@ -81,11 +79,11 @@ export function buildMcpServer(ctx: McpServerContext): Server {
 
     // Server-resolved tools run in-process; browser tools are relayed to the
     // connector owner's matching open workspace. No workspace → a clear,
-    // actionable error. Browser tools currently belong only to Site or
-    // Content; keep that invariant explicit instead of guessing a bridge.
+    // actionable error. Browser tools currently belong only to Site; keep
+    // that invariant explicit instead of guessing a bridge.
     let bridge = NOOP_BRIDGE
     if (tool.execution === 'browser') {
-      if (tool.scope !== 'site' && tool.scope !== 'content') {
+      if (tool.scope !== 'site') {
         return {
           isError: true,
           content: [{ type: 'text', text: `Browser tool "${tool.name}" has unsupported scope "${tool.scope}".` }],
@@ -96,22 +94,7 @@ export function buildMcpServer(ctx: McpServerContext): Server {
       if (!live) {
         return { isError: true, content: [{ type: 'text', text: NO_WORKSPACE_MESSAGE[browserScope] }] }
       }
-      bridge = browserScope === 'content'
-        ? {
-            callBrowser: async (toolName, input) => {
-              await authorizeMcpContentTool(
-                ctx.db,
-                ctx.userId,
-                ctx.capabilities,
-                toolName,
-                input,
-              )
-              const current = getEditorBridgeForUser(ctx.userId, browserScope)
-              if (!current) throw new Error(NO_WORKSPACE_MESSAGE[browserScope])
-              return current.callBrowser(toolName, input)
-            },
-          }
-        : live
+      bridge = live
     }
 
     const controller = new AbortController()
@@ -121,7 +104,7 @@ export function buildMcpServer(ctx: McpServerContext): Server {
         db: ctx.db,
         userId: ctx.userId,
         capabilities: ctx.capabilities,
-        scope: tool.scope === 'shared' ? 'content' : tool.scope,
+        scope: tool.scope === 'shared' ? 'site' : tool.scope,
         conversationId: `mcp:${ctx.connectorId}`,
         snapshot: null,
       })

@@ -2,8 +2,8 @@
  * get_context — orientation for an MCP agent in one call.
  *
  * Surfaces the two things that silently tripped up live use:
- *   1. which live workspaces are connected (browser tools need the matching
- *      Site or Content bridge), and
+ *   1. whether the Site editor bridge is connected (browser tools need it),
+ *      and
  *   2. which "everywhere" / post-type templates wrap pages (so the agent isn't
  *      surprised by a nav/footer it didn't author).
  *
@@ -50,7 +50,7 @@ export const contextMcpTools: AiTool[] = [
   {
     name: 'get_context',
     description:
-      'Orient yourself before editing: reports whether the Site editor and Content workspace are connected (browser tools require their matching workspace), and which templates wrap pages — an "everywhere" template applies a nav/footer/etc. to every page, so anything you author is in addition to it. Pass entryId to also learn whether a template wraps that specific page. Headless — no editor needed. Call this first if a browser tool returns an "open the workspace" error.',
+      'Orient yourself before editing: reports whether the Site editor is connected (browser tools require it), and which templates wrap pages — an "everywhere" template applies a nav/footer/etc. to every page, so anything you author is in addition to it. Pass entryId to also learn whether a template wraps that specific page. Headless — no editor needed. Call this first if a browser tool returns an "open the workspace" error.',
     scope: 'site',
     execution: 'server',
     inputSchema: GetContextInput,
@@ -79,7 +79,6 @@ export const contextMcpTools: AiTool[] = [
         site: site ? { name: site.name } : null,
         editor: {
           siteConnected: hasEditorBridge(ctx.userId, 'site'),
-          contentConnected: hasEditorBridge(ctx.userId, 'content'),
         },
         templates,
       }

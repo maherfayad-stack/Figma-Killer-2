@@ -55,13 +55,14 @@ export function AdminRoutes() {
       <Route path="/admin" element={<Navigate to="/admin/dashboard" replace />} />
       <Route path="/admin/dashboard" element={withRouteBoundary(<AdminEntry section="dashboard" />)} />
       <Route path="/admin/site" element={withRouteBoundary(<AdminEntry section="site" />)} />
-      {/* Content / Data / Media are no longer top-level destinations — the app
-          is a studio-first launcher. Their CMS model still powers the site
-          editor (loops, data pickers, publish), but the standalone workspace
-          pages are unreachable: any /admin/content|data|media URL falls through
-          to the catch-all below and redirects to the Overview. */}
-      <Route path="/admin/plugins" element={withRouteBoundary(<AdminEntry section="plugins" />)} />
-      <Route path="/admin/users" element={withRouteBoundary(<AdminEntry section="users" />)} />
+      {/* Content / Data / Media workspace pages have been removed — the app
+          is a studio-first launcher. The underlying data_tables/data_rows
+          model still powers the site editor (loops, data pickers, publish),
+          but there is no standalone workspace UI for it anymore: any
+          /admin/content|data|media URL falls through to the catch-all below
+          and redirects to the Overview. Plugins and Users management moved
+          into the Settings modal (in-modal panels) instead of separate
+          routes — /admin/plugins|users fall through the same way. */}
       <Route path="/admin/ai" element={withRouteBoundary(<AdminEntry section="ai" />)} />
       <Route path="/admin/account" element={withRouteBoundary(<AdminEntry section="account" />)} />
       <Route

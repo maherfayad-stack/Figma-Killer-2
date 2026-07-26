@@ -13,7 +13,7 @@ import { CanvasModulePlaceholder } from '@ui/components/CanvasModulePlaceholder'
 import { PackageSolidIcon } from 'pixel-art-icons/icons/package-solid'
 import { cn } from '@ui/cn'
 import { collectSiteStyleBackgroundImagePaths, generateClassCSS, type ResponsiveCssOptions } from '@core/publisher'
-import { useResponsiveEditorMediaAssets } from '@admin/pages/media/hooks/useResponsiveBackgroundStyle'
+import { useResponsiveEditorMediaAssets } from '@admin/shared/media/hooks/useResponsiveBackgroundStyle'
 import {
   createSandboxSrcDoc,
   HOST_MESSAGE_SOURCE,

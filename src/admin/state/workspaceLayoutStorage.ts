@@ -45,11 +45,13 @@ export type FloatingPanelId =
   | 'mediaBulkEdit'
 
 /**
- * Editor workspaces tracked by the layout persistence layer. These are the
- * four canvas-style admin workspaces — Site through `AdminCanvasLayout`, and
- * Content / Data / Media through `AdminWorkspaceCanvasLayout`. Other admin
- * pages (Plugins, Users, Account, …) render via `AdminPageLayout` and do not
- * participate in this persistence.
+ * Editor workspaces tracked by the layout persistence layer. `'site'` is the
+ * live canvas workspace (`AdminCanvasLayout`); `'content'`/`'data'`/`'media'`
+ * are retained as historical storage keys read by `readWorkspaceLayout` for
+ * installs with layout state saved before those workspaces were removed —
+ * no route resolves to them anymore. Other admin pages (Plugins, Users,
+ * Account, …) render via `AdminPageLayout` and do not participate in this
+ * persistence.
  */
 export type EditorWorkspaceId = 'site' | 'content' | 'data' | 'media'
 

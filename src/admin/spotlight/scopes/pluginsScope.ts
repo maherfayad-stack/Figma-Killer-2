@@ -9,6 +9,8 @@
 
 import type { Scope, Command } from '../types'
 import { pluginPagesProvider } from '../providers/pluginPagesProvider'
+import { queuePendingAction } from '../pendingAction'
+import { useAdminUi } from '@admin/state/adminUi'
 
 function getPluginsScopeCommands(): Command[] {
   return [
@@ -19,10 +21,11 @@ function getPluginsScopeCommands(): Command[] {
       group: 'plugins',
       iconName: 'download-solid',
       keywords: ['install', 'add', 'plugin', 'package', 'zip'],
-      workspaces: ['plugins'],
+      workspaces: ['any'],
       run: (ctx) => {
+        queuePendingAction('plugins.install')
         ctx.closeSpotlight()
-        ctx.navigate('/admin/plugins?action=install')
+        useAdminUi.getState().openSettings('plugins')
       },
     },
     {

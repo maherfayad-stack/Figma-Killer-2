@@ -4,15 +4,13 @@
  * One of the two top-level admin layouts in `src/admin/layouts/`:
  *   - AdminCanvasLayout — used by the Site editor. Carries the floating
  *     editor panels, the page canvas, and the SiteExplorer DnD context.
- *   - AdminWorkspaceCanvasLayout — used by Content / Data / Media. Keeps the
- *     canvas chrome without importing Site-only editor panels.
  *   - AdminPageLayout (this file) — used by Plugins, Users, Account, and
  *     plugin admin pages. Strips the canvas / sidebar / DnD chrome and
  *     renders a simple centered page body with a unified header (title,
  *     description, optional tabs and actions slots).
  *
- * Pick AdminWorkspaceCanvasLayout for non-site canvas workspaces. Pick this
- * layout when the page is a regular admin page (lists, forms, settings).
+ * Pick this layout when the page is a regular admin page (lists, forms,
+ * settings) rather than a canvas workspace.
  *
  * Bundle isolation contract (see also vite.config.ts comments)
  * ───────────────────────────────────────────────────────────

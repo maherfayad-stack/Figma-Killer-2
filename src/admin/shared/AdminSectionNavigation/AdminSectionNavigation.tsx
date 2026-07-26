@@ -1,32 +1,28 @@
 /**
  * AdminSectionNavigation — the row of section links shown inside the
- * editor toolbar (Site · Content · Plugins · Users · …plugin pages).
+ * editor toolbar (Site · …plugin pages).
+ *
+ * Plugins and Users management live in the Settings modal (in-modal panels),
+ * not here — this row is only for real navigable routes. Plugin-contributed
+ * admin pages (`/admin/plugins/:pluginId/:pageId`) are still real routes and
+ * still appear here.
  *
  * Lives next to the toolbar styles it consumes so both the heavy
- * AdminCanvasLayout (Site), AdminWorkspaceCanvasLayout (Content / Data /
- * Media), and the lightweight AdminPageLayout (Plugins / Users / Account /
+ * AdminCanvasLayout (Site) and the lightweight AdminPageLayout (Account /
  * plugin pages) can share it without one layout pulling another layout's
  * module graph in.
  */
-import { useEffect, useState, useSyncExternalStore, type MouseEvent, type ReactNode } from 'react'
-import { ArticleSolidIcon } from 'pixel-art-icons/icons/article-solid'
+import { useEffect, useState, type MouseEvent, type ReactNode } from 'react'
 import { DashboardSolidIcon } from 'pixel-art-icons/icons/dashboard-solid'
-import { DatabaseSolidIcon } from 'pixel-art-icons/icons/database-solid'
-import { ImagesSolidIcon } from 'pixel-art-icons/icons/images-solid'
 import { LayoutSolidIcon } from 'pixel-art-icons/icons/layout-solid'
 import { PackageSolidIcon } from 'pixel-art-icons/icons/package-solid'
-import { UsersSolidIcon } from 'pixel-art-icons/icons/users-solid'
 import { listCmsPlugins } from '@core/persistence/cmsPlugins'
 import type { CmsCurrentUser } from '@core/persistence'
 import type { PluginAdminPageRoute } from '@core/plugin-sdk'
 import { Link, useLocation } from '@admin/lib/routing'
 import { useAdminNavigate } from '@admin/lib/useAdminNavigate'
 import { useCurrentAdminUser } from '@admin/sessionContext'
-import { canAccessWorkspace } from '@admin/access'
-import {
-  getPluginsInErrorCount,
-  subscribePluginIssues,
-} from '@admin/pages/plugins/utils/pluginIssuesStore'
+import { canAccessWorkspace, canAccessPluginsWorkspace } from '@admin/access'
 import { CMS_PLUGINS_CHANGED_EVENT } from '@admin/pages/plugins/utils/pluginEvents'
 import type { AdminWorkspace } from '@admin/workspace'
 import toolbarStyles from '@site/toolbar/Toolbar.module.css'
@@ -77,7 +73,7 @@ export function AdminSectionNavigation({
   const effectiveUser = currentUser ?? sessionUser ?? null
   const unrestricted = !effectiveUser
   const canAccess = (workspace: AdminWorkspace) => unrestricted || canAccessWorkspace(effectiveUser, workspace)
-  const canAccessPlugins = canAccess('plugins')
+  const canAccessPlugins = unrestricted || canAccessPluginsWorkspace(effectiveUser)
 
   useEffect(() => {
     let cancelled = false
@@ -143,48 +139,6 @@ export function AdminSectionNavigation({
           onNavigateStart={onWorkspaceNavigateStart}
         />
       )}
-      {canAccess('content') && (
-        <NavItem
-          to="/admin/content"
-          icon={<ArticleSolidIcon size={NAV_ICON_SIZE} aria-hidden="true" />}
-          label="Content"
-          active={section === 'content'}
-          onNavigateStart={onWorkspaceNavigateStart}
-        />
-      )}
-      {canAccess('data') && (
-        <NavItem
-          to="/admin/data"
-          icon={<DatabaseSolidIcon size={NAV_ICON_SIZE} aria-hidden="true" />}
-          label="Data"
-          active={section === 'data'}
-          onNavigateStart={onWorkspaceNavigateStart}
-        />
-      )}
-      {canAccess('media') && (
-        <NavItem
-          to="/admin/media"
-          icon={<ImagesSolidIcon size={NAV_ICON_SIZE} aria-hidden="true" />}
-          label="Media"
-          active={section === 'media'}
-          onNavigateStart={onWorkspaceNavigateStart}
-        />
-      )}
-      {canAccess('plugins') && (
-        <PluginsNavLink
-          active={section === 'plugins'}
-          onNavigateStart={onWorkspaceNavigateStart}
-        />
-      )}
-      {canAccess('users') && (
-        <NavItem
-          to="/admin/users"
-          icon={<UsersSolidIcon size={NAV_ICON_SIZE} aria-hidden="true" />}
-          label="Users"
-          active={section === 'users'}
-          onNavigateStart={onWorkspaceNavigateStart}
-        />
-      )}
       {canAccessPlugins && pluginPages.map((page) => (
         <AdminRouteLink
           key={`${page.pluginId}:${page.id}`}
@@ -229,50 +183,6 @@ function NavItem({
     <AdminRouteLink to={to} onNavigateStart={onNavigateStart}>
       {icon}
       <span>{label}</span>
-    </AdminRouteLink>
-  )
-}
-
-/**
- * Plugins nav link — renders a tiny red dot next to the label when any
- * plugin is currently in `error` lifecycle state. The dot is fed by the
- * live SSE-driven `pluginIssuesStore`, so a plugin crashing while the
- * user is on (say) the Content page lights up the badge in real time.
- */
-function PluginsNavLink({
-  active,
-  onNavigateStart,
-}: {
-  active: boolean
-  onNavigateStart?: () => unknown
-}) {
-  const issuesCount = useSyncExternalStore(
-    subscribePluginIssues,
-    getPluginsInErrorCount,
-    getPluginsInErrorCount,
-  )
-  const dot = issuesCount > 0 ? (
-    <output
-      className={toolbarStyles.pluginsErrorDot}
-      aria-label={`${issuesCount} plugin${issuesCount === 1 ? '' : 's'} in error state`}
-      title={`${issuesCount} plugin${issuesCount === 1 ? '' : 's'} need${issuesCount === 1 ? 's' : ''} attention`}
-    />
-  ) : null
-
-  if (active) {
-    return (
-      <span className={toolbarStyles.activeSection}>
-        <PackageSolidIcon size={NAV_ICON_SIZE} aria-hidden="true" />
-        <span>Plugins</span>
-        {dot}
-      </span>
-    )
-  }
-  return (
-    <AdminRouteLink to="/admin/plugins" onNavigateStart={onNavigateStart}>
-      <PackageSolidIcon size={NAV_ICON_SIZE} aria-hidden="true" />
-      <span>Plugins</span>
-      {dot}
     </AdminRouteLink>
   )
 }

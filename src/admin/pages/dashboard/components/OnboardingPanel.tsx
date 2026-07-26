@@ -58,7 +58,7 @@ interface StepDef {
   icon: PixelArtIconComponent
   action:
     | { kind: 'navigate'; to: string }
-    | { kind: 'settings-modal' }
+    | { kind: 'settings-modal'; section?: string }
     | { kind: 'framework-import' }
 }
 
@@ -97,7 +97,7 @@ const STEPS: readonly StepDef[] = [
       'Add SEO, comments, image optimization or workflow extensions from the registry.',
     cta: 'Browse plugins',
     icon: PackageSolidIcon,
-    action: { kind: 'navigate', to: '/admin/plugins' },
+    action: { kind: 'settings-modal', section: 'plugins' },
   },
   {
     id: 'team',
@@ -106,7 +106,7 @@ const STEPS: readonly StepDef[] = [
       'Editors, designers and developers — each role gets a tuned set of editor permissions.',
     cta: 'Add members',
     icon: UsersSolidIcon,
-    action: { kind: 'navigate', to: '/admin/users' },
+    action: { kind: 'settings-modal', section: 'users' },
   },
 ]
 
@@ -179,7 +179,7 @@ export function OnboardingPanel({ facts, onDismiss, onFrameworkImported }: Onboa
     } else if (step.action.kind === 'framework-import') {
       setFrameworkImportOpen(true)
     } else {
-      openSettings('general')
+      openSettings(step.action.section ?? 'general')
     }
   }
 

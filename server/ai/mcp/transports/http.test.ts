@@ -62,6 +62,6 @@ describe('mcp http transport', () => {
     expect(res?.status).toBe(200)
     const text = await res!.text()
     expect(text).toContain('protocolVersion')
-    expect(text).toContain('instatic')
+    expect(text).toContain('alm-figma-killer')
   })
 })

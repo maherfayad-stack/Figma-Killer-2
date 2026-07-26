@@ -2,14 +2,12 @@
  * Per-widget dashboard data hooks.
  *
  * Each hook owns ONE network round-trip against a per-domain endpoint
- * (`/admin/api/cms/dashboard/<domain>`). The 6 hooks fire in parallel
+ * (`/admin/api/cms/dashboard/<domain>`). The 5 hooks fire in parallel
  * when the dashboard mounts, and each widget unblocks AS ITS DATA
  * ARRIVES — the dashboard fills in progressively instead of stalling
  * on the slowest endpoint (the audit-events-driven Activity feed).
  *
  *   • `usePagesStats()`        — Pages widget (cheap; 2 small counts)
- *   • `usePostsStats()`        — Posts widget (one query per postType
- *                                  + a 28-day histogram)
  *   • `useMediaStats()`        — Media widget (totals + 16 thumbs)
  *   • `usePluginsStats()`      — Plugins widget (one scan of
  *                                  `installed_plugins`)
@@ -125,14 +123,6 @@ const DashboardPagesStatsSchema = looseObject({
 })
 type DashboardPagesStats = Static<typeof DashboardPagesStatsSchema>
 
-const DashboardPostsStatsSchema = looseObject({
-  total: Type.Number(),
-  categories: Type.Number(),
-  scheduled: Type.Number(),
-  daily28: Type.Array(Type.Number()),
-})
-type DashboardPostsStats = Static<typeof DashboardPostsStatsSchema>
-
 const DashboardMediaStatsSchema = looseObject({
   count: Type.Number(),
   totalBytes: Type.Number(),
@@ -192,8 +182,8 @@ type DashboardActivityStats = Static<typeof DashboardActivityStatsSchema>
  * failure leaves the value `null` and the widget keeps its skeleton.
  *
  * Every request carries the viewer's IANA timezone (`tz`) so server readers
- * that bin timestamps per calendar day (the Posts histogram) bucket into the
- * operator's local day rather than UTC. Endpoints that don't bucket ignore it.
+ * that bin timestamps per calendar day bucket into the operator's local day
+ * rather than UTC. Endpoints that don't bucket ignore it.
  */
 function useDashboardEndpoint<S extends TSchema>(endpoint: string, schema: S): Static<S> | null {
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone
@@ -216,11 +206,6 @@ function useDashboardEndpoint<S extends TSchema>(endpoint: string, schema: S): S
 /** Pages widget. Two cheap counts on `data_rows` for the system pages table. */
 export function usePagesStats(): DashboardPagesStats | null {
   return useDashboardEndpoint('pages', DashboardPagesStatsSchema)
-}
-
-/** Posts widget. One query per postType table + a 28-day histogram. */
-export function usePostsStats(): DashboardPostsStats | null {
-  return useDashboardEndpoint('posts', DashboardPostsStatsSchema)
 }
 
 /** Media widget. Totals + 16 most-recent image thumbnails. */

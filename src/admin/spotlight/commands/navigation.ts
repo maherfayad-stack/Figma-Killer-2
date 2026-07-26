@@ -9,31 +9,13 @@
  */
 
 import type { Command } from '../types'
-
-/** Mirrors `canAccessContent` in access.ts. */
-const CONTENT_ACCESS_CAPABILITIES = [
-  'content.create',
-  'content.edit.own',
-  'content.edit.any',
-  'content.publish.own',
-  'content.publish.any',
-  'content.manage',
-] as const
+import { useAdminUi } from '@admin/state/adminUi'
 
 /** Mirrors `canAccessUsersWorkspace` in access.ts. */
 const USERS_ACCESS_CAPABILITIES = [
   'users.manage',
   'roles.manage',
   'audit.read',
-] as const
-
-/** Mirrors `canAccessDataWorkspace` in access.ts (any `data.*` table read/manage or `content.*`). */
-const DATA_WORKSPACE_CAPABILITIES = [
-  'data.custom.tables.read',
-  'data.custom.tables.manage',
-  'data.system.tables.read',
-  'data.system.tables.manage',
-  ...CONTENT_ACCESS_CAPABILITIES,
 ] as const
 
 /** Mirrors `canAccessPluginsWorkspace` in access.ts. */
@@ -61,73 +43,31 @@ export function getNavigationCommands(): Command[] {
       },
     },
     {
-      id: 'navigation.goToContent',
-      title: 'Go to Content',
-      subtitle: 'Manage content documents',
-      group: 'navigation',
-      iconName: 'file-text-solid',
-      keywords: ['content', 'documents', 'articles', 'cms'],
-      workspaces: ['any'],
-      capability: CONTENT_ACCESS_CAPABILITIES,
-      run: (ctx) => {
-        ctx.navigate('/admin/content')
-        ctx.closeSpotlight()
-      },
-    },
-    {
-      id: 'navigation.goToData',
-      title: 'Go to Data',
-      subtitle: 'Manage structured data tables',
-      group: 'navigation',
-      iconName: 'database-solid',
-      keywords: ['data', 'tables', 'fields', 'database', 'structured'],
-      workspaces: ['any'],
-      capability: DATA_WORKSPACE_CAPABILITIES,
-      run: (ctx) => {
-        ctx.navigate('/admin/data')
-        ctx.closeSpotlight()
-      },
-    },
-    {
-      id: 'navigation.goToMedia',
-      title: 'Go to Media',
-      subtitle: 'Manage uploaded media files',
-      group: 'navigation',
-      iconName: 'image-solid',
-      keywords: ['media', 'files', 'images', 'uploads', 'assets'],
-      workspaces: ['any'],
-      capability: 'media.read',
-      run: (ctx) => {
-        ctx.navigate('/admin/media')
-        ctx.closeSpotlight()
-      },
-    },
-    {
       id: 'navigation.goToPlugins',
-      title: 'Go to Plugins',
+      title: 'Open Settings → Plugins',
       subtitle: 'Manage installed plugins',
       group: 'navigation',
       iconName: 'package-solid',
-      keywords: ['plugins', 'extensions', 'addons', 'install'],
+      keywords: ['plugins', 'extensions', 'addons', 'install', 'settings'],
       workspaces: ['any'],
       capability: PLUGINS_ACCESS_CAPABILITIES,
       run: (ctx) => {
-        ctx.navigate('/admin/plugins')
         ctx.closeSpotlight()
+        useAdminUi.getState().openSettings('plugins')
       },
     },
     {
       id: 'navigation.goToUsers',
-      title: 'Go to Users',
+      title: 'Open Settings → Users',
       subtitle: 'Manage users and roles',
       group: 'navigation',
       iconName: 'cursor-minimal-solid',
-      keywords: ['users', 'roles', 'team', 'members', 'permissions', 'audit'],
+      keywords: ['users', 'roles', 'team', 'members', 'permissions', 'audit', 'settings'],
       workspaces: ['any'],
       capability: USERS_ACCESS_CAPABILITIES,
       run: (ctx) => {
-        ctx.navigate('/admin/users')
         ctx.closeSpotlight()
+        useAdminUi.getState().openSettings('users')
       },
     },
     {

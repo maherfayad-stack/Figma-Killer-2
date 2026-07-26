@@ -31,26 +31,28 @@ describe('MCP editor bridge handler', () => {
     expect(invalid.status).toBe(400)
   })
 
-  it('gates each bridge scope by access to its matching workspace', async () => {
+  it('gates the site bridge scope by access to the Site workspace', async () => {
     const siteUser = await harness.createRoleUser({
       name: 'Site Reader',
       slug: 'mcp-site-reader',
       capabilities: ['site.read'],
     })
-    const contentUser = await harness.createRoleUser({
-      name: 'Content Creator',
-      slug: 'mcp-content-creator',
-      capabilities: ['content.create'],
+    const noAccessUser = await harness.createRoleUser({
+      name: 'No Access',
+      slug: 'mcp-no-access',
+      capabilities: [],
     })
 
-    const siteDeniedContent = await harness.ai(`${BASE}?scope=content`, {
+    // 'content' is no longer a valid bridge scope, regardless of capabilities.
+    const contentRejected = await harness.ai(`${BASE}?scope=content`, {
       cookie: siteUser.cookie,
     })
-    expect(siteDeniedContent.status).toBe(403)
-    const contentDeniedSite = await harness.ai(`${BASE}?scope=site`, {
-      cookie: contentUser.cookie,
+    expect(contentRejected.status).toBe(400)
+
+    const deniedSite = await harness.ai(`${BASE}?scope=site`, {
+      cookie: noAccessUser.cookie,
     })
-    expect(contentDeniedSite.status).toBe(403)
+    expect(deniedSite.status).toBe(403)
 
     const siteCtrl = new AbortController()
     const siteAllowed = await harness.ai(`${BASE}?scope=site`, {
@@ -60,14 +62,5 @@ describe('MCP editor bridge handler', () => {
     expect(siteAllowed.status).toBe(200)
     expect(siteAllowed.headers.get('content-type')).toBe('application/x-ndjson')
     siteCtrl.abort()
-
-    const contentCtrl = new AbortController()
-    const contentAllowed = await harness.ai(`${BASE}?scope=content`, {
-      cookie: contentUser.cookie,
-      signal: contentCtrl.signal,
-    })
-    expect(contentAllowed.status).toBe(200)
-    expect(contentAllowed.headers.get('content-type')).toBe('application/x-ndjson')
-    contentCtrl.abort()
   })
 })

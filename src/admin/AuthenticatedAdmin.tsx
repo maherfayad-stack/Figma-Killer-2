@@ -5,7 +5,7 @@
  *   - SpotlightRoot (Cmd+K palette) + its keybinding listener
  *   - AdminSessionProvider (session context for authenticated children)
  *   - StepUpProvider (auth re-verification for sensitive actions)
- *   - The 10 workspace page components (DashboardPage, SitePage, …)
+ *   - The 5 workspace page components (DashboardPage, SitePage, …)
  *   - installPluginRuntime() (populates globalThis.__instatic for plugins)
  *
  * Splitting this out from `AdminEntry` keeps the cold-load JS execution
@@ -24,12 +24,12 @@
  *      'dashboard') loads first. React renders it; `prewarmedLazy`'s
  *      cold-path triggers `.preload()` and suspends to the nearest
  *      Suspense boundary until the import lands. The DASHBOARD chunk
- *      gets vite's CPU / the HTTP connection slot to itself — no 9
+ *      gets vite's CPU / the HTTP connection slot to itself — no 4
  *      sibling compilations competing for resources.
  *
  *   2. After the active page paints (i.e., the user actually sees the
  *      dashboard), an effect fires `requestIdleCallback` to schedule
- *      `.preload()` calls for the OTHER 9 workspace pages. They load
+ *      `.preload()` calls for the OTHER 4 workspace pages. They load
  *      in the background while the user is reading the dashboard.
  *
  *   3. When the user clicks any nav link, the target page's cached
@@ -40,8 +40,8 @@
  *   - React.lazy returns a fresh `.then()` chain on every render → one-
  *     tick Suspense flash on every nav even with cached chunks.
  *   - Auto-prewarming at construction time (the previous version of
- *     this file) fires all 10 imports simultaneously, which makes the
- *     active page COMPETE for vite-CPU / HTTP connections with 9
+ *     this file) fires all 5 imports simultaneously, which makes the
+ *     active page COMPETE for vite-CPU / HTTP connections with 4
  *     sibling chunks. The user perceives the active page as slower.
  *
  * Cost: same as before — every authenticated user eventually downloads
@@ -61,7 +61,7 @@ import { prewarmedLazy } from './lib/prewarmedLazy'
 import { useAdminUi } from './state/adminUi'
 import styles from './AdminEntry.module.css'
 
-// The 10 workspace pages — pre-warmed AND synchronously-renderable once
+// The 5 workspace pages — pre-warmed AND synchronously-renderable once
 // loaded. See file header for the rationale.
 const DashboardPage = prewarmedLazy(
   () => import('./pages/dashboard/DashboardPage').then((m) => ({ default: m.DashboardPage })),
@@ -71,25 +71,9 @@ const SitePage = prewarmedLazy(
   () => import('./pages/site/SitePage').then((m) => ({ default: m.SitePage })),
   { displayName: 'SitePage' },
 )
-const ContentPage = prewarmedLazy(
-  () => import('./pages/content/ContentPage').then((m) => ({ default: m.ContentPage })),
-  { displayName: 'ContentPage' },
-)
-const MediaPage = prewarmedLazy(
-  () => import('./pages/media/MediaPage').then((m) => ({ default: m.MediaPage })),
-  { displayName: 'MediaPage' },
-)
-const PluginsPage = prewarmedLazy(
-  () => import('./pages/plugins/PluginsPage').then((m) => ({ default: m.PluginsPage })),
-  { displayName: 'PluginsPage' },
-)
 const PluginPage = prewarmedLazy(
   () => import('./pages/plugins/PluginPage').then((m) => ({ default: m.PluginPage })),
   { displayName: 'PluginPage' },
-)
-const UsersPage = prewarmedLazy(
-  () => import('./pages/users/UsersPage').then((m) => ({ default: m.UsersPage })),
-  { displayName: 'UsersPage' },
 )
 const AiPage = prewarmedLazy(
   () => import('./pages/ai/AiPage').then((m) => ({ default: m.AiPage })),
@@ -98,10 +82,6 @@ const AiPage = prewarmedLazy(
 const AccountPage = prewarmedLazy(
   () => import('./pages/account/AccountPage').then((m) => ({ default: m.AccountPage })),
   { displayName: 'AccountPage' },
-)
-const DataPage = prewarmedLazy(
-  () => import('./pages/data/DataPage').then((m) => ({ default: m.DataPage })),
-  { displayName: 'DataPage' },
 )
 
 const SiteImportModal = lazy(() =>
@@ -148,12 +128,7 @@ if (typeof window !== 'undefined') {
   const pathname = window.location.pathname
   const activePage =
     pathname.startsWith('/admin/site') ? SitePage :
-    pathname.startsWith('/admin/content') ? ContentPage :
-    pathname.startsWith('/admin/data') ? DataPage :
-    pathname.startsWith('/admin/media') ? MediaPage :
     pathname.startsWith('/admin/plugins/') ? PluginPage :
-    pathname.startsWith('/admin/plugins') ? PluginsPage :
-    pathname.startsWith('/admin/users') ? UsersPage :
     pathname.startsWith('/admin/ai') ? AiPage :
     pathname.startsWith('/admin/account') ? AccountPage :
     DashboardPage
@@ -169,19 +144,13 @@ interface AuthenticatedAdminProps {
 
 // Every prewarmedLazy-wrapped workspace page, in one list so the
 // background-preload scheduler can iterate without naming each one.
-// Order matches the rough frequency of use (Site / Content / Data are
-// the canonical creator workflows; Plugins / Users / Account are
-// admin-only one-offs) — `requestIdleCallback` doesn't promise a
-// specific order, but if the browser starts firing requests round-
-// robin, this puts the most-likely-next pages first.
+// Order matches the rough frequency of use (Site is the canonical creator
+// workflow; Account is an admin-only one-off) — `requestIdleCallback`
+// doesn't promise a specific order, but if the browser starts firing
+// requests round-robin, this puts the most-likely-next pages first.
 const ALL_WORKSPACE_PAGES = [
   SitePage,
-  ContentPage,
-  DataPage,
   DashboardPage,
-  MediaPage,
-  PluginsPage,
-  UsersPage,
   AiPage,
   AccountPage,
   PluginPage,
@@ -190,11 +159,6 @@ const ALL_WORKSPACE_PAGES = [
 function pageForSection(section: AdminWorkspace) {
   return (
     section === 'site' ? SitePage :
-    section === 'content' ? ContentPage :
-    section === 'data' ? DataPage :
-    section === 'media' ? MediaPage :
-    section === 'plugins' ? PluginsPage :
-    section === 'users' ? UsersPage :
     section === 'ai' ? AiPage :
     section === 'pluginPage' ? PluginPage :
     section === 'account' ? AccountPage :
@@ -257,7 +221,7 @@ export default function AuthenticatedAdmin({ section, currentUser }: Authenticat
     if (section === 'site') {
       // `/admin/site` has a second, active-route post-paint import:
       // AdminCanvasEditorBody. Let that editor body claim the first idle
-      // slot before warming sibling workspace pages; otherwise Content/Data
+      // slot before warming sibling workspace pages; otherwise those
       // preloads start first and delay the canvas/dnd work the user actually
       // asked for by opening Site.
       let cancelIdlePreload: (() => void) | null = null
@@ -303,18 +267,12 @@ export default function AuthenticatedAdmin({ section, currentUser }: Authenticat
                   the pending import promise the first time). On subsequent
                   visits the prewarmedLazy renders synchronously and this
                   boundary never fires.
-                - Downstream `React.lazy()` inside pages (e.g. content body
-                  editor / LiveCanvas / CodeMirrorEditor). Those remain
-                  legitimately lazy because the editor surfaces are large and
-                  shouldn't ship until needed. */}
+                - Downstream `React.lazy()` inside pages (e.g. CodeMirrorEditor).
+                  Those remain legitimately lazy because the editor surfaces
+                  are large and shouldn't ship until needed. */}
           <Suspense fallback={<AppLoadingScreen />}>
             {section === 'dashboard' ? <DashboardPage /> :
               section === 'site' ? <SitePage /> :
-              section === 'content' ? <ContentPage /> :
-              section === 'data' ? <DataPage /> :
-              section === 'media' ? <MediaPage /> :
-              section === 'plugins' ? <PluginsPage /> :
-              section === 'users' ? <UsersPage /> :
               section === 'ai' ? <AiPage /> :
               section === 'pluginPage' ? <PluginPage /> :
               section === 'account' ? <AccountPage /> :

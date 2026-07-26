@@ -24,7 +24,7 @@ import { Badge } from '../components/Badge'
 import { auditActor, auditDetails, auditTitle } from '../utils/audit'
 import { formatDateTime } from '../utils/format'
 import type { UsersPageData } from '../hooks/useUsersPageData'
-import styles from '../UsersPage.module.css'
+import styles from '../users.module.css'
 
 export function AuditTab({ data }: { data: UsersPageData }) {
   const { users, roles, events } = data

@@ -19,8 +19,8 @@ import {
   blurHashToDataUrl,
   buildVariantSrcset,
   pickVariantUrl,
-} from '@admin/pages/media/utils/variants'
-import { useCmsMediaAssetByPath } from '@admin/pages/media/hooks/useCmsMediaAssetByPath'
+} from '@admin/shared/media/utils/variants'
+import { useCmsMediaAssetByPath } from '@admin/shared/media/hooks/useCmsMediaAssetByPath'
 import { CanvasModulePlaceholder } from '@ui/components/CanvasModulePlaceholder'
 import { ImageSolidIcon } from 'pixel-art-icons/icons/image-solid'
 import { htmlAttributesForReact } from '@modules/base/shared/htmlAttributes'

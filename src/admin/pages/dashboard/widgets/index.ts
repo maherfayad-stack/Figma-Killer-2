@@ -15,7 +15,6 @@ import { DomainWidget } from './DomainWidget'
 import { MediaWidget } from './MediaWidget'
 import { PagesWidget } from './PagesWidget'
 import { PluginsWidget } from './PluginsWidget'
-import { PostsWidget } from './PostsWidget'
 import { PublishQueueWidget } from './PublishQueueWidget'
 import { StatusWidget } from './StatusWidget'
 import { StorageWidget } from './StorageWidget'
@@ -28,7 +27,6 @@ import { DatabaseSolidIcon } from 'pixel-art-icons/icons/database-solid'
 import { FileTextSolidIcon } from 'pixel-art-icons/icons/file-text-solid'
 import { GlobeSolidIcon } from 'pixel-art-icons/icons/globe-solid'
 import { ImageSolidIcon } from 'pixel-art-icons/icons/image-solid'
-import { PenSquareSolidIcon } from 'pixel-art-icons/icons/pen-square-solid'
 import { PlugSolidIcon } from 'pixel-art-icons/icons/plug-solid'
 import { ZapSolidIcon } from 'pixel-art-icons/icons/zap-solid'
 
@@ -58,17 +56,6 @@ export function registerFirstPartyDashboardWidgets(): void {
     defaultSize: 3,
     tint: 'lilac',
     render: PagesWidget,
-  })
-
-  dashboardWidgetRegistry.register({
-    id: 'posts',
-    ownerId: 'core',
-    name: 'Posts',
-    description: 'Posts by category',
-    icon: PenSquareSolidIcon,
-    defaultSize: 3,
-    tint: 'peach',
-    render: PostsWidget,
   })
 
   dashboardWidgetRegistry.register({

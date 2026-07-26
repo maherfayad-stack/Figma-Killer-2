@@ -8,11 +8,9 @@
  *   - AdminPageLayout — used by Plugins, Users, Account, and plugin admin
  *     pages. Strips the canvas / sidebar / DnD chrome and renders a
  *     simple centered page body with a unified header.
- *   - AdminWorkspaceCanvasLayout — used by Content, Data, and Media. Keeps
- *     the canvas chrome without importing Site-editor-only modules.
  *
- * Pick AdminCanvasLayout for the visual Site editor. Content, Data, and Media
- * use AdminWorkspaceCanvasLayout so they do not download Site-editor-only
+ * Pick AdminCanvasLayout for the visual Site editor; pick AdminPageLayout
+ * for a regular admin page that should not download Site-editor-only
  * modules on first paint.
  *
  * Editor Overlay Layout (Guideline #410 — motion-editor style):
@@ -115,8 +113,7 @@ const PreviewOverlay = lazy(() =>
 )
 
 /**
- * AdminCanvasLayout is the Site editor shell. Other canvas-style workspaces
- * render through `AdminWorkspaceCanvasLayout`, and regular admin pages render
+ * AdminCanvasLayout is the Site editor shell. Regular admin pages render
  * through `AdminPageLayout`.
  */
 export function AdminCanvasLayout() {

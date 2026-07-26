@@ -107,7 +107,6 @@ const ALLOWLIST: ReadonlyMap<string, string> = new Map([
   ['dashboard/types.ts', 'TypeScript response shape definitions; no handlers.'],
   ['dashboard/shared.ts', 'SQL + coercion helpers shared by widget readers; no handlers.'],
   ['dashboard/pages.ts', 'Widget data reader called by gated dashboard/index.ts dispatcher.'],
-  ['dashboard/posts.ts', 'Widget data reader called by gated dashboard/index.ts dispatcher.'],
   ['dashboard/media.ts', 'Widget data reader called by gated dashboard/index.ts dispatcher.'],
   ['dashboard/plugins.ts', 'Widget data reader called by gated dashboard/index.ts dispatcher.'],
   ['dashboard/publishLineup.ts', 'Widget data reader called by gated dashboard/index.ts dispatcher.'],

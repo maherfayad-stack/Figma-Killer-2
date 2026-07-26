@@ -291,13 +291,13 @@ export async function listDefaults(): Promise<AiDefaults> {
 }
 
 export async function setDefault(
-  scope: 'site' | 'content' | 'data' | 'plugin',
+  scope: 'site' | 'data' | 'plugin',
   body: { credentialId: string; modelId: string },
 ): Promise<void> {
   await apiRequest(`/admin/api/ai/defaults/${scope}`, { method: 'PUT', body })
 }
 
-export async function clearDefault(scope: 'site' | 'content' | 'data' | 'plugin'): Promise<void> {
+export async function clearDefault(scope: 'site' | 'data' | 'plugin'): Promise<void> {
   await apiRequest(`/admin/api/ai/defaults/${scope}`, { method: 'DELETE' })
 }
 
@@ -305,7 +305,7 @@ export async function clearDefault(scope: 'site' | 'content' | 'data' | 'plugin'
 // Endpoints — conversations
 // ---------------------------------------------------------------------------
 
-export async function listConversations(scope: 'site' | 'content' | 'data' | 'plugin'): Promise<ConversationView[]> {
+export async function listConversations(scope: 'site' | 'data' | 'plugin'): Promise<ConversationView[]> {
   const body = await apiRequest('/admin/api/ai/conversations', {
     query: { scope },
     schema: ConversationListResponseSchema,

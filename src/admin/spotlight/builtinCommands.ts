@@ -26,9 +26,6 @@ import { getSettingsCommands } from './commands/settings'
 import { getHelpCommands } from './commands/help'
 import { getPagesCommands } from './commands/pages'
 import { getBreakpointsCommands } from './commands/breakpoints'
-import { getContentCommands } from './commands/content'
-import { getMediaCommands } from './commands/media'
-import { getDataCommands } from './commands/data'
 import { getFrameworkCommands } from './commands/framework'
 import { getVisualComponentsCommands } from './commands/visualComponents'
 import { getBuiltInPluginCommands, getPluginsCommands } from './commands/plugins'
@@ -71,9 +68,6 @@ export function getAllCommands(): Command[] {
       ...getPanelsCommands(),
       ...getPagesCommands(),
       ...getBreakpointsCommands(),
-      ...getContentCommands(),
-      ...getMediaCommands(),
-      ...getDataCommands(),
       ...getFrameworkCommands(),
       ...getVisualComponentsCommands(),
       ...getBuiltInPluginCommands(),

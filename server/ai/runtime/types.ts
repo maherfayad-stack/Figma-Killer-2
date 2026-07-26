@@ -36,7 +36,7 @@ export type AiProviderId = 'anthropic' | 'openai' | 'ollama' | 'openrouter' | 'o
 export type AiAuthMode = 'apiKey' | 'baseUrl'
 
 // One AI surface in the admin. Each scope has its own toolset + system prompt.
-export type ToolScope = 'site' | 'content' | 'data' | 'plugin'
+export type ToolScope = 'site' | 'data' | 'plugin'
 
 /**
  * Separator marking the split between the cacheable static system-prompt prefix

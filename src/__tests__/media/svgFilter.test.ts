@@ -11,7 +11,7 @@ import {
   bucketForMime,
   filterMediaAssets,
   SVG_MIME,
-} from '@admin/pages/media/utils/filters'
+} from '@admin/shared/media/utils/filters'
 import type { CmsMediaAsset } from '@core/persistence/cmsMedia'
 
 function asset(

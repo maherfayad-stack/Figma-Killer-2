@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "boards": [
+    {
+      "id": "554f63e6-8005-43a6-aa63-3383ba9b3b5e",
+      "name": "Board 1",
+      "frames": [
+        {
+          "pageId": "about",
+          "x": 0,
+          "y": 0
+        },
+        {
+          "pageId": "catalog",
+          "x": 1104,
+          "y": 0
+        },
+        {
+          "pageId": "home",
+          "x": 0,
+          "y": 880
+        },
+        {
+          "pageId": "page",
+          "x": 1104,
+          "y": 880
+        },
+        {
+          "pageId": "page2",
+          "x": 0,
+          "y": 1760
+        },
+        {
+          "pageId": "test",
+          "x": 1104,
+          "y": 1760
+        }
+      ],
+      "notes": [],
+      "docs": []
+    }
+  ]
+}

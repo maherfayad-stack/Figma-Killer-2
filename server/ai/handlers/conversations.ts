@@ -33,7 +33,7 @@ import {
 } from '../conversations/store'
 import type { ToolScope } from '../runtime/types'
 
-const VALID_SCOPES: ToolScope[] = ['site', 'content', 'data', 'plugin']
+const VALID_SCOPES: ToolScope[] = ['site', 'data', 'plugin']
 
 const CreateBodySchema = Type.Object({
   scope: Type.Union(VALID_SCOPES.map((s) => Type.Literal(s))),
