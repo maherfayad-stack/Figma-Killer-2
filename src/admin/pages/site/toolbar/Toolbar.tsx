@@ -98,7 +98,7 @@ function StudioProjectLabel() {
   if (!project) return null
 
   function startEditing() {
-    setDraft(project.name)
+    setDraft(project!.name)
     committingRef.current = false
     setEditing(true)
   }
@@ -107,7 +107,7 @@ function StudioProjectLabel() {
     if (committingRef.current) return
     committingRef.current = true
     setEditing(false)
-    const previous = project
+    const previous = project!
     const name = draft.trim()
     if (!name || name === previous.name) return
     setStudioProject({ dir: previous.dir, name })

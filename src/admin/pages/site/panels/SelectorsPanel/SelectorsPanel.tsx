@@ -74,11 +74,11 @@ function keyboardMenuPosition(element: HTMLElement) {
 
 function getEmptyFilterMessage(filter: SelectorFilter, query: string): string {
   const normalized = query.trim()
-  if (normalized) return `No selectors match “${normalized}”.`
-  if (filter === 'user') return 'No user selectors yet.'
-  if (filter === 'utility') return 'No utility selectors yet.'
-  if (filter === 'unused') return 'No unused selectors — every selector is in use.'
-  return 'No selectors match the current filters.'
+  if (normalized) return `No classes match “${normalized}”.`
+  if (filter === 'user') return 'No user classes yet.'
+  if (filter === 'utility') return 'No utility classes yet.'
+  if (filter === 'unused') return 'No unused classes — every class is in use.'
+  return 'No classes match the current filters.'
 }
 
 export function SelectorsPanel({ variant = 'docked' }: SelectorsPanelProps) {
@@ -302,7 +302,7 @@ export function SelectorsPanel({ variant = 'docked' }: SelectorsPanelProps) {
     <>
       <Panel
         panelId="selectors"
-        title="Selectors"
+        title="Classes"
         testId="selectors-panel"
         bodyRef={scrollRef}
         onClose={() => setSelectorsPanelOpen(false)}
@@ -315,32 +315,32 @@ export function SelectorsPanel({ variant = 'docked' }: SelectorsPanelProps) {
               value: query,
               onValueChange: setQuery,
               onClear: () => setQuery(''),
-              placeholder: 'Search selectors',
-              ariaLabel: 'Search selectors',
+              placeholder: 'Search classes',
+              ariaLabel: 'Search classes',
             }}
             searchTrailing={
               <Button
                 variant="secondary"
                 size="sm"
                 iconOnly
-                aria-label="Create selector"
-                tooltip="Create selector"
+                aria-label="Create class"
+                tooltip="Create class"
                 onClick={() => setCreateDialogOpen(true)}
               >
                 <PlusIcon size={13} aria-hidden="true" />
               </Button>
             }
-            groupLabel="Selector type"
+            groupLabel="Class type"
           />
 
           {showSkeleton ? (
             <SelectorRowsSkeleton />
           ) : reusableClasses.length === 0 ? (
             <EmptyState
-              title="No reusable selectors yet."
+              title="No reusable classes yet."
               action={
                 <Button variant="secondary" size="sm" onClick={() => setCreateDialogOpen(true)}>
-                  Create selector
+                  Create class
                 </Button>
               }
             />
@@ -349,7 +349,7 @@ export function SelectorsPanel({ variant = 'docked' }: SelectorsPanelProps) {
           ) : (
             <div
               className={cn(styles.rows, selecting && styles.rowsSelecting)}
-              aria-label="Reusable selectors"
+              aria-label="Reusable classes"
             >
               {visibleClasses.map((cls) => (
                 <SelectorRow
@@ -424,7 +424,7 @@ export function SelectorsPanel({ variant = 'docked' }: SelectorsPanelProps) {
 
       {createDialogOpen && (
         <SelectorNameDialog
-          title="Create selector"
+          title="Create class"
           initialValue=""
           submitLabel="Create"
           onCancel={() => setCreateDialogOpen(false)}
@@ -434,7 +434,7 @@ export function SelectorsPanel({ variant = 'docked' }: SelectorsPanelProps) {
 
       {renameTarget && (
         <SelectorNameDialog
-          title="Rename selector"
+          title="Rename class"
           initialValue={
             renameTarget.kind === 'ambient'
               ? styleRuleSelector(renameTarget)
