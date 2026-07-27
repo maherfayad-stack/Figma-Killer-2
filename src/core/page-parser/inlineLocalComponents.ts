@@ -241,14 +241,21 @@ function expandCallSite(
     const env = buildSubstitutionEnv(fn, callSiteNode.props)
     subPage = applySubstitutions(rootExpr, subPage, env, callSiteNode.children, target.sourceFile, targetRelFromRoot)
 
-    // §2.5 — every node this call site's subtree produces is locked, tagged
-    // with the component whose file it came from. Must happen BEFORE
-    // recursing so a deeper (nested) inlining's OWN lockReason isn't
-    // clobbered when it's merged in below.
+    // §2.5 — tag every node this call site's subtree produces with the
+    // component whose file it came from. These nodes are EDITABLE: their
+    // writeback target is that component's own source location (the tail of
+    // the composite id — see `studioEditLocation`), which is a real, valid
+    // place to write. What the tag carries is the consequence: one source file
+    // backs every instance, so an edit here lands on all of them. The editor
+    // surfaces that as a warning on the node rather than refusing the edit.
+    //
+    // A node that is locked for its OWN reason (`.map`/ternary/spread/dynamic
+    // SVG) stays locked — that lock is about the node having no single valid
+    // writeback target at all, which inlining does not change. Must happen
+    // BEFORE recursing so a deeper inlining's own tag isn't clobbered below.
     const displayName = callSiteNode.name
     for (const node of Object.values(subPage.nodes)) {
-      node.locked = true
-      node.lockReason = `from component ${displayName}`
+      if (!node.fromComponent) node.fromComponent = displayName
     }
 
     // Recurse into the sub-tree's own local components — resolved fresh

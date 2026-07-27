@@ -21,66 +21,28 @@ import {
   Node,
   Project,
   SyntaxKind,
-  type JsxAttribute,
   type JsxElement,
   type JsxSelfClosingElement,
-  type JsxSpreadAttribute,
   type ReturnStatement,
   type SourceFile,
 } from 'ts-morph'
 import type { FunctionLike, NodeLoc, ParsedNode, ParsedPage } from './types'
 import { createEvalScope, type StaticEvalOptions } from './staticEval'
-import { tryResolveExpression, withResolutionLock, type PageEvalContext, type Resolution } from './resolutionLock'
+import { withResolutionLock } from './resolutionLock'
+import {
+  buildImageImportMap,
+  extractInlineStyles,
+  extractProps,
+  extractRawSvgMarkup,
+  extractSingleText,
+  type ParseContext,
+} from './jsxAttributeReaders'
 
 type JsxOpeningLike = JsxElement | JsxSelfClosingElement
-
-interface ParseContext {
-  sourceFile: SourceFile
-  /** appDir-relative POSIX path, precomputed once per parse. */
-  relFile: string
-  nodes: Record<string, ParsedNode>
-  /**
-   * Local identifier -> workspace-relative POSIX asset path, for THIS file's
-   * default-imported image specifiers only (`import esimChip from
-   * '../assets/x.png'`). Built once per parse (§5.1) so `extractProps` doesn't
-   * re-walk import declarations per attribute — a page can reference the same
-   * imported image on many elements.
-   */
-  imageImports: Map<string, string>
-  /**
-   * §7 value resolution — present ONLY when the caller opted in (passed
-   * `evalOptions` to `parsePageFile`/`parseJsxTree`). `undefined` for every
-   * existing caller/test: `extractProps`/`extractInlineStyles`/
-   * `extractSingleText` keep their literal-only fast path unconditionally and
-   * simply skip the evaluator fallback when this is absent — zero behaviour
-   * change, zero cost, for a page that only uses literals. See
-   * `./resolutionLock` for the wiring glue this feeds.
-   */
-  eval?: PageEvalContext
-}
 
 const DYNAMIC_LOCK_REASON = 'dynamic — rendered in code'
 const SPREAD_LOCK_REASON = 'spread props'
 const DYNAMIC_SVG_LOCK_REASON = 'dynamic SVG'
-
-const IMAGE_EXTENSION_RE = /\.(png|jpe?g|svg|webp|gif|avif)$/i
-
-/** Markup that actually opens an `<svg>` document — see `extractRawSvgMarkup`. */
-const SVG_DOCUMENT_RE = /^\s*<svg[\s>]/i
-
-/**
- * Sentinel prefix `extractProps` emits (§5.1) for a prop whose value is a
- * plain identifier resolving to a default-imported image asset, e.g.
- * `props.src = 'studio-asset:assets/esim-flow/figma/esim-chip.png'`.
- *
- * Deliberately NOT a URL: `@core/page-parser` has no concept of an HTTP route
- * (it also runs against a bare workspace with no server around it). Rewriting
- * this into `/admin/api/studio/asset?dir=…&path=…` is the load handler's job
- * (`server/handlers/studio.ts`), which is the only layer that knows the route
- * shape and the project's `dir`. Exported so that layer never hardcodes the
- * prefix string.
- */
-export const STUDIO_ASSET_SENTINEL = 'studio-asset:'
 
 /**
  * `project` defaults to a fresh, single-file `Project` (this file only) —
@@ -414,262 +376,6 @@ function processElement(
   return id
 }
 
-/**
- * Maps `sourceFile`'s default-imported identifiers to a workspace-relative
- * POSIX asset path, for import specifiers that look like an image
- * (`import esimChip from '../assets/esim-flow/figma/esim-chip.png'`) — §5.1.
- *
- * Only RELATIVE specifiers are resolved (this is plain `path` resolution, not
- * module resolution: ts-morph's `Project` only tracks `.ts/.tsx/.js/.jsx`
- * files — see `createWorkspaceProject` — so a `.png` specifier never resolves
- * to a real `SourceFile` the way `classifyImport` in `componentSources.ts`
- * resolves a component import; there is nothing to reuse there beyond the
- * containment-check shape, which this mirrors). A bare/aliased specifier
- * (`@/assets/x.png`) is out of scope — same "small, contained widening" as
- * the rest of `extractProps`.
- *
- * A specifier that resolves outside `workspaceRoot` is dropped rather than
- * ever handed to a caller as a path — the asset-serving endpoint (§5.3) has
- * its own containment guard too, but the parser should never manufacture an
- * escaping path in the first place.
- */
-function buildImageImportMap(sourceFile: SourceFile, workspaceRoot: string): Map<string, string> {
-  const map = new Map<string, string>()
-  const root = path.resolve(workspaceRoot)
-
-  for (const declaration of sourceFile.getImportDeclarations()) {
-    const defaultImport = declaration.getDefaultImport()
-    if (!defaultImport) continue
-
-    const specifier = declaration.getModuleSpecifierValue()
-    if (!specifier.startsWith('.') || !IMAGE_EXTENSION_RE.test(specifier)) continue
-
-    const absolute = path.resolve(path.dirname(sourceFile.getFilePath()), specifier)
-    const relFromRoot = path.relative(root, absolute)
-    const insideRoot = relFromRoot.length > 0 && !relFromRoot.startsWith('..') && !path.isAbsolute(relFromRoot)
-    if (!insideRoot) continue
-
-    map.set(defaultImport.getText(), relFromRoot.split(path.sep).join('/'))
-  }
-
-  return map
-}
-
-/**
- * The raw SVG markup an element injects via
- * `dangerouslySetInnerHTML={{ __html: <expr> }}`, or `undefined`.
- *
- * `<expr>` goes through §7's evaluator, which resolves a `?raw` text import
- * (`resolveRawTextImport` in `./staticEvalCore`) as well as a local alias, a
- * member chain, or a value substituted in from a call site — so this one path
- * covers `<span dangerouslySetInnerHTML={{__html: checkSvg}} />` written
- * directly AND the far more common `<Icon svg={checkSvg} />` reaching the same
- * span after inlining substitutes its `svg` param.
- *
- * Only markup that actually opens an `<svg>` document is returned: this prop
- * can carry any HTML, and handing arbitrary markup to `base.svg` — whose whole
- * contract is "an inline SVG" — would be a category error.
- */
-function extractRawSvgMarkup(
-  attributes: (JsxAttribute | JsxSpreadAttribute)[],
-  ctx: ParseContext,
-): string | undefined {
-  for (const attribute of attributes) {
-    if (!Node.isJsxAttribute(attribute)) continue
-    if (attribute.getNameNode().getText() !== 'dangerouslySetInnerHTML') continue
-
-    const initializer = attribute.getInitializer()
-    if (!initializer || !Node.isJsxExpression(initializer)) return undefined
-    const objectExpr = initializer.getExpression()
-    if (!objectExpr || !Node.isObjectLiteralExpression(objectExpr)) return undefined
-
-    const htmlProp = objectExpr.getProperty('__html')
-    const valueExpr = htmlProp && Node.isPropertyAssignment(htmlProp) ? htmlProp.getInitializer() : undefined
-    if (!valueExpr) return undefined
-
-    const resolved = tryResolveExpression(valueExpr, ctx.eval)?.value
-    return typeof resolved === 'string' && SVG_DOCUMENT_RE.test(resolved) ? resolved : undefined
-  }
-  return undefined
-}
-
-/**
- * Literal-valued attributes (mirrors `../ast-codemods/readJsxProps`), falling
- * through to §7's evaluator ONLY when the literal fast path misses AND the
- * caller opted in (`ctx.eval` present) — zero behaviour change, zero cost,
- * for a page that only uses literals (§7.8's non-regression guarantee).
- */
-function extractProps(
-  attributes: (JsxAttribute | JsxSpreadAttribute)[],
-  ctx: ParseContext,
-): { props: Record<string, string | number | boolean>; resolutions: Resolution[] } {
-  const result: Record<string, string | number | boolean> = {}
-  const resolutions: Resolution[] = []
-
-  for (const attribute of attributes) {
-    if (!Node.isJsxAttribute(attribute)) continue // skip {...spread} attributes
-
-    const name = attribute.getNameNode().getText()
-    const initializer = attribute.getInitializer()
-
-    if (initializer === undefined) {
-      // Valueless shorthand (`<Foo primary />`) is JSX sugar for `true`.
-      result[name] = true
-      continue
-    }
-
-    if (Node.isStringLiteral(initializer)) {
-      result[name] = initializer.getLiteralValue()
-      continue
-    }
-
-    if (Node.isJsxExpression(initializer)) {
-      const expression = initializer.getExpression()
-      if (expression === undefined) continue
-
-      if (Node.isNumericLiteral(expression)) {
-        result[name] = expression.getLiteralValue()
-        continue
-      }
-      if (Node.isStringLiteral(expression)) {
-        result[name] = expression.getLiteralValue()
-        continue
-      }
-      if (Node.isTrueLiteral(expression)) {
-        result[name] = true
-        continue
-      }
-      if (Node.isFalseLiteral(expression)) {
-        result[name] = false
-        continue
-      }
-      if (Node.isIdentifier(expression)) {
-        // §5.1 — a bare identifier that resolves to a default-imported image
-        // (`<img src={esimChip}/>`) is captured as a sentinel path rather than
-        // skipped outright, so an imported screen's images can be served
-        // (see STUDIO_ASSET_SENTINEL's doc comment for why this isn't a URL
-        // yet).
-        const assetPath = ctx.imageImports.get(expression.getText())
-        if (assetPath !== undefined) {
-          result[name] = `${STUDIO_ASSET_SENTINEL}${assetPath}`
-          continue
-        }
-      }
-      // Any other expression kind (call, template, object, member access, a
-      // plain identifier that isn't an image import, …) is not a literal —
-      // §7's evaluator gets a shot at it now, still skipped unchanged when
-      // `ctx.eval` is absent. The `style={{…}}` object is captured separately
-      // by `extractInlineStyles` so the canvas can render the authored
-      // inline styles.
-      const resolved = tryResolveExpression(expression, ctx.eval)
-      if (resolved) {
-        result[name] = resolved.value
-        resolutions.push({ source: expression.getText(), note: resolved.note })
-      }
-    }
-  }
-
-  return { props: result, resolutions }
-}
-
-/**
- * Flatten an element's `style={{ … }}` object-literal attribute into its
- * literal (string/number) entries, so the canvas renders the inline styles
- * actually authored in source (`node.inlineStyles` → `NodeRenderer`). Mirrors
- * `extractProps`' literal-fast-path-then-evaluator-fallback policy: a
- * property whose value isn't a string/number literal (an identifier, a
- * `var(--x)` reference held in a const, a template, …) falls through to §7's
- * evaluator (still skipped when `ctx.eval` is absent). Returns `styles:
- * undefined` when there's no `style` attribute, it isn't a plain object
- * literal, or it has no resolvable entries.
- */
-function extractInlineStyles(
-  attributes: (JsxAttribute | JsxSpreadAttribute)[],
-  ctx: ParseContext,
-): { styles: Record<string, string | number> | undefined; resolutions: Resolution[] } {
-  const styleAttr = attributes.find(
-    (a): a is JsxAttribute => Node.isJsxAttribute(a) && a.getNameNode().getText() === 'style',
-  )
-  if (!styleAttr) return { styles: undefined, resolutions: [] }
-
-  const initializer = styleAttr.getInitializer()
-  if (initializer === undefined || !Node.isJsxExpression(initializer)) return { styles: undefined, resolutions: [] }
-  const expression = initializer.getExpression()
-  if (expression === undefined || !Node.isObjectLiteralExpression(expression)) return { styles: undefined, resolutions: [] }
-
-  const styles: Record<string, string | number> = {}
-  const resolutions: Resolution[] = []
-  for (const property of expression.getProperties()) {
-    if (!Node.isPropertyAssignment(property)) continue // skip shorthand / spread / methods
-    const nameNode = property.getNameNode()
-    const key = Node.isIdentifier(nameNode)
-      ? nameNode.getText()
-      : Node.isStringLiteral(nameNode)
-        ? nameNode.getLiteralValue()
-        : null
-    if (key === null) continue // computed keys are not statically known
-    const valueNode = property.getInitializer()
-    if (valueNode === undefined) continue
-    if (Node.isStringLiteral(valueNode)) {
-      styles[key] = valueNode.getLiteralValue()
-      continue
-    }
-    if (Node.isNumericLiteral(valueNode)) {
-      styles[key] = valueNode.getLiteralValue()
-      continue
-    }
-    // Non-literal values (var refs, calls, templates, nested objects) fall
-    // through to §7's evaluator — e.g. a `const accent = 'var(--text-link-default)'`
-    // reference, or `width: \`${pct}%\``. A style value is never boolean, so a
-    // resolved boolean (unlike for `extractProps`) isn't a usable style value.
-    const resolved = tryResolveExpression(valueNode, ctx.eval)
-    if (resolved && typeof resolved.value !== 'boolean') {
-      styles[key] = resolved.value
-      resolutions.push({ source: valueNode.getText(), note: resolved.note })
-    }
-  }
-
-  return { styles: Object.keys(styles).length > 0 ? styles : undefined, resolutions }
-}
-
-/**
- * When an element's only meaningful child is a single non-whitespace text
- * node — either raw JSX text or a `{"..."}` / `{'...'}` string-literal
- * expression container — returns that trimmed string. Falls through to §7's
- * evaluator when the sole child is some OTHER expression (`{t.homepage.greeting}`,
- * `` {`${pct}%`} ``, …). Elements with element children, more than one
- * meaningful child, or an unresolvable expression get no `text` (their
- * `children` are still walked structurally by `processChildren` instead,
- * exactly as before this capture existed).
- *
- * Mirrors `assertTextOnlyChildren` in `../ast-codemods/setJsxText` — a
- * captured `text` is always a shape that codemod is willing to overwrite
- * (§7.6: a RESOLVED text value is additionally always locked, see
- * `withResolutionLock`, since writing an edit back over the original
- * expression would destroy it).
- */
-function extractSingleText(children: Node[], ctx: ParseContext): { text: string | undefined; resolution?: Resolution } {
-  if (children.length !== 1) return { text: undefined }
-  const only = children[0]!
-
-  if (Node.isJsxText(only)) {
-    const text = only.getText().trim()
-    return { text: text.length > 0 ? text : undefined }
-  }
-
-  if (Node.isJsxExpression(only)) {
-    const expression = only.getExpression()
-    if (expression !== undefined) {
-      if (Node.isStringLiteral(expression)) return { text: expression.getLiteralValue() }
-      const resolved = tryResolveExpression(expression, ctx.eval)
-      if (resolved) {
-        return { text: String(resolved.value), resolution: { source: expression.getText(), note: resolved.note } }
-      }
-    }
-  }
-
-  return { text: undefined }
-}
 
 /**
  * Walks a JSX element's children (`getJsxChildren()` output). Plain text is

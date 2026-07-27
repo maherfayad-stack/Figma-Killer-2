@@ -50,7 +50,7 @@ function load(pageFile: string): { parsed: ParsedPage; expanded: ParsedPage } {
 }
 
 describe('inlineLocalComponents — 2a: literal props, no recursion', () => {
-  it('inlines Icon (span + dangerouslySetInnerHTML-shaped raw content stays locked, but structure expands)', () => {
+  it('inlines Icon (span + dangerouslySetInnerHTML-shaped raw content, tagged with its component)', () => {
     write(
       'components/Icon.jsx',
       [
@@ -83,8 +83,8 @@ describe('inlineLocalComponents — 2a: literal props, no recursion', () => {
     // Its child is the inlined <span>, locked, with the literal size (16) substituted for `{size}`.
     const span = expanded.nodes[callSite!.children[0]!]!
     expect(span.name).toBe('span')
-    expect(span.locked).toBe(true)
-    expect(span.lockReason).toBe('from component Icon')
+    expect(span.locked).toBeFalsy()
+    expect(span.fromComponent).toBe('Icon')
     expect(span.text).toBe('16')
     expect(span.props.className).toBe('ico')
   })
@@ -119,8 +119,8 @@ describe('inlineLocalComponents — 2a: literal props, no recursion', () => {
 
     const p = byName(expanded.nodes, 'p')
     expect(p.text).toBe('My Plans')
-    expect(p.locked).toBe(true)
-    expect(p.lockReason).toBe('from component SectionTitle')
+    expect(p.locked).toBeFalsy()
+    expect(p.fromComponent).toBe('SectionTitle')
 
     // The button is rendered from a `&&` logical expression inside SectionTitle's
     // own file — already locked for THAT (dynamic) reason by `parseJsxTree`,
@@ -159,7 +159,7 @@ describe('inlineLocalComponents — 2a: literal props, no recursion', () => {
     const inner = Object.values(expanded.nodes).find((n) => n.text === '12 SAR')
     expect(inner).toBeDefined()
     expect(inner!.props.className).toBe('price__value')
-    expect(inner!.locked).toBe(true)
+    expect(inner!.locked).toBeFalsy()
   })
 
   it('inlines ProgressSignal: a non-destructured-literal label stays unresolved (no crash, no guess)', () => {
@@ -195,7 +195,7 @@ describe('inlineLocalComponents — 2a: literal props, no recursion', () => {
     expect(labelSpan).toBeDefined()
   })
 
-  it('inlines DataRing: svg raw-capture and structural children stay locked and present, not dropped', () => {
+  it('inlines DataRing: svg raw-capture and structural children stay present, not dropped', () => {
     write(
       'components/DataRing.jsx',
       [
@@ -224,7 +224,9 @@ describe('inlineLocalComponents — 2a: literal props, no recursion', () => {
     const { expanded } = load(pageFile)
     const svg = byName(expanded.nodes, 'svg')
     expect(svg.props.svg).toContain('<circle')
-    expect(svg.locked).toBe(true) // inlined, always locked
+    // This fixture's <svg> is fully static (markup captured), so it carries no
+    // lock of its own — and inlining no longer adds one.
+    expect(svg.locked).toBeFalsy()
     const percentSpan = Object.values(expanded.nodes).find((n) => n.text === '42')
     expect(percentSpan).toBeDefined()
   })
@@ -254,7 +256,7 @@ describe('inlineLocalComponents — 2a: literal props, no recursion', () => {
     const img = byName(expanded.nodes, 'img')
     expect(img.props.src).toBe('/shot.png')
     expect(img.props.alt).toBe('Screenshot')
-    expect(img.locked).toBe(true)
+    expect(img.locked).toBeFalsy()
   })
 
   it('inlines a same-file, NON-EXPORTED helper component (e.g. BookingDetailsScreen\'s private row components)', () => {
@@ -279,8 +281,8 @@ describe('inlineLocalComponents — 2a: literal props, no recursion', () => {
     const spans = Object.values(expanded.nodes).filter((n) => n.name === 'span')
     expect(spans.map((s) => s.text).sort()).toEqual(['123', 'ID'])
     for (const span of spans) {
-      expect(span.locked).toBe(true)
-      expect(span.lockReason).toBe('from component Row')
+      expect(span.locked).toBeFalsy()
+      expect(span.fromComponent).toBe('Row')
     }
   })
 
@@ -344,11 +346,11 @@ describe('inlineLocalComponents — 2b: recursion + cycle guard + maxDepth/maxNo
 
     const p = byName(expanded.nodes, 'p')
     expect(p.text).toBe('Confirm booking')
-    expect(p.lockReason).toBe('from component SheetHeader')
+    expect(p.fromComponent).toBe('SheetHeader')
 
     const statusBarDiv = Object.values(expanded.nodes).find((n) => n.text === 'clock')
     expect(statusBarDiv).toBeDefined()
-    expect(statusBarDiv!.lockReason).toBe('from component StatusBar')
+    expect(statusBarDiv!.fromComponent).toBe('StatusBar')
     // A composite id encodes BOTH hops: the SheetShell call site, then the StatusBar call site nested inside it.
     expect(statusBarDiv!.id.split(INLINE_ID_SEPARATOR).length).toBeGreaterThanOrEqual(3)
   })
@@ -508,7 +510,7 @@ describe('inlineLocalComponents — 2c: {children} passthrough', () => {
     // It's now referenced as a child of the (locked) panel div inside SheetShell's inlined subtree.
     const panel = Object.values(expanded.nodes).find((n) => n.props.className === 'sheet-shell__panel')
     expect(panel).toBeDefined()
-    expect(panel!.locked).toBe(true)
+    expect(panel!.locked).toBeFalsy()
     expect(panel!.children).toContain(originalBody.id)
   })
 })
@@ -549,8 +551,11 @@ describe('inlineLocalComponents — 2d: locking fidelity on variant branching / 
     expect(Object.keys(expanded.nodes).length).toBeGreaterThan(0)
     const banner = Object.values(expanded.nodes).find((n) => n.name === 'div' && n.props.className === 'banner banner--')
     expect(banner).toBeDefined() // static prefix of the template literal kept
-    expect(banner!.locked).toBe(true)
-    expect(banner!.lockReason).toBe('from component EsimStatusBanner')
+    // Editable: its writeback target is EsimStatusBanner's own source line.
+    // `fromComponent` is what warns the user that the edit lands on every
+    // instance of the component.
+    expect(banner!.locked).toBeFalsy()
+    expect(banner!.fromComponent).toBe('EsimStatusBanner')
 
     // Both ternary branches are structurally PRESENT (not dropped) — same
     // "degrade, don't drop" convention `parseJsxTree` already applies to a
@@ -560,8 +565,12 @@ describe('inlineLocalComponents — 2d: locking fidelity on variant branching / 
     const spans = Object.values(expanded.nodes).filter((n) => n.name === 'span')
     expect(spans.length).toBe(2)
     for (const span of spans) {
+      // These KEEP a lock — they sit in a ternary, so there is no single
+      // source position an edit could write to. That is the only thing
+      // `locked` means now; inlining on its own no longer locks anything.
       expect(span.locked).toBe(true)
-      expect(span.lockReason).toBe('from component EsimStatusBanner')
+      expect(span.lockReason).toBe('dynamic — rendered in code')
+      expect(span.fromComponent).toBe('EsimStatusBanner')
     }
 
     // The `.map()`-rendered <li> is present too, locked, never crashing on

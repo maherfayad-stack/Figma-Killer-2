@@ -40,7 +40,7 @@ describe('fsCodemodAdapter — write-loop safety + framework sync', () => {
     const defaults: Record<string, unknown> = {
       '/admin/api/studio/load': { dir: '/tmp/studio-test', projectName: 'studio-test', pages: [], componentSources: {}, styleRules: {}, conditions: [] },
       '/admin/api/studio/framework': { framework: null },
-      '/admin/api/studio/save': { ok: true, written: 1, skipped: 0, shifted: false },
+      '/admin/api/studio/save': { ok: true, written: 1, skipped: 0, shifted: false, sharedComponents: false },
     }
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input.toString()

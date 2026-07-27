@@ -36,6 +36,7 @@ import { MultiSelectionInspector } from './MultiSelectionInspector'
 import { MultiSelectorInspector } from './MultiSelectorInspector'
 import { SelectorInspector } from './SelectorInspector'
 import { canComponentizeNode } from '@site/componentization'
+import { SharedComponentNotice } from './SharedComponentNotice'
 import styles from './PropertiesPanel.module.css'
 
 interface PropertiesPanelBodyProps {
@@ -138,8 +139,12 @@ export function PropertiesPanelBody(props: PropertiesPanelBodyProps): React.Reac
   const showConvertToComponent =
     permissions.canEditStructure && canComponentizeNode(activeDocument, selectedNode)
 
+
   return (
     <div className={styles.nodeArea}>
+      {selectedNode?.fromComponent && selectedNodeId ? (
+        <SharedComponentNotice componentName={selectedNode.fromComponent} nodeId={selectedNodeId} />
+      ) : null}
       <nav className={styles.nodeViewSwitcher} aria-label="Element options">
         <Button
           variant="ghost"

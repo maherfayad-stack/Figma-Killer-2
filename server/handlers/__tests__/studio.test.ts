@@ -19,7 +19,7 @@ import * as path from 'node:path'
 import { zipSync, strToU8 } from 'fflate'
 import { INLINE_ID_SEPARATOR } from '@core/page-parser'
 import { tryServeStudio } from '../studio'
-import { applyStudioEdit, orderStudioEditsForApply } from '../studioWriteback'
+import { applyStudioEdit, dedupeStudioEdits, orderStudioEditsForApply } from '../studioWriteback'
 import { assignPageIds, pageIdFromRelPath } from '../studioPageLoad'
 import { discoverPageFiles, listStudioProjects, pageComponentNameFromInput } from '../studioProjects'
 import { collectWorkspaceFiles } from '../studioDownload'
@@ -56,11 +56,10 @@ describe('orderStudioEditsForApply', () => {
   })
 
   // §2.4 — a composite (inlined) node id encodes TWO source locations
-  // (`callSiteId${INLINE_ID_SEPARATOR}componentNodeId`). `NODE_LOC_ID`'s
-  // greedy `.*` would happily match past the separator and treat the whole
-  // thing as if it decoded to a real line:col, so composite ids must sort
-  // last exactly like synthetic ones — never ranked ahead of a real edit.
-  it('sorts a composite (inlined) node id last, like a synthetic node', () => {
+  // (`callSiteId${INLINE_ID_SEPARATOR}componentNodeId`). It sorts by the TAIL
+  // one, because that is the location it writes to. Here the tail is line 3,
+  // so it sorts after the plain edit at line 11.
+  it('sorts a composite (inlined) node id by its TAIL location', () => {
     const edits = [
       { nodeId: `Home.tsx:5:6${INLINE_ID_SEPARATOR}components/Icon.tsx:3:5` },
       { nodeId: 'Home.tsx:11:8' },
@@ -68,6 +67,17 @@ describe('orderStudioEditsForApply', () => {
     expect(orderStudioEditsForApply(edits).map((e) => e.nodeId)).toEqual([
       'Home.tsx:11:8',
       `Home.tsx:5:6${INLINE_ID_SEPARATOR}components/Icon.tsx:3:5`,
+    ])
+  })
+
+  it('ranks a composite id ahead of a plain edit when its tail line is higher', () => {
+    const edits = [
+      { nodeId: 'Home.tsx:4:1' },
+      { nodeId: `Home.tsx:5:6${INLINE_ID_SEPARATOR}components/Icon.tsx:30:5` },
+    ]
+    expect(orderStudioEditsForApply(edits).map((e) => e.nodeId)).toEqual([
+      `Home.tsx:5:6${INLINE_ID_SEPARATOR}components/Icon.tsx:30:5`,
+      'Home.tsx:4:1',
     ])
   })
 })
@@ -214,7 +224,8 @@ describe('applyStudioEdit', () => {
   })
 
   function writeFixture(name: string, source: string): string {
-    const filePath = path.join(tmpDir, name)
+    const filePath = path.join(tmpDir, ...name.split('/'))
+    fs.mkdirSync(path.dirname(filePath), { recursive: true })
     fs.writeFileSync(filePath, source, 'utf8')
     return filePath
   }
@@ -285,19 +296,57 @@ describe('applyStudioEdit', () => {
   // separator, deriving `join(dir, 'prop.tsx:5:6~components/Icon.tsx')` as a
   // "file" to write `setJsxProp` against, silently corrupting whatever that
   // garbage path happens to resolve to (or creating it).
-  it('is a no-op for a composite (inlined) node id — never writes to any file', () => {
-    const source = ['export default function App() {', '  return <Button label="Old" />', '}', ''].join('\n')
-    const file = writeFixture('prop.tsx', source)
-    const { line, col } = locateTag(source, 'Button')
-    const before = fs.readFileSync(file, 'utf8')
-    const filesBefore = fs.readdirSync(tmpDir)
+  it('writes a composite (inlined) node id to the COMPONENT file, never to a path built from the prefix', () => {
+    // An inlined node's markup lives in the component's own file, so that is
+    // where an edit belongs — the tail of the composite id. What must never
+    // happen is `NODE_LOC_ID`'s greedy `.*` matching straight through the
+    // separator and yielding `join(dir, 'page.tsx:2:11~components/Icon.tsx')`
+    // as a "file", silently corrupting whatever that resolves to (or creating
+    // it). `studioEditLocation` splits on the separator before matching.
+    const pageSource = ['export default function App() {', '  return <Icon label="Old" />', '}', ''].join('\n')
+    const pageFile = writeFixture('page.tsx', pageSource)
+    const componentSource = ['export default function Icon({ label }) {', '  return <span title="Old" />', '}', ''].join('\n')
+    const componentFile = writeFixture('components/Icon.tsx', componentSource)
 
-    const compositeNodeId = `prop.tsx:${line}:${col}${INLINE_ID_SEPARATOR}components/Icon.tsx:3:5`
-    const result = applyStudioEdit(tmpDir, { kind: 'prop', nodeId: compositeNodeId, prop: 'label', value: 'New' })
+    const callSite = locateTag(pageSource, 'Icon')
+    const inner = locateTag(componentSource, 'span')
+    const compositeNodeId =
+      `page.tsx:${callSite.line}:${callSite.col}${INLINE_ID_SEPARATOR}components/Icon.tsx:${inner.line}:${inner.col}`
 
-    expect(result).toBe(false)
-    expect(fs.readFileSync(file, 'utf8')).toBe(before) // the REAL file is untouched
-    expect(fs.readdirSync(tmpDir)).toEqual(filesBefore) // no garbage file was created either
+    const result = applyStudioEdit(tmpDir, { kind: 'prop', nodeId: compositeNodeId, prop: 'title', value: 'New' })
+
+    expect(result).toBe(true)
+    expect(fs.readFileSync(componentFile, 'utf8')).toContain('title="New"')
+    // The call-site file — the composite id's PREFIX — is untouched.
+    expect(fs.readFileSync(pageFile, 'utf8')).toBe(pageSource)
+    // And no path was ever derived from the prefix itself.
+    expect(fs.existsSync(path.join(tmpDir, `page.tsx:${callSite.line}:${callSite.col}~components`))).toBe(false)
+  })
+
+  it('collapses two edits that resolve to the same component source location', () => {
+    // Every instance of an inlined component maps back to the same lines in
+    // that component's file, so a batch can legitimately contain two edits with
+    // one target. Applying both would make the second read a file the first
+    // already rewrote.
+    const nodeA = `a.tsx:2:11${INLINE_ID_SEPARATOR}components/Icon.tsx:2:11`
+    const nodeB = `b.tsx:9:4${INLINE_ID_SEPARATOR}components/Icon.tsx:2:11`
+    const deduped = dedupeStudioEdits([
+      { kind: 'prop', nodeId: nodeA, prop: 'title', value: 'First' },
+      { kind: 'prop', nodeId: nodeB, prop: 'title', value: 'Second' },
+    ])
+
+    expect(deduped).toHaveLength(1)
+    expect(deduped[0]).toMatchObject({ value: 'Second' }) // last edit wins
+  })
+
+  it('keeps edits to DIFFERENT props on the same location', () => {
+    const nodeId = `a.tsx:2:11${INLINE_ID_SEPARATOR}components/Icon.tsx:2:11`
+    const deduped = dedupeStudioEdits([
+      { kind: 'prop', nodeId, prop: 'title', value: 'T' },
+      { kind: 'prop', nodeId, prop: 'alt', value: 'A' },
+    ])
+
+    expect(deduped).toHaveLength(2)
   })
 
   it('propagates JsxTextTargetError for a mixed-content text target, leaving the file untouched', () => {

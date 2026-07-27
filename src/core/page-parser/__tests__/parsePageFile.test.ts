@@ -3,7 +3,8 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { setJsxProp } from '../../ast-codemods'
-import { parsePageFile, STUDIO_ASSET_SENTINEL } from '../parsePageFile'
+import { parsePageFile } from '../parsePageFile'
+import { STUDIO_ASSET_SENTINEL } from '../jsxAttributeReaders'
 import type { ParsedNode, ParsedPage } from '../types'
 
 let tmpDir: string

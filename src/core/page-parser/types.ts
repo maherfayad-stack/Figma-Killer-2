@@ -78,6 +78,18 @@ export interface ParsedNode {
    * `locked`/`lockReason` above.
    */
   resolution?: { source: string; note?: string }
+  /**
+   * Set on every node produced by inlining a local component (§2), naming the
+   * component it came from (`'SheetHeader'`). Provenance, NOT a lock: the node
+   * is editable, and its writeback target is that component's own source
+   * location — the tail of the composite id (see `studioEditLocation`).
+   *
+   * It exists because that file backs EVERY instance of the component, so one
+   * edit changes all of them. The editor shows a warning carrying this name
+   * and the instance count before the user commits. Nested inlining keeps the
+   * INNERMOST component's name — that is the file an edit actually writes to.
+   */
+  fromComponent?: string
 }
 
 export interface ParsedPage {

@@ -135,6 +135,8 @@ import { resolveStudioAssetResponse } from './studioAsset'
 import { pageIdFromRelPath, loadStudioPages } from './studioPageLoad'
 import {
   applyStudioEdit,
+  dedupeStudioEdits,
+  isInlinedNodeId,
   orderStudioEditsForApply,
   studioEditFile,
   StudioEditSchema,
@@ -259,7 +261,13 @@ export async function tryServeStudio(
 
       // Apply edits bottom-to-top so a line-count-changing codemod can't
       // invalidate another edit's location mid-batch (see the helper's doc).
-      const ordered = orderStudioEditsForApply(edits)
+      // Dedupe first: several board nodes can share one writeback target when
+      // they are instances of the same inlined component.
+      const ordered = orderStudioEditsForApply(dedupeStudioEdits(edits))
+
+      // An edit on an inlined node rewrites the component's own file, so every
+      // OTHER instance on the board is now stale. The client reloads on this.
+      const sharedComponents = edits.some((edit) => isInlinedNodeId(edit.nodeId))
 
       // Snapshot each touched file's line count so we can tell the client
       // whether any write shifted line numbers. If so, the client's in-memory
@@ -299,7 +307,7 @@ export async function tryServeStudio(
       }
 
       if (skipped > 0) console.error(`[studio] save: ${written} written, ${skipped} skipped`)
-      return jsonResponse({ ok: true, written, skipped, shifted })
+      return jsonResponse({ ok: true, written, skipped, shifted, sharedComponents })
     } catch (err) {
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
     }

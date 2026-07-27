@@ -4,8 +4,8 @@ export {
   getReturnedJsxRoot,
   parseJsxTree,
   parsePageFile,
-  STUDIO_ASSET_SENTINEL,
 } from './parsePageFile'
+export { STUDIO_ASSET_SENTINEL } from './jsxAttributeReaders'
 export type { FunctionLike, NodeLoc, ParsedNode, ParsedPage } from './types'
 export {
   EXCLUDED_WORKSPACE_DIR_NAMES,

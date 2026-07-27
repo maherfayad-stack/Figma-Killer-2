@@ -28,7 +28,7 @@
  * server (same-origin in prod behind Caddy).
  */
 import type { IPersistenceAdapter, SaveSiteOptions } from '@core/persistence/types'
-import { type SiteDocument, ConditionDefSchema, PageSchema, StyleRuleSchema } from '@core/page-tree'
+import { type Page, type SiteDocument, ConditionDefSchema, PageSchema, StyleRuleSchema } from '@core/page-tree'
 import { apiRequest } from '@core/http'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { FrameworkSettingsSchema } from '@core/framework-schema'
@@ -40,20 +40,6 @@ import { getStudioWorkspaceDir } from './studioWorkspaceDir'
 
 /** Node ids from page-parser are `relFile:line:col` — a decodable source location. */
 const SOURCE_NODE_ID = /^.+:\d+:\d+$/
-
-/**
- * Mirrors `INLINE_ID_SEPARATOR` in `@core/page-parser` (server-only ts-morph
- * module — see `ComponentSourceSchema`'s doc comment above for why this file
- * mirrors rather than imports: pulling `@core/page-parser`'s barrel into this
- * browser bundle drags ts-morph/typescript along with it, which blows the
- * `AdminCanvasLayout` chunk's `bundle-size-budgets.test.ts` budget by an
- * order of magnitude — confirmed empirically, not a hypothetical). A node id
- * containing this literal is an INLINED (composite) id from a locally-inlined
- * component (§2.4) — it has no single valid writeback location (editing one
- * instance would silently change every instance sharing that component's
- * file), so it must never be included in a save batch.
- */
-const INLINE_ID_SEPARATOR = '~'
 
 /**
  * One `kind: 'component'` node's classification (Phase 7A — multi-file
@@ -102,6 +88,13 @@ const StudioSaveResponseSchema = Type.Object({
   written: Type.Number(),
   skipped: Type.Number(),
   shifted: Type.Boolean(),
+  /**
+   * True when any edit in the batch targeted an inlined node, whose writeback
+   * goes to the component's own file and therefore changes EVERY instance of
+   * it. The other instances on the board still show their old values, so the
+   * client reloads — same remedy as `shifted`, different cause.
+   */
+  sharedComponents: Type.Boolean(),
 })
 
 /** POST /admin/api/studio/page response — the newly scaffolded page. */
@@ -168,6 +161,42 @@ let lastSyncedFrameworkJson: string | undefined
  */
 let componentSources: Record<string, ComponentSource> = {}
 
+/**
+ * Every source-backed node's values AS LOADED, keyed by node id, so `saveSite`
+ * can write only what the user actually changed.
+ *
+ * A full idempotent rewrite is not safe on an imported page. A prop whose
+ * source is an expression — `svg={checkSvg}`, `label={t.common.needHelp}` —
+ * arrives in the document as the value §7 resolved it to, and `setJsxProp`
+ * will happily replace the expression with that baked literal, destroying the
+ * binding. Diffing against this baseline means an untouched prop is never
+ * written at all.
+ *
+ * Inline styles are folded in under a `style:` key prefix so one flat map
+ * covers both prop and style diffing.
+ */
+let loadedValues = new Map<string, Record<string, string | number | boolean>>()
+
+/** Snapshot for `loadedValues` — see its doc comment. */
+function snapshotNodeValues(pages: readonly Page[]): Map<string, Record<string, string | number | boolean>> {
+  const snapshot = new Map<string, Record<string, string | number | boolean>>()
+  for (const page of pages) {
+    for (const node of Object.values(page.nodes)) {
+      const values: Record<string, string | number | boolean> = {}
+      for (const [prop, value] of Object.entries(node.props ?? {})) {
+        if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+          values[prop] = value
+        }
+      }
+      for (const [key, value] of Object.entries(literalInlineStyles(node.inlineStyles))) {
+        values[`style:${key}`] = value
+      }
+      snapshot.set(node.id, values)
+    }
+  }
+  return snapshot
+}
+
 /** The current workspace's local-vs-package classification for every component node, from the last load. */
 export function getStudioComponentSources(): Record<string, ComponentSource> {
   return componentSources
@@ -221,6 +250,8 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
     })
     loadedDir = dir
     componentSources = sources
+    // Baseline for the save-time diff — see `loadedValues`.
+    loadedValues = snapshotNodeValues(pages)
     // Distinct from `site.name` (the "Studio" product wordmark, unchanged per
     // project) — this is the per-project display name shown under the brand
     // in the toolbar (see Toolbar.tsx's StudioProjectLabel).
@@ -258,10 +289,6 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
     for (const page of site.pages) {
       for (const node of Object.values(page.nodes)) {
         if (!SOURCE_NODE_ID.test(node.id)) continue
-        // An inlined (composite) node id — from a locally-inlined component,
-        // §2.4 — has no single valid writeback location; `SOURCE_NODE_ID`'s
-        // `.+:\d+:\d+$` would otherwise still match past the separator.
-        if (node.id.includes(INLINE_ID_SEPARATOR)) continue
 
         // The module's declared inline-text-edit prop (if any) routes that
         // one prop as a `text` edit (rewrites the element's text children)
@@ -269,9 +296,18 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
         // an attribute would corrupt the source (e.g. `label="Click me"` on a
         // <Button> whose label is really its text child).
         const textProp = registry.get(node.moduleId)?.inlineTextEdit?.prop
+        const baseline = loadedValues.get(node.id)
 
         for (const [prop, value] of Object.entries(node.props ?? {})) {
           if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') continue
+          // Only write what the USER actually changed. This is the guard that
+          // makes writeback safe on an imported page: a prop whose source is
+          // an expression (`svg={checkSvg}`, `label={t.common.needHelp}`)
+          // arrives here as the value §7 resolved it to, and re-writing that
+          // unchanged value would replace the expression with a baked literal
+          // — silently destroying the binding. `setJsxText` refuses that on
+          // the text path, but `setJsxProp` will happily do it.
+          if (baseline && Object.is(baseline[prop], value)) continue
           if (prop === textProp) {
             edits.push({ kind: 'text', nodeId: node.id, text: String(value) })
           } else {
@@ -287,8 +323,9 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
         // scope for source writeback this slice.
         if (node.moduleId.startsWith('base.')) {
           const style = literalInlineStyles(node.inlineStyles)
-          if (Object.keys(style).length > 0) {
-            edits.push({ kind: 'style', nodeId: node.id, style })
+          const changed = Object.entries(style).filter(([k, v]) => !baseline || !Object.is(baseline[`style:${k}`], v))
+          if (changed.length > 0) {
+            edits.push({ kind: 'style', nodeId: node.id, style: Object.fromEntries(changed) })
           }
         }
       }
@@ -310,7 +347,10 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
       // write never re-enters as an external change). Rare in practice: source
       // formatting stabilizes after the first normalizing write, so `shifted`
       // is false on subsequent idempotent saves.
-      if (result.shifted) requestCmsSiteReload()
+      // A shared-component edit rewrote the component's own file, so every
+      // OTHER instance of it on the board is showing a stale value. Reload for
+      // the same reason as `shifted`: the document no longer matches disk.
+      if (result.shifted || result.sharedComponents) requestCmsSiteReload()
     }
 
     // Framework settings (Colors/Typography/Spacing) live outside the

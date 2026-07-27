@@ -42,6 +42,17 @@ export const PageNodeSchema = Type.Object({
    * original expression would silently destroy it).
    */
   resolution: Type.Optional(Type.Object({ source: Type.String(), note: Type.Optional(Type.String()) })),
+  /**
+   * Studio import (§2) — the local component this node was inlined out of
+   * (`'SheetHeader'`). Provenance, not a lock: the node is editable and its
+   * writeback target is that component's own source location.
+   *
+   * It exists because that one file backs EVERY instance of the component, so
+   * an edit here lands on all of them. The properties panel warns with this
+   * name and the instance count before the user commits. See
+   * `ParsedNode.fromComponent` in `@core/page-parser`.
+   */
+  fromComponent: Type.Optional(Type.String()),
 })
 
 export type PageNode = Static<typeof PageNodeSchema>
@@ -86,5 +97,8 @@ export function parsePageNode(raw: unknown, nodePath: string): PageNode {
     ...base,
     ...(dynamicBindings !== undefined ? { dynamicBindings } : {}),
     ...(resolution !== undefined ? { resolution } : {}),
+    ...(typeof r.fromComponent === 'string' && r.fromComponent.length > 0
+      ? { fromComponent: r.fromComponent }
+      : {}),
   }
 }
