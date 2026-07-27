@@ -694,20 +694,21 @@ describe('GET /admin/api/studio/load — Phase 7A multi-file workspace', () => {
       Object.values(landing.nodes).find((n) => n.moduleId === moduleId)!.id
 
     // Local component: import resolves inside the workspace.
-    // `resolveComponentSources` classifies against the PRE-inline tree (§2.6)
-    // — the call site's id survives inlining unchanged, so it's still the
-    // key `componentSources` reports it under, even though its `moduleId`
-    // is no longer `alm.Header` (its own file's JSX is now inlined in place —
-    // §2 — rather than an "Unknown module" box).
+    // `resolveComponentSources` classifies against the PRE-inline tree (§2.6),
+    // so it still reports the call site under the call site's own id — but that
+    // node is GONE from the page: `<Header/>` renders Header's own JSX at that
+    // position and emits no element of its own, so inlining replaces the call
+    // site with that JSX rather than wrapping it (§2.5). What's left is the
+    // inlined <span>, under a composite id.
     const headerNodeId = Object.keys(body.componentSources).find(
       (id) => body.componentSources[id]?.file === 'components/Header.tsx',
     )!
     expect(body.componentSources[headerNodeId]).toEqual({ kind: 'local', file: 'components/Header.tsx' })
     expect(Object.values(landing.nodes).some((n) => n.moduleId === 'alm.Header')).toBe(false)
-    const headerCallSite = landing.nodes[headerNodeId]!
-    expect(headerCallSite.moduleId).toBe('base.container') // promoted (§2.5) — real, editable, wraps the inlined <span>
+    expect(landing.nodes[headerNodeId]).toBeUndefined()
     const headerSpan = Object.values(landing.nodes).find((n) => n.moduleId === 'base.text' && n.id.includes('~'))
-    expect(headerSpan).toBeDefined() // Header's own <span> — inlined, locked, composite id
+    expect(headerSpan).toBeDefined() // Header's own <span> — inlined, composite id
+    expect(headerSpan!.id.startsWith(`${headerNodeId}~`)).toBe(true)
 
     // Package component: bare specifier, stays a read-only prop surface.
     const buttonNodeId = nodeByModule('alm.Button')

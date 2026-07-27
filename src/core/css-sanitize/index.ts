@@ -6,3 +6,4 @@
 // (the framework engine can't import the publisher barrel — that would cycle).
 
 export { sanitiseCssValue } from './sanitiseCssValue'
+export { cssValueForProperty, isUnitlessCssProperty } from './cssValueForProperty'

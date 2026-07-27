@@ -23,6 +23,7 @@ import {
   type JsxOpeningElement,
   type JsxSelfClosingElement,
   type Project,
+  type PropertyAccessExpression,
 } from 'ts-morph'
 import type { FunctionLike } from './types'
 import {
@@ -401,6 +402,43 @@ function evaluateCondition(expr: Node, scope: EvalScope, budget: Budget, depth: 
 
 // -- Whitelisted primitive method / coercion calls (§7.5) --------------------
 
+/**
+ * `[a, b].filter(Boolean)` — and ONLY that argument.
+ *
+ * This is half of the ubiquitous conditional-class idiom,
+ * `['ds-raw-icon', className].filter(Boolean).join(' ')`, which is how the
+ * corpus's components merge a base class with an optional one. Without it the
+ * whole expression is unresolved and the element reaches the canvas with no
+ * class at all — an inlined `<Icon className="bc-success__check-icon"/>` loses
+ * the rule that sizes it, and the raw SVG paints across its container.
+ *
+ * `Boolean` as the predicate keeps this inside §7's envelope rather than
+ * opening the door to Tier D: no user code runs, the receiver is an
+ * already-resolved array literal of known length, and the operation is total.
+ * An arrow predicate (`filter((x) => …)`) does NOT resolve — that is a loop over
+ * a body this evaluator does not execute.
+ */
+function tryFilterBoolean(
+  expr: CallExpression,
+  callee: PropertyAccessExpression,
+  scope: EvalScope,
+  budget: Budget,
+  depth: number,
+): StaticValue {
+  const args = expr.getArguments()
+  const predicate = args[0]
+  if (args.length !== 1 || !predicate || !Node.isIdentifier(predicate) || predicate.getText() !== 'Boolean') {
+    return unresolved('filter(...) predicate is not `Boolean`')
+  }
+
+  const receiver = evaluateNode(callee.getExpression(), scope, budget, depth + 1)
+  if (receiver.kind !== 'array') return unresolved('filter(...) receiver is not a statically resolvable array')
+  if (receiver.items.some((i) => i.kind !== 'literal')) return unresolved('filter() on an array with unresolved items')
+
+  const items = receiver.items.filter((i) => Boolean((i as Extract<StaticValue, { kind: 'literal' }>).value))
+  return { kind: 'array', items }
+}
+
 function tryWhitelistedPrimitiveCall(
   expr: CallExpression,
   callee: Node,
@@ -418,6 +456,7 @@ function tryWhitelistedPrimitiveCall(
 
   if (!Node.isPropertyAccessExpression(callee)) return undefined
   const methodName = callee.getName()
+  if (methodName === 'filter') return tryFilterBoolean(expr, callee, scope, budget, depth)
   if (!WHITELISTED_METHODS.has(methodName)) return undefined
 
   const receiver = evaluateNode(callee.getExpression(), scope, budget, depth + 1)

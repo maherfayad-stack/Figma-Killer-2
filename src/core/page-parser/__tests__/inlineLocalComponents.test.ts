@@ -73,15 +73,16 @@ describe('inlineLocalComponents — 2a: literal props, no recursion', () => {
 
     const { expanded } = load(pageFile)
 
-    // The call site keeps its OWN literal props (size, className) and becomes an editable container.
-    const callSite = Object.values(expanded.nodes).find((n) => n.props.size === 16)
-    expect(callSite).toBeDefined()
-    expect(callSite!.kind).toBe('element')
-    expect(callSite!.locked).toBeFalsy()
-    expect(callSite!.children.length).toBe(1)
+    // `<Icon/>` renders Icon's own <span> at that position and nothing else, so
+    // the page's <div> holds the span DIRECTLY — no call-site wrapper between
+    // them (see this module's header: a wrapper breaks `height: 100%` chains and
+    // direct-child combinators).
+    const pageDiv = Object.values(expanded.nodes).find((n) => n.name === 'div')!
+    expect(pageDiv.children.length).toBe(1)
+    expect(Object.values(expanded.nodes).some((n) => n.kind === 'component')).toBe(false)
 
-    // Its child is the inlined <span>, locked, with the literal size (16) substituted for `{size}`.
-    const span = expanded.nodes[callSite!.children[0]!]!
+    // That span carries the literal size (16) substituted for `{size}`.
+    const span = expanded.nodes[pageDiv.children[0]!]!
     expect(span.name).toBe('span')
     expect(span.locked).toBeFalsy()
     expect(span.fromComponent).toBe('Icon')

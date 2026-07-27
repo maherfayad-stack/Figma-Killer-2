@@ -134,7 +134,10 @@ describe('canvas frame mounting', () => {
 
     const designDoc = await waitForCanvasFrameDocument('desktop')
     expect(designDoc.documentElement.style.height).toBe('auto')
-    expect(designDoc.body.style.height).toBe('auto')
+    // Body's height is PINNED, not `auto` — `useIframeFrameAutoHeight` sets it
+    // to the measured frame height (floored at the viewport height) so authored
+    // percentage-height chains have a definite basis to resolve against.
+    expect(designDoc.body.style.height).toBe(`${CANVAS_VIEWPORT_HEIGHT}px`)
     expect(designDoc.body.style.minHeight).toBe(`${CANVAS_VIEWPORT_HEIGHT}px`)
     expect(designDoc.documentElement.style.overflow).toBe('hidden')
     expect(designDoc.body.style.overflow).toBe('hidden')

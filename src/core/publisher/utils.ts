@@ -36,4 +36,4 @@ export { escapeHtml, isSafeUrl, safeUrl } from '@core/html-sanitize'
 // framework→publisher cycle. Re-exported here so publisher-side consumers
 // (classCss, base modules, editor canvas) keep importing it from
 // `@core/publisher` unchanged. See `@core/css-sanitize` for the full doc.
-export { sanitiseCssValue } from '@core/css-sanitize'
+export { sanitiseCssValue, cssValueForProperty } from '@core/css-sanitize'

@@ -79,6 +79,11 @@ export function applyIframeBodyReset(
     return
   }
   iframeDoc.documentElement.style.height = 'auto'
+  // `auto` is the starting point only: `useIframeFrameAutoHeight` owns body's
+  // height from here on, pinning it to the measured frame height so authored
+  // percentage-height chains have a definite basis to resolve against. Setting
+  // it here keeps a frame that never runs that loop (a document detached before
+  // its first measure) on the old grow-to-content behaviour.
   iframeDoc.body.style.height = 'auto'
   iframeDoc.body.style.minHeight = `${CANVAS_VIEWPORT_HEIGHT}px`
   // Design frames grow to fit their content on the parent canvas. The iframe

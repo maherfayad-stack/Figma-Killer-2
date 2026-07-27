@@ -11,57 +11,79 @@
  * components' own source files describe.
  *
  * ---------------------------------------------------------------------------
- * WHY EVERY INLINED NODE IS LOCKED (§2.5) — read this before touching the
- * locking logic below.
+ * WHAT THIS MODULE PRODUCES (§2.5) — read this before touching the structure
+ * or provenance logic below.
  *
  * A component like `Icon` is typically called dozens of times across a page
  * (or across many pages). Every one of those call sites expands into its OWN
- * copy of `Icon.jsx`'s JSX, one per call site (see `INLINE_ID_SEPARATOR`'s
- * doc comment for why they don't collide). If an inlined node's prop/text
- * edits were writable, editing ONE instance's rendered copy would have no
- * sound place to write back to that wouldn't ALSO silently change every other
- * call site sharing that same source file — worse than read-only, because it
- * would look like a normal, isolated edit. There is also structurally no
- * single valid source location for a composite id to write to. So every node
- * this module produces gets `locked: true` with an explanatory `lockReason` —
- * matching the parser's pre-existing "rendered dynamically ⇒ read-only
- * surface" convention (`DYNAMIC_LOCK_REASON` in `./parsePageFile`), which
- * means the editor's existing edit-guards (`nodeActions`, `inlineEditSlice`)
- * already respect it with zero new work on their side.
+ * copy of `Icon.jsx`'s JSX (see `INLINE_ID_SEPARATOR`'s doc comment for why
+ * they don't collide). Those nodes are EDITABLE: a composite id's writeback
+ * target is the tail — the component's own source location, which is a real,
+ * valid place to write (`studioEditLocation`). What it is NOT is isolated:
+ * one source file backs every instance, so an edit here lands on all of them.
+ * That consequence is carried as `ParsedNode.fromComponent` and surfaced to
+ * the user on the node rather than by refusing the edit.
  *
- * The CALL SITE node itself is the one exception: it's a real, unique
- * location in a real page (or a real, unique location in some ancestor
- * component's file, itself already locked if that ancestor was itself
- * inlined) — so it keeps whatever locked/lockReason it already had, and its
- * own literal props (e.g. `<Icon size={24}/>`'s `size`) remain writable. Only
- * its `kind`/`name`/`children` are rewritten so it renders as a
- * `base.container` wrapping the expanded subtree (via
- * `server/handlers/studio.ts`'s `resolveModuleId`'s existing
- * children-promotion rule — §4), instead of `alm.Icon`'s "Unknown module" box.
+ * A node locked for its OWN reason (`.map`/ternary/spread/dynamic value) stays
+ * locked — that lock is about having no single valid writeback target at all,
+ * which inlining does not change.
+ *
+ * The CALL SITE node is REPLACED by the component's own root node(s), not
+ * kept as a wrapper around them. `<SheetShell/>` renders SheetShell's own
+ * root `<div>` at that position — a component call emits no element of its
+ * own — so the expanded tree must not either. Leaving a wrapper div behind
+ * silently breaks two things at once:
+ *
+ *   - Percentage and flex height chains. `.sheet-shell { height: 100% }`
+ *     resolves against the wrapper's `auto` height, so the shell collapses to
+ *     its own content height and every `flex: 1` descendant inside it
+ *     (a scroll viewport, typically) computes to 0 — on the eSIM corpus this
+ *     clipped 1447px of a screen's body down to nothing.
+ *   - Every direct-child and sibling combinator crossing the call site:
+ *     `.sheet-shell__panel > .booking-confirmation__scroll` stops matching
+ *     once a div sits between them.
+ *
+ * Both are the same class of bug the per-frame iframe exists to prevent (see
+ * `IframeFrameSurface`'s "no `display: contents` NodeWrapper divs" note): the
+ * canvas DOM has to be the DOM React renders, or authored CSS quietly means
+ * something different here than it does in the app.
+ *
+ * The trade-off is that a call site's own literal props (`<Icon size={24}/>`'s
+ * `size`) are no longer editable as a node, because there is no longer a node
+ * for the call site — those values reach the canvas through substitution into
+ * the subtree instead (§2.3(a)), and are edited at the source location that
+ * actually holds them.
  * ---------------------------------------------------------------------------
  *
  * SCOPE (§2.3 — partial evaluation, not an interpreter): the ONLY prop/text
  * shapes this module resolves are (a) a destructured prop forwarded verbatim
  * as `{paramName}` (an attribute value or a lone text child) where the call
  * site passed a literal or the destructure has a literal default, (b)
- * `{children}` splicing, and (c) a `className={\`static ${dynamic}\`}`
- * template literal's static head text (visual-fidelity best-effort only —
- * the node is locked regardless). There is no control-flow execution, no
- * hook evaluation, no context resolution, and no general expression
- * evaluator — every other shape (calls, member chains, spreads, `.map`) is
- * simply left as whatever `parseJsxTree` already produced for it, never
- * guessed at.
+ * `{children}` splicing, (c) a `className={\`static ${dynamic}\`}` template
+ * literal's static head text (visual-fidelity best-effort only), and (d) the
+ * `style={{…}}` object and the `dangerouslySetInnerHTML` markup, re-read
+ * against a scope where the component's PARAMETERS are bound to this call
+ * site's values (`paramEvalContext`) — the only way a value that only exists
+ * at the call site reaches the element that actually renders it.
+ *
+ * (d) stays inside §7's existing envelope; it adds bindings to a scope, not
+ * new evaluation powers. So there is still no control-flow execution and no
+ * loop expansion: `applyTokens(svg)` in the corpus's `IllustrationIcon`
+ * iterates a substitution table and is therefore Tier D — it does not resolve,
+ * and that icon renders empty rather than being guessed at. Every other shape
+ * (spreads, `.map`) is likewise left as whatever `parseJsxTree` produced.
  */
 import * as path from 'node:path'
-import { Node, SyntaxKind, type JsxElement, type JsxSelfClosingElement, type Project, type SourceFile } from 'ts-morph'
+import { Node, type Project, type SourceFile } from 'ts-morph'
 import {
   findComponentDeclaration,
   getFunctionLikeNode,
   getReturnedJsxRoot,
   parseJsxTree,
 } from './parsePageFile'
+import { applySubstitutions, buildSubstitutionEnv } from './componentSubstitution'
 import { resolveComponentSources, type ComponentSource } from './componentSources'
-import type { FunctionLike, ParsedNode, ParsedPage } from './types'
+import type { ParsedNode, ParsedPage } from './types'
 import type { StaticEvalOptions } from './staticEval'
 
 export interface InlineOptions {
@@ -105,15 +127,6 @@ export const INLINE_ID_SEPARATOR = '~'
 const DEFAULT_MAX_DEPTH = 6
 const DEFAULT_MAX_NODES = 4000
 
-/** Generic container tag used to re-home an expanded call site (§2.5, §4's promotion rule). */
-const CONTAINER_ELEMENT_NAME = 'div'
-
-type JsxOpeningLike = JsxElement | JsxSelfClosingElement
-type LiteralValue = string | number | boolean
-
-/** What `buildSubstitutionEnv` resolved a destructured prop param to. */
-type Substitution = { kind: 'literal'; value: LiteralValue } | { kind: 'children' }
-
 interface ExpandState {
   project: Project
   workspaceRoot: string
@@ -123,15 +136,6 @@ interface ExpandState {
   evalOptions: StaticEvalOptions | undefined
   /** Running total of nodes produced by inlining so far, across the whole page. */
   nodeCount: number
-  /**
-   * Ids that existed in the page as originally parsed, BEFORE any inlining —
-   * real, editable, page-native node ids. `{children}` splicing (§2.3) always
-   * references one of these (the call site's own literal JSX children, from
-   * real source), and they must NEVER be prefixed by `prefixParsedPage` no
-   * matter how many levels of inlining they get spliced through, since their
-   * (unprefixed) entry already lives in the merged node map untouched.
-   */
-  originalIds: ReadonlySet<string>
 }
 
 /**
@@ -163,24 +167,23 @@ export function inlineLocalComponents(
       maxNodes: opts.maxNodes ?? DEFAULT_MAX_NODES,
       evalOptions: opts.evalOptions,
       nodeCount: Object.keys(parsed.nodes).length,
-      originalIds: new Set(Object.keys(parsed.nodes)),
     }
 
-    const nodes: Record<string, ParsedNode> = { ...parsed.nodes }
+    const page: ParsedPage = { rootIds: [...parsed.rootIds], nodes: { ...parsed.nodes } }
     // Iterate a SNAPSHOT of the original node ids — `expandCallSite` mutates
-    // `nodes` (replacing/adding entries) as it goes, and we only ever want to
-    // consider call sites that existed in the page as parsed, not ones that
-    // inlining itself introduces (those are handled by the recursion, keyed
-    // off the sub-tree's OWN sources map).
+    // `page` (removing the call site, adding its expansion) as it goes, and we
+    // only ever want to consider call sites that existed in the page as parsed,
+    // not ones that inlining itself introduces (those are handled by the
+    // recursion, keyed off the sub-tree's OWN sources map).
     for (const id of Object.keys(parsed.nodes)) {
       const source = sources[id]
       if (!source || source.kind !== 'local') continue
-      const node = nodes[id]
+      const node = page.nodes[id]
       if (!node || node.kind !== 'component') continue
-      expandCallSite(id, node, source.file, nodes, state, new Set(), 0)
+      expandCallSite(id, node, source.file, page, state, new Set(), 0)
     }
 
-    return { rootIds: [...parsed.rootIds], nodes }
+    return page
   } catch {
     // Never throw — degrade to the unmodified input page.
     return { rootIds: [...parsed.rootIds], nodes: { ...parsed.nodes } }
@@ -188,13 +191,14 @@ export function inlineLocalComponents(
 }
 
 /**
- * Expands ONE call-site node in place within `nodes` (replacing its entry),
- * merging in the (locked, id-prefixed) subtree produced by parsing and
- * substituting into the target component's own returned JSX. Returns `true`
- * if expansion happened, `false` if the node was left opaque (unresolvable
- * target, cap reached, cycle detected, or any internal parse failure) — the
- * caller does nothing further in that case, leaving the node exactly as it
- * was.
+ * Expands ONE call-site node within `page`: merges in the (id-prefixed) subtree
+ * produced by parsing and substituting into the target component's own returned
+ * JSX, then REPLACES the call-site node with that subtree's root(s) wherever it
+ * was referenced (see this module's header — a call site is not an element).
+ * Returns `true` if expansion happened, `false` if the node was left opaque
+ * (unresolvable target, cap reached, cycle detected, or any internal parse
+ * failure) — the caller does nothing further in that case, leaving the node
+ * exactly as it was.
  *
  * `cyclePath` is the set of `${file}#${exportName}` keys on the CURRENT
  * recursion path (not a global visited set — the same component legitimately
@@ -205,7 +209,7 @@ function expandCallSite(
   callSiteId: string,
   callSiteNode: ParsedNode,
   targetRelFile: string,
-  nodes: Record<string, ParsedNode>,
+  page: ParsedPage,
   state: ExpandState,
   cyclePath: Set<string>,
   depth: number,
@@ -239,7 +243,7 @@ function expandCallSite(
     const targetRelFromRoot = path.relative(state.workspaceRoot, target.sourceFile.getFilePath()).split(path.sep).join('/')
     let subPage = parseJsxTree(rootExpr, target.sourceFile, targetRelFromRoot, state.workspaceRoot, fn, state.evalOptions)
     const env = buildSubstitutionEnv(fn, callSiteNode.props)
-    subPage = applySubstitutions(rootExpr, subPage, env, callSiteNode.children, target.sourceFile, targetRelFromRoot)
+    subPage = applySubstitutions(rootExpr, subPage, env, callSiteNode.children, target.sourceFile, targetRelFromRoot, fn, state.evalOptions)
 
     // §2.5 — tag every node this call site's subtree produces with the
     // component whose file it came from. These nodes are EDITABLE: their
@@ -269,28 +273,25 @@ function expandCallSite(
       if (!source || source.kind !== 'local') continue
       const node = subPage.nodes[id]
       if (!node || node.kind !== 'component') continue
-      expandCallSite(id, node, source.file, subPage.nodes, state, nextCyclePath, depth + 1)
+      expandCallSite(id, node, source.file, subPage, state, nextCyclePath, depth + 1)
     }
 
     // Prefix every id this subtree owns (§2.4) — deterministic and
     // collision-free even though the SAME component may be inlined at many
-    // call sites, because `callSiteId` is unique per call site. Ids already
-    // present before ANY inlining (spliced-in `{children}` content) are left
-    // untouched — see `originalIds`'s doc comment.
-    const prefixed = prefixParsedPage(subPage, callSiteId, state.originalIds)
+    // call sites, because `callSiteId` is unique per call site.
+    const prefixed = prefixParsedPage(subPage, callSiteId)
 
     for (const [id, node] of Object.entries(prefixed.nodes)) {
-      nodes[id] = node
+      page.nodes[id] = node
     }
     state.nodeCount += Object.keys(prefixed.nodes).length
 
-    nodes[callSiteId] = {
-      ...callSiteNode,
-      kind: 'element',
-      name: CONTAINER_ELEMENT_NAME,
-      children: prefixed.rootIds,
-      text: undefined,
-    }
+    // The call site itself contributes no element — its expansion takes its
+    // place, wherever it was referenced (module header, "The CALL SITE node is
+    // REPLACED"). A fragment root legitimately yields several roots; they all
+    // splice in at the call site's position, in order.
+    delete page.nodes[callSiteId]
+    spliceReference(page, callSiteId, prefixed.rootIds)
     return true
   } catch {
     // Any unexpected failure (syntax error in the target file, an
@@ -385,216 +386,24 @@ function findNamedComponentDeclaration(sourceFile: SourceFile, name: string, req
 }
 
 /**
- * Builds the substitution table (§2.3) from the target component's OWN
- * destructured first-parameter pattern and the call site's literal props.
- * Only a single `{ a, b: renamed, c = 1 }`-shaped object binding pattern is
- * supported (every validation-corpus component uses one) — a non-destructured
- * parameter (`function Foo(props) {…}`), a nested pattern, or a rest element
- * yields no entry for that param, so any `{paramName}` reference to it is
- * simply left unresolved (existing lock/drop path), never guessed at.
- */
-function buildSubstitutionEnv(fn: FunctionLike, callSiteProps: Record<string, LiteralValue>): Map<string, Substitution> {
-  const env = new Map<string, Substitution>()
-  const first = fn.getParameters()[0]
-  if (!first) return env
-
-  const pattern = first.getNameNode()
-  if (!Node.isObjectBindingPattern(pattern)) return env
-
-  for (const element of pattern.getElements()) {
-    if (element.getDotDotDotToken()) continue // ...rest — unsupported
-
-    const nameNode = element.getNameNode()
-    if (!Node.isIdentifier(nameNode)) continue // nested destructuring pattern — unsupported
-    const paramName = nameNode.getText()
-
-    const propertyNameNode = element.getPropertyNameNode()
-    const attrName = propertyNameNode ? propertyNameNode.getText() : paramName
-
-    if (attrName === 'children') {
-      env.set(paramName, { kind: 'children' })
-      continue
-    }
-
-    if (Object.hasOwn(callSiteProps, attrName)) {
-      env.set(paramName, { kind: 'literal', value: callSiteProps[attrName]! })
-      continue
-    }
-
-    const initializer = element.getInitializer()
-    if (!initializer) continue
-    if (Node.isStringLiteral(initializer) || Node.isNumericLiteral(initializer)) {
-      env.set(paramName, { kind: 'literal', value: initializer.getLiteralValue() })
-    } else if (initializer.getKind() === SyntaxKind.TrueKeyword || initializer.getKind() === SyntaxKind.FalseKeyword) {
-      env.set(paramName, { kind: 'literal', value: initializer.getKind() === SyntaxKind.TrueKeyword })
-    }
-    // Any other default (a call, a template literal, …) is not a literal —
-    // intentionally left unresolved, same policy as `extractProps`.
-  }
-
-  return env
-}
-
-/**
- * Patches `subPage` (already structurally correct via `parseJsxTree`) with
- * §2.3's substitutions: a `{paramName}` prop/text reference resolved to a
- * literal via `env`, a `{children}` reference spliced with the call site's
- * own already-parsed children ids, and a `className` template literal's
- * static head text. Does NOT re-derive structure, locking, svg capture, or
- * style extraction — `parseJsxTree` already owns all of that; this only
- * fills in values `extractProps`/`extractSingleText` had to skip because
- * they were identifier references, not literals.
+ * Replaces every id `subPage` OWNS with
+ * `${callSiteId}${INLINE_ID_SEPARATOR}${originalId}` (§2.4).
  *
- * Walks `rootExpr` in the same shape as the element tree (JSX
- * element/self-closing/fragment/expression) purely to re-derive each
- * element's id (same `${relFile}:${line}:${col}` convention) and match it
- * against `subPage.nodes` — it does not replicate locking or capture rules,
- * only finds where to patch.
+ * "Owns" is decided structurally: an id present in `subPage.nodes`. Anything
+ * `subPage` merely *references* without holding — a `{children}` splice point
+ * (§2.3(b)), whose nodes live in the enclosing page's map — is left exactly as
+ * it is, at every level of nesting, because its entry over there is what the
+ * reference has to keep pointing at.
+ *
+ * Reading it off the node map rather than threading a set of "ids that existed
+ * before inlining" is what makes it correct under call-site replacement: a
+ * nested expansion's replacement ids are in `subPage.nodes`, so they still get
+ * prefixed here and stay unique per call site, while spliced-in children — the
+ * only dangling references a subtree can hold — still don't.
  */
-function applySubstitutions(
-  rootExpr: Node,
-  subPage: ParsedPage,
-  env: Map<string, Substitution>,
-  callSiteChildrenIds: string[],
-  sourceFile: SourceFile,
-  relFile: string,
-): ParsedPage {
-  if (env.size === 0) return subPage
-  const nodes = { ...subPage.nodes }
-
-  const idFor = (el: Node): string => {
-    const { line, column } = sourceFile.getLineAndColumnAtPos(el.getStart())
-    return `${relFile}:${line}:${column}`
-  }
-
-  const patchElement = (el: JsxOpeningLike): void => {
-    const isElement = Node.isJsxElement(el)
-    const tagNameNode = isElement ? el.getOpeningElement().getTagNameNode() : el.getTagNameNode()
-    const id = idFor(tagNameNode)
-    const existing = nodes[id]
-    if (existing) {
-      const attributes = isElement ? el.getOpeningElement().getAttributes() : el.getAttributes()
-
-      let patchedProps: Record<string, LiteralValue> | undefined
-      for (const attr of attributes) {
-        if (!Node.isJsxAttribute(attr)) continue
-        const attrName = attr.getNameNode().getText()
-        if (attrName in existing.props) continue // already captured as a literal
-        const initializer = attr.getInitializer()
-        if (!initializer || !Node.isJsxExpression(initializer)) continue
-        const expr = initializer.getExpression()
-        if (!expr || !Node.isIdentifier(expr)) continue
-        const sub = env.get(expr.getText())
-        if (sub?.kind !== 'literal') continue
-        patchedProps ??= { ...existing.props }
-        patchedProps[attrName] = sub.value
-      }
-
-      // §2.3's `className={\`static ${dynamic}\`}` row — keep the STATIC
-      // head text even though the whole node is locked anyway (visual
-      // fidelity, not an editability concern).
-      if (!('className' in (patchedProps ?? existing.props))) {
-        const classNameAttr = attributes.find(
-          (a): a is typeof attributes[number] & { getNameNode(): Node } =>
-            Node.isJsxAttribute(a) && a.getNameNode().getText() === 'className',
-        )
-        const classInitializer = Node.isJsxAttribute(classNameAttr) ? classNameAttr.getInitializer() : undefined
-        if (classInitializer && Node.isJsxExpression(classInitializer)) {
-          const expr = classInitializer.getExpression()
-          if (expr && Node.isTemplateExpression(expr)) {
-            const head = expr.getHead().getLiteralText().trim()
-            if (head.length > 0) {
-              patchedProps ??= { ...existing.props }
-              patchedProps.className = head
-            }
-          }
-        }
-      }
-
-      let patchedText = existing.text
-      if (existing.text === undefined && existing.children.length === 0 && isElement) {
-        const meaningful = el
-          .getJsxChildren()
-          .filter((c) => !(Node.isJsxText(c) && c.getText().trim().length === 0))
-        if (meaningful.length === 1 && Node.isJsxExpression(meaningful[0])) {
-          const expr = meaningful[0].getExpression()
-          if (expr && Node.isIdentifier(expr)) {
-            const sub = env.get(expr.getText())
-            if (sub?.kind === 'literal') patchedText = String(sub.value)
-          }
-        }
-      }
-
-      let patchedChildren = existing.children
-      if (isElement) {
-        let insertAt = 0
-        for (const child of el.getJsxChildren()) {
-          if (Node.isJsxText(child)) continue
-          if (Node.isJsxElement(child) || Node.isJsxSelfClosingElement(child) || Node.isJsxFragment(child)) {
-            insertAt += 1
-            continue
-          }
-          if (Node.isJsxExpression(child)) {
-            const expr = child.getExpression()
-            if (expr && Node.isIdentifier(expr) && env.get(expr.getText())?.kind === 'children') {
-              patchedChildren = [
-                ...existing.children.slice(0, insertAt),
-                ...callSiteChildrenIds,
-                ...existing.children.slice(insertAt),
-              ]
-            }
-          }
-        }
-      }
-
-      if (patchedProps || patchedText !== existing.text || patchedChildren !== existing.children) {
-        nodes[id] = {
-          ...existing,
-          ...(patchedProps ? { props: patchedProps } : {}),
-          ...(patchedText !== undefined ? { text: patchedText } : {}),
-          children: patchedChildren,
-        }
-      }
-    }
-
-    if (isElement) {
-      for (const child of el.getJsxChildren()) walk(child)
-    }
-  }
-
-  const walk = (node: Node): void => {
-    if (Node.isJsxElement(node) || Node.isJsxSelfClosingElement(node)) {
-      patchElement(node)
-      return
-    }
-    if (Node.isJsxFragment(node)) {
-      for (const child of node.getJsxChildren()) walk(child)
-      return
-    }
-    if (Node.isJsxExpression(node)) {
-      const expr = node.getExpression()
-      if (expr) walk(expr)
-      return
-    }
-    // Ternary/logical/`.map(...)` bodies — descend to find any JSX literal
-    // reachable inside, same reachability `parseJsxTree` already used to
-    // decide what got a node at all.
-    node.forEachChild(walk)
-  }
-
-  walk(rootExpr)
-
-  return { rootIds: subPage.rootIds, nodes }
-}
-
-/**
- * Replaces every id `subPage` owns with
- * `${callSiteId}${INLINE_ID_SEPARATOR}${originalId}` (§2.4) — except ids in
- * `originalIds` (real, page-native ids spliced in via `{children}`), which
- * are left exactly as they are at every level of nesting.
- */
-function prefixParsedPage(subPage: ParsedPage, callSiteId: string, originalIds: ReadonlySet<string>): ParsedPage {
-  const prefix = (id: string): string => (originalIds.has(id) ? id : `${callSiteId}${INLINE_ID_SEPARATOR}${id}`)
+function prefixParsedPage(subPage: ParsedPage, callSiteId: string): ParsedPage {
+  const prefix = (id: string): string =>
+    subPage.nodes[id] ? `${callSiteId}${INLINE_ID_SEPARATOR}${id}` : id
 
   const nodes: Record<string, ParsedNode> = {}
   for (const [id, node] of Object.entries(subPage.nodes)) {
@@ -602,4 +411,34 @@ function prefixParsedPage(subPage: ParsedPage, callSiteId: string, originalIds: 
     nodes[newId] = { ...node, id: newId, children: node.children.map(prefix) }
   }
   return { rootIds: subPage.rootIds.map(prefix), nodes }
+}
+
+/**
+ * Splices `withIds` in for the single reference to `id` — in whichever node's
+ * `children` holds it, or in `page.rootIds` when the call site was a root.
+ *
+ * A tree references each id exactly once, so the first hit is the only hit.
+ * Scanning for it beats threading a child→parent map: expansion order is not
+ * top-down (an inner call site can be expanded before the outer one that
+ * splices its children), so any precomputed parent map would be stale by the
+ * time it was read.
+ */
+function spliceReference(page: ParsedPage, id: string, withIds: readonly string[]): void {
+  const spliced = (ids: string[]): string[] | null => {
+    const at = ids.indexOf(id)
+    return at === -1 ? null : [...ids.slice(0, at), ...withIds, ...ids.slice(at + 1)]
+  }
+
+  const roots = spliced(page.rootIds)
+  if (roots) {
+    page.rootIds.splice(0, page.rootIds.length, ...roots)
+    return
+  }
+  for (const [nodeId, node] of Object.entries(page.nodes)) {
+    const children = spliced(node.children)
+    if (children) {
+      page.nodes[nodeId] = { ...node, children }
+      return
+    }
+  }
 }

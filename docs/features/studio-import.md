@@ -10,7 +10,7 @@ The load path is `GET /admin/api/studio/load?dir=<abs>` → `loadStudioPages` (`
 
 - **Studio parses source structurally. It never executes it.** No component is rendered, no hook is called, no module is evaluated. Every value on the canvas was read out of the AST with ts-morph.
 - **Page discovery is configurable.** `.studio/meta.json`'s `pagesDir` points at a repo's real screens directory (e.g. `src/screens`); `.tsx` and `.jsx` are both discovered.
-- **Local components are inlined.** A `<Card />` whose import resolves inside the workspace is expanded into its own JSX so the canvas shows real markup, not an opaque box. Inlined nodes are **locked**.
+- **Local components are inlined.** A `<Card />` whose import resolves inside the workspace is expanded into its own JSX so the canvas shows real markup, not an opaque box. The call-site node is **replaced** by that JSX, not left wrapping it. Inlined nodes are **editable**, and the panel says how many places an edit will land in.
 - **Package components are not.** `@alm-design/design-system`'s `<Button />` stays a `alm.Button` node rendered by its own module.
 - **Non-literal values are statically resolved** where it is safe to — `{t.homepage.greeting}` becomes `"Hi Muhammad"`. Resolved nodes are **locked**, because writing an edited literal back over the expression would destroy the binding in the user's source file.
 - **Imported CSS is read-only.** `.css` files become `StyleRule`s and `node.classIds`, but **nothing is ever written back to a `.css` file**. An edit made in the CSS Classes panel is lost on the next reload. See [CSS is one-way](#css-is-one-way).
@@ -27,11 +27,13 @@ server/handlers/
 ├── studioProjects.ts     — project discovery, `.studio/meta.json` (displayName, pagesDir, previewLocale)
 ├── studioCss.ts          — §6: imported .css → StyleRule registry, deterministic ids, happy-dom CSSOM
 ├── studioAsset.ts        — GET /admin/api/studio/asset, path-containment guards
-└── studioWriteback.ts    — StudioEdit shapes + the composite-id guard
+└── studioWriteback.ts    — StudioEdit shapes, tail-resolved edit locations, dedupe
 
 src/core/page-parser/
 ├── parsePageFile.ts          — the ts-morph JSX walk → ParsedPage
-├── inlineLocalComponents.ts  — local-component expansion + composite ids
+├── inlineLocalComponents.ts  — local-component expansion: structure, composite ids, call-site replacement
+├── componentSubstitution.ts  — the value half: call-site props → the component's own JSX
+├── jsxAttributeReaders.ts    — how each attribute shape is read (props, style, raw SVG, images)
 ├── componentSources.ts       — local vs package classification, workspace-wide ts-morph Project
 ├── staticEval.ts             — public composer for the value evaluator
 ├── staticEvalCore.ts         — Tier A + the recursive walker + binding resolution
@@ -41,6 +43,12 @@ src/core/page-parser/
 src/core/studio-sync/
 ├── parsedPageToSitePage.ts    — ParsedPage → Instatic Page (moduleId, text prop, classIds)
 └── collectPageStylesheets.ts  — which .css files a page depends on, in cascade order
+
+src/core/css-sanitize/
+└── cssValueForProperty.ts     — the number → `px` rule, shared by canvas and publisher
+
+src/admin/pages/site/canvas/
+└── useIframeFrameAutoHeight.ts — frame height + the definite `body` height authored `%` chains need
 ```
 
 ---
@@ -87,11 +95,26 @@ The rule: an inlined node's id is
 
 `INLINE_ID_SEPARATOR` is `'~'`, exported from `@core/page-parser`. `fsCodemodAdapter.ts` **mirrors** the literal rather than importing it, because pulling the page-parser barrel into the browser bundle drags ts-morph/TypeScript along and blows the `AdminCanvasLayout` chunk budget by an order of magnitude (measured). The same file already mirrors `ComponentSource` for that reason.
 
-> **Writeback guard.** Both `NODE_LOC_ID` (`studioWriteback.ts`) and `SOURCE_NODE_ID` (`fsCodemodAdapter.ts`) are permissive `:line:col` patterns that would happily match a composite id and derive a garbage file path — i.e. silently corrupt a source file on save. A node id containing `~` must never enter a save batch. Both sides check.
+> **Writeback guard.** `NODE_LOC_ID` (`studioWriteback.ts`) is a permissive `:line:col` pattern whose greedy `.*` matches straight *through* the separator. Run on a whole composite id it yields the right line and column with a file path of `pages/Home.jsx:77:19~components/Icon.jsx` — a path that does not exist, and if it ever did, a file the user never asked to modify. `studioEditLocation` therefore splits on `INLINE_ID_SEPARATOR` and keeps the **tail** before matching. Order is not optional.
 
-### Why inlined nodes are locked
+### The call site is replaced, not wrapped
 
-An inlined subtree is one component's markup shown at one call site. Editing it would either change every other call site or lie about what the source says. Locking reuses the editor's existing edit-guard machinery (`nodeActions`, `inlineEditSlice`) for free.
+`<SheetShell/>` renders SheetShell's own root `<div>` at that position; a component call emits no element of its own. So expansion **replaces** the call-site node with the component's root(s) (`spliceReference`) instead of nesting them under it.
+
+A leftover wrapper div breaks two things silently:
+
+- **Percentage and flex height chains.** `.sheet-shell { height: 100% }` resolves against the wrapper's `auto` height, collapsing the shell to its own content height and every `flex: 1` scroll viewport inside it to 0. Measured on the eSIM corpus: 1447px of a screen's body clipped to nothing, with the header still visible above it.
+- **Direct-child and sibling combinators** that cross the call site: `.sheet-shell__panel > .booking-confirmation__scroll` stops matching.
+
+This is the same invariant the per-frame iframe exists to protect (`IframeFrameSurface`, "no `display: contents` NodeWrapper divs"): the canvas DOM must be the DOM React renders, or authored CSS quietly means something different here than in the app.
+
+The trade-off is that a call site's own literal props (`<Icon size={24}/>`'s `size`) are no longer editable *as a node*, because no node represents the call site. Those values still reach the canvas by substitution into the subtree, and are edited where they actually live.
+
+### Inlined nodes are editable, with their blast radius shown
+
+An inlined subtree is one component's markup shown at one call site, and a composite id's writeback target is its tail — the component's own source location, which is a real, valid place to write. So these nodes are **editable**. What they are not is *isolated*: one file backs every instance, so an edit lands on all of them. `ParsedNode.fromComponent` carries the component name, and `SharedComponentNotice` states the consequence next to the controls that would cause it, with a live instance count (one `Icon.jsx` line sat behind 29 board nodes on the corpus).
+
+A node locked for its **own** reason (`.map`/ternary/spread/dynamic value) stays locked — that lock is about having no single valid writeback target at all, which inlining does not change.
 
 ---
 
@@ -211,13 +234,25 @@ Two files defining the same class name collapse onto one id, later-parsed file w
 
 This is a real, user-visible sharp edge and it must not be discovered by losing work. Two-way CSS editing would need a CSS-text codemod alongside `ast-codemods` — a separate initiative.
 
+### The frame gives percentage heights a definite basis
+
+An imported screen is not a document that flows — it is an app shell: `html, body, #root { height: 100% }` under a `height: 100%` flex column, with the scrolling done by a `flex: 1` region inside. A percentage height only resolves against a parent whose height is **definite**; against `auto` it degrades to `auto`. So a design-canvas body left at `height: auto` (grow-to-content) collapses the whole chain and computes the scroll region to 0.
+
+`useIframeFrameAutoHeight` therefore pins `body.style.height` to the frame height it already measures, floored at `CANVAS_VIEWPORT_HEIGHT`. It unpins to `auto` before each measurement, because a pinned height floors `body.scrollHeight` and a page that got shorter could otherwise never shrink back — the same staleness `resolveCanvasFrameHeight` guards against for `documentElement`.
+
+This is the same move `resolveViewportUnits` makes for `vh`: give authored CSS a definite, device-like viewport to resolve against instead of a value derived from the content it is supposed to size. Grow-to-content still works, because the pin tracks measured content — a 3000px document page pins to 3000.
+
+### Numeric style values get their unit
+
+`style={{ width: size, height: size }}` parses to real numbers. `width: 44` is not valid CSS — the browser drops the declaration, in the canvas and in published HTML alike — so a bare number has to become `44px`. `sanitiseCssValue` sees only the value and can only stringify it, so `cssValueForProperty(prop, value)` (in `@core/css-sanitize`) owns the unit rule and every style-bag emitter goes through it. The rule is React's `isUnitlessNumber` list, so the canvas, the publisher, and anyone who has written JSX all agree. Before this, every inline SVG icon rendered at its own intrinsic size: a 24px check painted 300px wide across its badge.
+
 ---
 
 ## What still does not import
 
 Honest list, all deliberate:
 
-- **The app shell.** Studio renders each screen standalone, so the wrapper the real app mounts it in (`App.jsx`'s `.esim-app`, and the `html,body{height:100%}` chain under it) is not reproduced. A screen written to fill a fixed-height viewport — a bottom sheet with a `flex-grow` scroll region, say — lays out against an auto-height body instead and can collapse. Verified in a browser on the eSIM corpus: the content is present and correct in the DOM, it just doesn't get the height its CSS assumes.
+- **`applyTokens(svg)`-style transforms.** The corpus's `IllustrationIcon` pipes its raw markup through a function that loops over a substitution table swapping hardcoded hex fills for design tokens. Loops are Tier D, so the value does not resolve and those icons render empty rather than being guessed at (2 nodes on the corpus). A transform written without a loop resolves normally.
 - **Repeated list content.** A `.map()` over data renders as one locked, opaque node — Tier D is banned.
 - **Multi-stage screens.** A component with several conditional `return`s collapses to the least-nested one.
 - **Computed `className`.** `` className={`esb esb--${tone}`} `` keeps only its static prefix, so the variant class never attaches.

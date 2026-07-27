@@ -5,7 +5,7 @@ import type {
   ConditionDef,
 } from '@core/page-tree'
 import { breakpointMediaQuery, styleRuleSelector } from '@core/page-tree'
-import { sanitiseCssValue } from './utils'
+import { cssValueForProperty, sanitiseCssValue } from './utils'
 import { responsiveBackgroundImage, type ResponsiveCssOptions } from './responsiveBackground'
 
 /**
@@ -120,7 +120,7 @@ function tryCollapseSides(
     const property = `${prefix}${side}`
     const raw = bag[property]
     if (raw === undefined || raw === null || raw === '') return null
-    const sanitised = sanitiseCssValue(raw as string | number)
+    const sanitised = cssValueForProperty(property, raw as string | number)
     if (sanitised === null) return null
     const propertyImportant = priorities[property] === 'important'
     if (important !== undefined && propertyImportant !== important) return null
@@ -178,7 +178,7 @@ function bagToDeclarations(
       // Fewer than 4 sides present → fall through and emit longhand below.
     }
 
-    const sanitised = sanitiseCssValue(value as string | number)
+    const sanitised = cssValueForProperty(prop, value as string | number)
     if (sanitised === null) continue
     const kebab = toKebab(prop)
     const important = priorities[prop] === 'important'
@@ -246,7 +246,7 @@ export function bagToReactStyle(
   for (const [prop, value] of Object.entries(bag)) {
     if (!isEmittableProperty(prop)) continue
     if (value === undefined || value === null || value === '') continue
-    const sanitised = sanitiseCssValue(value as string | number)
+    const sanitised = cssValueForProperty(prop, value as string | number)
     if (sanitised === null) continue
     out[prop] = sanitised
   }

@@ -53,8 +53,44 @@ export interface ParseContext {
 
 const IMAGE_EXTENSION_RE = /\.(png|jpe?g|svg|webp|gif|avif)$/i
 
-/** Markup that actually opens an `<svg>` document — see `extractRawSvgMarkup`. */
-const SVG_DOCUMENT_RE = /^\s*<svg[\s>]/i
+/**
+ * Markup that actually opens an `<svg>` document.
+ *
+ * This prop can carry any HTML, and handing arbitrary markup to `base.svg` —
+ * whose whole contract is "an inline SVG" — would be a category error. Exported
+ * for `inlineLocalComponents`, which applies the same test to a value it
+ * substitutes in from a call site.
+ */
+export const SVG_DOCUMENT_RE = /^\s*<svg[\s>]/i
+
+/**
+ * The `<expr>` inside `dangerouslySetInnerHTML={{ __html: <expr> }}`, or
+ * `undefined` when this element has no such attribute (or writes it in a shape
+ * this parser does not read — a spread, a call, a non-literal object).
+ *
+ * Split out from `extractRawSvgMarkup` because two callers need this one shape
+ * and resolve `<expr>` differently: the parser hands it to §7's evaluator, while
+ * `inlineLocalComponents` looks it up in a call site's substitution env (a
+ * component parameter has no value the evaluator could reach). Sharing the
+ * reader keeps "how the attribute is written" in one place.
+ */
+export function rawHtmlValueExpression(
+  attributes: (JsxAttribute | JsxSpreadAttribute)[],
+): Node | undefined {
+  for (const attribute of attributes) {
+    if (!Node.isJsxAttribute(attribute)) continue
+    if (attribute.getNameNode().getText() !== 'dangerouslySetInnerHTML') continue
+
+    const initializer = attribute.getInitializer()
+    if (!initializer || !Node.isJsxExpression(initializer)) return undefined
+    const objectExpr = initializer.getExpression()
+    if (!objectExpr || !Node.isObjectLiteralExpression(objectExpr)) return undefined
+
+    const htmlProp = objectExpr.getProperty('__html')
+    return htmlProp && Node.isPropertyAssignment(htmlProp) ? htmlProp.getInitializer() : undefined
+  }
+  return undefined
+}
 
 /**
  * Sentinel prefix `extractProps` emits (§5.1) for a prop whose value is a
@@ -78,34 +114,21 @@ export const STUDIO_ASSET_SENTINEL = 'studio-asset:'
  * (`resolveRawTextImport` in `./staticEvalCore`) as well as a local alias, a
  * member chain, or a value substituted in from a call site — so this one path
  * covers `<span dangerouslySetInnerHTML={{__html: checkSvg}} />` written
- * directly AND the far more common `<Icon svg={checkSvg} />` reaching the same
- * span after inlining substitutes its `svg` param.
+ * directly. The far more common `<Icon svg={checkSvg} />` reaches the same span
+ * through `inlineLocalComponents`, which substitutes the `svg` param into this
+ * same attribute — a component parameter has no value for §7 to resolve here.
  *
- * Only markup that actually opens an `<svg>` document is returned: this prop
- * can carry any HTML, and handing arbitrary markup to `base.svg` — whose whole
- * contract is "an inline SVG" — would be a category error.
+ * Only markup that actually opens an `<svg>` document is returned — see
+ * `SVG_DOCUMENT_RE`.
  */
 export function extractRawSvgMarkup(
   attributes: (JsxAttribute | JsxSpreadAttribute)[],
   ctx: ParseContext,
 ): string | undefined {
-  for (const attribute of attributes) {
-    if (!Node.isJsxAttribute(attribute)) continue
-    if (attribute.getNameNode().getText() !== 'dangerouslySetInnerHTML') continue
-
-    const initializer = attribute.getInitializer()
-    if (!initializer || !Node.isJsxExpression(initializer)) return undefined
-    const objectExpr = initializer.getExpression()
-    if (!objectExpr || !Node.isObjectLiteralExpression(objectExpr)) return undefined
-
-    const htmlProp = objectExpr.getProperty('__html')
-    const valueExpr = htmlProp && Node.isPropertyAssignment(htmlProp) ? htmlProp.getInitializer() : undefined
-    if (!valueExpr) return undefined
-
-    const resolved = tryResolveExpression(valueExpr, ctx.eval)?.value
-    return typeof resolved === 'string' && SVG_DOCUMENT_RE.test(resolved) ? resolved : undefined
-  }
-  return undefined
+  const valueExpr = rawHtmlValueExpression(attributes)
+  if (!valueExpr) return undefined
+  const resolved = tryResolveExpression(valueExpr, ctx.eval)?.value
+  return typeof resolved === 'string' && SVG_DOCUMENT_RE.test(resolved) ? resolved : undefined
 }
 
 /**

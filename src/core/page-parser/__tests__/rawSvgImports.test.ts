@@ -168,6 +168,133 @@ describe('?raw SVG imports', () => {
     expect(svgNodes(loadNodes('pages/Home.jsx', evalOptions()))).toHaveLength(0)
   })
 
+  it('sizes the icon: a `style={{ width: size }}` param reaches the element that renders the markup', () => {
+    // Without this the raw SVG has no box and overflows whatever badge the
+    // design wrapped it in — the visible symptom on the eSIM confirmation
+    // screen, where a 24px check painted across the whole success block.
+    write('assets/check.svg', SVG)
+    write(
+      'components/Icon.jsx',
+      [
+        'export default function Icon({ svg, size = 24 }) {',
+        '  return (',
+        '    <span',
+        "      className=\"ds-raw-icon\"",
+        '      style={{ display: \'inline-flex\', width: size, height: size }}',
+        '      dangerouslySetInnerHTML={{ __html: svg }}',
+        '    />',
+        '  )',
+        '}',
+        '',
+      ].join('\n'),
+    )
+    write(
+      'pages/Home.jsx',
+      [
+        "import Icon from '../components/Icon'",
+        "import checkSvg from '../assets/check.svg?raw'",
+        'export default function Home() {',
+        '  return <div><Icon svg={checkSvg} size={44} /></div>',
+        '}',
+        '',
+      ].join('\n'),
+    )
+
+    const svgs = svgNodes(loadNodes('pages/Home.jsx', evalOptions()))
+    expect(svgs).toHaveLength(1)
+    expect(svgs[0]!.inlineStyles).toMatchObject({ display: 'inline-flex', width: 44, height: 44 })
+  })
+
+  it("resolves the conditional-class idiom so the call site's own class reaches the element", () => {
+    // `['base', className].filter(Boolean).join(' ')` is how the corpus merges a
+    // base class with an optional one. If it doesn't resolve, the element that
+    // renders the icon has no class — and no rule sizing it.
+    write('assets/check.svg', SVG)
+    write(
+      'components/Icon.jsx',
+      [
+        'export default function Icon({ svg, className }) {',
+        "  return <span className={['ds-raw-icon', className].filter(Boolean).join(' ')} dangerouslySetInnerHTML={{ __html: svg }} />",
+        '}',
+        '',
+      ].join('\n'),
+    )
+    write(
+      'pages/Home.jsx',
+      [
+        "import Icon from '../components/Icon'",
+        "import checkSvg from '../assets/check.svg?raw'",
+        'export default function Home() {',
+        '  return <div><Icon svg={checkSvg} className="bc-success__check-icon" /></div>',
+        '}',
+        '',
+      ].join('\n'),
+    )
+
+    const svgs = svgNodes(loadNodes('pages/Home.jsx', evalOptions()))
+    expect(svgs).toHaveLength(1)
+    expect(svgs[0]!.props.className).toBe('ds-raw-icon bc-success__check-icon')
+  })
+
+  it('drops the falsy slot when the call site passes no class', () => {
+    write('assets/check.svg', SVG)
+    write(
+      'components/Icon.jsx',
+      [
+        'export default function Icon({ svg, className }) {',
+        "  return <span className={['ds-raw-icon', className].filter(Boolean).join(' ')} dangerouslySetInnerHTML={{ __html: svg }} />",
+        '}',
+        '',
+      ].join('\n'),
+    )
+    write(
+      'pages/Home.jsx',
+      [
+        "import Icon from '../components/Icon'",
+        "import checkSvg from '../assets/check.svg?raw'",
+        'export default function Home() {',
+        '  return <div><Icon svg={checkSvg} /></div>',
+        '}',
+        '',
+      ].join('\n'),
+    )
+
+    // `className` has no value at all here, so the expression stays unresolved
+    // and the static-prefix fallback does not apply to a non-template shape —
+    // no class is invented.
+    const svgs = svgNodes(loadNodes('pages/Home.jsx', evalOptions()))
+    expect(svgs).toHaveLength(1)
+    expect(svgs[0]!.props.className).toBeUndefined()
+  })
+
+  it('falls back to the parameter default when the call site passes no value', () => {
+    write('assets/check.svg', SVG)
+    write(
+      'components/Icon.jsx',
+      [
+        'export default function Icon({ svg, size = 24 }) {',
+        '  return <span style={{ width: size }} dangerouslySetInnerHTML={{ __html: svg }} />',
+        '}',
+        '',
+      ].join('\n'),
+    )
+    write(
+      'pages/Home.jsx',
+      [
+        "import Icon from '../components/Icon'",
+        "import checkSvg from '../assets/check.svg?raw'",
+        'export default function Home() {',
+        '  return <div><Icon svg={checkSvg} /></div>',
+        '}',
+        '',
+      ].join('\n'),
+    )
+
+    const svgs = svgNodes(loadNodes('pages/Home.jsx', evalOptions()))
+    expect(svgs).toHaveLength(1)
+    expect(svgs[0]!.inlineStyles).toMatchObject({ width: 24 })
+  })
+
   it('leaves the node alone when the __html expression cannot be resolved', () => {
     write(
       'pages/Home.jsx',
