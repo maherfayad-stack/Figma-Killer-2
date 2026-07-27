@@ -17,12 +17,13 @@ export interface ParsedPageToSitePageOptions {
   title: string
   /** Maps a parsed node to an Instatic moduleId. Pure/injected so this converter
    *  stays decoupled from the design-system list. e.g. component "Button" -> "alm.Button",
-   *  element "div" -> "base.container". Also carries `children` so the resolver
-   *  can tell a text-only tag (`<p>Hello</p>`) apart from a text-ish tag that
-   *  actually wraps element/component children (`<p><Icon/></p>`) — the latter
-   *  must resolve to `base.container` or those children would be silently
-   *  dropped by the `base.text` leaf. */
-  resolveModuleId: (node: Pick<ParsedNode, 'kind' | 'name' | 'children'>) => string
+   *  element "div" -> "base.container". Also carries `children` and `text` so the
+   *  resolver can tell a text-only tag (`<p>Hello</p>`) apart from one that wraps
+   *  element children (`<p><Icon/></p>`) or carries no content at all
+   *  (`<span className="icon" />`) — only the first may resolve to a leaf module
+   *  like `base.text`, or the children are dropped and an empty element renders
+   *  that module's placeholder label. */
+  resolveModuleId: (node: Pick<ParsedNode, 'kind' | 'name' | 'children' | 'text'>) => string
   /**
    * Maps a resolved moduleId to the single prop key its module's
    * `inlineTextEdit` declares (`base.text` -> 'text', `base.button` -> 'label',
@@ -75,7 +76,7 @@ export function parsedPageToSitePage(parsed: ParsedPage, opts: ParsedPageToSiteP
 
   const nodes: Record<string, PageNode> = { [bodyId]: bodyNode }
   for (const [id, node] of Object.entries(parsed.nodes)) {
-    const moduleId = opts.resolveModuleId({ kind: node.kind, name: node.name, children: node.children })
+    const moduleId = opts.resolveModuleId({ kind: node.kind, name: node.name, children: node.children, text: node.text })
     const props: Record<string, string | number | boolean> = { ...node.props }
 
     // §6.3 — `className` is how the source attaches styling, but this engine
@@ -97,19 +98,24 @@ export function parsedPageToSitePage(parsed: ParsedPage, opts: ParsedPageToSiteP
       }
     }
 
-    // A promoted-to-container (or a genuinely container-tagged) element must
-    // keep rendering as its real host tag, or `base.container`'s default
-    // `tag:'div'` would silently turn an `<h1>`/`<li>`/`<section>` into a
-    // `<div>`. `div` needs no override — it's the module's own default.
-    if (moduleId === 'base.container' && node.kind === 'element' && !('tag' in props)) {
+    // Every tag-bearing module must keep rendering as its real host tag, or a
+    // module default silently rewrites the element: `base.container` would turn
+    // an `<h1>`/`<li>`/`<section>` into a `<div>`, and `base.text` would turn a
+    // `<span>` into a block `<p>`, which visibly breaks inline layout. Each
+    // module's own default tag needs no override.
+    if (node.kind === 'element' && !('tag' in props)) {
       const tag = node.name.toLowerCase()
-      if (tag !== 'div') {
+      if (moduleId === 'base.container' && tag !== 'div') {
         if (BUILTIN_CONTAINER_TAGS.has(tag)) {
           props.tag = tag
         } else {
           props.tag = CUSTOM_HTML_TAG_VALUE
           props.customTag = tag
         }
+      } else if (moduleId === 'base.text' && tag !== 'p') {
+        // `resolveModuleId` only picks `base.text` for a tag it can render, so
+        // there is no custom-tag fallback to reach here.
+        props.tag = tag
       }
     }
 

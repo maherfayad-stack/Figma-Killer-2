@@ -152,11 +152,17 @@ A resolved value is *derived*. Writing an edited literal back over `{t.homepage.
 |---|---|
 | `kind: 'component'` | `alm.<Name>` |
 | `div`, `section`, `main`, `header`, `footer`, `nav`, `article`, `aside` | `base.container` |
-| `button` / `a` / `img` / `svg` | `base.button` / `base.link` / `base.image` / `base.svg` |
-| any other tag **with element children** | `base.container` |
-| any other tag, no children | `base.text` |
+| `img` / `svg` / `a` | `base.image` / `base.svg` / `base.link` |
+| any other tag **with element children**, or **with no text** | `base.container` |
+| `button` with text, no children | `base.button` |
+| a tag `base.text` can render, with text, no children | `base.text` |
+| any other tag | `base.container` |
 
-That last pair matters: `base.text` is a leaf (`canHaveChildren: false`) whose `render()` only emits `props.text`, so a `<p><Icon/>…</p>` mapped to `base.text` would **silently drop its children**. A promoted element keeps its real host tag via `base.container`'s `tag` / `customTag` props, so an `<h1>` never becomes a `<div>`.
+`base.text` and `base.button` need the care. Both are leaves (`canHaveChildren: false`) — a `<button><Icon/><span>Save</span></button>` mapped to `base.button` would **silently drop its children** — and both render a hardcoded placeholder, the literal words "Text" and "Button", when their content prop is empty. That placeholder is right for a hand-authored page (an empty text block stays visible and clickable) and pure noise on an imported one, where real repos are full of `<span className="hp-avatar" />` icon slots drawn entirely by CSS.
+
+Every tag-bearing module also keeps its real host tag, or a module default silently rewrites the element: `base.container` would turn an `<h1>` into a `<div>`, and `base.text` would turn an inline `<span>` into a block `<p>`. `base.container` can represent any tag (via `tag`/`customTag`); `base.text` has no custom escape hatch, so a tag outside `TEXT_HTML_TAGS` (`<label>`, `<figcaption>`) goes to `base.container` instead of being defaulted to `<p>`.
+
+Measured on the eSIM corpus before these rules: 154 nodes rendered the word "Text", 21 rendered "Button", 10 buttons dropped their children, and 33 spans/headings rendered as paragraphs.
 
 ---
 
@@ -174,11 +180,15 @@ That last pair matters: `base.text` is a leaf (`canHaveChildren: false`) whose `
 
 An eSIM-shaped repo attaches styling with `import './Screen.css'` plus a `className`. Studio's renderer never reads a literal `className` — styling attaches through `node.classIds` → `site.styleRules`.
 
-1. **`collectPageStylesheets`** works out which files matter: the page's own file plus every local component file inlined into it, derived from `ParsedNode.loc.file` (which inlining already rewrites to the component's own file). Page first, then in the order nodes first appear; within a file, imports keep source order; deduped keeping the first occurrence.
+1. **`collectEntryStylesheets`** picks up the **global** stylesheets first — the ones reached from the app's entry module rather than any one screen. It resolves the entry from `index.html`'s module `<script src>` (falling back to `src/main.tsx|jsx`, `src/index.tsx|jsx`, …) and walks relative JS/TS imports from there.
+
+   This matters more than it sounds: in a Vite React app the design tokens and resets live in `src/index.css` and `src/App.css`, imported by `main.jsx`/`App.jsx`. Neither contributes a single node to any page, so a page-only walk never sees them — and every `var(--space-lg)` in a screen's own CSS then resolves to nothing, collapsing all spacing.
+
+2. **`collectPageStylesheets`** works out which per-screen files matter: the page's own file plus every local component file inlined into it, derived from `ParsedNode.loc.file` (which inlining already rewrites to the component's own file). Page first, then in the order nodes first appear; within a file, imports keep source order; deduped keeping the first occurrence.
    - Only **relative** specifiers (`./x.css`, `../y.css`). A bare package specifier is skipped — those components render through their own `alm.*` modules, and pulling a dependency's whole stylesheet into the editable class list would bury the user's own classes.
    - Anything resolving outside the workspace root is rejected.
-2. **`loadStudioStyles`** reads each file and parses it with the existing `cssToStyleRules` engine.
-3. **`classIdsForClassName`** splits a literal `className` and maps each name to its rule id, dropping names with no rule — a dangling `classId` would point at something the editor cannot show. The `className` prop is then deleted; it renders nothing on its own.
+3. **`loadStudioStyles`** reads each file and parses it with the existing `cssToStyleRules` engine, globals first so a reset precedes the rules that depend on it.
+4. **`classIdsForClassName`** splits a literal `className` and maps each name to its rule id, dropping names with no rule — a dangling `classId` would point at something the editor cannot show. The `className` prop is then deleted; it renders nothing on its own.
 
 ### CSSOM in Bun
 
@@ -207,6 +217,7 @@ This is a real, user-visible sharp edge and it must not be discovered by losing 
 
 Honest list, all deliberate:
 
+- **The app shell.** Studio renders each screen standalone, so the wrapper the real app mounts it in (`App.jsx`'s `.esim-app`, and the `html,body{height:100%}` chain under it) is not reproduced. A screen written to fill a fixed-height viewport — a bottom sheet with a `flex-grow` scroll region, say — lays out against an auto-height body instead and can collapse. Verified in a browser on the eSIM corpus: the content is present and correct in the DOM, it just doesn't get the height its CSS assumes.
 - **Repeated list content.** A `.map()` over data renders as one locked, opaque node — Tier D is banned.
 - **Multi-stage screens.** A component with several conditional `return`s collapses to the least-nested one.
 - **Computed `className`.** `` className={`esb esb--${tone}`} `` keeps only its static prefix, so the variant class never attaches.

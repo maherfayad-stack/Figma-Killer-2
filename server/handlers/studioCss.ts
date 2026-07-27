@@ -44,7 +44,7 @@ import type { Project } from 'ts-morph'
 import type { ParsedPage } from '@core/page-parser'
 import type { ConditionDef, StyleRule } from '@core/page-tree'
 import { cssToStyleRules } from '@core/siteImport'
-import { collectPageStylesheets, type PageStylesheet } from '@core/studio-sync/collectPageStylesheets'
+import { collectEntryStylesheets, collectPageStylesheets, type PageStylesheet } from '@core/studio-sync/collectPageStylesheets'
 
 /** Guard against a pathological vendored bundle being pulled in as "the page's CSS". */
 const MAX_STYLESHEET_BYTES = 2 * 1024 * 1024
@@ -109,6 +109,11 @@ export async function loadStudioStyles(
   workspaceRoot: string,
 ): Promise<StudioStyles> {
   const sheets = new Map<string, PageStylesheet>()
+  // Global stylesheets FIRST — resets and design tokens must precede the
+  // per-screen rules that reference them. See `collectEntryStylesheets`.
+  for (const sheet of collectEntryStylesheets(project, workspaceRoot)) {
+    if (!sheets.has(sheet.absPath)) sheets.set(sheet.absPath, sheet)
+  }
   for (const { parsed, relFile } of pages) {
     for (const sheet of collectPageStylesheets(parsed, relFile, project, workspaceRoot)) {
       if (!sheets.has(sheet.absPath)) sheets.set(sheet.absPath, sheet)

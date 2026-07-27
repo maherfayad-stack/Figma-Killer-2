@@ -34,6 +34,7 @@ import {
   type StaticEvalOptions,
 } from '@core/page-parser'
 import type { ConditionDef, Page, StyleRule } from '@core/page-tree'
+import { TEXT_HTML_TAG_SET } from '@modules/base/utils/htmlTag'
 import { parsedPageToSitePage } from '@core/studio-sync/parsedPageToSitePage'
 import { classIdsForClassName, loadStudioStyles } from './studioCss'
 import { discoverPageFiles, projectPagesDir, projectPreviewLocale } from './studioProjects'
@@ -46,23 +47,43 @@ const CONTAINER_TAGS: ReadonlySet<string> = new Set([
  * Map a parsed node to an Instatic moduleId (design-system → alm.*, host tags
  * → base.*).
  *
- * A text-ish host tag (`p`, `h1`, `span`, `li`, `ul`, …) that actually wraps
- * element/component children is promoted to `base.container` — `base.text`
- * is a leaf (`canHaveChildren:false`, `src/modules/base/text/index.ts`) and
- * would silently drop them. Text-only content (no children) keeps
- * `base.text`, so the existing inline click-to-edit UX for every current
- * Studio project is unchanged.
+ * `base.text` and `base.button` are the two modules that need care, because
+ * they share two properties: both are leaves (`canHaveChildren: false`) and
+ * both render a hardcoded placeholder — the literal words "Text" and "Button" —
+ * when their content prop is empty. That placeholder is the right affordance
+ * for a hand-authored page (an empty text block stays visible and clickable),
+ * but on an imported page it is pure noise: real repos are full of elements
+ * that carry no text at all, like `<span className="hp-avatar" />` used purely
+ * as a CSS-styled icon slot.
+ *
+ * So those two modules apply only to an element that BOTH has captured text and
+ * has no element children. Everything else that isn't a genuine HTML leaf
+ * becomes `base.container`, which preserves the real host tag through its
+ * `tag`/`customTag` props (see `parsedPageToSitePage`) and renders children —
+ * so an `<h1>` stays an `<h1>`, and an icon-only `<button>` still emits
+ * `<button>`, just without a phantom label.
+ *
+ * Measured on the eSIM corpus before this rule: 154 nodes rendered the literal
+ * word "Text", 21 rendered "Button", and 10 buttons silently dropped their
+ * children.
  */
-function resolveModuleId(node: { kind: 'element' | 'component'; name: string; children: string[] }): string {
+function resolveModuleId(node: { kind: 'element' | 'component'; name: string; children: string[]; text?: string }): string {
   if (node.kind === 'component') return `alm.${node.name}`
   const tag = node.name.toLowerCase()
   if (CONTAINER_TAGS.has(tag)) return 'base.container'
-  if (tag === 'button') return 'base.button'
-  if (tag === 'a') return 'base.link'
+  // Genuine HTML leaves, plus `base.link` which does accept children.
   if (tag === 'img') return 'base.image'
   if (tag === 'svg') return 'base.svg'
-  if (node.children.length > 0) return 'base.container'
-  return 'base.text'
+  if (tag === 'a') return 'base.link'
+  // No element children AND non-empty text. `''` counts as no content — an
+  // element whose text is empty or whitespace-only would render the
+  // placeholder just the same.
+  if (node.children.length > 0 || !node.text) return 'base.container'
+  if (tag === 'button') return 'base.button'
+  // `base.text` has no custom-tag escape hatch, so a tag it cannot render
+  // (`<label>`, `<figcaption>`, …) would silently come out as its default
+  // `<p>`. Those go to `base.container`, which can represent any tag.
+  return TEXT_HTML_TAG_SET.has(tag) ? 'base.text' : 'base.container'
 }
 
 /**

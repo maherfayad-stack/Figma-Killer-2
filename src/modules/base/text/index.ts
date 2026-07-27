@@ -13,6 +13,7 @@ import {
   htmlAttributesControl,
 } from '@modules/base/shared/htmlAttributes'
 import { textToBreakHtml } from '@modules/base/shared/inlineText'
+import { textTagControl } from '@modules/base/utils/htmlTag'
 import { TextEditor } from './TextEditor'
 import { normalizeTag } from './tags'
 import { TextPropsSchema, type TextStoredProps } from './props'
@@ -30,29 +31,7 @@ export const TextModule: ModuleDefinition<TextStoredProps> = {
 
   schema: {
     text: { type: 'textarea', label: 'Text', rows: 4, placeholder: 'Enter text...' },
-    // `tag` is a `select`, which defaults to category: 'layout' by the
-    // type-based heuristic. Override to 'content' — a copy editor changing
-    // a heading from h2 to h3 is editorial, not structural.
-    tag: {
-      type: 'select',
-      label: 'Tag',
-      category: 'content',
-      options: [
-        { label: 'Paragraph', value: 'p' },
-        { label: 'None', value: 'none' },
-        { label: 'Heading 1', value: 'h1' },
-        { label: 'Heading 2', value: 'h2' },
-        { label: 'Heading 3', value: 'h3' },
-        { label: 'Heading 4', value: 'h4' },
-        { label: 'Heading 5', value: 'h5' },
-        { label: 'Heading 6', value: 'h6' },
-        { label: 'Span', value: 'span' },
-        { label: 'Div', value: 'div' },
-        { label: 'Small', value: 'small' },
-        { label: 'Strong', value: 'strong' },
-        { label: 'Emphasis', value: 'em' },
-      ],
-    },
+    tag: textTagControl(),
     htmlAttributes: htmlAttributesControl(),
   },
 

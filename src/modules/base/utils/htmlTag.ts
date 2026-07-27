@@ -113,6 +113,40 @@ export function htmlTagControl(label: string = 'HTML tag'): PropertyControl {
 }
 
 /**
+ * The tags `base.text` can render as. Distinct from `BUILTIN_HTML_TAGS`: these
+ * are text-carrying elements (headings, inline emphasis) and there is no
+ * `custom` escape hatch, because `base.text` is a leaf — a tag it cannot
+ * represent has to become a `base.container` instead.
+ *
+ * Lives here rather than inline in `base.text` so the Studio import pipeline
+ * can check "can `base.text` actually render this tag?" against the same list
+ * the control offers, instead of duplicating it.
+ */
+export const TEXT_HTML_TAGS = [
+  'p', 'none', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+  'span', 'div', 'small', 'strong', 'em',
+] as const
+
+export const TEXT_HTML_TAG_SET: ReadonlySet<string> = new Set(TEXT_HTML_TAGS)
+
+/** The `tag` select for `base.text`. `category: 'content'` — a copy editor changing a heading from h2 to h3 is editorial, not structural. */
+export function textTagControl(label: string = 'Tag'): PropertyControl {
+  const LABELS: Record<string, string> = {
+    p: 'Paragraph', none: 'None', span: 'Span', div: 'Div',
+    small: 'Small', strong: 'Strong', em: 'Emphasis',
+  }
+  return {
+    type: 'select',
+    label,
+    category: 'content',
+    options: TEXT_HTML_TAGS.map((t) => ({
+      label: LABELS[t] ?? `Heading ${t.slice(1)}`,
+      value: t,
+    })),
+  }
+}
+
+/**
  * The free-form text control shown only when `tag === 'custom'`.
  *
  * `field` defaults to `'tag'` to match the standard prop naming used by

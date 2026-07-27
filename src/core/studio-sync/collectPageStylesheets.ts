@@ -40,7 +40,7 @@
  * would bury the user's own classes. Anything resolving outside the workspace
  * root is rejected outright.
  */
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import type { Project } from 'ts-morph'
 import type { ParsedPage } from '@core/page-parser'
@@ -53,6 +53,107 @@ export interface PageStylesheet {
   relPath: string
   /** Absolute path on disk, ready to read. */
   absPath: string
+}
+
+/**
+ * Conventional app entry points, tried in order when `index.html` doesn't name
+ * one. Covers the Vite/CRA React layouts real repos actually use.
+ */
+const ENTRY_CANDIDATES = [
+  'src/main.tsx', 'src/main.jsx', 'src/index.tsx', 'src/index.jsx',
+  'main.tsx', 'main.jsx', 'index.tsx', 'index.jsx',
+] as const
+
+/** Bounds the entry-graph walk. A real app entry reaches every screen; this only stops a pathological repo. */
+const MAX_ENTRY_GRAPH_FILES = 2000
+
+/**
+ * The GLOBAL stylesheets — the ones reached from the app's entry module rather
+ * than from any one screen.
+ *
+ * This matters more than it sounds. In a Vite React app the design tokens,
+ * resets, and the html/body height chain live in `src/index.css` and
+ * `src/App.css`, imported by `main.jsx`/`App.jsx`. Neither file contributes a
+ * single node to any page, so `collectPageStylesheets` never sees them — and
+ * without them every `var(--space-lg)` in a screen's own CSS resolves to
+ * nothing, collapsing all spacing. Measured on the eSIM corpus: screens
+ * rendered as near-blank sheets until these were collected.
+ *
+ * The walk follows relative JS/TS imports from the entry, so it naturally
+ * reaches `App.css` behind `App.jsx`. Order is source order from the entry
+ * outward, which is the order the real app loads them in — and these come
+ * FIRST in the cascade, before any page's own CSS, exactly as a reset should.
+ */
+export function collectEntryStylesheets(project: Project, workspaceRoot: string): PageStylesheet[] {
+  const root = path.resolve(workspaceRoot)
+  const entry = findEntryFile(root)
+  if (!entry) return []
+
+  const collected = new Map<string, PageStylesheet>()
+  const visited = new Set<string>()
+  const queue: string[] = [entry]
+
+  while (queue.length > 0 && visited.size < MAX_ENTRY_GRAPH_FILES) {
+    const absFile = queue.shift()!
+    if (visited.has(absFile)) continue
+    visited.add(absFile)
+
+    const sourceFile = project.getSourceFile(absFile) ?? addSourceFileSafely(project, absFile)
+    if (!sourceFile) continue
+
+    for (const decl of sourceFile.getImportDeclarations()) {
+      const specifier = decl.getModuleSpecifierValue()
+      const sheet = resolveStylesheetSpecifier(specifier, absFile, root)
+      if (sheet) {
+        if (!collected.has(sheet.absPath)) collected.set(sheet.absPath, sheet)
+        continue
+      }
+      // Follow relative module imports so `main -> App -> App.css` is reachable.
+      if (!specifier.startsWith('./') && !specifier.startsWith('../')) continue
+      const target = decl.getModuleSpecifierSourceFile()
+      const targetPath = target?.getFilePath()
+      if (!targetPath) continue
+      const rel = path.relative(root, targetPath)
+      if (rel.startsWith('..') || path.isAbsolute(rel)) continue
+      if (!visited.has(targetPath)) queue.push(targetPath)
+    }
+  }
+
+  return [...collected.values()]
+}
+
+/** The path in `index.html`'s module script tag, else the first conventional candidate that exists. */
+function findEntryFile(root: string): string | undefined {
+  const indexHtml = path.join(root, 'index.html')
+  if (existsSync(indexHtml)) {
+    try {
+      const html = readFileSync(indexHtml, 'utf8')
+      const match = /<script[^>]*\stype=["']module["'][^>]*\ssrc=["']([^"']+)["']/i.exec(html)
+        ?? /<script[^>]*\ssrc=["']([^"']+)["'][^>]*\stype=["']module["']/i.exec(html)
+      const src = match?.[1]
+      if (src) {
+        const abs = path.resolve(root, src.replace(/^\//, ''))
+        const rel = path.relative(root, abs)
+        if (!rel.startsWith('..') && !path.isAbsolute(rel) && existsSync(abs)) return abs
+      }
+    } catch {
+      // Unreadable index.html — fall through to the conventional candidates.
+    }
+  }
+  for (const candidate of ENTRY_CANDIDATES) {
+    const abs = path.join(root, ...candidate.split('/'))
+    if (existsSync(abs)) return abs
+  }
+  return undefined
+}
+
+/** The entry graph reaches files no page pulled in, so they may not be in the Project yet. */
+function addSourceFileSafely(project: Project, absFile: string): ReturnType<Project['getSourceFile']> {
+  try {
+    return project.addSourceFileAtPath(absFile)
+  } catch {
+    return undefined
+  }
 }
 
 /**

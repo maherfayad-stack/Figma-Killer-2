@@ -17,7 +17,7 @@ import {
   resolveComponentSources,
   type ParsedPage,
 } from '@core/page-parser'
-import { collectPageStylesheets } from '../collectPageStylesheets'
+import { collectEntryStylesheets, collectPageStylesheets } from '../collectPageStylesheets'
 
 let tmpDir: string
 
@@ -177,5 +177,63 @@ describe('collectPageStylesheets', () => {
     )
 
     expect(collect('pages/Home.tsx')).toEqual([])
+  })
+})
+
+describe('collectEntryStylesheets', () => {
+  function collectEntry(): string[] {
+    return collectEntryStylesheets(createWorkspaceProject(tmpDir), tmpDir).map((s) => s.relPath)
+  }
+
+  /** The Vite layout every real repo uses: index.html -> main -> index.css, and main -> App -> App.css. */
+  function writeViteApp(): void {
+    write('index.html', '<!doctype html><html><body><div id="root"></div><script type="module" src="/src/main.jsx"></script></body></html>')
+    write('src/index.css', ':root { --space: 16px }')
+    write('src/App.css', ':root { --space-lg: 24px }')
+    write('src/App.jsx', ["import './App.css'", 'export default function App() { return <div /> }', ''].join('\n'))
+    write(
+      'src/main.jsx',
+      ["import './index.css'", "import App from './App.jsx'", 'export default App', ''].join('\n'),
+    )
+  }
+
+  it('follows the index.html entry through the module graph to reach global CSS', () => {
+    writeViteApp()
+    // `App.css` is two hops from the entry and is imported by no page — without
+    // the graph walk its design tokens are silently missing.
+    expect(collectEntry()).toEqual(['src/index.css', 'src/App.css'])
+  })
+
+  it('falls back to a conventional entry path when there is no index.html', () => {
+    writeViteApp()
+    fs.rmSync(path.join(tmpDir, 'index.html'))
+
+    expect(collectEntry()).toEqual(['src/index.css', 'src/App.css'])
+  })
+
+  it('returns nothing when the workspace has no recognisable entry', () => {
+    write('pages/Home.tsx', 'export default function Home() { return <div /> }')
+
+    expect(collectEntry()).toEqual([])
+  })
+
+  it('does not follow package specifiers out of the workspace', () => {
+    write('index.html', '<!doctype html><html><body><script type="module" src="/src/main.jsx"></script></body></html>')
+    write('src/index.css', ':root { --space: 16px }')
+    write(
+      'src/main.jsx',
+      ["import '@alm-design/design-system/dist/index.css'", "import './index.css'", 'export default 1', ''].join('\n'),
+    )
+
+    expect(collectEntry()).toEqual(['src/index.css'])
+  })
+
+  it('survives an import cycle between entry modules', () => {
+    write('index.html', '<!doctype html><html><body><script type="module" src="/src/main.jsx"></script></body></html>')
+    write('src/a.css', '.a { color: red }')
+    write('src/main.jsx', ["import './App.jsx'", "import './a.css'", 'export const m = 1', ''].join('\n'))
+    write('src/App.jsx', ["import './main.jsx'", 'export const a = 1', ''].join('\n'))
+
+    expect(collectEntry()).toEqual(['src/a.css'])
   })
 })
