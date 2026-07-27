@@ -15,6 +15,8 @@
  * `evaluateExpression` call. `./staticEvalCalls` imports everything it needs
  * FROM this module (one direction only); this module imports nothing back.
  */
+import { readFileSync, statSync } from 'node:fs'
+import * as path from 'node:path'
 import {
   Node,
   SyntaxKind,
@@ -54,6 +56,14 @@ export interface StaticEvalOptions {
   preferredKey?: string
   /** Global per-page guard, shared across every call for one page load (incl. inlined subtrees) — see `PageEvalBudget`. Create with `createPageEvalBudget()`. */
   pageBudget?: PageEvalBudget
+  /**
+   * Absolute workspace root. Enables resolving Vite `?raw` text imports
+   * (`import icon from './x.svg?raw'`) to the file's contents — see
+   * `resolveRawTextImport`. Required for that, because reading a file off a
+   * relative specifier needs a boundary to contain it to. Omit and `?raw`
+   * imports stay unresolved, exactly as before.
+   */
+  workspaceRoot?: string
 }
 
 /** A component-body/module-scope binding chain — see `createEvalScope`. */
@@ -99,6 +109,7 @@ export interface Budget {
   cycle: Set<string>
   preferredKey: string | undefined
   pageBudget: PageEvalBudget | undefined
+  workspaceRoot: string | undefined
   callEvaluator: CallEvaluator
   /**
    * Set whenever a guard (depth, per-call steps, page budget, cycle) cut an
@@ -127,6 +138,7 @@ export function createBudget(opts: StaticEvalOptions, callEvaluator: CallEvaluat
     cycle: new Set(),
     preferredKey: opts.preferredKey,
     pageBudget: opts.pageBudget,
+    workspaceRoot: opts.workspaceRoot,
     callEvaluator,
     truncated: false,
   }
@@ -379,7 +391,13 @@ export function resolveIdentifier(name: string, scope: EvalScope, budget: Budget
 
   const imported = findImportBinding(scope.sourceFile, name)
   if (imported) {
-    if (!imported.targetFile) return unresolved(`cannot resolve the import target for "${name}"`)
+    if (!imported.targetFile) {
+      // A `?raw` text asset has no SourceFile — ts-morph only tracks JS/TS —
+      // but its CONTENTS are a perfectly static value.
+      const rawText = resolveRawTextImport(scope.sourceFile, name, budget)
+      if (rawText !== undefined) return { kind: 'literal', value: rawText }
+      return unresolved(`cannot resolve the import target for "${name}"`)
+    }
     return evaluateImportedName(imported.targetFile, imported.exportedName, budget, depth)
   }
 
@@ -428,6 +446,51 @@ export function evaluateModuleConst(
     byName.set(name, result)
   }
   return result
+}
+
+/** Vite's `?raw` text-inlining suffix, e.g. `'./check-line.svg?raw'`. */
+const RAW_TEXT_SPECIFIER_RE = /\.(svg|txt|html?|md|csv)\?raw$/i
+
+/** Guards against inlining a huge file into every expression that references it. */
+const MAX_RAW_TEXT_BYTES = 512 * 1024
+
+/**
+ * `import icon from './x.svg?raw'` -> the file's contents.
+ *
+ * Vite's `?raw` suffix inlines a file's text as the default export, and it is
+ * how real repos ship inline icons: a `?raw` SVG handed to
+ * `dangerouslySetInnerHTML`, often via a `<Icon svg={...} />` prop. Resolving
+ * it here rather than in the parser means one mechanism covers every path the
+ * value can travel — read directly, passed as a prop and substituted into a
+ * component, or aliased through a local const.
+ *
+ * Only relative specifiers, only inside `budget.workspaceRoot`, only regular
+ * files under `MAX_RAW_TEXT_BYTES`. Without a configured root this returns
+ * `undefined` rather than reading anything: a relative specifier can climb out
+ * of the workspace, and the evaluator must never manufacture an escaping path.
+ */
+function resolveRawTextImport(sourceFile: SourceFile, localName: string, budget: Budget): string | undefined {
+  const root = budget.workspaceRoot
+  if (!root) return undefined
+
+  for (const decl of sourceFile.getImportDeclarations()) {
+    if (decl.getDefaultImport()?.getText() !== localName) continue
+    const specifier = decl.getModuleSpecifierValue()
+    if (!specifier.startsWith('.') || !RAW_TEXT_SPECIFIER_RE.test(specifier)) return undefined
+
+    const absolute = path.resolve(path.dirname(sourceFile.getFilePath()), specifier.split('?')[0]!)
+    const relFromRoot = path.relative(path.resolve(root), absolute)
+    if (relFromRoot.startsWith('..') || path.isAbsolute(relFromRoot)) return undefined
+
+    try {
+      const stats = statSync(absolute)
+      if (!stats.isFile() || stats.size > MAX_RAW_TEXT_BYTES) return undefined
+      return readFileSync(absolute, 'utf8').trim()
+    } catch {
+      return undefined // Missing/unreadable asset — unresolved, never a throw.
+    }
+  }
+  return undefined
 }
 
 export interface ImportBindingTarget {

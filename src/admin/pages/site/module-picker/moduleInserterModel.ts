@@ -1,4 +1,5 @@
 import type { AnyModuleDefinition } from '@core/module-engine'
+import { PALETTE_HIDDEN_ALM_MODULE_IDS } from '@modules/alm/register'
 import type { SavedLayout } from '@core/layouts'
 import {
   DEFAULT_MODULE_INSERTER_PREFERENCE,
@@ -142,6 +143,10 @@ export function moduleAvailability(
   context: ModuleInsertionContext,
 ): ModuleAvailability {
   if (HIDDEN_MODULE_IDS.has(mod.id)) return { kind: 'hidden' }
+  // Design-system overlays/portals render detached from the canvas flow and are
+  // confusing to place by hand — but they stay REGISTERED so an imported page
+  // that already uses one renders it instead of an "Unknown module" box.
+  if (PALETTE_HIDDEN_ALM_MODULE_IDS.has(mod.id)) return { kind: 'hidden' }
   // Studio mode: only design-system components are user-insertable; the built-in
   // Instatic block modules are host-HTML renderers, not palette entries.
   if (context.isStudio && mod.category !== DESIGN_SYSTEM_CATEGORY) return { kind: 'hidden' }

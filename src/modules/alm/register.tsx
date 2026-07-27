@@ -42,11 +42,21 @@ const manifest = manifestJson as { components: ComponentSpec[] }
 
 /**
  * Overlay/portal components that render detached from the canvas flow and would
- * be confusing as inline placeable modules — excluded from the palette for now.
- * Everything else in the manifest is registered (the ErrorBoundary keeps any
- * component that needs richer props from breaking the canvas).
+ * be confusing to place by hand. They are hidden from the INSERT PALETTE only —
+ * `PALETTE_HIDDEN_ALM_MODULE_IDS`, consumed by `moduleAvailability`.
+ *
+ * They are still registered. An imported page that already uses `<Snackbar>` or
+ * `<ActionSheet>` in its source has real nodes for them, and an unregistered
+ * module renders as an "Unknown module" box — so skipping registration lost
+ * whole components off the board (measured: 4 nodes on the eSIM corpus). Being
+ * awkward to insert by hand is not a reason to refuse to render existing usage.
  */
-const EXCLUDE = new Set(['Dialog', 'BottomSheet', 'ActionSheet', 'Snackbar', 'Tooltip'])
+const PALETTE_HIDDEN_COMPONENTS = ['Dialog', 'BottomSheet', 'ActionSheet', 'Snackbar', 'Tooltip'] as const
+
+/** Module ids the insert palette hides. Exported for `moduleAvailability`; see `PALETTE_HIDDEN_COMPONENTS`. */
+export const PALETTE_HIDDEN_ALM_MODULE_IDS: ReadonlySet<string> = new Set(
+  PALETTE_HIDDEN_COMPONENTS.map((name) => `alm.${name}`),
+)
 
 // ---------------------------------------------------------------------------
 // Error boundary so a throwing design-system component degrades to a label
@@ -122,7 +132,6 @@ function makeComponent(name: string): React.FC<ModuleComponentProps> {
 
 let registered = 0
 for (const spec of manifest.components) {
-  if (EXCLUDE.has(spec.name)) continue
   const propsSchema = buildPropsSchema(spec.props)
   const mod = {
     id: `alm.${spec.name}`,

@@ -67,8 +67,18 @@ const CONTAINER_TAGS: ReadonlySet<string> = new Set([
  * word "Text", 21 rendered "Button", and 10 buttons silently dropped their
  * children.
  */
-function resolveModuleId(node: { kind: 'element' | 'component'; name: string; children: string[]; text?: string }): string {
+function resolveModuleId(node: {
+  kind: 'element' | 'component'
+  name: string
+  children: string[]
+  text?: string
+  props?: Record<string, string | number | boolean>
+}): string {
   if (node.kind === 'component') return `alm.${node.name}`
+  // An element carrying resolved raw SVG markup renders as `base.svg`
+  // whatever its tag — the `<span dangerouslySetInnerHTML={{__html: icon}} />`
+  // shape is how real repos inline an icon, and the markup is the content.
+  if (typeof node.props?.svg === 'string' && node.props.svg.length > 0) return 'base.svg'
   const tag = node.name.toLowerCase()
   if (CONTAINER_TAGS.has(tag)) return 'base.container'
   // Genuine HTML leaves, plus `base.link` which does accept children.
@@ -241,7 +251,8 @@ export async function loadStudioPages(dir: string): Promise<StudioLoadResult> {
     // parse and every locally-inlined subtree's parse below, so the page-wide
     // step budget (and the module-namespace memo cache inside staticEval.ts)
     // covers the whole page's worth of value resolution, not just one call.
-    const evalOptions: StaticEvalOptions = { preferredKey, pageBudget: createPageEvalBudget() }
+    // `workspaceRoot` enables `?raw` text-import resolution (inline SVG icons).
+    const evalOptions: StaticEvalOptions = { preferredKey, pageBudget: createPageEvalBudget(), workspaceRoot: dir }
     const parsed = parsePageFile(file, dir, project, evalOptions)
     // `resolveComponentSources` MUST run on the pre-inline tree — it keys
     // off call-site node ids, which only exist before splicing (§2.6).

@@ -23,7 +23,7 @@ export interface ParsedPageToSitePageOptions {
    *  (`<span className="icon" />`) — only the first may resolve to a leaf module
    *  like `base.text`, or the children are dropped and an empty element renders
    *  that module's placeholder label. */
-  resolveModuleId: (node: Pick<ParsedNode, 'kind' | 'name' | 'children' | 'text'>) => string
+  resolveModuleId: (node: Pick<ParsedNode, 'kind' | 'name' | 'children' | 'text' | 'props'>) => string
   /**
    * Maps a resolved moduleId to the single prop key its module's
    * `inlineTextEdit` declares (`base.text` -> 'text', `base.button` -> 'label',
@@ -76,7 +76,13 @@ export function parsedPageToSitePage(parsed: ParsedPage, opts: ParsedPageToSiteP
 
   const nodes: Record<string, PageNode> = { [bodyId]: bodyNode }
   for (const [id, node] of Object.entries(parsed.nodes)) {
-    const moduleId = opts.resolveModuleId({ kind: node.kind, name: node.name, children: node.children, text: node.text })
+    const moduleId = opts.resolveModuleId({
+      kind: node.kind,
+      name: node.name,
+      children: node.children,
+      text: node.text,
+      props: node.props,
+    })
     const props: Record<string, string | number | boolean> = { ...node.props }
 
     // §6.3 — `className` is how the source attaches styling, but this engine
