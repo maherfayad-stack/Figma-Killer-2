@@ -40,6 +40,7 @@
 import type { StyleRuleKind, Condition, ConditionDef } from '@core/page-tree'
 import { conditionId, makeConditionDef } from '@core/page-tree'
 import { formatVariant } from '@core/fonts'
+import { getSheetConstructor } from './cssomSheet'
 import { processKeyframesRule } from './keyframesToStyleRule'
 import { encodeSubstitutionDeclarations } from '@core/css-substitution'
 import { matchMediaQueryToViewport } from './mediaQueryMatch'
@@ -152,24 +153,6 @@ function classifySelector(selector: string): { kind: StyleRuleKind; name: string
   }
   // kind:'ambient' — the selector text IS the display name
   return { kind: 'ambient', name: selector }
-}
-
-/**
- * Get the CSSStyleSheet constructor: an explicitly injected one wins (Studio's
- * server-side import, running in Bun where no CSSOM exists), then the ambient
- * global, then the happy-dom window object in test environments where the
- * constructor is not on globalThis.
- */
-function getSheetConstructor(injected: typeof CSSStyleSheet | undefined): typeof CSSStyleSheet | null {
-  if (injected) return injected
-  if (typeof CSSStyleSheet !== 'undefined') return CSSStyleSheet
-  // happy-dom test env: available on globalThis.window
-  const w =
-    typeof window !== 'undefined'
-      ? (window as unknown as Record<string, unknown>)
-      : null
-  if (w?.CSSStyleSheet) return w.CSSStyleSheet as typeof CSSStyleSheet
-  return null
 }
 
 /**
