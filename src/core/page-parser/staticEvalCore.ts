@@ -46,7 +46,7 @@ export type StaticValue =
 export type ArrowFunctionOrDecl = ArrowFunction | FunctionDeclaration
 
 export interface StaticEvalOptions {
-  /** Max resolution depth through bindings/members. Default 12. */
+  /** Max BINDING-resolution depth (identifier -> const -> identifier -> …). Descending into an already-resolved object/array literal's own members does NOT count — see `evaluateObjectLiteral`. Default 24. */
   maxDepth?: number
   /** Max nodes visited per top-level `evaluateExpression` call. Default 2000. */
   maxSteps?: number
@@ -75,7 +75,16 @@ export type LocalBinding =
   /** An already-evaluated value — how Tier C binds a call's arguments to the callee's own parameter names. */
   | { kind: 'resolved'; value: StaticValue }
 
-const DEFAULT_MAX_DEPTH = 12
+/**
+ * Binding hops only (see `StaticEvalOptions.maxDepth`). A single Tier B read
+ * like `t.homepage.greeting` already spends ~9 of these getting from the page's
+ * `t` through the hook, the provider, its `useMemo`, and into the imported
+ * dictionary — and a page-local alias (`const c = t.bookingConfirmation`) adds
+ * more. 24 leaves real headroom above the corpus's worst chain while still
+ * bounding runaway binding recursion; `maxSteps` and `cycle` are the guards
+ * that actually stop divergence.
+ */
+const DEFAULT_MAX_DEPTH = 24
 const DEFAULT_MAX_STEPS = 2000
 const DEFAULT_PAGE_STEP_BUDGET = 20_000
 export const EMPTY_LOCALS: ReadonlyMap<string, LocalBinding> = new Map()
@@ -91,6 +100,14 @@ export interface Budget {
   preferredKey: string | undefined
   pageBudget: PageEvalBudget | undefined
   callEvaluator: CallEvaluator
+  /**
+   * Set whenever a guard (depth, per-call steps, page budget, cycle) cut an
+   * evaluation short. A truncated result describes the budget that happened to
+   * be left at that moment, not the code — so it MUST NOT be memoized, or the
+   * order pages happen to be parsed in silently decides what resolves. See
+   * `evaluateModuleConst`.
+   */
+  truncated: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -111,7 +128,23 @@ export function createBudget(opts: StaticEvalOptions, callEvaluator: CallEvaluat
     preferredKey: opts.preferredKey,
     pageBudget: opts.pageBudget,
     callEvaluator,
+    truncated: false,
   }
+}
+
+/**
+ * Runs `evaluate` and reports whether ANY guard tripped inside it, restoring
+ * the caller's own truncation state (an inner truncation still propagates
+ * outward — a partial value contaminates whatever is built from it). Every
+ * memoizing call site wraps its work in this and caches only complete results.
+ */
+export function trackTruncation(budget: Budget, evaluate: () => StaticValue): { result: StaticValue; truncated: boolean } {
+  const outer = budget.truncated
+  budget.truncated = false
+  const result = evaluate()
+  const truncated = budget.truncated
+  budget.truncated = outer || truncated
+  return { result, truncated }
 }
 
 /**
@@ -161,10 +194,16 @@ function buildComponentLocals(fn: FunctionLike | undefined): ReadonlyMap<string,
 
 function bumpSteps(budget: Budget): boolean {
   budget.steps += 1
-  if (budget.steps > budget.maxSteps) return false
+  if (budget.steps > budget.maxSteps) {
+    budget.truncated = true
+    return false
+  }
   if (budget.pageBudget) {
     budget.pageBudget.remaining -= 1
-    if (budget.pageBudget.remaining <= 0) return false
+    if (budget.pageBudget.remaining <= 0) {
+      budget.truncated = true
+      return false
+    }
   }
   return true
 }
@@ -190,7 +229,10 @@ export function withNote(value: StaticValue, note: string | undefined): StaticVa
 // ---------------------------------------------------------------------------
 
 export function evaluateNode(exprIn: Node, scope: EvalScope, budget: Budget, depth: number): StaticValue {
-  if (depth > budget.maxDepth) return unresolved('max resolution depth exceeded')
+  if (depth > budget.maxDepth) {
+    budget.truncated = true
+    return unresolved('max resolution depth exceeded')
+  }
   if (!bumpSteps(budget)) return unresolved('evaluator step budget exceeded')
 
   const expr = unwrapParens(exprIn)
@@ -274,6 +316,14 @@ function evaluateElementAccess(expr: ElementAccessExpression, scope: EvalScope, 
   return unresolved('computed member key is not statically known')
 }
 
+/**
+ * Members are evaluated at the SAME `depth` as the literal itself. Descending
+ * into an object/array literal walks a finite piece of source text and cannot
+ * diverge, so charging it against `maxDepth` — which exists to bound
+ * binding-chain recursion — only means a realistically nested i18n dictionary
+ * gets truncated partway down. `maxSteps`/`pageBudget` still bound the total
+ * work. An identifier *inside* a member resumes spending depth normally.
+ */
 function evaluateObjectLiteral(expr: ObjectLiteralExpression, scope: EvalScope, budget: Budget, depth: number): StaticValue {
   const entries = new Map<string, StaticValue>()
   for (const prop of expr.getProperties()) {
@@ -287,7 +337,7 @@ function evaluateObjectLiteral(expr: ObjectLiteralExpression, scope: EvalScope, 
       if (key === undefined) continue // computed key — not in the corpus, skipped like extractInlineStyles' policy
       const init = prop.getInitializer()
       if (!init) continue
-      entries.set(key, evaluateNode(init, scope, budget, depth + 1))
+      entries.set(key, evaluateNode(init, scope, budget, depth))
       continue
     }
     if (Node.isShorthandPropertyAssignment(prop)) {
@@ -299,10 +349,11 @@ function evaluateObjectLiteral(expr: ObjectLiteralExpression, scope: EvalScope, 
   return { kind: 'object', entries }
 }
 
+/** Same depth policy as `evaluateObjectLiteral` — see its doc comment. */
 function evaluateArrayLiteral(expr: ArrayLiteralExpression, scope: EvalScope, budget: Budget, depth: number): StaticValue {
   const items: StaticValue[] = []
   for (const el of expr.getElements()) {
-    items.push(Node.isSpreadElement(el) ? unresolved('spread element') : evaluateNode(el, scope, budget, depth + 1))
+    items.push(Node.isSpreadElement(el) ? unresolved('spread element') : evaluateNode(el, scope, budget, depth))
   }
   return { kind: 'array', items }
 }
@@ -349,22 +400,33 @@ export function evaluateModuleConst(
   if (cached) return cached
 
   const cycleKey = `${file.getFilePath()}#${name}`
-  if (budget.cycle.has(cycleKey)) return unresolved(`cyclic reference resolving "${name}"`)
+  if (budget.cycle.has(cycleKey)) {
+    budget.truncated = true
+    return unresolved(`cyclic reference resolving "${name}"`)
+  }
   budget.cycle.add(cycleKey)
 
   const init = decl.getInitializer()
-  const result = init
-    ? evaluateNode(init, { sourceFile: file, locals: EMPTY_LOCALS }, budget, depth + 1)
-    : unresolved(`"${name}" has no initializer`)
+  const { result, truncated } = trackTruncation(budget, () =>
+    init
+      ? evaluateNode(init, { sourceFile: file, locals: EMPTY_LOCALS }, budget, depth + 1)
+      : unresolved(`"${name}" has no initializer`),
+  )
 
   budget.cycle.delete(cycleKey)
 
-  let byName = moduleConstCache.get(file)
-  if (!byName) {
-    byName = new Map()
-    moduleConstCache.set(file, byName)
+  // Only COMPLETE results are memoized. Caching a depth/step-truncated
+  // dictionary would hand every later page a copy whose leaves are all
+  // `unresolved`, making what resolves depend on which page happened to be
+  // parsed first.
+  if (!truncated) {
+    let byName = moduleConstCache.get(file)
+    if (!byName) {
+      byName = new Map()
+      moduleConstCache.set(file, byName)
+    }
+    byName.set(name, result)
   }
-  byName.set(name, result)
   return result
 }
 

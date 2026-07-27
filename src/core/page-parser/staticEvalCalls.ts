@@ -26,10 +26,11 @@ import {
 } from 'ts-morph'
 import type { FunctionLike } from './types'
 import {
-  EMPTY_LOCALS,
+  createEvalScope,
   evaluateNode,
   findDefaultExportedVariable,
   findImportBinding,
+  trackTruncation,
   unresolved,
   unwrapParens,
   withNote,
@@ -48,6 +49,9 @@ const WHITELISTED_METHODS: ReadonlySet<string> = new Set([
 /** The `Budget.callEvaluator` implementation — dispatches a `CallExpression` to the whitelist, Tier B, or Tier C, in that order. */
 export function evaluateCall(expr: CallExpression, scope: EvalScope, budget: Budget, depth: number): StaticValue {
   const callee = expr.getExpression()
+
+  const memoized = tryUseMemoUnwrap(expr, callee, scope, budget, depth)
+  if (memoized) return memoized
 
   const whitelisted = tryWhitelistedPrimitiveCall(expr, callee, scope, budget, depth)
   if (whitelisted) return whitelisted
@@ -68,18 +72,46 @@ export function evaluateCall(expr: CallExpression, scope: EvalScope, budget: Bud
 
 // -- Tier B: hook -> useContext -> provider's static `value` -----------------
 
-/** `undefined` = not hook-shaped (let Tier C try instead); otherwise the (possibly unresolved) traced result. */
-const providerTraceCache = new WeakMap<Node, StaticValue>()
+/**
+ * Provider tracing is the expensive half of Tier B — it scans every source
+ * file in the workspace for `<Ctx.Provider>` — so its result is memoized per
+ * hook function node. The inner key is `Budget.preferredKey`, because §7.4's
+ * dictionary branch pick is what makes the traced value locale-dependent:
+ * caching `{ t: <the "en" branch> }` and then handing it back to a page loaded
+ * with `previewLocale: "ar"` would silently serve the wrong copy.
+ */
+const providerTraceCache = new WeakMap<Node, Map<string, StaticValue>>()
 
+/** `undefined` = not hook-shaped (let Tier C try instead); otherwise the (possibly unresolved) traced result. */
 function tryProviderTraceCached(fn: ArrowFunctionOrDecl, budget: Budget, depth: number): StaticValue | undefined {
   const ctxExpr = findUseContextArgument(fn)
   if (!ctxExpr) return undefined
 
-  const cached = providerTraceCache.get(fn)
+  const cacheKey = budget.preferredKey ?? ''
+  let byKey = providerTraceCache.get(fn)
+  const cached = byKey?.get(cacheKey)
   if (cached) return cached
 
-  const result = traceProvider(ctxExpr, fn.getProject(), budget, depth)
-  providerTraceCache.set(fn, result)
+  // A provider whose own `value` reads the same hook would recurse forever;
+  // `budget.cycle` is the same guard `evaluateModuleConst` uses for consts.
+  const cycleKey = `provider:${fn.getSourceFile().getFilePath()}#${fn.getPos()}`
+  if (budget.cycle.has(cycleKey)) {
+    budget.truncated = true
+    return unresolved('cyclic provider trace')
+  }
+  budget.cycle.add(cycleKey)
+  const { result, truncated } = trackTruncation(budget, () => traceProvider(ctxExpr, fn.getProject(), budget, depth))
+  budget.cycle.delete(cycleKey)
+
+  // Same rule as `evaluateModuleConst`: a guard-truncated trace is a fact
+  // about the budget, not the code — memoizing it would poison every later page.
+  if (!truncated) {
+    if (!byKey) {
+      byKey = new Map()
+      providerTraceCache.set(fn, byKey)
+    }
+    byKey.set(cacheKey, result)
+  }
   return result
 }
 
@@ -94,8 +126,20 @@ function traceProvider(ctxExpr: Node, project: Project, budget: Budget, depth: n
   const valueExpr = providerValueExpression(providers[0]!)
   if (!valueExpr) return unresolved('provider has no `value` attribute')
 
-  const providerScope: EvalScope = { sourceFile: valueExpr.getSourceFile(), locals: EMPTY_LOCALS }
+  // The value is almost never a literal sitting in the attribute — the corpus
+  // shape is `value={value}` referring to a `const` in the provider
+  // COMPONENT's body. So the scope must carry that component's own locals,
+  // exactly as §7.6's wiring does for a page's component body.
+  const providerScope = createEvalScope(valueExpr.getSourceFile(), enclosingFunctionLike(valueExpr))
   return evaluateNode(valueExpr, providerScope, budget, depth + 1)
+}
+
+/** The nearest enclosing component/hook function body, or `undefined` for a module-scope expression. */
+function enclosingFunctionLike(node: Node): FunctionLike | undefined {
+  return node.getFirstAncestor(
+    (a): a is FunctionLike =>
+      Node.isArrowFunction(a) || Node.isFunctionDeclaration(a) || Node.isFunctionExpression(a),
+  )
 }
 
 function findUseContextArgument(fn: FunctionLike): Node | undefined {
@@ -163,19 +207,32 @@ function providerValueExpression(node: JsxOpeningElement | JsxSelfClosingElement
   const init = attr?.getInitializer()
   if (!init || !Node.isJsxExpression(init)) return undefined
   const valueExpr = init.getExpression()
-  return valueExpr ? unwrapUseMemo(valueExpr) : undefined
+  return valueExpr ? unwrapParens(valueExpr) : undefined
 }
 
-/** `useMemo(() => ({...}), deps)` -> the returned object-literal expression. */
-function unwrapUseMemo(expr: Node): Node {
-  const n = unwrapParens(expr)
-  if (!Node.isCallExpression(n)) return n
-  const callee = n.getExpression()
-  if (!Node.isIdentifier(callee) || callee.getText() !== 'useMemo') return n
-  const factory = n.getArguments()[0]
-  if (!factory || !(Node.isArrowFunction(factory) || Node.isFunctionExpression(factory))) return n
+/**
+ * `useMemo(() => X, deps)` evaluates as `X`. A memo wrapper is transparent to
+ * a static reader — React's recompute-on-dep-change semantics are irrelevant
+ * when nothing runs. This lives in the shared call dispatcher rather than only
+ * where a provider's `value` attribute is read, because the corpus shape is
+ * `value={value}` with `const value = useMemo(…)` one identifier hop away.
+ * A `useMemo` call is never a Tier C candidate, so this always answers.
+ */
+function tryUseMemoUnwrap(
+  expr: CallExpression,
+  callee: Node,
+  scope: EvalScope,
+  budget: Budget,
+  depth: number,
+): StaticValue | undefined {
+  if (!Node.isIdentifier(callee) || callee.getText() !== 'useMemo') return undefined
+  const factory = expr.getArguments()[0]
+  if (!factory || !(Node.isArrowFunction(factory) || Node.isFunctionExpression(factory))) {
+    return unresolved('useMemo factory is not an inline function')
+  }
   const body = factory.getBody()
-  return unwrapParens(body)
+  if (Node.isBlock(body)) return unresolved('useMemo factory has a block body — outside the evaluator envelope')
+  return evaluateNode(unwrapParens(body), scope, budget, depth + 1)
 }
 
 // -- Tier C: calling a resolvable pure arrow/function -------------------------
