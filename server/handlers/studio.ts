@@ -230,8 +230,8 @@ export async function tryServeStudio(
     try {
       const dir = resolveProjectDir(url.searchParams.get('dir'))
       const projectName = projectDisplayName(dir)
-      const { pages, componentSources } = loadStudioPages(dir)
-      return jsonResponse({ dir, projectName, pages, componentSources })
+      const { pages, componentSources, styleRules, conditions } = await loadStudioPages(dir)
+      return jsonResponse({ dir, projectName, pages, componentSources, styleRules, conditions })
     } catch (err) {
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
     }

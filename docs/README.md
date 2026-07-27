@@ -157,6 +157,7 @@ Three categories, three voices:
 | [features/site-transfer.md](features/site-transfer.md)           | Export / import CMS bundle (JSON round-trip between instances)      |
 | [features/site-import.md](features/site-import.md)               | Super Import — static-site files / ZIP → pages, style rules, media |
 | [features/html-import.md](features/html-import.md)               | HTML string → `PageNode` fragment (paste HTML, AI `insertHtml` tool) |
+| [features/studio-import.md](features/studio-import.md)           | Studio opens a real React repo as a board — parse, inline, resolve values, import CSS |
 | [features/editor-preferences.md](features/editor-preferences.md) | Catalog-driven local UI preferences for the editor                   |
 | [features/canvas-iframe-per-frame.md](features/canvas-iframe-per-frame.md) | Per-breakpoint iframe rendering in the visual editor canvas |
 

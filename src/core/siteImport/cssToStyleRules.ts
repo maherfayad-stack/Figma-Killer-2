@@ -73,6 +73,17 @@ interface CssToStyleRulesOptions {
    * context with width 775px if `mediaTolerance >= 7`. Defaults to 10.
    */
   mediaTolerance?: number
+  /**
+   * CSSOM implementation to parse with. Defaults to the ambient
+   * `CSSStyleSheet` (browser, or the happy-dom test environment).
+   *
+   * Studio's server-side import runs inside Bun, which has no CSSOM at all, so
+   * it passes happy-dom's constructor in explicitly. Injection rather than
+   * assigning `globalThis.window` in the server process: a long-lived Bun
+   * server that grows browser globals is a footgun for every other module that
+   * feature-detects them.
+   */
+  sheetConstructor?: typeof CSSStyleSheet
 }
 
 interface CssToStyleRulesResult {
@@ -144,10 +155,13 @@ function classifySelector(selector: string): { kind: StyleRuleKind; name: string
 }
 
 /**
- * Get the CSSStyleSheet constructor, falling back to the happy-dom window
- * object in test environments where the constructor is not on globalThis.
+ * Get the CSSStyleSheet constructor: an explicitly injected one wins (Studio's
+ * server-side import, running in Bun where no CSSOM exists), then the ambient
+ * global, then the happy-dom window object in test environments where the
+ * constructor is not on globalThis.
  */
-function getSheetConstructor(): typeof CSSStyleSheet | null {
+function getSheetConstructor(injected: typeof CSSStyleSheet | undefined): typeof CSSStyleSheet | null {
+  if (injected) return injected
   if (typeof CSSStyleSheet !== 'undefined') return CSSStyleSheet
   // happy-dom test env: available on globalThis.window
   const w =
@@ -245,7 +259,7 @@ export function cssToStyleRules(
   const conditionsById = new Map<string, ConditionDef>()
 
   // ── Acquire the CSS engine ──────────────────────────────────────────────
-  const SheetCtor = getSheetConstructor()
+  const SheetCtor = getSheetConstructor(options?.sheetConstructor)
   if (!SheetCtor) {
     warnings.push({
       kind: 'invalid-rule',

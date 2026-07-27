@@ -22,7 +22,7 @@
  * (e.g. a nested `useLanguage()` call) resolve under the same budget.
  */
 import { existsSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, relative, sep } from 'node:path'
 import {
   createPageEvalBudget,
   createWorkspaceProject,
@@ -33,8 +33,9 @@ import {
   type ComponentSource,
   type StaticEvalOptions,
 } from '@core/page-parser'
-import type { Page } from '@core/page-tree'
+import type { ConditionDef, Page, StyleRule } from '@core/page-tree'
 import { parsedPageToSitePage } from '@core/studio-sync/parsedPageToSitePage'
+import { classIdsForClassName, loadStudioStyles } from './studioCss'
 import { discoverPageFiles, projectPagesDir, projectPreviewLocale } from './studioProjects'
 
 const CONTAINER_TAGS: ReadonlySet<string> = new Set([
@@ -169,10 +170,14 @@ export function assignPageIds(relPaths: readonly string[]): Map<string, string> 
   return assigned
 }
 
-/** Result of the load pipeline: every parsed page plus the merged component classification, keyed by node id. */
+/** Result of the load pipeline: every parsed page, the merged component classification (keyed by node id), and the merged imported-CSS registry. */
 export interface StudioLoadResult {
   pages: Page[]
   componentSources: Record<string, ComponentSource>
+  /** §6 — imported `.css` parsed into style rules, keyed by rule id. READ-ONLY: never written back to disk. */
+  styleRules: Record<string, StyleRule>
+  /** §6 — reusable `@media`/`@container`/`@supports` conditions the rules reference. */
+  conditions: ConditionDef[]
 }
 
 /**
@@ -189,9 +194,9 @@ export interface StudioLoadResult {
  * merged classification for every page is returned as `componentSources`,
  * keyed by node id.
  */
-export function loadStudioPages(dir: string): StudioLoadResult {
+export async function loadStudioPages(dir: string): Promise<StudioLoadResult> {
   const pagesDir = projectPagesDir(dir)
-  if (!existsSync(pagesDir)) return { pages: [], componentSources: {} }
+  if (!existsSync(pagesDir)) return { pages: [], componentSources: {}, styleRules: {}, conditions: [] }
 
   const relPaths = discoverPageFiles(pagesDir)
   const pageIds = assignPageIds(relPaths)
@@ -205,7 +210,10 @@ export function loadStudioPages(dir: string): StudioLoadResult {
   // §7.4 — `preferredKey` for a dynamically-indexed dictionary (`translations[lang]`).
   const preferredKey = projectPreviewLocale(dir)
 
-  const pages = relPaths.map((relPath) => {
+  // Parse + inline EVERY page first, then resolve CSS, then convert. The CSS
+  // registry is site-wide (pages routinely share a stylesheet), so it has to be
+  // complete before any page can turn a `className` into `classIds`.
+  const expandedPages = relPaths.map((relPath) => {
     const file = join(pagesDir, ...relPath.split('/'))
     const pageId = pageIds.get(relPath)!
     // §7 — one evaluator options bag PER PAGE, shared between this page's own
@@ -222,12 +230,25 @@ export function loadStudioPages(dir: string): StudioLoadResult {
     const sources = resolveComponentSources(project, file, dir, parsed)
     Object.assign(componentSources, sources)
     const expanded = inlineLocalComponents(parsed, sources, project, dir, { evalOptions })
+    return { expanded, pageId, relPath, relFile: relative(dir, file).split(sep).join('/') }
+  })
+
+  // §6 — read every stylesheet the pages import, in cascade order.
+  const { styleRules, conditions, classIdsByName } = await loadStudioStyles(
+    expandedPages.map(({ expanded, relFile }) => ({ parsed: expanded, relFile })),
+    project,
+    dir,
+  )
+  const resolveClassIds = (className: string): string[] => classIdsForClassName(className, classIdsByName)
+
+  const pages = expandedPages.map(({ expanded, pageId, relPath }) => {
     const page = parsedPageToSitePage(expanded, {
       pageId,
       slug: pageId,
       title: relPath.split('/').pop()!.replace(/\.(tsx|jsx)$/, ''),
       resolveModuleId,
       resolveTextProp,
+      resolveClassIds,
     })
     // §5.2 — turn any `studio-asset:` sentinel (resolved image imports) into
     // a real fetchable URL now that `dir` is in scope.
@@ -235,5 +256,5 @@ export function loadStudioPages(dir: string): StudioLoadResult {
     return page
   })
 
-  return { pages, componentSources }
+  return { pages, componentSources, styleRules, conditions }
 }

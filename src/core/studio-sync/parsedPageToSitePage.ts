@@ -32,6 +32,17 @@ export interface ParsedPageToSitePageOptions {
    * `resolveModuleId`.
    */
   resolveTextProp: (moduleId: string) => string | null
+  /**
+   * §6.3 — maps a literal `className` attribute to the `classIds` the engine
+   * renders styling from. Injected for the same decoupling reason as the two
+   * resolvers above: this converter must not know how imported CSS was parsed
+   * or how its rule ids are derived.
+   *
+   * Omitted when no CSS was imported, in which case `className` is dropped
+   * (it is not a renderable prop in this engine, and keeping it would show a
+   * dead value in the properties panel).
+   */
+  resolveClassIds?: (className: string) => string[]
 }
 
 /**
@@ -67,6 +78,15 @@ export function parsedPageToSitePage(parsed: ParsedPage, opts: ParsedPageToSiteP
     const moduleId = opts.resolveModuleId({ kind: node.kind, name: node.name, children: node.children })
     const props: Record<string, string | number | boolean> = { ...node.props }
 
+    // §6.3 — `className` is how the source attaches styling, but this engine
+    // attaches it through `classIds` -> `site.styleRules`. Translate, then drop
+    // the prop: it renders nothing on its own.
+    const className = props.className
+    delete props.className
+    const classIds = typeof className === 'string' && opts.resolveClassIds
+      ? opts.resolveClassIds(className)
+      : []
+
     // Map captured element text onto the module's declared text prop — but
     // an explicit attribute always wins (e.g. `<Button label="x">y</Button>`
     // is a real, if odd, source shape; the attribute is the author's intent).
@@ -98,7 +118,7 @@ export function parsedPageToSitePage(parsed: ParsedPage, opts: ParsedPageToSiteP
       moduleId,
       props,
       children: [...node.children],
-      classIds: [],
+      classIds,
       breakpointOverrides: {},
       // Propagate the page-parser's source/dynamic lock (`.map`/ternary/`&&`/
       // spread subtree detection) onto the built PageNode so the editor's

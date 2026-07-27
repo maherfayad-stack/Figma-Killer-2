@@ -38,7 +38,7 @@ describe('fsCodemodAdapter — write-loop safety + framework sync', () => {
 
   function stubFetch(responses: Record<string, unknown> = {}) {
     const defaults: Record<string, unknown> = {
-      '/admin/api/studio/load': { dir: '/tmp/studio-test', projectName: 'studio-test', pages: [], componentSources: {} },
+      '/admin/api/studio/load': { dir: '/tmp/studio-test', projectName: 'studio-test', pages: [], componentSources: {}, styleRules: {}, conditions: [] },
       '/admin/api/studio/framework': { framework: null },
       '/admin/api/studio/save': { ok: true, written: 1, skipped: 0, shifted: false },
     }

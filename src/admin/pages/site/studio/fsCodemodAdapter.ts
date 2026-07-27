@@ -28,7 +28,7 @@
  * server (same-origin in prod behind Caddy).
  */
 import type { IPersistenceAdapter, SaveSiteOptions } from '@core/persistence/types'
-import { type SiteDocument, PageSchema } from '@core/page-tree'
+import { type SiteDocument, ConditionDefSchema, PageSchema, StyleRuleSchema } from '@core/page-tree'
 import { apiRequest } from '@core/http'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { FrameworkSettingsSchema } from '@core/framework-schema'
@@ -80,6 +80,15 @@ const StudioLoadResponseSchema = Type.Object({
   pages: Type.Array(PageSchema),
   /** Keyed by node id (`relFile:line:col`) — only `kind: 'component'` nodes appear. */
   componentSources: Type.Record(Type.String(), ComponentSourceSchema),
+  /**
+   * §6 — the page's imported `.css` files, parsed into style rules and keyed
+   * by a deterministic id (see `server/handlers/studioCss.ts`). READ-ONLY:
+   * there is no CSS writeback codemod, so an edit made here is lost on the
+   * next reload.
+   */
+  styleRules: Type.Record(Type.String(), StyleRuleSchema),
+  /** §6 — reusable `@media`/`@container`/`@supports` conditions referenced by those rules' `contextStyles`. */
+  conditions: Type.Array(ConditionDefSchema),
 })
 
 /**
@@ -206,7 +215,7 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
     // GitHub-imported) — see studioWorkspaceDir's doc comment for why every
     // studio client call must agree on the same active dir.
     const overrideDir = getStudioWorkspaceDir()
-    const { dir, projectName, pages, componentSources: sources } = await apiRequest('/admin/api/studio/load', {
+    const { dir, projectName, pages, componentSources: sources, styleRules, conditions } = await apiRequest('/admin/api/studio/load', {
       schema: StudioLoadResponseSchema,
       query: overrideDir ? { dir: overrideDir } : undefined,
     })
@@ -220,6 +229,11 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
     // settings, framework, …) — every workspace page becomes a board frame.
     const site = createDefaultSiteDocument('Studio')
     site.pages = pages
+    // §6 — styling imported from the workspace's `.css` files. One-way: these
+    // rules are re-derived from disk on every load, so an edit made in the CSS
+    // Classes panel is lost on the next reload (see studioCss.ts's §6.6 note).
+    site.styleRules = styleRules
+    site.conditions = conditions
 
     // Override the default shell's framework settings with whatever's
     // persisted for this project, if anything — `null` means no
