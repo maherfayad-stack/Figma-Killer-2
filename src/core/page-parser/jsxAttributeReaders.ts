@@ -49,7 +49,22 @@ export interface ParseContext {
    * See `./resolutionLock` for the wiring glue this feeds.
    */
   eval?: PageEvalContext
+  /**
+   * Appended to every node id minted under this context, to distinguish
+   * iterations of an expanded `.map` (`…:70:21#0`, `…:70:21#1`, …) — one piece
+   * of source JSX legitimately produces N nodes, and without this they would
+   * collide on the single source location and destroy the flat node map. Nested
+   * loops chain segments. See `staticLoopExpansion`.
+   *
+   * Deliberately makes the id stop matching `NODE_LOC_ID`, so the writeback
+   * guards reject it: there is no single source location an edit to row 3 could
+   * land on that would not rewrite every row.
+   */
+  idSuffix?: string
 }
+
+/** Separator between a node's source location and its `.map` iteration index. */
+export const LOOP_ID_SEPARATOR = '#'
 
 const IMAGE_EXTENSION_RE = /\.(png|jpe?g|svg|webp|gif|avif)$/i
 

@@ -35,8 +35,10 @@ import {
   extractProps,
   extractRawSvgMarkup,
   extractSingleText,
+  LOOP_ID_SEPARATOR,
   type ParseContext,
 } from './jsxAttributeReaders'
+import { iterationEvalContext, loopCallbackBody, readStaticLoop } from './staticLoopExpansion'
 
 type JsxOpeningLike = JsxElement | JsxSelfClosingElement
 
@@ -257,6 +259,56 @@ function collectRootIds(rootExpr: Node, ctx: ParseContext): string[] {
   return collectFromExpression(rootExpr, ctx, triggers, triggers ? DYNAMIC_LOCK_REASON : undefined)
 }
 
+/**
+ * The three JSX-bearing shapes an expression can take, dispatched the same way
+ * everywhere: an element, a fragment, or something that merely *contains* JSX.
+ *
+ * `collectFromExpression` walks DESCENDANTS, so it never sees an expression that
+ * is itself an element — hence this wrapper rather than calling it directly.
+ */
+function collectJsx(
+  expr: Node,
+  ctx: ParseContext,
+  locked: boolean,
+  reason: string | undefined,
+): string[] {
+  if (Node.isJsxElement(expr) || Node.isJsxSelfClosingElement(expr)) {
+    return [processElement(expr, ctx, locked, reason)]
+  }
+  if (Node.isJsxFragment(expr)) {
+    return processChildren(expr.getJsxChildren(), ctx, locked, reason)
+  }
+  return collectFromExpression(expr, ctx, locked, reason)
+}
+
+/**
+ * Expands `items.map(item => <Row/>)` into one subtree per item, or returns
+ * `undefined` to leave the expression opaque (today's single locked
+ * placeholder). See `staticLoopExpansion` for what qualifies and why this is
+ * not the banned "execute the code" tier.
+ */
+function expandStaticLoop(expr: Node, ctx: ParseContext): string[] | undefined {
+  const evalCtx = ctx.eval
+  if (!evalCtx) return undefined
+  const loop = readStaticLoop(expr, evalCtx)
+  if (!loop) return undefined
+  const body = loopCallbackBody(loop.callback)
+  if (!body) return undefined
+
+  const ids: string[] = []
+  loop.items.forEach((item, index) => {
+    const iterationCtx: ParseContext = {
+      ...ctx,
+      eval: iterationEvalContext(loop, item, index, evalCtx),
+      idSuffix: `${ctx.idSuffix ?? ''}${LOOP_ID_SEPARATOR}${index}`,
+    }
+    // Locked with a reason naming the item, not the generic dynamic-surface
+    // message: the row IS resolved, it just has no isolated place to write to.
+    ids.push(...collectJsx(body, iterationCtx, true, `item ${index + 1} of ${loop.sourceText}`))
+  })
+  return ids
+}
+
 /** Creates the `ParsedNode` for one JSXElement/JSXSelfClosingElement. */
 function processElement(
   element: JsxOpeningLike,
@@ -274,7 +326,9 @@ function processElement(
   const pos = tagNameNode.getStart()
   const { line, column } = ctx.sourceFile.getLineAndColumnAtPos(pos)
   const loc: NodeLoc = { file: ctx.relFile, line, col: column }
-  const id = `${ctx.relFile}:${line}:${column}`
+  // `loc` stays the real source location even for an expanded loop iteration —
+  // that IS where this element is written. Only the id is made unique.
+  const id = `${ctx.relFile}:${line}:${column}${ctx.idSuffix ?? ''}`
 
   const attributes = Node.isJsxElement(element)
     ? element.getOpeningElement().getAttributes()
@@ -347,9 +401,19 @@ function processElement(
 
   const rawChildren = Node.isJsxElement(element) ? element.getJsxChildren() : []
   const children = Node.isJsxElement(element) ? processChildren(rawChildren, ctx, locked, lockReason) : []
-  // Only capture text for editable-surface elements — a locked/dynamic node
-  // has no writeback path, so leaving `text` unset avoids implying otherwise.
-  const textResult = locked ? undefined : extractSingleText(rawChildren, ctx)
+  // Capture text whether or not the node is locked.
+  //
+  // This used to skip locked nodes, reasoning that a node with no writeback path
+  // should not imply an editable surface. But `locked` is what carries that
+  // meaning — the editor's edit guards read it — and withholding the text does
+  // not make a node less editable, it makes it BLANK. Every `.map` row, every
+  // `{cond && <span>Saved</span>}`, every spread-bearing element rendered as an
+  // empty box on the canvas while its text sat in plain sight in the source.
+  //
+  // §7 already settled this the other way: a resolved value sets `text` AND
+  // locks the node (`withResolutionLock`). The two rules contradicted each
+  // other; this is the one that shows the user their screen.
+  const textResult = extractSingleText(rawChildren, ctx)
   const text = textResult?.text
 
   const lock = withResolutionLock(locked, lockReason, [
@@ -408,6 +472,12 @@ function processChildren(
     if (Node.isJsxExpression(child)) {
       const expr = child.getExpression()
       if (!expr) continue
+
+      const expanded = expandStaticLoop(expr, ctx)
+      if (expanded) {
+        ids.push(...expanded)
+        continue
+      }
 
       const triggers = isLockingExpression(expr)
       const locked = inheritedLocked || triggers

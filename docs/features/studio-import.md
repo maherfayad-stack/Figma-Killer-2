@@ -12,6 +12,7 @@ The load path is `GET /admin/api/studio/load?dir=<abs>` → `loadStudioPages` (`
 - **Page discovery is configurable.** `.studio/meta.json`'s `pagesDir` points at a repo's real screens directory (e.g. `src/screens`); `.tsx` and `.jsx` are both discovered.
 - **Local components are inlined.** A `<Card />` whose import resolves inside the workspace is expanded into its own JSX so the canvas shows real markup, not an opaque box. The call-site node is **replaced** by that JSX, not left wrapping it. Inlined nodes are **editable**, and the panel says how many places an edit will land in.
 - **Package components are not.** `@alm-design/design-system`'s `<Button />` stays a `alm.Button` node rendered by its own module.
+- **`.map` over a statically-resolved array is expanded** into one node per item, so a list renders as a list. Rows are locked (derived from data).
 - **Non-literal values are statically resolved** where it is safe to — `{t.homepage.greeting}` becomes `"Hi Muhammad"`. Resolved nodes are **locked**, because writing an edited literal back over the expression would destroy the binding in the user's source file.
 - **Imported CSS is read-only.** `.css` files become `StyleRule`s and `node.classIds`, but **nothing is ever written back to a `.css` file**. An edit made in the CSS Classes panel is lost on the next reload. See [CSS is one-way](#css-is-one-way).
 - **Writeback is prop/text/style only**, and only for nodes whose id is a real single source location.
@@ -33,6 +34,7 @@ src/core/page-parser/
 ├── parsePageFile.ts          — the ts-morph JSX walk → ParsedPage
 ├── inlineLocalComponents.ts  — local-component expansion: structure, composite ids, call-site replacement
 ├── componentSubstitution.ts  — the value half: call-site props → the component's own JSX
+├── staticLoopExpansion.ts    — `.map` over a resolved array → one node per item
 ├── jsxAttributeReaders.ts    — how each attribute shape is read (props, style, raw SVG, images)
 ├── componentSources.ts       — local vs package classification, workspace-wide ts-morph Project
 ├── staticEval.ts             — public composer for the value evaluator
@@ -142,7 +144,31 @@ Calls a resolvable arrow/function inside `qualifiesForTierC`'s explicit envelope
 
 ### Tier D — banned
 
-Loop expansion, JSX conditional-branch selection, hook state, effects, async. Do not implement these anywhere in this module. Once `esimChecklist` resolves to a 3-item array you *could* render three rows — that needs iteration-scoped bindings and stable per-iteration ids, and it is a separate feature.
+JSX conditional-branch selection, hook state, effects, async. Do not implement these anywhere in this module. The line is **executing code**: control flow whose outcome the parser cannot know, state it would have to simulate, work it would have to run.
+
+Picking a ternary branch is the sharpest case, and it stays banned because it can look right and be a lie — a stateful screen has many states, and rendering one as if it were the markup misrepresents the source.
+
+### Bounded loop expansion — not Tier D
+
+`items.map(item => <Row/>)` **is** expanded, when `items` is an array Tier A has already fully resolved (`src/core/page-parser/staticLoopExpansion.ts`). This is not execution: the length comes from the source, every item is a value the evaluator produced by reading declarations, and there is no branch to guess. It is a bounded, deterministic function of the AST like every other §7 resolution.
+
+The guard rails:
+
+| Rule | Why |
+|---|---|
+| The array *and every item* must resolve | One unresolved item would silently drop a row instead of showing the list as unknown |
+| Callback must be an inline arrow/function with identifier params | A destructured param would mean re-implementing destructuring against a `StaticValue` |
+| `MAX_LOOP_ITERATIONS` = 100 | "Bounded" and "renderable on a canvas" are different claims |
+| Iteration ids get a `#<index>` suffix (`LOOP_ID_SEPARATOR`) | One source location legitimately yields N nodes; without it they collide |
+| Rows are **locked** | They are derived, and one piece of source JSX backs all N — an edit to row 3 has nowhere isolated to land. Edit the data |
+
+Decline and the call site keeps its single `dynamic — rendered in code` placeholder — exactly the old behaviour.
+
+Measured on the eSIM corpus: 955 → 1062 nodes, 60 → 78 rendered icons (many icons live inside list rows), 773 → 868 styled elements.
+
+### Locked nodes still show their text
+
+A locked node used to have its `text` withheld, on the reasoning that a node with no writeback path shouldn't imply an editable surface. `locked` is what carries that meaning — the editor's edit guards read it — and withholding the text doesn't make a node less editable, it makes it **blank**. Every `.map` row, every `{cond && <span>Saved</span>}`, and every spread-bearing element rendered as an empty box while its text sat in plain sight in the source. §7 had already settled this the other way (a resolved value sets `text` *and* locks the node), so the two rules contradicted each other.
 
 ### Guards
 

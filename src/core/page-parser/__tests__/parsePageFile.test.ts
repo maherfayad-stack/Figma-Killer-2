@@ -282,7 +282,7 @@ describe('parsePageFile', () => {
     expect(span.text).toBe('Hi')
   })
 
-  it('does not capture text for a locked (dynamic-surface) element', () => {
+  it('captures literal text on a locked (dynamic-surface) element', () => {
     const source = [
       'interface Item { id: string; title: string }',
       'export default function Page({ items }: { items: Item[] }) {',
@@ -301,8 +301,13 @@ describe('parsePageFile', () => {
     const page = parsePageFile(file, tmpDir)
 
     const card = byName(page, 'Card')
+    // `locked` is what tells the editor this has no writeback path. Withholding
+    // the text on top of that does not make the node less editable, it makes it
+    // render as an empty box — even though "Static label" is right there in the
+    // source. Every `.map` row and every `{cond && <span>…</span>}` was blank on
+    // the canvas because of that.
     expect(card.locked).toBe(true)
-    expect(card.text).toBeUndefined()
+    expect(card.text).toBe('Static label')
   })
 
   it('captures a static <svg> verbatim into props.svg and does not recurse into its children', () => {
