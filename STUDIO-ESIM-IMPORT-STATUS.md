@@ -1,11 +1,9 @@
 # Status — STUDIO-ESIM-IMPORT-PLAN implementation
 
-**As of 2026-07-26.** Companion to `STUDIO-ESIM-IMPORT-PLAN.md`. Work was run
-as an orchestrated pipeline of Sonnet 5 workers, one stage-group per worker,
-audited between stages.
+**As of 2026-07-27.** Companion to `STUDIO-ESIM-IMPORT-PLAN.md`.
 
-**Headline: 5 of 7 implementation sections complete, §7 substantially complete
-but red, §6 not started. Validation (§8) and documentation (§9) outstanding.**
+**Headline: all nine sections complete. §7 Tier B closed, §6 built, §8 dogfooded
+in a browser, §9 written. Full gate run — no failures introduced.**
 
 ---
 
@@ -14,31 +12,17 @@ but red, §6 not started. Validation (§8) and documentation (§9) outstanding.*
 | | |
 |---|---|
 | Branch | `feat/alm-figma-killer-studio-shell` |
-| Commit | `6213bfc feat(staticEval): implement bounded static evaluator for JSX expressions` |
-| Working tree | **Dirty — an unfinished refactor sits on top of that commit.** See "Working tree state" below. |
+| Head | `f6b2692 fix(studio): four import-fidelity defects found by driving the board in a browser` |
+| Working tree | Clean (apart from the `design-system` submodule, which is not ours) |
 
-`6213bfc` is a single squashed commit containing §1–§5 **and** a first cut of
-§7. That is not how the work was staged — a worker committed it against
-instructions. The commit message describes only §7 and understates its
-contents by a wide margin.
-
-### Working tree state — read this before touching anything
-
-The §7 worker was terminated mid-task (monthly spend limit) while splitting an
-812-line `staticEval.ts` that busted the repo's 700-line module ceiling. The
-split is **finished and working**, but uncommitted:
+Four commits land the remaining work:
 
 ```
- M src/core/page-parser/parsePageFile.ts
- M src/core/page-parser/staticEval.ts        812 → 72 lines (now a barrel)
-?? src/core/page-parser/staticEvalCore.ts    360 lines
-?? src/core/page-parser/staticEvalCalls.ts   348 lines
-?? src/core/page-parser/resolutionLock.ts     71 lines
-?? src/core/page-parser/__tests__/staticEval.test.ts
+062545a fix(staticEval): close Tier B provider tracing and stop caching truncated results
+83dac66 feat(studio): import a workspace's CSS as style rules and classIds
+347a9c5 refactor(siteImport): extract CSSOM acquisition out of cssToStyleRules
+f6b2692 fix(studio): four import-fidelity defects found by driving the board in a browser
 ```
-
-The working tree is **healthier than the commit** — it is what brings
-`module-size-budgets` back to green. Do not discard it. It needs a commit.
 
 ---
 
@@ -46,191 +30,172 @@ The working tree is **healthier than the commit** — it is what brings
 
 | § | Scope | State |
 |---|---|---|
-| **§1** | Configurable page source (`pagesDir` meta, `.jsx` discovery) | ✅ Complete |
-| **§2** | Local-component inlining (2a→2d) | ✅ Complete |
-| **§3** | `<svg>` raw capture → `base.svg` | ✅ Complete |
-| **§4** | Context-aware element→module resolution | ✅ Complete |
-| **§5** | Local asset serving | ✅ Complete |
-| **§6** | CSS imports → StyleRules + classIds | ❌ **Not started** |
-| **§7** | Static value resolution (tiers A→B→C) | ⚠️ **Tiers A + C green, Tier B red** |
-| **§8** | Validation on eSIM | ⚠️ Partial — static only, never dogfooded in a browser |
-| **§9** | Verification gate + docs | ⚠️ Gates run; **`docs/` never written** |
+| **§1** | Configurable page source (`pagesDir` meta, `.jsx` discovery) | ✅ |
+| **§2** | Local-component inlining (2a→2d) | ✅ |
+| **§3** | `<svg>` raw capture → `base.svg` | ✅ |
+| **§4** | Context-aware element→module resolution | ✅ (extended — see below) |
+| **§5** | Local asset serving | ✅ |
+| **§6** | CSS imports → StyleRules + classIds | ✅ |
+| **§7** | Static value resolution (tiers A→B→C) | ✅ |
+| **§8** | Validation on eSIM | ✅ static **and** in a real browser |
+| **§9** | Verification gate + docs | ✅ `docs/features/studio-import.md` |
 
-### §7 — the precise gap
+---
 
-`bun test src/core/page-parser/__tests__/staticEval.test.ts` → **24 pass / 2 fail**.
-Both failures are Tier B, and both trace to the same root cause: §7.3 step 3,
-locating `<Ctx.Provider value={…}>` and evaluating its `value` expression.
+## §7 — Tier B, and the bug behind it
 
-```
-staticEval — Tier B > traces a single provider through useContext…
-staticEval — Tier B > resolves the preferredKey branch when configured
+Tier B was red on two tests. The stated cause (provider tracing) was real but
+was one of three defects, and the third was the dangerous one.
 
-  expected: { kind: "literal", value: "Hi Muhammad",
-              note: 'dynamic key not statically known — showing the "en" branch' }
-  received: { kind: "unresolved", reason: '"value" is not a statically resolvable binding' }
-```
+1. The provider's `value` expression was evaluated with `EMPTY_LOCALS`, so the
+   near-universal `value={value}` shape — a `const` in the provider component's
+   body — never resolved. Scope now comes from the enclosing function.
+2. `useMemo` was only unwrapped when written inline in the `value` attribute,
+   not when reached through an identifier. Moved into the shared call
+   dispatcher: any `useMemo(() => X, deps)` evaluates as `X`.
+3. **`maxDepth` conflated data nesting with binding hops.** A realistic i18n
+   dictionary reached through an alias (`const c = t.bookingConfirmation`) blew
+   the limit of 12. Object/array members now evaluate at the literal's own depth
+   — finite source text cannot diverge — and the default is 24.
 
-The second failure is a cascade, not an independent bug — §7.4's
-`preferredKey` branch selection can only run once provider tracing hands it the
-dictionary.
+**The order-dependence was the real hazard.** A depth-truncated `translations`
+object was written into the module-const memo, so every page parsed *after* the
+first one read back a dictionary whose leaves were all `unresolved`. Whether any
+copy appeared at all depended on which screen happened to be parsed first.
+Guard trips now mark `Budget.truncated`, and neither the module-const nor the
+provider-trace cache stores a truncated result. The provider cache is also keyed
+by `preferredKey` (it decides the locale branch) and guarded against a provider
+that reads its own hook.
 
-**Consequence:** the eSIM corpus's copy comes from `useLanguage()` →
-`useContext` → `translations[lang]`, which is exactly the Tier B path. So
-§7.9's acceptance criterion — real English copy (`"Hi Muhammad"`,
-`"Your booking is confirmed"`, `"Almosafer Points"`) rendering on canvas — is
-**not met yet**, even though Tier A and Tier C both work. §7 is the
-load-bearing section for whether an import *looks* like the app, and this is
-the last mile of it.
+Corpus result: **188 resolved nodes, identical in either parse order.**
+"Hi Muhammad", "Your booking is confirmed", "Almosafer Points", "Round-trip |
+RUH to CAI" all render. §7.9's acceptance criterion is met.
+
+### §7 cost (§7.9's measurement)
+
+| | createWorkspaceProject | parse + inline | first page | remaining 14 |
+|---|---|---|---|---|
+| evaluator off | 64 ms | 812 ms | 761 ms | 51 ms |
+| evaluator on | 57 ms | 764 ms | 700 ms | 64 ms |
+
+The evaluator costs ~13 ms across 1081 nodes. The ~760 ms first-page cost is
+cold ts-morph module resolution and is present with the evaluator **disabled**
+too — the previous status doc's 102 ms §2 baseline was measured on a warm
+project, so this was never a §7 regression.
+
+---
+
+## §6 — imported CSS
+
+`collectEntryStylesheets` + `collectPageStylesheets` (`@core/studio-sync`) decide
+which files and in what order; `server/handlers/studioCss.ts` parses them through
+the existing `cssToStyleRules` engine and maps `className` → `classIds`.
+
+Three decisions worth knowing:
+
+- **`GlobalWindow`, not `Window`.** Bun has no CSSOM, so happy-dom's constructor
+  is injected via a new `CssToStyleRulesOptions.sheetConstructor`. It must be
+  `GlobalWindow` — happy-dom's CSS parser reports selector errors through
+  `this.window.SyntaxError`, and with a plain `Window` *every* stylesheet fails
+  with "undefined is not a constructor". Injection rather than assigning browser
+  globals onto a long-lived server process.
+- **Deterministic ids** — `sc-${sha1(kind|name)}`, not `nanoid()`. Studio reloads
+  the whole site document on reload and on a `shifted` save; random ids would
+  churn selection, undo, and every `classIds` entry on every load.
+- **CSS is one-way.** There is no writeback codemod. An edit in the CSS Classes
+  panel is lost on the next reload. Documented in the feature doc rather than
+  left for a user to discover by losing work.
+
+Corpus: **420 rules (class + ambient), 786 of 1081 nodes styled, ids identical
+across reloads, no leftover `className` props, no measurable load-time cost.**
+
+---
+
+## §8 — what the browser found that the gates did not
+
+Static gates were green and the endpoint returned correct-looking JSON. Loading
+the board in a real browser found four defects anyway. All four measure zero now
+and are covered by `server/handlers/__tests__/studioModuleMapping.test.ts`.
+
+| Defect | Before | After |
+|---|---|---|
+| Nodes rendering the literal word "Text" | 154 | 0 |
+| Nodes rendering the literal word "Button" | 21 | 0 |
+| Buttons silently dropping their children | 10 | 0 |
+| Inline `<span>` / `<h1>` rewritten to block `<p>` | 33 | 0 |
+| Global stylesheets (tokens, resets) collected | no | yes (365 → 420 rules) |
+
+The fourth is the one a test would never have caught by itself: design tokens
+live in `src/index.css` and `src/App.css`, imported by `main.jsx`/`App.jsx` —
+files that contribute no nodes to any page, so a page-only walk never saw them.
+Every `var(--space-lg)` in a screen's own CSS resolved to nothing.
+
+**Verified in the editor:** 15 screens on one board, real English copy, imported
+CSS applied (197 KB of style tags per frame, `hp-header` computing
+`display:flex; flex-direction:column` from the imported sheet), zero placeholder
+labels, `<span>`s preserved as spans.
+
+---
+
+## Known remaining limitations
+
+All deliberate and documented in `docs/features/studio-import.md`:
+
+- **The app shell is not reproduced.** Studio renders each screen standalone, so
+  `App.jsx`'s `.esim-app` wrapper and the `html,body{height:100%}` chain under it
+  are absent. A bottom sheet built to fill a fixed-height viewport lays out
+  against an auto-height body and can collapse. The content is present and
+  correct in the DOM — it just doesn't get the height its CSS assumes. This is
+  the largest remaining fidelity gap and the obvious next piece of work.
+- No loop expansion (Tier D banned); multi-stage screens collapse to the
+  least-nested `return`; computed `className` keeps only its static prefix; only
+  the `previewLocale` branch renders; dynamic-SVG detection is `text.includes('{')`
+  and over-triggers on a literal `{`; everything §7 resolves is read-only.
+- `INLINE_ID_SEPARATOR` is still mirrored rather than imported in
+  `fsCodemodAdapter.ts` (importing `@core/page-parser` into browser code drags
+  ts-morph in and blows the chunk budget ~10x). **There is still no gate test
+  keeping the two constants in sync.** Worth adding.
 
 ---
 
 ## Gate status
 
-Measured on the working tree.
+Run in full at `f6b2692`.
 
 | Gate | Result |
 |---|---|
-| `bun test server/handlers/__tests__` | **129 pass / 0 fail** |
-| `bun test src/core/page-parser src/core/studio-sync` | **84 pass / 2 fail** (the two §7 Tier B above) |
-| `module-size-budgets`, `boundary-validation`, `no-core-barrel-deep-imports` | **14 pass / 0 fail** |
-| `bun run build` (`tsc -b && vite build`) | Passed as of the §2/split audit; **not re-run since the §7 split** |
-| `bun test` (full suite) | **Never completed** — takes >10 min; deferred to the final gate that was never reached |
+| `bun run build` (`tsc -b && vite build`) | ✅ |
+| `bun run lint` | ✅ zero errors in `src/` or `server/` |
+| `bun test` | 6747 pass / 16 fail |
 
-### Pre-existing failures — not caused by this work
+**None of the 16 are ours.** The identical set failed before this work started;
+`module-size-budgets` was the one regression introduced (a doc comment pushed
+`cssToStyleRules.ts` to 702 lines) and it was fixed by extracting `cssomSheet.ts`.
 
-`bun test src/__tests__/architecture` on the **pristine** `cd1dd15` commit is
-**464 pass / 10 fail**. Verified by stashing. Those 10 (bundle-size budgets,
-CodeMirror lazy-load, icon wrapper, publish bus, error boundary, keybindings,
-plugin bootstrap freshness, two vendor-icon freshness gates) are inherited and
-out of scope.
+The two bundle-size failures were verified pre-existing by rebuilding at
+`74f0bcc`: `AdminCanvasEditorBody` was already **1,516.18 kB** against a 761.7 kB
+budget, byte-identical to now. This work added zero bundle weight — the ts-morph
+hazard the plan warned about was avoided.
 
-**Two regressions this pipeline *did* introduce were caught and fixed:**
+The rest (SettingsModal ×5, Toolbar ×2, ClassPropertyRow, SettingsButton, Zustand
+selector stability, icon wrapper, two vendor-icon freshness gates) belong to the
+parallel studio-shell/rebrand work in `magical-humming-moth.md`.
 
-1. `server/handlers/studio.ts` grew to 855 lines against a 700 ceiling → split
-   into four modules (below).
-2. `no-circular-dependencies` began timing out. Investigated: **there is no
-   actual cycle** — `madge` needs ~12.6s for the ~2,485-file graph and the test
-   budget was 15s. Raised to 60s with a comment explaining it is a hang guard,
-   not a perf assertion.
-
-A worker initially reported both as "pre-existing". They were not — it had
-compared against an already-modified tree rather than `HEAD`. Worth knowing
-when reading the other worker reports in this pipeline.
+`bun run lint` reports 188 errors overall, all inside the `design-system`
+submodule and `templates/` — neither is ours.
 
 ---
 
-## What was built
+## Local environment notes
 
-### New modules
-
-```
-server/handlers/studioAsset.ts          86   asset route + traversal guards
-server/handlers/studioWriteback.ts     130   StudioEdit, applyStudioEdit, composite-id guards
-server/handlers/studioPageLoad.ts      239   parse → inline → convert pipeline
-src/core/page-parser/inlineLocalComponents.ts  598   §2
-src/core/page-parser/staticEvalCore.ts  360   §7 tiers A/B
-src/core/page-parser/staticEvalCalls.ts 348   §7 tier C
-src/core/page-parser/resolutionLock.ts   71   §7.6 derived-value locking
-```
-
-`server/handlers/studio.ts` went 855 → 503 lines and is now pure HTTP routing,
-which is what its own module doc always said it should be.
-
-### Corpus measurements (`studio-workspace/esim-journey/`, 15 screens)
-
-§2 inlining, parse + inline wall clock:
-
-| | nodes | time |
-|---|---|---|
-| Before | 337 | 38.4 ms |
-| After | 1066 | 102.3 ms |
-
-No screen hit `maxDepth` (6) or `maxNodes` (4000); deepest real chain is 4.
-After a fix for same-file non-exported helper components, **every remaining
-un-inlined `kind:'component'` node across the corpus is a genuine
-`@alm-design/design-system` package component** — i.e. correctly left alone,
-since those already have real `alm.*` renderers per §0.7.
-
-§7 timings were never measured — the worker died before §7.9.
-
----
-
-## Deliberate deviations from the plan
-
-Each was justified at the time; flagging them so they are not mistaken for drift.
-
-1. **`INLINE_ID_SEPARATOR` is mirrored, not imported, in `fsCodemodAdapter.ts`.**
-   §2.4 says to export it from one place so both sides agree. Importing
-   `@core/page-parser` into browser code pulled ts-morph/typescript into the
-   client bundle and blew the `AdminCanvasLayout` chunk from ~700 KB to
-   **6.9 MB** (measured, not guessed). `fsCodemodAdapter.ts` already mirrors
-   `ComponentSource` for exactly this reason and documents it. **Risk: the two
-   constants can silently drift — there is no gate test keeping them in sync.
-   Worth adding one.**
-2. **`renameProjectDisplayName` added** (not in the plan). §1.1's type change
-   made the existing `writeProjectMeta(dir, { displayName })` on rename silently
-   erase an imported project's `pagesDir`. Fixed at the source.
-3. **`projectDisplayName` now uses `basename`.** It split on `/`, so on Windows
-   every project's display name came back as its full absolute path. This was a
-   pre-existing bug causing 4 red tests; fixed to de-noise the gate for later
-   workers. Slightly outside plan scope.
-4. **`no-circular-dependencies` timeout 15s → 60s**, per above.
-
----
-
-## Known limitations already accepted
-
-- **`{children}` splicing** (§2c) does not handle the case where spliced
-  content is itself an intermediate inlined id from a deeper nesting level —
-  it would produce a dangling reference. Does not occur in the corpus;
-  documented in the module rather than solved with general bookkeeping.
-- **Dynamic-SVG detection is `text.includes('{')`**, per §3.3 as written. A
-  static SVG containing a literal `{` (e.g. an embedded `<style>` block) is a
-  false positive and renders as an empty placeholder. Conservative and honest,
-  but broader than strictly necessary.
-- Everything in the plan's own "Expected residual gaps on eSIM" list (§8) still
-  applies: no loop expansion (Tier D banned), multi-stage screens collapse to
-  the least-nested `return`, computed `className` keeps only its static prefix,
-  only the `previewLocale` branch renders, and all §7-resolved copy is
-  read-only on canvas by design.
-
----
-
-## To finish
-
-In dependency order:
-
-1. **Commit the working tree.** It is the fix for the module-size gate.
-2. **Close §7 Tier B** — provider tracing (§7.3 step 3). Two tests, one root
-   cause. This unblocks §7.9's acceptance and is what makes imported screens
-   show real copy.
-3. **Measure §7 load time** against the 102.3 ms §2 baseline (§7.9 requires it;
-   the memoized module-namespace cache is the thing being verified).
-4. **§6 — CSS imports → StyleRules + classIds.** Entirely unstarted. Note §6.2's
-   guidance to inject a `sheetConstructor` into `cssToStyleRules` rather than
-   mutating `globalThis` in the Bun server, and §6.5's warning that
-   `fsCodemodAdapter.test.ts`'s mock must gain the new required fields or all
-   its tests fail on a TypeBox error.
-5. **§8 — browser validation.** Nothing has been dogfooded in a real browser;
-   per standing instruction, workers ran static gates only. The corpus is
-   staged and ready at `studio-workspace/esim-journey/`.
-6. **§9 — docs.** `docs/features/` has **no** Studio-import page. Needs the
-   pages-dir override, inlining semantics + the lock rule, the asset route, the
-   one-way CSS boundary (§6.6 — CSS edits are *not* written back and are lost on
-   reload; the plan is explicit this must not be left for users to discover),
-   and static value resolution.
-7. **Run the full `bun test` + `bun run build` + `bun run lint` gate** (§9). It
-   has never been run to completion.
-
----
-
-## Validation corpus
-
-`studio-workspace/esim-journey/` — a copy of
-`github.com/maherfayad-stack/eSIM` → `journey-screens/`, with a hand-written
-`.studio/meta.json` (`pagesDir: "src/screens"`, `previewLocale: "en"`) per §8
-step 1.
-
-It is **git-excluded** via `.git/info/exclude` (a local-only exclusion, so it
-will not follow a clone). It is read-only input: never commit it, never edit it.
+- **Validation corpus** is re-staged at `studio-workspace/esim-journey/` (a copy
+  of `github.com/maherfayad-stack/eSIM` → `journey-screens/`, with a hand-written
+  `.studio/meta.json`: `pagesDir: "src/screens"`, `previewLocale: "en"`). It is
+  git-excluded via `.git/info/exclude`. Read-only input: never commit it. Note it
+  has **no `node_modules`**, so `@alm-design/design-system` CSS is absent — the
+  admin canvas injects those tokens itself, so this does not affect the result.
+- **A local smoke-test account was added to `.tmp/dev.db`** to drive the UI, since
+  the existing `dev@localhost.dev` password is not recoverable:
+  `smoke@localhost.dev` / `SmokeTest!2026`, role `admin`. Local dev DB only, and
+  gitignored. Delete it whenever you like:
+  `delete from users where email_normalized = 'smoke@localhost.dev';`
