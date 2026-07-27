@@ -134,13 +134,18 @@ describe('canvas frame mounting', () => {
 
     const designDoc = await waitForCanvasFrameDocument('desktop')
     expect(designDoc.documentElement.style.height).toBe('auto')
-    // Body's height is PINNED, not `auto` — `useIframeFrameAutoHeight` sets it
-    // to the measured frame height (floored at the viewport height) so authored
-    // percentage-height chains have a definite basis to resolve against.
+    // Body's height is PINNED, not `auto`, so authored percentage-height chains
+    // have a definite basis to resolve against. It opens at the device viewport
+    // and only grows to fit inner scroll regions (`resolveFrameFitHeight`).
     expect(designDoc.body.style.height).toBe(`${CANVAS_VIEWPORT_HEIGHT}px`)
     expect(designDoc.body.style.minHeight).toBe(`${CANVAS_VIEWPORT_HEIGHT}px`)
+    // `documentElement` owns scrollbar suppression; body must NOT clip, or a
+    // page taller than the pin loses everything below the fold.
     expect(designDoc.documentElement.style.overflow).toBe('hidden')
-    expect(designDoc.body.style.overflow).toBe('hidden')
+    expect(designDoc.body.style.overflow).toBe('visible')
+    // Body is the containing block, so an `inset: 0` overlay anchors to the
+    // canvas's device viewport instead of the grow-to-content frame it feeds.
+    expect(designDoc.body.style.position).toBe('relative')
 
     cleanup()
     useEditorStore.setState({ canvasView: 'live' } as Parameters<typeof useEditorStore.setState>[0])

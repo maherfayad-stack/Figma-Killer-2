@@ -1,6 +1,7 @@
 import { useEffect, type RefObject } from 'react'
 import { resolveCanvasFrameHeight } from './iframeFrameHeight'
 import { CANVAS_VIEWPORT_HEIGHT } from './resolveViewportUnits'
+import { collectScrollDeficits, resolveFrameFitHeight } from './resolveFrameFitHeight'
 import {
   getIframeObserverConstructors,
   getIframeObserverDocument,
@@ -14,29 +15,28 @@ interface UseIframeFrameAutoHeightOptions {
 }
 
 /**
- * Keeps design-canvas iframes expanded to their content height, and keeps the
- * frame document's `<body>` height DEFINITE at that same value.
+ * Sizes a design-canvas frame so the whole screen is visible at once: `<body>`
+ * gets a definite height grown until nothing inside needs to scroll, and the
+ * iframe element tracks that.
  *
  * Canvas frames should not have their own scrollbars: inner iframe scroll
  * consumes the wheel events that the parent canvas needs for pan/zoom. The
  * self-resize cap prevents viewport-unit feedback loops where growing the
  * iframe changes the child document's `vh` reference and causes endless growth.
  *
- * Why body's height is pinned rather than left `auto`
- * ───────────────────────────────────────────────────
- * A percentage height only resolves against a parent whose height is DEFINITE;
- * against `auto` it degrades to `auto` itself. So with an `auto` body, an
- * authored app-shell chain — `html, body, #root { height: 100% }` on top of a
- * `height: 100%` flex column — collapses to its own content height in the
- * canvas, and every `flex: 1` scroll viewport inside it computes to 0. On the
- * imported eSIM corpus that clipped a screen's entire 1447px body to nothing
- * while the frame showed the header and empty space below it.
+ * Two separate numbers, and they are not interchangeable:
  *
- * Pinning body to the frame height is the same move `resolveViewportUnits`
- * makes for `vh`: give authored CSS a definite, device-like viewport to resolve
- * against instead of a value derived from the content it is supposed to size.
- * Grow-to-content still works, because the pin tracks the measured content
- * height rather than a constant — a 3000px document page pins to 3000.
+ *   - `resolveFrameFitHeight` → body's DEFINITE height. Owns the percentage
+ *     basis (an authored `body { height: 100% }` chain resolves against it
+ *     instead of collapsing) and the no-scroll guarantee. Grows only, from
+ *     `CANVAS_VIEWPORT_HEIGHT`, because content height depends on the pin and a
+ *     rule that could shrink it would flicker. See that module.
+ *   - `resolveCanvasFrameHeight` → the iframe element's height on the parent
+ *     canvas. Follows the document; owns shrinking back down when a page gets
+ *     shorter.
+ *
+ * Nothing here writes a measured value into body: body is only ever the fitted
+ * pin, which is what keeps the pin ⇄ relayout loop open.
  */
 export function useIframeFrameAutoHeight({
   iframeRef,
@@ -55,6 +55,11 @@ export function useIframeFrameAutoHeight({
     const MAX_SELF_RESIZES = 60
     let selfResizes = 0
     let rafId: number | null = null
+    // Body's current definite height. Only ever grows while a document is
+    // mounted (see `resolveFrameFitHeight` for why shrinking would flicker); a
+    // real DOM change resets it so an edited page can get shorter again.
+    let pinnedHeight = CANVAS_VIEWPORT_HEIGHT
+    let fitPasses = 0
     const {
       ResizeObserver: FrameResizeObserver,
       MutationObserver: FrameMutationObserver,
@@ -65,27 +70,27 @@ export function useIframeFrameAutoHeight({
       const body = observerDocument.body
       const html = observerDocument.documentElement
       if (!body || !html) return
+
+      // Grow body until nothing inside the frame needs to scroll. Reading
+      // `scrollHeight`/`clientHeight` forces the layout that makes the previous
+      // pass's pin take effect, so successive passes see real numbers.
+      const fitted = resolveFrameFitHeight({
+        pinnedHeight,
+        scrollDeficits: collectScrollDeficits(observerDocument),
+        passesUsed: fitPasses,
+      })
+      if (fitted !== null) {
+        pinnedHeight = fitted
+        fitPasses += 1
+        body.style.height = `${fitted}px`
+      }
+
       const current = parseFloat(iframe.style.height || '0')
-      // Unpin before measuring. A pinned height floors `body.scrollHeight`, so
-      // a page whose content got shorter could never shrink back — the same
-      // staleness `resolveCanvasFrameHeight` already guards against for
-      // `documentElement`. Reading `scrollHeight` next forces the layout that
-      // makes this reset take effect.
-      body.style.height = 'auto'
       const target = resolveCanvasFrameHeight({
         bodyScrollHeight: body.scrollHeight,
         documentScrollHeight: html.scrollHeight,
         currentFrameHeight: current,
       })
-      // Re-pin unconditionally, including on the no-change path below: this is
-      // the definite percentage-height basis authored CSS resolves against (see
-      // this hook's doc comment), not a consequence of the frame resizing.
-      //
-      // Floored at the same `min-height` the body reset applies, which is what
-      // body's used height already is — so the pin states that height rather
-      // than shrinking the frame to a `scrollHeight` measured before layout has
-      // settled (or in an environment that reports 0 for it).
-      body.style.height = `${Math.max(target, CANVAS_VIEWPORT_HEIGHT)}px`
       if (Math.abs(current - target) <= 0.5) {
         selfResizes = 0
         return
@@ -105,6 +110,16 @@ export function useIframeFrameAutoHeight({
     ro.observe(observerRoot)
     const mo = observeIframeMutations(FrameMutationObserver, observerDocument, () => {
       selfResizes = 0
+      // Real content changed, so the fit has to be re-derived from scratch —
+      // otherwise an edit that REMOVES content leaves the frame stuck at the
+      // height the old content needed. Re-fitting is monotonic from the viewport
+      // height again, so this is the only place the pin can shrink, and it takes
+      // a user edit to get here.
+      pinnedHeight = CANVAS_VIEWPORT_HEIGHT
+      fitPasses = 0
+      if (observerDocument.body) {
+        observerDocument.body.style.height = `${CANVAS_VIEWPORT_HEIGHT}px`
+      }
       scheduleMeasure()
     })
     return () => {

@@ -167,9 +167,13 @@ describe('canvas iframe body presentation', () => {
       expect(frameDocument.body.style.backgroundImage).toBe(
         'linear-gradient(rgb(12, 18, 24), rgb(24, 36, 48))',
       )
-      expect(frameDocument.body.style.height).toBe('auto')
+      // Body's height is the canvas's fitted pin, not `auto`: a DEFINITE height
+      // is what lets an authored `body { height: 100% }` chain resolve instead
+      // of collapsing. It opens at the viewport height and only grows from there
+      // (`resolveFrameFitHeight`). Authored sizing still can't replace it.
+      expect(frameDocument.body.style.height).toBe('800px')
       expect(frameDocument.body.style.minHeight).toBe('800px')
-      expect(frameDocument.body.style.overflow).toBe('hidden')
+      expect(frameDocument.body.style.overflow).toBe('visible')
       expect(frameDocument.body.style.overflowX).toBe('')
       expect(frameDocument.body.id).toBe('site-body')
       expect(frameDocument.body.getAttribute('role')).toBe('document')
@@ -192,9 +196,13 @@ describe('canvas iframe body presentation', () => {
 
     await waitFor(() => {
       expect(frameDocument.body.style.backgroundColor).toBe('rgb(30, 42, 54)')
-      expect(frameDocument.body.style.height).toBe('auto')
+      // Body's height is the canvas's fitted pin, not `auto`: a DEFINITE height
+      // is what lets an authored `body { height: 100% }` chain resolve instead
+      // of collapsing. It opens at the viewport height and only grows from there
+      // (`resolveFrameFitHeight`). Authored sizing still can't replace it.
+      expect(frameDocument.body.style.height).toBe('800px')
       expect(frameDocument.body.style.minHeight).toBe('800px')
-      expect(frameDocument.body.style.overflow).toBe('hidden')
+      expect(frameDocument.body.style.overflow).toBe('visible')
       expect(frameDocument.body.style.overflowY).toBe('')
       expect(frameDocument.body.hasAttribute('id')).toBe(false)
       expect(frameDocument.body.getAttribute('dir')).toBe('rtl')
