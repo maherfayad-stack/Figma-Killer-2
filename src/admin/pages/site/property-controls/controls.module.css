@@ -390,11 +390,11 @@
     padding: var(--space-m) 0 0 var(--space-m);
 }
 
-/* ── StructuredValueControl ──────────────────────────────────────────────── */
-/* A prop holding an array/object has no editable form — see
-   StructuredValueControl. This is a summary line, styled as inert text at the
-   same height as the inputs it stands in for so the row grid doesn't jump. */
-.structuredValue {
+/* ── CodeValueControl ────────────────────────────────────────────────────── */
+/* A prop this panel cannot write — a structured value, or any prop on a
+   source-locked node. This is a summary line, styled as inert text at the same
+   height as the inputs it stands in for so the row grid doesn't jump. */
+.codeValue {
     display: flex;
     align-items: center;
     gap: var(--space-4xs);
@@ -406,6 +406,6 @@
     text-overflow: ellipsis;
 }
 
-.structuredValueHint {
+.codeValueHint {
     color: var(--text-subtle);
 }

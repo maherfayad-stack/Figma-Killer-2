@@ -34,7 +34,7 @@ import { ImageControl } from './ImageControl'
 import { MediaLibraryControl } from './MediaLibraryControl'
 import { UrlControl } from './UrlControl'
 import { SvgControl } from './SvgControl'
-import { StructuredValueControl } from './StructuredValueControl'
+import { CodeValueControl } from './CodeValueControl'
 import { DataTableControl } from './DataTableControl'
 import { DynamicBindingControl } from './DynamicBindingControl'
 import { getDynamicBindingMode } from './bindingCompatibility'
@@ -70,6 +70,13 @@ interface RenderControlOptions {
   onChange: (key: string, val: unknown) => void
   isOverride?: boolean
   disabled?: boolean
+  /**
+   * Set when the selected node is SOURCE-LOCKED — `PageNode.lockReason`. Every
+   * prop on such a node is unwritable (`updateNodeProps` returns early, and
+   * silently, because agents and plugins call it too), so no control here may
+   * present itself as an input. Carries the reason so the row can say it.
+   */
+  sourceLockReason?: string
   dynamicBinding?: DynamicBindingRenderContext
 }
 
@@ -120,6 +127,7 @@ export function PropertyControlRenderer({
   onChange,
   isOverride = false,
   disabled = false,
+  sourceLockReason,
   dynamicBinding,
 }: RenderControlOptions) {
   const layout = resolveControlLayout(control)
@@ -144,7 +152,9 @@ export function PropertyControlRenderer({
     layout,
   }
 
-  if (isStructuredValue(control, value)) {
+  // Nothing writable behind this control: either the value has no scalar form,
+  // or the node itself refuses writes. Same read-only row for both.
+  if (sourceLockReason !== undefined || isStructuredValue(control, value)) {
     return (
       <div
         data-testid={`property-control-${propKey}`}
@@ -152,7 +162,7 @@ export function PropertyControlRenderer({
         data-category={category}
         data-layout={layout}
       >
-        <StructuredValueControl {...shared} value={value} />
+        <CodeValueControl {...shared} value={value} {...(sourceLockReason ? { hint: sourceLockReason } : {})} />
       </div>
     )
   }

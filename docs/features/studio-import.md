@@ -57,7 +57,7 @@ src/modules/alm/
                                   layout-transparent host so a component keeps the author's layout
 
 src/admin/pages/site/property-controls/
-└── StructuredValueControl.tsx — read-only stand-in for an array/object prop value
+└── CodeValueControl.tsx        — read-only stand-in for any prop this panel cannot write
 
 src/core/css-sanitize/
 └── cssValueForProperty.ts     — the number → `px` rule, shared by canvas and publisher
@@ -254,6 +254,24 @@ Resolving a whole `translations` object is memoized per `SourceFile`, and a prov
 
 A resolved value is *derived*. Writing an edited literal back over `{t.homepage.greeting}` would destroy the real i18n binding in the user's source file, so the node is locked with `lockReason: 'value from <source>'` and carries `ParsedNode.resolution = { source, note? }` so the editor can explain why.
 
+### A locked node says so, everywhere it is edited
+
+`updateNodeProps`, `setNodeInlineStyles`, and `startInlineEdit` all return early on `lockReason`, and **silently** — the first two are also called by agents and plugins, where a toast would be noise.
+
+Silent was the whole problem. The panel still rendered an ordinary textarea holding the real copy, so the obvious move (click the text, retype it) produced nothing at all with no explanation on screen. **42% of the nodes on the eSIM board are source-locked** — 176 conditional branches, 150 resolved values, 50 dynamic subtrees, 118 `.map` iterations, 6 spreads — so this is the common case, not an edge one.
+
+Every surface that cannot write now says why, using `lockReason`'s own wording (the parser writes it to be read by a person: `value from c.hotelsTitle`, `item 2 of DEALS`, `one branch of several — chosen in code`):
+
+| Surface | Behaviour |
+|---|---|
+| Properties panel, top | `SourceLockedNotice` — the reason, plus `resolution.note` when the evaluator had to choose a branch (which locale it showed) |
+| Every prop row | `CodeValueControl` — the value read-only, followed by `· <reason>`. No input, no select, `data-disabled="true"` so no binding affordance offers to overwrite it |
+| Inline styles | A read-only `EmptyState` instead of `InlineStyleComposer`. **Classes are unaffected** — assigning one writes `node.classIds`, which the lock does not gate, so styling an imported element from the panel still works |
+| HTML attributes tab | `readOnly` |
+| Canvas double-click | An `info` toast. This one is announced where the store's other early-returns stay silent, because it is the only one a user can mistake for a bug: they double-clicked real copy sitting right there and nothing happened. (Double-clicking a container has no inline-edit contract at all, which needs no announcement.) |
+
+What this does NOT do is make the value editable. The honest writeback for `{c.hotelsTitle}` is the dictionary entry in `src/i18n/translations.js`, one hop away and a real string literal — but `resolution.source` records the expression TEXT, not a source location, and there is no codemod for an object-literal property. Editing resolved values at their real origin is a separate piece of work; this change is about not pretending it already exists.
+
 ---
 
 ## Structured props — arrays and objects
@@ -271,7 +289,7 @@ This exists because a design-system component's most important props are not sca
 | A structured value records **no `Resolution`**, so it does **not** lock the node | `withResolutionLock` locks to protect a *writeback target*, and a structured value is never one (`setJsxProp` writes scalars; the studio save path filters to scalars first). Locking would cost the user the ability to edit the sibling `title` |
 | `style` and `dangerouslySetInnerHTML` are excluded from `extractProps` | `extractInlineStyles` and `extractRawSvgMarkup` own them. Before objects resolved, the scalar-only evaluator declined them implicitly; now the exclusion has to be stated |
 
-**The properties panel does not offer to edit one.** `PropertyControlRenderer` renders `StructuredValueControl` — a read-only summary (`2 items · set in code`) — for any array/object value on a scalar control. The `TextControl` it replaces showed `[object Object]` in an editable box, and one keystroke would have replaced a whole array of actions with that string.
+**The properties panel does not offer to edit one.** `PropertyControlRenderer` renders `CodeValueControl` — a read-only summary (`2 items · set in code`) — for any array/object value on a scalar control. The `TextControl` it replaces showed `[object Object]` in an editable box, and one keystroke would have replaced a whole array of actions with that string.
 
 **`alm.*` modules declare every prop `Type.Unknown()`.** The generated manifest records `tsType: 'unknown'` for all of them, so `Type.String()` was a lie: `validateNodeProps` ran `Value.Parse`, an `actions` array failed `Check`, and the module fell back to its declared defaults. Declaring the truth passes values through untouched — a boolean `open` stays a boolean instead of becoming `"true"`.
 
@@ -450,7 +468,7 @@ Honest list, all deliberate:
 - **An image behind hook state.** `SLIDE_IMAGES[index]` where `index` is `useState(0)` does not resolve — reading hook state is Tier D. The two carousel slides on the eSIM corpus are the only instances.
 - **An `<img>` in a JSX branch the source would not take.** Every branch renders (Tier D), so `{addOn.image ? <img …/> : <Icon …/>}` yields an `<img>` with no `src` for the items that carry an `icon` instead.
 - **`{children}` splicing depth.** Spliced content that is itself an intermediate inlined id from a deeper nesting level would produce a dangling reference. Does not occur in practice; documented in `inlineLocalComponents.ts` rather than solved with general bookkeeping.
-- **Everything §7 resolved is read-only** on the canvas, by design.
+- **Everything §7 resolved is read-only** on the canvas, by design — now stated on every surface rather than silently discarded ([above](#a-locked-node-says-so-everywhere-it-is-edited)).
 
 ---
 
@@ -466,7 +484,7 @@ Honest list, all deliberate:
 | `?raw` imports, `node_modules`, symlink containment, transform fallback | `src/core/page-parser/__tests__/rawSvgImports.test.ts` |
 | Image imports through data structures, inline-`<svg>` serialisation, Tier A operators | `src/core/page-parser/__tests__/imageAssetsAndInlineSvg.test.ts` |
 | A repo unlike the validation corpus (barrels, named exports, typed data, CSS modules, hooks) | `src/core/page-parser/__tests__/genericRepoShapes.test.ts` |
-| Panel never offers an editable input for a structured value | `src/__tests__/property-controls/PropertyControlRenderer.test.tsx` |
+| Panel never offers an editable input for a structured value, or for any prop on a source-locked node | `src/__tests__/property-controls/PropertyControlRenderer.test.tsx` |
 | Stylesheet collection, ordering, escape rejection | `src/core/studio-sync/__tests__/collectPageStylesheets.test.ts` |
 | CSS round-trip, id stability, classIds | `server/handlers/__tests__/studioCss.test.ts` |
 | Asset route guards | `server/handlers/__tests__/studioAsset.test.ts` |

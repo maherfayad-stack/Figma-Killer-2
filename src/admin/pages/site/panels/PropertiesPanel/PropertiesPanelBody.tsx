@@ -37,6 +37,7 @@ import { MultiSelectorInspector } from './MultiSelectorInspector'
 import { SelectorInspector } from './SelectorInspector'
 import { canComponentizeNode } from '@site/componentization'
 import { SharedComponentNotice } from './SharedComponentNotice'
+import { SourceLockedNotice } from './SourceLockedNotice'
 import styles from './PropertiesPanel.module.css'
 
 interface PropertiesPanelBodyProps {
@@ -145,6 +146,9 @@ export function PropertiesPanelBody(props: PropertiesPanelBodyProps): React.Reac
       {selectedNode?.fromComponent && selectedNodeId ? (
         <SharedComponentNotice componentName={selectedNode.fromComponent} nodeId={selectedNodeId} />
       ) : null}
+      {selectedNode?.lockReason ? (
+        <SourceLockedNotice lockReason={selectedNode.lockReason} note={selectedNode.resolution?.note} />
+      ) : null}
       <nav className={styles.nodeViewSwitcher} aria-label="Element options">
         <Button
           variant="ghost"
@@ -195,6 +199,7 @@ export function PropertiesPanelBody(props: PropertiesPanelBodyProps): React.Reac
           activeBreakpointId={activeBreakpointId}
           nodeId={selectedNodeId}
           inlineStyles={selectedNode.inlineStyles}
+          sourceLockReason={selectedNode.lockReason}
           moduleContent={moduleTabContent}
           onFocusClassPicker={onFocusClassPicker}
         />
@@ -202,7 +207,8 @@ export function PropertiesPanelBody(props: PropertiesPanelBodyProps): React.Reac
         <HtmlAttributesPanel
           nodeId={selectedNode.id}
           htmlAttributes={selectedNode.props.htmlAttributes}
-          readOnly={!permissions.canEditStructure}
+          // A source-locked node refuses every prop write, `htmlAttributes` included.
+          readOnly={!permissions.canEditStructure || selectedNode.lockReason !== undefined}
         />
       )}
     </div>

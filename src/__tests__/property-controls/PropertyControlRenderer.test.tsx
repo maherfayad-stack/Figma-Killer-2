@@ -37,6 +37,7 @@ function renderControl(
   control: PropertyControl,
   propKey = 'myProp',
   value: unknown = '',
+  sourceLockReason?: string,
 ): string {
   return renderToStaticMarkup(
     <PropertyControlRenderer
@@ -44,6 +45,7 @@ function renderControl(
       control={control}
       value={value}
       onChange={() => {}}
+      {...(sourceLockReason !== undefined ? { sourceLockReason } : {})}
     />
   )
 }
@@ -818,7 +820,7 @@ describe('PropertyControlRenderer — structured values', () => {
     // to write back over the source array.
     expect(html).not.toContain('[object Object]')
     expect(html).not.toContain('<input')
-    expect(html).toContain('data-testid="structured-value-actions"')
+    expect(html).toContain('data-testid="code-value-actions"')
     expect(html).toContain('2 items')
   })
 
@@ -853,6 +855,58 @@ describe('PropertyControlRenderer — structured values', () => {
       { gap: '8px' },
     )
 
-    expect(html).not.toContain('structured-value-layout')
+    expect(html).not.toContain('code-value-layout')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Source-locked nodes — the store refuses every prop write, silently
+// ---------------------------------------------------------------------------
+
+describe('PropertyControlRenderer — a source-locked node', () => {
+  it('shows the value read-only with the reason, never an input', () => {
+    const html = renderControl(
+      { type: 'textarea', label: 'Text' },
+      'text',
+      'Enjoy 12% discount on hotels',
+      'value from c.hotelsTitle',
+    )
+
+    // The exact trap this closes: the panel rendered the real copy in a normal
+    // textarea, `updateNodeProps` returned early on `lockReason` without a word,
+    // and retyping the text did nothing at all.
+    expect(html).not.toContain('<textarea')
+    expect(html).not.toContain('<input')
+    expect(html).toContain('Enjoy 12% discount on hotels')
+    expect(html).toContain('value from c.hotelsTitle')
+    expect(html).toContain('data-disabled="true"')
+  })
+
+  it('applies to every control type, not just text', () => {
+    for (const control of [
+      { type: 'select', label: 'Tag', options: [{ label: 'p', value: 'p' }] },
+      { type: 'number', label: 'Size' },
+      { type: 'toggle', label: 'Hidden' },
+      { type: 'color', label: 'Fill' },
+    ] as PropertyControl[]) {
+      const html = renderControl(control, 'k', 'v', 'item 2 of DEALS')
+      expect(html).not.toContain('<input')
+      expect(html).not.toContain('<select')
+      expect(html).toContain('item 2 of DEALS')
+    }
+  })
+
+  it('shows an em dash for a locked prop that has no value', () => {
+    const html = renderControl({ type: 'text', label: 'Alt' }, 'alt', '', 'spread props')
+
+    expect(html).toContain('—')
+    expect(html).toContain('spread props')
+  })
+
+  it('leaves an unlocked node fully editable', () => {
+    const html = renderControl({ type: 'text', label: 'Title' }, 'title', 'Editable')
+
+    expect(html).toContain('<input')
+    expect(html).not.toContain('set in code')
   })
 })

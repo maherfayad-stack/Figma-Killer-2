@@ -15,6 +15,7 @@
  * must revert exactly the inline session, nothing more.
  */
 import { registry } from '@core/module-engine'
+import { pushToast } from '@ui/components/Toast'
 import type { EditorStoreSliceCreator } from '@site/store/types'
 import { getActiveTree } from './selectionSlice'
 
@@ -72,11 +73,27 @@ export const createInlineEditSlice: EditorStoreSliceCreator<InlineEditSlice> = (
     if (def?.editorRuntime?.sandbox && !def.trusted) return
     // A node rendering children doesn't render its text prop (base.link).
     if (node.children.length > 0) return
-    // Source-locked (dynamic) nodes — propagated from the page-parser's
-    // `.map`/ternary/`&&`/spread subtree detection — are not editable inline.
-    // Keyed on `lockReason` (not `locked` alone) so the manual DnD-only
-    // "layer lock" keeps its existing semantics.
-    if (node.lockReason) return
+    // Source-locked nodes — propagated from the page-parser's resolved-value /
+    // `.map` / ternary / spread detection — are not editable inline. Keyed on
+    // `lockReason` (not `locked` alone) so the manual DnD-only "layer lock"
+    // keeps its existing semantics.
+    //
+    // This one gets a TOAST where the other early-returns above stay silent,
+    // because it is the only one the user can mistake for a bug: they
+    // double-clicked real copy that is plainly right there, and nothing
+    // happened. (Double-clicking a container has no inline-edit contract at
+    // all, which needs no announcement.) `startInlineEdit` has exactly one
+    // caller — the canvas double-click handler — so a toast here is always a
+    // response to a real gesture, never programmatic noise.
+    if (node.lockReason) {
+      pushToast({
+        kind: 'info',
+        title: 'This text is set in code',
+        body: `${capitalise(node.lockReason)}. Edit it in the source file — the Properties panel shows where it comes from.`,
+        location: 'canvas:inline-edit',
+      })
+      return
+    }
     // A dynamically-bound prop isn't literal-editable — the binding would
     // overwrite every keystroke in the canvas preview.
     if (node.dynamicBindings?.[spec.prop]) return
@@ -141,3 +158,8 @@ export const createInlineEditSlice: EditorStoreSliceCreator<InlineEditSlice> = (
     })
   },
 })
+
+/** `value from c.hotelsTitle` -> `Value from c.hotelsTitle`, for use mid-sentence. */
+function capitalise(text: string): string {
+  return text.length === 0 ? text : `${text[0]!.toUpperCase()}${text.slice(1)}`
+}

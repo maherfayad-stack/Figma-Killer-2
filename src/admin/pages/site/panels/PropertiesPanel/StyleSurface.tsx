@@ -69,6 +69,13 @@ interface StyleSurfaceProps {
    * the per-node `style=""` layer — instead of a class.
    */
   inlineStyles?: Record<string, unknown>
+  /**
+   * `PageNode.lockReason` when the selected node is source-locked. Inline styles
+   * on such a node are unwritable — `setNodeInlineStyles` returns early — so the
+   * inline composer must not be offered. Classes are NOT affected: assigning one
+   * writes `node.classIds`, which the lock does not gate.
+   */
+  sourceLockReason?: string
   /** Pre-rendered module prop rows shown in the Module section. */
   moduleContent?: ReactNode
   /** Called when 'Add class' is clicked in the locked preview. */
@@ -86,6 +93,7 @@ export function StyleSurface({
   activeBreakpointId,
   nodeId,
   inlineStyles,
+  sourceLockReason,
   moduleContent,
   onFocusClassPicker,
 }: StyleSurfaceProps) {
@@ -169,6 +177,7 @@ export function StyleSurface({
 
   // CSS area content. Branches in priority order:
   //  - caller lacks `site.style.edit`           → role-locked notice
+  //  - source-locked node, inline target        → source-locked notice
   //  - inline-style editing target              → InlineStyleComposer
   //  - active class is set and editable         → StyleRuleComposer
   //  - active class is a locked generated utility → utility notice
@@ -181,6 +190,16 @@ export function StyleSurface({
           variant="centered"
           title="Styles are read-only for your role"
           description="Your role can edit page copy but not classes or style overrides. Ask an editor to make visual changes."
+        />
+      </div>
+    )
+  } else if (showInline && sourceLockReason !== undefined) {
+    cssContent = (
+      <div className={styles.lockedContent}>
+        <EmptyState
+          variant="centered"
+          title="Inline styles come from the source file"
+          description={`This element is ${sourceLockReason}, so its style="" layer is written in code. Assign a CSS class above to style it from here.`}
         />
       </div>
     )

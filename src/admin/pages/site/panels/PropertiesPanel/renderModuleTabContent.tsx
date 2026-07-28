@@ -139,6 +139,7 @@ export function renderModuleTabContent(args: ModuleTabContentArgs): React.ReactN
             value={resolvedPropsForBreakpoint[key]}
             onChange={updateModuleProp}
             isOverride={overrideKeys.has(key)}
+            sourceLockReason={selectedNode.lockReason}
             dynamicBinding={dynamicBindingsEnabled && selectedNodeId ? {
               binding: selectedNode.dynamicBindings?.[key],
               onSet: (binding) => onSetDynamicBinding(key, binding),
