@@ -28,18 +28,27 @@
  * server (same-origin in prod behind Caddy).
  */
 import type { IPersistenceAdapter, SaveSiteOptions } from '@core/persistence/types'
-import { type Page, type SiteDocument, ConditionDefSchema, PageSchema, StyleRuleSchema } from '@core/page-tree'
+import {
+  type Page,
+  type SiteDocument,
+  ConditionDefSchema,
+  PageSchema,
+  StyleRuleSchema,
+  hasWritableSourceLocation,
+  isPropWritableToSource,
+  isStyleWritableToSource,
+  styleValueKey,
+} from '@core/page-tree'
 import { apiRequest } from '@core/http'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { FrameworkSettingsSchema } from '@core/framework-schema'
 import { createDefaultSiteDocument } from '@site/store/slices/site/defaults'
 import { registry } from '@core/module-engine'
+import { CUSTOM_HTML_TAG_VALUE } from '@modules/base/utils/htmlTag'
 import { requestCmsSiteReload } from '@admin/state/adminEvents'
 import { useAdminUi } from '@admin/state/adminUi'
 import { getStudioWorkspaceDir } from './studioWorkspaceDir'
 
-/** Node ids from page-parser are `relFile:line:col` — a decodable source location. */
-const SOURCE_NODE_ID = /^.+:\d+:\d+$/
 
 /**
  * One `kind: 'component'` node's classification (Phase 7A — multi-file
@@ -189,7 +198,7 @@ function snapshotNodeValues(pages: readonly Page[]): Map<string, Record<string, 
         }
       }
       for (const [key, value] of Object.entries(literalInlineStyles(node.inlineStyles))) {
-        values[`style:${key}`] = value
+        values[styleValueKey(key)] = value
       }
       snapshot.set(node.id, values)
     }
@@ -229,6 +238,21 @@ type StudioEditPayload =
   | { kind: 'text'; nodeId: string; text: string }
   | { kind: 'style'; nodeId: string; style: Record<string, string | number> }
   | { kind: 'literal'; nodeId: string; text: string }
+  | { kind: 'tag'; nodeId: string; tag: string }
+
+/**
+ * The HTML tag an element node renders as, or `undefined` when the module has no
+ * tag property. `base.container`'s select uses a sentinel plus a free-text
+ * `customTag` for anything outside its built-in list, so the effective name is
+ * one of two props — collapsed here so the writeback deals in one value.
+ */
+function effectiveTag(props: Record<string, unknown> | undefined): string | undefined {
+  const tag = props?.tag
+  if (typeof tag !== 'string') return undefined
+  if (tag !== CUSTOM_HTML_TAG_VALUE) return tag
+  const custom = props?.customTag
+  return typeof custom === 'string' && custom.length > 0 ? custom : undefined
+}
 
 /** Narrows a node's `inlineStyles` bag down to the string/number values `setJsxStyle` can write. */
 function literalInlineStyles(inlineStyles: Record<string, unknown> | undefined): Record<string, string | number> {
@@ -310,10 +334,30 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
           }
         }
 
-        if (!SOURCE_NODE_ID.test(node.id)) continue
+        // No single source location to write to (a synthetic `index:body` root, a
+        // `.map` iteration). Reached only after the text-origin branch above,
+        // which is why a `.map` row can still have its own copy edited.
+        if (!hasWritableSourceLocation(node.id)) continue
+
+        // The element's own name, not an attribute — see `effectiveTag`. Diffed
+        // against the loaded baseline the same way, then routed to the rename
+        // codemod instead of the attribute writer.
+        // Restricted to `base.*`, whose source element IS the host tag at this
+        // location. A design-system component's `tag`, if it has one, is a real
+        // prop it forwards — renaming `<Sheet>` is not what the user asked for.
+        if (node.moduleId.startsWith('base.')) {
+          const tag = effectiveTag(node.props)
+          const baselineTag = effectiveTag(baseline)
+          if (tag !== undefined && tag !== baselineTag) {
+            edits.push({ kind: 'tag', nodeId: node.id, tag })
+          }
+        }
 
         for (const [prop, value] of Object.entries(node.props ?? {})) {
           if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') continue
+          // Already emitted as a `tag` edit above; writing either as an attribute
+          // would put a junk `tag="section"` on the element and leave it a `<div>`.
+          if (prop === 'tag' || prop === 'customTag') continue
           // Only write what the USER actually changed. This is the guard that
           // makes writeback safe on an imported page: a prop whose source is
           // an expression (`svg={checkSvg}`, `label={t.common.needHelp}`)
@@ -322,6 +366,11 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
           // — silently destroying the binding. `setJsxText` refuses that on
           // the text path, but `setJsxProp` will happily do it.
           if (baseline && Object.is(baseline[prop], value)) continue
+          // Second gate on the same rule the store applies, here because THIS is
+          // the boundary that writes files: `updateNodeProps` refuses a
+          // code-valued prop, but a tree can also arrive from an agent or a
+          // plugin, and a mis-aimed `setJsxProp` bakes a literal over a binding.
+          if (!isPropWritableToSource(node, prop)) continue
           // Already emitted as a `literal` edit aimed at its origin, above.
           if (prop === textProp && node.textOrigin) continue
           if (prop === textProp) {
@@ -339,7 +388,11 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
         // scope for source writeback this slice.
         if (node.moduleId.startsWith('base.')) {
           const style = literalInlineStyles(node.inlineStyles)
-          const changed = Object.entries(style).filter(([k, v]) => !baseline || !Object.is(baseline[`style:${k}`], v))
+          const changed = Object.entries(style).filter(
+            ([k, v]) =>
+              isStyleWritableToSource(node, k) &&
+              (!baseline || !Object.is(baseline[styleValueKey(k)], v)),
+          )
           if (changed.length > 0) {
             edits.push({ kind: 'style', nodeId: node.id, style: Object.fromEntries(changed) })
           }

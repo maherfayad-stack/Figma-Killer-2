@@ -14,6 +14,39 @@ import styles from './BreakpointSelectionOverlay.module.css'
 const TOOLBAR_VERTICAL_OFFSET = 30
 const INSPECTOR_VERTICAL_GAP = 12
 
+/** Minimum breathing room between overlay chrome and the canvas edge. */
+const GUTTER = 4
+
+/**
+ * True when `rect` lies entirely outside the canvas root's visible box. Overlay
+ * coords are canvas-root-relative and the root cannot scroll (`overflow: clip`),
+ * so its visible box is simply `0,0 → width,height`.
+ */
+function isFullyOutOfView(rect: CanvasOverlayRect, canvasRect: DOMRect): boolean {
+  return (
+    rect.x + rect.width <= 0 ||
+    rect.x >= canvasRect.width ||
+    rect.y + rect.height <= 0 ||
+    rect.y >= canvasRect.height
+  )
+}
+
+/**
+ * The part of `rect` inside the canvas root's visible box. Only called after
+ * `isFullyOutOfView` has ruled out an empty intersection, so the result always
+ * describes real on-screen pixels.
+ */
+function intersectWithView(rect: CanvasOverlayRect, canvasRect: DOMRect): CanvasOverlayRect {
+  const left = Math.max(rect.x, 0)
+  const top = Math.max(rect.y, 0)
+  return {
+    x: left,
+    y: top,
+    width: Math.min(rect.x + rect.width, canvasRect.width) - left,
+    height: Math.min(rect.y + rect.height, canvasRect.height) - top,
+  }
+}
+
 /**
  * Last placement applied per overlay element ('hidden' or the exact rect).
  * Lets the WRITE phase no-op when nothing moved — same-value style writes
@@ -148,19 +181,18 @@ export function hideSurplusRings(container: HTMLDivElement, keep: number): void 
  * toolbar when there is no measurable selection or when the selection sits
  * entirely outside the canvas root's visible area — otherwise the toolbar
  * would "hang on screen" detached from the element it belongs to. For
- * partial overlap, the canvas root's overflow:hidden clips it.
+ * partial overlap, the canvas root's `overflow: clip` clips it.
  *
  * Scoped path: toolbar lives inside the canvas root (position: absolute), so
- * `left`/`top` are in canvas-root scroll-content coordinates — exactly the
- * coordinate space `union` is measured in. Fixed path (fallback,
- * `canvasRect === null`): toolbar lives in document.body (position: fixed)
- * and the same values are viewport (client) coordinates.
+ * `left`/`top` are canvas-root-relative — exactly the coordinate space `union`
+ * is measured in, because the root cannot scroll (`overflow: clip`). Fixed path
+ * (fallback, `canvasRect === null`): toolbar lives in document.body
+ * (position: fixed) and the same values are viewport (client) coordinates.
  */
 export function positionToolbar(
   toolbar: HTMLDivElement | null,
   union: CanvasOverlayRect | null,
   canvasRect: DOMRect | null,
-  scroll: { left: number; top: number },
 ): void {
   if (!toolbar) return
   if (!union) {
@@ -168,20 +200,9 @@ export function positionToolbar(
     return
   }
 
-  if (canvasRect) {
-    const visibleLeft = scroll.left
-    const visibleRight = scroll.left + canvasRect.width
-    const visibleTop = scroll.top
-    const visibleBottom = scroll.top + canvasRect.height
-    const elementFullyOutOfBounds =
-      union.x + union.width <= visibleLeft ||
-      union.x >= visibleRight ||
-      union.y + union.height <= visibleTop ||
-      union.y >= visibleBottom
-    if (elementFullyOutOfBounds) {
-      hideOverlayElement(toolbar)
-      return
-    }
+  if (canvasRect && isFullyOutOfView(union, canvasRect)) {
+    hideOverlayElement(toolbar)
+    return
   }
 
   // Keep toolbar actions reachable when a wide selected element overlaps the
@@ -189,13 +210,10 @@ export function positionToolbar(
   // out-of-bounds selections are hidden above; clamping here only affects
   // partially visible selections.
   if (canvasRect && toolbar.style.display === 'none') toolbar.style.display = ''
-  const rawX = union.x
-  let x = rawX
+  let x = union.x
   if (canvasRect) {
-    const gutter = 4
-    const minX = scroll.left + gutter
-    const maxX = Math.max(minX, scroll.left + canvasRect.width - toolbar.offsetWidth - gutter)
-    x = Math.min(Math.max(rawX, minX), maxX)
+    const maxX = Math.max(GUTTER, canvasRect.width - toolbar.offsetWidth - GUTTER)
+    x = Math.min(Math.max(x, GUTTER), maxX)
   }
 
   const placement: CanvasOverlayRect = {
@@ -226,12 +244,20 @@ export function positionToolbar(
  * that scopes the inspector to whichever studio board frame holds the
  * selected node) or when the selection sits entirely outside the canvas
  * root's visible area, mirroring `positionToolbar`'s out-of-bounds rule.
+ *
+ * The anchor is the element's VISIBLE region, not its raw rect. A selected
+ * element wider or taller than the canvas viewport — or one panned so its top
+ * left corner sits off-screen, which is ordinary on a studio board of
+ * phone-sized frames — has a raw `rect.x`/`rect.y` far outside the viewport.
+ * Clamping that raw corner onto the canvas parked this panel of form controls
+ * against the canvas edge, hundreds of pixels from the element it edits, with
+ * no visible relationship to it. Intersecting first keeps the panel beside the
+ * part of the element the user can actually see.
  */
 export function positionInspector(
   inspector: HTMLDivElement | null,
   rect: CanvasOverlayRect | null,
   canvasRect: DOMRect | null,
-  scroll: { left: number; top: number },
 ): void {
   if (!inspector) return
   if (!rect) {
@@ -239,34 +265,24 @@ export function positionInspector(
     return
   }
 
-  if (canvasRect) {
-    const visibleLeft = scroll.left
-    const visibleRight = scroll.left + canvasRect.width
-    const visibleTop = scroll.top
-    const visibleBottom = scroll.top + canvasRect.height
-    const elementFullyOutOfBounds =
-      rect.x + rect.width <= visibleLeft ||
-      rect.x >= visibleRight ||
-      rect.y + rect.height <= visibleTop ||
-      rect.y >= visibleBottom
-    if (elementFullyOutOfBounds) {
-      hideOverlayElement(inspector)
-      return
-    }
+  if (canvasRect && isFullyOutOfView(rect, canvasRect)) {
+    hideOverlayElement(inspector)
+    return
   }
 
   if (canvasRect && inspector.style.display === 'none') inspector.style.display = ''
   let x = rect.x
+  let anchorBottom = rect.y + rect.height
   if (canvasRect) {
-    const gutter = 4
-    const minX = scroll.left + gutter
-    const maxX = Math.max(minX, scroll.left + canvasRect.width - inspector.offsetWidth - gutter)
-    x = Math.min(Math.max(x, minX), maxX)
+    const visible = intersectWithView(rect, canvasRect)
+    const maxX = Math.max(GUTTER, canvasRect.width - inspector.offsetWidth - GUTTER)
+    x = Math.min(Math.max(visible.x, GUTTER), maxX)
+    anchorBottom = visible.y + visible.height
   }
 
   const placement: CanvasOverlayRect = {
     x,
-    y: rect.y + rect.height + INSPECTOR_VERTICAL_GAP,
+    y: anchorBottom + INSPECTOR_VERTICAL_GAP,
     width: rect.width,
     height: rect.height,
   }

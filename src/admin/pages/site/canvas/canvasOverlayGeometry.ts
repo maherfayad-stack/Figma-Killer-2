@@ -8,11 +8,15 @@
  * ELEMENT in the parent doc IS scaled by the canvas transform layer, so we
  * recover the canvas zoom from the iframe element itself
  * (`clientRect.width / offsetWidth`), multiply the inner rect by that scale,
- * add the iframe's outer offset, subtract the canvas-root origin, and add the
- * canvas root's scroll offset (zero in the fixed-position fallback mode).
- * `overflow: hidden` roots can still gain nonzero programmatic scroll offsets
- * when iframe focus/selection scrolls content into view, and absolutely
- * positioned overlay children are laid out in that scroll-content space.
+ * add the iframe's outer offset, and subtract the canvas-root origin.
+ *
+ * There is deliberately no scroll term. The canvas root is `overflow: clip`
+ * (see `CanvasRoot.module.css`), which clips the board WITHOUT creating a
+ * scroll container — its scroll offsets are structurally pinned at 0, so the
+ * canvas-root client rect IS the overlay coordinate origin. This used to add
+ * `scrollLeft`/`scrollTop` to compensate for an `overflow: hidden` root that
+ * the browser scrolled behind the user's back on iframe focus; that scroll is
+ * now impossible, so compensating for it would be dead arithmetic.
  */
 import { nodeVisualRect } from './canvasDomGeometry'
 
@@ -26,10 +30,7 @@ export interface CanvasOverlayRect {
 export interface CanvasOverlayMeasureSession {
   /** Canvas-root client rect, or null in the fixed/body fallback mode. */
   canvasRect: DOMRect | null
-  /** Canvas-root scroll offsets in the same axis as measured overlay rects. */
-  scrollLeft: number
-  scrollTop: number
-  /** Measure one iframe element into overlay scroll-content coords. */
+  /** Measure one iframe element into canvas-root-relative overlay coords. */
   measure(target: HTMLElement | null): CanvasOverlayRect | null
 }
 
@@ -47,15 +48,11 @@ export function createCanvasOverlayMeasureSession(
   const iframeRect = iframe.getBoundingClientRect()
   const iframeScale = iframe.offsetWidth > 0 ? iframeRect.width / iframe.offsetWidth : 1
   const canvasRect = canvasRoot ? canvasRoot.getBoundingClientRect() : null
-  const scrollLeft = canvasRoot?.scrollLeft ?? 0
-  const scrollTop = canvasRoot?.scrollTop ?? 0
-  const originLeft = (canvasRect?.left ?? 0) - scrollLeft
-  const originTop = (canvasRect?.top ?? 0) - scrollTop
+  const originLeft = canvasRect?.left ?? 0
+  const originTop = canvasRect?.top ?? 0
 
   return {
     canvasRect,
-    scrollLeft,
-    scrollTop,
     measure(target) {
       // Duck-type check (`getBoundingClientRect` is callable) rather than
       // `instanceof Element` because iframe nodes have their own Element class.

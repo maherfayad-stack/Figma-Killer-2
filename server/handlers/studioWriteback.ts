@@ -18,7 +18,7 @@
  */
 import { join } from 'node:path'
 import { INLINE_ID_SEPARATOR } from '@core/page-parser'
-import { setJsxProp, setJsxStyle, setJsxText, setStringLiteral } from '@core/ast-codemods'
+import { setJsxProp, setJsxStyle, setJsxTagName, setJsxText, setStringLiteral } from '@core/ast-codemods'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 
 const NODE_LOC_ID = /^(.*):(\d+):(\d+)$/
@@ -66,8 +66,28 @@ const LiteralEditSchema = Type.Object({
   text: Type.String(),
 })
 
+/**
+ * One element rename — `setJsxTagName`.
+ *
+ * `tag` is the one editor property that is not an attribute: it is synthesized
+ * from the element's NAME so an imported `<h1>` keeps rendering as an `<h1>`.
+ * Writing it through `setJsxProp` added a literal `tag="section"` attribute and
+ * left the element a `<div>`, so it gets its own kind and its own codemod.
+ */
+const TagEditSchema = Type.Object({
+  kind: Type.Literal('tag'),
+  nodeId: Type.String(),
+  tag: Type.String(),
+})
+
 /** Discriminated union of every studio edit kind — `kind` is the discriminator. */
-export const StudioEditSchema = Type.Union([PropEditSchema, TextEditSchema, StyleEditSchema, LiteralEditSchema])
+export const StudioEditSchema = Type.Union([
+  PropEditSchema,
+  TextEditSchema,
+  StyleEditSchema,
+  LiteralEditSchema,
+  TagEditSchema,
+])
 export type StudioEdit = Static<typeof StudioEditSchema>
 
 /** A decoded writeback target: workspace-relative file plus 1-based line/column. */
@@ -225,6 +245,9 @@ export function applyStudioEdit(dir: string, edit: StudioEdit): boolean {
       return true
     case 'literal':
       setStringLiteral({ ...loc, value: edit.text })
+      return true
+    case 'tag':
+      setJsxTagName({ ...loc, tag: edit.tag })
       return true
   }
 }

@@ -59,6 +59,20 @@ export const PageNodeSchema = Type.Object({
     col: Type.Number(),
   })),
   /**
+   * Studio import — the prop names on this node that are NOT writable back to
+   * source, because the source holds an expression rather than a literal
+   * attribute. Inline-style entries appear as `style:<property>`.
+   *
+   * This is what the editor's edit guards consult, NOT `locked`/`lockReason`.
+   * Those two describe the node's STRUCTURE (a `.map` generated it, a ternary
+   * chose it, a spread feeds it) and say nothing about whether `title="Where
+   * to?"` on it is a writable literal. Gating props on the structural lock
+   * refused every prop on 42% of an imported app's nodes — including the plain
+   * literal attributes that `setJsxProp` rewrites precisely — while the panel
+   * went on showing live-looking inputs. See `ParsedNode.codeProps`.
+   */
+  codeProps: Type.Optional(Type.Array(Type.String())),
+  /**
    * Studio import (§2) — the local component this node was inlined out of
    * (`'SheetHeader'`). Provenance, not a lock: the node is editable and its
    * writeback target is that component's own source location.
@@ -85,6 +99,22 @@ function parseResolution(raw: unknown): { source: string; note?: string } | unde
   return typeof r.note === 'string' ? { source: r.source, note: r.note } : { source: r.source }
 }
 
+/** Parse a raw `textOrigin` field — same per-field tolerance as `resolution`. */
+function parseTextOrigin(raw: unknown): { rel: string; line: number; col: number } | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const r = raw as Record<string, unknown>
+  if (typeof r.rel !== 'string' || r.rel.length === 0) return undefined
+  if (typeof r.line !== 'number' || typeof r.col !== 'number') return undefined
+  return { rel: r.rel, line: r.line, col: r.col }
+}
+
+/** Parse a raw `codeProps` field, keeping only the string entries. */
+function parseCodeProps(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined
+  const names = raw.filter((entry): entry is string => typeof entry === 'string' && entry.length > 0)
+  return names.length > 0 ? names : undefined
+}
+
 /**
  * Parse a single PageNode, throwing `Error('<nodePath>.<field>: <message>')` on
  * required-field failures so parsePage/parseSiteDocument can report the exact
@@ -108,11 +138,19 @@ export function parsePageNode(raw: unknown, nodePath: string): PageNode {
   // Page-only overlay: template data-binding map. Silently dropped if invalid.
   const dynamicBindings = parseDynamicBindings(r.dynamicBindings)
   const resolution = parseResolution(r.resolution)
+  // Studio provenance. Carried through the tolerant parser for the same reason
+  // as `resolution`: dropping it silently would turn an editable resolved text
+  // back into a dead field, and turn a code-valued prop back into one the editor
+  // believes it may overwrite.
+  const textOrigin = parseTextOrigin(r.textOrigin)
+  const codeProps = parseCodeProps(r.codeProps)
 
   return {
     ...base,
     ...(dynamicBindings !== undefined ? { dynamicBindings } : {}),
     ...(resolution !== undefined ? { resolution } : {}),
+    ...(textOrigin !== undefined ? { textOrigin } : {}),
+    ...(codeProps !== undefined ? { codeProps } : {}),
     ...(typeof r.fromComponent === 'string' && r.fromComponent.length > 0
       ? { fromComponent: r.fromComponent }
       : {}),

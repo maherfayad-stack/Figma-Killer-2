@@ -143,3 +143,42 @@ describe('applyStudioEdit — the literal kind', () => {
     expect(read('src/consts.ts')).toContain('42')
   })
 })
+
+describe('applyStudioEdit — the tag kind', () => {
+  it('renames the element instead of adding a tag attribute', () => {
+    // The editor's `tag` property is synthesized from the element NAME, so the
+    // old attribute route wrote `tag="section"` and left it a `<div>`.
+    write('src/screens/Home.jsx', 'export default () => (\n  <div className="c">Hi</div>\n)\n')
+
+    const applied = applyStudioEdit(tmpDir, {
+      kind: 'tag',
+      nodeId: 'src/screens/Home.jsx:2:4',
+      tag: 'section',
+    })
+
+    expect(applied).toBe(true)
+    const written = read('src/screens/Home.jsx')
+    expect(written).toContain('<section className="c">Hi</section>')
+    expect(written).not.toContain('tag=')
+  })
+
+  it('refuses a name that is not a plain HTML tag', () => {
+    const source = 'export default () => <div>Hi</div>\n'
+    write('src/screens/Home.jsx', source)
+
+    expect(() =>
+      applyStudioEdit(tmpDir, {
+        kind: 'tag',
+        nodeId: 'src/screens/Home.jsx:1:23',
+        tag: 'div onClick={steal}',
+      }),
+    ).toThrow()
+    expect(read('src/screens/Home.jsx')).toBe(source)
+  })
+
+  it('writes nothing for an escaping path', () => {
+    expect(
+      applyStudioEdit(tmpDir, { kind: 'tag', nodeId: '../outside.tsx:1:1', tag: 'section' }),
+    ).toBe(false)
+  })
+})

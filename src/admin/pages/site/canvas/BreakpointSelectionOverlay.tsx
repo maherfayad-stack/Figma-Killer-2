@@ -343,18 +343,8 @@ export function BreakpointSelectionOverlay({
     for (const { ring, rect } of ringPlacements) positionOverlayElement(ring, rect)
     positionOverlayElement(hoverRef.current, hoverRect)
     syncSelectorHighlightRings(selectorHighlightRef.current, selectorRects)
-    positionToolbar(
-      toolbarRef.current,
-      showToolbar ? toolbarUnion : null,
-      session.canvasRect,
-      { left: session.scrollLeft, top: session.scrollTop },
-    )
-    positionInspector(
-      inspectorRef.current,
-      inspectorNodeId ? inspectorRect : null,
-      session.canvasRect,
-      { left: session.scrollLeft, top: session.scrollTop },
-    )
+    positionToolbar(toolbarRef.current, showToolbar ? toolbarUnion : null, session.canvasRect)
+    positionInspector(inspectorRef.current, inspectorNodeId ? inspectorRect : null, session.canvasRect)
   })
 
   // The RAF loop exists to re-position overlay chrome as the tracked element

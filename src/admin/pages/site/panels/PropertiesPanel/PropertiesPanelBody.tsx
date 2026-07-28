@@ -22,6 +22,7 @@ import { useState } from 'react'
 import { EmptyState } from '@ui/components/EmptyState'
 import { useEditorPermissions } from '@site/editorPermissionsContext'
 import type { AnyModuleDefinition } from '@core/module-engine'
+import { hasWritableSourceLocation, isPropWritableToSource } from '@core/page-tree'
 import type { StyleRule, PageNode } from '@core/page-tree'
 import type { VisualComponent } from '@core/visualComponents'
 import type { ActiveDocument } from '../../store/slices/uiSlice'
@@ -174,6 +175,8 @@ export function PropertiesPanelBody(props: PropertiesPanelBodyProps): React.Reac
           note={selectedNode.resolution?.note}
           textOrigin={selectedNode.textOrigin}
           sharedWith={sharedTextOriginCount}
+          codeProps={selectedNode.codeProps}
+          hasWritableLocation={hasWritableSourceLocation(selectedNode.id)}
         />
       ) : null}
       <nav className={styles.nodeViewSwitcher} aria-label="Element options">
@@ -226,7 +229,16 @@ export function PropertiesPanelBody(props: PropertiesPanelBodyProps): React.Reac
           activeBreakpointId={activeBreakpointId}
           nodeId={selectedNodeId}
           inlineStyles={selectedNode.inlineStyles}
-          sourceLockReason={selectedNode.lockReason}
+          // Only the case where NO inline-style edit can ever land: a `.map` row,
+          // whose single piece of source JSX renders every row, so a `style={{}}`
+          // write there would restyle all of them. A structurally locked element
+          // with a real source location of its own (a ternary branch, a spread
+          // bearer) takes ordinary inline styles — `setJsxStyle` merges into the
+          // literal object at that line. Per-property refusals are handled by
+          // `setNodeInlineStyles` against `codeProps`.
+          sourceLockReason={
+            hasWritableSourceLocation(selectedNode.id) ? undefined : selectedNode.lockReason
+          }
           moduleContent={moduleTabContent}
           onFocusClassPicker={onFocusClassPicker}
         />
@@ -234,8 +246,12 @@ export function PropertiesPanelBody(props: PropertiesPanelBodyProps): React.Reac
         <HtmlAttributesPanel
           nodeId={selectedNode.id}
           htmlAttributes={selectedNode.props.htmlAttributes}
-          // A source-locked node refuses every prop write, `htmlAttributes` included.
-          readOnly={!permissions.canEditStructure || selectedNode.lockReason !== undefined}
+          // `htmlAttributes` is an ordinary prop, so it follows the same per-prop
+          // rule as every other one.
+          readOnly={
+            !permissions.canEditStructure ||
+            !isPropWritableToSource(selectedNode, 'htmlAttributes')
+          }
         />
       )}
     </div>

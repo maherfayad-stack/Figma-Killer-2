@@ -14,6 +14,25 @@ export { BaseNodeSchema,  parseBaseNodeFields } from './baseNode'
 export { asPlainObject } from './parseHelpers'
 export { NodeTreeSchema } from './treeSchema'
 export { PageNodeSchema, parsePageNode } from './pageNode'
+// Studio-imported node ids: their grammar, and the per-prop writeback rule the
+// editor's edit guards consult (NOT `locked`/`lockReason`, which describe
+// structure). See each module's header.
+export {
+  INLINE_ID_SEPARATOR,
+  LOOP_ID_SEPARATOR,
+  decodeSourceNodeId,
+  hasWritableSourceLocation,
+  isInlinedNodeId,
+} from './sourceNodeId'
+export type { SourceNodeLocation } from './sourceNodeId'
+export {
+  isPropWritableToSource,
+  isPropPatchWritableToSource,
+  isStyleWritableToSource,
+  isStylePatchWritableToSource,
+  styleValueKey,
+} from './sourceWritability'
+export type { SourceWritableNode } from './sourceWritability'
 export {
   TreeOperationSchema,
   TreeMutateResultSchema,

@@ -70,9 +70,47 @@ export interface ParsedNode {
   /** Child node ids, in source order. */
   children: string[]
   loc: NodeLoc
-  /** true = rendered but not structurally/prop editable (dynamic surface). */
+  /**
+   * true = this node's STRUCTURE is code-controlled: it may not be moved,
+   * deleted, reordered, or wrapped, because the source does not place it — a
+   * `.map` generated it, a ternary/`&&` chose it, a spread supplies its props.
+   *
+   * Deliberately NOT a statement about its values. Which branch of a conditional
+   * renders has nothing to do with whether `title="Where to?"` on that branch's
+   * element is a writable literal attribute — it is one, at a known line and
+   * column. Value writability is per-prop and lives in `codeProps` below.
+   */
   locked: boolean
   lockReason?: string
+  /**
+   * The prop names on this node whose value is CODE rather than a literal
+   * attribute at this element — so writing an edit back would overwrite an
+   * expression and destroy what it reads. Inline-style entries appear as
+   * `style:<property>`.
+   *
+   * This is the per-prop half of what `locked` used to do wholesale. A node
+   * locked for a structural reason (branch, spread, `.map`) had EVERY prop
+   * refused, silently, which is how an imported app ended up with a properties
+   * panel that showed the right values in live-looking inputs and threw away
+   * every keystroke. Three quarters of those props are ordinary literal
+   * attributes that `setJsxProp` can rewrite precisely.
+   *
+   * A prop is code-valued when §7's evaluator had to resolve it
+   * (`title={c.sheetTitle}`), or when it holds a structured/JSX value that has
+   * no scalar source form at all (`actions={[…]}`, `icon={<Icon/>}`).
+   *
+   * The node's TEXT is included here, under the module's own text prop name,
+   * only once `studio-sync` maps it — and only when it has no writable
+   * `textOrigin`. See `parsedPageToSitePage`.
+   */
+  codeProps?: string[]
+  /**
+   * True when the element's `text` came from an expression rather than a literal
+   * JSX child. Consumed by `studio-sync`, which knows the module's text prop
+   * name and folds this into `PageNode.codeProps` — unless `textOrigin` gives
+   * the edit somewhere honest to land.
+   */
+  codeText?: boolean
   /**
    * The element's text content, captured ONLY when its meaningful children
    * are exactly one non-whitespace `JsxText` node or one string-literal

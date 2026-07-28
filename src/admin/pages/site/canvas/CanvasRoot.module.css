@@ -15,7 +15,18 @@
        rings' internal ordering intact while ensuring the entire canvas — rings
        included — sits below floating overlay panels and sidebars. */
     z-index: 0;
-    overflow: hidden;
+    /* `clip`, NOT `hidden`. Both clip the overflowing board, but `hidden`
+       creates a SCROLL CONTAINER — one the user can never scroll with a
+       gesture (pan/zoom is a transform on .layer, not a scroll) yet the
+       browser scrolls on its own whenever something inside gains focus.
+       Clicking any focusable element in a breakpoint iframe — every button,
+       link, and input on an imported screen — made the browser scroll this
+       element to "reveal" the iframe, measured at 420px of vertical jump per
+       click, yanking the board away from the frame the user just clicked.
+       `overflow: clip` creates no scroll container at all, so scrollTop/
+       scrollLeft are pinned at 0 (they ignore assignment) and focus has
+       nowhere to scroll to. The canvas now moves only when the user moves it. */
+    overflow: clip;
     background: var(--bg-surface-2);
     border-top-left-radius: 16px;
     cursor: default;

@@ -19,6 +19,7 @@ import {
   type JsxSpreadAttribute,
   type SourceFile,
 } from 'ts-morph'
+import { LOOP_ID_SEPARATOR } from '@core/page-tree'
 import type { ParsedNode, ParsedPropValue } from './types'
 import { tryResolveExpression, tryResolvePropValue, type PageEvalContext, type Resolution } from './resolutionLock'
 import type { ValueOrigin } from './staticEvalTypes'
@@ -55,8 +56,13 @@ export interface ParseContext {
   idSuffix?: string
 }
 
-/** Separator between a node's source location and its `.map` iteration index. */
-export const LOOP_ID_SEPARATOR = '#'
+/**
+ * Separator between a node's source location and its `.map` iteration index.
+ * Declared in `@core/page-tree`'s `sourceNodeId` with the rest of the id grammar
+ * — including the reason an id carrying it has no writable source location —
+ * and re-exported here because this is where the suffix is applied.
+ */
+export { LOOP_ID_SEPARATOR }
 
 /**
  * Markup that actually opens an `<svg>` document.
@@ -241,9 +247,11 @@ export function extractProps(
   attributes: (JsxAttribute | JsxSpreadAttribute)[],
   ctx: ParseContext,
   kind: ParsedNode['kind'] = 'element',
-): { props: Record<string, ParsedPropValue>; resolutions: Resolution[] } {
+): { props: Record<string, ParsedPropValue>; resolutions: Resolution[]; codeProps: string[] } {
   const result: Record<string, ParsedPropValue> = {}
   const resolutions: Resolution[] = []
+  /** Names whose value came from code, not a literal attribute — see `ParsedNode.codeProps`. */
+  const codeProps: string[] = []
 
   for (const attribute of attributes) {
     if (!Node.isJsxAttribute(attribute)) continue // skip {...spread} attributes
@@ -292,24 +300,34 @@ export function extractProps(
       if (resolved) {
         result[name] = resolved.value
         resolutions.push({ source: expression.getText(), note: resolved.note })
+        // The value shown is what the expression evaluates to; the source holds
+        // the expression. Writing an edit here would replace the binding with a
+        // baked literal, so this one prop is not a writeback target.
+        codeProps.push(name)
         continue
       }
       // A component's prop may also be an array/object. No `Resolution` is
       // recorded for it — see `tryResolvePropValue` for why a structured value
-      // must not lock the node the way a resolved scalar does.
+      // must not lock the node the way a resolved scalar does. It is still
+      // code-valued: `setJsxProp` writes scalars, and there is no scalar form of
+      // an array or a JSX element to write.
       if (kind === 'component') {
         const icon = iconPropFromJsx(expression, ctx.eval)
         if (icon !== undefined) {
           result[name] = icon
+          codeProps.push(name)
           continue
         }
         const structured = tryResolvePropValue(expression, ctx.eval)
-        if (structured !== undefined) result[name] = structured
+        if (structured !== undefined) {
+          result[name] = structured
+          codeProps.push(name)
+        }
       }
     }
   }
 
-  return { props: result, resolutions }
+  return { props: result, resolutions, codeProps }
 }
 
 /**
@@ -326,19 +344,29 @@ export function extractProps(
 export function extractInlineStyles(
   attributes: (JsxAttribute | JsxSpreadAttribute)[],
   ctx: ParseContext,
-): { styles: Record<string, string | number> | undefined; resolutions: Resolution[] } {
+): {
+  styles: Record<string, string | number> | undefined
+  resolutions: Resolution[]
+  /** Style properties whose value came from code — `ParsedNode.codeProps` entries, minus the `style:` prefix the caller adds. */
+  codeStyles: string[]
+} {
   const styleAttr = attributes.find(
     (a): a is JsxAttribute => Node.isJsxAttribute(a) && a.getNameNode().getText() === 'style',
   )
-  if (!styleAttr) return { styles: undefined, resolutions: [] }
+  if (!styleAttr) return { styles: undefined, resolutions: [], codeStyles: [] }
 
   const initializer = styleAttr.getInitializer()
-  if (initializer === undefined || !Node.isJsxExpression(initializer)) return { styles: undefined, resolutions: [] }
+  if (initializer === undefined || !Node.isJsxExpression(initializer)) {
+    return { styles: undefined, resolutions: [], codeStyles: [] }
+  }
   const expression = initializer.getExpression()
-  if (expression === undefined || !Node.isObjectLiteralExpression(expression)) return { styles: undefined, resolutions: [] }
+  if (expression === undefined || !Node.isObjectLiteralExpression(expression)) {
+    return { styles: undefined, resolutions: [], codeStyles: [] }
+  }
 
   const styles: Record<string, string | number> = {}
   const resolutions: Resolution[] = []
+  const codeStyles: string[] = []
   for (const property of expression.getProperties()) {
     if (!Node.isPropertyAssignment(property)) continue // skip shorthand / spread / methods
     const nameNode = property.getNameNode()
@@ -366,10 +394,11 @@ export function extractInlineStyles(
     if (resolved && typeof resolved.value !== 'boolean') {
       styles[key] = resolved.value
       resolutions.push({ source: valueNode.getText(), note: resolved.note })
+      codeStyles.push(key)
     }
   }
 
-  return { styles: Object.keys(styles).length > 0 ? styles : undefined, resolutions }
+  return { styles: Object.keys(styles).length > 0 ? styles : undefined, resolutions, codeStyles }
 }
 
 /**

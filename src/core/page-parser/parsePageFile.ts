@@ -348,6 +348,15 @@ function expandStaticLoop(expr: Node, ctx: ParseContext): string[] | undefined {
   return ids
 }
 
+/**
+ * The `ParsedNode.codeProps` list for one element: prop names whose value is
+ * code, plus its style properties under the `style:` prefix the editor's
+ * inline-style surface reads back.
+ */
+function codePropNames(propNames: string[], styleNames: string[]): string[] {
+  return [...propNames, ...styleNames.map((key) => `style:${key}`)]
+}
+
 /** Creates the `ParsedNode` for one JSXElement/JSXSelfClosingElement. */
 function processElement(
   element: JsxOpeningLike,
@@ -411,6 +420,9 @@ function processElement(
       loc,
       locked: svgLock.locked,
       ...(svgLock.lockReason ? { lockReason: svgLock.lockReason } : {}),
+      // `svg` is markup serialised from the JSX children, not an attribute —
+      // there is nothing at this location for a scalar write to land on.
+      codeProps: codePropNames([...propsResult.codeProps, 'svg'], styleResult.codeStyles),
       ...(styleResult.styles !== undefined ? { inlineStyles: styleResult.styles } : {}),
       ...(svgLock.resolution ? { resolution: svgLock.resolution } : {}),
     }
@@ -435,6 +447,9 @@ function processElement(
       loc,
       locked: rawLock.locked,
       ...(rawLock.lockReason ? { lockReason: rawLock.lockReason } : {}),
+      // `svg` is resolved out of `dangerouslySetInnerHTML={{__html: …}}`, an
+      // expression — see the sibling branch above.
+      codeProps: codePropNames([...propsResult.codeProps, 'svg'], styleResult.codeStyles),
       ...(styleResult.styles !== undefined ? { inlineStyles: styleResult.styles } : {}),
       ...(rawLock.resolution ? { resolution: rawLock.resolution } : {}),
     }
@@ -465,6 +480,8 @@ function processElement(
     ...styleResult.resolutions,
   ])
 
+  const codeProps = codePropNames(propsResult.codeProps, styleResult.codeStyles)
+
   const node: ParsedNode = {
     id,
     kind,
@@ -474,6 +491,8 @@ function processElement(
     loc,
     locked: lock.locked,
     ...(lock.lockReason ? { lockReason: lock.lockReason } : {}),
+    ...(codeProps.length > 0 ? { codeProps } : {}),
+    ...(textResult?.resolution ? { codeText: true } : {}),
     ...(text !== undefined ? { text } : {}),
     // Only when the text came from a `.map` iteration's own scope would this be
     // ambiguous, and `idSuffix` marks those ids as unwritable anyway.

@@ -30,6 +30,8 @@ import {
   wrapNode,
   wrapNodes,
   reindexNodeParents,
+  isPropPatchWritableToSource,
+  isStylePatchWritableToSource,
 } from '@core/page-tree'
 import type { NodeTree, PageNode, SiteDocument } from '@core/page-tree'
 import { subtreeHasOutlet, treeHasOutlet } from '@core/templates'
@@ -317,21 +319,18 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
         (tree) => {
           const node = tree.nodes[nodeId]
           if (!node) throw new Error(`[PageTree] Node "${nodeId}" not found`)
-          // Source-locked (dynamic) nodes — `.map`/ternary/`&&`/spread subtrees
-          // propagated from the page-parser — are not programmatically
-          // editable. Keyed on `lockReason` (truthy only for THIS kind of
-          // lock), not `locked` alone, so the manual DnD-only "layer lock"
-          // keeps its existing selection/move-only semantics. Silent no-op:
-          // this action is also called programmatically (agent, plugins), so
-          // a toast here would be noise, not user feedback.
+          // On a studio-imported node, writability is PER-PROP: a prop backed by
+          // a literal attribute at this element is editable even when the node's
+          // structure is code-controlled (a `.map` made it, a ternary chose it),
+          // while a prop backed by an expression is not, because writing there
+          // would replace the binding with a baked literal. See
+          // `isPropPatchWritableToSource` for why this is not keyed on
+          // `lockReason` — that describes structure, not values.
           //
-          // ONE exception: a patch touching only the node's text prop, on a node
-          // that carries `textOrigin`. The lock protects the JSX from having its
-          // `{c.hotelsTag}` binding overwritten — but that text resolves to a
-          // plain string literal in a real file, and `saveSite` routes this patch
-          // THERE instead of at the JSX. Refusing it made the panel's only
-          // populated field permanently dead for 106 nodes on one imported app.
-          if (node.lockReason && !isTextOriginPatch(node, patch)) return false
+          // Silent no-op: this action is also called programmatically (agent,
+          // plugins), so a toast here would be noise, not user feedback. The
+          // panel is what tells the user, by not offering the control.
+          if (!isPropPatchWritableToSource(node, patch)) return false
           if (!recordPatchChanges(node.props, patch)) return false
           updateNodeProps(tree, nodeId, patch)
           return true
@@ -344,8 +343,10 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
       mutateActiveTree((tree) => {
         const node = tree.nodes[nodeId]
         if (!node) throw new Error(`[PageTree] Node "${nodeId}" not found`)
-        // Same source-lock guard as `updateNodeProps` above.
-        if (node.lockReason) return false
+        // Same per-property rule as `updateNodeProps` above — a `style={{}}`
+        // entry authored as a literal is writable; one resolved from an
+        // expression (`width: `${pct}%``) is not.
+        if (!isStylePatchWritableToSource(node, patch)) return false
         const next: Record<string, unknown> = { ...(node.inlineStyles ?? {}) }
         let changed = false
         for (const [key, value] of Object.entries(patch)) {
@@ -597,19 +598,3 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
   return actions
 }
 
-/**
- * True when `patch` changes nothing but the node's own inline-text prop, and that
- * text has a writable origin (`PageNode.textOrigin`).
- *
- * Both halves matter. The origin is what makes a write possible at all; the
- * single-prop check is what keeps the lock doing its job — a patch that also
- * carried `className` would have no honest target for that half, so the whole
- * patch is refused rather than half-applied.
- */
-function isTextOriginPatch(node: PageNode, patch: Record<string, unknown>): boolean {
-  if (!node.textOrigin) return false
-  const textProp = registry.get(node.moduleId)?.inlineTextEdit?.prop
-  if (!textProp) return false
-  const keys = Object.keys(patch)
-  return keys.length === 1 && keys[0] === textProp
-}

@@ -1,24 +1,23 @@
 /**
- * SourceLockedNotice — states that the selected element's values come from code,
- * so this panel cannot change them.
+ * SourceLockedNotice — explains what the source does to the selected element, and
+ * which of its values that does or does not put out of reach.
  *
- * A Studio-imported node is source-locked when its content is not a literal
- * sitting in the JSX: a value the §7 evaluator resolved from an expression
- * (`{c.hotelsTitle}` behind a `useLanguage()` dictionary), one iteration of a
- * `.map`, one branch of a conditional, or an element behind a spread. The store
- * enforces it — `updateNodeProps`/`setNodeInlineStyles` return early on
- * `lockReason`, deliberately silently, because both are also called
- * programmatically by agents and plugins.
+ * A Studio-imported node is source-locked when the source does not simply place
+ * it: a `.map` generated it, a ternary or `&&` chose it, a spread feeds it, or a
+ * value on it came from an expression (`{c.hotelsTitle}`) rather than a literal.
  *
- * Silent was the whole problem. The panel still rendered an ordinary text box
- * with the current copy in it, so the honest-looking move — click the text,
- * retype it — produced nothing at all, with no explanation anywhere on screen.
- * 42% of the nodes on a real imported board are source-locked, so this is the
- * common case, not an edge one.
+ * The wording matters because the honest answer differs per element, and the
+ * previous version of this notice gave only the pessimistic one ("Set in code.
+ * Edit the source file to change it") for all of them. That was wrong for most:
+ * a conditional's branch is an ordinary element at a known line, and its literal
+ * attributes are precisely writable. What is genuinely unwritable is narrower —
+ * an individual expression-backed prop (marked "set in code" on its own row), and
+ * every prop on a `.map` row, which has no source location of its own because one
+ * piece of JSX renders all of them.
  *
- * `lockReason` is written by the page parser to be read by a person
- * ("value from c.hotelsTitle", "item 2 of DEALS", "one branch of several —
- * chosen in code"), so it is shown verbatim rather than re-worded here.
+ * `lockReason` is written by the page parser to be read by a person ("value from
+ * c.hotelsTitle", "item 2 of DEALS", "one branch of several — chosen in code"),
+ * so it is shown verbatim rather than re-worded here.
  */
 import { LockSolidIcon } from 'pixel-art-icons/icons/lock-solid'
 import styles from './SharedComponentNotice.module.css'
@@ -30,34 +29,64 @@ interface SourceLockedNoticeProps {
   note?: string
   /**
    * `PageNode.textOrigin` — where the text's string literal lives, when it has
-   * one. Its presence flips this notice from "read-only" to "editable, and here
-   * is where your edit lands", because that is the actual behaviour.
+   * one. Its presence means an edit to the text lands there instead of on the
+   * JSX, so the notice can say where the user's typing will go.
    */
   textOrigin?: { rel: string; line: number; col: number }
   /** How many nodes across the site resolve their text to the SAME literal. */
   sharedWith?: number
+  /** `PageNode.codeProps` — the individual props with no writable target. */
+  codeProps?: string[]
+  /**
+   * False for a `.map` row: one piece of source JSX renders every row, so no prop
+   * write here could land on this row alone.
+   */
+  hasWritableLocation: boolean
 }
 
-export function SourceLockedNotice({ lockReason, note, textOrigin, sharedWith }: SourceLockedNoticeProps) {
+export function SourceLockedNotice({
+  lockReason,
+  note,
+  textOrigin,
+  sharedWith,
+  codeProps,
+  hasWritableLocation,
+}: SourceLockedNoticeProps) {
+  const codeValued = (codeProps ?? []).filter((name) => !name.startsWith('style:'))
+
   return (
     <div className={styles.notice} role="note" data-testid="source-locked-notice">
       <LockSolidIcon size={14} className={styles.icon} />
       <p className={styles.text}>
-        {textOrigin ? (
+        <strong>{lockReason}</strong>
+        {note ? <> {note}.</> : '.'}{' '}
+        {hasWritableLocation ? (
           <>
-            Text comes from <strong>{textOrigin.rel}</strong> (line {textOrigin.line}) via{' '}
-            <strong>{lockReason.replace(/^value from /, '')}</strong>. Editing it writes there
-            {sharedWith !== undefined && sharedWith > 1 ? (
-              <> and changes all <strong>{sharedWith}</strong> places that use it</>
+            This element can&apos;t be moved or deleted from here, but its own values
+            are editable and write straight to the source.
+            {codeValued.length > 0 ? (
+              <> {codeValued.length === 1 ? 'One value comes' : `${codeValued.length} values come`}{' '}
+                from an expression (<strong>{codeValued.join(', ')}</strong>) and stays
+                read-only — writing there would replace the code that produces it.
+              </>
             ) : null}
-            . Other properties on this element are set in code.
           </>
         ) : (
           <>
-            Set in code — <strong>{lockReason}</strong>. Edit the source file to change it.
+            One piece of source renders every row of this list, so a change here
+            would apply to all of them — the values stay read-only.
           </>
         )}
-        {note ? <> {note}.</> : null}
+        {textOrigin ? (
+          <>
+            {' '}Its text comes from <strong>{textOrigin.rel}</strong> (line{' '}
+            {textOrigin.line}); editing it writes there
+            {sharedWith !== undefined && sharedWith > 1 ? (
+              <> and changes all <strong>{sharedWith}</strong> places that use it</>
+            ) : null}
+            .
+          </>
+        ) : null}
       </p>
     </div>
   )

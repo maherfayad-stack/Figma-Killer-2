@@ -9,6 +9,7 @@
  */
 import { CUSTOM_HTML_TAG_VALUE, htmlTagControl } from '@modules/base/utils/htmlTag'
 import type { ParsedPage, ParsedNode, ParsedPropValue } from '../page-parser'
+import { hasWritableSourceLocation, styleValueKey } from '../page-tree'
 import type { Page, PageNode } from '../page-tree'
 
 export interface ParsedPageToSitePageOptions {
@@ -94,13 +95,24 @@ export function parsedPageToSitePage(parsed: ParsedPage, opts: ParsedPageToSiteP
       ? opts.resolveClassIds(className)
       : []
 
+    // `className` never reaches the panel (translated to `classIds` above), so
+    // a code-valued one would name a prop that does not exist.
+    const codeProps = (node.codeProps ?? []).filter((name) => name !== 'className')
+
     // Map captured element text onto the module's declared text prop — but
     // an explicit attribute always wins (e.g. `<Button label="x">y</Button>`
     // is a real, if odd, source shape; the attribute is the author's intent).
+    let originTextProp: string | null = null
     if (node.text !== undefined) {
       const textProp = opts.resolveTextProp(moduleId)
       if (textProp !== null && !(textProp in props)) {
         props[textProp] = node.text
+        // Text that came from an expression is only writable if the parser found
+        // the string literal it reads (`textOrigin`) — `saveSite` then aims a
+        // `literal` edit there instead of overwriting the JSX. With no origin
+        // there is nowhere honest to write, so the text prop joins `codeProps`.
+        if (node.textOrigin) originTextProp = textProp
+        else if (node.codeText) codeProps.push(textProp)
       }
     }
 
@@ -109,6 +121,12 @@ export function parsedPageToSitePage(parsed: ParsedPage, opts: ParsedPageToSiteP
     // an `<h1>`/`<li>`/`<section>` into a `<div>`, and `base.text` would turn a
     // `<span>` into a block `<p>`, which visibly breaks inline layout. Each
     // module's own default tag needs no override.
+    //
+    // `tag`/`customTag` are SYNTHESIZED from the element's name rather than read
+    // off an attribute, so they do not write back through `setJsxProp` — the save
+    // adapter routes a change to them as a `tag` edit, which renames the element
+    // itself (`setJsxTagName`). They stay out of `codeProps` because they ARE
+    // editable; they just take a different road.
     if (node.kind === 'element' && !('tag' in props)) {
       const tag = node.name.toLowerCase()
       if (moduleId === 'base.container' && tag !== 'div') {
@@ -125,6 +143,20 @@ export function parsedPageToSitePage(parsed: ParsedPage, opts: ParsedPageToSiteP
       }
     }
 
+    // A `.map` row (`…:70:21#2`) has no source location of its own — one piece of
+    // JSX produced every row, so a prop write there would rewrite all of them.
+    // Its resolved TEXT is the exception: that came from its own array element,
+    // and `textOrigin` says which literal, so it keeps its one editable field.
+    if (!hasWritableSourceLocation(id)) {
+      for (const name of Object.keys(props)) {
+        if (name !== originTextProp && !codeProps.includes(name)) codeProps.push(name)
+      }
+      for (const property of Object.keys(node.inlineStyles ?? {})) {
+        const key = styleValueKey(property)
+        if (!codeProps.includes(key)) codeProps.push(key)
+      }
+    }
+
     nodes[id] = {
       id,
       moduleId,
@@ -132,13 +164,17 @@ export function parsedPageToSitePage(parsed: ParsedPage, opts: ParsedPageToSiteP
       children: [...node.children],
       classIds,
       breakpointOverrides: {},
-      // Propagate the page-parser's source/dynamic lock (`.map`/ternary/`&&`/
-      // spread subtree detection) onto the built PageNode so the editor's
-      // edit-guard checks (nodeActions, inlineEditSlice) can refuse to mutate
-      // these nodes. Distinct from the manual "layer lock" the editor itself
-      // toggles — see `lockReason`'s doc comment in `page-tree/baseNode.ts`.
+      // Propagate the page-parser's STRUCTURAL lock (`.map`/ternary/`&&`/spread
+      // subtree detection) onto the built PageNode, so the editor refuses to
+      // move, delete, or reorder a node the source does not place. Distinct
+      // from the manual "layer lock" the editor itself toggles — see
+      // `lockReason`'s doc comment in `page-tree/baseNode.ts`.
       ...(node.locked ? { locked: true } : {}),
       ...(node.lockReason ? { lockReason: node.lockReason } : {}),
+      // Per-prop writability, which is what the VALUE edit guards read. Kept
+      // separate from the structural lock above because the two answer different
+      // questions — see `PageNode.codeProps`.
+      ...(codeProps.length > 0 ? { codeProps } : {}),
       // Carry the source `style={{…}}` through so the canvas renders the real
       // inline styles (`NodeRenderer` reads `node.inlineStyles`). Without this
       // an authored flex/gap/etc. layout is invisible on the board.

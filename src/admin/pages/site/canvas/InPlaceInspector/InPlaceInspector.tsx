@@ -23,6 +23,7 @@ import type { EditorStore } from '@site/store/store'
 import type { BaseNode } from '@core/page-tree'
 import { registry } from '@core/module-engine'
 import { PropertyControlRenderer } from '@site/property-controls/PropertyControlRenderer'
+import { propLockReason } from '@site/panels/PropertiesPanel/renderModuleTabContent'
 import { visibleInspectorControls } from './visibleInspectorControls'
 import styles from './InPlaceInspector.module.css'
 
@@ -78,6 +79,12 @@ export function InPlaceInspector({ nodeId }: InPlaceInspectorProps) {
             control={control}
             value={props[key]}
             onChange={handleChange}
+            // Same per-prop rule the docked panel and the store use. Without it
+            // this panel rendered an ordinary, focusable, live-looking input for
+            // a prop `updateNodeProps` was going to silently refuse — which is
+            // the whole reported bug: type into `title`, watch nothing happen,
+            // with nothing on screen saying why.
+            sourceLockReason={propLockReason(node, key)}
           />
         ))}
       </div>

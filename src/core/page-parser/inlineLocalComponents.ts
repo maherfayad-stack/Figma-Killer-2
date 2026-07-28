@@ -77,6 +77,7 @@
  */
 import * as path from 'node:path'
 import { Node, type Project, type SourceFile } from 'ts-morph'
+import { INLINE_ID_SEPARATOR } from '@core/page-tree'
 import {
   findComponentDeclaration,
   getFunctionLikeNode,
@@ -120,11 +121,13 @@ export interface InlineOptions {
  * component that itself calls another local component) chains additional
  * segments the same way.
  *
- * Exported so every consumer that needs to recognise a composite id
- * (writeback guards in `server/handlers/studio.ts` and `fsCodemodAdapter.ts`)
- * shares this literal from one place rather than each hardcoding `'~'`.
+ * The literal itself lives in `@core/page-tree`'s `sourceNodeId`, alongside the
+ * grammar of the ids it builds and the "is there one place to write this?"
+ * predicate every writeback path shares. Re-exported here because this module is
+ * where composite ids are MINTED, so a reader arriving at the minting code finds
+ * the separator on the way.
  */
-export const INLINE_ID_SEPARATOR = '~'
+export { INLINE_ID_SEPARATOR }
 
 const DEFAULT_MAX_DEPTH = 6
 const DEFAULT_MAX_NODES = 4000

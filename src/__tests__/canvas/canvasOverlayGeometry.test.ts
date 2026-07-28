@@ -43,7 +43,14 @@ describe('measureCanvasElementRect', () => {
     expect(measureCanvasElementRect(null, fakeIframe, null)).toBeNull()
   })
 
-  it('adds canvas root scroll offsets for absolute overlay positioning', () => {
+  it('measures relative to the canvas root, ignoring any scroll offset on it', () => {
+    // The canvas root is `overflow: clip`, so it has no scroll offsets to
+    // compensate for — `scrollLeft`/`scrollTop` are pinned at 0 and ignore
+    // assignment. They are set to nonzero here on purpose: the geometry must not
+    // read them. It used to, because the root was `overflow: hidden` and the
+    // browser scrolled it behind the user's back whenever an iframe gained focus
+    // (measured at 420px per click on an imported screen full of buttons), which
+    // yanked the board away from the frame the user had just clicked.
     const fakeIframe = {
       offsetWidth: 200,
       getBoundingClientRect: () => testRect({ left: 50, top: 20, width: 100, height: 100 }),
@@ -58,8 +65,10 @@ describe('measureCanvasElementRect', () => {
     } as unknown as HTMLElement
 
     expect(measureCanvasElementRect(fakeTarget, fakeIframe, fakeCanvasRoot)).toEqual({
-      x: 80,
-      y: 35,
+      // iframe.left(50) + target.left(20) * scale(0.5) - canvasRoot.left(10)
+      x: 50,
+      // iframe.top(20) + target.top(40) * scale(0.5) - canvasRoot.top(10)
+      y: 30,
       width: 30,
       height: 40,
     })

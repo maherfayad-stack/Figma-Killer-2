@@ -50,8 +50,16 @@ src/core/page-parser/
 └── resolutionLock.ts         — resolved value → lock + `resolution`; scalar vs structured prop values
 
 src/core/studio-sync/
-├── parsedPageToSitePage.ts    — ParsedPage → Instatic Page (moduleId, text prop, classIds)
+├── parsedPageToSitePage.ts    — ParsedPage → Instatic Page (moduleId, text prop, classIds, codeProps)
 └── collectPageStylesheets.ts  — which .css files a page depends on, in cascade order
+
+src/core/page-tree/
+├── sourceNodeId.ts            — the studio node-id grammar: separators, decode, "is there one place
+│                                 to write this?" (false for a `.map` iteration)
+└── sourceWritability.ts       — the ONE per-prop rule every edit surface asks (`codeProps`)
+
+src/core/ast-codemods/
+└── setJsxTagName.ts           — renames an HTML element; the writeback behind the `tag` property
 
 src/modules/alm/
 └── register.tsx               — design-system components as modules; revives `{ svg }` props into elements;
@@ -251,25 +259,36 @@ Resolving a whole `translations` object is memoized per `SourceFile`, and a prov
 
 **A guard-truncated result is never cached.** A truncated value describes the budget that happened to be left at that moment, not the code — caching one made *which page was parsed first* silently decide whether any copy resolved at all. `Budget.truncated` and `trackTruncation` enforce this; both caches check it.
 
-### Resolved nodes are locked
+### Structure is locked; values are decided per prop
 
-A resolved value is *derived*. Writing an edited literal back over `{t.homepage.greeting}` would destroy the real i18n binding in the user's source file, so the node is locked with `lockReason: 'value from <source>'` and carries `ParsedNode.resolution = { source, note? }` so the editor can explain why.
+Two different facts used to share one field, and conflating them made most of an imported app uneditable.
 
-### A locked node says so, everywhere it is edited
+- **`locked` / `lockReason`** describe the node's **structure**: the source does not simply place it. A `.map` generated it, a ternary or `&&` chose it, a spread feeds it. It may not be moved, deleted, reordered, or wrapped.
+- **`codeProps`** describes its **values**: the prop names with no writable target, because the source holds an expression rather than a literal attribute. Inline-style entries appear as `style:<property>`.
 
-`updateNodeProps`, `setNodeInlineStyles`, and `startInlineEdit` all return early on `lockReason`, and **silently** — the first two are also called by agents and plugins, where a toast would be noise.
+Structure says nothing about values. Which branch renders at runtime has nothing to do with whether `title="Where to?"` on that branch's element is a literal attribute at a known line and column — it is one, and `setJsxProp` rewrites it precisely. **45% of the nodes on the eSIM board are structurally locked** (a screen that opens `if (loading) return <Spinner/>` puts its entire main return behind a branch), so gating values on the structural lock refused nearly everything:
 
-Silent was the whole problem. The panel still rendered an ordinary textarea holding the real copy, so the obvious move (click the text, retype it) produced nothing at all with no explanation on screen. **42% of the nodes on the eSIM board are source-locked** — 176 conditional branches, 150 resolved values, 50 dynamic subtrees, 118 `.map` iterations, 6 spreads — so this is the common case, not an edge one.
+| | editable props, eSIM screens | |
+|---|---|---|
+| | before | after |
+| structurally locked nodes | 0 of 63 (0%) | **40 of 63 (63%)** |
+| unlocked nodes | 120 of 120 | 116 of 120 (the 4 lost are genuinely code-valued) |
+| `.map` rows | 4 of 127 | 4 of 127 (unchanged — see below) |
+| **all** | **124 of 310 (40%)** | **160 of 310 (52%)** |
 
-Every surface that cannot write now says why, using `lockReason`'s own wording (the parser writes it to be read by a person: `value from c.hotelsTitle`, `item 2 of DEALS`, `one branch of several — chosen in code`):
+A prop is code-valued when §7's evaluator resolved it (`title={c.sheetTitle}` — writing there would replace the binding with a baked literal), or when it holds a structured or JSX value with no scalar source form (`actions={[…]}`, `icon={<Icon/>}`). **A `.map` row has no source location of its own** (`hasWritableSourceLocation` is false for a `…#2` id), so every one of its props is code-valued: one piece of JSX renders all the rows, and a write there would change all of them. Its resolved *text* is the exception — that came from its own array element, and `textOrigin` says which literal.
+
+`isPropWritableToSource` in [`src/core/page-tree/sourceWritability.ts`](../../src/core/page-tree/sourceWritability.ts) is the single predicate. Every surface asks it, so what the panel offers and what the store accepts can't drift:
 
 | Surface | Behaviour |
 |---|---|
-| Properties panel, top | `SourceLockedNotice` — the reason, plus `resolution.note` when the evaluator had to choose a branch (which locale it showed) |
-| Every prop row | `CodeValueControl` — the value read-only, followed by `· <reason>`. No input, no select, `data-disabled="true"` so no binding affordance offers to overwrite it |
-| Inline styles | A read-only `EmptyState` instead of `InlineStyleComposer`. **Classes are unaffected** — assigning one writes `node.classIds`, which the lock does not gate, so styling an imported element from the panel still works |
-| HTML attributes tab | `readOnly` |
-| Canvas double-click | An `info` toast. This one is announced where the store's other early-returns stay silent, because it is the only one a user can mistake for a bug: they double-clicked real copy sitting right there and nothing happened. (Double-clicking a container has no inline-edit contract at all, which needs no announcement.) |
+| `updateNodeProps` / `setNodeInlineStyles` | Refuse a patch if **any** key is code-valued — all-or-nothing, because a half-applied patch is a canvas that disagrees with the file it mirrors. Silent: both are also called by agents and plugins, where a toast would be noise |
+| Properties panel, top | `SourceLockedNotice` — the structural reason, `resolution.note` when the evaluator had to choose a branch, and which individual props stay read-only |
+| Prop rows | `CodeValueControl` for a code-valued prop only (`propLockReason`); its literal siblings get their ordinary control |
+| In-place canvas inspector | Same `propLockReason`. It previously rendered a live-looking input for every prop, including ones the store was about to refuse |
+| Inline styles | `InlineStyleComposer` is offered unless the node is a `.map` row. Per-property refusals happen in the store. **Classes are unaffected** either way — assigning one writes `node.classIds`, which none of this gates |
+| HTML attributes tab | `readOnly` only when `htmlAttributes` itself is code-valued |
+| Canvas double-click | An `info` toast when the **text prop** is code-valued. Announced where the store's other early-returns stay silent, because it is the only one a user can mistake for a bug: they double-clicked real copy sitting right there and nothing happened |
 
 ### Resolved TEXT is editable, at its origin
 
@@ -283,18 +302,27 @@ How each piece knows:
 |---|---|
 | Evaluator | `origin` is attached at the ONE place a literal is read out of a file, so every path that merely passes the value along (identifier → const → `pluck` → array index) carries it for free, and every path that COMPUTES a value (template, concatenation, arithmetic, a call) cannot |
 | Parser | `textOrigin` on the node, scoped to text on purpose — see below |
-| Store | `updateNodeProps` admits a patch that touches ONLY the module's `inlineTextEdit` prop on a node with an origin (`isTextOriginPatch`); `startInlineEdit` allows the same node, so canvas double-click works |
-| Panel | `propLockReason` unlocks that one prop and keeps every other one locked |
+| Sync | `parsedPageToSitePage` leaves the text prop OUT of `codeProps` when an origin exists — so "writable" needs no special case downstream, it falls out of the one predicate |
+| Store | `updateNodeProps` and `startInlineEdit` both consult `isPropWritableToSource`, so canvas double-click and the panel field agree |
+| Panel | `propLockReason` offers that prop and keeps the genuinely code-valued ones read-only |
 | Save | `saveSite` emits `kind: 'literal'` with the ORIGIN's `rel:line:col` as its `nodeId`, so the server's existing ordering, dedupe, and touched-file logic all apply unchanged |
 | Codemod | `setStringLiteral` replaces the literal at that exact position, preserving the file's quote style |
 
 **Scoped to text, not hung off `resolution`.** A node can resolve several values (text, `className`, an aria label) and `resolution` keeps only the first — so an origin there could point at the literal behind a *different* prop than the one being edited, and a writeback aimed at the wrong string is worse than none.
 
-**A `.map` row is individually editable.** Each iteration resolved a different array element, so each carries its own origin. The origin path deliberately runs before the `SOURCE_NODE_ID` guard in `saveSite`, because that guard is about JSX locations and a literal edit has nothing to do with the node's own id.
+**A `.map` row's copy is individually editable.** Each iteration resolved a different array element, so each carries its own origin. The origin path deliberately runs before the `hasWritableSourceLocation` guard in `saveSite`, because that guard is about JSX locations and a literal edit has nothing to do with the node's own id.
 
 **Shared copy says so.** A dictionary key is shared by design, so the notice counts how many nodes resolve to the same literal and warns before the user commits — the same treatment `SharedComponentNotice` gives a shared component.
 
-**Still not editable:** a computed text (`` `${count} left` ``) has no single literal to rewrite, and every prop other than text stays locked. Both show the read-only row with the reason.
+**Still not editable:** a computed text (`` `${count} left` ``) has no single literal to rewrite, so `codeText` is set with no origin and `parsedPageToSitePage` puts the text prop into `codeProps`.
+
+### `tag` renames the element
+
+`tag` is the one editor property that is not an attribute: `parsedPageToSitePage` synthesizes it from the element's **name** so an imported `<h1>` keeps rendering as an `<h1>` instead of `base.container`'s default `<div>`.
+
+Routing it through `setJsxProp` therefore did the wrong thing quietly — it added a literal `tag="section"` attribute, which React passes to the DOM as an unknown attribute, while the element stayed a `<div>`. On the eSIM screens that was **140 properties** worth of controls that looked live, changed the canvas, and wrote junk into the user's file.
+
+It now has its own edit kind and codemod. `saveSite` collapses `tag`/`customTag` into one effective name (`effectiveTag`), diffs it against the load baseline, and emits `kind: 'tag'`; `setJsxTagName` renames the opening and closing tag together. Restricted to `base.*` nodes, whose source element IS the host tag at that location. It fails closed on a component reference (`<Sheet>` → `<Dialog>` would need the new name imported and in scope) and on anything that is not a plain HTML tag name.
 
 ### The writeback path is contained
 
@@ -498,7 +526,10 @@ Honest list, all deliberate:
 - **An image behind hook state.** `SLIDE_IMAGES[index]` where `index` is `useState(0)` does not resolve — reading hook state is Tier D. The two carousel slides on the eSIM corpus are the only instances.
 - **An `<img>` in a JSX branch the source would not take.** Every branch renders (Tier D), so `{addOn.image ? <img …/> : <Icon …/>}` yields an `<img>` with no `src` for the items that carry an `icon` instead.
 - **`{children}` splicing depth.** Spliced content that is itself an intermediate inlined id from a deeper nesting level would produce a dangling reference. Does not occur in practice; documented in `inlineLocalComponents.ts` rather than solved with general bookkeeping.
-- **Everything §7 resolved is read-only** on the canvas, by design — now stated on every surface rather than silently discarded ([above](#a-locked-node-says-so-everywhere-it-is-edited)).
+- **A prop §7 resolved is read-only** — that one prop, not its literal siblings and not the node ([above](#structure-is-locked-values-are-decided-per-prop)). Editing a resolved value would replace the expression that produces it.
+- **Nothing on a `.map` row is editable except its own copy.** One piece of source JSX renders every row, so a prop or style write there would change all of them. Its text escapes this because each iteration resolved a different array element and `textOrigin` names the literal.
+- **Renaming a component reference.** `setJsxTagName` renames HTML elements only; `<Sheet>` → `<Dialog>` would need the new name imported and in scope.
+- **The node-id grammar lives in one place now** (`@core/page-tree`'s `sourceNodeId`), consumed by the parser and the client save adapter. `server/handlers/studioWriteback.ts` still has its own `NODE_LOC_ID` regex, because it pairs the decode with a write-permission check on the path; the two agree but nothing enforces that they keep agreeing.
 
 ---
 
@@ -514,7 +545,11 @@ Honest list, all deliberate:
 | `?raw` imports, `node_modules`, symlink containment, transform fallback | `src/core/page-parser/__tests__/rawSvgImports.test.ts` |
 | Image imports through data structures, inline-`<svg>` serialisation, Tier A operators | `src/core/page-parser/__tests__/imageAssetsAndInlineSvg.test.ts` |
 | A repo unlike the validation corpus (barrels, named exports, typed data, CSS modules, hooks) | `src/core/page-parser/__tests__/genericRepoShapes.test.ts` |
-| Panel never offers an editable input for a structured value, or for any prop on a source-locked node | `src/__tests__/property-controls/PropertyControlRenderer.test.tsx` |
+| Panel never offers an editable input for a structured value, or for a code-valued prop | `src/__tests__/property-controls/PropertyControlRenderer.test.tsx` |
+| `codeProps` derived from real source: conditional branches stay editable, resolved props don't, `.map` rows have nothing | `src/core/studio-sync/__tests__/codeProps.test.ts` |
+| Store gate, panel gate, and the writability predicate agreeing | `src/__tests__/studio/resolvedTextEditing.test.ts` |
+| Store refuses a code-valued prop/style, admits a structurally-locked literal one | `src/__tests__/editor-store/lockedNodeGuards.test.ts` |
+| Element rename, and its refusals (component reference, non-tag name) | `src/core/ast-codemods/__tests__/setJsxTagName.test.ts` |
 | Stylesheet collection, ordering, escape rejection | `src/core/studio-sync/__tests__/collectPageStylesheets.test.ts` |
 | CSS round-trip, id stability, classIds | `server/handlers/__tests__/studioCss.test.ts` |
 | Asset route guards | `server/handlers/__tests__/studioAsset.test.ts` |

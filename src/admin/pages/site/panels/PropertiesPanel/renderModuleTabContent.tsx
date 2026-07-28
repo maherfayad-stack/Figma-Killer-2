@@ -21,8 +21,7 @@
  * from being editable without touching the panel shell.
  */
 import { PropertyControlRenderer } from '@site/property-controls/PropertyControlRenderer'
-import { evaluateCondition } from '@core/page-tree'
-import { registry } from '@core/module-engine'
+import { evaluateCondition, isPropWritableToSource } from '@core/page-tree'
 import type {
   AnyModuleDefinition,
   PropertyControl,
@@ -163,14 +162,18 @@ function isPromotedFormProperty(selectedNode: PageNode, key: string): boolean {
 /**
  * Why this one prop cannot be edited, or `undefined` when it can.
  *
- * A source-locked node normally refuses every prop write. Its inline-text prop is
- * the exception when the node carries `textOrigin`: the text resolved from an
- * expression, but the STRING it resolved to is a plain literal in a real file, and
- * `saveSite` routes the edit there. Mirrors `isTextOriginPatch` in `nodeActions`,
- * which is what actually admits the write.
+ * Delegates the decision to `isPropWritableToSource` — the same predicate the
+ * store's `updateNodeProps` guard uses — so the panel offers exactly the controls
+ * the store will accept. When the two disagree the panel wins visually and the
+ * store wins in fact, which is precisely the shape of "I typed and nothing
+ * happened".
+ *
+ * The reason shown is the node's `lockReason` when it has one, because the parser
+ * writes that phrase to be read by a person ("value from c.hotelsTag", "item 2 of
+ * DEALS"). A prop can be code-valued on a node with no structural lock at all —
+ * one resolved attribute among literals — so there is a fallback.
  */
 export function propLockReason(node: PageNode, propKey: string): string | undefined {
-  if (!node.lockReason) return undefined
-  if (node.textOrigin && registry.get(node.moduleId)?.inlineTextEdit?.prop === propKey) return undefined
-  return node.lockReason
+  if (isPropWritableToSource(node, propKey)) return undefined
+  return node.lockReason ?? 'set in code'
 }

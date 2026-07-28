@@ -15,6 +15,7 @@
  * must revert exactly the inline session, nothing more.
  */
 import { registry } from '@core/module-engine'
+import { isPropWritableToSource } from '@core/page-tree'
 import { pushToast } from '@ui/components/Toast'
 import type { EditorStoreSliceCreator } from '@site/store/types'
 import { getActiveTree } from './selectionSlice'
@@ -37,9 +38,10 @@ interface InlineEditSlice {
   /**
    * Start a session for `nodeId` in `breakpointId`'s frame. No-ops when the
    * module doesn't declare `inlineTextEdit`, the node has children
-   * (base.link renders children instead of `text`), the node is
-   * source-locked (`lockReason`), the prop is dynamically bound, or the
-   * stored value isn't a string (corrupt tree → console.warn).
+   * (base.link renders children instead of `text`), the text prop is not
+   * writable back to source (`codeProps` — toasted, since the user
+   * double-clicked visible copy), the prop is dynamically bound, or the stored
+   * value isn't a string (corrupt tree → console.warn).
    */
   startInlineEdit: (nodeId: string, breakpointId: string) => void
   /** Live per-keystroke commit — one coalesced undo entry per session. */
@@ -85,14 +87,18 @@ export const createInlineEditSlice: EditorStoreSliceCreator<InlineEditSlice> = (
     // all, which needs no announcement.) `startInlineEdit` has exactly one
     // caller — the canvas double-click handler — so a toast here is always a
     // response to a real gesture, never programmatic noise.
-    // A node whose text has a writable origin (`textOrigin`) IS editable — the
-    // commit routes to the literal in its own file, not to the JSX. See
-    // `isTextOriginPatch` in `nodeActions`.
-    if (node.lockReason && !node.textOrigin) {
+    // Asked of the TEXT PROP, not the node. A node can be structurally locked (a
+    // ternary chose it, a `.map` made it) and still hold a perfectly writable
+    // literal text child — that is the common case on an imported screen, and
+    // refusing it on the node's lock is what made real copy undoubleclickable.
+    // `codeProps` names the text prop only when the text came from an expression
+    // AND has no `textOrigin` literal to write instead. See
+    // `@core/page-tree`'s `sourceWritability`.
+    if (!isPropWritableToSource(node, spec.prop)) {
       pushToast({
         kind: 'info',
         title: 'This text is set in code',
-        body: `${capitalise(node.lockReason)}. Edit it in the source file — the Properties panel shows where it comes from.`,
+        body: `${capitalise(node.lockReason ?? 'it is computed in code')}. Edit it in the source file — the Properties panel shows where it comes from.`,
         location: 'canvas:inline-edit',
       })
       return
