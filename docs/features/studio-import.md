@@ -13,6 +13,8 @@ The load path is `GET /admin/api/studio/load?dir=<abs>` → `loadStudioPages` (`
 - **Local components are inlined.** A `<Card />` whose import resolves inside the workspace is expanded into its own JSX so the canvas shows real markup, not an opaque box. The call-site node is **replaced** by that JSX, not left wrapping it. Inlined nodes are **editable**, and the panel says how many places an edit will land in.
 - **Package components are not.** `@alm-design/design-system`'s `<Button />` stays a `alm.Button` node rendered by its own module.
 - **`.map` over a statically-resolved array is expanded** into one node per item, so a list renders as a list. Rows are locked (derived from data).
+- **Every `return` in a component renders**, not just the shallowest one. A screen with `if (stage === 'loading') return …` shows both branches, locked — the parser never picks between them.
+- **A component's array/object props survive.** `<ActionSheet actions={[{ label }, { label }]}/>` reaches the canvas as a real array, so the design-system component renders its buttons. HTML elements stay scalar-only (an attribute is a string).
 - **Non-literal values are statically resolved** where it is safe to — `{t.homepage.greeting}` becomes `"Hi Muhammad"`. Resolved nodes are **locked**, because writing an edited literal back over the expression would destroy the binding in the user's source file.
 - **Imported CSS is read-only.** `.css` files become `StyleRule`s and `node.classIds`, but **nothing is ever written back to a `.css` file**. An edit made in the CSS Classes panel is lost on the next reload. See [CSS is one-way](#css-is-one-way).
 - **Writeback is prop/text/style only**, and only for nodes whose id is a real single source location.
@@ -40,11 +42,17 @@ src/core/page-parser/
 ├── staticEval.ts             — public composer for the value evaluator
 ├── staticEvalCore.ts         — Tier A + the recursive walker + binding resolution
 ├── staticEvalCalls.ts        — Tier B (hook → provider) + Tier C (pure calls)
-└── resolutionLock.ts         — turns a resolved value into lock + `resolution` metadata
+└── resolutionLock.ts         — resolved value → lock + `resolution`; scalar vs structured prop values
 
 src/core/studio-sync/
 ├── parsedPageToSitePage.ts    — ParsedPage → Instatic Page (moduleId, text prop, classIds)
 └── collectPageStylesheets.ts  — which .css files a page depends on, in cascade order
+
+src/modules/alm/
+└── register.tsx               — design-system components as modules; revives `{ svg }` props into elements
+
+src/admin/pages/site/property-controls/
+└── StructuredValueControl.tsx — read-only stand-in for an array/object prop value
 
 src/core/css-sanitize/
 └── cssValueForProperty.ts     — the number → `px` rule, shared by canvas and publisher
@@ -146,7 +154,9 @@ Calls a resolvable arrow/function inside `qualifiesForTierC`'s explicit envelope
 
 JSX conditional-branch selection, hook state, effects, async. Do not implement these anywhere in this module. The line is **executing code**: control flow whose outcome the parser cannot know, state it would have to simulate, work it would have to run.
 
-Picking a ternary branch is the sharpest case, and it stays banned because it can look right and be a lie — a stateful screen has many states, and rendering one as if it were the markup misrepresents the source.
+Picking a ternary branch is the sharpest case, and it stays banned because it can look right and be a lie — a stateful screen has many states, and rendering one as if it were the markup misrepresents the source. **The parser's answer to a branch is always "render all of it, lock all of it"** — for a ternary child, a `&&`, and (since the multi-return change below) a component's several `return`s alike.
+
+A **loop inside a callee's body** is likewise not executed, so a call like `applyTokens(svg)` does not resolve. Where the value is raw SVG markup there is a documented fallback — see [SVG through a transform](#svg-through-a-transform-the-evaluator-cannot-run).
 
 ### Bounded loop expansion — not Tier D
 
@@ -165,6 +175,21 @@ The guard rails:
 Decline and the call site keeps its single `dynamic — rendered in code` placeholder — exactly the old behaviour.
 
 Measured on the eSIM corpus: 955 → 1062 nodes, 60 → 78 rendered icons (many icons live inside list rows), 773 → 868 styled elements.
+
+### Every `return` renders — no branch is chosen
+
+`getReturnedJsxRoots` returns **every** JSX-producing `return` in a component's body, in source order, and `parseJsxTree` walks all of them into one `ParsedPage`.
+
+It used to sort the returns by block depth and take the shallowest, which systematically preferred the *fallback* and dropped the *special case*: `EsimAddonIcon`'s data-usage ring — an `<svg>` plus a percentage label behind `if (type === 'ring')` — never appeared on any of the four cards that use it, and multi-stage screens collapsed to their last `return`.
+
+| Rule | Why |
+|---|---|
+| All JSX-bearing returns contribute nodes | Same rule already applied one level down, where a ternary contributes both sides. Choosing would mean evaluating the condition — Tier D |
+| Each subtree is locked, `one branch of several — chosen in code` | Which branch runs is not knowable here, so it is not an editable surface |
+| A `return null` guard does **not** count | It contributes no nodes; counting it would lock an entire editable screen for `if (!data) return null` |
+| Returns inside a nested callback are ignored | They belong to the callback, not the component |
+
+Measured on the eSIM corpus: 1062 → 1154 nodes, 161 → 181 text-bearing nodes.
 
 ### Locked nodes still show their text
 
@@ -190,6 +215,57 @@ Resolving a whole `translations` object is memoized per `SourceFile`, and a prov
 ### Resolved nodes are locked
 
 A resolved value is *derived*. Writing an edited literal back over `{t.homepage.greeting}` would destroy the real i18n binding in the user's source file, so the node is locked with `lockReason: 'value from <source>'` and carries `ParsedNode.resolution = { source, note? }` so the editor can explain why.
+
+---
+
+## Structured props — arrays and objects
+
+`ParsedNode.props` is `Record<string, ParsedPropValue>`, where a value may be a scalar, an array, or a plain object (JSON-shaped, because it crosses HTTP to the editor).
+
+This exists because a design-system component's most important props are not scalars. `<ActionSheet actions={[{ label }, { label }]}/>` was reaching the canvas with no actions at all, so the device-picker screen rendered its title over empty space; `<TabBar items={…}/>` rendered no tabs; `<SegmentedControl items={…}/>` no segments.
+
+| Rule | Why |
+|---|---|
+| **Components only.** An HTML element stays scalar-only | An attribute is a string — an object there could only stringify to `[object Object]`. It also keeps `base.*` modules and the publisher's prop escaping on the scalar diet they were written for |
+| A **function** entry is dropped, never stubbed | `{ label, onClick }` becomes `{ label }`. A handler has no JSON form, and a placeholder would claim behaviour the source does not have |
+| One **unresolved array item** declines the whole array | Rendering the resolvable half reads as "the list is shorter", not "we could not read the list" — the same rule `readStaticLoop` applies |
+| An object left with **no entries** declines | An empty object is not information; an absent prop lets the component fall back to its own default |
+| A structured value records **no `Resolution`**, so it does **not** lock the node | `withResolutionLock` locks to protect a *writeback target*, and a structured value is never one (`setJsxProp` writes scalars; the studio save path filters to scalars first). Locking would cost the user the ability to edit the sibling `title` |
+| `style` and `dangerouslySetInnerHTML` are excluded from `extractProps` | `extractInlineStyles` and `extractRawSvgMarkup` own them. Before objects resolved, the scalar-only evaluator declined them implicitly; now the exclusion has to be stated |
+
+**The properties panel does not offer to edit one.** `PropertyControlRenderer` renders `StructuredValueControl` — a read-only summary (`2 items · set in code`) — for any array/object value on a scalar control. The `TextControl` it replaces showed `[object Object]` in an editable box, and one keystroke would have replaced a whole array of actions with that string.
+
+**`alm.*` modules declare every prop `Type.Unknown()`.** The generated manifest records `tsType: 'unknown'` for all of them, so `Type.String()` was a lie: `validateNodeProps` ran `Value.Parse`, an `actions` array failed `Check`, and the module fell back to its declared defaults. Declaring the truth passes values through untouched — a boolean `open` stays a boolean instead of becoming `"true"`.
+
+### JSX-valued icon props
+
+`<Cell icon={<Icon svg={rewardCardSvg}/>}/>` is how a design system's icon slots are filled, and a React element has no JSON form. Such a prop is captured as **`{ svg: markup }`** — the same key a node carrying raw markup uses (`resolveModuleId` promotes such a node to `base.svg`), so this is one convention read at two altitudes rather than a new one.
+
+`iconPropFromJsx` reads only the element's **own** attributes, one level deep: its `dangerouslySetInnerHTML`, or any attribute resolving to a string that opens an `<svg>` document. A nested layout declines rather than being flattened into an icon.
+
+The module layer turns it back into an element: `reviveIconProps` in `src/modules/alm/register.tsx` — already the adapter between page-tree JSON and React props — replaces a `{ svg }` value with a `<span dangerouslySetInnerHTML>`, sanitised through `sanitizeSvg` for the same reason `SvgEditor` sanitises (never trust that an upstream layer did).
+
+---
+
+## Inline SVG icons — `?raw` imports
+
+`import icon from './x.svg?raw'` plus `dangerouslySetInnerHTML` is how real repos ship icons. `resolveRawTextImport` (`staticEvalCore.ts`) resolves the specifier to the file's text, so one mechanism covers every path the value travels: read directly, aliased through a local `const`, or passed as a prop and substituted into a component.
+
+### Installed-package specifiers
+
+A bare specifier (`@alm-design/design-system/src/icons/line-icons/headset.svg?raw`) resolves by walking `node_modules` up from the importing file, **stopping at the workspace root** — Node's own algorithm, narrowed to one file. ~23 of the eSIM corpus's icons are imported exactly this way and resolved to nothing before it.
+
+**Containment is checked on the real path, after following symlinks.** A workspace can arrive from `/import-github` and git stores symlinks, so a `node_modules` entry is untrusted input: a textual containment check would happily read `~/.ssh/id_rsa` through a link that merely *looks* like it sits under the workspace. An absolute specifier is never read at all.
+
+The cost is that a **linked** `file:../pkg` dependency (or a pnpm store) does not resolve. Installing the package — a real directory — does.
+
+### SVG through a transform the evaluator cannot run
+
+The common real shape is not a bare identifier but `__html: applyTokens(svg)`, where `applyTokens` **loops** over a substitution table swapping hardcoded hex fills for design tokens. A loop in a callee's body is not executed, so the call is unresolved — and 9 illustration icons on the corpus's homepage rendered as blank 48px boxes with their markup one argument away.
+
+`resolveRawSvgMarkup` falls back to the markup the transform was **handed**: one call level deep, first argument that resolves to an `<svg>` document.
+
+What that gives up, stated plainly: the icon renders with the fills the source file holds rather than the ones the transform would have produced (real hex instead of `var(--color-aqua-*)`, so it does not follow a dark theme). It is the same trade `applySubstitutions` already makes for a computed `className`, keeping the static prefix for visual fidelity — and it beats a blank box, which tells the user nothing about their screen.
 
 ---
 
@@ -278,10 +354,12 @@ This is the same move `resolveViewportUnits` makes for `vh`: give authored CSS a
 
 Honest list, all deliberate:
 
-- **`applyTokens(svg)`-style transforms.** The corpus's `IllustrationIcon` pipes its raw markup through a function that loops over a substitution table swapping hardcoded hex fills for design tokens. Loops are Tier D, so the value does not resolve and those icons render empty rather than being guessed at (2 nodes on the corpus). A transform written without a loop resolves normally.
-- **Repeated list content.** A `.map()` over data renders as one locked, opaque node — Tier D is banned.
-- **Multi-stage screens.** A component with several conditional `return`s collapses to the least-nested one.
+- **A transform's own effect.** `applyTokens(svg)` loops, so the call does not resolve; the icon renders with the source's raw fills instead of the token-substituted ones ([why](#svg-through-a-transform-the-evaluator-cannot-run)). A transform written without a loop resolves normally.
+- **`.map` over data the parser cannot read.** A resolved array is expanded ([above](#bounded-loop-expansion--not-tier-d)); an array reached through props/state/fetch stays one locked, opaque node.
+- **Multi-stage screens show every stage at once**, stacked and locked, because choosing one is Tier D. Honest, but a screen with four stages is four screens tall on the board.
 - **Computed `className`.** `` className={`esb esb--${tone}`} `` keeps only its static prefix, so the variant class never attaches.
+- **Linked package dependencies.** A `?raw` import from a symlinked `file:../pkg` (or a pnpm store) does not resolve — containment is checked on the real path ([why](#installed-package-specifiers)). Install the package instead.
+- **A JSX-valued prop that is not an icon.** `iconPropFromJsx` recovers inline SVG markup one level deep; a prop holding a nested layout is dropped rather than flattened.
 - **Only the `previewLocale` branch.** The other locale exists in the dictionary but is not rendered; RTL is not applied.
 - **Dynamic SVG.** An `<svg>` whose captured text contains `{` is treated as dynamic and renders as an empty placeholder. Conservative: a static SVG containing a literal `{` (an embedded `<style>` block) is a false positive.
 - **`{children}` splicing depth.** Spliced content that is itself an intermediate inlined id from a deeper nesting level would produce a dangling reference. Does not occur in practice; documented in `inlineLocalComponents.ts` rather than solved with general bookkeeping.
@@ -295,6 +373,11 @@ Honest list, all deliberate:
 |---|---|
 | Value evaluator, all tiers + guards | `src/core/page-parser/__tests__/staticEval.test.ts` |
 | Local-component inlining | `src/core/page-parser/__tests__/inlineLocalComponents.test.ts` |
+| `.map` expansion | `src/core/page-parser/__tests__/staticLoopExpansion.test.ts` |
+| Every `return` renders, `return null` guards don't lock | `src/core/page-parser/__tests__/multipleReturns.test.ts` |
+| Structured + JSX-valued props | `src/core/page-parser/__tests__/structuredProps.test.ts` |
+| `?raw` imports, `node_modules`, symlink containment, transform fallback | `src/core/page-parser/__tests__/rawSvgImports.test.ts` |
+| Panel never offers an editable input for a structured value | `src/__tests__/property-controls/PropertyControlRenderer.test.tsx` |
 | Stylesheet collection, ordering, escape rejection | `src/core/studio-sync/__tests__/collectPageStylesheets.test.ts` |
 | CSS round-trip, id stability, classIds | `server/handlers/__tests__/studioCss.test.ts` |
 | Asset route guards | `server/handlers/__tests__/studioAsset.test.ts` |

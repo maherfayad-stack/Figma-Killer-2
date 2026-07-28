@@ -67,18 +67,20 @@
  * at the call site reaches the element that actually renders it.
  *
  * (d) stays inside §7's existing envelope; it adds bindings to a scope, not
- * new evaluation powers. So there is still no control-flow execution and no
- * loop expansion: `applyTokens(svg)` in the corpus's `IllustrationIcon`
- * iterates a substitution table and is therefore Tier D — it does not resolve,
- * and that icon renders empty rather than being guessed at. Every other shape
- * (spreads, `.map`) is likewise left as whatever `parseJsxTree` produced.
+ * new evaluation powers. There is still no control-flow execution in a callee's
+ * body: `applyTokens(svg)` in the corpus's `IllustrationIcon` iterates a
+ * substitution table, so the CALL does not resolve — what reaches the canvas is
+ * the markup that transform was handed, untransformed, because a blank box says
+ * less about the screen than the icon's own fills do (`resolveRawSvgMarkup`
+ * states the trade). Every other shape (spreads, `.map`) is left as whatever
+ * `parseJsxTree` produced.
  */
 import * as path from 'node:path'
 import { Node, type Project, type SourceFile } from 'ts-morph'
 import {
   findComponentDeclaration,
   getFunctionLikeNode,
-  getReturnedJsxRoot,
+  getReturnedJsxRoots,
   parseJsxTree,
 } from './parsePageFile'
 import { applySubstitutions, buildSubstitutionEnv } from './componentSubstitution'
@@ -237,13 +239,13 @@ function expandCallSite(
       ? findComponentDeclaration(target.sourceFile)
       : findNamedComponentDeclaration(target.sourceFile, target.exportedName, !target.sameFile)
     const fn = declaration ? getFunctionLikeNode(declaration) : undefined
-    const rootExpr = fn ? getReturnedJsxRoot(fn) : undefined
-    if (!rootExpr || !fn) return false
+    const roots = fn ? getReturnedJsxRoots(fn) : []
+    if (roots.length === 0 || !fn) return false
 
     const targetRelFromRoot = path.relative(state.workspaceRoot, target.sourceFile.getFilePath()).split(path.sep).join('/')
-    let subPage = parseJsxTree(rootExpr, target.sourceFile, targetRelFromRoot, state.workspaceRoot, fn, state.evalOptions)
+    let subPage = parseJsxTree(roots, target.sourceFile, targetRelFromRoot, state.workspaceRoot, fn, state.evalOptions)
     const env = buildSubstitutionEnv(fn, callSiteNode.props)
-    subPage = applySubstitutions(rootExpr, subPage, env, callSiteNode.children, target.sourceFile, targetRelFromRoot, fn, state.evalOptions)
+    subPage = applySubstitutions(roots, subPage, env, callSiteNode.children, target.sourceFile, targetRelFromRoot, fn, state.evalOptions)
 
     // §2.5 — tag every node this call site's subtree produces with the
     // component whose file it came from. These nodes are EDITABLE: their

@@ -31,6 +31,7 @@ import {
   resolveComponentSources,
   STUDIO_ASSET_SENTINEL,
   type ComponentSource,
+  type ParsedPropValue,
   type StaticEvalOptions,
 } from '@core/page-parser'
 import type { ConditionDef, Page, StyleRule } from '@core/page-tree'
@@ -72,7 +73,7 @@ function resolveModuleId(node: {
   name: string
   children: string[]
   text?: string
-  props?: Record<string, string | number | boolean>
+  props?: Record<string, ParsedPropValue>
 }): string {
   if (node.kind === 'component') return `alm.${node.name}`
   // An element carrying resolved raw SVG markup renders as `base.svg`

@@ -1,12 +1,13 @@
 export {
   findComponentDeclaration,
   getFunctionLikeNode,
-  getReturnedJsxRoot,
+  getReturnedJsxRoots,
   parseJsxTree,
   parsePageFile,
 } from './parsePageFile'
+export type { ReturnedJsx } from './parsePageFile'
 export { STUDIO_ASSET_SENTINEL } from './jsxAttributeReaders'
-export type { FunctionLike, NodeLoc, ParsedNode, ParsedPage } from './types'
+export type { FunctionLike, NodeLoc, ParsedNode, ParsedPage, ParsedPropValue } from './types'
 export {
   EXCLUDED_WORKSPACE_DIR_NAMES,
   WORKSPACE_MAX_FILE_BYTES,

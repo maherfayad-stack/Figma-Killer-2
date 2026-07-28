@@ -98,6 +98,39 @@ describe('fsCodemodAdapter — write-loop safety + framework sync', () => {
     expect(calls.some((c) => c.url === '/admin/api/studio/load')).toBe(false)
   })
 
+  it('never ships a structured prop as an edit — there is no scalar to write', async () => {
+    stubFetch()
+    await loadThenResetCalls()
+
+    // `<ActionSheet actions={[{ label }]}/>` reaches the document with a real
+    // array (see `ParsedPropValue`). `setJsxProp` writes a scalar initializer,
+    // so shipping this would either throw or bake `actions="[object Object]"`
+    // over the source array. The only edit that may leave here is `title`.
+    const site = makeSite({
+      pages: [
+        makePage({
+          rootNodeId: 'root',
+          nodes: {
+            root: makeNode({
+              id: 'pages/Device.tsx:9:7',
+              moduleId: 'alm.ActionSheet',
+              props: {
+                title: 'Pick a device',
+                actions: [{ label: 'This device' }, { label: 'Another device' }],
+              },
+            }),
+          },
+        }),
+      ],
+    })
+
+    await fsCodemodAdapter.saveSite(site)
+
+    expect(calls).toHaveLength(1)
+    const body = calls[0]!.body as { edits: Array<{ kind: string; prop?: string }> }
+    expect(body.edits.map((e) => e.prop)).toEqual(['title'])
+  })
+
   it('makes NO request when there are no source-backed edits and the framework is unchanged', async () => {
     stubFetch()
     await loadThenResetCalls()

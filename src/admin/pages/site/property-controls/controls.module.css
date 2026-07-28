@@ -389,3 +389,23 @@
 .groupChildren {
     padding: var(--space-m) 0 0 var(--space-m);
 }
+
+/* ── StructuredValueControl ──────────────────────────────────────────────── */
+/* A prop holding an array/object has no editable form — see
+   StructuredValueControl. This is a summary line, styled as inert text at the
+   same height as the inputs it stands in for so the row grid doesn't jump. */
+.structuredValue {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4xs);
+    min-height: 28px;
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.structuredValueHint {
+    color: var(--text-subtle);
+}

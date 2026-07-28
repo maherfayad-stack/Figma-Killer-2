@@ -8,7 +8,7 @@
  * this converter synthesises one and hangs the parsed root nodes under it.
  */
 import { CUSTOM_HTML_TAG_VALUE, htmlTagControl } from '@modules/base/utils/htmlTag'
-import type { ParsedPage, ParsedNode } from '../page-parser'
+import type { ParsedPage, ParsedNode, ParsedPropValue } from '../page-parser'
 import type { Page, PageNode } from '../page-tree'
 
 export interface ParsedPageToSitePageOptions {
@@ -83,7 +83,7 @@ export function parsedPageToSitePage(parsed: ParsedPage, opts: ParsedPageToSiteP
       text: node.text,
       props: node.props,
     })
-    const props: Record<string, string | number | boolean> = { ...node.props }
+    const props: Record<string, ParsedPropValue> = { ...node.props }
 
     // §6.3 — `className` is how the source attaches styling, but this engine
     // attaches it through `classIds` -> `site.styleRules`. Translate, then drop

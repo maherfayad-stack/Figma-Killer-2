@@ -800,3 +800,59 @@ describe('PropertyControlRenderer — dynamic binding affordance eligibility', (
     }
   })
 })
+
+// ---------------------------------------------------------------------------
+// Structured (array/object) values — read-only, never an editable input
+// ---------------------------------------------------------------------------
+
+describe('PropertyControlRenderer — structured values', () => {
+  it('renders a read-only summary instead of a text input for an array value', () => {
+    const html = renderControl({ type: 'text', label: 'Actions' }, 'actions', [
+      { label: 'This device' },
+      { label: 'Another device' },
+    ])
+
+    // The hazard this guards: `String(value)` in the text branch renders
+    // `[object Object]` in an editable box, and one keystroke would replace the
+    // whole array with that string — which the studio save path would then try
+    // to write back over the source array.
+    expect(html).not.toContain('[object Object]')
+    expect(html).not.toContain('<input')
+    expect(html).toContain('data-testid="structured-value-actions"')
+    expect(html).toContain('2 items')
+  })
+
+  it('summarises an object value by its keys', () => {
+    const html = renderControl({ type: 'text', label: 'Search' }, 'search', {
+      value: 'x',
+      placeholder: 'Search',
+    })
+
+    expect(html).toContain('value, placeholder')
+    expect(html).not.toContain('<input')
+  })
+
+  it('marks the row disabled so no binding affordance offers to overwrite it', () => {
+    const html = renderControl({ type: 'select', label: 'Items', options: [] }, 'items', ['a', 'b'])
+
+    expect(html).toContain('data-disabled="true"')
+    expect(html).not.toContain('<select')
+  })
+
+  it('leaves scalar values on their normal control', () => {
+    const html = renderControl({ type: 'text', label: 'Title' }, 'title', 'Choose a device')
+
+    expect(html).toContain('<input')
+    expect(html).toContain('Choose a device')
+  })
+
+  it('does not hijack a group control, whose value is its children bag', () => {
+    const html = renderControl(
+      { type: 'group', label: 'Layout', children: { gap: { type: 'text', label: 'Gap' } } },
+      'layout',
+      { gap: '8px' },
+    )
+
+    expect(html).not.toContain('structured-value-layout')
+  })
+})

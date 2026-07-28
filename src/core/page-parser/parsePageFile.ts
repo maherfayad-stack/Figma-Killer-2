@@ -45,6 +45,8 @@ type JsxOpeningLike = JsxElement | JsxSelfClosingElement
 const DYNAMIC_LOCK_REASON = 'dynamic — rendered in code'
 const SPREAD_LOCK_REASON = 'spread props'
 const DYNAMIC_SVG_LOCK_REASON = 'dynamic SVG'
+/** One of several `return`s in a component — see `getReturnedJsxRoots`. */
+const BRANCH_LOCK_REASON = 'one branch of several — chosen in code'
 
 /**
  * `project` defaults to a fresh, single-file `Project` (this file only) —
@@ -67,11 +69,11 @@ export function parsePageFile(
 
     const componentDecl = findComponentDeclaration(sourceFile)
     const fn = componentDecl ? getFunctionLikeNode(componentDecl) : undefined
-    const rootExpr = fn ? getReturnedJsxRoot(fn) : undefined
+    const roots = fn ? getReturnedJsxRoots(fn) : []
 
-    if (!rootExpr) return { rootIds: [], nodes: {} }
+    if (roots.length === 0) return { rootIds: [], nodes: {} }
 
-    return parseJsxTree(rootExpr, sourceFile, relFile, appDir, fn, evalOptions)
+    return parseJsxTree(roots, sourceFile, relFile, appDir, fn, evalOptions)
   } catch {
     // Never throw on ordinary pages — anything unexpected just yields an
     // empty (unparsed) page rather than a crash for the caller.
@@ -107,7 +109,7 @@ export function parsePageFile(
  * only behaviour exactly, at zero extra cost.
  */
 export function parseJsxTree(
-  rootExpr: Node,
+  roots: readonly ReturnedJsx[],
   sourceFile: SourceFile,
   relFile: string,
   workspaceRoot: string,
@@ -121,7 +123,10 @@ export function parseJsxTree(
     imageImports: buildImageImportMap(sourceFile, workspaceRoot),
     ...(evalOptions ? { eval: { scope: createEvalScope(sourceFile, componentFn), options: evalOptions } } : {}),
   }
-  const rootIds = collectRootIds(rootExpr, ctx)
+  // One `ctx` across every return, so ids and the eval budget are shared: two
+  // returns in one component can never collide (their JSX is at different
+  // source locations) and the page-wide step budget stays page-wide.
+  const rootIds = roots.flatMap((root) => collectRootIds(root, ctx))
   return { rootIds, nodes: ctx.nodes }
 }
 
@@ -186,51 +191,77 @@ export function getFunctionLikeNode(decl: Node): FunctionLike | undefined {
   return undefined
 }
 
+/** One `return` in a component's body, and whether it is the only one. */
+export interface ReturnedJsx {
+  expr: Node
+  /**
+   * True when the component has more than one `return` — at runtime exactly one
+   * of them renders, and which one is a branch decision the parser does not make.
+   */
+  conditional: boolean
+}
+
 /**
- * Gets the JSX the component's outermost return produces.
+ * Every JSX-producing `return` in a component's body, in source order.
  *
- * For a concise arrow body (`() => (<div/>)`), that's the body itself. For a
- * block body, it's the expression of the "outermost" (least nested inside
- * an `if`/other block) `return` statement that belongs directly to this
- * function — nested function/arrow scopes (event handlers, `.map` callbacks,
- * etc.) are not descended into, since their returns belong to a different
- * component.
+ * For a concise arrow body (`() => (<div/>)`) that is the body itself. For a
+ * block body it is EVERY `return` statement belonging directly to this function
+ * — nested function/arrow scopes (event handlers, `.map` callbacks) are not
+ * descended into, since their returns belong to a different component.
+ *
+ * WHY ALL OF THEM, not the outermost one. This used to sort by block depth and
+ * take the shallowest, which systematically picked the fallback and dropped the
+ * special case: a multi-stage screen collapsed to its last `return`, and
+ * `EsimAddonIcon`'s data-usage ring (a whole `<svg>` + label, behind
+ * `if (type === 'ring')`) never appeared on any of the four cards that use it.
+ *
+ * Rendering all of them is the SAME rule this parser already applies one level
+ * down, where a ternary or `&&` contributes nodes for both sides: conditional
+ * content is shown and locked, never silently chosen between. Choosing WOULD
+ * require evaluating the condition, which is the banned tier.
  */
-export function getReturnedJsxRoot(fn: FunctionLike): Node | undefined {
+export function getReturnedJsxRoots(fn: FunctionLike): ReturnedJsx[] {
   const body = fn.getBody()
-  if (!body) return undefined
+  if (!body) return []
 
   if (!Node.isBlock(body)) {
-    return unwrapParens(body)
+    return [{ expr: unwrapParens(body), conditional: false }]
   }
 
-  const candidates: { node: ReturnStatement; depth: number }[] = []
+  const returns: ReturnStatement[] = []
   body.forEachDescendant((node, traversal) => {
     if (Node.isFunctionDeclaration(node) || Node.isFunctionExpression(node) || Node.isArrowFunction(node)) {
       traversal.skip()
       return
     }
-    if (Node.isReturnStatement(node)) {
-      candidates.push({ node, depth: blockDepth(node, body) })
-    }
+    if (Node.isReturnStatement(node)) returns.push(node)
   })
 
-  if (candidates.length === 0) return undefined
-  candidates.sort((a, b) => a.depth - b.depth)
+  // Only JSX-BEARING returns count towards "more than one". `if (!data) return
+  // null` is the most common early return there is, and it contributes no nodes
+  // — letting it mark the component's real tree conditional would lock an entire
+  // editable screen for a guard clause.
+  const exprs: Node[] = []
+  for (const statement of returns) {
+    const expr = statement.getExpression()
+    if (!expr) continue
+    const unwrapped = unwrapParens(expr)
+    if (containsJsx(unwrapped)) exprs.push(unwrapped)
+  }
 
-  const expr = candidates[0].node.getExpression()
-  return expr ? unwrapParens(expr) : undefined
+  return exprs.map((expr) => ({ expr, conditional: exprs.length > 1 }))
 }
 
-/** Counts how many nested `{ ... }` blocks sit between `node` and `root`. */
-function blockDepth(node: Node, root: Node): number {
-  let depth = 0
-  let current = node.getParent()
-  while (current && current !== root) {
-    if (Node.isBlock(current)) depth += 1
-    current = current.getParent()
-  }
-  return depth
+const JSX_ROOT_KINDS: ReadonlySet<SyntaxKind> = new Set([
+  SyntaxKind.JsxElement,
+  SyntaxKind.JsxSelfClosingElement,
+  SyntaxKind.JsxFragment,
+])
+
+/** Whether `node` is JSX or has JSX anywhere inside it (`cond ? <A/> : <B/>`). */
+function containsJsx(node: Node): boolean {
+  if (JSX_ROOT_KINDS.has(node.getKind())) return true
+  return node.getFirstDescendant((d) => JSX_ROOT_KINDS.has(d.getKind())) !== undefined
 }
 
 function unwrapParens(node: Node): Node {
@@ -245,18 +276,30 @@ function unwrapParens(node: Node): Node {
 // JSX tree walk
 // ---------------------------------------------------------------------------
 
-function collectRootIds(rootExpr: Node, ctx: ParseContext): string[] {
+function collectRootIds(root: ReturnedJsx, ctx: ParseContext): string[] {
+  const { expr: rootExpr } = root
+  // One of several `return`s: the subtree renders, but which branch runs is a
+  // condition this parser does not evaluate, so it is not an editable surface —
+  // exactly the treatment a ternary's two sides already get.
+  const branchLocked = root.conditional
+  const branchReason = branchLocked ? BRANCH_LOCK_REASON : undefined
+
   if (Node.isJsxElement(rootExpr) || Node.isJsxSelfClosingElement(rootExpr)) {
-    return [processElement(rootExpr, ctx, false, undefined)]
+    return [processElement(rootExpr, ctx, branchLocked, branchReason)]
   }
   if (Node.isJsxFragment(rootExpr)) {
-    return processChildren(rootExpr.getJsxChildren(), ctx, false, undefined)
+    return processChildren(rootExpr.getJsxChildren(), ctx, branchLocked, branchReason)
   }
   // The component's own return is itself a dynamic expression (e.g.
   // `return cond ? <A/> : <B/>`) — still walk it, honoring the same locking
   // rule as a nested `{...}` child would get.
   const triggers = isLockingExpression(rootExpr)
-  return collectFromExpression(rootExpr, ctx, triggers, triggers ? DYNAMIC_LOCK_REASON : undefined)
+  return collectFromExpression(
+    rootExpr,
+    ctx,
+    triggers || branchLocked,
+    triggers ? DYNAMIC_LOCK_REASON : branchReason,
+  )
 }
 
 /**
@@ -338,7 +381,7 @@ function processElement(
   const locked = inheritedLocked || hasSpread
   const lockReason = inheritedLocked ? inheritedReason : hasSpread ? SPREAD_LOCK_REASON : undefined
 
-  const propsResult = extractProps(attributes, ctx)
+  const propsResult = extractProps(attributes, ctx, kind)
   const styleResult = extractInlineStyles(attributes, ctx)
 
   // <svg> is captured as one opaque unit for `base.svg` (raw inline markup) —

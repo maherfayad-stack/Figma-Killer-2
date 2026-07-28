@@ -1,14 +1,17 @@
 # Status — STUDIO-ESIM-IMPORT-PLAN implementation
 
-**As of 2026-07-27.** Companion to `STUDIO-ESIM-IMPORT-PLAN.md`.
+**As of 2026-07-28.** Companion to `STUDIO-ESIM-IMPORT-PLAN.md`.
 
-**Headline: all nine sections complete, plus three further rounds of browser
-dogfooding that found nine more defects the green gates had missed.** The largest
-were structural: a phantom wrapper div at every component call site, and `.map`
-lists never being expanded. Full gate run — no failures introduced.
+**Headline: all nine sections complete, plus four rounds of browser dogfooding.**
+Rounds 1-3 found nine defects the green gates had missed, the largest structural:
+a phantom wrapper div at every component call site, and `.map` lists never being
+expanded. Round 4 closed the five gaps that snapshot listed as remaining, all of
+which came down to the same thing — the parser throwing away content it had
+already read.
 
-Read [Round 2 findings](#round-2--what-three-more-passes-in-a-browser-found) for
-everything after §9. That section is the useful part of this document now.
+Read [Round 4](#round-4--closing-the-five-remaining-gaps) first; it is the current
+state. [Round 2 findings](#round-2--what-three-more-passes-in-a-browser-found) is
+the history behind it.
 
 ---
 
@@ -17,7 +20,7 @@ everything after §9. That section is the useful part of this document now.
 | | |
 |---|---|
 | Branch | `feat/alm-figma-killer-studio-shell` |
-| Head | `64e9cc0 feat(studio): expand \`.map\` over resolved arrays, and stop blanking locked nodes' text` |
+| Head | see `git log` — Round 4 lands as one commit on top of `36c6bac` |
 | Working tree | Clean (apart from the `design-system` submodule, which is not ours) |
 
 Four commits land the remaining work:
@@ -262,73 +265,109 @@ Recorded because both are the kind of thing that is invisible later.
 
 ---
 
-## Known remaining limitations
+## Round 4 — closing the five remaining gaps
 
-All deliberate and documented in `docs/features/studio-import.md`. Ordered by how
-visible each one is on the board.
+The Round 2 snapshot ended with a list ordered by visibility. All five items on it
+are now closed. Every one turned out to be the same failure mode: **the parser had
+already read the content and then dropped it** — because the type it was carrying
+it in was too narrow, because a resolution route was missing, or because it picked
+one branch out of several and discarded the rest.
 
-**1. Array- and object-valued props on package components are dropped.**
-`ParsedNode.props` is typed `Record<string, string | number | boolean>`, so
-`<ActionSheet actions={[{ label, onClick }]}/>` reaches the canvas with no
-actions and the DS component renders its title alone. This is why the device
-picker shows "Where do you want to install this eSIM?" and nothing else. Fixing
-it means widening the props type through the parser, `parsedPageToSitePage`, and
-the writeback guard (which must never try to write a non-scalar back). **This is
-the largest remaining visible gap and the obvious next piece of work.**
+| # | Gap | Fix | Corpus effect |
+|---|---|---|---|
+| 1 | Array/object props dropped, so `<ActionSheet actions={[…]}/>` rendered its title alone | `ParsedPropValue` through parser → converter → panel | 3 components populated (2 sheet actions, 5 tabs, 2 segments) |
+| 2 | ~23 design-system icons resolved to nothing | `resolveRawTextImport` walks `node_modules` | 78 → 95 icons with real markup |
+| 3 | `applyTokens(svg)` loop left 9 illustrations blank | fall back to the transform's input | 95 → 104 |
+| 4 | `icon={<Icon/>}` skipped — a React element has no JSON form | capture `{ svg }`; `reviveIconProps` rebuilds the element | 15 icon props, 4/4 Cells now show their icon |
+| 5 | Multi-branch components collapsed to the shallowest `return` | every JSX-bearing `return` renders, locked | 1062 → 1154 nodes, 161 → 181 with text |
 
-**2. Design-system icons need the corpus's dependencies installed.** ~23 icons
-import from `@alm-design/design-system/src/icons/**/*.svg?raw`. The corpus has no
-`node_modules`, so the specifier resolves to nothing. The files do exist in this
-repo at `design-system/src/icons/`, but that path is not on any resolution route
-from the corpus, and hardcoding it would be a workspace-specific hack. Two honest
-options: install/link the package inside the corpus, or teach
-`resolveRawTextImport` to walk `node_modules` for a bare specifier (general, and
-correct — it just needs the package to actually be there).
+### Measurements
 
-**3. `applyTokens(svg)`-style transforms don't resolve.** The corpus's
-`IllustrationIcon` pipes raw markup through a function that **loops** over a
-substitution table swapping hex fills for design tokens. Loops in a callee body
-are Tier D, so 2 illustration icons render empty rather than being guessed at. A
-transform written without a loop resolves normally.
+Same corpus (`studio-workspace/esim-journey/`, 15 screens), same script, before → after:
 
-**4. Frames can be taller than their content.** `resolveCanvasFrameHeight`'s
-shrink path is gated behind `MAX_SELF_RESIZES` (60), and a frame that exhausts the
-budget during first layout keeps whatever height it reached — one board sits at
-4620px around 924px of content. Pre-existing, cosmetic (blank space below the
-screen), and unrelated to the fit logic added in `11badcc`.
+| | Round 2 | Round 4 |
+|---|---|---|
+| Nodes | 1062 | **1154** |
+| Locked | 329 | **479** |
+| Nodes with text | 161 | **181** |
+| Icons with real SVG markup | 78 | **104** |
+| Structured props captured | 0 | **18** |
+| `base.svg` nodes with no markup | 0 | **0** |
 
-**5. Still no gate test keeping `INLINE_ID_SEPARATOR` in sync.**
-`fsCodemodAdapter.ts` and `SharedComponentNotice.tsx` both **mirror** the `'~'`
-literal rather than importing it, because pulling `@core/page-parser` into browser
-code drags ts-morph in and blows the chunk budget ~10x. Three copies now, zero
-tests holding them together. Worth adding.
+Locked went up by 150 and that is the intended trade: the +92 new nodes are
+conditional branches, which are visible-but-not-editable by the same rule a
+ternary's two sides already followed.
 
-**6. Smaller, unchanged:** multi-stage screens collapse to the least-nested
-`return` (~14 elements); `icon={<Icon/>}` JSX-valued props are not descended into
-(~8 elements); computed `className` keeps only its static prefix when the whole
-expression doesn't resolve; only the `previewLocale` branch renders; dynamic-SVG
-detection is `text.includes('{')` and over-triggers on a literal `{`; everything
-§7 resolves is read-only.
+### What the browser confirmed
 
-**Fixed since the last snapshot** — the previous version of this document listed
-"the app shell is not reproduced" as the largest gap. That is resolved: body now
-carries a definite height and is the containing block, so authored
-`html, body { height: 100% }` chains resolve and `inset: 0` overlays anchor
-correctly. Sheet screens no longer collapse.
+Driven with gstack `/browse` against `http://localhost:5173/admin/site?studio`.
+A 1400x2600 viewport mounts all 15 frames at once (the board virtualises, and
+programmatic `scrollTop` does not re-trigger it — resize the viewport instead).
+
+- **DevicePickerSheet** — the screen the user reported as a heading over empty
+  space — now renders `Where do you want to install this eSIM?` plus both
+  `ios-dialog__btn` buttons, `This device` and `Another device`.
+- **HomepageScreen** — `[role=tab]` × 5: Home, Explore, My Trips, Top offers,
+  Profile. All 25 SVGs have real geometry; 10 carry the source's own hex fills,
+  the documented signature of the transform fallback.
+- **SelectPackageSheet** — `Data` / `Days` segments render.
+- **BookingConfirmationScreen** — 4 of 4 `.cell`s have an icon SVG.
+- **BookingDetailsScreen** — 4 `.ec-ring`s *and* 5 `.ec-icon-img`s, i.e. both
+  branches of `EsimAddonIcon`. The ring had never rendered before.
+- **No inner scrolling anywhere.** All 15 frames report `body.scrollHeight -
+  clientHeight <= 0`.
+- **No flicker.** 60 consecutive `requestAnimationFrame`s sampling every frame's
+  height yielded **1** distinct state.
+
+### Two judgement calls worth re-reading
+
+1. **A structured prop does NOT lock its node.** Every other resolved value does.
+   The reason locking exists is to protect a *writeback target*, and a structured
+   value is never one — `setJsxProp` writes scalars, and the save path filters to
+   scalars before reaching it. Locking would have cost the user the ability to edit
+   `ActionSheet`'s `title` to protect an `actions` array they could never edit.
+   The panel's `StructuredValueControl` is what closes the hazard instead.
+2. **`?raw` containment is checked on the REAL path, after `realpathSync`.** That
+   deliberately breaks linked (`file:`/pnpm) dependencies, and the alternative was
+   worse: a workspace can arrive from `/import-github`, git stores symlinks, so a
+   textual check would read any file the server user can and inline it into a page.
+   Note the root is realpath'd too — without that, macOS's `/var` → `/private/var`
+   made every read under `os.tmpdir()` look like an escape (it broke 6 tests
+   before I spotted it).
+
+### Still open
+
+- **Only the `previewLocale` branch renders**; RTL is not applied.
+- **A multi-stage screen is now as tall as all its stages stacked.** Honest, but
+  `ActivationFlowScreen` is 6468px. If this becomes a usability problem the answer
+  is a branch *picker* in the editor — never branch selection in the parser.
+- **Frames can be taller than their content** (`MAX_SELF_RESIZES` staleness).
+  Pre-existing, cosmetic, unrelated to the fit logic.
+- **No gate test keeps `INLINE_ID_SEPARATOR` in sync** across its three mirrored
+  copies (`fsCodemodAdapter.ts`, `SharedComponentNotice.tsx`) — importing
+  `@core/page-parser` into browser code drags ts-morph in and blows the chunk
+  budget.
+- **Dynamic-SVG detection is `text.includes('{')`** and over-triggers on a literal
+  `{`.
+- **One empty icon remains** on BookingConfirmationScreen: `ADD_ONS[0]` has an
+  `image` and no `icon`, and both ternary branches render by design, so the
+  `<Icon>` branch for that row genuinely has no markup. Correct, not a defect.
 
 ---
 
 ## Gate status
 
-Run in full at `64e9cc0`.
+Run in full after Round 4.
 
 | Gate | Result |
 |---|---|
 | `bun run build` (`tsc -b && vite build`) | ✅ |
-| `bun run lint` | ✅ zero errors in `src/` or `server/` |
-| `bun test` | 6789 pass / 16 fail |
+| `bun run lint` | ✅ zero errors in `src/` or `server/` (188 overall, all in the `design-system` submodule and `templates/`) |
+| `bun test` | 6820 pass / 16 fail |
 
-**None of the 16 are ours** — the identical set failed before this work started.
+**None of the 16 are ours** — the identical set was confirmed failing at `36c6bac`
+with this work stashed, including `ClassPropertyRow`, which sits close enough to
+the touched `property-controls/` folder to be worth checking rather than assuming.
 Two regressions were introduced and fixed along the way, both caught by the gate:
 
 - `module-size-budgets` twice. `cssToStyleRules.ts` hit 702 lines (fixed by
@@ -364,8 +403,11 @@ submodule and `templates/` — neither is ours.
   of `github.com/maherfayad-stack/eSIM` → `journey-screens/`, with a hand-written
   `.studio/meta.json`: `pagesDir: "src/screens"`, `previewLocale: "en"`). It is
   git-excluded via `.git/info/exclude`. Read-only input: never commit it. Note it
-  has **no `node_modules`**, so `@alm-design/design-system` CSS is absent — the
-  admin canvas injects those tokens itself, so this does not affect the result.
+  **now has a local `node_modules/@alm-design/design-system`** — a real copy of the
+  package already installed at the repo root, put there so the ~23 package `?raw`
+  icon imports resolve (`npm install` inside the corpus does the same thing). It is
+  inside the git-excluded path, so nothing about it is committed. A **symlink would
+  not work by design** — see Round 4's second judgement call.
 - **A local smoke-test account was added to `.tmp/dev.db`** to drive the UI, since
   the existing `dev@localhost.dev` password is not recoverable:
   `smoke@localhost.dev`, role `admin`. Its password was reset during Round 2 to

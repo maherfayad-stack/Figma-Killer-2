@@ -309,3 +309,151 @@ describe('?raw SVG imports', () => {
     expect(svgNodes(loadNodes('pages/Home.jsx', evalOptions()))).toHaveLength(0)
   })
 })
+
+// ---------------------------------------------------------------------------
+// Installed-package specifiers
+// ---------------------------------------------------------------------------
+
+describe('?raw SVG imports from an installed package', () => {
+  it('resolves a bare specifier through node_modules', () => {
+    write('node_modules/@alm-design/design-system/src/icons/line-icons/headset.svg', SVG)
+    write(
+      'pages/Help.jsx',
+      [
+        "import headsetSvg from '@alm-design/design-system/src/icons/line-icons/headset.svg?raw'",
+        'export default function Help() {',
+        '  return <span dangerouslySetInnerHTML={{ __html: headsetSvg }} />',
+        '}',
+        '',
+      ].join('\n'),
+    )
+
+    // A design system ships its icons inside its package; ~23 of the eSIM
+    // corpus's icons are imported exactly like this.
+    const span = loadNodes('pages/Help.jsx', evalOptions()).find((n) => n.name === 'span')
+    expect(span?.props.svg).toBe(SVG)
+  })
+
+  it('walks up to a node_modules above the importing file, but not above the workspace root', () => {
+    write('node_modules/pkg/icon.svg', SVG)
+    write(
+      'pages/deep/nested/Screen.jsx',
+      [
+        "import icon from 'pkg/icon.svg?raw'",
+        'export default function Screen() {',
+        '  return <span dangerouslySetInnerHTML={{ __html: icon }} />',
+        '}',
+        '',
+      ].join('\n'),
+    )
+
+    const span = loadNodes('pages/deep/nested/Screen.jsx', evalOptions()).find((n) => n.name === 'span')
+    expect(span?.props.svg).toBe(SVG)
+  })
+
+  it('refuses a symlink whose real target is outside the workspace', () => {
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'raw-svg-outside-'))
+    try {
+      fs.writeFileSync(path.join(outside, 'secret.svg'), SVG, 'utf8')
+      fs.mkdirSync(path.join(tmpDir, 'node_modules', 'pkg'), { recursive: true })
+      fs.symlinkSync(path.join(outside, 'secret.svg'), path.join(tmpDir, 'node_modules', 'pkg', 'icon.svg'))
+      write(
+        'pages/Leak.jsx',
+        [
+          "import icon from 'pkg/icon.svg?raw'",
+          'export default function Leak() {',
+          '  return <span dangerouslySetInnerHTML={{ __html: icon }} />',
+          '}',
+          '',
+        ].join('\n'),
+      )
+
+      // A workspace can arrive from /import-github, and git stores symlinks — so
+      // a textual containment check would read any file the server user can.
+      const span = loadNodes('pages/Leak.jsx', evalOptions()).find((n) => n.name === 'span')
+      expect(span?.props.svg).toBeUndefined()
+    } finally {
+      fs.rmSync(outside, { recursive: true, force: true })
+    }
+  })
+
+  it('never reads an absolute specifier', () => {
+    write(
+      'pages/Abs.jsx',
+      [
+        "import icon from '/etc/hosts.svg?raw'",
+        'export default function Abs() {',
+        '  return <span dangerouslySetInnerHTML={{ __html: icon }} />',
+        '}',
+        '',
+      ].join('\n'),
+    )
+
+    const span = loadNodes('pages/Abs.jsx', evalOptions()).find((n) => n.name === 'span')
+    expect(span?.props.svg).toBeUndefined()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Markup reached through a transform the evaluator cannot run
+// ---------------------------------------------------------------------------
+
+describe('?raw SVG through an unevaluatable transform', () => {
+  it('falls back to the transform\'s input rather than rendering nothing', () => {
+    write('assets/wallet.svg', SVG)
+    write(
+      'components/IllustrationIcon.jsx',
+      [
+        "const SUBSTITUTIONS = [['fill=\"#fff\"', 'fill=\"var(--bg)\"']]",
+        'function applyTokens(raw) {',
+        '  let out = raw',
+        '  for (const [from, to] of SUBSTITUTIONS) out = out.replaceAll(from, to)',
+        '  return out',
+        '}',
+        'export default function IllustrationIcon({ svg, size = 48 }) {',
+        '  return <span style={{ width: size }} dangerouslySetInnerHTML={{ __html: applyTokens(svg) }} />',
+        '}',
+        '',
+      ].join('\n'),
+    )
+    write(
+      'pages/Home.jsx',
+      [
+        "import IllustrationIcon from '../components/IllustrationIcon'",
+        "import walletSvg from '../assets/wallet.svg?raw'",
+        'export default function Home() {',
+        '  return <IllustrationIcon svg={walletSvg} size={24} />',
+        '}',
+        '',
+      ].join('\n'),
+    )
+
+    // `applyTokens` loops over a substitution table, which the evaluator does
+    // not execute — so the call is unresolved and the markup would otherwise be
+    // dropped, leaving a blank 24px box. 9 homepage illustrations on the eSIM
+    // corpus were exactly this.
+    const span = loadNodes('pages/Home.jsx', evalOptions()).find((n) => n.name === 'span')
+    expect(span?.props.svg).toBe(SVG)
+    // Untransformed, and that is the honest cost: the source's own fills, not the
+    // token-substituted ones the transform would have produced.
+    expect(span?.props.svg).not.toContain('var(--bg)')
+  })
+
+  it('still resolves nothing when the transform\'s input is not SVG markup', () => {
+    write(
+      'pages/Text.jsx',
+      [
+        'const LABEL = "not markup"',
+        'export default function Text() {',
+        '  return <span dangerouslySetInnerHTML={{ __html: shout(LABEL) }} />',
+        '}',
+        '',
+      ].join('\n'),
+    )
+
+    // The fallback recovers a transform's SVG input; it is not a licence to pour
+    // arbitrary strings into `base.svg`.
+    const span = loadNodes('pages/Text.jsx', evalOptions()).find((n) => n.name === 'span')
+    expect(span?.props.svg).toBeUndefined()
+  })
+})

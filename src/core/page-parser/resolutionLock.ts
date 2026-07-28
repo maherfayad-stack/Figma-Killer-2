@@ -8,7 +8,7 @@
  */
 import type { Node } from 'ts-morph'
 import { evaluateExpression, type EvalScope, type StaticEvalOptions, type StaticValue } from './staticEval'
-import type { ParsedNode } from './types'
+import type { ParsedNode, ParsedPropValue } from './types'
 
 /** The `(scope, options)` pair `parseJsxTree` builds once per page when the caller opts into §7 — see `ParseContext.eval` in `parsePageFile.ts`. */
 export interface PageEvalContext {
@@ -46,6 +46,72 @@ export function tryResolveExpression(
   const result: StaticValue = evaluateExpression(expr, evalCtx.scope, evalCtx.options)
   if (result.kind !== 'literal' || result.value === null) return undefined
   return { value: result.value, note: result.note }
+}
+
+/**
+ * Converts a resolved `StaticValue` tree into the JSON-shaped `ParsedPropValue`
+ * a component prop can carry, or `undefined` when nothing usable came back.
+ *
+ * Three deliberate rules, all about not lying about what the source says:
+ *
+ *  - A FUNCTION entry is dropped, never stubbed. `{ label, onClick }` becomes
+ *    `{ label }`: the handler has no JSON form, and inventing a placeholder
+ *    would make the canvas claim a behaviour the source does not have. The
+ *    object is still worth keeping — the label is the part that renders.
+ *  - An unresolved ARRAY ITEM declines the whole array. Rendering the resolvable
+ *    half would silently drop a row, which reads as "the list is shorter" rather
+ *    than "we could not read the list" — same rule `readStaticLoop` applies.
+ *  - An OBJECT that ends up with no entries at all declines. An empty object is
+ *    not information; a prop that resolved to nothing should stay absent so the
+ *    component falls back to its own default.
+ */
+function staticValueToPropValue(value: StaticValue): ParsedPropValue | undefined {
+  switch (value.kind) {
+    case 'literal':
+      return value.value === null ? undefined : value.value
+    case 'array': {
+      const items: ParsedPropValue[] = []
+      for (const item of value.items) {
+        const converted = staticValueToPropValue(item)
+        if (converted === undefined) return undefined
+        items.push(converted)
+      }
+      return items
+    }
+    case 'object': {
+      const entries: Record<string, ParsedPropValue> = {}
+      for (const [key, entry] of value.entries) {
+        const converted = staticValueToPropValue(entry)
+        if (converted !== undefined) entries[key] = converted
+      }
+      return Object.keys(entries).length > 0 ? entries : undefined
+    }
+    // A bare function or an unresolved value carries nothing renderable.
+    case 'fn':
+    case 'unresolved':
+      return undefined
+  }
+}
+
+/**
+ * `tryResolveExpression`'s structured sibling: also accepts an array/object
+ * result. Used only for COMPONENT props (see `extractProps`) — an HTML
+ * attribute is a string, so a structured value there is meaningless.
+ *
+ * Returns no `note`-carrying `Resolution` obligation to the caller, and that is
+ * intentional: `withResolutionLock` locks a node because a resolved value must
+ * never be written back over its binding, and a structured value is not a
+ * writeback target in the first place (`setJsxProp` only takes scalars, and the
+ * studio save path filters to scalars before it gets there). Locking the node
+ * would cost the user the ability to edit the component's `title` next to an
+ * `actions` array they were never able to edit anyway.
+ */
+export function tryResolvePropValue(
+  expr: Node,
+  evalCtx: PageEvalContext | undefined,
+): ParsedPropValue | undefined {
+  if (!evalCtx) return undefined
+  return staticValueToPropValue(evaluateExpression(expr, evalCtx.scope, evalCtx.options))
 }
 
 /**

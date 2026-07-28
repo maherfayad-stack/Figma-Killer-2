@@ -19,6 +19,25 @@ import type { ArrowFunction, FunctionDeclaration, FunctionExpression } from 'ts-
  */
 export type FunctionLike = ArrowFunction | FunctionDeclaration | FunctionExpression
 
+/**
+ * A value a prop can hold. Scalars are the whole story for an HTML element —
+ * an attribute is a string — but a COMPONENT prop is routinely an array of
+ * objects (`<ActionSheet actions={[{ label }, { label }]}/>`), and dropping
+ * those left real design-system components rendering their title and nothing
+ * else. See `extractProps` for why only component props are captured
+ * structurally.
+ *
+ * JSON-shaped on purpose: this crosses HTTP to the editor as `PageNode.props`.
+ * A function-valued entry (`onClick`) has no JSON form and is dropped, not
+ * stubbed — see `staticValueToPropValue`.
+ */
+export type ParsedPropValue =
+  | string
+  | number
+  | boolean
+  | readonly ParsedPropValue[]
+  | { readonly [key: string]: ParsedPropValue }
+
 export interface NodeLoc {
   /** appDir-relative POSIX path. */
   file: string
@@ -33,8 +52,12 @@ export interface ParsedNode {
   kind: 'element' | 'component'
   /** Tag name / component identifier, e.g. "div" or "Button". */
   name: string
-  /** Literal attributes only — non-literal expression props are skipped. */
-  props: Record<string, string | number | boolean>
+  /**
+   * Literal attributes, plus whatever §7's evaluator resolved. Scalars for
+   * every element; a COMPONENT may also carry an array/object value — see
+   * `ParsedPropValue`. An expression that does not resolve is skipped.
+   */
+  props: Record<string, ParsedPropValue>
   /**
    * The element's `style={{ … }}` object-literal attribute, flattened to its
    * literal (string/number) entries so the canvas can render the real

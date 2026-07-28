@@ -34,6 +34,7 @@ import { ImageControl } from './ImageControl'
 import { MediaLibraryControl } from './MediaLibraryControl'
 import { UrlControl } from './UrlControl'
 import { SvgControl } from './SvgControl'
+import { StructuredValueControl } from './StructuredValueControl'
 import { DataTableControl } from './DataTableControl'
 import { DynamicBindingControl } from './DynamicBindingControl'
 import { getDynamicBindingMode } from './bindingCompatibility'
@@ -96,6 +97,19 @@ function resolveControlLayout(control: PropertyControl): PropertyControlLayout {
 }
 
 /**
+ * An array/object value on a control that edits a scalar. Studio's page parser
+ * captures these for design-system components (`actions={[{ label }, …]}`), and
+ * every scalar control here coerces with `String(value)` — which would show
+ * `[object Object]` and let one keystroke overwrite the whole structure.
+ *
+ * `group` is excluded because its value is not the edited thing: it holds the
+ * child schema's props bag by design.
+ */
+function isStructuredValue(control: PropertyControl, value: unknown): value is readonly unknown[] | Record<string, unknown> {
+  return control.type !== 'group' && typeof value === 'object' && value !== null
+}
+
+/**
  * Render a single property control wrapped in the test/accessibility shell.
  * Returns null for unknown or unimplemented control types.
  */
@@ -128,6 +142,19 @@ export function PropertyControlRenderer({
     isOverride,
     disabled: effectiveDisabled,
     layout,
+  }
+
+  if (isStructuredValue(control, value)) {
+    return (
+      <div
+        data-testid={`property-control-${propKey}`}
+        data-disabled="true"
+        data-category={category}
+        data-layout={layout}
+      >
+        <StructuredValueControl {...shared} value={value} />
+      </div>
+    )
   }
 
   let inner: React.ReactNode

@@ -21,6 +21,7 @@ import React from 'react'
 import * as DS from '@alm-design/design-system'
 import { Type } from '@core/utils/typeboxHelpers'
 import { registry, type ModuleDefinition, type ModuleComponentProps } from '@core/module-engine'
+import { sanitizeSvg } from '@core/sanitize'
 import { CursorClickSolidIcon } from 'pixel-art-icons/icons/cursor-click-solid'
 import manifestJson from './manifest.generated.json'
 
@@ -98,9 +99,20 @@ function buildSchema(props: PropSpec[]): ModuleDefinition['schema'] {
   return schema as ModuleDefinition['schema']
 }
 
+/**
+ * Every prop is `Unknown`, because it genuinely is: the generator records
+ * `tsType: 'unknown'` for all of them, so there is no real type here to declare.
+ *
+ * `Type.String()` was the old shape and it actively lied. `validateNodeProps`
+ * runs `Value.Parse` against this schema, so an `actions={[{ label }]}` array —
+ * exactly what a real `<ActionSheet>` needs — failed Check, threw, and fell back
+ * to the module's defaults. Declaring the truth passes the value through
+ * untouched, which is what a React component wants: a boolean `open` stays a
+ * boolean instead of being converted to the string `"true"`.
+ */
 function buildPropsSchema(props: PropSpec[]) {
   const shape: Record<string, ReturnType<typeof Type.Optional>> = {}
-  for (const p of props) shape[p.name] = Type.Optional(Type.String())
+  for (const p of props) shape[p.name] = Type.Optional(Type.Unknown())
   return Type.Object(shape)
 }
 
@@ -113,11 +125,43 @@ function buildDefaults(spec: ComponentSpec): Record<string, unknown> {
   return defaults
 }
 
+/**
+ * Turns a `{ svg: markup }` prop back into the React element the source had
+ * there: `<Cell icon={<Icon svg={rewardCardSvg}/>}/>`.
+ *
+ * A page tree is JSON, so a React node cannot survive the trip from source to
+ * the canvas. The page parser captures such a prop as `{ svg }` — the same key a
+ * node carrying raw markup uses (see `ICON_PROP_SVG_KEY`) — and this layer, which
+ * is already the adapter between page-tree JSON and React props, converts it
+ * back. Markup is sanitised here for the same reason `SvgEditor` sanitises: never
+ * trust that an upstream layer did.
+ *
+ * Other structured values pass straight through: a real `<ActionSheet>` wants its
+ * `actions` array as an array.
+ */
+function reviveIconProps(props: Record<string, unknown>): Record<string, unknown> {
+  let revived: Record<string, unknown> | undefined
+  for (const [key, value] of Object.entries(props)) {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) continue
+    const entries = Object.entries(value as Record<string, unknown>)
+    const svg = entries.length === 1 && entries[0]![0] === 'svg' ? entries[0]![1] : undefined
+    if (typeof svg !== 'string') continue
+    const markup = sanitizeSvg(svg)
+    if (!markup) continue
+    revived ??= { ...props }
+    revived[key] = React.createElement('span', {
+      style: { display: 'inline-flex' },
+      dangerouslySetInnerHTML: { __html: markup },
+    })
+  }
+  return revived ?? props
+}
+
 function makeComponent(name: string): React.FC<ModuleComponentProps> {
   const Comp = (DS as Record<string, unknown>)[name] as React.ComponentType<Record<string, unknown>> | undefined
   const AlmEditor: React.FC<ModuleComponentProps> = ({ props, nodeWrapperProps, mcClassName }) => {
     const inner = Comp
-      ? React.createElement(Comp, props as Record<string, unknown>)
+      ? React.createElement(Comp, reviveIconProps(props as Record<string, unknown>))
       : React.createElement('span', null, name)
     const provided = Provider ? React.createElement(Provider, null, inner) : inner
     return React.createElement(

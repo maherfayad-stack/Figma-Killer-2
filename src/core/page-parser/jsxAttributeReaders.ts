@@ -20,8 +20,8 @@ import {
   type JsxSpreadAttribute,
   type SourceFile,
 } from 'ts-morph'
-import type { ParsedNode } from './types'
-import { tryResolveExpression, type PageEvalContext, type Resolution } from './resolutionLock'
+import type { ParsedNode, ParsedPropValue } from './types'
+import { tryResolveExpression, tryResolvePropValue, type PageEvalContext, type Resolution } from './resolutionLock'
 
 /**
  * Everything one parse pass needs to read values and record nodes. Built once
@@ -141,28 +141,139 @@ export function extractRawSvgMarkup(
   ctx: ParseContext,
 ): string | undefined {
   const valueExpr = rawHtmlValueExpression(attributes)
-  if (!valueExpr) return undefined
-  const resolved = tryResolveExpression(valueExpr, ctx.eval)?.value
-  return typeof resolved === 'string' && SVG_DOCUMENT_RE.test(resolved) ? resolved : undefined
+  return valueExpr ? resolveRawSvgMarkup(valueExpr, ctx.eval) : undefined
 }
+
+/**
+ * The SVG markup a `__html` expression yields — the resolved value when §7 can
+ * evaluate it, otherwise the markup its TRANSFORM was handed.
+ *
+ * The fallback exists because the common real shape is not a bare identifier but
+ * `__html: applyTokens(svg)`, where `applyTokens` LOOPS over a substitution
+ * table swapping hardcoded hex fills for design tokens. A loop over a resolved
+ * array in a callee's body is a statement-level evaluation the §7 evaluator does
+ * not do, so the call returns unresolved — and 9 illustration icons on the eSIM
+ * corpus's homepage rendered as blank 48px boxes with their markup sitting in
+ * plain sight one argument away.
+ *
+ * What this gives up, stated plainly: the icon renders with the fills the source
+ * file holds rather than the ones the transform would have produced (here, real
+ * hex instead of `var(--color-aqua-*)`, so it does not follow a dark theme). That
+ * is the same trade `applySubstitutions` already makes for a computed
+ * `className`, keeping the static prefix for visual fidelity — and it beats a
+ * blank box, which tells the user nothing about their screen.
+ *
+ * Deliberately ONE call level deep and argument-order-first: this recovers the
+ * input of a transform, it does not try to guess at nested composition.
+ *
+ * Exported for `componentSubstitution`, which re-reads the same attribute against
+ * a call site's param-bound scope.
+ */
+export function resolveRawSvgMarkup(valueExpr: Node, evalCtx: PageEvalContext | undefined): string | undefined {
+  const direct = tryResolveExpression(valueExpr, evalCtx)?.value
+  if (typeof direct === 'string' && SVG_DOCUMENT_RE.test(direct)) return direct
+
+  if (!Node.isCallExpression(valueExpr)) return undefined
+  for (const argument of valueExpr.getArguments()) {
+    const inner = tryResolveExpression(argument, evalCtx)?.value
+    if (typeof inner === 'string' && SVG_DOCUMENT_RE.test(inner)) return inner
+  }
+  return undefined
+}
+
+/**
+ * The value shape a JSX-valued icon prop is captured as: `{ svg: markup }`.
+ *
+ * `<Cell icon={<Icon svg={rewardCardSvg}/>}/>` is how a design system's icon
+ * slots are actually filled, and a React element has no JSON form — so the prop
+ * was skipped and the cell rendered with an empty visual slot (8 of them across
+ * the eSIM corpus, in `Cell`, `GlassButton`, and the `leadingIcon`/`trailingIcon`
+ * slots).
+ *
+ * `svg` is the SAME key a node carrying raw markup uses (`resolveModuleId`
+ * promotes such a node to `base.svg`), so this is one convention read at two
+ * altitudes rather than a new one: a value holding `svg` IS inline SVG. The
+ * module layer turns it back into an element — see `src/modules/alm/register.tsx`.
+ */
+export const ICON_PROP_SVG_KEY = 'svg'
+
+/**
+ * The inline SVG markup a JSX-valued prop's element renders, as
+ * `{ svg: markup }`, or `undefined` when the element yields no markup.
+ *
+ * Reads only the element's OWN attributes, one level deep: its
+ * `dangerouslySetInnerHTML` (the `<span dangerouslySetInnerHTML/>` shape), or any
+ * attribute whose value resolves to a string that opens an `<svg>` document
+ * (the `<Icon svg={…}/>` shape, where the wrapper component is what would
+ * eventually inject it). Anything else — a nested layout, a component whose
+ * markup only materialises after inlining — declines, and the prop stays absent
+ * rather than being guessed at.
+ */
+function iconPropFromJsx(
+  expression: Node,
+  evalCtx: PageEvalContext | undefined,
+): Record<string, string> | undefined {
+  if (!Node.isJsxElement(expression) && !Node.isJsxSelfClosingElement(expression)) return undefined
+  const attributes = Node.isJsxElement(expression)
+    ? expression.getOpeningElement().getAttributes()
+    : expression.getAttributes()
+
+  const rawHtml = rawHtmlValueExpression(attributes)
+  const injected = rawHtml ? resolveRawSvgMarkup(rawHtml, evalCtx) : undefined
+  if (injected !== undefined) return { [ICON_PROP_SVG_KEY]: injected }
+
+  for (const attribute of attributes) {
+    if (!Node.isJsxAttribute(attribute)) continue
+    const initializer = attribute.getInitializer()
+    if (!initializer || !Node.isJsxExpression(initializer)) continue
+    const inner = initializer.getExpression()
+    if (!inner) continue
+    const resolved = tryResolveExpression(inner, evalCtx)?.value
+    if (typeof resolved === 'string' && SVG_DOCUMENT_RE.test(resolved)) {
+      return { [ICON_PROP_SVG_KEY]: resolved }
+    }
+  }
+  return undefined
+}
+
+/**
+ * Attributes this reader never captures, because another reader owns them and
+ * would end up duplicated (or actively broken) by a second copy in `props`:
+ * `extractInlineStyles` owns `style`, and `extractRawSvgMarkup` owns
+ * `dangerouslySetInnerHTML` (whose value it promotes to the `svg` prop).
+ *
+ * Before structured props existed this was implicit — both attributes are
+ * object literals, and the scalar-only evaluator fallback declined them. Now
+ * that an object resolves, the exclusion has to be stated.
+ */
+const READER_OWNED_ATTRIBUTES: ReadonlySet<string> = new Set(['style', 'dangerouslySetInnerHTML'])
 
 /**
  * Literal-valued attributes (mirrors `../ast-codemods/readJsxProps`), falling
  * through to §7's evaluator ONLY when the literal fast path misses AND the
  * caller opted in (`ctx.eval` present) — zero behaviour change, zero cost,
  * for a page that only uses literals (§7.8's non-regression guarantee).
+ *
+ * `kind` decides whether an array/object value is captured at all. A COMPONENT
+ * consumes a structured prop as a real JS value (`<ActionSheet actions={[…]}/>`
+ * renders one button per entry); an HTML ELEMENT cannot — an attribute is a
+ * string, so an object there would only ever stringify to `[object Object]`.
+ * Restricting it this way also keeps `base.*` modules and the publisher's
+ * prop-escaping on the scalar diet they were written for.
  */
 export function extractProps(
   attributes: (JsxAttribute | JsxSpreadAttribute)[],
   ctx: ParseContext,
-): { props: Record<string, string | number | boolean>; resolutions: Resolution[] } {
-  const result: Record<string, string | number | boolean> = {}
+  kind: ParsedNode['kind'] = 'element',
+): { props: Record<string, ParsedPropValue>; resolutions: Resolution[] } {
+  const result: Record<string, ParsedPropValue> = {}
   const resolutions: Resolution[] = []
 
   for (const attribute of attributes) {
     if (!Node.isJsxAttribute(attribute)) continue // skip {...spread} attributes
 
     const name = attribute.getNameNode().getText()
+    if (READER_OWNED_ATTRIBUTES.has(name)) continue
     const initializer = attribute.getInitializer()
 
     if (initializer === undefined) {
@@ -211,13 +322,24 @@ export function extractProps(
       // Any other expression kind (call, template, object, member access, a
       // plain identifier that isn't an image import, …) is not a literal —
       // §7's evaluator gets a shot at it now, still skipped unchanged when
-      // `ctx.eval` is absent. The `style={{…}}` object is captured separately
-      // by `extractInlineStyles` so the canvas can render the authored
-      // inline styles.
+      // `ctx.eval` is absent.
       const resolved = tryResolveExpression(expression, ctx.eval)
       if (resolved) {
         result[name] = resolved.value
         resolutions.push({ source: expression.getText(), note: resolved.note })
+        continue
+      }
+      // A component's prop may also be an array/object. No `Resolution` is
+      // recorded for it — see `tryResolvePropValue` for why a structured value
+      // must not lock the node the way a resolved scalar does.
+      if (kind === 'component') {
+        const icon = iconPropFromJsx(expression, ctx.eval)
+        if (icon !== undefined) {
+          result[name] = icon
+          continue
+        }
+        const structured = tryResolvePropValue(expression, ctx.eval)
+        if (structured !== undefined) result[name] = structured
       }
     }
   }

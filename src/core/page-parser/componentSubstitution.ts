@@ -21,10 +21,11 @@
  * shapes and why loop-bearing transforms stay unresolved.
  */
 import { Node, SyntaxKind, type JsxElement, type JsxSelfClosingElement, type SourceFile } from 'ts-morph'
-import { extractInlineStyles, rawHtmlValueExpression, SVG_DOCUMENT_RE } from './jsxAttributeReaders'
+import { extractInlineStyles, rawHtmlValueExpression, resolveRawSvgMarkup } from './jsxAttributeReaders'
 import { tryResolveExpression, type PageEvalContext } from './resolutionLock'
-import { createEvalScope, type LocalBinding } from './staticEval'
-import type { FunctionLike, ParsedPage } from './types'
+import { createEvalScope, type LocalBinding, type StaticValue } from './staticEval'
+import type { ReturnedJsx } from './parsePageFile'
+import type { FunctionLike, ParsedPage, ParsedPropValue } from './types'
 import type { StaticEvalOptions } from './staticEval'
 
 /** `extractInlineStyles` takes a full `ParseContext`; the image-import map is only consulted by `extractProps`, never on the style path. */
@@ -32,11 +33,27 @@ const EMPTY_IMAGE_IMPORTS: Map<string, string> = new Map()
 
 type JsxOpeningLike = JsxElement | JsxSelfClosingElement
 
-/** A literal a call site passed, or its `{children}`. */
-export type LiteralValue = string | number | boolean
+/**
+ * What `buildSubstitutionEnv` resolved a destructured prop param to: a value the
+ * call site passed (scalar, or a structured one for a component prop — see
+ * `ParsedPropValue`), or its `{children}`.
+ */
+export type Substitution = { kind: 'value'; value: ParsedPropValue } | { kind: 'children' }
 
-/** What `buildSubstitutionEnv` resolved a destructured prop param to. */
-export type Substitution = { kind: 'literal'; value: LiteralValue } | { kind: 'children' }
+/**
+ * Lifts a call site's already-captured prop value back into a `StaticValue`, so
+ * the evaluator can read INTO it when the component's own JSX does
+ * (`<Row item={pkg}/>` → `{item.gb}`). The round trip through
+ * `ParsedPropValue` is lossless for everything the parser kept — the entries it
+ * dropped (functions, unresolved values) were never representable anyway.
+ */
+function toStaticValue(value: ParsedPropValue): StaticValue {
+  if (Array.isArray(value)) return { kind: 'array', items: value.map(toStaticValue) }
+  if (typeof value === 'object') {
+    return { kind: 'object', entries: new Map(Object.entries(value).map(([k, v]) => [k, toStaticValue(v)])) }
+  }
+  return { kind: 'literal', value }
+}
 
 /**
  * Builds the substitution table (§2.3) from the target component's OWN
@@ -47,7 +64,7 @@ export type Substitution = { kind: 'literal'; value: LiteralValue } | { kind: 'c
  * yields no entry for that param, so any `{paramName}` reference to it is
  * simply left unresolved (existing lock/drop path), never guessed at.
  */
-export function buildSubstitutionEnv(fn: FunctionLike, callSiteProps: Record<string, LiteralValue>): Map<string, Substitution> {
+export function buildSubstitutionEnv(fn: FunctionLike, callSiteProps: Record<string, ParsedPropValue>): Map<string, Substitution> {
   const env = new Map<string, Substitution>()
   const first = fn.getParameters()[0]
   if (!first) return env
@@ -71,16 +88,16 @@ export function buildSubstitutionEnv(fn: FunctionLike, callSiteProps: Record<str
     }
 
     if (Object.hasOwn(callSiteProps, attrName)) {
-      env.set(paramName, { kind: 'literal', value: callSiteProps[attrName]! })
+      env.set(paramName, { kind: 'value', value: callSiteProps[attrName]! })
       continue
     }
 
     const initializer = element.getInitializer()
     if (!initializer) continue
     if (Node.isStringLiteral(initializer) || Node.isNumericLiteral(initializer)) {
-      env.set(paramName, { kind: 'literal', value: initializer.getLiteralValue() })
+      env.set(paramName, { kind: 'value', value: initializer.getLiteralValue() })
     } else if (initializer.getKind() === SyntaxKind.TrueKeyword || initializer.getKind() === SyntaxKind.FalseKeyword) {
-      env.set(paramName, { kind: 'literal', value: initializer.getKind() === SyntaxKind.TrueKeyword })
+      env.set(paramName, { kind: 'value', value: initializer.getKind() === SyntaxKind.TrueKeyword })
     }
     // Any other default (a call, a template literal, …) is not a literal —
     // intentionally left unresolved, same policy as `extractProps`.
@@ -99,14 +116,14 @@ export function buildSubstitutionEnv(fn: FunctionLike, callSiteProps: Record<str
  * fills in values `extractProps`/`extractSingleText` had to skip because
  * they were identifier references, not literals.
  *
- * Walks `rootExpr` in the same shape as the element tree (JSX
+ * Walks each of the component's returns in the same shape as the element tree (JSX
  * element/self-closing/fragment/expression) purely to re-derive each
  * element's id (same `${relFile}:${line}:${col}` convention) and match it
  * against `subPage.nodes` — it does not replicate locking or capture rules,
  * only finds where to patch.
  */
 export function applySubstitutions(
-  rootExpr: Node,
+  roots: readonly ReturnedJsx[],
   subPage: ParsedPage,
   env: Map<string, Substitution>,
   callSiteChildrenIds: string[],
@@ -141,7 +158,7 @@ export function applySubstitutions(
       locals: new Map<string, LocalBinding>([
         ...createEvalScope(sourceFile, fn).locals,
         ...[...env].flatMap(([name, sub]): [string, LocalBinding][] =>
-          sub.kind === 'literal' ? [[name, { kind: 'resolved', value: { kind: 'literal', value: sub.value } }]] : [],
+          sub.kind === 'value' ? [[name, { kind: 'resolved', value: toStaticValue(sub.value) }]] : [],
         ),
       ]),
     },
@@ -155,7 +172,7 @@ export function applySubstitutions(
     if (existing) {
       const attributes = isElement ? el.getOpeningElement().getAttributes() : el.getAttributes()
 
-      let patchedProps: Record<string, LiteralValue> | undefined
+      let patchedProps: Record<string, ParsedPropValue> | undefined
       for (const attr of attributes) {
         if (!Node.isJsxAttribute(attr)) continue
         const attrName = attr.getNameNode().getText()
@@ -165,22 +182,25 @@ export function applySubstitutions(
         const expr = initializer.getExpression()
         if (!expr || !Node.isIdentifier(expr)) continue
         const sub = env.get(expr.getText())
-        if (sub?.kind !== 'literal') continue
+        if (sub?.kind !== 'value') continue
+        // A structured value forwarded onto a plain HTML element would only
+        // stringify — same rule `extractProps` applies at the top level.
+        if (typeof sub.value === 'object' && existing.kind !== 'component') continue
         patchedProps ??= { ...existing.props }
         patchedProps[attrName] = sub.value
       }
 
       // `<Icon svg={checkSvg}/>` → `<span dangerouslySetInnerHTML={{__html: svg}}/>`:
       // the span is the element that actually renders the markup (and carries
-      // the class that sizes and colours it). Evaluating the `__html` expression
+      // the class that sizes and colours it). Reading the `__html` expression
       // against the param-bound scope covers the corpus's two shapes with one
-      // mechanism — a bare `svg` and `applyTokens(svg)`, a pure local function
-      // that swaps hardcoded hex fills for design tokens. `props.svg` is the
+      // mechanism — a bare `svg` and `applyTokens(svg)` — see
+      // `resolveRawSvgMarkup` for how the second one lands. `props.svg` is the
       // same key `extractRawSvgMarkup` writes, which promotes it to `base.svg`.
       if (!('svg' in (patchedProps ?? existing.props))) {
         const htmlExpr = rawHtmlValueExpression(attributes)
-        const resolved = htmlExpr ? tryResolveExpression(htmlExpr, paramEvalContext)?.value : undefined
-        if (typeof resolved === 'string' && SVG_DOCUMENT_RE.test(resolved)) {
+        const resolved = htmlExpr ? resolveRawSvgMarkup(htmlExpr, paramEvalContext) : undefined
+        if (resolved !== undefined) {
           patchedProps ??= { ...existing.props }
           patchedProps.svg = resolved
         }
@@ -247,7 +267,9 @@ export function applySubstitutions(
           const expr = meaningful[0].getExpression()
           if (expr && Node.isIdentifier(expr)) {
             const sub = env.get(expr.getText())
-            if (sub?.kind === 'literal') patchedText = String(sub.value)
+            // Only a scalar has a text form. `String({…})` is `[object Object]`,
+            // which is worse than leaving the element empty.
+            if (sub?.kind === 'value' && typeof sub.value !== 'object') patchedText = String(sub.value)
           }
         }
       }
@@ -315,7 +337,9 @@ export function applySubstitutions(
     node.forEachChild(walk)
   }
 
-  walk(rootExpr)
+  // Every `return` the component has — see `getReturnedJsxRoots`. All of them
+  // produced nodes, so all of them need their params substituted.
+  for (const root of roots) walk(root.expr)
 
   return { rootIds: subPage.rootIds, nodes }
 }
