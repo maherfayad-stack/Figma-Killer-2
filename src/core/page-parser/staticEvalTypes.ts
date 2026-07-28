@@ -17,8 +17,32 @@ import type {
   SourceFile,
 } from 'ts-morph'
 
+/**
+ * Where a resolved literal PHYSICALLY lives — the string in the source file the
+ * value was read out of, workspace-relative POSIX path plus 1-based line/column
+ * of the literal token.
+ *
+ * This is what makes a resolved value editable. `{c.hotelsTag}` cannot be
+ * written back at the JSX (that would replace the i18n binding with a baked
+ * string), but the value it resolves to IS a plain string literal one hop away
+ * in `src/i18n/translations.js`, and THAT can be rewritten in place.
+ *
+ * Present only when the value passed through unchanged — an identifier, a const,
+ * a member chain, an array index. A COMPUTED value (a template literal, a
+ * concatenation, arithmetic, a function call) has no single literal behind it and
+ * carries no origin, so nothing tries to write one.
+ */
+export interface ValueOrigin {
+  /** Workspace-relative POSIX path of the file holding the literal. */
+  rel: string
+  /** 1-based line of the literal token. */
+  line: number
+  /** 1-based column of the literal token. */
+  col: number
+}
+
 export type StaticValue =
-  | { kind: 'literal'; value: string | number | boolean | null; note?: string }
+  | { kind: 'literal'; value: string | number | boolean | null; note?: string; origin?: ValueOrigin }
   | { kind: 'object'; entries: Map<string, StaticValue>; note?: string }
   | { kind: 'array'; items: StaticValue[]; note?: string }
   | { kind: 'fn'; node: ArrowFunctionOrDecl }

@@ -18,7 +18,7 @@
  */
 import { join } from 'node:path'
 import { INLINE_ID_SEPARATOR } from '@core/page-parser'
-import { setJsxProp, setJsxStyle, setJsxText } from '@core/ast-codemods'
+import { setJsxProp, setJsxStyle, setJsxText, setStringLiteral } from '@core/ast-codemods'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 
 const NODE_LOC_ID = /^(.*):(\d+):(\d+)$/
@@ -45,8 +45,29 @@ const StyleEditSchema = Type.Object({
   style: Type.Record(Type.String(), Type.Union([Type.String(), Type.Number()])),
 })
 
+/**
+ * One string-literal-in-place writeback — `setStringLiteral`.
+ *
+ * The odd one out: its target is not the JSX the node renders, but the literal
+ * that JSX READS. `<span>{c.hotelsTag}</span>` cannot be written at the span —
+ * that would replace the i18n binding with a baked string — while
+ * `hotelsTag: 'Exclusive rates on hotels'` in `translations.js` is an ordinary
+ * literal and rewriting it is exactly what editing that copy means. The client
+ * emits this from `PageNode.textOrigin`.
+ *
+ * `nodeId` here is the ORIGIN's own `rel:line:col`, not the rendering node's, so
+ * ordering / dedupe / touched-file collection all keep working through the one
+ * `studioEditLocation` decoder — and two board nodes fed by the same dictionary
+ * key dedupe onto one write, which is what shared copy means.
+ */
+const LiteralEditSchema = Type.Object({
+  kind: Type.Literal('literal'),
+  nodeId: Type.String(),
+  text: Type.String(),
+})
+
 /** Discriminated union of every studio edit kind — `kind` is the discriminator. */
-export const StudioEditSchema = Type.Union([PropEditSchema, TextEditSchema, StyleEditSchema])
+export const StudioEditSchema = Type.Union([PropEditSchema, TextEditSchema, StyleEditSchema, LiteralEditSchema])
 export type StudioEdit = Static<typeof StudioEditSchema>
 
 /** A decoded writeback target: workspace-relative file plus 1-based line/column. */
@@ -73,7 +94,34 @@ export interface StudioEditLocation {
 export function studioEditLocation(nodeId: string): StudioEditLocation | null {
   const target = nodeId.split(INLINE_ID_SEPARATOR).pop() ?? nodeId
   const m = NODE_LOC_ID.exec(target)
-  return m ? { rel: m[1]!, line: Number(m[2]), col: Number(m[3]) } : null
+  if (!m) return null
+  const rel = m[1]!
+  return isWritableSourceRel(rel) ? { rel, line: Number(m[2]), col: Number(m[3]) } : null
+}
+
+/** Files a writeback may touch. Never a `.env`, a lockfile, or anything else that isn't app source. */
+const WRITABLE_SOURCE_EXTENSION = /\.(tsx?|jsx?|mjs|cjs)$/i
+
+/**
+ * Whether a decoded `rel` is safe to write, checked on the PATH SHAPE alone so
+ * this stays pure and every consumer of `studioEditLocation` inherits it.
+ *
+ * The whole batch arrives from the client, `rel` included, and the save route
+ * builds its target with `join(dir, rel)` — so `../../.ssh/config:1:1` as a
+ * nodeId was an arbitrary file write. Nothing legitimate produces one: the parser
+ * mints these ids from `path.relative(workspaceRoot, file)` for files it already
+ * found inside the workspace.
+ *
+ * The extension check is the second half. Even contained, a writeback belongs on
+ * app source and nowhere else, and every codemod here parses its target as
+ * TypeScript/JavaScript anyway.
+ */
+function isWritableSourceRel(rel: string): boolean {
+  if (rel.length === 0) return false
+  if (rel.startsWith('/') || rel.startsWith('\\') || /^[a-zA-Z]:/.test(rel)) return false
+  const segments = rel.split(/[/\\]/)
+  if (segments.some((segment) => segment === '..' || segment === '')) return false
+  return WRITABLE_SOURCE_EXTENSION.test(rel)
 }
 
 /** True when this id came from a component inlined at a call site — one edit here rewrites every instance. */
@@ -174,6 +222,9 @@ export function applyStudioEdit(dir: string, edit: StudioEdit): boolean {
       return true
     case 'style':
       setJsxStyle({ ...loc, style: edit.style })
+      return true
+    case 'literal':
+      setStringLiteral({ ...loc, value: edit.text })
       return true
   }
 }

@@ -28,14 +28,35 @@ interface SourceLockedNoticeProps {
   lockReason: string
   /** `PageNode.resolution.note`, when the evaluator had to choose (e.g. which locale branch). */
   note?: string
+  /**
+   * `PageNode.textOrigin` — where the text's string literal lives, when it has
+   * one. Its presence flips this notice from "read-only" to "editable, and here
+   * is where your edit lands", because that is the actual behaviour.
+   */
+  textOrigin?: { rel: string; line: number; col: number }
+  /** How many nodes across the site resolve their text to the SAME literal. */
+  sharedWith?: number
 }
 
-export function SourceLockedNotice({ lockReason, note }: SourceLockedNoticeProps) {
+export function SourceLockedNotice({ lockReason, note, textOrigin, sharedWith }: SourceLockedNoticeProps) {
   return (
     <div className={styles.notice} role="note" data-testid="source-locked-notice">
       <LockSolidIcon size={14} className={styles.icon} />
       <p className={styles.text}>
-        Set in code — <strong>{lockReason}</strong>. Edit the source file to change it.
+        {textOrigin ? (
+          <>
+            Text comes from <strong>{textOrigin.rel}</strong> (line {textOrigin.line}) via{' '}
+            <strong>{lockReason.replace(/^value from /, '')}</strong>. Editing it writes there
+            {sharedWith !== undefined && sharedWith > 1 ? (
+              <> and changes all <strong>{sharedWith}</strong> places that use it</>
+            ) : null}
+            . Other properties on this element are set in code.
+          </>
+        ) : (
+          <>
+            Set in code — <strong>{lockReason}</strong>. Edit the source file to change it.
+          </>
+        )}
         {note ? <> {note}.</> : null}
       </p>
     </div>

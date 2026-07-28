@@ -5,6 +5,7 @@
  * a location is 1-based line, 1-based column of the JSX element's tag-name
  * identifier start — the character immediately after `<`.
  */
+import type { ValueOrigin } from './staticEvalTypes'
 import type { ArrowFunction, FunctionDeclaration, FunctionExpression } from 'ts-morph'
 
 /**
@@ -98,9 +99,32 @@ export interface ParsedNode {
    * `lockReason: 'value from <source>'` — writing an edited literal back over
    * `{t.homepage.greeting}` would silently destroy the original binding in
    * the user's real source file, so the value is read-only, same principle as
-   * `locked`/`lockReason` above.
+   * `locked`/`lockReason` above. `textOrigin` below is the one exception, and
+   * it works by writing somewhere else entirely.
    */
   resolution?: { source: string; note?: string }
+  /**
+   * Where this node's TEXT literally lives, when its text was resolved from an
+   * expression and that expression bottomed out in a single string literal
+   * inside the workspace: `{c.hotelsTag}` -> `hotelsTag: 'Exclusive rates on
+   * hotels'` in `src/i18n/translations.js`.
+   *
+   * This is what makes resolved copy editable. The JSX is NOT a writeback
+   * target — replacing `{c.hotelsTag}` with a string would destroy the i18n
+   * binding — but the literal it reads is an ordinary string in a source file,
+   * and rewriting it in place is exactly what a person editing that copy means.
+   *
+   * Deliberately scoped to TEXT rather than hung off `resolution`. A node can
+   * resolve several values (text, `className`, an aria label) and `resolution`
+   * keeps only the first, so an origin there could point at the literal behind a
+   * DIFFERENT prop than the one being edited — and a writeback aimed at the
+   * wrong string is worse than no writeback at all.
+   *
+   * Absent when the text is computed rather than passed through (a template
+   * literal, a concatenation, a function's return value): there is no single
+   * literal to rewrite. See `ValueOrigin`.
+   */
+  textOrigin?: ValueOrigin
   /**
    * Set on every node produced by inlining a local component (§2), naming the
    * component it came from (`'SheetHeader'`). Provenance, NOT a lock: the node

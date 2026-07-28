@@ -51,7 +51,7 @@ import { createBudget, createEvalScope as createEvalScopeCore, createPageEvalBud
 import type { EvalScope, StaticEvalOptions, StaticValue } from './staticEvalCore'
 import type { FunctionLike } from './types'
 
-export type { ArrowFunctionOrDecl, EvalScope, LocalBinding, PageEvalBudget, StaticEvalOptions, StaticValue } from './staticEvalCore'
+export type { ArrowFunctionOrDecl, EvalScope, LocalBinding, PageEvalBudget, StaticEvalOptions, StaticValue, ValueOrigin } from './staticEvalCore'
 export { createPageEvalBudget }
 
 /** See `staticEvalCore.ts`'s `createEvalScope` — re-exported so every consumer imports one thing from `./staticEval`. */

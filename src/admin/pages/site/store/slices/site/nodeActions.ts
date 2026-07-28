@@ -324,7 +324,14 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
           // keeps its existing selection/move-only semantics. Silent no-op:
           // this action is also called programmatically (agent, plugins), so
           // a toast here would be noise, not user feedback.
-          if (node.lockReason) return false
+          //
+          // ONE exception: a patch touching only the node's text prop, on a node
+          // that carries `textOrigin`. The lock protects the JSX from having its
+          // `{c.hotelsTag}` binding overwritten — but that text resolves to a
+          // plain string literal in a real file, and `saveSite` routes this patch
+          // THERE instead of at the JSX. Refusing it made the panel's only
+          // populated field permanently dead for 106 nodes on one imported app.
+          if (node.lockReason && !isTextOriginPatch(node, patch)) return false
           if (!recordPatchChanges(node.props, patch)) return false
           updateNodeProps(tree, nodeId, patch)
           return true
@@ -588,4 +595,21 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
   }
 
   return actions
+}
+
+/**
+ * True when `patch` changes nothing but the node's own inline-text prop, and that
+ * text has a writable origin (`PageNode.textOrigin`).
+ *
+ * Both halves matter. The origin is what makes a write possible at all; the
+ * single-prop check is what keeps the lock doing its job — a patch that also
+ * carried `className` would have no honest target for that half, so the whole
+ * patch is refused rather than half-applied.
+ */
+function isTextOriginPatch(node: PageNode, patch: Record<string, unknown>): boolean {
+  if (!node.textOrigin) return false
+  const textProp = registry.get(node.moduleId)?.inlineTextEdit?.prop
+  if (!textProp) return false
+  const keys = Object.keys(patch)
+  return keys.length === 1 && keys[0] === textProp
 }

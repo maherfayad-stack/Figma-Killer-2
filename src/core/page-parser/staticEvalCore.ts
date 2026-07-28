@@ -28,6 +28,7 @@ import {
   type TemplateExpression,
   type VariableDeclaration,
 } from 'ts-morph'
+import * as path from 'node:path'
 import { resolveImageAssetImport, resolveRawTextImport } from './assetImports'
 import { evaluateBinaryOperator, evaluateUnaryOperator } from './staticEvalOperators'
 import type { FunctionLike } from './types'
@@ -39,6 +40,7 @@ import type { FunctionLike } from './types'
 export type {
   ArrowFunctionOrDecl,
   EvalScope,
+  ValueOrigin,
   LocalBinding,
   PageEvalBudget,
   StaticEvalOptions,
@@ -46,6 +48,7 @@ export type {
 } from './staticEvalTypes'
 import type {
   EvalScope,
+  ValueOrigin,
   LocalBinding,
   PageEvalBudget,
   StaticEvalOptions,
@@ -198,6 +201,21 @@ export function unwrapParens(node: Node): Node {
 }
 
 /** Propagates a Tier B.4 branch-pick note through a member-access chain, without ever overwriting a MORE specific (deeper) note already attached. */
+/**
+ * `{ origin }` for a literal token, or `{}` when it cannot be addressed — no
+ * configured workspace root, or a file outside it (a `node_modules` dictionary
+ * is not the user's to rewrite).
+ */
+function originOf(literal: Node, budget: Budget): { origin?: ValueOrigin } {
+  const root = budget.workspaceRoot
+  if (!root) return {}
+  const sourceFile = literal.getSourceFile()
+  const rel = path.relative(path.resolve(root), path.resolve(sourceFile.getFilePath()))
+  if (rel.length === 0 || rel.startsWith('..') || path.isAbsolute(rel)) return {}
+  const { line, column } = sourceFile.getLineAndColumnAtPos(literal.getStart())
+  return { origin: { rel: rel.split(path.sep).join('/'), line, col: column } }
+}
+
 export function withNote(value: StaticValue, note: string | undefined): StaticValue {
   if (!note || value.kind === 'unresolved' || value.kind === 'fn' || value.note) return value
   return { ...value, note }
@@ -217,9 +235,15 @@ export function evaluateNode(exprIn: Node, scope: EvalScope, budget: Budget, dep
   const expr = unwrapParens(exprIn)
 
   if (Node.isStringLiteral(expr) || Node.isNoSubstitutionTemplateLiteral(expr)) {
-    return { kind: 'literal', value: expr.getLiteralText() }
+    // The origin is attached HERE, at the only place a literal is read out of a
+    // source file, so every path that merely passes the value along — an
+    // identifier, a const, `pluck` off an object, an array index — carries it for
+    // free, and every path that COMPUTES a new value cannot.
+    return { kind: 'literal', value: expr.getLiteralText(), ...originOf(expr, budget) }
   }
-  if (Node.isNumericLiteral(expr)) return { kind: 'literal', value: expr.getLiteralValue() }
+  if (Node.isNumericLiteral(expr)) {
+    return { kind: 'literal', value: expr.getLiteralValue(), ...originOf(expr, budget) }
+  }
   const kind = expr.getKind()
   if (kind === SyntaxKind.TrueKeyword) return { kind: 'literal', value: true }
   if (kind === SyntaxKind.FalseKeyword) return { kind: 'literal', value: false }

@@ -85,7 +85,10 @@ export const createInlineEditSlice: EditorStoreSliceCreator<InlineEditSlice> = (
     // all, which needs no announcement.) `startInlineEdit` has exactly one
     // caller — the canvas double-click handler — so a toast here is always a
     // response to a real gesture, never programmatic noise.
-    if (node.lockReason) {
+    // A node whose text has a writable origin (`textOrigin`) IS editable — the
+    // commit routes to the literal in its own file, not to the JSX. See
+    // `isTextOriginPatch` in `nodeActions`.
+    if (node.lockReason && !node.textOrigin) {
       pushToast({
         kind: 'info',
         title: 'This text is set in code',

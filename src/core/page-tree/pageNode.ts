@@ -43,6 +43,22 @@ export const PageNodeSchema = Type.Object({
    */
   resolution: Type.Optional(Type.Object({ source: Type.String(), note: Type.Optional(Type.String()) })),
   /**
+   * Studio import (§7) — where this node's TEXT literally lives, when its text
+   * resolved from an expression that bottomed out in one string literal inside
+   * the workspace (`{c.hotelsTag}` -> `hotelsTag: '…'` in `translations.js`).
+   *
+   * The reason a resolved node can be edited at all. The JSX is not a writeback
+   * target, but this literal is: `saveSite` turns a text change on such a node
+   * into a `literal` studio edit aimed here instead of a `text` edit aimed at the
+   * JSX. See `ParsedNode.textOrigin` for the full reasoning and why it is scoped
+   * to text rather than hung off `resolution`.
+   */
+  textOrigin: Type.Optional(Type.Object({
+    rel: Type.String(),
+    line: Type.Number(),
+    col: Type.Number(),
+  })),
+  /**
    * Studio import (§2) — the local component this node was inlined out of
    * (`'SheetHeader'`). Provenance, not a lock: the node is editable and its
    * writeback target is that component's own source location.

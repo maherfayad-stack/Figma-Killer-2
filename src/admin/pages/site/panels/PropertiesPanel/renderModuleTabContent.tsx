@@ -22,6 +22,7 @@
  */
 import { PropertyControlRenderer } from '@site/property-controls/PropertyControlRenderer'
 import { evaluateCondition } from '@core/page-tree'
+import { registry } from '@core/module-engine'
 import type {
   AnyModuleDefinition,
   PropertyControl,
@@ -139,7 +140,7 @@ export function renderModuleTabContent(args: ModuleTabContentArgs): React.ReactN
             value={resolvedPropsForBreakpoint[key]}
             onChange={updateModuleProp}
             isOverride={overrideKeys.has(key)}
-            sourceLockReason={selectedNode.lockReason}
+            sourceLockReason={propLockReason(selectedNode, key)}
             dynamicBinding={dynamicBindingsEnabled && selectedNodeId ? {
               binding: selectedNode.dynamicBindings?.[key],
               onSet: (binding) => onSetDynamicBinding(key, binding),
@@ -157,4 +158,19 @@ export function renderModuleTabContent(args: ModuleTabContentArgs): React.ReactN
 
 function isPromotedFormProperty(selectedNode: PageNode, key: string): boolean {
   return selectedNode.moduleId === 'base.form' && PROMOTED_FORM_PROPERTY_KEYS.has(key)
+}
+
+/**
+ * Why this one prop cannot be edited, or `undefined` when it can.
+ *
+ * A source-locked node normally refuses every prop write. Its inline-text prop is
+ * the exception when the node carries `textOrigin`: the text resolved from an
+ * expression, but the STRING it resolved to is a plain literal in a real file, and
+ * `saveSite` routes the edit there. Mirrors `isTextOriginPatch` in `nodeActions`,
+ * which is what actually admits the write.
+ */
+export function propLockReason(node: PageNode, propKey: string): string | undefined {
+  if (!node.lockReason) return undefined
+  if (node.textOrigin && registry.get(node.moduleId)?.inlineTextEdit?.prop === propKey) return undefined
+  return node.lockReason
 }

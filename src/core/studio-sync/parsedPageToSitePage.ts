@@ -147,6 +147,8 @@ export function parsedPageToSitePage(parsed: ParsedPage, opts: ParsedPageToSiteP
       // show WHY a resolved node is locked and which branch/note it chose.
       // Follows the exact `locked`/`lockReason` pattern above.
       ...(node.resolution ? { resolution: node.resolution } : {}),
+      // Same straight copy — the editable-origin pointer behind resolved text.
+      ...(node.textOrigin ? { textOrigin: node.textOrigin } : {}),
       // §2 — which local component this node was inlined out of. Provenance,
       // not a lock: the properties panel warns that an edit here rewrites that
       // component's file and so lands on every instance of it.

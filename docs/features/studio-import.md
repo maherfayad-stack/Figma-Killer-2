@@ -31,7 +31,7 @@ server/handlers/
 ├── studioProjects.ts     — project discovery, `.studio/meta.json` (displayName, pagesDir, previewLocale)
 ├── studioCss.ts          — §6: imported .css → StyleRule registry, deterministic ids, happy-dom CSSOM
 ├── studioAsset.ts        — GET /admin/api/studio/asset, path-containment guards
-└── studioWriteback.ts    — StudioEdit shapes, tail-resolved edit locations, dedupe
+└── studioWriteback.ts    — StudioEdit shapes, tail-resolved edit locations, dedupe, path containment
 
 src/core/page-parser/
 ├── parsePageFile.ts          — the ts-morph JSX walk → ParsedPage
@@ -40,6 +40,7 @@ src/core/page-parser/
 ├── staticLoopExpansion.ts    — `.map` over a resolved array → one node per item
 ├── jsxAttributeReaders.ts    — how each attribute shape is read (props, style, raw SVG)
 ├── inlineSvg.ts              — an `<svg>` written as JSX elements → markup for `base.svg`
+├── staticEvalTypes.ts        — pure leaf: the evaluator's value/scope types incl. `ValueOrigin`
 ├── componentSources.ts       — local vs package classification, workspace-wide ts-morph Project
 ├── staticEval.ts             — public composer for the value evaluator
 ├── staticEvalCore.ts         — Tier A + the recursive walker + binding resolution
@@ -270,7 +271,36 @@ Every surface that cannot write now says why, using `lockReason`'s own wording (
 | HTML attributes tab | `readOnly` |
 | Canvas double-click | An `info` toast. This one is announced where the store's other early-returns stay silent, because it is the only one a user can mistake for a bug: they double-clicked real copy sitting right there and nothing happened. (Double-clicking a container has no inline-edit contract at all, which needs no announcement.) |
 
-What this does NOT do is make the value editable. The honest writeback for `{c.hotelsTitle}` is the dictionary entry in `src/i18n/translations.js`, one hop away and a real string literal — but `resolution.source` records the expression TEXT, not a source location, and there is no codemod for an object-literal property. Editing resolved values at their real origin is a separate piece of work; this change is about not pretending it already exists.
+### Resolved TEXT is editable, at its origin
+
+Explaining a dead field is not the same as fixing it, and copy is the thing users actually came to edit. So resolved text now writes — not to the JSX, but to the string it reads.
+
+`ParsedNode.textOrigin` (`ValueOrigin`: workspace-relative path + 1-based line/column) records where a resolved text's literal physically lives. `{c.hotelsTag}` resolves to `hotelsTag: 'Exclusive rates on hotels'` at `src/i18n/translations.js:142:18`, and **that** is a perfectly ordinary string literal to rewrite. On the eSIM corpus, **106 of the 149 locked-with-text nodes have a writable origin.**
+
+How each piece knows:
+
+| Layer | Mechanism |
+|---|---|
+| Evaluator | `origin` is attached at the ONE place a literal is read out of a file, so every path that merely passes the value along (identifier → const → `pluck` → array index) carries it for free, and every path that COMPUTES a value (template, concatenation, arithmetic, a call) cannot |
+| Parser | `textOrigin` on the node, scoped to text on purpose — see below |
+| Store | `updateNodeProps` admits a patch that touches ONLY the module's `inlineTextEdit` prop on a node with an origin (`isTextOriginPatch`); `startInlineEdit` allows the same node, so canvas double-click works |
+| Panel | `propLockReason` unlocks that one prop and keeps every other one locked |
+| Save | `saveSite` emits `kind: 'literal'` with the ORIGIN's `rel:line:col` as its `nodeId`, so the server's existing ordering, dedupe, and touched-file logic all apply unchanged |
+| Codemod | `setStringLiteral` replaces the literal at that exact position, preserving the file's quote style |
+
+**Scoped to text, not hung off `resolution`.** A node can resolve several values (text, `className`, an aria label) and `resolution` keeps only the first — so an origin there could point at the literal behind a *different* prop than the one being edited, and a writeback aimed at the wrong string is worse than none.
+
+**A `.map` row is individually editable.** Each iteration resolved a different array element, so each carries its own origin. The origin path deliberately runs before the `SOURCE_NODE_ID` guard in `saveSite`, because that guard is about JSX locations and a literal edit has nothing to do with the node's own id.
+
+**Shared copy says so.** A dictionary key is shared by design, so the notice counts how many nodes resolve to the same literal and warns before the user commits — the same treatment `SharedComponentNotice` gives a shared component.
+
+**Still not editable:** a computed text (`` `${count} left` ``) has no single literal to rewrite, and every prop other than text stays locked. Both show the read-only row with the reason.
+
+### The writeback path is contained
+
+`studioEditLocation` now rejects a `rel` that is absolute, contains a `..` or empty segment, or does not end in a JS/TS extension.
+
+This was a real hole, not a hypothetical one: the whole edit batch arrives from the client with `rel` inside each `nodeId`, and the save route builds its target with `join(dir, rel)` — so a `nodeId` of `../../.ssh/config:1:1` was an arbitrary file write. Nothing legitimate produces one (the parser mints ids from `path.relative(workspaceRoot, file)` for files it already found inside the workspace), and the check lives in the single decoder every path shares, so ordering, dedupe, touched-file collection, and apply all inherit it.
 
 ---
 
@@ -490,3 +520,6 @@ Honest list, all deliberate:
 | Asset route guards | `server/handlers/__tests__/studioAsset.test.ts` |
 | Load/save endpoint contract | `server/handlers/__tests__/studio.test.ts` |
 | Save write-loop safety | `src/admin/pages/site/studio/__tests__/fsCodemodAdapter.test.ts` |
+| Literal writeback + writable-path guard | `server/handlers/__tests__/studioWriteback.test.ts` |
+| `setStringLiteral` fail-closed behaviour | `src/core/ast-codemods/__tests__/setStringLiteral.test.ts` |
+| Resolved text is editable at its origin, and nothing else is | `src/__tests__/studio/resolvedTextEditing.test.ts` |

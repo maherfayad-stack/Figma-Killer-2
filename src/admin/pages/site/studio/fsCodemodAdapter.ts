@@ -228,6 +228,7 @@ type StudioEditPayload =
   | { kind: 'prop'; nodeId: string; prop: string; value: string | number | boolean }
   | { kind: 'text'; nodeId: string; text: string }
   | { kind: 'style'; nodeId: string; style: Record<string, string | number> }
+  | { kind: 'literal'; nodeId: string; text: string }
 
 /** Narrows a node's `inlineStyles` bag down to the string/number values `setJsxStyle` can write. */
 function literalInlineStyles(inlineStyles: Record<string, unknown> | undefined): Record<string, string | number> {
@@ -288,8 +289,6 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
 
     for (const page of site.pages) {
       for (const node of Object.values(page.nodes)) {
-        if (!SOURCE_NODE_ID.test(node.id)) continue
-
         // The module's declared inline-text-edit prop (if any) routes that
         // one prop as a `text` edit (rewrites the element's text children)
         // instead of a `prop` edit (rewrites an attribute) — capturing it as
@@ -297,6 +296,21 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
         // <Button> whose label is really its text child).
         const textProp = registry.get(node.moduleId)?.inlineTextEdit?.prop
         const baseline = loadedValues.get(node.id)
+
+        // A resolved text's ORIGIN is a literal in some other file, so this
+        // branch does not care whether the node's own id is a writable JSX
+        // location — which is what lets a `.map` row be edited individually. Each
+        // iteration resolved a DIFFERENT array element, so each carries its own
+        // origin and writes only its own string.
+        if (textProp !== undefined && node.textOrigin) {
+          const value = node.props?.[textProp]
+          if (typeof value === 'string' && !(baseline && Object.is(baseline[textProp], value))) {
+            const { rel, line, col } = node.textOrigin
+            edits.push({ kind: 'literal', nodeId: `${rel}:${line}:${col}`, text: value })
+          }
+        }
+
+        if (!SOURCE_NODE_ID.test(node.id)) continue
 
         for (const [prop, value] of Object.entries(node.props ?? {})) {
           if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') continue
@@ -308,6 +322,8 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
           // — silently destroying the binding. `setJsxText` refuses that on
           // the text path, but `setJsxProp` will happily do it.
           if (baseline && Object.is(baseline[prop], value)) continue
+          // Already emitted as a `literal` edit aimed at its origin, above.
+          if (prop === textProp && node.textOrigin) continue
           if (prop === textProp) {
             edits.push({ kind: 'text', nodeId: node.id, text: String(value) })
           } else {

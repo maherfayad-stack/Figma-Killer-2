@@ -21,6 +21,7 @@ import {
 } from 'ts-morph'
 import type { ParsedNode, ParsedPropValue } from './types'
 import { tryResolveExpression, tryResolvePropValue, type PageEvalContext, type Resolution } from './resolutionLock'
+import type { ValueOrigin } from './staticEvalTypes'
 
 /**
  * Everything one parse pass needs to read values and record nodes. Built once
@@ -387,7 +388,10 @@ export function extractInlineStyles(
  * `withResolutionLock`, since writing an edit back over the original
  * expression would destroy it).
  */
-export function extractSingleText(children: Node[], ctx: ParseContext): { text: string | undefined; resolution?: Resolution } {
+export function extractSingleText(
+  children: Node[],
+  ctx: ParseContext,
+): { text: string | undefined; resolution?: Resolution; origin?: ValueOrigin } {
   if (children.length !== 1) return { text: undefined }
   const only = children[0]!
 
@@ -402,7 +406,13 @@ export function extractSingleText(children: Node[], ctx: ParseContext): { text: 
       if (Node.isStringLiteral(expression)) return { text: expression.getLiteralValue() }
       const resolved = tryResolveExpression(expression, ctx.eval)
       if (resolved) {
-        return { text: String(resolved.value), resolution: { source: expression.getText(), note: resolved.note } }
+        return {
+          text: String(resolved.value),
+          resolution: { source: expression.getText(), note: resolved.note },
+          // Where the string actually lives, so an edit can be written there
+          // instead of over the expression. See `ParsedNode.textOrigin`.
+          origin: resolved.origin,
+        }
       }
     }
   }

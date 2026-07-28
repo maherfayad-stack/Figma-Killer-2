@@ -475,6 +475,9 @@ function processElement(
     locked: lock.locked,
     ...(lock.lockReason ? { lockReason: lock.lockReason } : {}),
     ...(text !== undefined ? { text } : {}),
+    // Only when the text came from a `.map` iteration's own scope would this be
+    // ambiguous, and `idSuffix` marks those ids as unwritable anyway.
+    ...(textResult?.origin ? { textOrigin: textResult.origin } : {}),
     ...(styleResult.styles !== undefined ? { inlineStyles: styleResult.styles } : {}),
     ...(lock.resolution ? { resolution: lock.resolution } : {}),
   }

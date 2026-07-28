@@ -7,7 +7,7 @@
  * evaluation logic (the evaluator itself lives in `staticEval.ts`).
  */
 import type { Node } from 'ts-morph'
-import { evaluateExpression, type EvalScope, type StaticEvalOptions, type StaticValue } from './staticEval'
+import { evaluateExpression, type EvalScope, type StaticEvalOptions, type StaticValue, type ValueOrigin } from './staticEval'
 import type { ParsedNode, ParsedPropValue } from './types'
 
 /** The `(scope, options)` pair `parseJsxTree` builds once per page when the caller opts into §7 — see `ParseContext.eval` in `parsePageFile.ts`. */
@@ -41,11 +41,11 @@ function shortenSource(text: string): string {
 export function tryResolveExpression(
   expr: Node,
   evalCtx: PageEvalContext | undefined,
-): { value: string | number | boolean; note?: string } | undefined {
+): { value: string | number | boolean; note?: string; origin?: ValueOrigin } | undefined {
   if (!evalCtx) return undefined
   const result: StaticValue = evaluateExpression(expr, evalCtx.scope, evalCtx.options)
   if (result.kind !== 'literal' || result.value === null) return undefined
-  return { value: result.value, note: result.note }
+  return { value: result.value, note: result.note, origin: result.origin }
 }
 
 /**
