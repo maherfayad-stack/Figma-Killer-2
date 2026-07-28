@@ -28,6 +28,7 @@ import {
 import type { FunctionLike } from './types'
 import {
   createEvalScope,
+  evaluateCondition,
   evaluateNode,
   findDefaultExportedVariable,
   findImportBinding,
@@ -356,49 +357,6 @@ function callPureArrow(fn: ArrowFunctionOrDecl, args: StaticValue[], budget: Bud
   return unresolved('no branch of the if-chain could be statically resolved')
 }
 
-/** Narrow, condition-only sub-evaluator for Tier C's if-chain walk — NEVER reused for JSX ternary/branch selection (§7.7 bans that). */
-function evaluateCondition(expr: Node, scope: EvalScope, budget: Budget, depth: number): boolean | undefined {
-  const n = unwrapParens(expr)
-  if (Node.isBinaryExpression(n)) {
-    const opKind = n.getOperatorToken().getKind()
-    if (opKind === SyntaxKind.AmpersandAmpersandToken) {
-      const left = evaluateCondition(n.getLeft(), scope, budget, depth)
-      if (left === false) return false
-      const right = evaluateCondition(n.getRight(), scope, budget, depth)
-      if (right === false) return false
-      return left === true && right === true ? true : undefined
-    }
-    if (opKind === SyntaxKind.BarBarToken) {
-      const left = evaluateCondition(n.getLeft(), scope, budget, depth)
-      if (left === true) return true
-      const right = evaluateCondition(n.getRight(), scope, budget, depth)
-      if (right === true) return true
-      return left === false && right === false ? false : undefined
-    }
-    const comparators: Partial<Record<SyntaxKind, (a: unknown, b: unknown) => boolean>> = {
-      [SyntaxKind.EqualsEqualsEqualsToken]: (a, b) => a === b,
-      [SyntaxKind.EqualsEqualsToken]: (a, b) => a === b,
-      [SyntaxKind.ExclamationEqualsEqualsToken]: (a, b) => a !== b,
-      [SyntaxKind.ExclamationEqualsToken]: (a, b) => a !== b,
-      [SyntaxKind.LessThanToken]: (a, b) => (a as number) < (b as number),
-      [SyntaxKind.LessThanEqualsToken]: (a, b) => (a as number) <= (b as number),
-      [SyntaxKind.GreaterThanToken]: (a, b) => (a as number) > (b as number),
-      [SyntaxKind.GreaterThanEqualsToken]: (a, b) => (a as number) >= (b as number),
-    }
-    const compare = comparators[opKind]
-    if (!compare) return undefined
-    const left = evaluateNode(n.getLeft(), scope, budget, depth + 1)
-    const right = evaluateNode(n.getRight(), scope, budget, depth + 1)
-    if (left.kind !== 'literal' || right.kind !== 'literal') return undefined
-    return compare(left.value, right.value)
-  }
-  if (Node.isPrefixUnaryExpression(n) && n.getOperatorToken() === SyntaxKind.ExclamationToken) {
-    const inner = evaluateCondition(n.getOperand(), scope, budget, depth)
-    return inner === undefined ? undefined : !inner
-  }
-  const value = evaluateNode(n, scope, budget, depth + 1)
-  return value.kind === 'literal' && typeof value.value === 'boolean' ? value.value : undefined
-}
 
 // -- Whitelisted primitive method / coercion calls (§7.5) --------------------
 

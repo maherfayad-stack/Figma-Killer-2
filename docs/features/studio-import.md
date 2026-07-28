@@ -10,6 +10,7 @@ The load path is `GET /admin/api/studio/load?dir=<abs>` → `loadStudioPages` (`
 
 - **Studio parses source structurally. It never executes it.** No component is rendered, no hook is called, no module is evaluated. Every value on the canvas was read out of the AST with ts-morph.
 - **Page discovery is configurable.** `.studio/meta.json`'s `pagesDir` points at a repo's real screens directory (e.g. `src/screens`); `.tsx` and `.jsx` are both discovered.
+- **Written for any React repo, not one app.** `genericRepoShapes.test.ts` is a second fixture that shares nothing with the validation corpus — `.tsx`, arrow components, named exports, a barrel between page and component, typed data modules — and exists because a suite grown from one repo's defects encodes that repo's habits.
 - **Local components are inlined.** A `<Card />` whose import resolves inside the workspace is expanded into its own JSX so the canvas shows real markup, not an opaque box. The call-site node is **replaced** by that JSX, not left wrapping it. Inlined nodes are **editable**, and the panel says how many places an edit will land in.
 - **Package components are not.** `@alm-design/design-system`'s `<Button />` stays a `alm.Button` node rendered by its own module.
 - **`.map` over a statically-resolved array is expanded** into one node per item, so a list renders as a list. Rows are locked (derived from data).
@@ -42,6 +43,7 @@ src/core/page-parser/
 ├── staticEval.ts             — public composer for the value evaluator
 ├── staticEvalCore.ts         — Tier A + the recursive walker + binding resolution
 ├── staticEvalCalls.ts        — Tier B (hook → provider) + Tier C (pure calls)
+├── rawTextImports.ts         — `?raw` specifier → file text: node_modules walk, real-path containment
 └── resolutionLock.ts         — resolved value → lock + `resolution`; scalar vs structured prop values
 
 src/core/studio-sync/
@@ -120,6 +122,18 @@ This is the same invariant the per-frame iframe exists to protect (`IframeFrameS
 
 The trade-off is that a call site's own literal props (`<Icon size={24}/>`'s `size`) are no longer editable *as a node*, because no node represents the call site. Those values still reach the canvas by substitution into the subtree, and are edited where they actually live.
 
+### Imports are followed through barrels
+
+A named import is classified against the file that actually DECLARES it, not the file the specifier names — `resolveExportedDeclaration` walks `export { X } from './X'` and `export * from './X'` chains via ts-morph's own `getExportedDeclarations()`, and returns the declaration's own name so a renaming barrel (`export { Card as PlanCard }`) resolves too.
+
+Without this, `import { Card } from '../components'` recorded a local component whose file (`components/index.ts`) declares nothing, inlining bailed, and the node stayed an opaque box. A barrel between a page and its components is one of the most common layouts there is; the validation corpus simply does not use one.
+
+### A component's own JSX is re-read against the call site's values
+
+`applySubstitutions` re-reads props, inline styles, `className`, the raw-SVG markup, and the single-text-leaf against a scope where the component's **parameters** are bound to what the call site passed.
+
+The substitution table alone only covers a param forwarded verbatim (`{paramName}`). Everything read OFF a param needs the evaluator: `title={plan.name}`, `{seatLabel(plan.seats)}`, `{money(plan.monthly)}`. A component that takes an object and renders its fields is the normal way to write a typed React component, and none of it resolved — the component's own file sees `plan` as a parameter with no value anywhere in it. Combined with structured props, a loop item forwarded as an object prop now resolves three hops out.
+
 ### Inlined nodes are editable, with their blast radius shown
 
 An inlined subtree is one component's markup shown at one call site, and a composite id's writeback target is its tail — the component's own source location, which is a real, valid place to write. So these nodes are **editable**. What they are not is *isolated*: one file backs every instance, so an edit lands on all of them. `ParsedNode.fromComponent` carries the component name, and `SharedComponentNotice` states the consequence next to the controls that would cause it, with a live instance count (one `Icon.jsx` line sat behind 29 board nodes on the corpus).
@@ -150,6 +164,12 @@ Two providers for the same context ⇒ `unresolved`. Ambiguity is never guessed 
 
 Calls a resolvable arrow/function inside `qualifiesForTierC`'s explicit envelope: a concise-expression body, or a block of bare `if (cond) return …` / `return …` statements, with no assignment, loop, `await`, `new`, or non-whitelisted member call anywhere in a reachable sub-expression. Whitelisted: `String`, `Number`, `Math.*`, `.toFixed`, `.padStart`, `.toUpperCase`, `.toLowerCase`, `.trim`, `.join`.
 
+### Value-level ternaries resolve when the condition does
+
+`cond ? a : b` evaluates its condition with `evaluateCondition` (`&&`/`||`/`!`, the six comparisons, a bare boolean) and returns the taken branch. This is the same act Tier C already performed for `if (cond) return x` in a callee body, so declining it was an inconsistency: a dictionary's pluraliser is `` (days) => `+${days} Day${days === 1 ? '' : 's'}` ``, and refusing the ternary left every "Days" row blank while the "GB" rows — identical but for the suffix — resolved.
+
+**A ternary whose branches contain JSX declines regardless of the condition**, and that is checked rather than assumed. Markup stays the structural walk's decision alone; see Tier D.
+
 ### Tier D — banned
 
 JSX conditional-branch selection, hook state, effects, async. Do not implement these anywhere in this module. The line is **executing code**: control flow whose outcome the parser cannot know, state it would have to simulate, work it would have to run.
@@ -173,6 +193,8 @@ The guard rails:
 | Rows are **locked** | They are derived, and one piece of source JSX backs all N — an edit to row 3 has nowhere isolated to land. Edit the data |
 
 Decline and the call site keeps its single `dynamic — rendered in code` placeholder — exactly the old behaviour.
+
+**Expansion does not depend on where the `.map` sits.** It fires for a direct `{items.map(…)}` child and equally for one reached through a ternary (`{tab === 0 ? A.map(…) : B.map(…)}`), a `&&`, or a `return` that is itself the conditional — `collectFromExpression` expands a loop met on the way down instead of walking into the callback. It used to live only in `processChildren`, so the same list wrapped one level deeper collapsed to ONE row per branch with every item-dependent value unresolved. Which of two equivalent spellings a repo happens to use is not something the result may depend on.
 
 Measured on the eSIM corpus: 955 → 1062 nodes, 60 → 78 rendered icons (many icons live inside list rows), 773 → 868 styled elements.
 
@@ -377,6 +399,7 @@ Honest list, all deliberate:
 | Every `return` renders, `return null` guards don't lock | `src/core/page-parser/__tests__/multipleReturns.test.ts` |
 | Structured + JSX-valued props | `src/core/page-parser/__tests__/structuredProps.test.ts` |
 | `?raw` imports, `node_modules`, symlink containment, transform fallback | `src/core/page-parser/__tests__/rawSvgImports.test.ts` |
+| A repo unlike the validation corpus (barrels, named exports, typed data, CSS modules, hooks) | `src/core/page-parser/__tests__/genericRepoShapes.test.ts` |
 | Panel never offers an editable input for a structured value | `src/__tests__/property-controls/PropertyControlRenderer.test.tsx` |
 | Stylesheet collection, ordering, escape rejection | `src/core/studio-sync/__tests__/collectPageStylesheets.test.ts` |
 | CSS round-trip, id stability, classIds | `server/handlers/__tests__/studioCss.test.ts` |

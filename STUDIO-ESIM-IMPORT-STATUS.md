@@ -335,6 +335,39 @@ programmatic `scrollTop` does not re-trigger it — resize the viewport instead)
    made every read under `os.tmpdir()` look like an escape (it broke 6 tests
    before I spotted it).
 
+### Round 5 — four generality bugs a second corpus found
+
+Round 4's fixes were all validated on the eSIM corpus, which is exactly the risk:
+a suite grown from one repo's defects encodes that repo's habits. So Round 5 added
+`genericRepoShapes.test.ts` — a fixture sharing nothing with eSIM (`.tsx`, arrow
+components assigned to `const`, named exports, a barrel `index.ts` between page and
+component, a typed data module, CSS modules, hooks/handlers). **Four of its ten
+tests failed on first run**, all real:
+
+| Bug | Why eSIM never showed it |
+|---|---|
+| A component imported through a **barrel** (`export { X } from './X'`) was classified local against `index.ts`, which declares nothing — so inlining bailed and the node stayed an opaque box | the corpus imports every component by direct path |
+| `{plan.name}` / `{money(plan.monthly)}` — anything read **off** a param — never resolved inside an inlined component | the corpus passes scalars (`title`, `label`) and forwards them verbatim, which the substitution table already covered |
+| A `.map` reached through a **ternary** was skipped entirely: expansion lived only in `processChildren`, so `{tab === 0 ? A.map(…) : B.map(…)}` collapsed to one blank row per branch | found independently from a user screenshot of the package picker — the corpus's other lists are direct `{items.map(…)}` children |
+| A **value-level ternary** declined even with a decidable condition, so `` `+${days} Day${days === 1 ? '' : 's'}` `` left every "Days" row blank while the "GB" rows resolved | the corpus's other labels do not pluralise |
+
+Two of the four were also visible on eSIM once found (the package picker), which is
+the point: the second corpus turned "some rows look empty" into four named causes.
+
+A fifth bug surfaced while fixing the first: `Node.isNameable` matched nothing for
+`const Card = () => …`. A VariableDeclaration's name is REQUIRED, so it is *named*,
+not *nameable* — `Node.hasName` is the right predicate. The barrel fix silently did
+nothing until that was corrected.
+
+Corpus after Round 5: **1180 nodes, 197 with text, 104 icons**. In the browser all 7
+package rows render (`1 GB / SAR 20` … `+30 Days / SAR 40`) where the screenshot had
+two blank ones; 15 frames, 0 scroll deficits, 169 SVGs all sized.
+
+`staticEvalCore.ts` hit 701 lines against the 700 ceiling and was split by
+extracting `rawTextImports.ts` — reading a file off an import specifier is
+filesystem and module resolution, not expression evaluation, and the new module
+imports nothing back from the evaluator.
+
 ### Still open
 
 - **Only the `previewLocale` branch renders**; RTL is not applied.

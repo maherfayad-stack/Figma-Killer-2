@@ -15,14 +15,13 @@
  * `evaluateExpression` call. `./staticEvalCalls` imports everything it needs
  * FROM this module (one direction only); this module imports nothing back.
  */
-import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
-import * as path from 'node:path'
 import {
   Node,
   SyntaxKind,
   type ArrayLiteralExpression,
   type ArrowFunction,
   type CallExpression,
+  type ConditionalExpression,
   type ElementAccessExpression,
   type FunctionDeclaration,
   type ObjectLiteralExpression,
@@ -31,6 +30,7 @@ import {
   type TemplateExpression,
   type VariableDeclaration,
 } from 'ts-morph'
+import { resolveRawTextImport } from './rawTextImports'
 import type { FunctionLike } from './types'
 
 // ---------------------------------------------------------------------------
@@ -264,11 +264,113 @@ export function evaluateNode(exprIn: Node, scope: EvalScope, budget: Budget, dep
   if (Node.isElementAccessExpression(expr)) return evaluateElementAccess(expr, scope, budget, depth)
   if (Node.isObjectLiteralExpression(expr)) return evaluateObjectLiteral(expr, scope, budget, depth)
   if (Node.isArrayLiteralExpression(expr)) return evaluateArrayLiteral(expr, scope, budget, depth)
+  if (Node.isConditionalExpression(expr)) return evaluateConditionalExpression(expr, scope, budget, depth)
   // CallExpression is NOT handled inline — see this module's doc comment.
   if (Node.isCallExpression(expr)) return budget.callEvaluator(expr, scope, budget, depth)
   if (Node.isArrowFunction(expr) || Node.isFunctionDeclaration(expr)) return { kind: 'fn', node: expr }
 
   return unresolved(`unsupported expression kind (${expr.getKindName()})`)
+}
+
+/**
+ * Narrow, condition-only sub-evaluator: `&&`/`||`/`!`, the six comparison
+ * operators, and a bare boolean value. Returns `undefined` — never a guess —
+ * when the condition is not statically decidable.
+ *
+ * Two callers, both selecting a VALUE: Tier C's `if`-chain walk in
+ * `./staticEvalCalls`, and `evaluateConditionalExpression` below.
+ *
+ * NEVER reach for this to pick a JSX branch. §7.7's ban is about markup: a
+ * stateful screen has many states and rendering one as if it were the source
+ * misrepresents it, so the parser renders every branch and locks them. Deciding
+ * `days === 1` to build a plural label is a different act — the condition is
+ * fully determined by source text, and the result is a string.
+ */
+export function evaluateCondition(expr: Node, scope: EvalScope, budget: Budget, depth: number): boolean | undefined {
+  const n = unwrapParens(expr)
+  if (Node.isBinaryExpression(n)) {
+    const opKind = n.getOperatorToken().getKind()
+    if (opKind === SyntaxKind.AmpersandAmpersandToken) {
+      const left = evaluateCondition(n.getLeft(), scope, budget, depth)
+      if (left === false) return false
+      const right = evaluateCondition(n.getRight(), scope, budget, depth)
+      if (right === false) return false
+      return left === true && right === true ? true : undefined
+    }
+    if (opKind === SyntaxKind.BarBarToken) {
+      const left = evaluateCondition(n.getLeft(), scope, budget, depth)
+      if (left === true) return true
+      const right = evaluateCondition(n.getRight(), scope, budget, depth)
+      if (right === true) return true
+      return left === false && right === false ? false : undefined
+    }
+    const comparators: Partial<Record<SyntaxKind, (a: unknown, b: unknown) => boolean>> = {
+      [SyntaxKind.EqualsEqualsEqualsToken]: (a, b) => a === b,
+      [SyntaxKind.EqualsEqualsToken]: (a, b) => a === b,
+      [SyntaxKind.ExclamationEqualsEqualsToken]: (a, b) => a !== b,
+      [SyntaxKind.ExclamationEqualsToken]: (a, b) => a !== b,
+      [SyntaxKind.LessThanToken]: (a, b) => (a as number) < (b as number),
+      [SyntaxKind.LessThanEqualsToken]: (a, b) => (a as number) <= (b as number),
+      [SyntaxKind.GreaterThanToken]: (a, b) => (a as number) > (b as number),
+      [SyntaxKind.GreaterThanEqualsToken]: (a, b) => (a as number) >= (b as number),
+    }
+    const compare = comparators[opKind]
+    if (!compare) return undefined
+    const left = evaluateNode(n.getLeft(), scope, budget, depth + 1)
+    const right = evaluateNode(n.getRight(), scope, budget, depth + 1)
+    if (left.kind !== 'literal' || right.kind !== 'literal') return undefined
+    return compare(left.value, right.value)
+  }
+  if (Node.isPrefixUnaryExpression(n) && n.getOperatorToken() === SyntaxKind.ExclamationToken) {
+    const inner = evaluateCondition(n.getOperand(), scope, budget, depth)
+    return inner === undefined ? undefined : !inner
+  }
+  const value = evaluateNode(n, scope, budget, depth + 1)
+  return value.kind === 'literal' && typeof value.value === 'boolean' ? value.value : undefined
+}
+
+/**
+ * `cond ? a : b`, when `cond` is statically decidable.
+ *
+ * This is the same act Tier C already performs for `if (cond) return x` in a
+ * callee's body, so declining it here was an inconsistency: the corpus's
+ * pluralisation helper is `` (days) => `+${days} Day${days === 1 ? '' : 's'}` ``,
+ * and refusing the ternary left every "Days" package row blank while the "GB"
+ * rows — identical but for the plural suffix — resolved fine. Pluralising inside
+ * a template is one of the most common shapes in an i18n dictionary.
+ *
+ * A ternary whose branches contain JSX declines regardless of the condition. That
+ * is §7.7's ban, and it is enforced here rather than assumed: the parser's
+ * structural walk renders both JSX branches and locks them, and it must stay the
+ * only thing that decides what markup exists.
+ */
+function evaluateConditionalExpression(
+  expr: ConditionalExpression,
+  scope: EvalScope,
+  budget: Budget,
+  depth: number,
+): StaticValue {
+  const whenTrue = expr.getWhenTrue()
+  const whenFalse = expr.getWhenFalse()
+  if (containsJsxNode(whenTrue) || containsJsxNode(whenFalse)) {
+    return unresolved('a JSX ternary is resolved structurally, never by picking a branch')
+  }
+
+  const cond = evaluateCondition(expr.getCondition(), scope, budget, depth + 1)
+  if (cond === undefined) return unresolved('ternary condition is not statically known')
+  return evaluateNode(cond ? whenTrue : whenFalse, scope, budget, depth + 1)
+}
+
+const JSX_VALUE_KINDS: ReadonlySet<SyntaxKind> = new Set([
+  SyntaxKind.JsxElement,
+  SyntaxKind.JsxSelfClosingElement,
+  SyntaxKind.JsxFragment,
+])
+
+/** Whether `node` is JSX or contains any — see `evaluateConditionalExpression`. */
+function containsJsxNode(node: Node): boolean {
+  if (JSX_VALUE_KINDS.has(node.getKind())) return true
+  return node.getFirstDescendant((d) => JSX_VALUE_KINDS.has(d.getKind())) !== undefined
 }
 
 function evaluateTemplate(expr: TemplateExpression, scope: EvalScope, budget: Budget, depth: number): StaticValue {
@@ -394,7 +496,7 @@ export function resolveIdentifier(name: string, scope: EvalScope, budget: Budget
     if (!imported.targetFile) {
       // A `?raw` text asset has no SourceFile — ts-morph only tracks JS/TS —
       // but its CONTENTS are a perfectly static value.
-      const rawText = resolveRawTextImport(scope.sourceFile, name, budget)
+      const rawText = resolveRawTextImport(scope.sourceFile, name, budget.workspaceRoot)
       if (rawText !== undefined) return { kind: 'literal', value: rawText }
       return unresolved(`cannot resolve the import target for "${name}"`)
     }
@@ -446,110 +548,6 @@ export function evaluateModuleConst(
     byName.set(name, result)
   }
   return result
-}
-
-/** Vite's `?raw` text-inlining suffix, e.g. `'./check-line.svg?raw'`. */
-const RAW_TEXT_SPECIFIER_RE = /\.(svg|txt|html?|md|csv)\?raw$/i
-
-/** Guards against inlining a huge file into every expression that references it. */
-const MAX_RAW_TEXT_BYTES = 512 * 1024
-
-/**
- * A specifier that names a file inside an installed package
- * (`@alm-design/design-system/src/icons/line-icons/headset.svg?raw`) rather than
- * a path relative to the importing file. Absolute specifiers are excluded here
- * and rejected outright — nothing legitimate imports `/etc/passwd?raw`.
- */
-function isBareSpecifier(specifier: string): boolean {
-  return !specifier.startsWith('.') && !specifier.startsWith('/') && !specifier.startsWith('\\')
-}
-
-/**
- * Node's own algorithm, narrowed to one file: walk up from the importing file
- * looking for `<dir>/node_modules/<specifier>`, stopping at the workspace root.
- *
- * A design system ships its icons as files inside its package, so an app that
- * imports 23 of them (`.../icons/line-icons/headset.svg?raw`) had every one
- * resolve to nothing before this. Hardcoding a path to this repo's own copy was
- * the alternative and would have been a workspace-specific hack; walking
- * `node_modules` is the general, correct rule — it just needs the package to
- * actually be installed.
- */
-function resolveInNodeModules(fromDir: string, specifier: string, resolvedRoot: string): string | undefined {
-  let dir = path.resolve(fromDir)
-  for (;;) {
-    const candidate = path.join(dir, 'node_modules', specifier)
-    if (existsSync(candidate)) return candidate
-    if (dir === resolvedRoot) return undefined
-    const parent = path.dirname(dir)
-    if (parent === dir) return undefined
-    dir = parent
-  }
-}
-
-/**
- * `import icon from './x.svg?raw'` -> the file's contents.
- *
- * Vite's `?raw` suffix inlines a file's text as the default export, and it is
- * how real repos ship inline icons: a `?raw` SVG handed to
- * `dangerouslySetInnerHTML`, often via a `<Icon svg={...} />` prop. Resolving
- * it here rather than in the parser means one mechanism covers every path the
- * value can travel — read directly, passed as a prop and substituted into a
- * component, or aliased through a local const.
- *
- * Relative specifiers and installed-package specifiers, only inside
- * `budget.workspaceRoot`, only regular files under `MAX_RAW_TEXT_BYTES`. Without
- * a configured root this returns `undefined` rather than reading anything: a
- * specifier can climb out of the workspace, and the evaluator must never
- * manufacture an escaping path.
- *
- * CONTAINMENT IS CHECKED ON THE REAL PATH, after following symlinks. A workspace
- * can arrive from `/import-github`, and git stores symlinks — so a
- * `node_modules` entry is untrusted input, and a textual containment check would
- * happily read `~/.ssh/id_rsa` through a link that merely *looks* like it sits
- * under the workspace. The cost is that a linked `file:../pkg` dependency does
- * not resolve; installing the package (a real directory) does.
- */
-function resolveRawTextImport(sourceFile: SourceFile, localName: string, budget: Budget): string | undefined {
-  const root = budget.workspaceRoot
-  if (!root) return undefined
-  const resolvedRoot = path.resolve(root)
-  // The root itself is routinely reached through a symlink (`/var` -> `/private/var`
-  // on macOS, a linked checkout), so containment has to compare real path to real
-  // path or every read under it looks like an escape.
-  let realRoot: string
-  try {
-    realRoot = realpathSync(resolvedRoot)
-  } catch {
-    return undefined
-  }
-
-  for (const decl of sourceFile.getImportDeclarations()) {
-    if (decl.getDefaultImport()?.getText() !== localName) continue
-    const specifier = decl.getModuleSpecifierValue()
-    if (!RAW_TEXT_SPECIFIER_RE.test(specifier)) return undefined
-    const filePath = specifier.split('?')[0]!
-
-    const fromDir = path.dirname(sourceFile.getFilePath())
-    const absolute = isBareSpecifier(specifier)
-      ? resolveInNodeModules(fromDir, filePath, resolvedRoot)
-      : specifier.startsWith('.')
-        ? path.resolve(fromDir, filePath)
-        : undefined // absolute specifier — never read
-    if (absolute === undefined) return undefined
-
-    try {
-      const real = realpathSync(absolute)
-      const relFromRoot = path.relative(realRoot, real)
-      if (relFromRoot.startsWith('..') || path.isAbsolute(relFromRoot)) return undefined
-      const stats = statSync(real)
-      if (!stats.isFile() || stats.size > MAX_RAW_TEXT_BYTES) return undefined
-      return readFileSync(real, 'utf8').trim()
-    } catch {
-      return undefined // Missing/unreadable asset — unresolved, never a throw.
-    }
-  }
-  return undefined
 }
 
 export interface ImportBindingTarget {

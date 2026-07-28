@@ -27,7 +27,7 @@
  */
 import { existsSync } from 'node:fs'
 import * as path from 'node:path'
-import { Project, type SourceFile } from 'ts-morph'
+import { Node, Project, type SourceFile } from 'ts-morph'
 import type { ParsedPage } from './types'
 import { EXCLUDED_WORKSPACE_DIR_NAMES } from './workspaceFiles'
 
@@ -116,7 +116,8 @@ function buildImportIdentifierMap(sourceFile: SourceFile, workspaceRoot: string)
 
   for (const declaration of sourceFile.getImportDeclarations()) {
     const specifier = declaration.getModuleSpecifierValue()
-    const source = classifyImport(declaration.getModuleSpecifierSourceFile(), workspaceRoot, specifier)
+    const target = declaration.getModuleSpecifierSourceFile()
+    const source = classifyImport(target, workspaceRoot, specifier)
 
     const defaultImport = declaration.getDefaultImport()
     if (defaultImport) map[defaultImport.getText()] = source
@@ -125,13 +126,68 @@ function buildImportIdentifierMap(sourceFile: SourceFile, workspaceRoot: string)
     if (namespaceImport) map[namespaceImport.getText()] = source
 
     for (const named of declaration.getNamedImports()) {
-      const localName = named.getAliasNode()?.getText() ?? named.getNameNode().getText()
-      map[localName] = source
+      const importedName = named.getNameNode().getText()
+      const localName = named.getAliasNode()?.getText() ?? importedName
+      // A NAMED import may be re-exported. `import { Card } from '../components'`
+      // resolves to `components/index.ts`, which declares nothing — classifying
+      // against that file recorded a "local component" whose file has no
+      // component in it, so inlining bailed and the node stayed an opaque box.
+      // A barrel between a page and its components is one of the most common
+      // layouts there is.
+      const declaring = resolveExportedDeclaration(target, importedName)
+      map[localName] = declaring ? classifyImport(declaring.sourceFile, workspaceRoot, specifier) : source
     }
   }
 
   return map
 }
+
+/**
+ * Where an exported name is actually DECLARED, following `export { X } from './X'`
+ * and `export * from './X'` chains to any depth.
+ *
+ * `getExportedDeclarations()` is ts-morph's own export-graph walk, so this
+ * inherits its handling of re-export chains, aliases, and `export *` — rather
+ * than this module re-implementing module resolution. Returns the declaration's
+ * own name too, which is what makes a renaming barrel
+ * (`export { Card as PlanCard }`) resolve: the page's local name does not exist
+ * in the declaring file.
+ *
+ * Results are cached per `SourceFile` — the walk is not cheap, and a barrel is
+ * consulted once per named import on every page that uses it.
+ */
+export function resolveExportedDeclaration(
+  file: SourceFile | undefined,
+  exportedName: string,
+): { sourceFile: SourceFile; name: string } | undefined {
+  if (!file) return undefined
+
+  let byName = exportedDeclarationCache.get(file)
+  if (!byName) {
+    byName = new Map()
+    exportedDeclarationCache.set(file, byName)
+  }
+  if (byName.has(exportedName)) return byName.get(exportedName)
+
+  const declarations = file.getExportedDeclarations().get(exportedName)
+  const declaration = declarations?.[0]
+  // `hasName`, not `isNameable`: a `const Card = () => …` is a VariableDeclaration
+  // whose name is REQUIRED, so it is "named" and not "nameable" — the narrower
+  // predicate silently matched nothing and every barrel import stayed opaque.
+  const name = declaration && Node.hasName(declaration) ? declaration.getName() : undefined
+  const resolved = declaration && name !== undefined
+    ? { sourceFile: declaration.getSourceFile(), name }
+    : undefined
+
+  byName.set(exportedName, resolved)
+  return resolved
+}
+
+/** Per-`SourceFile` memo for `resolveExportedDeclaration`; auto-GC'd with the Project. */
+const exportedDeclarationCache = new WeakMap<
+  SourceFile,
+  Map<string, { sourceFile: SourceFile; name: string } | undefined>
+>()
 
 /** local = resolves to a real file inside `workspaceRoot`, outside any `node_modules`. */
 function classifyImport(

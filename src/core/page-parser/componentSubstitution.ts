@@ -21,7 +21,7 @@
  * shapes and why loop-bearing transforms stay unresolved.
  */
 import { Node, SyntaxKind, type JsxElement, type JsxSelfClosingElement, type SourceFile } from 'ts-morph'
-import { extractInlineStyles, rawHtmlValueExpression, resolveRawSvgMarkup } from './jsxAttributeReaders'
+import { extractInlineStyles, extractProps, extractSingleText, rawHtmlValueExpression, resolveRawSvgMarkup } from './jsxAttributeReaders'
 import { tryResolveExpression, type PageEvalContext } from './resolutionLock'
 import { createEvalScope, type LocalBinding, type StaticValue } from './staticEval'
 import type { ReturnedJsx } from './parsePageFile'
@@ -164,6 +164,15 @@ export function applySubstitutions(
     },
   }
 
+  /**
+   * The `ParseContext` the value readers take, minus the `eval` field each call
+   * site supplies. `imageImports` is empty on purpose: an image import inside the
+   * component's own file was already resolved when `parseJsxTree` walked it, and
+   * these re-reads only ever fill gaps — they must not manufacture a second
+   * sentinel path from a scope that has no workspace root to contain it to.
+   */
+  const readerCtx = { sourceFile, relFile, nodes, imageImports: EMPTY_IMAGE_IMPORTS }
+
   const patchElement = (el: JsxOpeningLike): void => {
     const isElement = Node.isJsxElement(el)
     const tagNameNode = isElement ? el.getOpeningElement().getTagNameNode() : el.getTagNameNode()
@@ -173,6 +182,23 @@ export function applySubstitutions(
       const attributes = isElement ? el.getOpeningElement().getAttributes() : el.getAttributes()
 
       let patchedProps: Record<string, ParsedPropValue> | undefined
+
+      // Re-read EVERY attribute against the param-bound scope, filling only the
+      // gaps `parseJsxTree` left. The loop below handles a param forwarded as a
+      // bare `{paramName}`; this handles everything read OFF a param —
+      // `title={plan.name}`, `label={money(plan.monthly)}`. A component that
+      // takes an object and renders its fields is the normal way to write a
+      // typed React component, and none of it resolved: the component's own file
+      // sees `plan` as a parameter with no value anywhere in it.
+      if (paramEvalContext) {
+        const { props: reread } = extractProps(attributes, { ...readerCtx, eval: paramEvalContext }, existing.kind)
+        for (const [key, value] of Object.entries(reread)) {
+          if (key in existing.props) continue
+          patchedProps ??= { ...existing.props }
+          patchedProps[key] = value
+        }
+      }
+
       for (const attr of attributes) {
         if (!Node.isJsxAttribute(attr)) continue
         const attrName = attr.getNameNode().getText()
@@ -248,13 +274,7 @@ export function applySubstitutions(
       // reader for "how a style object is written".
       let patchedStyles = existing.inlineStyles
       if (paramEvalContext) {
-        const { styles } = extractInlineStyles(attributes, {
-          sourceFile,
-          relFile,
-          nodes,
-          imageImports: EMPTY_IMAGE_IMPORTS,
-          eval: paramEvalContext,
-        })
+        const { styles } = extractInlineStyles(attributes, { ...readerCtx, eval: paramEvalContext })
         if (styles) patchedStyles = { ...existing.inlineStyles, ...styles }
       }
 
@@ -271,6 +291,13 @@ export function applySubstitutions(
             // which is worse than leaving the element empty.
             if (sub?.kind === 'value' && typeof sub.value !== 'object') patchedText = String(sub.value)
           }
+        }
+        // Same story as the props re-read: the text is commonly not the param
+        // itself but something read off it (`{plan.name}`,
+        // `{seatLabel(plan.seats)}`). Reusing `extractSingleText` keeps one
+        // reader for "what counts as a text-only leaf".
+        if (patchedText === undefined && paramEvalContext) {
+          patchedText = extractSingleText(meaningful, { ...readerCtx, eval: paramEvalContext }).text
         }
       }
 

@@ -84,7 +84,7 @@ import {
   parseJsxTree,
 } from './parsePageFile'
 import { applySubstitutions, buildSubstitutionEnv } from './componentSubstitution'
-import { resolveComponentSources, type ComponentSource } from './componentSources'
+import { resolveComponentSources, resolveExportedDeclaration, type ComponentSource } from './componentSources'
 import type { ParsedNode, ParsedPage } from './types'
 import type { StaticEvalOptions } from './staticEval'
 
@@ -347,10 +347,20 @@ function resolveCallTarget(
       return { sourceFile: targetSourceFile, exportedName: undefined, sameFile: false }
     }
     for (const named of decl.getNamedImports()) {
-      const localName = named.getAliasNode()?.getText() ?? named.getNameNode().getText()
-      if (localName === identifier) {
-        return { sourceFile: targetSourceFile, exportedName: named.getNameNode().getText(), sameFile: false }
+      const importedName = named.getNameNode().getText()
+      const localName = named.getAliasNode()?.getText() ?? importedName
+      if (localName !== identifier) continue
+      // The import's own module may only RE-EXPORT the name (a barrel). Ask
+      // where it is declared, under whichever name it is declared as — a
+      // renaming barrel (`export { Card as PlanCard }`) means the page's local
+      // name does not exist in the declaring file at all. `componentSources`
+      // already pointed `targetAbsPath` at that file; this supplies the name to
+      // look for inside it.
+      const declaring = resolveExportedDeclaration(decl.getModuleSpecifierSourceFile(), importedName)
+      if (declaring && path.resolve(declaring.sourceFile.getFilePath()) === path.resolve(targetAbsPath)) {
+        return { sourceFile: declaring.sourceFile, exportedName: declaring.name, sameFile: false }
       }
+      return { sourceFile: targetSourceFile, exportedName: importedName, sameFile: false }
     }
   }
   return undefined

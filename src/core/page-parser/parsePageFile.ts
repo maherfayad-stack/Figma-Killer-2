@@ -538,6 +538,16 @@ function processChildren(
  * ternary/logical expression), without descending into elements once found
  * — their own children are handled by `processElement` → `processChildren`
  * as usual.
+ *
+ * A `.map` met on the way down is EXPANDED here, not walked into. Loop
+ * expansion used to live only in `processChildren`, so it fired for a list
+ * written as a direct `{items.map(…)}` child and silently did not for the same
+ * list written one wrapper deeper — `{cond ? A.map(…) : B.map(…)}`, `{ok &&
+ * items.map(…)}`, or a `return` that is itself the ternary. The list then
+ * collapsed to ONE row per branch, with every value that depended on the loop
+ * item left unresolved: the corpus's package picker rendered two blank radio
+ * rows instead of four priced ones. Which of two equivalent ways a repo happens
+ * to write its list is not something the result may depend on.
  */
 function collectFromExpression(
   expr: Node,
@@ -548,6 +558,12 @@ function collectFromExpression(
   const ids: string[] = []
 
   expr.forEachDescendant((node, traversal) => {
+    const expanded = expandStaticLoop(node, ctx)
+    if (expanded) {
+      ids.push(...expanded)
+      traversal.skip()
+      return
+    }
     if (Node.isJsxElement(node) || Node.isJsxSelfClosingElement(node)) {
       ids.push(processElement(node, ctx, locked, reason))
       traversal.skip()
