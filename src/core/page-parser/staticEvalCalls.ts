@@ -48,6 +48,25 @@ const WHITELISTED_METHODS: ReadonlySet<string> = new Set([
   'toFixed', 'padStart', 'toUpperCase', 'toLowerCase', 'trim', 'join',
 ])
 
+/**
+ * `Math` functions that are pure and deterministic. `random` is deliberately
+ * absent — a value that differs per call is not a static value.
+ */
+const MATH_FUNCTIONS: ReadonlyMap<string, (...args: number[]) => number> = new Map([
+  ['abs', Math.abs], ['ceil', Math.ceil], ['floor', Math.floor], ['round', Math.round],
+  ['trunc', Math.trunc], ['sign', Math.sign], ['sqrt', Math.sqrt], ['cbrt', Math.cbrt],
+  ['min', Math.min], ['max', Math.max], ['pow', Math.pow], ['hypot', Math.hypot],
+  ['log', Math.log], ['log2', Math.log2], ['log10', Math.log10], ['exp', Math.exp],
+  ['sin', Math.sin], ['cos', Math.cos], ['tan', Math.tan], ['atan2', Math.atan2],
+])
+
+/** The pure `Math` function a `Math.f` callee names, or `undefined`. */
+function mathFunction(callee: PropertyAccessExpression): ((...args: number[]) => number) | undefined {
+  const obj = callee.getExpression()
+  if (!Node.isIdentifier(obj) || obj.getText() !== 'Math') return undefined
+  return MATH_FUNCTIONS.get(callee.getName())
+}
+
 /** The `Budget.callEvaluator` implementation — dispatches a `CallExpression` to the whitelist, Tier B, or Tier C, in that order. */
 export function evaluateCall(expr: CallExpression, scope: EvalScope, budget: Budget, depth: number): StaticValue {
   const callee = expr.getExpression()
@@ -415,6 +434,24 @@ function tryWhitelistedPrimitiveCall(
   if (!Node.isPropertyAccessExpression(callee)) return undefined
   const methodName = callee.getName()
   if (methodName === 'filter') return tryFilterBoolean(expr, callee, scope, budget, depth)
+
+  // `Math.f(…)`. `isWhitelistedCallShape` has always ADMITTED these, but nothing
+  // ever computed one: `Math` is not a resolvable binding, so the receiver check
+  // below rejected every call. `Math.round(pct)` and
+  // `Math.max(0, Math.min(100, pct))` are how a clamped percentage is written,
+  // and both silently produced nothing.
+  const mathFn = mathFunction(callee)
+  if (mathFn) {
+    const args = expr.getArguments().map((a) => evaluateNode(a, scope, budget, depth + 1))
+    if (args.some((a) => a.kind !== 'literal')) return unresolved(`Math.${methodName}(...) argument is not statically resolvable`)
+    const numbers = args.map((a) => Number((a as Extract<StaticValue, { kind: 'literal' }>).value))
+    if (numbers.some((n) => Number.isNaN(n))) return unresolved(`Math.${methodName}(...) argument is not a number`)
+    const result = mathFn(...numbers)
+    return Number.isFinite(result)
+      ? { kind: 'literal', value: result }
+      : unresolved(`Math.${methodName}(...) produced a non-finite number`)
+  }
+
   if (!WHITELISTED_METHODS.has(methodName)) return undefined
 
   const receiver = evaluateNode(callee.getExpression(), scope, budget, depth + 1)

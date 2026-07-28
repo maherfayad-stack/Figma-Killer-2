@@ -29,7 +29,6 @@ import type { FunctionLike, ParsedPage, ParsedPropValue } from './types'
 import type { StaticEvalOptions } from './staticEval'
 
 /** `extractInlineStyles` takes a full `ParseContext`; the image-import map is only consulted by `extractProps`, never on the style path. */
-const EMPTY_IMAGE_IMPORTS: Map<string, string> = new Map()
 
 type JsxOpeningLike = JsxElement | JsxSelfClosingElement
 
@@ -166,12 +165,9 @@ export function applySubstitutions(
 
   /**
    * The `ParseContext` the value readers take, minus the `eval` field each call
-   * site supplies. `imageImports` is empty on purpose: an image import inside the
-   * component's own file was already resolved when `parseJsxTree` walked it, and
-   * these re-reads only ever fill gaps — they must not manufacture a second
-   * sentinel path from a scope that has no workspace root to contain it to.
+   * site supplies.
    */
-  const readerCtx = { sourceFile, relFile, nodes, imageImports: EMPTY_IMAGE_IMPORTS }
+  const readerCtx = { sourceFile, relFile, nodes }
 
   const patchElement = (el: JsxOpeningLike): void => {
     const isElement = Node.isJsxElement(el)

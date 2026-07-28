@@ -14,6 +14,7 @@
  * when iframe focus/selection scrolls content into view, and absolutely
  * positioned overlay children are laid out in that scroll-content space.
  */
+import { nodeVisualRect } from './canvasDomGeometry'
 
 export interface CanvasOverlayRect {
   x: number
@@ -65,10 +66,8 @@ export function createCanvasOverlayMeasureSession(
         return null
       }
 
-      const elementRectInIframe = target.getBoundingClientRect()
-      if (elementRectInIframe.width === 0 && elementRectInIframe.height === 0) {
-        return null
-      }
+      const elementRectInIframe = nodeVisualRect(target)
+      if (!elementRectInIframe) return null
       return {
         x: iframeRect.left + elementRectInIframe.left * iframeScale - originLeft,
         y: iframeRect.top + elementRectInIframe.top * iframeScale - originTop,

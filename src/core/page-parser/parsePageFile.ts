@@ -30,7 +30,6 @@ import type { FunctionLike, NodeLoc, ParsedNode, ParsedPage } from './types'
 import { createEvalScope, type StaticEvalOptions } from './staticEval'
 import { withResolutionLock } from './resolutionLock'
 import {
-  buildImageImportMap,
   extractInlineStyles,
   extractProps,
   extractRawSvgMarkup,
@@ -39,12 +38,13 @@ import {
   type ParseContext,
 } from './jsxAttributeReaders'
 import { iterationEvalContext, loopCallbackBody, readStaticLoop } from './staticLoopExpansion'
+import { serializeInlineSvg } from './inlineSvg'
 
 type JsxOpeningLike = JsxElement | JsxSelfClosingElement
 
 const DYNAMIC_LOCK_REASON = 'dynamic — rendered in code'
 const SPREAD_LOCK_REASON = 'spread props'
-const DYNAMIC_SVG_LOCK_REASON = 'dynamic SVG'
+const DYNAMIC_SVG_LOCK_REASON = 'SVG built in code'
 /** One of several `return`s in a component — see `getReturnedJsxRoots`. */
 const BRANCH_LOCK_REASON = 'one branch of several — chosen in code'
 
@@ -73,7 +73,7 @@ export function parsePageFile(
 
     if (roots.length === 0) return { rootIds: [], nodes: {} }
 
-    return parseJsxTree(roots, sourceFile, relFile, appDir, fn, evalOptions)
+    return parseJsxTree(roots, sourceFile, relFile, fn, evalOptions)
   } catch {
     // Never throw on ordinary pages — anything unexpected just yields an
     // empty (unparsed) page rather than a crash for the caller.
@@ -89,9 +89,7 @@ export function parsePageFile(
  * `processElement`/`processChildren`/the locking rules/svg capture/etc.
  * `relFile` is the workspace-relative POSIX path to attribute produced node
  * ids and locations to (the component's OWN file when called for inlining,
- * not the page that references it); `workspaceRoot` is only consulted for
- * image-import resolution (§5.1) and should stay the same workspace root used
- * for the whole load so `studio-asset:` sentinels stay workspace-relative.
+ * not the page that references it).
  *
  * Not wrapped in try/catch itself — `parsePageFile` and `inlineLocalComponents`
  * each own their own top-level guard, since what "failure degrades to" differs
@@ -112,7 +110,6 @@ export function parseJsxTree(
   roots: readonly ReturnedJsx[],
   sourceFile: SourceFile,
   relFile: string,
-  workspaceRoot: string,
   componentFn?: FunctionLike,
   evalOptions?: StaticEvalOptions,
 ): ParsedPage {
@@ -120,7 +117,6 @@ export function parseJsxTree(
     sourceFile,
     relFile,
     nodes: {},
-    imageImports: buildImageImportMap(sourceFile, workspaceRoot),
     ...(evalOptions ? { eval: { scope: createEvalScope(sourceFile, componentFn), options: evalOptions } } : {}),
   }
   // One `ctx` across every return, so ids and the eval budget are shared: two
@@ -389,24 +385,28 @@ function processElement(
   // modules. `className`/`style` are still captured above so they reach the
   // canvas (§4/§6 depend on that).
   if (kind === 'element' && name.toLowerCase() === 'svg') {
-    const svgText = element.getText()
-    // Embedded JSX expressions (`{...}`) — e.g. a progress ring's
-    // `strokeDashoffset={C*(1-pct/100)}` — mean the captured text is not
-    // valid standalone SVG. Keep the node (so its class/style/position are
-    // still visible) but drop the unusable markup and lock it, rather than
-    // ever emitting broken markup. `.map`/ternary/spread locks upstream, if
-    // any, are superseded by this more specific reason.
-    const dynamic = svgText.includes('{')
+    // Serialised from the JSX rather than copied out of the source text: the
+    // source is JSX, not markup — `className=` is not a class attribute, and an
+    // embedded expression (`strokeDashoffset={C*(1-pct/100)}`) is not an
+    // attribute value at all. `serializeInlineSvg` resolves those through §7 and
+    // writes real attribute names. Copying the text verbatim, and blanking the
+    // whole graphic whenever it contained a `{`, is what left six empty rings on
+    // the eSIM corpus.
+    const markup = serializeInlineSvg(element, ctx.eval)
+    // Nothing usable came back (a spread-driven or oversized graphic). Keep the
+    // node so its class/style/position are still visible, but lock it — there is
+    // no markup to edit. A `.map`/ternary/spread lock upstream, if any, is
+    // superseded by this more specific reason.
     const svgLock = withResolutionLock(
-      locked || dynamic,
-      dynamic ? DYNAMIC_SVG_LOCK_REASON : lockReason,
+      locked || markup === undefined,
+      markup === undefined ? DYNAMIC_SVG_LOCK_REASON : lockReason,
       [...propsResult.resolutions, ...styleResult.resolutions],
     )
     const svgNode: ParsedNode = {
       id,
       kind,
       name,
-      props: dynamic ? propsResult.props : { ...propsResult.props, svg: svgText },
+      props: markup === undefined ? propsResult.props : { ...propsResult.props, svg: markup },
       children: [],
       loc,
       locked: svgLock.locked,

@@ -126,8 +126,8 @@ export function measureCanvasDropCandidates(
     const node = tree.nodes[nodeId]
     if (!node || node.hidden) continue
 
-    const rectInsideScope = target.getBoundingClientRect()
-    if (rectInsideScope.width === 0 && rectInsideScope.height === 0) continue
+    const rectInsideScope = nodeVisualRect(target)
+    if (!rectInsideScope) continue
 
     // Translate iframe-internal coords into editor coords: multiply by the
     // canvas zoom, then add the iframe's outer offset.
@@ -163,13 +163,59 @@ export function measureCanvasDropCandidates(
  * translation path above — both work, and we don't need `new DOMRect(...)`
  * which isn't available in every test environment.
  */
-interface ClientRectLike {
+export interface ClientRectLike {
   left: number
   top: number
   right: number
   bottom: number
   width: number
   height: number
+}
+
+/** How far `nodeVisualRect` will descend looking for a box. */
+const MAX_TRANSPARENT_WRAPPER_DEPTH = 4
+
+/**
+ * The box a canvas node element actually occupies, or `null` when it occupies
+ * none at all.
+ *
+ * A module whose root element is LAYOUT-TRANSPARENT (`display: contents`, how a
+ * module hosts a third-party component without inserting a box into the author's
+ * layout — see `src/modules/alm/register.tsx`) generates no box of its own, so
+ * `getBoundingClientRect()` is all zeros. What the user sees and clicks is its
+ * children, so their union is the node's visual box. Without this such a node
+ * gets no selection ring, no hover outline, and cannot be a drop target.
+ *
+ * Also covers the ordinary empty-element case: a node with neither a box nor any
+ * boxed descendant returns `null`, which is what both callers already did with a
+ * zero rect.
+ */
+export function nodeVisualRect(element: Element, depth: number = 0): ClientRectLike | null {
+  const rect = element.getBoundingClientRect()
+  if (rect.width !== 0 || rect.height !== 0) return rect
+  if (depth >= MAX_TRANSPARENT_WRAPPER_DEPTH) return null
+
+  // Duck-typed, like `measure`'s own `getBoundingClientRect` check: elements
+  // arrive from an iframe document with their own classes, and test doubles
+  // implement only what they are asked about.
+  const children = element.children
+  if (!children || typeof children.length !== 'number') return null
+
+  let union: ClientRectLike | null = null
+  for (const child of Array.from(children)) {
+    const childRect = nodeVisualRect(child, depth + 1)
+    if (!childRect) continue
+    union = union === null ? childRect : {
+      left: Math.min(union.left, childRect.left),
+      top: Math.min(union.top, childRect.top),
+      right: Math.max(union.right, childRect.right),
+      bottom: Math.max(union.bottom, childRect.bottom),
+      width: 0,
+      height: 0,
+    }
+  }
+  if (union === null) return null
+  return { ...union, width: union.right - union.left, height: union.bottom - union.top }
 }
 
 function clientRectToViewportRect(

@@ -157,16 +157,54 @@ function reviveIconProps(props: Record<string, unknown>): Record<string, unknown
   return revived ?? props
 }
 
+/**
+ * The host element every design-system component is mounted under, carrying the
+ * editor's selection/hover/keyboard wiring (`nodeWrapperProps`) — which a
+ * third-party component cannot be relied on to forward onto its own root.
+ *
+ * `display: contents` because it must carry NO layout of its own. As an
+ * `inline-block` it shrink-wrapped, and every full-width design-system button on
+ * an imported screen came out at its intrinsic width: source styles them with
+ * `.footer .btn { width: 100% }`, and 100% of a shrink-to-fit box is the box's
+ * own content width. The same box also stopped the component participating in a
+ * parent's flex/grid layout. `nodeVisualRect` is what keeps the node selectable
+ * and droppable without a box of its own.
+ */
+const TRANSPARENT_HOST_STYLE: React.CSSProperties = { display: 'contents' }
+
+/** Merges two optional class strings, dropping empties and duplicates. */
+function mergeClassNames(a: unknown, b: string | undefined): string | undefined {
+  const names = new Set<string>()
+  for (const source of [a, b]) {
+    if (typeof source !== 'string') continue
+    for (const name of source.split(/\s+/)) if (name) names.add(name)
+  }
+  return names.size > 0 ? [...names].join(' ') : undefined
+}
+
 function makeComponent(name: string): React.FC<ModuleComponentProps> {
   const Comp = (DS as Record<string, unknown>)[name] as React.ComponentType<Record<string, unknown>> | undefined
   const AlmEditor: React.FC<ModuleComponentProps> = ({ props, nodeWrapperProps, mcClassName }) => {
+    // `style` is pulled OUT of the editor bag: it holds the node's own inline
+    // styles, which belong on the styled component, not on the transparent host
+    // where `display: contents` would make them inert.
+    const { style: nodeStyle, ...editorProps } = nodeWrapperProps ?? {}
+    const dsProps = reviveIconProps(props as Record<string, unknown>)
+    // The node's CSS classes go on the design-system component, where the source
+    // wrote them — applying them to the host as well double-applied every
+    // padding and margin in the rule.
+    const className = mergeClassNames(dsProps.className, mcClassName)
     const inner = Comp
-      ? React.createElement(Comp, reviveIconProps(props as Record<string, unknown>))
+      ? React.createElement(Comp, {
+          ...dsProps,
+          ...(className !== undefined ? { className } : {}),
+          ...(nodeStyle ? { style: nodeStyle } : {}),
+        })
       : React.createElement('span', null, name)
     const provided = Provider ? React.createElement(Provider, null, inner) : inner
     return React.createElement(
       'div',
-      { ...nodeWrapperProps, className: mcClassName, style: { display: 'inline-block' } },
+      { ...editorProps, style: TRANSPARENT_HOST_STYLE },
       React.createElement(AlmErrorBoundary, { name }, provided),
     )
   }

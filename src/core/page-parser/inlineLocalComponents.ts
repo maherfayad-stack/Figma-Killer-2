@@ -243,7 +243,7 @@ function expandCallSite(
     if (roots.length === 0 || !fn) return false
 
     const targetRelFromRoot = path.relative(state.workspaceRoot, target.sourceFile.getFilePath()).split(path.sep).join('/')
-    let subPage = parseJsxTree(roots, target.sourceFile, targetRelFromRoot, state.workspaceRoot, fn, state.evalOptions)
+    let subPage = parseJsxTree(roots, target.sourceFile, targetRelFromRoot, fn, state.evalOptions)
     const env = buildSubstitutionEnv(fn, callSiteNode.props)
     subPage = applySubstitutions(roots, subPage, env, callSiteNode.children, target.sourceFile, targetRelFromRoot, fn, state.evalOptions)
 

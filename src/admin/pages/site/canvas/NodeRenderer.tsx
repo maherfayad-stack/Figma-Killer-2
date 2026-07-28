@@ -264,6 +264,7 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
     ...(inlineStyle ? { style: inlineStyle } : {}),
     ...(isHovered && !isSelected ? { 'data-hovered': 'true' as const } : {}),
     onPointerDownCapture: (e) => {
+      focusNodeWithoutScrolling(e.currentTarget, e.target, isInlineEditing)
       if (!shouldSuppressAuthoredFormControlEvent(e.target, e.currentTarget)) return
       e.preventDefault()
       e.stopPropagation()
@@ -528,6 +529,42 @@ function isEditableTextTarget(target: EventTarget | null): boolean {
   if (!isElementLike(target)) return false
   if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return true
   return target.closest('[contenteditable="true"], [contenteditable="plaintext-only"], [contenteditable=""]') !== null
+}
+
+/**
+ * Focus the node the browser is about to focus anyway, but with
+ * `preventScroll` — the one thing the native focus step will not do.
+ *
+ * Every node element carries `tabIndex: 0` (keyboard selection), so a plain
+ * click focuses it. The canvas root is `overflow: hidden` WITH real scroll
+ * extents, and a clipped ancestor is exactly what the browser scrolls to reveal
+ * a newly-focused element: clicking anything in the lower half of a tall frame
+ * yanked the whole board upward by however far that node sat past the viewport
+ * (measured: 410px on one click), which reads as the canvas throwing you out of
+ * the screen you were working in.
+ *
+ * Focusing FIRST makes the element already-active by the time the default
+ * action runs, so there is no focus change left to scroll for.
+ *
+ * Skipped when the pointer landed on something focusable in its own right (an
+ * authored `<input>`, the inline-text editor) — stealing focus from those would
+ * break typing, and they are the browser's to focus.
+ */
+function focusNodeWithoutScrolling(
+  currentTarget: EventTarget | null,
+  target: EventTarget | null,
+  isInlineEditing: boolean,
+): void {
+  if (isInlineEditing) return
+  if (!isClosestCanvasNodeTarget(target, currentTarget)) return
+  if (!isElementLike(currentTarget)) return
+  // A descendant that is focusable in its own right (`tabIndex >= 0`, or
+  // `contentEditable`) keeps the focus the browser would give it.
+  if (target !== currentTarget && isElementLike(target)) {
+    const inner = target as HTMLElement
+    if (inner.tabIndex >= 0 || inner.isContentEditable) return
+  }
+  ;(currentTarget as HTMLElement).focus?.({ preventScroll: true })
 }
 
 function isClosestCanvasNodeTarget(

@@ -19,71 +19,38 @@ import {
   Node,
   SyntaxKind,
   type ArrayLiteralExpression,
-  type ArrowFunction,
   type CallExpression,
   type ConditionalExpression,
   type ElementAccessExpression,
-  type FunctionDeclaration,
   type ObjectLiteralExpression,
   type PropertyAccessExpression,
   type SourceFile,
   type TemplateExpression,
   type VariableDeclaration,
 } from 'ts-morph'
-import { resolveRawTextImport } from './rawTextImports'
+import { resolveImageAssetImport, resolveRawTextImport } from './assetImports'
+import { evaluateBinaryOperator, evaluateUnaryOperator } from './staticEvalOperators'
 import type { FunctionLike } from './types'
 
 // ---------------------------------------------------------------------------
 // Public shapes (§7.2)
 // ---------------------------------------------------------------------------
 
-export type StaticValue =
-  | { kind: 'literal'; value: string | number | boolean | null; note?: string }
-  | { kind: 'object'; entries: Map<string, StaticValue>; note?: string }
-  | { kind: 'array'; items: StaticValue[]; note?: string }
-  | { kind: 'fn'; node: ArrowFunctionOrDecl }
-  | { kind: 'unresolved'; reason: string; partial?: string }
-
-/** The plan's §7.2 `{kind:'fn'}` shape — narrower than `FunctionLike` (excludes `FunctionExpression`, unused by the corpus for a callable const). */
-export type ArrowFunctionOrDecl = ArrowFunction | FunctionDeclaration
-
-export interface StaticEvalOptions {
-  /** Max BINDING-resolution depth (identifier -> const -> identifier -> …). Descending into an already-resolved object/array literal's own members does NOT count — see `evaluateObjectLiteral`. Default 24. */
-  maxDepth?: number
-  /** Max nodes visited per top-level `evaluateExpression` call. Default 2000. */
-  maxSteps?: number
-  /** Preferred key indexing a dictionary with a non-static key (`translations[lang]`) — falls back to the first key in source order. Sourced from `.studio/meta.json`'s `previewLocale`. */
-  preferredKey?: string
-  /** Global per-page guard, shared across every call for one page load (incl. inlined subtrees) — see `PageEvalBudget`. Create with `createPageEvalBudget()`. */
-  pageBudget?: PageEvalBudget
-  /**
-   * Absolute workspace root. Enables resolving Vite `?raw` text imports
-   * (`import icon from './x.svg?raw'`) to the file's contents — see
-   * `resolveRawTextImport`. Required for that, because reading a file off a
-   * relative specifier needs a boundary to contain it to. Omit and `?raw`
-   * imports stay unresolved, exactly as before.
-   */
-  workspaceRoot?: string
-}
-
-/** A component-body/module-scope binding chain — see `createEvalScope`. */
-export interface EvalScope {
-  sourceFile: SourceFile
-  locals: ReadonlyMap<string, LocalBinding>
-}
-
-/** A mutable page-wide step counter, shared across every `evaluateExpression` call for one page (and every locally-inlined subtree) — see `StaticEvalOptions.pageBudget`. */
-export interface PageEvalBudget {
-  remaining: number
-}
-
-export type LocalBinding =
-  /** `const x = <node>` — re-evaluated in the SAME scope each lookup. */
-  | { kind: 'expr'; node: Node }
-  /** `const { key: x } = <node>` (or `{ x }` shorthand, key === name). */
-  | { kind: 'destructure'; source: Node; key: string }
-  /** An already-evaluated value — how Tier C binds a call's arguments to the callee's own parameter names. */
-  | { kind: 'resolved'; value: StaticValue }
+export type {
+  ArrowFunctionOrDecl,
+  EvalScope,
+  LocalBinding,
+  PageEvalBudget,
+  StaticEvalOptions,
+  StaticValue,
+} from './staticEvalTypes'
+import type {
+  EvalScope,
+  LocalBinding,
+  PageEvalBudget,
+  StaticEvalOptions,
+  StaticValue,
+} from './staticEvalTypes'
 
 /**
  * Binding hops only (see `StaticEvalOptions.maxDepth`). A single Tier B read
@@ -265,6 +232,21 @@ export function evaluateNode(exprIn: Node, scope: EvalScope, budget: Budget, dep
   if (Node.isObjectLiteralExpression(expr)) return evaluateObjectLiteral(expr, scope, budget, depth)
   if (Node.isArrayLiteralExpression(expr)) return evaluateArrayLiteral(expr, scope, budget, depth)
   if (Node.isConditionalExpression(expr)) return evaluateConditionalExpression(expr, scope, budget, depth)
+  // Tier A operators. Both decline (`undefined`) for an operator they do not own
+  // — a comparison in value position falls through to `evaluateCondition` below,
+  // which yields a real boolean.
+  if (Node.isBinaryExpression(expr)) {
+    const evaluated = evaluateBinaryOperator(expr, (operand) => evaluateNode(operand, scope, budget, depth + 1))
+    if (evaluated) return evaluated
+    const asBoolean = evaluateCondition(expr, scope, budget, depth)
+    return asBoolean === undefined
+      ? unresolved(`unsupported binary operator (${expr.getOperatorToken().getKindName()})`)
+      : { kind: 'literal', value: asBoolean }
+  }
+  if (Node.isPrefixUnaryExpression(expr)) {
+    const evaluated = evaluateUnaryOperator(expr, (operand) => evaluateNode(operand, scope, budget, depth + 1))
+    if (evaluated) return evaluated
+  }
   // CallExpression is NOT handled inline — see this module's doc comment.
   if (Node.isCallExpression(expr)) return budget.callEvaluator(expr, scope, budget, depth)
   if (Node.isArrowFunction(expr) || Node.isFunctionDeclaration(expr)) return { kind: 'fn', node: expr }
@@ -387,9 +369,26 @@ function evaluateTemplate(expr: TemplateExpression, scope: EvalScope, budget: Bu
   return { kind: 'literal', value: text }
 }
 
+/**
+ * `Math`'s numeric constants. Its FUNCTIONS were already callable (see
+ * `isWhitelistedCall` in `./staticEvalCalls`), but a constant is a property
+ * access, so `2 * Math.PI * RADIUS` — the circumference every progress ring in
+ * every codebase is drawn from — resolved to nothing.
+ */
+const MATH_CONSTANTS: ReadonlyMap<string, number> = new Map(
+  (['E', 'LN2', 'LN10', 'LOG2E', 'LOG10E', 'PI', 'SQRT1_2', 'SQRT2'] as const)
+    .map((key) => [key, Math[key]]),
+)
+
 function evaluatePropertyAccess(expr: PropertyAccessExpression, scope: EvalScope, budget: Budget, depth: number): StaticValue {
-  const object = evaluateNode(expr.getExpression(), scope, budget, depth + 1)
-  return pluck(object, expr.getName())
+  const objectExpr = expr.getExpression()
+  const name = expr.getName()
+  if (Node.isIdentifier(objectExpr) && objectExpr.getText() === 'Math') {
+    const constant = MATH_CONSTANTS.get(name)
+    if (constant !== undefined) return { kind: 'literal', value: constant }
+  }
+  const object = evaluateNode(objectExpr, scope, budget, depth + 1)
+  return pluck(object, name)
 }
 
 export function pluck(value: StaticValue, key: string): StaticValue {
@@ -494,10 +493,13 @@ export function resolveIdentifier(name: string, scope: EvalScope, budget: Budget
   const imported = findImportBinding(scope.sourceFile, name)
   if (imported) {
     if (!imported.targetFile) {
-      // A `?raw` text asset has no SourceFile — ts-morph only tracks JS/TS —
-      // but its CONTENTS are a perfectly static value.
+      // An import that names a FILE rather than a module has no SourceFile —
+      // ts-morph only tracks JS/TS — but it still has a static value: a `?raw`
+      // asset's value is its CONTENTS, an image asset's is its PATH.
       const rawText = resolveRawTextImport(scope.sourceFile, name, budget.workspaceRoot)
       if (rawText !== undefined) return { kind: 'literal', value: rawText }
+      const assetPath = resolveImageAssetImport(scope.sourceFile, name, budget.workspaceRoot)
+      if (assetPath !== undefined) return { kind: 'literal', value: assetPath }
       return unresolved(`cannot resolve the import target for "${name}"`)
     }
     return evaluateImportedName(imported.targetFile, imported.exportedName, budget, depth)

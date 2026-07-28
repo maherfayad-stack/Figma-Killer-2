@@ -4,7 +4,8 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import { setJsxProp } from '../../ast-codemods'
 import { parsePageFile } from '../parsePageFile'
-import { STUDIO_ASSET_SENTINEL } from '../jsxAttributeReaders'
+import { createPageEvalBudget } from '../staticEval'
+import { STUDIO_ASSET_SENTINEL } from '../assetImports'
 import type { ParsedNode, ParsedPage } from '../types'
 
 let tmpDir: string
@@ -29,6 +30,25 @@ function writeNestedFixture(relPath: string, source: string): string {
   fs.mkdirSync(path.dirname(filePath), { recursive: true })
   fs.writeFileSync(filePath, source, 'utf8')
   return filePath
+}
+
+/** An empty file at `relPath`, so an asset import resolves to something real. */
+function writeAsset(relPath: string): void {
+  const filePath = path.join(tmpDir, ...relPath.split('/'))
+  fs.mkdirSync(path.dirname(filePath), { recursive: true })
+  fs.writeFileSync(filePath, '', 'utf8')
+}
+
+/**
+ * Parses with §7 enabled, which is how the studio pipeline always calls it —
+ * an image import resolves through the evaluator (`resolveImageAssetImport`),
+ * so a literal-only parse deliberately leaves `src` absent.
+ */
+function parseWithEval(file: string): ParsedPage {
+  return parsePageFile(file, tmpDir, undefined, {
+    pageBudget: createPageEvalBudget(),
+    workspaceRoot: tmpDir,
+  })
 }
 
 function byName(page: ParsedPage, name: string): ParsedNode {
@@ -341,13 +361,13 @@ describe('parsePageFile', () => {
     expect(Object.values(page.nodes).some((n) => n.name === 'circle')).toBe(false)
   })
 
-  it('locks a dynamic <svg> (embedded JSX expression) and drops the unusable svg prop', () => {
+  it('serialises an <svg> with embedded expressions, resolving what it can and omitting the rest', () => {
     const source = [
       'export default function Page({ pct }: { pct: number }) {',
-      '  const C = 100',
+      '  const R = 17',
       '  return (',
       '    <svg viewBox="0 0 24 24">',
-      '      <circle strokeDashoffset={C * (1 - pct / 100)} />',
+      '      <circle r={R} strokeWidth={2} strokeDashoffset={2 * Math.PI * R * (1 - pct / 100)} />',
       '    </svg>',
       '  )',
       '}',
@@ -355,13 +375,17 @@ describe('parsePageFile', () => {
     ].join('\n')
     const file = writeFixture('dynamic-svg.tsx', source)
 
-    const page = parsePageFile(file, tmpDir)
+    const page = parseWithEval(file)
 
     const svg = page.nodes[page.rootIds[0]]!
     expect(svg.name).toBe('svg')
-    expect(svg.locked).toBe(true)
-    expect(svg.lockReason).toBe('dynamic SVG')
-    expect(svg.props.svg).toBeUndefined()
+    // A `{...}` anywhere used to blank the whole graphic. Now each attribute is
+    // resolved on its own: `r`/`strokeWidth` are knowable, and the React-ism
+    // becomes the real dashed attribute name.
+    expect(svg.props.svg).toBe('<svg viewBox="0 0 24 24"><circle r="17" stroke-width="2"/></svg>')
+    // `strokeDashoffset` depends on a component PARAM, which has no static
+    // value — the one attribute is omitted rather than the whole SVG.
+    expect(svg.props.svg).not.toContain('stroke-dashoffset')
     expect(svg.children).toEqual([])
   })
 
@@ -376,8 +400,9 @@ describe('parsePageFile', () => {
         '',
       ].join('\n'),
     )
+    writeAsset('src/assets/esim-flow/figma/esim-chip.png')
 
-    const page = parsePageFile(file, tmpDir)
+    const page = parseWithEval(file)
 
     const img = byName(page, 'img')
     expect(img.props.src).toBe(`${STUDIO_ASSET_SENTINEL}src/assets/esim-flow/figma/esim-chip.png`)
@@ -402,7 +427,9 @@ describe('parsePageFile', () => {
       ].join('\n'),
     )
 
-    const page = parsePageFile(file, tmpDir)
+    writeAsset('src/assets/esim-chip.png')
+
+    const page = parseWithEval(file)
     const imgs = Object.values(page.nodes).filter((n) => n.name === 'img')
     expect(imgs).toHaveLength(2)
     for (const img of imgs) {

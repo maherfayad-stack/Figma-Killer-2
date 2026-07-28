@@ -13,7 +13,6 @@
  * evaluator when the caller opted in (`ctx.eval` present), so a page that uses
  * nothing but literals costs exactly what it did before §7 existed.
  */
-import * as path from 'node:path'
 import {
   Node,
   type JsxAttribute,
@@ -33,14 +32,6 @@ export interface ParseContext {
   /** appDir-relative POSIX path, precomputed once per parse. */
   relFile: string
   nodes: Record<string, ParsedNode>
-  /**
-   * Local identifier -> workspace-relative POSIX asset path, for THIS file's
-   * default-imported image specifiers only (`import esimChip from
-   * '../assets/x.png'`). Built once per parse (§5.1) so `extractProps` doesn't
-   * re-walk import declarations per attribute — a page can reference the same
-   * imported image on many elements.
-   */
-  imageImports: Map<string, string>
   /**
    * §7 value resolution — present ONLY when the caller opted in (passed
    * `evalOptions` to `parsePageFile`/`parseJsxTree`). `undefined` for every
@@ -65,8 +56,6 @@ export interface ParseContext {
 
 /** Separator between a node's source location and its `.map` iteration index. */
 export const LOOP_ID_SEPARATOR = '#'
-
-const IMAGE_EXTENSION_RE = /\.(png|jpe?g|svg|webp|gif|avif)$/i
 
 /**
  * Markup that actually opens an `<svg>` document.
@@ -106,20 +95,6 @@ export function rawHtmlValueExpression(
   }
   return undefined
 }
-
-/**
- * Sentinel prefix `extractProps` emits (§5.1) for a prop whose value is a
- * plain identifier resolving to a default-imported image asset, e.g.
- * `props.src = 'studio-asset:assets/esim-flow/figma/esim-chip.png'`.
- *
- * Deliberately NOT a URL: `@core/page-parser` has no concept of an HTTP route
- * (it also runs against a bare workspace with no server around it). Rewriting
- * this into `/admin/api/studio/asset?dir=…&path=…` is the load handler's job
- * (`server/handlers/studioPageLoad.ts`), which is the only layer that knows the
- * route shape and the project's `dir`. Exported so that layer never hardcodes
- * the prefix string.
- */
-export const STUDIO_ASSET_SENTINEL = 'studio-asset:'
 
 /**
  * The raw SVG markup an element injects via
@@ -307,22 +282,11 @@ export function extractProps(
         result[name] = false
         continue
       }
-      if (Node.isIdentifier(expression)) {
-        // §5.1 — a bare identifier that resolves to a default-imported image
-        // (`<img src={esimChip}/>`) is captured as a sentinel path rather than
-        // skipped outright, so an imported screen's images can be served
-        // (see STUDIO_ASSET_SENTINEL's doc comment for why this isn't a URL
-        // yet).
-        const assetPath = ctx.imageImports.get(expression.getText())
-        if (assetPath !== undefined) {
-          result[name] = `${STUDIO_ASSET_SENTINEL}${assetPath}`
-          continue
-        }
-      }
       // Any other expression kind (call, template, object, member access, a
-      // plain identifier that isn't an image import, …) is not a literal —
-      // §7's evaluator gets a shot at it now, still skipped unchanged when
-      // `ctx.eval` is absent.
+      // plain identifier, …) is not a literal — §7's evaluator gets a shot at
+      // it now, still skipped unchanged when `ctx.eval` is absent. An imported
+      // image (`<img src={esimChip}/>`, `src={deal.image}`) resolves through
+      // here too, as a `studio-asset:` path — see `resolveImageAssetImport`.
       const resolved = tryResolveExpression(expression, ctx.eval)
       if (resolved) {
         result[name] = resolved.value
@@ -446,43 +410,3 @@ export function extractSingleText(children: Node[], ctx: ParseContext): { text: 
   return { text: undefined }
 }
 
-/**
- * Maps `sourceFile`'s default-imported identifiers to a workspace-relative
- * POSIX asset path, for import specifiers that look like an image
- * (`import esimChip from '../assets/esim-flow/figma/esim-chip.png'`) — §5.1.
- *
- * Only RELATIVE specifiers are resolved (this is plain `path` resolution, not
- * module resolution: ts-morph's `Project` only tracks `.ts/.tsx/.js/.jsx`
- * files — see `createWorkspaceProject` — so a `.png` specifier never resolves
- * to a real `SourceFile` the way `classifyImport` in `componentSources.ts`
- * resolves a component import; there is nothing to reuse there beyond the
- * containment-check shape, which this mirrors). A bare/aliased specifier
- * (`@/assets/x.png`) is out of scope — same "small, contained widening" as
- * the rest of `extractProps`.
- *
- * A specifier that resolves outside `workspaceRoot` is dropped rather than
- * ever handed to a caller as a path — the asset-serving endpoint (§5.3) has
- * its own containment guard too, but the parser should never manufacture an
- * escaping path in the first place.
- */
-export function buildImageImportMap(sourceFile: SourceFile, workspaceRoot: string): Map<string, string> {
-  const map = new Map<string, string>()
-  const root = path.resolve(workspaceRoot)
-
-  for (const declaration of sourceFile.getImportDeclarations()) {
-    const defaultImport = declaration.getDefaultImport()
-    if (!defaultImport) continue
-
-    const specifier = declaration.getModuleSpecifierValue()
-    if (!specifier.startsWith('.') || !IMAGE_EXTENSION_RE.test(specifier)) continue
-
-    const absolute = path.resolve(path.dirname(sourceFile.getFilePath()), specifier)
-    const relFromRoot = path.relative(root, absolute)
-    const insideRoot = relFromRoot.length > 0 && !relFromRoot.startsWith('..') && !path.isAbsolute(relFromRoot)
-    if (!insideRoot) continue
-
-    map.set(defaultImport.getText(), relFromRoot.split(path.sep).join('/'))
-  }
-
-  return map
-}

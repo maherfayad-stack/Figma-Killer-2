@@ -6,7 +6,7 @@ export {
   parsePageFile,
 } from './parsePageFile'
 export type { ReturnedJsx } from './parsePageFile'
-export { STUDIO_ASSET_SENTINEL } from './jsxAttributeReaders'
+export { STUDIO_ASSET_SENTINEL } from './assetImports'
 export type { FunctionLike, NodeLoc, ParsedNode, ParsedPage, ParsedPropValue } from './types'
 export {
   EXCLUDED_WORKSPACE_DIR_NAMES,

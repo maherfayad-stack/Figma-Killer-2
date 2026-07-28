@@ -38,12 +38,14 @@ src/core/page-parser/
 ├── inlineLocalComponents.ts  — local-component expansion: structure, composite ids, call-site replacement
 ├── componentSubstitution.ts  — the value half: call-site props → the component's own JSX
 ├── staticLoopExpansion.ts    — `.map` over a resolved array → one node per item
-├── jsxAttributeReaders.ts    — how each attribute shape is read (props, style, raw SVG, images)
+├── jsxAttributeReaders.ts    — how each attribute shape is read (props, style, raw SVG)
+├── inlineSvg.ts              — an `<svg>` written as JSX elements → markup for `base.svg`
 ├── componentSources.ts       — local vs package classification, workspace-wide ts-morph Project
 ├── staticEval.ts             — public composer for the value evaluator
 ├── staticEvalCore.ts         — Tier A + the recursive walker + binding resolution
 ├── staticEvalCalls.ts        — Tier B (hook → provider) + Tier C (pure calls)
-├── rawTextImports.ts         — `?raw` specifier → file text: node_modules walk, real-path containment
+├── staticEvalOperators.ts    — Tier A operators: arithmetic, concatenation, unary, `&&`/`||`/`??`
+├── assetImports.ts           — imports that name a FILE: `?raw` → text, image → `studio-asset:` path
 └── resolutionLock.ts         — resolved value → lock + `resolution`; scalar vs structured prop values
 
 src/core/studio-sync/
@@ -51,7 +53,8 @@ src/core/studio-sync/
 └── collectPageStylesheets.ts  — which .css files a page depends on, in cascade order
 
 src/modules/alm/
-└── register.tsx               — design-system components as modules; revives `{ svg }` props into elements
+└── register.tsx               — design-system components as modules; revives `{ svg }` props into elements;
+                                  layout-transparent host so a component keeps the author's layout
 
 src/admin/pages/site/property-controls/
 └── StructuredValueControl.tsx — read-only stand-in for an array/object prop value
@@ -148,9 +151,22 @@ A node locked for its **own** reason (`.map`/ternary/spread/dynamic value) stays
 
 The evaluator (`staticEval.ts` and friends) is a **bounded partial evaluator, not a JavaScript interpreter**. Its tiers are the boundary; do not blur them when extending.
 
-### Tier A — literals, consts, member chains
+### Tier A — literals, consts, member chains, operators
 
 Module-scope and cross-file `const` objects/arrays, component-body aliases, computed members with a resolvable key, template literals with resolvable parts, array indexing. A partially resolvable template keeps its static prefix (`` `esb esb--${tone}` `` → `partial: 'esb esb--'`).
+
+Also **operators** (`staticEvalOperators.ts`), which are pure functions of source text:
+
+| Shape | Notes |
+|---|---|
+| `+ - * / % **` | `/` and `%` by zero decline rather than emit `Infinity`/`NaN` |
+| `+` with a string operand | concatenation |
+| `-x`, `+x`, `!x` | also what makes a negative literal (`{-4}`) resolve — `-4` is a prefix expression, not a numeric literal |
+| `a \|\| b`, `a && b`, `a ?? b` | return an **operand**, not a boolean: `{title \|\| 'Untitled'}` renders a string |
+| `Math.PI`, `Math.E`, … | constants, which are property accesses, not calls |
+| `Math.round/max/min/abs/…` | pure functions; `Math.random` is deliberately excluded |
+
+Arithmetic in a JSX value is ordinary React and none of it resolved before: `const CIRCUMFERENCE = 2 * Math.PI * RADIUS` is how every progress ring is drawn, and `Math.max(0, Math.min(100, pct))` is how a percentage is clamped. `Math.*` calls had been *admitted* by `isWhitelistedCallShape` since Tier C landed, but nothing computed them — `Math` is not a resolvable binding, so the receiver check rejected all of them.
 
 ### Tier B — hook → context provider
 
@@ -267,11 +283,28 @@ This exists because a design-system component's most important props are not sca
 
 The module layer turns it back into an element: `reviveIconProps` in `src/modules/alm/register.tsx` — already the adapter between page-tree JSON and React props — replaces a `{ svg }` value with a `<span dangerouslySetInnerHTML>`, sanitised through `sanitizeSvg` for the same reason `SvgEditor` sanitises (never trust that an upstream layer did).
 
+### The design-system host carries no layout
+
+`makeComponent` mounts every design-system component under a host `<div>` that carries the editor's selection/hover/keyboard wiring — a third-party component cannot be relied on to forward `nodeWrapperProps` onto its own root. That host is `display: contents`, so it generates **no box**.
+
+As an `inline-block` it shrink-wrapped, and every full-width design-system button on an imported screen came out at its intrinsic width. The source styles them the ordinary way:
+
+```css
+.esim-sheet__footer .btn { width: 100%; }
+```
+
+That selector matched the real `<button>` fine — but `100%` resolved against the shrink-to-fit host, which is the button's own content width. The same box also stopped the component participating in its parent's flex/grid layout, so `align-self: flex-start` on a design-system button did nothing.
+
+Two consequences worth knowing:
+
+- **The node's classes go on the design-system component, not the host.** They used to be applied to *both* (the host got `mcClassName`, the component got the source's literal `className`), which double-applied every padding and margin in the rule.
+- **`nodeVisualRect` (`canvasDomGeometry.ts`) is what keeps a box-less node usable.** A `display: contents` element measures as all zeros, so selection rings, hover outlines, and drop candidates would all vanish. It falls back to the union of the element's children — one helper, shared by the overlay and the drop-candidate measurement, both of which previously just skipped a zero-size element.
+
 ---
 
 ## Inline SVG icons — `?raw` imports
 
-`import icon from './x.svg?raw'` plus `dangerouslySetInnerHTML` is how real repos ship icons. `resolveRawTextImport` (`staticEvalCore.ts`) resolves the specifier to the file's text, so one mechanism covers every path the value travels: read directly, aliased through a local `const`, or passed as a prop and substituted into a component.
+`import icon from './x.svg?raw'` plus `dangerouslySetInnerHTML` is how real repos ship icons. `resolveRawTextImport` (`assetImports.ts`) resolves the specifier to the file's text, so one mechanism covers every path the value travels: read directly, aliased through a local `const`, or passed as a prop and substituted into a component.
 
 ### Installed-package specifiers
 
@@ -289,6 +322,25 @@ The common real shape is not a bare identifier but `__html: applyTokens(svg)`, w
 
 What that gives up, stated plainly: the icon renders with the fills the source file holds rather than the ones the transform would have produced (real hex instead of `var(--color-aqua-*)`, so it does not follow a dark theme). It is the same trade `applySubstitutions` already makes for a computed `className`, keeping the static prefix for visual fidelity — and it beats a blank box, which tells the user nothing about their screen.
 
+### An `<svg>` written as JSX elements is serialised
+
+The other half of inline SVG is a graphic authored as real JSX, which is how every hand-rolled icon and progress ring is written:
+
+```jsx
+<svg className="ring__svg" viewBox="0 0 40 40">
+  <circle className="ring__track" cx="20" cy="20" r={RADIUS} />
+  <circle strokeDasharray={C} strokeDashoffset={C * (1 - pct / 100)} … />
+</svg>
+```
+
+`serializeInlineSvg` (`inlineSvg.ts`) walks that subtree into markup for `base.svg`. It resolves each attribute through §7 independently, writes real markup attribute names (`className` → `class`, `strokeWidth` → `stroke-width`, while `viewBox` and the other genuinely-camelCase SVG attributes stay), serialises a `style={{…}}` object into a declaration string, drops event handlers, and omits any single attribute it cannot resolve.
+
+This replaced copying `element.getText()` verbatim and blanking the whole graphic whenever it contained a `{`. That heuristic was wrong in both directions: a "static" SVG shipped `className=` into markup where it is not a class attribute, and a single computed attribute erased the entire drawing — six empty progress rings on the eSIM corpus.
+
+The alternative was keeping the interior as real nodes with `base.container` carrying `customTag: 'circle'`. That renders a geometry-free element: `base.container` has no generic attribute passthrough, so every `cx`/`r`/`stroke-*` would be dropped and the graphic would come out blank one layer further down.
+
+**The interior is not editable.** An `<svg>` subtree collapses to one `base.svg` node; its children are drawing instructions, not page structure, and `base.svg`'s own editor is where markup is changed.
+
 ---
 
 ## Element → module resolution
@@ -299,7 +351,9 @@ What that gives up, stated plainly: the icon renders with the fills the source f
 |---|---|
 | `kind: 'component'` | `alm.<Name>` |
 | `div`, `section`, `main`, `header`, `footer`, `nav`, `article`, `aside` | `base.container` |
-| `img` / `svg` / `a` | `base.image` / `base.svg` / `base.link` |
+| `img` / `a` | `base.image` / `base.link` |
+| an element carrying resolved SVG markup (`svg` prop), whatever its tag | `base.svg` |
+| `svg` | `base.svg`, its subtree serialised into markup — see "An `<svg>` written as JSX elements" |
 | any other tag **with element children**, or **with no text** | `base.container` |
 | `button` with text, no children | `base.button` |
 | a tag `base.text` can render, with text, no children | `base.text` |
@@ -317,7 +371,16 @@ Measured on the eSIM corpus before these rules: 154 nodes rendered the word "Tex
 
 `GET /admin/api/studio/asset?dir=<abs>&path=<workspace-rel>` serves an imported page's own images.
 
-`parsePageFile` resolves a local image import to a `studio-asset:<workspace-rel>` sentinel; `rewriteStudioAssetSentinels` turns that into the URL above once `dir` is in scope. That rewrite lives in the load pipeline rather than the pure converter because the query-param shape belongs with the endpoint that owns it.
+`resolveImageAssetImport` (`assetImports.ts`) resolves a local image import to a `studio-asset:<workspace-rel>` sentinel; `rewriteStudioAssetSentinels` turns that into the URL above once `dir` is in scope. That rewrite lives in the load pipeline rather than the pure converter because the query-param shape belongs with the endpoint that owns it.
+
+**Resolution runs through the evaluator, not through a special case at the attribute.** It sits in the same "an import with no `SourceFile`" branch as `?raw` text, because that is exactly what an image import is — ts-morph tracks only JS/TS, so a `.png` specifier never resolves to a module. Matching a bare identifier at `<img src={…}>` used to be the only path, and it is close to the rarest shape in a real repo: the eSIM corpus reaches every one of its images as `deal.image` off a `const DEALS = [{ image: dealCard1 }, …]`, as `SLIDE_IMAGES[index]`, or as a prop handed to a child component. Going through the evaluator means every shape it already understands — member chains, array indexing, aliases, call-site substitution — works here for free.
+
+Two deliberate narrowings versus `?raw`:
+
+- **The file must exist.** A path nothing can serve is worse than no path: the canvas would render a broken image instead of an empty one.
+- **Installed-package specifiers are not resolved.** The asset endpoint refuses to serve out of `node_modules`, so a path it would never honour is not worth emitting.
+
+A resolved `src` **locks its node**, like every other resolved value. That is correct here and not merely incidental: `src={esimChip}` binds to an import, and the only honest writeback — changing the import — does not exist, so leaving the field editable would write an `/admin/api/...` URL into the user's repository.
 
 `resolveStudioAssetResponse` rejects absolute and UNC paths, `..` traversal on either separator, anything under `EXCLUDED_WORKSPACE_DIR_NAMES`, and symlink escapes. Everything rejected is a 404.
 
@@ -383,7 +446,9 @@ Honest list, all deliberate:
 - **Linked package dependencies.** A `?raw` import from a symlinked `file:../pkg` (or a pnpm store) does not resolve — containment is checked on the real path ([why](#installed-package-specifiers)). Install the package instead.
 - **A JSX-valued prop that is not an icon.** `iconPropFromJsx` recovers inline SVG markup one level deep; a prop holding a nested layout is dropped rather than flattened.
 - **Only the `previewLocale` branch.** The other locale exists in the dictionary but is not rendered; RTL is not applied.
-- **Dynamic SVG.** An `<svg>` whose captured text contains `{` is treated as dynamic and renders as an empty placeholder. Conservative: a static SVG containing a literal `{` (an embedded `<style>` block) is a false positive.
+- **One attribute of an inline `<svg>` that depends on a prop or state.** The graphic serialises; the unresolvable attribute is omitted ([above](#an-svg-written-as-jsx-elements-is-serialised)). A ring drawn from `strokeDashoffset={f(props.percent)}` shows its track without its progress arc.
+- **An image behind hook state.** `SLIDE_IMAGES[index]` where `index` is `useState(0)` does not resolve — reading hook state is Tier D. The two carousel slides on the eSIM corpus are the only instances.
+- **An `<img>` in a JSX branch the source would not take.** Every branch renders (Tier D), so `{addOn.image ? <img …/> : <Icon …/>}` yields an `<img>` with no `src` for the items that carry an `icon` instead.
 - **`{children}` splicing depth.** Spliced content that is itself an intermediate inlined id from a deeper nesting level would produce a dangling reference. Does not occur in practice; documented in `inlineLocalComponents.ts` rather than solved with general bookkeeping.
 - **Everything §7 resolved is read-only** on the canvas, by design.
 
@@ -399,6 +464,7 @@ Honest list, all deliberate:
 | Every `return` renders, `return null` guards don't lock | `src/core/page-parser/__tests__/multipleReturns.test.ts` |
 | Structured + JSX-valued props | `src/core/page-parser/__tests__/structuredProps.test.ts` |
 | `?raw` imports, `node_modules`, symlink containment, transform fallback | `src/core/page-parser/__tests__/rawSvgImports.test.ts` |
+| Image imports through data structures, inline-`<svg>` serialisation, Tier A operators | `src/core/page-parser/__tests__/imageAssetsAndInlineSvg.test.ts` |
 | A repo unlike the validation corpus (barrels, named exports, typed data, CSS modules, hooks) | `src/core/page-parser/__tests__/genericRepoShapes.test.ts` |
 | Panel never offers an editable input for a structured value | `src/__tests__/property-controls/PropertyControlRenderer.test.tsx` |
 | Stylesheet collection, ordering, escape rejection | `src/core/studio-sync/__tests__/collectPageStylesheets.test.ts` |
