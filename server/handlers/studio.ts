@@ -287,7 +287,12 @@ export async function tryServeStudio(
       let skipped = 0
       for (const edit of ordered) {
         try {
+          // `false` is a no-op, not a success: the edit resolved to no writable
+          // source location. Counting it as skipped is what lets the client tell
+          // "your change reached disk" from "your change went nowhere" — before
+          // this it was invisible in both counters and the client assumed a write.
           if (applyStudioEdit(dir, edit)) written += 1
+          else skipped += 1
         } catch (err) {
           // One edit's codemod refusing to write (e.g. mixed-content text
           // target, non-object-literal style attribute) must not abort the

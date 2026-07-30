@@ -74,6 +74,7 @@ import { cn } from '@ui/cn'
 import { ClassStyleInjector } from './ClassStyleInjector'
 import { UserStylesheetInjector } from './UserStylesheetInjector'
 import { AlmDesignSystemCssInjector } from './AlmDesignSystemCssInjector'
+import { CanvasAnimationInjector } from './CanvasAnimationInjector'
 import { EditorChromeInjector } from './EditorChromeInjector'
 import { RuntimeScriptInjector } from './RuntimeScriptInjector'
 import type { InjectableRuntimeScript } from './useRuntimeScriptBuild'
@@ -659,6 +660,11 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
                 <EditorChromeInjector targetDocument={iframeDoc} parentDocument={document} />
                 {/* Design-system CSS (tokens + component styles) so @alm-design modules render styled */}
                 <AlmDesignSystemCssInjector targetDocument={iframeDoc} />
+                {/* Design frames only: animations play once and hold their last
+                    keyframe, so an imported app's infinite shimmers/spinners
+                    don't run forever behind the selection ring. Live mode is a
+                    visitor preview, so it keeps the real motion. */}
+                {!isLive && <CanvasAnimationInjector targetDocument={iframeDoc} />}
                 {/* Author CSS — both wrapped in @layer user-authored inside the injectors */}
                 <ClassStyleInjector targetDocument={iframeDoc} viewport={viewport} />
                 <UserStylesheetInjector targetDocument={iframeDoc} viewport={viewport} />

@@ -36,6 +36,15 @@ interface DragSession {
   draggedId: string
   draggedIds: string[]
   candidates: ReturnType<typeof measureCanvasDropCandidates>
+  /** Where the pointer went down — the origin the activation threshold measures from. */
+  originX: number
+  originY: number
+  /**
+   * False until the pointer has travelled `DRAG_ACTIVATE_PX` from the origin.
+   * While false the session resolves no drop target, runs no auto-pan, and
+   * commits no move on pointerup — see `DRAG_ACTIVATE_PX`.
+   */
+  active: boolean
 }
 
 interface CanvasReorderDragState extends CanvasDropResolution {
@@ -50,6 +59,23 @@ const EMPTY_DRAG_STATE: CanvasReorderDragState = {
 
 const AUTO_PAN_EDGE_PX = 48
 const AUTO_PAN_MAX_SPEED = 18
+
+/**
+ * How far the pointer must travel before a press on the drag handle becomes a
+ * drag. Below this the gesture is a click and commits nothing.
+ *
+ * Without a threshold the session went live on pointerdown, so a plain click on
+ * the handle was a completed zero-distance drag: a couple of pixels of hand
+ * jitter is enough for one `pointermove` to resolve a drop target, and pointerup
+ * then committed `moveNodes` to it. The selected element reparented itself under
+ * a click the user meant as a click — it appeared to jump away on its own.
+ *
+ * 4px is the usual activation distance for this gesture (`@dnd-kit`'s
+ * `activationConstraint: { distance: … }`, which the DOM-panel tree uses); it is
+ * under the ~5px of travel a deliberate drag covers in its first frames and over
+ * anything a click produces.
+ */
+const DRAG_ACTIVATE_PX = 4
 
 export function useCanvasReorderDrag({
   viewportRef,
@@ -84,7 +110,8 @@ export function useCanvasReorderDrag({
   const setResolution = useCallback((resolution: CanvasDropResolution) => {
     latestResolutionRef.current = resolution
     setDragState({
-      dragging: sessionRef.current !== null,
+      // A session that has not cleared the activation distance is still a click.
+      dragging: sessionRef.current?.active === true,
       target: resolution.target,
       invalid: resolution.invalid,
     })
@@ -116,7 +143,8 @@ export function useCanvasReorderDrag({
     autoPanFrameRef.current = null
     const root = canvasRootRef?.current
     const point = latestClientPointRef.current
-    if (!root || !point || !panBy || !sessionRef.current) return
+    // `active` guard: a press that has not become a drag must not pan the canvas.
+    if (!root || !point || !panBy || sessionRef.current?.active !== true) return
 
     const rect = root.getBoundingClientRect()
     const leftDistance = point.x - rect.left
@@ -186,6 +214,18 @@ export function useCanvasReorderDrag({
     if (!session) return
     event.preventDefault()
     latestClientPointRef.current = { x: event.clientX, y: event.clientY }
+
+    // Hold the gesture as a click until it clears the activation distance. Until
+    // then there is deliberately no drop target and no auto-pan, so a pointerup
+    // here commits nothing (see DRAG_ACTIVATE_PX).
+    if (!session.active) {
+      const dx = event.clientX - session.originX
+      const dy = event.clientY - session.originY
+      if (Math.hypot(dx, dy) < DRAG_ACTIVATE_PX) return
+      session.active = true
+      setDragState({ dragging: true, target: null, invalid: null })
+    }
+
     resolveAtClientPoint(event.clientX, event.clientY)
     scheduleAutoPan(event.clientX, event.clientY)
   }
@@ -194,6 +234,13 @@ export function useCanvasReorderDrag({
     const session = sessionRef.current
     if (!session) return
     event.preventDefault()
+
+    // A press that never cleared the activation distance is a click on the
+    // handle, not a drag. Reset and move nothing.
+    if (!session.active) {
+      resetDrag()
+      return
+    }
 
     const target = latestResolutionRef.current.target
     resetDrag()
@@ -252,9 +299,13 @@ export function useCanvasReorderDrag({
       // Iframe-aware measurement: queries the iframe's contentDocument for
       // `[data-node-id]` and translates each rect into editor coords.
       candidates: measureCanvasDropCandidates(viewport, tree, iframeElement),
+      originX: event.clientX,
+      originY: event.clientY,
+      // Not a drag yet — `handleWindowPointerMove` promotes it once the pointer
+      // clears DRAG_ACTIVATE_PX, so a click on the handle stays a click.
+      active: false,
     }
     latestClientPointRef.current = { x: event.clientX, y: event.clientY }
-    setDragState({ dragging: true, target: null, invalid: null })
 
     // Cross-frame drag signal. Every iframe's pointer relay (see
     // `IframeFrameSurface`) reads `data-instatic-canvas-dragging` on the parent

@@ -21,6 +21,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { fsCodemodAdapter } from '../fsCodemodAdapter'
+import { CMS_SITE_RELOAD_EVENT } from '@admin/state/adminEvents'
 import { makeNode, makePage, makeSite } from '../../../../../__tests__/fixtures'
 
 describe('fsCodemodAdapter — write-loop safety + framework sync', () => {
@@ -188,5 +189,121 @@ describe('fsCodemodAdapter — write-loop safety + framework sync', () => {
     expect(calls).toHaveLength(2)
     expect(calls[0]).toMatchObject({ url: '/admin/api/studio/save', method: 'POST' })
     expect(calls[1]).toMatchObject({ url: '/admin/api/studio/framework', method: 'POST' })
+  })
+
+  // ─── Reload gating ────────────────────────────────────────────────────────
+  //
+  // A studio reload re-parses the workspace from disk and replaces the whole
+  // document. That is correct when a write actually landed and moved line
+  // numbers (stale `line:col` ids) or rewrote a shared component (stale sibling
+  // instances) — and destructive when NOTHING landed, because the reload then
+  // overwrites the user's in-memory edit with the unchanged source. The symptom
+  // was an edit reverting itself ~2s after being typed: `setJsxText` refuses
+  // prop-bound text (`<p>{title}</p>`), the server reported
+  // `written: 0, skipped: 1, sharedComponents: true`, and the client reloaded
+  // over the top of it anyway.
+  describe('reload is gated on a write actually landing', () => {
+    function editedSite() {
+      return makeSite({
+        pages: [
+          makePage({
+            rootNodeId: 'root',
+            nodes: {
+              root: makeNode({
+                id: 'pages/Home.tsx:3:1',
+                moduleId: 'base.text',
+                props: { text: 'Hello' },
+              }),
+            },
+          }),
+        ],
+      })
+    }
+
+    /** Counts `CMS_SITE_RELOAD_EVENT` dispatches while `run` executes. */
+    async function countReloads(run: () => Promise<void>): Promise<number> {
+      let reloads = 0
+      const onReload = () => { reloads += 1 }
+      window.addEventListener(CMS_SITE_RELOAD_EVENT, onReload)
+      try {
+        await run()
+      } finally {
+        window.removeEventListener(CMS_SITE_RELOAD_EVENT, onReload)
+      }
+      return reloads
+    }
+
+    it('does NOT reload when every edit was skipped, even with sharedComponents set', async () => {
+      stubFetch({
+        '/admin/api/studio/save': {
+          ok: true, written: 0, skipped: 1, shifted: false, sharedComponents: true,
+        },
+      })
+      await loadThenResetCalls()
+
+      const reloads = await countReloads(() => fsCodemodAdapter.saveSite(editedSite()))
+
+      // Nothing reached disk, so the document still matches the files. Reloading
+      // here would replace the user's edit with the unchanged source.
+      expect(reloads).toBe(0)
+    })
+
+    it('does NOT reload when nothing was written and a line count still shifted', async () => {
+      // `shifted` is derived from a line-count delta, which an unrelated
+      // concurrent write could also produce. With no write of our own there are
+      // no ids of ours to re-derive.
+      stubFetch({
+        '/admin/api/studio/save': {
+          ok: true, written: 0, skipped: 2, shifted: true, sharedComponents: false,
+        },
+      })
+      await loadThenResetCalls()
+
+      const reloads = await countReloads(() => fsCodemodAdapter.saveSite(editedSite()))
+
+      expect(reloads).toBe(0)
+    })
+
+    it('DOES reload when a write landed and shifted line numbers', async () => {
+      stubFetch({
+        '/admin/api/studio/save': {
+          ok: true, written: 1, skipped: 0, shifted: true, sharedComponents: false,
+        },
+      })
+      await loadThenResetCalls()
+
+      const reloads = await countReloads(() => fsCodemodAdapter.saveSite(editedSite()))
+
+      // Every `line:col` id below the write is now stale — re-parse is required.
+      expect(reloads).toBe(1)
+    })
+
+    it('DOES reload when a write landed on a shared component', async () => {
+      stubFetch({
+        '/admin/api/studio/save': {
+          ok: true, written: 1, skipped: 0, shifted: false, sharedComponents: true,
+        },
+      })
+      await loadThenResetCalls()
+
+      const reloads = await countReloads(() => fsCodemodAdapter.saveSite(editedSite()))
+
+      // The component's own file changed, so every other instance on the board
+      // is showing a stale value.
+      expect(reloads).toBe(1)
+    })
+
+    it('does NOT reload on an ordinary in-place write', async () => {
+      stubFetch({
+        '/admin/api/studio/save': {
+          ok: true, written: 1, skipped: 0, shifted: false, sharedComponents: false,
+        },
+      })
+      await loadThenResetCalls()
+
+      const reloads = await countReloads(() => fsCodemodAdapter.saveSite(editedSite()))
+
+      expect(reloads).toBe(0)
+    })
   })
 })

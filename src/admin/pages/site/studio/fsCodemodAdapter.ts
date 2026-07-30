@@ -47,6 +47,7 @@ import { registry } from '@core/module-engine'
 import { CUSTOM_HTML_TAG_VALUE } from '@modules/base/utils/htmlTag'
 import { requestCmsSiteReload } from '@admin/state/adminEvents'
 import { useAdminUi } from '@admin/state/adminUi'
+import { pushToast } from '@ui/components/Toast'
 import { getStudioWorkspaceDir } from './studioWorkspaceDir'
 
 
@@ -407,6 +408,23 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
         schema: StudioSaveResponseSchema,
       })
 
+      // Some edits resolved to no writable source location, so nothing reached
+      // disk for them. The commonest cause is text that is not a literal in the
+      // target element at all: `<p className="title">{title}</p>` renders a prop
+      // the CALL SITE passes, and `setJsxText` refuses rather than baking the
+      // binding away into a string. Say so — the alternative is the user
+      // watching their edit snap back with no explanation.
+      if (result.skipped > 0) {
+        pushToast({
+          kind: 'error',
+          title: 'Some changes were not saved to source',
+          body:
+            `${result.skipped} edit${result.skipped === 1 ? '' : 's'} had no writable location in the code. ` +
+            'Text that comes from a prop or a variable cannot be edited on the canvas yet — ' +
+            'edit it where the value is defined.',
+        })
+      }
+
       // A write shifted line numbers, so every `line:col` node id below that
       // point is now stale against disk. Re-parse the workspace to re-derive
       // fresh ids (`requestCmsSiteReload` → usePersistence reload → loadSite),
@@ -419,7 +437,15 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
       // A shared-component edit rewrote the component's own file, so every
       // OTHER instance of it on the board is showing a stale value. Reload for
       // the same reason as `shifted`: the document no longer matches disk.
-      if (result.shifted || result.sharedComponents) requestCmsSiteReload()
+      //
+      // Gated on `written > 0`. When nothing reached disk the document still
+      // matches the files, so there is nothing to re-sync — and reloading would
+      // replace the user's in-memory edit with the unchanged source, making the
+      // edit visibly revert two seconds after they typed it. That was the whole
+      // bug: an unwritable text edit reverted itself on a timer.
+      if (result.written > 0 && (result.shifted || result.sharedComponents)) {
+        requestCmsSiteReload()
+      }
     }
 
     // Framework settings (Colors/Typography/Spacing) live outside the

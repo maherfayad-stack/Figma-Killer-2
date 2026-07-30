@@ -330,6 +330,24 @@ It now has its own edit kind and codemod. `saveSite` collapses `tag`/`customTag`
 
 This was a real hole, not a hypothetical one: the whole edit batch arrives from the client with `rel` inside each `nodeId`, and the save route builds its target with `join(dir, rel)` — so a `nodeId` of `../../.ssh/config:1:1` was an arbitrary file write. Nothing legitimate produces one (the parser mints ids from `path.relative(workspaceRoot, file)` for files it already found inside the workspace), and the check lives in the single decoder every path shares, so ordering, dedupe, touched-file collection, and apply all inherit it.
 
+### A save only reloads when a write actually landed
+
+A reload re-parses the whole workspace and replaces the document. That is required when a write **landed** and either moved line numbers (`shifted` — every `line:col` id below the write is stale) or rewrote a shared component (`sharedComponents` — every other instance on the board shows a stale value). It is destructive when **nothing** landed, because the reload then overwrites the user's in-memory edit with the unchanged source.
+
+That combination was reachable and routine. `<p className="sheet-header__title">{title}</p>` renders a prop the *call site* passes, so `setJsxText` refuses it (correctly — writing a string there would delete the binding), while the node is inlined, so `sharedComponents` was `true`. The server reported `written: 0, skipped: 1, sharedComponents: true` and the client reloaded on top of the edit: **the user's change reverted itself about two seconds after they typed it**, on the autosave cadence, with nothing in the UI to explain why.
+
+Three rules now hold:
+
+| Rule | Why |
+|---|---|
+| The reload is gated on `written > 0` | With no write, the document still matches the files — there is nothing to re-sync, and reloading can only discard the user's edit |
+| `applyStudioEdit` returning `false` counts as `skipped`, not as nothing | It used to increment neither counter, so an edit that resolved to no writable location was invisible to the client, which then assumed a write had happened |
+| `skipped > 0` raises a toast | The failure was silent. A refusal the user cannot see is indistinguishable from data loss |
+
+Prop-forwarded text is still not editable on the canvas — the honest fix is to resolve it to the call site the way `textOrigin` already resolves dictionary copy ([resolved text is editable, at its origin](#resolved-text-is-editable-at-its-origin)), which is a parser change, not a writeback one. Until then the user is told, rather than left to discover it.
+
+`loadSite` also **keeps the page that is currently open** when the incoming site still contains its id, instead of always resetting to the home page. Resetting is right when opening a different project and wrong when re-syncing the one already open: it threw the designer back to the home page mid-edit, which read as the canvas moving on its own.
+
 ---
 
 ## Structured props — arrays and objects

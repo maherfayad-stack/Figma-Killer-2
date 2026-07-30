@@ -33,6 +33,7 @@ import { getKeybindingForCommand } from '@admin/spotlight/keybindings'
 import { useCanvas } from '@site/hooks/useCanvas'
 import { useEditorPermissions } from '@site/editorPermissionsContext'
 import { CanvasTransformLayer } from './CanvasTransformLayer'
+import { resolveCanvasFocusTarget } from './canvasFocusTarget'
 import { CanvasLiveSurface } from './CanvasLiveSurface'
 import { AgentSnapshotFrame } from './AgentSnapshotFrame'
 import { useRuntimeScriptBuild } from './useRuntimeScriptBuild'
@@ -207,9 +208,22 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
   // run. setTimeout fires regardless, and reading getBoundingClientRect forces
   // the layout we need synchronously. The cap is a safety valve for a breakpoint
   // that has no preview frame at all.
+  // WHICH change re-frames the canvas is decided by `resolveCanvasFocusTarget`
+  // — see it for why the active page is the wrong unit on a studio board (it is
+  // a selection artifact there, and every board frame shares one breakpoint id,
+  // so centering on it snapped the canvas back to frame #1 on every selection).
   const canvasPageId = canvasPage?.id ?? null
+  const activeBoardId = useEditorStore((s) => s.activeBoardId)
+  const lastCenteredKeyRef = useRef<string | null>(null)
   useEffect(() => {
     if (isLive) return
+
+    const { centerKey, shouldCenter } = resolveCanvasFocusTarget({
+      activeBoardId,
+      canvasPageId,
+      lastCenteredKey: lastCenteredKeyRef.current,
+    })
+    if (!shouldCenter) return
 
     let timerId: ReturnType<typeof setTimeout> | undefined
     let attempts = 0
@@ -221,12 +235,18 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
       const targetId = canvasPageId
         ? useEditorStore.getState().activeBreakpointId
         : readEditorSelectPreference('defaultBreakpoint')
-      if (centerOnBreakpointFrame(targetId) || attempts++ >= MAX_ATTEMPTS) return
+      if (centerOnBreakpointFrame(targetId)) {
+        // Record only on success: a failed attempt must not consume the key, or
+        // a board whose frames were not laid out yet would never get framed.
+        lastCenteredKeyRef.current = centerKey
+        return
+      }
+      if (attempts++ >= MAX_ATTEMPTS) return
       timerId = setTimeout(tryCenter, RETRY_MS)
     }
     tryCenter()
     return () => clearTimeout(timerId)
-  }, [canvasPageId, isLive, centerOnBreakpointFrame])
+  }, [canvasPageId, activeBoardId, isLive, centerOnBreakpointFrame])
 
   // ─── Modals & overlays ─────────────────────────────────────────────────────
 

@@ -85,8 +85,20 @@ export function createLifecycleActions({
         state.packageJson = packageJson
         state.siteRuntime = siteRuntime
         // Default to the home page (slug `index`) so the editor opens on `/`
-        // rather than whatever happens to be first in the array.
-        state.activePageId = (findHomePage(site.pages) ?? site.pages[0])?.id ?? null
+        // rather than whatever happens to be first in the array — EXCEPT when
+        // this load is a re-sync of the document already open, rather than a
+        // switch to a different one. Studio re-parses the whole workspace from
+        // disk after a writeback that moved line numbers or touched a shared
+        // component, and resetting the active page there threw the designer back
+        // to the home page mid-edit, seconds after an unrelated keystroke. A page
+        // id still present in the incoming site is the same page, so keep it; on
+        // a genuine project switch no id matches and this falls through to home.
+        const openPageId = state.activePageId
+        const openPageStillExists =
+          openPageId !== null && site.pages.some((page) => page.id === openPageId)
+        state.activePageId = openPageStillExists
+          ? openPageId
+          : (findHomePage(site.pages) ?? site.pages[0])?.id ?? null
         // Reset activeDocument — see createSite for rationale.
         state.activeDocument = null
         state._historyPast = []

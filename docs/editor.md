@@ -409,6 +409,10 @@ Selection rings and hover rings are absolutely-positioned overlay divs portaled 
 
 `BreakpointSelectionOverlay` owns these rings and all other canvas-local action chrome that must escape iframe overflow: the selected-layer toolbar and the Alt/Option inspect ladder. The selected-layer toolbar carries four actions, left to right: drag-to-reorder, **insert module** (`CanvasInsertModuleButton` — opens the full `ModuleInserterDialog`, the same modal command surface as the main toolbar's "+ Add" button, rather than an anchored dropdown that would mis-position against the zoom/transform-scaled canvas and its breakpoint iframes), duplicate, and delete. Both inserter entry points share the `useInsertInserterItem` hook, so the picked node routes through `resolveInsertLocation` against the current selection — nesting as a last child of a container target or landing as a sibling-after of a leaf target, identical to every other insert flow. Holding Alt/Option while hovering a canvas element opens a momentary tree-shaped target picker in the parent canvas root, anchored above or below the hovered element and clamped to the visible canvas. The picker is built from the active `NodeTree`, not raw DOM parents: ancestors appear above the hovered node, the hovered node is the current row, and the first visible child appears below it. ArrowUp/ArrowDown move the highlighted target, Enter commits selection, clicking a row commits immediately, and releasing Alt/Option or pressing Escape dismisses the ladder. Committing through the ladder changes the selected node without taking focus from the current side panel, so the Properties panel stays open while users retarget parent or child layers.
 
+**Selecting never moves the canvas.** `CanvasRoot`'s initial-focus effect centers the viewport on the active breakpoint's frame when a document opens, and `resolveCanvasFocusTarget` (`canvasFocusTarget.ts`) decides what "opens" means: the active **board** when there is one, the active page otherwise, and each is framed at most once. Keying it on the active page was wrong on a studio board — clicking any element activates that element's page (`BoardFramesLayer`'s `onPointerDownCapture` → `openPageInCanvas`), and since every board frame's `BreakpointFrame` comes from `buildStudioBreakpoint`, which varies only `width`, they all share one breakpoint id and the centering query always resolved to the first frame in DOM order. The canvas snapped back to frame #1 on every selection.
+
+**The drag-to-reorder handle has a 4px activation distance.** `useCanvasReorderDrag`'s session starts on `pointerdown` but stays inert until the pointer travels `DRAG_ACTIVATE_PX` from where it went down; only then does it report `dragging`, resolve a drop target, or run edge auto-pan, and a `pointerup` before that commits nothing. Without the threshold the session was live immediately, so a plain click on the handle was a completed zero-distance drag — a few pixels of hand jitter produced one `pointermove` that resolved a target, and `pointerup` committed `moveNodes` to it, reparenting the selected element under what the user meant as a click. Matches the `activationConstraint: { distance: … }` the `@dnd-kit` trees use.
+
 Ring and toolbar positions are computed on each animation frame via a RAF loop (simpler than wiring ResizeObserver/MutationObserver/IntersectionObserver to every mutation source — scroll, layout shift, zoom, content animation). The loop only starts when `hasOverlayWork` is true — at least one selection ring, hover ring, selector-affinity highlight, or toolbar is visible. When there is no overlay work the effect returns early so idle breakpoint frames incur no RAF cost. **When adding a new visible overlay type to `BreakpointSelectionOverlay`, update `hasOverlayWork`** so the loop arms correctly.
 
 **A node whose element carries no layout box is still selectable.** `nodeVisualRect` (`canvasDomGeometry.ts`) falls back to the union of an element's children when its own `getBoundingClientRect()` is all zeros — which is what a `display: contents` module root measures as (`src/modules/alm/register.tsx` uses one so a third-party component keeps the author's layout instead of being wrapped in a box). Both the overlay measurement and `measureCanvasDropCandidates` go through it, so a box-less node gets rings, hover outlines, and drop candidates like any other; a node with neither a box nor a boxed descendant still measures as `null`, exactly as a zero-size element did before.
@@ -429,7 +433,7 @@ Double-clicking a node whose module declares `inlineTextEdit` (`base.text`, `bas
 
 ### CSS injection into the iframe
 
-Each iframe `<head>` receives five `<style>` elements (three from `ClassStyleInjector`, one each from the others), in this order:
+Each iframe `<head>` receives up to six `<style>` elements (three from `ClassStyleInjector`, one each from the others; the animation one is design-frame only), in this order:
 
 | Element | Injector | Cascade layer | Contents |
 |---|---|---|---|
@@ -438,6 +442,13 @@ Each iframe `<head>` receives five `<style>` elements (three from `ClassStyleInj
 | `<style id="mc-classes-preview">` | `ClassStyleInjector` | `@layer user-authored` | Higher-specificity preview rule while a property control is hovered; empty for state-pseudo rules |
 | `<style id="mc-classes-force-state">` | `ClassStyleInjector` | `@layer user-authored` | Forced state preview: paints the active state-pseudo rule onto the selected node via a doubled `[data-node-id]` selector |
 | `<style id="mc-user-styles">` | `UserStylesheetInjector` | `@layer user-authored` | User-uploaded stylesheets (verbatim, unscoped) |
+| `<style id="instatic-canvas-animation">` | `CanvasAnimationInjector` | **unlayered**, `!important` | Design frames only: animations run once and hold their last keyframe |
+
+**Animations run once on the design canvas.** `CanvasAnimationInjector` sets `animation-iteration-count: 1` and `animation-fill-mode: forwards` on `*`, `*::before`, and `*::after`, so a looping animation plays through once and then holds its final frame instead of running forever behind the selection ring. An imported app makes this necessary rather than cosmetic: the eSIM corpus has a radar ping and an orbiting dot on `infinite`, and `@alm-design/design-system` ships an `infinite` shimmer on every skeleton variant — on a board, that is every frame animating at once. Duration and delay are left alone, so each animation still plays at its authored speed before settling, and transitions are untouched (they are interaction responses, not ambient motion).
+
+This is the one injector that needs `!important`. Being unlayered is not sufficient here, because `AlmDesignSystemCssInjector` is unlayered too — so specificity decides between the two, and `*` (0,0,0) loses to `.btn--skeleton` (0,1,0) and to any author class. Overriding an `animation: … infinite` shorthand in third-party CSS is the case `!important` exists for; the repo-wide ban is scoped to component CSS modules.
+
+`IframeFrameSurface` mounts it only when `interaction !== 'live'`, so live/preview mode still shows real motion and the publisher never emits the rule. Consequence worth knowing: an animation whose final keyframe is invisible ends invisible — `esim-radar-ping` fades opacity `0.75 → 0`, so its rings hold at `opacity: 0` and the radar shows only its core and orbit dot. That is what "hold the last frame" means for a fade-out.
 
 The **unlayered-vs-layered** split is the cascade isolation mechanism: CSS rules outside any `@layer` always beat rules inside `@layer`-d blocks, regardless of specificity. Author CSS (both the class registry and user stylesheets) goes into `@layer user-authored`, so it can never override the editor chrome even with a high-specificity selector.
 
@@ -488,6 +499,7 @@ Canvas-internal values are not CSS tokens — they are raw integers intentionall
 | `BreakpointFrame.tsx`           | One iframe per active breakpoint                                |
 | `IframeFrameSurface.tsx`        | The iframe element + portal + style injectors                   |
 | `EditorChromeInjector.tsx`      | Unlayered editor-chrome CSS into each iframe head               |
+| `CanvasAnimationInjector.tsx`   | Design frames only: animations run once and hold their last keyframe |
 | `ClassStyleInjector.tsx`        | Class registry + publisher reset CSS into each iframe head      |
 | `UserStylesheetInjector.tsx`    | User-uploaded CSS into each iframe head                         |
 | `NodeRenderer.tsx`              | Renders a single node and its children inside the iframe        |
@@ -509,6 +521,7 @@ Canvas-internal values are not CSS tokens — they are raw integers intentionall
 | `CanvasTreeLadderOverlay.tsx`   | `useCanvasTreeLadderOverlay` — wires the ladder model to canvas events and portal |
 | `CanvasTreeLadderRowButton.tsx` | Single row button in the Alt/Option inspect ladder              |
 | `useCanvas.ts`                  | Pan/zoom gesture hook; `centerOnBreakpointFrame` for initial viewport focus |
+| `canvasFocusTarget.ts`          | `resolveCanvasFocusTarget` — which change re-frames the canvas (the board when there is one, the page otherwise; once per unit) so selecting never moves the viewport |
 | `useCanvasKeyboardShortcuts.ts` | Editor keyboard shortcuts (delete, duplicate, wrap, …)          |
 | `useRuntimeScriptBuild.ts`      | Builds the bundled runtime scripts for the Run-scripts toggle    |
 | `useIframeCursorBridge.ts`      | Bridges iframe-native cursor movement to parent-doc callbacks (used by breakpoint activation tooltip) |
