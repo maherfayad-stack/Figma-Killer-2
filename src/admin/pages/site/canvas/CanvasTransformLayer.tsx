@@ -9,7 +9,7 @@
  * See useCanvas.ts for the RAF-batched write pattern.
  */
 
-import type { Ref } from 'react'
+import { lazy, Suspense, type Ref } from 'react'
 import { DEFAULT_BREAKPOINTS, type Page, type Breakpoint } from '@core/page-tree'
 import type { TemplateRenderDataContext } from '@core/templates/dynamicBindings'
 import { useEditorStore } from '@site/store/store'
@@ -17,11 +17,16 @@ import { selectActiveBoard } from '@site/store/slices/boardSlice'
 import { BreakpointFrame } from './BreakpointFrame'
 import { CanvasFrameSkeletonFrame } from '@admin/shared/CanvasFrameSkeleton'
 import type { InjectableRuntimeScript } from './useRuntimeScriptBuild'
-import { BoardNotesLayer } from './BoardNotesLayer'
-import { BoardDocsLayer } from './BoardDocsLayer'
-import { BoardFramesLayer } from './BoardFramesLayer'
-import { BoardGuidesLayer } from './BoardGuidesLayer'
 import styles from './CanvasTransformLayer.module.css'
+
+// Studio-only board overlay layers (frames, sticky notes, doc blocks, snap
+// guides) — see StudioBoardLayers.tsx. All four self-gate to `null` outside
+// an active board, so this lazy boundary only changes WHEN the chunk is
+// fetched, not what renders: `activeBoard` is always `null` in the default
+// (non-Studio) CMS editor.
+const StudioBoardLayers = lazy(() =>
+  import('./StudioBoardLayers').then((m) => ({ default: m.StudioBoardLayers })),
+)
 
 interface CanvasTransformLayerProps {
   page: Page | null
@@ -71,7 +76,9 @@ export function CanvasTransformLayer({
       className={styles.transformLayer}
     >
       {activeBoard ? (
-        <BoardFramesLayer />
+        <Suspense fallback={null}>
+          <StudioBoardLayers />
+        </Suspense>
       ) : page ? (
         // Only breakpoints flagged for a preview frame render an iframe on the
         // canvas (`previewFrame !== false`; undefined = framed for back-compat).
@@ -105,20 +112,6 @@ export function CanvasTransformLayer({
           />
         ))
       )}
-
-      {/* Studio-mode sticky-notes overlay. Mounted last so it paints above the
-          breakpoint/board frames, and inside the transform layer so it
-          inherits the pan/zoom transform. Self-gates on active board — safe to
-          always mount in both the board and non-board paths. */}
-      <BoardNotesLayer />
-      {/* Studio-mode markdown doc-block overlay — same mounting rationale as
-          BoardNotesLayer above (paints above frames, inherits pan/zoom,
-          self-gates on active board). */}
-      <BoardDocsLayer />
-      {/* Snap-alignment guide lines (Phase 6B) — mounted last so they paint
-          above every other board layer while a frame/note/doc is mid-drag.
-          Self-gates on there being active guides; safe to always mount. */}
-      <BoardGuidesLayer />
     </div>
   )
 }

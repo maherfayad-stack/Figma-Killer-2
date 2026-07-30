@@ -5,7 +5,6 @@ import { AgentStoreProvider } from '@admin/ai/AgentStoreContext'
 import { FrameworkPanel } from '@site/panels/FrameworkPanel'
 import { ExplorerPanel } from '@site/panels/ExplorerPanel'
 import { DependenciesPanel } from '@site/panels/DependenciesPanel'
-import { InspectPanel } from '@site/panels/InspectPanel'
 import { PanelRail } from '@site/sidebars/PanelRail'
 import { PluginEditorPanel } from '@site/panels/PluginEditorPanel'
 import { SelectorsPanel } from '@site/panels/SelectorsPanel'
@@ -20,6 +19,16 @@ import styles from './LeftSidebar.module.css'
 // independently so its local draft survives panel switches after first load.
 const AgentPanel = lazy(() =>
   import('@site/panels/AgentPanel').then((module) => ({ default: module.AgentPanel })),
+)
+
+// InspectPanel (read-only "what actually rendered" inspector) is only
+// needed once a user opens the Inspect tab — same rationale as AgentPanel
+// above. lazy() keeps its computed-style walker (`inspectModel.ts`,
+// `useInspectComputedStyle.ts`) out of the eager editor-body chunk; the
+// panel still stays mounted-but-hidden like its siblings below once loaded,
+// so switching tabs doesn't lose its state.
+const InspectPanel = lazy(() =>
+  import('@site/panels/InspectPanel').then((module) => ({ default: module.InspectPanel })),
 )
 
 function selectActiveLeftSidebarPanel(state: ReturnType<typeof useEditorStore.getState>): LeftSidebarPanelId | null {
@@ -131,7 +140,9 @@ export function LeftSidebar({
               tier as Explorer: useful in both CMS and studio, no structural
               edit capability required. */}
           <div className={styles.panelMount} hidden={effectiveActivePanel !== 'inspect'}>
-            <InspectPanel />
+            <Suspense fallback={null}>
+              <InspectPanel />
+            </Suspense>
           </div>
           {/* Editor-only panels — only mounted when the caller can perform
               structural edits. Mounting them for non-editors would expose

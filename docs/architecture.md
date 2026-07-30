@@ -413,6 +413,8 @@ bun run test:e2e          # run specs in tests/e2e/*.e2e.ts
 
 `bun run build` runs both `tsc -b` and `vite build` — a change that runs in dev but fails `tsc` is not done. Verification is an end-of-task gate, not a per-edit ritual; see `CLAUDE.md` for the rules around pre-existing failures from parallel sessions.
 
+`files/` holds standalone scaffolds copied out by an external `pnpm create-file` workflow (e.g. `files/demo/`) — independent projects with their own toolchain (Vitest, not `bun test`) and their own dependency graph. `bunfig.toml` sets `[test] pathIgnorePatterns = ["files/**"]` so `bun test` never discovers them; test a scaffold from inside its own folder (`cd files/<name> && bun run test`).
+
 ---
 
 ## Related

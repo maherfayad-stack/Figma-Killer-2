@@ -35,8 +35,18 @@ describe('ClassPropertyRow remove button layout', () => {
     )
     expect(css).toMatch(/\.removeBtn\.removeBtn\s*\{[^}]*width:\s*var\(--class-remove-button-size\)/s)
     expect(css).toMatch(/\.removeBtn\.removeBtn\s*\{[^}]*height:\s*var\(--class-remove-button-size\)/s)
-    expect(css).not.toMatch(/\.removeBtn\s*\{[^}]*right:/s)
-    expect(css).not.toMatch(/\.removeBtn\s*\{[^}]*translateY\(-50%\)/s)
+    // There are deliberately two anchoring modes: the base `.removeBtn` rule
+    // overlays the fixed 100px inline label column via `left` (no `right`),
+    // while the stacked-layout descendant selector `.propertyRowWrapStacked
+    // .removeBtn` re-anchors to the row's top-right corner via `right`
+    // (stacked cells have no label column to overlay). Anchor the negative
+    // assertion to the base rule only (`^\.removeBtn` at line-start) so it
+    // can't be satisfied by the tail of the unrelated descendant selector.
+    expect(css).not.toMatch(/^\.removeBtn\s*\{[^}]*right:/ms)
+    expect(css).not.toMatch(/^\.removeBtn\s*\{[^}]*translateY\(-50%\)/ms)
+    expect(css).toMatch(
+      /\.propertyRowWrapStacked \.removeBtn\s*\{[^}]*top:\s*0[^}]*left:\s*auto[^}]*right:\s*0/s,
+    )
   })
 
   it('uses a neutral remove affordance instead of the destructive danger hover style', async () => {

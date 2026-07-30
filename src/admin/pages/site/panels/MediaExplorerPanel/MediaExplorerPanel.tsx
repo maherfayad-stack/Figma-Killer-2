@@ -33,7 +33,7 @@ import {
   type ExplorerContextMenuItem,
   type ExplorerRenamePayload,
 } from '@site/explorer-actions'
-import { MediaViewerWindow } from '@admin/shared/media/components/MediaViewerWindow/MediaViewerWindow'
+import { LazyMediaViewerWindow } from '@admin/shared/media/components/MediaViewerWindow/LazyMediaViewerWindow'
 import { useStandaloneMediaEditor } from '@admin/shared/media/hooks/useStandaloneMediaEditor'
 import { subscribeCmsMediaAssetCreated } from '@admin/shared/media/mediaAssetEvents'
 import {
@@ -464,7 +464,7 @@ export function MediaExplorerPanel({
         />
       )}
 
-      <MediaViewerWindow
+      <LazyMediaViewerWindow
         editor={viewerEditor}
         open={viewerAsset !== null}
         onClose={() => setViewerAssetId(null)}

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { selectActivePage, useEditorStore } from '@site/store/store'
 import { getCmsPublishStatus, publishCmsDraft } from '@core/persistence'
 import { LoaderIcon } from 'pixel-art-icons/icons/loader'
@@ -9,10 +9,21 @@ import { CloudUploadSolidIcon } from 'pixel-art-icons/icons/cloud-upload-solid'
 import { EyeSolidIcon } from 'pixel-art-icons/icons/eye-solid'
 import { SaveSolidIcon } from 'pixel-art-icons/icons/save-solid'
 import { StepUpCancelledMessage, useStepUp } from '@admin/shared/StepUp'
-import { SchedulePublishDialog } from '@admin/modals/SchedulePublishDialog'
 import type { PersistenceSaveStatus } from '@site/hooks/usePersistence'
 import { PublishActionGroup, type PublishActionMenuItem } from './PublishActionGroup'
 import { getErrorMessage } from '@core/utils/errorMessage'
+
+// SchedulePublishDialog drags in DateTimePicker (~14 kB pre-minify) + its CSS
+// module, and is opened rarely (the schedule-publish menu action). lazy()
+// keeps it out of the eager SitePage route chunk — same pattern as
+// ImportGithubDialog / SettingsModal / PreviewOverlay. The dialog is only
+// rendered once `scheduleDialogOpen` flips true (see JSX below), so the
+// dynamic import isn't even requested until the user opens it.
+const SchedulePublishDialog = lazy(() =>
+  import('@admin/modals/SchedulePublishDialog').then((m) => ({
+    default: m.SchedulePublishDialog,
+  })),
+)
 
 type PublishState = 'idle' | 'publishing' | 'published' | 'error'
 
@@ -241,27 +252,29 @@ export function PublishButton({ enabled = true, onSave, saveStatus }: PublishBut
           message,
         } : null}
       />
-      {activePage && (
-        <SchedulePublishDialog
-          open={scheduleDialogOpen}
-          onClose={() => setScheduleDialogOpen(false)}
-          rowId={activePage.id}
-          // The editor's in-memory Page shape doesn't carry the row's
-          // scheduledPublishAt — that lives on the CMS row, not in the
-          // site document. Future enhancement: read it from a
-          // useCmsPageStatus(activePage.id) hook so re-opening the
-          // dialog pre-fills with the current schedule. For now we
-          // start fresh on every open.
-          currentScheduledAt={null}
-          entityLabel="page"
-          onScheduled={() => {
-            // Re-fetch publish status so the toolbar can transition out
-            // of "Draft saved" / "Unsaved" into the published state if
-            // the row picked up. Cheap call — the same endpoint the
-            // mount-time useEffect uses.
-            void getCmsPublishStatus().catch(() => undefined)
-          }}
-        />
+      {activePage && scheduleDialogOpen && (
+        <Suspense fallback={null}>
+          <SchedulePublishDialog
+            open={scheduleDialogOpen}
+            onClose={() => setScheduleDialogOpen(false)}
+            rowId={activePage.id}
+            // The editor's in-memory Page shape doesn't carry the row's
+            // scheduledPublishAt — that lives on the CMS row, not in the
+            // site document. Future enhancement: read it from a
+            // useCmsPageStatus(activePage.id) hook so re-opening the
+            // dialog pre-fills with the current schedule. For now we
+            // start fresh on every open.
+            currentScheduledAt={null}
+            entityLabel="page"
+            onScheduled={() => {
+              // Re-fetch publish status so the toolbar can transition out
+              // of "Draft saved" / "Unsaved" into the published state if
+              // the row picked up. Cheap call — the same endpoint the
+              // mount-time useEffect uses.
+              void getCmsPublishStatus().catch(() => undefined)
+            }}
+          />
+        </Suspense>
       )}
     </>
   )

@@ -84,6 +84,30 @@ function openCategory(label: string): HTMLElement {
   return screen.getByRole('switch', { name: new RegExp(`include ${label} in export`, 'i') })
 }
 
+/** A minimal row shape satisfying the export dialog's rows-list response. */
+function makeRow(id: string, tableId: string, title: string) {
+  return {
+    id,
+    tableId,
+    cells: { title },
+    slug: title.toLowerCase().replace(/\s+/g, '-'),
+    status: 'published' as const,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    publishedAt: null,
+    scheduledPublishAt: null,
+    deletedAt: null,
+    authorUserId: null,
+    createdByUserId: null,
+    updatedByUserId: null,
+    publishedByUserId: null,
+    author: null,
+    createdBy: null,
+    updatedBy: null,
+    publishedBy: null,
+  }
+}
+
 // ── Global state saved for restore ───────────────────────────────────────────
 
 const originalFetch = globalThis.fetch
@@ -234,6 +258,7 @@ describe('ExportDialog', () => {
       const url = typeof input === 'string' ? input : input.toString()
       if (url.startsWith('/admin/api/cms/export/summary')) return jsonResponse({ media: 0, mediaFolders: 0, redirects: 0 })
       if (url === '/admin/api/cms/export/estimate') return jsonResponse({ bytes: 1000 })
+      if (url.includes('/data/tables/') && url.endsWith('/rows')) return jsonResponse({ rows: [] })
       return jsonResponse({ error: `Unexpected: ${url}` }, 500)
     }
     HTMLFormElement.prototype.submit = function () {
@@ -286,7 +311,23 @@ describe('ExportDialog', () => {
     await waitFor(() => { expect(screen.getByText(/~12 KB/i)).toBeTruthy() })
   })
 
-  it("initialScope='selected' pre-narrows the active table to the grid selection", () => {
+  it("initialScope='selected' pre-narrows the active table to the grid selection", async () => {
+    // initialScope='selected' opens directly on the Posts table detail, which
+    // kicks off the lazy rows-fetch for 'posts' on mount. Stub it (in addition
+    // to summary/estimate) so that fetch resolves instead of 500ing under the
+    // shared default stub — an unstubbed rejection here would otherwise settle
+    // after this test's synchronous body returns and leak noise into whatever
+    // runs next.
+    globalThis.fetch = async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      if (url.startsWith('/admin/api/cms/export/summary')) return jsonResponse({ media: 2, mediaFolders: 1, redirects: 1 })
+      if (url === '/admin/api/cms/export/estimate') return jsonResponse({ bytes: 12_000 })
+      if (url.includes('/data/tables/posts/rows')) {
+        return jsonResponse({ rows: Array.from({ length: 5 }, (_, i) => makeRow(`r${i + 1}`, 'posts', `Row ${i + 1}`)) })
+      }
+      return jsonResponse({ error: `Unexpected request: ${url}` }, 500)
+    }
+
     render(
       <ExportDialog
         open={true}
@@ -300,6 +341,10 @@ describe('ExportDialog', () => {
 
     // Opens on the Posts table, pre-narrowed to the 2 selected rows of 5.
     expect(screen.getByText(/2 of 5 entries selected/i)).toBeTruthy()
+
+    // Wait for the lazy rows-fetch to settle inside this test's act() boundary
+    // rather than leaking a state update out after the test ends.
+    await screen.findByRole('checkbox', { name: /include row 1/i })
   })
 
   it('content table detail lists rows as a checklist; toggling updates the count + request', async () => {

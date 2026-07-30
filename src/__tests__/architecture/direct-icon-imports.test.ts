@@ -13,15 +13,50 @@ import { join, extname } from 'path'
 
 const SRC_ROOT = join(import.meta.dir, '../../')
 
+/**
+ * Best-effort stripper of `//` line comments and `/* ... *\/` block comments.
+ * Used by architecture tests that need to scan ACTUAL code for forbidden
+ * patterns — mentions inside doc comments shouldn't count. Mirrors the
+ * helper in db-postgres-isms.test.ts / boundary-validation.test.ts.
+ *
+ * Not a full parser; nested edge cases (a `//` inside a regex literal) are
+ * handled imperfectly. Good enough for grep-style structural checks.
+ */
+function stripComments(source: string): string {
+  let s = source.replace(/\/\*[\s\S]*?\*\//g, ' ')
+  s = s.replace(/\/\/[^\n]*/g, ' ')
+  return s
+}
+
+/**
+ * Further strips string and template literals on top of stripComments.
+ * Used only for the JSX-render check (`<Icon`) — a `<Icon` appearing
+ * inside a string literal is not a render either. NOT used for the
+ * import-path check, since that check's whole match target (the module
+ * specifier) lives inside a string literal.
+ *
+ * Not a full parser; nested string/comment edge cases (regex literals
+ * containing `//`, template literals with `${}` interpolating code) are
+ * handled imperfectly. Good enough for grep-style structural checks.
+ */
+function stripCommentsAndStrings(source: string): string {
+  let s = stripComments(source)
+  s = s.replace(/'(?:\\.|[^'\\])*'/g, "''")
+  s = s.replace(/"(?:\\.|[^"\\])*"/g, '""')
+  s = s.replace(/`(?:\\.|[^`\\])*`/g, '``')
+  return s
+}
+
 function collectFiles(dir: string, exts = ['.ts', '.tsx', '.js', '.jsx', '.mts', '.mjs']): string[] {
   const results: string[] = []
   if (!existsSync(dir)) return results
   for (const entry of readdirSync(dir)) {
+    if (entry === '__tests__') continue
     const full = join(dir, entry)
     const stat = statSync(full)
     if (stat.isDirectory()) {
       results.push(...collectFiles(full, exts))
-    } else if (exts.includes(extname(entry))) {
+    } else if (exts.includes(extname(entry)) && !/\.test\.(ts|tsx|js|jsx|mts|mjs)$/.test(entry)) {
       results.push(full)
     }
   }
@@ -43,10 +78,12 @@ describe('Direct icon imports — no lazy Icon wrapper in production UI', () => 
     for (const filePath of collectProdFiles()) {
       const rel = filePath.replace(SRC_ROOT, 'src/')
 
-      const source = readFileSync(filePath, 'utf8')
+      const raw = readFileSync(filePath, 'utf8')
+      const sourceNoComments = stripComments(raw)
+      const sourceNoCommentsOrStrings = stripCommentsAndStrings(raw)
       if (
-        /from\s+['"]pixel-art-icons\/Icon['"]/.test(source) ||
-        /<Icon\b/.test(source)
+        /from\s+['"]pixel-art-icons\/Icon['"]/.test(sourceNoComments) ||
+        /<Icon\b/.test(sourceNoCommentsOrStrings)
       ) {
         violations.push(rel)
       }

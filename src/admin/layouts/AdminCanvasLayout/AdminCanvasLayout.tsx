@@ -39,8 +39,6 @@
 import { Toolbar } from '@admin/pages/site/toolbar/Toolbar'
 import { ZoomControls } from '@admin/pages/site/toolbar/ZoomControls'
 import { PublishButton } from '@admin/pages/site/toolbar/PublishButton'
-import { DownloadCodeButton } from '@admin/pages/site/toolbar/DownloadCodeButton'
-import { ImportGithubButton } from '@admin/pages/site/toolbar/ImportGithubButton'
 import { useEditorAppearancePreferences } from '@admin/pages/site/preferences/editorPreferences'
 import { usePersistence } from '@admin/pages/site/hooks/usePersistence'
 import { useSiteEditorUrlSync } from '@admin/pages/site/hooks/useSiteEditorUrlSync'
@@ -48,7 +46,6 @@ import { useEditorLayoutPersistence } from '@admin/pages/site/hooks/useEditorLay
 import { useEditorStore } from '@admin/pages/site/store/store'
 import { cmsAdapter } from '@core/persistence/cms'
 import { fsCodemodAdapter, STUDIO_AUTOSAVE_DELAY_MS } from '@site/studio/fsCodemodAdapter'
-import { fetchBoards, saveBoards } from '@site/studio/boardsApi'
 import { syncStudioModeFromUrl } from '@site/studio/studioMode'
 import { getStudioWorkspaceDir } from '@site/studio/studioWorkspaceDir'
 import { createBoardsFile } from '@core/studio-board'
@@ -109,6 +106,18 @@ const SettingsModal = lazy(() =>
 const PreviewOverlay = lazy(() =>
   import('@admin/pages/site/preview/PreviewOverlay').then((m) => ({
     default: m.PreviewOverlay,
+  })),
+)
+
+// Studio-only toolbar actions — only rendered when `?studio` is present
+// (see `studioMode` below). lazy() keeps ImportGithubButton/DownloadCodeButton
+// (plus their `downloadStudioCode.ts` client) out of the eager SitePage route
+// chunk for the (default) non-studio CMS editor. Bundled behind ONE lazy
+// boundary (`StudioToolbarActions`) rather than two, so the SitePage shell
+// only pays for a single dynamic-import preload map.
+const StudioToolbarActions = lazy(() =>
+  import('@admin/pages/site/toolbar/StudioToolbarActions').then((m) => ({
+    default: m.StudioToolbarActions,
   })),
 )
 
@@ -248,10 +257,9 @@ export function AdminCanvasLayout() {
                   without a manual save button; its own export story is
                   DownloadCodeButton below (Phase 6D). */}
               {studioMode ? (
-                <>
-                  <ImportGithubButton />
-                  <DownloadCodeButton />
-                </>
+                <Suspense fallback={null}>
+                  <StudioToolbarActions />
+                </Suspense>
               ) : (
                 <PublishButton
                   enabled={canPublishPages}
@@ -329,7 +337,11 @@ function useStudioBoardsPersistence(studioMode: boolean): void {
     let cancelled = false
 
     function load() {
-      fetchBoards(getStudioWorkspaceDir())
+      // Dynamic import: `boardsApi` is only relevant in Studio mode (this
+      // whole effect early-returns above when it's off), so keep its client
+      // out of the eager SitePage route chunk for the default CMS editor.
+      import('@site/studio/boardsApi')
+        .then(({ fetchBoards }) => fetchBoards(getStudioWorkspaceDir()))
         .then((file) => {
           if (!cancelled) useEditorStore.getState().loadBoards(file)
         })
@@ -369,7 +381,8 @@ function useStudioBoardsPersistence(studioMode: boolean): void {
       // `boards` with a new reference (the pure @core/studio-board transforms are
       // immutable), so identity tells us whether an edit landed mid-flight.
       const snapshot = useEditorStore.getState().boards
-      saveBoards(snapshot, getStudioWorkspaceDir())
+      import('@site/studio/boardsApi')
+        .then(({ saveBoards }) => saveBoards(snapshot, getStudioWorkspaceDir()))
         .then(() => {
           const st = useEditorStore.getState()
           if (st.boards === snapshot) {

@@ -30,7 +30,7 @@ import { Input } from '@ui/components/Input'
 import { SegmentedControl } from '@ui/components/SegmentedControl'
 import { VideoSolidIcon } from 'pixel-art-icons/icons/video-solid'
 import { MediaPickerField } from '@admin/shared/media/components/MediaPickerField'
-import { MediaViewerWindow } from '@admin/shared/media/components/MediaViewerWindow/MediaViewerWindow'
+import { LazyMediaViewerWindow } from '@admin/shared/media/components/MediaViewerWindow/LazyMediaViewerWindow'
 import { useStandaloneMediaEditor } from '@admin/shared/media/hooks/useStandaloneMediaEditor'
 import { primeCmsMediaAssetCache } from '@admin/shared/media/hooks/useCmsMediaAssetByPath'
 import styles from './controls.module.css'
@@ -277,7 +277,7 @@ export function MediaLibraryControl({
         </Suspense>
       )}
 
-      <MediaViewerWindow
+      <LazyMediaViewerWindow
         editor={viewerEditor}
         open={viewerAsset !== null}
         onClose={() => setViewerAssetId(null)}

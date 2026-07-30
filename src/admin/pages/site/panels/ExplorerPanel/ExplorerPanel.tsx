@@ -20,16 +20,25 @@
  *   double-handling every explorer drag — so they deliberately share one
  *   instance + DnD scope.
  */
+import { lazy, Suspense } from 'react'
 import { useEditorStore } from '@site/store/store'
 import { Panel } from '@admin/shared/Panel'
 import { SegmentedControl } from '@ui/components/SegmentedControl'
 import { DomPanel } from '@site/panels/DomPanel'
 import { SiteExplorerPanel } from '@site/panels/SiteExplorerPanel'
 import { MediaExplorerPanel } from '@site/panels/MediaExplorerPanel'
-import { StudioExplorer } from './StudioExplorer'
 import { isStudioMode } from '@site/studio/studioMode'
 import type { ExplorerPanelTab } from '@site/store/slices/uiSlice'
 import styles from './ExplorerPanel.module.css'
+
+// Studio's explorer body (Boards list + all-pages Layers tree) is only
+// reachable when the editor was opened with `?studio` — the default CMS
+// editor always takes the tab-row branch below. lazy() keeps StudioExplorer
+// (+ StudioBoardsList, StudioPagesTree, their prefs + CSS) out of the eager
+// editor-body chunk for the (default) non-Studio case.
+const StudioExplorer = lazy(() =>
+  import('./StudioExplorer').then((m) => ({ default: m.StudioExplorer })),
+)
 
 const TABS: ReadonlyArray<{ value: ExplorerPanelTab; label: string }> = [
   { value: 'layers', label: 'Layers' },
@@ -57,7 +66,9 @@ export function ExplorerPanel({ editable = true }: ExplorerPanelProps) {
       body="bare"
     >
       {isStudioMode() ? (
-        <StudioExplorer editable={editable} />
+        <Suspense fallback={null}>
+          <StudioExplorer editable={editable} />
+        </Suspense>
       ) : (
         <>
           <div className={styles.tabsRow}>

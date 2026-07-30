@@ -1,2 +1,6 @@
 [test]
 preload = ["./src/__tests__/setup.ts"]
+# `files/` holds standalone scaffolds (see files/demo) copied out by `pnpm create-file`.
+# They are independent projects with their own toolchain (vitest, not bun test) and
+# their own dependency graph — bun's test runner must not discover or execute them.
+pathIgnorePatterns = ["files/**"]
