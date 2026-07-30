@@ -38,7 +38,7 @@ function canvasTarget() {
     tagName: 'DIV',
     isContentEditable: false,
     closest: (selector: string) =>
-      selector === '[data-instatic-canvas-root="true"]' ? {} : null,
+      selector === '[data-studio-canvas-root="true"]' ? {} : null,
   }
 }
 
@@ -47,7 +47,7 @@ function layerTreeTarget() {
     tagName: 'DIV',
     isContentEditable: false,
     closest: (selector: string) =>
-      selector === '[data-instatic-layer-tree="true"]' ? {} : null,
+      selector === '[data-studio-layer-tree="true"]' ? {} : null,
   }
 }
 

@@ -49,7 +49,7 @@ interface RpcResponse {
 
 let nextId = 1
 async function rpc(method: string, params: unknown): Promise<{ status: number; json: RpcResponse }> {
-  const req = new Request('http://localhost/_instatic/mcp', {
+  const req = new Request('http://localhost/_studio/mcp', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -97,7 +97,7 @@ describe('MCP end-to-end (stateless multi-request, real handler)', () => {
       tokenHash: await hashConnectorToken(readToken),
     })
     const req = (method: string, params: unknown) =>
-      new Request('http://localhost/_instatic/mcp', {
+      new Request('http://localhost/_studio/mcp', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

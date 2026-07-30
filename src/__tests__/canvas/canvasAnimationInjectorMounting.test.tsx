@@ -21,7 +21,7 @@ import { makeNode, makePage, makeSite } from '../fixtures'
 import { CANVAS_FRAME_READY_TIMEOUT_MS, waitForCanvasFrameDocument } from './iframeCanvasQuery'
 import '@modules/base'
 
-const STYLE_TAG_ID = 'instatic-canvas-animation'
+const STYLE_TAG_ID = 'studio-canvas-animation'
 
 beforeEach(() => {
   const page = makePage({
@@ -91,7 +91,7 @@ describe('CanvasAnimationInjector mounting', () => {
     await waitFor(
       () => {
         doc = container.querySelector('iframe')?.contentDocument ?? null
-        expect(doc?.getElementById('instatic-editor-chrome')).not.toBeNull()
+        expect(doc?.getElementById('studio-editor-chrome')).not.toBeNull()
       },
       { timeout: CANVAS_FRAME_READY_TIMEOUT_MS },
     )

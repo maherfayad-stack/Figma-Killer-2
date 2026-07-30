@@ -11,7 +11,7 @@ interface SiteScriptWorkspace {
 }
 
 export async function materializeSiteScriptWorkspace(site: SiteDocument): Promise<SiteScriptWorkspace> {
-  const tempDir = await mkdtemp(join(tmpdir(), 'instatic-site-runtime-'))
+  const tempDir = await mkdtemp(join(tmpdir(), 'studio-site-runtime-'))
   const rootDir = await realpath(tempDir)
   const entryPointByFileId = new Map<string, string>()
 

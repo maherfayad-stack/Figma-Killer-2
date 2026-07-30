@@ -541,7 +541,7 @@ export type SaveDataRowDraftInput = Static<typeof SaveDataRowDraftInputSchema>
 // DataMeta — lean binding catalog returned by GET /admin/api/cms/data/_meta.
 //
 // A stripped-down view of the data tables + fields, designed for use by
-// the instatic binding picker. Contains only what the picker needs to
+// the studio binding picker. Contains only what the picker needs to
 // build its UI: identifiers, labels, types, and a small set of per-type
 // extras (mediaKind, allowMultiple, targetTableSlug). Deep field settings
 // (options, validation rules, currency, format, …) are intentionally
@@ -552,7 +552,7 @@ const DataMetaFieldSchema = Type.Object({
   id: Type.String(),
   label: Type.String(),
   // NOTE: pageTree and fieldSchema are intentionally excluded — they are
-  // structural types not surfaced in the instatic binding catalog.
+  // structural types not surfaced in the studio binding catalog.
   type: Type.Union([
     Type.Literal('text'), Type.Literal('longText'), Type.Literal('richText'),
     Type.Literal('number'), Type.Literal('boolean'),

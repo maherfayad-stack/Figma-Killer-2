@@ -67,7 +67,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/corebunch/instatic
+          images: ghcr.io/corebunch/studio
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
@@ -82,9 +82,9 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            INSTATIC_VERSION=${{ steps.version.outputs.version }}
-            INSTATIC_REVISION=${{ github.sha }}
-            INSTATIC_CREATED=${{ steps.version.outputs.created }}
+            STUDIO_VERSION=${{ steps.version.outputs.version }}
+            STUDIO_REVISION=${{ github.sha }}
+            STUDIO_CREATED=${{ steps.version.outputs.created }}
 
   bundle:
     name: Publish Release Bundle
@@ -116,7 +116,7 @@ jobs:
             exit 0
           fi
           gh release create "$GITHUB_REF_NAME" \
-            --title "Instatic ${{ needs.image.outputs.version }}" \
+            --title "Studio ${{ needs.image.outputs.version }}" \
             --generate-notes
 
       - name: Upload release bundle
@@ -124,5 +124,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release upload "$GITHUB_REF_NAME" \
-            ".tmp/release/instatic-${{ needs.image.outputs.version }}-release-bundle.tar.gz" \
+            ".tmp/release/studio-${{ needs.image.outputs.version }}-release-bundle.tar.gz" \
             --clobber

@@ -267,7 +267,6 @@ Don't add raw `dragstart` / `dragend` listeners — `@dnd-kit` owns those. If yo
 - [docs/editor.md](../editor.md) — canvas overview
 - [docs/reference/page-tree.md](page-tree.md) — `moveNode`, `moveNodes`, `wrapNode`, `wrapNodes`, `insertNode`
 - [docs/features/visual-components.md](../features/visual-components.md) — slot-instance is locked
-- [docs/features/dashboard.md](../features/dashboard.md) — separate DnD topology for the dashboard
 - Source-of-truth files:
   - `src/admin/pages/site/canvas/canvasDnd.ts` — `getCanvasDropZone`, `resolveCanvasDropTarget`
   - `src/admin/pages/site/canvas/canvasInsertionDrop.ts` — pointer-to-canvas insertion target + fixed preview geometry shared by module and media insert sources

@@ -27,7 +27,7 @@ describe('mcp auth', () => {
       userId: 'u1', label: 'L', type: 'remote',
       capabilities: ['ai.chat', 'content.manage'], tokenHash: await hashConnectorToken(token),
     })
-    const req = new Request('http://x/_instatic/mcp', { headers: { Authorization: `Bearer ${token}` } })
+    const req = new Request('http://x/_studio/mcp', { headers: { Authorization: `Bearer ${token}` } })
     const res = await resolveMcpAuth(req, db)
     expect(res.ok).toBe(true)
     if (res.ok) {
@@ -37,12 +37,12 @@ describe('mcp auth', () => {
   })
 
   it('rejects a missing token', async () => {
-    const res = await resolveMcpAuth(new Request('http://x/_instatic/mcp'), db)
+    const res = await resolveMcpAuth(new Request('http://x/_studio/mcp'), db)
     expect(res.ok).toBe(false)
   })
 
   it('rejects an unknown token', async () => {
-    const req = new Request('http://x/_instatic/mcp', { headers: { Authorization: 'Bearer imcp_nope' } })
+    const req = new Request('http://x/_studio/mcp', { headers: { Authorization: 'Bearer imcp_nope' } })
     expect((await resolveMcpAuth(req, db)).ok).toBe(false)
   })
 
@@ -52,7 +52,7 @@ describe('mcp auth', () => {
       userId: 'u1', label: 'L', type: 'remote', capabilities: ['ai.chat'], tokenHash: await hashConnectorToken(token),
     })
     await db`update ai_mcp_connectors set revoked_at = current_timestamp where id = ${rec.id}`
-    const req = new Request('http://x/_instatic/mcp', { headers: { Authorization: `Bearer ${token}` } })
+    const req = new Request('http://x/_studio/mcp', { headers: { Authorization: `Bearer ${token}` } })
     expect((await resolveMcpAuth(req, db)).ok).toBe(false)
   })
 
@@ -66,7 +66,7 @@ describe('mcp auth', () => {
     })
     // Backdate expires_at to a past timestamp to simulate expiry.
     await db`update ai_mcp_connectors set expires_at = ${pastExpiry} where id = ${rec.id}`
-    const req = new Request('http://x/_instatic/mcp', { headers: { Authorization: `Bearer ${token}` } })
+    const req = new Request('http://x/_studio/mcp', { headers: { Authorization: `Bearer ${token}` } })
     expect((await resolveMcpAuth(req, db)).ok).toBe(false)
   })
 
@@ -77,13 +77,13 @@ describe('mcp auth', () => {
     })
     // Simulate a pre-migration 019 row with no expiry set.
     await db`update ai_mcp_connectors set expires_at = null where id = ${rec.id}`
-    const req = new Request('http://x/_instatic/mcp', { headers: { Authorization: `Bearer ${token}` } })
+    const req = new Request('http://x/_studio/mcp', { headers: { Authorization: `Bearer ${token}` } })
     const res = await resolveMcpAuth(req, db)
     expect(res.ok).toBe(true)
   })
 
   it('builds a spec-correct 401 with a resource_metadata pointer', () => {
-    const r = unauthorizedResponse(new URL('http://x/_instatic/mcp'))
+    const r = unauthorizedResponse(new URL('http://x/_studio/mcp'))
     expect(r.status).toBe(401)
     const wwwAuth = r.headers.get('WWW-Authenticate') ?? ''
     expect(wwwAuth).toContain('Bearer')

@@ -1,7 +1,7 @@
 /**
  * `definePlugin` — type-checked plugin configuration.
  *
- *   import { definePlugin, permissions } from '@instatic/plugin-sdk'
+ *   import { definePlugin, permissions } from '@studio/plugin-sdk'
  *   import callout from './modules/callout'
  *   import pack from './pack'
  *

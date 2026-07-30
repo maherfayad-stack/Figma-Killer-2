@@ -7,7 +7,7 @@
  * Mirrors `UserStylesheetInjector`'s per-iframe injection pattern. The CSS is
  * imported once as a string via Vite's `?inline`.
  *
- * IMPORTANT — injected UNLAYERED (not inside an `@layer`): Instatic's CSS reset
+ * IMPORTANT — injected UNLAYERED (not inside an `@layer`): Studio's CSS reset
  * lives in `@layer user-authored`, and cascade layers trump specificity, so a
  * layered design-system rule would LOSE to the reset's element selectors
  * (`button {…}`), leaving components unstyled. Unlayered, the design system's

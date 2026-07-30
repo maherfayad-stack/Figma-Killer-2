@@ -16,7 +16,11 @@ import { fileURLToPath } from 'node:url'
 const configDir = path.dirname(fileURLToPath(import.meta.url))
 
 export default defineConfig([
-  globalIgnores(['dist', '.worktrees', '.claude']),
+  // `design-system/` is a standalone package with its own tsconfig, eslint, and
+  // test scripts — it is a library, not part of the Vite app, so app-only rules
+  // (notably `react-refresh/only-export-components`, which is about HMR
+  // boundaries) do not apply to it. Lint it with its own `bun run lint` there.
+  globalIgnores(['dist', '.worktrees', '.claude', 'design-system']),
   {
     files: ['**/*.{ts,tsx}'],
     extends: [

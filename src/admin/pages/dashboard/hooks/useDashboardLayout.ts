@@ -394,7 +394,7 @@ export function useDashboardLayout(): DashboardLayoutApi {
     // wastes a few KB per browser. Pre-release, no migration code needed —
     // just nuke it on mount.
     if (typeof window !== 'undefined') {
-      try { window.localStorage.removeItem('instatic-admin-dashboard-layout-v3') } catch { /* private browsing */ }
+      try { window.localStorage.removeItem('studio-admin-dashboard-layout-v3') } catch { /* private browsing */ }
     }
 
     return () => { cancelled = true }

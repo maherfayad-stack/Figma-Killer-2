@@ -3,7 +3,7 @@
  * and save back to, a real React page on disk (via the /admin/api/studio
  * server endpoints), instead of the SQLite CMS draft.
  *
- *   loadSite  → GET  /admin/api/studio/load   → every source-derived Instatic
+ *   loadSite  → GET  /admin/api/studio/load   → every source-derived Studio
  *               Page in the workspace's `pages/` dir, wrapped in a default
  *               SiteDocument shell (multi-frame board — Phase 1 Increment 1B).
  *               `site.settings.framework` (Colors/Typography/Spacing) is then
@@ -22,7 +22,7 @@
  *
  * Wired in only when the editor is opened with `?studio` (see AdminCanvasLayout);
  * the normal DB-backed editor is untouched. This is the filesystem-as-truth
- * path — Instatic's autosave (debounce / Cmd+S) is the commit-on-idle trigger.
+ * path — Studio's autosave (debounce / Cmd+S) is the commit-on-idle trigger.
  *
  * Paths live under /admin/api so the Vite dev proxy forwards them to the :3001
  * server (same-origin in prod behind Caddy).

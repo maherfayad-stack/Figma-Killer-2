@@ -332,13 +332,13 @@ describe('publishDraftSite — Layer A static artefacts', () => {
     expect(staticHtml).not.toBeNull()
     expect(staticHtml).toContain('Hello static world')
 
-    // Dynamic page is ALSO baked — as a static SHELL with a <instatic-hole>
+    // Dynamic page is ALSO baked — as a static SHELL with a <studio-hole>
     // placeholder for the request-dependent loop. Everything except the hole
     // fragment is on disk; the hole runtime hydrates the loop at request time.
     const dynamicHtml = await readArtefact(uploadsDir, '/news')
     expect(dynamicHtml).not.toBeNull()
-    expect(dynamicHtml).toContain('<instatic-hole')
-    expect(dynamicHtml).toContain('/_instatic/hole-runtime.js')
+    expect(dynamicHtml).toContain('<studio-hole')
+    expect(dynamicHtml).toContain('/_studio/hole-runtime.js')
     // The loop's items are NOT inlined — they come from the hole fetch.
 
     // Symlink exists and points to a slot
@@ -347,7 +347,7 @@ describe('publishDraftSite — Layer A static artefacts', () => {
 
     // Complete static publishing: the CSS bundles the page links must be
     // baked to disk so the page never needs the server to regenerate them.
-    const cssHrefs = [...(staticHtml ?? '').matchAll(/href="(\/_instatic\/css\/[^"]+\.css)"/g)].map((m) => m[1])
+    const cssHrefs = [...(staticHtml ?? '').matchAll(/href="(\/_studio\/css\/[^"]+\.css)"/g)].map((m) => m[1])
     expect(cssHrefs.length).toBeGreaterThan(0) // reset + framework at minimum
     for (const href of cssHrefs) {
       const bytes = await readStaticAsset(uploadsDir, href)
@@ -494,8 +494,8 @@ describe('publicRouter — Layer A disk fast-path', () => {
     const { prepareInactiveSlot, writeArtefact, writeStaticAsset, swapSlot } =
       await import('../../../server/publish/staticArtefact')
     const enc = new TextEncoder()
-    const cssPath = '/_instatic/css/reset-abc123abc123.css'
-    const jsPath = '/_instatic/assets/v1/entries/app-deadbeefcafe.js'
+    const cssPath = '/_studio/css/reset-abc123abc123.css'
+    const jsPath = '/_studio/assets/v1/entries/app-deadbeefcafe.js'
     const html =
       `<!DOCTYPE html><html><head>` +
       `<link rel="stylesheet" href="${cssPath}">` +
@@ -538,19 +538,19 @@ describe('publicRouter — Layer A disk fast-path', () => {
     expect(dbQueried).toBe(false)
   })
 
-  it('serves a hole-page SHELL (HTML + CSS) from disk with ZERO DB — only the /_instatic/hole fragment is dynamic', async () => {
-    // A page with a hole bakes a static shell: real HTML + a <instatic-hole>
+  it('serves a hole-page SHELL (HTML + CSS) from disk with ZERO DB — only the /_studio/hole fragment is dynamic', async () => {
+    // A page with a hole bakes a static shell: real HTML + a <studio-hole>
     // placeholder + the hole runtime. The shell and its CSS are on disk; only
-    // the hole fragment fetch (/_instatic/hole/<id>) touches the server at runtime.
+    // the hole fragment fetch (/_studio/hole/<id>) touches the server at runtime.
     const { prepareInactiveSlot, writeArtefact, writeStaticAsset, swapSlot } =
       await import('../../../server/publish/staticArtefact')
-    const cssPath = '/_instatic/css/style-feedfeedfeed.css'
+    const cssPath = '/_studio/css/style-feedfeedfeed.css'
     const shell =
       `<!DOCTYPE html><html><head>` +
       `<link rel="stylesheet" href="${cssPath}">` +
-      `<script type="module" src="/_instatic/hole-runtime.js?v=3" defer></script>` +
+      `<script type="module" src="/_studio/hole-runtime.js?v=3" defer></script>` +
       `</head><body><h1>Blog</h1>` +
-      `<instatic-hole id="hole-loop1" data-instatic-hole="loop1" data-instatic-version="3" style="display:contents"></instatic-hole>` +
+      `<studio-hole id="hole-loop1" data-studio-hole="loop1" data-studio-version="3" style="display:contents"></studio-hole>` +
       `</body></html>`
 
     const { slot, slotDir } = await prepareInactiveSlot(uploadsDir)
@@ -568,8 +568,8 @@ describe('publicRouter — Layer A disk fast-path', () => {
     expect(htmlRes.status).toBe(200)
     const body = await htmlRes.text()
     expect(body).toContain('<h1>Blog</h1>')
-    expect(body).toContain('<instatic-hole') // the dynamic part is deferred to a hole
-    expect(body).toContain('/_instatic/hole-runtime.js')
+    expect(body).toContain('<studio-hole') // the dynamic part is deferred to a hole
+    expect(body).toContain('/_studio/hole-runtime.js')
 
     const cssRes = await handleServerRequest(new Request(`http://localhost${cssPath}`), { db: throwingDb, uploadsDir })
     expect(cssRes.status).toBe(200)

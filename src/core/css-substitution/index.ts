@@ -28,7 +28,7 @@
  * rewritten to a marker custom property:
  *
  *   `border-left: 1px solid var(--rule)`
- *     → `--instatic-sub-border-left: 1px solid var(--rule)`
+ *     → `--studio-sub-border-left: 1px solid var(--rule)`
  *
  * and decoded back to its real property after the engine parse
  * (`decodeSubstitutionProperty`). The output is identical across engines BY
@@ -42,7 +42,7 @@
 import { isEmittableProperty } from '@core/publisher'
 import type { CSSDeclarationPriorityBag } from '@core/page-tree'
 /** Prefix for encoded substitution declarations. */
-export const SUBSTITUTION_PROP_MARKER = '--instatic-sub-'
+export const SUBSTITUTION_PROP_MARKER = '--studio-sub-'
 
 /** A value that contains a `var(` or `env(` substitution function. */
 export const SUBSTITUTION_FN_RE = /\b(?:var|env)\(/

@@ -5,7 +5,7 @@
  *   ┌─ site.runtime.dependencyLock  (resolved versions, SRI, tarball URL)
  *   ├─ ensureRuntimeDependencyCache  (bun install → node_modules/)
  *   └─ buildRuntimePackageImportmap  ← we resolve each package's ESM entry
- *                                       to a `/_instatic/runtime/cache/<hash>/...`
+ *                                       to a `/_studio/runtime/cache/<hash>/...`
  *                                       URL the host serves.
  *
  * Resolution rules per package:
@@ -131,7 +131,7 @@ async function resolvePackageEntry(packageDir: string): Promise<string | null> {
 }
 
 interface BuildPackageImportmapOptions {
-  /** URL prefix the host serves the cache from. Defaults to `/_instatic/runtime/cache/`. */
+  /** URL prefix the host serves the cache from. Defaults to `/_studio/runtime/cache/`. */
   cacheUrlPrefix?: string
 }
 
@@ -148,7 +148,7 @@ export async function buildRuntimePackageImportmap(
   const lockedNames = Object.keys(lock.packages)
   if (lockedNames.length === 0) return null
 
-  const prefix = options.cacheUrlPrefix ?? '/_instatic/runtime/cache/'
+  const prefix = options.cacheUrlPrefix ?? '/_studio/runtime/cache/'
   const baseUrl = `${prefix.replace(/\/+$/g, '')}/${cache.hash}/`
 
   const imports: Record<string, string> = {}

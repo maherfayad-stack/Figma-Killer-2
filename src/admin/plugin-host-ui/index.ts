@@ -1,7 +1,7 @@
 /**
- * `@instatic/host-ui` — the named-export host UI surface plugins import.
+ * `@studio/host-ui` — the named-export host UI surface plugins import.
  *
- *   import { Button, Stack, Card, Text } from '@instatic/host-ui'
+ *   import { Button, Stack, Card, Text } from '@studio/host-ui'
  *
  *   export default function MyPanel() {
  *     return <Stack gap={12}><Button variant="primary">Hi</Button></Stack>

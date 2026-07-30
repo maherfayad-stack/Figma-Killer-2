@@ -17,7 +17,7 @@ import { afterEach, describe, expect, it } from 'bun:test'
 import { cleanup, render } from '@testing-library/react'
 import { CanvasAnimationInjector } from '@site/canvas/CanvasAnimationInjector'
 
-const STYLE_TAG_ID = 'instatic-canvas-animation'
+const STYLE_TAG_ID = 'studio-canvas-animation'
 
 afterEach(() => {
   cleanup()

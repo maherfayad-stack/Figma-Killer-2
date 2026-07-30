@@ -29,7 +29,7 @@ function runtimeSite(overrides: Partial<SiteDocument> = {}): SiteDocument {
         type: 'script',
         content: `
           import { message } from './message'
-          window.__instaticRuntimeMessage = message
+          window.__studioRuntimeMessage = message
         `,
         createdAt: 1,
         updatedAt: 1,
@@ -65,7 +65,7 @@ describe('site runtime build', () => {
       site: runtimeSite(),
       page,
       target: 'publish',
-      assetBasePath: '/_instatic/assets/runtime/',
+      assetBasePath: '/_studio/assets/runtime/',
     })
 
     expect(result.diagnostics).toEqual([])
@@ -76,7 +76,7 @@ describe('site runtime build', () => {
       placement: 'head',
       priority: 10,
     })
-    expect(result.runtimeAssets.scripts[0].src).toStartWith('/_instatic/assets/runtime/')
+    expect(result.runtimeAssets.scripts[0].src).toStartWith('/_studio/assets/runtime/')
     const entryAsset = result.files.find((file) => file.publicPath === result.runtimeAssets.scripts[0].src)
     expect(entryAsset?.content).toContain('hello-runtime')
   })
@@ -99,7 +99,7 @@ describe('site runtime build', () => {
       site,
       page,
       target: 'publish',
-      assetBasePath: '/_instatic/assets/runtime/',
+      assetBasePath: '/_studio/assets/runtime/',
     })
 
     expect(result.files).toEqual([])
@@ -118,17 +118,17 @@ describe('site runtime build', () => {
       site: runtimeSite(),
       page,
       registry,
-      assetBasePath: '/_instatic/preview/runtime/',
+      assetBasePath: '/_studio/preview/runtime/',
     })
 
     expect(result.diagnostics).toEqual([])
     expect(result.html).toContain("script-src 'self'")
-    expect(result.html).toContain('data-instatic-runtime-script="entry"')
-    expect(result.html).toContain('/_instatic/preview/runtime/')
+    expect(result.html).toContain('data-studio-runtime-script="entry"')
+    expect(result.html).toContain('/_studio/preview/runtime/')
   })
 
   it('resolves declared package imports from a dependency cache node_modules directory', async () => {
-    const cacheRoot = await mkdtemp(join(tmpdir(), 'instatic-runtime-node-modules-'))
+    const cacheRoot = await mkdtemp(join(tmpdir(), 'studio-runtime-node-modules-'))
     const nodeModulesDir = join(cacheRoot, 'node_modules')
     await mkdir(join(nodeModulesDir, 'fake-runtime-package'), { recursive: true })
     await writeFile(
@@ -151,7 +151,7 @@ describe('site runtime build', () => {
             type: 'script',
             content: `
               import { packageMessage } from 'fake-runtime-package'
-              window.__instaticRuntimeMessage = packageMessage
+              window.__studioRuntimeMessage = packageMessage
             `,
             createdAt: 1,
             updatedAt: 1,
@@ -167,7 +167,7 @@ describe('site runtime build', () => {
         site,
         page,
         target: 'publish',
-        assetBasePath: '/_instatic/assets/runtime/',
+        assetBasePath: '/_studio/assets/runtime/',
         dependencyNodeModulesDir: nodeModulesDir,
       })
 
@@ -183,7 +183,7 @@ describe('site runtime build', () => {
       site: runtimeSite(),
       page,
       target: 'publish',
-      assetBasePath: '/_instatic/assets/runtime/',
+      assetBasePath: '/_studio/assets/runtime/',
       // bundleTimeoutMs <= 0 short-circuits to a synchronous timeout error
       // before esbuild runs. This is deterministic — a real `setTimeout(0)`
       // race against esbuild's promise can be won by either side depending

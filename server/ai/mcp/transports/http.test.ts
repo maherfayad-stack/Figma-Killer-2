@@ -26,7 +26,7 @@ function mcpRequest(body: string, token?: string): Request {
     Accept: 'application/json, text/event-stream',
   }
   if (token) headers.Authorization = `Bearer ${token}`
-  return new Request('http://localhost/_instatic/mcp', { method: 'POST', headers, body })
+  return new Request('http://localhost/_studio/mcp', { method: 'POST', headers, body })
 }
 
 let db: DbClient

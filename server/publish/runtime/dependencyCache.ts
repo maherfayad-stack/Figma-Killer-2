@@ -39,7 +39,7 @@ interface EnsureRuntimeDependencyCacheOptions {
  * (interrupted child process, watcher reload, pipe deadlock) can leave the
  * directory created but only sparsely populated.
  */
-const INSTALL_SENTINEL_FILE = '.instatic-install-complete'
+const INSTALL_SENTINEL_FILE = '.studio-install-complete'
 
 /**
  * Hard upper bound on packages declared in a single dependency lock. A site
@@ -81,7 +81,7 @@ export function runtimeDependencyLockHash(lock: SiteDependencyLock): string {
 
 /** Root of the runtime dependency cache. Overridable via `RUNTIME_CACHE_DIR`. */
 export function cacheRootDir(): string {
-  return resolve(process.env.RUNTIME_CACHE_DIR || join(tmpdir(), 'instatic-runtime-cache'))
+  return resolve(process.env.RUNTIME_CACHE_DIR || join(tmpdir(), 'studio-runtime-cache'))
 }
 
 /** Directory holding all per-hash workspaces under a cache root. */
@@ -203,7 +203,7 @@ async function performInstall(
   try {
     await writeFile(join(tempDir, 'package.json'), JSON.stringify({
       private: true,
-      name: `instatic-runtime-${hash}`,
+      name: `studio-runtime-${hash}`,
       version: '0.0.0',
       type: 'module',
       dependencies: exactDependencies,

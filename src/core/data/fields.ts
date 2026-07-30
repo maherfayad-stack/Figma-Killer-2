@@ -54,7 +54,7 @@ export function isPostTypeBuiltInFieldId(fieldId: string): boolean {
 // buildDataMeta — builds the lean binding catalog from a list of DataTables.
 //
 // Strips deep field settings (options, validation, format, currency, …) and
-// keeps only what the instatic binding picker needs: identifiers, labels,
+// keeps only what the studio binding picker needs: identifiers, labels,
 // types, and per-type extras (mediaKind, allowMultiple, targetTableSlug).
 //
 // Relation fields whose targetTableId does not resolve to a known table are
@@ -84,7 +84,7 @@ function buildMetaFields(
       if (field.allowMultiple !== undefined) entry.allowMultiple = field.allowMultiple
       result.push(entry)
     } else if (field.type === 'pageTree' || field.type === 'fieldSchema') {
-      // Structural types — not part of the instatic binding catalog.
+      // Structural types — not part of the studio binding catalog.
       // pageTree and fieldSchema cells hold whole documents (tree/field array),
       // not scalar values that can be bound to a property control.
       continue

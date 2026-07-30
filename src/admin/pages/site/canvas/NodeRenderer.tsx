@@ -209,7 +209,7 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
     return (
       <div
         className={styles.unknownModule}
-        data-instatic-unknown-module=""
+        data-studio-unknown-module=""
         title={`Unknown module: ${node.moduleId}`}
       >
         <WarningDiamondSolidIcon size={14} /> Unknown module: {node.moduleId}

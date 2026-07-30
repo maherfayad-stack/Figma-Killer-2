@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto'
 
-export const SESSION_COOKIE_NAME = 'instatic_admin_session'
+export const SESSION_COOKIE_NAME = 'studio_admin_session'
 const SESSION_ABSOLUTE_TIMEOUT_MS = 1000 * 60 * 60 * 24 * 90
 
 export async function hashPassword(password: string): Promise<string> {

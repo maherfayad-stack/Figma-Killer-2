@@ -330,13 +330,13 @@ export const TreeNode = memo(function TreeNode({ nodeId, depth, editable = true 
         ].filter(Boolean).join(', ')}
         data-drop-position={dropPosition}
         // Stable agent-addressable handles. `dom-tree-item` is keyed by the
-        // node id (matches `data-instatic-node-id` on the canvas) so a single id
-        // round-trips between the canvas and the layers tree. `data-instatic-tag`
+        // node id (matches `data-studio-node-id` on the canvas) so a single id
+        // round-trips between the canvas and the layers tree. `data-studio-tag`
         // mirrors the resolved HTML tag so agents can disambiguate two
-        // "Container" rows by `[data-instatic-tag="nav"]` vs `[data-instatic-tag="footer"]`.
+        // "Container" rows by `[data-studio-tag="nav"]` vs `[data-studio-tag="footer"]`.
         data-testid={`dom-tree-item-${nodeId}`}
-        data-instatic-node-id={nodeId}
-        data-instatic-tag={htmlTag ?? undefined}
+        data-studio-node-id={nodeId}
+        data-studio-tag={htmlTag ?? undefined}
         tabIndex={0}
         onClick={(e) => {
           e.stopPropagation()

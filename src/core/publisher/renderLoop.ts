@@ -42,10 +42,10 @@ import type { RenderConfig, RenderAccumulators, RenderNodeFn } from './renderCon
  *
  * Pagination:
  *   - 'none': all rendered items emitted, no extra markup.
- *   - 'infinite': items emitted, plus a `data-instatic-loop-id` sentinel and the
+ *   - 'infinite': items emitted, plus a `data-studio-loop-id` sentinel and the
  *     loop's nodeId is added to `acc.infiniteLoopIds` so the publisher can
  *     inject the runtime script. The runtime fetches subsequent pages from
- *     `/_instatic/loop/<loopId>?page=N` and appends rendered HTML.
+ *     `/_studio/loop/<loopId>?page=N` and appends rendered HTML.
  *
  * The loop's own `classIds` are injected onto a wrapping `<div>` so author-
  * applied classes (e.g. grid layout) actually take effect.
@@ -62,12 +62,12 @@ export function renderLoop(
   // not seed loopData. Emit a marker comment rather than an empty string so
   // diagnostics in the rendered output are visible.
   if (!data) {
-    return `<!-- instatic: loop "${escapeHtml(loopId)}" has no resolved data -->`
+    return `<!-- studio: loop "${escapeHtml(loopId)}" has no resolved data -->`
   }
 
   const variants = node.children ?? []
   if (variants.length === 0) {
-    return '<!-- instatic: loop has no child template -->'
+    return '<!-- studio: loop has no child template -->'
   }
   if (data.items.length === 0) {
     return ''
@@ -102,12 +102,12 @@ export function renderLoop(
   // the runtime script.
   const props = node.props
   const isInfinite = props.pagination === 'infinite'
-  let attrs = ` data-instatic-loop="${escapeHtml(loopId)}"`
-  attrs += ` data-instatic-loop-page="${data.pageNumber}"`
+  let attrs = ` data-studio-loop="${escapeHtml(loopId)}"`
+  attrs += ` data-studio-loop-page="${data.pageNumber}"`
   if (isInfinite) {
-    attrs += ` data-instatic-loop-mode="infinite"`
-    attrs += ` data-instatic-loop-has-more="${data.hasMore ? 'true' : 'false'}"`
-    attrs += ` data-instatic-loop-page-size="${typeof props.pageSize === 'number' ? Math.floor(props.pageSize) : 10}"`
+    attrs += ` data-studio-loop-mode="infinite"`
+    attrs += ` data-studio-loop-has-more="${data.hasMore ? 'true' : 'false'}"`
+    attrs += ` data-studio-loop-page-size="${typeof props.pageSize === 'number' ? Math.floor(props.pageSize) : 10}"`
     acc.infiniteLoopIds.add(loopId)
   }
 

@@ -476,7 +476,7 @@ function DomPanelInner({ editable = true }: { editable?: boolean }) {
             <TreeContainer
               ariaLabel="Page element tree"
               testId="dom-panel-tree"
-              data-instatic-layer-tree="true"
+              data-studio-layer-tree="true"
             >
               <SearchResults
                 rows={searchRows}
@@ -502,7 +502,7 @@ function DomPanelInner({ editable = true }: { editable?: boolean }) {
                   ariaLabel="Page element tree"
                   testId="dom-panel-tree"
                   containerRef={treeRef}
-                  data-instatic-layer-tree="true"
+                  data-studio-layer-tree="true"
                 >
                   {/*
                     Page mode shows the `base.body` root because it represents

@@ -1,6 +1,6 @@
 # Studio Import
 
-Studio can open a **real React repository** — one written by hand or pulled straight from GitHub — as an editable board, without that repo knowing anything about Instatic.
+Studio can open a **real React repository** — one written by hand or pulled straight from GitHub — as an editable board, without that repo knowing anything about Studio.
 
 The load path is `GET /admin/api/studio/load?dir=<abs>` → `loadStudioPages` (`server/handlers/studioPageLoad.ts`). Everything below describes what that pipeline does to arbitrary source and, just as importantly, what it deliberately refuses to do.
 
@@ -50,7 +50,7 @@ src/core/page-parser/
 └── resolutionLock.ts         — resolved value → lock + `resolution`; scalar vs structured prop values
 
 src/core/studio-sync/
-├── parsedPageToSitePage.ts    — ParsedPage → Instatic Page (moduleId, text prop, classIds, codeProps)
+├── parsedPageToSitePage.ts    — ParsedPage → Studio Page (moduleId, text prop, classIds, codeProps)
 └── collectPageStylesheets.ts  — which .css files a page depends on, in cascade order
 
 src/core/page-tree/
@@ -439,7 +439,7 @@ The alternative was keeping the interior as real nodes with `base.container` car
 
 ## Element → module resolution
 
-`resolveModuleId` (`studioPageLoad.ts`) maps a parsed node to an Instatic module:
+`resolveModuleId` (`studioPageLoad.ts`) maps a parsed node to an Studio module:
 
 | Source | moduleId |
 |---|---|

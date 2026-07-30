@@ -170,9 +170,9 @@ async function findPublishedFormSnapshot(
 }
 
 function publicFormRoute(pathname: string): PublicFormRoute | null {
-  if (pathname === '/_instatic/form/challenge') return 'challenge'
-  if (pathname === '/_instatic/form/submit') return 'submit'
-  if (pathname.startsWith('/_instatic/form/')) return 'submit'
+  if (pathname === '/_studio/form/challenge') return 'challenge'
+  if (pathname === '/_studio/form/submit') return 'submit'
+  if (pathname.startsWith('/_studio/form/')) return 'submit'
   return null
 }
 

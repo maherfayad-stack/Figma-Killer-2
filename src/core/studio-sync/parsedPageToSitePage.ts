@@ -1,10 +1,10 @@
 /**
  * Converts a `ParsedPage` (from `../page-parser` — a flat element/instance
- * tree extracted from a real .tsx page file) into an Instatic `Page` (from
+ * tree extracted from a real .tsx page file) into an Studio `Page` (from
  * `../page-tree`) so the parsed source can be loaded into the editor's
  * document model.
  *
- * CRITICAL Instatic rule: `rootNodeId` must point at a `base.body` node, so
+ * CRITICAL Studio rule: `rootNodeId` must point at a `base.body` node, so
  * this converter synthesises one and hangs the parsed root nodes under it.
  */
 import { CUSTOM_HTML_TAG_VALUE, htmlTagControl } from '@modules/base/utils/htmlTag'
@@ -16,7 +16,7 @@ export interface ParsedPageToSitePageOptions {
   pageId: string
   slug: string
   title: string
-  /** Maps a parsed node to an Instatic moduleId. Pure/injected so this converter
+  /** Maps a parsed node to an Studio moduleId. Pure/injected so this converter
    *  stays decoupled from the design-system list. e.g. component "Button" -> "alm.Button",
    *  element "div" -> "base.container". Also carries `children` and `text` so the
    *  resolver can tell a text-only tag (`<p>Hello</p>`) apart from one that wraps

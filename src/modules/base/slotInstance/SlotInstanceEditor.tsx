@@ -23,12 +23,12 @@ export const SlotInstanceEditor: React.FC<ModuleComponentProps<SlotInstanceStore
   const slotName = resolveSlotName(props)
 
   return (
-    <div {...nodeWrapperProps} className={styles.container} data-instatic-slot-instance="">
-      <div className={styles.header} data-instatic-slot-instance-header="">
+    <div {...nodeWrapperProps} className={styles.container} data-studio-slot-instance="">
+      <div className={styles.header} data-studio-slot-instance-header="">
         <TargetSolidIcon size={11} color="currentColor" aria-hidden="true" />
-        <span className={styles.label} data-instatic-slot-label="">Slot: {slotName}</span>
+        <span className={styles.label} data-studio-slot-label="">Slot: {slotName}</span>
       </div>
-      <div className={styles.content} data-instatic-slot-instance-content="">{children}</div>
+      <div className={styles.content} data-studio-slot-instance-content="">{children}</div>
     </div>
   )
 }

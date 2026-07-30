@@ -9,8 +9,8 @@
  * entirely). A fresh tab keeps the user's last collapse/height choice instead
  * of resetting every reload.
  */
-const COLLAPSED_KEY = 'instatic:studio:boardsListCollapsed'
-const HEIGHT_KEY = 'instatic:studio:boardsListHeight'
+const COLLAPSED_KEY = 'studio:studio:boardsListCollapsed'
+const HEIGHT_KEY = 'studio:studio:boardsListHeight'
 
 export const BOARDS_LIST_MIN_HEIGHT = 80
 export const BOARDS_LIST_DEFAULT_HEIGHT = 160

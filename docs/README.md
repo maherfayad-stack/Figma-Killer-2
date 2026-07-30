@@ -1,9 +1,23 @@
-# Instatic Docs
+# Studio Docs
 
-The documentation tree for Instatic. This index tells you what to read, in what order, and where to look for what.
+The documentation tree for Studio. This index tells you what to read, in what order, and where to look for what.
 
-If you're an agent: start at `CLAUDE.md` (repo root) for the rules, then come here for the explanations.
+If you're an agent: start at [`PROJECT-BRIEF.md`](../PROJECT-BRIEF.md) for orientation and `CLAUDE.md` for the rules, then use [`agent-refs/`](agent-refs/) — compressed, agent-facing versions of everything below. Come here when you need the long form.
 If you're a human contributor: start with [`architecture.md`](architecture.md), then read whichever feature or reference page is closest to what you're changing.
+
+> **Note:** this tree still contains documentation for the dormant CMS half of the fork (auth, plugins, publisher, site shell). Studio's own docs are [`features/studio-import.md`](features/studio-import.md) and [`features/canvas-iframe-per-frame.md`](features/canvas-iframe-per-frame.md). Where a CMS doc conflicts with `PROJECT-BRIEF.md`, the brief wins.
+
+## Agent references
+
+| Ref | Read it when |
+|---|---|
+| [`agent-refs/path-index.md`](agent-refs/path-index.md) | **Always** — where everything lives, marked Studio / shared / dormant |
+| [`agent-refs/conventions-quickref.md`](agent-refs/conventions-quickref.md) | **Always before writing code** — every rule that has a gate test |
+| [`agent-refs/studio-pipeline.md`](agent-refs/studio-pipeline.md) | Parsing, evaluation, inlining, locks, writeback, codemods |
+| [`agent-refs/canvas-internals.md`](agent-refs/canvas-internals.md) | Canvas, iframes, injectors, overlays, geometry, events, perf |
+| [`agent-refs/editor-store.md`](agent-refs/editor-store.md) | Zustand slices, tree mutations, undo history, selection |
+| [`agent-refs/handoff-protocol.md`](agent-refs/handoff-protocol.md) | **Always** — how to read and write `STATE.md` |
+| [`agent-refs/glossary.md`](agent-refs/glossary.md) | You hit a term you don't recognise |
 
 ---
 
@@ -23,21 +37,11 @@ docs/
 │   ├── plugin-system.md            ← plugin SDK, sandbox, lifecycle, permissions
 │   ├── publisher.md                ← page tree → static HTML/CSS pipeline
 │   ├── visual-components.md        ← VCs, slots, params, instantiation
-│   ├── content-storage.md          ← data_tables + data_rows (the universal store)
-│   ├── content-workspace.md        ← Content workspace: collections, entries, body editor
 │   ├── auth-and-access.md          ← sessions, MFA, capabilities, roles
 │   ├── site-shell.md               ← site config (breakpoints, classes, files, deps)
 │   ├── modules.md                  ← module engine + first-party blocks
-│   ├── data-workspace.md           ← Data workspace: table schema + field management UI
-│   ├── dashboard.md                ← Dashboard workspace + widget registry
 │   ├── spotlight.md                ← Cmd+K command palette
 │   ├── agent.md                    ← AI agent integration
-│   ├── templates.md                ← entry templates + dynamic bindings
-│   ├── loops.md                    ← base.loop + loop sources
-│   ├── cms-native-forms.md         ← visual form primitives + data_rows submissions
-│   ├── media.md                    ← Media workspace + storage adapters
-│   ├── audit-log.md                ← audit_events catalog
-│   ├── site-transfer.md            ← export / import CMS bundles
 │   ├── site-import.md              ← Super Import (static sites → CMS)
 │   ├── html-import.md              ← paste / import HTML into the page tree
 │   ├── editor-preferences.md       ← catalog-driven editor prefs
@@ -139,22 +143,12 @@ Three categories, three voices:
 | [features/plugin-system.md](features/plugin-system.md)           | The plugin system end-to-end: package shape, lifecycle, sandbox, SDK, permissions, CLI |
 | [features/publisher.md](features/publisher.md)                   | The page-tree-to-HTML/CSS renderer + server-side publishing wrappers |
 | [features/visual-components.md](features/visual-components.md)   | VCs, slots, params, instantiation, recursion guard                   |
-| [features/content-storage.md](features/content-storage.md)       | `data_tables` + `data_rows` — the universal content store           |
-| [features/content-workspace.md](features/content-workspace.md)   | Content workspace UI: collections, entries, body editor, settings panel |
-| [features/data-workspace.md](features/data-workspace.md)         | Data workspace UI: DataInspector, field management, DataGrid        |
 | [features/auth-and-access.md](features/auth-and-access.md)       | Sessions, MFA, step-up, lockout, CSRF, capabilities                  |
 | [features/site-shell.md](features/site-shell.md)                 | The persisted site config (breakpoints, classes, files, deps)        |
 | [features/modules.md](features/modules.md)                       | Module engine, defining first-party blocks                          |
-| [features/dashboard.md](features/dashboard.md)                   | Dashboard workspace, widgets, grid, customize mode                  |
 | [features/spotlight.md](features/spotlight.md)                   | Cmd+K command palette                                                |
 | [features/agent.md](features/agent.md)                           | AI agent integration and provider-agnostic runtime                   |
-| [features/mcp-connectors.md](features/mcp-connectors.md)         | Instatic as an MCP server — external AI clients drive the CMS over MCP |
-| [features/templates.md](features/templates.md)                   | Entry templates + dynamic bindings + token interpolation             |
-| [features/loops.md](features/loops.md)                           | `base.loop` + loop entity sources                                    |
-| [features/cms-native-forms.md](features/cms-native-forms.md)     | Visual form primitives and secure public submissions                 |
-| [features/media.md](features/media.md)                           | Media workspace, upload pipeline, storage adapters                  |
-| [features/audit-log.md](features/audit-log.md)                   | Audit event catalog + recording new actions                         |
-| [features/site-transfer.md](features/site-transfer.md)           | Export / import CMS bundle (JSON round-trip between instances)      |
+| [features/mcp-connectors.md](features/mcp-connectors.md)         | Studio as an MCP server — external AI clients drive the CMS over MCP |
 | [features/site-import.md](features/site-import.md)               | Super Import — static-site files / ZIP → pages, style rules, media |
 | [features/html-import.md](features/html-import.md)               | HTML string → `PageNode` fragment (paste HTML, AI `insertHtml` tool) |
 | [features/studio-import.md](features/studio-import.md)           | Studio opens a real React repo as a board — parse, inline, resolve values, import CSS |

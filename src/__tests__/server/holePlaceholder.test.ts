@@ -1,8 +1,8 @@
 /**
- * Tests for module `staticPlaceholder` injection into `<instatic-hole>` elements.
+ * Tests for module `staticPlaceholder` injection into `<studio-hole>` elements.
  *
  * A dynamic module may provide a `staticPlaceholder(props): string` function.
- * At publish time, its output is sanitised and baked into the `<instatic-hole>`
+ * At publish time, its output is sanitised and baked into the `<studio-hole>`
  * element so non-JS visitors (or users before the runtime fires) see a
  * meaningful fallback (skeleton bars, "Loading…" text, blur images, etc.).
  *
@@ -17,7 +17,7 @@ import { publishPage } from '../../core/publisher/render'
 import { makePage, makeSite, makeRegistry, makeModule } from '../publisher/helpers'
 
 describe('publishPage — staticPlaceholder injection and sanitisation', () => {
-  it('injects the staticPlaceholder output into <instatic-hole>', () => {
+  it('injects the staticPlaceholder output into <studio-hole>', () => {
     const page = makePage({
       root: { moduleId: 'base.body', children: ['widget'] },
       widget: { moduleId: 'plugin.live-widget', props: { label: 'Items' } },
@@ -36,11 +36,11 @@ describe('publishPage — staticPlaceholder injection and sanitisation', () => {
 
     const { html } = publishPage(page, site, reg, { publishVersion: 1 })
 
-    // The placeholder content must appear inside the instatic-hole element
-    expect(html).toContain('<instatic-hole')
+    // The placeholder content must appear inside the studio-hole element
+    expect(html).toContain('<studio-hole')
     expect(html).toContain('Loading Items')
-    // The outer instatic-hole wrapper must still be present
-    expect(html).toContain('</instatic-hole>')
+    // The outer studio-hole wrapper must still be present
+    expect(html).toContain('</studio-hole>')
   })
 
   it('omits placeholder content when staticPlaceholder is not provided', () => {
@@ -61,10 +61,10 @@ describe('publishPage — staticPlaceholder injection and sanitisation', () => {
 
     const { html } = publishPage(page, site, reg, { publishVersion: 1 })
 
-    // The instatic-hole must be an empty element (nothing between the tags)
-    expect(html).toContain('<instatic-hole')
-    const holeStart = html.indexOf('<instatic-hole')
-    const holeEnd = html.indexOf('</instatic-hole>', holeStart)
+    // The studio-hole must be an empty element (nothing between the tags)
+    expect(html).toContain('<studio-hole')
+    const holeStart = html.indexOf('<studio-hole')
+    const holeEnd = html.indexOf('</studio-hole>', holeStart)
     const holeContent = html.slice(html.indexOf('>', holeStart) + 1, holeEnd)
     expect(holeContent.trim()).toBe('')
   })

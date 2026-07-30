@@ -310,7 +310,7 @@ The keybindings registry is **the single source of truth** for shortcuts — gat
 
 ## Recents
 
-`recentStore.ts` persists the last N executed command ids in localStorage (`instatic-spotlight-recents`). When the palette opens with an empty query, the recents float to the top.
+`recentStore.ts` persists the last N executed command ids in localStorage (`studio-spotlight-recents`). When the palette opens with an empty query, the recents float to the top.
 
 The store is per-device, not per-user, because it sits in localStorage.
 

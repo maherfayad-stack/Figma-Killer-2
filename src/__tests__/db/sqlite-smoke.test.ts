@@ -146,7 +146,7 @@ describe('SQLite adapter smoke test', () => {
       await db`
         insert into published_runtime_assets
           (id, data_row_version_id, asset_path, public_path, content_type, content_bytes)
-        values (${'a1'}, ${'drv1'}, ${'/main.js'}, ${'/_instatic/assets/drv1/main.js'}, ${'text/javascript'}, ${payload})`
+        values (${'a1'}, ${'drv1'}, ${'/main.js'}, ${'/_studio/assets/drv1/main.js'}, ${'text/javascript'}, ${payload})`
 
       const { rows } = await db<{ content_bytes: Uint8Array }>`
         select content_bytes from published_runtime_assets where id = ${'a1'}`

@@ -14,7 +14,7 @@
  * pattern and correct for any consumer that holds component state in panels.
  *
  * Lives under src/ui/components/ so plugins can import it via
- * @instatic/host-ui.
+ * @studio/host-ui.
  */
 import {
   createContext,

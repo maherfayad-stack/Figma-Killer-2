@@ -1,16 +1,16 @@
 /**
- * `instatic-plugin` CLI entry.
+ * `studio-plugin` CLI entry.
  *
  * Usage:
- *   instatic-plugin init <name>
- *   instatic-plugin build [<plugin-dir>]
- *   instatic-plugin dev   [<plugin-dir>] [--uploads <path>]
+ *   studio-plugin init <name>
+ *   studio-plugin build [<plugin-dir>]
+ *   studio-plugin dev   [<plugin-dir>] [--uploads <path>]
  *
  * Run via Bun:
- *   bun run instatic-plugin <cmd>
+ *   bun run studio-plugin <cmd>
  *
  * The CLI lives inside the SDK so plugin authors get the same code that
- * powers the host's `bun run instatic-plugin` script. No HTTP, no auth, no env
+ * powers the host's `bun run studio-plugin` script. No HTTP, no auth, no env
  * gate — the dev command writes built files directly into the host's
  * `uploads/plugins/<id>/<version>/` directory.
  */
@@ -49,7 +49,7 @@ function parseArgs(argv: string[]): ParsedArgs {
 }
 
 function printHelp(): void {
-  console.log(`instatic-plugin — Instatic plugin CLI
+  console.log(`studio-plugin — Studio plugin CLI
 
 Commands:
   init <name>             Scaffold a new plugin in <name>/
@@ -66,17 +66,17 @@ Options for \`init\`:
 
 Options for \`dev\`:
   --uploads <path>        Override the host's uploads directory.
-                          Falls back to INSTATIC_UPLOADS_DIR env var, then to
+                          Falls back to STUDIO_UPLOADS_DIR env var, then to
                           auto-detection (walks up from the plugin folder
                           looking for an uploads/plugins/ directory).
 
 Examples:
-  instatic-plugin init acme.confetti
-  instatic-plugin init acme.seo --kind content-editor
-  instatic-plugin lint acme.confetti
-  instatic-plugin build acme.confetti
-  instatic-plugin dev acme.confetti
-  instatic-plugin dev --uploads ../instatic/uploads
+  studio-plugin init acme.confetti
+  studio-plugin init acme.seo --kind content-editor
+  studio-plugin lint acme.confetti
+  studio-plugin build acme.confetti
+  studio-plugin dev acme.confetti
+  studio-plugin dev --uploads ../studio/uploads
 `)
 }
 
@@ -91,7 +91,7 @@ async function main(): Promise<void> {
   if (command === 'init') {
     const name = positional[0]
     if (!name) {
-      console.error('Usage: instatic-plugin init <name> [--kind=module|content-editor]')
+      console.error('Usage: studio-plugin init <name> [--kind=module|content-editor]')
       process.exit(1)
     }
     const kindFlag = flags.kind
@@ -104,7 +104,7 @@ async function main(): Promise<void> {
     const kind: 'module' | 'content-editor' = kindFlag === 'content-editor' ? 'content-editor' : 'module'
     const created = await runPluginInit(name, { kind })
     console.log(`✓ Created plugin at ${created}`)
-    console.log(`  cd ${created.split('/').pop()} && instatic-plugin dev`)
+    console.log(`  cd ${created.split('/').pop()} && studio-plugin dev`)
     return
   }
 

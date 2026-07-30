@@ -2,18 +2,18 @@
  * Browser runtime for `base.loop` infinite loading.
  *
  * Self-contained ES module — no dependencies, no framework. The publisher
- * injects a `<script type="module" src="/_instatic/assets/loop-runtime.js">` tag
+ * injects a `<script type="module" src="/_studio/assets/loop-runtime.js">` tag
  * into pages that contain at least one `pagination='infinite'` loop.
  *
  * On load, the runtime:
- *   1. Finds every `[data-instatic-loop][data-instatic-loop-mode="infinite"]` element.
- *   2. If `data-instatic-loop-has-more="true"`, attaches a "Load more" button.
+ *   1. Finds every `[data-studio-loop][data-studio-loop-mode="infinite"]` element.
+ *   2. If `data-studio-loop-has-more="true"`, attaches a "Load more" button.
  *   3. On click, fetches `<endpoint>/<loopId>?page=N` and appends the
  *      returned HTML to the wrapper, then increments the page counter.
  *   4. When `hasMore=false`, removes the button.
  *
- * Endpoint URL is read from `data-instatic-loop-endpoint` on the script tag —
- * defaults to `/_instatic/loop/`. Each loop sends its own pageId (the published
+ * Endpoint URL is read from `data-studio-loop-endpoint` on the script tag —
+ * defaults to `/_studio/loop/`. Each loop sends its own pageId (the published
  * page) via a header attached at server-render time below.
  *
  * The runtime is intentionally tiny (< 2 KB minified) to keep the
@@ -21,25 +21,25 @@
  * infinite-mode loop exists on the page.
  */
 
-function runInstaticLoopRuntime(): void {
+function runStudioLoopRuntime(): void {
   const scriptEl = document.currentScript
   const endpointBase =
-    (scriptEl && scriptEl.getAttribute('data-instatic-loop-endpoint')) || '/_instatic/loop/'
+    (scriptEl && scriptEl.getAttribute('data-studio-loop-endpoint')) || '/_studio/loop/'
   const pagePath = location.pathname
 
   function attach(loopEl: Element): void {
-    let pageNumber = parseInt(loopEl.getAttribute('data-instatic-loop-page') || '1', 10)
-    let hasMore = loopEl.getAttribute('data-instatic-loop-has-more') === 'true'
+    let pageNumber = parseInt(loopEl.getAttribute('data-studio-loop-page') || '1', 10)
+    let hasMore = loopEl.getAttribute('data-studio-loop-has-more') === 'true'
     if (!hasMore) return
 
-    const loopId = loopEl.getAttribute('data-instatic-loop')
+    const loopId = loopEl.getAttribute('data-studio-loop')
     if (!loopId) return
 
     const button = document.createElement('button')
     button.type = 'button'
-    button.className = 'instatic-loop-load-more'
+    button.className = 'studio-loop-load-more'
     button.textContent = 'Load more'
-    button.setAttribute('data-instatic-loop-load-more', loopId)
+    button.setAttribute('data-studio-loop-load-more', loopId)
 
     let busy = false
     button.addEventListener('click', async () => {
@@ -65,13 +65,13 @@ function runInstaticLoopRuntime(): void {
         }
         pageNumber += 1
         hasMore = body.hasMore === true
-        loopEl.setAttribute('data-instatic-loop-page', String(pageNumber))
-        loopEl.setAttribute('data-instatic-loop-has-more', hasMore ? 'true' : 'false')
+        loopEl.setAttribute('data-studio-loop-page', String(pageNumber))
+        loopEl.setAttribute('data-studio-loop-has-more', hasMore ? 'true' : 'false')
         if (!hasMore) {
           button.remove()
         }
       } catch (err) {
-        console.error('[instatic-loop]', err)
+        console.error('[studio-loop]', err)
         button.textContent = 'Try again'
       } finally {
         busy = false
@@ -84,7 +84,7 @@ function runInstaticLoopRuntime(): void {
   }
 
   function init(): void {
-    document.querySelectorAll('[data-instatic-loop][data-instatic-loop-mode="infinite"]').forEach(attach)
+    document.querySelectorAll('[data-studio-loop][data-studio-loop-mode="infinite"]').forEach(attach)
   }
 
   if (document.readyState === 'loading') {
@@ -94,4 +94,4 @@ function runInstaticLoopRuntime(): void {
   }
 }
 
-export const LOOP_RUNTIME_JS = `(${runInstaticLoopRuntime.toString()})();`
+export const LOOP_RUNTIME_JS = `(${runStudioLoopRuntime.toString()})();`

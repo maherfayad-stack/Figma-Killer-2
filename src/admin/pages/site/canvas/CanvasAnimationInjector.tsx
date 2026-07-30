@@ -23,7 +23,7 @@
  * ────────────────
  * This has to beat arbitrary author CSS, and the usual lever — being UNLAYERED
  * while author CSS sits in `@layer user-authored` — is not enough here, because
- * `AlmDesignSystemCssInjector` is *also* unlayered (it has to be, or Instatic's
+ * `AlmDesignSystemCssInjector` is *also* unlayered (it has to be, or Studio's
  * reset would beat it). Against an unlayered peer, specificity decides, and this
  * rule's `*` selector (0,0,0) loses to the design system's `.btn--skeleton`
  * (0,1,0) and to any author class. Overriding a shorthand (`animation: … infinite`)
@@ -46,7 +46,7 @@
 
 import { useEffect } from 'react'
 
-const STYLE_TAG_ID = 'instatic-canvas-animation'
+const STYLE_TAG_ID = 'studio-canvas-animation'
 
 /**
  * Module-scope constant: stable across renders, never captured into a closure.

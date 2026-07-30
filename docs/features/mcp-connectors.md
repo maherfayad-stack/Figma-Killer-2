@@ -1,8 +1,8 @@
 # MCP Connectors
 
-MCP connectors let **external AI clients drive this Instatic instance** over the [Model Context Protocol](https://modelcontextprotocol.io). Instatic acts as an **MCP server**: a local client (Claude Code, Codex, Cursor) or a remote agent connects, lists the available tools, and operates the CMS — reading the site, editing page structure, and managing content — exactly the way the built-in AI panel does.
+MCP connectors let **external AI clients drive this Studio instance** over the [Model Context Protocol](https://modelcontextprotocol.io). Studio acts as an **MCP server**: a local client (Claude Code, Codex, Cursor) or a remote agent connects, lists the available tools, and operates the CMS — reading the site, editing page structure, and managing content — exactly the way the built-in AI panel does.
 
-This is the mirror image of the **Providers** tab (`server/ai/credentials/`), which points Instatic's *own* agent outward at LLM providers. MCP connectors point inward: they let outside agents reach in.
+This is the mirror image of the **Providers** tab (`server/ai/credentials/`), which points Studio's *own* agent outward at LLM providers. MCP connectors point inward: they let outside agents reach in.
 
 The server is implemented with the official `@modelcontextprotocol/sdk`. That package is banned everywhere else in the tree (the AI drivers hand-roll provider REST); it is allowed **only under `server/ai/mcp/`**, scoped by `ai-driver-isolation.test.ts`.
 
@@ -10,7 +10,7 @@ The server is implemented with the official `@modelcontextprotocol/sdk`. That pa
 
 ## TL;DR
 
-- **Instatic is an MCP server.** One Streamable-HTTP endpoint at `/_instatic/mcp` serves both local and remote clients (local is just `localhost`).
+- **Studio is an MCP server.** One Streamable-HTTP endpoint at `/_studio/mcp` serves both local and remote clients (local is just `localhost`).
 - **Thin adapter over the existing tool engine.** No tool logic is duplicated. MCP is a new *caller* alongside the built-in agent and the plugin host; tool dispatch reuses `executeAiTool`.
 - **Tool surface = the full catalog.** Server-resolved tools (`site_list_documents`, `site_read_styles`, and explicit `site_publish`) run headless — no editor needed. Every browser-execution tool the agent panel has is exposed too, **relayed to the open Site workspace** — the single source of truth for edits. If that workspace is not open, its tools return a clear error; headless tools still work.
 - **Draft, then publish.** Browser writes save the draft and never leak intermediate work to visitors. A connector with `ai.tools.write` + `pages.publish` calls `site_publish` once after its edit sequence; that server-side tool runs the canonical full-site pipeline and atomically swaps the rebuilt static slot.
@@ -27,7 +27,7 @@ The server is implemented with the official `@modelcontextprotocol/sdk`. That pa
 MCP client (Claude Code / Codex / remote agent)
         │  JSON-RPC over Streamable HTTP
         ▼
-server/router.ts  →  /_instatic/mcp   (tryServeMcp)
+server/router.ts  →  /_studio/mcp   (tryServeMcp)
         │
 server/ai/mcp/transports/http.ts      WebStandardStreamableHTTPServerTransport (Web Request/Response)
         │
@@ -120,11 +120,11 @@ Create a connector in **AI → MCP**, complete the step-up prompt if the session
 **Local (Claude Code / Codex / Cursor):**
 
 ```sh
-claude mcp add instatic --transport http http://localhost:3000/_instatic/mcp \
+claude mcp add studio --transport http http://localhost:3000/_studio/mcp \
   --header "Authorization: Bearer imcp_…"
 ```
 
-**Remote:** point the client at `https://<your-host>/_instatic/mcp` and send the token as an `Authorization: Bearer` header.
+**Remote:** point the client at `https://<your-host>/_studio/mcp` and send the token as an `Authorization: Bearer` header.
 
 ---
 

@@ -1,5 +1,5 @@
 /**
- * Build a capability-scoped MCP `Server` over Instatic's existing tool engine.
+ * Build a capability-scoped MCP `Server` over Studio's existing tool engine.
  *
  * We use the low-level SDK `Server` + `setRequestHandler` (not the higher-level
  * `McpServer.registerTool`, which requires Zod schemas — banned repo-wide).

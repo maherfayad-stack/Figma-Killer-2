@@ -5,7 +5,7 @@
  *
  * Regression: the active page's content is spliced into a wrapping template's
  * outlet, so editable nodes live INSIDE the read-only wrapper element. Walking
- * straight to the nearest `[data-instatic-readonly-*]` ancestor wrongly treated
+ * straight to the nearest `[data-studio-readonly-*]` ancestor wrongly treated
  * that editable content as read-only — the hover hint fired over the whole page
  * and double-click opened the template instead of editing the node.
  */
@@ -14,9 +14,9 @@ import { closestReadonlyRegion, isElementLike } from '@site/canvas/readonlyRegio
 
 function readonly(tag: string): HTMLElement {
   const el = document.createElement(tag)
-  el.setAttribute('data-instatic-readonly-label', 'Main template')
-  el.setAttribute('data-instatic-readonly-kind', 'page')
-  el.setAttribute('data-instatic-readonly-id', 'tpl-main')
+  el.setAttribute('data-studio-readonly-label', 'Main template')
+  el.setAttribute('data-studio-readonly-kind', 'page')
+  el.setAttribute('data-studio-readonly-id', 'tpl-main')
   return el
 }
 
@@ -42,7 +42,7 @@ describe('closestReadonlyRegion', () => {
 
   it('returns the region element for read-only template chrome', () => {
     const nav = readonly('nav')
-    expect(closestReadonlyRegion(nav)?.getAttribute('data-instatic-readonly-label')).toBe('Main template')
+    expect(closestReadonlyRegion(nav)?.getAttribute('data-studio-readonly-label')).toBe('Main template')
   })
 
   it('returns the read-only ancestor for an unmarked child of chrome (e.g. a logo image)', () => {
@@ -50,8 +50,8 @@ describe('closestReadonlyRegion', () => {
     const img = document.createElement('img')
     nav.appendChild(img)
     const region = closestReadonlyRegion(img)
-    expect(region?.getAttribute('data-instatic-readonly-id')).toBe('tpl-main')
-    expect(region?.getAttribute('data-instatic-readonly-kind')).toBe('page')
+    expect(region?.getAttribute('data-studio-readonly-id')).toBe('tpl-main')
+    expect(region?.getAttribute('data-studio-readonly-kind')).toBe('page')
   })
 
   it('returns null for a plain editable node with no readonly ancestor', () => {

@@ -64,7 +64,6 @@ docs/
 │   ├── plugin-system.md
 │   ├── publisher.md
 │   ├── visual-components.md
-│   ├── content-storage.md
 │   ├── media.md
 │   └── ...
 │

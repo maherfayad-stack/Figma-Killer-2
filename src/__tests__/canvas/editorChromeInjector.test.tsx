@@ -29,7 +29,7 @@ describe('EditorChromeInjector font isolation', () => {
     const target = document.implementation.createHTMLDocument('iframe')
     render(<EditorChromeInjector targetDocument={target} parentDocument={makeParentDoc()} />)
 
-    const css = target.getElementById('instatic-editor-chrome')?.textContent ?? ''
+    const css = target.getElementById('studio-editor-chrome')?.textContent ?? ''
     expect(css).not.toBe('')
 
     // The chrome font is exposed as a namespaced var carrying the editor font…

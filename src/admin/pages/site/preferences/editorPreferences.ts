@@ -30,7 +30,7 @@ import {
   type SelectPreferenceId,
 } from './catalog'
 
-export const EDITOR_PREFS_KEY = 'instatic-editor-prefs'
+export const EDITOR_PREFS_KEY = 'studio-editor-prefs'
 
 interface EditorAppearancePreferences {
   density: string

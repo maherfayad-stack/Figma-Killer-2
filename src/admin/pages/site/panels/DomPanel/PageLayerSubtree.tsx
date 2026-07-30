@@ -53,7 +53,7 @@ export function PageLayerSubtree({ page, editable = true }: PageLayerSubtreeProp
         <DomTreePageContext.Provider value={page.id}>
           <TreeContainer
             ariaLabel={`${page.title} element tree`}
-            data-instatic-layer-tree="true"
+            data-studio-layer-tree="true"
           >
             <TreeNode nodeId={page.rootNodeId} depth={0} editable={editable} />
           </TreeContainer>

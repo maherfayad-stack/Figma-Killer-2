@@ -24,7 +24,7 @@ interface RpcResponse {
 let rpcId = 0
 
 function rpcRequest(token: string, method: string, params: unknown): Request {
-  return new Request('http://localhost/_instatic/mcp', {
+  return new Request('http://localhost/_studio/mcp', {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
@@ -114,7 +114,7 @@ describe('site_publish MCP tool', () => {
 
     const html = await readArtefact(uploadsDir, '/')
     expect(html).not.toBeNull()
-    const cssPaths = [...(html ?? '').matchAll(/href="(\/_instatic\/css\/[^"]+\.css)"/g)]
+    const cssPaths = [...(html ?? '').matchAll(/href="(\/_studio\/css\/[^"]+\.css)"/g)]
       .map((match) => match[1]!)
     const cssAssets = await Promise.all(cssPaths.map((path) => readStaticAsset(uploadsDir, path)))
     const css = cssAssets

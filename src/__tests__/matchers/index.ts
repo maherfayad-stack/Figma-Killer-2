@@ -1,5 +1,5 @@
 /**
- * Custom bun:test matchers for the instatic test suite.
+ * Custom bun:test matchers for the studio test suite.
  *
  * Import this file as a side-effect in any test that uses the custom matchers:
  *   import '../matchers'

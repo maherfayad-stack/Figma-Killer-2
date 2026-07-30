@@ -979,7 +979,7 @@ describe('HTML attribute preservation — props.htmlAttributes for ordinary base
 
   it('skips class, module-owned attributes, and reserved editor attributes', () => {
     const result = imported(`
-      <div class="kept-as-class" data-bg-src="assets/images/shape/heroShape1_1.png" data-instatic-node="reserved">
+      <div class="kept-as-class" data-bg-src="assets/images/shape/heroShape1_1.png" data-studio-node="reserved">
         <a href="#target" target="_blank" rel="nofollow" data-track="jump">Jump</a>
         <img src="/logo.png" alt="Logo" data-lazy="logo">
       </div>
@@ -1250,19 +1250,19 @@ describe('walkAndMap + parseHtml as independent pipeline steps', () => {
 })
 
 // ---------------------------------------------------------------------------
-// base.outlet — <instatic-outlet> custom element
+// base.outlet — <studio-outlet> custom element
 // ---------------------------------------------------------------------------
 
-describe('base.outlet — <instatic-outlet>', () => {
-  it('maps <instatic-outlet> to a childless base.outlet node', () => {
-    const node = single('<instatic-outlet></instatic-outlet>')
+describe('base.outlet — <studio-outlet>', () => {
+  it('maps <studio-outlet> to a childless base.outlet node', () => {
+    const node = single('<studio-outlet></studio-outlet>')
     expect(node.moduleId).toBe('base.outlet')
     expect(node.children ?? []).toHaveLength(0)
   })
 
   it('survives import alongside sibling chrome, producing one outlet node', () => {
     const result = importHtml(
-      '<header>Top</header><instatic-outlet></instatic-outlet><footer>Bottom</footer>',
+      '<header>Top</header><studio-outlet></studio-outlet><footer>Bottom</footer>',
     )
     const outlets = Object.values(result.nodes).filter((n) => n.moduleId === 'base.outlet')
     expect(outlets).toHaveLength(1)
@@ -1270,13 +1270,13 @@ describe('base.outlet — <instatic-outlet>', () => {
 })
 
 // ---------------------------------------------------------------------------
-// base.loop — <instatic-loop> custom element
+// base.loop — <studio-loop> custom element
 // ---------------------------------------------------------------------------
 
-describe('base.loop — <instatic-loop>', () => {
-  it('maps <instatic-loop> to a configured base.loop node with child variants', () => {
+describe('base.loop — <studio-loop>', () => {
+  it('maps <studio-loop> to a configured base.loop node with child variants', () => {
     const result = importHtml(`
-      <instatic-loop
+      <studio-loop
         class="cards"
         data-source-id="data.rows"
         data-table-id="tbl_posts"
@@ -1288,7 +1288,7 @@ describe('base.loop — <instatic-loop>', () => {
         data-page-size="2"
       >
         <article><h2>{currentEntry.title}</h2></article>
-      </instatic-loop>
+      </studio-loop>
     `)
 
     expect(result.rootIds).toHaveLength(1)

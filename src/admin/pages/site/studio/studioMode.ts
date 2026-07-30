@@ -15,7 +15,7 @@
  * `syncStudioModeFromUrl()` is called once on editor mount to persist the URL
  * intent; everything else just reads.
  */
-const STUDIO_STORAGE_KEY = 'instatic:studio'
+const STUDIO_STORAGE_KEY = 'studio:studio'
 
 /** True when the URL's `studio` value means "on" (present, and not `0`/`false`). */
 function urlStudioValue(): boolean | null {

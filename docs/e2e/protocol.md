@@ -1,4 +1,4 @@
-# Instatic User E2E Protocol
+# Studio User E2E Protocol
 
 ## Purpose
 

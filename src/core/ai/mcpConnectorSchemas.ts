@@ -1,7 +1,7 @@
 /**
  * Wire schemas for MCP connectors — the configured integrations that let an
  * external MCP client (Claude Code, Codex, a remote agent) reach into this
- * Instatic instance and drive its tools.
+ * Studio instance and drive its tools.
  *
  * Shared between the server handlers (`server/ai/mcp/handlers`) and the admin
  * UI (`src/admin/ai/api.ts`) so a single TypeBox definition validates both

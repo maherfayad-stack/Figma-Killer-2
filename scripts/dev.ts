@@ -190,9 +190,9 @@ async function waitForPostgresReady(timeoutMs = 60_000): Promise<void> {
         'postgres',
         'pg_isready',
         '-U',
-        'instatic',
+        'studio',
         '-d',
-        'instatic',
+        'studio',
       ],
       { stdout: 'ignore', stderr: 'ignore' },
     )

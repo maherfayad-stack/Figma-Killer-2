@@ -15,9 +15,9 @@ services:
   postgres:
     image: postgres:16
     environment:
-      POSTGRES_DB: instatic
-      POSTGRES_USER: instatic
-      POSTGRES_PASSWORD: instatic
+      POSTGRES_DB: studio
+      POSTGRES_USER: studio
+      POSTGRES_PASSWORD: studio
     ports:
       - "5433:5432"
     volumes:

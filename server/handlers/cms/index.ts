@@ -22,7 +22,7 @@
  * abstraction with config objects. New route groups just need a new
  * file in this directory and one entry in `routeGroups` below.
  *
- * Loop traffic (`/_instatic/loop/...`) lives next door in `./loop.ts` and is
+ * Loop traffic (`/_studio/loop/...`) lives next door in `./loop.ts` and is
  * dispatched directly by the top-level router, not through this entry
  * point — its prefix is outside `/admin/api/cms/`.
  */

@@ -187,7 +187,7 @@ export async function handleRuntimeRoutes(req: Request, db: DbClient): Promise<R
         site,
         page,
         registry,
-        assetBasePath: '/_instatic/preview/runtime/',
+        assetBasePath: '/_studio/preview/runtime/',
         dependencyCache,
         breakpointId,
         templateContext,

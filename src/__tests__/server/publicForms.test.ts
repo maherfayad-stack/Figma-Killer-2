@@ -228,7 +228,7 @@ describe('public CMS-native form endpoint', () => {
 
     const response = await handleServerRequest(
       makeRequest(
-        '/_instatic/form/challenge',
+        '/_studio/form/challenge',
         { formId: 'newsletter', pageId: 'page-home', pageToken: pageToken() },
         'http://cms.test',
         '203.0.113.40',
@@ -246,7 +246,7 @@ describe('public CMS-native form endpoint', () => {
     const { db, wasQueried } = makeThrowingDb()
 
     const response = await handleServerRequest(
-      new Request('http://cms.test/_instatic/form/challenge', {
+      new Request('http://cms.test/_studio/form/challenge', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ formId: 'newsletter', pageId: 'page-home', pageToken: 'unused' }),
@@ -263,7 +263,7 @@ describe('public CMS-native form endpoint', () => {
     const { db, wasQueried } = makeThrowingDb()
 
     const response = await handleServerRequest(
-      makeRequest('/_instatic/form/unknown', { not: 'a submit payload' }, 'http://cms.test', '203.0.113.41'),
+      makeRequest('/_studio/form/unknown', { not: 'a submit payload' }, 'http://cms.test', '203.0.113.41'),
       { db },
     )
 
@@ -275,9 +275,9 @@ describe('public CMS-native form endpoint', () => {
   it('rejects challenge requests from foreign origins', async () => {
     const { db } = makeDb()
     const response = await handlePublicFormRequest(
-      makeRequest('/_instatic/form/challenge', { formId: 'newsletter', pageId: 'page-home', pageToken: pageToken() }, 'https://evil.test'),
+      makeRequest('/_studio/form/challenge', { formId: 'newsletter', pageId: 'page-home', pageToken: pageToken() }, 'https://evil.test'),
       db,
-      new URL('http://cms.test/_instatic/form/challenge'),
+      new URL('http://cms.test/_studio/form/challenge'),
     )
 
     expect(response?.status).toBe(403)
@@ -294,12 +294,12 @@ describe('public CMS-native form endpoint', () => {
     const { db } = makeDb()
     const response = await handlePublicFormRequest(
       makeRequest(
-        '/_instatic/form/challenge',
+        '/_studio/form/challenge',
         { formId: 'newsletter', pageId: 'page-home', pageToken: pageToken() },
         'https://forms.example.com',
       ),
       db,
-      new URL('http://cms.test/_instatic/form/challenge'),
+      new URL('http://cms.test/_studio/form/challenge'),
     )
 
     expect(response?.status).toBe(200)
@@ -309,9 +309,9 @@ describe('public CMS-native form endpoint', () => {
     resetPublicFormChallenges()
     const { db } = makeDb()
     const challenge = await handlePublicFormRequest(
-      makeRequest('/_instatic/form/challenge', { formId: 'newsletter', pageId: 'page-home', pageToken: pageToken() }),
+      makeRequest('/_studio/form/challenge', { formId: 'newsletter', pageId: 'page-home', pageToken: pageToken() }),
       db,
-      new URL('http://cms.test/_instatic/form/challenge'),
+      new URL('http://cms.test/_studio/form/challenge'),
     )
     expect(challenge?.status).toBe(200)
     const challengeBody = await readJson(challenge!)
@@ -319,7 +319,7 @@ describe('public CMS-native form endpoint', () => {
     expect(typeof challengeBody.challenge).toBe('string')
 
     const submit = await handlePublicFormRequest(
-      makeRequest('/_instatic/form/submit', {
+      makeRequest('/_studio/form/submit', {
         formId: 'newsletter',
         pageId: 'page-home',
         token: 'missing',
@@ -327,7 +327,7 @@ describe('public CMS-native form endpoint', () => {
         values: { email: 'ai@example.com' },
       }),
       db,
-      new URL('http://cms.test/_instatic/form/submit'),
+      new URL('http://cms.test/_studio/form/submit'),
     )
     expect(submit?.status).toBe(400)
   })
@@ -336,13 +336,13 @@ describe('public CMS-native form endpoint', () => {
     resetPublicFormChallenges()
     const { db } = makeDb()
     const response = await handlePublicFormRequest(
-      makeRequest('/_instatic/form/challenge', {
+      makeRequest('/_studio/form/challenge', {
         formId: 'newsletter',
         pageId: 'page-home',
         pageToken: 'forged',
       }),
       db,
-      new URL('http://cms.test/_instatic/form/challenge'),
+      new URL('http://cms.test/_studio/form/challenge'),
     )
 
     expect(response?.status).toBe(403)
@@ -352,14 +352,14 @@ describe('public CMS-native form endpoint', () => {
     resetPublicFormChallenges()
     const { db } = makeDb()
     const response = await handlePublicFormRequest(
-      makeRequest('/_instatic/form/challenge', {
+      makeRequest('/_studio/form/challenge', {
         formId: 'newsletter',
         pageId: 'page-home',
         pageToken: pageToken(),
         padding: 'x'.repeat(9 * 1024),
       }, 'http://cms.test', '203.0.113.20'),
       db,
-      new URL('http://cms.test/_instatic/form/challenge'),
+      new URL('http://cms.test/_studio/form/challenge'),
     )
 
     expect(response?.status).toBe(413)
@@ -371,25 +371,25 @@ describe('public CMS-native form endpoint', () => {
     const ip = '203.0.113.21'
     for (let i = 0; i < 60; i++) {
       const response = await handlePublicFormRequest(
-        makeRequest('/_instatic/form/challenge', {
+        makeRequest('/_studio/form/challenge', {
           formId: 'newsletter',
           pageId: 'page-home',
           pageToken: pageToken(),
         }, 'http://cms.test', ip),
         db,
-        new URL('http://cms.test/_instatic/form/challenge'),
+        new URL('http://cms.test/_studio/form/challenge'),
       )
       expect(response?.status).toBe(200)
     }
 
     const limited = await handlePublicFormRequest(
-      makeRequest('/_instatic/form/challenge', {
+      makeRequest('/_studio/form/challenge', {
         formId: 'newsletter',
         pageId: 'page-home',
         pageToken: pageToken(),
       }, 'http://cms.test', ip),
       db,
-      new URL('http://cms.test/_instatic/form/challenge'),
+      new URL('http://cms.test/_studio/form/challenge'),
     )
     expect(limited?.status).toBe(429)
   })
@@ -415,14 +415,14 @@ describe('public CMS-native form endpoint', () => {
     publicFormPerFormRateLimit.reset('unknown|newsletter')
     const { db, createdRows } = makeDb()
     const challengeResponse = await handlePublicFormRequest(
-      makeRequest('/_instatic/form/challenge', { formId: 'newsletter', pageId: 'page-home', pageToken: pageToken() }),
+      makeRequest('/_studio/form/challenge', { formId: 'newsletter', pageId: 'page-home', pageToken: pageToken() }),
       db,
-      new URL('http://cms.test/_instatic/form/challenge'),
+      new URL('http://cms.test/_studio/form/challenge'),
     )
     const challenge = await readJson(challengeResponse!)
 
     const submit = await handlePublicFormRequest(
-      makeRequest('/_instatic/form/submit', {
+      makeRequest('/_studio/form/submit', {
         formId: 'newsletter',
         pageId: 'page-home',
         token: challenge.token,
@@ -430,7 +430,7 @@ describe('public CMS-native form endpoint', () => {
         values: { email: 'ai@example.com', company: '' },
       }),
       db,
-      new URL('http://cms.test/_instatic/form/submit'),
+      new URL('http://cms.test/_studio/form/submit'),
     )
 
     expect(submit?.status).toBe(200)
@@ -446,7 +446,7 @@ describe('public CMS-native form endpoint', () => {
     const { db } = makeDb()
 
     const response = await handlePublicFormRequest(
-      makeRequest('/_instatic/form/submit', {
+      makeRequest('/_studio/form/submit', {
         formId: 'newsletter',
         pageId: 'page-home',
         token: 'missing',
@@ -454,7 +454,7 @@ describe('public CMS-native form endpoint', () => {
         values: { email: `${'a'.repeat(1024 * 1024)}@example.com` },
       }, 'http://cms.test', '203.0.113.22'),
       db,
-      new URL('http://cms.test/_instatic/form/submit'),
+      new URL('http://cms.test/_studio/form/submit'),
     )
 
     expect(response?.status).toBe(413)
@@ -481,14 +481,14 @@ describe('public CMS-native form endpoint', () => {
       },
     })
     const challengeResponse = await handlePublicFormRequest(
-      makeRequest('/_instatic/form/challenge', { formId: 'newsletter', pageId: 'page-home', pageToken: pageToken() }),
+      makeRequest('/_studio/form/challenge', { formId: 'newsletter', pageId: 'page-home', pageToken: pageToken() }),
       db,
-      new URL('http://cms.test/_instatic/form/challenge'),
+      new URL('http://cms.test/_studio/form/challenge'),
     )
     const challenge = await readJson(challengeResponse!)
 
     const submit = await handlePublicFormRequest(
-      makeRequest('/_instatic/form/submit', {
+      makeRequest('/_studio/form/submit', {
         formId: 'newsletter',
         pageId: 'page-home',
         token: challenge.token,
@@ -496,7 +496,7 @@ describe('public CMS-native form endpoint', () => {
         values: { email: 'ai@example.com', company: '' },
       }),
       db,
-      new URL('http://cms.test/_instatic/form/submit'),
+      new URL('http://cms.test/_studio/form/submit'),
     )
 
     expect(submit?.status).toBe(404)

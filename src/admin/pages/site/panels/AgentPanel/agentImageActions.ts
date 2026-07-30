@@ -56,14 +56,14 @@ export function agentImageFilename(image: AgentPreviewImage, blob: Blob): string
     ? mimeType.slice('image/'.length).replace(/[^a-z0-9]+/g, '')
     : ''
   const extension = EXTENSION_BY_MIME[mimeType] ?? (subtype || 'img')
-  const preferred = image.filename?.trim() || `instatic-image-${image.id}`
+  const preferred = image.filename?.trim() || `studio-image-${image.id}`
   const withoutExtension = preferred.replace(/\.[a-z0-9]{1,10}$/i, '')
   const safeStem = withoutExtension
     .normalize('NFKC')
     .replace(/[^\p{L}\p{N}._-]+/gu, '-')
     .replace(/^[.-]+|[.-]+$/g, '')
     .slice(0, 96)
-  return `${safeStem || 'instatic-image'}.${extension}`
+  return `${safeStem || 'studio-image'}.${extension}`
 }
 
 /** Copy the rendered image bytes (not its URL) to the system clipboard. */

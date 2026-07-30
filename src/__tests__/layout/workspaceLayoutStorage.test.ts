@@ -33,7 +33,7 @@ describe('workspaceLayoutStorage — floating panel positions', () => {
   it('does not write retired per-panel localStorage keys', () => {
     writeStoredPanelPosition('agent', { x: 24, y: 180 })
 
-    expect(localStorage.getItem('instatic-agent-panel-pos')).toBeNull()
+    expect(localStorage.getItem('studio-agent-panel-pos')).toBeNull()
   })
 })
 

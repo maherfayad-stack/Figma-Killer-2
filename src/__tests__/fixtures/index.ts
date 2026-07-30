@@ -1,5 +1,5 @@
 /**
- * Shared test fixture factories for the instatic test suite.
+ * Shared test fixture factories for the studio test suite.
  *
  * Design goals:
  * - Every factory has sensible defaults → minimal boilerplate per test

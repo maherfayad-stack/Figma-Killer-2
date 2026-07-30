@@ -1,8 +1,8 @@
 /**
  * `definePluginPanel` — type-safe plugin editor panel entrypoint.
  *
- *   import { definePluginPanel } from '@instatic/plugin-sdk'
- *   import { Stack, Button, Card, Text } from '@instatic/host-ui'
+ *   import { definePluginPanel } from '@studio/plugin-sdk'
+ *   import { Stack, Button, Card, Text } from '@studio/host-ui'
  *   import { useState } from 'react'
  *
  *   function ReviewPanel() {
@@ -30,9 +30,9 @@
  *   })
  *
  * The plugin's bundle has zero React imports relative to the runtime — at
- * build time, `instatic-plugin build` externalizes `react`, `react/jsx-runtime`,
- * `@instatic/host-ui`, `@instatic/host-hooks`, and
- * `@instatic/plugin-sdk`. The host's import map resolves those names at
+ * build time, `studio-plugin build` externalizes `react`, `react/jsx-runtime`,
+ * `@studio/host-ui`, `@studio/host-hooks`, and
+ * `@studio/plugin-sdk`. The host's import map resolves those names at
  * mount time to its own React instance and design-system primitives, so
  * plugins share host React + host UI without bundling a copy.
  *
@@ -76,7 +76,7 @@ const PANEL_ID_PATTERN = /^[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?$/
 
 /**
  * Identity wrapper — validates the id shape at definition time so authoring
- * errors surface during `instatic-plugin build`, not at editor activation.
+ * errors surface during `studio-plugin build`, not at editor activation.
  */
 export function definePluginPanel(
   config: DefinePluginEditorPanelConfig,

@@ -37,7 +37,7 @@ const loopModule = makeModule('base.loop', {
   canHaveChildren: true,
   // Defense-in-depth fallback that should never be called — interceptor
   // handles loop rendering. If it IS called, the test will see this.
-  render: () => ({ html: '<!-- instatic: loop default render hit -->' }),
+  render: () => ({ html: '<!-- studio: loop default render hit -->' }),
 })
 
 // Renders BOTH the parentEntry and currentEntry bindings in one element so a
@@ -329,12 +329,12 @@ describe('publisher loop renderer', () => {
       loopData: new Map([['loop', loopDataWithMore(items, 2)]]),
     }).html
 
-    expect(html).toContain('data-instatic-loop="loop"')
-    expect(html).toContain('data-instatic-loop-mode="infinite"')
-    expect(html).toContain('data-instatic-loop-has-more="true"')
-    expect(html).toContain('data-instatic-loop-page-size="2"')
+    expect(html).toContain('data-studio-loop="loop"')
+    expect(html).toContain('data-studio-loop-mode="infinite"')
+    expect(html).toContain('data-studio-loop-has-more="true"')
+    expect(html).toContain('data-studio-loop-page-size="2"')
     // Loop runtime script injected when at least one infinite loop exists
-    expect(html).toContain('/_instatic/assets/loop-runtime.js')
+    expect(html).toContain('/_studio/assets/loop-runtime.js')
   })
 
   it('does not inject the loop runtime when no loop is infinite', () => {

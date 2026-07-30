@@ -1,7 +1,7 @@
 import type { createModuleImportMap } from '@core/module-engine'
 
-export const SANDBOX_MESSAGE_SOURCE = 'instatic-module-sandbox'
-export const HOST_MESSAGE_SOURCE = 'instatic-module-host'
+export const SANDBOX_MESSAGE_SOURCE = 'studio-module-sandbox'
+export const HOST_MESSAGE_SOURCE = 'studio-module-host'
 
 export interface SandboxContext {
   props: Record<string, unknown>
@@ -86,7 +86,7 @@ export function createSandboxSrcDoc({
         height: 100%;
       }
 
-      .instatic-runtime-error {
+      .studio-runtime-error {
         display: grid;
         min-height: 240px;
         place-items: center;
@@ -97,7 +97,7 @@ export function createSandboxSrcDoc({
         white-space: pre-wrap;
       }
     </style>
-    <style id="instatic-class-styles">${escapeStyleContent(classCSS)}</style>
+    <style id="studio-class-styles">${escapeStyleContent(classCSS)}</style>
   </head>
   <body>
     <div id="root"></div>
@@ -105,7 +105,7 @@ export function createSandboxSrcDoc({
       let context = ${safeJson(context)};
       const moduleUrl = ${safeJson(moduleUrl)};
       const root = document.getElementById('root');
-      const classStyleEl = document.getElementById('instatic-class-styles');
+      const classStyleEl = document.getElementById('studio-class-styles');
       root.className = context.className || '';
       let runtime = null;
       let cleanup = null;
@@ -127,7 +127,7 @@ export function createSandboxSrcDoc({
         const message = error instanceof Error ? error.stack || error.message : String(error);
         root.textContent = '';
         const pre = document.createElement('pre');
-        pre.className = 'instatic-runtime-error';
+        pre.className = 'studio-runtime-error';
         pre.textContent = message;
         root.appendChild(pre);
       }

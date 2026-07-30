@@ -6,7 +6,7 @@
  *   - AdminSessionProvider (session context for authenticated children)
  *   - StepUpProvider (auth re-verification for sensitive actions)
  *   - The 5 workspace page components (DashboardPage, SitePage, …)
- *   - installPluginRuntime() (populates globalThis.__instatic for plugins)
+ *   - installPluginRuntime() (populates globalThis.__studio for plugins)
  *
  * Splitting this out from `AdminEntry` keeps the cold-load JS execution
  * gap small for the unauthenticated login flow: the entry chunk no longer
@@ -92,7 +92,7 @@ const SiteExportModal = lazy(() =>
   import('./modals/SiteExport').then((m) => ({ default: m.SiteExportModal })),
 )
 
-// Plugin runtime (globalThis.__instatic) is now installed LAZILY by
+// Plugin runtime (globalThis.__studio) is now installed LAZILY by
 // `ensurePluginRuntime()` in `pluginRuntimeBootstrap.ts`. The two callers
 // that need it (useInstalledEditorPlugins, PluginPageRenderer) await it
 // before triggering their plugin dynamic-imports. Eagerly installing

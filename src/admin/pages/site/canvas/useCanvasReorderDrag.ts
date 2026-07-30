@@ -19,7 +19,7 @@ interface UseCanvasReorderDragOptions {
    * Cross-iframe pointer relay: the drag originates in the parent doc
    * (selection toolbar handle), but pointermove / up / cancel events
    * inside the iframe don't bubble to the parent window. This hook
-   * tags the parent's `<html>` with `data-instatic-canvas-dragging` while a
+   * tags the parent's `<html>` with `data-studio-canvas-dragging` while a
    * drag is in flight; each `IframeFrameSurface` reads that flag and
    * forwards its pointer events back to the parent so the window
    * listeners keep ticking even when the cursor is over a frame.
@@ -308,7 +308,7 @@ export function useCanvasReorderDrag({
     latestClientPointRef.current = { x: event.clientX, y: event.clientY }
 
     // Cross-frame drag signal. Every iframe's pointer relay (see
-    // `IframeFrameSurface`) reads `data-instatic-canvas-dragging` on the parent
+    // `IframeFrameSurface`) reads `data-studio-canvas-dragging` on the parent
     // document's `<html>` and forwards pointermove / up / cancel events to
     // the parent when set. We also stash the originating pointerId so the
     // relay can mint events with the matching id — keeps the eventual

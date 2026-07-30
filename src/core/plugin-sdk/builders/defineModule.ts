@@ -1,7 +1,7 @@
 /**
  * `defineModule` — type-checked canvas module builder.
  *
- *   import { defineModule, control, html } from '@instatic/plugin-sdk'
+ *   import { defineModule, control, html } from '@studio/plugin-sdk'
  *
  *   export default defineModule({
  *     id: 'acme.ui-kit.callout',

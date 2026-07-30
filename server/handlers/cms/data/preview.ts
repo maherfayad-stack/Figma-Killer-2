@@ -36,8 +36,8 @@ import { badRequest, jsonResponse, readValidatedBody } from '../../../http'
 import { canReadDataRow, forbidden, requireDataAccess } from './access'
 import type { RouteParams } from '../routeTable'
 
-const CSS_ASSET_BASE_URL = '/_instatic/css/'
-const LOOP_ENDPOINT_BASE_URL = '/_instatic/loop/'
+const CSS_ASSET_BASE_URL = '/_studio/css/'
+const LOOP_ENDPOINT_BASE_URL = '/_studio/loop/'
 
 // ---------------------------------------------------------------------------
 // Request schema

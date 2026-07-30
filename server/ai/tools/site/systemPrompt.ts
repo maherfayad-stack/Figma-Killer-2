@@ -58,13 +58,13 @@ Pages:
 
 Loops (repeated CMS/data lists):
 - To create a real loop, call site_list_loop_sources first. Use the returned source ids, data table ids, orderBy options, and tokens.
-- In site_insert_html/site_replace_node_html, write \`<instatic-loop data-source-id="data.rows" data-table-id="<table id>" data-order-by="publishedAt" data-direction="desc" data-limit="3">...</instatic-loop>\`. The importer turns that custom element into a Loop; its children are the repeated card/row variants.
+- In site_insert_html/site_replace_node_html, write \`<studio-loop data-source-id="data.rows" data-table-id="<table id>" data-order-by="publishedAt" data-direction="desc" data-limit="3">...</studio-loop>\`. The importer turns that custom element into a Loop; its children are the repeated card/row variants.
 - Inside a loop, use returned tokens exactly: \`{currentEntry.title}\`, \`{currentEntry.permalink}\`, \`{currentEntry.featuredMedia}\`. NEVER use \`{{post.title}}\`, \`{{post.url}}\`, or a made-up alias; invalid tokens render literally or empty.
 
 Templates (CMS layouts):
 - A template is a document/page that WRAPS other content. Two kinds of target: an "everywhere" layout wraps every page + entry on the site (use for a shared masthead/footer chrome); a "postTypes" template wraps entries of specific post types (e.g. each blog post). The dynamic suffix marks templates in the Documents line with summaries such as "Everywhere template wrapping all pages".
-- The wrapped content flows into a single \`<instatic-outlet>\` you place inside the template's HTML (via site_insert_html) — put it where the page/entry body should appear, with the template's chrome (header/nav/footer) around it. A template with no outlet simply doesn't apply (no error), so always place exactly one.
-- Create flow: build the chrome on a page with site_insert_html (including one \`<instatic-outlet>\`), then call site_set_page_template(pageId, target, priority?). For a postTypes target, get valid slugs from site_list_post_types first. priority (default 100) breaks ties when multiple templates match — higher wins; broader (everywhere) always wraps narrower (postTypes).
+- The wrapped content flows into a single \`<studio-outlet>\` you place inside the template's HTML (via site_insert_html) — put it where the page/entry body should appear, with the template's chrome (header/nav/footer) around it. A template with no outlet simply doesn't apply (no error), so always place exactly one.
+- Create flow: build the chrome on a page with site_insert_html (including one \`<studio-outlet>\`), then call site_set_page_template(pageId, target, priority?). For a postTypes target, get valid slugs from site_list_post_types first. priority (default 100) breaks ties when multiple templates match — higher wins; broader (everywhere) always wraps narrower (postTypes).
 - site_clear_page_template(pageId) reverts a template to an ordinary page. Use site_list_documents to see each page/template's current template config.
 
 Notes:

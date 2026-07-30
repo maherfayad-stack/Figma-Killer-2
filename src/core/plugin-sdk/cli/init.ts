@@ -1,9 +1,9 @@
 /**
- * `instatic-plugin init <name>` — scaffold a new plugin project.
+ * `studio-plugin init <name>` — scaffold a new plugin project.
  *
  * Creates a minimal but real plugin: one canvas module, a settings entry,
- * and a `instatic-plugin.config.ts` that uses the SDK builders. The author can
- * `cd <name>` and run `instatic-plugin dev` immediately.
+ * and a `studio-plugin.config.ts` that uses the SDK builders. The author can
+ * `cd <name>` and run `studio-plugin dev` immediately.
  *
  * Convention: `<name>` becomes the plugin id `<vendor>.<short>`. We split
  * on the first `.` so `acme.confetti` → directory `confetti`, plugin id
@@ -26,7 +26,7 @@ interface InitTemplate {
 function pluginIdFromName(input: string): { pluginId: string; pluginName: string; dirName: string } {
   const trimmed = input.trim()
   if (!trimmed) {
-    throw new Error('Plugin name is required: `instatic-plugin init <name>`')
+    throw new Error('Plugin name is required: `studio-plugin init <name>`')
   }
   const safeId = trimmed
     .toLowerCase()
@@ -75,7 +75,7 @@ export async function runPluginInit(
 
   if (kind === 'content-editor') {
     await mkdir(join(pluginDir, 'server'), { recursive: true })
-    await writeFile(join(pluginDir, 'instatic-plugin.config.ts'), pluginConfigTemplate(template), 'utf-8')
+    await writeFile(join(pluginDir, 'studio-plugin.config.ts'), pluginConfigTemplate(template), 'utf-8')
     await writeFile(join(pluginDir, 'server', 'index.ts'), serverEntryTemplate(template), 'utf-8')
     await writeFile(join(pluginDir, 'README.md'), readmeTemplate(template), 'utf-8')
     await writeFile(join(pluginDir, '.gitignore'), gitignoreTemplate(), 'utf-8')
@@ -83,7 +83,7 @@ export async function runPluginInit(
   }
 
   await mkdir(join(pluginDir, 'modules'), { recursive: true })
-  await writeFile(join(pluginDir, 'instatic-plugin.config.ts'), pluginConfigTemplate(template), 'utf-8')
+  await writeFile(join(pluginDir, 'studio-plugin.config.ts'), pluginConfigTemplate(template), 'utf-8')
   await writeFile(join(pluginDir, 'modules', 'hello.ts'), helloModuleTemplate(template), 'utf-8')
   await writeFile(join(pluginDir, 'README.md'), readmeTemplate(template), 'utf-8')
   await writeFile(join(pluginDir, '.gitignore'), gitignoreTemplate(), 'utf-8')
@@ -141,7 +141,7 @@ export default definePlugin({
 }
 
 function serverEntryTemplate({ pluginName }: InitTemplate): string {
-  return `import type { ServerPluginModule } from '@instatic/plugin-sdk'
+  return `import type { ServerPluginModule } from '@studio/plugin-sdk'
 
 /**
  * Server entrypoint for ${pluginName}.
@@ -210,21 +210,21 @@ function readmeTemplate({ pluginId, pluginName }: InitTemplate): string {
 ## Develop
 
 \`\`\`bash
-instatic-plugin dev          # watch + sync into the running CMS
-instatic-plugin build        # produce a .plugin.zip
+studio-plugin dev          # watch + sync into the running CMS
+studio-plugin build        # produce a .plugin.zip
 \`\`\`
 
 The dev command writes built files directly into the host CMS's
 \`uploads/plugins/${pluginId}/<version>/\` directory. On first run it
 auto-detects the host's \`uploads/\` folder by walking up from the plugin
-directory; pass \`--uploads <path>\` (or set \`INSTATIC_UPLOADS_DIR\`) when running
-outside the instatic monorepo.
+directory; pass \`--uploads <path>\` (or set \`STUDIO_UPLOADS_DIR\`) when running
+outside the studio monorepo.
 
 You'll need to install the plugin once via the admin UI (\`/admin/plugins\` →
 Upload Plugin) so the host registers it and approves permissions. After
-that, every \`instatic-plugin dev\` rebuild flows in without another upload.
+that, every \`studio-plugin dev\` rebuild flows in without another upload.
 
-See [docs/features/plugin-system.md](../instatic/docs/features/plugin-system.md)
+See [docs/features/plugin-system.md](../studio/docs/features/plugin-system.md)
 for the full plugin SDK surface.
 `
 }

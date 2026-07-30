@@ -17,7 +17,7 @@ import type { DbClient } from '../../../db/client'
 import { resolveMcpAuth, unauthorizedResponse } from '../auth'
 import { buildMcpServer } from '../server'
 
-export const MCP_ENDPOINT_PATH = '/_instatic/mcp'
+export const MCP_ENDPOINT_PATH = '/_studio/mcp'
 
 interface McpHttpOptions {
   uploadsDir?: string

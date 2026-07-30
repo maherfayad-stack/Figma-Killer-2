@@ -106,9 +106,9 @@ describe('readServerConfig', () => {
     expect(
       readServerConfig({
         PORT: '4321',
-        DATABASE_URL: 'postgres://instatic:secret@postgres:5432/instatic',
-        UPLOADS_DIR: '/srv/instatic/uploads',
-        STATIC_DIR: '/srv/instatic/dist',
+        DATABASE_URL: 'postgres://studio:secret@postgres:5432/studio',
+        UPLOADS_DIR: '/srv/studio/uploads',
+        STATIC_DIR: '/srv/studio/dist',
         TRUSTED_PROXY_CIDRS: '10.0.0.0/8, 192.168.0.0/16, ',
         PUBLIC_ORIGIN: 'https://CMS.example.com/, http://localhost:5173',
         RENDER_EXTERNAL_URL: 'https://ignored.onrender.com',
@@ -116,9 +116,9 @@ describe('readServerConfig', () => {
       }),
     ).toEqual({
       port: 4321,
-      databaseUrl: 'postgres://instatic:secret@postgres:5432/instatic',
-      uploadsDir: '/srv/instatic/uploads',
-      staticDir: '/srv/instatic/dist',
+      databaseUrl: 'postgres://studio:secret@postgres:5432/studio',
+      uploadsDir: '/srv/studio/uploads',
+      staticDir: '/srv/studio/dist',
       trustedProxyCidrs: ['10.0.0.0/8', '192.168.0.0/16'],
       publicOrigins: ['https://cms.example.com', 'http://localhost:5173'],
     })

@@ -1,8 +1,8 @@
 /**
  * `definePluginAdminApp` — type-safe plugin admin app entrypoint.
  *
- *   import { definePluginAdminApp } from '@instatic/plugin-sdk'
- *   import { Stack, Heading, Button, Card, Text } from '@instatic/host-ui'
+ *   import { definePluginAdminApp } from '@studio/plugin-sdk'
+ *   import { Stack, Heading, Button, Card, Text } from '@studio/host-ui'
  *   import { useState } from 'react'
  *
  *   export default definePluginAdminApp(function Dashboard() {
@@ -23,8 +23,8 @@
  * What plugins get:
  *
  *   • Real React + JSX. `import { useState } from 'react'`.
- *   • `@instatic/host-ui` for design-system primitives (Button, Stack, …).
- *   • `@instatic/host-hooks` for editor / settings / routes hooks.
+ *   • `@studio/host-ui` for design-system primitives (Button, Stack, …).
+ *   • `@studio/host-hooks` for editor / settings / routes hooks.
  *
  * The plugin's bundle externalizes those names — at runtime the browser's
  * import map resolves them to the host's React instance and design system,

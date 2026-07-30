@@ -38,7 +38,7 @@ interface RuntimeScriptInjectorProps {
   scripts: InjectableRuntimeScript[]
 }
 
-const RUNTIME_SCRIPT_MARKER = 'data-instatic-canvas-runtime-script'
+const RUNTIME_SCRIPT_MARKER = 'data-studio-canvas-runtime-script'
 
 function injectScriptsWithDomReadyReplay(
   targetDocument: Document,

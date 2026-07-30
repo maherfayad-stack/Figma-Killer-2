@@ -1,5 +1,5 @@
 /**
- * Tests for the @instatic/plugin-sdk builders. Each builder is
+ * Tests for the @studio/plugin-sdk builders. Each builder is
  * exercised end-to-end: input → output → host runtime shape.
  */
 import { describe, expect, it } from 'bun:test'

@@ -18,7 +18,7 @@
  * Persisted (sticky) the same way `studioMode`'s flag is: a refresh keeps
  * browsing the same project instead of reverting to the first one.
  */
-const STUDIO_WORKSPACE_DIR_STORAGE_KEY = 'instatic:studio:dir'
+const STUDIO_WORKSPACE_DIR_STORAGE_KEY = 'studio:studio:dir'
 
 /** The active workspace dir override, or `undefined` for the server default. */
 export function getStudioWorkspaceDir(): string | undefined {

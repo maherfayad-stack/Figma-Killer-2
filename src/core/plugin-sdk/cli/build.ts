@@ -1,7 +1,7 @@
 /**
  * Plugin build pipeline.
  *
- * Reads `<dir>/instatic-plugin.config.ts`, evaluates it via `import()` (Bun
+ * Reads `<dir>/studio-plugin.config.ts`, evaluates it via `import()` (Bun
  * transpiles TypeScript natively), and writes the runtime zip layout that
  * the host package installer expects:
  *
@@ -39,13 +39,13 @@ export async function readPluginDefinition(sourceDir: string): Promise<PluginDef
   // The config may call definePack({ layouts }) which compiles HTML — give it
   // a DOM + the base module registry before it is evaluated.
   installPackCompileEnvironment()
-  const configPath = join(sourceDir, 'instatic-plugin.config.ts')
+  const configPath = join(sourceDir, 'studio-plugin.config.ts')
   if (!existsSync(configPath)) {
-    throw new Error(`instatic-plugin.config.ts not found at ${configPath}`)
+    throw new Error(`studio-plugin.config.ts not found at ${configPath}`)
   }
   const mod = await import(pathToFileURL(configPath).href + `?ts=${Date.now()}`) as { default: PluginDefinition }
   if (!mod.default || typeof mod.default !== 'object') {
-    throw new Error(`instatic-plugin.config.ts must default-export a definePlugin() result`)
+    throw new Error(`studio-plugin.config.ts must default-export a definePlugin() result`)
   }
   return mod.default
 }
@@ -68,16 +68,16 @@ export async function readPluginDefinition(sourceDir: string): Promise<PluginDef
  *     which never load the editor's import map. A bare `import 'react'`
  *     in a frontend bundle would crash at runtime ("Failed to resolve
  *     module specifier"). Frontend scripts must either bundle React
- *     themselves or stick to `window.__instatic` and vanilla DOM.
+ *     themselves or stick to `window.__studio` and vanilla DOM.
  */
 const HOST_RUNTIME_EXTERNALS = [
   'react',
   'react/jsx-runtime',
   'react/jsx-dev-runtime',
   'react-dom',
-  '@instatic/host-ui',
-  '@instatic/host-hooks',
-  '@instatic/plugin-sdk',
+  '@studio/host-ui',
+  '@studio/host-hooks',
+  '@studio/plugin-sdk',
 ]
 
 interface BundleOptions {
@@ -102,8 +102,8 @@ interface BundleOptions {
   /**
    * When true, omit the host-runtime externals — use for `frontend.assets`
    * script bundles. Published pages don't have the host import map, so
-   * frontend code can't rely on bare `react` / `@instatic/*` imports being
-   * resolved. Bundle locally (or stick to `window.__instatic`).
+   * frontend code can't rely on bare `react` / `@studio/*` imports being
+   * resolved. Bundle locally (or stick to `window.__studio`).
    */
   frontendBundle?: boolean
   /**
@@ -113,16 +113,16 @@ interface BundleOptions {
    * import map) AND the server publisher / QuickJS sandbox (via
    * `modulePackVm` — NO import map, no module resolver).
    *
-   * The browser path could resolve bare `@instatic/plugin-sdk` imports
+   * The browser path could resolve bare `@studio/plugin-sdk` imports
    * via the import map, but the sandbox path cannot — and the SDK helpers
    * that module packs use (`defineModule`, `control`, `html`, `raw`,
    * `safeUrl`) are pure data builders with no React or host-state
    * dependency, so inlining them is the simple, correct fix.
    *
    * Without this flag, modules bundles would ship bare
-   * `import { defineModule } from "@instatic/plugin-sdk"`, which fails
+   * `import { defineModule } from "@studio/plugin-sdk"`, which fails
    * at module-pack-activate time inside the sandbox, the registry never
-   * gets populated, and the publisher emits `<!-- instatic: unknown module -->`
+   * gets populated, and the publisher emits `<!-- studio: unknown module -->`
    * comments on published pages.
    */
   inlineHostRuntime?: boolean
@@ -362,7 +362,7 @@ async function zipDirectory(sourceDir: string, zipPath: string): Promise<void> {
 }
 
 export interface BuildPluginOptions {
-  /** When false, skip producing the .plugin.zip (used by `instatic-plugin dev`). */
+  /** When false, skip producing the .plugin.zip (used by `studio-plugin dev`). */
   zip?: boolean
 }
 
@@ -419,9 +419,9 @@ export async function buildPlugin(
       // CRITICAL: `inlineHostRuntime: true` is what keeps the SDK helpers
       // (defineModule / control / html / raw / safeUrl) bundled in. The
       // sandbox path has no import map / no module resolver — without this
-      // flag, bare `import { defineModule } from "@instatic/plugin-sdk"`
+      // flag, bare `import { defineModule } from "@studio/plugin-sdk"`
       // fails at activate time, the registry never receives the pack, and
-      // the publisher emits `<!-- instatic: unknown module -->` on every page
+      // the publisher emits `<!-- studio: unknown module -->` on every page
       // that drops one of the plugin's modules.
       await bundleEntrypoint(modulesFacadePath, join(distDir, 'modules', 'index.js'), {
         inlineHostRuntime: true,

@@ -8,12 +8,12 @@
  */
 export function markCanvasPointerRelay(pointerId: number): void {
   if (typeof document === 'undefined') return
-  document.documentElement.dataset.instaticCanvasDragging = '1'
-  document.documentElement.dataset.instaticCanvasDraggingPointerId = String(pointerId)
+  document.documentElement.dataset.studioCanvasDragging = '1'
+  document.documentElement.dataset.studioCanvasDraggingPointerId = String(pointerId)
 }
 
 export function clearCanvasPointerRelay(): void {
   if (typeof document === 'undefined') return
-  delete document.documentElement.dataset.instaticCanvasDragging
-  delete document.documentElement.dataset.instaticCanvasDraggingPointerId
+  delete document.documentElement.dataset.studioCanvasDragging
+  delete document.documentElement.dataset.studioCanvasDraggingPointerId
 }

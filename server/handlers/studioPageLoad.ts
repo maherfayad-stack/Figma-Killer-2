@@ -4,12 +4,12 @@
  * module doc for the full endpoint contract). Split out of `studio.ts`
  * because this is one coherent unit: turn a project's `pages/` directory
  * (or its `.studio/meta.json` `pagesDir` override) into the parsed, inlined,
- * Instatic-shaped `Page[]` the client renders — independent of HTTP routing.
+ * Studio-shaped `Page[]` the client renders — independent of HTTP routing.
  *
  * `pageIdFromRelPath`/`assignPageIds` turn a page file's path (relative to
  * the workspace's `pages/` dir) into the stable, unique `pageId`/`slug` the
  * multi-page load scan uses. `resolveModuleId`/`resolveTextProp` map a parsed
- * node to an Instatic module id and its inline-text-edit prop.
+ * node to an Studio module id and its inline-text-edit prop.
  * `rewriteStudioAssetSentinels` turns a resolved local-image import into a
  * fetchable `/admin/api/studio/asset` URL. `loadStudioPages` is the per-page
  * parse → inline → convert sequence that ties all of the above together for
@@ -45,7 +45,7 @@ const CONTAINER_TAGS: ReadonlySet<string> = new Set([
 ])
 
 /**
- * Map a parsed node to an Instatic moduleId (design-system → alm.*, host tags
+ * Map a parsed node to an Studio moduleId (design-system → alm.*, host tags
  * → base.*).
  *
  * `base.text` and `base.button` are the two modules that need care, because
@@ -215,7 +215,7 @@ export interface StudioLoadResult {
 /**
  * Recursively discovers every page file under `dir`'s pages directory
  * (`projectPagesDir` — `<dir>/pages` by default, or the `.studio/meta.json`
- * `pagesDir` override) and parses EACH into an Instatic `Page`. Returns empty
+ * `pagesDir` override) and parses EACH into an Studio `Page`. Returns empty
  * results (not an error) when the pages directory doesn't exist yet.
  *
  * Every page is parsed against one shared, workspace-wide ts-morph `Project`

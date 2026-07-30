@@ -13,17 +13,17 @@
  * Production note: React 19's `react-jsx-dev-runtime.production.js`
  * exports `jsxDEV` as `void 0`. Plugins built with the dev JSX transform
  * therefore crash with "jsxDEV is not a function" in a production host.
- * The fix is to build plugins with production JSX: `instatic-plugin build`
+ * The fix is to build plugins with production JSX: `studio-plugin build`
  * passes `define: { 'process.env.NODE_ENV': '"production"' }` to
  * `Bun.build`, which makes Bun's transpiler emit `react/jsx-runtime`
  * (with real `jsx`/`jsxs`) instead. Third-party plugin authors using a
  * different bundler must do the same — there is intentionally no
  * fallback here.
  */
-const G = globalThis.__instatic?.ReactJsxDevRuntime
+const G = globalThis.__studio?.ReactJsxDevRuntime
 if (!G) {
   throw new Error(
-    "[@instatic/runtime] Host React JSX dev runtime not initialized. Did the host bundle finish loading before the plugin import?",
+    "[@studio/runtime] Host React JSX dev runtime not initialized. Did the host bundle finish loading before the plugin import?",
   )
 }
 

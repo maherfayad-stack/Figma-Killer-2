@@ -59,7 +59,7 @@ export async function fetchGithubCssSource(
   const { owner, repo } = parsedRepo
 
   const zipUrl = buildGithubZipballUrl(owner, repo, options.ref)
-  const headers: Record<string, string> = { 'user-agent': 'instatic-design-import' }
+  const headers: Record<string, string> = { 'user-agent': 'studio-design-import' }
   if (options.token) headers.authorization = `Bearer ${options.token}`
 
   let res: Response

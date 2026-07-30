@@ -1,5 +1,5 @@
 /**
- * Browser-side executor for instatic write tools.
+ * Browser-side executor for studio write tools.
  *
  * The AI runtime defines these browser-executed tools server-side, then emits a
  * `toolRequest` stream event so the browser can apply the mutation against the
@@ -570,7 +570,7 @@ function runDuplicateNode(input: DuplicateNodeInput): AiToolOutput {
 // ---------------------------------------------------------------------------
 
 /**
- * Apply a single instatic write tool against the editor store.
+ * Apply a single studio write tool against the editor store.
  *
  * The browser receives a `toolRequest` event from the server stream,
  * dispatches the tool here, and POSTs the canonical result back to
@@ -656,7 +656,7 @@ export async function executeAgentTool(
         return await runRenderSnapshotAtBreakpoint({ ...parsed, breakpointId })
       }
       default:
-        return aiToolError(`Unknown instatic tool: ${toolName}`)
+        return aiToolError(`Unknown studio tool: ${toolName}`)
     }
   } catch (err) {
     const message = getErrorMessage(err, String(err))

@@ -285,7 +285,7 @@ type SitePackageJson = {
 }
 ```
 
-The CMS supports plugins that ship their own npm deps and runtime imports (e.g. `three`). When a site declares a dependency, `bun install` runs against a per-site workspace under `uploads/sites/<siteId>/runtime/`, producing a hashed cache directory the server serves at `/_instatic/runtime/cache/<hash>/...`. The runtime cache layout is owned by `src/core/site-runtime/` and served by `server/publish/runtime/`.
+The CMS supports plugins that ship their own npm deps and runtime imports (e.g. `three`). When a site declares a dependency, `bun install` runs against a per-site workspace under `uploads/sites/<siteId>/runtime/`, producing a hashed cache directory the server serves at `/_studio/runtime/cache/<hash>/...`. The runtime cache layout is owned by `src/core/site-runtime/` and served by `server/publish/runtime/`.
 
 The Site → Dependencies panel edits this `package.json`. Saving triggers a `bun install` and updates the runtime lock.
 
@@ -321,7 +321,7 @@ type SiteRuntimeConfig = {
 }
 ```
 
-`dependencyLock` is the resolved snapshot from the last successful `bun install` — the publisher uses it to build the `<script type="importmap">` entries that map bare specifiers (`three`) to `/_instatic/runtime/cache/<hash>/...` URLs.
+`dependencyLock` is the resolved snapshot from the last successful `bun install` — the publisher uses it to build the `<script type="importmap">` entries that map bare specifiers (`three`) to `/_studio/runtime/cache/<hash>/...` URLs.
 
 `scripts` and `styles` share the `SiteAssetScope` shape and the `assetScopeAppliesToPage` helper, so a script and a stylesheet target pages identically. Scripts additionally carry `placement`/`timing`/`runInCanvas` (a `<link>` has no execution model, so stylesheets omit those). Both are edited from the floating code editor's left rail (`ScriptSettingsPane` / `StyleSettingsPane`).
 
@@ -526,7 +526,7 @@ Site → Dependencies panel edits `packageJson.dependencies`:
 }
 ```
 
-Save → server runs `bun install` in the per-site workspace → `runtime.dependencyLock` updates → the publisher emits a `<script type="importmap">` mapping `three` to `/_instatic/runtime/cache/<hash>/three/build/three.module.js`.
+Save → server runs `bun install` in the per-site workspace → `runtime.dependencyLock` updates → the publisher emits a `<script type="importmap">` mapping `three` to `/_studio/runtime/cache/<hash>/three/build/three.module.js`.
 
 A plugin canvas module can then `import * as THREE from 'three'` and it resolves at runtime.
 
@@ -551,7 +551,6 @@ A plugin canvas module can then `import * as THREE from 'three'` and it resolves
 - [docs/architecture.md](../architecture.md) — system overview
 - [docs/editor.md](../editor.md) — editor store consumes `SiteDocument`
 - [docs/features/publisher.md](publisher.md) — framework CSS + class CSS pipelines
-- [docs/features/content-storage.md](content-storage.md) — pages and VCs live in `data_rows`
 - [docs/reference/css-class-registry.md](../reference/css-class-registry.md) — class registry details
 - [docs/reference/design-tokens.md](../reference/design-tokens.md) — editor token catalog
 - Source-of-truth files:

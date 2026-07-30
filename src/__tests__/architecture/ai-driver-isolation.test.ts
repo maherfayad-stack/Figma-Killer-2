@@ -22,7 +22,7 @@
  *
  * Scoped (allowed under one prefix only):
  *   - `@modelcontextprotocol/sdk`       — allowed ONLY under `server/ai/mcp/`,
- *                                         where Instatic implements an MCP
+ *                                         where Studio implements an MCP
  *                                         *server* (a real wire protocol — a
  *                                         legitimate SDK use). Still banned in
  *                                         the drivers and the browser, which

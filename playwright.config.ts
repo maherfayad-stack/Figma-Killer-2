@@ -32,31 +32,22 @@ export default defineConfig({
     video: process.env.CI ? 'on-first-retry' : LOCAL_VIDEO ? 'retain-on-failure' : 'off',
   },
   // The disposable DB is set up once per run, so first-run setup runs in its own
-  // `setup` project. Dashboard preflight then verifies clean-install facts before
-  // persona/capability specs mutate site-wide users and plugins. `personas` creates
-  // accounts used by destructive self-management specs; those specs must never
-  // revoke the shared owner session that ordinary specs reuse.
+  // `setup` project; every spec then reuses the shared owner session it saved.
+  //
+  // The former `dashboard-preflight` and `personas` projects were removed with the
+  // CMS-only specs they existed for (clean-install dashboard facts, and throwaway
+  // accounts for destructive self-management tests). The specs that remain are
+  // Studio-relevant — shell navigation, canvas/visual builder, pages, preview,
+  // files/deps, perf, a11y, reliability — and each owns whatever fixtures it needs.
   projects: [
     {
       name: 'setup',
       testMatch: /auth\.setup\.ts$/,
     },
     {
-      name: 'dashboard-preflight',
-      testMatch: /dashboard\.e2e\.ts$/,
-      dependencies: ['setup'],
-      use: { storageState: OWNER_STATE_FILE },
-    },
-    {
-      name: 'personas',
-      testMatch: /account-persona\.setup\.ts$/,
-      dependencies: ['dashboard-preflight'],
-    },
-    {
       name: 'e2e',
       testMatch: '**/*.e2e.ts',
-      testIgnore: /dashboard\.e2e\.ts$/,
-      dependencies: ['setup', 'personas'],
+      dependencies: ['setup'],
       use: { storageState: OWNER_STATE_FILE },
     },
   ],

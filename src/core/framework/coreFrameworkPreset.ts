@@ -3,7 +3,7 @@
  *
  * Maps the Core Framework default project (the colors, typography scale,
  * spacing scale and utility-class generators a fresh Core Framework project
- * ships with) into Instatic's structured `FrameworkSettings` shape.
+ * ships with) into Studio's structured `FrameworkSettings` shape.
  *
  * Sources mirrored verbatim from the Core Framework repo
  * (`packages/core/src/...`):
@@ -27,7 +27,7 @@
  *               NO utility classes. Color `generateUtilities` is all-off and
  *               the typography / spacing class generators are dropped.
  *
- * Shade / tint values are generated from a count by Instatic's own algorithm
+ * Shade / tint values are generated from a count by Studio's own algorithm
  * (the schema stores a count, not hand-authored values), so they are close to
  * — but not byte-identical with — Core Framework's hand-tuned shade swatches.
  */
@@ -62,7 +62,7 @@ export interface CoreFrameworkImportOptions {
 // ---------------------------------------------------------------------------
 
 /**
- * Core Framework's `gen` tokens map onto Instatic utility kinds. Core Framework
+ * Core Framework's `gen` tokens map onto Studio utility kinds. Core Framework
  * never generates `fill` utilities in its default preset, so it is not part of
  * this union — `genToUtilities` always emits `fill: false`.
  */

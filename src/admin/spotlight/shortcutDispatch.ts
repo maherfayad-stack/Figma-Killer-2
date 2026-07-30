@@ -2,8 +2,8 @@ import { filterCommands, getAllCommands } from './commandRegistry'
 import { KEYBINDINGS, type KeyEventLike } from './keybindings'
 import type { Command, CommandContext } from './types'
 
-const CANVAS_ROOT_SELECTOR = '[data-instatic-canvas-root="true"]'
-const LAYER_TREE_SELECTOR = '[data-instatic-layer-tree="true"]'
+const CANVAS_ROOT_SELECTOR = '[data-studio-canvas-root="true"]'
+const LAYER_TREE_SELECTOR = '[data-studio-layer-tree="true"]'
 
 const COMPONENT_OWNED_SHORTCUTS = new Set([
   'spotlight.open',

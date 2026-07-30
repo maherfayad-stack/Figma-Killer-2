@@ -9,13 +9,13 @@
  *       see `projectPagesDir`) — (Phase 7A — multi-file project backend;
  *       nested route/page dirs like `pages/marketing/Landing.tsx` are
  *       discovered, not just a flat top-level scan) and parses EVERY
- *       `.tsx`/`.jsx` file into an Instatic `Page` (multi-frame board). Node ids
+ *       `.tsx`/`.jsx` file into an Studio `Page` (multi-frame board). Node ids
  *       stay `relFile:line:col`
  *       (from page-parser), `relFile` always relative to the WORKSPACE ROOT
  *       (not the pages dir), so the client can ask us to write a specific
  *       node's prop straight back to source no matter how deep its file
  *       sits, and the save handler below needs no changes to keep working.
- *       The parse → local-component-inline → Instatic-`Page` conversion
+ *       The parse → local-component-inline → Studio-`Page` conversion
  *       pipeline itself — including the `componentSources` local/package
  *       classification and the `STUDIO_ASSET_SENTINEL` → fetchable-URL
  *       rewrite (§5.1/§5.2) — lives in `loadStudioPages`; see

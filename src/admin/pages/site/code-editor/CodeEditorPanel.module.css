@@ -92,7 +92,7 @@
   /* Slight delay before the skeleton becomes visible — avoids a flash of
      skeleton on cache hits where the chunk is already loaded and resolves
      within a frame or two. */
-  animation: instaticCodeEditorSkeletonReveal 120ms ease-out 80ms both;
+  animation: studioCodeEditorSkeletonReveal 120ms ease-out 80ms both;
 }
 
 .loadingGutter {
@@ -118,7 +118,7 @@
     var(--bg-surface-2) 100%
   );
   background-size: 240% 100%;
-  animation: instaticCodeEditorSkeletonShimmer 1400ms ease-in-out infinite;
+  animation: studioCodeEditorSkeletonShimmer 1400ms ease-in-out infinite;
 }
 
 .loadingLines {
@@ -142,10 +142,10 @@
     var(--bg-surface-2) 100%
   );
   background-size: 240% 100%;
-  animation: instaticCodeEditorSkeletonShimmer 1400ms ease-in-out infinite;
+  animation: studioCodeEditorSkeletonShimmer 1400ms ease-in-out infinite;
 }
 
-@keyframes instaticCodeEditorSkeletonShimmer {
+@keyframes studioCodeEditorSkeletonShimmer {
   0% {
     background-position: 120% 0;
   }
@@ -154,7 +154,7 @@
   }
 }
 
-@keyframes instaticCodeEditorSkeletonReveal {
+@keyframes studioCodeEditorSkeletonReveal {
   from {
     opacity: 0;
   }

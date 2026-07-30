@@ -18,7 +18,7 @@
  *      the iframe's :root at mount time — so `var(--text-subtle)` etc.
  *      resolve correctly inside the chrome CSS.
  *   2. Style editor chrome via STABLE data-attribute selectors
- *      (data-canvas-module-placeholder, data-instatic-slot-instance, etc.) instead
+ *      (data-canvas-module-placeholder, data-studio-slot-instance, etc.) instead
  *      of hashed CSS-Module class names which will never match inside the iframe.
  *
  * Cascade isolation via @layer
@@ -30,7 +30,7 @@
  * bleed into placeholder / slot-boundary chrome even at high specificity.
  *
  * Mount order inside the portal:
- *   <EditorChromeInjector>   ← <style id="instatic-editor-chrome">  (unlayered)
+ *   <EditorChromeInjector>   ← <style id="studio-editor-chrome">  (unlayered)
  *   <ClassStyleInjector>     ← <style id="mc-classes">        (@layer user-authored)
  *   <UserStylesheetInjector> ← <style id="mc-user-styles">    (@layer user-authored)
  *   {children}
@@ -41,7 +41,7 @@
 
 import { useEffect } from 'react'
 
-const STYLE_TAG_ID = 'instatic-editor-chrome'
+const STYLE_TAG_ID = 'studio-editor-chrome'
 
 /**
  * Design tokens to forward from the parent document's :root onto the iframe's
@@ -160,7 +160,7 @@ const CHROME_RULES = `
 /* ── CanvasModulePlaceholder ───────────────────────────────────────────────
  * Reproduced from CanvasModulePlaceholder.module.css using stable
  * data-attribute selectors (data-canvas-module-placeholder, data-variant,
- * data-instatic-placeholder-*) added to the component alongside the existing
+ * data-studio-placeholder-*) added to the component alongside the existing
  * CSS-Module class names. The CSS-Module classes still style the component
  * when it renders outside the iframe (e.g. in tests); the data-attribute
  * hooks give the iframe chrome CSS a stable target.
@@ -201,7 +201,7 @@ const CHROME_RULES = `
   padding: var(--chrome-space-xs) var(--chrome-space-m);
 }
 
-[data-canvas-module-placeholder] [data-instatic-placeholder-content] {
+[data-canvas-module-placeholder] [data-studio-placeholder-content] {
   box-sizing: border-box;
   min-width: 0;
   margin: 0;
@@ -209,14 +209,14 @@ const CHROME_RULES = `
   pointer-events: none;
 }
 
-[data-canvas-module-placeholder][data-variant="block"] [data-instatic-placeholder-content] {
+[data-canvas-module-placeholder][data-variant="block"] [data-studio-placeholder-content] {
   display: grid;
   justify-items: center;
   align-content: center;
   row-gap: var(--chrome-space-s);
 }
 
-[data-canvas-module-placeholder][data-variant="block"][data-layout="row"] [data-instatic-placeholder-content] {
+[data-canvas-module-placeholder][data-variant="block"][data-layout="row"] [data-studio-placeholder-content] {
   display: flex;
   flex-direction: row;
   align-items: center;
@@ -224,14 +224,14 @@ const CHROME_RULES = `
   gap: var(--chrome-space-s);
 }
 
-[data-canvas-module-placeholder][data-variant="inline"] [data-instatic-placeholder-content] {
+[data-canvas-module-placeholder][data-variant="inline"] [data-studio-placeholder-content] {
   display: flex;
   flex-direction: row;
   align-items: center;
   gap: var(--chrome-space-xs);
 }
 
-[data-canvas-module-placeholder] [data-instatic-placeholder-icon] {
+[data-canvas-module-placeholder] [data-studio-placeholder-icon] {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -247,14 +247,14 @@ const CHROME_RULES = `
   white-space: normal;
 }
 
-[data-canvas-module-placeholder] [data-instatic-placeholder-icon] > svg {
+[data-canvas-module-placeholder] [data-studio-placeholder-icon] > svg {
   display: block;
   flex: 0 0 auto;
   margin: 0;
   padding: 0;
 }
 
-[data-canvas-module-placeholder] [data-instatic-placeholder-label] {
+[data-canvas-module-placeholder] [data-studio-placeholder-label] {
   display: block;
   margin: 0;
   padding: 0;
@@ -270,11 +270,11 @@ const CHROME_RULES = `
   white-space: normal;
 }
 
-[data-canvas-module-placeholder][data-variant="inline"] [data-instatic-placeholder-label] {
+[data-canvas-module-placeholder][data-variant="inline"] [data-studio-placeholder-label] {
   font-weight: 500;
 }
 
-[data-canvas-module-placeholder] [data-instatic-placeholder-description] {
+[data-canvas-module-placeholder] [data-studio-placeholder-description] {
   max-width: 36ch;
   margin: 0;
   padding: 0;
@@ -290,7 +290,7 @@ const CHROME_RULES = `
   white-space: normal;
 }
 
-[data-canvas-module-placeholder] [data-instatic-placeholder-actions] {
+[data-canvas-module-placeholder] [data-studio-placeholder-actions] {
   display: inline-flex;
   flex-wrap: wrap;
   justify-content: center;
@@ -299,7 +299,7 @@ const CHROME_RULES = `
   pointer-events: auto;
 }
 
-[data-canvas-module-placeholder] [data-instatic-placeholder-actions] button {
+[data-canvas-module-placeholder] [data-studio-placeholder-actions] button {
   height: 28px;
   padding: 0 var(--chrome-space-xl);
   border: 1px solid color-mix(in srgb, var(--text) 14%, transparent);
@@ -315,26 +315,26 @@ const CHROME_RULES = `
   cursor: default;
 }
 
-[data-canvas-module-placeholder] [data-instatic-placeholder-actions] button:hover {
+[data-canvas-module-placeholder] [data-studio-placeholder-actions] button:hover {
   background: var(--bg-surface-2);
   border-color: color-mix(in srgb, var(--text) 22%, transparent);
 }
 
-[data-canvas-module-placeholder] [data-instatic-placeholder-actions] button:active {
+[data-canvas-module-placeholder] [data-studio-placeholder-actions] button:active {
   background: var(--bg-surface-3);
 }
 
 /* ── base.slot-instance ─────────────────────────────────────────────────────
  * Reproduced from SlotInstance.module.css using stable data-attribute selectors
- * (data-instatic-slot-instance, data-instatic-slot-instance-header, data-instatic-slot-label,
- * data-instatic-slot-instance-content) added to SlotInstanceEditor.tsx alongside
+ * (data-studio-slot-instance, data-studio-slot-instance-header, data-studio-slot-label,
+ * data-studio-slot-instance-content) added to SlotInstanceEditor.tsx alongside
  * the existing CSS-Module class names.
  *
  * Uses the forwarded global border tokens so slot chrome matches the parent
  * editor document without duplicating literal values in this iframe stylesheet.
  */
 
-[data-instatic-slot-instance] {
+[data-studio-slot-instance] {
   border: 1px solid var(--border-muted);
   border-radius: var(--radius);
   background: var(--bg-surface);
@@ -349,7 +349,7 @@ const CHROME_RULES = `
   text-transform: none;
 }
 
-[data-instatic-slot-instance-header] {
+[data-studio-slot-instance-header] {
   display: flex;
   align-items: center;
   gap: var(--chrome-space-2xs);
@@ -370,7 +370,7 @@ const CHROME_RULES = `
   pointer-events: none;
 }
 
-[data-instatic-slot-instance-header] [data-instatic-slot-label] {
+[data-studio-slot-instance-header] [data-studio-slot-label] {
   color: var(--text-muted);
   font-size: var(--chrome-text-xs);
   font-style: italic;
@@ -382,17 +382,17 @@ const CHROME_RULES = `
   white-space: normal;
 }
 
-[data-instatic-slot-instance-content] {
+[data-studio-slot-instance-content] {
   min-height: 24px;
   padding: var(--chrome-space-3xs);
 }
 
 /* ── base.list placeholder ──────────────────────────────────────────────────
  * Reproduced from list.module.css .placeholder using the stable
- * data-instatic-list-placeholder attribute added to ListEditor.tsx.
+ * data-studio-list-placeholder attribute added to ListEditor.tsx.
  */
 
-[data-instatic-list-placeholder] {
+[data-studio-list-placeholder] {
   color: var(--text-subtle);
   margin-bottom: var(--chrome-space-xs);
   font-family: var(--chrome-font-sans);
@@ -405,10 +405,10 @@ const CHROME_RULES = `
 
 /* ── NodeRenderer unknown-module fallback ───────────────────────────────────
  * Reproduced from NodeRenderer.module.css .unknownModule using the stable
- * data-instatic-unknown-module attribute added to NodeRenderer.tsx.
+ * data-studio-unknown-module attribute added to NodeRenderer.tsx.
  */
 
-[data-instatic-unknown-module] {
+[data-studio-unknown-module] {
   outline: 1px dashed var(--danger);
   padding: var(--chrome-space-3xs);
   color: var(--text-subtle);

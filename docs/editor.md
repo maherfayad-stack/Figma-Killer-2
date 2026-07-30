@@ -67,7 +67,7 @@ Why the split:
 - **`AdminEntry`** is eager-imported but small (~10 KB gz). Owns the boot probe and gate.
 - **`AuthenticatedAdmin`** is `React.lazy` so the login screen doesn't pay for SpotlightRoot, the editor store, or any workspace page chunk.
 - **Workspace pages** are wrapped in `prewarmedLazy(...)` — the active page pre-warms at module evaluation (alone, so no 8 sibling imports stealing CPU); after first paint a `requestIdleCallback` pre-warms the remaining pages. `/admin/site` delays sibling preloads slightly so `AdminCanvasEditorBody` claims the first post-paint slot. The result: subsequent workspace navigation renders synchronously with no Suspense fallback.
-- **Plugin runtime** (`globalThis.__instatic`) is installed lazily by `ensurePluginRuntime()` in `pluginRuntimeBootstrap.ts`. It's triggered on first admin-layout mount via `useInstalledEditorPlugins`, so plugin code never runs before login and the runtime download stays off the dashboard critical path.
+- **Plugin runtime** (`globalThis.__studio`) is installed lazily by `ensurePluginRuntime()` in `pluginRuntimeBootstrap.ts`. It's triggered on first admin-layout mount via `useInstalledEditorPlugins`, so plugin code never runs before login and the runtime download stays off the dashboard critical path.
 
 ---
 
@@ -108,7 +108,7 @@ import { useInitialQueryParams, useUrlQuerySync } from '@admin/lib/urlState'
 
 ### Why a separate module
 
-Workspace selections still need bookmarkable query strings without replaying route navigation. `urlState` solves this by operating on `window.history.replaceState` directly — no `instatic:locationchange` event, no route re-match, just a query-string update that keeps the pathname stable.
+Workspace selections still need bookmarkable query strings without replaying route navigation. `urlState` solves this by operating on `window.history.replaceState` directly — no `studio:locationchange` event, no route re-match, just a query-string update that keeps the pathname stable.
 
 ### `useInitialQueryParams()`
 
@@ -202,7 +202,7 @@ src/admin/
 ├── access.ts                   ← workspace gating
 ├── workspace.ts                ← AdminWorkspace union
 ├── session.tsx, sessionContext.ts ← AdminSession context
-├── pluginRuntimeBootstrap.ts   ← installs globalThis.__instatic (lazy)
+├── pluginRuntimeBootstrap.ts   ← installs globalThis.__studio (lazy)
 │
 ├── layouts/
 │   ├── AdminCanvasLayout/      ← Site shell + lazy editor body
@@ -230,7 +230,7 @@ src/admin/
     ├── dashboard/              ← stats, activity, publish lineup
     ├── site/                   ← THE VISUAL EDITOR (see below)
     ├── content/                ← post / page list and editor
-    ├── data/                   ← data_tables management (see docs/features/data-workspace.md)
+    ├── data/                   ← data_tables management
     ├── media/                  ← media manager
     ├── plugins/                ← plugin install / configure
     ├── users/                  ← user management
@@ -437,12 +437,12 @@ Each iframe `<head>` receives up to six `<style>` elements (three from `ClassSty
 
 | Element | Injector | Cascade layer | Contents |
 |---|---|---|---|
-| `<style id="instatic-editor-chrome">` | `EditorChromeInjector` | **unlayered** | Editor-only chrome: placeholder, slot-instance, list placeholder, unknown-module fallback |
+| `<style id="studio-editor-chrome">` | `EditorChromeInjector` | **unlayered** | Editor-only chrome: placeholder, slot-instance, list placeholder, unknown-module fallback |
 | `<style id="mc-classes">` | `ClassStyleInjector` | `@layer user-authored` | Publisher reset + framework CSS + class registry CSS |
 | `<style id="mc-classes-preview">` | `ClassStyleInjector` | `@layer user-authored` | Higher-specificity preview rule while a property control is hovered; empty for state-pseudo rules |
 | `<style id="mc-classes-force-state">` | `ClassStyleInjector` | `@layer user-authored` | Forced state preview: paints the active state-pseudo rule onto the selected node via a doubled `[data-node-id]` selector |
 | `<style id="mc-user-styles">` | `UserStylesheetInjector` | `@layer user-authored` | User-uploaded stylesheets (verbatim, unscoped) |
-| `<style id="instatic-canvas-animation">` | `CanvasAnimationInjector` | **unlayered**, `!important` | Design frames only: animations run once and hold their last keyframe |
+| `<style id="studio-canvas-animation">` | `CanvasAnimationInjector` | **unlayered**, `!important` | Design frames only: animations run once and hold their last keyframe |
 
 **Animations run once on the design canvas.** `CanvasAnimationInjector` sets `animation-iteration-count: 1` and `animation-fill-mode: forwards` on `*`, `*::before`, and `*::after`, so a looping animation plays through once and then holds its final frame instead of running forever behind the selection ring. An imported app makes this necessary rather than cosmetic: the eSIM corpus has a radar ping and an orbiting dot on `infinite`, and `@alm-design/design-system` ships an `infinite` shimmer on every skeleton variant — on a board, that is every frame animating at once. Duration and delay are left alone, so each animation still plays at its authored speed before settling, and transitions are untouched (they are interaction responses, not ambient motion).
 
@@ -452,7 +452,7 @@ This is the one injector that needs `!important`. Being unlayered is not suffici
 
 The **unlayered-vs-layered** split is the cascade isolation mechanism: CSS rules outside any `@layer` always beat rules inside `@layer`-d blocks, regardless of specificity. Author CSS (both the class registry and user stylesheets) goes into `@layer user-authored`, so it can never override the editor chrome even with a high-specificity selector.
 
-`EditorChromeInjector` targets chrome elements via **stable data-attribute selectors** (`data-canvas-module-placeholder`, `data-instatic-slot-instance`, `data-instatic-unknown-module`, etc.) rather than hashed CSS-Module class names, which only exist in the parent document. At mount, it copies the required safe design tokens (`--text-subtle`, `--canvas-placeholder-bg`, `--radius`, etc.) from the parent document's `:root` onto the iframe's `:root` so `var(...)` references resolve correctly inside the iframe. Admin font, text-size, and spacing tokens are remapped to `--chrome-font-sans`, `--chrome-text-*`, and `--chrome-space-*` before use; they are never copied as `--font-sans`, `--text-*`, or `--space-*`, because those short names belong to the rendered site's Framework tokens inside the canvas.
+`EditorChromeInjector` targets chrome elements via **stable data-attribute selectors** (`data-canvas-module-placeholder`, `data-studio-slot-instance`, `data-studio-unknown-module`, etc.) rather than hashed CSS-Module class names, which only exist in the parent document. At mount, it copies the required safe design tokens (`--text-subtle`, `--canvas-placeholder-bg`, `--radius`, etc.) from the parent document's `:root` onto the iframe's `:root` so `var(...)` references resolve correctly inside the iframe. Admin font, text-size, and spacing tokens are remapped to `--chrome-font-sans`, `--chrome-text-*`, and `--chrome-space-*` before use; they are never copied as `--font-sans`, `--text-*`, or `--space-*`, because those short names belong to the rendered site's Framework tokens inside the canvas.
 
 Full details: [`docs/features/canvas-iframe-per-frame.md`](features/canvas-iframe-per-frame.md).
 
@@ -650,7 +650,7 @@ Data sources:
 - **Modules:** `registry.list()` filtered by the same editor insertion rules as the compact picker (`base.body`, `base.visual-component-ref`, and `base.slot-instance` hidden; `base.slot-outlet` only in Visual Component mode).
 - **Layouts:** a single source — user-saved layouts from `site.layouts` (see "Saved layouts" below), which persist as `data_rows` (table_id `layouts`). There are no code-defined presets; any built-ins we ship later are seeded rows in that same table, indistinguishable from a user save.
 - **Components:** `site.visualComponents`.
-- **Recent:** per-browser local state in `instatic-module-inserter-v1`, validated with TypeBox before use.
+- **Recent:** per-browser local state in `studio-module-inserter-v1`, validated with TypeBox before use.
 - **Favorites:** per-user server state in `user_preferences` key `module-inserter`, validated with TypeBox by `src/core/persistence/userPreferences.ts` and used by `CanvasNotch`.
 
 The modal uses the tile-card pattern from `docs/design.md`: `--bg-surface` parent, 1px grid gap, `--bg-surface-2` tiles, `--card-radius`, categorical accents via `data-accent`, and an achromatic `--focus-ring` selection state. Wireframe image regions reuse `--canvas-placeholder-bg`.
@@ -685,7 +685,7 @@ The palette is wired so that **plugin-registered commands work the same as built
 
 Two folders carry the plugin frontend:
 
-- **`src/admin/plugin-host-hooks/`** — React hooks exposed to plugins via `globalThis.__instatic` (set up by `installPluginRuntime()` in `AuthenticatedAdmin`).
+- **`src/admin/plugin-host-hooks/`** — React hooks exposed to plugins via `globalThis.__studio` (set up by `installPluginRuntime()` in `AuthenticatedAdmin`).
 - **`src/admin/plugin-host-ui/`** — UI primitives plugins call to render dashboard / panel / page surfaces.
 
 Plugin canvas modules render inside the canvas iframe like any other module. Plugin admin pages mount at `/admin/plugins/:pluginId/:pageId` via the `pluginPage` workspace.

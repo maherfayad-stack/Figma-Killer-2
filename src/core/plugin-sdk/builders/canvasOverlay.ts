@@ -1,8 +1,8 @@
 /**
  * `definePluginCanvasOverlay` — type-safe canvas overlay entrypoint.
  *
- *   import { definePluginCanvasOverlay } from '@instatic/plugin-sdk'
- *   import { useCanvasNodeRect, useEditorStore } from '@instatic/host-hooks'
+ *   import { definePluginCanvasOverlay } from '@studio/plugin-sdk'
+ *   import { useCanvasNodeRect, useEditorStore } from '@studio/host-hooks'
  *
  *   function PluginPin() {
  *     const selectedId = useEditorStore((s) => s.selectedNodeId)
@@ -40,8 +40,8 @@
  *   • Each plugin's overlay is wrapped in an ErrorBoundary so a crash
  *     stays contained
  *
- * The plugin's bundle externalizes `react` / `@instatic/host-ui` /
- * `@instatic/host-hooks` / `@instatic/plugin-sdk` like every other
+ * The plugin's bundle externalizes `react` / `@studio/host-ui` /
+ * `@studio/host-hooks` / `@studio/plugin-sdk` like every other
  * editor surface — same import-map resolution, same single-React guarantee.
  */
 
@@ -63,7 +63,7 @@ const OVERLAY_ID_PATTERN = /^[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?$/
 
 /**
  * Identity wrapper — validates the id at definition time so authoring errors
- * surface during `instatic-plugin build`, not at editor activation.
+ * surface during `studio-plugin build`, not at editor activation.
  */
 export function definePluginCanvasOverlay(
   config: DefinePluginCanvasOverlayConfig,

@@ -54,7 +54,7 @@ describe('module inserter model', () => {
     expect(vcModeIds).toEqual(['base.container', 'base.slot-outlet', 'base.text'])
   })
 
-  it('hides every built-in Instatic block from the palette in studio mode, keeping only design-system components', () => {
+  it('hides every built-in Studio block from the palette in studio mode, keeping only design-system components', () => {
     const modules = [
       mod('base.container', 'Layout', 'Container'),
       mod('base.text', 'Typography', 'Text'),

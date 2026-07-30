@@ -111,7 +111,7 @@ export interface ModuleInsertionContext {
   /**
    * Studio (filesystem-as-truth) mode. In studio the only insertable palette
    * entries are the code-backed design-system components (category
-   * `'Design System'`); Instatic's built-in `base.*` block modules stay
+   * `'Design System'`); Studio's built-in `base.*` block modules stay
    * registered as renderers for host HTML in the parsed source, but are hidden
    * from every picker surface so authors compose only with real components.
    */
@@ -148,7 +148,7 @@ export function moduleAvailability(
   // that already uses one renders it instead of an "Unknown module" box.
   if (PALETTE_HIDDEN_ALM_MODULE_IDS.has(mod.id)) return { kind: 'hidden' }
   // Studio mode: only design-system components are user-insertable; the built-in
-  // Instatic block modules are host-HTML renderers, not palette entries.
+  // Studio block modules are host-HTML renderers, not palette entries.
   if (context.isStudio && mod.category !== DESIGN_SYSTEM_CATEGORY) return { kind: 'hidden' }
   if (mod.id === 'base.slot-outlet' && !context.isVCMode) return { kind: 'hidden' }
   if (mod.id === 'base.outlet') {

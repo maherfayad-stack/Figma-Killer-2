@@ -87,7 +87,7 @@ export async function fetchNpmCssSource(
   let metaRes: Response
   try {
     metaRes = await fetchImpl(registryMetadataUrl(parsed.name), {
-      headers: { accept: 'application/json', 'user-agent': 'instatic-design-import' },
+      headers: { accept: 'application/json', 'user-agent': 'studio-design-import' },
     })
   } catch (err) {
     throw new DesignImportError(
@@ -118,7 +118,7 @@ export async function fetchNpmCssSource(
 
   let tarRes: Response
   try {
-    tarRes = await fetchImpl(tarballUrl, { headers: { 'user-agent': 'instatic-design-import' } })
+    tarRes = await fetchImpl(tarballUrl, { headers: { 'user-agent': 'studio-design-import' } })
   } catch (err) {
     throw new DesignImportError(
       `Could not download the package tarball: ${err instanceof Error ? err.message : String(err)}`,

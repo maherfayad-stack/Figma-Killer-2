@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * Instatic benchmark suite — CLI orchestrator.
+ * Studio benchmark suite — CLI orchestrator.
  *
  * Usage:
  *   bun run bench                    # full suite, write .tmp/benchmarks/REPORT.md
@@ -42,7 +42,7 @@ import { snapshotTokensBench } from './benches/snapshot-tokens'
 const REPO_ROOT = resolve(import.meta.dir, '../..')
 
 // `browser` and `snapshot-tokens` are NOT in the default run. `browser` needs
-// Chromium and optional INSTATIC_BENCH_ADMIN_EMAIL / INSTATIC_BENCH_ADMIN_PASSWORD
+// Chromium and optional STUDIO_BENCH_ADMIN_EMAIL / STUDIO_BENCH_ADMIN_PASSWORD
 // credentials for authenticated scenarios; `snapshot-tokens` needs ANTHROPIC_API_KEY
 // + a seeded .tmp/dev.db and makes network calls to count_tokens. Run them
 // explicitly, e.g. `bun run bench --only=snapshot-tokens`.
@@ -104,7 +104,7 @@ function parseArgs(argv: readonly string[]): CliFlags {
 
 function printHelp(): void {
   console.log(`
-Instatic benchmark suite.
+Studio benchmark suite.
 
 Usage:
   bun run bench [flags]
@@ -177,7 +177,7 @@ async function main(): Promise<void> {
     baseUrl: flags.baseUrl,
   }
 
-  log.section('Instatic benchmark suite')
+  log.section('Studio benchmark suite')
   log.detail(`Running ${benches.length} bench${benches.length === 1 ? '' : 'es'}: ${benches.map((b) => b.name).join(', ')}`)
   if (flags.quick) log.detail('Quick mode — reduced iteration counts.')
   if (flags.baseUrl) log.detail(`Targeting external server: ${flags.baseUrl}`)

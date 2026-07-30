@@ -53,7 +53,7 @@
  * Left-click pointer events inside the iframe never bubble to the parent's
  * `window`, so the parent's pointermove / up / cancel listeners go silent
  * the moment the cursor enters a frame. To fix that, drag hooks set
- * `data-instatic-canvas-dragging` and `data-instatic-canvas-dragging-pointer-id` on
+ * `data-studio-canvas-dragging` and `data-studio-canvas-dragging-pointer-id` on
  * the parent's `<html>` while a drag is in flight. Every iframe reads
  * those flags inside its pointer handler and, when set, forwards the
  * three pointer event types to the parent (using the original drag's
@@ -94,14 +94,14 @@ import { closestReadonlyRegion, isElementLike } from './readonlyRegion'
 import { CanvasDocumentContext, CanvasFrameElementContext } from './CanvasContexts'
 import styles from './IframeFrameSurface.module.css'
 
-const IFRAME_DOCUMENT_SENTINEL = 'data-instatic-canvas-document'
+const IFRAME_DOCUMENT_SENTINEL = 'data-studio-canvas-document'
 const IFRAME_SRC_DOC = `<!doctype html><html ${IFRAME_DOCUMENT_SENTINEL}><head></head><body></body></html>`
-const IFRAME_DOCUMENT_FLAG = '__instaticCanvasDocument'
+const IFRAME_DOCUMENT_FLAG = '__studioCanvasDocument'
 
-type InstaticIframeDocument = Document & { [IFRAME_DOCUMENT_FLAG]?: true }
+type StudioIframeDocument = Document & { [IFRAME_DOCUMENT_FLAG]?: true }
 
 function claimIframeSrcDocument(doc: Document): boolean {
-  const taggedDocument = doc as InstaticIframeDocument
+  const taggedDocument = doc as StudioIframeDocument
   if (taggedDocument[IFRAME_DOCUMENT_FLAG]) return true
   if (!doc.documentElement.hasAttribute(IFRAME_DOCUMENT_SENTINEL)) return false
 
@@ -160,7 +160,7 @@ interface IframeFrameSurfaceProps {
   /**
    * Double-click handler for read-only composed regions (template chrome,
    * inlined components, outlet previews). Resolved from the nearest ancestor
-   * carrying `data-instatic-readonly-*` markers; opens that source for editing.
+   * carrying `data-studio-readonly-*` markers; opens that source for editing.
    */
   onReadonlyOpen?: (kind: 'page' | 'component', id: string) => void
   /**
@@ -181,7 +181,7 @@ export interface IframeFrameSurfaceHandle {
   contentBody: HTMLBodyElement | null
 }
 
-type IframeWithCleanup = HTMLIFrameElement & { _instaticCleanup?: () => void }
+type IframeWithCleanup = HTMLIFrameElement & { _studioCleanup?: () => void }
 
 export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFrameSurfaceProps>(
   function IframeFrameSurface(
@@ -229,15 +229,15 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
     const attachIframeDoc = (iframe: HTMLIFrameElement | null) => {
       const previousIframe = iframeRef.current as IframeWithCleanup | null
       if (previousIframe && previousIframe !== iframe) {
-        previousIframe._instaticCleanup?.()
-        previousIframe._instaticCleanup = undefined
+        previousIframe._studioCleanup?.()
+        previousIframe._studioCleanup = undefined
       }
       iframeRef.current = iframe
       if (!iframe) {
         setIframeDoc(null)
         return
       }
-      delete iframe.dataset.instaticCanvasDocumentLoaded
+      delete iframe.dataset.studioCanvasDocumentLoaded
       const captureSrcDoc = () => {
         const doc = iframe.contentDocument
         if (
@@ -249,7 +249,7 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
         // document. Module effects, media reads, and authored runtime scripts
         // must run once against the final srcDoc document only.
         setIframeDoc(doc)
-        iframe.dataset.instaticCanvasDocumentLoaded = 'true'
+        iframe.dataset.studioCanvasDocumentLoaded = 'true'
       }
       // srcDoc often parses before the ref commits; otherwise its load event
       // retries. The bootstrap sentinel, not event timing or URL heuristics,
@@ -261,10 +261,10 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
       // function may be called again with null on unmount) doesn't leak
       // listeners.
       const cleanableIframe = iframe as IframeWithCleanup
-      cleanableIframe._instaticCleanup = () => {
+      cleanableIframe._studioCleanup = () => {
         iframe.removeEventListener('load', captureSrcDoc)
-        delete iframe.dataset.instaticCanvasDocumentLoaded
-        cleanableIframe._instaticCleanup = undefined
+        delete iframe.dataset.studioCanvasDocumentLoaded
+        cleanableIframe._studioCleanup = undefined
       }
     }
 
@@ -347,8 +347,8 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
       const handleDblClick = (event: MouseEvent) => {
         const region = closestReadonlyRegion(event.target)
         if (!region) return
-        const id = region.getAttribute('data-instatic-readonly-id')
-        const kind = region.getAttribute('data-instatic-readonly-kind')
+        const id = region.getAttribute('data-studio-readonly-id')
+        const kind = region.getAttribute('data-studio-readonly-kind')
         if (!id || (kind !== 'page' && kind !== 'component')) return
         event.preventDefault()
         event.stopPropagation()
@@ -425,7 +425,7 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
     //      pointer down fires in the parent, then as the cursor enters an
     //      iframe its pointermove/up events go to the iframe instead of
     //      bubbling up to `window`. Canvas drag hooks set
-    //      `data-instatic-canvas-dragging` on `<html>` so each iframe knows to
+    //      `data-studio-canvas-dragging` on `<html>` so each iframe knows to
     //      forward pointermove / up / cancel events while the drag is in
     //      flight. The drag id is also stashed so we can mint forwarded
     //      events with the matching pointerId.
@@ -545,8 +545,8 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
       const isCanvasDragActive = (): { pointerId: number } | null => {
         const html = iframe.ownerDocument?.documentElement
         if (!html) return null
-        if (html.dataset.instaticCanvasDragging !== '1') return null
-        const id = Number(html.dataset.instaticCanvasDraggingPointerId ?? NaN)
+        if (html.dataset.studioCanvasDragging !== '1') return null
+        const id = Number(html.dataset.studioCanvasDraggingPointerId ?? NaN)
         return Number.isFinite(id) ? { pointerId: id } : { pointerId: 0 }
       }
       // True while a pan gesture started inside this iframe is still in

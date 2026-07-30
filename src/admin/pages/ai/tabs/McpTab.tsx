@@ -342,8 +342,8 @@ function TokenResultDialog({
 }) {
   const [copied, setCopied] = useState<string | null>(null)
   const origin = typeof window !== 'undefined' ? window.location.origin : ''
-  const endpoint = `${origin}/_instatic/mcp`
-  const claudeCommand = `claude mcp add instatic --transport http ${endpoint} --header "Authorization: Bearer ${result.token}"`
+  const endpoint = `${origin}/_studio/mcp`
+  const claudeCommand = `claude mcp add studio --transport http ${endpoint} --header "Authorization: Bearer ${result.token}"`
 
   async function copy(value: string, key: string) {
     try {

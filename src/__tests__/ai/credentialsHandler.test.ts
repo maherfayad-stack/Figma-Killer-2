@@ -15,7 +15,7 @@ describe('AI credential handler', () => {
     originalWarn = console.warn
     originalError = console.error
     originalNodeEnv = process.env.NODE_ENV
-    originalSecretKey = process.env.INSTATIC_SECRET_KEY
+    originalSecretKey = process.env.STUDIO_SECRET_KEY
     __resetMasterKeyCacheForTesting()
     globalThis.fetch = async (input, init) => {
       const url = typeof input === 'string'
@@ -50,9 +50,9 @@ describe('AI credential handler', () => {
       process.env.NODE_ENV = originalNodeEnv
     }
     if (originalSecretKey === undefined) {
-      delete process.env.INSTATIC_SECRET_KEY
+      delete process.env.STUDIO_SECRET_KEY
     } else {
-      process.env.INSTATIC_SECRET_KEY = originalSecretKey
+      process.env.STUDIO_SECRET_KEY = originalSecretKey
     }
     __resetMasterKeyCacheForTesting()
     await harness.cleanup()
@@ -164,7 +164,7 @@ describe('AI credential handler', () => {
 
   it('surfaces a clear production error when the credential encryption key is missing', async () => {
     process.env.NODE_ENV = 'production'
-    delete process.env.INSTATIC_SECRET_KEY
+    delete process.env.STUDIO_SECRET_KEY
     __resetMasterKeyCacheForTesting()
 
     const cookie = await harness.setupOwner()
@@ -182,7 +182,7 @@ describe('AI credential handler', () => {
 
     expect(res.status).toBe(500)
     const body = await readJson<{ error: string }>(res)
-    expect(body.error).toContain('INSTATIC_SECRET_KEY')
+    expect(body.error).toContain('STUDIO_SECRET_KEY')
     expect(body.error).not.toContain('sk-proj-test')
   })
 

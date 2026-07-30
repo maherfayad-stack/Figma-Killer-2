@@ -1,6 +1,36 @@
-# Instatic
+# Studio
 
-This file is the **agent rule book**. Read it before changing code. Detailed explanations live in `docs/` — start at [`docs/README.md`](docs/README.md) for orientation and follow the links from there.
+This file is the **agent rule book** — the constraints every change must satisfy.
+
+## Read these first, in this order
+
+| File | What it gives you |
+|---|---|
+| **[`PROJECT-BRIEF.md`](PROJECT-BRIEF.md)** | **Start here.** What this product actually is, what already works, the traps that catch every new agent, and which specialist + docs your task needs. It exists so you never have to re-scan the repo. |
+| **[`STATE.md`](STATE.md)** | Live coordination. What is in flight, what is blocked, and durable facts previous agents learned the hard way. **Read before working; write a handoff before stopping.** |
+| [`docs/agent-refs/`](docs/agent-refs/) | Compressed, agent-facing references: `path-index.md` (where everything lives), `conventions-quickref.md` (the gated rules), `studio-pipeline.md`, `canvas-internals.md`, `editor-store.md`, `handoff-protocol.md`, `glossary.md`. |
+| [`STUDIO-IMPORT-V2-PLAN.md`](STUDIO-IMPORT-V2-PLAN.md) | The roadmap. Most feature requests are already specced here — find the workstream before designing. |
+| [`docs/README.md`](docs/README.md) | Full documentation index, for depth. |
+
+**If a doc conflicts with `PROJECT-BRIEF.md`, the brief wins** — parts of `docs/`
+still describe the dormant CMS half of this fork.
+
+## Agent team
+
+Fourteen specialists live in [`.claude/agents/`](.claude/agents/) — roster and
+routing in [`.claude/agents/README.md`](.claude/agents/README.md). All run on
+Sonnet 5.
+
+- **Core:** `studio-scout` (recon, read-only) · `studio-architect` (work orders) ·
+  `studio-implementer` · `studio-verifier` (gates + triage) · `studio-scribe` (docs)
+- **Specialists:** `parser-surgeon` · `canvas-engineer` · `store-engineer` ·
+  `panel-designer` · `server-engineer` · `mcp-tooling` · `perf-hunter` ·
+  `security-guard` · `test-engineer`
+
+**Every agent writes a `STATE.md` handoff entry at every stage boundary** — see
+[`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protocol.md).
+An unfinished task with a good handoff is worth more than a finished one nobody
+can continue.
 
 ## Local admin smoke tests
 
@@ -28,11 +58,22 @@ When publishing work:
 
 ## What this project is
 
-A self-hosted, open-source CMS with a built-in visual editor and a first-class plugin system. One Bun server backed by either Postgres or SQLite (selected by `DATABASE_URL`). The output is intentionally plain, semantic HTML with hand-clean CSS — no framework runtimes injected into published pages.
+**Studio — a Figma-grade visual design tool whose source of truth is a real React repository on disk.**
 
-The product is **self-hosted only**. The codebase should not carry assumptions about multi-tenant SaaS operation.
+A user opens a React project (hand-written, uploaded, or pulled from GitHub) as an infinite board of live, editable frames. Every edit is written back into the actual `.tsx` files as a precise AST change. There is no export step and no code generation: the repository *is* the document. Projects live in `studio-workspace/<project>/`; Studio mode is entered at `/admin/site?studio`.
 
-Read [`docs/architecture.md`](docs/architecture.md) for the system overview, [`docs/server.md`](docs/server.md) for the server, [`docs/editor.md`](docs/editor.md) for the admin + visual editor.
+Two invariants explain most of the codebase:
+
+1. **Parse, never execute.** Everything on the canvas was read out of the AST by a bounded evaluator with explicit tiers — no component is rendered server-side, no hook is called. *(The roadmap proposes relaxing this behind an explicit, per-project trust tier; until that ships, it holds absolutely.)*
+2. **A write must have exactly one honest target.** If an edit cannot land in exactly one place in the user's source without destroying a binding or silently changing N call sites, the editor refuses it and says why.
+
+### The dormant CMS half
+
+This repo began as a fork of a self-hosted CMS. That subsystem — Postgres/SQLite, `data_tables`/`data_rows`, the publisher, plugins, Content/Data/Dashboard/Media workspaces — **is still here and is load-bearing**: Studio's editor store, page tree, module engine, canvas, admin shell, and auth are all built on it.
+
+**Keep it, do not build new features on it, and do not let a CMS feature doc convince you a CMS concept is the right home for a Studio feature.** Sections of this file below (database dialects, migrations, plugin SDK, publisher) describe that half and still apply *when you genuinely touch it* — but Studio state belongs on disk, not in the database.
+
+Read [`PROJECT-BRIEF.md`](PROJECT-BRIEF.md) for orientation, [`docs/features/studio-import.md`](docs/features/studio-import.md) for the parser contract, [`docs/architecture.md`](docs/architecture.md) for the system overview, [`docs/server.md`](docs/server.md) for the server, [`docs/editor.md`](docs/editor.md) for the admin + visual editor.
 
 ### Stack at a glance
 
@@ -47,10 +88,10 @@ Read [`docs/architecture.md`](docs/architecture.md) for the system overview, [`d
 - **Plugins:** Zip packages with a `plugin.json` manifest, lifecycle hooks. Server entrypoints and canvas module packs run inside a **QuickJS-WASM sandbox** — no Node/Bun ambient access, network gated by `network.outbound` permission + `networkAllowedHosts`. The VM bootstrap (SDK factory + `__run*` dispatchers) is authored as typed TS in `server/plugins/quickjs/bootstrap/src/` and bundled to committed string artifacts in `bootstrap/generated/` — after editing the source run `bun run bootstrap:sync` (gated by `plugin-bootstrap-fresh.test.ts`). Permission enforcement everywhere (VM, host, editor) validates against `grantedPermissions`, never the declared `permissions` array. Feature doc: [`docs/features/plugin-system.md`](docs/features/plugin-system.md).
 - **Routing:** In-house router at `src/admin/lib/routing/`. Replaces `react-router-dom`. Use it for all internal admin navigation, including links rendered from the site editor. `react-router-dom` is banned, raw `<a href="/admin...">` hard navigations are banned in admin UI, and `src/core/` + `src/modules/` must not import the admin router. Gated by `admin-router-usage.test.ts`.
 - **Icons:** `pixel-art-icons/icons/<name>` — deep-imported, tree-shakeable. Vendored at `vendor/pixel-art-icons/`. No `lucide-react`, no inline SVG strings — gated by `no-third-party-icons.test.ts`, `direct-icon-imports.test.ts`. Add a new icon by importing it and running `bun run icons:sync`.
-- **AI providers:** No provider SDKs. Each driver in `server/ai/drivers/` talks directly to its provider's REST API over HTTP/SSE, sharing one multi-turn tool loop (`drivers/http/toolLoop.ts`). `@anthropic-ai/sdk`, `@anthropic-ai/claude-agent-sdk`, `@openai/agents`, and `@openrouter/agent` are banned repo-wide. `@modelcontextprotocol/sdk` is **scoped, not banned**: allowed only under `server/ai/mcp/` (Instatic's MCP *server* implements a real wire protocol), still banned in the drivers and the browser. Gated by `ai-driver-isolation.test.ts`.
-- **MCP server:** Instatic exposes its CMS tools to external MCP clients (Claude Code, Codex, remote agents) at `/_instatic/mcp`, authenticated by per-connector bearer tokens. Thin adapter over the existing tool engine: headless reads and explicit `site_publish` run in-process; browser tools route by scope to the connector owner's **open Site or Content workspace** through the `(userId, scope)` live bridge (`server/ai/mcp/editorBridge.ts` + `useMcpWorkspaceBridge`). The live workspace is the single source of truth for edits (no headless DB-mutating page-tree tool, which would desync), and writes remain drafts until the explicitly capability-gated publish call. Feature doc: [`docs/features/mcp-connectors.md`](docs/features/mcp-connectors.md).
+- **AI providers:** No provider SDKs. Each driver in `server/ai/drivers/` talks directly to its provider's REST API over HTTP/SSE, sharing one multi-turn tool loop (`drivers/http/toolLoop.ts`). `@anthropic-ai/sdk`, `@anthropic-ai/claude-agent-sdk`, `@openai/agents`, and `@openrouter/agent` are banned repo-wide. `@modelcontextprotocol/sdk` is **scoped, not banned**: allowed only under `server/ai/mcp/` (Studio's MCP *server* implements a real wire protocol), still banned in the drivers and the browser. Gated by `ai-driver-isolation.test.ts`.
+- **MCP server:** Studio exposes its CMS tools to external MCP clients (Claude Code, Codex, remote agents) at `/_studio/mcp`, authenticated by per-connector bearer tokens. Thin adapter over the existing tool engine: headless reads and explicit `site_publish` run in-process; browser tools route by scope to the connector owner's **open Site or Content workspace** through the `(userId, scope)` live bridge (`server/ai/mcp/editorBridge.ts` + `useMcpWorkspaceBridge`). The live workspace is the single source of truth for edits (no headless DB-mutating page-tree tool, which would desync), and writes remain drafts until the explicitly capability-gated publish call. Feature doc: [`docs/features/mcp-connectors.md`](docs/features/mcp-connectors.md).
 - **Tree primitive:** Every tree-of-nodes — pages, Visual Components, slot fills — uses one shape: `NodeTree<TNode>` in `src/core/page-tree/treeSchema.ts`. Mutations are tree-agnostic. Reference: [`docs/reference/page-tree.md`](docs/reference/page-tree.md).
-- **Publishing:** Three-layer pipeline. **Layer A** bakes fully-static pages to `uploads/published/current/<route>.html` at publish time via a two-slot symlink swap (`server/publish/staticArtefact.ts`). **Layer B** is an in-memory LRU keyed by `(urlPath, queryString, publishVersion)` for dynamic routes (`server/publish/renderCache.ts`); `bumpPublishVersion()` evicts wholesale on every publish. **Layer C** emits `<instatic-hole>` placeholders for nodes auto-detected as request-dependent; a ~668 B `IntersectionObserver` runtime lazy-fetches each fragment from `/_instatic/hole/<nodeId>`. Auto-detection lives in `src/core/publisher/dynamicDetection.ts` — one walker, four rules. Single entry: `server/publish/publicRouter.ts:renderPublicResolution`. Full design: [`docs/features/publisher.md`](docs/features/publisher.md).
+- **Publishing:** Three-layer pipeline. **Layer A** bakes fully-static pages to `uploads/published/current/<route>.html` at publish time via a two-slot symlink swap (`server/publish/staticArtefact.ts`). **Layer B** is an in-memory LRU keyed by `(urlPath, queryString, publishVersion)` for dynamic routes (`server/publish/renderCache.ts`); `bumpPublishVersion()` evicts wholesale on every publish. **Layer C** emits `<studio-hole>` placeholders for nodes auto-detected as request-dependent; a ~668 B `IntersectionObserver` runtime lazy-fetches each fragment from `/_studio/hole/<nodeId>`. Auto-detection lives in `src/core/publisher/dynamicDetection.ts` — one walker, four rules. Single entry: `server/publish/publicRouter.ts:renderPublicResolution`. Full design: [`docs/features/publisher.md`](docs/features/publisher.md).
 - **Tests:** `bun test`. Architectural rules in `src/__tests__/architecture/*` — when *your* change drifts a structural rule, fix the rule's gate test in the same change.
 
 ### Repo layout
@@ -331,6 +372,7 @@ The bar is: **your work is clean.**
 
 ## TL;DR
 
+0. **Read [`PROJECT-BRIEF.md`](PROJECT-BRIEF.md) and [`STATE.md`](STATE.md) first, and write a `STATE.md` handoff before you stop.** This is Studio — a design tool over a real React repo — not the CMS half of the fork that most of `docs/` still describes.
 1. Live installations exist with real user data. Refactor **code** freely — no compat shims needed. **DB schema is the exception: every change ships as an additive, non-destructive migration; never rewrite a committed migration or require a DB drop.**
 2. Never preserve backward compatibility in code, never leave band-aids, never duplicate "old vs new" code paths.
 3. If the architecture would be cleaner with a multi-file refactor — do the refactor, in this change.

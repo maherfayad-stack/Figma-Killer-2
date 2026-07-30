@@ -4,7 +4,7 @@
  * A sibling of the Site Import modal: a two-column category navigator (left)
  * with a detail pane (right). Everything is selected by default, so the primary
  * action is a one-click *full export* — a bundle that re-imports into a fresh
- * Instatic instance and reproduces the same site: theme & settings, all content
+ * Studio instance and reproduces the same site: theme & settings, all content
  * tables + rows, the media library and its folder tree, and published-URL
  * redirects.
  *
