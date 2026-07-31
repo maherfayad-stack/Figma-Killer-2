@@ -8,6 +8,65 @@ Entry ids are `<area>-<nn>`. Areas in use: `parser`, `canvas`, `store`, `panel`,
 
 ---
 
+## Where this stands (2026-07-31, end of the resume wave)
+
+**All five spend-limit-terminated work orders are done**, plus `test-infra-01`
+which came out of auditing them. Verified by the orchestrator, not taken on
+report:
+
+| | |
+|---|---|
+| `bun run build` | **exit 0** (with the PINNED compiler — see `standing-08`) |
+| `bun run lint` | **exit 0** |
+| `bun test` | **7675 pass / 20 fail** (was 7436 / 215) |
+
+The 20 are enumerated in `standing-01` and none belong to this wave: 7 plugin
+QuickJS runtime, 3 worker-RPC timeout, 2 runtime-cache layout, and 8 single
+Windows path/separator gates.
+
+**Four files graduated off `debt-01`'s grandfathered ledger this wave, none by
+raising a cap** — `staticEvalCore.ts` 831→663, `BreakpointSelectionOverlay.tsx`
+718→655, `fsCodemodAdapter.ts` 890→645, `studioWriteback.ts` 738→645, plus
+`IframeFrameSurface.tsx` 711→695. `debt-01` is closed.
+
+### The three regressions the wave left behind
+
+Found only by running the full suite **after every agent had landed**. Two of
+them were attributed to "parallel agents' in-flight work" while agents were
+still live — they survived every agent finishing, so that attribution was
+wrong. **Rule: an in-flight attribution expires when the agent lands. Re-run
+before believing it.**
+
+1. **Agent snapshot frames carried editor chrome.** `IframeFrameSurface` gated
+   the in-iframe selection overlay on `!isLive`, and a capture frame is not
+   live — so the overlay root was injected into a surface that is `inert`,
+   `aria-hidden`, and exists only to be read back. Fixed by modelling
+   `'capture'` as the third `IframeInteraction` it actually is.
+2. **`fsCodemodAdapter`'s fetch stub (12 tests)** predated `panel-02` making
+   `styleRuleSources` required on the NDJSON meta line. Second time this exact
+   field broke a fixture — the first was `ProjectCssInjector`.
+3. **`layerNodeContextMenu`'s multi-delete fixture** assigned `site` straight
+   through `setState`, which runs none of the store's index maintenance, so
+   `_nodeIdToPageIds` was empty and `deleteNodes` dropped every id. Production
+   is unaffected — the index is rebuilt on load and patched on every mutation.
+
+### Still open, deliberately
+
+- **Live-update on a call-site prop edit** — the subtree is parsed with the old
+  value substituted, so a change shows only after save + re-parse
+  (`instance-ui-01`).
+- **Zoom crossing a frame-mount boundary: 290–337 ms.** A single frame mount is
+  ~100–140 ms, so batching is not the lever; the fix is making one mount
+  cheaper. `perf-01` measured this and shipped the budget as an explicit
+  ratchet, not a target.
+- **Click selects the nearest instance, not the outermost** — a deliberate
+  deviation from Figma; `findEnclosingInstance` is the one function to change.
+- `setDeclarationAtMedia`, the Tailwind tier's real fix (a `className` edit),
+  and CSS property removal (`panel-02`).
+- ~4,200 orphaned `cms-test-*` dirs in `%TEMP%` from before the `EBUSY` fix.
+
+---
+
 ## STOP — read this before resuming (2026-07-31)
 
 **Five agents were terminated mid-edit by an account spend limit**, not by any
