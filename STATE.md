@@ -16,6 +16,24 @@ Their partial work is committed and the tree **builds and lints clean**, but
 four tests fail from work that stopped halfway. Resume those five work orders
 from the queue below; do not start anything new first.
 
+**Resume wave dispatched 2026-07-31 (orchestrator).** Three of the five are
+running now, chosen to be file-disjoint so they cannot collide:
+
+| Work order | Owns | Why it went first |
+|---|---|---|
+| `parser-07` | `src/core/page-parser/` | last known cause of visibly-broken screens (3 of 15) |
+| `infra-01` | `server/handlers/studio/` + token extraction | owns all 4 genuinely-failing tests |
+| `instance-ui-01` | `src/admin/pages/site/panels/PropertiesPanel/` + canvas selection | `parser-05` shipped the engine and named this as its gap |
+
+`panel-02` and `perf-01` are **deliberately held**, not forgotten:
+- `panel-02` shares `studioWriteback.ts` and `fsCodemodAdapter.ts` with work
+  `instance-ui-01` may touch — dispatch it once `instance-ui-01` lands.
+- `perf-01` touches canvas rendering, which `instance-ui-01` also touches for
+  click-to-select-the-instance — same reason, same ordering.
+
+Each resumed agent was told to `git status` / `git diff` FIRST, because its
+predecessor's partial edits are in the tree and re-deriving them would be waste.
+
 ### Repaired by the orchestrator after the terminations
 - **Import cycle** `renderModuleTabContent.tsx` ↔ `InstanceCallSiteView.tsx` —
   broke it by extracting `propLockReason.ts` as a leaf. Madge now clean.
