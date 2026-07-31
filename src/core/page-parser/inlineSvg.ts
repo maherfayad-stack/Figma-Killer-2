@@ -27,8 +27,8 @@
  */
 import { Node } from 'ts-morph'
 import type { JsxAttribute, JsxSpreadAttribute } from 'ts-morph'
-import type { PageEvalContext } from './resolutionLock'
-import { tryResolveExpression } from './resolutionLock'
+import type { PageEvalContext } from './nodeResolution'
+import { tryResolveExpression } from './nodeResolution'
 
 /**
  * SVG attributes that really are camelCase in markup. Everything else that

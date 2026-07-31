@@ -1,7 +1,7 @@
 /**
- * resolutionLock — §7.6's wiring glue between `staticEval.ts`'s evaluator and
+ * nodeResolution — §7.6's wiring glue between `staticEval.ts`'s evaluator and
  * `parsePageFile.ts`'s node construction: turns a resolved `StaticValue` into
- * the prop/style/text value plus the lock + `ParsedNode.resolution` metadata
+ * the prop/style/text value plus the `ParsedNode.resolution` metadata
  * `processElement` attaches to a node. Split out of `parsePageFile.ts` purely
  * to stay under the module-size-budget ceiling — this is wiring glue, not new
  * evaluation logic (the evaluator itself lives in `staticEval.ts`).
@@ -16,7 +16,7 @@ export interface PageEvalContext {
   options: StaticEvalOptions
 }
 
-/** A resolved non-literal value, tracked alongside `props`/`inlineStyles`/`text` so `processElement` can lock the node and record `ParsedNode.resolution` — see its doc comment in `./types`. */
+/** A resolved non-literal value, tracked alongside `props`/`inlineStyles`/`text` so `processElement` can record `ParsedNode.resolution` — see its doc comment in `./types`. */
 export interface Resolution {
   source: string
   note?: string
@@ -110,12 +110,11 @@ function staticValueToPropValue(value: StaticValue): ParsedPropValue | undefined
  * attribute is a string, so a structured value there is meaningless.
  *
  * Returns no `note`-carrying `Resolution` obligation to the caller, and that is
- * intentional: `withResolutionLock` locks a node because a resolved value must
- * never be written back over its binding, and a structured value is not a
- * writeback target in the first place (`setJsxProp` only takes scalars, and the
- * studio save path filters to scalars before it gets there). Locking the node
- * would cost the user the ability to edit the component's `title` next to an
- * `actions` array they were never able to edit anyway.
+ * intentional: `ParsedNode.resolution` explains a value the user can SEE but
+ * cannot write back over its binding, and a structured value is not a writeback
+ * target in the first place (`setJsxProp` only takes scalars, and the studio
+ * save path filters to scalars before it gets there). Its read-only-ness is
+ * already recorded per-prop in `codeProps` by the caller.
  */
 export function tryResolvePropValue(
   expr: Node,
@@ -126,29 +125,47 @@ export function tryResolvePropValue(
 }
 
 /**
- * Combines a node's STRUCTURAL lock (inherited/`.map`/ternary/spread/svg —
- * `structuralLocked`/`structuralReason`, exactly what `processElement` always
- * computed before §7) with any §7 resolutions captured while extracting its
- * props/style/text. A resolved value is DERIVED — see `ParsedNode.resolution`'s
- * doc comment for why the node must be locked — so ANY resolution locks the
- * node even if it wasn't already; a node that was ALREADY locked keeps its
- * original (more specific) reason and just gains the `resolution` metadata.
- * With no resolutions at all (the common, evaluator-off case) this returns
- * EXACTLY `{ locked: structuralLocked, lockReason?: structuralReason }` —
- * byte-identical to what every call site built manually before §7.
+ * Attaches the §7 resolutions captured while extracting a node's
+ * props/style/text to that node's STRUCTURAL lock (inherited/`.map`/ternary/
+ * spread/svg — `structuralLocked`/`structuralReason`, exactly what
+ * `processElement` computes from the JSX itself).
+ *
+ * **The lock is decided by the structure alone.** A resolution records WHERE a
+ * value came from and nothing else: `<h1>{c.heading}</h1>` is an ordinary
+ * element at a known line and column, so moving, reordering, wrapping or
+ * deleting it is a precise, single-target edit — the same call
+ * `branchAlternatives` already makes ("the parser is certain of the STRUCTURE
+ * here, it only chose which value/branch to show").
+ *
+ * This used to lock the node for any resolution at all, reasoning that an
+ * edited literal must never be written back over `{c.heading}`. That reason is
+ * real, but it is a fact about ONE VALUE, and the per-prop truth already lives
+ * in `codeProps` — every `Resolution` recorded here has a matching `codeProps`
+ * entry pushed by the same reader (`extractProps`/`extractInlineStyles`, and
+ * `codeText` for text), and `isPropWritableToSource` is what every edit guard
+ * asks. So the lock added nothing to the refusal and instead made 149 of the
+ * 276 locked nodes on the real eSIM board (54%) undraggable, each showing a
+ * notice whose first clause — "this element can't be moved or deleted from
+ * here" — was false for it. `ParsedNode.locked`'s own doc comment already said
+ * it is "deliberately NOT a statement about its values"; this makes the code
+ * agree with it.
+ *
+ * `lockReason` is therefore only ever a STRUCTURAL reason. A node with no
+ * structural lock carries none, and the panel explains its resolved values from
+ * `resolution` + `codeProps` instead (`SourceConstraintNotice`).
  */
-export function withResolutionLock(
+export function withResolution(
   structuralLocked: boolean,
   structuralReason: string | undefined,
   resolutions: Resolution[],
 ): { locked: boolean; lockReason?: string; resolution?: NonNullable<ParsedNode['resolution']> } {
   const primary = resolutions[0]
-  if (!primary) {
-    return { locked: structuralLocked, ...(structuralReason ? { lockReason: structuralReason } : {}) }
+  const resolution = primary
+    ? { source: shortenSource(primary.source), ...(primary.note ? { note: primary.note } : {}) }
+    : undefined
+  return {
+    locked: structuralLocked,
+    ...(structuralLocked && structuralReason ? { lockReason: structuralReason } : {}),
+    ...(resolution ? { resolution } : {}),
   }
-  const resolution = { source: shortenSource(primary.source), ...(primary.note ? { note: primary.note } : {}) }
-  if (structuralLocked) {
-    return { locked: true, ...(structuralReason ? { lockReason: structuralReason } : {}), resolution }
-  }
-  return { locked: true, lockReason: `value from ${resolution.source}`, resolution }
 }

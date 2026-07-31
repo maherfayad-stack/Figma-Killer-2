@@ -8,9 +8,12 @@
  * nothing happened".
  *
  * The reason shown is the node's `lockReason` when it has one, because the
- * parser writes that phrase to be read by a person ("value from c.hotelsTag",
- * "item 2 of DEALS"). A prop can be code-valued on a node with no structural
- * lock at all — one resolved attribute among literals — so there is a fallback.
+ * parser writes that phrase to be read by a person ("item 2 of DEALS"). That
+ * phrase is STRUCTURAL and applies to every prop on such a node. Most
+ * code-valued props sit on a node with no structural lock at all — one resolved
+ * attribute among literals — and get the generic fallback rather than the
+ * node's first resolution, which may well have been a different prop's
+ * (`ParsedNode.resolution` keeps only the first).
  *
  * This lives in its own module rather than in `renderModuleTabContent.tsx`
  * because both that file and `InstanceCallSiteView.tsx` need it, and

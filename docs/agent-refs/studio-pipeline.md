@@ -53,6 +53,12 @@ uneditable.
 | `locked` / `lockReason` | **Structure**: the source does not simply place this node — a `.map` generated it, an unresolved ternary/`&&`/call the parser could not pick a single branch for, or a spread feeds it | Cannot be moved, deleted, reordered, wrapped |
 | `codeProps: string[]` | **Values**: prop names with no writable target, because the source holds an expression, not a literal. Inline styles appear as `style:<property>` | Those props are read-only; **siblings stay editable** |
 
+It runs both ways. A resolved value (`{c.heading}`) records `codeProps` and
+`resolution` and **does not lock its node** — `lock-01` deleted that lock, which
+was 149 of the 276 locks on the real board (34.4% -> 15.8% locked) and made the
+panel tell every one of them "this element can't be moved or deleted", which was
+false. `lockReason` is now only ever structural.
+
 A structurally locked node with a real source location **still takes prop, style,
 and text edits**. One predicate decides, and every surface asks it:
 
@@ -183,8 +189,8 @@ statically decidable (Tier A/B), which always outranks the guess. Nothing
 here is evaluated to make the choice — only a source POSITION is preferred —
 so it stays outside Tier D.
 
-**Locked nodes still show their text.** `locked` carries the "not editable"
-meaning; withholding text just made nodes blank.
+**Locked nodes still show their text.** Withholding it just made nodes blank;
+whether the text can be WRITTEN is `codeText`/`textOrigin`'s answer, per-prop.
 
 **Structured props (arrays/objects) reach components only** — an HTML attribute
 is a string. A function entry is dropped, never stubbed. One unresolved array
@@ -238,5 +244,6 @@ import". **The V2 plan turns each of these into a machine-readable finding code.
    with the eSIM corpus, because a suite grown from one repo encodes that repo's
    habits.
 3. Never make the parser throw. Every failure resolves to `unresolved`.
-4. If you add a resolution, decide explicitly: does it **lock** the node? Does it
-   add to `codeProps`? Does it carry an `origin`?
+4. If you add a resolution, decide explicitly: does it add to `codeProps`? Does
+   it carry an `origin`? (It does **not** lock the node — only a STRUCTURAL fact
+   about where the source places the element ever does.)

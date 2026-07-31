@@ -290,6 +290,49 @@ are the remaining WS-2 items, not yet dispatched. See
 
 ## Recently landed
 
+### lock-01 — a resolved VALUE stopped locking its element: 34.4% -> 15.8% locked, and the notice stopped saying something false
+- **Agent:** parser-surgeon
+- **Stage:** done — browser-verified against `studio-workspace/maherfayad-stack-eSIM`
+- **Updated:** 2026-08-01
+- **Goal:** the user's *"a lot of sections, components and stuff is locked, I can't edit"*. `select-01` measured it and reported rather than fixed (see its entry): 276 of 802 nodes locked, **149 of them (54%) for nothing but a resolved value**.
+- **Scope:** `src/core/page-parser/{resolutionLock.ts -> nodeResolution.ts, parsePageFile.ts, types.ts, jsxAttributeReaders.ts, nextAppLayout.ts, branchSelection.ts, componentSubstitution.ts, inlineSvg.ts, staticLoopExpansion.ts}`, `src/core/page-tree/{pageNode.ts,baseNode.ts}`, `src/admin/pages/site/panels/PropertiesPanel/{SourceLockedNotice.tsx -> SourceConstraintNotice.tsx, SharedComponentNotice.module.css, PropertiesPanelBody.tsx, propLockReason.ts}`, `src/admin/pages/site/property-controls/CodeValueControl.tsx`, `server/ai/mcp/tools/studio/fidelityReport.ts`, tests + docs. **Nothing in `BoardFramesLayer/` or `useMarqueeSelection` (`board-03`'s).**
+
+- **I verified `select-01`'s reasoning before implementing it, and it holds.** Every `Resolution` recorded by a reader has a matching `codeProps` entry pushed by that SAME reader — `extractProps` (`jsxAttributeReaders.ts:308/314`), `extractInlineStyles` (`:417/418`), and `codeText` for text (folded into `codeProps` by `parsedPageToSitePage` unless `textOrigin` gives the edit somewhere honest to land). So the node lock added **nothing** to the value refusal: every guard (`updateNodeProps`, `setNodeInlineStyles`, `startInlineEdit`, `fsCodemodAdapter`) asks `isPropWritableToSource`, which reads `codeProps` and never `locked`. Confirmed on the corpus: **0 unlocked-with-resolution nodes sit at a non-writable source location**, i.e. no `.map` descendant was loosened. Structural inheritance is untouched — `processChildren` was already passed the pre-resolution `locked`, so a resolution lock never propagated to children in the first place.
+- **`withResolutionLock` -> `withResolution` (renamed with its file).** It no longer locks anything; it attaches `resolution` to whatever the STRUCTURE decided. `lockReason` is now only ever structural, which is what makes the notice's first clause true again.
+
+#### Census, all 15 pages, real pipeline (`loadStudioPages` on a temp-dir COPY)
+
+| | before | after |
+|---|---|---|
+| nodes | 802 | **802** (unchanged) |
+| locked | 276 (34.4%) | **127 (15.8%)** |
+| `value from <expr>` | 149 (54% of locks) | **0** |
+| `item N of <ARRAY>` | 117 | **117** |
+| `dynamic — rendered in code` | 8 | **8** |
+| spread props | 2 | **2** |
+
+The 127 that remain are exactly `select-01`'s load-bearing set: one piece of source JSX renders every instance, so no move or delete has a single honest target. **Nothing was loosened there, and Tier D stays banned.**
+
+#### `SourceLockedNotice` -> `SourceConstraintNotice`, three variants
+`structure-locked` (padlock, warning tone) · `list-row` (`.map`) · **`values-only`** (new: info tone, `CodeIcon`, never claims the element cannot be moved). It returns `null` when it has nothing true to say — which is also what keeps it off a branch-chosen node whose only `resolution` is the STRUCTURAL note `walkExpressionForJsx` borrows that field for (`BranchChoiceNotice` owns those; measured 0 collisions on the corpus). Notice counts now: 10 structure-locked, 117 list-row, 181 values-only.
+
+- **Decisions:**
+  - *A resolution-only node carries NO `lockReason` at all* (rather than an unlocked node keeping the phrase). `lockReason` is rendered by three surfaces as "this cannot be moved"; leaving it on an unlocked node just moves the lie. Side effect worth knowing: `propLockReason` now returns the generic `set in code` for those props instead of `value from <first resolution>` — which is MORE honest, because `resolution` keeps only the FIRST resolution and that may belong to a different prop than the row being labelled.
+  - *The notice strips the `callSiteProps:` namespace* when naming read-only props. The row the user reads it against is labelled `title`, not `callSiteProps:title`.
+  - *`fidelityReport`'s `value from ` early-return was deleted, not kept "just in case"* — the parser cannot produce that reason any more, so it was dead code. `locked` in its per-page score drops accordingly; `resolved` and `CODE_VALUED_PROP` are unchanged.
+- **Landmines:**
+  - **There is NO structural writeback, for any node.** `StudioEditPayload` has `prop | text | style | literal | tag | asset | css`, and the server's `StudioEditSchema` adds only `detach | swap`. A move/reorder/delete is canvas+store state that never reaches disk — 526 of 802 nodes were already unlocked and in exactly that boat, so this change does not create that gap, it just lets more nodes share it. Making moves persist is a new codemod, not a lock question.
+  - **The layers-tree drag is a measurement race near a scroll edge.** BOTH dnd-kit and `useDomPanelDnd` auto-scroll when the pointer comes within 32px of an edge; rows are measured once at drag start, so a drag begun on a row near the bottom scrolls the list out from under those rects and **no drop target ever resolves** — indistinguishable from a refused drop. `row.scrollIntoView({block:'center'})` + a 500ms settle + small pointer steps fixes it; the e2e spec documents this inline. Real product fragility, not a test artifact.
+  - **Do not kill ports 5174/3002 to run a browser pass while another agent is live.** `scripts/e2e-dev.ts` DELETES `.tmp/e2e-agent.db` at startup and `.tmp/e2e-owner-state.json` is shared, so a second `bun run e2e:dev` destroys the other agent's run. I ran an isolated stack instead: `PORT=3012 VITE_ALLOWED_ORIGIN=http://127.0.0.1:5184 DATABASE_URL=sqlite:.tmp/lock01/db.sqlite bun server/index.ts` plus `PORT=3012 vite --port 5184`, driven by `.tmp/lock01/playwright.config.ts` (its own setup project and its own state file). Both files are left in `.tmp/lock01/` for the next agent. **`VITE_ALLOWED_ORIGIN` is required** or every POST fails `Forbidden: invalid origin`.
+  - The e2e/dev CMS process runs **without `--watch`**: a page-parser change needs that process restarted before a browser pass can see it.
+- **Verification:**
+  - `tests/e2e/resolved-value-not-locked.e2e.ts` — **passes** against the real 15-frame eSIM board with real mouse input. Clicking "Upcoming trip" selects `HomepageScreen.jsx:163:14` (a `studio.instance`, locked on HEAD as `value from t.homepage.upcomingTrip`); the notice reads `data-variant="values-only"`, its `title`/`actionLabel` rows read **"Upcoming trip · set in code"** with no input while the literal `size` row keeps its ordinary control, and the row **drags and reorders** in the layers tree. **Proved it discriminates:** restoring the old lock inside `withResolution` and restarting the server fails the spec at exactly the variant assertion (`Received: "structure-locked"`); reverting makes it pass again.
+  - The exact sentence a user now reads, captured from the browser: *"**value from t.homepage.upcomingTrip** dynamic key not statically known — showing the "en" branch. The source places this element at a known line, so it is not locked — only its value is code. 2 values come from an expression (**title, actionLabel**) and stay read-only — writing there would replace the code that produces it."* Every clause is checkable and true of that node.
+  - `bun run build` -> exit 0. `bun run lint` -> exit 0. `bun test` -> **7704 pass / 20 fail / 1 skip**; the 20 are `standing-01`'s exact set (7 plugin QuickJS, 3 worker-RPC, 2 runtime-cache, 8 Windows path gates), none in this diff.
+  - New: `src/__tests__/panels/sourceConstraintNotice.test.tsx` (8 cases), 2 new parser cases in `staticEval.test.ts`. `lockedNodeGuards.test.ts` fixtures updated — the two `value from …` ones now carry **no** `lockReason`, which is the shape the parser actually emits.
+  - `git status --porcelain -- studio-workspace/` is byte-identical to the snapshot taken before I started (3 tracked modifications plus cache/untitled, all pre-existing dogfood state, none staged). `[studio] save:` never appears in my server log — the browser pass wrote nothing to the user's repo.
+- **Human action needed:** dogfood `/admin/site?studio` on the eSIM board. Click a heading or section title whose copy comes from the dictionary: it should select, show a **blue** "value from …" note instead of the amber padlock, and drag in Layers, while its resolved value stays read-only. If something still looks locked for no reason, it is one of the 127 structural ones — read what its notice actually says before treating it as a bug.
+
 ### board-03 — the marquee was never broken; its SPEC was. And the marquee was hit-testing a rect that doesn't exist
 - **Agent:** canvas-engineer
 - **Stage:** done — browser-verified against `studio-workspace/maherfayad-stack-eSIM`

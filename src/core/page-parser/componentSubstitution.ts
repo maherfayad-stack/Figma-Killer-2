@@ -22,7 +22,7 @@
  */
 import { Node, SyntaxKind, type JsxElement, type JsxSelfClosingElement, type SourceFile } from 'ts-morph'
 import { extractInlineStyles, extractProps, extractSingleText, rawHtmlValueExpression, resolveRawSvgMarkup } from './jsxAttributeReaders'
-import { tryResolveExpression, type PageEvalContext } from './resolutionLock'
+import { tryResolveExpression, type PageEvalContext } from './nodeResolution'
 import { createEvalScope, type LocalBinding, type StaticValue } from './staticEval'
 import type { ReturnedJsx } from './parsePageFile'
 import type { FunctionLike, ParsedPage, ParsedPropValue } from './types'

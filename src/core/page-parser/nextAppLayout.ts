@@ -64,15 +64,14 @@ function componentDisplayName(fn: FunctionLike): string {
  * `withNote`) — rather than inventing a new field; WS-9's fidelity report is
  * specced to read exactly this shape off a node.
  *
- * Deliberately does NOT lock the node the way `withResolutionLock` always
- * does for an actual resolved VALUE. `withResolutionLock`'s lock protects a
- * writeback target from being baked over with a literal that would delete a
- * binding — nothing here is being baked over anything, and the component's
- * STRUCTURE is not a runtime choice the way a multi-`return`'s branches are
- * (that stays `BRANCH_LOCK_REASON`'s job). Locking every node here would
- * misrepresent structure the parser is in fact certain of. Only the VALUES it
- * could not read are missing, and those already silently drop out of
- * `props`/`text` on their own — this note is what explains why.
+ * Deliberately does NOT lock the node — the same rule `withResolution` applies
+ * to every other resolution. A lock states that the source does not PLACE this
+ * element, and the component's structure is not a runtime choice the way a
+ * multi-`return`'s branches are (that stays `BRANCH_LOCK_REASON`'s job).
+ * Locking every node here would misrepresent structure the parser is in fact
+ * certain of. Only the VALUES it could not read are missing, and those already
+ * silently drop out of `props`/`text` on their own — this note is what explains
+ * why.
  */
 export function applyAsyncServerComponentFinding(parsed: ParsedPage, fn: FunctionLike, relFile: string): ParsedPage {
   if (!fn.isAsync() || parsed.rootIds.length === 0) return parsed

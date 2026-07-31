@@ -50,12 +50,13 @@ interface Finding {
 }
 
 function classifyLockReason(reason: string): string | null {
-  // A resolved value's lockReason is `value from <source>` (§7.6, resolutionLock.ts)
-  // — that is a SUCCESS (the evaluator read a real value), not a limitation.
-  if (reason.startsWith('value from ')) return null
-  // A resolved `.map` row's lockReason is `item N of <source>` — also a
-  // success: the array itself WAS statically readable, or it wouldn't have
-  // expanded into rows at all.
+  // A resolved `.map` row's lockReason is `item N of <source>` — a SUCCESS
+  // (the array itself WAS statically readable, or it wouldn't have expanded
+  // into rows at all), not a limitation.
+  //
+  // `value from <source>` is not checked here because `lock-01` stopped the
+  // parser producing it: a resolved VALUE no longer locks its node at all, so
+  // the only lock reasons that reach this function are structural.
   if (/^item \d+ of /.test(reason)) return null
   const match = LOCK_REASON_TO_CODE.find((entry) => reason === entry.reason)
   return match?.code ?? null

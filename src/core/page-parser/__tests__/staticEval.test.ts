@@ -600,7 +600,7 @@ describe('staticEval — non-regression (literal-only pages are unaffected)', ()
     expect(withEval).toEqual(without)
   })
 
-  it('§7.6 wiring: a resolved value locks the node with an explanatory lockReason + resolution', () => {
+  it('§7.6 wiring: a resolved value records `resolution` and does NOT lock the node (lock-01)', () => {
     write('translations.ts', "export const translations = { en: { greeting: 'Hi Muhammad' } }")
     const file = write(
       'Page.tsx',
@@ -617,9 +617,56 @@ describe('staticEval — non-regression (literal-only pages are unaffected)', ()
     const page = parsePageFile(file, tmpDir, project, {})
     const p = page.nodes[page.rootIds[0]!]!
     expect(p.text).toBe('Hi Muhammad')
-    expect(p.locked).toBe(true)
-    expect(p.lockReason).toBe('value from t.greeting')
+    // `<p>` is written at a known line and column: moving, reordering or
+    // deleting it is a precise, single-target edit. Only its VALUE is derived.
+    expect(p.locked).toBe(false)
+    expect(p.lockReason).toBeUndefined()
     expect(p.resolution).toEqual({ source: 't.greeting' })
+    // The refusal that actually protects the binding, unchanged and per-prop.
+    expect(p.codeText).toBe(true)
+  })
+
+  it('lock-01: a resolved value on a STRUCTURALLY locked node keeps that node locked, with its own reason', () => {
+    write('copy.ts', "export const copy = { title: 'Deals' }")
+    const file = write(
+      'Spread.tsx',
+      [
+        "import { copy } from './copy'",
+        'export default function Page({ rest }) {',
+        '  return <p {...rest} data-x={copy.title}>hi</p>',
+        '}',
+        '',
+      ].join('\n'),
+    )
+    const project = createWorkspaceProject(tmpDir)
+    const page = parsePageFile(file, tmpDir, project, {})
+    const p = page.nodes[page.rootIds[0]!]!
+    expect(p.locked).toBe(true)
+    expect(p.lockReason).toBe('spread props')
+    expect(p.resolution).toEqual({ source: 'copy.title' })
+    expect(p.codeProps).toContain('data-x')
+  })
+
+  it('lock-01: an inline-style value resolved from a const does not lock its element', () => {
+    write('tokens.ts', "export const accent = 'var(--text-link-default)'")
+    const file = write(
+      'Styled.tsx',
+      [
+        "import { accent } from './tokens'",
+        'export default function Page() {',
+        '  return <span style={{ color: accent }}>hi</span>',
+        '}',
+        '',
+      ].join('\n'),
+    )
+    const project = createWorkspaceProject(tmpDir)
+    const page = parsePageFile(file, tmpDir, project, {})
+    const span = page.nodes[page.rootIds[0]!]!
+    expect(span.inlineStyles).toEqual({ color: 'var(--text-link-default)' })
+    expect(span.locked).toBe(false)
+    expect(span.lockReason).toBeUndefined()
+    // The style PROPERTY is still refused — that is where the truth lives.
+    expect(span.codeProps).toContain('style:color')
   })
 })
 

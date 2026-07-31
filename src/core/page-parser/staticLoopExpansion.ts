@@ -29,7 +29,7 @@
  */
 import { Node, type ArrowFunction, type FunctionExpression } from 'ts-morph'
 import type { StaticValue } from './staticEvalCore'
-import type { PageEvalContext } from './resolutionLock'
+import type { PageEvalContext } from './nodeResolution'
 import { evaluateExpression } from './staticEval'
 
 /**

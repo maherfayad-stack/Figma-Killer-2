@@ -87,12 +87,13 @@ export const BaseNodeSchema = Type.Object({
   // When true, cannot be selected or moved in the editor
   locked: Type.Optional(Type.Boolean()),
 
-  // Present only for a SOURCE/dynamic lock (propagated from the page-parser's
-  // `.map`/ternary/`&&`/spread subtree detection — see `ParsedNode.lockReason`
-  // in `@core/page-parser/types`). Distinct from the manual "layer lock"
-  // above (`locked`, DnD-only): edit actions gate on THIS field being truthy
-  // to refuse programmatic prop/style mutation of dynamic surfaces, while
-  // `locked` alone keeps its existing selection/move-only semantics.
+  // Present only for a STRUCTURAL source lock (propagated from the
+  // page-parser's `.map`/spread/dynamic-surface detection — see
+  // `ParsedNode.lockReason` in `@core/page-parser/types`), and always
+  // alongside `locked`. Distinct from the manual "layer lock" above, which the
+  // editor itself toggles. It is a phrase to SHOW a person, never an edit
+  // gate: value writability is per-prop and lives in `codeProps`
+  // (`isPropWritableToSource`).
   lockReason: Type.Optional(Type.String()),
 
   // When true, hidden on the canvas (still present in the tree)

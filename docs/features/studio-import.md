@@ -16,7 +16,7 @@ The load path is `GET /admin/api/studio/load?dir=<abs>` → `loadStudioPages` (`
 - **`.map` over a statically-resolved array is expanded** into one node per item, so a list renders as a list. Rows are locked (derived from data).
 - **The parser SELECTS one `return`** (parser-06) — the last JSX-bearing one, the component's "normal" state — and leaves it unlocked. A screen with `if (stage === 'loading') return …` shows the branch that survives every guard; the guard branches are recorded as `label` + source location (`ParsedNode.branchAlternatives`), never rendered. A ternary/`&&` inside JSX gets the same treatment one level down (parser-07 closed a gap where `&&` used to render unconditionally, with no static check at all), and both honor a `useState(<literal>)` binding's own initial value as a real, first-paint answer when the condition names one.
 - **A component's array/object props survive.** `<ActionSheet actions={[{ label }, { label }]}/>` reaches the canvas as a real array, so the design-system component renders its buttons. HTML elements stay scalar-only (an attribute is a string).
-- **Non-literal values are statically resolved** where it is safe to — `{t.homepage.greeting}` becomes `"Hi Muhammad"`. Resolved nodes are **locked**, because writing an edited literal back over the expression would destroy the binding in the user's source file.
+- **Non-literal values are statically resolved** where it is safe to — `{t.homepage.greeting}` becomes `"Hi Muhammad"`. The resolved **prop** is read-only (writing an edited literal back over the expression would destroy the binding in the user's source file), but the **node is not locked**: it is an ordinary element at a known line and column.
 - **Imported CSS is read-only.** `.css` files become `StyleRule`s and `node.classIds`, but **nothing is ever written back to a `.css` file**. An edit made in the CSS Classes panel is lost on the next reload. See [CSS is one-way](#css-is-one-way).
 - **Writeback is prop/text/style only**, and only for nodes whose id is a real single source location.
 
@@ -49,7 +49,7 @@ src/core/page-parser/
 ├── staticEvalValues.ts       — pure leaf: operations on an ALREADY-RESOLVED value (`pluck`, `withNote`,
 │                                `unresolved`, `originOf`) — shared by Core/Calls/Operators without a cycle
 ├── assetImports.ts           — imports that name a FILE: `?raw` → text, image → `studio-asset:` path
-└── resolutionLock.ts         — resolved value → lock + `resolution`; scalar vs structured prop values
+└── nodeResolution.ts         — resolved value → `resolution` metadata; scalar vs structured prop values
 
 src/core/studio-sync/
 ├── parsedPageToSitePage.ts    — ParsedPage → Studio Page (moduleId, text prop, classIds, codeProps)
@@ -388,7 +388,7 @@ Resolving a whole `translations` object is memoized per `SourceFile`, and a prov
 
 Two different facts used to share one field, and conflating them made most of an imported app uneditable.
 
-- **`locked` / `lockReason`** describe the node's **structure**: the source does not simply place it. A `.map` generated it, a ternary or `&&` chose it, a spread feeds it. It may not be moved, deleted, reordered, or wrapped.
+- **`locked` / `lockReason`** describe the node's **structure**: the source does not simply place it. A `.map` generated it, a spread feeds it, its `<svg>` is built in code. It may not be moved, deleted, reordered, or wrapped.
 - **`codeProps`** describes its **values**: the prop names with no writable target, because the source holds an expression rather than a literal attribute. Inline-style entries appear as `style:<property>`.
 
 Structure says nothing about values. Which branch renders at runtime has nothing to do with whether `title="Where to?"` on that branch's element is a literal attribute at a known line and column — it is one, and `setJsxProp` rewrites it precisely. **45% of the nodes on the eSIM board are structurally locked** (a screen that opens `if (loading) return <Spinner/>` puts its entire main return behind a branch), so gating values on the structural lock refused nearly everything:
@@ -401,6 +401,8 @@ Structure says nothing about values. Which branch renders at runtime has nothing
 | `.map` rows | 4 of 127 | 4 of 127 (unchanged — see below) |
 | **all** | **124 of 310 (40%)** | **160 of 310 (52%)** |
 
+**And it runs the other way too (`lock-01`).** A resolved VALUE used to lock its node — `withResolutionLock` set `locked: true` because one attribute had to be evaluated. That was the same conflation in the opposite direction, and it was the *majority* of the locks on a real board: of the 276 locked nodes across the 15 eSIM screens, **149 (54%) were locked for nothing but a resolved value**, and 147 of those had at least one perfectly editable prop. Each one also rendered a notice opening with *"This element can't be moved or deleted from here"* — false for every one of them. The lock now states the structure alone (`withResolution` in `nodeResolution.ts`), which takes the board from **276 locked (34.4%) to 127 (15.8%)** with the node count unchanged. What did NOT move: the `.map` rows (117), the dynamic surfaces (8), and the spread bearers (2) — 127 load-bearing locks where one piece of source JSX really does render every instance, so no move or delete has a single honest target.
+
 A prop is code-valued when §7's evaluator resolved it (`title={c.sheetTitle}` — writing there would replace the binding with a baked literal), or when it holds a structured or JSX value with no scalar source form (`actions={[…]}`, `icon={<Icon/>}`). **A `.map` row has no source location of its own** (`hasWritableSourceLocation` is false for a `…#2` id), so every one of its props is code-valued: one piece of JSX renders all the rows, and a write there would change all of them. Its resolved *text* is the exception — that came from its own array element, and `textOrigin` says which literal.
 
 `isPropWritableToSource` in [`src/core/page-tree/sourceWritability.ts`](../../src/core/page-tree/sourceWritability.ts) is the single predicate. Every surface asks it, so what the panel offers and what the store accepts can't drift:
@@ -408,7 +410,7 @@ A prop is code-valued when §7's evaluator resolved it (`title={c.sheetTitle}` �
 | Surface | Behaviour |
 |---|---|
 | `updateNodeProps` / `setNodeInlineStyles` | Refuse a patch if **any** key is code-valued — all-or-nothing, because a half-applied patch is a canvas that disagrees with the file it mirrors. Silent: both are also called by agents and plugins, where a toast would be noise |
-| Properties panel, top | `SourceLockedNotice` — the structural reason, `resolution.note` when the evaluator had to choose a branch, and which individual props stay read-only |
+| Properties panel, top | `SourceConstraintNotice` — one of three variants: the structural reason, the `.map`-row reason, or (the majority case) "the structure is fine, these specific values are not". Plus `resolution.note` when the evaluator had to choose, and which individual props stay read-only |
 | Prop rows | `CodeValueControl` for a code-valued prop only (`propLockReason`); its literal siblings get their ordinary control |
 | In-place canvas inspector | Same `propLockReason`. It previously rendered a live-looking input for every prop, including ones the store was about to refuse |
 | Inline styles | `InlineStyleComposer` is offered unless the node is a `.map` row. Per-property refusals happen in the store. **Classes are unaffected** either way — assigning one writes `node.classIds`, which none of this gates |
@@ -419,7 +421,7 @@ A prop is code-valued when §7's evaluator resolved it (`title={c.sheetTitle}` �
 
 Explaining a dead field is not the same as fixing it, and copy is the thing users actually came to edit. So resolved text now writes — not to the JSX, but to the string it reads.
 
-`ParsedNode.textOrigin` (`ValueOrigin`: workspace-relative path + 1-based line/column) records where a resolved text's literal physically lives. `{c.hotelsTag}` resolves to `hotelsTag: 'Exclusive rates on hotels'` at `src/i18n/translations.js:142:18`, and **that** is a perfectly ordinary string literal to rewrite. On the eSIM corpus, **106 of the 149 locked-with-text nodes have a writable origin.**
+`ParsedNode.textOrigin` (`ValueOrigin`: workspace-relative path + 1-based line/column) records where a resolved text's literal physically lives. `{c.hotelsTag}` resolves to `hotelsTag: 'Exclusive rates on hotels'` at `src/i18n/translations.js:142:18`, and **that** is a perfectly ordinary string literal to rewrite. On the eSIM corpus, **106 of the 149 resolved-text nodes have a writable origin.**
 
 How each piece knows:
 

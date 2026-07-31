@@ -31,7 +31,7 @@ import { Node, SyntaxKind, type BinaryExpression, type ConditionalExpression, ty
 import type { FunctionLike } from './types'
 import type { ParseContext } from './jsxAttributeReaders'
 import { evaluateStaticTruthiness, evaluateStaticNullish } from './staticEval'
-import { shortenSource } from './resolutionLock'
+import { shortenSource } from './nodeResolution'
 
 // ---------------------------------------------------------------------------
 // Shared JSX-detection helpers

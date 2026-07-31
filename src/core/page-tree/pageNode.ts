@@ -37,11 +37,13 @@ export const PageNodeSchema = Type.Object({
    * a resolution choice worth surfacing to the editor (e.g. a dynamically
    * indexed dictionary picked a specific locale/branch). See
    * `ParsedNode.resolution` in `@core/page-parser` — `parsedPageToSitePage`
-   * copies it straight across, same pattern as `locked`/`lockReason`. A node
-   * carrying `resolution` is USUALLY `locked` (writing an edit back over the
-   * original expression would silently destroy it) — except for the two
-   * structural exceptions noted at `branchAlternatives` below, which lock
-   * nothing.
+   * copies it straight across, same pattern as `locked`/`lockReason`.
+   *
+   * **Never locks the node.** Writing an edit back over the original
+   * expression would silently destroy it, but that is a fact about one VALUE
+   * and is recorded per-prop in `codeProps`; the element itself sits at a known
+   * line and column and moves like any other. See `withResolution` in
+   * `@core/page-parser`'s `nodeResolution.ts`.
    */
   resolution: Type.Optional(Type.Object({ source: Type.String(), note: Type.Optional(Type.String()) })),
   /**
@@ -51,9 +53,7 @@ export const PageNodeSchema = Type.Object({
    * location, never a materialized subtree — see `BranchAlternative` in
    * `@core/page-parser`. Does NOT lock the node: the parser is certain of the
    * STRUCTURE here, it only chose which of several runtime states to show by
-   * default (unlike `resolution` above, which usually protects a resolved
-   * VALUE and locks accordingly — see that field's own note about the two
-   * exceptions).
+   * default.
    */
   branchAlternatives: Type.Optional(Type.Array(Type.Object({
     label: Type.String(),

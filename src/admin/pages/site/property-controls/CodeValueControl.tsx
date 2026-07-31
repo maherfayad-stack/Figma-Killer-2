@@ -12,10 +12,11 @@
  *     on: `setJsxProp` writes a scalar initializer, and the studio save path
  *     filters to scalars before it gets there.
  *
- *  2. **A source-locked node.** The value was resolved from an expression, a
- *     `.map` iteration, or a conditional branch, so `updateNodeProps` refuses
- *     the write (see `SourceLockedNotice` for the full reasoning). Every control
- *     on such a node is dead, not just this one.
+ *  2. **A code-valued prop.** The value was resolved from an expression, or the
+ *     node is a `.map` row with no isolated source location, so
+ *     `updateNodeProps` refuses the write (see `SourceConstraintNotice` for the
+ *     full reasoning). This is per-PROP: its literal siblings on the same node
+ *     stay editable, and the node itself is usually not locked at all.
  *
  * In both cases an editable-looking input is a lie. Case 1 previously rendered
  * `[object Object]` in a text box where one keystroke replaced a whole array of

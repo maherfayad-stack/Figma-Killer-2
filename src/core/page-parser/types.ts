@@ -113,6 +113,14 @@ export interface ParsedNode {
    * column. Value writability is per-prop and lives in `codeProps` below.
    */
   locked: boolean
+  /**
+   * Why the STRUCTURE is code-controlled, phrased to be read by a person
+   * ("item 2 of DEALS", "spread props"). Present only when `locked` — a
+   * resolved VALUE is explained by `resolution` + `codeProps` instead, and
+   * never produces a lock reason. Every surface that renders this phrase
+   * (`SourceConstraintNotice`, `propLockReason`, the fidelity report) treats
+   * its presence as "this element cannot be moved or deleted".
+   */
   lockReason?: string
   /**
    * The prop names on this node whose value is CODE rather than a literal
@@ -165,17 +173,18 @@ export interface ParsedNode {
    * worth surfacing in the editor (e.g. picking a locale/branch for a
    * dynamically-indexed dictionary — see `staticEval.ts`'s Tier B.4).
    *
-   * A node carrying `resolution` is USUALLY also `locked`, with a
-   * `lockReason: 'value from <source>'` — writing an edited literal back over
-   * `{t.homepage.greeting}` would silently destroy the original binding in
-   * the user's real source file, so the value is read-only, same principle as
-   * `locked`/`lockReason` above. `textOrigin` below is one exception (it
-   * writes somewhere else entirely); `applyAsyncServerComponentFinding`
-   * (`nextAppLayout.ts`) and the multi-return/ternary/`&&` branch CHOICE
-   * below (`branchAlternatives`) are the other two — both attach this same
-   * `{source, note}` shape to explain a STRUCTURAL fact the parser is
-   * certain of, not a value it is protecting from a baked-over write, so
-   * neither locks the node. See each site's own comment for why.
+   * **Carrying a `resolution` never locks the node.** Writing an edited literal
+   * back over `{t.homepage.greeting}` would silently destroy the binding in the
+   * user's real source file — but that is a fact about ONE VALUE, recorded
+   * per-prop in `codeProps` by the same reader that recorded the resolution
+   * (and in `codeText` for text, unless `textOrigin` names a literal that IS an
+   * honest target). The element itself is written at a known line and column,
+   * so moving, reordering or deleting it stays a precise, single-target edit.
+   * `applyAsyncServerComponentFinding` (`nextAppLayout.ts`) and the
+   * multi-return/ternary/`&&` branch CHOICE (`branchAlternatives` below) attach
+   * this same `{source, note}` shape for the same reason. See `withResolution`
+   * in `./nodeResolution` for the full history — locking here is what made 54%
+   * of a real board's locks say something false about the element.
    */
   resolution?: { source: string; note?: string }
   /**

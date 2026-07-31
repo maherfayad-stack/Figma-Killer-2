@@ -28,7 +28,7 @@ import {
 } from 'ts-morph'
 import type { BranchAlternative, FunctionLike, NodeLoc, ParsedNode, ParsedPage, ParsedPropValue } from './types'
 import { createEvalScope, type StaticEvalOptions } from './staticEval'
-import { withResolutionLock } from './resolutionLock'
+import { withResolution } from './nodeResolution'
 import {
   getReturnedJsxRoots,
   isLockingExpression,
@@ -375,7 +375,7 @@ function processElement(
     // node so its class/style/position are still visible, but lock it — there is
     // no markup to edit. A `.map`/ternary/spread lock upstream, if any, is
     // superseded by this more specific reason.
-    const svgLock = withResolutionLock(
+    const svgLock = withResolution(
       locked || markup === undefined,
       markup === undefined ? DYNAMIC_SVG_LOCK_REASON : lockReason,
       [...propsResult.resolutions, ...styleResult.resolutions],
@@ -406,7 +406,7 @@ function processElement(
   // are irrelevant here — React ignores them when this prop is set.
   const rawSvg = extractRawSvgMarkup(attributes, ctx)
   if (rawSvg !== undefined) {
-    const rawLock = withResolutionLock(locked, lockReason, [...propsResult.resolutions, ...styleResult.resolutions])
+    const rawLock = withResolution(locked, lockReason, [...propsResult.resolutions, ...styleResult.resolutions])
     const rawNode: ParsedNode = {
       id,
       kind,
@@ -431,19 +431,16 @@ function processElement(
   // Capture text whether or not the node is locked.
   //
   // This used to skip locked nodes, reasoning that a node with no writeback path
-  // should not imply an editable surface. But `locked` is what carries that
-  // meaning — the editor's edit guards read it — and withholding the text does
-  // not make a node less editable, it makes it BLANK. Every `.map` row, every
+  // should not imply an editable surface. But withholding the text does not make
+  // a node less editable, it makes it BLANK. Every `.map` row, every
   // `{cond && <span>Saved</span>}`, every spread-bearing element rendered as an
   // empty box on the canvas while its text sat in plain sight in the source.
-  //
-  // §7 already settled this the other way: a resolved value sets `text` AND
-  // locks the node (`withResolutionLock`). The two rules contradicted each
-  // other; this is the one that shows the user their screen.
+  // Whether the TEXT can be written is decided per-prop, downstream, from
+  // `codeText`/`textOrigin` — never from the node's structural lock.
   const textResult = extractSingleText(rawChildren, ctx)
   const text = textResult?.text
 
-  const lock = withResolutionLock(locked, lockReason, [
+  const lock = withResolution(locked, lockReason, [
     ...(textResult?.resolution ? [textResult.resolution] : []),
     ...propsResult.resolutions,
     ...styleResult.resolutions,

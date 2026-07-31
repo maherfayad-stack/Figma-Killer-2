@@ -39,7 +39,7 @@ import { SelectorInspector } from './SelectorInspector'
 import { canComponentizeNode } from '@site/componentization'
 import { BranchChoiceNotice } from './BranchChoiceNotice'
 import { SharedComponentNotice } from './SharedComponentNotice'
-import { SourceLockedNotice } from './SourceLockedNotice'
+import { SourceConstraintNotice } from './SourceConstraintNotice'
 import { useEditorStore } from '@site/store/store'
 import { textOriginKey } from '@site/store/slices/site/nodeIndex'
 import styles from './PropertiesPanel.module.css'
@@ -164,23 +164,25 @@ export function PropertiesPanelBody(props: PropertiesPanelBodyProps): React.Reac
       {selectedNode?.fromComponent && selectedNodeId ? (
         <SharedComponentNotice componentName={selectedNode.fromComponent} nodeId={selectedNodeId} />
       ) : null}
-      {selectedNode?.lockReason ? (
-        <SourceLockedNotice
-          lockReason={selectedNode.lockReason}
-          note={selectedNode.resolution?.note}
-          textOrigin={selectedNode.textOrigin}
-          sharedWith={sharedTextOriginCount}
-          codeProps={selectedNode.codeProps}
-          hasWritableLocation={hasWritableSourceLocation(selectedNode.id)}
-        />
-      ) : null}
-      {/* parser-06 — this fires independently of `lockReason`: the chosen
-          branch is NOT locked (the parser is certain of its structure), but
-          the fact that OTHER branches exist and weren't shown is still worth
-          surfacing. `SourceLockedNotice` above already covers this node's
-          `resolution.note` when it IS also locked for some other reason, so
-          show this one only when that didn't already run. */}
-      {!selectedNode?.lockReason && selectedNode?.branchAlternatives?.length ? (
+      {/* Rendered for a structural lock OR for a node whose values alone came
+          from code — `lock-01`: the second is the majority case on a real
+          board, and it used to be given the first one's copy ("this element
+          can't be moved or deleted"), which is false for it. The component
+          picks the variant off `lockReason` and returns null when it has
+          nothing true to say. */}
+      <SourceConstraintNotice
+        lockReason={selectedNode.lockReason}
+        resolution={selectedNode.resolution}
+        textOrigin={selectedNode.textOrigin}
+        sharedWith={sharedTextOriginCount}
+        codeProps={selectedNode.codeProps}
+        hasWritableLocation={hasWritableSourceLocation(selectedNode.id)}
+      />
+      {/* parser-06 — the chosen branch is NOT locked (the parser is certain of
+          its structure), but the fact that OTHER branches exist and weren't
+          shown is still worth surfacing. Suppressed under a structural lock,
+          whose notice already carries this node's `resolution.note`. */}
+      {!selectedNode.lockReason && selectedNode.branchAlternatives?.length ? (
         <BranchChoiceNotice alternatives={selectedNode.branchAlternatives} />
       ) : null}
       <nav className={styles.nodeViewSwitcher} aria-label="Element options">

@@ -21,7 +21,7 @@ import {
 } from 'ts-morph'
 import { LOOP_ID_SEPARATOR } from '@core/page-tree'
 import type { ParsedNode, ParsedPropValue } from './types'
-import { tryResolveExpression, tryResolvePropValue, type PageEvalContext, type Resolution } from './resolutionLock'
+import { tryResolveExpression, tryResolvePropValue, type PageEvalContext, type Resolution } from './nodeResolution'
 import type { ValueOrigin } from './staticEvalTypes'
 import { STUDIO_ASSET_SENTINEL } from './assetImports'
 
@@ -40,7 +40,7 @@ export interface ParseContext {
    * `evalOptions` to `parsePageFile`/`parseJsxTree`). `undefined` for every
    * existing caller/test: the readers below keep their literal-only fast path
    * unconditionally and simply skip the evaluator fallback when this is absent.
-   * See `./resolutionLock` for the wiring glue this feeds.
+   * See `./nodeResolution` for the wiring glue this feeds.
    */
   eval?: PageEvalContext
   /**
@@ -434,9 +434,10 @@ export function extractInlineStyles(
  *
  * Mirrors `assertTextOnlyChildren` in `../ast-codemods/setJsxText` — a
  * captured `text` is always a shape that codemod is willing to overwrite
- * (§7.6: a RESOLVED text value is additionally always locked, see
- * `withResolutionLock`, since writing an edit back over the original
- * expression would destroy it).
+ * (§7.6: a RESOLVED text value is additionally always read-only ON THAT PROP,
+ * via `codeText` -> `codeProps`, since writing an edit back over the original
+ * expression would destroy it — unless `textOrigin` names the literal it read,
+ * which is somewhere honest to land).
  */
 export function extractSingleText(
   children: Node[],

@@ -66,7 +66,7 @@ Legend: 🟢 Studio (active work) · 🟡 shared infrastructure Studio depends o
 | 🟢 `src/core/page-parser/assetImports.ts` | `?raw` text imports, image imports → `studio-asset:` sentinel + `ParsedNode.assetOrigin` (WS-8.3, the import specifier's own location), `.module.css` imports → `{ localName: globalName }` (WS-2.2, sourced from `styleCompile.ts`'s `moduleClassMaps`). |
 | 🟢 `src/core/page-parser/inlineSvg.ts` | `<svg>` written as JSX → markup for `base.svg`. |
 | 🟢 `src/core/page-parser/jsxAttributeReaders.ts` | How each attribute shape is read. |
-| 🟢 `src/core/page-parser/resolutionLock.ts` | Resolved value → lock + `resolution`. |
+| 🟢 `src/core/page-parser/nodeResolution.ts` | Resolved value → `resolution` metadata. Never locks the node — see `withResolution`. |
 | 🟢 `src/core/ast-codemods/` | **Every source write.** `setJsxProp`, `setJsxText`, `setJsxStyle`, `setStringLiteral`, `setJsxTagName`, `setImportSpecifier` (WS-8.3), `detachComponent`/`extractComponentCopy`/`swapComponentInstance` (WS-4.4/4.5), `resolveComponentCallSite` (shared "what does this JSX tag refer to" resolution the three of them share). |
 | 🟢 `src/core/studio-sync/parsedPageToSitePage.ts` | `ParsedPage` → editor `Page` (moduleId, text prop, classIds, codeProps) — WS-4.2: an `instanceOf` node's `props` become `{componentName, source, sourceFile, callSiteProps}`, codeProps prefixed `callSiteProps:<name>`. |
 | 🟢 `src/modules/base/instance/` | WS-4.2 — `studio.instance` module: renders `<>{children}</>`, zero DOM. |
@@ -131,7 +131,7 @@ Legend: 🟢 Studio (active work) · 🟡 shared infrastructure Studio depends o
 
 | Path | What it owns |
 |---|---|
-| 🟢 `src/admin/pages/site/panels/PropertiesPanel/` | The right sidebar. `StyleSurface`, `ClassPicker`, `LayoutSection`, `SizeSection`, `PositionSection`, `TypographySection`, `BackgroundSection`, `SpacingBoxControl`, `SourceLockedNotice`, `SharedComponentNotice`, `ImageSourceSection` (WS-8.3 image picker, dispatched from `renderModuleTabContent`). |
+| 🟢 `src/admin/pages/site/panels/PropertiesPanel/` | The right sidebar. `StyleSurface`, `ClassPicker`, `LayoutSection`, `SizeSection`, `PositionSection`, `TypographySection`, `BackgroundSection`, `SpacingBoxControl`, `SourceConstraintNotice`, `SharedComponentNotice`, `ImageSourceSection` (WS-8.3 image picker, dispatched from `renderModuleTabContent`). |
 | 🟢 `src/admin/pages/site/property-controls/` | Per-prop control dispatch. `CodeValueControl` = read-only stand-in. |
 | 🟡 `src/admin/pages/site/sidebars/` | LeftSidebar, RightSidebar, PanelRail. |
 | 🟡 `src/admin/pages/site/panels/DomPanel/` | Layer tree. |
