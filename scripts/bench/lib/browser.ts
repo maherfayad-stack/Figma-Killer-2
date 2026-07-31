@@ -18,6 +18,29 @@
  * Authentication uses the JSON login endpoint (`POST /admin/api/cms/login`)
  * — much faster + more deterministic than scripting the login form,
  * and our scenarios actually need a session cookie, not a UI dance.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * KNOWN LIMITATION — **every browser bench is unrunnable under Bun on
+ * Windows.** Playwright launches Chromium over `--remote-debugging-pipe`,
+ * which needs stdio fds 3/4 wired into the child; Bun on Windows does not
+ * provide them, so `chromium.launch()` hangs until its timeout and the
+ * browser process sits there having never completed a CDP handshake.
+ * Measured (`perf-01`, 2026-07-31): the identical launch returns in **72ms
+ * under Node** and hangs for **180s under Bun**, for the bundled
+ * `chromium_headless_shell`, the full `chromium`, and system Chrome alike.
+ * `chromium.connectOverCDP()` against a `--remote-debugging-port` endpoint
+ * hangs too — Bun's WebSocket client never finishes the upgrade.
+ *
+ * Because `launchBrowser` throws and the benches catch it into their
+ * "skip gracefully" branch, `bun run bench --only=studio-board` REPORTED
+ * SUCCESS while never opening a browser. That is why WS-5.6's budgets sat
+ * uncalibrated: nothing could ever run them.
+ *
+ * Until that is fixed, real-browser canvas measurement lives in
+ * `tests/e2e/studio-board-perf.e2e.ts` — the Playwright **test runner**
+ * spawns Node, so it works. Do not trust a green browser bench on Windows
+ * without checking it did not skip.
+ * ─────────────────────────────────────────────────────────────────────────
  */
 import { existsSync } from 'node:fs'
 

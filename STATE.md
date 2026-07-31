@@ -40,9 +40,12 @@ indistinguishable from unfinished work — **write the handoff entry in the same
 commit as the code**, not after.
 
 `panel-02` and `perf-01` were held behind `instance-ui-01`, which has now landed
-— **both are free to dispatch.** Note for `perf-01`: `instance-ui-01` touched
-`NodeRenderer.tsx` (one Enter-key guard) and split
-`BreakpointSelectionOverlay.tsx`'s toolbar out into `SelectionToolbar.tsx`.
+— **both were then dispatched.** `perf-01` is **done** (see its entry under
+"Recently landed"): like `parser-07`, most of its work had already landed and
+what was actually missing was anyone running it in a browser. It also found
+that **no `scripts/bench/` browser bench can execute under Bun on Windows** and
+that they report success anyway — read its Landmines before trusting a green
+bench. `panel-02` is still in flight (its files are dirty in the tree).
 
 Each resumed agent was told to `git status` / `git diff` FIRST, because its
 predecessor's partial edits are in the tree and re-deriving them would be waste.
@@ -134,7 +137,7 @@ test.
 | 6 | `panel-01` — WS-6 Figma inspector: `ScrubInput`, target chip, align bar, typed prop controls, CSS write-back | `pkg-02` (`PropKind`) | done (partial — see entry below: `ScrubInput`/`AlignBar`/`MixedValue` shipped and wired into real usage; CSS write-back is the pure codemod primitive only, not end-to-end; full WS-6.1 Figma section reorder not attempted, only Position/Size promoted) |
 | 7 | `canvas-06` — overlay/bottom-sheet render fidelity across all 15 eSIM screens | `canvas-05` | done — see entry below |
 | 8 | `parser-05` — WS-4 instance model: `studio.instance` fragment nodes, call-site props, detach, swap | `pkg-02` | done (engine layer — parser/codemods/MCP). Its named gap — panel UI, click-to-select-the-instance, Enter/Esc — is **closed by `instance-ui-01`**, browser-verified. Still not built: package-instance detach, and a project-wide component catalog for the Swap picker |
-| 9 | `perf-01` — WS-5.3–5.6: iframe virtualization + frozen posters, no re-render on pan/zoom, page cache + NDJSON streaming, `scripts/bench/studioBoard.bench.ts` budgets | `canvas-05`, `board-02` | queued |
+| 9 | `perf-01` — WS-5.3–5.6: iframe virtualization + frozen posters, no re-render on pan/zoom, page cache + NDJSON streaming, `scripts/bench/studioBoard.bench.ts` budgets | `canvas-05`, `board-02` | done — see entry below (browser-measured; one named defect left: ~300ms mount stall on a boundary-crossing zoom) |
 
 Added after `mcp-01` measured the board:
 
@@ -169,7 +172,7 @@ Added after `panel-01` and the integration audits:
 | # | Work order | Depends on | State |
 |---|---|---|---|
 | 12 | `panel-02` — wire CSS write-back end to end: `StyleRule.id → (file, selector, pos)` mapping at load, a save route, and the tiered policy (`meta-03` decision 3). `src/core/css-codemods/` exists and is byte-exact tested but reaches nothing. | `parser-05` (shares `studioWriteback.ts`) | queued |
-| 13 | `perf-01` — WS-5.3–5.6: iframe virtualization + frozen posters, no React re-render on pan/zoom, page cache + NDJSON streaming, `scripts/bench/studioBoard.bench.ts` budgets | `board-02` (owns `useCanvas.ts`) | queued |
+| 13 | `perf-01` — duplicate of row 9 above | `board-02` (owns `useCanvas.ts`) | done — see entry below |
 | 14 | `infra-01` — install jobs are in-memory, so a dev-server restart silently loses one and the UI shows nothing. Also: `designImport.ts` is a **second** token-import system duplicating `tokenExtract.ts` with a known correctness gap on nested corpora — resolve to one. | — | queued |
 
 **Integration gaps are the recurring failure of this run — check for them explicitly.**
@@ -214,6 +217,123 @@ are the remaining WS-2 items, not yet dispatched. See
 ---
 
 ## Recently landed
+
+### perf-01 — WS-5.3–5.6 measured in a real browser: pan/zoom is already 60fps, and the perf gate could never run
+- **Agent:** perf-hunter
+- **Stage:** done — with two honest negative results and one named, unfixed defect
+- **Updated:** 2026-07-31
+- **Headline:** almost all of WS-5.3/5.4/5.5 had **already landed** (predecessor
+  session + `canvas-05`); what had never happened was anyone *running* it. This
+  work order measured it in a real Chromium against the real
+  `maherfayad-stack-eSIM` board and found: pan and zoom are genuinely 60fps and
+  genuinely do not re-render the frame tree (WS-5.4 verified, not assumed),
+  iframe virtualization works (15 frames → 6 live), frozen posters work
+  (15/15). It also found that **`scripts/bench/studioBoard.bench.ts` — the
+  WS-5.6 gate — cannot execute at all on this platform and was silently
+  reporting success**, and that a zoom crossing virtualization boundaries
+  still costs ~300ms in one frame. Two attempted fixes for that made it no
+  better and one made it worse; both were reverted rather than shipped.
+- **Measured, real browser, real corpus** (`tests/e2e/studio-board-perf.e2e.ts`,
+  15 pages / ~803 nodes, four runs, numbers stable across them):
+
+  | Metric | Measured |
+  |---|---|
+  | Board frames | 15 |
+  | Live iframes at a working zoom | **6** (vs 15 pre-virtualization) |
+  | Live iframes with the whole board in view | 10–15 |
+  | Pan — worst frame | **18.1–19.8 ms** (0 frames >20ms, of ~100) |
+  | Pan — mean frame | **16.7 ms** (= 60fps exactly) |
+  | Pan — mutations inside the frames layer | **0** |
+  | Pan — transform-layer style writes | 21 (the rAF commits — the gesture really moved) |
+  | Pan with 10 live iframes — worst / mean | 18.2 / 16.7 ms (unchanged) |
+  | Zoom that crosses no mount boundary | 18.2–18.9 ms worst, 0 mutations |
+  | **Zoom that mounts frames (6 → 15)** | **290–337 ms worst**, 47–49 ms mean, 26/98 frames >20ms, ~161 mutations |
+  | Frames showing a frozen poster after leaving the viewport | **15/15** |
+  | DOM nodes | 946 |
+
+- **WS-5.4 is verified, by mechanism and not by inference.** The spec installs a
+  `MutationObserver` over `[data-testid="board-frames-layer"]` during a scripted
+  gesture. Pan produces **0** mutations inside that layer and 21 `style` writes
+  on the transform layer itself — i.e. the only thing pan touches is
+  `useCanvas.ts`'s rAF-batched `transform`, exactly as designed. This is the
+  direct measurement of "no React re-render on pan/zoom" rather than a proxy.
+- **Two negative results, both reverted, both worth not repeating:**
+  1. **`useDeferredValue` on the virtualization inputs did nothing.** 290ms with
+     it vs 296ms without. Transition priority changes when React *starts* a
+     render; it cannot split the *commit*, and the commit is where iframe
+     mounting happens.
+  2. **Staggering mounts (≤3 new iframes per rAF) made it WORSE.** 423ms worst
+     (up from 290ms), mean 49→66ms, mutations 163→283. Root cause: a *single*
+     board-frame mount on this corpus is itself ~100–140ms (iframe + `srcDoc` +
+     injector chain + node tree), so batching is not the lever — spreading the
+     same unavoidable cost over more commits just lengthens the jank and adds
+     reconciliation on top. **The real fix is making one mount cheaper**, not
+     rescheduling the batch. Not attempted here.
+  Both were removed; `BoardFramesLayer.tsx` is byte-identical to its previous
+  state. The measured-best configuration is the one already committed.
+- **The landmine this work order actually removed:** `bun run bench
+  --only=studio-board` **reported success while never opening a browser.**
+  Playwright launches Chromium over `--remote-debugging-pipe`, which needs
+  stdio fds 3/4 in the child; **Bun on Windows does not provide them**, so
+  `chromium.launch()` hangs to its timeout. Measured: the identical launch
+  returns in **72 ms under Node** and hangs **180 s under Bun** — for the
+  bundled `chromium_headless_shell`, the full `chromium`, and system Chrome
+  alike. `connectOverCDP()` against a `--remote-debugging-port` endpoint hangs
+  too (Bun's WebSocket client never completes the upgrade). `launchBrowser`
+  throws, the bench's "skip gracefully" branch catches it, and the suite prints
+  a pass. **That is why WS-5.6's budgets were never calibrated: nothing could
+  ever run them.** Documented in a KNOWN LIMITATION block in
+  `scripts/bench/lib/browser.ts`, and the bench's own header no longer claims
+  its budgets were "calibrated against a real run" — they never were.
+  **Every `benches/browser.ts`-family bench is affected, not just this one.**
+- **Where real browser measurement lives now:** the Playwright **test runner**
+  spawns Node, not Bun, so `tests/e2e/studio-board-perf.e2e.ts` works. If you
+  need a canvas frame-time number, add it there, not to `scripts/bench/`.
+- **Scope:**
+  - **New:** `tests/e2e/studio-board-perf.e2e.ts`.
+  - **Modified (comments//docs only, no behaviour):** `scripts/bench/lib/browser.ts`,
+    `scripts/bench/studioBoard.bench.ts`.
+  - **Never touched:** `fsCodemodAdapter.ts`, `server/handlers/studioWriteback.ts`,
+    `src/core/css-codemods/`, the CSS panel surface (all `panel-02`'s, actively
+    dirty in the tree throughout); `server/db/` + test helpers (`test-infra-01`'s).
+    `BoardFramesLayer.tsx` and `useCanvas.ts` were experimented on and restored.
+- **Budgets, and which are honest:** the e2e's budgets ARE derived from the
+  measurements above (pan worst <40ms against 18–20ms observed; pan layer
+  mutations <10 against 0 observed). `BUDGET_ZOOM_WORST_FRAME_MS = 600` is
+  explicitly a **ratchet on a known defect**, not a target — it exists so the
+  ~300ms mount stall cannot silently get worse. `studioBoard.bench.ts`'s
+  budgets remain WS-5.6 plan targets and are labelled as uncalibrated; its
+  `BUDGET_PAN_WORST_FRAME_MS = 20` will very likely fail on its first real run,
+  and that failure will be TRUE — calibrate then, do not pre-emptively loosen.
+- **Verification:**
+  - `npx playwright test tests/e2e/studio-board-perf.e2e.ts` → **2 passed**
+    (final run, on the reverted baseline). Numbers in the table above.
+  - `npx eslint` on all three files in this diff → clean.
+  - `npx tsc -b` → my files clean. The tree currently has **203 pre-existing
+    type errors** in files I never touched (`NodeList` missing `Symbol.iterator`
+    across many canvas/agent files, plus several `SchemaResult`/union narrowing
+    errors) — a tsconfig `lib`/`target` regression from a concurrent session,
+    NOT this diff. `dist/` built clean at 19:16 today, so it appeared after that.
+    **Whoever owns the tsconfig change should look at this.**
+- **Landmines for the next agent:**
+  - **`E2E_REUSE_SERVER=1` is not the danger; orphaned servers are.** Every
+    Playwright run that fails to start leaves `bun run scripts/e2e-dev.ts`
+    alive. The next run then dies with `EBUSY: resource busy or locked, rm
+    './.tmp/e2e-agent.db'` (exit 255) or `5174 is already used`. Kill by port
+    (`Get-NetTCPConnection -LocalPort 5174,3002` → `taskkill /F`) and delete
+    `.tmp/e2e-agent.db*` before each run. Do NOT blanket-kill `bun` processes:
+    concurrent sessions have their own dev servers running.
+  - **Vite's FIRST cold start in a session exceeds the 120s `webServer`
+    timeout** (dep optimize). It is 0.7–1.6s once warm. A first-run webServer
+    timeout is not a code failure — start `scripts/e2e-dev.ts` once by hand,
+    then run with `E2E_REUSE_SERVER=1`.
+  - **Measuring virtualization requires a gesture that actually crosses a mount
+    boundary.** An in/out zoom wobble can net `6 -> 6` live iframes and measure
+    an idle canvas — an early version of this spec did exactly that and
+    "proved" zoom was 18ms. The spec now asserts `liveAfter > liveBefore` so it
+    cannot silently measure nothing. Same trap applies to posters: the first
+    reading was "0 posters", which looked like a broken feature but was
+    9 frames that had simply never been on screen.
 
 ### test-infra-01 — `DbClient.close()`, and the test signal becomes trustworthy
 - **Agent:** test-engineer

@@ -11,13 +11,24 @@
  *   - Store change → panel re-render
  *   - Mounted iframes at rest (virtualization actually bounds the count)
  *
- * These are the numbers `perf-01` calibrated them against — see that
- * `STATE.md` entry for the measured baseline. Budgets are set to the
- * measured value plus a small margin, not an aspirational target: **a
- * budget nobody can fail is a comment, not a gate.**
+ * ⚠ **THE BUDGETS BELOW ARE UNCALIBRATED, AND THIS BENCH HAS NEVER RUN.**
+ * An earlier draft of this file claimed they were "calibrated against a real
+ * run"; they were not, and could not have been. `launchBrowser` cannot start
+ * Chromium under Bun on Windows at all — see the KNOWN LIMITATION block in
+ * `lib/browser.ts` for the root cause and the measurements. The launch throws,
+ * the catch below turns it into `skippedResult`, and the suite reports
+ * success having opened no browser.
  *
- * Skips gracefully (does not fail the suite) when `dist/` or Chromium isn't
- * available — same posture as `benches/browser.ts`.
+ * The numbers are therefore still WS-5.6's plan targets, not observations.
+ * **Real, measured canvas numbers live in
+ * `tests/e2e/studio-board-perf.e2e.ts`**, which runs under the Playwright
+ * test runner (Node) and drives the real `maherfayad-stack-eSIM` board; its
+ * budgets ARE derived from measurements. Calibrate these against a first
+ * green run of this bench before treating any of them as a gate.
+ *
+ * Skips (does not fail the suite) when `dist/` or Chromium isn't available —
+ * same posture as `benches/browser.ts`. Treat a `skipped` line here as "no
+ * signal", never as a pass.
  */
 import { resolve, join } from 'node:path'
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
@@ -263,10 +274,15 @@ export const studioBoardBench: BenchModule = {
       )
 
       // ───────────────────────────────────────────────────────────────────
-      // Budgets — calibrated against a real run of this bench (see
-      // STATE.md's `perf-01` entry for the measured baseline this was set
-      // against). Set to the measured value plus a small margin: a budget
-      // nobody can fail is a comment, not a gate.
+      // Budgets — WS-5.6's PLAN TARGETS, not measurements. See this module's
+      // header: no run of this bench has ever completed, so nothing here has
+      // been calibrated. The equivalent measured numbers (on the real corpus,
+      // via the Playwright test runner) are in
+      // `tests/e2e/studio-board-perf.e2e.ts`. Notably, the real board shows
+      // a zoom that crosses virtualization boundaries costing ~290ms in a
+      // single frame — so `BUDGET_PAN_WORST_FRAME_MS = 20` here is very
+      // likely to fail on its first real run, and that failure will be
+      // TRUE. Calibrate then; do not pre-emptively loosen.
       // ───────────────────────────────────────────────────────────────────
       const BUDGET_RING_PAINT_MS = 32
       const BUDGET_PAN_WORST_FRAME_MS = 20
