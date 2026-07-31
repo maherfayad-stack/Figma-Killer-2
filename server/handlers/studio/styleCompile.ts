@@ -42,6 +42,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { basename, dirname, isAbsolute, join, relative } from 'node:path'
 import { listWorkspaceFiles } from '@core/page-parser'
+import { joinAppRoot } from './appRoot'
 import { DEFAULT_TRUST_TIER, readStudioMeta, type TrustTier } from './studioMeta'
 import { CSS_MODULE_FILE_RE, readCappedFile } from './styleCompileFileRead'
 import { compileSass, compilePostcssPipeline, type StyleCompileOverrides } from './styleCompileTier1'
@@ -251,18 +252,20 @@ function packageNameAndSubpath(specifier: string): { pkgName: string; subpath: s
 }
 
 /**
- * `<dir>/node_modules/<pkgName>/<subpath>`, or `undefined` when the package
- * isn't installed, the import has no subpath (a bare `import 'some-css-pkg'`
- * with no file — nothing to read), the resolved path escapes the package's
- * own directory, or the file doesn't exist. Never falls back to the host
- * admin server's own `node_modules` — same posture as every other resolver
- * in this file.
+ * `<appRootAbs>/node_modules/<pkgName>/<subpath>`, or `undefined` when the
+ * package isn't installed, the import has no subpath (a bare
+ * `import 'some-css-pkg'` with no file — nothing to read), the resolved path
+ * escapes the package's own directory, or the file doesn't exist. Never
+ * falls back to the host admin server's own `node_modules` — same posture as
+ * every other resolver in this file. `appRootAbs` is the project's APP ROOT
+ * (`approot-01` — `joinAppRoot`), not necessarily the project directory —
+ * a nested app (`journey-screens/`) installs its own `node_modules` there.
  */
-function resolvePackageCssPath(dir: string, specifier: string): string | undefined {
+function resolvePackageCssPath(appRootAbs: string, specifier: string): string | undefined {
   const withoutQuery = specifier.split('?')[0]!
   const { pkgName, subpath } = packageNameAndSubpath(withoutQuery)
   if (!subpath) return undefined
-  const pkgRoot = join(dir, 'node_modules', ...pkgName.split('/'))
+  const pkgRoot = join(appRootAbs, 'node_modules', ...pkgName.split('/'))
   const absPath = join(pkgRoot, ...subpath.split('/'))
   const rel = relative(pkgRoot, absPath)
   if (rel.startsWith('..') || isAbsolute(rel)) return undefined
@@ -275,11 +278,12 @@ function resolvePackageCssPath(dir: string, specifier: string): string | undefin
  * `cssToStyleRules`. `specifiers` empty is the common case (most projects
  * import no package CSS) and returns `''` with no `node_modules` check at
  * all. Degrades to a warning, never throws, matching this module's contract.
+ * `appRootAbs` — see `resolvePackageCssPath`'s doc.
  */
-function collectVendorCss(dir: string, specifiers: ReadonlySet<string>, warnings: ProbeWarning[]): string {
+function collectVendorCss(appRootAbs: string, specifiers: ReadonlySet<string>, warnings: ProbeWarning[]): string {
   if (specifiers.size === 0) return ''
 
-  if (!existsSync(join(dir, 'node_modules'))) {
+  if (!existsSync(join(appRootAbs, 'node_modules'))) {
     warnings.push({
       code: 'vendor-css-requires-install',
       message: `${specifiers.size} package stylesheet import(s) were found (e.g. \`${[...specifiers][0]}\`), but the workspace has no installed node_modules.`,
@@ -291,7 +295,7 @@ function collectVendorCss(dir: string, specifiers: ReadonlySet<string>, warnings
   const chunks: string[] = []
   const unresolved: string[] = []
   for (const specifier of [...specifiers].sort()) {
-    const absPath = resolvePackageCssPath(dir, specifier)
+    const absPath = resolvePackageCssPath(appRootAbs, specifier)
     const text = absPath ? readCappedFile(absPath) : undefined
     if (text === undefined) {
       unresolved.push(specifier)
@@ -427,8 +431,14 @@ export async function compileProjectStyles(
   const vendorSpecifiers = findBareCssImportSpecifiers(dir)
   if (!needsCssModules && !needsTier1 && vendorSpecifiers.size === 0) return { styles: EMPTY_STYLES, warnings }
 
+  // `approot-01` — every `node_modules` read (the Tier 1 gate below, vendor
+  // CSS, the compiler resolution `compileSass`/`compilePostcssPipeline` do)
+  // targets the project's APP ROOT, not necessarily the project directory:
+  // a nested app installs its own `node_modules` there. `''` app root (the
+  // common case) makes this a no-op — `appRootAbs === dir`.
+  const appRootAbs = joinAppRoot(dir, profile.appRoot)
   const trust = readStudioMeta(dir).trust ?? DEFAULT_TRUST_TIER
-  const hasNodeModules = existsSync(join(dir, 'node_modules'))
+  const hasNodeModules = existsSync(join(appRootAbs, 'node_modules'))
 
   if (needsTier1) {
     if (trust === 'static') {
@@ -456,15 +466,15 @@ export async function compileProjectStyles(
 
   let tier1Css = ''
   if (needsTier1 && trust !== 'static' && hasNodeModules) {
-    const sassCss = toolchain.sass ? await compileSass(dir, warnings, overrides) : ''
-    const postcssCss = toolchain.tailwind || toolchain.postcssConfigPath ? await compilePostcssPipeline(dir, profile, warnings, overrides) : ''
+    const sassCss = toolchain.sass ? await compileSass(dir, appRootAbs, warnings, overrides) : ''
+    const postcssCss = toolchain.tailwind || toolchain.postcssConfigPath ? await compilePostcssPipeline(dir, appRootAbs, profile, warnings, overrides) : ''
     tier1Css = [sassCss, postcssCss].filter(Boolean).join('\n\n')
   }
 
   const styles: CompiledStyles = {
     css: [cssModulesResult.css, tier1Css].filter(Boolean).join('\n\n'),
     moduleClassMaps: cssModulesResult.moduleClassMaps,
-    vendorCss: collectVendorCss(dir, vendorSpecifiers, warnings),
+    vendorCss: collectVendorCss(appRootAbs, vendorSpecifiers, warnings),
   }
 
   writeStyleCache(dir, cacheKey, styles)

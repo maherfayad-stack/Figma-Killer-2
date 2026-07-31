@@ -38,6 +38,7 @@ import { createFrameworkSpacingActions } from './site/framework/spacing'
 import { createFrameworkPreferencesActions } from './site/framework/preferences'
 import { createFrameworkPreviewActions } from './site/framework/preview'
 import { createFrameworkManagerActions } from './site/framework/manage'
+import { createFrameworkTokenImportActions } from './site/framework/tokenImport'
 import type { SiteSlice } from './site/types'
 
 // Re-export the public slice type for store wiring.
@@ -91,5 +92,6 @@ export const createSiteSlice: EditorStoreSliceCreator<SiteSlice> = (set, get) =>
     ...createFrameworkPreferencesActions(helpers),
     ...createFrameworkPreviewActions(helpers),
     ...createFrameworkManagerActions(helpers),
+    ...createFrameworkTokenImportActions(helpers),
   }
 }

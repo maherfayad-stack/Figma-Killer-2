@@ -1,0 +1,176 @@
+/* ── Shared building blocks across the eSIM activation + top-up flow ── */
+
+.esim-intro__progress {
+  width: 100%;
+}
+
+.esim-sheet__scroll {
+  flex: 1 0 0;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.esim-sheet__scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.esim-sheet__body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space);
+  padding: var(--space-sm) var(--space) var(--space-2xl);
+  min-height: 100%;
+  box-sizing: border-box;
+}
+
+.esim-sheet__footer {
+  flex-shrink: 0;
+  padding: var(--space-sm) var(--space) var(--space);
+}
+
+.esim-sheet__footer .btn {
+  width: 100%;
+}
+
+/* Checklist — bordered rounded row, green check circle, body text */
+.esim-checklist {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.esim-checklist__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  width: 100%;
+  padding: var(--space-md) 17px;
+  border: 1px solid var(--border-base-default);
+  border-radius: var(--rounded);
+  box-sizing: border-box;
+}
+
+.esim-checklist__icon {
+  flex-shrink: 0;
+}
+
+.esim-checklist__text {
+  flex: 1 0 0;
+  min-width: 0;
+  font-family: var(--font-body);
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-lh);
+  color: var(--text-base-default);
+}
+
+/* Radar / ping loader — "Configuring eSIM" state */
+.esim-radar {
+  position: relative;
+  width: 96px;
+  height: 96px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+  margin-bottom: var(--space-sm);
+}
+.esim-radar__ring {
+  position: absolute;
+  inset: 0;
+  border-radius: var(--rounded-full);
+  border: 2px solid var(--color-aqua-100);
+  opacity: 0;
+  animation: esim-radar-ping 2.1s ease-out infinite;
+}
+.esim-radar__ring:nth-child(2) { animation-delay: 0.7s; }
+.esim-radar__ring:nth-child(3) { animation-delay: 1.4s; }
+.esim-radar__orbit {
+  position: absolute;
+  inset: 0;
+  animation: esim-orbit 1.6s linear infinite;
+}
+.esim-radar__orbit::before {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 50%;
+  width: 7px;
+  height: 7px;
+  margin-left: -3.5px;
+  border-radius: var(--rounded-full);
+  background: var(--color-aqua-100);
+}
+.esim-radar__core {
+  width: 42px;
+  height: 42px;
+  border-radius: var(--rounded-full);
+  background: linear-gradient(180deg, var(--color-aqua-100) 0%, var(--color-almosafer) 99%);
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--color-aqua-100) 45%, transparent);
+}
+
+@keyframes esim-radar-ping {
+  0%   { transform: scale(0.4); opacity: 0.75; }
+  100% { transform: scale(1); opacity: 0; }
+}
+@keyframes esim-orbit {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+.esim-config-title {
+  margin: 0;
+  text-align: center;
+  font-family: var(--font-body);
+  font-size: var(--type-body-size);
+  font-weight: var(--type-body-semibold-weight);
+  line-height: var(--type-body-lh);
+  color: var(--text-base-default);
+}
+
+.esim-config-phase {
+  margin: 0;
+  min-height: 20px;
+  text-align: center;
+  font-family: var(--font-body);
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-lh);
+  color: var(--text-base-subtext);
+}
+
+.esim-config-track {
+  display: flex;
+  gap: var(--space-xs);
+  width: 100%;
+  max-width: 220px;
+  margin-top: var(--space-xs);
+}
+.esim-config-seg {
+  flex: 1;
+  height: 4px;
+  border-radius: var(--rounded-full);
+  background: var(--border-base-default);
+  overflow: hidden;
+}
+.esim-config-seg::after {
+  content: '';
+  display: block;
+  height: 100%;
+  width: 0%;
+  border-radius: inherit;
+  background: var(--color-aqua-100);
+  transition: width 0.5s ease;
+}
+.esim-config-seg--done::after,
+.esim-config-seg--active::after { width: 100%; }
+
+@media (prefers-reduced-motion: reduce) {
+  .esim-radar__ring,
+  .esim-radar__orbit { animation: none; }
+}

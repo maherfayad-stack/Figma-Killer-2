@@ -28,31 +28,41 @@
  * locked — that lock is about having no single valid writeback target at all,
  * which inlining does not change.
  *
- * The CALL SITE node is REPLACED by the component's own root node(s), not
- * kept as a wrapper around them. `<SheetShell/>` renders SheetShell's own
- * root `<div>` at that position — a component call emits no element of its
- * own — so the expanded tree must not either. Leaving a wrapper div behind
- * silently breaks two things at once:
+ * The CALL SITE node is KEPT — WS-4.2's "instance" fragment model — rather
+ * than replaced by the component's own root node(s). `<SheetShell/>` still
+ * renders SheetShell's own root `<div>` at that position (a component call
+ * emits no element of its own), so the call-site node itself renders as
+ * `moduleId: 'studio.instance'`, a React Fragment with ZERO DOM boxes
+ * (`src/modules/base/instance/`) — the inlined subtree becomes its
+ * `children` instead of replacing it in the parent's `children`/`rootIds`.
+ * This preserves everything the old "replace, don't wrap" design existed for:
  *
  *   - Percentage and flex height chains. `.sheet-shell { height: 100% }`
- *     resolves against the wrapper's `auto` height, so the shell collapses to
- *     its own content height and every `flex: 1` descendant inside it
- *     (a scroll viewport, typically) computes to 0 — on the eSIM corpus this
- *     clipped 1447px of a screen's body down to nothing.
+ *     resolves against a REAL `auto`-height wrapper the same way it would
+ *     against nothing at all if the wrapper is layout-transparent — a
+ *     Fragment inserts no box, so there is nothing for a `height: 100%` chain
+ *     to collapse against. (On the eSIM corpus, a stray wrapper div here
+ *     clipped 1447px of a screen's body down to nothing — see
+ *     `instanceNodes.test.tsx` for the regression test.)
  *   - Every direct-child and sibling combinator crossing the call site:
- *     `.sheet-shell__panel > .booking-confirmation__scroll` stops matching
- *     once a div sits between them.
+ *     `.sheet-shell__panel > .booking-confirmation__scroll` keeps matching,
+ *     because no element sits between them — a Fragment renders no DOM node
+ *     at all, which is strictly better than the `display: contents` trick
+ *     `src/modules/alm/register.tsx` uses for the same reason (that trick
+ *     still creates an element, which breaks `:nth-child`/sibling selectors
+ *     landing on either side of it; a Fragment breaks nothing).
  *
  * Both are the same class of bug the per-frame iframe exists to prevent (see
  * `IframeFrameSurface`'s "no `display: contents` NodeWrapper divs" note): the
  * canvas DOM has to be the DOM React renders, or authored CSS quietly means
  * something different here than it does in the app.
  *
- * The trade-off is that a call site's own literal props (`<Icon size={24}/>`'s
- * `size`) are no longer editable as a node, because there is no longer a node
- * for the call site — those values reach the canvas through substitution into
- * the subtree instead (§2.3(a)), and are edited at the source location that
- * actually holds them.
+ * Unlike the old replace-in-place design, a call site's own literal props
+ * (`<Icon size={24}/>`'s `size`) ARE now editable, as this node's own
+ * `ParsedNode.instanceOf.callSiteProps` — because the call site keeps its own
+ * id (a real, writable source location: the call site's own `relFile:line:col`,
+ * never composite) instead of being deleted. See `ParsedNode.instanceOf`'s doc
+ * comment and `parsedPageToSitePage.ts` for how that reaches the editor.
  * ---------------------------------------------------------------------------
  *
  * SCOPE (§2.3 — partial evaluation, not an interpreter): the ONLY prop/text
@@ -86,8 +96,9 @@ import {
 } from './parsePageFile'
 import { applySubstitutions, buildSubstitutionEnv } from './componentSubstitution'
 import { resolveComponentSources, resolveExportedDeclaration, type ComponentSource } from './componentSources'
-import type { ParsedNode, ParsedPage } from './types'
+import type { ParsedNode, ParsedPage, ParsedPropValue } from './types'
 import type { StaticEvalOptions } from './staticEval'
+import { studioSlotNodeId, studioSlotValue } from '@core/utils/studioSlotSentinel'
 
 export interface InlineOptions {
   /** Hard cap on nesting depth. Default 6. */
@@ -269,7 +280,14 @@ function expandCallSite(
 
     // Recurse into the sub-tree's own local components — resolved fresh
     // against ITS OWN file, since `sources` (this function's caller's
-    // parameter) only classified the ORIGINAL page's call sites.
+    // parameter) only classified the ORIGINAL page's call sites. A nested
+    // call site becomes its OWN instance node (same transform, applied
+    // recursively) BEFORE this level's own prefixing runs below — its id
+    // (still its own plain `relFile:line:col` at this point) gets folded
+    // into the multi-segment composite chain by `prefixParsedPage` exactly
+    // like any other node this subtree owns; `INLINE_ID_SEPARATOR`'s own doc
+    // comment already anticipates this ("nested inlining … chains additional
+    // segments the same way").
     const subSources = resolveComponentSources(state.project, target.sourceFile.getFilePath(), state.workspaceRoot, subPage)
     const nextCyclePath = new Set(cyclePath)
     nextCyclePath.add(cycleKey)
@@ -291,12 +309,25 @@ function expandCallSite(
     }
     state.nodeCount += Object.keys(prefixed.nodes).length
 
-    // The call site itself contributes no element — its expansion takes its
-    // place, wherever it was referenced (module header, "The CALL SITE node is
-    // REPLACED"). A fragment root legitimately yields several roots; they all
-    // splice in at the call site's position, in order.
-    delete page.nodes[callSiteId]
-    spliceReference(page, callSiteId, prefixed.rootIds)
+    // WS-4.2 — the call site becomes the "instance" fragment node: it stays
+    // exactly where it already was (`page.rootIds` or its parent's
+    // `children` still reference `callSiteId` unchanged — nothing to splice),
+    // its CHILDREN become the inlined subtree's roots, and `instanceOf` names
+    // the component + carries the call site's own props for §4.3's editable
+    // call-site prop surface. `callSiteNode.locked`/`lockReason` (the call
+    // site's OWN structural status — e.g. it sits inside a `.map`/ternary at
+    // ITS level) is preserved as-is via the spread; inlining does not change
+    // it, same principle `fromComponent` already followed for the subtree.
+    page.nodes[callSiteId] = {
+      ...callSiteNode,
+      children: [...prefixed.rootIds],
+      instanceOf: {
+        componentName: displayName,
+        source: 'local',
+        sourceFile: targetRelFile,
+        callSiteProps: callSiteNode.props,
+      },
+    }
     return true
   } catch {
     // Any unexpected failure (syntax error in the target file, an
@@ -307,7 +338,14 @@ function expandCallSite(
   }
 }
 
-interface CallTarget {
+/**
+ * Exported (WS-4.4/4.5) so `detachComponent.ts`/`swapComponentInstance.ts`
+ * can resolve "what does this call site's tag identifier actually refer to"
+ * with the exact same import/barrel/rename/same-file logic
+ * `inlineLocalComponents` already needed for the same question, rather than a
+ * second, drifting copy.
+ */
+export interface CallTarget {
   sourceFile: SourceFile
   /** `undefined` = resolve the target file's DEFAULT export. */
   exportedName: string | undefined
@@ -331,7 +369,7 @@ interface CallTarget {
  * same-file declaration (a small helper component defined directly in the
  * page/component file that calls it, never imported at all).
  */
-function resolveCallTarget(
+export function resolveCallTarget(
   callerSourceFile: SourceFile,
   identifier: string,
   targetAbsPath: string,
@@ -385,7 +423,7 @@ function defaultExportTarget(targetAbsPath: string, project: Project): CallTarge
  * resolution), so `requireExport` stays `true` there as a defence-in-depth
  * check, not a guess.
  */
-function findNamedComponentDeclaration(sourceFile: SourceFile, name: string, requireExport: boolean): Node | undefined {
+export function findNamedComponentDeclaration(sourceFile: SourceFile, name: string, requireExport: boolean): Node | undefined {
   const fn = sourceFile.getFunction(name)
   if (fn && (!requireExport || fn.isExported())) return fn
 
@@ -415,7 +453,30 @@ function findNamedComponentDeclaration(sourceFile: SourceFile, name: string, req
  * nested expansion's replacement ids are in `subPage.nodes`, so they still get
  * prefixed here and stay unique per call site, while spliced-in children — the
  * only dangling references a subtree can hold — still don't.
+ *
+ * WS-3.4 — a node's `props` can hold a slot-sentinel value (§ `studioSlotSentinel.ts`)
+ * referencing another id `subPage` owns (`<Cell icon={<Icon/>}/>`, both minted
+ * by the SAME `parseJsxTree` call that produced `subPage`). That reference
+ * lives in `props`, which `children.map(prefix)` above never touches — left
+ * alone, it would still name the PRE-prefix id after this function renames
+ * everything else, pointing at a node that no longer exists under that key.
+ * `rewriteSlotSentinels` applies the identical `prefix` function to any prop
+ * value shaped like a slot sentinel.
  */
+function rewriteSlotSentinels(
+  props: Record<string, ParsedPropValue>,
+  prefix: (id: string) => string,
+): Record<string, ParsedPropValue> {
+  let next: Record<string, ParsedPropValue> | undefined
+  for (const [key, value] of Object.entries(props)) {
+    const targetId = studioSlotNodeId(value)
+    if (targetId === undefined) continue
+    next ??= { ...props }
+    next[key] = studioSlotValue(prefix(targetId))
+  }
+  return next ?? props
+}
+
 function prefixParsedPage(subPage: ParsedPage, callSiteId: string): ParsedPage {
   const prefix = (id: string): string =>
     subPage.nodes[id] ? `${callSiteId}${INLINE_ID_SEPARATOR}${id}` : id
@@ -423,37 +484,19 @@ function prefixParsedPage(subPage: ParsedPage, callSiteId: string): ParsedPage {
   const nodes: Record<string, ParsedNode> = {}
   for (const [id, node] of Object.entries(subPage.nodes)) {
     const newId = prefix(id)
-    nodes[newId] = { ...node, id: newId, children: node.children.map(prefix) }
+    nodes[newId] = {
+      ...node,
+      id: newId,
+      children: node.children.map(prefix),
+      props: rewriteSlotSentinels(node.props, prefix),
+    }
   }
   return { rootIds: subPage.rootIds.map(prefix), nodes }
 }
 
-/**
- * Splices `withIds` in for the single reference to `id` — in whichever node's
- * `children` holds it, or in `page.rootIds` when the call site was a root.
- *
- * A tree references each id exactly once, so the first hit is the only hit.
- * Scanning for it beats threading a child→parent map: expansion order is not
- * top-down (an inner call site can be expanded before the outer one that
- * splices its children), so any precomputed parent map would be stale by the
- * time it was read.
- */
-function spliceReference(page: ParsedPage, id: string, withIds: readonly string[]): void {
-  const spliced = (ids: string[]): string[] | null => {
-    const at = ids.indexOf(id)
-    return at === -1 ? null : [...ids.slice(0, at), ...withIds, ...ids.slice(at + 1)]
-  }
-
-  const roots = spliced(page.rootIds)
-  if (roots) {
-    page.rootIds.splice(0, page.rootIds.length, ...roots)
-    return
-  }
-  for (const [nodeId, node] of Object.entries(page.nodes)) {
-    const children = spliced(node.children)
-    if (children) {
-      page.nodes[nodeId] = { ...node, children }
-      return
-    }
-  }
-}
+// `spliceReference` (the old "delete the call site, splice its expansion in
+// wherever it was referenced" step) is gone — WS-4.2 keeps the call site node
+// in place and only changes its `children`/`instanceOf`, so nothing needs
+// splicing any more: a slot-sentinel prop pointing at a call site id (WS-3.4)
+// keeps pointing at a REAL node (the instance), not a dangling reference that
+// needed rewriting. See `expandCallSite`'s WS-4.2 comment.

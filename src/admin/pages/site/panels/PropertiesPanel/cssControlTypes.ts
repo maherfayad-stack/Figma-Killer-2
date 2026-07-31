@@ -370,34 +370,17 @@ export interface ClassStyleSectionDefinition {
   properties: ReadonlyArray<keyof CSSPropertyBag>
 }
 
+// ---------------------------------------------------------------------------
+// Section order — WS-6.1's Figma-shaped top-to-bottom flow: Position → Size
+// → Auto layout → Spacing → Fill → Stroke → Effects → Typography →
+// Interaction (Studio's own addition — Figma has no CSS-cursor/pointer-events
+// concept, so it stays last rather than displacing anything Figma-native).
+// Order is read by consumers via array iteration (`StyleCategoryRail`'s rail
+// buttons, `StyleSectionsEditor`'s scroll order) — changing it changes both
+// at once, deliberately, since they're meant to stay in lockstep.
+// ---------------------------------------------------------------------------
+
 export const CLASS_STYLE_SECTIONS: ReadonlyArray<ClassStyleSectionDefinition> = [
-  {
-    id: 'layout',
-    title: 'Layout',
-    icon: LayoutSolidIcon,
-    defaultOpen: true,
-    properties: [
-      'display',
-      'flexDirection',
-      'flexWrap',
-      'alignItems',
-      'justifyContent',
-      'justifyItems',
-      'alignSelf',
-      'justifySelf',
-      'flex',
-      'gap',
-      'rowGap',
-      'columnGap',
-      'gridTemplateColumns',
-      'gridTemplateRows',
-      'gridColumn',
-      'gridRow',
-      'overflow',
-      'overflowX',
-      'overflowY',
-    ],
-  },
   {
     id: 'position',
     title: 'Position',
@@ -428,6 +411,33 @@ export const CLASS_STYLE_SECTIONS: ReadonlyArray<ClassStyleSectionDefinition> = 
     ],
   },
   {
+    id: 'layout',
+    title: 'Layout',
+    icon: LayoutSolidIcon,
+    defaultOpen: true,
+    properties: [
+      'display',
+      'flexDirection',
+      'flexWrap',
+      'alignItems',
+      'justifyContent',
+      'justifyItems',
+      'alignSelf',
+      'justifySelf',
+      'flex',
+      'gap',
+      'rowGap',
+      'columnGap',
+      'gridTemplateColumns',
+      'gridTemplateRows',
+      'gridColumn',
+      'gridRow',
+      'overflow',
+      'overflowX',
+      'overflowY',
+    ],
+  },
+  {
     id: 'spacing',
     title: 'Spacing',
     icon: RulerDimensionSolidIcon,
@@ -441,25 +451,6 @@ export const CLASS_STYLE_SECTIONS: ReadonlyArray<ClassStyleSectionDefinition> = 
       'marginRight',
       'marginBottom',
       'marginLeft',
-    ],
-  },
-  {
-    id: 'typography',
-    title: 'Typography',
-    icon: TextStartTIcon,
-    properties: [
-      'fontFamily',
-      'fontSize',
-      'fontWeight',
-      'fontStyle',
-      'lineHeight',
-      'letterSpacing',
-      'textAlign',
-      'textDecoration',
-      'textTransform',
-      'whiteSpace',
-      'color',
-      'textShadow',
     ],
   },
   {
@@ -526,6 +517,25 @@ export const CLASS_STYLE_SECTIONS: ReadonlyArray<ClassStyleSectionDefinition> = 
       'transformOrigin',
       'transition',
       'animation',
+    ],
+  },
+  {
+    id: 'typography',
+    title: 'Typography',
+    icon: TextStartTIcon,
+    properties: [
+      'fontFamily',
+      'fontSize',
+      'fontWeight',
+      'fontStyle',
+      'lineHeight',
+      'letterSpacing',
+      'textAlign',
+      'textDecoration',
+      'textTransform',
+      'whiteSpace',
+      'color',
+      'textShadow',
     ],
   },
   {

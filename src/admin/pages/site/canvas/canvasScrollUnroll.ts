@@ -28,10 +28,30 @@ export const SCROLL_UNROLL_ATTR = 'data-studio-unroll'
 export const SCROLL_UNROLL_ORIGINAL_OVERFLOW_ATTR = 'data-studio-unroll-overflow-y'
 
 /**
- * Custom property carrying the "explicit-height" element's ORIGINAL box
- * height, read by the injected stylesheet as `min-height`. Set inline (a
- * value, not a behaviour) — the actual override (`height: auto; min-height:
- * var(...)`) lives in the stylesheet, keyed off `SCROLL_UNROLL_ATTR`.
+ * Custom property carrying the "explicit-height" element's true full content
+ * extent (its `scrollHeight`, measured before any mutation), read by the
+ * injected stylesheet as `min-height`. Set inline (a value, not a behaviour)
+ * — the actual override (`height: auto; min-height: var(...)`) lives in the
+ * stylesheet, keyed off `SCROLL_UNROLL_ATTR`.
+ *
+ * Deliberately `scrollHeight`, not `clientHeight` — and specifically the
+ * value measured BEFORE this element (or any earlier-in-document-order
+ * ancestor's) tag is applied. Two reasons, either one sufficient on its own:
+ * (1) a `clientHeight` re-read taken AFTER this element's own
+ * `[data-studio-unroll="explicit-height"]` rule activates resolves
+ * `min-height: var(--studio-unroll-min-height)` via CSS custom-property
+ * INHERITANCE from whichever ancestor was tagged earlier in the same pass —
+ * since custom properties inherit and this element hasn't set its own local
+ * value yet, it picks up the ancestor's (often much larger) one and bakes it
+ * in permanently; (2) even ignoring inheritance, `min-height` needs to beat
+ * an author's `max-height` (a common `max-height: 60vh; overflow-y: auto`
+ * sheet-content pattern) — CSS resolves a min/max conflict in favour of
+ * `min-height`, but only if the value baked in is actually larger than
+ * `max-height`, which `scrollHeight` (the true, uncapped content extent) is
+ * and a `clientHeight` read while still clamped to that same `max-height`
+ * never can be. Regression coverage:
+ * `canvasScrollUnrollInjector.test.tsx`'s "floors it at its true content
+ * extent" case.
  */
 export const SCROLL_UNROLL_MIN_HEIGHT_VAR = '--studio-unroll-min-height'
 

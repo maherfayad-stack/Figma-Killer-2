@@ -11,7 +11,7 @@
  * Renders nothing outside Studio mode, and nothing once `node_modules`
  * already exists or the project has no dependencies to install.
  */
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from '@ui/components/Button'
 import { EmptyState } from '@ui/components/EmptyState'
 import { pushToast } from '@ui/components/Toast'
@@ -44,41 +44,14 @@ export function InstallDependenciesPrompt() {
   const [starting, setStarting] = useState(false)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  // Re-probe whenever the active project changes, and drop any poll left
-  // running for the PREVIOUS project. Deliberately does NOT clear `probe`/
-  // `job` synchronously first (that trips the "setState in effect body"
-  // rule) — the previous project's status just holds until the new probe
-  // resolves, which is a one-request-long flash in the rare case a project
-  // switch happens while this panel is already open.
-  useEffect(() => {
-    let cancelled = false
-    if (pollRef.current) {
-      clearInterval(pollRef.current)
-      pollRef.current = null
-    }
-    probeDependencyInstall(dir)
-      .then((result) => {
-        if (cancelled) return
-        setProbe(result)
-        setJob(null)
-      })
-      .catch((err) => {
-        console.error('[InstallDependenciesPrompt] probe failed:', err)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [dir])
-
-  // Belt-and-braces: stop polling on unmount no matter what state we're in.
-  useEffect(() => {
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current)
-    }
-  }, [])
-
-  const pollJob = (jobId: string) => {
-    getDependencyInstallJob(jobId)
+  // `pollJob` is called from a `setInterval` closure captured inside the two
+  // effects below (deliberately excluded from the mount effect's own dep
+  // array further down, else it would re-run on every render) — wrapped in
+  // `useCallback` so BOTH effects that reference it stay correct across
+  // renders without re-subscribing on every one (React Compiler exception
+  // #1: a function referenced from a dep array needs a stable identity).
+  const pollJob = useCallback((jobId: string) => {
+    getDependencyInstallJob(jobId, dir)
       .then((result) => {
         setJob(result)
         if (result.status === 'running') return
@@ -102,17 +75,69 @@ export function InstallDependenciesPrompt() {
             .then(setProbe)
             .catch((err) => console.error('[InstallDependenciesPrompt] re-probe failed:', err))
         } else {
-          pushToast({
-            kind: 'error',
-            title: result.status === 'timeout' ? 'Dependency install timed out' : 'Dependency install failed',
-            body: tailLines(result.log, 4) || 'The install did not complete — see the server log.',
-          })
+          const title =
+            result.status === 'timeout'
+              ? 'Dependency install timed out'
+              : result.status === 'interrupted'
+                ? 'Dependency install was interrupted'
+                : 'Dependency install failed'
+          const body =
+            result.status === 'interrupted'
+              ? 'The server restarted while this install was running, so its outcome is unknown. Check whether dependencies landed, then try again.'
+              : tailLines(result.log, 4) || 'The install did not complete — see the server log.'
+          pushToast({ kind: 'error', title, body })
         }
       })
       .catch((err) => {
         console.error('[InstallDependenciesPrompt] poll failed:', err)
       })
-  }
+  }, [dir])
+
+  // Re-probe whenever the active project changes, and drop any poll left
+  // running for the PREVIOUS project. Deliberately does NOT clear `probe`/
+  // `job` synchronously first (that trips the "setState in effect body"
+  // rule) — the previous project's status just holds until the new probe
+  // resolves, which is a one-request-long flash in the rare case a project
+  // switch happens while this panel is already open.
+  //
+  // `infra-01`: the probe's `job` field can report a job STILL `'running'` —
+  // e.g. this component remounted (panel closed/reopened, page reload) while
+  // an install kicked off earlier is genuinely still going, whether or not
+  // the server itself restarted in between. Resume polling it instead of
+  // silently re-offering "Install dependencies" over a job already in
+  // flight (which would start a SECOND, concurrent install into the same
+  // `node_modules`).
+  useEffect(() => {
+    let cancelled = false
+    if (pollRef.current) {
+      clearInterval(pollRef.current)
+      pollRef.current = null
+    }
+    probeDependencyInstall(dir)
+      .then((result) => {
+        if (cancelled) return
+        setProbe(result)
+        if (result.job?.status === 'running') {
+          setJob(result.job)
+          pollRef.current = setInterval(() => pollJob(result.job!.id), POLL_INTERVAL_MS)
+        } else {
+          setJob(null)
+        }
+      })
+      .catch((err) => {
+        console.error('[InstallDependenciesPrompt] probe failed:', err)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [dir, pollJob])
+
+  // Belt-and-braces: stop polling on unmount no matter what state we're in.
+  useEffect(() => {
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current)
+    }
+  }, [])
 
   const handleInstall = () => {
     if (starting || job?.status === 'running') return

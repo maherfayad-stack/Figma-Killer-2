@@ -85,7 +85,17 @@ describe('canvas iframe body presentation', () => {
       expect(firstChild?.tagName).toBe('MAIN')
       expect(firstChild?.getAttribute('data-node-id')).toBe(main.id)
       expect(firstChild?.matches(':first-child')).toBe(true)
-      expect(frameDocument.body.children).toHaveLength(1)
+      // Exactly one non-editor child. `CanvasSelectionOverlayInjector`
+      // (WS-5.1) legitimately appends ONE body-level overlay root
+      // (`data-studio-canvas-overlay-root`) — always AFTER authored content,
+      // which is what actually matters for CSS combinator correctness
+      // (`:first-child` above already pins that). It carries no
+      // `data-node-id`, is never a selectable/hoverable node, and is
+      // excluded from this "editor-only children" check by design.
+      const nonOverlayChildren = Array.from(frameDocument.body.children).filter(
+        (child) => !child.hasAttribute('data-studio-canvas-overlay-root'),
+      )
+      expect(nonOverlayChildren).toHaveLength(1)
     })
   })
 

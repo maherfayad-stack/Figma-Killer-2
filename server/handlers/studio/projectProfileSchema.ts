@@ -81,8 +81,27 @@ const PagesDirCandidateSchema = Type.Object({
   score: Type.Number(),
 })
 
+const AppRootCandidateSchema = Type.Object({
+  /** Project-relative POSIX directory path. */
+  dir: Type.String(),
+  /** Composite ranking score (framework config presence, `src/` presence, dependency count) — see `projectProbe.ts`'s `scoreAppRootCandidate`. Higher wins; informational only, the real tie-break order lives in the ranking comparator. */
+  score: Type.Number(),
+})
+
 export const ProjectProfileSchema = Type.Object({
   framework: FrameworkSchema,
+  /**
+   * Project-relative POSIX path to the app's own root — the nearest directory
+   * (project dir itself, an immediate child, or a grandchild) containing a
+   * `package.json`. `''` when the app root IS the project directory (by far
+   * the common case). Every other path in this profile (`pagesDir`,
+   * `entryFiles`, `styleToolchain.*.configPath`) is still project-relative,
+   * NOT app-root-relative — they already carry this prefix when it is
+   * non-empty. Consumers that need `node_modules`/the toolchain itself
+   * resolved go through `resolveAppRoot(dir)` (`./appRoot.ts`), never rejoin
+   * this field by hand.
+   */
+  appRoot: Type.String(),
   /** Repo-relative POSIX. */
   pagesDir: Type.String(),
   routeStyle: RouteStyleSchema,
@@ -102,5 +121,12 @@ export const ProjectProfileSchema = Type.Object({
    * Companion warning code: `pages-dir-heuristic`.
    */
   pagesDirCandidates: Type.Optional(Type.Array(PagesDirCandidateSchema)),
+  /**
+   * Present only when app-root detection found more than one plausible
+   * candidate at the winning search depth (a real monorepo) — the ranked
+   * list, so a caller can offer the user a choice instead of trusting a guess
+   * silently. Companion warning code: `app-root-ambiguous`.
+   */
+  appRootCandidates: Type.Optional(Type.Array(AppRootCandidateSchema)),
 })
 export type ProjectProfile = Static<typeof ProjectProfileSchema>

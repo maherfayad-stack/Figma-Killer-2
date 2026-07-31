@@ -1,0 +1,7 @@
+.esim-device-picker .action-sheet-overlay__scrim {
+  background: var(--overlay-default);
+}
+
+.esim-device-picker .ios-dialog__glass {
+  background: color-mix(in srgb, var(--background-base-default) 90%, transparent);
+}

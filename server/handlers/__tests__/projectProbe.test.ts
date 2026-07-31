@@ -150,6 +150,106 @@ describe('probeProject — framework detection', () => {
     expect(profile.pagesDir).toBe('pages')
     expect(profile.warnings.some((w) => w.code === 'pages-dir-not-found')).toBe(true)
   })
+
+  it('prefers a directory whose RECURSIVE subtree holds more matching files over a same-ratio sibling with a higher DIRECT count', () => {
+    // No framework config — forces the JSX-density heuristic. Fixture shares
+    // nothing with the eSIM corpus (`views`/`widgets`, not `screens`/
+    // `components`) — see `genericRepoShapes.test.ts`'s discipline. Mirrors
+    // the real shape that made `mcp-01` mis-rank `journey-screens/src/
+    // components` over `journey-screens/src/screens`: two directories at
+    // 100% JSX-default-export density, one of which has a nested
+    // subdirectory of its own matching files, the other flatter but with a
+    // higher DIRECT file count.
+    writePackageJson({})
+    const jsxDefault = (name: string) => `export default function ${name}() {\n  return <div>${name}</div>\n}\n`
+    write('views/Home.tsx', jsxDefault('Home'))
+    write('views/Profile.tsx', jsxDefault('Profile'))
+    write('views/settings/General.tsx', jsxDefault('General'))
+    write('views/settings/Privacy.tsx', jsxDefault('Privacy'))
+    write('views/settings/Billing.tsx', jsxDefault('Billing'))
+    write('widgets/Card.tsx', jsxDefault('Card'))
+    write('widgets/Badge.tsx', jsxDefault('Badge'))
+    write('widgets/Avatar.tsx', jsxDefault('Avatar'))
+    write('widgets/Tag.tsx', jsxDefault('Tag'))
+
+    const profile = probeProject(tmpDir)
+    // `views/` (2 direct + 3 nested = 5 matched) outranks `widgets/` (4
+    // matched, no subtree) even though `widgets/` has more DIRECT files.
+    expect(profile.pagesDir).toBe('views')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// App root (`approot-01`) — a project's app root is not always its project
+// directory.
+// ---------------------------------------------------------------------------
+
+describe('probeProject — app root', () => {
+  it('treats the project directory as the app root when package.json sits there — unchanged behavior for every existing project', () => {
+    writePackageJson({})
+    write('pages/Home.tsx', 'export default function Home() { return <div>Home</div> }\n')
+
+    const profile = probeProject(tmpDir)
+    expect(profile.appRoot).toBe('')
+    expect(profile.appRootCandidates).toBeUndefined()
+    expect(profile.warnings.some((w) => w.code.startsWith('app-root-'))).toBe(false)
+    expect(profile.pagesDir).toBe('pages')
+  })
+
+  it('detects a nested app root one level down, and every returned path stays project-relative', () => {
+    // Shares nothing with the eSIM corpus's own `journey-screens/` naming —
+    // `genericRepoShapes.test.ts` discipline.
+    write('firmware-console/package.json', JSON.stringify({ name: 'firmware-console' }))
+    write('firmware-console/screens/Dashboard.tsx', 'export default function Dashboard() { return <div>Dashboard</div> }\n')
+    write('firmware-console/screens/Settings.tsx', 'export default function Settings() { return <div>Settings</div> }\n')
+
+    const profile = probeProject(tmpDir)
+    expect(profile.appRoot).toBe('firmware-console')
+    expect(profile.pagesDir).toBe('firmware-console/screens')
+    expect(profile.warnings.some((w) => w.code === 'pages-dir-heuristic')).toBe(true)
+    expect(profile.pagesDirCandidates?.every((c) => c.dir.startsWith('firmware-console/'))).toBe(true)
+    expect(profile.warnings.some((w) => w.code.startsWith('app-root-'))).toBe(false)
+  })
+
+  it('detects a nested app root two levels down (a monorepo apps/<name> shape)', () => {
+    write('apps/web/package.json', JSON.stringify({ name: 'web' }))
+    write('apps/web/screens/Home.tsx', 'export default function Home() { return <div>Home</div> }\n')
+
+    const profile = probeProject(tmpDir)
+    expect(profile.appRoot).toBe('apps/web')
+    expect(profile.pagesDir).toBe('apps/web/screens')
+  })
+
+  it('ranks two candidate app roots at the same depth, warns, and returns the ranked list — never silently picks', () => {
+    write('service-a/package.json', JSON.stringify({ name: 'service-a', dependencies: { react: '^18.0.0' } }))
+    // service-b has a framework config — outranks service-a on that signal alone.
+    write('service-b/package.json', JSON.stringify({ name: 'service-b' }))
+    write('service-b/vite.config.ts', 'export default {}\n')
+
+    const profile = probeProject(tmpDir)
+    expect(profile.appRoot).toBe('service-b')
+    expect(profile.appRootCandidates).toBeDefined()
+    const dirs = profile.appRootCandidates!.map((c) => c.dir).sort()
+    expect(dirs).toEqual(['service-a', 'service-b'])
+    expect(profile.warnings.some((w) => w.code === 'app-root-ambiguous')).toBe(true)
+  })
+
+  it('degrades to the project directory itself, with a warning, when no package.json exists anywhere within the bound', () => {
+    write('notes/README.md', 'hello\n')
+
+    const profile = probeProject(tmpDir)
+    expect(profile.appRoot).toBe('')
+    expect(profile.warnings.some((w) => w.code === 'app-root-not-found')).toBe(true)
+  })
+
+  it('never descends into node_modules/.git/dist looking for a nested package.json', () => {
+    write('node_modules/some-dep/package.json', JSON.stringify({ name: 'some-dep' }))
+    write('.git/hooks/package.json', JSON.stringify({ name: 'not-real' }))
+
+    const profile = probeProject(tmpDir)
+    expect(profile.appRoot).toBe('')
+    expect(profile.warnings.some((w) => w.code === 'app-root-not-found')).toBe(true)
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -403,6 +503,7 @@ describe('tryServeStudioProbe', () => {
     write('vite.config.ts', 'export default {}\n')
     const cachedProfile: ProjectProfile = {
       framework: 'astro',
+      appRoot: '',
       pagesDir: 'src/pages',
       routeStyle: 'file-router',
       entryFiles: [],

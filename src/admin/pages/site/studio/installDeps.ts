@@ -5,11 +5,18 @@
  *
  *   probeDependencyInstall  → GET  /admin/api/studio/install/status
  *       "should the Install dependencies prompt show at all?" — cheap,
- *       no job started.
+ *       no job started. Also carries the last known `job` for this project
+ *       (`infra-01`), resolved honestly across a server restart — see that
+ *       field's doc below.
  *   startDependencyInstall  → POST /admin/api/studio/install
  *       kicks the job, returns its id immediately.
- *   getDependencyInstallJob → GET  /admin/api/studio/install/:id
- *       one poll of a running/finished job's status + capped log.
+ *   getDependencyInstallJob → GET  /admin/api/studio/install/:id?dir=<dir>
+ *       one poll of a running/finished job's status + capped log. `dir` is
+ *       optional but should always be passed — it's the durability fallback:
+ *       if the server restarted since the job started (its in-process job
+ *       registry is per-process, not persisted — `bun --watch` restarts on
+ *       every file edit), this is what lets the server find the job's
+ *       `.studio/install-job.json` record instead of 404ing forever.
  *
  * A real install is 30s-3min — callers own the polling loop (a plain
  * `setInterval`, cleared on unmount/terminal status); this module never
@@ -25,23 +32,20 @@ const PackageManagerSchema = Type.Union([
   Type.Literal('npm'),
 ])
 
+/**
+ * `'interrupted'` is a terminal status a job can ONLY arrive at via a server
+ * restart mid-install (see `resolvePersistedJobStatus` server-side) — the
+ * server lost its live handle on the subprocess and can no longer observe
+ * (or report) how it actually ended. Treat it like `'failed'`/`'timeout'`:
+ * stop polling, surface it, let the user retry.
+ */
 const InstallJobStatusSchema = Type.Union([
   Type.Literal('running'),
   Type.Literal('done'),
   Type.Literal('failed'),
   Type.Literal('timeout'),
+  Type.Literal('interrupted'),
 ])
-
-const InstallProbeResponseSchema = Type.Object({
-  hasPackageJson: Type.Boolean(),
-  hasNodeModules: Type.Boolean(),
-  dependencyCount: Type.Number(),
-  packageManager: PackageManagerSchema,
-})
-
-const InstallStartResponseSchema = Type.Object({
-  jobId: Type.String(),
-})
 
 const InstallJobResponseSchema = Type.Object({
   id: Type.String(),
@@ -54,14 +58,21 @@ const InstallJobResponseSchema = Type.Object({
   warnings: Type.Array(Type.String()),
 })
 
+const InstallProbeResponseSchema = Type.Object({
+  hasPackageJson: Type.Boolean(),
+  hasNodeModules: Type.Boolean(),
+  dependencyCount: Type.Number(),
+  packageManager: PackageManagerSchema,
+  /** The last known job for this project's app root, or `null` if none has ever run — lets a fresh mount (page reload, or a server restart) notice and resume a still-`'running'` job instead of silently offering "Install dependencies" again over a job that's already in flight. */
+  job: Type.Union([InstallJobResponseSchema, Type.Null()]),
+})
+
+const InstallStartResponseSchema = Type.Object({
+  jobId: Type.String(),
+})
+
 export type PackageManager = 'bun' | 'pnpm' | 'yarn' | 'npm'
-export type InstallJobStatus = 'running' | 'done' | 'failed' | 'timeout'
-export type InstallProbeStatus = {
-  hasPackageJson: boolean
-  hasNodeModules: boolean
-  dependencyCount: number
-  packageManager: PackageManager
-}
+export type InstallJobStatus = 'running' | 'done' | 'failed' | 'timeout' | 'interrupted'
 export type InstallJob = {
   id: string
   dir: string
@@ -71,6 +82,13 @@ export type InstallJob = {
   truncated: boolean
   exitCode: number | null
   warnings: string[]
+}
+export type InstallProbeStatus = {
+  hasPackageJson: boolean
+  hasNodeModules: boolean
+  dependencyCount: number
+  packageManager: PackageManager
+  job: InstallJob | null
 }
 
 /** Cheap check — does the active project have deps to install, with none installed yet? No job is started. */
@@ -91,9 +109,10 @@ export async function startDependencyInstall(dir?: string): Promise<string> {
   return jobId
 }
 
-/** One poll of a job's current status/log. */
-export async function getDependencyInstallJob(jobId: string): Promise<InstallJob> {
+/** One poll of a job's current status/log. Pass `dir` whenever it's known — see the module doc for why it's the restart-durability fallback, not an optional nicety. */
+export async function getDependencyInstallJob(jobId: string, dir?: string): Promise<InstallJob> {
   return apiRequest(`/admin/api/studio/install/${encodeURIComponent(jobId)}`, {
     schema: InstallJobResponseSchema,
+    query: dir ? { dir } : undefined,
   })
 }

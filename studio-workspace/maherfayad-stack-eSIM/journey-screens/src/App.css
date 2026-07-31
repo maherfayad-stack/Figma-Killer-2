@@ -1,0 +1,250 @@
+.esim-app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+/* ── top bar ── */
+.esim-bar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--background-base-default);
+  border-bottom: 1px solid var(--border-base-default);
+  padding: 0 20px;
+  height: 52px;
+  z-index: 10;
+}
+
+.esim-bar__left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-lg);
+  min-width: 0;
+}
+
+.esim-bar__title {
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-base-default);
+  white-space: nowrap;
+  letter-spacing: -0.2px;
+}
+
+.esim-bar__title span {
+  color: var(--color-aqua-100);
+}
+
+.esim-bar__right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-shrink: 0;
+}
+
+.esim-icon-btn {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--rounded-sm);
+  border: 1px solid var(--border-base-default);
+  background: var(--background-base-subtle);
+  color: var(--text-base-default);
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.esim-icon-btn:hover {
+  background: var(--background-base-hover);
+}
+
+.esim-canvas-btn {
+  width: auto;
+  padding: 0 var(--space-md);
+  font-family: var(--font-body);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.esim-canvas-btn--active {
+  background: var(--background-primary-subtle);
+  border-color: var(--color-aqua-100);
+  color: var(--color-aqua-100);
+}
+
+.esim-lang-btn {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: auto;
+  height: 32px;
+  padding: 0 var(--space-md);
+  border-radius: var(--rounded-sm);
+  border: 1px solid var(--border-base-default);
+  background: var(--background-base-subtle);
+  color: var(--text-base-default);
+  font-family: var(--font-body);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.esim-lang-btn:hover {
+  background: var(--background-base-hover);
+}
+
+/* ── page tabs row ── */
+.esim-page-tabs {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  background: var(--background-base-default);
+  border-bottom: 1px solid var(--border-base-default);
+  padding: 0 20px;
+  height: 40px;
+}
+
+.esim-page-tab {
+  border: none;
+  background: none;
+  height: 100%;
+  padding: 0 var(--space-xs);
+  font-family: var(--font-body);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-base-subtext);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+}
+
+.esim-page-tab:hover {
+  color: var(--text-base-default);
+}
+
+.esim-page-tab--active {
+  color: var(--text-link-default);
+  border-bottom-color: var(--border-primary-default, var(--color-aqua-100));
+  font-weight: 600;
+}
+
+/* ── demo-only state switcher: which eSIM card state to preview ── */
+.esim-demo-tabs-row {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space);
+  background: var(--background-base-subtle);
+  border-bottom: 1px solid var(--border-base-default);
+  padding: var(--space-sm) 20px;
+}
+
+.esim-demo-tabs {
+  width: 220px;
+}
+
+.esim-banner-style-tabs {
+  width: 260px;
+}
+
+.esim-card-style-tabs {
+  width: 260px;
+}
+
+/* ── stage — centers the phone frame ── */
+.esim-stage {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  background: var(--background-base-subtle);
+  padding: 40px 0 40px;
+  box-sizing: border-box;
+}
+
+.esim-phone {
+  position: relative;
+  flex-shrink: 0;
+  width: 393px;
+  height: 852px;
+  border-radius: 50px;
+  overflow: hidden;
+  box-shadow:
+    0 0 0 10px var(--background-base-default),
+    0 0 0 11px var(--border-base-default),
+    0 20px 60px rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+  contain: layout;
+}
+
+/* ── canvas shell — fills the remaining space below the top bar ── */
+.esim-canvas-shell {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+}
+
+/* ── mobile shell — no dev chrome, screen fills the whole viewport ── */
+.esim-app--mobile {
+  height: 100%;
+}
+
+.esim-mobile {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  overflow: hidden;
+  overscroll-behavior: none;
+  display: flex;
+  flex-direction: column;
+  touch-action: manipulation;
+}
+
+/* Visible settings affordance for mobile (no right-click available). */
+.esim-mobile__actions {
+  position: absolute;
+  top: var(--space-md);
+  inset-inline-end: var(--space-md);
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  width: max-content;
+}
+
+.esim-mobile__actions .esim-demo-tabs {
+  width: 150px;
+  flex-shrink: 0;
+  box-shadow: var(--elevation-raised);
+}
+
+.esim-mobile__menu-btn {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--rounded-full);
+  border: 1px solid var(--border-base-default);
+  background: var(--background-base-default);
+  color: var(--text-base-default);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: var(--elevation-raised);
+}

@@ -87,7 +87,28 @@ describe('CanvasScrollUnrollInjector — tagging pass', () => {
     }
   })
 
-  it('tags a clipping element "explicit-height" and records its original box height', async () => {
+  it('tags a clipping element "explicit-height" and floors it at its true content extent (scrollHeight), not its currently-clipped clientHeight', async () => {
+    // Regression coverage for a real browser-verified bug (canvas-06):
+    // `runUnrollPass` used to re-read `el.clientHeight` AFTER calling
+    // `el.setAttribute(SCROLL_UNROLL_ATTR, 'explicit-height')`, which
+    // activates this element's OWN `[data-studio-unroll="explicit-height"]
+    // { min-height: var(--studio-unroll-min-height) !important }` rule. CSS
+    // custom properties inherit — if an ANCESTOR was already tagged earlier
+    // in the SAME synchronous pass (querySelectorAll visits ancestors
+    // before descendants) and had ITS OWN min-height var set, a descendant
+    // being measured before its own local value is written INHERITS the
+    // ancestor's (often much larger) value, inflating `clientHeight` to
+    // match it — then that inflated number gets baked in as the
+    // descendant's own PERMANENT min-height. Measured live on
+    // `maherfayad-stack-eSIM`'s homepage: a two-character "66" price label
+    // was permanently floored at 1608px (the PAGE ROOT's own, unrelated,
+    // correct deficit), tripling the whole page's real content height and
+    // overlapping the board frames below it. happy-dom has no layout
+    // engine, so it cannot reproduce the inheritance itself — this test
+    // instead locks the CONTRACT the fix relies on: the value written is
+    // the pre-mutation `scrollHeight` (this element's own true full content
+    // extent, immune to any later CSS side effect), never a `clientHeight`
+    // re-read after the element's own override is already active.
     const panel = document.createElement('div')
     stubClipping(panel, { scrollHeight: 1600, clientHeight: 812 })
     document.body.appendChild(panel)
@@ -98,7 +119,7 @@ describe('CanvasScrollUnrollInjector — tagging pass', () => {
       await waitFor(() => {
         expect(panel.getAttribute(SCROLL_UNROLL_ATTR)).toBe('explicit-height')
       })
-      expect(panel.style.getPropertyValue(SCROLL_UNROLL_MIN_HEIGHT_VAR)).toBe('812px')
+      expect(panel.style.getPropertyValue(SCROLL_UNROLL_MIN_HEIGHT_VAR)).toBe('1600px')
     } finally {
       panel.remove()
     }

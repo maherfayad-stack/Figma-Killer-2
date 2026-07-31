@@ -1,0 +1,503 @@
+.booking-details__scroll {
+  flex: 1 0 0;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.booking-details__scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.booking-details__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+  padding: 0 var(--space) var(--space-lg);
+}
+
+/* ── booking summary card — ported from PostBookingProductCard ── */
+
+.bd-card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  width: 100%;
+  padding: var(--space);
+  border: 1px solid var(--border-base-default);
+  border-radius: var(--rounded);
+  background: var(--background-base-default);
+}
+
+.bd-card__status-row {
+  display: flex;
+  align-items: flex-start;
+  margin-bottom: var(--space-sm);
+}
+
+.bd-card__header {
+  display: flex;
+  align-items: center;
+  gap: var(--space);
+  width: 100%;
+  padding: var(--space-sm) 0;
+}
+
+.bd-card__airline {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--rounded-full);
+  border: 1.5px solid var(--color-white-static, #fff);
+  box-shadow: 0 0 0 0.5px var(--border-base-default);
+  overflow: hidden;
+  background: var(--background-base-default);
+}
+
+.bd-card__route {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0;
+  text-align: start;
+}
+
+.bd-card__trip-type {
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-lh);
+  color: var(--text-base-subtext);
+}
+
+.bd-card__route-title {
+  font-family: var(--font-body);
+  font-size: 18px;
+  line-height: 28px;
+  font-weight: 600;
+  color: var(--text-base-default);
+}
+
+.bd-card__chevron {
+  flex-shrink: 0;
+  color: var(--icon-secondary-default);
+}
+
+[dir='rtl'] .bd-card__chevron {
+  transform: scaleX(-1);
+}
+
+.bd-card__details {
+  display: flex;
+  flex-direction: column;
+}
+
+.bd-card__detail-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space);
+  padding: var(--space-xs) 0;
+}
+
+.bd-card__detail-icon {
+  flex-shrink: 0;
+  color: var(--icon-base-default);
+}
+
+.bd-card__detail-value {
+  font-family: var(--font-body);
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-lh);
+  color: var(--text-base-default);
+}
+
+.bd-card__separator {
+  margin: var(--space-sm) 0;
+  border: none;
+  border-top: 1px solid var(--border-base-default);
+  width: 100%;
+}
+
+.bd-card__references {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space);
+  padding-top: var(--space);
+}
+
+.bd-card__segment-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding-top: var(--space);
+}
+
+.bd-card__segment-logo {
+  flex-shrink: 0;
+  border-radius: var(--rounded-full);
+  overflow: hidden;
+}
+
+.bd-card__segment-title {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-body);
+  font-size: var(--type-subtitle-size, 16px);
+  font-weight: 600;
+  color: var(--text-base-default);
+}
+
+.bd-card__segment .bd-ref-row {
+  padding-top: var(--space-xs);
+}
+
+/* ── booking reference row — ported from BookingReferenceRow ── */
+
+.bd-ref-row {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
+.bd-ref-row__main {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  width: 100%;
+  min-height: 20px;
+}
+
+.bd-ref-row__meta {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+.bd-ref-row__label {
+  flex-shrink: 0;
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-lh);
+  color: var(--text-base-subtext);
+  white-space: nowrap;
+}
+
+.bd-ref-row__info {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: var(--icon-base-default);
+}
+
+.bd-ref-row__value {
+  font-family: var(--font-body);
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-lh);
+  font-weight: var(--type-body-semibold-weight);
+  color: var(--text-base-default);
+  white-space: nowrap;
+}
+
+.bd-ref-row__copy {
+  flex-shrink: 0;
+  margin-inline-start: auto;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font-family: var(--font-body);
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-lh);
+  font-weight: var(--type-body-semibold-weight);
+  color: var(--text-link-default);
+  cursor: pointer;
+}
+
+.bd-ref-row__separator {
+  margin: var(--space) 0 0;
+  border: none;
+  border-top: 1px solid var(--border-base-subtle);
+  width: 100%;
+}
+
+/* ── add-on section ── */
+
+.bd-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space);
+  width: 100%;
+}
+
+.bd-esim-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space);
+  width: 100%;
+}
+
+/* ── esim card ── */
+
+/* non-primary Topup action: secondary-inverted is transparent + bordered but
+   labels white-static for dark surfaces — recolor the label aqua for use on
+   this card's light background, keeping the transparent/bordered "ghost" look */
+.ec-card__topup-btn--ghost.btn--secondary-inverted {
+  color: var(--text-link-default);
+}
+
+.ec-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  width: 100%;
+  padding: var(--space);
+  border: 1px solid var(--border-base-default);
+  border-radius: var(--rounded);
+}
+
+.ec-card__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  width: 100%;
+}
+
+.ec-card__content {
+  display: flex;
+  align-items: start;
+  gap: var(--space-sm);
+  flex: 1 0 0;
+  min-width: 0;
+}
+
+.ec-card__text {
+  flex: 1 0 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.ec-card__title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.ec-card__title {
+  margin: 0;
+  font-family: var(--font-body);
+  font-size: var(--type-subtitle-size, 16px);
+  font-weight: 600;
+  line-height: 24px;
+  color: var(--text-base-default);
+}
+
+.ec-card__subtitle {
+  margin: 0;
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-lh);
+  color: var(--text-base-subtext);
+}
+
+.ec-card__subtitle-parts {
+  display: flex;
+  align-items: center;
+  gap: var(--space);
+}
+
+.ec-card__subtitle-parts .ec-card__subtitle {
+  white-space: nowrap;
+}
+
+/* ── icon slot: eSIM chip illustration (not-yet-installed cards) ── */
+
+.ec-icon-img {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+}
+
+/* ── progress ring: fullness gauge, sized to match the other card icons ── */
+
+.ec-ring {
+  position: relative;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+}
+
+.ec-ring__svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+
+.ec-ring__track,
+.ec-ring__fill {
+  fill: none;
+  stroke-width: 4;
+}
+
+.ec-ring__track {
+  stroke: var(--border-base-default);
+}
+
+.ec-ring__fill {
+  stroke: var(--icon-secondary-default);
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.4s ease, stroke 0.2s ease;
+}
+
+.ec-ring--low .ec-ring__fill {
+  stroke: var(--icon-caution-default);
+}
+
+.ec-ring__label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-body);
+  font-size: 7px;
+  letter-spacing: -0.2px;
+  line-height: 1;
+  color: var(--text-base-default);
+}
+
+/* ── card variant: "stat" — same footprint as the ring/install cards;
+   the second line becomes a bold GB-left headline, with a thin bar underneath ── */
+
+.ec-card-stat__headline-row {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-xs);
+}
+
+.ec-card-stat__headline {
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-lh);
+  font-weight: 700;
+  color: var(--text-base-default);
+}
+
+.ec-card-stat__headline--low {
+  color: var(--icon-caution-default);
+}
+
+.ec-card-stat__days {
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-lh);
+  color: var(--text-base-subtext);
+}
+
+.ec-card-stat__track {
+  height: 3px;
+  border-radius: var(--rounded-full);
+  background: var(--background-neutral-subtle);
+  overflow: hidden;
+}
+
+.ec-card-stat__fill {
+  height: 100%;
+  border-radius: var(--rounded-full);
+  background: var(--icon-secondary-default);
+  transition: width 0.4s ease;
+}
+
+.ec-card-stat__fill--low {
+  background: var(--icon-caution-default);
+}
+
+/* ── card variant: "gauge" — compact fraction badge + slim bar underneath ── */
+
+.ec-card-gauge__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space);
+  width: 100%;
+}
+
+.ec-card-gauge__badge-col {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-xs);
+  width: 44px;
+}
+
+.ec-card-gauge__badge {
+  font-family: var(--font-body);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--icon-secondary-default);
+  white-space: nowrap;
+}
+
+.ec-card-gauge__badge--low {
+  color: var(--icon-caution-default);
+}
+
+.ec-card-gauge__badge-track {
+  width: 100%;
+  height: 4px;
+  border-radius: var(--rounded-full);
+  background: var(--background-neutral-subtle);
+  overflow: hidden;
+}
+
+.ec-card-gauge__badge-fill {
+  height: 100%;
+  border-radius: var(--rounded-full);
+  background: var(--icon-secondary-default);
+  transition: width 0.4s ease;
+}
+
+.ec-card-gauge__badge-fill--low {
+  background: var(--icon-caution-default);
+}
+
+.ec-card-gauge__text {
+  flex: 1 0 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ec-card-gauge__title {
+  margin: 0;
+  font-family: var(--font-body);
+  font-size: var(--type-subtitle-size, 16px);
+  font-weight: 600;
+  line-height: 24px;
+  color: var(--text-base-default);
+}
+
+.ec-card-gauge__subtitle {
+  margin: 0;
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-lh);
+  color: var(--text-base-subtext);
+}

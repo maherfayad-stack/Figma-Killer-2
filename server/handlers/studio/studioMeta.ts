@@ -73,6 +73,17 @@ export const StudioMetaSchema = Type.Object({
   profile: Type.Optional(ProjectProfileSchema),
   /** WS-7 — per-project frame size default; overrides the editor's own preference (project wins, same precedent as `defaultBreakpoint`). */
   frameDefaults: Type.Optional(FrameDefaultsSchema),
+  /**
+   * WS-3.3 — extra package-component module ids (`pkg.<sanitized>.<Name>`,
+   * see `@core/module-engine`'s `packageModuleId`) to hide from the insert
+   * palette, ADDED to the name-heuristic hides `registerProjectModules.ts`
+   * derives on its own (`/Dialog|Sheet|Modal|Toast|Snackbar|Tooltip|Popover/`).
+   * Union, not replacement: there is no override to force-SHOW a component
+   * the heuristic caught, only to hide additional ones it missed (e.g. a
+   * design system's own `Drawer` or `ContextMenu`, which the heuristic's
+   * fixed name list doesn't recognize as overlay/portal components).
+   */
+  paletteHiddenModuleIds: Type.Optional(Type.Array(Type.String())),
 })
 export type StudioMeta = Static<typeof StudioMetaSchema>
 

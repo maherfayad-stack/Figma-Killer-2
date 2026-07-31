@@ -69,6 +69,13 @@ const CHROME_TOKENS = [
   '--border-muted',
   '--border',
   '--danger',
+  // WS-3.3 — the `pkg.*` component placeholder (`[data-studio-package-placeholder]`
+  // below). Colors, not typography/spacing, so direct-name forwarding is safe:
+  // unlike `--text-s`/`--space-m`, a site's own Framework tokens never define
+  // `--warning`/`--warning-10`/`--warning-text`.
+  '--warning',
+  '--warning-10',
+  '--warning-text',
 ] as const
 
 /**
@@ -423,6 +430,58 @@ const CHROME_RULES = `
   letter-spacing: normal;
   text-transform: none;
   white-space: normal;
+}
+
+/* ── WS-3.3 package-component placeholder ────────────────────────────────
+ * Reproduced from NodeRenderer.module.css .packagePlaceholder using the
+ * stable data-studio-package-placeholder attribute added to
+ * PackageComponentPlaceholder.tsx — see that file's §8.16 note in
+ * button-primitive-usage.test.ts for why its "Promote" action is a bare
+ * button element styled here rather than the Button primitive.
+ */
+
+[data-studio-package-placeholder] {
+  display: flex;
+  align-items: center;
+  gap: var(--chrome-space-2xs);
+  outline: 1px dashed var(--warning);
+  border-radius: var(--radius-sm);
+  padding: var(--chrome-space-2xs) var(--chrome-space-3xs);
+  color: var(--warning-text);
+  background: var(--warning-10);
+  font-family: var(--chrome-font-sans);
+  font-size: var(--chrome-text-s);
+  font-weight: 400;
+  font-style: normal;
+  letter-spacing: normal;
+  text-transform: none;
+  white-space: normal;
+}
+
+[data-studio-package-placeholder-label] {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+[data-studio-package-placeholder-promote] {
+  flex: 0 0 auto;
+  border: 1px solid var(--warning);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--warning-text);
+  font-family: var(--chrome-font-sans);
+  font-size: var(--chrome-text-s);
+  font-weight: 400;
+  padding: var(--chrome-space-4xs) var(--chrome-space-2xs);
+  cursor: pointer;
+}
+
+[data-studio-package-placeholder-promote]:disabled {
+  cursor: default;
+  opacity: 0.6;
 }
 `.trim()
 

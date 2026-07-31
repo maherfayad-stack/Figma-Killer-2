@@ -1,0 +1,103 @@
+/* ScrubInput — matches Input's visual shell (border/radius/tokens) so it
+ * drops into the same rows, plus a draggable label region. */
+
+.wrapper {
+    position: relative;
+    display: inline-flex;
+    align-items: stretch;
+    width: 100%;
+    box-sizing: border-box;
+    background: transparent;
+    border: 1px solid var(--overlay-20);
+    border-radius: var(--input-radius);
+    color: var(--text);
+    font-family: var(--font-sans);
+    overflow: hidden;
+    transition: border-color 120ms ease;
+}
+
+.wrapper:hover {
+    border-color: var(--overlay-30);
+}
+
+.wrapper:focus-within {
+    border-color: var(--overlay-50);
+}
+
+.wrapper[data-dragging='true'] {
+    border-color: var(--canvas-selection-ring-color);
+    cursor: ew-resize;
+}
+
+.wrapper.disabled {
+    opacity: 0.5;
+}
+
+.wrapper[data-state='mixed'] .input {
+    font-style: italic;
+}
+
+.size-xs {
+    min-height: 24px;
+}
+
+.size-sm {
+    min-height: 28px;
+}
+
+.size-md {
+    min-height: 32px;
+}
+
+/* The draggable label — Figma's "drag the W to scrub" affordance. Not
+ * focusable/keyboard-operable on its own: the text field next to it is the
+ * keyboard-accessible control (arrow keys nudge, typing edits directly), so
+ * the label stays a pointer-only enhancement rather than a second tab stop
+ * that would duplicate the field's own semantics. */
+.label {
+    display: inline-flex;
+    align-items: center;
+    flex: 0 0 auto;
+    padding: 0 var(--space-3xs) 0 var(--space-s);
+    color: var(--text-subtle);
+    font-size: inherit;
+    font-variant-numeric: tabular-nums;
+    cursor: ew-resize;
+    user-select: none;
+    touch-action: none;
+}
+
+.labelDisabled {
+    cursor: not-allowed;
+}
+
+.label:hover {
+    color: var(--text);
+}
+
+.input {
+    flex: 1;
+    width: auto;
+    min-width: 0;
+    height: auto;
+    padding: var(--space-2xs) var(--space-s) var(--space-2xs) 0;
+    border: 0;
+    background: transparent;
+    color: var(--text);
+    font-family: inherit;
+    font-size: var(--text-xs);
+    outline: none;
+}
+
+.input:disabled {
+    cursor: not-allowed;
+}
+
+.input::placeholder {
+    color: var(--text-disabled);
+}
+
+.input.keyword {
+    color: var(--text-subtle);
+    font-style: italic;
+}

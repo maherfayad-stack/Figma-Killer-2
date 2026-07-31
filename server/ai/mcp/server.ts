@@ -11,7 +11,9 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import {
   CallToolRequestSchema,
+  ListResourcesRequestSchema,
   ListToolsRequestSchema,
+  ReadResourceRequestSchema,
   type CallToolResult,
 } from '@modelcontextprotocol/sdk/types.js'
 import type { DbClient } from '../../db/client'
@@ -20,6 +22,7 @@ import { getErrorMessage } from '@core/utils/errorMessage'
 import type { AiBrowserBridge, AiTool, AiToolOutput } from '../runtime/types'
 import { executeAiTool } from '../drivers/http/execTool'
 import { mcpToolsForCapabilities } from './registry'
+import { MCP_RESOURCES, findMcpResource } from './resources'
 import {
   getEditorBridgeForUser,
   type EditorBridgeScope,
@@ -47,8 +50,22 @@ const NO_WORKSPACE_MESSAGE: Record<EditorBridgeScope, string> = {
 export function buildMcpServer(ctx: McpServerContext): Server {
   const server = new Server(
     { name: 'alm-figma-killer', version: '1.0.0' },
-    { capabilities: { tools: {} } },
+    { capabilities: { tools: {}, resources: {} } },
   )
+
+  // Static reference resources (WS-9.5) — read-only, not capability-gated:
+  // they're documentation, not a data source, so every connector can read
+  // "how to write React this parser imports cleanly" regardless of grant.
+  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+    resources: MCP_RESOURCES.map((r) => ({ uri: r.uri, name: r.name, description: r.description, mimeType: r.mimeType })),
+  }))
+  server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+    const resource = findMcpResource(request.params.uri)
+    if (!resource) throw new Error(`Unknown resource: ${request.params.uri}`)
+    return {
+      contents: [{ uri: resource.uri, mimeType: resource.mimeType, text: resource.text }],
+    }
+  })
 
   const tools = mcpToolsForCapabilities(
     ctx.capabilities,

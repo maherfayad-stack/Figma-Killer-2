@@ -250,7 +250,7 @@ describe('applyStudioEdit', () => {
 
     const result = applyStudioEdit(tmpDir, { kind: 'prop', nodeId: `prop.tsx:${line}:${col}`, prop: 'label', value: 'New' })
 
-    expect(result).toBe(true)
+    expect(result.applied).toBe(true)
     expect(fs.readFileSync(file, 'utf8')).toContain('label="New"')
   })
 
@@ -261,7 +261,7 @@ describe('applyStudioEdit', () => {
 
     const result = applyStudioEdit(tmpDir, { kind: 'text', nodeId: `text.tsx:${line}:${col}`, text: 'Bye' })
 
-    expect(result).toBe(true)
+    expect(result.applied).toBe(true)
     expect(fs.readFileSync(file, 'utf8')).toContain('<p>{"Bye"}</p>')
   })
 
@@ -281,7 +281,7 @@ describe('applyStudioEdit', () => {
       style: { color: 'blue', boxShadow: '0 0 1px' },
     })
 
-    expect(result).toBe(true)
+    expect(result.applied).toBe(true)
     const written = fs.readFileSync(file, 'utf8')
     expect(written).toContain('color: "blue"')
     expect(written).toContain('boxShadow: "0 0 1px"')
@@ -289,7 +289,7 @@ describe('applyStudioEdit', () => {
 
   it('returns false (no throw) for a synthetic node id with no source location', () => {
     const result = applyStudioEdit(tmpDir, { kind: 'prop', nodeId: 'home:body', prop: 'x', value: 'y' })
-    expect(result).toBe(false)
+    expect(result.applied).toBe(false)
   })
 
   // §2.4 — the risk register's specifically-named test: a composite (inlined)
@@ -317,7 +317,7 @@ describe('applyStudioEdit', () => {
 
     const result = applyStudioEdit(tmpDir, { kind: 'prop', nodeId: compositeNodeId, prop: 'title', value: 'New' })
 
-    expect(result).toBe(true)
+    expect(result.applied).toBe(true)
     expect(fs.readFileSync(componentFile, 'utf8')).toContain('title="New"')
     // The call-site file — the composite id's PREFIX — is untouched.
     expect(fs.readFileSync(pageFile, 'utf8')).toBe(pageSource)
@@ -697,17 +697,20 @@ describe('GET /admin/api/studio/load — Phase 7A multi-file workspace', () => {
 
     // Local component: import resolves inside the workspace.
     // `resolveComponentSources` classifies against the PRE-inline tree (§2.6),
-    // so it still reports the call site under the call site's own id — but that
-    // node is GONE from the page: `<Header/>` renders Header's own JSX at that
-    // position and emits no element of its own, so inlining replaces the call
-    // site with that JSX rather than wrapping it (§2.5). What's left is the
-    // inlined <span>, under a composite id.
+    // so it still reports the call site under the call site's own id — and
+    // (WS-4.2) that node is now KEPT, as the "instance" fragment
+    // (`moduleId: 'studio.instance'`, zero DOM at render time): `<Header/>`
+    // renders Header's own JSX as the instance's CHILDREN rather than
+    // replacing the call site (§2.5's old design). Header's own <span> is
+    // still reachable, under a composite id, as that instance's child.
     const headerNodeId = Object.keys(body.componentSources).find(
       (id) => body.componentSources[id]?.file === 'components/Header.tsx',
     )!
     expect(body.componentSources[headerNodeId]).toEqual({ kind: 'local', file: 'components/Header.tsx' })
     expect(Object.values(landing.nodes).some((n) => n.moduleId === 'alm.Header')).toBe(false)
-    expect(landing.nodes[headerNodeId]).toBeUndefined()
+    const headerInstance = landing.nodes[headerNodeId]
+    expect(headerInstance).toBeDefined()
+    expect(headerInstance!.moduleId).toBe('studio.instance')
     const headerSpan = Object.values(landing.nodes).find((n) => n.moduleId === 'base.text' && n.id.includes('~'))
     expect(headerSpan).toBeDefined() // Header's own <span> — inlined, composite id
     expect(headerSpan!.id.startsWith(`${headerNodeId}~`)).toBe(true)
@@ -731,7 +734,7 @@ describe('GET /admin/api/studio/load — Phase 7A multi-file workspace', () => {
     // Round trip: applying an edit against that node id must write to the
     // exact nested file `relFile:line:col` encodes.
     const wrote = applyStudioEdit(tmpDir, { kind: 'prop', nodeId: divNodeId, prop: 'data-test', value: 'ok' })
-    expect(wrote).toBe(true)
+    expect(wrote.applied).toBe(true)
     const written = fs.readFileSync(path.join(tmpDir, 'pages', 'marketing', 'Landing.tsx'), 'utf8')
     expect(written).toContain('data-test="ok"')
   })
@@ -744,6 +747,73 @@ describe('GET /admin/api/studio/load — Phase 7A multi-file workspace', () => {
 
     expect(body.pages).toEqual([])
     expect(body.componentSources).toEqual({})
+  })
+
+  // WS-5.5 — the page-level parse cache (`pageParseCache.ts`) must never
+  // serve stale content: reloading twice with no changes must be stable, and
+  // reloading after an edit must reflect it. A caching bug here would look
+  // exactly like "the editor shows an old version of the page" — silent, and
+  // among the worst kinds of regression a perf change can introduce.
+  it('reflects a page edit on the very next load, and does not resurrect stale content once cached', async () => {
+    write('pages/Home.tsx', 'export default function Home() { return <p>First</p> }')
+
+    const load = async () => {
+      const url = new URL(`http://localhost/admin/api/studio/load?dir=${encodeURIComponent(tmpDir)}`)
+      const res = await tryServeStudio(new Request(url), undefined, url, url.pathname)
+      // Probe the raw response text rather than a specific node field — this
+      // test cares only about "did the served content change", not which
+      // exact `PageNode` field carries a `<div>`'s literal text.
+      return await res!.text()
+    }
+
+    // Cold load, then an immediate repeat with nothing changed — must stay
+    // identical (a cache hit reusing the same parse, not a corrupted reuse).
+    expect(await load()).toContain('First')
+    expect(await load()).toContain('First')
+
+    // Bump the mtime explicitly — successive writes within the same
+    // filesystem-clock tick could otherwise land on an unchanged stat().
+    const homeFile = path.join(tmpDir, 'pages', 'Home.tsx')
+    fs.writeFileSync(homeFile, 'export default function Home() { return <p>Second</p> }', 'utf8')
+    const bumped = new Date(fs.statSync(homeFile).mtime.getTime() + 5000)
+    fs.utimesSync(homeFile, bumped, bumped)
+
+    const afterEdit = await load()
+    expect(afterEdit).toContain('Second')
+    expect(afterEdit).not.toContain('First')
+  })
+
+  // WS-5.5 — `?stream=1` is a different WIRE FORMAT for the identical
+  // computed result, not a different computation: this proves the NDJSON
+  // path reports the same dir/pages/componentSources as the buffered-JSON
+  // default, just split across lines.
+  it('?stream=1 serves the identical content as one NDJSON line per page, preceded by a meta line', async () => {
+    write('pages/Home.tsx', 'export default function Home() { return <p>Hello</p> }')
+    write('pages/About.tsx', 'export default function About() { return <p>About us</p> }')
+
+    const plainUrl = new URL(`http://localhost/admin/api/studio/load?dir=${encodeURIComponent(tmpDir)}`)
+    const plainRes = await tryServeStudio(new Request(plainUrl), undefined, plainUrl, plainUrl.pathname)
+    const plainBody = (await plainRes!.json()) as { dir: string; pages: Array<{ id: string }> }
+
+    const streamUrl = new URL(
+      `http://localhost/admin/api/studio/load?dir=${encodeURIComponent(tmpDir)}&stream=1`,
+    )
+    const streamRes = await tryServeStudio(new Request(streamUrl), undefined, streamUrl, streamUrl.pathname)
+    expect(streamRes!.headers.get('content-type')).toBe('application/x-ndjson')
+    const lines = (await streamRes!.text())
+      .split('\n')
+      .filter((l) => l.length > 0)
+      .map((l) => JSON.parse(l) as { kind: string; [k: string]: unknown })
+
+    const metaLine = lines.find((l) => l.kind === 'meta') as
+      | { kind: 'meta'; dir: string; pageCount: number }
+      | undefined
+    expect(metaLine).toBeDefined()
+    expect(metaLine!.dir).toBe(plainBody.dir)
+    expect(metaLine!.pageCount).toBe(plainBody.pages.length)
+
+    const pageLines = lines.filter((l) => l.kind === 'page') as Array<{ kind: 'page'; page: { id: string } }>
+    expect(pageLines.map((l) => l.page.id).sort()).toEqual(plainBody.pages.map((p) => p.id).sort())
   })
 })
 
@@ -836,13 +906,13 @@ describe('GET /admin/api/studio/load — Next.js App Router (WS-1.3)', () => {
 
     // Writeback: an edit to the LAYOUT node lands in app/layout.tsx...
     const wroteLayout = applyStudioEdit(tmpDir, { kind: 'prop', nodeId: body!.id, prop: 'data-chrome', value: 'ok' })
-    expect(wroteLayout).toBe(true)
+    expect(wroteLayout.applied).toBe(true)
     expect(fs.readFileSync(path.join(tmpDir, 'app', 'layout.tsx'), 'utf8')).toContain('data-chrome="ok"')
 
     // ...and an edit to the PAGE node lands in app/pricing/page.tsx — never
     // the other file.
     const wrotePage = applyStudioEdit(tmpDir, { kind: 'prop', nodeId: main!.id, prop: 'data-content', value: 'ok' })
-    expect(wrotePage).toBe(true)
+    expect(wrotePage.applied).toBe(true)
     const pageSource = fs.readFileSync(path.join(tmpDir, 'app', 'pricing', 'page.tsx'), 'utf8')
     expect(pageSource).toContain('data-content="ok"')
     expect(pageSource).not.toContain('data-chrome')

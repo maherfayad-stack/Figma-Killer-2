@@ -41,6 +41,21 @@ interface SelectionSlice {
   hoveredBreakpointId: string | null
 
   /**
+   * instance-ui-01 — Figma's nesting model for `studio.instance` fragment
+   * nodes (WS-4.2, `parser-05`). A stack of currently-"entered" instance node
+   * ids, outermost first. Clicking inside a `studio.instance` subtree selects
+   * the NEAREST ancestor instance not present in this stack (see
+   * `findEnclosingInstance` in `canvas/canvasSelectionUtils.ts`) instead of
+   * the specific descendant — same redirect shape as the existing VC
+   * lock-down (`findEnclosingComponentRef`), but driven by the real page
+   * tree (an instance's children are ordinary tree nodes) instead of an
+   * in-memory `_owningRefId` annotation. Entering a NESTED instance (one
+   * inside an already-entered instance) appends; `exitInstance` pops one
+   * level, matching Figma's "Esc steps back out one level at a time".
+   */
+  enteredInstanceIds: string[]
+
+  /**
    * Select a node.
    * - `replace` (default): clears selection, selects only `id`. Pass `null` to clear.
    * - `toggle`: add or remove `id` from the selection set.
@@ -58,6 +73,31 @@ interface SelectionSlice {
   removeFromSelection: (id: string) => void
   hoverNode: (id: string | null, breakpointId?: string | null) => void
   clearSelection: () => void
+
+  /**
+   * Push `nodeId` (a `studio.instance` node) onto the entered-instance
+   * stack — a no-op if it's already entered. Pure "enter" — deliberately
+   * does not change the selection; callers decide what becomes selectable
+   * next (the double-clicked descendant for a mouse gesture, the hovered/
+   * first-child descendant for the keyboard path via `enterSelectedInstance`).
+   */
+  enterInstance: (nodeId: string) => void
+  /**
+   * Pop the innermost entered instance and re-select it (Figma: Esc steps
+   * back OUT to the instance boundary, not to nothing). Returns `false`
+   * (no-op) when nothing is entered, so a caller can fall through to a
+   * plain "clear selection" Escape.
+   */
+  exitInstance: () => boolean
+  /**
+   * Keyboard "Enter enters the instance" — only acts when the current
+   * selection is a `studio.instance` node. Enters it, then selects the
+   * hovered descendant if the cursor is already over one (mirrors "the
+   * inner node under the cursor" for a mouse-driven double-click), else the
+   * instance's first child. Returns `false` when the current selection
+   * isn't an instance.
+   */
+  enterSelectedInstance: () => boolean
 }
 
 // Contribute this slice's fields to the combined `EditorStore` type via TS
@@ -71,6 +111,7 @@ export const createSelectionSlice: EditorStoreSliceCreator<SelectionSlice> = (se
   selectedNodeId: null,
   hoveredNodeId: null,
   hoveredBreakpointId: null,
+  enteredInstanceIds: [],
 
   selectNode: (id, mode = 'replace', options) => {
     const current = get()
@@ -171,7 +212,50 @@ export const createSelectionSlice: EditorStoreSliceCreator<SelectionSlice> = (se
     activeClassId: null,
     inlineStyleEditing: false,
     componentizeEditorRequest: null,
+    enteredInstanceIds: [],
   }),
+
+  enterInstance: (nodeId) => {
+    const state = get()
+    if (state.enteredInstanceIds.includes(nodeId)) return
+    set((s) => {
+      s.enteredInstanceIds.push(nodeId)
+    })
+  },
+
+  exitInstance: () => {
+    const state = get()
+    const stack = state.enteredInstanceIds
+    if (stack.length === 0) return false
+    const exitedId = stack[stack.length - 1]!
+    set((s) => {
+      s.enteredInstanceIds.pop()
+    })
+    get().selectNode(exitedId)
+    return true
+  },
+
+  enterSelectedInstance: () => {
+    const state = get()
+    const selectedId = state.selectedNodeId
+    if (!selectedId) return false
+    const resolved = resolveSelectableNode(state, selectedId)
+    if (!resolved || resolved.node.moduleId !== 'studio.instance') return false
+    if (state.enteredInstanceIds.includes(selectedId)) return false
+
+    const { node, tree } = resolved
+    const hovered = state.hoveredNodeId
+    const target =
+      hovered && hovered !== selectedId && isDescendantInTree(tree, selectedId, hovered)
+        ? hovered
+        : (node.children[0] ?? null)
+
+    set((s) => {
+      s.enteredInstanceIds.push(selectedId)
+    })
+    if (target) get().selectNode(target)
+    return true
+  },
 })
 
 // ---------------------------------------------------------------------------
@@ -203,6 +287,10 @@ export function clearCanvasSelectionDraft(state: EditorStore): void {
   // node it points at is no longer on the canvas. Live keystrokes already
   // committed; clearing here is the spec's "force-close without committing".
   state.activeInlineEdit = null
+  // instance-ui-01 — an entered `studio.instance` id only means something
+  // relative to the tree that was just left; a document/page switch drops it
+  // the same way it drops the rest of the selection.
+  state.enteredInstanceIds = []
 }
 
 /**
@@ -227,6 +315,16 @@ export function pruneCanvasSelectionDraft(state: EditorStore): void {
   const surviving = tree
     ? state.selectedNodeIds.filter((id) => Boolean(tree.nodes[id]))
     : []
+  // instance-ui-01 — drop any entered instance id whose node was deleted
+  // along with the pruned selection (e.g. detach/swap removes the call site
+  // that was entered). Filtered independently of `selectedNodeIds` sharing
+  // the survivor check: nothing else invalidates this stack on a prune.
+  const survivingEntered = tree
+    ? state.enteredInstanceIds.filter((id) => Boolean(tree.nodes[id]))
+    : []
+  if (survivingEntered.length !== state.enteredInstanceIds.length) {
+    state.enteredInstanceIds = survivingEntered
+  }
   if (surviving.length === state.selectedNodeIds.length) return
   state.selectedNodeIds = surviving
   state.selectedNodeId = surviving.length > 0 ? surviving[surviving.length - 1] : null
@@ -395,6 +493,26 @@ function sameTree(state: EditorStore, existingIds: string[], id: string): boolea
   if (existingIds.length === 0) return true
   const anchor = existingIds[existingIds.length - 1]!
   return resolveSelectableNode(state, id) !== null && resolveSelectableNode(state, anchor) !== null
+}
+
+/**
+ * True when `nodeId` is `ancestorId` itself or a descendant of it, walking up
+ * via `getParent` with a cycle guard. Used by `enterSelectedInstance` to
+ * decide whether the hovered node is actually "under the cursor" inside the
+ * instance being entered (vs. a stale hover left over from elsewhere on the
+ * board), and by `findEnclosingInstance` (canvas/canvasSelectionUtils.ts, the
+ * click-routing counterpart) for the analogous walk-up-from-a-click question.
+ */
+function isDescendantInTree(tree: NodeTree<PageNode>, ancestorId: string, nodeId: string): boolean {
+  const visited = new Set<string>()
+  let current: PageNode | undefined = tree.nodes[nodeId]
+  while (current) {
+    if (visited.has(current.id)) return false
+    visited.add(current.id)
+    if (current.id === ancestorId) return true
+    current = getParent(tree, current.id)
+  }
+  return false
 }
 
 /**

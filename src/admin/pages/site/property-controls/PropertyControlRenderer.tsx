@@ -34,6 +34,7 @@ import { ImageControl } from './ImageControl'
 import { MediaLibraryControl } from './MediaLibraryControl'
 import { UrlControl } from './UrlControl'
 import { SvgControl } from './SvgControl'
+import { SlotControl } from './SlotControl'
 import { CodeValueControl } from './CodeValueControl'
 import { DataTableControl } from './DataTableControl'
 import { DynamicBindingControl } from './DynamicBindingControl'
@@ -247,6 +248,10 @@ export function PropertyControlRenderer({
 
     case 'svg':
       inner = <SvgControl {...shared} value={String(value ?? '')} />
+      break
+
+    case 'slot':
+      inner = <SlotControl {...shared} value={value} />
       break
 
     case 'richtext':

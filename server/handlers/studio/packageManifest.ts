@@ -40,6 +40,12 @@
  * `workspacePackageResolve.ts`'s `isRealpathContained` (`sec-01`'s own
  * primitive, reused rather than reimplemented — see
  * `.claude/agents/security-guard.md` "Paths").
+ *
+ * `dir` throughout this file means "the directory whose OWN `node_modules`
+ * to search" — for a project whose app root is not its project directory
+ * (`approot-01`), the caller (`componentBundle.ts`) resolves that first
+ * (`resolveAppRoot`/`joinAppRoot`, `./appRoot.ts`) and passes the resolved
+ * app root here, never the bare project directory.
  */
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { basename, join } from 'node:path'

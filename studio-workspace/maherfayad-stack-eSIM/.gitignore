@@ -1,0 +1,38 @@
+# Dependencies
+**/node_modules
+
+# Build output
+**/dist
+**/dist-ssr
+
+# Live dev clone of tajawal/design-system, if checked out here for local
+# design-system work (private, not tracked here). journey-screens itself
+# consumes the published @alm-design/design-system package, not this clone.
+/design-system
+
+# Logs
+**/*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Env / local config
+**/.env
+**/.env.local
+**/.mcp.json
+
+# Editor / OS
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Tooling scratch state
+**/.gstack
+.gstack/

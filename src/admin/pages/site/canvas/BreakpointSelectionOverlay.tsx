@@ -1,78 +1,73 @@
 /**
- * BreakpointSelectionOverlay — selection and hover rings for the canvas.
+ * BreakpointSelectionOverlay — selection chrome for one breakpoint frame:
+ * rings, the node badge, the selection toolbar, and the in-place inspector's
+ * positioning wrapper.
  *
- * Why this exists
- * ───────────────
- * The previous design rendered selection/hover rings via a `::after`
- * pseudo-element on `NodeWrapper`. That required `NodeWrapper` to produce a
- * layout box (`<div>` with `position: relative`), which in turn forced every
- * canvas node into block flow — breaking inline behaviour (two `<a>` siblings
- * stacking instead of sitting side-by-side, flex-row containers laying out as
- * column, etc.) and diverging from the published HTML.
+ * Two coordinate spaces, on purpose (STUDIO-IMPORT-V2-PLAN.md WS-5.1)
+ * ─────────────────────────────────────────────────────────────────
+ * Rings, the hover ring, the selector-affinity pool, and the node badge are
+ * portaled into `overlayRoot` — a zero-size div `CanvasSelectionOverlayInjector`
+ * appends to the IFRAME's own `<body>`. They're measured with
+ * `measureIframeLocalRect` (no zoom recovery, no iframe-offset addition, no
+ * canvas-root origin subtraction) because they live in the SAME document as
+ * the element they track. Panning/zooming the canvas moves the iframe element
+ * — and this overlay with it — as one composited CSS transform, so this is
+ * pixel-correct at every zoom level for free.
  *
- * Now `NodeWrapper` is `display: contents` (no layout box, exact match for
- * published), and rings live here as absolutely-positioned divs over the
- * actual rendered module element.
+ * This used to be the "menu far from the element" defect (`STATE.md`
+ * `standing-03`): the OLD design rendered rings in the PARENT document,
+ * positioned from `elementRect × zoom + iframeOffset + panOffset`, recomputed
+ * every RAF tick — any staleness in any term showed up as displacement,
+ * multiplied by zoom. Moving the rings into the iframe eliminates the
+ * conversion entirely rather than trying to keep it fresher.
  *
- * Architecture
- * ────────────
+ * The selection toolbar and `InPlaceInspector` genuinely can't make that
+ * move — real inputs/buttons inside a transformed iframe are a worse
+ * problem — so they stay portaled into the parent canvas root (or
+ * `document.body` as a fixed-position fallback when the canvas root ref
+ * isn't wired up: tests, a transient mount race). They anchor to a rect
+ * computed with the OLD (zoom-converting) `createCanvasOverlayMeasureSession`
+ * math, but — unlike the old design — that computation is NOT run every RAF
+ * tick. It runs only when `anchorDirtyRef` is set: once on mount, once per
+ * selection change, once per pan/zoom COMMIT (the debounced store values,
+ * never per pointermove), and once when the inspected node's cheap
+ * iframe-local rect changes (content reflow). See `tickOnce`'s own docblock.
+ * The resulting rect is also published as the `--selection-anchor-{x,y,w,h}`
+ * custom-property channel (`publishSelectionAnchor` — the sanctioned
+ * inline-style exception in CLAUDE.md) on both the toolbar and the inspector
+ * wrapper.
+ *
+ * Everything else
+ * ────────────────
  * - One overlay per breakpoint frame. Drop indicators stay inside the
  *   breakpoint viewport (they only appear during a drag, and the
  *   transform-scaled coordinate path is established for them).
- * - Selection / hover rings AND the selection toolbar are portaled into
- *   the canvas root — i.e. they live OUTSIDE `CanvasTransformLayer` and
- *   are therefore NOT scaled by the canvas zoom. The 1px border (set via
- *   `box-shadow: inset 0 0 0 1px …`) stays a real pixel at every zoom
- *   level, which is critical for the user to see what they have selected
- *   when zoomed out. Position alone tracks the (scaled) element, matching
- *   the existing toolbar pattern.
- * - Subscribes to `selectedNodeId` and (per-frame) `hoveredNodeId`.
  * - Resolves the rendered element via `[data-node-id="X"]` directly — each
  *   module spreads `nodeWrapperProps` onto its own root tag, so the matched
  *   element IS the rendered `<article>` / `<h1>` / grid `<div>` / etc., and
- *   its rect spans the whole element (including every grid column or flex
- *   child). Reading the rect off a `firstElementChild` was a leftover from
- *   the old `<div class="nodeWrapper">` design and produced a selection ring
- *   the size of the first child only.
- * - Computes the rect relative to the canvas root on every animation frame
- *   while a ring is visible. Polling via RAF is simpler than wiring
- *   ResizeObserver/MutationObserver/IntersectionObserver to every possible
- *   mutation source (scroll, layout shift, zoom/pan, CSS animation) — but
- *   each tick must stay cheap, so it is structured as:
- *     1. READ phase — one `createCanvasOverlayMeasureSession` snapshots the
- *        iframe + canvas-root geometry shared by every ring, tracked
- *        elements resolve through a `CanvasNodeElementCache` (no per-frame
- *        `querySelector` scans), and every rect is measured up front. The
- *        toolbar anchors to the union of the ring rects already measured —
- *        nothing is queried or measured twice.
- *     2. WRITE phase — styles are applied after all reads, and writes are
- *        skipped when a rect matches what's already applied. Steady-state
- *        frames therefore do a handful of cached-layout reads and zero
- *        writes; no read/write interleaving means no forced reflows while
- *        rects are actually changing.
+ *   `nodeVisualRect` (used by both measurement paths) falls back to the
+ *   union of children for box-less (`display: contents`) nodes.
  * - Clears style positioning when the tracked node disappears or the
  *   selection/hover clears.
- * - Renders the selected-layer toolbar AND the selection / hover rings
- *   through a portal into the canvas root so they escape the breakpoint
- *   viewport's overflow boundary and the transform layer's scale, but stay
- *   inside the canvas's stacking + clipping context. That way the editor
- *   sidebars (z-index 55), dialogs (95+), modals (200+) and overlays
- *   naturally paint above them — instead of being covered by a
- *   max-z-index fixed-position toolbar floating over the whole document.
- *   Falls back to document.body with position:fixed when the canvas root
- *   isn't available (tests, transient mount race).
  *
  * Contract
  * ────────
- * The ring and indicator overlay is presentational and click-through
- * (`pointer-events: none` in CSS). The selected-layer toolbar is interactive
- * and clipped by the canvas root.
+ * The ring/badge/indicator overlay is presentational and click-through
+ * (`pointer-events: none`). The selected-layer toolbar and the inspector are
+ * interactive and clipped by the canvas root.
  */
 
 import { use, useEffect, useEffectEvent, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { useEditorStore } from '@site/store/store'
-import { styleRuleSelector } from '@core/page-tree'
+import { selectActiveCanvasPage, useEditorStore } from '@site/store/store'
+import {
+  getNodeDisplayName,
+  getNodeHtmlTag,
+  styleRuleSelector,
+  type Page,
+} from '@core/page-tree'
+import { registry } from '@core/module-engine'
+import type { VisualComponent } from '@core/visualComponents'
 import { useEditorPermissions } from '@site/editorPermissionsContext'
 import { useShallow } from 'zustand/react/shallow'
 import { Button } from '@ui/components/Button'
@@ -89,6 +84,7 @@ import { InPlaceInspector } from './InPlaceInspector'
 import { isStudioMode } from '@site/studio/studioMode'
 import {
   createCanvasOverlayMeasureSession,
+  measureIframeLocalRect,
   unionCanvasOverlayRects,
   type CanvasOverlayRect,
 } from './canvasOverlayGeometry'
@@ -97,12 +93,50 @@ import {
   hideOverlayElement,
   measureSelectorHighlightRects,
   positionInspector,
+  positionNodeBadge,
   positionOverlayElement,
   positionToolbar,
+  publishSelectionAnchor,
   rectStyle,
   syncSelectorHighlightRings,
 } from './canvasSelectionOverlayPositioning'
 import styles from './BreakpointSelectionOverlay.module.css'
+
+const EMPTY_VISUAL_COMPONENTS: readonly VisualComponent[] = []
+
+/** Two nullable rects are equal when every field matches (or both are null). */
+function overlayRectsEqual(a: CanvasOverlayRect | null, b: CanvasOverlayRect | null): boolean {
+  if (a === b) return true
+  if (!a || !b) return false
+  return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height
+}
+
+/** `null` (frame doesn't own the node — legitimate) or every field a finite number. */
+function overlayRectIsFinite(rect: CanvasOverlayRect | null): boolean {
+  if (!rect) return true
+  return (
+    Number.isFinite(rect.x) &&
+    Number.isFinite(rect.y) &&
+    Number.isFinite(rect.width) &&
+    Number.isFinite(rect.height)
+  )
+}
+
+/**
+ * The node's tag or display name for the in-iframe node badge (WS-5.1) —
+ * same fallback order the Alt-hover tree ladder rows already use
+ * (`CanvasTreeLadderRowButton`).
+ */
+function resolveNodeBadgeLabel(
+  page: Page | null,
+  nodeId: string,
+  visualComponents: ReadonlyArray<VisualComponent>,
+): string | null {
+  const node = page?.nodes[nodeId]
+  if (!node) return null
+  const definition = registry.get(node.moduleId)
+  return getNodeHtmlTag(node, definition) || getNodeDisplayName(node, definition, visualComponents) || null
+}
 
 interface BreakpointSelectionOverlayProps {
   /**
@@ -126,6 +160,15 @@ interface BreakpointSelectionOverlayProps {
    * mounts.
    */
   iframeElement: HTMLIFrameElement | null
+  /**
+   * The in-iframe selection-overlay root (WS-5.1), created by
+   * `CanvasSelectionOverlayInjector` and appended to the iframe's own
+   * `<body>`. Rings, the hover ring, the selector-affinity pool, and the
+   * node badge portal into THIS instead of the parent canvas root, so they
+   * live in the same coordinate space as the element they track — no zoom/
+   * pan conversion, no drift. `null` until the injector's effect runs.
+   */
+  overlayRoot: HTMLElement | null
 }
 
 function duplicateSelectedLayers() {
@@ -146,6 +189,7 @@ export function BreakpointSelectionOverlay({
   breakpointId,
   viewportRef,
   iframeElement,
+  overlayRoot,
 }: BreakpointSelectionOverlayProps) {
   // Multi-select: render one ring per selected node. `useShallow` keeps the
   // subscription stable when the array reference changes but its contents
@@ -177,11 +221,19 @@ export function BreakpointSelectionOverlay({
     const rule = s.site?.styleRules[classId]
     return rule ? styleRuleSelector(rule) : null
   })
+  // Node metadata for the in-iframe badge label (WS-5.1) — the active page's
+  // node map is an O(1) lookup, same active-page selector CanvasTreeLadderOverlay
+  // already uses; this is NOT the O(pages × nodes) scan `standing-03` flags.
+  const activePage = useEditorStore(selectActiveCanvasPage)
+  const visualComponents = useEditorStore((s) => s.site?.visualComponents ?? EMPTY_VISUAL_COMPONENTS)
   // One ref per selected node, keyed by id. Stable across renders while the
   // id stays in the selection — when an id is removed, its ring entry is
   // dropped from the map; when added, a fresh ref is allocated.
   const ringRefs = useRef<Map<string, HTMLDivElement | null> | null>(null)
   if (ringRefs.current === null) ringRefs.current = new Map()
+  // One badge per selected node, same keying discipline as ringRefs.
+  const badgeRefs = useRef<Map<string, HTMLDivElement | null> | null>(null)
+  if (badgeRefs.current === null) badgeRefs.current = new Map()
   const hoverRef = useRef<HTMLDivElement>(null)
   // Container whose children are the orange selector-affinity rings. Their
   // count is driven by the live DOM (how many elements match the selector), so
@@ -195,6 +247,17 @@ export function BreakpointSelectionOverlay({
   // steady-state tick never pays a per-frame `querySelector` document scan.
   const nodeElementCacheRef = useRef<CanvasNodeElementCache | null>(null)
   if (nodeElementCacheRef.current === null) nodeElementCacheRef.current = new CanvasNodeElementCache()
+  // Gates the EXPENSIVE parent-doc anchor computation (iframe.getBoundingClientRect()
+  // + canvasRoot.getBoundingClientRect(), the zoom-multiplied math that caused
+  // `standing-03`'s drift). Starts `true` so the toolbar/inspector get positioned
+  // on first mount. Set back to `true` by the effect below (selection change /
+  // committed pan-zoom) and by tickOnce itself when the inspected node's cheap
+  // iframe-local rect changes (content reflow, e.g. editing a prop that resizes
+  // the element) — both are real, infrequent events, never a per-pointermove one.
+  const anchorDirtyRef = useRef(true)
+  // Last iframe-local rect seen for `inspectorNodeId`, to detect (2) above
+  // without paying for the expensive conversion on ticks where nothing moved.
+  const lastInspectorLocalRectRef = useRef<CanvasOverlayRect | null>(null)
   const viewportActions = use(CanvasViewportActionsContext)
 
   useEffect(() => {
@@ -234,6 +297,17 @@ export function BreakpointSelectionOverlay({
   const showInspector = isStudioMode() && selectedNodeIds.length === 1
   const inspectorNodeId = showInspector ? selectedNodeIds[0] : null
 
+  // Pan/zoom "commit" signal for the anchor recompute below — `zoom`/`panX`/
+  // `panY` in the store are the DEBOUNCED values `useCanvas.ts` writes ~100ms
+  // after a gesture ends (see its own docblock), never per pointermove. This
+  // is exactly the "once per pan/zoom commit" trigger WS-5.1 asks for — no
+  // separate throttling needed here.
+  const committedTransform = useEditorStore(useShallow((s) => [s.zoom, s.panX, s.panY] as const))
+  const selectedNodeIdsSignature = selectedNodeIds.join(',')
+  useEffect(() => {
+    anchorDirtyRef.current = true
+  }, [selectedNodeIdsSignature, showToolbar, inspectorNodeId, committedTransform])
+
   // Prefer the canvas root as the portal target so overlay chrome sits inside
   // the canvas's stacking + clipping context. The root is captured into state
   // after mount so the portal target and measurement coordinate space switch
@@ -272,79 +346,149 @@ export function BreakpointSelectionOverlay({
   // start or stop — gated by `hasOverlayWork` below — not on every change to
   // which specific nodes are tracked.
   //
-  // Bridge inputs:
-  //  - `iframe` is the breakpoint's iframe element. `[data-node-id]` lookups
-  //    happen inside `iframe.contentDocument`, then the measure session
-  //    translates from iframe-document coordinates into canvas-root-local
-  //    (screen-px, NOT scaled) coordinates so the 1px border on each ring
-  //    stays exactly 1px at every zoom level.
-  //  - `canvasRoot` is the editor canvas surface — the rings and toolbar are
-  //    portaled into it (see render output below) and positioned in its
-  //    scroll-content coordinate space, escaping the transform layer's scale.
-  //    Null in the fixed/body fallback mode (tests, transient mount race),
-  //    where overlay coords stay in viewport (client) space.
+  // WS-5.1: the tick now does two very differently-priced things.
   //
-  // The tick is split into a READ phase (resolve cached elements, measure
-  // every rect through one shared geometry session) and a WRITE phase
-  // (apply styles, skipping writes whose rect is already applied) — see the
-  // header comment. Reordering measurements/writes here can reintroduce
-  // per-frame forced reflows.
+  //  1. Iframe-local read + write (rings, hover ring, selector-affinity pool,
+  //     node badge) — EVERY tick. `measureIframeLocalRect` reads the target's
+  //     rect directly (no zoom recovery, no iframe-offset addition, no
+  //     canvas-root origin subtraction — see its own docblock), because these
+  //     elements are portaled into `overlayRoot`, which lives in the SAME
+  //     iframe document as the elements they track. Panning/zooming moves the
+  //     whole iframe (and this overlay with it) as one composited transform,
+  //     so this is correct at every zoom level with zero conversion.
+  //  2. Parent-doc anchor (toolbar, InPlaceInspector) — ONLY when
+  //     `anchorDirtyRef.current` is true: once on mount, once per selection
+  //     change / pan-zoom commit (the effect above), and once when the
+  //     inspected node's cheap iframe-local rect actually changed since the
+  //     last tick (content reflow — e.g. editing a prop through the inspector
+  //     that resizes the element). This is the expensive path
+  //     (`iframe.getBoundingClientRect()` + `canvasRoot.getBoundingClientRect()`,
+  //     the same zoom-multiplied math that caused `standing-03`'s drift) —
+  //     paying for it only on these real, infrequent events (never per
+  //     pointermove) is the whole point of WS-5.1's bounded-cost requirement.
   const tickOnce = useEffectEvent((iframe: HTMLIFrameElement | null) => {
     const canvasRoot = portalCanvasRoot
     const iframeDoc = iframe?.contentDocument ?? null
     const elementCache = nodeElementCacheRef.current!
 
     if (!iframe || !iframeDoc) {
-      // Nothing measurable (iframe not mounted yet / reloading) — hide all
-      // chrome. Pure writes; they no-op once everything is already hidden.
-      for (const id of selectedNodeIds) hideOverlayElement(ringRefs.current?.get(id) ?? null)
-      hideOverlayElement(hoverRef.current)
-      syncSelectorHighlightRings(selectorHighlightRef.current, null)
+      // Nothing measurable (iframe not mounted yet / reloading). Rings/hover/
+      // selector-highlight/badge now live INSIDE the iframe document, so when
+      // it's gone there is nothing there to hide — only the parent-doc
+      // toolbar/inspector need an explicit hide.
       hideOverlayElement(toolbarRef.current)
       hideOverlayElement(inspectorRef.current)
       return
     }
 
-    // ── READ phase ──────────────────────────────────────────────────────
-    const session = createCanvasOverlayMeasureSession(iframe, canvasRoot)
-    const trackedIds = new Set<string>()
+    // `overlayRoot` is `null` for a LIVE frame — `IframeFrameSurface` never
+    // mounts `CanvasSelectionOverlayInjector` there (WS-5.1 is design-mode
+    // only). A live frame isn't inside `CanvasTransformLayer`, so it was
+    // never subject to `standing-03`'s zoom-multiplied drift in the first
+    // place — falling back to the OLD zoom-converting measurement (session,
+    // created lazily, at most once per tick) is exactly correct there, not a
+    // regression. It also covers the brief design-mode startup window before
+    // the injector's own effect has created the root.
+    let fallbackSession: ReturnType<typeof createCanvasOverlayMeasureSession> | null = null
+    const measureRing = (target: HTMLElement | null): CanvasOverlayRect | null => {
+      if (overlayRoot) return measureIframeLocalRect(target)
+      fallbackSession ??= createCanvasOverlayMeasureSession(iframe, canvasRoot)
+      return fallbackSession.measure(target)
+    }
 
-    const ringPlacements: Array<{ ring: HTMLDivElement | null; rect: CanvasOverlayRect | null }> = []
-    let toolbarUnion: CanvasOverlayRect | null = null
-    // The inspector reuses the SAME rect already measured for the selected
-    // node's ring — no second `getBoundingClientRect` pass. `null` here means
-    // this frame's iframe doesn't contain the selected node's element, which
-    // is exactly how the inspector ends up rendered in only the one studio
-    // board frame that owns it.
-    let inspectorRect: CanvasOverlayRect | null = null
+    // ── Ring/badge READ phase (cheap in the common design-mode case) ─────
+    const trackedIds = new Set<string>()
+    const ringPlacements: Array<{ id: string; ring: HTMLDivElement | null; rect: CanvasOverlayRect | null }> = []
     for (const id of selectedNodeIds) {
       trackedIds.add(id)
-      const rect = session.measure(elementCache.resolve(iframeDoc, id))
-      ringPlacements.push({ ring: ringRefs.current?.get(id) ?? null, rect })
-      if (showToolbar && rect) toolbarUnion = unionCanvasOverlayRects(toolbarUnion, rect)
-      if (inspectorNodeId && id === inspectorNodeId) inspectorRect = rect
+      const rect = measureRing(elementCache.resolve(iframeDoc, id))
+      ringPlacements.push({ id, ring: ringRefs.current?.get(id) ?? null, rect })
     }
 
     const hoverId = showHover ? hoverRingNodeId : null
     let hoverRect: CanvasOverlayRect | null = null
     if (hoverId) {
       trackedIds.add(hoverId)
-      hoverRect = session.measure(elementCache.resolve(iframeDoc, hoverId))
+      hoverRect = measureRing(elementCache.resolve(iframeDoc, hoverId))
     }
     elementCache.retainOnly(trackedIds)
 
     const selectorRects = measureSelectorHighlightRects(
       showSelectorHighlight ? highlightedSelector : null,
       iframeDoc,
-      session,
+      measureRing,
     )
 
-    // ── WRITE phase ─────────────────────────────────────────────────────
+    // ── Ring/badge WRITE phase ────────────────────────────────────────────
     for (const { ring, rect } of ringPlacements) positionOverlayElement(ring, rect)
     positionOverlayElement(hoverRef.current, hoverRect)
-    syncSelectorHighlightRings(selectorHighlightRef.current, selectorRects)
+    syncSelectorHighlightRings(
+      selectorHighlightRef.current,
+      selectorRects,
+      overlayRoot ? null : { className: cn(styles.ring, styles.selectorHighlight), mode: toolbarMode },
+    )
+    // Badge is design-mode only (see `canvasChrome`'s render gate) — no live-
+    // mode fallback, so no work when `overlayRoot` isn't the active mode.
+    if (overlayRoot && showRings) {
+      for (const { id, rect } of ringPlacements) {
+        const badge = badgeRefs.current?.get(id) ?? null
+        positionNodeBadge(badge, rect, resolveNodeBadgeLabel(activePage, id, visualComponents))
+      }
+    }
+
+    // Content-reflow detection for the inspected node (see tick docblock,
+    // point 2): compare THIS tick's already-measured cheap local rect against
+    // the last one seen. A real change (not a reference change — a value
+    // change) marks the anchor dirty for the branch below, in the SAME tick.
+    if (inspectorNodeId) {
+      const localRect = ringPlacements.find((p) => p.id === inspectorNodeId)?.rect ?? null
+      if (!overlayRectsEqual(lastInspectorLocalRectRef.current, localRect)) {
+        anchorDirtyRef.current = true
+      }
+      lastInspectorLocalRectRef.current = localRect
+    }
+
+    // ── Parent-doc anchor (expensive, rare) ───────────────────────────────
+    const needsAnchor = showToolbar || Boolean(inspectorNodeId)
+    if (!needsAnchor) {
+      hideOverlayElement(toolbarRef.current)
+      hideOverlayElement(inspectorRef.current)
+      return
+    }
+    if (!anchorDirtyRef.current) return
+
+    // Reuse the session already created for the fallback ring path (live
+    // mode, or the brief design-mode startup window) instead of a second one.
+    const session = fallbackSession ?? createCanvasOverlayMeasureSession(iframe, canvasRoot)
+    let toolbarUnion: CanvasOverlayRect | null = null
+    // The inspector's rect comes from this SAME session pass — `null` here
+    // means this frame's iframe doesn't contain the selected node's element,
+    // which is exactly how the inspector ends up rendered in only the one
+    // studio board frame that owns it.
+    let inspectorRect: CanvasOverlayRect | null = null
+    for (const id of selectedNodeIds) {
+      const rect = session.measure(elementCache.resolve(iframeDoc, id))
+      if (showToolbar && rect) toolbarUnion = unionCanvasOverlayRects(toolbarUnion, rect)
+      if (inspectorNodeId === id) inspectorRect = rect
+    }
+
     positionToolbar(toolbarRef.current, showToolbar ? toolbarUnion : null, session.canvasRect)
+    publishSelectionAnchor(toolbarRef.current, showToolbar ? toolbarUnion : null)
     positionInspector(inspectorRef.current, inspectorNodeId ? inspectorRect : null, session.canvasRect)
+    publishSelectionAnchor(inspectorRef.current, inspectorNodeId ? inspectorRect : null)
+    // Only commit "clean" when both rects came out finite (or legitimately
+    // null — the frame doesn't own the node). A layout read taken mid-reflow
+    // can occasionally come back non-finite (e.g. an iframe measured the
+    // instant it's mid-resize); committing that as "done" would freeze the
+    // toolbar/inspector in a broken position until the NEXT selection change
+    // or pan/zoom commit, since this branch — unlike the old per-tick design
+    // — doesn't get a chance to self-correct next frame by default. Leaving
+    // `anchorDirtyRef` true instead makes this tick retry on the very next
+    // one, restoring that same self-correction without paying for it every
+    // tick in the common case.
+    if (overlayRectIsFinite(toolbarUnion) && overlayRectIsFinite(inspectorRect)) {
+      anchorDirtyRef.current = false
+    }
   })
 
   // The RAF loop exists to re-position overlay chrome as the tracked element
@@ -434,42 +578,83 @@ export function BreakpointSelectionOverlay({
     </div>
   ) : null
 
-  // Rings live in the canvas root's coordinate space (screen-px, NOT
-  // transform-scaled), so their 1px border stays exactly 1px at every zoom
-  // level. Position alone tracks the selected/hovered element — same
-  // pattern as the toolbar.
-  const rings = showRings && (selectedNodeIds.length > 0 || (showHover && hoverRingNodeId) || showSelectorHighlight) ? (
-    <div
-      className={styles.ringLayer}
-      data-canvas-ring-layer-mode={toolbarMode}
-      aria-hidden="true"
-    >
+  // Rings and the selector-affinity pool render INSIDE the iframe document
+  // (WS-5.1) whenever `overlayRoot` is available — portaled there instead of
+  // the parent canvas root, appearance coming from
+  // `CanvasSelectionOverlayInjector`'s stylesheet via the stable
+  // `data-canvas-*` selectors below (CSS Module classes from THIS file don't
+  // exist inside the iframe — see `EditorChromeInjector`'s docblock).
+  //
+  // `overlayRoot` is `null` for a LIVE frame (design-mode-only injector,
+  // never mounted there) and for the brief design-mode startup window before
+  // the injector's own effect has run. Both fall back to the ORIGINAL
+  // parent-doc rendering — CSS Module classes + the scoped/fixed
+  // `data-canvas-ring-mode` attribute (same `toolbarMode` the toolbar already
+  // uses) — which is exactly correct for live mode: a live frame isn't
+  // inside `CanvasTransformLayer`, so it was never subject to the
+  // zoom-multiplied drift this work order fixes.
+  const usingIframeOverlay = Boolean(overlayRoot)
+  const legacyRingClassName = (variant: 'selection' | 'hover') =>
+    usingIframeOverlay ? undefined : cn(styles.ring, styles[variant])
+  const legacyRingMode = usingIframeOverlay ? undefined : toolbarMode
+  const canvasChrome = showRings && (selectedNodeIds.length > 0 || (showHover && hoverRingNodeId) || showSelectorHighlight) ? (
+    <>
       {/* Orange affinity rings — populated imperatively by the RAF tick, one
           per element matching the hovered selector. */}
       {showSelectorHighlight && (
         <div ref={selectorHighlightRef} data-canvas-selector-highlight-layer="true" />
       )}
+      {/* `data-canvas-overlay-node-id`, NOT `data-node-id`: when hosted inside
+          the iframe (WS-5.1), these elements live in the SAME document as
+          authored content. `data-node-id` is the contract many other
+          subsystems query on inside a canvas iframe — drag/drop candidate
+          measurement (`measureCanvasDropCandidates`'s `[data-node-id]` scan),
+          `findRenderedCanvasNodes`/`CanvasNodeElementCache`'s node
+          resolution, plugin `useCanvasNodeRect` — carrying it here would
+          make chrome masquerade as a second, ring-shaped copy of the
+          authored node wherever those scans run. The correlating id below is
+          JS-only bookkeeping (ref maps, the e2e/test hook), never a selector
+          any other subsystem treats as "this is an authored node". */}
       {selectedNodeIds.map((id) => (
         <div
-          key={id}
+          key={`ring-${id}`}
           ref={(el) => {
             if (el) ringRefs.current?.set(id, el)
             else ringRefs.current?.delete(id)
           }}
-          className={cn(styles.ring, styles.selection)}
+          className={legacyRingClassName('selection')}
+          data-canvas-ring-mode={legacyRingMode}
           data-canvas-selection-ring="true"
-          data-node-id={id}
+          data-canvas-overlay-node-id={id}
+        />
+      ))}
+      {/* Node-name badge (WS-5.1) — design-mode only (see props doc): one per
+          selected node, anchored just above its ring by `positionNodeBadge`.
+          Text set imperatively. No badge for the hover ring or
+          selector-affinity pool (transient affordances, not a deliberate
+          selection), and none in the live-mode fallback — the badge is a
+          WS-5.1 addition, not a pre-existing affordance to preserve there. */}
+      {usingIframeOverlay && selectedNodeIds.map((id) => (
+        <div
+          key={`badge-${id}`}
+          ref={(el) => {
+            if (el) badgeRefs.current?.set(id, el)
+            else badgeRefs.current?.delete(id)
+          }}
+          data-canvas-node-badge="true"
+          data-canvas-overlay-node-id={id}
         />
       ))}
       {showHover && hoverRingNodeId && (
         <div
           ref={hoverRef}
-          className={cn(styles.ring, styles.hover)}
+          className={legacyRingClassName('hover')}
+          data-canvas-ring-mode={legacyRingMode}
           data-canvas-hover-ring="true"
-          data-node-id={hoverRingNodeId}
+          data-canvas-overlay-node-id={hoverRingNodeId}
         />
       )}
-    </div>
+    </>
   ) : null
 
   // Studio-only mini-inspector (Phase 2): anchored just below the selection
@@ -484,6 +669,11 @@ export function BreakpointSelectionOverlay({
       className={styles.inspectorAnchor}
       data-canvas-in-place-inspector="true"
       data-canvas-inspector-mode={toolbarMode}
+      // Debugging aid: every studio board frame mounts its OWN wrapper (see
+      // `showInspector`'s comment above), so several of these can exist in
+      // the DOM at once with only one actually positioned/visible — this
+      // makes it possible to tell them apart without walking React internals.
+      data-canvas-inspector-breakpoint={breakpointId}
       // Same rationale as the toolbar's onClick guard: the inspector is
       // portaled into the canvas root, whose background click clears the
       // selection — without this guard, clicking a control inside it would
@@ -519,7 +709,7 @@ export function BreakpointSelectionOverlay({
           />
         )}
       </div>
-      {rings && createPortal(rings, portalTarget)}
+      {canvasChrome && createPortal(canvasChrome, overlayRoot ?? portalTarget)}
       {toolbar && createPortal(toolbar, portalTarget)}
       {inspector && createPortal(inspector, portalTarget)}
       {treeLadder.portal}

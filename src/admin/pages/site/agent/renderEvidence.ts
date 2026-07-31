@@ -26,6 +26,14 @@ interface CaptureRenderSnapshotOptions {
   /** Configured breakpoint id to capture. Defaults to the first canvas frame. */
   breakpointId?: string
   /**
+   * Studio board frame id (`Page.id`) to disambiguate among frames that share
+   * ONE synthetic breakpoint id (every Studio board frame carries
+   * `breakpointId: 'studio'` — see `BoardFramesLayer.tsx`'s
+   * `STUDIO_BREAKPOINT_BASE`). Ignored for CMS/VC capture, where a
+   * breakpoint id alone is already unambiguous.
+   */
+  pageId?: string
+  /**
    * Scope the capture to a single node's subtree. When set, the screenshot and
    * layout report cover only that node (coordinates relative to its box).
    * Omit to capture the whole breakpoint frame.
@@ -33,6 +41,13 @@ interface CaptureRenderSnapshotOptions {
   nodeId?: string
   /** When false, only layout is collected (no html-to-image) — faster. */
   captureScreenshot?: boolean
+  /**
+   * Output pixel-density multiplier, e.g. `2` for a retina-equivalent PNG.
+   * Still capped so neither edge exceeds `MAX_IMAGE_EDGE` — a caller asking
+   * for `dpr: 3` on a huge frame gets the same safe cap `site_render_snapshot`
+   * already enforces, not an unbounded image.
+   */
+  pixelRatio?: number
   /** Exact visible or transient frame selected by the browser executor. */
   frame?: HTMLElement
 }
@@ -47,6 +62,8 @@ interface CaptureRegion {
 
 export interface AgentRenderFrameQuery {
   breakpointId?: string
+  /** Studio board frame id — see `CaptureRenderSnapshotOptions.pageId`. */
+  pageId?: string
   source?: 'visible' | 'transient'
   requestId?: string
   requireReady?: boolean
@@ -86,13 +103,15 @@ export class SnapshotNodeNotFoundError extends Error {
  */
 export async function captureAgentRenderSnapshot({
   breakpointId,
+  pageId,
   nodeId,
   captureScreenshot = true,
+  pixelRatio,
   frame: selectedFrame,
 }: CaptureRenderSnapshotOptions = {}): Promise<AgentRenderSnapshotPayload | null> {
   if (typeof document === 'undefined') return null
 
-  const frame = selectedFrame ?? findAgentRenderFrame({ breakpointId })
+  const frame = selectedFrame ?? findAgentRenderFrame({ breakpointId, pageId })
   if (!frame) return null
   const frameBreakpointId = agentRenderFrameBreakpointId(frame)
   if (breakpointId && frameBreakpointId !== breakpointId) return null
@@ -124,7 +143,7 @@ export async function captureAgentRenderSnapshot({
 
   const layout = collectLayoutReport(root, captureRegion, resolvedBreakpointId, nodeId)
   const screenshot = captureScreenshot
-    ? await captureElementScreenshot(root, captureRegion, documentRegion)
+    ? await captureElementScreenshot(root, captureRegion, documentRegion, pixelRatio)
     : unavailableScreenshot('Screenshot capture not requested.')
 
   return {
@@ -138,9 +157,19 @@ export async function captureAgentRenderSnapshot({
   }
 }
 
-/** Find an exact visible canvas frame or one one-shot offscreen capture frame. */
+/**
+ * Find an exact visible canvas frame or one one-shot offscreen capture frame.
+ *
+ * `pageId` disambiguates among Studio board frames, which all share the ONE
+ * synthetic `'studio'` breakpoint id — it matches the `data-page-id`
+ * `BoardFramesLayer.tsx` already puts on each frame's outer wrapper. Ignored
+ * for CMS/VC frames (no `data-page-id` attribute exists there, so passing it
+ * for a non-Studio query would just fail to match — callers only pass it for
+ * a Studio capture).
+ */
 export function findAgentRenderFrame({
   breakpointId,
+  pageId,
   source = 'visible',
   requestId,
   requireReady = false,
@@ -157,9 +186,17 @@ export function findAgentRenderFrame({
   const requestSelector = requestId
     ? `[data-agent-snapshot-request-id="${cssAttrEscape(requestId)}"]`
     : ''
-  const candidates = document.querySelectorAll<HTMLElement>(
-    `${breakpointSelector}${sourceSelector}${requestSelector}`,
-  )
+  // `data-page-id` (BoardFramesLayer's outer `.frame` wrapper) and
+  // `data-breakpoint-id` (BreakpointFrame's inner `.viewport` div, several
+  // levels down) are NEVER the same element, so a pageId query needs a
+  // DESCENDANT combinator, not a compound attribute selector on one element.
+  const candidates = pageId
+    ? document.querySelectorAll<HTMLElement>(
+        `[data-page-id="${cssAttrEscape(pageId)}"] ${breakpointSelector}${sourceSelector}${requestSelector}`,
+      )
+    : document.querySelectorAll<HTMLElement>(
+        `${breakpointSelector}${sourceSelector}${requestSelector}`,
+      )
 
   for (const frame of candidates) {
     if (!requireReady || isAgentRenderFrameReady(frame, requestId)) return frame
@@ -364,6 +401,7 @@ async function captureElementScreenshot(
   root: HTMLElement,
   captureRegion: CaptureRegion,
   documentRegion: CaptureRegion,
+  pixelRatioOverride?: number,
 ): Promise<AgentScreenshotContext> {
   try {
     const { toCanvas } = await import('html-to-image')
@@ -371,10 +409,13 @@ async function captureElementScreenshot(
       return unavailableScreenshot('Captured element has no visible size.')
     }
 
-    // Cap BOTH dimensions at MAX_IMAGE_EDGE (never upscale past 1:1). A tall
-    // page is constrained by its height; a wide one by its width.
+    // Cap BOTH dimensions at MAX_IMAGE_EDGE (never upscale past 1:1, even when
+    // a caller asks for a higher `pixelRatioOverride` — e.g. `studio_export_frames`
+    // requesting `dpr: 2` on an already-large frame). A tall page is
+    // constrained by its height; a wide one by its width.
+    const requestedRatio = pixelRatioOverride && pixelRatioOverride > 0 ? pixelRatioOverride : 1
     const pixelRatio = Math.min(
-      1,
+      requestedRatio,
       MAX_IMAGE_EDGE / Math.max(1, captureRegion.width),
       MAX_IMAGE_EDGE / Math.max(1, captureRegion.height),
     )

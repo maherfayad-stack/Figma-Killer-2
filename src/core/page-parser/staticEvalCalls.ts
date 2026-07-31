@@ -29,6 +29,7 @@ import {
 import type { FunctionLike } from './types'
 import {
   createEvalScope,
+  enclosingFunctionLike,
   evaluateCondition,
   evaluateNode,
   findDefaultExportedVariable,
@@ -157,14 +158,6 @@ function traceProvider(ctxExpr: Node, project: Project, budget: Budget, depth: n
   // exactly as §7.6's wiring does for a page's component body.
   const providerScope = createEvalScope(valueExpr.getSourceFile(), enclosingFunctionLike(valueExpr))
   return evaluateNode(valueExpr, providerScope, budget, depth + 1)
-}
-
-/** The nearest enclosing component/hook function body, or `undefined` for a module-scope expression. */
-function enclosingFunctionLike(node: Node): FunctionLike | undefined {
-  return node.getFirstAncestor(
-    (a): a is FunctionLike =>
-      Node.isArrowFunction(a) || Node.isFunctionDeclaration(a) || Node.isFunctionExpression(a),
-  )
 }
 
 function findUseContextArgument(fn: FunctionLike): Node | undefined {

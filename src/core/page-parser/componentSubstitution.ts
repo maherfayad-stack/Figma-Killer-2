@@ -360,8 +360,11 @@ export function applySubstitutions(
     node.forEachChild(walk)
   }
 
-  // Every `return` the component has — see `getReturnedJsxRoots`. All of them
-  // produced nodes, so all of them need their params substituted.
+  // Every `return` the component has — see `getReturnedJsxRoots`. Only the
+  // CHOSEN one produced nodes in `subPage`; walking the non-chosen ones too is
+  // harmless (their ids simply have no `existing` entry in `nodes`, so
+  // `patchElement` no-ops for them) and keeps this loop from having to know
+  // which is which.
   for (const root of roots) walk(root.expr)
 
   return { rootIds: subPage.rootIds, nodes }

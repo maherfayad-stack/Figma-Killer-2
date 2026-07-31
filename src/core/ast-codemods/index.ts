@@ -12,3 +12,30 @@ export { setImportSpecifier, ImportSpecifierTargetError } from './setImportSpeci
 export type { SetImportSpecifierParams } from './setImportSpecifier'
 export { setJsxTagName, JsxTagNameTargetError } from './setJsxTagName'
 export type { SetJsxTagNameParams } from './setJsxTagName'
+export { detachComponentInstance } from './detachComponent'
+export type {
+  DetachComponentParams,
+  DetachFailure,
+  DetachRefusal,
+  DetachRefusalReason,
+  DetachResult,
+  DetachSuccess,
+} from './detachComponent'
+export { extractComponentCopy } from './extractComponentCopy'
+export type {
+  ExtractComponentCopyFailure,
+  ExtractComponentCopyParams,
+  ExtractComponentCopyRefusal,
+  ExtractComponentCopyRefusalReason,
+  ExtractComponentCopyResult,
+  ExtractComponentCopySuccess,
+} from './extractComponentCopy'
+export { swapComponentInstance } from './swapComponentInstance'
+export type {
+  SwapComponentInstanceParams,
+  SwapFailure,
+  SwapRefusal,
+  SwapRefusalReason,
+  SwapResult,
+  SwapSuccess,
+} from './swapComponentInstance'

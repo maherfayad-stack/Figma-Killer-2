@@ -10,6 +10,7 @@ import { CanvasRoot } from '@admin/pages/site/canvas'
 import { CodeEditorPanel, CodeEditorSkeleton } from '@admin/pages/site/code-editor'
 import { useActiveLivePath } from '@admin/pages/site/hooks/useActiveLivePath'
 import { useAutoResolveDependencies } from '@admin/pages/site/hooks/useAutoResolveDependencies'
+import { useRegisterProjectModules } from '@admin/pages/site/studio/registerProjectModules'
 import { LayoutNameDialog } from '@admin/pages/site/dialogs/LayoutNameDialog'
 import { PropertiesPanel } from '@admin/pages/site/panels/PropertiesPanel'
 import { LeftSidebar } from '@admin/pages/site/sidebars/LeftSidebar'
@@ -49,6 +50,11 @@ export function AdminCanvasEditorBody({
   // Keep `siteRuntime.dependencyLock` in lockstep with `packageJson` while
   // the editor body is open.
   useAutoResolveDependencies()
+  // WS-3.3 — registers/unregisters `pkg.*` design-system modules for
+  // whichever project is currently open. Generalizes `@modules/alm/register`
+  // (imported below, kept per `standing-07`) to any npm package a project
+  // actually imports, not just the one hardcoded `@alm-design/design-system`.
+  useRegisterProjectModules()
   // Own the toolbar's "Open live page" target. Resolves templates to the
   // page / post they're previewed against (templates have no routable slug of
   // their own); lives here, in the lazy body, so the CMS fetch it needs for

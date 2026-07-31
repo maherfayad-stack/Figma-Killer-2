@@ -1,5 +1,6 @@
 import type { AnyModuleDefinition } from '@core/module-engine'
 import { PALETTE_HIDDEN_ALM_MODULE_IDS } from '@modules/alm/register'
+import { getPaletteHiddenPackageModuleIds } from '@site/studio/registerProjectModules'
 import type { SavedLayout } from '@core/layouts'
 import {
   DEFAULT_MODULE_INSERTER_PREFERENCE,
@@ -82,6 +83,12 @@ const HIDDEN_MODULE_IDS = new Set([
   'base.body',
   'base.visual-component-ref',
   'base.slot-instance',
+  // WS-4.2 — auto-materialized by `inlineLocalComponents` expanding a call
+  // site; a manual insert has no call site + inlined subtree to give it, so
+  // there is nothing a picker entry could meaningfully create. (Also already
+  // covered by the Studio-mode `category !== 'Design System'` rule below,
+  // this closes the same gap for any future non-Studio surface.)
+  'studio.instance',
 ])
 
 export const DEFAULT_MODULE_INSERTER_FAVORITES =
@@ -147,6 +154,10 @@ export function moduleAvailability(
   // confusing to place by hand — but they stay REGISTERED so an imported page
   // that already uses one renders it instead of an "Unknown module" box.
   if (PALETTE_HIDDEN_ALM_MODULE_IDS.has(mod.id)) return { kind: 'hidden' }
+  // WS-3.3 — the generic `pkg.*` equivalent: same overlay/portal name
+  // heuristic plus `.studio/meta.json`'s `paletteHiddenModuleIds` override,
+  // computed per project by `registerProjectModules.ts`.
+  if (getPaletteHiddenPackageModuleIds().has(mod.id)) return { kind: 'hidden' }
   // Studio mode: only design-system components are user-insertable; the built-in
   // Studio block modules are host-HTML renderers, not palette entries.
   if (context.isStudio && mod.category !== DESIGN_SYSTEM_CATEGORY) return { kind: 'hidden' }

@@ -81,6 +81,7 @@ describe('projectPagesDir', () => {
       JSON.stringify({
         profile: {
           framework: 'next-app',
+          appRoot: '',
           pagesDir: 'app',
           routeStyle: 'file-router',
           entryFiles: [],
@@ -104,6 +105,7 @@ describe('projectPagesDir', () => {
         pagesDir: 'src/screens',
         profile: {
           framework: 'next-app',
+          appRoot: '',
           pagesDir: 'app',
           routeStyle: 'file-router',
           entryFiles: [],

@@ -92,6 +92,27 @@ const EXEMPT = new Set<string>([
  */
 const GRANDFATHERED: Record<string, number> = {
   'src/admin/pages/site/store/slices/visualComponentsSlice.ts': 715,
+  // WS-5.1 (canvas-05) is the component's own primary work: rings/badge move
+  // into the in-iframe overlay, the toolbar/inspector keep a parent-doc
+  // anchor gated on a dirty flag instead of recomputing every RAF tick, and
+  // a live-mode fallback preserves the pre-fix rendering where the new
+  // injector never mounts — genuine new logic, not incidental bloat, but a
+  // real extraction candidate exists for a follow-up: the ~50-line toolbar
+  // JSX block (drag/insert/duplicate/delete buttons) is self-contained
+  // enough to become its own `SelectionToolbar.tsx`, taking `reorderDrag` +
+  // the two action callbacks as props.
+  'src/admin/pages/site/canvas/BreakpointSelectionOverlay.tsx': 718,
+  // WS-5.1 (canvas-05) mounted CanvasSelectionOverlayInjector alongside the
+  // file's existing per-frame injectors, tipping it from 691 to 711 lines —
+  // a small, cohesive addition (one more injector in the same composition
+  // pattern as EditorChromeInjector/CanvasAnimationInjector), not new bloat.
+  // A real extraction candidate exists (the ~200-line cross-iframe pointer/
+  // keyboard-forwarding effect into its own hook, matching the file's own
+  // useIframeCursorBridge.ts/useCanvasFormControlSuppression.ts pattern) but
+  // is deliberately left for a follow-up rather than rushed alongside this
+  // change — that effect is exactly the kind of delicate, easy-to-regress
+  // cross-iframe event logic this file's own docblock warns about.
+  'src/admin/pages/site/canvas/IframeFrameSurface.tsx': 711,
   // server/repositories/media.ts graduated: the row ↔ asset mapping unit was
   // extracted into server/repositories/mediaAssetMapping.ts, dropping media.ts
   // to 583 lines — under CEILING, so it's now held by the normal ceiling rule.

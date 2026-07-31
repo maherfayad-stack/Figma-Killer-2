@@ -81,6 +81,19 @@ function areCanvasTransformSnapshotsEqual(
  */
 const ANIMATED_TRANSFORM_MS = 220
 
+/**
+ * WS-5.4 — how long after the last transform write to drop
+ * `will-change: transform` back to `auto`. `CanvasTransformLayer.module.css`
+ * already documents (and, until this fix, only documents — the constant it
+ * names didn't exist) why this is transient rather than permanent: a
+ * permanently promoted transform layer wraps the whole board subtree into
+ * one oversized GPU-composited layer whose backing can overflow the
+ * tile/memory budget and paint blank at scale (react-virtualized#453). Kept
+ * slightly above the 100ms Zustand commit debounce so a promotion doesn't
+ * drop mid-gesture between two rAF-batched writes.
+ */
+const WILL_CHANGE_RELEASE_MS = 200
+
 /** Escape a value for safe interpolation into an attribute-equals selector. */
 function cssAttrEscape(value: string): string {
   return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
@@ -92,6 +105,7 @@ export function useCanvas({ canvasRootRef, transformLayerRef, enabled }: UseCanv
   const rafRef = useRef<number | null>(null)
   const commitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const animatingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const willChangeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const spaceActiveRef = useRef(false)
   const isDraggingRef = useRef(false)
   const lastPinchMovementRef = useRef(1)
@@ -146,6 +160,19 @@ export function useCanvas({ canvasRootRef, transformLayerRef, enabled }: UseCanv
 
     // setProperty avoids the same property-assignment lint trip as above.
     el.style.setProperty('transform', `translate(${t.panX}px, ${t.panY}px) scale(${t.zoom})`)
+
+    // WS-5.4 — promote to a GPU-composited layer for the duration of the
+    // gesture, then release. `el.style.willChange` reads back the resolved
+    // value, so this check is a no-op skip on every write but the first of a
+    // gesture, not a redundant style recalc every rAF tick.
+    if (el.style.willChange !== 'transform') {
+      el.style.setProperty('will-change', 'transform')
+    }
+    if (willChangeTimerRef.current) clearTimeout(willChangeTimerRef.current)
+    willChangeTimerRef.current = setTimeout(() => {
+      willChangeTimerRef.current = null
+      el.style.setProperty('will-change', 'auto')
+    }, WILL_CHANGE_RELEASE_MS)
   }, [transformLayerRef])
 
   // Sync from store on mount AND whenever the canvas re-becomes enabled
@@ -530,6 +557,7 @@ export function useCanvas({ canvasRootRef, transformLayerRef, enabled }: UseCanv
       if (rafRef.current !== null) cancelAnimationFrame(rafRef.current)
       if (commitTimerRef.current) clearTimeout(commitTimerRef.current)
       if (animatingTimerRef.current) clearTimeout(animatingTimerRef.current)
+      if (willChangeTimerRef.current) clearTimeout(willChangeTimerRef.current)
     }
   }, [])
 

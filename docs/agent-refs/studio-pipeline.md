@@ -24,6 +24,17 @@ GET /admin/api/studio/load?dir=<abs>            server/handlers/studio.ts
         9. rewriteStudioAssetSentinels()         → /admin/api/studio/asset URLs
    → editor store  →  board frames  →  iframes
 
+Independently, the CLIENT (`fsCodemodAdapter.ts`'s `loadSite`) calls
+`POST /admin/api/studio/tokens` (`tokens-01`, `studio/tokenExtract.ts`) right
+after `GET /admin/api/studio/framework` — reads `:root` custom properties out
+of the SAME `compileProjectStyles` output step 6.5 already produced (falling
+back to a static Tailwind-theme read, then vendor package CSS), classifies
+them into `FrameworkColorToken`/`FrameworkSpacingGroup`/
+`FrameworkTypographyGroup`, and merges them into `.studio/framework.json`
+WITHOUT clobbering anything already there (whole-family merge — a family is
+only filled when currently empty). This is what populates the Framework
+panel's Colors/Typography/Spacing on a fresh import.
+
 POST /admin/api/studio/save  { dir, edits: StudioEdit[] }
    └─ studioEditLocation()  → { rel, line, col }  (split composite id, keep TAIL)
    └─ applyStudioEdit()     → one ast-codemod per edit
@@ -39,7 +50,7 @@ uneditable.
 
 | Field | Means | Consequence |
 |---|---|---|
-| `locked` / `lockReason` | **Structure**: the source does not simply place this node — a `.map` generated it, a ternary/`&&` chose it, a spread feeds it, it's one of several `return`s | Cannot be moved, deleted, reordered, wrapped |
+| `locked` / `lockReason` | **Structure**: the source does not simply place this node — a `.map` generated it, an unresolved ternary/`&&`/call the parser could not pick a single branch for, or a spread feeds it | Cannot be moved, deleted, reordered, wrapped |
 | `codeProps: string[]` | **Values**: prop names with no writable target, because the source holds an expression, not a literal. Inline styles appear as `style:<property>` | Those props are read-only; **siblings stay editable** |
 
 A structurally locked node with a real source location **still takes prop, style,
@@ -136,22 +147,41 @@ later line numbers.
 
 ## Structure decisions you will trip over
 
-**A call site is replaced, not wrapped.** `<SheetShell/>` renders SheetShell's
-own root — a component call emits no element of its own. `spliceReference`
-replaces the call-site node. A leftover wrapper silently breaks:
+**A call site is an instance, not a wrapper (WS-4.2, shipped).** `<SheetShell/>`
+renders SheetShell's own root — a component call emits no element of its
+own — but the call site node is now KEPT, as `moduleId: 'studio.instance'`:
+its literal/resolved props move to `props.callSiteProps`, and the inlined
+subtree becomes its `children`. `NodeRenderer` renders it as a bare React
+Fragment (`src/modules/base/instance/`) — **zero DOM elements**, so a leftover
+wrapper never happens:
 - percentage/flex height chains (`height: 100%` against an `auto` wrapper
-  collapses the shell and every `flex: 1` region inside it to 0),
+  collapses the shell and every `flex: 1` region inside it to 0) — proven
+  against the real corpus in a real browser, `tests/e2e/instance-fragment-node.e2e.ts`,
 - `>` and `+` combinators crossing the call site.
 
-The cost: call-site literal props are not editable as a node. *(WS-4 of the V2
-plan fixes this with a fragment node that renders zero DOM.)*
+Call-site literal props ARE now editable, as `ParsedNode.instanceOf.callSiteProps`
+→ `PageNode.props.callSiteProps`, writable via the `callSiteProps:<name>`
+`codeProps` convention (parallel to `style:<property>`). Detach
+(`detachComponent.ts`), its refusal escape hatch (`extractComponentCopy.ts`),
+and swap (`swapComponentInstance.ts`) act on the instance node — see
+`docs/features/studio-import.md`'s "Detach and swap" section for the full
+contract and refusal reasons.
 
 **Imports are followed through barrels.** `resolveExportedDeclaration` walks
 `export { X } from './X'` and `export * from './X'` and returns the declaring
 name, so `export { Card as PlanCard }` resolves.
 
-**Every JSX-bearing `return` renders**, all locked. Choosing a branch is Tier D.
-A `return null` guard contributes nothing and does not lock the screen.
+**The parser SELECTS one JSX-bearing `return`** — the last one, unlocked
+(parser-06). Guard clauses (loading/empty/error) return early; the return
+that survives every guard is the "normal" state. The others are recorded as
+`label` + source `loc` on the chosen node (`ParsedNode.branchAlternatives`),
+never parsed into nodes — cheap, addressable, not rendered. A `return null`
+guard contributes nothing and does not count as a branch. A ternary/`&&`
+inside JSX gets the same one-branch-chosen treatment (`selectJsxBranch`),
+preferring the consequent / `&&`'s right side unless the condition is
+statically decidable (Tier A/B), which always outranks the guess. Nothing
+here is evaluated to make the choice — only a source POSITION is preferred —
+so it stays outside Tier D.
 
 **Locked nodes still show their text.** `locked` carries the "not editable"
 meaning; withholding text just made nodes blank.
@@ -188,8 +218,9 @@ tag or the element is silently rewritten.
 ## Known non-imports (deliberate)
 
 Transform effects (`applyTokens(svg)` loops — falls back to the markup handed
-in) · `.map` over props/state/fetch data · multi-stage screens render every
-stage stacked · computed `className` keeps only its static prefix · linked
+in) · `.map` over props/state/fetch data · a multi-stage screen shows only the
+LAST stage by default (the others are addressable via `branchAlternatives`,
+not rendered — parser-06) · computed `className` keeps only its static prefix · linked
 (`file:`/pnpm) package deps · JSX-valued props that aren't icons · only the
 `previewLocale` branch · an inline `<svg>` attribute depending on state · images
 behind hook state · renaming a component reference.

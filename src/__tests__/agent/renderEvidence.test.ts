@@ -81,7 +81,7 @@ const toCanvasMock = mock(async (root: HTMLElement, options: RasterOptions = {})
 
 mock.module('html-to-image', () => ({ toCanvas: toCanvasMock }))
 
-const { captureAgentRenderSnapshot, SnapshotNodeNotFoundError } = await import('@site/agent')
+const { captureAgentRenderSnapshot, SnapshotNodeNotFoundError, findAgentRenderFrame } = await import('@site/agent')
 
 beforeEach(() => {
   document.body.innerHTML = ''
@@ -493,5 +493,60 @@ describe('captureAgentRenderSnapshot — on-demand browser bridge', () => {
       captureScreenshot: false,
     })
     expect(snapshot?.breakpointId).toBe('desktop')
+  })
+})
+
+describe('findAgentRenderFrame — pageId disambiguation (Studio board frames)', () => {
+  /**
+   * Mounts a Studio board frame the way `BoardFramesLayer.tsx` actually does:
+   * an OUTER `[data-page-id]` wrapper (the frame card) containing an INNER
+   * `[data-breakpoint-id]` div (`BreakpointFrame`'s `.viewport`) several
+   * levels down, which itself wraps the `<iframe>`. Every Studio frame shares
+   * ONE breakpoint id (`'studio'`) — `data-page-id` is the only thing that
+   * disambiguates between frames, and it lives on a DIFFERENT element than
+   * `data-breakpoint-id`, never the same one.
+   */
+  function mountBoardFrame(pageId: string): Document {
+    const outer = document.createElement('div')
+    outer.dataset.pageId = pageId
+    const middle = document.createElement('div') // stand-in for BreakpointFrame's own wrapper
+    const viewport = document.createElement('div')
+    viewport.dataset.breakpointId = 'studio'
+    const iframe = document.createElement('iframe')
+    viewport.appendChild(iframe)
+    middle.appendChild(viewport)
+    outer.appendChild(middle)
+    document.body.appendChild(outer)
+    const doc = iframe.contentDocument
+    if (!doc) throw new Error('iframe.contentDocument unavailable in test env')
+    return doc
+  }
+
+  it('returns the frame nested under the matching data-page-id, not a same-breakpoint sibling', () => {
+    mountBoardFrame('page-a')
+    const docB = mountBoardFrame('page-b')
+
+    const frame = findAgentRenderFrame({ breakpointId: 'studio', pageId: 'page-b', source: 'visible' })
+    expect(frame).not.toBeNull()
+    expect(frame!.querySelector('iframe')!.contentDocument).toBe(docB)
+  })
+
+  it('returns null for a pageId with no matching frame on the board', () => {
+    mountBoardFrame('page-a')
+    const frame = findAgentRenderFrame({ breakpointId: 'studio', pageId: 'page-nonexistent', source: 'visible' })
+    expect(frame).toBeNull()
+  })
+
+  it('a plain compound selector would have failed this — data-page-id and data-breakpoint-id are never the same element', () => {
+    mountBoardFrame('page-a')
+    // Sanity: confirm the fixture matches production shape (regression guard
+    // for the bug this test exists to catch — see findAgentRenderFrame's own
+    // "DESCENDANT combinator, not a compound attribute selector" comment).
+    const outer = document.querySelector('[data-page-id="page-a"]')
+    const viewport = document.querySelector('[data-breakpoint-id="studio"]')
+    expect(outer).not.toBeNull()
+    expect(viewport).not.toBeNull()
+    expect(outer).not.toBe(viewport)
+    expect(outer!.contains(viewport)).toBe(true)
   })
 })

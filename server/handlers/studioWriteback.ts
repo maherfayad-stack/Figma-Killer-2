@@ -8,7 +8,7 @@
  * full Request/Response round trip.
  *
  * A batch of typed edits (`kind: 'prop' | 'text' | 'style' | 'literal' | 'tag'
- * | 'asset'`). Each edit's nodeId is decoded back to a source location and
+ * | 'asset' | 'detach' | 'swap' | 'css'`). Most edits' nodeId is decoded back to a source location and
  * dispatched to the matching `ast-codemods` writer (`setJsxProp` /
  * `setJsxText` / `setJsxStyle` / `setStringLiteral` / `setJsxTagName` /
  * `setImportSpecifier`) via `applyStudioEdit`. Synthetic nodes (e.g. the
@@ -18,21 +18,33 @@
  * the route rather than aborting the whole batch.
  */
 import { isAbsolute, join, resolve, sep } from 'node:path'
-import { realpathSync } from 'node:fs'
+import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { EXCLUDED_WORKSPACE_DIR_NAMES, INLINE_ID_SEPARATOR } from '@core/page-parser'
 import {
+  detachComponentInstance,
   setImportSpecifier,
   setJsxProp,
   setJsxStyle,
   setJsxTagName,
   setJsxText,
   setStringLiteral,
+  swapComponentInstance,
 } from '@core/ast-codemods'
+import { classifyStylesheetEditability, setDeclaration } from '@core/css-codemods'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 
 const NODE_LOC_ID = /^(.*):(\d+):(\d+)$/
 
-/** One prop attribute writeback — `setJsxProp`. */
+/**
+ * One prop attribute writeback — `setJsxProp`.
+ *
+ * WS-4.2/4.3 — `prop` may arrive prefixed `callSiteProps:<name>` (the
+ * convention `parsedPageToSitePage.ts` uses for a `studio.instance`'s
+ * call-site props, parallel to `style:<property>`). `applyStudioEdit` strips
+ * the prefix before calling `setJsxProp` — a `studio.instance`'s own id IS
+ * the call site's plain (non-composite) location, so the prop write lands
+ * on the call site's own JSX attribute exactly like any other node's.
+ */
 const PropEditSchema = Type.Object({
   kind: Type.Literal('prop'),
   nodeId: Type.String(),
@@ -113,6 +125,60 @@ const AssetEditSchema = Type.Object({
   assetPath: Type.String(),
 })
 
+/**
+ * One "detach a local component instance" writeback (WS-4.4) —
+ * `detachComponentInstance`. `nodeId` is a `studio.instance` node's own id
+ * (the call site's plain location — never composite, see that node's doc
+ * comment). Unlike every other edit kind, this can REFUSE with a specific
+ * reason rather than simply "no writable location" — see `applyStudioEdit`'s
+ * `StudioEditRefusalError`.
+ */
+const DetachEditSchema = Type.Object({
+  kind: Type.Literal('detach'),
+  nodeId: Type.String(),
+})
+
+/**
+ * One "swap this instance for a different component" writeback (WS-4.5) —
+ * `swapComponentInstance`. `newComponentFile` is a workspace-relative POSIX
+ * path when `newComponentSource` is `'local'`, or a bare package specifier
+ * when `'package'`.
+ */
+const SwapEditSchema = Type.Object({
+  kind: Type.Literal('swap'),
+  nodeId: Type.String(),
+  newComponentName: Type.String(),
+  newComponentSource: Type.Union([Type.Literal('local'), Type.Literal('package')]),
+  newComponentFile: Type.String(),
+})
+
+/**
+ * One CSS declaration writeback (WS-6.3, `panel-02`) — `setDeclaration`
+ * (`@core/css-codemods`), a postcss CST round-trip. Scoped to a rule's BASE
+ * declarations only this pass — a breakpoint/condition-scoped override
+ * (`@media`) is a real, documented gap; `setDeclarationAtMedia` is ready for
+ * it, this edit kind just doesn't carry a query yet.
+ *
+ * `file`/`selector` are `server/handlers/studioCss.ts`'s
+ * `StyleRuleSource` for this rule id, resolved by the CLIENT at load time —
+ * a CSS rule's write target is a FILE + SELECTOR, not a `line:col`, so it
+ * cannot be encoded in `nodeId` the way every other edit kind's target is.
+ * `nodeId` is carried anyway (synthesized, never decodes to a location) only
+ * so this kind satisfies the shared `{ nodeId: string }` constraint every
+ * ordering/dedup helper below uses — `applyStudioEdit` special-cases
+ * `kind === 'css'` before ever calling `studioEditLocation` on it, and the
+ * synthesized id never collides with a real `rel:line:col` (see
+ * `NODE_LOC_ID`).
+ */
+const CssEditSchema = Type.Object({
+  kind: Type.Literal('css'),
+  nodeId: Type.String(),
+  file: Type.String(),
+  selector: Type.String(),
+  property: Type.String(),
+  value: Type.String(),
+})
+
 /** Discriminated union of every studio edit kind — `kind` is the discriminator. */
 export const StudioEditSchema = Type.Union([
   PropEditSchema,
@@ -121,8 +187,29 @@ export const StudioEditSchema = Type.Union([
   LiteralEditSchema,
   TagEditSchema,
   AssetEditSchema,
+  DetachEditSchema,
+  SwapEditSchema,
+  CssEditSchema,
 ])
 export type StudioEdit = Static<typeof StudioEditSchema>
+
+/**
+ * Thrown by `applyStudioEdit` when a `detach`/`swap` codemod REFUSES rather
+ * than failing unexpectedly — a typed, first-class outcome (reason +
+ * message) distinct from an ordinary codemod exception. `applyStudioEditBatch`
+ * catches this specially and records it in `StudioEditBatchResult.refusals`
+ * so the client can show the SPECIFIC reason (a toast with an offer, per
+ * WS-4.4's plan), not just a generic "skipped" count — every other codemod's
+ * thrown error stays in the existing skip-and-log path unchanged.
+ */
+export class StudioEditRefusalError extends Error {
+  readonly reason: string
+  constructor(reason: string, message: string) {
+    super(message)
+    this.name = 'StudioEditRefusalError'
+    this.reason = reason
+  }
+}
 
 /** A decoded writeback target: workspace-relative file plus 1-based line/column. */
 export interface StudioEditLocation {
@@ -224,9 +311,15 @@ const ROUTE_CHROME_FILE = /^(layout|template)\.(tsx|ts|jsx|js)$/i
  * route chrome below — the cost of a false positive is one redundant reload,
  * the cost of a false negative is a board showing an image that no longer
  * matches source.
+ *
+ * WS-4.4/4.5 — `detach`/`swap` are ALSO treated as shared unconditionally:
+ * both always rewrite JSX structure (adding/removing imports, replacing an
+ * element) and therefore always shift line numbers, invalidating every OTHER
+ * node id below them in the same file whether or not this particular node
+ * happened to be an inlined/shared one.
  */
 export function isSharedSourceNodeId(nodeId: string, kind?: StudioEdit['kind']): boolean {
-  if (kind === 'asset') return true
+  if (kind === 'asset' || kind === 'detach' || kind === 'swap') return true
   return isInlinedNodeId(nodeId) || isRouteChromeNodeId(nodeId)
 }
 
@@ -367,6 +460,79 @@ function relativeImportSpecifier(fromFileRel: string, toFileRel: string): string
 }
 
 /**
+ * Validates that `fileRel` — the project-relative `.css` path
+ * `studioCss.ts`'s `StyleRuleSource` mapped a `StyleRule.id` to at load time
+ * — is safe to write, and resolves it to an absolute path. Same adversarial
+ * posture as `resolveContainedAssetPath` above: reject absolute/UNC/drive-
+ * letter forms, `..`/empty segments on either separator, and any
+ * `EXCLUDED_WORKSPACE_DIR_NAMES` segment; require a literal `.css` extension
+ * (the codemod parses real CSS syntax, and `studioCss.ts` never maps a
+ * `.scss`/`.sass`/`.less` file for exactly this reason — see its doc); then
+ * require CONTAINMENT ON THE REAL PATH after resolving symlinks. `null` on
+ * any violation, or when the file doesn't exist — a stylesheet pointing
+ * nowhere is worse than refusing the edit.
+ */
+function resolveContainedCssPath(dir: string, fileRel: string): string | null {
+  if (fileRel.length === 0) return null
+  if (isAbsolute(fileRel)) return null
+  if (/^[a-zA-Z]:/.test(fileRel)) return null // Windows drive path
+  if (fileRel.startsWith('\\\\') || fileRel.startsWith('//')) return null // UNC path
+  if (!/\.css$/i.test(fileRel)) return null
+
+  const segments = fileRel.split(/[\\/]+/).filter((segment) => segment.length > 0)
+  if (segments.length === 0) return null
+  if (segments.some((segment) => segment === '..' || segment === '.')) return null
+  if (segments.some((segment) => EXCLUDED_WORKSPACE_DIR_NAMES.has(segment))) return null
+
+  const root = resolve(dir)
+  const resolved = resolve(join(dir, ...segments))
+  if (resolved !== root && !resolved.startsWith(root + sep)) return null
+
+  let real: string
+  try {
+    real = realpathSync(resolved)
+  } catch {
+    return null // missing file — nowhere honest to write a declaration
+  }
+  let realRoot: string
+  try {
+    realRoot = realpathSync(root)
+  } catch {
+    return null
+  }
+  if (real !== realRoot && !real.startsWith(realRoot + sep)) return null
+
+  return resolved
+}
+
+/**
+ * WS-6.3 — dispatches a `kind: 'css'` edit to `setDeclaration`
+ * (`@core/css-codemods`, a postcss CST round-trip that preserves everything
+ * it didn't touch). `classifyStylesheetEditability` runs FIRST: a `.min.css`
+ * or a build-output path (`dist/`, `.next/`, …) has no honest hand-editable
+ * source at this layer, and REFUSES with the classifier's own specific
+ * reason via `StudioEditRefusalError` — a real, informative outcome per
+ * `meta-03` decision 3, not a silent skip. A path that fails the
+ * containment/extension/existence guard (`resolveContainedCssPath`) returns
+ * `{ applied: false }` instead — the same "refuse, never guess" posture
+ * `resolveContainedAssetPath`'s own unsafe-target case takes above; nothing
+ * legitimate produces one; a client only ever sends a `file` this exact
+ * project's own load response mapped for this rule id.
+ */
+function applyCssEdit(dir: string, edit: Extract<StudioEdit, { kind: 'css' }>): StudioEditApplyOutcome {
+  const editability = classifyStylesheetEditability(edit.file)
+  if (editability.kind === 'compiled') {
+    throw new StudioEditRefusalError('compiled-stylesheet', editability.reason)
+  }
+  const filePath = resolveContainedCssPath(dir, edit.file)
+  if (filePath === null) return { applied: false }
+  const cssText = readFileSync(filePath, 'utf8')
+  const result = setDeclaration(cssText, edit.selector, edit.property, edit.value)
+  if (result.changed) writeFileSync(filePath, result.css, 'utf8')
+  return { applied: true }
+}
+
+/**
  * Applies one typed studio edit to the .tsx source under `dir`, dispatching
  * on `edit.kind` to the matching `ast-codemods` writer. Extracted as a pure
  * helper (dir + edit in, codemod side effect out) so it's unit-testable
@@ -385,39 +551,188 @@ function relativeImportSpecifier(fromFileRel: string, toFileRel: string): string
  * the matching codemod has written the file. Propagates whatever the underlying
  * codemod throws (e.g. `JsxTextTargetError`, `JsxStyleTargetError`) for a real
  * source location it refuses to touch — callers decide whether to
- * skip-and-log or let it bubble.
+ * skip-and-log or let it bubble. A `detach`/`swap` REFUSAL (a typed, expected
+ * outcome — see `detachComponentInstance`/`swapComponentInstance`) throws
+ * `StudioEditRefusalError` specifically, so `applyStudioEditBatch` can surface
+ * the reason instead of folding it into the generic skip-and-log path.
  */
-export function applyStudioEdit(dir: string, edit: StudioEdit): boolean {
+/**
+ * WS-4.5 — what changed on the call site's props when a `swap` edit
+ * succeeds: attributes the new component doesn't accept (dropped) and
+ * required props it needs that the call site didn't already supply (left
+ * for the user to fill in — never synthesized). Surfaced all the way to the
+ * client (`StudioEditBatchResult.swapDetails` → `/save`'s response →
+ * `swapComponentInstance` in `fsCodemodAdapter.ts`) so the Properties panel
+ * can report it instead of a bare "swapped" toast.
+ */
+export interface StudioEditSwapDetail {
+  removedProps: string[]
+  unfilledRequiredProps: string[]
+}
+
+/**
+ * `applyStudioEdit`'s result. `applied: false` means "no writable source
+ * location, nothing to do" (a synthetic node, an unresolvable asset target)
+ * — not an error, the existing `skipped` counter's meaning. `swapDetail` is
+ * populated only for a successful `swap` edit — see `StudioEditSwapDetail`.
+ */
+export interface StudioEditApplyOutcome {
+  applied: boolean
+  swapDetail?: StudioEditSwapDetail
+}
+
+export function applyStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyOutcome {
+  // WS-6.3 — a CSS edit's target is a FILE + SELECTOR (`edit.file`/
+  // `edit.selector`), never the nodeId-encoded `rel:line:col` every other
+  // kind decodes below; `edit.nodeId` here is a synthesized, non-decodable
+  // string (see `CssEditSchema`'s doc), so it must branch off before
+  // `studioEditLocation` ever sees it.
+  if (edit.kind === 'css') return applyCssEdit(dir, edit)
+
   const target = studioEditLocation(edit.nodeId)
-  if (!target) return false // synthetic node (e.g. body) — no source location
+  if (!target) return { applied: false } // synthetic node (e.g. body) — no source location
   const loc = { file: join(dir, target.rel), line: target.line, col: target.col }
 
   switch (edit.kind) {
-    case 'prop':
-      setJsxProp({ ...loc, prop: edit.prop, value: edit.value })
-      return true
+    case 'prop': {
+      // WS-4.2/4.3 — a `studio.instance`'s call-site prop arrives as
+      // `callSiteProps:<name>` (see `PropEditSchema`'s doc comment); the
+      // actual JSX attribute is `<name>` at this SAME location (the instance
+      // node's own id is the call site's own plain location).
+      const prop = edit.prop.startsWith('callSiteProps:') ? edit.prop.slice('callSiteProps:'.length) : edit.prop
+      setJsxProp({ ...loc, prop, value: edit.value })
+      return { applied: true }
+    }
     case 'text':
       setJsxText({ ...loc, text: edit.text })
-      return true
+      return { applied: true }
     case 'style':
       setJsxStyle({ ...loc, style: edit.style })
-      return true
+      return { applied: true }
     case 'literal':
       setStringLiteral({ ...loc, value: edit.text })
-      return true
+      return { applied: true }
     case 'asset': {
       // `target` here is the IMPORT's own location (assetOrigin), decoded by
       // the same `studioEditLocation` every other kind shares — `target.rel`
       // is therefore the file HOLDING the import, which is exactly what
       // `relativeImportSpecifier` needs as its "from" side.
       const assetPath = resolveContainedAssetPath(dir, edit.assetPath)
-      if (assetPath === null) return false // unsafe or missing target — refuse, never guess
+      if (assetPath === null) return { applied: false } // unsafe or missing target — refuse, never guess
       const specifier = relativeImportSpecifier(target.rel, assetPath)
       setImportSpecifier({ ...loc, specifier })
-      return true
+      return { applied: true }
     }
     case 'tag':
       setJsxTagName({ ...loc, tag: edit.tag })
-      return true
+      return { applied: true }
+    case 'detach': {
+      const result = detachComponentInstance({ ...loc, workspaceRoot: dir })
+      if (!result.ok) throw new StudioEditRefusalError(result.refusal.reason, result.refusal.message)
+      return { applied: true }
+    }
+    case 'swap': {
+      const result = swapComponentInstance({
+        ...loc,
+        workspaceRoot: dir,
+        newComponentName: edit.newComponentName,
+        newComponentSource: edit.newComponentSource,
+        newComponentFile: edit.newComponentFile,
+      })
+      if (!result.ok) throw new StudioEditRefusalError(result.refusal.reason, result.refusal.message)
+      return {
+        applied: true,
+        swapDetail: { removedProps: result.removedProps, unfilledRequiredProps: result.unfilledRequiredProps },
+      }
+    }
   }
+}
+
+/**
+ * One `detach`/`swap`/`css` edit that refused rather than writing — surfaced
+ * to the client so it can show the SPECIFIC reason (a toast with an offer,
+ * per WS-4.4's plan; `StyleTargetChip`'s per-tier message for `css`) instead
+ * of a generic "skipped" count.
+ */
+export interface StudioEditRefusal {
+  nodeId: string
+  kind: 'detach' | 'swap' | 'css'
+  reason: string
+  message: string
+}
+
+/** The result of applying a batch of studio edits — `POST /admin/api/studio/save`'s own response shape. */
+export interface StudioEditBatchResult {
+  written: number
+  skipped: number
+  /** True when any write shifted a touched file's line count — stale `line:col` node ids downstream must re-parse. */
+  shifted: boolean
+  /** True when any edit targets an inlined/shared source location — every OTHER frame reading the same file is now stale too. */
+  sharedComponents: boolean
+  /** WS-4.4/4.5 — every `detach`/`swap` edit that refused, with why. Empty array when none did (always present, never omitted, so a client doesn't need an `?.length` guard). */
+  refusals: StudioEditRefusal[]
+  /** WS-4.5 — every `swap` edit that SUCCEEDED, with what changed on the call site. Empty array when none did. */
+  swapDetails: (StudioEditSwapDetail & { nodeId: string })[]
+}
+
+/**
+ * Apply a batch of typed studio edits to `dir`, exactly the way `POST
+ * /admin/api/studio/save` does — ordering (bottom-to-top, so a line-count-
+ * changing codemod can't invalidate another pending edit's location),
+ * dedup (several board nodes can share one writeback target when they are
+ * instances of the same inlined component), per-edit try/catch (one
+ * codemod's refusal must not abort the rest of the batch), and line-count-
+ * shift / shared-component detection.
+ *
+ * Single source of truth for "apply a batch of edits" — both the HTTP save
+ * route and `studio_apply_edits` (MCP) call this, so there is exactly one
+ * place that knows the ordering/dedup/shift rules.
+ */
+export function applyStudioEditBatch(dir: string, edits: readonly StudioEdit[]): StudioEditBatchResult {
+  const ordered = orderStudioEditsForApply(dedupeStudioEdits(edits))
+  const sharedComponents = edits.some((edit) => isSharedSourceNodeId(edit.nodeId, edit.kind))
+
+  const touchedFiles = new Set<string>()
+  for (const edit of ordered) {
+    const file = studioEditFile(dir, edit.nodeId)
+    if (file) touchedFiles.add(file)
+  }
+  const lineCountBefore = new Map<string, number>()
+  for (const file of touchedFiles) {
+    lineCountBefore.set(file, existsSync(file) ? readFileSync(file, 'utf8').split('\n').length : 0)
+  }
+
+  let written = 0
+  let skipped = 0
+  const refusals: StudioEditRefusal[] = []
+  const swapDetails: (StudioEditSwapDetail & { nodeId: string })[] = []
+  for (const edit of ordered) {
+    try {
+      const outcome = applyStudioEdit(dir, edit)
+      if (outcome.applied) {
+        written += 1
+        if (outcome.swapDetail) swapDetails.push({ nodeId: edit.nodeId, ...outcome.swapDetail })
+      } else {
+        skipped += 1
+      }
+    } catch (err) {
+      if (err instanceof StudioEditRefusalError && (edit.kind === 'detach' || edit.kind === 'swap' || edit.kind === 'css')) {
+        refusals.push({ nodeId: edit.nodeId, kind: edit.kind, reason: err.reason, message: err.message })
+      } else {
+        console.error('[studio]', err)
+      }
+      skipped += 1
+    }
+  }
+
+  let shifted = false
+  for (const file of touchedFiles) {
+    const after = existsSync(file) ? readFileSync(file, 'utf8').split('\n').length : 0
+    if (after !== lineCountBefore.get(file)) {
+      shifted = true
+      break
+    }
+  }
+
+  return { written, skipped, shifted, sharedComponents, refusals, swapDetails }
 }

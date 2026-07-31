@@ -52,7 +52,8 @@ import { CanvasRenameDialog } from './CanvasRenameDialog'
 import { useCanvasRenameDialog } from './useCanvasRenameDialog'
 import { CanvasLayerContextMenu } from './CanvasLayerContextMenu'
 import { useCanvasLayerContextMenu } from './useCanvasLayerContextMenu'
-import { useCanvasKeyboardShortcuts } from './useCanvasKeyboardShortcuts'
+import { useCanvasKeyboardShortcuts, isTextInputTarget } from './useCanvasKeyboardShortcuts'
+import { useInstanceEntryKeyboard } from './useInstanceEntryKeyboard'
 import { clientPointToEditorDoc } from './canvasDomGeometry'
 import { useConfirmDelete } from '@admin/shared/dialogs/ConfirmDeleteDialog'
 import { useEditorPreference, readEditorSelectPreference } from '@site/preferences/editorPreferences'
@@ -410,9 +411,65 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
     return () => document.removeEventListener('keydown', onKeyDown)
   }, [editable, isLive])
 
-  // ─── Canvas background click → deselect ───────────────────────────────────
+  // ─── ⌘/Ctrl+A — select every frame on the active studio board ─────────────
+  //
+  // `board-02`: this was previously handled inside `useCanvasKeyboardShortcuts`,
+  // a React `onKeyDown` on the canvas div — which only fires while a
+  // descendant of the canvas holds DOM focus. The moment the user touches any
+  // panel, focus moves there and this handler never sees the key, so the
+  // browser's native select-all ran instead (the reported bug: "ctrl A
+  // selects text in the canvas panels not in the canvas itself"). Fixed by
+  // scoping on INTENT instead of focus, mirroring the `layers.delete`
+  // document-level listener above: a document-level listener that fires
+  // regardless of which panel currently holds focus, and only stands down
+  // for an editable field (`isTextInputTarget` — input/textarea/
+  // contenteditable, which covers a panel text field, the DOM tree's rename
+  // input, and a code editor's contenteditable surface alike) or while a
+  // node is already selected (node selection has no "select all" of its own,
+  // WS-7.1 — this only ever competes with the browser's native select-all).
+  useEffect(() => {
+    if (isLive || !editable) return
+    const selectAllBinding = getKeybindingForCommand('board.selectAllFrames')
+    if (!selectAllBinding) return
 
-  const handleCanvasClick = () => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return
+      if (useEditorStore.getState().activeInlineEdit) return
+      if (!selectAllBinding.match(event)) return
+      if (isTextInputTarget(event.target)) return
+      if (useEditorStore.getState().selectedNodeId) return
+
+      event.preventDefault()
+      useEditorStore.getState().selectAllFrames()
+    }
+
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [editable, isLive])
+
+  // ─── instance-ui-01 — Enter enters / Esc exits a `studio.instance` ─────────
+  // Extracted to useInstanceEntryKeyboard.ts (module-size-budgets) — see that
+  // file for why this is a document-level listener, not React `onKeyDown`.
+  useInstanceEntryKeyboard(editable, isLive)
+
+  // ─── Canvas background click → deselect ───────────────────────────────────
+  //
+  // `board-02`: this handler sits on the OUTERMOST canvas div, so a click
+  // anywhere inside it — including one that started on a frame header, a
+  // node, a sticky note — still bubbles here as a native 'click' event
+  // (nothing downstream stops it). Only a click that lands on genuine empty
+  // background is a "deselect" gesture: either directly on this outer div
+  // (studio board mode — `.transformLayer` has no intrinsic size there, see
+  // `BoardFramesLayer`'s module doc, so board background clicks always
+  // target this div) or directly on the transform layer itself (CMS mode —
+  // the gap/padding around `BreakpointFrame`s inside the flex-laid-out
+  // transform layer, which DOES have real size there). Anything deeper
+  // (a frame header, a node, a sticky note) is excluded — without this,
+  // EVERY frame-header click's own trailing 'click' event reached here a
+  // tick after `BoardFrameView`'s pointerdown handler selected it,
+  // immediately clearing the selection it had just made.
+  const handleCanvasClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.target !== e.currentTarget && e.target !== transformLayerRef.current) return
     contextMenu.close()
     clearSelection()
     // WS-7.1 — a background click also deselects any board-frame
@@ -457,13 +514,23 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
           data-canvas-state={canvasPage ? 'canvas-ready' : 'canvas-empty'}
           data-canvas-view={canvasView}
           data-vc-mode={activeDocument?.kind === 'visualComponent' ? 'true' : undefined}
+          className={styles.canvas}
+          // Spread gesture handlers from useGesture (wheel, drag, pinch)
+          // FIRST, before the explicit handlers below — @use-gesture's own
+          // `drag` action binds its OWN `onKeyDown`/`onKeyUp` (arrow-key
+          // accessible dragging; see `keyDown`/`keyUp` in
+          // `@use-gesture/core`'s pointer action). JSX prop spreading is
+          // last-one-wins, so spreading this AFTER `onKeyDown` (as it used
+          // to be) silently discarded EVERY canvas keyboard shortcut —
+          // Escape, +/-, Ctrl+C/X/V/D — to that library-internal handler.
+          // `board-02` found this while diagnosing why Escape didn't clear
+          // a frame selection; it explains the same for every OTHER
+          // shortcut `useCanvasKeyboardShortcuts` owns, not just the frame
+          // ones. Empty in preview mode — see gestureBindings above.
+          {...gestureBindings}
           onKeyDown={onCanvasKeyDown}
           onClick={onCanvasClick}
           onFocus={() => setFocusedPanel('canvas')}
-          className={styles.canvas}
-          // Spread gesture handlers from useGesture (wheel, drag, pinch).
-          // Empty in preview mode — see gestureBindings above.
-          {...gestureBindings}
         >
           {/* CSS for prefers-reduced-motion — no transitions for accessibility */}
           <style>{`

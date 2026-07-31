@@ -43,10 +43,12 @@ export interface ComponentBundleWorkerResult {
 /**
  * Runs `Bun.build` against `task.entryAbsPath` and writes the result to
  * `task.outputAbsPath`. `Bun.build` resolves `node_modules` imports by
- * walking up from the entry file's own location — since the parent always
- * writes the barrel entry inside `<dir>/.studio/cache/`, that walk lands on
- * `<dir>/node_modules` exactly like running `bun build` from the workspace
- * itself would, with no explicit `cwd` option needed. Exported directly (not
+ * walking up from the entry file's own location — `approot-01`: since the
+ * parent always writes the barrel entry directly at the project's resolved
+ * APP ROOT (not necessarily the project directory — see `componentBundle.ts`'s
+ * `entryAbsPath` construction), that walk lands on `<appRoot>/node_modules`
+ * exactly like running `bun build` from the app's own directory would, with
+ * no explicit `cwd` option needed. Exported directly (not
  * only reachable via the `import.meta.main` subprocess block below) so tests
  * can call it against a real fixture `node_modules/` without spawning a real
  * subprocess — same seam `styleCompileWorker.ts`'s `runWorkerTask` uses.

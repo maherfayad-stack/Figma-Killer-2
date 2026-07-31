@@ -89,6 +89,33 @@ export function measureCanvasElementRect(
   return createCanvasOverlayMeasureSession(iframe, canvasRoot).measure(target)
 }
 
+/**
+ * Measure `target` directly in its OWN document's coordinate space — no zoom
+ * recovery, no iframe-offset addition, no canvas-root origin subtraction.
+ * Valid ONLY when the caller (an overlay element) lives in the SAME document
+ * as `target` — e.g. the in-iframe selection overlay (WS-5.1), which portals
+ * rings/badge into an overlay root appended to the iframe's own `<body>`
+ * instead of the parent canvas root. Panning/zooming the canvas moves the
+ * iframe element — and everything painted inside it, including this overlay
+ * — as one composited CSS transform, so an overlay measured in this space
+ * tracks the element with zero per-frame conversion and zero drift. This is
+ * the fix for "the ring lands away from the element" (`STATE.md`
+ * `standing-03`); `createCanvasOverlayMeasureSession` above is still what
+ * PARENT-document chrome (the toolbar, `InPlaceInspector`) needs, since that
+ * chrome genuinely lives in a different coordinate space.
+ */
+export function measureIframeLocalRect(target: HTMLElement | null): CanvasOverlayRect | null {
+  if (
+    !target ||
+    typeof (target as { getBoundingClientRect?: unknown }).getBoundingClientRect !== 'function'
+  ) {
+    return null
+  }
+  const rect = nodeVisualRect(target)
+  if (!rect) return null
+  return { x: rect.left, y: rect.top, width: rect.width, height: rect.height }
+}
+
 /** Smallest rect containing both `a` (may be null) and `b`. */
 export function unionCanvasOverlayRects(
   a: CanvasOverlayRect | null,

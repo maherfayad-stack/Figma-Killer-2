@@ -60,7 +60,16 @@ function loadNodes(pageRel: string, opts: StaticEvalOptions | undefined): Parsed
   return Object.values(expanded.nodes)
 }
 
-const svgNodes = (nodes: ParsedNode[]): ParsedNode[] => nodes.filter((n) => typeof n.props.svg === 'string')
+// WS-4.2 — a component call site's own `props` (kept, not deleted, on the
+// "instance" node — see `inlineLocalComponents.ts`'s module header) can ALSO
+// carry a resolved `svg` value when the call site forwards it as a prop
+// (`<Icon svg={checkSvg}/>`): that's `instanceOf.callSiteProps.svg`
+// downstream, not a rendered element. Only an ELEMENT actually renders raw
+// SVG markup (`base.svg`'s contract), so exclude instance (`kind:'component'`)
+// nodes here — same distinction `resolveModuleId` makes when mapping a node
+// to a moduleId.
+const svgNodes = (nodes: ParsedNode[]): ParsedNode[] =>
+  nodes.filter((n) => n.kind === 'element' && typeof n.props.svg === 'string')
 
 describe('?raw SVG imports', () => {
   it('resolves a ?raw import used directly in dangerouslySetInnerHTML', () => {

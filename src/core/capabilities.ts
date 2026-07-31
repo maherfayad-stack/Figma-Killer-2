@@ -72,6 +72,13 @@ export const CORE_CAPABILITIES = [
   'ai.tools.write',
   'ai.providers.manage',
   'ai.audit.read',
+  // Studio MCP tool family (WS-9) — separate from `site.*` because a Studio
+  // project is a filesystem workspace, not a DB-backed site document.
+  // `studio.write` gates install/save/frame/codemod mutations; `studio.run.project`
+  // gates Tier 2 (executing the OPEN PROJECT's own code — dev server + Playwright)
+  // and is never granted by default.
+  'studio.write',
+  'studio.run.project',
 ] as const
 
 export type CoreCapability = typeof CORE_CAPABILITIES[number]

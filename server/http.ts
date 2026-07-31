@@ -27,6 +27,35 @@ export function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
   return res
 }
 
+/**
+ * Newline-delimited JSON response: one `JSON.stringify`-ed line per item of
+ * `lines`, streamed as each one is produced rather than buffered into a
+ * single string first. Pairs with `@core/http`'s `ndjsonRequest` on the
+ * client (WS-5.5's studio page-load stream — see `studioPageLoad.ts`).
+ *
+ * `lines` is an async iterable so a caller doing real work between items
+ * (or wanting the event loop to actually flush a chunk before producing the
+ * next one — `for await` yields control between iterations) gets that for
+ * free; a plain array works too, `for await` accepts both.
+ */
+export function ndjsonResponse(lines: AsyncIterable<unknown> | Iterable<unknown>): Response {
+  const encoder = new TextEncoder()
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      try {
+        for await (const line of lines) {
+          controller.enqueue(encoder.encode(`${JSON.stringify(line)}\n`))
+        }
+      } catch (err) {
+        controller.error(err)
+        return
+      }
+      controller.close()
+    },
+  })
+  return new Response(stream, { headers: { 'content-type': 'application/x-ndjson' } })
+}
+
 export function methodNotAllowed(): Response {
   return jsonResponse({ error: 'Method not allowed' }, { status: 405 })
 }

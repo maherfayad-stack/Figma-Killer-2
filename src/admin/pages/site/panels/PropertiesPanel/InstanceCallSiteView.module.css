@@ -1,0 +1,136 @@
+/**
+ * InstanceCallSiteView — styles for the `studio.instance` Properties panel
+ * surface. Achromatic palette (color as identity/state/canvas affordance
+ * only). CSS Modules only. Token-only colors — no hardcoded hex/rgb/hsl.
+ */
+
+/* ── Header strip — mirrors ComponentRefView's header ────────────────────── */
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-s) var(--space-l);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-surface-3);
+}
+
+.headerIcon {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.headerName {
+  flex: 1;
+  font-size: var(--text-s);
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sourceBadge {
+  flex-shrink: 0;
+  padding: 2px var(--space-2xs);
+  border-radius: var(--radius);
+  background: var(--bg-surface-2);
+  color: var(--text-disabled);
+  font-size: var(--text-2xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* ── Detach / Swap actions ────────────────────────────────────────────────── */
+
+.actionsRow {
+  display: flex;
+  gap: var(--space-2xs);
+  padding: var(--space-s) var(--space-l);
+  border-bottom: 1px solid var(--border);
+}
+
+/* ── Detach refusal notice — same shape as SharedComponentNotice, danger tone ── */
+
+.refusalNotice {
+  display: flex;
+  gap: var(--space-2xs);
+  align-items: flex-start;
+  margin: var(--space-s) var(--space-l);
+  padding: var(--space-xs) var(--space-s);
+  border-radius: var(--radius);
+  background: var(--danger-10);
+}
+
+.refusalIcon {
+  flex-shrink: 0;
+  color: var(--danger-light);
+  align-self: baseline;
+}
+
+.refusalBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+  min-width: 0;
+}
+
+.refusalText {
+  margin: 0;
+  font-size: var(--text-2xs);
+  line-height: 1.4;
+  color: var(--danger-text);
+}
+
+/* ── Swap picker ──────────────────────────────────────────────────────────── */
+
+.swapPicker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+  padding: var(--space-s) var(--space-l);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-surface-2);
+}
+
+.swapEmpty {
+  margin: var(--space-2xs) 0 0;
+  padding: var(--space-m);
+  font-size: var(--text-2xs);
+  color: var(--text-disabled);
+  text-align: center;
+  line-height: 1.5;
+}
+
+.swapList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: var(--space-2xs) 0 0;
+  padding: 0;
+  list-style: none;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.swapCandidate {
+  width: 100%;
+  justify-content: flex-start;
+}
+
+/* ── No call-site props placeholder ──────────────────────────────────────── */
+
+.noParams {
+  padding: var(--space-4xl) var(--space-l);
+  font-size: var(--text-xs);
+  color: var(--text-disabled);
+  text-align: center;
+  line-height: 1.6;
+}
+
+/* ── Props list ───────────────────────────────────────────────────────────── */
+
+.propsList {
+  overflow-y: auto;
+  flex: 1;
+}

@@ -6,6 +6,7 @@ import {
   ApiError,
   assertOk,
   isAbortError,
+  ndjsonRequest,
   readEnvelope,
   responseErrorMessage,
 } from '@core/http'
@@ -162,6 +163,80 @@ describe('responseErrorMessage', () => {
   it('falls back to raw text, then to the fallback', async () => {
     expect(await responseErrorMessage(new Response('plain text', { status: 500 }), 'fb')).toBe('plain text')
     expect(await responseErrorMessage(new Response('', { status: 500 }), 'fb')).toBe('fb')
+  })
+})
+
+/** A `Response` whose body streams the given raw chunks, one `enqueue` per array entry — for testing that `ndjsonRequest` correctly handles a line split across chunk boundaries. */
+function streamedResponse(chunks: string[], status = 200): Response {
+  const encoder = new TextEncoder()
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(encoder.encode(chunk))
+      controller.close()
+    },
+  })
+  return new Response(body, { status, headers: { 'content-type': 'application/x-ndjson' } })
+}
+
+describe('ndjsonRequest', () => {
+  it('delivers one validated value per line, in order', async () => {
+    const seen: number[] = []
+    await ndjsonRequest('/x', {
+      lineSchema: BodySchema,
+      fetchImpl: async () => streamedResponse(['{"value":1}\n{"value":2}\n{"value":3}\n']),
+      onLine: (v) => seen.push(v.value),
+    })
+    expect(seen).toEqual([1, 2, 3])
+  })
+
+  it('reassembles a line split across chunk boundaries', async () => {
+    const seen: number[] = []
+    await ndjsonRequest('/x', {
+      lineSchema: BodySchema,
+      // The second line's bytes arrive split across three separate chunks.
+      fetchImpl: async () => streamedResponse(['{"value":1}\n{"val', 'ue":2}', '\n{"value":3}\n']),
+      onLine: (v) => seen.push(v.value),
+    })
+    expect(seen).toEqual([1, 2, 3])
+  })
+
+  it('delivers a final line with no trailing newline', async () => {
+    const seen: number[] = []
+    await ndjsonRequest('/x', {
+      lineSchema: BodySchema,
+      fetchImpl: async () => streamedResponse(['{"value":1}\n{"value":2}']),
+      onLine: (v) => seen.push(v.value),
+    })
+    expect(seen).toEqual([1, 2])
+  })
+
+  it('skips blank lines', async () => {
+    const seen: number[] = []
+    await ndjsonRequest('/x', {
+      lineSchema: BodySchema,
+      fetchImpl: async () => streamedResponse(['{"value":1}\n\n{"value":2}\n']),
+      onLine: (v) => seen.push(v.value),
+    })
+    expect(seen).toEqual([1, 2])
+  })
+
+  it('throws the same ApiError envelope as apiRequest on a non-OK response', async () => {
+    const err = await ndjsonRequest('/x', {
+      lineSchema: BodySchema,
+      fetchImpl: async () => jsonResponse({ error: 'nope' }, 422),
+      onLine: () => {},
+    }).catch((e) => e)
+    expect(err).toBeInstanceOf(ApiError)
+    expect((err as ApiError).status).toBe(422)
+  })
+
+  it('throws when a line fails schema validation', async () => {
+    const err = await ndjsonRequest('/x', {
+      lineSchema: BodySchema,
+      fetchImpl: async () => streamedResponse(['{"value":"not a number"}\n']),
+      onLine: () => {},
+    }).catch((e) => e)
+    expect(err).toBeInstanceOf(Error)
   })
 })
 

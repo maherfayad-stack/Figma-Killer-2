@@ -144,6 +144,20 @@
     color: var(--text-subtle);
 }
 
+/* WS-5.3 frozen poster — a rasterized PNG of the frame's last-settled
+   content, shown instead of `.offscreenPlaceholder` once one has been
+   captured (`useFramePosterCapture.ts`). Same footprint as the live iframe
+   it stands in for, top-aligned since a taller-than-box page was scrolled
+   at capture time and the poster itself doesn't scroll. */
+.offscreenPlaceholderImage {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: top;
+    border-radius: 0 0 var(--radius) var(--radius);
+}
+
 /* Resize handles — active frame only. `.resizeHandles` overlays the whole
    `.frame` box (header + frameBody) without contributing to layout, since
    `.frame` (position: absolute) is already its containing block. Each

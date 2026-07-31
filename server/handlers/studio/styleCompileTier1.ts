@@ -131,14 +131,14 @@ async function runStyleCompileWorker(
 // Sass/Less — Tier 1
 // ---------------------------------------------------------------------------
 
-/** Every non-module `.scss`/`.sass` file, compiled through the workspace's own `sass` package (its real public API — `compileString`), concatenated. `.module.scss` is excluded — see `styleCompile.ts`'s `compileCssModules` doc. Runs in the `styleCompileWorker.ts` subprocess. */
-export async function compileSass(dir: string, warnings: ProbeWarning[], overrides: StyleCompileOverrides): Promise<string> {
+/** Every non-module `.scss`/`.sass` file, compiled through the workspace's own `sass` package (its real public API — `compileString`), concatenated. `.module.scss` is excluded — see `styleCompile.ts`'s `compileCssModules` doc. Runs in the `styleCompileWorker.ts` subprocess. `dir` scopes the FILE scan and the subprocess `cwd` (`files` stays project-relative); `appRootAbs` (`approot-01`) is only where the `sass` package itself resolves from. */
+export async function compileSass(dir: string, appRootAbs: string, warnings: ProbeWarning[], overrides: StyleCompileOverrides): Promise<string> {
   const files = listWorkspaceFiles(dir)
     .filter((f) => /\.(scss|sass)$/i.test(f) && !CSS_MODULE_FILE_RE.test(f))
     .sort()
   if (files.length === 0) return ''
 
-  const sassEntryAbsPath = resolveWorkspacePackageEntry(dir, 'sass')
+  const sassEntryAbsPath = resolveWorkspacePackageEntry(appRootAbs, 'sass')
   if (!sassEntryAbsPath) {
     warnings.push({
       code: 'sass-not-installed',
@@ -186,13 +186,15 @@ function findPostcssEntryStylesheet(dir: string, tailwind: { configPath: string 
  * `postcss.config.*` itself. Named-plugin-map resolution
  * (`{ tailwindcss: {}, autoprefixer: {} }`) can only happen AFTER the config
  * file runs, so that step is deferred to the subprocess — see
- * `styleCompileWorker.ts`'s `resolvePostcssPlugins`.
+ * `styleCompileWorker.ts`'s `resolvePostcssPlugins`, which is told where to
+ * look via `nodeModulesRoot` (`appRootAbs`, below) rather than its own `cwd`
+ * — `approot-01`: a nested app's `node_modules` is not necessarily at `cwd`.
  */
-export async function compilePostcssPipeline(dir: string, profile: ProjectProfile, warnings: ProbeWarning[], overrides: StyleCompileOverrides): Promise<string> {
+export async function compilePostcssPipeline(dir: string, appRootAbs: string, profile: ProjectProfile, warnings: ProbeWarning[], overrides: StyleCompileOverrides): Promise<string> {
   const toolchain = profile.styleToolchain
   if (!toolchain.tailwind && !toolchain.postcssConfigPath) return ''
 
-  const postcssEntryAbsPath = resolveWorkspacePackageEntry(dir, 'postcss')
+  const postcssEntryAbsPath = resolveWorkspacePackageEntry(appRootAbs, 'postcss')
   if (!postcssEntryAbsPath) {
     warnings.push({
       code: 'postcss-not-installed',
@@ -227,7 +229,7 @@ export async function compilePostcssPipeline(dir: string, profile: ProjectProfil
     postcssConfigAbsPath = candidate
   } else if (toolchain.tailwind) {
     // v4, no postcss.config: the official integration is `@tailwindcss/postcss`.
-    const twPostcssEntry = resolveWorkspacePackageEntry(dir, '@tailwindcss/postcss')
+    const twPostcssEntry = resolveWorkspacePackageEntry(appRootAbs, '@tailwindcss/postcss')
     if (twPostcssEntry) pluginEntryAbsPaths = [twPostcssEntry]
   }
 
@@ -242,7 +244,7 @@ export async function compilePostcssPipeline(dir: string, profile: ProjectProfil
 
   const result = await runStyleCompileWorker(
     dir,
-    { kind: 'postcss', postcssEntryAbsPath, entryRelPath, pluginEntryAbsPaths, postcssConfigAbsPath },
+    { kind: 'postcss', postcssEntryAbsPath, entryRelPath, pluginEntryAbsPaths, postcssConfigAbsPath, nodeModulesRoot: appRootAbs },
     warnings,
     'postcss-compile-failed',
     overrides,

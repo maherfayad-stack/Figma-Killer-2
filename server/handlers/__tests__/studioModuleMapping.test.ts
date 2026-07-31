@@ -128,3 +128,95 @@ describe('resolveModuleId — the real host tag survives the module default', ()
     expect(mapping(page)).toEqual(['label:base.container'])
   })
 })
+
+// ---------------------------------------------------------------------------
+// pkg-02 / WS-3.3 — package components get `pkg.<sanitized-package>.<Name>`
+// ---------------------------------------------------------------------------
+
+/** Writes a one-page workspace with arbitrary imports (a real npm package need not be installed — see below). */
+async function loadPageWithImports(imports: string, jsx: string): Promise<Page> {
+  const full = path.join(tmpDir, 'pages', 'Home.jsx')
+  fs.mkdirSync(path.dirname(full), { recursive: true })
+  fs.writeFileSync(
+    full,
+    [imports, 'export default function Home() {', `  return (${jsx})`, '}', ''].join('\n'),
+    'utf8',
+  )
+  const { pages } = await loadStudioPages(tmpDir)
+  return pages[0]!
+}
+
+describe('resolveModuleId — WS-3.3 package components', () => {
+  it('routes a component from a bare-specifier import to pkg.<sanitized>.<Name>', async () => {
+    // No real `node_modules/some-design-system` on disk — ts-morph simply
+    // can't resolve the specifier to a file, which `resolveComponentSources`
+    // already treats as `kind: 'package'` (see `classifyImport`'s
+    // `resolved` branch). Real-corpus behaviour is identical: the workspace
+    // DOES have the package installed, but resolution to a real file still
+    // means "not inside the workspace root", the same classification.
+    const page = await loadPageWithImports(
+      "import { Button } from 'some-design-system'",
+      '<Button label="Save" />',
+    )
+    expect(mapping(page)).toEqual(['pkg.some_design_system.Button'])
+  })
+
+  it('keeps @alm-design/design-system components on alm.<Name> — standing-07', async () => {
+    const page = await loadPageWithImports(
+      "import { Card } from '@alm-design/design-system'",
+      '<Card />',
+    )
+    expect(mapping(page)).toEqual(['alm.Card'])
+  })
+
+  it('keeps an unclassified component (no import, no same-file declaration) on alm.<Name>', async () => {
+    // `Mystery` isn't declared anywhere in this file, so `resolveComponentSources`
+    // can't classify it as local OR package (no import, no same-file
+    // declaration) — it's simply omitted from `componentSources`, which
+    // `resolveModuleId` treats the same as "not a package": alm.<Name>, the
+    // honest "nothing this pipeline can do about it" outcome.
+    const page = await loadPageWithImports('', '<div><Mystery/></div>')
+    expect(mapping(page)).toEqual(['alm.Mystery', 'base.container'])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// pkg-02 / WS-3.4 — a component prop's JSX value materializes as a real slot node
+// ---------------------------------------------------------------------------
+
+describe('captureSlotProps — WS-3.4 slot materialization', () => {
+  it('captures a JSX-valued component prop as a real child node, referenced by a sentinel', async () => {
+    const page = await loadPageWithImports(
+      "import { Cell, Icon } from 'some-design-system'",
+      '<Cell icon={<Icon name="home" />} />',
+    )
+    const cell = Object.values(page.nodes).find((n) => n.moduleId === 'pkg.some_design_system.Cell')
+    expect(cell).toBeDefined()
+    const iconProp = cell!.props.icon
+    expect(typeof iconProp).toBe('string')
+    expect(iconProp as string).toStartWith('studio-slot:')
+
+    const slotNodeId = (iconProp as string).slice('studio-slot:'.length)
+    const slotNode = page.nodes[slotNodeId]
+    expect(slotNode).toBeDefined()
+    expect(slotNode!.moduleId).toBe('pkg.some_design_system.Icon')
+    expect(slotNode!.props.name).toBe('home')
+    // Structurally locked — it can't be dragged out of the slot — but its
+    // OWN props stay ordinary/editable (not in codeProps).
+    expect(slotNode!.locked).toBe(true)
+    expect(slotNode!.codeProps ?? []).not.toContain('name')
+    // Not a normal DOM child of Cell — only reachable via the sentinel.
+    expect(cell!.children).not.toContain(slotNodeId)
+  })
+
+  it('captures more than one slot prop on the same component', async () => {
+    const page = await loadPageWithImports(
+      "import { Cell, Icon, Badge } from 'some-design-system'",
+      '<Cell icon={<Icon name="home" />} trailing={<Badge label="new" />} />',
+    )
+    const cell = Object.values(page.nodes).find((n) => n.moduleId === 'pkg.some_design_system.Cell')!
+    expect(typeof cell.props.icon).toBe('string')
+    expect(typeof cell.props.trailing).toBe('string')
+    expect(cell.props.icon).not.toBe(cell.props.trailing)
+  })
+})

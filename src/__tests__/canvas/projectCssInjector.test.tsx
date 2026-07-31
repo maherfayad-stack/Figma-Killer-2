@@ -29,10 +29,16 @@ function stubLoad(vendorCss: string): void {
     if (path === '/admin/api/studio/framework') {
       return new Response(JSON.stringify({ framework: null }), { status: 200 })
     }
-    return new Response(JSON.stringify({
-      dir: '/tmp/studio-test', projectName: 'studio-test', pages: [], componentSources: {},
-      styleRules: {}, conditions: [], vendorCss,
-    }), { status: 200 })
+    // `fsCodemodAdapter.loadSite` reads `/admin/api/studio/load?stream=1` as
+    // NDJSON (WS-5.5) — a single `kind: 'meta'` line here since this suite's
+    // fixture never has any pages.
+    const metaLine = JSON.stringify({
+      kind: 'meta',
+      dir: '/tmp/studio-test', projectName: 'studio-test', componentSources: {},
+      styleRules: {}, conditions: [], vendorCss, trust: 'static', paletteHiddenModuleIds: [],
+      pageCount: 0,
+    })
+    return new Response(`${metaLine}\n`, { status: 200, headers: { 'content-type': 'application/x-ndjson' } })
   }) as typeof fetch
 }
 

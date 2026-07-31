@@ -46,6 +46,38 @@ export interface NodeLoc {
   col: number
 }
 
+/**
+ * One branch the parser did NOT select, recorded on the node it DID select —
+ * see `ParsedNode.branchAlternatives` and `getReturnedJsxRoots`/
+ * `selectJsxBranch` in `parsePageFile.ts` (parser-06, extended to `&&` by
+ * parser-07).
+ *
+ * Deliberately just a pointer (a label + where it lives), not a materialized
+ * subtree: the alternative was never walked into `ParsedNode`s, so it costs
+ * nothing in node count, never shows up in a fidelity walk of `page.nodes`,
+ * and can't drift from what `nodeIds`-style bookkeeping would need to keep in
+ * sync. A branch picker reads `loc` to point the user at the source, the same
+ * way `textOrigin`/`assetOrigin` point at a literal without the JSX itself
+ * being a node.
+ *
+ * For a multi-return component or a ternary, `loc` is a genuinely different
+ * piece of source the parser never walked. For an unresolvable `&&`
+ * (parser-07) there is no separate "other branch" — only a shown/hidden
+ * toggle on the ONE JSX that exists — so `loc` points at that same JSX,
+ * labelled as the hidden state, rather than at nothing.
+ */
+export interface BranchAlternative {
+  /**
+   * Human label for this branch, derived from its own guard `if` condition
+   * (`"loading"`, `"!items.length"`) or a ternary/`&&`'s condition text —
+   * whatever a person reading the source would call it. Falls back to a
+   * positional name (`"branch 2"`) when no guard expression could be read.
+   */
+  label: string
+  /** Where this branch's own JSX begins. */
+  loc: NodeLoc
+}
+
 export interface ParsedNode {
   /** `${relFilePosix}:${line}:${col}` — deterministic. */
   id: string
@@ -133,14 +165,33 @@ export interface ParsedNode {
    * worth surfacing in the editor (e.g. picking a locale/branch for a
    * dynamically-indexed dictionary — see `staticEval.ts`'s Tier B.4).
    *
-   * A node carrying `resolution` is always `locked` with a
+   * A node carrying `resolution` is USUALLY also `locked`, with a
    * `lockReason: 'value from <source>'` — writing an edited literal back over
    * `{t.homepage.greeting}` would silently destroy the original binding in
    * the user's real source file, so the value is read-only, same principle as
-   * `locked`/`lockReason` above. `textOrigin` below is the one exception, and
-   * it works by writing somewhere else entirely.
+   * `locked`/`lockReason` above. `textOrigin` below is one exception (it
+   * writes somewhere else entirely); `applyAsyncServerComponentFinding`
+   * (`nextAppLayout.ts`) and the multi-return/ternary/`&&` branch CHOICE
+   * below (`branchAlternatives`) are the other two — both attach this same
+   * `{source, note}` shape to explain a STRUCTURAL fact the parser is
+   * certain of, not a value it is protecting from a baked-over write, so
+   * neither locks the node. See each site's own comment for why.
    */
   resolution?: { source: string; note?: string }
+  /**
+   * Present on the node the parser SELECTED when a component had more than
+   * one JSX-bearing `return`, or a JSX child was a ternary/`&&` — see
+   * `getReturnedJsxRoots`/`selectJsxBranch` in `parsePageFile.ts`. Lists the
+   * branch(es) NOT shown, each just a label + source location (see
+   * `BranchAlternative`'s own doc comment for why nothing is materialized).
+   *
+   * Deliberately does NOT lock the node: the parser is certain of the
+   * STRUCTURE here (there really is exactly one element at this line and
+   * column) — it only chose which of several runtime states to show by
+   * default. That is a different fact from a resolved VALUE, which `locked`
+   * exists to protect a writeback target for.
+   */
+  branchAlternatives?: BranchAlternative[]
   /**
    * Where this node's TEXT literally lives, when its text was resolved from an
    * expression and that expression bottomed out in a single string literal
@@ -195,6 +246,39 @@ export interface ParsedNode {
    * INNERMOST component's name — that is the file an edit actually writes to.
    */
   fromComponent?: string
+  /**
+   * WS-4.2 — present on a component CALL SITE that `inlineLocalComponents`
+   * successfully expanded. Turns this node into the "instance" fragment
+   * model: `children` is the inlined subtree's roots (what used to replace
+   * the call site outright — see `inlineLocalComponents`'s module header),
+   * and this field is the provenance + call-site prop surface that makes the
+   * redesign worth doing — call-site props become editable (§4.3), and
+   * detach/swap (§4.4/4.5) have something to act on.
+   *
+   * Absent when a `kind: 'component'` call site was NOT expanded (declined —
+   * cycle, missing declaration, depth/node cap) — that node stays exactly as
+   * `parseJsxTree` produced it, unchanged from pre-WS-4 behaviour, so
+   * `resolveModuleId` can tell the two cases apart and keep the honest
+   * "Unknown module" fallback for a genuinely-declined call site.
+   */
+  instanceOf?: {
+    /** The component's own display name, e.g. `'Card'` — same string `fromComponent` uses for its descendants. */
+    componentName: string
+    /** Only `'local'` is ever produced by this parser today; `'package'` is reserved for a future package-instance unification (see WS-4's doc). */
+    source: 'local' | 'package'
+    /** Workspace-relative POSIX path of the component's OWN declaring file, or `null` when not applicable. */
+    sourceFile: string | null
+    /**
+     * The call site's own literal/resolved prop values — e.g. `<Card
+     * title="Confirm"/>`'s `{ title: "Confirm" }`. Distinct from `props`
+     * (this node's OWN top-level props, which for an instance node are the
+     * four `instanceOf` fields mirrored by `parsedPageToSitePage` — see that
+     * module) so a call-site prop's writability can be asked with the
+     * `callSiteProps:<name>` `codeProps` convention (parallel to
+     * `style:<property>`), without inventing a new predicate.
+     */
+    callSiteProps: Record<string, ParsedPropValue>
+  }
 }
 
 export interface ParsedPage {

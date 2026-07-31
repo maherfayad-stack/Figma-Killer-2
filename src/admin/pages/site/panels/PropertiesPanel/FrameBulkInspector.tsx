@@ -23,7 +23,7 @@
  */
 import { useState } from 'react'
 import { useEditorStore } from '@site/store/store'
-import { selectActiveBoard, type FrameAlignEdge } from '@site/store/slices/boardSlice'
+import { selectActiveBoard } from '@site/store/slices/boardSlice'
 import { getStudioWorkspaceDir } from '@site/studio/studioWorkspaceDir'
 import { DEVICE_PRESETS, findMatchingPreset, type DevicePreset } from '@core/studio-board'
 import { FRAME_WIDTH, FRAME_HEIGHT } from '@site/canvas/BoardFramesLayer/frameGrid'
@@ -32,18 +32,12 @@ import { escapeCssAttributeValue } from '@site/canvas/canvasNodeLookup'
 import { Select } from '@ui/components/Select'
 import { Input } from '@ui/components/Input'
 import { Button } from '@ui/components/Button'
+import { ScrubInput } from '@ui/components/ScrubInput'
+import { MIXED, isMixed, type Mixed } from '@ui/components/MixedValue'
+import { AlignBar } from '@ui/components/AlignBar'
 import { useConfirmDelete } from '@admin/shared/dialogs/ConfirmDeleteDialog'
 import { pushToast } from '@ui/components/Toast'
 import { getErrorMessage } from '@core/utils/errorMessage'
-import { AlignStartHorizontalSolidIcon } from 'pixel-art-icons/icons/align-start-horizontal-solid'
-import { AlignCenterHorizontalSolidIcon } from 'pixel-art-icons/icons/align-center-horizontal-solid'
-import { AlignEndHorizontalSolidIcon } from 'pixel-art-icons/icons/align-end-horizontal-solid'
-import { AlignStartVerticalSolidIcon } from 'pixel-art-icons/icons/align-start-vertical-solid'
-import { AlignCenterVerticalSolidIcon } from 'pixel-art-icons/icons/align-center-vertical-solid'
-import { AlignEndVerticalSolidIcon } from 'pixel-art-icons/icons/align-end-vertical-solid'
-import { AlignHorizontalSpaceBetweenSolidIcon } from 'pixel-art-icons/icons/align-horizontal-space-between-solid'
-import { AlignVerticalSpaceBetweenSolidIcon } from 'pixel-art-icons/icons/align-vertical-space-between-solid'
-import { Grid2x22SolidIcon } from 'pixel-art-icons/icons/grid-2x2-2-solid'
 import { TrashSolidIcon } from 'pixel-art-icons/icons/trash-solid'
 import styles from './FrameBulkInspector.module.css'
 
@@ -190,15 +184,13 @@ export function FrameBulkInspector() {
         <BulkDimensionInput
           label="W"
           ariaLabel="Frame width"
-          value={singleWidth}
-          mixed={mixedWidth}
+          value={mixedWidth ? MIXED : singleWidth}
           onCommit={(next) => setSelectedFramesSize(next, null)}
         />
         <BulkDimensionInput
           label="H"
           ariaLabel="Frame height"
-          value={singleHeight}
-          mixed={mixedHeight}
+          value={mixedHeight ? MIXED : singleHeight}
           onCommit={(next) => setSelectedFramesSize(null, next)}
         />
       </div>
@@ -217,40 +209,13 @@ export function FrameBulkInspector() {
         Fit height to content
       </Button>
 
-      <div className={styles.sectionLabel}>Align</div>
-      <div className={styles.iconRow} role="group" aria-label="Align selected frames">
-        <Button variant="ghost" size="sm" iconOnly disabled={selectedFrameIds.length < 2} onClick={() => alignSelectedFrames('left' satisfies FrameAlignEdge)} aria-label="Align left" tooltip="Align left">
-          <AlignStartHorizontalSolidIcon size={14} aria-hidden="true" />
-        </Button>
-        <Button variant="ghost" size="sm" iconOnly disabled={selectedFrameIds.length < 2} onClick={() => alignSelectedFrames('center' satisfies FrameAlignEdge)} aria-label="Align center" tooltip="Align center">
-          <AlignCenterHorizontalSolidIcon size={14} aria-hidden="true" />
-        </Button>
-        <Button variant="ghost" size="sm" iconOnly disabled={selectedFrameIds.length < 2} onClick={() => alignSelectedFrames('right' satisfies FrameAlignEdge)} aria-label="Align right" tooltip="Align right">
-          <AlignEndHorizontalSolidIcon size={14} aria-hidden="true" />
-        </Button>
-        <Button variant="ghost" size="sm" iconOnly disabled={selectedFrameIds.length < 2} onClick={() => alignSelectedFrames('top' satisfies FrameAlignEdge)} aria-label="Align top" tooltip="Align top">
-          <AlignStartVerticalSolidIcon size={14} aria-hidden="true" />
-        </Button>
-        <Button variant="ghost" size="sm" iconOnly disabled={selectedFrameIds.length < 2} onClick={() => alignSelectedFrames('middle' satisfies FrameAlignEdge)} aria-label="Align middle" tooltip="Align middle">
-          <AlignCenterVerticalSolidIcon size={14} aria-hidden="true" />
-        </Button>
-        <Button variant="ghost" size="sm" iconOnly disabled={selectedFrameIds.length < 2} onClick={() => alignSelectedFrames('bottom' satisfies FrameAlignEdge)} aria-label="Align bottom" tooltip="Align bottom">
-          <AlignEndVerticalSolidIcon size={14} aria-hidden="true" />
-        </Button>
-      </div>
-
-      <div className={styles.sectionLabel}>Distribute</div>
-      <div className={styles.iconRow} role="group" aria-label="Distribute selected frames">
-        <Button variant="ghost" size="sm" iconOnly disabled={selectedFrameIds.length < 3} onClick={() => distributeSelectedFrames('horizontal')} aria-label="Distribute horizontally" tooltip="Distribute horizontally">
-          <AlignHorizontalSpaceBetweenSolidIcon size={14} aria-hidden="true" />
-        </Button>
-        <Button variant="ghost" size="sm" iconOnly disabled={selectedFrameIds.length < 3} onClick={() => distributeSelectedFrames('vertical')} aria-label="Distribute vertically" tooltip="Distribute vertically">
-          <AlignVerticalSpaceBetweenSolidIcon size={14} aria-hidden="true" />
-        </Button>
-        <Button variant="ghost" size="sm" iconOnly onClick={tidySelectedFrames} aria-label="Tidy into a grid" tooltip="Tidy into a grid">
-          <Grid2x22SolidIcon size={14} aria-hidden="true" />
-        </Button>
-      </div>
+      <div className={styles.sectionLabel}>Align &amp; distribute</div>
+      <AlignBar
+        count={selectedFrameIds.length}
+        onAlign={(edge) => alignSelectedFrames(edge)}
+        onDistribute={(axis) => distributeSelectedFrames(axis)}
+        onTidy={tidySelectedFrames}
+      />
 
       <div className={styles.sectionLabel}>Batch rename</div>
       <div className={styles.renameRow}>
@@ -285,48 +250,27 @@ interface BulkDimensionInputProps {
   label: string
   ariaLabel: string
   /** The single shared value as a string, or `''` when `mixed`. */
-  value: string
-  mixed: boolean
+  value: string | Mixed
   onCommit: (next: number) => void
 }
 
-function BulkDimensionInput({ label, ariaLabel, value, mixed, onCommit }: BulkDimensionInputProps) {
-  const [draft, setDraft] = useState(value)
-  const [editing, setEditing] = useState(false)
-
-  const [lastExternal, setLastExternal] = useState(value)
-  if (!editing && value !== lastExternal) {
-    setLastExternal(value)
-    setDraft(value)
-  }
-
+function BulkDimensionInput({ label, ariaLabel, value, onCommit }: BulkDimensionInputProps) {
   const clamp = (n: number) => Math.max(MIN_FRAME_SIZE, Math.round(n))
 
   const commit = (raw: string) => {
     const n = Number.parseFloat(raw)
     if (Number.isFinite(n)) onCommit(clamp(n))
-    setDraft(value)
-    setEditing(false)
   }
 
   return (
-    <Input
-      type="text"
-      inputMode="numeric"
-      prefix={label}
+    <ScrubInput
+      label={label}
       aria-label={ariaLabel}
       fieldSize="sm"
-      value={draft}
-      placeholder={mixed ? 'Mixed' : undefined}
-      onFocus={() => setEditing(true)}
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={(e) => commit(e.target.value)}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') {
-          e.preventDefault()
-          e.currentTarget.blur()
-        }
-      }}
+      value={isMixed(value) ? MIXED : value}
+      onChange={commit}
+      min={MIN_FRAME_SIZE}
+      data-testid={`frame-bulk-${label.toLowerCase()}`}
     />
   )
 }

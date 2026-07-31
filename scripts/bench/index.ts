@@ -38,14 +38,18 @@ import { footprintBench } from './benches/footprint'
 import { healthBench } from './benches/health'
 import { browserBench } from './benches/browser'
 import { snapshotTokensBench } from './benches/snapshot-tokens'
+import { studioBoardBench } from './studioBoard.bench'
 
 const REPO_ROOT = resolve(import.meta.dir, '../..')
 
-// `browser` and `snapshot-tokens` are NOT in the default run. `browser` needs
-// Chromium and optional STUDIO_BENCH_ADMIN_EMAIL / STUDIO_BENCH_ADMIN_PASSWORD
-// credentials for authenticated scenarios; `snapshot-tokens` needs ANTHROPIC_API_KEY
-// + a seeded .tmp/dev.db and makes network calls to count_tokens. Run them
-// explicitly, e.g. `bun run bench --only=snapshot-tokens`.
+// `browser`, `studio-board`, and `snapshot-tokens` are NOT in the default
+// run. `browser` needs Chromium and optional STUDIO_BENCH_ADMIN_EMAIL /
+// STUDIO_BENCH_ADMIN_PASSWORD credentials for authenticated scenarios;
+// `studio-board` (WS-5.6) needs Chromium too, generates its own synthetic
+// project + fresh throwaway DB/owner so it needs no credentials, but adds
+// real seconds (server boot + a 1s scripted pan); `snapshot-tokens` needs
+// ANTHROPIC_API_KEY + a seeded .tmp/dev.db and makes network calls to
+// count_tokens. Run them explicitly, e.g. `bun run bench --only=studio-board`.
 const DEFAULT_BENCHES: readonly BenchModule[] = [
   bundleBench,
   publisherBench,
@@ -61,6 +65,7 @@ const DEFAULT_BENCHES: readonly BenchModule[] = [
 const ALL_BENCHES: readonly BenchModule[] = [
   ...DEFAULT_BENCHES,
   browserBench,
+  studioBoardBench,
   snapshotTokensBench,
 ]
 

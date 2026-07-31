@@ -21,14 +21,23 @@ import {
   Node,
   Project,
   SyntaxKind,
+  type JsxAttribute,
   type JsxElement,
   type JsxSelfClosingElement,
-  type ReturnStatement,
+  type JsxSpreadAttribute,
   type SourceFile,
 } from 'ts-morph'
-import type { FunctionLike, NodeLoc, ParsedNode, ParsedPage } from './types'
+import type { BranchAlternative, FunctionLike, NodeLoc, ParsedNode, ParsedPage, ParsedPropValue } from './types'
 import { createEvalScope, type StaticEvalOptions } from './staticEval'
 import { withResolutionLock } from './resolutionLock'
+import {
+  getReturnedJsxRoots,
+  isLockingExpression,
+  selectJsxBranch,
+  unwrapParens,
+  type ReturnedJsx,
+} from './branchSelection'
+import { studioSlotValue } from '@core/utils/studioSlotSentinel'
 import {
   extractInlineStyles,
   extractProps,
@@ -40,13 +49,21 @@ import {
 import { iterationEvalContext, loopCallbackBody, readStaticLoop } from './staticLoopExpansion'
 import { serializeInlineSvg } from './inlineSvg'
 
+// Re-exported so every existing `from './parsePageFile'` import (`index.ts`,
+// `inlineLocalComponents.ts`, `nextAppLayout.ts`, `componentSubstitution.ts`)
+// keeps working unchanged — the branch-SELECTION decision moved to its own
+// module (`./branchSelection`, parser-06) purely for the module-size budget;
+// this file still owns finding a component's declaration and walking its JSX.
+export { getReturnedJsxRoots }
+export type { ReturnedJsx }
+
 type JsxOpeningLike = JsxElement | JsxSelfClosingElement
 
 const DYNAMIC_LOCK_REASON = 'dynamic — rendered in code'
 const SPREAD_LOCK_REASON = 'spread props'
 const DYNAMIC_SVG_LOCK_REASON = 'SVG built in code'
-/** One of several `return`s in a component — see `getReturnedJsxRoots`. */
-const BRANCH_LOCK_REASON = 'one branch of several — chosen in code'
+/** WS-3.4 — a component prop's JSX value, materialized as a real child node. See `captureSlotProps`. */
+const SLOT_LOCK_REASON = 'slot content — fills a component prop'
 
 /**
  * `project` defaults to a fresh, single-file `Project` (this file only) —
@@ -122,7 +139,41 @@ export function parseJsxTree(
   // One `ctx` across every return, so ids and the eval budget are shared: two
   // returns in one component can never collide (their JSX is at different
   // source locations) and the page-wide step budget stays page-wide.
-  const rootIds = roots.flatMap((root) => collectRootIds(root, ctx))
+  //
+  // Only the CHOSEN return(s) — see `getReturnedJsxRoots` — are walked into
+  // real nodes. A NOT-chosen return contributes nothing to `ctx.nodes`: it is
+  // recorded as a `BranchAlternative` (label + its own location) on whichever
+  // chosen node ends up at the top of the tree, never materialized. That is
+  // the parser-06 policy change — every `return` used to render, stacked and
+  // locked; now exactly one does, unlocked, with the rest addressable but
+  // invisible by default.
+  const chosenRoots = roots.filter((root) => root.chosen)
+  const alternateRoots = roots.filter((root) => !root.chosen)
+
+  const rootIds = chosenRoots.flatMap((root) => collectRootIds(root, ctx))
+
+  if (alternateRoots.length > 0 && rootIds.length > 0) {
+    const alternatives: BranchAlternative[] = alternateRoots.map((root) => {
+      const { line, column } = sourceFile.getLineAndColumnAtPos(root.expr.getStart())
+      return { label: root.label ?? 'other branch', loc: { file: relFile, line, col: column } }
+    })
+    const note = `showing the final return; ${alternatives.length} other branch${
+      alternatives.length === 1 ? '' : 'es'
+    } not shown: ${alternatives.map((a) => a.label).join(', ')}`
+    for (const id of rootIds) {
+      const node = ctx.nodes[id]
+      if (!node) continue
+      ctx.nodes[id] = {
+        ...node,
+        branchAlternatives: alternatives,
+        // Don't clobber a resolution the evaluator already recorded for THIS
+        // node (e.g. its own text/prop resolved) — see `resolution`'s "only
+        // the first" policy in `./types.ts`.
+        ...(node.resolution ? {} : { resolution: { source: relFile, note } }),
+      }
+    }
+  }
+
   return { rootIds, nodes: ctx.nodes }
 }
 
@@ -187,115 +238,34 @@ export function getFunctionLikeNode(decl: Node): FunctionLike | undefined {
   return undefined
 }
 
-/** One `return` in a component's body, and whether it is the only one. */
-export interface ReturnedJsx {
-  expr: Node
-  /**
-   * True when the component has more than one `return` — at runtime exactly one
-   * of them renders, and which one is a branch decision the parser does not make.
-   */
-  conditional: boolean
-}
-
-/**
- * Every JSX-producing `return` in a component's body, in source order.
- *
- * For a concise arrow body (`() => (<div/>)`) that is the body itself. For a
- * block body it is EVERY `return` statement belonging directly to this function
- * — nested function/arrow scopes (event handlers, `.map` callbacks) are not
- * descended into, since their returns belong to a different component.
- *
- * WHY ALL OF THEM, not the outermost one. This used to sort by block depth and
- * take the shallowest, which systematically picked the fallback and dropped the
- * special case: a multi-stage screen collapsed to its last `return`, and
- * `EsimAddonIcon`'s data-usage ring (a whole `<svg>` + label, behind
- * `if (type === 'ring')`) never appeared on any of the four cards that use it.
- *
- * Rendering all of them is the SAME rule this parser already applies one level
- * down, where a ternary or `&&` contributes nodes for both sides: conditional
- * content is shown and locked, never silently chosen between. Choosing WOULD
- * require evaluating the condition, which is the banned tier.
- */
-export function getReturnedJsxRoots(fn: FunctionLike): ReturnedJsx[] {
-  const body = fn.getBody()
-  if (!body) return []
-
-  if (!Node.isBlock(body)) {
-    return [{ expr: unwrapParens(body), conditional: false }]
-  }
-
-  const returns: ReturnStatement[] = []
-  body.forEachDescendant((node, traversal) => {
-    if (Node.isFunctionDeclaration(node) || Node.isFunctionExpression(node) || Node.isArrowFunction(node)) {
-      traversal.skip()
-      return
-    }
-    if (Node.isReturnStatement(node)) returns.push(node)
-  })
-
-  // Only JSX-BEARING returns count towards "more than one". `if (!data) return
-  // null` is the most common early return there is, and it contributes no nodes
-  // — letting it mark the component's real tree conditional would lock an entire
-  // editable screen for a guard clause.
-  const exprs: Node[] = []
-  for (const statement of returns) {
-    const expr = statement.getExpression()
-    if (!expr) continue
-    const unwrapped = unwrapParens(expr)
-    if (containsJsx(unwrapped)) exprs.push(unwrapped)
-  }
-
-  return exprs.map((expr) => ({ expr, conditional: exprs.length > 1 }))
-}
-
-const JSX_ROOT_KINDS: ReadonlySet<SyntaxKind> = new Set([
-  SyntaxKind.JsxElement,
-  SyntaxKind.JsxSelfClosingElement,
-  SyntaxKind.JsxFragment,
-])
-
-/** Whether `node` is JSX or has JSX anywhere inside it (`cond ? <A/> : <B/>`). */
-function containsJsx(node: Node): boolean {
-  if (JSX_ROOT_KINDS.has(node.getKind())) return true
-  return node.getFirstDescendant((d) => JSX_ROOT_KINDS.has(d.getKind())) !== undefined
-}
-
-function unwrapParens(node: Node): Node {
-  let current = node
-  while (Node.isParenthesizedExpression(current)) {
-    current = current.getExpression()
-  }
-  return current
-}
-
 // ---------------------------------------------------------------------------
 // JSX tree walk
+//
+// `ReturnedJsx`/`getReturnedJsxRoots` (which `return` renders) and
+// `selectJsxBranch`/`isLockingExpression` (which side of a ternary/`&&`
+// renders) live in `./branchSelection` — imported above, `getReturnedJsxRoots`
+// re-exported above too. This section owns the actual WALK: turning the
+// chosen JSX into `ParsedNode`s.
 // ---------------------------------------------------------------------------
 
 function collectRootIds(root: ReturnedJsx, ctx: ParseContext): string[] {
   const { expr: rootExpr } = root
-  // One of several `return`s: the subtree renders, but which branch runs is a
-  // condition this parser does not evaluate, so it is not an editable surface —
-  // exactly the treatment a ternary's two sides already get.
-  const branchLocked = root.conditional
-  const branchReason = branchLocked ? BRANCH_LOCK_REASON : undefined
-
+  // `root` here is always the CHOSEN return — see `parseJsxTree`, which never
+  // calls this for one of `getReturnedJsxRoots`'s non-chosen entries. So there
+  // is no branch-selection lock to apply at this level any more; the only
+  // remaining question is whether the return's own expression is itself
+  // genuinely dynamic (a call, `||`) — same as any other JSX-bearing `{...}`.
   if (Node.isJsxElement(rootExpr) || Node.isJsxSelfClosingElement(rootExpr)) {
-    return [processElement(rootExpr, ctx, branchLocked, branchReason)]
+    return [processElement(rootExpr, ctx, false, undefined)]
   }
   if (Node.isJsxFragment(rootExpr)) {
-    return processChildren(rootExpr.getJsxChildren(), ctx, branchLocked, branchReason)
+    return processChildren(rootExpr.getJsxChildren(), ctx, false, undefined)
   }
   // The component's own return is itself a dynamic expression (e.g.
-  // `return cond ? <A/> : <B/>`) — still walk it, honoring the same locking
-  // rule as a nested `{...}` child would get.
+  // `return cond ? <A/> : <B/>`) — walk it through the same branch-selection
+  // rule a nested `{...}` child gets (`collectFromExpression`/`selectJsxBranch`).
   const triggers = isLockingExpression(rootExpr)
-  return collectFromExpression(
-    rootExpr,
-    ctx,
-    triggers || branchLocked,
-    triggers ? DYNAMIC_LOCK_REASON : branchReason,
-  )
+  return collectFromExpression(rootExpr, ctx, triggers, triggers ? DYNAMIC_LOCK_REASON : undefined)
 }
 
 /**
@@ -480,13 +450,28 @@ function processElement(
     ...styleResult.resolutions,
   ])
 
-  const codeProps = codePropNames(propsResult.codeProps, styleResult.codeStyles)
+  // WS-3.4 — a COMPONENT prop whose JSX value the readers above could not
+  // resolve to a scalar/icon/structured value (a design-system slot: icon,
+  // header, footer, …) is materialized as a real child node instead of being
+  // silently dropped. See `captureSlotProps`'s doc for the full shape.
+  const slotProps = kind === 'component' ? captureSlotProps(attributes, propsResult.props, ctx) : undefined
+  const props = slotProps
+    ? {
+        ...propsResult.props,
+        ...Object.fromEntries(Object.entries(slotProps).map(([name, childId]) => [name, studioSlotValue(childId)])),
+      }
+    : propsResult.props
+
+  const codeProps = codePropNames(
+    [...propsResult.codeProps, ...(slotProps ? Object.keys(slotProps) : [])],
+    styleResult.codeStyles,
+  )
 
   const node: ParsedNode = {
     id,
     kind,
     name,
-    props: propsResult.props,
+    props,
     children,
     loc,
     locked: lock.locked,
@@ -508,6 +493,52 @@ function processElement(
   return id
 }
 
+/**
+ * WS-3.4 — captures a COMPONENT prop's JSX-element value as a real child
+ * node, for every attribute `extractProps` did NOT already resolve into
+ * `existingProps` (a scalar, the `{svg}` icon shape, or a resolved
+ * array/object all win over this — see `extractProps`'s own component-prop
+ * branch in `jsxAttributeReaders.ts`).
+ *
+ * `<Cell icon={<Icon/>}/>` mints `<Icon/>` via the SAME `processElement` walk
+ * every ordinary child goes through — identical locking rules, identical
+ * props/text/svg capture — but the minted id is NOT added to `children`: a
+ * slot value is not a DOM child of the host, it is handed to one specific
+ * prop (see `studioSlotSentinel.ts`, which the caller uses to encode the
+ * reference into `props`). The minted node is always locked
+ * (`SLOT_LOCK_REASON`) — it cannot be dragged out of the slot structurally —
+ * but its OWN props stay ordinary and editable, the same `locked`-is-
+ * structure / `codeProps`-is-values split every other locked node in this
+ * parser already follows.
+ *
+ * Only a single JSX element/self-closing element is captured — a fragment is
+ * declined (returns no slot for that attribute) because it can expand to
+ * zero or several roots, which is ambiguous for a prop expecting exactly one
+ * element. `style`/`dangerouslySetInnerHTML` never reach here: `style`'s
+ * value is never JSX, and a node with a resolvable `dangerouslySetInnerHTML`
+ * already returned from `processElement` before this runs.
+ */
+function captureSlotProps(
+  attributes: (JsxAttribute | JsxSpreadAttribute)[],
+  existingProps: Record<string, ParsedPropValue>,
+  ctx: ParseContext,
+): Record<string, string> | undefined {
+  let slots: Record<string, string> | undefined
+  for (const attribute of attributes) {
+    if (!Node.isJsxAttribute(attribute)) continue
+    const name = attribute.getNameNode().getText()
+    if (name in existingProps) continue // already a scalar/icon/structured value
+    const initializer = attribute.getInitializer()
+    if (!initializer || !Node.isJsxExpression(initializer)) continue
+    const expression = initializer.getExpression()
+    if (!expression) continue
+    if (!Node.isJsxElement(expression) && !Node.isJsxSelfClosingElement(expression)) continue
+    const slotChildId = processElement(expression, ctx, true, SLOT_LOCK_REASON)
+    slots ??= {}
+    slots[name] = slotChildId
+  }
+  return slots
+}
 
 /**
  * Walks a JSX element's children (`getJsxChildren()` output). Plain text is
@@ -559,20 +590,25 @@ function processChildren(
 
 /**
  * Finds the "top-level" JSX elements reachable inside an arbitrary
- * expression (e.g. the body of a `.map` callback, or the branches of a
- * ternary/logical expression), without descending into elements once found
- * — their own children are handled by `processElement` → `processChildren`
- * as usual.
+ * expression (e.g. the body of a `.map` callback, or a component's own
+ * `return cond ? <A/> : <B/>`), without descending into elements once found —
+ * their own children are handled by `processElement` → `processChildren` as
+ * usual. A `.map` met on the way down is EXPANDED here, not walked into (see
+ * `expandStaticLoop`'s doc comment for why that must happen at every level,
+ * not only where a list is a direct `{items.map(…)}` child).
  *
- * A `.map` met on the way down is EXPANDED here, not walked into. Loop
- * expansion used to live only in `processChildren`, so it fired for a list
- * written as a direct `{items.map(…)}` child and silently did not for the same
- * list written one wrapper deeper — `{cond ? A.map(…) : B.map(…)}`, `{ok &&
- * items.map(…)}`, or a `return` that is itself the ternary. The list then
- * collapsed to ONE row per branch, with every value that depended on the loop
- * item left unresolved: the corpus's package picker rendered two blank radio
- * rows instead of four priced ones. Which of two equivalent ways a repo happens
- * to write its list is not something the result may depend on.
+ * A ternary or `&&` met on the way down is a BRANCH POINT (parser-06):
+ * `selectJsxBranch` picks exactly one side to descend into, instead of both —
+ * or (parser-07) none, for a statically-false `&&` — see that function's doc
+ * comment. This is the SAME "select, don't stack" rule `getReturnedJsxRoots`
+ * applies one level up, for the same reason: rendering every branch of a
+ * runtime conditional shows a screen no user ever sees. A dynamic construct
+ * this walk could NOT resolve a single branch/row
+ * for (an unresolved `.map`, any other call, `||`) re-derives its own lock
+ * instead of silently inheriting whichever ambient `locked`/`reason` this
+ * walk started with — necessary now that `&&`/a ternary no longer forces
+ * their whole subtree locked: `{ok && items.map(unresolvable)}` must still
+ * lock `items.map`'s contents even though `&&` itself does not.
  */
 function collectFromExpression(
   expr: Node,
@@ -581,40 +617,70 @@ function collectFromExpression(
   reason: string | undefined,
 ): string[] {
   const ids: string[] = []
-
-  expr.forEachDescendant((node, traversal) => {
-    const expanded = expandStaticLoop(node, ctx)
-    if (expanded) {
-      ids.push(...expanded)
-      traversal.skip()
-      return
-    }
-    if (Node.isJsxElement(node) || Node.isJsxSelfClosingElement(node)) {
-      ids.push(processElement(node, ctx, locked, reason))
-      traversal.skip()
-    }
-    // JsxFragment nodes are intentionally not skipped — traversal continues
-    // into their children so those get flattened in automatically.
-  })
-
+  walkExpressionForJsx(expr, ctx, locked, reason, ids)
   return ids
 }
 
-/**
- * An element is on the "dynamic surface" (locked) when it is rendered from
- * inside a `.map(...)` callback (a CallExpression), or a
- * conditional/ternary or logical (`&&` / `||`) JSX expression, rather than
- * being structurally present in the static tree.
- */
-function isLockingExpression(expr: Node): boolean {
-  const node = unwrapParens(expr)
+function walkExpressionForJsx(
+  rawNode: Node,
+  ctx: ParseContext,
+  locked: boolean,
+  reason: string | undefined,
+  ids: string[],
+): void {
+  const node = unwrapParens(rawNode)
 
-  if (Node.isCallExpression(node)) return true
-  if (Node.isConditionalExpression(node)) return true
-  if (Node.isBinaryExpression(node)) {
-    const opKind = node.getOperatorToken().getKind()
-    return opKind === SyntaxKind.AmpersandAmpersandToken || opKind === SyntaxKind.BarBarToken
+  const expanded = expandStaticLoop(node, ctx)
+  if (expanded) {
+    ids.push(...expanded)
+    return
+  }
+  if (Node.isJsxElement(node) || Node.isJsxSelfClosingElement(node)) {
+    ids.push(processElement(node, ctx, locked, reason))
+    return
   }
 
-  return false
+  const branch = selectJsxBranch(node, ctx)
+  if (branch) {
+    // parser-07: `chosen` is `undefined` only for a statically-false `&&` —
+    // nothing renders at this position, so there is nothing further to walk
+    // or attach a note/alternative to.
+    if (!branch.chosen) return
+    const before = ids.length
+    walkExpressionForJsx(branch.chosen, ctx, locked, reason, ids)
+    const chosenIds = ids.slice(before)
+    if (chosenIds.length > 0) {
+      let alternative: BranchAlternative | undefined
+      if (branch.alternative) {
+        const { line, column } = ctx.sourceFile.getLineAndColumnAtPos(unwrapParens(branch.alternative).getStart())
+        alternative = { label: branch.altLabel ?? 'other branch', loc: { file: ctx.relFile, line, col: column } }
+      }
+      for (const id of chosenIds) {
+        const existing = ctx.nodes[id]
+        if (!existing) continue
+        ctx.nodes[id] = {
+          ...existing,
+          ...(alternative ? { branchAlternatives: [...(existing.branchAlternatives ?? []), alternative] } : {}),
+          // Don't clobber a resolution already recorded for THIS node's own
+          // value — see `resolution`'s "only the first" policy in `./types.ts`.
+          ...(existing.resolution ? {} : { resolution: { source: ctx.relFile, note: branch.note } }),
+        }
+      }
+    }
+    return
+  }
+
+  // A dynamic construct `selectJsxBranch` does not own (an unresolved `.map`,
+  // any other function call, or `||`) re-triggers the SAME lock
+  // `isLockingExpression` applies at the top level — see this function's doc
+  // comment for why that can no longer be assumed to already be true here.
+  if (
+    Node.isCallExpression(node) ||
+    (Node.isBinaryExpression(node) && node.getOperatorToken().getKind() === SyntaxKind.BarBarToken)
+  ) {
+    node.forEachChild((child) => walkExpressionForJsx(child, ctx, true, DYNAMIC_LOCK_REASON, ids))
+    return
+  }
+
+  node.forEachChild((child) => walkExpressionForJsx(child, ctx, locked, reason, ids))
 }

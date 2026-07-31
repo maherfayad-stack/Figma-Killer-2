@@ -127,6 +127,93 @@ describe('studioCss — imported CSS becomes style rules and classIds', () => {
   })
 })
 
+/**
+ * `panel-02` (WS-6.3) — `styleRuleSources`, the `StyleRule.id -> (file,
+ * selector)` map the CSS write-back path (`studioWriteback.ts`'s `css` edit
+ * kind) reads at save time. This is the thing that used to not exist at all
+ * — `panel-01` shipped the write PRIMITIVE fully tested in isolation, but
+ * nothing computed which file a given rule id should write to.
+ */
+describe('studioCss — styleRuleSources (WS-6.3 write-back mapping)', () => {
+  it('maps a class rule to the real .css file and selector it was parsed from', async () => {
+    writeFixtureWorkspace()
+
+    const { styleRules, styleRuleSources } = await loadStudioPages(tmpDir)
+    const heroId = styleRuleId('class', 'hero')
+
+    expect(styleRules[heroId]).toBeDefined()
+    expect(styleRuleSources[heroId]).toEqual({ file: 'pages/Home.css', selector: '.hero' })
+  })
+
+  it('maps an ambient (non-class) rule too — setDeclaration matches by selector, not by kind', async () => {
+    writeFixtureWorkspace()
+
+    const { styleRuleSources } = await loadStudioPages(tmpDir)
+    const h1Id = styleRuleId('ambient', 'h1')
+
+    expect(styleRuleSources[h1Id]).toEqual({ file: 'pages/Home.css', selector: 'h1' })
+  })
+
+  it('maps a component-owned stylesheet to the component file, not the page that inlined it', async () => {
+    writeFixtureWorkspace()
+
+    const { styleRuleSources } = await loadStudioPages(tmpDir)
+    const badgeId = styleRuleId('class', 'badge')
+
+    expect(styleRuleSources[badgeId]).toEqual({ file: 'components/Badge.css', selector: '.badge' })
+  })
+
+  it('leaves a .module.css-sourced class unmapped — no honest hand-editable selector at this layer', async () => {
+    write('pages/Home.module.css', '.title { color: red }\n')
+    write(
+      'pages/Home.tsx',
+      [
+        "import styles from './Home.module.css'",
+        'export default function Home() {',
+        '  return <h1 className={styles.title}>Hi</h1>',
+        '}',
+        '',
+      ].join('\n'),
+    )
+
+    const { styleRuleSources } = await loadStudioPages(tmpDir)
+
+    // Every entry in the map (if any) must NOT point at the .module.css file.
+    expect(Object.values(styleRuleSources).some((s) => s.file.endsWith('.module.css'))).toBe(false)
+  })
+
+  it('a later stylesheet redefining the same class name wins the mapping too, matching styleRules itself', async () => {
+    write('pages/Home.css', '.hero { color: red }\n')
+    write('pages/Override.css', '.hero { color: blue }\n')
+    write(
+      'pages/Home.tsx',
+      [
+        "import './Home.css'",
+        "import './Override.css'",
+        'export default function Home() {',
+        '  return <div className="hero" />',
+        '}',
+        '',
+      ].join('\n'),
+    )
+
+    const { styleRules, styleRuleSources } = await loadStudioPages(tmpDir)
+    const heroId = styleRuleId('class', 'hero')
+
+    expect(styleRules[heroId]).toMatchObject({ styles: { color: 'blue' } })
+    expect(styleRuleSources[heroId]).toEqual({ file: 'pages/Override.css', selector: '.hero' })
+  })
+
+  it('returns an empty sources map alongside an empty styleRules map', async () => {
+    write('pages/Home.tsx', ['export default function Home() {', '  return <div className="hero" />', '}', ''].join('\n'))
+
+    const { styleRules, styleRuleSources } = await loadStudioPages(tmpDir)
+
+    expect(styleRules).toEqual({})
+    expect(styleRuleSources).toEqual({})
+  })
+})
+
 describe('classIdsForClassName', () => {
   const map = { hero: 'sc-aaa', badge: 'sc-bbb' }
 

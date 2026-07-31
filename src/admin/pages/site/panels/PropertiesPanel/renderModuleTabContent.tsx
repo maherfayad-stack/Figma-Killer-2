@@ -35,6 +35,7 @@ import type { LoopEntitySource } from '@core/loops/types'
 import type { ActiveDocument } from '../../store/slices/uiSlice'
 import { isStudioMode } from '@site/studio/studioMode'
 import { LoopPropertiesView } from './LoopPropertiesView'
+import { InstanceCallSiteView } from './InstanceCallSiteView'
 import { ParamPromotableRow } from './ParamPromotableRow'
 import { FormSettingsPanel } from './FormSettingsPanel'
 import { isFormSettingsModule } from './formSettingsAnalysis'
@@ -85,6 +86,17 @@ export function renderModuleTabContent(args: ModuleTabContentArgs): React.ReactN
         props={selectedNode.props as Record<string, unknown>}
       />
     )
+  }
+
+  // instance-ui-01 — `studio.instance` (WS-4.2) has an empty `schema` (its
+  // editable surface is the call-site prop bag, `props.callSiteProps`,
+  // classified per-instance rather than from a fixed control map every
+  // instance would otherwise share — see that module's own doc comment), so
+  // it needs the same dedicated-view treatment `base.loop` gets above,
+  // before the schema-driven branches below (which would render nothing for
+  // it) ever run.
+  if (selectedNode?.moduleId === 'studio.instance' && selectedNodeId) {
+    return <InstanceCallSiteView nodeId={selectedNodeId} node={selectedNode} />
   }
 
   // Branches 2 & 3 share the schema iteration; bail when there's nothing

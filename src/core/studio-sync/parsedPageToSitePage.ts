@@ -17,14 +17,20 @@ export interface ParsedPageToSitePageOptions {
   slug: string
   title: string
   /** Maps a parsed node to an Studio moduleId. Pure/injected so this converter
-   *  stays decoupled from the design-system list. e.g. component "Button" -> "alm.Button",
-   *  element "div" -> "base.container". Also carries `children` and `text` so the
-   *  resolver can tell a text-only tag (`<p>Hello</p>`) apart from one that wraps
-   *  element children (`<p><Icon/></p>`) or carries no content at all
-   *  (`<span className="icon" />`) — only the first may resolve to a leaf module
-   *  like `base.text`, or the children are dropped and an empty element renders
-   *  that module's placeholder label. */
-  resolveModuleId: (node: Pick<ParsedNode, 'kind' | 'name' | 'children' | 'text' | 'props'>) => string
+   *  stays decoupled from the design-system list. e.g. component "Button" -> "alm.Button"
+   *  or "pkg.some_ui.Button", element "div" -> "base.container". Also carries
+   *  `children` and `text` so the resolver can tell a text-only tag (`<p>Hello</p>`)
+   *  apart from one that wraps element children (`<p><Icon/></p>`) or carries no
+   *  content at all (`<span className="icon" />`) — only the first may resolve to a
+   *  leaf module like `base.text`, or the children are dropped and an empty element
+   *  renders that module's placeholder label. `id` is included (WS-3.3) so the
+   *  injected resolver can look up this node's own package/local classification
+   *  (`componentSources`, keyed by node id) without this converter needing to know
+   *  anything about that classification itself. `instanceOf` (WS-4.2) is
+   *  included so the resolver can tell a call site inlining EXPANDED (an
+   *  instance) apart from one it declined to expand, without re-deriving
+   *  that from `componentSources` alone. */
+  resolveModuleId: (node: Pick<ParsedNode, 'id' | 'kind' | 'name' | 'children' | 'text' | 'props' | 'instanceOf'>) => string
   /**
    * Maps a resolved moduleId to the single prop key its module's
    * `inlineTextEdit` declares (`base.text` -> 'text', `base.button` -> 'label',
@@ -78,13 +84,30 @@ export function parsedPageToSitePage(parsed: ParsedPage, opts: ParsedPageToSiteP
   const nodes: Record<string, PageNode> = { [bodyId]: bodyNode }
   for (const [id, node] of Object.entries(parsed.nodes)) {
     const moduleId = opts.resolveModuleId({
+      id,
       kind: node.kind,
       name: node.name,
       children: node.children,
       text: node.text,
       props: node.props,
+      instanceOf: node.instanceOf,
     })
-    const props: Record<string, ParsedPropValue> = { ...node.props }
+    // WS-4.2 — a `studio.instance` node's own `props` bag is NOT the call
+    // site's literal props (those live nested, at `props.callSiteProps`) —
+    // it's the four `instanceOf` fields, so the properties panel can build
+    // the "Component" section (swap/detach + the call-site prop surface,
+    // WS-6) off one predictable shape regardless of which local component
+    // this instance is of. `node.instanceOf` is guaranteed set here because
+    // `resolveModuleId` only returns `'studio.instance'` when it is (see its
+    // own doc comment).
+    const props: Record<string, ParsedPropValue> = node.instanceOf
+      ? {
+          componentName: node.instanceOf.componentName,
+          source: node.instanceOf.source,
+          sourceFile: node.instanceOf.sourceFile ?? '',
+          callSiteProps: node.instanceOf.callSiteProps,
+        }
+      : { ...node.props }
 
     // §6.3 — `className` is how the source attaches styling, but this engine
     // attaches it through `classIds` -> `site.styleRules`. Translate, then drop
@@ -97,7 +120,17 @@ export function parsedPageToSitePage(parsed: ParsedPage, opts: ParsedPageToSiteP
 
     // `className` never reaches the panel (translated to `classIds` above), so
     // a code-valued one would name a prop that does not exist.
-    const codeProps = (node.codeProps ?? []).filter((name) => name !== 'className')
+    //
+    // WS-4.2 — for a `studio.instance` node, `node.codeProps` (unchanged by
+    // `expandCallSite`'s spread — see `ParsedNode.instanceOf`'s doc comment)
+    // still names the call site's OWN flat prop keys ('title', not
+    // 'callSiteProps.title'). Re-key each into the `callSiteProps:<name>`
+    // convention `isPropWritableToSource` already generically supports
+    // (parallel to `style:<property>`) — the ONE new true-case §4.3 promised,
+    // no new predicate.
+    const codeProps = node.instanceOf
+      ? (node.codeProps ?? []).map((name) => `callSiteProps:${name}`)
+      : (node.codeProps ?? []).filter((name) => name !== 'className')
 
     // Map captured element text onto the module's declared text prop — but
     // an explicit attribute always wins (e.g. `<Button label="x">y</Button>`
@@ -155,6 +188,18 @@ export function parsedPageToSitePage(parsed: ParsedPage, opts: ParsedPageToSiteP
         const key = styleValueKey(property)
         if (!codeProps.includes(key)) codeProps.push(key)
       }
+      // WS-4.2 — an instance whose OWN id has no writable source location
+      // (its call site sits inside a `.map`) must ALSO lock every
+      // `callSiteProps:<name>` entry, not just the top-level `callSiteProps`
+      // key the loop above already pushed — one piece of JSX produced every
+      // row's call site, so a call-site prop write here would rewrite all of
+      // them, exactly the reasoning above already applies to an ordinary node.
+      if (node.instanceOf) {
+        for (const name of Object.keys(node.instanceOf.callSiteProps)) {
+          const key = `callSiteProps:${name}`
+          if (!codeProps.includes(key)) codeProps.push(key)
+        }
+      }
     }
 
     nodes[id] = {
@@ -183,6 +228,10 @@ export function parsedPageToSitePage(parsed: ParsedPage, opts: ParsedPageToSiteP
       // show WHY a resolved node is locked and which branch/note it chose.
       // Follows the exact `locked`/`lockReason` pattern above.
       ...(node.resolution ? { resolution: node.resolution } : {}),
+      // parser-06 — the branch(es) the parser did NOT select for this node,
+      // straight copy (same shape on both sides). Does not affect `locked`;
+      // see `PageNode.branchAlternatives`'s own doc comment.
+      ...(node.branchAlternatives ? { branchAlternatives: node.branchAlternatives } : {}),
       // Same straight copy — the editable-origin pointer behind resolved text.
       ...(node.textOrigin ? { textOrigin: node.textOrigin } : {}),
       // WS-8.3 — same straight copy, for the import behind a resolved image.

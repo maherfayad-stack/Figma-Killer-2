@@ -1,0 +1,84 @@
+.onboarding-carousel__slide {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 1 0 0;
+  min-height: 0;
+  gap: var(--space);
+  width: 100%;
+  animation: obc-slide-in 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.onboarding-carousel__illustration {
+  flex: 1 0 0;
+  min-height: 0;
+  width: 100%;
+  object-fit: contain;
+  animation: obc-illustration-in 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.onboarding-carousel__text {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  width: 100%;
+  text-align: start;
+}
+
+.onboarding-carousel__heading {
+  margin: 0;
+  width: 100%;
+  font-family: var(--font-body);
+  font-size: var(--type-headline-size);
+  line-height: var(--type-headline-lh);
+  letter-spacing: var(--type-headline-ls);
+  font-weight: var(--type-headline-weight);
+  color: var(--text-base-default);
+  animation: obc-text-in 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation-delay: 0.08s;
+}
+
+.onboarding-carousel__desc {
+  margin: 0;
+  width: 100%;
+  font-family: var(--font-body);
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-lh);
+  color: var(--text-base-subtext);
+  animation: obc-text-in 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation-delay: 0.16s;
+}
+
+@keyframes obc-slide-in {
+  from { opacity: 0; transform: translateX(28px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes obc-illustration-in {
+  from { opacity: 0; transform: scale(0.92) translateY(10px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+@keyframes obc-text-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+[dir='rtl'] .onboarding-carousel__slide {
+  animation-name: obc-slide-in-rtl;
+}
+
+@keyframes obc-slide-in-rtl {
+  from { opacity: 0; transform: translateX(-28px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .onboarding-carousel__slide,
+  .onboarding-carousel__illustration,
+  .onboarding-carousel__heading,
+  .onboarding-carousel__desc {
+    animation: none;
+  }
+}

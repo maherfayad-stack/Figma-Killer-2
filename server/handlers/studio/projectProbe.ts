@@ -27,14 +27,32 @@
  * without importing this module (which imports it back). Add fields there,
  * not here.
  *
+ * **A project's app root is not always its project directory** (`approot-01`).
+ * A GitHub import can land its real app one level down (`journey-screens/`),
+ * two levels down inside a monorepo (`apps/web/`), or anywhere a bounded
+ * `detectAppRoot` search below reaches — see that function's own doc. Every
+ * OTHER detector in this file (framework, pages dir, style toolchain,
+ * component packages, aliases) runs rooted at the resolved app root, not the
+ * project directory — but every PATH this module returns
+ * (`pagesDir`/`entryFiles`/`styleToolchain.*.configPath`) is re-prefixed with
+ * `appRoot` before being stored, so it stays project-relative, exactly like
+ * before this app-root concept existed. This is deliberate: every existing
+ * consumer (`projectPagesDir`'s `join(dir, pagesDir)`, `styleCompileTier1.ts`'s
+ * `join(dir, toolchain.postcssConfigPath)`, …) already joins these fields
+ * against the PROJECT directory, and changing that contract would mean
+ * auditing every call site instead of one detection module. A consumer that
+ * needs `node_modules`/the toolchain binaries THEMSELVES resolved (installing
+ * dependencies, compiling Sass/PostCSS, bundling a package component) uses
+ * `resolveAppRoot(dir)` (`./appRoot.ts`) — never rejoins `appRoot` by hand.
+ *
  * Also exports `tryServeStudioProbe`, a router sub-handler with the same
  * `(req, url, pathname) => Response | null` shape `server/router.ts`
  * composes at the top level — `server/handlers/studio.ts` wires it in
  * (that file is the orchestrator's, not touched here).
  */
-import { existsSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative, resolve, sep } from 'node:path'
-import { listWorkspaceFiles } from '@core/page-parser'
+import { EXCLUDED_WORKSPACE_DIR_NAMES, listWorkspaceFiles } from '@core/page-parser'
 import { findEntryFile } from '@core/studio-sync/collectPageStylesheets'
 import { Type, type Static, type TSchema } from '@core/utils/typeboxHelpers'
 import { safeParseJson } from '@core/utils/jsonValidate'
@@ -220,33 +238,163 @@ interface PagesDirCandidate {
 }
 
 /**
- * Ranks every directory under `root` containing `.tsx`/`.jsx` files by
- * (files whose default export returns JSX) / (total files in that
- * directory), descending. Directories with zero matches are dropped
- * entirely — a components/ or utils/ dir full of non-page helpers should
- * never outrank an empty result. Ties break on match count, then path.
+ * Ranks every directory under `root` that DIRECTLY contains a `.tsx`/`.jsx`
+ * file by (files whose default export returns JSX) / (total files), scored
+ * over that directory's WHOLE SUBTREE (itself plus every descendant
+ * directory), descending. Directories with zero matches are dropped entirely
+ * — a components/ or utils/ dir full of non-page helpers should never
+ * outrank an empty result. Ties break on match count, then path.
+ *
+ * Scored recursively (not just the direct children) because the WINNER feeds
+ * `discoverPageFiles`, which walks recursively from it — a candidate whose
+ * direct files all pass but whose own subdirectory holds MORE matching
+ * screens should win over a same-ratio sibling with fewer files total.
+ * Concretely, on a real corpus (`maherfayad-stack-eSIM`): `screens/` (3
+ * direct files) and `screens/esim/` (12 direct files) both score 1.0
+ * individually, and a components/ dir with 13 direct files at 1.0 would
+ * outrank either of them alone on match COUNT — but `screens/`'s recursive
+ * subtree (3 + 12 = 15 matched) correctly outranks components/'s 13.
  */
 function rankPagesDirCandidates(root: string): PagesDirCandidate[] {
-  const byDir = new Map<string, string[]>()
+  const files: string[] = []
+  const directDirs = new Set<string>()
   for (const relFile of listWorkspaceFiles(root)) {
     if (!/\.(tsx|jsx)$/.test(relFile)) continue
     const segments = relFile.split('/')
     if (segments.length < 2) continue // a file sitting at the workspace root isn't "a directory of pages"
     if (segments.some((seg) => NON_PAGES_DIR_SEGMENTS.has(seg))) continue
-    const dir = segments.slice(0, -1).join('/')
-    const list = byDir.get(dir) ?? []
-    list.push(relFile)
-    byDir.set(dir, list)
+    files.push(relFile)
+    directDirs.add(segments.slice(0, -1).join('/'))
+  }
+
+  const matchCache = new Map<string, boolean>()
+  const isJsxDefaultExport = (relFile: string): boolean => {
+    let cached = matchCache.get(relFile)
+    if (cached === undefined) {
+      cached = fileDefaultExportsJsx(join(root, ...relFile.split('/')))
+      matchCache.set(relFile, cached)
+    }
+    return cached
   }
 
   const scored: (PagesDirCandidate & { matched: number })[] = []
-  for (const [dir, relFiles] of byDir) {
-    const matched = relFiles.filter((relFile) => fileDefaultExportsJsx(join(root, ...relFile.split('/')))).length
+  for (const dir of directDirs) {
+    const prefix = `${dir}/`
+    const subtreeFiles = files.filter((relFile) => relFile.startsWith(prefix))
+    const matched = subtreeFiles.filter(isJsxDefaultExport).length
     if (matched === 0) continue
-    scored.push({ dir, score: Math.round((matched / relFiles.length) * 100) / 100, matched })
+    scored.push({ dir, score: Math.round((matched / subtreeFiles.length) * 100) / 100, matched })
   }
   scored.sort((a, b) => b.score - a.score || b.matched - a.matched || a.dir.localeCompare(b.dir))
   return scored.map(({ dir, score }) => ({ dir, score }))
+}
+
+// ---------------------------------------------------------------------------
+// App root (`approot-01`) — a project's app root is not always its project
+// directory: a GitHub import can land its real `package.json` one or two
+// levels below the project directory (monorepos, `examples/` folders, a
+// named subdirectory like `journey-screens/`).
+// ---------------------------------------------------------------------------
+
+/** Bounded — project dir itself, its immediate children, then their children. Never a full-tree walk. */
+const APP_ROOT_MAX_DEPTH = 2
+
+interface AppRootCandidate {
+  dir: string
+  score: number
+}
+
+/** Every real, non-excluded (`.git`/`node_modules`/`.studio`/etc — same policy every workspace walk uses) immediate subdirectory NAME of `absDir`. Never throws — an unreadable dir just contributes no children. */
+function childDirNames(absDir: string): string[] {
+  try {
+    return readdirSync(absDir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && !EXCLUDED_WORKSPACE_DIR_NAMES.has(entry.name))
+      .map((entry) => entry.name)
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Composite ranking score for a monorepo app-root candidate: a framework
+ * config (`vite.config.*`/`next.config.*`) outranks everything (it's direct
+ * evidence this directory is a real app entry, not a workspace-root
+ * manifest), then `src/` presence, then declared dependency count. Purely
+ * informational beyond the ordering it produces — `AppRootCandidateSchema`'s
+ * own doc says as much.
+ */
+function scoreAppRootCandidate(absDir: string): number {
+  const hasFrameworkConfig = Boolean(findConfigFile(absDir, VITE_CONFIG_NAMES) ?? findConfigFile(absDir, NEXT_CONFIG_NAMES))
+  const hasSrc = existsSync(join(absDir, 'src'))
+  const pkg = readPackageJson(absDir)
+  const depCount = pkg ? Object.keys(pkg.dependencies ?? {}).length + Object.keys(pkg.devDependencies ?? {}).length : 0
+  return (hasFrameworkConfig ? 1000 : 0) + (hasSrc ? 100 : 0) + Math.min(depCount, 99)
+}
+
+interface AppRootDetection {
+  /** Project-relative POSIX path, `''` for "the project dir itself". */
+  appRoot: string
+  /** Present only when more than one candidate existed at the winning depth. */
+  candidates?: AppRootCandidate[]
+  warnings: ProbeWarning[]
+}
+
+/**
+ * The nearest directory containing a `package.json` — project dir first
+ * (depth 0), then its immediate children (depth 1), then their children
+ * (depth 2). Bounded; does not walk the whole tree. Stops at the FIRST depth
+ * with at least one match — "nearest wins." When several candidates exist at
+ * that depth (a real monorepo), ranks them via `scoreAppRootCandidate` and
+ * returns the winner PLUS the full ranked list (so a caller can offer a
+ * choice) and an `app-root-ambiguous` warning, rather than silently picking.
+ * No `package.json` anywhere within the bound degrades to `appRoot: ''`
+ * (treat the project dir as the app root, today's behavior, unchanged) with
+ * an `app-root-not-found` warning — never throws.
+ */
+function detectAppRoot(root: string): AppRootDetection {
+  if (existsSync(join(root, 'package.json'))) return { appRoot: '', warnings: [] }
+
+  let level: string[] = [''] // '' = the project dir itself, whose children are depth 1
+  for (let depth = 1; depth <= APP_ROOT_MAX_DEPTH; depth++) {
+    const next: string[] = []
+    for (const parentRel of level) {
+      const parentAbs = parentRel ? join(root, ...parentRel.split('/')) : root
+      for (const name of childDirNames(parentAbs)) {
+        next.push(parentRel ? `${parentRel}/${name}` : name)
+      }
+    }
+
+    const withPackageJson = next.filter((rel) => existsSync(join(root, ...rel.split('/'), 'package.json')))
+    if (withPackageJson.length === 1) return { appRoot: withPackageJson[0]!, warnings: [] }
+    if (withPackageJson.length > 1) {
+      const ranked = withPackageJson
+        .map((dir) => ({ dir, score: scoreAppRootCandidate(join(root, ...dir.split('/'))) }))
+        .sort((a, b) => b.score - a.score || a.dir.localeCompare(b.dir))
+      return {
+        appRoot: ranked[0]!.dir,
+        candidates: ranked,
+        warnings: [
+          {
+            code: 'app-root-ambiguous',
+            message: `Found ${ranked.length} directories with their own package.json at the same depth (e.g. "${ranked[0]!.dir}" and "${ranked[1]!.dir}"); guessed "${ranked[0]!.dir}" by ranking on framework config presence, src/ presence, and dependency count.`,
+            fix: 'Confirm the app root in the import dialog, or set "appRoot" explicitly in .studio/meta.json.',
+          },
+        ],
+      }
+    }
+    level = next
+  }
+
+  return {
+    appRoot: '',
+    warnings: [
+      {
+        code: 'app-root-not-found',
+        message: `No package.json was found in the project directory or within ${APP_ROOT_MAX_DEPTH} levels of nested subdirectories.`,
+        fix: 'Confirm this project actually contains a package.json, or add one at the app root.',
+      },
+    ],
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -402,28 +550,35 @@ function extractViteAliases(root: string): Record<string, string> {
 
 export function probeProject(dir: string): ProjectProfile {
   const root = resolve(dir)
-  const pkg = readPackageJson(root)
-  const packageManager = detectPackageManager(root)
-  const shape = detectFrameworkShape(root, pkg)
-  const warnings: ProbeWarning[] = [...shape.warnings]
 
-  let pagesDir = shape.pagesDir
+  const appRootDetection = detectAppRoot(root)
+  const appRoot = appRootDetection.appRoot
+  const appRootAbs = appRoot ? join(root, ...appRoot.split('/')) : root
+  /** Every path this module returns is project-relative — re-prefix a path computed against `appRootAbs` before it leaves this function. See the module doc's "app root" paragraph. */
+  const prefixAppRoot = (relPath: string): string => (appRoot ? `${appRoot}/${relPath}` : relPath)
+
+  const pkg = readPackageJson(appRootAbs)
+  const packageManager = detectPackageManager(appRootAbs)
+  const shape = detectFrameworkShape(appRootAbs, pkg)
+  const warnings: ProbeWarning[] = [...appRootDetection.warnings, ...shape.warnings]
+
+  let pagesDir = shape.pagesDir ? prefixAppRoot(shape.pagesDir) : undefined
   let routeStyle = shape.routeStyle
   let pagesDirCandidates: PagesDirCandidate[] | undefined
 
   if (!pagesDir) {
-    const ranked = rankPagesDirCandidates(root)
+    const ranked = rankPagesDirCandidates(appRootAbs)
     if (ranked.length > 0) {
-      pagesDir = ranked[0]!.dir
+      pagesDir = prefixAppRoot(ranked[0]!.dir)
       routeStyle = 'flat'
-      pagesDirCandidates = ranked.slice(0, 3)
+      pagesDirCandidates = ranked.slice(0, 3).map((c) => ({ ...c, dir: prefixAppRoot(c.dir) }))
       warnings.push({
         code: 'pages-dir-heuristic',
         message: `No routing framework convention matched; guessed the pages directory "${pagesDir}" by ranking directories on the fraction of files with a JSX-returning default export.`,
         fix: 'Confirm the pages directory in the import dialog, or set "pagesDir" explicitly in .studio/meta.json.',
       })
     } else {
-      pagesDir = 'pages'
+      pagesDir = prefixAppRoot('pages')
       routeStyle = 'flat'
       warnings.push({
         code: 'pages-dir-not-found',
@@ -433,23 +588,28 @@ export function probeProject(dir: string): ProjectProfile {
     }
   }
 
+  const tailwind = detectTailwind(appRootAbs, pkg, warnings)
+  const postcssConfigPath = findConfigFile(appRootAbs, POSTCSS_CONFIG_NAMES)
+
   return {
     framework: shape.framework,
+    appRoot,
     pagesDir,
     routeStyle: routeStyle ?? 'flat',
-    entryFiles: shape.entryFiles,
+    entryFiles: shape.entryFiles.map(prefixAppRoot),
     packageManager,
     styleToolchain: {
-      tailwind: detectTailwind(root, pkg, warnings),
-      cssModules: hasCssModules(root),
-      sass: hasSass(root, pkg),
-      postcssConfigPath: findConfigFile(root, POSTCSS_CONFIG_NAMES) ?? null,
+      tailwind: tailwind ? { ...tailwind, configPath: prefixAppRoot(tailwind.configPath) } : null,
+      cssModules: hasCssModules(appRootAbs),
+      sass: hasSass(appRootAbs, pkg),
+      postcssConfigPath: postcssConfigPath ? prefixAppRoot(postcssConfigPath) : null,
       cssInJs: detectCssInJs(pkg),
     },
-    componentPackages: detectComponentPackages(root, pkg, warnings),
-    aliases: { ...extractTsconfigAliases(root), ...extractViteAliases(root) },
+    componentPackages: detectComponentPackages(appRootAbs, pkg, warnings),
+    aliases: { ...extractTsconfigAliases(appRootAbs), ...extractViteAliases(appRootAbs) },
     warnings,
     ...(pagesDirCandidates ? { pagesDirCandidates } : {}),
+    ...(appRootDetection.candidates ? { appRootCandidates: appRootDetection.candidates } : {}),
   }
 }
 

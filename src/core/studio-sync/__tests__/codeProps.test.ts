@@ -69,9 +69,13 @@ describe('a node behind a conditional', () => {
     `)
 
     const span = byName(nodes, 'Exclusive rates on hotels')!
-    // The branch is real and recorded...
-    expect(span.lockReason).toBeDefined()
-    // ...and says nothing about the attributes written on the element.
+    // parser-06: the parser now SELECTS the `&&`'s body — there is no "other
+    // side" to choose between, so this element is no longer locked at all
+    // (it used to be, under the predecessor "render every branch, lock it"
+    // policy). Writability is even more directly true now than the branch-vs-
+    // props split this file exists to defend, but the assertion is what
+    // matters: nothing here refuses an ordinary literal attribute.
+    expect(span.lockReason).toBeUndefined()
     expect(isPropWritableToSource(span, 'title')).toBe(true)
     expect(isPropWritableToSource(span, 'text')).toBe(true)
   })

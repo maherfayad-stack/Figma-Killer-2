@@ -1507,6 +1507,14 @@ describe('PP-24 — StyleSectionsEditor assigned categories use shared Section',
 // ---------------------------------------------------------------------------
 
 describe('PP-25 — Keyboard navigation reaches ClassPropertyRow controls and remove button', () => {
+  // Explicit timeout: this test drives up to 120 real `user.tab()` presses,
+  // each with its own userEvent scheduling overhead — already close to the
+  // default 5000ms budget before WS-6.2's StyleTargetChip added one more
+  // legitimate tab stop ahead of the target (the "Element" style-target
+  // toggle, disabled-but-focusable so its explanatory tooltip still fires on
+  // hover — same disabled+tooltip→aria-disabled convention every other
+  // disabled Button in this codebase already uses, see `Button.tsx`). The
+  // walk itself is unchanged; it just now needs a few hundred more ms.
   it('Tab key can reach the remove button for a class property row', async () => {
     const { nodeId } = loadSiteWithHeading()
     const state = useEditorStore.getState()
@@ -1537,7 +1545,7 @@ describe('PP-25 — Keyboard navigation reaches ClassPropertyRow controls and re
     }
 
     expect(foundRemoveBtn).toBe(true)
-  })
+  }, 15000)
 })
 
 // ---------------------------------------------------------------------------

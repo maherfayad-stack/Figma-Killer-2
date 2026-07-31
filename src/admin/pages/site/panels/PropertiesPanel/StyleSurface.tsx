@@ -26,6 +26,8 @@ import { useEditorStore } from '@site/store/store'
 import type { AnyModuleDefinition } from '@core/module-engine'
 import type { StyleRule, CSSPropertyBag } from '@core/page-tree'
 import { isGeneratedClassLocked, styleRuleSelector } from '@core/page-tree'
+import { classifyStylesheetEditability } from '@core/css-codemods'
+import { getStudioStyleRuleSources } from '@site/studio/fsCodemodAdapter'
 import { Button } from '@ui/components/Button'
 import { SearchBar } from '@ui/components/SearchBar'
 import { Section } from '@ui/components/Section'
@@ -33,6 +35,7 @@ import { StyleRuleComposer } from './StyleRuleComposer'
 import { InlineStyleComposer } from './InlineStyleComposer'
 import { ClassPropertyRow } from './ClassPropertyRow'
 import { StyleCategoryRail, MODULE_CATEGORY_ID } from './StyleCategoryRail'
+import { StyleTargetChip, type StyleEditTarget, type ClassCssEditability } from './StyleTargetChip'
 import { useScrollSpy } from './useScrollSpy'
 import {
   CLASS_STYLE_SECTIONS,
@@ -154,6 +157,20 @@ export function StyleSurface({
   // "Style inline" button). It's mutually exclusive with an active class.
   const showInline = canEditStyleHere && nodeId != null && activeClass == null && inlineStyleEditing
 
+  // WS-6.2 — the style-target chip. Reachability of "Element" mirrors
+  // `showInline`'s own gate exactly (mutual exclusion with an active class),
+  // so the chip never offers a switch this surface can't actually honor.
+  const styleTarget: StyleEditTarget = activeClass != null ? 'class' : showInline ? 'element' : 'none'
+  const canReachElementTarget = canEditStyleHere && nodeId != null && activeClass == null
+
+  // `panel-02` (WS-6.3) — whether the active class's declarations reach disk
+  // on save. `getStudioStyleRuleSources()` is `{}` outside Studio (the
+  // DB-backed CMS editor never populates it), so this correctly falls back
+  // to `unmapped` there — unchanged from this chip's pre-`panel-02` default.
+  const classCssEditability: ClassCssEditability | undefined = activeClass
+    ? resolveClassCssEditability(activeClass.id)
+    : undefined
+
   const storedStyles: Record<string, unknown> = showInline
     ? (inlineStyles ?? {})
     : activeClass
@@ -245,6 +262,18 @@ export function StyleSurface({
     <div ref={scrollRef} className={styles.surface}>
       {/* ── Left column: search + module section + CSS area ─────────── */}
       <div className={styles.surfaceContent}>
+
+        {/* WS-6.2 — style-target chip. Node mode only (nodeId != null); the
+            global selector surface (SelectorInspector) always edits a class
+            and has no "Element" concept to switch to. */}
+        {nodeId != null && (
+          <StyleTargetChip
+            target={styleTarget}
+            classSelector={activeClass ? styleRuleSelector(activeClass) : undefined}
+            classCssEditability={classCssEditability}
+            onSelectElement={canReachElementTarget ? () => setInlineStyleEditing(true) : undefined}
+          />
+        )}
 
         {/* Search bar — sticky at the top, searches both module and CSS.
             Hidden when no class is selected or the active class is a locked
@@ -418,3 +447,24 @@ function moduleMatchesQuery(query: string, definition: AnyModuleDefinition): boo
 }
 
 function noop() {}
+
+/**
+ * `panel-02` (WS-6.3) — the `StyleTargetChip`'s per-class write-back tier,
+ * resolved from the current project's `styleRuleSources` map (§6.3's
+ * `StyleRule.id -> (file, selector)`) plus `classifyStylesheetEditability`
+ * (`@core/css-codemods`, shared verbatim with the server-side write
+ * dispatcher so the chip's claim and the actual save outcome can never
+ * diverge). No mapped source at all — a Tailwind/Sass/PostCSS-generated
+ * class, a CSS Modules compile, or simply not Studio mode — reads as
+ * `unmapped`, the same honest "nothing to point at" outcome
+ * `classifyStylesheetEditability` itself has no representation for either
+ * (see that module's own doc).
+ */
+function resolveClassCssEditability(classId: string): ClassCssEditability {
+  const source = getStudioStyleRuleSources()[classId]
+  if (!source) return { kind: 'unmapped' }
+  const editability = classifyStylesheetEditability(source.file)
+  return editability.kind === 'plain-css'
+    ? { kind: 'plain-css', file: source.file }
+    : { kind: 'compiled', reason: editability.reason }
+}

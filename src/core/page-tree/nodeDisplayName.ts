@@ -43,6 +43,16 @@ export function getNodeDisplayName(
     }
   }
 
+  // WS-4.2 — a `studio.instance` node's label is the COMPONENT it is an
+  // instance of (`"Card"`), not the generic module name ("Instance") the
+  // registry entry carries — same reasoning as the VC-ref case above, minus
+  // the site-wide lookup (the name is already sitting on the node's own
+  // `props.componentName`, straight from the parser — see `ParsedNode.instanceOf`).
+  if (node.moduleId === 'studio.instance') {
+    const componentName = (node.props as Record<string, unknown> | undefined)?.componentName
+    if (typeof componentName === 'string' && componentName.length > 0) return componentName
+  }
+
   // slot-instance: show "Slot: <slotName>" so the DOM tree panel clearly identifies
   // which named slot this placeholder fills (e.g. "Slot: children", "Slot: actions").
   if (node.moduleId === 'base.slot-instance') {

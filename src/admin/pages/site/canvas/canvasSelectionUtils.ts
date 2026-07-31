@@ -8,7 +8,8 @@
  * Constraint #269 does NOT apply here (this is in editor/, not core/).
  */
 
-import type { PageNode } from '@core/page-tree'
+import type { NodeTree, PageNode } from '@core/page-tree'
+import { getParent } from '@core/page-tree'
 
 // ---------------------------------------------------------------------------
 // AnnotatedPageNode
@@ -90,4 +91,55 @@ export function findEnclosingComponentRef(
   }
 
   return { refId, isInsideSlotContent: false }
+}
+
+// ---------------------------------------------------------------------------
+// findEnclosingInstance
+// ---------------------------------------------------------------------------
+
+/**
+ * instance-ui-01 — the `studio.instance` (WS-4.2) counterpart to
+ * `findEnclosingComponentRef` above. A `studio.instance` renders NO DOM
+ * element (a bare React Fragment — see `src/modules/base/instance/
+ * InstanceEditor.tsx`), and its children are ORDINARY nodes in the real page
+ * tree (not a separate annotated map produced at instantiation time like a
+ * Visual Component's inlined body), so this walks the actual tree via
+ * `getParent` instead of an `_owningRefId` chain.
+ *
+ * Figma's nesting model: a click anywhere inside an instance's subtree
+ * selects the instance, not the specific descendant — UNLESS the user has
+ * already "entered" that instance (double-click / Enter), in which case
+ * clicks land on the real node again, same as any other part of the canvas,
+ * until a NESTED instance boundary is crossed.
+ *
+ * Walks from `nodeId` up through its ancestors (inclusive) and returns the
+ * id of the NEAREST `studio.instance` ancestor that is NOT in
+ * `enteredInstanceIds`. Returns `null` when `nodeId` isn't inside any
+ * not-yet-entered instance — either it's outside every instance, or every
+ * instance ancestor on its path has been entered.
+ *
+ * `tree` is a `Page` (or any `NodeTree<PageNode>`) — callers pass the
+ * specific frame's page via `selectCanvasPageFor`, matching the VC lock-down
+ * call sites above.
+ */
+export function findEnclosingInstance(
+  tree: NodeTree<PageNode>,
+  nodeId: string,
+  enteredInstanceIds: readonly string[],
+): string | null {
+  const visited = new Set<string>()
+  let current: PageNode | undefined = tree.nodes[nodeId]
+
+  while (current) {
+    if (visited.has(current.id)) return null // cycle guard
+    visited.add(current.id)
+
+    if (current.moduleId === 'studio.instance' && !enteredInstanceIds.includes(current.id)) {
+      return current.id
+    }
+
+    current = getParent(tree, current.id)
+  }
+
+  return null
 }

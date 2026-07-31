@@ -35,6 +35,7 @@ import {
 import { computeFluidScale, effectiveScaleRatio, resolveFrameworkPreferences } from '@core/framework'
 import { SpacingBarChart, type ChartPoint } from '@site/panels/SpacingPanel'
 import type { FrameworkPanelTab } from '@site/store/slices/uiSlice'
+import { TokenImportStatus } from './TokenImportStatus'
 import styles from './FrameworkHome.module.css'
 
 /** Cap the palette so a large library stays a clean row, not slivers. */
@@ -136,6 +137,7 @@ export function FrameworkHome() {
 
   return (
     <div className={styles.home}>
+      <TokenImportStatus />
       <div className={styles.cards}>
         {card(
           'colors',

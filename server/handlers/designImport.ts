@@ -8,6 +8,12 @@
  * scanned when their name looks like a token definition — see
  * `designImport/shared.ts`'s `isCandidateTokenFile`.
  *
+ * Classification (value-first, `var()`-resolved for the CSS path) is the
+ * SAME engine `server/handlers/studio/tokenExtract.ts` uses for the
+ * automatic, currently-open-project import — see
+ * `designImport/parseCssTokens.ts`'s module doc for why this module no
+ * longer carries its own, separately-drifting classifier.
+ *
  *   POST /admin/api/design-import/preview   body: { source: 'github'|'npm', ... }
  *       Fetches the source's matching files (nothing written to disk yet)
  *       and returns the CSS files alongside classified token candidates

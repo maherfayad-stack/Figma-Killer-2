@@ -47,6 +47,7 @@ import {
   SetPageTemplateInputSchema,
   ClearPageTemplateInputSchema,
   RenderSnapshotInputSchema,
+  StudioExportFramesInputSchema,
   type InsertHtmlInput,
   type GetNodeHtmlInput,
   type ReadDocumentInput,
@@ -87,6 +88,7 @@ import {
   runWriteCodeAsset,
 } from './codeAssetTools'
 import { runRenderSnapshotAtBreakpoint } from './renderSnapshotAtBreakpoint'
+import { runStudioExportFrames } from './studioExportFrames'
 import { parseImportedStyleCss, runApplyCss } from './cssTools'
 import {
   activeDocumentNodes,
@@ -655,6 +657,8 @@ export async function executeAgentTool(
         const breakpointId = parsed.breakpointId ?? getStoreState().activeBreakpointId
         return await runRenderSnapshotAtBreakpoint({ ...parsed, breakpointId })
       }
+      case 'studio_export_frames':
+        return await runStudioExportFrames(parseValue(StudioExportFramesInputSchema, rawInput))
       default:
         return aiToolError(`Unknown studio tool: ${toolName}`)
     }

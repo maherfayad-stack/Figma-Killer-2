@@ -8,7 +8,7 @@
 
 import type { StoreApi } from 'zustand'
 import type { Draft, Patches } from 'mutative'
-import type { FrameworkColorToken, FrameworkColorUtilityType, FrameworkPreferencesSettings, FrameworkScaleManualSize, FrameworkScaleMode, FrameworkSpacingClassGenerator, FrameworkSpacingGroup, FrameworkTypographyClassGenerator, FrameworkTypographyGroup } from '@core/framework-schema'
+import type { FrameworkColorToken, FrameworkColorUtilityType, FrameworkPreferencesSettings, FrameworkScaleManualSize, FrameworkScaleMode, FrameworkSettings, FrameworkSpacingClassGenerator, FrameworkSpacingGroup, FrameworkTypographyClassGenerator, FrameworkTypographyGroup } from '@core/framework-schema'
 import type {
   DecorativeSiteExplorerSectionId,
   DynamicPropBinding,
@@ -219,6 +219,16 @@ export interface SiteSlice {
   deleteNodes: (nodeIds: string[]) => void
   updateNodeProps: (nodeId: string, patch: Record<string, unknown>) => void
   /**
+   * instance-ui-01 — write ONE call-site prop on a `studio.instance` node
+   * (`props.callSiteProps.<propName>`), the WS-4.2/4.3 instance model's
+   * nested prop bag. Silently refuses (no-op, same convention as
+   * `updateNodeProps`) when `callSiteProps:<propName>` is code-valued —
+   * checked per-FIELD, unlike routing this through `updateNodeProps` itself
+   * would give (that action's own guard is keyed on the literal patch key
+   * `"callSiteProps"`, which can't see a per-field lock).
+   */
+  updateInstanceCallSiteProp: (nodeId: string, propName: string, value: unknown) => void
+  /**
    * Patch a node's inline styles (`node.inlineStyles`) — the per-node `style=""`
    * layer emitted by the publisher. A `null`/`undefined`/`''` value in the patch
    * removes that property; an empty resulting bag clears the field entirely.
@@ -306,6 +316,16 @@ export interface SiteSlice {
    * Reconcile then strips every stale framework classId from nodes.
    */
   setFrameworkPreset: (target: FrameworkPreset) => void
+
+  /**
+   * `tokens-01` — lands a server-derived token extraction result (see
+   * `server/handlers/studio/tokenExtract.ts`) into the live document. The
+   * server has already done the "never clobber existing values" merge and
+   * persisted it to `.studio/framework.json`; this just applies that SAME,
+   * already-merged result to `site.settings.framework` so the panel reflects
+   * it without waiting for a full reload. Studio-only — no-op wiring elsewhere.
+   */
+  applyExtractedFrameworkTokens: (framework: FrameworkSettings) => void
 
   // ─── Site fonts library ─────────────────────────────────────────────────
   /**

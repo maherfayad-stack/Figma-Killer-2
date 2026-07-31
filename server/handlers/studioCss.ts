@@ -29,14 +29,26 @@
  * later-parsed file winning. That matches CSS cascade order closely enough for
  * a read-only view and keeps `classIds` unambiguous.
  *
- * ## READ-ONLY (§6.6)
+ * ## Write-back mapping (§6.3, `panel-02`)
  *
- * There is no CSS writeback codemod. Editing one of these rules in the CSS
- * Classes panel updates the in-memory site document and is LOST on the next
- * reload — the `.css` file on disk is never rewritten. Two-way CSS editing
- * would need a CSS-text codemod alongside `ast-codemods`, which is a separate
- * initiative. This is documented in `docs/features/studio-import.md`; do not
- * let a user discover it by losing work.
+ * `sources` is the `StyleRule.id -> (file, selector)` map WS-6.3's write-back
+ * needs: `server/handlers/studioWriteback.ts`'s `kind: 'css'` edit dispatches
+ * to `@core/css-codemods`'s `setDeclaration` using exactly this file/selector
+ * pair. Only rules parsed from a REAL `.css` file on disk get an entry — a
+ * rule contributed by `extraCss` (Tailwind/Sass/PostCSS output, rewritten CSS
+ * Modules selectors — see "WS-2.1" below) has no single hand-authored file to
+ * point at, so it is left unmapped on purpose: the write path treats an
+ * unmapped rule id as "no editable source", which is the correct outcome for
+ * a generated class per `meta-03` decision 3. A non-`.css` stylesheet
+ * (`.scss`/`.sass`/`.less`, accepted as an IMPORT specifier by
+ * `collectPageStylesheets` but not a syntax `setDeclaration`'s postcss parse
+ * understands) is unmapped for the same reason — see the `/\.css$/i` guard
+ * below.
+ *
+ * A rule with NO mapping still edits fine in the CSS Classes panel — the
+ * in-memory `site.styleRules` entry updates immediately — it just does not
+ * reach disk; `StyleTargetChip` says so for that specific rule (see
+ * `classifyStylesheetEditability` for the exact wording per tier).
  *
  * ## WS-2.1 — compiled styles (`extraCss`)
  *
@@ -72,6 +84,14 @@ const MAX_STYLESHEET_BYTES = 2 * 1024 * 1024
  */
 const IMPORTED_RULE_TIMESTAMP = 0
 
+/** Where a `StyleRule` was parsed from, when it has a single hand-authored `.css` file to point at — see this module's "Write-back mapping" doc. */
+export interface StyleRuleSource {
+  /** Workspace-relative POSIX path, same convention as every `StudioEdit.nodeId`'s `rel`. */
+  file: string
+  /** The rule's selector exactly as written in that file — `setDeclaration`'s match key. */
+  selector: string
+}
+
 export interface StudioStyles {
   /** Keyed by rule id, ready to assign to `site.styleRules`. */
   styleRules: Record<string, StyleRule>
@@ -79,9 +99,11 @@ export interface StudioStyles {
   conditions: ConditionDef[]
   /** Class NAME -> rule id, for `classIdsForClassName`. Only names with a real rule appear. */
   classIdsByName: Record<string, string>
+  /** Rule id -> its source `.css` file + selector, for rules with one — see "Write-back mapping". */
+  sources: Record<string, StyleRuleSource>
 }
 
-const EMPTY_STYLES: StudioStyles = { styleRules: {}, conditions: [], classIdsByName: {} }
+const EMPTY_STYLES: StudioStyles = { styleRules: {}, conditions: [], classIdsByName: {}, sources: {} }
 
 /**
  * Deterministic rule id. Derived from the rule's identity so the same CSS
@@ -149,18 +171,32 @@ export async function loadStudioStyles(
   const styleRules: Record<string, StyleRule> = {}
   const conditionsById = new Map<string, ConditionDef>()
   const classIdsByName: Record<string, string> = {}
+  const sources: Record<string, StyleRuleSource> = {}
   let order = 0
 
-  const mergeParsedCss = (cssText: string): void => {
+  /**
+   * `sourceFile` is the workspace-relative `.css` path this text was read
+   * from, or `undefined` for `extraCss` (no single hand-authored file — see
+   * "Write-back mapping"). Only a literal `.css` file gets a `sources` entry
+   * — `.scss`/`.sass`/`.less` are accepted as import specifiers elsewhere in
+   * this pipeline but are not syntax `setDeclaration`'s postcss parse
+   * understands, so mapping one would let a save silently corrupt it.
+   */
+  const mergeParsedCss = (cssText: string, sourceFile?: string): void => {
     const parsed = cssToStyleRules(cssText, { sheetConstructor: SheetCtor })
     for (const condition of parsed.conditions) conditionsById.set(condition.id, condition)
 
+    const mappable = sourceFile !== undefined && /\.css$/i.test(sourceFile)
     for (const rule of parsed.rules) {
       const id = styleRuleId(rule.kind, rule.name)
       // A later stylesheet redefining the same name wins, matching cascade
       // order — `order` still advances so relative sort position is preserved.
       styleRules[id] = { ...rule, id, order: order++, createdAt: IMPORTED_RULE_TIMESTAMP, updatedAt: IMPORTED_RULE_TIMESTAMP }
       if (rule.kind === 'class') classIdsByName[rule.name] = id
+      // A later redefinition's mapping (or lack of one) replaces the earlier
+      // rule's, same "later wins" rule as `styleRules` itself above.
+      if (mappable) sources[id] = { file: sourceFile!, selector: rule.selector }
+      else delete sources[id]
     }
   }
 
@@ -169,10 +205,10 @@ export async function loadStudioStyles(
   for (const sheet of sheets.values()) {
     const cssText = readStylesheet(sheet)
     if (cssText === undefined) continue
-    mergeParsedCss(cssText)
+    mergeParsedCss(cssText, sheet.relPath)
   }
 
-  return { styleRules, conditions: [...conditionsById.values()], classIdsByName }
+  return { styleRules, conditions: [...conditionsById.values()], classIdsByName, sources }
 }
 
 function readStylesheet(sheet: PageStylesheet): string | undefined {

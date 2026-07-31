@@ -103,7 +103,9 @@ studio-workspace/<project>/          ← a real React repo. THE source of truth.
 - GitHub zipball import with path-traversal / zip-bomb guards
 - Multi-file page discovery + `.studio/meta.json` (`displayName`, `pagesDir`, `previewLocale`)
 - ts-morph parse, local-component inlining through barrels, tsconfig `paths` aliases
-- Static value resolution Tiers A/B/C, `.map` expansion, multi-return rendering
+- Static value resolution Tiers A/B/C, `.map` expansion, multi-return/ternary/`&&`
+  branch **selection** (parser-06 — one branch chosen, unlocked; the rest recorded
+  as `branchAlternatives`, never stacked)
 - Per-prop writability (`codeProps`), resolved-text writeback at its literal origin
 - Plain-CSS import → `StyleRule` registry + `node.classIds`
 - Compiled styles (WS-2.1/2.2): CSS Modules (`.module.css`, Tier 0) rewritten

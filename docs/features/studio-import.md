@@ -14,7 +14,7 @@ The load path is `GET /admin/api/studio/load?dir=<abs>` → `loadStudioPages` (`
 - **Local components are inlined.** A `<Card />` whose import resolves inside the workspace is expanded into its own JSX so the canvas shows real markup, not an opaque box. The call-site node is **replaced** by that JSX, not left wrapping it. Inlined nodes are **editable**, and the panel says how many places an edit will land in.
 - **Package components are not.** `@alm-design/design-system`'s `<Button />` stays a `alm.Button` node rendered by its own module.
 - **`.map` over a statically-resolved array is expanded** into one node per item, so a list renders as a list. Rows are locked (derived from data).
-- **Every `return` in a component renders**, not just the shallowest one. A screen with `if (stage === 'loading') return …` shows both branches, locked — the parser never picks between them.
+- **The parser SELECTS one `return`** (parser-06) — the last JSX-bearing one, the component's "normal" state — and leaves it unlocked. A screen with `if (stage === 'loading') return …` shows the branch that survives every guard; the guard branches are recorded as `label` + source location (`ParsedNode.branchAlternatives`), never rendered. A ternary/`&&` inside JSX gets the same treatment one level down (parser-07 closed a gap where `&&` used to render unconditionally, with no static check at all), and both honor a `useState(<literal>)` binding's own initial value as a real, first-paint answer when the condition names one.
 - **A component's array/object props survive.** `<ActionSheet actions={[{ label }, { label }]}/>` reaches the canvas as a real array, so the design-system component renders its buttons. HTML elements stay scalar-only (an attribute is a string).
 - **Non-literal values are statically resolved** where it is safe to — `{t.homepage.greeting}` becomes `"Hi Muhammad"`. Resolved nodes are **locked**, because writing an edited literal back over the expression would destroy the binding in the user's source file.
 - **Imported CSS is read-only.** `.css` files become `StyleRule`s and `node.classIds`, but **nothing is ever written back to a `.css` file**. An edit made in the CSS Classes panel is lost on the next reload. See [CSS is one-way](#css-is-one-way).
@@ -97,6 +97,52 @@ Sits alongside the existing `.studio/boards.json` and `.studio/framework.json`.
 
 Page discovery (`discoverPageFiles`) walks `pagesDir` recursively, returns sorted POSIX paths, and skips `EXCLUDED_WORKSPACE_DIR_NAMES` (`.studio`, `.git`, `node_modules`, `dist`, `.next`, `.turbo`). Both `.tsx` and `.jsx` are page files.
 
+### The app root is not always the project directory (`approot-01`)
+
+A GitHub import lands at `studio-workspace/<project>/`, but the real app's
+`package.json` doesn't have to sit there — a monorepo (`apps/web/`), an
+`examples/` folder, or a repo that keeps its app in a named subdirectory
+(`journey-screens/`) are all real shapes. `probeProject`'s `detectAppRoot`
+searches the project directory itself, then its immediate children, then
+their children (bounded, never a full-tree walk) for the nearest
+`package.json`, and stores the result on `ProjectProfile.appRoot` — a
+project-relative POSIX path, `''` when the app root is the project directory
+(the common case). When several candidates exist at the same depth (a real
+monorepo), it ranks them (framework config presence, `src/` presence,
+dependency count) and reports the full list on `appRootCandidates` plus an
+`app-root-ambiguous` warning, rather than silently picking.
+
+Every OTHER probe detector (framework, pages dir, style toolchain, aliases,
+component packages) runs rooted at the resolved app root — but every path
+`ProjectProfile` returns (`pagesDir`, `entryFiles`,
+`styleToolchain.*.configPath`) is re-prefixed with `appRoot` before being
+stored, so it stays project-relative and every existing `join(dir, ...)`
+call site (`projectPagesDir`, `styleCompileTier1.ts`) keeps working
+unchanged. A consumer that needs the app root ITSELF resolved — to spawn
+`bun install`, to resolve `<appRoot>/node_modules/<pkg>`, to bundle a
+package component — calls `resolveAppRoot(dir)` (`server/handlers/studio/
+appRoot.ts`), real-path containment-checked against `dir` (the value is
+cached in hand-editable `.studio/meta.json`, so it is never trusted blindly).
+
+### Install jobs survive a server restart (`infra-01`)
+
+The dev server runs under `bun --watch`, which restarts on every file edit —
+including edits an agent makes while a user's `bun install` job is still
+running. `installDeps.ts`'s job registry is an in-memory
+`Map<jobId, JobRecord>`, so a naive implementation would strand the client
+polling a `jobId` the new process has never heard of, 404ing forever (from
+the UI: "the install button did nothing"). Every job is now ALSO mirrored to
+`<appRoot>/.studio/install-job.json` (`installJobStore.ts`) at start and at
+completion. A status query that finds a record on disk with no matching
+in-memory job — the process that owned it is gone — resolves it to a
+terminal `'interrupted'` status rather than reporting a phantom `'running'`
+forever (`resolvePersistedJobStatus` in `installDeps.ts`). Both status routes
+(`GET /admin/api/studio/install/status?dir=` and
+`GET /admin/api/studio/install/:id?dir=`) go through this resolution, so a
+completed-then-restarted install is still reported correctly — paired with
+`hasNodeModules`'s live disk check, which settles whether dependencies
+actually landed regardless of what the job record itself could observe.
+
 ---
 
 ## Local-component inlining
@@ -121,18 +167,30 @@ The rule: an inlined node's id is
 
 > **Writeback guard.** `NODE_LOC_ID` (`studioWriteback.ts`) is a permissive `:line:col` pattern whose greedy `.*` matches straight *through* the separator. Run on a whole composite id it yields the right line and column with a file path of `pages/Home.jsx:77:19~components/Icon.jsx` — a path that does not exist, and if it ever did, a file the user never asked to modify. `studioEditLocation` therefore splits on `INLINE_ID_SEPARATOR` and keeps the **tail** before matching. Order is not optional.
 
-### The call site is replaced, not wrapped
+### The call site is an instance, not a wrapper (WS-4.2)
 
-`<SheetShell/>` renders SheetShell's own root `<div>` at that position; a component call emits no element of its own. So expansion **replaces** the call-site node with the component's root(s) (`spliceReference`) instead of nesting them under it.
+`<SheetShell/>` renders SheetShell's own root `<div>` at that position; a component call emits no element of its own. Through M2, expansion **replaced** the call-site node with the component's root(s) outright, so no node represented the call site at all. WS-4.2 replaces that with the **instance fragment model**: the call site is KEPT — it takes `moduleId: 'studio.instance'`, its own literal/resolved props move to `props.callSiteProps`, and the inlined subtree becomes its `children` instead of splicing into the call site's own position. `NodeRenderer` renders a `studio.instance` node as a bare React Fragment (`src/modules/base/instance/InstanceEditor.tsx`) — **zero DOM elements**, strictly better than the `display: contents` trick the design-system host uses (that still creates an element, which breaks `:nth-child`/sibling selectors landing on either side of it; a Fragment breaks nothing).
 
-A leftover wrapper div breaks two things silently:
+A leftover wrapper element breaks two things silently — this is why "zero DOM" is the whole point, not a detail:
 
 - **Percentage and flex height chains.** `.sheet-shell { height: 100% }` resolves against the wrapper's `auto` height, collapsing the shell to its own content height and every `flex: 1` scroll viewport inside it to 0. Measured on the eSIM corpus: 1447px of a screen's body clipped to nothing, with the header still visible above it.
 - **Direct-child and sibling combinators** that cross the call site: `.sheet-shell__panel > .booking-confirmation__scroll` stops matching.
 
-This is the same invariant the per-frame iframe exists to protect (`IframeFrameSurface`, "no `display: contents` NodeWrapper divs"): the canvas DOM must be the DOM React renders, or authored CSS quietly means something different here than in the app.
+This is the same invariant the per-frame iframe exists to protect (`IframeFrameSurface`, "no `display: contents` NodeWrapper divs"): the canvas DOM must be the DOM React renders, or authored CSS quietly means something different here than in the app. `tests/e2e/instance-fragment-node.e2e.ts` proves both halves against the real eSIM corpus in a real browser: `.sheet-shell`'s `height: 100%` resolves to a real, non-trivial pixel height (not a collapsed one), and `.sheet-shell`'s DOM parent is the page's own root container with nothing editor-inserted in between.
 
-The trade-off is that a call site's own literal props (`<Icon size={24}/>`'s `size`) are no longer editable *as a node*, because no node represents the call site. Those values still reach the canvas by substitution into the subtree, and are edited where they actually live.
+Unlike the old replace-in-place design, a call site's own literal props (`<Icon size={24}/>`'s `size`) **are** now editable — as `ParsedNode.instanceOf.callSiteProps`, because the call site keeps its own id (a real, writable source location, never composite) instead of being deleted. `parsedPageToSitePage.ts` mirrors `instanceOf` onto `PageNode.props` as `{ componentName, source, sourceFile, callSiteProps }`, and a non-writable call-site prop is named `callSiteProps:<name>` in `codeProps` — the same `style:<property>` convention `isPropWritableToSource` already generically supports, so writability needed no new predicate. `applyStudioEdit` (`studioWriteback.ts`) strips the `callSiteProps:` prefix before calling `setJsxProp`, because the instance node's own id **is** the call site.
+
+### Detach and swap (WS-4.4/4.5)
+
+`src/core/ast-codemods/detachComponent.ts` inlines a LOCAL instance's own JSX at its call site, substituting the callee's params with the call site's own argument **expressions** (never evaluated values — `title={plan.name}` stays a binding), reconciling every import the pasted JSX now needs, and removing the component's import if this was its last usage. It **refuses**, with a specific reason, rather than guessing: a hook call anywhere in the body (`uses-hooks`), a `.map` over one of the component's own props (`maps-over-props`), an undestructured `props` parameter (`unsupported-params`), a package (not local) component (`package-component`), or an unresolvable declaration (`unresolvable`). A component with more than one JSX-bearing `return` (parser-06 already selects one) is **not** refused — detach inlines the branch actually shown and reports it via `branchNote`.
+
+`src/core/ast-codemods/extractComponentCopy.ts` is the refusal escape hatch: duplicate the component under the next free numeric suffix (`Card` → `Card2`), rename the copy's own export, and repoint just the one call site — no inlining, so none of detach's refusal conditions apply.
+
+`src/core/ast-codemods/swapComponentInstance.ts` retargets an instance at a different component: renames the JSX tag (self-closing, or opening+closing — a self-closing element's `.getParent()` is whatever CONTAINS it, not "its own open+close pair"; get that wrong and a nested instance's swap corrupts the ENCLOSING element's closing tag instead — a real bug this module's tests caught and pin down), adds/repoints the import, and diffs the prop sets — a prop the new component doesn't accept is removed and reported (`removedProps`), a required prop (no destructured default) the new component adds is left for the user to fill in and reported (`unfilledRequiredProps`), never synthesized. Refuses when the new name would shadow an existing binding in the page file.
+
+All three share `resolveComponentCallSite.ts`'s "what does this JSX tag identifier actually refer to" resolution — the same local/package classification, barrel/rename-aware lookup, and declaration walk `inlineLocalComponents.ts` uses for the identical question.
+
+Measured against the real eSIM corpus (139 `studio.instance` nodes on the board): 59 detach cleanly; 42 refuse `uses-hooks` (`StatusBar`'s `useState`, and `useLanguage()` — the i18n hook — used throughout); 38 have no single writable call-site location at all (they sit inside a `.map()` row — the pre-existing, unrelated "no writable source location" rule, unchanged by WS-4).
 
 ### Imports are followed through barrels
 
@@ -223,20 +281,42 @@ Decline and the call site keeps its single `dynamic — rendered in code` placeh
 
 Measured on the eSIM corpus: 955 → 1062 nodes, 60 → 78 rendered icons (many icons live inside list rows), 773 → 868 styled elements.
 
-### Every `return` renders — no branch is chosen
+### One `return` renders — the parser SELECTS a branch (parser-06)
 
-`getReturnedJsxRoots` returns **every** JSX-producing `return` in a component's body, in source order, and `parseJsxTree` walks all of them into one `ParsedPage`.
+`getReturnedJsxRoots` finds **every** JSX-producing `return` in a component's body, in source order, but marks exactly **one** `chosen`; `parseJsxTree` walks only that one into real `ParsedNode`s.
 
-It used to sort the returns by block depth and take the shallowest, which systematically preferred the *fallback* and dropped the *special case*: `EsimAddonIcon`'s data-usage ring — an `<svg>` plus a percentage label behind `if (type === 'ring')` — never appeared on any of the four cards that use it, and multi-stage screens collapsed to their last `return`.
+This replaced an earlier policy change that went the other way: for a while, EVERY JSX-bearing return rendered, stacked and locked, reasoning that choosing a branch would mean evaluating the condition (Tier D) — the same rule already applied to a ternary's two sides. That was correct about the tier boundary and wrong about the user experience: it put a genuine, measured visual defect on the board. A card with a loading state, an empty state, and a loaded state rendered **all three, stacked in a column**, on every screen that used it — never what a real user sees. Measured on the eSIM corpus before this change: 176 `MULTI_BRANCH_ALL_RENDERED` findings, the second-most-common finding on the board, and the homepage screen's "2 eSIMs for your trip" card rendered three times in three different visual states.
+
+**The rule: the LAST JSX-bearing return is chosen.** Guard clauses — loading, empty, error — are overwhelmingly written as early returns; the return that survives every guard is the component's real, "normal" content. This is still not Tier D: nothing is *evaluated* (no `loading`/`stage` variable is ever read) — only a *position* in the source is preferred, the same kind of decision the label-derivation below already makes about which `if` a return sits under.
 
 | Rule | Why |
 |---|---|
-| All JSX-bearing returns contribute nodes | Same rule already applied one level down, where a ternary contributes both sides. Choosing would mean evaluating the condition — Tier D |
-| Each subtree is locked, `one branch of several — chosen in code` | Which branch runs is not knowable here, so it is not an editable surface |
-| A `return null` guard does **not** count | It contributes no nodes; counting it would lock an entire editable screen for `if (!data) return null` |
+| The LAST JSX-bearing return is `chosen`; it alone contributes nodes | Guard clauses return early; the return that survives every guard is the normal state |
+| The chosen branch is **unlocked** | The structure at that location is completely ordinary — the parser is certain of it, it only chose which of several runtime states to show by default |
+| Every OTHER branch is recorded as a `BranchAlternative` (a label + its own source location) on the chosen node, via `ParsedNode.branchAlternatives` — never parsed into nodes | Cheap (zero node-count cost), and honest: the alternative is addressable, not silently discarded, without pretending the parser knows it also renders |
+| The label is the branch's own guard `if` condition text (`"loading"`, `"!items.length"`), or a positional fallback | Matches how a person reading the source would name the branch |
+| A `return null` guard does **not** count | It contributes no nodes; counting it would make a single real return look like "the chosen one of several" for no reason |
 | Returns inside a nested callback are ignored | They belong to the callback, not the component |
+| A component whose ONLY return sits inside an `if`, with no fallback return | Treated as a plain single-return component — nothing to choose between |
 
-Measured on the eSIM corpus: 1062 → 1154 nodes, 161 → 181 text-bearing nodes.
+**A ternary or `&&` inside JSX gets the identical treatment one level down** (`selectJsxBranch` in `src/core/page-parser/branchSelection.ts`): a ternary prefers the consequent (same "first-written branch is normal" rule), and BOTH honor a statically-decidable condition over the heuristic when one is available — a real answer always outranks a guess at "which is normal". `||`, and any construct the walk cannot resolve to a single branch/row (an unresolvable `.map`, another function call), are unchanged — still shown and locked as `dynamic — rendered in code`.
+
+**`&&` (parser-07)** used to be the one branch-selection path with no static check at all — its right side rendered UNCONDITIONALLY, so `{showDataHelp && <Overlay/>}` stacked the overlay on the base screen even when `showDataHelp` starts `false`. Measured against the real eSIM board: 3 of 15 screens rendered wrong for exactly this reason. It now gets the SAME `evaluateStaticCondition` check the ternary side always had:
+
+| Condition | Result |
+|---|---|
+| Statically **false** | Nothing renders at this position — no node, not even a locked one, because the source places nothing here |
+| Statically **true** | The right side renders, unlocked, no alternative (nothing to switch to) |
+| Not statically decidable | Falls back to today's behaviour (render the right side), but now records the HIDDEN state as a `branchAlternatives` entry pointing at the same JSX — not silently assumed away |
+
+`evaluateStaticCondition` (Tier A/B only) covers a literal, a module-scope const, AND — parser-07 — a binding's own DEFAULT literal value, read directly off the source (`src/core/page-parser/staticEvalCore.ts`'s `resolveConditionDefaultLiteral`). Two shapes, checked in order, a name is never both:
+
+1. **A destructured prop parameter's own default** — `function Foo({ introVariant = 'checklist' })` reads `'checklist'` the same way `componentSubstitution.ts`'s `buildSubstitutionEnv` already does for a locally-inlined call site's fallback value; this is that identical read, reached when there is no call site at all (a page parsed standalone, which is exactly how a `.studio/boards.json` screen gets parsed).
+2. **A `const [x] = useState(<default>)` binding** — `const [showDataHelp] = useState(false)` reads the literal `false` directly; `const [step] = useState(initialStep)` recurses ONE hop into lookup 1 when the argument is itself a defaulted parameter (the real eSIM shape — `ActivationFlowScreen`'s five `step === '…' && <Screen/>` overlays are gated by exactly this: `useState(initialStep)` where `initialStep = 'intro'` is the parameter's own default, not a bare literal at the call).
+
+Both are Tier A, not Tier D — nothing is executed, no hook runs, no setter is simulated, no call site is guessed at; the literal the author wrote in the signature/hook call is read the same way a `const` initializer already is, and the result is the component's FIRST PAINT with no props passed, exactly what a design tool should show by default. The boundary is narrow and deliberate: the default must itself be a bare literal (a computed/prop-derived value with no default anywhere stays unresolvable), the binding must never be reassigned elsewhere in the function body (a `let`-mutated pair falls back to unresolvable too), only the function's own top-level statements/first parameter are scanned (flat, not block-scoped — same simplification `buildComponentLocals` already makes), and — critically — this is wired ONLY into condition evaluation, never into the general identifier-resolution chain (`resolveIdentifier`/`buildComponentLocals`) every other Tier A/B path shares. Wiring it in generally would also feed Tier B.4's dynamic-dictionary-key pick (`translations[lang]` where `lang` is `useState('en')`), silently overriding the `previewLocale` option the language-switcher pattern depends on — see `staticEval.test.ts`'s provider-tracing tests.
+
+Measured on the eSIM corpus, before parser-06: 176 `MULTI_BRANCH_ALL_RENDERED` findings. See `STATE.md`'s `parser-06`/`parser-07` entries for the after counts.
 
 ### Locked nodes still show their text
 
@@ -574,11 +654,42 @@ This is the same move `resolveViewportUnits` makes for `vh`: give authored CSS a
 
 ## What still does not import
 
-Honest list, all deliberate:
+Honest list, all deliberate. WS-9.4 (`server/ai/mcp/tools/studio/fidelityCodes.ts`)
+turns every one of these that a loaded page tree can actually detect into a
+stable, machine-readable finding code `studio_fidelity_report` emits. Six more
+codes are reused verbatim from the project probe's own `ProbeWarning.code`
+(`server/handlers/studio/projectProfileSchema.ts`) — `studio_project_profile`
+and `studio_fidelity_report` return the SAME code for the same issue. A `—` in
+the Code column means the limitation below is real but not yet turned into an
+automatic finding (either it's a codemod/tooling constraint with no per-node
+signal, or the underlying compile step doesn't surface a warning through the
+page-load pipeline yet) — `fidelityCodes.test.ts` gates that every code in
+this table exists in the registry and vice versa, so a code can only appear
+here once it is genuinely detectable.
+
+| Code | Limitation |
+|---|---|
+| `SVG_BUILT_DYNAMICALLY` | A transform's own effect (`applyTokens(svg)` loops) or dynamically-constructed inline SVG markup. |
+| `DYNAMIC_CONTENT_UNRESOLVED` | `.map` over data the parser cannot read; a computed `className` interpolation that isn't statically resolvable; an image behind hook state. |
+| `BRANCH_AUTO_SELECTED` | **info, not a defect** (`mcp-02`, replacing the retired `MULTI_BRANCH_ALL_RENDERED` — see [One `return` renders](#one-return-renders--the-parser-selects-a-branch-parser-06)) — the parser found more than one `return`/ternary/`&&` branch and SELECTED one (the node is NOT locked); the untaken alternative(s), each a label + source location, are read straight off `PageNode.branchAlternatives`. Verify the auto-selected branch is the one that matters for the audit — a real run (`studio_render_reference`) is the only way to confirm which branch a user actually sees. |
+| `SPREAD_PROPS_UNRESOLVED` | An element spreads an arbitrary prop bag (`{...rest}`). |
+| `CODE_VALUED_PROP` | A prop §7 resolved is read-only (that one prop, not its literal siblings or the node); nothing on a `.map` row is editable except its own copy. |
+| `dependencies-not-installed` | Package CSS/components/`?raw` icons resolve to nothing until `studio_install_deps` runs. |
+| `pages-dir-heuristic` / `pages-dir-not-found` | The pages directory was guessed or not found. |
+| `tailwind-config-not-found` / `vite-entry-not-found` / `next-config-no-routes-found` | Project-level config gaps the probe found. |
+| `—` | CSS Modules only compiles `.module.css` (Sass/Less module variants detected, not compiled). |
+| `—` | Sass/Less/PostCSS/Tailwind compilation needs the project promoted past Tier 0 (`style-toolchain-requires-trust-promotion`, not yet surfaced through the page-load pipeline). |
+| `—` | CSS-in-JS (`styled-components`/`emotion`/`stitches`) is detected, never compiled. |
+| `—` | Linked package dependencies (a `?raw` import from a symlinked `file:../pkg`) do not resolve. |
+| `—` | A JSX-valued prop that is not an icon is dropped rather than flattened. |
+| `—` | Only the `previewLocale` branch renders; the other locale/RTL is not applied. |
+| `—` | One attribute of an inline `<svg>` that depends on a prop/state is omitted (the graphic still serialises). |
+| `—` | `{children}` splicing depth (does not occur in practice). |
+| `—` | Renaming a component reference — `studio_codemod`'s `rename-tag` renames HTML elements only. |
 
 - **A transform's own effect.** `applyTokens(svg)` loops, so the call does not resolve; the icon renders with the source's raw fills instead of the token-substituted ones ([why](#svg-through-a-transform-the-evaluator-cannot-run)). A transform written without a loop resolves normally.
 - **`.map` over data the parser cannot read.** A resolved array is expanded ([above](#bounded-loop-expansion--not-tier-d)); an array reached through props/state/fetch stays one locked, opaque node.
-- **Multi-stage screens show every stage at once**, stacked and locked, because choosing one is Tier D. Honest, but a screen with four stages is four screens tall on the board.
+- **Multi-stage screens show ONE stage** (parser-06) — the last JSX-bearing `return`, unlocked. The other stages are not rendered; each is recorded as a `label` + source `loc` on the chosen node's `branchAlternatives`, never materialized into nodes. Still not Tier D: nothing is evaluated, only a source POSITION is preferred. What is genuinely still not possible: showing more than one stage on the board at once (that would need editor-side branch-switching UI, not built here — see `STATE.md`'s `parser-06` handoff), and a stage the heuristic picks wrong (the last `return` is overwhelmingly the "normal" one, but a component that orders its returns unusually can still surprise).
 - **Computed `className` whose interpolation isn't statically resolvable.** `` className={`esb esb--${tone}`} `` keeps only its static prefix when `tone` cannot be resolved. As of WS-2.2 this is much narrower than it used to be — a CSS Modules value (`styles.card`), a resolved const, or a `cn()`/`clsx()` call now resolves through the evaluator — but a genuinely runtime-only interpolation (component state, an unresolvable prop) still keeps only the prefix. The plan's WS-2.4 variant probe (pick the default variant from an enumerable prop union, record a `resolution.note`) is not implemented.
 - **CSS Modules only compiles `.module.css`.** `.module.scss`/`.module.sass`/`.module.less` are detected (`css-module-sass-not-supported` warning) but not compiled — that needs Sass/Less compilation (Tier 1) BEFORE the class-name renamer could run, and this slice doesn't wire that chain.
 - **Sass/Less/PostCSS/Tailwind compilation needs the project promoted past Tier 0.** A freshly-imported project defaults to Tier 0 (`static`, `meta-03` decision 1) and never auto-promotes; `styleCompile.ts` returns a `style-toolchain-requires-trust-promotion` warning and compiles nothing until the user explicitly promotes the project's trust tier.
@@ -587,8 +698,8 @@ Honest list, all deliberate:
 - **A JSX-valued prop that is not an icon.** `iconPropFromJsx` recovers inline SVG markup one level deep; a prop holding a nested layout is dropped rather than flattened.
 - **Only the `previewLocale` branch.** The other locale exists in the dictionary but is not rendered; RTL is not applied.
 - **One attribute of an inline `<svg>` that depends on a prop or state.** The graphic serialises; the unresolvable attribute is omitted ([above](#an-svg-written-as-jsx-elements-is-serialised)). A ring drawn from `strokeDashoffset={f(props.percent)}` shows its track without its progress arc.
-- **An image behind hook state.** `SLIDE_IMAGES[index]` where `index` is `useState(0)` does not resolve — reading hook state is Tier D. The two carousel slides on the eSIM corpus are the only instances.
-- **An `<img>` in a JSX branch the source would not take.** Every branch renders (Tier D), so `{addOn.image ? <img …/> : <Icon …/>}` yields an `<img>` with no `src` for the items that carry an `icon` instead.
+- **An image behind hook state.** `SLIDE_IMAGES[index]` where `index` is `useState(0)` does not resolve. Not a Tier D ban (parser-07 established that reading a `useState(<literal>)`'s own initial value is a Tier A source read, not execution) — a deliberate SCOPING decision: that read is wired only into `evaluateCondition` (JSX branch selection), never into `resolveIdentifier`/`buildComponentLocals`, the chain element/property access shares with Tier B.4's dynamic-dictionary-key pick. Wiring it in generally would silently override the `previewLocale` option for the common `useState('en')` language-switcher shape — see [One `return` renders](#one-return-renders--the-parser-selects-a-branch-parser-06)'s `&&` section. The two carousel slides on the eSIM corpus are the only instances of the array-index case.
+- **A ternary/`&&` branch the heuristic guesses wrong.** `selectJsxBranch` (parser-06) prefers the CONSEQUENT unless the condition is statically decidable, so `{addOn.image ? <img …/> : <Icon …/>}` renders `<img>` even for the items that actually carry an `icon` at runtime — the untaken `<Icon …/>` is recorded as a `branchAlternatives` entry (label + location), not rendered. Was previously "every branch renders", which showed BOTH; this is now a single, sometimes-wrong guess instead of an always-honest stack. Extract the condition to a module-scope const to get the real answer instead of the guess.
 - **`{children}` splicing depth.** Spliced content that is itself an intermediate inlined id from a deeper nesting level would produce a dangling reference. Does not occur in practice; documented in `inlineLocalComponents.ts` rather than solved with general bookkeeping.
 - **A prop §7 resolved is read-only** — that one prop, not its literal siblings and not the node ([above](#structure-is-locked-values-are-decided-per-prop)). Editing a resolved value would replace the expression that produces it.
 - **Nothing on a `.map` row is editable except its own copy.** One piece of source JSX renders every row, so a prop or style write there would change all of them. Its text escapes this because each iteration resolved a different array element and `textOrigin` names the literal.
@@ -604,7 +715,7 @@ Honest list, all deliberate:
 | Value evaluator, all tiers + guards | `src/core/page-parser/__tests__/staticEval.test.ts` |
 | Local-component inlining | `src/core/page-parser/__tests__/inlineLocalComponents.test.ts` |
 | `.map` expansion | `src/core/page-parser/__tests__/staticLoopExpansion.test.ts` |
-| Every `return` renders, `return null` guards don't lock | `src/core/page-parser/__tests__/multipleReturns.test.ts` |
+| Branch SELECTION (multi-return, ternary, `&&`), `return null` guards don't count, a statically-resolvable condition outranks the heuristic | `src/core/page-parser/__tests__/multipleReturns.test.ts` |
 | Structured + JSX-valued props | `src/core/page-parser/__tests__/structuredProps.test.ts` |
 | `?raw` imports, `node_modules`, symlink containment, transform fallback | `src/core/page-parser/__tests__/rawSvgImports.test.ts` |
 | Image imports through data structures, inline-`<svg>` serialisation, Tier A operators | `src/core/page-parser/__tests__/imageAssetsAndInlineSvg.test.ts` |

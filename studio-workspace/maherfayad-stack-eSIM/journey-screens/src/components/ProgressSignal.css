@@ -1,0 +1,48 @@
+.esim-progress {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  width: 100%;
+}
+
+.esim-progress__track {
+  display: flex;
+  gap: var(--space-2xs);
+  width: 100%;
+}
+
+.esim-progress__seg {
+  position: relative;
+  flex: 1;
+  height: 4px;
+  border-radius: var(--rounded-full);
+  background: var(--color-alice);
+  overflow: hidden;
+}
+
+.esim-progress__seg::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  width: 0%;
+  border-radius: inherit;
+  background: var(--color-aqua-100);
+  transition: width 0.45s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.esim-progress__seg--filled::after {
+  width: 100%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .esim-progress__seg::after {
+    transition: none;
+  }
+}
+
+.esim-progress__label {
+  font-family: var(--font-body);
+  font-size: var(--type-meta-size);
+  line-height: var(--type-meta-lh);
+  color: var(--text-base-subtext);
+}

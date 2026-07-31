@@ -31,6 +31,7 @@ import type { PageNode } from '@core/page-tree'
 import { WarningDiamondSolidIcon } from 'pixel-art-icons/icons/warning-diamond-solid'
 import { ErrorBoundary } from '@ui/components/ErrorBoundary'
 import { ModuleSandboxFrame } from './ModuleSandboxFrame'
+import { PackageComponentPlaceholder } from './PackageComponentPlaceholder'
 import { CanvasBreakpointContext, CanvasPageContext, CanvasSelectionContext, CanvasTemplateContext } from './CanvasContexts'
 import {
   addEditorFormPreviewProps,
@@ -39,7 +40,7 @@ import {
 } from './canvasFormPreview'
 import { useResponsiveBackgroundStyle } from '@admin/shared/media/hooks/useResponsiveBackgroundStyle'
 import { getCanvasNodeClassIds, getCanvasNodeClassName } from './canvasNodeClassName'
-import { findEnclosingComponentRef, type AnnotatedPageNode } from './canvasSelectionUtils'
+import { findEnclosingComponentRef, findEnclosingInstance, type AnnotatedPageNode } from './canvasSelectionUtils'
 import { useLoopPreviewItems } from './useLoopPreviewItems'
 import styles from './NodeRenderer.module.css'
 
@@ -118,21 +119,34 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
   const { onNodeClick, onNodeHover, onNodeContextMenu, onNodeDoubleClick } = use(CanvasSelectionContext)
 
   const handleNodeClick = (clickedNodeId: string, e: React.MouseEvent) => {
-    // B3 — VC lock-down: redirect clicks inside inlined VC bodies to the ref node.
     // Imperative store access is correct here (event handler, not render path).
     const state = useEditorStore.getState()
-    if (state.activeDocument?.kind !== 'visualComponent') {
-      const page = selectCanvasPageFor(state, contextPageId)
-      if (page) {
-        const enclosing = findEnclosingComponentRef(
-          page.nodes as Record<string, AnnotatedPageNode>,
-          clickedNodeId,
-        )
-        if (enclosing !== null && !enclosing.isInsideSlotContent) {
-          // Clicked inside a VC body (not slot content) — route to the ref.
-          onNodeClick(enclosing.refId, e, breakpointId)
-          return
-        }
+    const page = selectCanvasPageFor(state, contextPageId)
+
+    // instance-ui-01 — Figma's nesting model for `studio.instance` (WS-4.2):
+    // a click anywhere inside a not-yet-entered instance's subtree selects
+    // the INSTANCE, not the specific descendant. Checked before the VC
+    // lock-down below — the two mechanisms are independent (real tree nodes
+    // vs. an in-memory `_owningRefId` annotation) and a click resolves to at
+    // most one of them in practice.
+    if (page) {
+      const enclosingInstance = findEnclosingInstance(page, clickedNodeId, state.enteredInstanceIds)
+      if (enclosingInstance !== null) {
+        onNodeClick(enclosingInstance, e, breakpointId)
+        return
+      }
+    }
+
+    // B3 — VC lock-down: redirect clicks inside inlined VC bodies to the ref node.
+    if (state.activeDocument?.kind !== 'visualComponent' && page) {
+      const enclosing = findEnclosingComponentRef(
+        page.nodes as Record<string, AnnotatedPageNode>,
+        clickedNodeId,
+      )
+      if (enclosing !== null && !enclosing.isInsideSlotContent) {
+        // Clicked inside a VC body (not slot content) — route to the ref.
+        onNodeClick(enclosing.refId, e, breakpointId)
+        return
       }
     }
     onNodeClick(clickedNodeId, e, breakpointId)
@@ -142,21 +156,55 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
     onNodeContextMenu(clickedNodeId, e, breakpointId)
   }
 
+  /**
+   * instance-ui-01 — Figma's "Enter / double-click enters it and selects the
+   * inner node under the cursor". A double-click on a node inside a
+   * not-yet-entered instance enters that instance (pushes it onto
+   * `enteredInstanceIds`) and selects the EXACT descendant that was
+   * double-clicked directly (bypassing `handleNodeClick`'s own redirect,
+   * which would otherwise just reselect the instance we're entering) —
+   * instead of the module's ordinary double-click behaviour (inline text
+   * edit). A double-click on a node inside an ALREADY-entered instance falls
+   * through to that ordinary behaviour unchanged.
+   */
+  const handleNodeDoubleClick = (clickedNodeId: string, e: React.MouseEvent) => {
+    const state = useEditorStore.getState()
+    const page = selectCanvasPageFor(state, contextPageId)
+    if (page) {
+      const enclosingInstance = findEnclosingInstance(page, clickedNodeId, state.enteredInstanceIds)
+      if (enclosingInstance !== null) {
+        state.enterInstance(enclosingInstance)
+        onNodeClick(clickedNodeId, e, breakpointId)
+        return
+      }
+    }
+    onNodeDoubleClick(clickedNodeId, e, breakpointId)
+  }
+
   const handleNodeHover = (hoveredNodeId: string | null) => {
     if (hoveredNodeId !== null) {
-      // B3 — VC lock-down: clamp hover ring to the ref node for VC body nodes.
       const state = useEditorStore.getState()
-      if (state.activeDocument?.kind !== 'visualComponent') {
-        const page = selectCanvasPageFor(state, contextPageId)
-        if (page) {
-          const enclosing = findEnclosingComponentRef(
-            page.nodes as Record<string, AnnotatedPageNode>,
-            hoveredNodeId,
-          )
-          if (enclosing !== null && !enclosing.isInsideSlotContent) {
-            onNodeHover(enclosing.refId, breakpointId)
-            return
-          }
+      const page = selectCanvasPageFor(state, contextPageId)
+
+      // instance-ui-01 — clamp the hover ring to the enclosing not-yet-
+      // entered instance, same redirect as click above.
+      if (page) {
+        const enclosingInstance = findEnclosingInstance(page, hoveredNodeId, state.enteredInstanceIds)
+        if (enclosingInstance !== null) {
+          onNodeHover(enclosingInstance, breakpointId)
+          return
+        }
+      }
+
+      // B3 — VC lock-down: clamp hover ring to the ref node for VC body nodes.
+      if (state.activeDocument?.kind !== 'visualComponent' && page) {
+        const enclosing = findEnclosingComponentRef(
+          page.nodes as Record<string, AnnotatedPageNode>,
+          hoveredNodeId,
+        )
+        if (enclosing !== null && !enclosing.isInsideSlotContent) {
+          onNodeHover(enclosing.refId, breakpointId)
+          return
         }
       }
     }
@@ -206,6 +254,15 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
 
   const definition = registry.get(node.moduleId)
   if (!definition) {
+    // WS-3.3 — an unregistered `pkg.*` node is an EXPECTED, actionable state
+    // (Tier 0, a bundle refusal, or a fetch in flight), not a broken
+    // reference — show `PackageComponentPlaceholder` instead of the generic
+    // "Unknown module" box. Any other unregistered id (a stale `alm.*`
+    // reference, a plugin module pack that failed to activate, …) keeps the
+    // original fallback.
+    if (node.moduleId.startsWith('pkg.')) {
+      return <PackageComponentPlaceholder moduleId={node.moduleId} />
+    }
     return (
       <div
         className={styles.unknownModule}
@@ -307,7 +364,7 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
       if (isCanvasEditorControlTarget(e.target, e.currentTarget)) return
       e.preventDefault()
       e.stopPropagation()
-      onNodeDoubleClick(nodeId, e as unknown as React.MouseEvent, breakpointId)
+      handleNodeDoubleClick(nodeId, e as unknown as React.MouseEvent)
     },
     onDoubleClick: (e) => {
       if (!isClosestCanvasNodeTarget(e.target, e.currentTarget)) return
@@ -317,7 +374,7 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
       }
       e.preventDefault()
       e.stopPropagation()
-      onNodeDoubleClick(nodeId, e as unknown as React.MouseEvent, breakpointId)
+      handleNodeDoubleClick(nodeId, e as unknown as React.MouseEvent)
     },
     onContextMenuCapture: (e) => {
       if (!isClosestCanvasNodeTarget(e.target, e.currentTarget)) return

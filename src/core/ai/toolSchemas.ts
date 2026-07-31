@@ -412,3 +412,28 @@ export const RenderSnapshotInputSchema = Type.Object({
   breakpointId: Type.Optional(Type.String({ minLength: 1 })),
   nodeId: Type.Optional(Type.String({ minLength: 1 })),
 })
+
+// ---------------------------------------------------------------------------
+// studio_export_frames (WS-9.2) — browser-bridged, batch Studio board capture
+//
+// Model-facing shape. Unlike `RenderSnapshotInputSchema` there is no
+// `breakpointId`: every Studio board frame shares ONE synthetic breakpoint
+// (`'studio'`, `BoardFramesLayer.tsx`), each at its OWN authored width — a
+// tool-wide "width" parameter would silently misdescribe a project with
+// differently-sized frames. Resize a frame first with `studio_set_frames` if
+// a specific width is needed; the response reports each frame's actual
+// captured width/height so a caller never has to guess what it got.
+// ---------------------------------------------------------------------------
+
+export const StudioExportFramesInputSchema = Type.Object({
+  pageIds: Type.Array(Type.String({ minLength: 1 }), {
+    minItems: 1,
+    maxItems: 20,
+    description: 'Studio page ids (from studio_list_pages) to export, batched in one call. Each must be a frame on the currently open board.',
+  }),
+  dpr: Type.Optional(Type.Number({
+    minimum: 0.5,
+    maximum: 3,
+    description: 'Output pixel-density multiplier applied to each frame\'s native captured size (e.g. 2 for a retina-equivalent PNG). Still capped so no image edge exceeds the shared vision-safe limit. Default 1.',
+  })),
+})

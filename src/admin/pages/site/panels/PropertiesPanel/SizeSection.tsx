@@ -17,7 +17,7 @@ import type { CSSPropertyBag } from '@core/page-tree'
 import { Button } from '@ui/components/Button'
 import { CloseIcon } from 'pixel-art-icons/icons/close'
 import { ClassPropertyRow } from './ClassPropertyRow'
-import { TokenAwareInput } from '@site/property-controls/TokenAwareInput'
+import { ScrubInput } from '@ui/components/ScrubInput'
 import { getCSSPropertyDefaultValue } from './cssControlTypes'
 import { hasStyleValue } from './styleValueUtils'
 import styles from './SizeSection.module.css'
@@ -198,16 +198,16 @@ function DimensionCell({
       data-state={isSet ? 'set' : 'unset'}
       data-testid={`css-size-input-${String(property)}`}
     >
-      <TokenAwareInput
+      <ScrubInput
         aria-label={ariaLabel}
-        prefix={label}
+        label={label}
         value={isSet ? String(storedValue) : undefined}
         placeholder={placeholder}
-        tokens={[]}
-        onCommit={(resolved) => onChange(property, resolved)}
+        onChange={(resolved) => onChange(property, resolved)}
         onPreview={onPreview ? (resolved) => onPreview(property, resolved) : undefined}
         onClearPreview={onClearPreview}
         className={styles.dimInput}
+        data-testid={`css-size-scrub-${String(property)}`}
       />
       {isSet && (
         <Button

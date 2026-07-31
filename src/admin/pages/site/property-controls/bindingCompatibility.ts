@@ -29,6 +29,8 @@ type DynamicBindingMode = 'token' | 'structured'
  *   TypeBox validation will coerce unknown dynamic values back to defaults.
  * - `color` has no binding mode until data has a first-class color field type.
  * - `group` has no meaningful scalar binding target.
+ * - `slot` holds a `studio-slot:<nodeId>` sentinel naming a materialized
+ *   child node (WS-3.4) — not a scalar, nothing to bind.
  * - `pageTree` and `fieldSchema` are structural cell types that hold whole
  *   documents (a page-node tree and a DataField[] array). They are not
  *   bindable to any property control — page authors cannot wire a page tree
@@ -55,6 +57,7 @@ export const BINDING_COMPATIBILITY: Record<PropertyControlKind, readonly DataFie
   dataTable: [],
   image:    ['media'],
   media:    ['media'],
+  slot:     [],
   // Structural (document-level) types: not scalar-bindable, listed here for
   // coverage-test completeness only — the picker excludes them from the
   // binding catalog via buildMetaFields in src/core/data/fields.ts.
@@ -102,6 +105,7 @@ export function getDynamicBindingMode(control: PropertyControl): DynamicBindingM
     case 'dataTable':
     case 'svg':
     case 'group':
+    case 'slot':
       return null
     default:
       return null

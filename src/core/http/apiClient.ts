@@ -24,7 +24,7 @@
 
 import type { TSchema, Static } from '@sinclair/typebox'
 import { Type } from '@core/utils/typeboxHelpers'
-import { parseJsonResponse } from '@core/utils/jsonValidate'
+import { parseJsonResponse, safeParseJson } from '@core/utils/jsonValidate'
 
 export type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
 
@@ -173,6 +173,54 @@ export async function apiBlobRequest(
 ): Promise<Blob> {
   const res = await requestResponse(path, options)
   return res.blob()
+}
+
+/**
+ * Stream a newline-delimited-JSON response through the same authenticated/
+ * error-normalized transport `apiRequest` uses (`requestResponse` — same
+ * `credentials`, query serialization, and `{ error }`-envelope handling on a
+ * non-OK status), validating and delivering ONE value per line as it
+ * arrives, rather than waiting for the whole body.
+ *
+ * Reserved for the class of endpoint where that actually matters — a large,
+ * genuinely incremental payload where a caller can usefully act on the first
+ * items before the last one has arrived (WS-5.5's studio page load: the
+ * first board frame can render while later pages are still in flight). Every
+ * other response goes through {@link apiRequest}'s single validated
+ * envelope; this is not a general substitute for it.
+ */
+export async function ndjsonRequest<S extends TSchema>(
+  path: string,
+  options: Omit<ApiRequestOptions, 'schema'> & { lineSchema: S; onLine: (value: Static<S>) => void },
+): Promise<void> {
+  const { lineSchema, onLine, ...rest } = options
+  const res = await requestResponse(path, rest)
+  const reader = res.body?.getReader()
+  if (!reader) return
+
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  const consumeLine = (line: string) => {
+    const trimmed = line.trim()
+    if (!trimmed) return
+    const parsed = safeParseJson(trimmed, lineSchema)
+    if (!parsed.ok) throw parsed.error
+    onLine(parsed.value)
+  }
+
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (value) buffer += decoder.decode(value, { stream: true })
+    let newlineIndex = buffer.indexOf('\n')
+    while (newlineIndex >= 0) {
+      consumeLine(buffer.slice(0, newlineIndex))
+      buffer = buffer.slice(newlineIndex + 1)
+      newlineIndex = buffer.indexOf('\n')
+    }
+    if (done) break
+  }
+  consumeLine(buffer)
 }
 
 async function requestResponse(

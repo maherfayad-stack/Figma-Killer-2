@@ -184,6 +184,17 @@ export const CAPABILITY_META: Record<CoreCapability, CapabilityMeta> = {
     label: 'Read AI audit log',
     description: 'View site-wide AI usage, cost, and error events across all users.',
   },
+  // ---------------------------------------------------------------------
+  // Studio MCP tool family (WS-9)
+  // ---------------------------------------------------------------------
+  'studio.write': {
+    label: 'Edit studio projects',
+    description: 'Install dependencies, apply source edits, run codemods, and rearrange board frames in a studio workspace.',
+  },
+  'studio.run.project': {
+    label: 'Run studio project code',
+    description: "Boot an imported project's own dev server and screenshot it for visual comparison. Executes the user's code — never granted by default.",
+  },
 }
 
 /**

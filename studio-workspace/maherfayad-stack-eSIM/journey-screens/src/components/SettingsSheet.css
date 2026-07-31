@@ -1,0 +1,39 @@
+.settings-sheet .bottom-sheet__frame {
+  --bottom-sheet-width: 100%;
+  max-width: 100%;
+}
+
+.settings-sheet .bottom-sheet__scrim {
+  background: var(--overlay-default);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.settings-sheet__content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+  padding-inline: var(--space);
+  padding-block-end: var(--space-xs);
+}
+
+.settings-sheet__section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.settings-sheet__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+  max-height: min(40vh, 320px);
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.settings-sheet__list::-webkit-scrollbar {
+  display: none;
+}

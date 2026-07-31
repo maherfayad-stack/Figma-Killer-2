@@ -54,6 +54,8 @@ repositories (headless reads) / live editor store (browser tools)
 | `tools/styleTools.ts` | `site_read_styles` — the design system as a CSS stylesheet, headless from the DB. |
 | `tools/publishTool.ts` | `site_publish` — explicit server-side full-site publish through `publishDraftSite`, including the Layer-A static slot and MCP audit metadata. |
 | `tools/studioImportTool.ts` | `studio_import_project` — thin adapter over the Phase 7B GitHub import engine (`server/handlers/studioGithubImport.ts`); fetches a repo into its own `studio-workspace/<owner>-<repo>` project folder and summarizes the discovered pages. |
+| `tools/studio/` | WS-9 Studio tool family — project/board orientation, bulk edits, codemods, and the fidelity report. See "Studio tools (WS-9)" below. |
+| `resources.ts` | Static MCP **resources** (not tools) — `studio://guidelines`. |
 | `editorBridge.ts` | Per-user live workspace bridge registry + `createEditorBridgeStream`; browser tools route to the owner's open Site workspace. |
 | `handlers/editorBridge.ts` | `GET /admin/api/ai/editor-bridge?scope=site` — the capability-gated NDJSON stream the workspace holds open. |
 | `connectors/` | `types.ts` (server-only record), `token.ts` (generate + SHA-256 hash), `store.ts` (CRUD + `toConnectorView`). |
@@ -76,6 +78,104 @@ MCP exposes the **full tool catalog** (deduped by name), capability-filtered. To
 - `studio_import_project({ url, ref?, subdir?, token? })` — imports a GitHub React app into a studio workspace. A thin adapter: it calls the same `runGithubImport` engine behind the admin "Import from GitHub" dialog (Phase 7B), reshaping its `{ dir, files, skipped }` result with a `pageCount` and a short list of discovered `pages/*.tsx` paths (a directory listing via the Phase 7A `discoverPageFiles` walk, not a second parse). Requires `ai.tools.write` + `site.structure.edit`. **Security:** the import target is always derived server-side as `studio-workspace/<owner>-<repo>` (its own project folder, never the root) — the tool's input schema has no `dir` field, and the handler passes `url`/`ref`/`subdir`/`token` to `runGithubImport` explicitly (never spread), because `runGithubImport` clears its target directory before repopulating it and a caller-supplied target would be an arbitrary recursive-delete primitive. `token`, when supplied, is forwarded to GitHub as a Bearer credential only — never logged, echoed back, or persisted. Writes to disk only: it never publishes and never touches the live page-tree editor's DB — open the resulting workspace through the Studio UI to edit it live, the same load path every other studio workspace uses.
 
 Site writes deliberately do **not** call `site_publish` automatically. A multi-step agent edit can involve many tool calls; publishing each intermediate call would expose incomplete work, bypass the user's explicit deployment intent, and repeatedly run the expensive full-site pipeline. The client should finish and verify its draft changes, then call `site_publish` once when publication was requested.
+
+### Studio tools (WS-9) — let an agent audit and restructure a Studio project's board
+
+`server/ai/mcp/tools/studio/` — a separate tool family for **Studio** projects
+(a real React repo under `studio-workspace/<project>/`, imported as a board of
+frames), distinct from the CMS `site` document family above. All headless
+(`execution: 'server'`), because a Studio project's state is filesystem state
+— its source `.tsx`/`.jsx` files and its `.studio/boards.json` frame geometry
+— read/written through the exact same plain GET/POST round trip the Studio UI
+itself uses. There is no live-editor-store autosave for either to desync from
+(unlike the CMS `site` page tree, which is why THAT stays browser-relayed
+only) — concurrent last-write-wins is the ordinary risk any two editors of the
+same files already have, not a new failure mode.
+
+**9.1 — project + board orientation** (read-only, no `requiredCapabilities`):
+`studio_list_projects`, `studio_project_profile` (the cached/fresh
+`ProjectProfile` + probe warnings), `studio_list_pages`, `studio_get_node_source`
+(node id → `{ file, line, col, snippet }`, decoding `@core/page-tree`'s
+`sourceNodeId` grammar), `studio_find_nodes` (query by moduleId/tag/class/text/
+lock state/codeProps presence).
+
+**9.1 — mutating:** `studio_install_deps` + `studio_install_status` (the WS-1.4
+polled install job). Requires `studio.write`.
+
+**9.3 — bulk edit + structural**, all requiring `studio.write`:
+`studio_apply_edits` (a batch of `StudioEdit`s through `applyStudioEditBatch` —
+the SAME engine `POST /admin/api/studio/save` runs, extracted into
+`server/handlers/studioWriteback.ts` so there is exactly one ordering/dedup/
+shift-detection implementation), `studio_set_frames` (bulk `.studio/boards.json`
+geometry), `studio_codemod` (dispatches `rename-tag`/`set-import-specifier` to
+the shipped `@core/ast-codemods`; `detach`/`swap`/`extract-component` are WS-4,
+not built yet, and return `{ ok:false, code:'not-yet-available', message }`
+rather than a silent no-op).
+
+**9.4 — `studio_fidelity_report(dir, pageId?)`** — the flagship tool. Per page:
+a `score` (`nodes`/`resolved`/`locked`/`codeValued`) and `findings[]`, each
+`{ code, nodeId, file, line, message, fix, impact }`. Every finding code is
+either reused verbatim from `ProjectProfile.warnings[].code`
+(`server/handlers/studio/projectProfileSchema.ts`) for project-level issues, or
+minted in `server/ai/mcp/tools/studio/fidelityCodes.ts` for node-level issues
+detected from a loaded page's `lockReason`/`resolution`/`codeProps` fields.
+`docs/features/studio-import.md`'s "What still does not import" section is the
+same vocabulary as a doc table — `fidelityCodes.test.ts` gates that every
+registered code appears in the doc and vice versa.
+
+**9.5 — `studio://guidelines`** — an MCP **resource** (not a tool): the
+distilled "how to write React that Studio imports cleanly" rules (module-scope
+consts over hooks, literal `className`s, one `return` per component, `?raw`
+icon imports, providers in one place). Read once, not capability-gated (it's
+documentation, not a data source).
+
+**9.2 — the visual-audit trio** (`mcp-02`), requirement 10 ("audit the frames
+visually by exporting them as images and comparing them to the live one"):
+
+- `studio_export_frames` — **browser-relayed** (`execution:'browser'`,
+  `scope:'site'`, `mutates:true` + `studio.write`), the one 9.x tool that is
+  NOT headless: a Studio board frame does not exist offscreen the way a CMS
+  breakpoint does (every board frame shares one synthetic `'studio'`
+  breakpoint id at its OWN authored width, with no `Breakpoint` object in
+  `site.breakpoints` a transient mount could target without touching
+  `CanvasRoot.tsx`, which a concurrent work order owned at ship time). Instead
+  it captures the REAL, already-mounted board frame: forces zoom to 1 and
+  pans the requested page fully on screen (so the capture is width-accurate
+  regardless of the user's current zoom), activates it, waits for mount +
+  settle, then reuses `site_render_snapshot`'s own capture pipeline
+  (`renderEvidence.ts`, extended with a `pageId` filter). Because it captures
+  the real live DOM, the design-canvas freeze (`CanvasAnimationInjector`) and
+  scroll-unroll (`CanvasScrollUnrollInjector`) injectors apply automatically.
+  Side effect, by design: temporarily takes over the live canvas's pan/zoom/
+  active-page (clearing node selection) for the batch, restored afterward —
+  documented in the tool description since a user editing in the same session
+  will see their view jump.
+- `studio_render_reference` — **Tier 2**, `execution:'server'`, `mutates:true`
+  + `studio.run.project` (never granted by default, never implicit — this is
+  the only Studio tool that EXECUTES the project's own code). Boots the
+  project's own `dev`/`start` script via the detected package manager
+  (`server/handlers/studio/installDeps.ts`'s `detectPackageManager`, reused),
+  parses the URL it prints (no forced port — frameworks disagree on how to
+  request one, and some auto-increment past a taken port anyway), drives
+  `playwright-core` to `route` at the given viewport, screenshots. `route` is
+  caller-supplied, not derived from a Studio page id: a parsed Studio page
+  (one screen file) does not always correspond to an addressable dev-server
+  URL — confirmed against the real eSIM corpus, whose `App.jsx` exposes only
+  3 of its 15 screens via a `?page=` query param, the rest reachable only by
+  simulating in-app interaction this tool does not drive. The dev server is
+  reused across calls for the same project and torn down after
+  `idleTimeoutMs` of inactivity (default 2 min). A boot failure returns
+  `ok:false` with the captured stdout/stderr tail, never a synthetic result.
+- `studio_diff_frames` — headless, `execution:'server'`, no
+  `requiredCapabilities` (a pure read/compute over two caller-supplied PNGs).
+  Deliberately generic (two base64 PNGs in, not coupled to the other two
+  tools' output shape): `pixelmatch` computes the overall score + diff PNG; an
+  independent grid + flood-fill pass over the two ORIGINAL images (not
+  pixelmatch's diff-image encoding) finds the top N differing rectangles,
+  each intersected against caller-supplied `nodeRects` (the exact shape
+  `studio_export_frames` already returns per frame) to report the node ids a
+  differing region overlaps — "the hero section is 78% different, nodes X and
+  Y," not "the images look different."
 
 **Browser-relayed (via the live workspace bridge) — require the Site workspace to be open:**
 - Structure editing — `site_insert_html`, `site_replace_node_html`, `site_delete_node`, `site_move_node`, `site_duplicate_node`, `site_rename_node`, `site_update_node_props`.
@@ -165,5 +265,7 @@ An admin cannot grant a capability they do not hold (enforced in `handlers/conne
 - `server/ai/mcp/{registry,auth,server,transports/http}.test.ts` and `server/ai/mcp/tools/documentTools.test.ts` — capability filtering, headless document listing, bearer auth + 401, scoped workspace relay, full MCP round-trip, HTTP handshake.
 - `server/ai/mcp/publishTool.test.ts` — explicit MCP publish rebuilds and swaps the real static CSS/HTML slot and records connector audit metadata.
 - `server/ai/mcp/tools/studioImportTool.test.ts` — capability gating, the `dir`-stripping input schema, the imported-pages summary helper, and an end-to-end handler run against a stubbed global `fetch` (no real network calls); `server/handlers/__tests__/studioGithubImport.test.ts` covers the underlying import engine itself.
+- `server/ai/mcp/tools/studio/{projectTools,editTools,fidelityReport}.test.ts` — orientation/edit/fidelity tool handlers against temp fixture projects; `fidelityCodes.test.ts` — doc ⇄ code parity gate against `docs/features/studio-import.md`'s table.
+- `server/ai/mcp/resources.test.ts` — `studio://guidelines` resource listing/read.
 - `src/__tests__/ai/mcpConnectorsHandler.test.ts` — CRUD, step-up, privilege floor, capability gating.
 - `src/__tests__/architecture/ai-mcp-connectors-never-leak.test.ts` — token never serialized.

@@ -78,16 +78,13 @@
  *   - Header click (`BoardFrameView`) — replace on a plain click, toggle-add
  *     on Shift-click, mirroring the node-selection click contract in
  *     `CanvasRoot.onNodeClick`.
- *   - ⌘/Ctrl+A — wired in `useCanvasKeyboardShortcuts.ts` via `selectAllFrames`.
- *   - Marquee drag on empty canvas — `handleLayerPointerDown/Move` below,
- *     armed only when the pointerdown TARGET is the bare `.layer` div itself
- *     (not a bubbled event from a frame), so dragging a frame's header never
- *     also starts a marquee. Live-updates the selection every move via the
- *     pure `framesInMarquee` (screen-space math, unit-tested separately).
- *     The visual marquee rectangle is portaled OUTSIDE this transformed
- *     layer (into the canvas root) because it's drawn in screen pixels, not
- *     board units — rendering it inside `.layer` would scale/pan it with
- *     the board instead of tracking the cursor.
+ *   - ⌘/Ctrl+A — a document-level listener in `CanvasRoot.tsx`, scoped by
+ *     intent (not typing in an editable field) rather than DOM focus.
+ *   - Marquee drag on empty canvas — `useMarqueeSelection.ts` (own module,
+ *     extracted for `module-size-budgets` — see its own doc comment for the
+ *     "Marquee gesture arbitration" reasoning: why the listeners live on
+ *     `canvasRootRef.current` rather than JSX pointer props on `.layer`, and
+ *     how that also resolves who wins against `useCanvas`'s pan gesture).
  */
 import {
   useContext,
@@ -102,31 +99,25 @@ import { createPortal } from 'react-dom'
 import { useEditorStore } from '@site/store/store'
 import { selectActiveBoard } from '@site/store/slices/boardSlice'
 import type { Breakpoint, Page } from '@core/page-tree'
-import type { BoardFrame } from '@core/studio-board'
 import { Input } from '@ui/components/Input'
 import { ContextMenu, ContextMenuItem } from '@ui/components/ContextMenu'
 import { useInlineRename } from '@site/hooks/useInlineRename'
 import { CloseIcon } from 'pixel-art-icons/icons/close'
 import { PenSquareSolidIcon } from 'pixel-art-icons/icons/pen-square-solid'
 import { CanvasPageContext, CanvasViewportActionsContext } from '../CanvasContexts'
-import { isCanvasSpacePanActive } from '../canvasPanInput'
 import { BreakpointFrame } from '../BreakpointFrame'
 import { AddFramePicker } from './AddFramePicker'
 import { NewPageButton } from './NewPageButton'
-import { FRAME_WIDTH, FRAME_HEIGHT } from './frameGrid'
+import { FRAME_WIDTH, FRAME_HEIGHT, FRAME_HEADER_HEIGHT } from './frameGrid'
 import { FRAME_VIEWPORT_MARGIN, isFrameOnScreen } from './frameVirtualization'
-import { framesInMarquee, marqueeRectFromPoints, type MarqueeFrame, type MarqueeRect } from './framesInMarquee'
 import { resizeFrameRect, MIN_FRAME_SIZE, type FrameResizeRect, type ResizeHandle } from './frameResize'
 import { computeSnap, collectPeerRects, SNAP_THRESHOLD_BOARD_UNITS } from '../boardSnapping'
+import { resolveFramesWithPages } from './resolveFramesWithPages'
+import { useMarqueeSelection } from './useMarqueeSelection'
+import { useFramePosterCapture } from './useFramePosterCapture'
+import { getFramePoster } from './frameSnapshotCache'
+import { FramePosterPlaceholder } from './FramePosterPlaceholder'
 import styles from './BoardFramesLayer.module.css'
-
-/** Marquee movement (screen px) before a drag counts as "selecting", so a plain click doesn't flash an empty marquee. */
-const MARQUEE_DRAG_THRESHOLD_PX = 3
-
-/** Header height (board units) added to the frame's own height for the
- * on-screen intersection test, so the drag header itself isn't cut off the
- * rect. */
-const FRAME_HEADER_HEIGHT = 48
 
 /**
  * Shared chrome every studio frame's synthetic breakpoint carries — see the
@@ -173,23 +164,10 @@ export function BoardFramesLayer() {
   const panX = useEditorStore((s) => s.panX)
   const panY = useEditorStore((s) => s.panY)
   // WS-7.1 — frame multi-selection, a separate domain from node selection.
+  // Subscribed for the render (selection ring / bounding box); the marquee
+  // effect below reads/writes this fresh via `useEditorStore.getState()`
+  // instead, since it intentionally does not re-run on every store update.
   const selectedFrameIds = useEditorStore((s) => s.selectedFrameIds)
-  const setSelectedFrameIds = useEditorStore((s) => s.setSelectedFrameIds)
-
-  // Marquee drag (WS-7.1) — screen-space rect, portaled outside the
-  // transformed layer (see module doc). `marqueeDragRef` carries the
-  // in-progress gesture; `marqueeRect` is only set once movement crosses
-  // MARQUEE_DRAG_THRESHOLD_PX, so a plain background click never flashes an
-  // empty marquee (and never touches the selection — see CanvasRoot's
-  // background-click handler for the "click empty canvas to deselect" path).
-  const marqueeDragRef = useRef<{
-    pointerId: number
-    startX: number
-    startY: number
-    additive: boolean
-    baseSelection: string[]
-  } | null>(null)
-  const [marqueeRect, setMarqueeRect] = useState<MarqueeRect | null>(null)
 
   // The untransformed canvas root's client size — this layer's ancestor
   // applies `translate(panX, panY) scale(zoom)`, so the root's own box is
@@ -211,69 +189,14 @@ export function BoardFramesLayer() {
     return () => observer.disconnect()
   }, [viewportActions])
 
+  // Marquee drag (WS-7.1) — screen-space rect, portaled outside the
+  // transformed layer below. Gesture wiring + arbitration lives in
+  // `useMarqueeSelection.ts` (own module, see its doc comment).
+  const marqueeRect = useMarqueeSelection(viewportActions?.canvasRootRef)
+
   if (!board) return null
 
-  // board.frames is membership — resolve each against site.pages and drop
-  // any frame whose page no longer exists (deleted since it was added).
-  const framesWithPages = board.frames
-    .map((frame) => ({ frame, page: pages.find((p) => p.id === frame.pageId) }))
-    .filter(
-      (entry): entry is { frame: BoardFrame; page: Page } => entry.page !== undefined,
-    )
-
-  // Marquee: only arms on a genuine empty-canvas primary-button press — the
-  // pointerdown TARGET must be the bare `.layer` div itself (a bubbled event
-  // from a frame/furniture child has `e.target` pointing at that child, not
-  // `.layer`), never during space-held pan, never on a secondary button.
-  const handleLayerPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
-    if (e.button !== 0) return
-    if (e.target !== e.currentTarget) return
-    if (isCanvasSpacePanActive(document)) return
-    const canvasRoot = viewportActions?.canvasRootRef.current
-    if (!canvasRoot) return
-    const rect = canvasRoot.getBoundingClientRect()
-    marqueeDragRef.current = {
-      pointerId: e.pointerId,
-      startX: e.clientX - rect.left,
-      startY: e.clientY - rect.top,
-      additive: e.shiftKey,
-      baseSelection: selectedFrameIds,
-    }
-    e.currentTarget.setPointerCapture(e.pointerId)
-  }
-
-  const handleLayerPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
-    const drag = marqueeDragRef.current
-    if (!drag || drag.pointerId !== e.pointerId) return
-    const canvasRoot = viewportActions?.canvasRootRef.current
-    if (!canvasRoot) return
-    const rect = canvasRoot.getBoundingClientRect()
-    const currentX = e.clientX - rect.left
-    const currentY = e.clientY - rect.top
-    const next = marqueeRectFromPoints(drag.startX, drag.startY, currentX, currentY)
-    if (next.width < MARQUEE_DRAG_THRESHOLD_PX && next.height < MARQUEE_DRAG_THRESHOLD_PX) return
-
-    setMarqueeRect(next)
-    const marqueeFrames: MarqueeFrame[] = framesWithPages.map(({ frame, page }) => ({
-      pageId: page.id,
-      x: frame.x,
-      y: frame.y,
-      width: frame.width ?? FRAME_WIDTH,
-      height: (frame.height ?? FRAME_HEIGHT) + FRAME_HEADER_HEIGHT,
-    }))
-    const hits = framesInMarquee(marqueeFrames, next, { panX, panY, zoom })
-    const nextIds = drag.additive
-      ? [...drag.baseSelection, ...hits.filter((id) => !drag.baseSelection.includes(id))]
-      : hits
-    setSelectedFrameIds(nextIds)
-  }
-
-  const endMarqueeDrag = (e: ReactPointerEvent<HTMLDivElement>) => {
-    if (marqueeDragRef.current?.pointerId === e.pointerId) {
-      marqueeDragRef.current = null
-      setMarqueeRect(null)
-    }
-  }
+  const framesWithPages = resolveFramesWithPages(board, pages)
 
   // One bounding box around the whole multi-selection (board-space, so it
   // lives inside `.layer` and pans/zooms with the frames it encloses).
@@ -302,10 +225,6 @@ export function BoardFramesLayer() {
     <div
       className={styles.layer}
       data-testid="board-frames-layer"
-      onPointerDown={handleLayerPointerDown}
-      onPointerMove={handleLayerPointerMove}
-      onPointerUp={endMarqueeDrag}
-      onPointerCancel={endMarqueeDrag}
     >
       {framesWithPages.length === 0 ? (
         <div className={styles.emptyState}>
@@ -442,6 +361,12 @@ function BoardFrameView({
   const resizeRef = useRef<ResizeDragState | null>(null)
   const [rename, renameInputRef] = useInlineRename({ onCommit: onRename })
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
+  // WS-5.3 — frozen poster for this frame's offscreen placeholder. Capture
+  // reads the live iframe straight out of `frameBodyRef` while on screen; see
+  // `useFramePosterCapture.ts`'s own doc comment for why it doesn't mount a
+  // second offscreen frame to do this.
+  const frameBodyRef = useRef<HTMLDivElement>(null)
+  useFramePosterCapture(frameBodyRef, page, width, isOnScreen)
 
   // Capture phase — fires before the frame's own node-click handling, so
   // `activePageId` is already switched to this page by the time selection
@@ -611,6 +536,7 @@ function BoardFrameView({
           offscreen frame has no live iframe to size against, so it keeps the
           fixed fallback box the placeholder needs — same as before. */}
       <div
+        ref={frameBodyRef}
         className={styles.frameBody}
         data-testid="board-frame-body"
         data-frame-auto-height={!hasManualHeight && isOnScreen ? 'true' : undefined}
@@ -626,9 +552,7 @@ function BoardFrameView({
             />
           </CanvasPageContext.Provider>
         ) : (
-          <div className={styles.offscreenPlaceholder} data-testid="board-frame-placeholder">
-            <span className={styles.offscreenPlaceholderTitle}>{page.title}</span>
-          </div>
+          <FramePosterPlaceholder title={page.title} posterUrl={getFramePoster(page, width)} />
         )}
       </div>
       {/* Resize handles — active frame only, mirroring the selection ring's

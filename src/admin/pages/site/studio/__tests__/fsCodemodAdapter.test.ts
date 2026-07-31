@@ -39,7 +39,7 @@ describe('fsCodemodAdapter — write-loop safety + framework sync', () => {
 
   function stubFetch(responses: Record<string, unknown> = {}) {
     const defaults: Record<string, unknown> = {
-      '/admin/api/studio/load': { dir: '/tmp/studio-test', projectName: 'studio-test', pages: [], componentSources: {}, styleRules: {}, conditions: [], vendorCss: '' },
+      '/admin/api/studio/load': { dir: '/tmp/studio-test', projectName: 'studio-test', pages: [], componentSources: {}, styleRules: {}, conditions: [], vendorCss: '', trust: 'static', paletteHiddenModuleIds: [] },
       '/admin/api/studio/framework': { framework: null },
       '/admin/api/studio/save': { ok: true, written: 1, skipped: 0, shifted: false, sharedComponents: false },
     }
@@ -59,6 +59,23 @@ describe('fsCodemodAdapter — write-loop safety + framework sync', () => {
         return new Response(JSON.stringify({ ok: true, framework: body.framework }), { status: 200 })
       }
       const body = responses[path] ?? defaults[path]
+      // `/admin/api/studio/load` is read as an NDJSON stream (WS-5.5,
+      // `?stream=1` — see `fsCodemodAdapter.ts`'s `loadSite`): one meta line
+      // (everything but `pages`) followed by one `kind: 'page'` line per
+      // page. Test call sites above still pass the flat, pre-streaming
+      // shape — translate it here so every existing `stubFetch({ ... })`
+      // call keeps working unchanged.
+      if (path === '/admin/api/studio/load') {
+        const { pages, ...meta } = body as { pages: unknown[]; [k: string]: unknown }
+        const lines = [
+          { kind: 'meta', ...meta, pageCount: pages.length },
+          ...pages.map((page) => ({ kind: 'page', page })),
+        ]
+        return new Response(
+          lines.map((line) => JSON.stringify(line)).join('\n') + '\n',
+          { status: 200, headers: { 'content-type': 'application/x-ndjson' } },
+        )
+      }
       return new Response(JSON.stringify(body), { status: 200 })
     }) as typeof fetch
   }
@@ -314,6 +331,7 @@ describe('fsCodemodAdapter — write-loop safety + framework sync', () => {
         '/admin/api/studio/load': {
           dir: '/tmp/studio-test', projectName: 'studio-test', pages: [], componentSources: {},
           styleRules: {}, conditions: [], vendorCss: '.btn--primary { color: hotpink }',
+          trust: 'static', paletteHiddenModuleIds: [],
         },
       })
 
@@ -327,6 +345,7 @@ describe('fsCodemodAdapter — write-loop safety + framework sync', () => {
         '/admin/api/studio/load': {
           dir: '/tmp/studio-test', projectName: 'studio-test', pages: [], componentSources: {},
           styleRules: {}, conditions: [], vendorCss: '.a { color: red }',
+          trust: 'static', paletteHiddenModuleIds: [],
         },
       })
       await fsCodemodAdapter.loadSite()
@@ -344,6 +363,7 @@ describe('fsCodemodAdapter — write-loop safety + framework sync', () => {
         '/admin/api/studio/load': {
           dir: '/tmp/studio-test', projectName: 'studio-test', pages: [], componentSources: {},
           styleRules: {}, conditions: [], vendorCss: '.b { color: blue }',
+          trust: 'static', paletteHiddenModuleIds: [],
         },
       })
       await fsCodemodAdapter.loadSite()

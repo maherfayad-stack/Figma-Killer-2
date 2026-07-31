@@ -167,6 +167,14 @@ export const PropertyControlSchema = Type.Recursive((Self) => Type.Union([
     { additionalProperties: false },
   ),
   Type.Object(
+    // A prop whose value is a materialized child node (WS-3.4's
+    // `studio-slot:<nodeId>` sentinel) rather than a scalar — see
+    // `SlotControl`. There is nothing to type into; the control is an "Edit
+    // contents" affordance that selects the slot's own node.
+    { ...PropertyControlBaseSchema, type: Type.Literal('slot') },
+    { additionalProperties: false },
+  ),
+  Type.Object(
     {
       ...PropertyControlBaseSchema,
       type: Type.Literal('group'),

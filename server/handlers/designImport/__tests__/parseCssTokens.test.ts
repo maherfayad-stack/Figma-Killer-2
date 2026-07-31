@@ -19,10 +19,17 @@ describe('extractRootCustomProperties', () => {
     ])
   })
 
-  it('finds a :root nested inside a @media wrapper, with correct brace matching', () => {
+  it('does NOT descend into a :root nested inside an @media wrapper (shared engine change: a dark-mode-only :root must never be read as the default)', () => {
+    // Historical note: the old, now-deleted standalone scanner in this
+    // module DID recurse into `@media` wrappers, which meant a `:root`
+    // nested inside `@media (prefers-color-scheme: dark)` was silently
+    // flattened in as if it were a light/default value — exactly the bug
+    // `tokenExtractCssScan.ts` (the now-shared engine) was written to avoid
+    // for the automatic import path. Consolidating onto that engine fixes it
+    // here too: an honest gap (documented, not a fabricated default) beats a
+    // silently wrong dark-mode value.
     const css = `@media (prefers-color-scheme: dark) {\n  :root {\n    --bg: #000;\n  }\n}`
-    const vars = extractRootCustomProperties(css, 'a.css')
-    expect(vars).toEqual([{ name: 'bg', value: '#000', file: 'a.css' }])
+    expect(extractRootCustomProperties(css, 'a.css')).toEqual([])
   })
 
   it('matches a compound selector containing :root (e.g. :root, [data-theme])', () => {
@@ -102,8 +109,17 @@ describe('classifyToken', () => {
     expect(classifyToken('y', 'hsl(220 80% 50%)')).toBe('color')
   })
 
-  it('classifies by a color-ish name hint even when the value is a reference', () => {
-    expect(classifyToken('brand-color', 'var(--gray-900)')).toBe('color')
+  it('does NOT classify an unresolved var() reference as color from a name hint alone (value-first: an unresolvable value is honestly unclassified, never guessed)', () => {
+    // Historical note: the old, now-deleted `classifyToken` checked the name
+    // hint BEFORE the value, so `brand-color: var(--gray-900)` classified as
+    // 'color' purely because the name said so — even though the value was
+    // never resolved and could have been anything. The shared engine
+    // resolves `var()` chains against the CSS file's own root scope BEFORE
+    // classifying (see `extractRootCustomProperties`/`buildTokenCandidates`),
+    // so in practice a real `var()` reference is resolved to a leaf value
+    // long before it reaches `classifyToken` — this test exercises the
+    // (now honest) fallback for a value this function alone cannot resolve.
+    expect(classifyToken('brand-color', 'var(--gray-900)')).toBe('other')
   })
 
   it('classifies a font/text-hinted convertible length as typography', () => {
@@ -116,8 +132,14 @@ describe('classifyToken', () => {
     expect(classifyToken('gap-lg', '24px')).toBe('spacing')
   })
 
-  it('falls back to spacing for a bare convertible length with no name hint', () => {
-    expect(classifyToken('foo', '8px')).toBe('spacing')
+  it('does NOT guess spacing for a bare convertible length with no name hint (shared engine change: a wrong token is worse than a missing one)', () => {
+    // Historical note: the old, now-deleted `classifyToken` defaulted a
+    // nameless-but-convertible length to 'spacing' ("the more common bare-
+    // number use in a design-token sheet"). The shared engine never guesses
+    // a category from shape alone once the color check has failed — an
+    // unrecognized name stays 'other', matching `tokenExtractCssScan.ts`'s
+    // "unclassified, counted, never guessed" philosophy.
+    expect(classifyToken('foo', '8px')).toBe('other')
   })
 
   it('classifies a font/spacing-hinted non-convertible value as other', () => {

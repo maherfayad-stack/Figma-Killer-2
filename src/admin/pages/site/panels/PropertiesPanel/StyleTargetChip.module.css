@@ -1,0 +1,74 @@
+.row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+    padding: var(--space-2xs) var(--space-s);
+}
+
+.editingLabel {
+    flex: 0 0 auto;
+    color: var(--text-subtle);
+    font-size: var(--text-xs);
+}
+
+.chips {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3xs);
+    min-width: 0;
+}
+
+.chip.chip {
+    gap: var(--space-4xs);
+    max-width: 160px;
+}
+
+.chip.chip > * {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Presentational chip (the class target — see StyleTargetChip.tsx's doc for
+   why it isn't a Button). Same visual shell as the Button-based Element
+   chip's `secondary` variant so the two read as one control group. */
+.chipStatic {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 22px;
+    padding: 0 var(--space-xs);
+    border: 1px solid var(--overlay-20);
+    border-radius: var(--radius);
+    background: transparent;
+    color: var(--text-subtle);
+    font-size: var(--text-xs);
+    line-height: 1;
+    cursor: default;
+}
+
+/* The active class target carries the CSS write-back warning — tinted with
+   the shared warning state token, not a decorative color. */
+.chipStatic[data-active='true'] {
+    background: var(--warning-10);
+    border-color: var(--warning-30);
+    color: var(--warning-text);
+}
+
+/* panel-02 (WS-6.3) — a class whose declarations genuinely reach disk on
+   save gets the success state token instead of the warning one. Two
+   attribute selectors outrank the rule above regardless of source order. */
+.chipStatic[data-active='true'][data-writable='true'] {
+    background: var(--success-10);
+    border-color: var(--success-30);
+    color: var(--success-text);
+}
+
+.chipDisabled {
+    opacity: 0.5;
+}
+
+.warningIcon {
+    flex: 0 0 auto;
+    color: var(--warning);
+}

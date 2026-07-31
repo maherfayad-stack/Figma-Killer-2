@@ -89,6 +89,12 @@ export function CanvasLiveSurface({
   // it for positioning context, and queries the iframe element for node rects.
   const viewportRef = useRef<HTMLDivElement | null>(null)
   const [iframeEl, setIframeEl] = useState<HTMLIFrameElement | null>(null)
+  // Always `null` here in practice — `CanvasSelectionOverlayInjector` is
+  // design-mode only (WS-5.1), so a live-interaction `IframeFrameSurface`
+  // never creates one. Tracked (rather than passing a literal `null`) so this
+  // stays correct automatically if that ever changes; `BreakpointSelectionOverlay`
+  // already falls back to its pre-WS-5.1 rendering whenever this is `null`.
+  const [overlayRoot, setOverlayRoot] = useState<HTMLDivElement | null>(null)
 
   const [containerWidth, setContainerWidth] = useState<number | null>(null)
   const [widthOverride, setWidthOverride] = useState<LiveWidthOverride | null>(null)
@@ -145,6 +151,7 @@ export function CanvasLiveSurface({
 
   const handleIframeRef = (handle: IframeFrameSurfaceHandle | null) => {
     setIframeEl(handle?.iframeElement ?? null)
+    setOverlayRoot(handle?.contentOverlayRoot ?? null)
   }
 
   return (
@@ -185,6 +192,7 @@ export function CanvasLiveSurface({
               breakpointId={activeBreakpoint.id}
               viewportRef={viewportRef}
               iframeElement={iframeEl}
+              overlayRoot={overlayRoot}
             />
           </div>
 

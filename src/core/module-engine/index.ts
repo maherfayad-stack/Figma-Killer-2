@@ -49,6 +49,8 @@ export {
 
 export { registry } from './registry'
 
+export { sanitizePackageName, packageModuleId } from './packageModuleId'
+
 export { validateNodeProps } from './validateNodeProps'
 
 export { resolveHtmlTagBadge } from './htmlTagBadge'

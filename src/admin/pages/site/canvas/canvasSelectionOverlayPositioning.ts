@@ -1,7 +1,5 @@
 import type { CSSProperties } from 'react'
-import { cn } from '@ui/cn'
 import type {
-  CanvasOverlayMeasureSession,
   CanvasOverlayRect,
 } from './canvasOverlayGeometry'
 import type {
@@ -9,7 +7,6 @@ import type {
   CanvasDropTarget,
   CanvasRect,
 } from './canvasDnd'
-import styles from './BreakpointSelectionOverlay.module.css'
 
 const TOOLBAR_VERTICAL_OFFSET = 30
 const INSPECTOR_VERTICAL_GAP = 12
@@ -112,11 +109,18 @@ const SELECTOR_HIGHLIGHT_RING_CAP = 300
  * READ-phase half of the selector-affinity highlight: measure every element
  * matching `selector` inside the breakpoint iframe (capped). Returns null
  * when the highlight is inactive (clears the pool in the write phase).
+ *
+ * `measure` is a plain measurement function rather than a whole
+ * `CanvasOverlayMeasureSession` — the affinity rings live in the in-iframe
+ * overlay root now (WS-5.1), so the caller passes `measureIframeLocalRect`
+ * (no zoom/offset conversion needed); the signature stays generic so a
+ * caller that genuinely needs parent-document coordinates could still pass
+ * `session.measure`.
  */
 export function measureSelectorHighlightRects(
   selector: string | null,
   iframeDoc: Document,
-  session: CanvasOverlayMeasureSession,
+  measure: (target: HTMLElement | null) => CanvasOverlayRect | null,
 ): CanvasOverlayRect[] | null {
   if (!selector) return null
 
@@ -133,10 +137,23 @@ export function measureSelectorHighlightRects(
   const count = Math.min(matches.length, SELECTOR_HIGHLIGHT_RING_CAP)
   const rects: CanvasOverlayRect[] = []
   for (let i = 0; i < count; i++) {
-    const rect = session.measure(matches[i])
+    const rect = measure(matches[i])
     if (rect) rects.push(rect)
   }
   return rects
+}
+
+/**
+ * Styling for an affinity ring created OUTSIDE the in-iframe overlay root —
+ * the live-mode / transient-startup fallback (see `BreakpointSelectionOverlay`'s
+ * `usingIframeOverlay`). `className` is the caller's pre-composed CSS Module
+ * class string (this module doesn't import CSS Modules itself, to stay
+ * decoupled from any one component's stylesheet); `mode` is the same
+ * scoped/fixed value the selection toolbar already uses.
+ */
+export interface LegacySelectorRingStyle {
+  className: string
+  mode: 'scoped' | 'fixed'
 }
 
 /**
@@ -148,6 +165,7 @@ export function measureSelectorHighlightRects(
 export function syncSelectorHighlightRings(
   container: HTMLDivElement | null,
   rects: CanvasOverlayRect[] | null,
+  legacyStyle?: LegacySelectorRingStyle | null,
 ): void {
   if (!container) return
   if (!rects) {
@@ -159,8 +177,18 @@ export function syncSelectorHighlightRings(
     let ring = container.children[i] as HTMLDivElement | undefined
     if (!ring) {
       ring = container.ownerDocument.createElement('div')
-      ring.className = cn(styles.ring, styles.selectorHighlight)
+      // Inside the in-iframe overlay root (WS-5.1, `legacyStyle` omitted):
+      // hashed CSS Module class names from the parent document don't exist
+      // inside the iframe, so appearance comes ONLY from
+      // `CanvasSelectionOverlayInjector`'s `[data-canvas-selector-highlight-ring]`
+      // rule. In the live-mode / transient-startup fallback (`legacyStyle`
+      // provided), the ring is portaled into the PARENT document instead,
+      // where the CSS Module class is what actually paints it.
       ring.setAttribute('data-canvas-selector-highlight-ring', 'true')
+      if (legacyStyle) {
+        ring.className = legacyStyle.className
+        ring.setAttribute('data-canvas-ring-mode', legacyStyle.mode)
+      }
       container.appendChild(ring)
     }
     positionOverlayElement(ring, rects[i])
@@ -295,6 +323,90 @@ export function positionInspector(
   inspector.style.left = `${placement.x}px`
   inspector.style.top = `${placement.y}px`
   appliedOverlayPlacements.set(inspector, placement)
+}
+
+/**
+ * Publish the current selection's canvas-root-relative rect as the
+ * `--selection-anchor-{x,y,w,h}` custom-property channel (WS-5.1) — the
+ * sanctioned inline-style exception in CLAUDE.md. `positionToolbar` /
+ * `positionInspector` above still own the actual left/top math (offset +
+ * clamp), computed from the SAME rect passed here; this channel exists
+ * alongside that so the anchor value is inspectable independent of which
+ * piece of parent-doc chrome consumes it, without threading a rect object
+ * through more props than necessary.
+ *
+ * Deliberately NOT written every RAF tick — see `BreakpointSelectionOverlay`'s
+ * `anchorDirtyRef`, which gates calls to this to once per selection change and
+ * once per pan/zoom commit. A `null` rect clears the channel to zero rather
+ * than removing the properties, so a stale reader never sees a `NaN`/empty
+ * `calc()`.
+ */
+export function publishSelectionAnchor(
+  element: HTMLElement | null,
+  rect: CanvasOverlayRect | null,
+): void {
+  if (!element) return
+  const r = rect ?? { x: 0, y: 0, width: 0, height: 0 }
+  element.style.setProperty('--selection-anchor-x', `${r.x}px`)
+  element.style.setProperty('--selection-anchor-y', `${r.y}px`)
+  element.style.setProperty('--selection-anchor-w', `${r.width}px`)
+  element.style.setProperty('--selection-anchor-h', `${r.height}px`)
+}
+
+const NODE_BADGE_GAP = 4
+const NODE_BADGE_FALLBACK_HEIGHT = 20
+
+interface AppliedBadgePlacement {
+  x: number
+  y: number
+  label: string
+}
+
+/** Last placement + label applied per badge — same no-op-when-unchanged idea as `appliedOverlayPlacements`. */
+const appliedBadgePlacements = new WeakMap<HTMLElement, AppliedBadgePlacement | 'hidden'>()
+
+/**
+ * Position the node-name badge (WS-5.1) just above its ring's top-left
+ * corner, Figma-style — or just below when there's no room above (the ring
+ * sits at the very top of the frame). `ringRect` is iframe-local (the SAME
+ * rect the selection ring for this node was just positioned with), so no
+ * extra measurement pass. `label` is the node's tag or display name; a
+ * `null` rect or label hides the badge.
+ */
+export function positionNodeBadge(
+  badge: HTMLElement | null,
+  ringRect: CanvasOverlayRect | null,
+  label: string | null,
+): void {
+  if (!badge) return
+  if (!ringRect || !label) {
+    if (appliedBadgePlacements.get(badge) !== 'hidden') {
+      badge.style.display = 'none'
+      appliedBadgePlacements.set(badge, 'hidden')
+    }
+    return
+  }
+
+  const prev = appliedBadgePlacements.get(badge)
+  if (
+    prev !== undefined &&
+    prev !== 'hidden' &&
+    prev.x === ringRect.x &&
+    prev.y === ringRect.y &&
+    prev.label === label
+  ) {
+    return
+  }
+
+  if (badge.textContent !== label) badge.textContent = label
+  badge.style.display = ''
+  // Measured AFTER `textContent`/`display` are current, so `offsetHeight`
+  // reflects the label actually being shown this tick.
+  const badgeHeight = badge.offsetHeight || NODE_BADGE_FALLBACK_HEIGHT
+  const aboveY = ringRect.y - badgeHeight - NODE_BADGE_GAP
+  const y = aboveY >= 0 ? aboveY : ringRect.y + NODE_BADGE_GAP
+  badge.style.transform = `translate(${ringRect.x}px, ${y}px)`
+  appliedBadgePlacements.set(badge, { x: ringRect.x, y: ringRect.y, label })
 }
 
 export function dropIndicatorStyle(target: CanvasDropTarget): CSSProperties {

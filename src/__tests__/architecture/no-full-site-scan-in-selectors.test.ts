@@ -50,7 +50,16 @@ const SCAN_ROOT = join(SRC_ROOT, 'admin')
  * this gate exists specifically because "it's probably fine" was wrong three
  * times already.
  */
-const FULL_SITE_SCAN_ALLOWLIST = new Set<string>([])
+const FULL_SITE_SCAN_ALLOWLIST = new Set<string>([
+  // pkg-02/WS-3.3 — registerProjectModules.ts's `siteHasUnregisteredPackageNode`
+  // walks `useEditorStore.getState().site.pages` IMPERATIVELY, once per
+  // `useEffect` run keyed on `[projectDir, trust]` (a project load/switch or
+  // a trust-tier promotion) — never inside a subscribed `useEditorStore(selector)`
+  // callback, so it does not run on every store change. The file does import
+  // `useEditorStore` (for `.getState()`), which is what this gate's text
+  // match can't distinguish from a reactive selector subscription.
+  'admin/pages/site/studio/registerProjectModules.ts',
+])
 
 // Windows' `path.relative` emits backslashes; normalize before comparing or
 // reporting so the gate behaves identically on every OS — several other

@@ -278,7 +278,7 @@ describe('JSX-valued icon props', () => {
     expect(named(loadNodes('pages/Share.jsx', evalOptions()), 'GlassButton').props.icon1).toEqual({ svg: SVG })
   })
 
-  it('declines a JSX prop that renders no markup of its own', () => {
+  it('WS-3.4 — a JSX prop that renders no raw markup is materialized as a real slot child instead of dropped', () => {
     write(
       'pages/Layout.jsx',
       [
@@ -289,8 +289,26 @@ describe('JSX-valued icon props', () => {
       ].join('\n'),
     )
 
-    // Only one level deep, and only markup the element itself carries. A nested
-    // layout is not something this can honestly flatten into an icon.
-    expect(named(loadNodes('pages/Layout.jsx', evalOptions()), 'Cell').props.icon).toBeUndefined()
+    // `iconPropFromJsx` still declines (one level deep, no raw markup) — but
+    // `captureSlotProps` (`parsePageFile.ts`) now materializes the whole
+    // subtree as a real child node instead of dropping the prop. The sentinel
+    // names that node's id; the actual `<div className="wrap"><span/></div>`
+    // structure survives as ordinary nodes in the flat tree.
+    const nodes = loadNodes('pages/Layout.jsx', evalOptions())
+    const cell = named(nodes, 'Cell')
+    const icon = cell.props.icon
+    expect(typeof icon).toBe('string')
+    const slotId = (icon as string).replace(/^studio-slot:/, '')
+    expect(slotId).not.toBe(icon) // proves the prefix was actually present
+
+    const slotDiv = nodes.find((n) => n.id === slotId)
+    expect(slotDiv).toBeDefined()
+    expect(slotDiv!.name).toBe('div')
+    expect(slotDiv!.locked).toBe(true)
+    expect(slotDiv!.children.length).toBe(1)
+    const span = nodes.find((n) => n.id === slotDiv!.children[0])
+    expect(span?.name).toBe('span')
+    // Not a normal DOM child of Cell — only reachable via the sentinel.
+    expect(cell.children).not.toContain(slotId)
   })
 })

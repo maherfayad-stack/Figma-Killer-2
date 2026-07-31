@@ -20,12 +20,14 @@ import {
   detectPackageManager,
   getInstallJob,
   probeInstallStatus,
+  resolveInstallJobStatus,
   startInstallJob,
   tryServeStudioInstall,
   type InstallSpawnFn,
   type InstallSpawnedProcess,
   type PublicInstallJob,
 } from '../studio/installDeps'
+import { readInstallJobFile, writeInstallJobFile, type PersistedInstallJob } from '../studio/installJobStore'
 import { projectsRootDir } from '../studioProjects'
 
 // ---------------------------------------------------------------------------
@@ -175,6 +177,7 @@ describe('probeInstallStatus', () => {
       hasNodeModules: false,
       dependencyCount: 0,
       packageManager: 'bun',
+      job: null,
     })
   })
 
@@ -189,6 +192,7 @@ describe('probeInstallStatus', () => {
       hasNodeModules: true,
       dependencyCount: 2,
       packageManager: 'bun',
+      job: null,
     })
   })
 
@@ -197,6 +201,20 @@ describe('probeInstallStatus', () => {
     const status = probeInstallStatus(tmpDir)
     expect(status.hasPackageJson).toBe(true)
     expect(status.dependencyCount).toBe(0)
+  })
+
+  it('approot-01 — reports package.json/node_modules found ONE LEVEL DOWN, not at the project directory', () => {
+    const appDir = path.join(tmpDir, 'firmware-console')
+    fs.mkdirSync(path.join(appDir, 'node_modules'), { recursive: true })
+    fs.writeFileSync(path.join(appDir, 'package.json'), JSON.stringify({ dependencies: { react: '^19.0.0' } }))
+
+    expect(probeInstallStatus(tmpDir)).toEqual({
+      hasPackageJson: true,
+      hasNodeModules: true,
+      dependencyCount: 1,
+      packageManager: 'bun',
+      job: null,
+    })
   })
 })
 
@@ -329,11 +347,140 @@ describe('startInstallJob', () => {
     expect(job.status).toBe('done')
     expect(job.warnings.join(' ')).toContain('sharp')
   })
+
+  // -------------------------------------------------------------------------
+  // approot-01 — a project's app root is not always its project directory.
+  // -------------------------------------------------------------------------
+
+  it('runs with cwd = the resolved APP ROOT when package.json sits one level down, not the project directory', async () => {
+    // Shares nothing with the eSIM corpus's own naming — genericRepoShapes.test.ts discipline.
+    const appDir = path.join(tmpDir, 'firmware-console')
+    fs.mkdirSync(appDir, { recursive: true })
+    fs.writeFileSync(path.join(appDir, 'package.json'), JSON.stringify({ name: 'firmware-console' }))
+
+    const { spawn, calls } = makeSpawnSpy(() => makeFakeProcess({ exitCode: 0 }).proc)
+    const timer = makeInertTimer()
+    const jobId = startInstallJob(tmpDir, { spawn, ...timer })
+    await waitForSettle(jobId)
+
+    expect(normalize(calls[0].cwd)).toBe(normalize(appDir))
+    expect(normalize(calls[0].cwd)).not.toBe(normalize(tmpDir))
+  })
+
+  it("uses the app root's OWN lockfile to pick the package manager, not the project directory's", async () => {
+    const appDir = path.join(tmpDir, 'firmware-console')
+    fs.mkdirSync(appDir, { recursive: true })
+    fs.writeFileSync(path.join(appDir, 'package.json'), JSON.stringify({ name: 'firmware-console' }))
+    fs.writeFileSync(path.join(appDir, 'pnpm-lock.yaml'), '')
+    // A DIFFERENT manager's lockfile at the project root must not win.
+    fs.writeFileSync(path.join(tmpDir, 'package-lock.json'), '')
+
+    const { spawn, calls } = makeSpawnSpy(() => makeFakeProcess({ exitCode: 0 }).proc)
+    const timer = makeInertTimer()
+    const jobId = startInstallJob(tmpDir, { spawn, ...timer })
+    await waitForSettle(jobId)
+
+    expect(calls[0].argv[0]).toBe('pnpm')
+  })
+
+  it('still runs at the project directory when package.json sits there too — the nested-app fix does not regress the common case', async () => {
+    fs.writeFileSync(path.join(tmpDir, 'package.json'), JSON.stringify({ name: 'fixture' }))
+    const { spawn, calls } = makeSpawnSpy(() => makeFakeProcess({ exitCode: 0 }).proc)
+    const timer = makeInertTimer()
+    const jobId = startInstallJob(tmpDir, { spawn, ...timer })
+    await waitForSettle(jobId)
+
+    expect(normalize(calls[0].cwd)).toBe(normalize(path.resolve(tmpDir)))
+  })
 })
 
 describe('getInstallJob', () => {
   it('returns null for an unknown job id', () => {
     expect(getInstallJob('this-job-does-not-exist')).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// infra-01 — durability: .studio/install-job.json survives a server restart
+// ---------------------------------------------------------------------------
+
+describe('install job durability (.studio/install-job.json)', () => {
+  let tmpDir: string
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'installdeps-durable-'))
+  })
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  function orphanRecord(overrides: Partial<PersistedInstallJob> = {}): PersistedInstallJob {
+    return {
+      id: 'orphan-job-id',
+      dir: path.resolve(tmpDir),
+      packageManager: 'bun',
+      status: 'running',
+      log: '',
+      truncated: false,
+      exitCode: null,
+      warnings: [],
+      startedAt: Date.now(),
+      finishedAt: null,
+      pid: null,
+      ...overrides,
+    }
+  }
+
+  it('writes a running record synchronously at start, then a terminal record once the job settles', async () => {
+    const { spawn } = makeSpawnSpy(() => makeFakeProcess({ exitCode: 0, stdout: 'ok' }).proc)
+    const timer = makeInertTimer()
+    const jobId = startInstallJob(tmpDir, { spawn, ...timer })
+
+    // Synchronous — `startInstallJob` writes this BEFORE the async job runner
+    // ever awaits anything, so it's on disk the instant the call returns.
+    const runningRecord = readInstallJobFile(tmpDir)
+    expect(runningRecord?.id).toBe(jobId)
+    expect(runningRecord?.status).toBe('running')
+
+    await waitForSettle(jobId)
+
+    const doneRecord = readInstallJobFile(tmpDir)
+    expect(doneRecord?.status).toBe('done')
+    expect(doneRecord?.log).toContain('ok')
+  })
+
+  it('resolveInstallJobStatus resolves an orphaned persisted "running" record — no matching in-memory job, simulating a server restart — to "interrupted", never a phantom "running"', () => {
+    writeInstallJobFile(orphanRecord({ pid: 424242 }))
+
+    const resolved = resolveInstallJobStatus('orphan-job-id', path.resolve(tmpDir))
+    expect(resolved?.status).toBe('interrupted')
+    expect(resolved?.warnings.join(' ')).toContain('424242')
+
+    // The correction is written back — a second read sees the same honest answer.
+    const onDisk = readInstallJobFile(tmpDir)
+    expect(onDisk?.status).toBe('interrupted')
+  })
+
+  it('resolveInstallJobStatus leaves an already-terminal persisted record untouched', () => {
+    writeInstallJobFile(orphanRecord({ status: 'done', exitCode: 0, finishedAt: Date.now(), warnings: ['pre-existing'] }))
+
+    const resolved = resolveInstallJobStatus('orphan-job-id', path.resolve(tmpDir))
+    expect(resolved?.status).toBe('done')
+    expect(resolved?.warnings).toEqual(['pre-existing'])
+  })
+
+  it('resolveInstallJobStatus returns null when the id matches neither memory nor what is persisted at dir', () => {
+    writeInstallJobFile(orphanRecord({ id: 'some-other-job', status: 'done' }))
+    expect(resolveInstallJobStatus('completely-unknown-id', path.resolve(tmpDir))).toBeNull()
+  })
+
+  it('probeInstallStatus surfaces the persisted job, resolving an orphaned "running" record honestly', () => {
+    writeInstallJobFile(orphanRecord({ packageManager: 'npm', log: 'installing…' }))
+
+    const status = probeInstallStatus(tmpDir)
+    expect(status.job?.id).toBe('orphan-job-id')
+    expect(status.job?.status).toBe('interrupted')
   })
 })
 
@@ -398,6 +545,7 @@ describe('tryServeStudioInstall', () => {
         hasNodeModules: false,
         dependencyCount: 0,
         packageManager: 'bun',
+        job: null,
       })
     } finally {
       fs.rmSync(insideDir, { recursive: true, force: true })
@@ -419,5 +567,45 @@ describe('tryServeStudioInstall', () => {
     const { req, url, pathname } = makeRequest('/admin/api/studio/load')
     const res = await tryServeStudioInstall(req, url, pathname)
     expect(res).toBeNull()
+  })
+
+  it('GET /install/:id?dir= falls back to the persisted record when the id is unknown to THIS process (simulated server restart)', async () => {
+    const root = projectsRootDir()
+    fs.mkdirSync(root, { recursive: true })
+    const insideDir = fs.mkdtempSync(path.join(root, '__installdeps_test_durable_'))
+    try {
+      writeInstallJobFile({
+        id: 'restart-sim-job',
+        dir: path.resolve(insideDir),
+        packageManager: 'bun',
+        status: 'running',
+        log: '',
+        truncated: false,
+        exitCode: null,
+        warnings: [],
+        startedAt: Date.now(),
+        finishedAt: null,
+        pid: null,
+      })
+
+      const { req, url, pathname } = makeRequest(
+        `/admin/api/studio/install/restart-sim-job?dir=${encodeURIComponent(insideDir)}`,
+      )
+      const res = await tryServeStudioInstall(req, url, pathname)
+      expect(res).not.toBeNull()
+      expect(res!.status).toBe(200)
+      const body = (await res!.json()) as { status: string; id: string }
+      expect(body.id).toBe('restart-sim-job')
+      expect(body.status).toBe('interrupted')
+    } finally {
+      fs.rmSync(insideDir, { recursive: true, force: true })
+    }
+  })
+
+  it('GET /install/:id still 404s when neither memory nor a dir-resolved disk record has the id', async () => {
+    const { req, url, pathname } = makeRequest('/admin/api/studio/install/some-unknown-id-without-dir')
+    const res = await tryServeStudioInstall(req, url, pathname)
+    expect(res).not.toBeNull()
+    expect(res!.status).toBe(404)
   })
 })

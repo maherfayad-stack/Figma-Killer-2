@@ -53,11 +53,12 @@ export function minimalSubprocessEnv(extraKeys: readonly string[] = []): Record<
   return env
 }
 
-/** The minimal shape `captureSubprocess`/`runCappedSubprocess` need from a spawned child — real `Bun.spawn` output already satisfies it. */
+/** The minimal shape `captureSubprocess`/`runCappedSubprocess` need from a spawned child — real `Bun.spawn` output already satisfies it. `pid` is optional and purely informational (e.g. `installDeps.ts` records it for forensic display in an `'interrupted'` job's warning text) — nothing here ever probes OS process liveness by it. */
 export interface SpawnedProcessLike {
   readonly stdout: ReadableStream<Uint8Array> | null
   readonly stderr: ReadableStream<Uint8Array> | null
   readonly exited: Promise<number>
+  readonly pid?: number
   kill(): void
 }
 

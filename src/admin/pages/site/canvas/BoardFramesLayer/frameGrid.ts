@@ -14,6 +14,14 @@ export const FRAME_HEIGHT = 800
 export const FRAME_GAP = 80
 export const GRID_COLUMNS = 2
 
+/**
+ * Header height (board units) added to a frame's own height for on-screen /
+ * marquee intersection tests, so the drag header itself isn't cut off the
+ * rect. Shared by `BoardFramesLayer.tsx` (selection bounding box) and
+ * `useMarqueeSelection.ts` (marquee hit-testing).
+ */
+export const FRAME_HEADER_HEIGHT = 48
+
 /** Grid slot for the Nth frame added to a board (0-indexed). */
 export function defaultFramePosition(index: number): { x: number; y: number } {
   const col = index % GRID_COLUMNS

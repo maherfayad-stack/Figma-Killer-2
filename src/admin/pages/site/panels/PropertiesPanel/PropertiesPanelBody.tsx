@@ -37,6 +37,7 @@ import { MultiSelectionInspector } from './MultiSelectionInspector'
 import { MultiSelectorInspector } from './MultiSelectorInspector'
 import { SelectorInspector } from './SelectorInspector'
 import { canComponentizeNode } from '@site/componentization'
+import { BranchChoiceNotice } from './BranchChoiceNotice'
 import { SharedComponentNotice } from './SharedComponentNotice'
 import { SourceLockedNotice } from './SourceLockedNotice'
 import { useEditorStore } from '@site/store/store'
@@ -172,6 +173,15 @@ export function PropertiesPanelBody(props: PropertiesPanelBodyProps): React.Reac
           codeProps={selectedNode.codeProps}
           hasWritableLocation={hasWritableSourceLocation(selectedNode.id)}
         />
+      ) : null}
+      {/* parser-06 — this fires independently of `lockReason`: the chosen
+          branch is NOT locked (the parser is certain of its structure), but
+          the fact that OTHER branches exist and weren't shown is still worth
+          surfacing. `SourceLockedNotice` above already covers this node's
+          `resolution.note` when it IS also locked for some other reason, so
+          show this one only when that didn't already run. */}
+      {!selectedNode?.lockReason && selectedNode?.branchAlternatives?.length ? (
+        <BranchChoiceNotice alternatives={selectedNode.branchAlternatives} />
       ) : null}
       <nav className={styles.nodeViewSwitcher} aria-label="Element options">
         <Button

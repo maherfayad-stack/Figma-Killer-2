@@ -45,6 +45,8 @@ import {
   writeArchiveToWorkspace,
 } from './archiveIngest'
 import { nextProjectName, projectsRootDir, safeProjectFolderName, writeProjectMeta } from '../studioProjects'
+import { probeProject } from './projectProbe'
+import { mergeStudioMeta } from './studioMeta'
 
 const ImportUploadFieldsSchema = Type.Object({
   kind: Type.Union([Type.Literal('zip'), Type.Literal('directory')]),
@@ -209,6 +211,17 @@ export async function tryServeStudioIngest(
     // so this always creates a fresh meta.json rather than clobbering a prior
     // one — same reasoning as the GitHub import route.
     writeProjectMeta(dir, { displayName })
+    // Cache a probe of the freshly-ingested tree, so the first `/load` knows
+    // where its pages live. Same reasoning as the GitHub route — see the
+    // comment there: without this, importing a repo whose app sits in a
+    // subdirectory succeeds and then renders an EMPTY canvas, silently.
+    // `profile.pagesDir` is the second source `projectPagesDir` consults.
+    // Never fatal: a probe failure must not lose an archive already on disk.
+    try {
+      mergeStudioMeta(dir, { profile: probeProject(dir) })
+    } catch (probeErr) {
+      console.error('[studio/importUpload] post-import probe failed:', probeErr)
+    }
     return jsonResponse({ ok: true, ...result })
   } catch (err) {
     console.error('[studio]', err)

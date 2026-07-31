@@ -35,8 +35,12 @@
  *      not itself a flex item doesn't respond to `min-height: auto` (that
  *      only has special content-based resolution for flex/grid items — CSS
  *      Flexbox §4.5). It needs `height: auto` plus a `min-height` floor set
- *      to its OWN original box height, which has to be MEASURED before the
- *      override is written.
+ *      to its OWN true content extent (`scrollHeight`), which has to be
+ *      MEASURED before the override is written — and specifically before
+ *      ANY mutation this same pass makes, ancestor or self (see
+ *      `SCROLL_UNROLL_MIN_HEIGHT_VAR`'s own doc for why re-reading
+ *      `clientHeight` afterward silently inherits an unrelated ancestor's
+ *      value instead).
  *
  * Both need `getComputedStyle` + a real layout read, so both are tag-then-
  * style: the JS pass measures and writes a `data-studio-unroll` attribute
@@ -269,15 +273,45 @@ function runUnrollPass(doc: Document): boolean {
   for (const el of body.querySelectorAll<HTMLElement>('*')) {
     if (el.hasAttribute(SCROLL_UNROLL_ATTR)) continue
     const computed = view.getComputedStyle(el)
+    // Capture BOTH metrics now, before this element (or any later sibling)
+    // is mutated — `scrollHeight` is what gets baked in as the min-height
+    // floor below. See the long comment at the write site for why re-reading
+    // either metric after `setAttribute` is wrong.
+    const clientHeight = el.clientHeight
+    const scrollHeight = el.scrollHeight
     const tag = classifyUnrollElement({
       position: computed.position,
-      scrollDeficit: el.scrollHeight - el.clientHeight,
-      clientHeight: el.clientHeight,
+      scrollDeficit: scrollHeight - clientHeight,
+      clientHeight,
     })
     if (tag === null) continue
     el.setAttribute(SCROLL_UNROLL_ATTR, tag)
     if (tag === 'explicit-height') {
-      el.style.setProperty(SCROLL_UNROLL_MIN_HEIGHT_VAR, `${el.clientHeight}px`)
+      // Use the metrics captured ABOVE, before `setAttribute` — not a fresh
+      // `el.clientHeight` re-read here. `querySelectorAll` visits ancestors
+      // before descendants, so by the time a deep descendant is processed
+      // in THIS SAME pass, an ancestor higher up may already have been
+      // tagged and had ITS `--studio-unroll-min-height` custom property set
+      // moments ago. Custom properties inherit — re-reading `clientHeight`
+      // AFTER this element's own `setAttribute` activates
+      // `[data-studio-unroll="explicit-height"] { height: auto !important;
+      // min-height: var(--studio-unroll-min-height) !important }` on ITSELF
+      // resolves that `min-height` against the INHERITED ancestor value
+      // (this element hasn't set its own local one yet), forcing its
+      // clientHeight up to match — a small, correctly-sized element (e.g. a
+      // "66" price label, ~12px) then gets the ancestor's much larger min-
+      // height (e.g. 1608px) baked in as its own PERMANENT floor. Measured
+      // live: `.homepage` (root, correctly needs 1608px) tags first; every
+      // descendant tagged afterward in the same pass — `.hp-enhance__row`,
+      // `.price`, `.price__value` — inherited and locked in that same
+      // 1608px, inflating a two-character price span to over a thousand
+      // pixels tall and, cascading up through `flex-direction: column`
+      // ancestors, roughly tripling the whole page's real content height
+      // (and, on the board, overlapping the frames below it). `scrollHeight`
+      // captured before any mutation is a pure geometry read, immune to this
+      // — it reports this element's own true overflow extent regardless of
+      // what an ancestor's inline style says.
+      el.style.setProperty(SCROLL_UNROLL_MIN_HEIGHT_VAR, `${scrollHeight}px`)
     }
     changed = true
   }

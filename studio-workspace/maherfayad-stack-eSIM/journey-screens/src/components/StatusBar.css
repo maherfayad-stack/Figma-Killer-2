@@ -1,0 +1,26 @@
+.mock-status-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px 0;
+  height: 59px;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  color: var(--text-base-default);
+}
+
+.mock-status-bar__time {
+  font-size: var(--type-body-size);
+  font-weight: 600;
+  letter-spacing: -0.3px;
+  font-family: -apple-system, 'SF Pro Text', system-ui, sans-serif;
+  color: inherit;
+  line-height: 1;
+}
+
+.mock-status-bar__icons {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: inherit;
+}

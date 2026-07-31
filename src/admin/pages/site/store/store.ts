@@ -193,14 +193,29 @@ export const selectActivePage = (s: EditorStore): Page | null => {
   return page
 }
 
-/** Select whether the docked right sidebar is currently taking layout space. */
+/**
+ * Select whether the docked right sidebar is currently taking layout space.
+ *
+ * `board-02`: includes `selectedFrameIds` (WS-7.1 board-frame multi-
+ * selection) alongside node/selector selection — without it, the docked
+ * sidebar stayed width-0 for a frame selection (`selectFrame`/
+ * `setSelectedFrameIds`/`selectAllFrames` all clear `selectedNodeId` as part
+ * of selecting a frame — see `boardSlice`'s module doc), even after
+ * `usePropertiesPanelAutoOpen`'s `collapsed` fix, because THIS selector — a
+ * separate gate for the DOCKED variant's layout width — never considered
+ * frames either. `FrameBulkInspector` rendered with a real DOM box (`.panel`
+ * doesn't read `isExpanded`, only `--panel-w`), but sat behind a width-0
+ * `<aside>`, unreachable to a real click/`elementFromPoint` even though
+ * `boundingBox()` reported it as present.
+ */
 export const selectRightSidebarExpanded = (s: EditorStore) =>
   s.propertiesPanelMode === 'docked' &&
   !s.propertiesPanel.collapsed &&
   Boolean(
     s.selectedNodeId ||
       s.selectedSelectorClassId ||
-      s.selectedSelectorClassIds.length > 0,
+      s.selectedSelectorClassIds.length > 0 ||
+      s.selectedFrameIds.length > 0,
   )
 
 // ---------------------------------------------------------------------------

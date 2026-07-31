@@ -147,6 +147,35 @@ describe('an ordinary TypeScript React repo', () => {
     ])
   })
 
+  it('WS-4.2 — each call site becomes its own "instance" node (named-export arrow, reached through a barrel)', () => {
+    write(
+      'app/routes/Pricing.tsx',
+      [
+        "import { PlanCard } from '../components'",
+        "export const Pricing = () => (",
+        '  <main>',
+        '    <PlanCard plan={{ id: \'x\', name: \'Solo\', seats: 1, monthly: 5 }} featured />',
+        '  </main>',
+        ')',
+        '',
+      ].join('\n'),
+    )
+
+    const nodes = load('app/routes/Pricing.tsx')
+    const instance = nodes.find((n) => n.instanceOf?.componentName === 'PlanCard')
+    expect(instance).toBeDefined()
+    expect(instance!.instanceOf?.source).toBe('local')
+    expect(instance!.instanceOf?.sourceFile).toBe('app/components/PlanCard.tsx')
+    // `featured` (a boolean-shorthand attribute) round-trips as a real call-site prop.
+    expect(instance!.instanceOf?.callSiteProps.featured).toBe(true)
+    // The instance itself contributes no element of its own — `article` is
+    // its CHILD (not itself named "article"), reachable via `children`.
+    expect(instance!.kind).toBe('component')
+    const article = nodes.find((n) => n.name === 'article')
+    expect(article).toBeDefined()
+    expect(instance!.children).toContain(article!.id)
+  })
+
   it('resolves a field read off a loop item passed through a component prop', () => {
     write(
       'app/routes/Pricing.tsx',
@@ -287,6 +316,36 @@ describe('an ordinary TypeScript React repo', () => {
     const nodes = load('app/routes/Stateful.tsx')
     expect(texts(nodes)).toEqual(['Counter', 'Add one'])
     expect(nodes.find((n) => n.name === 'button')?.props.onClick).toBeUndefined()
+  })
+
+  it('reads a useState(<literal>) initial value to decide a `&&` overlay, not stack it (parser-07)', () => {
+    write(
+      'app/routes/Overlay.tsx',
+      [
+        "import { useState } from 'react'",
+        'interface OverlayProps {',
+        '  title: string',
+        '}',
+        'const Overlay = ({ title }: OverlayProps) => {',
+        '  const [showHelp, setShowHelp] = useState(false)',
+        '  return (',
+        '    <section>',
+        '      <h2>{title}</h2>',
+        '      {showHelp && <p className="help">Need a hand?</p>}',
+        '    </section>',
+        '  )',
+        '}',
+        'export default Overlay',
+        '',
+      ].join('\n'),
+    )
+
+    // `showHelp`'s initial value is a literal `false` right there in the
+    // source, not hook state that has to run — so the FIRST PAINT the canvas
+    // shows has the help panel hidden, not stacked on top of the heading.
+    const nodes = load('app/routes/Overlay.tsx')
+    expect(nodes.find((n) => n.name === 'p')).toBeUndefined()
+    expect(nodes.find((n) => n.name === 'section')?.locked).toBe(false)
   })
 
   it('yields an empty page rather than throwing on a file it cannot parse', () => {

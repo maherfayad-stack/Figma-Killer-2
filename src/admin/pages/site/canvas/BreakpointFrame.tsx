@@ -75,6 +75,9 @@ export function BreakpointFrame({
   // `getBoundingClientRect()` call. State (not ref) so the overlay re-renders
   // when the iframe mounts.
   const [iframeEl, setIframeEl] = useState<HTMLIFrameElement | null>(null)
+  // The in-iframe selection-overlay root (WS-5.1) — state so the overlay
+  // re-renders once it's ready to portal rings/badge into it.
+  const [overlayRoot, setOverlayRoot] = useState<HTMLDivElement | null>(null)
   const [activationHintPoint, setActivationHintPoint] = useState<CursorTooltipPoint | null>(null)
   const [readonlyHint, setReadonlyHint] = useState<{ text: string; point: CursorTooltipPoint } | null>(null)
 
@@ -114,6 +117,7 @@ export function BreakpointFrame({
   const handleIframeRef = (handle: IframeFrameSurfaceHandle | null) => {
     iframeHandleRef.current = handle
     setIframeEl(handle?.iframeElement ?? null)
+    setOverlayRoot(handle?.contentOverlayRoot ?? null)
   }
 
   const handleEmptyFrameClick = () => {
@@ -235,13 +239,16 @@ export function BreakpointFrame({
           </CanvasTemplateContext.Provider>
         </IframeFrameSurface>
 
-        {/* Selection / hover rings — rendered in the parent document but
-            positioned over the iframe. The overlay handles the iframe-rect
-            → editor-viewport coordinate translation. */}
+        {/* Selection / hover rings + node badge render INSIDE the iframe
+            (WS-5.1, see CanvasSelectionOverlayInjector) via `overlayRoot`.
+            The toolbar and InPlaceInspector still portal into the parent
+            document — real inputs/buttons inside a transformed iframe are a
+            worse problem — anchored via the `--selection-anchor-*` channel. */}
         <BreakpointSelectionOverlay
           breakpointId={breakpoint.id}
           viewportRef={viewportRef}
           iframeElement={iframeEl}
+          overlayRoot={overlayRoot}
         />
         <CursorTooltip
           content={`Click to activate ${breakpoint.label} breakpoint`}

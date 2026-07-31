@@ -25,3 +25,11 @@
   outline: 1px dashed var(--danger);
   padding: var(--space-3xs);
 }
+
+/*
+ * WS-3.3's `PackageComponentPlaceholder` (an unregistered `pkg.*` node) is
+ * deliberately NOT styled here. Like `.unknownModule` above, it renders
+ * INSIDE the per-frame iframe, where hashed CSS Module class names never
+ * apply (see `EditorChromeInjector.tsx`'s module doc) — its actual styling
+ * lives in that injector's `[data-studio-package-placeholder]` rule.
+ */

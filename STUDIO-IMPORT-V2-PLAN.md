@@ -494,6 +494,25 @@ exists and nothing imports `@alm-design/design-system` outside a fixture.
 This is the heart of requirements 3 and 5, and it is a **redesign**, not an
 addition.
 
+**Engine layer done (`parser-05`), interaction layer open.** 4.2 (fragment
+node), 4.3 (call-site props writable), 4.4 (detach + `extractComponentCopy`
+escape hatch), and 4.5 (swap) are shipped at the parser/codemod/MCP layer —
+see `docs/features/studio-import.md`'s "Detach and swap" section and
+`STATE.md`'s `parser-05` entry for the eSIM corpus numbers (139 instances, 59
+clean detaches, 42 hook refusals, 38 `.map`-row no-location). **Not built**:
+Figma-style click-to-select-the-instance / Enter-to-enter / Esc-to-exit
+(needs new store "entered instance" state + a `findEnclosingComponentRef`-
+style click-routing mechanism — see that entry's Landmines), the DOM/Layers
+panel's collapsed-row-with-glyph treatment (falls back to the generic tree
+row today — `getNodeDisplayName` shows the component name, but no dedicated
+row chrome), the Properties panel's "Component" section (swap picker UI,
+typed call-site prop controls via WS-3.1's `PropKind` for LOCAL components —
+package components already have this from `pkg-01`/`panel-01`), and the
+package-instance side of detach ("Eject to local component" / "Replace with
+markup snapshot" — `detachComponentInstance` refuses a package instance with
+a clear `package-component` reason today, doesn't yet offer either
+alternative).
+
 #### 4.1 The problem with today's inlining
 
 `inlineLocalComponents` **replaces** the `<Card/>` call site with Card's own

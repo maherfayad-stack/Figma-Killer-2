@@ -1,33 +1,49 @@
 /**
  * designImport/parseCssTokens — hand-rolled scanning for design-token import,
  * across three source shapes:
- *   - CSS: top-level `:root { --x: y; }`-style custom properties. No CSS
- *     parser dependency exists in this codebase (checked: no postcss/
- *     css-tree/lightningcss); the extraction needed is narrow enough that a
- *     small brace-depth scanner is simpler and lighter than a full CSS AST
- *     parser — see `extractRootCustomProperties`.
+ *   - CSS: `:root`/global-token-host custom properties, `var()`-resolved and
+ *     classified through `tokenExtractCssScan.ts`'s shared engine (see below)
+ *     — see `buildCssCandidates`.
  *   - JSON: a recursive walk of the parsed value (real JSON.parse — always
  *     safe) — see `extractJsonTokens`.
  *   - JS/TS: a conservative TEXT-ONLY regex over `key: 'quoted string'` pairs
  *     — the source is NEVER parsed as code or executed — see
  *     `extractJsTokens`.
  *
- * Every extractor feeds the SAME `classifyToken` heuristic below, so a
- * `--brand-500` custom property, a `{"brand-500": {"value": "#fff"}}` JSON
- * leaf, and a `brand500: '#fff'` object-literal entry all classify
- * identically once extracted.
+ * ## One classification engine, not two
+ *
+ * This module used to carry its own `classifyToken` — a NAME-hint-first
+ * heuristic (`--text-*` reads as typography by name) that never resolved
+ * `var(...)` indirection ("meaningless as a standalone palette entry"). That
+ * was a real, documented correctness gap: most of a real design system's
+ * semantic palette IS `var()` indirection (`--text-base-default: var(--color-
+ * metal)` is a text COLOR, not a typography token), and name-first
+ * classification got both wrong — it forced the alias to typography by name,
+ * AND never had a value to fall back on since it was never resolved.
+ *
+ * `server/handlers/studio/tokenExtractCssScan.ts` (built for `tokens-01`'s
+ * automatic, currently-open-project import) already solved this correctly:
+ * value-first classification (a real color literal is a color regardless of
+ * name) with bounded, cycle-safe `var()` resolution against the same `:root`
+ * scope. Rather than duplicate that engine a second time for this
+ * WIZARD-triggered, external-source import, this module now calls it
+ * directly (`classifyDeclaration`, `resolveVarValue`, `collectRootScopeMaps`,
+ * `toPx`) for BOTH the CSS path (with real resolution) and the JSON/JS path
+ * (classifying the extracted name/value pair with no resolution to do — a
+ * JSON/JS token file's leaves are ordinarily literal, not `var()` refs). One
+ * engine, two triggers (automatic vs. manual/external), per CLAUDE.md's
+ * "no old and new side by side."
  *
  * Scope, deliberately narrow:
  *   - Only declared CUSTOM PROPERTIES inside a recognized global-token-host
- *     selector are extracted — `:root`, `html`, or either wrapped in a single
- *     `:where(...)`/`:is(...)` (real packages vary: open-props, for one,
- *     ships every token under `:where(html)` rather than `:root` — see
- *     `isGlobalHostSelectorSegment`) — not arbitrary color/length literals
- *     scattered through ordinary rules. Third-party CSS is unpredictable;
- *     custom properties on a recognized host are the closest thing to a
- *     declared "design token" a stylesheet can have, so restricting to them
- *     keeps the signal high (see the preview-dialog decision this backs — a
- *     raw literal-hunting scan would surface a lot of unrelated noise).
+ *     selector are extracted — see `tokenExtractCssScan.ts`'s
+ *     `isGlobalTokenHostSelector` (`:root`, `html`, `body`, or any of those
+ *     wrapped in a single `:where(...)`/`:is(...)` — open-props ships every
+ *     token under `:where(html)` rather than `:root`) — not arbitrary
+ *     color/length literals scattered through ordinary rules. Third-party CSS
+ *     is unpredictable; custom properties on a recognized host are the
+ *     closest thing to a declared "design token" a stylesheet can have, so
+ *     restricting to them keeps the signal high.
  *   - `@font-face` family names are NOT extracted as a token category: this
  *     app's Framework "Typography" settings are a numeric font-SIZE scale
  *     (`FrameworkTypographyGroup`), not a font-family picker — that's a
@@ -35,6 +51,13 @@
  *     source CSS still work because the raw file is copied into the project
  *     verbatim; they're just not surfaced as importable "typography" tokens.
  */
+import {
+  classifyDeclaration,
+  collectRootScopeMaps,
+  resolveVarValue,
+  toPx,
+  type Classification,
+} from '../studio/tokenExtractCssScan'
 
 export interface ExtractedCssVar {
   /** Custom property name, without the leading `--`. */
@@ -58,9 +81,9 @@ export interface ColorTokenCandidate {
 /**
  * One classified size candidate (typography or spacing) — ready for a
  * `fluid_manual` scale group's `manualSizes` entry. `px` is the value
- * converted to a plain number of pixels (see `convertLengthToPx`); size
- * candidates whose unit can't be safely converted (`%`, `vh`, `ch`, …) are
- * excluded from these lists entirely, not included with a guessed value.
+ * converted to a plain number of pixels (`toPx`); size candidates whose unit
+ * can't be safely converted (`%`, `vh`, `ch`, …) are excluded from these
+ * lists entirely, not included with a guessed value.
  */
 export interface SizeTokenCandidate {
   id: string
@@ -78,145 +101,47 @@ export interface TokenCandidates {
   otherCount: number
 }
 
+/** `classifyDeclaration`'s 5-way `Classification` collapsed to this module's 4-way `TokenCategory` — `typography-detail` (real, but not representable as a size step) and `unclassified` both surface as `'other'`, matching this wizard's existing preview shape (no separate "detail" bucket in `DesignImportDialog.tsx`). */
+function toTokenCategory(kind: Classification): TokenCategory {
+  if (kind === 'color') return 'color'
+  if (kind === 'spacing') return 'spacing'
+  if (kind === 'typography-size') return 'typography'
+  return 'other'
+}
+
 // ---------------------------------------------------------------------------
-// :root custom-property extraction
+// :root custom-property extraction (delegates to the shared engine)
 // ---------------------------------------------------------------------------
 
-/** Strips `/* … *\/` block comments — run before scanning so a commented-out `:root` or `--var` never matches. */
-function stripCssComments(css: string): string {
-  return css.replace(/\/\*[\s\S]*?\*\//g, '')
-}
-
-/**
- * True when one comma-separated selector segment is a recognized "global
- * token host" — `:root`, `html`, or either wrapped in a single `:where(...)`/
- * `:is(...)` (the low-specificity pattern real design-token packages
- * increasingly use — e.g. open-props ships every token under
- * `:where(html)`, not `:root`). Exact/near-exact match on the trimmed
- * segment, NOT a substring test, so a class like `.html-embed` never
- * false-positives.
- */
-function isGlobalHostSelectorSegment(segment: string): boolean {
-  const trimmed = segment.trim().toLowerCase()
-  if (/^:root(\[[^\]]*\])?$/.test(trimmed)) return true
-  if (/^html(\[[^\]]*\])?$/.test(trimmed)) return true
-  const wrapped = /^:(?:where|is)\(\s*(.+?)\s*\)$/.exec(trimmed)
-  if (wrapped) return wrapped[1] === ':root' || wrapped[1] === 'html'
-  return false
-}
-
-/**
- * Finds every top-level rule block whose selector is (or includes, in a
- * comma-separated list) a recognized global token host — see
- * `isGlobalHostSelectorSegment` — and returns the `{ … }` body of each. Brace-
- * depth counting (not a single regex) so a host selector nested inside a
- * `@media (...)` wrapper is still found, and a block containing nested
- * `@supports`/`@media` sub-blocks doesn't truncate at the first inner `}`.
- */
-function findRootBlockBodies(css: string): string[] {
-  const bodies: string[] = []
-  const len = css.length
-  let i = 0
-  while (i < len) {
-    const brace = css.indexOf('{', i)
-    if (brace === -1) break
-    const selector = css.slice(i, brace)
-    const isHost = selector.split(',').some(isGlobalHostSelectorSegment)
-
-    // Find this block's matching closing brace via depth-counting — this
-    // always advances `i` past the WHOLE block, never just its opening `{`.
-    // Skipping only past `{` would leave the skipped block's own body +
-    // closing `}` inside the NEXT selector slice, corrupting it.
-    let depth = 1
-    let j = brace + 1
-    while (j < len && depth > 0) {
-      if (css[j] === '{') depth++
-      else if (css[j] === '}') depth--
-      j++
-    }
-    if (isHost) {
-      bodies.push(css.slice(brace + 1, j - 1))
-    } else {
-      // Not a host itself, but it may be a WRAPPER around one (e.g. a
-      // `@media (...) { :root { … } }` block) — recurse into its body rather
-      // than discarding it outright.
-      bodies.push(...findRootBlockBodies(css.slice(brace + 1, j - 1)))
-    }
-    i = j
-  }
-  return bodies
-}
-
-const CUSTOM_PROP_RE = /--([a-zA-Z0-9_-]+)\s*:\s*([^;]+);/g
-
-/** Extracts every `--name: value;` declaration from every global-token-host block in `css` (see `isGlobalHostSelectorSegment`). */
+/** Extracts every classifiable `--name: value;` declaration from every global-token-host block in `css` (see module doc), `var()`-resolved against `css`'s own root scope. Exported for its own test coverage; `buildTokenCandidates` is the real entry point. */
 export function extractRootCustomProperties(css: string, file: string): ExtractedCssVar[] {
-  const cleaned = stripCssComments(css)
+  const { light } = collectRootScopeMaps(css)
   const out: ExtractedCssVar[] = []
-  for (const body of findRootBlockBodies(cleaned)) {
-    let match: RegExpExecArray | null
-    CUSTOM_PROP_RE.lastIndex = 0
-    while ((match = CUSTOM_PROP_RE.exec(body)) !== null) {
-      out.push({ name: match[1], value: match[2].trim(), file })
-    }
+  for (const [name, raw] of light) {
+    out.push({ name, value: resolveVarValue(raw, light), file })
   }
   return out
 }
 
 // ---------------------------------------------------------------------------
-// Classification
+// Classification — a thin, name-preserving wrapper around the shared engine
 // ---------------------------------------------------------------------------
 
-const COLOR_VALUE_RE = /^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$|^(?:rgb|rgba|hsl|hsla|hwb|oklch|oklab|lab|lch|color)\(/i
-const COLOR_NAME_HINT_RE = /color|background|border|accent|surface|foreground|fg\b|\bbg\b/i
-const TYPOGRAPHY_NAME_HINT_RE = /font|text|type|leading|tracking|heading/i
-const SPACING_NAME_HINT_RE = /space|spacing|gap\b|padding|margin|radius|size|width|height|inset/i
-
 /**
- * Length units this import can safely convert to a plain px number.
- * `rem`/`em` are converted against the standard 16px browser default — NOT
- * this project's own `FrameworkPreferencesSettings.rootFontSize` (which
- * defaults to 10 and only governs how THIS app emits its own generated
- * clamp()/rem output; it has no bearing on what "1rem" means in someone
- * else's source CSS). `%`, `vh`, `vw`, `ch`, `vmin`, `vmax` are context-
- * dependent and are deliberately NOT converted — those candidates are
- * excluded from the size lists entirely rather than guessed at.
- */
-const REM_EM_TO_PX = 16
-const PT_TO_PX = 96 / 72
-
-const LENGTH_RE = /^(-?\d*\.?\d+)(px|rem|em|pt)$/i
-
-/** Converts a CSS length to a plain px number, or `null` if the unit isn't safely convertible (or the value isn't a length at all). */
-export function convertLengthToPx(value: string): number | null {
-  const match = LENGTH_RE.exec(value.trim())
-  if (!match) return null
-  const amount = Number.parseFloat(match[1])
-  if (!Number.isFinite(amount)) return null
-  const unit = match[2].toLowerCase()
-  if (unit === 'px') return amount
-  if (unit === 'rem' || unit === 'em') return amount * REM_EM_TO_PX
-  if (unit === 'pt') return amount * PT_TO_PX
-  return null
-}
-
-/**
- * Classifies one `--name: value` pair. Name hints are checked first — a var
- * named `--brand-color: var(--gray-900)` should classify as a color even
- * though its value is a reference, not a literal — falling back to shape-of-
- * value detection when the name gives no hint.
+ * Classifies one already-resolved `name: value` pair via the shared
+ * `classifyDeclaration` engine (value first, name-hint second, never guesses
+ * a bare length into spacing with no hint at all — see that function's doc).
+ * Kept as a named export (rather than inlining `classifyDeclaration` at each
+ * call site) purely for this module's own test coverage and because callers
+ * here want the 4-way `TokenCategory`, not the engine's 5-way
+ * `Classification`.
  */
 export function classifyToken(name: string, value: string): TokenCategory {
-  const trimmed = value.trim()
-  if (COLOR_NAME_HINT_RE.test(name) || COLOR_VALUE_RE.test(trimmed)) return 'color'
-  if (TYPOGRAPHY_NAME_HINT_RE.test(name)) return convertLengthToPx(trimmed) !== null ? 'typography' : 'other'
-  if (SPACING_NAME_HINT_RE.test(name)) return convertLengthToPx(trimmed) !== null ? 'spacing' : 'other'
-  // No name hint — fall back to value shape: a plain convertible length reads
-  // as spacing (the more common bare-number use in a design-token sheet);
-  // typography sizes without a name hint are rare enough to not guess at.
-  if (convertLengthToPx(trimmed) !== null) return 'spacing'
-  return 'other'
+  return toTokenCategory(classifyDeclaration(name, value.trim()))
 }
+
+/** Converts a CSS length to a plain px number, or `null` if the unit isn't safely convertible (or the value isn't a length at all). Re-exported from the shared engine — kept under this module's own name since it's part of this module's public/tested surface. */
+export const convertLengthToPx = toPx
 
 // ---------------------------------------------------------------------------
 // JSON token extraction
@@ -237,7 +162,7 @@ function isDtcgLeaf(value: unknown): value is { value: string | number; type?: s
 /**
  * Recursively walks a parsed JSON value, collecting every string/number leaf
  * as a candidate token — `name` is the dot-joined path (e.g.
- * `colors.brand.500`), which then runs through the SAME `classifyToken`
+ * `colors.brand.500`), which then runs through the SAME `classifyDeclaration`
  * heuristic as a CSS custom property name. A DTCG-style `{value, type}` leaf
  * folds its `type` into the classified name (e.g. `color colors.brand.500`)
  * so a file that already declares "this is a color" gets that signal too,
@@ -287,9 +212,9 @@ const JS_STRING_ENTRY_RE = /(?:^|[{,])\s*(?:['"]?)([A-Za-z0-9_$-]+)(?:['"]?)\s*:
  * nested plain-object literal whose leaves are quoted strings (colors,
  * dimensions with units, font stacks). Computed keys, template literals,
  * spreads, and non-string (numeric/expression) values are not extracted —
- * acceptable because `classifyToken` still filters the result: a match on
- * unrelated code (e.g. `className: 'foo'`) simply won't look like a color or
- * length and lands in "other", same safety net the CSS path relies on.
+ * acceptable because `classifyDeclaration` still filters the result: a match
+ * on unrelated code (e.g. `className: 'foo'`) simply won't look like a color
+ * or length and lands in "other", same safety net the CSS path relies on.
  */
 export function extractJsTokens(source: string, file: string): ExtractedCssVar[] {
   const cleaned = stripJsComments(source)
@@ -313,25 +238,52 @@ function nextCandidateId(): string {
 }
 
 /**
- * Scans every fetched source file — CSS via its `:root`-ish custom
- * properties, JSON/JS/TS token files (`isCandidateTokenFile`) via their own
- * extractors — classifies each declaration, and returns de-duplicated
- * candidate lists (later files win on a `name` collision — matches "last one
- * wins" cascade intuition for same-named tokens across multiple files).
- * `cssFiles` and `tokenFiles` are scanned identically past this point; they're
- * only kept apart upstream because CSS files are also eligible for
- * project copy-back and token files are not (see `FetchedSource`'s doc).
+ * CSS files are concatenated (in order) into ONE text before scanning — a
+ * design-token repo commonly splits `colors.css`/`spacing.css` referencing a
+ * shared `variables.css`, and `var()` resolution needs to see all of it at
+ * once, the same way `tokenExtract.ts` resolves against a whole project's
+ * already-concatenated compiled CSS. `file` attribution (which of the
+ * ORIGINAL files a given name came from, for the preview) is tracked
+ * separately, per-file, with the same "later file wins" cascade order the
+ * combined map already resolves duplicates by.
+ */
+function buildCssCandidates(cssFiles: ReadonlyArray<{ relPath: string; contents: string }>): ExtractedCssVar[] {
+  if (cssFiles.length === 0) return []
+  const combined = cssFiles.map((f) => f.contents).join('\n')
+  const { light } = collectRootScopeMaps(combined)
+
+  const nameToFile = new Map<string, string>()
+  for (const file of cssFiles) {
+    for (const name of collectRootScopeMaps(file.contents).light.keys()) {
+      nameToFile.set(name, file.relPath)
+    }
+  }
+
+  const out: ExtractedCssVar[] = []
+  for (const [name, raw] of light) {
+    out.push({ name, value: resolveVarValue(raw, light), file: nameToFile.get(name) ?? cssFiles[0]!.relPath })
+  }
+  return out
+}
+
+/**
+ * Scans every fetched source file — CSS via its global-token-host custom
+ * properties (`buildCssCandidates`), JSON/JS/TS token files
+ * (`isCandidateTokenFile`) via their own extractors — classifies each
+ * declaration through the shared `classifyDeclaration` engine, and returns
+ * de-duplicated candidate lists (later files win on a `name` collision —
+ * matches "last one wins" cascade intuition for same-named tokens across
+ * multiple files). `cssFiles` and `tokenFiles` are scanned identically past
+ * extraction; they're only kept apart upstream because CSS files are also
+ * eligible for project copy-back and token files are not (see
+ * `FetchedSource`'s doc).
  */
 export function buildTokenCandidates(
   cssFiles: ReadonlyArray<{ relPath: string; contents: string }>,
   tokenFiles: ReadonlyArray<{ relPath: string; contents: string }> = [],
 ): TokenCandidates {
   const byName = new Map<string, ExtractedCssVar>()
-  for (const file of cssFiles) {
-    for (const v of extractRootCustomProperties(file.contents, file.relPath)) {
-      byName.set(v.name, v)
-    }
-  }
+  for (const v of buildCssCandidates(cssFiles)) byName.set(v.name, v)
   for (const file of tokenFiles) {
     const isJson = file.relPath.toLowerCase().endsWith('.json')
     let vars: ExtractedCssVar[]

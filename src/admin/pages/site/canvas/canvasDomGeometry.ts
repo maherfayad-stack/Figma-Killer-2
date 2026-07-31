@@ -205,17 +205,31 @@ export function nodeVisualRect(element: Element, depth: number = 0): ClientRectL
   for (const child of Array.from(children)) {
     const childRect = nodeVisualRect(child, depth + 1)
     if (!childRect) continue
-    union = union === null ? childRect : {
-      left: Math.min(union.left, childRect.left),
-      top: Math.min(union.top, childRect.top),
-      right: Math.max(union.right, childRect.right),
-      bottom: Math.max(union.bottom, childRect.bottom),
-      width: 0,
-      height: 0,
-    }
+    // NEVER assign `union = childRect` directly (the single/first-child
+    // case) when `childRect` can be a real `DOMRect` — `getBoundingClientRect()`
+    // returns one whenever a child's own box is non-empty (the `return rect`
+    // branch above). `left`/`top`/`right`/`bottom` on a `DOMRect` are
+    // PROTOTYPE getters, not the instance's own enumerable properties, so a
+    // later `{ ...union, ... }` spread (below) silently drops them — the
+    // result keeps a correct `width`/`height` (computed from `right`/`left`,
+    // which ARE readable via normal property access) but `x`/`y` come out
+    // `undefined`, then `undefined * zoom` is `NaN` wherever a caller
+    // multiplies it. Explicit field reads work on a DOMRect either way — copy
+    // fields into a plain object immediately so nothing downstream can spread
+    // it again and reintroduce this.
+    union = union === null
+      ? { left: childRect.left, top: childRect.top, right: childRect.right, bottom: childRect.bottom, width: 0, height: 0 }
+      : {
+        left: Math.min(union.left, childRect.left),
+        top: Math.min(union.top, childRect.top),
+        right: Math.max(union.right, childRect.right),
+        bottom: Math.max(union.bottom, childRect.bottom),
+        width: 0,
+        height: 0,
+      }
   }
   if (union === null) return null
-  return { ...union, width: union.right - union.left, height: union.bottom - union.top }
+  return { left: union.left, top: union.top, right: union.right, bottom: union.bottom, width: union.right - union.left, height: union.bottom - union.top }
 }
 
 function clientRectToViewportRect(

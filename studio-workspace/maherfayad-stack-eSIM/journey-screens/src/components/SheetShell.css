@@ -1,0 +1,27 @@
+.sheet-shell {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  background: var(--color-black-static, #000);
+  overflow: hidden;
+}
+
+.sheet-shell__top {
+  flex-shrink: 0;
+  background: var(--color-black-static, #000);
+}
+
+.sheet-shell__status-bar {
+  color: var(--color-white-static, #fff);
+}
+
+.sheet-shell__panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--background-base-default);
+  border-radius: var(--rounded-lg) var(--rounded-lg) 0 0;
+  overflow: hidden;
+}

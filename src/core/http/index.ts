@@ -6,6 +6,7 @@
 export {
   apiRequest,
   apiBlobRequest,
+  ndjsonRequest,
   readEnvelope,
   assertOk,
   responseErrorMessage,

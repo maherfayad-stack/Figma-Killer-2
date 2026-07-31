@@ -132,6 +132,18 @@
  *       symlinks, walking to the nearest existing ancestor for a target
  *       directory that does not exist yet.
  *
+ *   GET/POST /admin/api/studio/trust-tier      → `studio/trustTier.ts`
+ *       WS-3.3 — reads/writes `.studio/meta.json`'s `trust` field. The action
+ *       behind the canvas's "promote this project" placeholder for an
+ *       unregistered `pkg.*` node — see `NodeRenderer.tsx`'s
+ *       `PackageComponentPlaceholder`.
+ *
+ *   POST /admin/api/studio/extract-component   → `studio/extractComponent.ts`
+ *       instance-ui-01 — the detach-refusal escape hatch (`extractComponentCopy`)
+ *       as a plain route the admin browser can call: duplicate a component
+ *       under a fresh name and repoint just the one call site. The Properties
+ *       panel's "Duplicate as Card2.tsx and edit that instead?" offer.
+ *
  *   POST /admin/api/studio/install            → `studio/installDeps.ts`
  *   GET  /admin/api/studio/install/:id
  *   GET  /admin/api/studio/install/status
@@ -153,7 +165,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { createBoardsFile, parseBoardsFile, serializeBoardsFile, type BoardsFile } from '@core/studio-board'
 import { Type } from '@core/utils/typeboxHelpers'
-import { badRequest, jsonResponse, readValidatedBody } from '../http'
+import { badRequest, jsonResponse, ndjsonResponse, readValidatedBody } from '../http'
 import { GithubImportError, parseGithubRepoUrl, runGithubImport } from './studioGithubImport'
 import {
   discoverPageFiles,
@@ -172,24 +184,21 @@ import {
   writeProjectMeta,
   type StudioProjectSummary,
 } from './studioProjects'
-import { readStudioMeta } from './studio/studioMeta'
+import { readStudioMeta, DEFAULT_TRUST_TIER } from './studio/studioMeta'
 import { readStudioFrameworkFile, writeStudioFrameworkFile } from './studioFramework'
 import { buildStudioDownloadResponse } from './studioDownload'
 import { resolveStudioAssetResponse } from './studioAsset'
 import { pageIdFromRelPath, loadStudioPages } from './studioPageLoad'
-import {
-  applyStudioEdit,
-  dedupeStudioEdits,
-  isSharedSourceNodeId,
-  orderStudioEditsForApply,
-  studioEditFile,
-  StudioEditSchema,
-} from './studioWriteback'
-import { tryServeStudioProbe } from './studio/projectProbe'
+import { applyStudioEditBatch, StudioEditSchema } from './studioWriteback'
+import { probeProject, tryServeStudioProbe } from './studio/projectProbe'
+import { mergeStudioMeta } from './studio/studioMeta'
 import { tryServeStudioInstall } from './studio/installDeps'
 import { tryServeStudioIngest } from './studio/importUpload'
 import { tryServeStudioAssetUpload } from './studio/assetUpload'
 import { tryServeStudioComponentBundle } from './studio/componentBundle'
+import { tryServeStudioTokens } from './studio/tokenExtract'
+import { tryServeStudioTrustTier } from './studio/trustTier'
+import { tryServeStudioExtractComponent } from './studio/extractComponent'
 
 /**
  * Sub-routers for the newer studio namespaces, each owning one concern and its
@@ -208,6 +217,9 @@ const STUDIO_SUB_ROUTERS = [
   tryServeStudioIngest,
   tryServeStudioAssetUpload,
   tryServeStudioComponentBundle,
+  tryServeStudioTrustTier,
+  tryServeStudioTokens,
+  tryServeStudioExtractComponent,
 ] as const
 
 /** Body of POST /admin/api/studio/save — a batch of typed source writebacks. */
@@ -301,6 +313,35 @@ const GithubImportBodySchema = Type.Object({
   pagesDir: Type.Optional(Type.String()),
 })
 
+/**
+ * WS-5.5 — the `?stream=1` NDJSON body for `GET /admin/api/studio/load`:
+ * one `{ kind: 'meta', ... }` line (everything except `pages`), then one
+ * `{ kind: 'page', page }` line per page, in the same order `pages` was in.
+ * `@core/http`'s `ndjsonRequest` (client) validates each line against a
+ * matching discriminated-union TypeBox schema — see `fsCodemodAdapter.ts`'s
+ * `StudioLoadStreamLineSchema`, which MUST stay in sync with this shape.
+ */
+async function* studioLoadStreamLines(
+  result: Awaited<ReturnType<typeof loadStudioPages>> & {
+    dir: string
+    projectName: string
+    trust: unknown
+    paletteHiddenModuleIds: string[]
+  },
+): AsyncGenerator<Record<string, unknown>> {
+  const { pages, ...meta } = result
+  yield { kind: 'meta', ...meta, pageCount: pages.length }
+  for (const page of pages) {
+    // Yield control back to the event loop between pages so Bun actually
+    // flushes each chunk to the socket instead of enqueueing every line
+    // inside one synchronous burst (server-side compute for ALL pages is
+    // already done by the time this generator starts — see the route's own
+    // comment for exactly what this streaming does and does not buy).
+    await new Promise((resolve) => setImmediate(resolve))
+    yield { kind: 'page', page }
+  }
+}
+
 export async function tryServeStudio(
   req: Request,
   _runtime: unknown,
@@ -316,8 +357,47 @@ export async function tryServeStudio(
     try {
       const dir = resolveProjectDir(url.searchParams.get('dir'))
       const projectName = projectDisplayName(dir)
-      const { pages, componentSources, styleRules, conditions, vendorCss } = await loadStudioPages(dir)
-      return jsonResponse({ dir, projectName, pages, componentSources, styleRules, conditions, vendorCss })
+      const { pages, componentSources, styleRules, styleRuleSources, conditions, vendorCss } = await loadStudioPages(dir)
+      // WS-3.3 — the client needs the CURRENT trust tier to decide whether an
+      // unregistered `pkg.*` node should fetch a component bundle (Tier ≥ 1)
+      // or render the "promote to render" placeholder (Tier 0, the default
+      // for every fresh import — `meta-03` decision 1). Read fresh, same
+      // posture as every other read path here (never auto-promoted).
+      const meta = readStudioMeta(dir)
+      const trust = meta.trust ?? DEFAULT_TRUST_TIER
+      const paletteHiddenModuleIds = meta.paletteHiddenModuleIds ?? []
+
+      // WS-5.5 — `?stream=1` (the canvas's own loader, `fsCodemodAdapter.ts`)
+      // gets the SAME computed result as an NDJSON stream instead of one
+      // buffered JSON body: a meta line first, then one line per page. Every
+      // other caller (tests, MCP tools reading over HTTP, tooling) keeps the
+      // single-envelope response unchanged below — see `studioPageLoad.ts`'s
+      // `pageParseCache.ts` doc for why the actual PARSE cost (the ts-morph
+      // pass) is already resolved by the time either response starts: the
+      // real win here is TTFB (the client starts receiving/parsing page 1's
+      // bytes before the LAST page's `JSON.stringify` even runs) and
+      // per-line parse/validate work overlapping with network I/O, not
+      // interleaved server-side parsing — that would need `loadStudioStyles`'s
+      // site-wide class-id registry to resolve per-page, which this change
+      // does not attempt.
+      if (url.searchParams.get('stream') === '1') {
+        return ndjsonResponse(studioLoadStreamLines({
+          dir, projectName, componentSources, styleRules, styleRuleSources, conditions, vendorCss, trust, paletteHiddenModuleIds, pages,
+        }))
+      }
+
+      return jsonResponse({
+        dir,
+        projectName,
+        pages,
+        componentSources,
+        styleRules,
+        styleRuleSources,
+        conditions,
+        vendorCss,
+        trust,
+        paletteHiddenModuleIds,
+      })
     } catch (err) {
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
     }
@@ -343,62 +423,18 @@ export async function tryServeStudio(
       const dir = resolveProjectDir(body.dir)
       const edits = body.edits ?? []
 
-      // Apply edits bottom-to-top so a line-count-changing codemod can't
-      // invalidate another edit's location mid-batch (see the helper's doc).
-      // Dedupe first: several board nodes can share one writeback target when
-      // they are instances of the same inlined component.
-      const ordered = orderStudioEditsForApply(dedupeStudioEdits(edits))
-
-      // An edit on an inlined node rewrites the component's own file, so every
-      // OTHER instance on the board is now stale — as does an edit to App
-      // Router chrome (`layout.tsx`), which one file composes into many routes.
-      // The client reloads on this.
-      const sharedComponents = edits.some((edit) => isSharedSourceNodeId(edit.nodeId, edit.kind))
-
-      // Snapshot each touched file's line count so we can tell the client
-      // whether any write shifted line numbers. If so, the client's in-memory
-      // `line:col` node ids are now stale against disk and it must re-parse to
-      // re-sync them (see `shifted` handling in fsCodemodAdapter).
-      const touchedFiles = new Set<string>()
-      for (const edit of ordered) {
-        const file = studioEditFile(dir, edit.nodeId)
-        if (file) touchedFiles.add(file)
-      }
-      const lineCountBefore = new Map<string, number>()
-      for (const file of touchedFiles) {
-        lineCountBefore.set(file, existsSync(file) ? readFileSync(file, 'utf8').split('\n').length : 0)
-      }
-
-      let written = 0
-      let skipped = 0
-      for (const edit of ordered) {
-        try {
-          // `false` is a no-op, not a success: the edit resolved to no writable
-          // source location. Counting it as skipped is what lets the client tell
-          // "your change reached disk" from "your change went nowhere" — before
-          // this it was invisible in both counters and the client assumed a write.
-          if (applyStudioEdit(dir, edit)) written += 1
-          else skipped += 1
-        } catch (err) {
-          // One edit's codemod refusing to write (e.g. mixed-content text
-          // target, non-object-literal style attribute) must not abort the
-          // rest of the batch.
-          console.error('[studio]', err)
-          skipped += 1
-        }
-      }
-
-      let shifted = false
-      for (const file of touchedFiles) {
-        const after = existsSync(file) ? readFileSync(file, 'utf8').split('\n').length : 0
-        if (after !== lineCountBefore.get(file)) {
-          shifted = true
-          break
-        }
-      }
+      // Ordering, dedup, per-edit try/catch, and shift/shared-component
+      // detection all live in `applyStudioEditBatch` — the single engine both
+      // this route and `studio_apply_edits` (MCP) run through.
+      const { written, skipped, shifted, sharedComponents, refusals, swapDetails } = applyStudioEditBatch(dir, edits)
 
       if (skipped > 0) console.error(`[studio] save: ${written} written, ${skipped} skipped`)
-      return jsonResponse({ ok: true, written, skipped, shifted, sharedComponents })
+      // WS-4.4/4.5 — `refusals` names WHY a `detach`/`swap` edit specifically
+      // didn't write (a typed reason + message), so the client can show that
+      // instead of a generic "skipped" toast — see `StudioEditRefusal`'s doc.
+      // `swapDetails` — instance-ui-01 — is the mirror for a SUCCESSFUL swap:
+      // which props were dropped / still need a value, per `StudioEditSwapDetail`.
+      return jsonResponse({ ok: true, written, skipped, shifted, sharedComponents, refusals, swapDetails })
     } catch (err) {
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
     }
@@ -509,6 +545,25 @@ export async function tryServeStudio(
       const derivedDisplayName =
         parseGithubRepoUrl(body.url)?.repo ?? result.dir.split(/[\\/]+/).filter(Boolean).pop() ?? 'Untitled'
       writeProjectMeta(result.dir, { displayName: derivedDisplayName, pagesDir: body.pagesDir })
+      // Probe the freshly-imported repo and cache the profile, so the very
+      // first `/load` knows where its pages actually live.
+      //
+      // Without this the import "succeeds" and the canvas is EMPTY, which is
+      // exactly what a real import of a nested repo did: eSIM keeps its app in
+      // `journey-screens/`, so `projectPagesDir` fell back to `<dir>/pages`,
+      // found nothing, and reported no error anywhere. WS-1.1 (ingest) and
+      // WS-1.2 (probe) were built in parallel and each was correct alone —
+      // nothing connected them. `profile.pagesDir` is the second source
+      // `projectPagesDir` consults, after an explicit override, so caching it
+      // here is the whole fix.
+      //
+      // Never fatal: a probe failure must not lose a repo that is already
+      // safely on disk. The user can re-probe from the UI.
+      try {
+        mergeStudioMeta(result.dir, { profile: probeProject(result.dir) })
+      } catch (probeErr) {
+        console.error('[studio] post-import probe failed:', probeErr)
+      }
       return jsonResponse({ ok: true, ...result })
     } catch (err) {
       console.error('[studio]', err)

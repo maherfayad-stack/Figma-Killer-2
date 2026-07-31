@@ -31,6 +31,7 @@ import {
   wrapNodes,
   reindexNodeParents,
   isPropPatchWritableToSource,
+  isPropWritableToSource,
   isStylePatchWritableToSource,
 } from '@core/page-tree'
 import type { NodeTree, PageNode, SiteDocument } from '@core/page-tree'
@@ -51,6 +52,7 @@ type NodeActions = Pick<
   | 'deleteNode'
   | 'deleteNodes'
   | 'updateNodeProps'
+  | 'updateInstanceCallSiteProp'
   | 'setNodeInlineStyles'
   | 'removeNodeInlineStyleProperty'
   | 'clearNodeInlineStyles'
@@ -337,6 +339,35 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
           return true
         },
         coalesceKeyForPatch('props', nodeId, patch),
+      )
+    },
+
+    updateInstanceCallSiteProp: (nodeId, propName, value) => {
+      mutateActiveTree(
+        (tree) => {
+          const node = tree.nodes[nodeId]
+          if (!node) throw new Error(`[PageTree] Node "${nodeId}" not found`)
+          // instance-ui-01 — call-site props live nested at
+          // `props.callSiteProps` (parser-05's deliberate non-flat shape),
+          // so `updateNodeProps`'s own patch-level `isPropPatchWritableToSource`
+          // check (keyed on the literal patch KEY, "callSiteProps") can't see
+          // a per-field lock keyed `callSiteProps:<name>` — this action checks
+          // the SPECIFIC field being changed instead, same rule, right key.
+          const codeKey = `callSiteProps:${propName}`
+          if (!isPropWritableToSource(node, codeKey)) return false
+          const current = (node.props as { callSiteProps?: Record<string, unknown> } | undefined)?.callSiteProps ?? {}
+          if (Object.is(current[propName], value)) return false
+          const nextCallSiteProps = { ...current, [propName]: value }
+          updateNodeProps(tree, nodeId, { callSiteProps: nextCallSiteProps })
+          return true
+        },
+        // Finer-grained than `coalesceKeyForPatch('props', …)` would give a
+        // whole-object patch (that helper only coalesces single-KEY patches,
+        // and the key here is always the literal string "callSiteProps") —
+        // this keys on the actual field being edited, so a burst of
+        // keystrokes on ONE call-site prop is one undo entry, and editing a
+        // DIFFERENT call-site prop right after doesn't fold into it.
+        { coalesceKey: `callSiteProps:${nodeId}:${propName}` },
       )
     },
 

@@ -202,6 +202,22 @@ const ALLOWLIST = new Set([
   // click — the same multi-line custom-layout card class as §8.7 / §8.14 that
   // Button's inline-flex size tokens cannot represent.
   'admin/pages/site/panels/FrameworkPanel/FrameworkHome.tsx',
+
+  // ── §8.16 Iframe-rendered canvas chrome (WS-3.3 package-component placeholder) ──
+  // PackageComponentPlaceholder is NodeRenderer's fallback for an
+  // unregistered `pkg.*` node — same rendering position as `.unknownModule`
+  // (NodeRenderer.tsx), which is portalled INTO the per-frame iframe's own
+  // document (canvas-engineer's own rule: "the canvas DOM must be the DOM
+  // React renders"). CSS Modules — including Button.module.css — exist only
+  // in the PARENT editor document's stylesheets and never reach iframe
+  // content (see EditorChromeInjector.tsx's own module doc); a mounted
+  // `Button` here would render functionally but visually unstyled. The
+  // "Promote this project" action is styled instead via a stable
+  // `data-studio-package-placeholder-promote` selector in
+  // EditorChromeInjector's injected chrome stylesheet — the same
+  // stable-data-attribute pattern `.unknownModule`/`data-studio-unknown-module`
+  // already established for this exact constraint.
+  'admin/pages/site/canvas/PackageComponentPlaceholder.tsx',
 ])
 
 // ---------------------------------------------------------------------------

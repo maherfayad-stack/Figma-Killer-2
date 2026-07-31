@@ -251,6 +251,24 @@ describe('tryServeStudioComponentBundle', () => {
     expect(body.code).toBe('react-not-declared')
   })
 
+  it('approot-01 — reads the react-version check from a NESTED app root, not the project directory', async () => {
+    // No package.json at wsDir root at all — only inside a nested app dir,
+    // same shape as the real eSIM corpus. Shares no naming with it —
+    // genericRepoShapes.test.ts discipline.
+    write(wsDir, 'firmware-console/package.json', JSON.stringify({ name: 'firmware-console', dependencies: { react: '^18.2.0' } }))
+    forceComponentPackageDemand(['acme-ui']) // probeProject(wsDir) now detects appRoot: 'firmware-console'
+    mergeStudioMeta(wsDir, { trust: 'render-packages' })
+
+    const { req, url, pathname } = makeRequest('/admin/api/studio/component-bundle', postBody({ dir: wsDir }))
+    const res = await tryServeStudioComponentBundle(req, url, pathname)
+    const body = (await res!.json()) as { ok: boolean; code?: string; message?: string }
+    // A project-root read would find NO package.json at all and refuse with
+    // `react-not-declared` instead — this specific refusal proves the
+    // NESTED package.json's react@18 was actually read and compared.
+    expect(body.ok).toBe(false)
+    expect(body.code).toBe('react-version-mismatch')
+  })
+
   it('refuses on a React major-version mismatch, with a clear message, rather than crashing on render', async () => {
     forceComponentPackageDemand(['acme-ui'])
     mergeStudioMeta(wsDir, { trust: 'render-packages' })

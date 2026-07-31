@@ -22,6 +22,8 @@ import * as DS from '@alm-design/design-system'
 import { Type } from '@core/utils/typeboxHelpers'
 import { registry, type ModuleDefinition, type ModuleComponentProps } from '@core/module-engine'
 import { sanitizeSvg } from '@core/sanitize'
+import { studioSlotNodeId } from '@core/utils/studioSlotSentinel'
+import { NodeRenderer } from '@site/canvas/NodeRenderer'
 import { CursorClickSolidIcon } from 'pixel-art-icons/icons/cursor-click-solid'
 import manifestJson from './manifest.generated.json'
 
@@ -136,12 +138,31 @@ function buildDefaults(spec: ComponentSpec): Record<string, unknown> {
  * back. Markup is sanitised here for the same reason `SvgEditor` sanitises: never
  * trust that an upstream layer did.
  *
+ * WS-3.4 (`pkg-02`) — the parser now ALSO captures a JSX-valued component prop
+ * that isn't a one-level SVG icon as a real materialized child node, referenced
+ * by a `studio-slot:<nodeId>` sentinel (`@core/utils/studioSlotSentinel`) rather
+ * than the `{svg}` shape above. This function must recognize BOTH: the parser
+ * change is unconditional (it runs for every component, not just `pkg.*` ones),
+ * so an `@alm-design` node with a composed-children prop this file's old
+ * one-level SVG capture declined would otherwise arrive here as a raw,
+ * unrecognized sentinel STRING and render as literal visible text
+ * (`"studio-slot:pages/Home.jsx:5:3"`) instead of the icon/header it names —
+ * a regression `structuredProps.test.ts`'s "WS-3.4" case exists to catch
+ * generically, mirrored here because this file's own render path is separate
+ * from `registerProjectModules.ts`'s `revivePropValue`.
+ *
  * Other structured values pass straight through: a real `<ActionSheet>` wants its
  * `actions` array as an array.
  */
 function reviveIconProps(props: Record<string, unknown>): Record<string, unknown> {
   let revived: Record<string, unknown> | undefined
   for (const [key, value] of Object.entries(props)) {
+    const slotNodeId = studioSlotNodeId(value)
+    if (slotNodeId !== undefined) {
+      revived ??= { ...props }
+      revived[key] = React.createElement(NodeRenderer, { key: slotNodeId, nodeId: slotNodeId })
+      continue
+    }
     if (typeof value !== 'object' || value === null || Array.isArray(value)) continue
     const entries = Object.entries(value as Record<string, unknown>)
     const svg = entries.length === 1 && entries[0]![0] === 'svg' ? entries[0]![1] : undefined

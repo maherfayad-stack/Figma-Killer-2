@@ -158,7 +158,13 @@ describe('parsePageFile', () => {
     expect(div.children).toContain(card.id)
   })
 
-  it('locks elements rendered from a ternary or logical JSX expression', () => {
+  it('SELECTS the branch a ternary/`&&` JSX expression would take, unlocked (parser-06)', () => {
+    // Rendering both `<Dialog/>` and `null`, or stacking `<Toast/>` behind a
+    // lock, is the predecessor policy this replaces — see parsePageFile.ts's
+    // `selectJsxBranch`. Neither expression's condition is statically
+    // resolvable here (no `evalOptions` passed at all, so the evaluator is
+    // opted out entirely), so both fall to the "prefer the branch that's
+    // there" heuristic.
     const source = [
       'export default function Page({ open }: { open: boolean }) {',
       '  return (',
@@ -174,13 +180,17 @@ describe('parsePageFile', () => {
 
     const page = parsePageFile(file, tmpDir)
 
+    // `null` carries no JSX, so the ternary has nothing to record as an
+    // alternative — `<Dialog/>` is simply the one true option here.
     const dialog = byName(page, 'Dialog')
-    expect(dialog.locked).toBe(true)
-    expect(dialog.lockReason).toBeTruthy()
+    expect(dialog.locked).toBe(false)
+    expect(dialog.lockReason).toBeUndefined()
+    expect(dialog.branchAlternatives).toBeUndefined()
 
     const toast = byName(page, 'Toast')
-    expect(toast.locked).toBe(true)
-    expect(toast.lockReason).toBeTruthy()
+    expect(toast.locked).toBe(false)
+    expect(toast.lockReason).toBeUndefined()
+    expect(toast.resolution?.note).toContain('open')
   })
 
   it('locks elements with a spread attribute', () => {

@@ -88,10 +88,12 @@ import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } 
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { Type } from '@core/utils/typeboxHelpers'
+import { sanitizePackageName } from '@core/module-engine'
 import { safeParseJson } from '@core/utils/jsonValidate'
 import { badRequest, jsonResponse, readValidatedBody } from '../../http'
 import { serveStaticFile } from '../../static'
 import { projectsRootDir, resolveProjectDir } from '../studioProjects'
+import { resolveAppRoot } from './appRoot'
 import { buildPackageManifest, resolvePackageDtsEntry, resolvePackageTsxEntry } from './packageManifest'
 import type { ComponentSpec } from './packageManifestSchema'
 import { probeProject } from './projectProbe'
@@ -161,9 +163,9 @@ function hostReactMajor(): number | undefined {
   return version ? majorFromVersion(version) : undefined
 }
 
-/** The workspace's DECLARED react dependency major, read from `package.json` — per WS-3.2's own spec ("detect the workspace's React major from its package.json"), not the installed `node_modules` copy. */
-function workspaceReactMajor(dir: string): number | undefined {
-  const fields = readPackageJsonFields(join(dir, 'package.json'))
+/** The workspace's DECLARED react dependency major, read from `package.json` — per WS-3.2's own spec ("detect the workspace's React major from its package.json"), not the installed `node_modules` copy. `appRootAbs` (`approot-01`) — a nested app's own `package.json` is not necessarily at the project directory. */
+function workspaceReactMajor(appRootAbs: string): number | undefined {
+  const fields = readPackageJsonFields(join(appRootAbs, 'package.json'))
   const spec = fields?.dependencies?.react ?? fields?.devDependencies?.react
   return spec ? majorFromVersion(spec) : undefined
 }
@@ -186,7 +188,10 @@ function readPackageVersion(pkgJsonPath: string): string | undefined {
  * each package's resolved `.d.ts`/`.tsx` entry file's stat (size + mtime) —
  * the version-alone key would go stale for a locally-linked package whose
  * source changed without a version bump, same reasoning
- * `computeStyleCacheKey` gives for over-invalidating on purpose.
+ * `computeStyleCacheKey` gives for over-invalidating on purpose. `dir` is
+ * whichever directory's OWN `node_modules` the demanded packages resolve
+ * from — the real route passes its resolved app root (`approot-01`), not
+ * necessarily the project directory.
  */
 export function computeBundleCacheKey(dir: string, trust: TrustTier, demand: readonly string[]): string {
   const hash = createHash('sha1')
@@ -232,10 +237,23 @@ function bundleUrl(dir: string, hash: string): string {
 // Barrel generation — one generated entry re-exporting every manifested component
 // ---------------------------------------------------------------------------
 
-/** `@acme/ui` -> `_acme_ui` — a valid JS identifier fragment, used to namespace the bundle's own export names so two packages exporting the same component name (`Button`) coexist without a local-binding collision (each is its own `export ... from '<pkg>'` re-export statement, which never introduces a local binding at all). */
-export function sanitizePackageName(pkg: string): string {
-  return pkg.replace(/[^A-Za-z0-9]/g, '_')
-}
+/**
+ * `@acme/ui` -> `_acme_ui` — a valid JS identifier fragment, used to
+ * namespace the bundle's own export names so two packages exporting the same
+ * component name (`Button`) coexist without a local-binding collision (each
+ * is its own `export ... from '<pkg>'` re-export statement, which never
+ * introduces a local binding at all).
+ *
+ * Re-exported (not redefined) from `@core/module-engine`'s
+ * `packageModuleId.ts` — WS-3.3's `resolveModuleId` (`studioPageLoad.ts`)
+ * needs the IDENTICAL sanitization to assign a `PageNode.moduleId` that
+ * `registerProjectModules.ts` will actually find in the registry; two
+ * separately-maintained copies of this regex would drift silently. Kept as a
+ * named export here too so `componentBundle.test.ts`'s existing import
+ * (`import { sanitizePackageName } from '../studio/componentBundle'`) keeps
+ * working unchanged.
+ */
+export { sanitizePackageName }
 
 function generateBarrelSource(manifestsByPkg: ReadonlyMap<string, ComponentSpec[]>): string {
   const lines: string[] = []
@@ -300,6 +318,13 @@ export async function tryServeStudioComponentBundle(req: Request, url: URL, path
       if (!body) return badRequest('invalid component-bundle body')
       const dir = resolveProjectDir(body.dir)
       if (!isRealpathContained(dir, projectsRootDir())) return new Response('Not found', { status: 404 })
+      // `approot-01` — every node_modules-touching step below (React-version
+      // check, cache key, manifest extraction, the bundler subprocess itself)
+      // targets the project's APP ROOT, not necessarily `dir`: a nested app
+      // installs its own `node_modules` there. `.studio/cache` (the artefact
+      // and its sidecar) stays at the PROJECT root regardless — it's Studio's
+      // own sidecar, not part of "the app".
+      const appRootAbs = resolveAppRoot(dir)
 
       const demand = componentPackageDemand(dir)
       if (demand.length === 0) {
@@ -316,7 +341,7 @@ export async function tryServeStudioComponentBundle(req: Request, url: URL, path
       }
 
       const hostMajor = hostReactMajor()
-      const wsMajor = workspaceReactMajor(dir)
+      const wsMajor = workspaceReactMajor(appRootAbs)
       if (wsMajor === undefined) {
         return jsonResponse({
           ok: false,
@@ -332,7 +357,7 @@ export async function tryServeStudioComponentBundle(req: Request, url: URL, path
         })
       }
 
-      const hash = computeBundleCacheKey(dir, trust, demand)
+      const hash = computeBundleCacheKey(appRootAbs, trust, demand)
       const { js, json } = cacheFilePaths(dir, hash)
       if (existsSync(js) && existsSync(json)) {
         const cached = readBundleCacheSidecar(json)
@@ -342,7 +367,7 @@ export async function tryServeStudioComponentBundle(req: Request, url: URL, path
       const warnings: ProbeWarning[] = []
       const manifestsByPkg = new Map<string, ComponentSpec[]>()
       for (const pkg of demand) {
-        const result = buildPackageManifest(dir, pkg)
+        const result = buildPackageManifest(appRootAbs, pkg)
         warnings.push(...result.warnings)
         if (result.components.length > 0) manifestsByPkg.set(pkg, result.components)
       }
@@ -353,12 +378,22 @@ export async function tryServeStudioComponentBundle(req: Request, url: URL, path
 
       const cacheDir = join(dir, '.studio', 'cache')
       mkdirSync(cacheDir, { recursive: true })
-      const entryAbsPath = join(cacheDir, `bundle-entry-${hash}.ts`)
+      // `approot-01` — the generated barrel MUST live inside the app root's
+      // own directory tree: `Bun.build` resolves a bare specifier
+      // (`from '@acme/ui'`) by walking UP from the entry file's own location
+      // looking for `node_modules` (`componentBundleWorker.ts`'s own doc), so
+      // an entry file under `<dir>/.studio/cache/` would never reach
+      // `<appRootAbs>/node_modules` when `appRootAbs !== dir` — a SIBLING
+      // subtree, never an ancestor. Placed directly at `appRootAbs`'s own
+      // top level (zero hops up to its `node_modules`), dot-prefixed as
+      // transient scaffolding, deleted right after the subprocess returns —
+      // never the artefact itself (that stays at `js`, under `.studio/cache/`).
+      const entryAbsPath = join(appRootAbs, `.studio-bundle-entry-${hash}.ts`)
       writeFileSync(entryAbsPath, generateBarrelSource(manifestsByPkg))
 
       const task: ComponentBundleTask = { entryAbsPath, outputAbsPath: js, external: [...EXTERNAL_SPECIFIERS], maxBundleBytes: MAX_BUNDLE_BYTES }
       const result = await runCappedSubprocess([process.execPath, WORKER_SCRIPT_PATH, JSON.stringify(task)], {
-        cwd: dir,
+        cwd: appRootAbs,
         env: minimalSubprocessEnv(),
         timeoutMs: BUNDLE_TIMEOUT_MS,
         maxStdoutBytes: WORKER_MAX_STDOUT_BYTES,

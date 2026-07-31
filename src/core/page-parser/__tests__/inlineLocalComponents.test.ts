@@ -73,16 +73,24 @@ describe('inlineLocalComponents — 2a: literal props, no recursion', () => {
 
     const { expanded } = load(pageFile)
 
-    // `<Icon/>` renders Icon's own <span> at that position and nothing else, so
-    // the page's <div> holds the span DIRECTLY — no call-site wrapper between
-    // them (see this module's header: a wrapper breaks `height: 100%` chains and
-    // direct-child combinators).
+    // WS-4.2 — `<Icon/>`'s call site is now KEPT as an "instance" node (zero
+    // DOM at render time — `NodeRenderer` renders `studio.instance` as a bare
+    // Fragment, see `src/modules/base/instance/`), so the page's <div> holds
+    // ONE child: the instance, not the span directly. The instance's own
+    // child is Icon's own <span> — no wrapper DIV was introduced (see this
+    // module's header: a wrapper breaks `height: 100%` chains and direct-
+    // child combinators; the instance is a Fragment, not an element).
     const pageDiv = Object.values(expanded.nodes).find((n) => n.name === 'div')!
     expect(pageDiv.children.length).toBe(1)
-    expect(Object.values(expanded.nodes).some((n) => n.kind === 'component')).toBe(false)
+    const instance = expanded.nodes[pageDiv.children[0]!]!
+    expect(instance.kind).toBe('component')
+    expect(instance.instanceOf?.componentName).toBe('Icon')
+    expect(instance.instanceOf?.source).toBe('local')
+    expect(instance.instanceOf?.callSiteProps).toEqual({ size: 16, className: 'ico' })
+    expect(instance.children.length).toBe(1)
 
     // That span carries the literal size (16) substituted for `{size}`.
-    const span = expanded.nodes[pageDiv.children[0]!]!
+    const span = expanded.nodes[instance.children[0]!]!
     expect(span.name).toBe('span')
     expect(span.locked).toBeFalsy()
     expect(span.fromComponent).toBe('Icon')
@@ -123,11 +131,14 @@ describe('inlineLocalComponents — 2a: literal props, no recursion', () => {
     expect(p.locked).toBeFalsy()
     expect(p.fromComponent).toBe('SectionTitle')
 
-    // The button is rendered from a `&&` logical expression inside SectionTitle's
-    // own file — already locked for THAT (dynamic) reason by `parseJsxTree`,
-    // and then re-tagged as inlined on top, same as every other node in this subtree.
+    // The button is rendered from a `&&` logical expression inside
+    // SectionTitle's own file — parser-06's `selectJsxBranch` picks it (there
+    // is no "other side" to `&&`) and leaves it unlocked, same as every other
+    // ordinary node in this subtree; inlining tags `fromComponent` on top but
+    // adds no lock of its own.
     const button = byName(expanded.nodes, 'button')
-    expect(button.locked).toBe(true)
+    expect(button.locked).toBeFalsy()
+    expect(button.fromComponent).toBe('SectionTitle')
   })
 
   it('inlines Price: literal value substituted into a template-literal className\'s static prefix', () => {
@@ -558,21 +569,25 @@ describe('inlineLocalComponents — 2d: locking fidelity on variant branching / 
     expect(banner!.locked).toBeFalsy()
     expect(banner!.fromComponent).toBe('EsimStatusBanner')
 
-    // Both ternary branches are structurally PRESENT (not dropped) — same
-    // "degrade, don't drop" convention `parseJsxTree` already applies to a
-    // dynamic-rendering surface; their own `text` stays unset because they
-    // were ALREADY locked for that (pre-existing, unrelated to inlining)
-    // reason, same as any other locked node in the parser.
+    // parser-06: the ternary is a SELECTED branch, not a stacked one. `variant`
+    // is still just a parameter when `EsimStatusBanner.jsx` is parsed on its
+    // own (substitution happens afterward, and never re-runs branch
+    // selection), so the condition isn't statically known and the heuristic
+    // picks the CONSEQUENT — `<span>OK</span>` — which, in this fixture, also
+    // happens to be the branch the call site's real `variant="success"`
+    // would have taken. `<span>Warn</span>` is never materialized into a node
+    // at all; it is recorded as a `branchAlternatives` pointer instead.
     const spans = Object.values(expanded.nodes).filter((n) => n.name === 'span')
-    expect(spans.length).toBe(2)
-    for (const span of spans) {
-      // These KEEP a lock — they sit in a ternary, so there is no single
-      // source position an edit could write to. That is the only thing
-      // `locked` means now; inlining on its own no longer locks anything.
-      expect(span.locked).toBe(true)
-      expect(span.lockReason).toBe('dynamic — rendered in code')
-      expect(span.fromComponent).toBe('EsimStatusBanner')
-    }
+    expect(spans.length).toBe(1)
+    const [span] = spans
+    expect(span!.text).toBe('OK')
+    // Unlocked — the structure at this location is completely ordinary; only
+    // WHICH of the two runtime states to show by default was chosen.
+    expect(span!.locked).toBeFalsy()
+    expect(span!.lockReason).toBeUndefined()
+    expect(span!.fromComponent).toBe('EsimStatusBanner')
+    expect(span!.branchAlternatives).toHaveLength(1)
+    expect(span!.branchAlternatives?.[0]!.label).toBe("not (variant === 'success')")
 
     // The `.map()`-rendered <li> is present too, locked, never crashing on
     // the loop shape (`.map()` expansion itself stays banned/out of scope —

@@ -53,6 +53,8 @@ export interface PostcssTask {
   pluginEntryAbsPaths: string[]
   /** `postcss.config.js`'s real path, pre-verified by the parent to sit within the workspace — executed here to discover its `plugins` (array or named-map form). */
   postcssConfigAbsPath?: string
+  /** `approot-01` — absolute dir whose `node_modules` a NAMED plugin-map entry (`{ tailwindcss: {} }`) resolves against. Defaults to `cwd` when absent (older callers/fixtures) — a nested app's `node_modules` is not necessarily at `cwd`, so the real parent (`compilePostcssPipeline`) always passes its own resolved app root explicitly. */
+  nodeModulesRoot?: string
 }
 
 export type WorkerTask = SassTask | PostcssTask
@@ -104,6 +106,7 @@ type PluginFactoryLike = ((opts?: unknown) => unknown) | { default?: (opts?: unk
  * `require(pkgName)`, which could otherwise reach outside the workspace.
  */
 async function resolvePostcssPlugins(task: PostcssTask, cwd: string): Promise<{ plugins: unknown[]; errors: WorkerResult['errors'] }> {
+  const nodeModulesRoot = task.nodeModulesRoot ?? cwd
   if (task.postcssConfigAbsPath) {
     try {
       const configMod = (await import(pathToFileURL(task.postcssConfigAbsPath).href)) as Record<string, unknown>
@@ -115,7 +118,7 @@ async function resolvePostcssPlugins(task: PostcssTask, cwd: string): Promise<{ 
         const plugins: unknown[] = []
         for (const [pkgName, options] of Object.entries(pluginsValue as Record<string, unknown>)) {
           if (!options) continue // `false`/`null` disables a plugin, same as real postcss-load-config
-          const entry = resolveWorkspacePackageEntry(cwd, pkgName)
+          const entry = resolveWorkspacePackageEntry(nodeModulesRoot, pkgName)
           if (!entry) continue
           const pluginMod = (await import(pathToFileURL(entry).href)) as Record<string, unknown>
           const candidate = (pluginMod.default ?? pluginMod) as PluginFactoryLike | undefined

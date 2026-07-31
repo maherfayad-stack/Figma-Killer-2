@@ -18,7 +18,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { applyStudioEdit, isSharedSourceNodeId, studioEditLocation } from '../studioWriteback'
+import { applyStudioEdit, applyStudioEditBatch, isSharedSourceNodeId, studioEditLocation } from '../studioWriteback'
 
 let tmpDir: string
 
@@ -108,7 +108,7 @@ describe('applyStudioEdit — the literal kind', () => {
       text: 'Members-only hotel rates',
     })
 
-    expect(applied).toBe(true)
+    expect(applied.applied).toBe(true)
     const written = read('src/i18n/translations.js')
     expect(written).toContain("hotelsTag: 'Members-only hotel rates'")
     // The other locale's identically-named key is a different literal.
@@ -127,7 +127,7 @@ describe('applyStudioEdit — the literal kind', () => {
         text: 'overwritten',
       })
 
-      expect(applied).toBe(false)
+      expect(applied.applied).toBe(false)
       expect(fs.readFileSync(outside, 'utf8')).toContain('keep me')
     } finally {
       fs.rmSync(outside, { force: true })
@@ -156,7 +156,7 @@ describe('applyStudioEdit — the tag kind', () => {
       tag: 'section',
     })
 
-    expect(applied).toBe(true)
+    expect(applied.applied).toBe(true)
     const written = read('src/screens/Home.jsx')
     expect(written).toContain('<section className="c">Hi</section>')
     expect(written).not.toContain('tag=')
@@ -178,7 +178,7 @@ describe('applyStudioEdit — the tag kind', () => {
 
   it('writes nothing for an escaping path', () => {
     expect(
-      applyStudioEdit(tmpDir, { kind: 'tag', nodeId: '../outside.tsx:1:1', tag: 'section' }),
+      applyStudioEdit(tmpDir, { kind: 'tag', nodeId: '../outside.tsx:1:1', tag: 'section' }).applied,
     ).toBe(false)
   })
 })
@@ -194,7 +194,7 @@ describe('applyStudioEdit — the asset kind (WS-8.3)', () => {
       assetPath: 'src/pages/hero-2.png',
     })
 
-    expect(applied).toBe(true)
+    expect(applied.applied).toBe(true)
     expect(read('src/pages/Home.tsx')).toContain("import heroImg from './hero-2.png'")
   })
 
@@ -208,7 +208,7 @@ describe('applyStudioEdit — the asset kind (WS-8.3)', () => {
       assetPath: 'assets/uploads/new-hero.png',
     })
 
-    expect(applied).toBe(true)
+    expect(applied.applied).toBe(true)
     expect(read('src/pages/Home.tsx')).toContain("import heroImg from '../../assets/uploads/new-hero.png'")
   })
 
@@ -223,7 +223,7 @@ describe('applyStudioEdit — the asset kind (WS-8.3)', () => {
         nodeId: 'src/pages/Home.tsx:1:21',
         assetPath: '../outside.png',
       })
-      expect(applied).toBe(false)
+      expect(applied.applied).toBe(false)
       expect(read('src/pages/Home.tsx')).toContain("'./old.png'")
     } finally {
       fs.rmSync(outside, { force: true })
@@ -239,7 +239,7 @@ describe('applyStudioEdit — the asset kind (WS-8.3)', () => {
       assetPath: 'src/assets/gone.png',
     })
 
-    expect(applied).toBe(false)
+    expect(applied.applied).toBe(false)
     expect(read('src/pages/Home.tsx')).toContain("'./old.png'")
   })
 
@@ -262,7 +262,7 @@ describe('applyStudioEdit — the asset kind (WS-8.3)', () => {
         assetPath: 'src/assets/linked.png',
       })
 
-      expect(applied).toBe(false)
+      expect(applied.applied).toBe(false)
       expect(read('src/pages/Home.tsx')).toContain("'./old.png'")
     } finally {
       fs.rmSync(outsideDir, { recursive: true, force: true })
@@ -278,12 +278,12 @@ describe('applyStudioEdit — the asset kind (WS-8.3)', () => {
       assetPath: 'src\\..\\..\\outside.png',
     })
 
-    expect(applied).toBe(false)
+    expect(applied.applied).toBe(false)
   })
 
   it('writes nothing for an escaping nodeId, same guard every other kind gets', () => {
     expect(
-      applyStudioEdit(tmpDir, { kind: 'asset', nodeId: '../outside.tsx:1:1', assetPath: 'src/x.png' }),
+      applyStudioEdit(tmpDir, { kind: 'asset', nodeId: '../outside.tsx:1:1', assetPath: 'src/x.png' }).applied,
     ).toBe(false)
   })
 })
@@ -327,5 +327,164 @@ describe('isSharedSourceNodeId', () => {
   it('does not flag an id with no decodable location', () => {
     expect(isSharedSourceNodeId('index:body')).toBe(false)
     expect(isSharedSourceNodeId('../../.ssh/config:1:1')).toBe(false)
+  })
+})
+
+/**
+ * `panel-02` (WS-6.3) — the `css` edit kind. Unlike every other kind, its
+ * target is a FILE + SELECTOR (from `studioCss.ts`'s `StyleRuleSource`), not
+ * a `nodeId`-encoded `line:col` — these tests exercise that the dispatch
+ * special-case, the containment/extension guard, and the tiered refusal
+ * (`classifyStylesheetEditability`) all actually reach the postcss codemod
+ * (`setDeclaration`) rather than merely existing in isolation.
+ */
+describe('applyStudioEdit — the css kind (WS-6.3)', () => {
+  it('writes a real declaration change to a plain .css file, preserving the rest byte-for-byte', () => {
+    write('src/screens/Home.css', '.hero {\n  color: red;\n  padding: 8px;\n}\n')
+
+    const applied = applyStudioEdit(tmpDir, {
+      kind: 'css',
+      nodeId: 'css:src/screens/Home.css#.hero#color',
+      file: 'src/screens/Home.css',
+      selector: '.hero',
+      property: 'color',
+      value: 'blue',
+    })
+
+    expect(applied.applied).toBe(true)
+    expect(read('src/screens/Home.css')).toBe('.hero {\n  color: blue;\n  padding: 8px;\n}\n')
+  })
+
+  it('appends a new declaration when the property is absent from the rule', () => {
+    write('src/screens/Home.css', '.hero {\n  color: red;\n}\n')
+
+    const applied = applyStudioEdit(tmpDir, {
+      kind: 'css',
+      nodeId: 'css:src/screens/Home.css#.hero#padding',
+      file: 'src/screens/Home.css',
+      selector: '.hero',
+      property: 'padding',
+      value: '4px',
+    })
+
+    expect(applied.applied).toBe(true)
+    expect(read('src/screens/Home.css')).toBe('.hero {\n  color: red;\n  padding: 4px;\n}\n')
+  })
+
+  it('refuses a .module.css target with the classifier’s specific reason, via applyStudioEditBatch', () => {
+    write('src/screens/Home.module.css', '.hero {\n  color: red;\n}\n')
+
+    const result = applyStudioEditBatch(tmpDir, [{
+      kind: 'css',
+      nodeId: 'css:src/screens/Home.module.css#.hero#color',
+      file: 'src/screens/Home.module.css',
+      selector: '.hero',
+      property: 'color',
+      value: 'blue',
+    }])
+
+    expect(result.written).toBe(0)
+    expect(result.skipped).toBe(1)
+    expect(result.refusals).toHaveLength(1)
+    expect(result.refusals[0]).toMatchObject({ kind: 'css', reason: 'compiled-stylesheet' })
+    expect(result.refusals[0]!.message).toContain('CSS Modules')
+    // Refused BEFORE any read/write — the file is untouched.
+    expect(read('src/screens/Home.module.css')).toBe('.hero {\n  color: red;\n}\n')
+  })
+
+  it('refuses a minified build artefact the same way', () => {
+    write('dist/style.min.css', '.a{color:red}')
+
+    const result = applyStudioEditBatch(tmpDir, [{
+      kind: 'css',
+      nodeId: 'css:dist/style.min.css#.a#color',
+      file: 'dist/style.min.css',
+      selector: '.a',
+      property: 'color',
+      value: 'blue',
+    }])
+
+    expect(result.refusals[0]).toMatchObject({ kind: 'css', reason: 'compiled-stylesheet' })
+    expect(read('dist/style.min.css')).toBe('.a{color:red}')
+  })
+
+  it('writes nothing for a path escaping the workspace, same guard every other kind gets', () => {
+    const outside = path.join(path.dirname(tmpDir), 'outside.css')
+    fs.writeFileSync(outside, '.a { color: red }\n', 'utf8')
+    try {
+      const applied = applyStudioEdit(tmpDir, {
+        kind: 'css',
+        nodeId: 'css:../outside.css#.a#color',
+        file: '../outside.css',
+        selector: '.a',
+        property: 'color',
+        value: 'blue',
+      })
+      expect(applied.applied).toBe(false)
+      expect(fs.readFileSync(outside, 'utf8')).toContain('red')
+    } finally {
+      fs.rmSync(outside, { force: true })
+    }
+  })
+
+  it('writes nothing for a non-.css extension — the codemod only understands CSS syntax', () => {
+    write('src/screens/Home.scss', '.hero { color: red; }\n')
+
+    const applied = applyStudioEdit(tmpDir, {
+      kind: 'css',
+      nodeId: 'css:src/screens/Home.scss#.hero#color',
+      file: 'src/screens/Home.scss',
+      selector: '.hero',
+      property: 'color',
+      value: 'blue',
+    })
+
+    expect(applied.applied).toBe(false)
+    expect(read('src/screens/Home.scss')).toContain('red')
+  })
+
+  it('writes nothing for a target that does not exist on disk', () => {
+    const applied = applyStudioEdit(tmpDir, {
+      kind: 'css',
+      nodeId: 'css:src/screens/Gone.css#.hero#color',
+      file: 'src/screens/Gone.css',
+      selector: '.hero',
+      property: 'color',
+      value: 'blue',
+    })
+
+    expect(applied.applied).toBe(false)
+  })
+
+  it('is a no-op — applied true, file unchanged — when the value already matches', () => {
+    write('src/screens/Home.css', '.hero {\n  color: blue;\n}\n')
+
+    const applied = applyStudioEdit(tmpDir, {
+      kind: 'css',
+      nodeId: 'css:src/screens/Home.css#.hero#color',
+      file: 'src/screens/Home.css',
+      selector: '.hero',
+      property: 'color',
+      value: 'blue',
+    })
+
+    expect(applied.applied).toBe(true)
+    expect(read('src/screens/Home.css')).toBe('.hero {\n  color: blue;\n}\n')
+  })
+
+  it('a css edit does not mark the batch as touching a shared component', () => {
+    write('src/screens/Home.css', '.hero {\n  color: red;\n}\n')
+
+    const result = applyStudioEditBatch(tmpDir, [{
+      kind: 'css',
+      nodeId: 'css:src/screens/Home.css#.hero#color',
+      file: 'src/screens/Home.css',
+      selector: '.hero',
+      property: 'color',
+      value: 'blue',
+    }])
+
+    expect(result.written).toBe(1)
+    expect(result.sharedComponents).toBe(false)
   })
 })

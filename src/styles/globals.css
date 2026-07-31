@@ -240,6 +240,10 @@
        there's no drift. */
     --canvas-selection-ring-color: #39ff14;
     --canvas-hover-ring-color: #ff2bd6;
+    /* Legible text on the neon selection-ring background — the in-iframe
+       node-name badge (WS-5.1) sits on --canvas-selection-ring-color, which
+       is too bright for --text-bright to read against. */
+    --canvas-node-badge-text: #08110a;
     --tree-drop-line: #5eead4;
     --tree-drop-line-shadow: rgba(94, 234, 212, 0.18);
     --tree-drop-inside-bg: rgba(94, 234, 212, 0.08);

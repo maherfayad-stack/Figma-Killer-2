@@ -38,10 +38,27 @@ export const PageNodeSchema = Type.Object({
    * indexed dictionary picked a specific locale/branch). See
    * `ParsedNode.resolution` in `@core/page-parser` — `parsedPageToSitePage`
    * copies it straight across, same pattern as `locked`/`lockReason`. A node
-   * carrying `resolution` is always `locked` (writing an edit back over the
-   * original expression would silently destroy it).
+   * carrying `resolution` is USUALLY `locked` (writing an edit back over the
+   * original expression would silently destroy it) — except for the two
+   * structural exceptions noted at `branchAlternatives` below, which lock
+   * nothing.
    */
   resolution: Type.Optional(Type.Object({ source: Type.String(), note: Type.Optional(Type.String()) })),
+  /**
+   * Studio import (parser-06) — present on the node the parser SELECTED when
+   * a component had more than one JSX-bearing `return`, or a JSX child was a
+   * ternary/`&&`. Lists the branch(es) NOT shown, each just a label + source
+   * location, never a materialized subtree — see `BranchAlternative` in
+   * `@core/page-parser`. Does NOT lock the node: the parser is certain of the
+   * STRUCTURE here, it only chose which of several runtime states to show by
+   * default (unlike `resolution` above, which usually protects a resolved
+   * VALUE and locks accordingly — see that field's own note about the two
+   * exceptions).
+   */
+  branchAlternatives: Type.Optional(Type.Array(Type.Object({
+    label: Type.String(),
+    loc: Type.Object({ file: Type.String(), line: Type.Number(), col: Type.Number() }),
+  }))),
   /**
    * Studio import (§7) — where this node's TEXT literally lives, when its text
    * resolved from an expression that bottomed out in one string literal inside
@@ -115,6 +132,23 @@ function parseResolution(raw: unknown): { source: string; note?: string } | unde
   return typeof r.note === 'string' ? { source: r.source, note: r.note } : { source: r.source }
 }
 
+/** Parse a raw `branchAlternatives` field — drops any entry missing a string `label` or a well-formed `loc`, same per-entry tolerance the rest of this parser uses. */
+function parseBranchAlternatives(raw: unknown): { label: string; loc: { file: string; line: number; col: number } }[] | undefined {
+  if (!Array.isArray(raw)) return undefined
+  const entries: { label: string; loc: { file: string; line: number; col: number } }[] = []
+  for (const entry of raw) {
+    if (!entry || typeof entry !== 'object') continue
+    const e = entry as Record<string, unknown>
+    if (typeof e.label !== 'string' || e.label.length === 0) continue
+    const loc = e.loc as Record<string, unknown> | undefined
+    if (!loc || typeof loc !== 'object') continue
+    if (typeof loc.file !== 'string' || loc.file.length === 0) continue
+    if (typeof loc.line !== 'number' || typeof loc.col !== 'number') continue
+    entries.push({ label: e.label, loc: { file: loc.file, line: loc.line, col: loc.col } })
+  }
+  return entries.length > 0 ? entries : undefined
+}
+
 /** Parse a raw `textOrigin` field — same per-field tolerance as `resolution`. */
 function parseTextOrigin(raw: unknown): { rel: string; line: number; col: number } | undefined {
   if (!raw || typeof raw !== 'object') return undefined
@@ -159,6 +193,7 @@ export function parsePageNode(raw: unknown, nodePath: string): PageNode {
   // Page-only overlay: template data-binding map. Silently dropped if invalid.
   const dynamicBindings = parseDynamicBindings(r.dynamicBindings)
   const resolution = parseResolution(r.resolution)
+  const branchAlternatives = parseBranchAlternatives(r.branchAlternatives)
   // Studio provenance. Carried through the tolerant parser for the same reason
   // as `resolution`: dropping it silently would turn an editable resolved text
   // back into a dead field, and turn a code-valued prop back into one the editor
@@ -171,6 +206,7 @@ export function parsePageNode(raw: unknown, nodePath: string): PageNode {
     ...base,
     ...(dynamicBindings !== undefined ? { dynamicBindings } : {}),
     ...(resolution !== undefined ? { resolution } : {}),
+    ...(branchAlternatives !== undefined ? { branchAlternatives } : {}),
     ...(textOrigin !== undefined ? { textOrigin } : {}),
     ...(assetOrigin !== undefined ? { assetOrigin } : {}),
     ...(codeProps !== undefined ? { codeProps } : {}),

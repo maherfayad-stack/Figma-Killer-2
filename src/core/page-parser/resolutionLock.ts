@@ -24,8 +24,15 @@ export interface Resolution {
 
 const MAX_RESOLUTION_SOURCE_LENGTH = 80
 
-/** Caps + collapses whitespace in an expression's source text for a `lockReason`/`resolution.source` message — a resolved template literal can otherwise be arbitrarily long. */
-function shortenSource(text: string): string {
+/**
+ * Caps + collapses whitespace in an expression's source text for a
+ * `lockReason`/`resolution.source`/`resolution.note` message — a resolved
+ * template literal (or a guard condition's own text) can otherwise be
+ * arbitrarily long. Exported for `parsePageFile.ts`'s branch-selection
+ * labels (`deriveBranchLabel`, `selectJsxBranch`) — same "short original
+ * expression text" need, one implementation.
+ */
+export function shortenSource(text: string): string {
   const collapsed = text.replace(/\s+/g, ' ').trim()
   return collapsed.length > MAX_RESOLUTION_SOURCE_LENGTH
     ? `${collapsed.slice(0, MAX_RESOLUTION_SOURCE_LENGTH - 1)}…`

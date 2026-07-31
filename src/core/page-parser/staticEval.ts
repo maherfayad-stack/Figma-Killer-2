@@ -47,7 +47,13 @@
  */
 import type { Node, SourceFile } from 'ts-morph'
 import { evaluateCall } from './staticEvalCalls'
-import { createBudget, createEvalScope as createEvalScopeCore, createPageEvalBudget, evaluateNode } from './staticEvalCore'
+import {
+  createBudget,
+  createEvalScope as createEvalScopeCore,
+  createPageEvalBudget,
+  evaluateCondition,
+  evaluateNode,
+} from './staticEvalCore'
 import type { EvalScope, StaticEvalOptions, StaticValue } from './staticEvalCore'
 import type { FunctionLike } from './types'
 
@@ -71,5 +77,31 @@ export function evaluateExpression(expr: Node, scope: EvalScope, opts: StaticEva
   } catch (err) {
     console.error('[staticEval]', err)
     return { kind: 'unresolved', reason: 'internal evaluator error' }
+  }
+}
+
+/**
+ * Resolves `expr` to a definite `true`/`false`, or `undefined` when it is not
+ * statically decidable — `evaluateCondition`'s own narrow contract (`&&`/`||`/
+ * `!`, the six comparisons, a bare boolean; see its doc comment), exposed
+ * through the public composer for `parsePageFile.ts`'s JSX branch selection
+ * (parser-06).
+ *
+ * This is a DELIBERATE, narrow exception to `evaluateCondition`'s own warning
+ * against ever using it to pick a JSX branch: that warning is about GUESSING
+ * (hook state, a runtime prop) misrepresenting a stateful screen as one fixed
+ * state. Nothing is guessed here — a condition this resolves is fully
+ * determined by source text (a literal, a module-scope const), which is a
+ * real answer, not a guess, and it OUTRANKS the "pick the consequent"
+ * heuristic `selectJsxBranch` falls back to when this returns `undefined`.
+ * Never called for a condition this can't decide from source alone.
+ */
+export function evaluateStaticCondition(expr: Node, scope: EvalScope, opts: StaticEvalOptions = {}): boolean | undefined {
+  const budget = createBudget(opts, evaluateCall)
+  try {
+    return evaluateCondition(expr, scope, budget, 0)
+  } catch (err) {
+    console.error('[staticEval]', err)
+    return undefined
   }
 }

@@ -76,6 +76,7 @@ import { UserStylesheetInjector } from './UserStylesheetInjector'
 import { ProjectCssInjector } from './ProjectCssInjector'
 import { CanvasAnimationInjector } from './CanvasAnimationInjector'
 import { CanvasScrollUnrollInjector } from './CanvasScrollUnrollInjector'
+import { CanvasSelectionOverlayInjector } from './CanvasSelectionOverlayInjector'
 import { EditorChromeInjector } from './EditorChromeInjector'
 import { RuntimeScriptInjector } from './RuntimeScriptInjector'
 import type { InjectableRuntimeScript } from './useRuntimeScriptBuild'
@@ -180,6 +181,14 @@ export interface IframeFrameSurfaceHandle {
   contentDocument: Document | null
   /** Convenience: the iframe's body. `null` until loaded. */
   contentBody: HTMLBodyElement | null
+  /**
+   * The in-iframe selection-overlay root (WS-5.1) — `null` in live mode
+   * (never mounted) and until `CanvasSelectionOverlayInjector` creates it.
+   * `BreakpointSelectionOverlay` portals rings/badge into this instead of the
+   * parent canvas root, so they live in the same coordinate space as the
+   * element they track.
+   */
+  contentOverlayRoot: HTMLDivElement | null
 }
 
 type IframeWithCleanup = HTMLIFrameElement & { _studioCleanup?: () => void }
@@ -205,6 +214,7 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
       const isLive = interaction === 'live'
       const iframeRef = useRef<HTMLIFrameElement | null>(null)
       const [iframeDoc, setIframeDoc] = useState<Document | null>(null)
+      const [overlayRoot, setOverlayRoot] = useState<HTMLDivElement | null>(null)
 
     useIframeCursorBridge(iframeRef, iframeDoc, { onCursorMove, onCursorLeave })
     useCanvasFormControlSuppression(iframeDoc, { breakpointId, enabled: !isLive })
@@ -218,8 +228,9 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
         iframeElement: iframeRef.current,
         contentDocument: iframeDoc,
         contentBody: (iframeDoc?.body ?? null) as HTMLBodyElement | null,
+        contentOverlayRoot: overlayRoot,
       }),
-      [iframeDoc],
+      [iframeDoc, overlayRoot],
     )
 
     // Wire up the iframe document once it's ready. Capture both onLoad and
@@ -659,6 +670,16 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
               <CanvasDocumentContext.Provider value={iframeDoc}>
                 {/* Editor-chrome stylesheet — UNLAYERED so it beats every other bucket */}
                 <EditorChromeInjector targetDocument={iframeDoc} parentDocument={document} />
+                {/* Design frames only: selection/hover rings + the node-name badge
+                    render INSIDE this document (WS-5.1) so they track the element
+                    with zero zoom/pan conversion. See its own docblock. */}
+                {!isLive && (
+                  <CanvasSelectionOverlayInjector
+                    targetDocument={iframeDoc}
+                    parentDocument={document}
+                    onRootReady={setOverlayRoot}
+                  />
+                )}
                 {/* Vendor package CSS (Alm design-system + the open project's own
                     bare-specifier package CSS) — read-only, @layer vendor,
                     ordered below @layer user-authored. See canvasCssLayers.ts. */}

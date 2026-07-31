@@ -61,9 +61,11 @@ import {
 } from '@core/page-parser'
 import type { ConditionDef, Page, StyleRule } from '@core/page-tree'
 import { TEXT_HTML_TAG_SET } from '@modules/base/utils/htmlTag'
+import { packageModuleId } from '@core/module-engine'
 import { parsedPageToSitePage } from '@core/studio-sync/parsedPageToSitePage'
-import { classIdsForClassName, loadStudioStyles } from './studioCss'
+import { classIdsForClassName, loadStudioStyles, type StyleRuleSource } from './studioCss'
 import { probeProject } from './studio/projectProbe'
+import { getCachedRouteParse, hashWorkspaceConfig, setCachedRouteParse } from './studio/pageParseCache'
 import { compileProjectStyles } from './studio/styleCompile'
 import { readStudioMeta } from './studio/studioMeta'
 import {
@@ -80,8 +82,36 @@ const CONTAINER_TAGS: ReadonlySet<string> = new Set([
 ])
 
 /**
- * Map a parsed node to an Studio moduleId (design-system → alm.*, host tags
- * → base.*).
+ * `@alm-design/design-system` keeps resolving to `alm.<Name>` (WS-3's
+ * hardcoded, build-time-manifested path) rather than the generic
+ * `pkg.<sanitized>.<Name>` scheme every other package gets. `standing-07`
+ * (STATE.md): the generic pipeline is not yet PROVEN to render the eSIM
+ * board — the one real corpus that actually uses this package — visually
+ * equivalently to the hardcoded `alm.*` registration in
+ * `src/modules/alm/register.tsx`. Routing this one specifier through the new
+ * scheme before that dogfood pass would regress the only corpus that
+ * currently renders correctly. Revisit only once `standing-07`'s five
+ * preconditions all hold — see the `pkg-01` STATE.md entry.
+ */
+const ALM_DESIGN_PACKAGE_SPECIFIER = '@alm-design/design-system'
+
+/**
+ * Map a parsed node to an Studio moduleId (design-system → alm.* / pkg.*, host
+ * tags → base.*).
+ *
+ * WS-3.3 — a `kind: 'component'` node whose `componentSources` classification
+ * (computed earlier in `loadStudioPages`, from the PRE-inline tree — see that
+ * function's doc) says it's a `package` import gets the generic
+ * `pkg.<sanitized-package>.<ComponentName>` id (`packageModuleId`), so
+ * `registerProjectModules.ts` can register — and the canvas can find — a
+ * module for whatever npm design system the project actually imports, not
+ * just the one hardcoded `@alm-design/design-system` case (kept on `alm.*`
+ * — see `ALM_DESIGN_PACKAGE_SPECIFIER`'s doc). A `kind: 'component'` node with
+ * no package classification at all (a LOCAL component `inlineLocalComponents`
+ * declined to expand — recursion, missing declaration, cap reached) keeps the
+ * old `alm.<Name>` id: there is no package to bundle for it, so it renders
+ * "Unknown module" exactly as it did before this change, which is the honest
+ * outcome for content this pipeline cannot materialize.
  *
  * `base.text` and `base.button` are the two modules that need care, because
  * they share two properties: both are leaves (`canHaveChildren: false`) and
@@ -103,14 +133,36 @@ const CONTAINER_TAGS: ReadonlySet<string> = new Set([
  * word "Text", 21 rendered "Button", and 10 buttons silently dropped their
  * children.
  */
-function resolveModuleId(node: {
-  kind: 'element' | 'component'
-  name: string
-  children: string[]
-  text?: string
-  props?: Record<string, ParsedPropValue>
-}): string {
-  if (node.kind === 'component') return `alm.${node.name}`
+function resolveModuleId(
+  node: {
+    id: string
+    kind: 'element' | 'component'
+    name: string
+    children: string[]
+    text?: string
+    props?: Record<string, ParsedPropValue>
+    /** WS-4.2 — present when `inlineLocalComponents` successfully expanded this call site into an instance. */
+    instanceOf?: { componentName: string; source: 'local' | 'package'; sourceFile: string | null }
+  },
+  componentSources: Record<string, ComponentSource>,
+): string {
+  if (node.kind === 'component') {
+    // WS-4.2 — a call site `inlineLocalComponents` actually expanded renders
+    // as the zero-DOM instance fragment, whatever `componentSources` says
+    // about it (it will say `local`, since only local expansion produces
+    // this field — checked FIRST, not merged into the branch below, so a
+    // future package-instance producer of this same field doesn't have to
+    // fight the `alm.`/`pkg.` fallback order). A `kind: 'component'` node
+    // with NO `instanceOf` is either a package reference (never inlined) or
+    // a local call site inlining DECLINED to expand — both keep the
+    // pre-WS-4 fallback below unchanged.
+    if (node.instanceOf) return 'studio.instance'
+    const source = componentSources[node.id]
+    if (source?.kind === 'package' && source.specifier !== ALM_DESIGN_PACKAGE_SPECIFIER) {
+      return packageModuleId(source.specifier, node.name)
+    }
+    return `alm.${node.name}`
+  }
   // An element carrying resolved raw SVG markup renders as `base.svg`
   // whatever its tag — the `<span dangerouslySetInnerHTML={{__html: icon}} />`
   // shape is how real repos inline an icon, and the markup is the content.
@@ -241,8 +293,23 @@ export function assignPageIds(relPaths: readonly string[]): Map<string, string> 
 export interface StudioLoadResult {
   pages: Page[]
   componentSources: Record<string, ComponentSource>
-  /** §6 — imported `.css` parsed into style rules, keyed by rule id. READ-ONLY: never written back to disk. */
+  /**
+   * §6 — imported `.css` parsed into style rules, keyed by rule id. Edits in
+   * the CSS Classes panel apply to this in-memory registry immediately;
+   * whether they ALSO reach disk depends on `styleRuleSources` below —
+   * `panel-02` wires the write-back for rules with a mapped source.
+   */
   styleRules: Record<string, StyleRule>
+  /**
+   * `panel-02` (WS-6.3) — `StyleRule.id -> (file, selector)` for every rule
+   * parsed from a real, hand-authored `.css` file. Absent for a rule
+   * contributed by `extraCss` (Tailwind/Sass/PostCSS output, rewritten CSS
+   * Modules) or a non-`.css` stylesheet — see `studioCss.ts`'s "Write-back
+   * mapping" doc for why those stay unmapped on purpose. The client diffs
+   * `site.styleRules` against this to decide which class edits can become a
+   * `kind: 'css'` `StudioEdit`.
+   */
+  styleRuleSources: Record<string, StyleRuleSource>
   /** §6 — reusable `@media`/`@container`/`@supports` conditions the rules reference. */
   conditions: ConditionDef[]
   /**
@@ -266,11 +333,22 @@ interface RoutePageEntry {
   componentSources: Record<string, ComponentSource>
 }
 
+/** Absolute file paths of every `kind: 'local'` entry in `sources`, deduplicated — see `pageParseCache.ts`'s "one level deep" limitation. */
+function localSourceAbsFiles(sources: Record<string, ComponentSource>, dir: string): string[] {
+  const files = new Set<string>()
+  for (const source of Object.values(sources)) {
+    if (source.kind === 'local') files.add(join(dir, ...source.file.split('/')))
+  }
+  return [...files]
+}
+
 /**
- * `assignPageIds`'s per-page parse loop, UNCHANGED — moved into its own
- * function so `loadStudioPages` can branch on framework without touching this
- * path at all. Every non-`next-app` project's page discovery and parse stays
- * byte for byte identical to before WS-1.3.
+ * `assignPageIds`'s per-page parse loop — moved into its own function so
+ * `loadStudioPages` can branch on framework without touching this path at
+ * all. Every non-`next-app` project's page discovery and parse produces the
+ * same output as before WS-1.3; WS-5.5 adds a cache check/write around the
+ * expensive parse+inline sequence, keyed by this route's own file plus every
+ * local component file it resolved (`pageParseCache.ts`).
  */
 function buildStandardPageEntries(
   pagesDir: string,
@@ -278,6 +356,7 @@ function buildStandardPageEntries(
   project: ReturnType<typeof createWorkspaceProject>,
   preferredKey: string | undefined,
   cssModuleClassMaps: Record<string, Record<string, string>> | undefined,
+  configHash: string,
 ): RoutePageEntry[] {
   const relPaths = discoverPageFiles(pagesDir)
   const pageIds = assignPageIds(relPaths)
@@ -285,22 +364,38 @@ function buildStandardPageEntries(
   return relPaths.map((relPath) => {
     const file = join(pagesDir, ...relPath.split('/'))
     const pageId = pageIds.get(relPath)!
-    // §7 — one evaluator options bag PER PAGE, shared between this page's own
-    // parse and every locally-inlined subtree's parse below, so the page-wide
-    // step budget (and the module-namespace memo cache inside staticEval.ts)
-    // covers the whole page's worth of value resolution, not just one call.
-    // `workspaceRoot` enables `?raw` text-import resolution (inline SVG icons).
-    // `cssModuleClassMaps` (WS-2.2) is `styleCompile.ts`'s compiled output —
-    // enables `import styles from './Card.module.css'` -> `styles.card`.
-    const evalOptions: StaticEvalOptions = { preferredKey, pageBudget: createPageEvalBudget(), workspaceRoot: dir, cssModuleClassMaps }
-    const parsed = parsePageFile(file, dir, project, evalOptions)
-    // `resolveComponentSources` MUST run on the pre-inline tree — it keys
-    // off call-site node ids, which only exist before splicing (§2.6).
-    // Nested local components discovered while expanding a sub-tree are
-    // resolved fresh, inside `inlineLocalComponents` itself, against that
-    // sub-tree's own file.
-    const sources = resolveComponentSources(project, file, dir, parsed)
-    const expanded = inlineLocalComponents(parsed, sources, project, dir, { evalOptions })
+    const cacheKey = `${dir}::${relPath}`
+
+    const cached = getCachedRouteParse(cacheKey, configHash)
+    let expanded: ParsedPage
+    let sources: Record<string, ComponentSource>
+    if (cached) {
+      expanded = cached.expanded
+      sources = cached.componentSources
+    } else {
+      // §7 — one evaluator options bag PER PAGE, shared between this page's
+      // own parse and every locally-inlined subtree's parse below, so the
+      // page-wide step budget (and the module-namespace memo cache inside
+      // staticEval.ts) covers the whole page's worth of value resolution,
+      // not just one call. `workspaceRoot` enables `?raw` text-import
+      // resolution (inline SVG icons). `cssModuleClassMaps` (WS-2.2) is
+      // `styleCompile.ts`'s compiled output — enables `import styles from
+      // './Card.module.css'` -> `styles.card`.
+      const evalOptions: StaticEvalOptions = { preferredKey, pageBudget: createPageEvalBudget(), workspaceRoot: dir, cssModuleClassMaps }
+      const parsed = parsePageFile(file, dir, project, evalOptions)
+      // `resolveComponentSources` MUST run on the pre-inline tree — it keys
+      // off call-site node ids, which only exist before splicing (§2.6).
+      // Nested local components discovered while expanding a sub-tree are
+      // resolved fresh, inside `inlineLocalComponents` itself, against that
+      // sub-tree's own file.
+      sources = resolveComponentSources(project, file, dir, parsed)
+      expanded = inlineLocalComponents(parsed, sources, project, dir, { evalOptions })
+      setCachedRouteParse(cacheKey, configHash, [file, ...localSourceAbsFiles(sources, dir)], {
+        expanded,
+        componentSources: sources,
+      })
+    }
+
     return {
       expanded,
       pageId,
@@ -355,6 +450,13 @@ function slugFromAppRoute(route: string): string {
  * other framework; composition (and the layout chain's OWN local-component
  * inlining) is `composeAppRouterRoute`'s job — see that module's doc for why
  * order matters and what it declines rather than guesses at.
+ *
+ * WS-5.5 — the cache key covers the composed result (route + its full layout
+ * chain), and tracked dependency files include every layout file in the
+ * chain, not just the route's own `page.tsx`: editing a shared `layout.tsx`
+ * must invalidate every route beneath it, exactly the many-routes-share-one-
+ * layout shape `meta-05`/`store-01`'s `nodeIdToPageIds` index already had to
+ * account for.
  */
 function buildAppRouterPageEntries(
   pagesDir: string,
@@ -362,6 +464,7 @@ function buildAppRouterPageEntries(
   project: ReturnType<typeof createWorkspaceProject>,
   preferredKey: string | undefined,
   cssModuleClassMaps: Record<string, Record<string, string>> | undefined,
+  configHash: string,
 ): RoutePageEntry[] {
   const routes = discoverAppRouterRoutes(pagesDir)
   const pageIds = assignAppRouterPageIds(routes)
@@ -369,31 +472,49 @@ function buildAppRouterPageEntries(
   return routes.map(({ relPath, route }) => {
     const file = join(pagesDir, ...relPath.split('/'))
     const pageId = pageIds.get(relPath)!
-    const evalOptions: StaticEvalOptions = { preferredKey, pageBudget: createPageEvalBudget(), workspaceRoot: dir, cssModuleClassMaps }
-
-    const parsed = parsePageFile(file, dir, project, evalOptions)
-    const sources = resolveComponentSources(project, file, dir, parsed)
-    const pageExpanded = inlineLocalComponents(parsed, sources, project, dir, { evalOptions })
-
+    const cacheKey = `${dir}::${relPath}`
     const layoutAbsFiles = collectAppRouterLayoutChain(pagesDir, relPath).map((relLayoutPath) =>
       join(pagesDir, ...relLayoutPath.split('/')),
     )
-    const composed = composeAppRouterRoute({
-      page: pageExpanded,
-      pageAbsFile: file,
-      layoutAbsFiles,
-      project,
-      workspaceRoot: dir,
-      evalOptions,
-    })
+
+    const cached = getCachedRouteParse(cacheKey, configHash)
+    let expanded: ParsedPage
+    let sources: Record<string, ComponentSource>
+    if (cached) {
+      expanded = cached.expanded
+      sources = cached.componentSources
+    } else {
+      const evalOptions: StaticEvalOptions = { preferredKey, pageBudget: createPageEvalBudget(), workspaceRoot: dir, cssModuleClassMaps }
+
+      const parsed = parsePageFile(file, dir, project, evalOptions)
+      const pageSources = resolveComponentSources(project, file, dir, parsed)
+      const pageExpanded = inlineLocalComponents(parsed, pageSources, project, dir, { evalOptions })
+
+      const composed = composeAppRouterRoute({
+        page: pageExpanded,
+        pageAbsFile: file,
+        layoutAbsFiles,
+        project,
+        workspaceRoot: dir,
+        evalOptions,
+      })
+      expanded = composed.page
+      sources = { ...pageSources, ...composed.componentSources }
+      setCachedRouteParse(
+        cacheKey,
+        configHash,
+        [file, ...layoutAbsFiles, ...localSourceAbsFiles(sources, dir)],
+        { expanded, componentSources: sources },
+      )
+    }
 
     return {
-      expanded: composed.page,
+      expanded,
       pageId,
       slug: slugFromAppRoute(route),
       title: route,
       relFile: relative(dir, file).split(sep).join('/'),
-      componentSources: { ...sources, ...composed.componentSources },
+      componentSources: sources,
     }
   })
 }
@@ -420,7 +541,9 @@ function buildAppRouterPageEntries(
  */
 export async function loadStudioPages(dir: string): Promise<StudioLoadResult> {
   const pagesDir = projectPagesDir(dir)
-  if (!existsSync(pagesDir)) return { pages: [], componentSources: {}, styleRules: {}, conditions: [], vendorCss: '' }
+  if (!existsSync(pagesDir)) {
+    return { pages: [], componentSources: {}, styleRules: {}, styleRuleSources: {}, conditions: [], vendorCss: '' }
+  }
 
   // One shared, workspace-wide ts-morph Project so a page's local
   // component imports resolve to real files elsewhere in the tree —
@@ -440,19 +563,26 @@ export async function loadStudioPages(dir: string): Promise<StudioLoadResult> {
   const profile = meta.profile ?? probeProject(dir)
   const { styles: compiledStyles } = await compileProjectStyles(dir, profile)
 
+  // WS-5.5 — everything besides per-file mtimes that feeds the parse/eval
+  // pass below: a changed framework classification, preview locale, or
+  // compiled CSS-Modules class map invalidates every route's cache entry at
+  // once (`pageParseCache.ts`'s own doc explains why a per-file mtime alone
+  // can't catch this).
+  const configHash = hashWorkspaceConfig([framework, preferredKey, compiledStyles.moduleClassMaps])
+
   // Parse + inline EVERY route first, then resolve CSS, then convert. The CSS
   // registry is site-wide (pages routinely share a stylesheet), so it has to be
   // complete before any page can turn a `className` into `classIds`.
   const routeEntries = framework === 'next-app'
-    ? buildAppRouterPageEntries(pagesDir, dir, project, preferredKey, compiledStyles.moduleClassMaps)
-    : buildStandardPageEntries(pagesDir, dir, project, preferredKey, compiledStyles.moduleClassMaps)
+    ? buildAppRouterPageEntries(pagesDir, dir, project, preferredKey, compiledStyles.moduleClassMaps, configHash)
+    : buildStandardPageEntries(pagesDir, dir, project, preferredKey, compiledStyles.moduleClassMaps, configHash)
 
   const componentSources: Record<string, ComponentSource> = {}
   for (const entry of routeEntries) Object.assign(componentSources, entry.componentSources)
 
   // §6 — read every stylesheet the pages import, in cascade order, plus the
   // WS-2.1 compiled blob (Tailwind/Sass/PostCSS output, rewritten CSS Modules).
-  const { styleRules, conditions, classIdsByName } = await loadStudioStyles(
+  const { styleRules, conditions, classIdsByName, sources: styleRuleSources } = await loadStudioStyles(
     routeEntries.map(({ expanded, relFile }) => ({ parsed: expanded, relFile })),
     project,
     dir,
@@ -465,7 +595,11 @@ export async function loadStudioPages(dir: string): Promise<StudioLoadResult> {
       pageId,
       slug,
       title,
-      resolveModuleId,
+      // Bound over the SITE-WIDE merged `componentSources` (built above, not
+      // this route's own) — a node id is unique across the whole load (App
+      // Router layout composition aside, which merges into the same map), so
+      // one shared lookup is correct for every page.
+      resolveModuleId: (node) => resolveModuleId(node, componentSources),
       resolveTextProp,
       resolveClassIds,
     })
@@ -475,5 +609,5 @@ export async function loadStudioPages(dir: string): Promise<StudioLoadResult> {
     return page
   })
 
-  return { pages, componentSources, styleRules, conditions, vendorCss: compiledStyles.vendorCss }
+  return { pages, componentSources, styleRules, styleRuleSources, conditions, vendorCss: compiledStyles.vendorCss }
 }

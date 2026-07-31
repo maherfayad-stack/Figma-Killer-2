@@ -50,6 +50,11 @@ const GLOBALS_TO_COPY = [
   'CustomEvent',
   'KeyboardEvent',
   'MouseEvent',
+  // happy-dom implements PointerEvent + set/has/releasePointerCapture, but
+  // doesn't put PointerEvent on the global scope by default — needed for
+  // tests that drive a real drag gesture (e.g. ScrubInput's scrub-to-change
+  // interaction) via @testing-library's `fireEvent.pointerDown/Move/Up`.
+  'PointerEvent',
   'FocusEvent',
   'InputEvent',
   'MutationObserver',

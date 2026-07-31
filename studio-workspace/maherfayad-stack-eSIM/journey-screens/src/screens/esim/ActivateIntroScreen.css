@@ -1,0 +1,17 @@
+.esim-intro__illustration {
+  width: 148px;
+  height: 148px;
+  border-radius: var(--rounded-lg);
+  object-fit: cover;
+}
+
+.esim-intro__heading {
+  margin: 0;
+  width: 100%;
+  font-family: var(--font-body);
+  font-size: var(--type-headline-size);
+  line-height: var(--type-headline-lh);
+  letter-spacing: var(--type-headline-ls);
+  font-weight: var(--type-headline-weight);
+  color: var(--text-base-default);
+}

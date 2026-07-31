@@ -43,8 +43,13 @@ interface CanvasKeyboardShortcutsDeps {
   runShortcut?: (event: KeyboardEvent) => boolean
 }
 
-/** Inputs / textareas / contenteditable surfaces let the browser own the keystroke. */
-function isTextInputTarget(target: EventTarget | null): boolean {
+/**
+ * Inputs / textareas / contenteditable surfaces let the browser own the
+ * keystroke. Exported: `CanvasRoot.tsx`'s document-level `board.selectAllFrames`
+ * listener (board-02) reuses this exact predicate so "don't hijack Ctrl/Cmd+A
+ * while typing" is defined in exactly one place.
+ */
+export function isTextInputTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false
   return (
     target.tagName === 'INPUT' ||
@@ -170,16 +175,13 @@ export function useCanvasKeyboardShortcuts(
       return
     }
 
-    // WS-7.1 — ⌘/Ctrl+A on an empty canvas (no node selected) selects every
-    // frame on the active studio board. Runs before the `!selectedNodeId`
-    // guard below on purpose: node selection has no "select all" of its own,
-    // so this only ever competes with the browser's native select-all, which
-    // `preventDefault` already suppresses in an editable-field-free canvas.
-    if (!selectedNodeId && getKeybindingForCommand('board.selectAllFrames')?.match(event)) {
-      event.preventDefault()
-      useEditorStore.getState().selectAllFrames()
-      return
-    }
+    // `board.selectAllFrames` (⌘/Ctrl+A) is NOT handled here (board-02):
+    // this handler is a React `onKeyDown` on the canvas div, so it only
+    // fires while a descendant of the canvas holds DOM focus — exactly the
+    // bug report ("ctrl A selects text in the canvas panels not in the
+    // canvas itself"). It's handled by a document-level listener in
+    // `CanvasRoot.tsx` instead, scoped by intent (not typing in an editable
+    // field) rather than by focus.
 
     if (!editable) return
     if (!selectedNodeId) return
