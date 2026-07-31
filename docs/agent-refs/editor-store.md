@@ -111,8 +111,11 @@ frame clears the node selection and vice versa (mutual exclusivity), so
   (toggle) in `BoardFramesLayer.tsx`; `⌘/Ctrl+A` on empty canvas
   (`selectAllFrames`, wired through the keybindings registry as the virtual
   command `board.selectAllFrames`); marquee-drag on empty canvas
-  (`framesInMarquee.ts`, pure board→screen math next to
-  `frameVirtualization.ts`).
+  (`useMarqueeSelection.ts` + `framesInMarquee.ts`). The marquee hit-tests each
+  frame's **rendered** box, measured once at pointerdown — not the board-space
+  rect `frameVirtualization.ts` derives from `board.frames[].height`, which is a
+  fiction for every auto-height frame (`canvas-04`), i.e. every frame on a
+  freshly seeded board.
 - **Bulk frame actions** (`setSelectedFramesSize`, `applyWidthToAllFrames`,
   `setFrameHeights`, `alignSelectedFrames`, `distributeSelectedFrames`,
   `tidySelectedFrames`) all resolve their target set from `selectedFrameIds`

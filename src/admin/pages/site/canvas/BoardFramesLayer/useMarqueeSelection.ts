@@ -42,25 +42,49 @@
  * it passes the threshold. It is a replacing gesture, and `setSelectedFrameIds`
  * only drops the node selection when it selects at least one frame — so a drag
  * over empty board used to end with the old node still selected.
+ *
+ * `board-03`: what the marquee hit-tests against is now each frame's RENDERED
+ * box, measured once at pointerdown (`measureFrameRects`), not a board-space
+ * rect derived from `board.frames[].height`. See `framesInMarquee.ts` for why
+ * the derived rect was a fiction for every auto-height frame — which is every
+ * frame on a freshly seeded board.
  */
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 import { useEditorStore } from '@site/store/store'
-import { selectActiveBoard } from '@site/store/slices/boardSlice'
-import type { Page } from '@core/page-tree'
 import { isCanvasSpacePanActive } from '../canvasPanInput'
-import { FRAME_WIDTH, FRAME_HEIGHT, FRAME_HEADER_HEIGHT } from './frameGrid'
 import { framesInMarquee, marqueeRectFromPoints, type MarqueeFrame, type MarqueeRect } from './framesInMarquee'
-import { resolveFramesWithPages } from './resolveFramesWithPages'
 
 /** Marquee movement (screen px) before a drag counts as "selecting", so a plain click doesn't flash an empty marquee. */
 const MARQUEE_DRAG_THRESHOLD_PX = 3
 
-// Stable fallback reference — see BoardFramesLayer.tsx's own copy for why
-// `?? []` inline is banned in a Zustand selector; this one is read via
-// `useEditorStore.getState()` (not a selector hook) so the same reasoning
-// doesn't strictly apply, but a fresh array per call is still wasteful churn
-// this module doesn't need.
-const EMPTY_PAGES: Page[] = []
+/**
+ * Every board frame's RENDERED box, in the same canvas-root-relative screen
+ * space the marquee rect is built in.
+ *
+ * Read once per gesture, at pointerdown: a marquee drag owns the pointer for
+ * its whole duration (it claims the event before `useCanvas`'s pan gesture
+ * sees it, and nothing else moves or resizes a frame meanwhile), so one layout
+ * pass covers the drag. Every frame on the board is measurable regardless of
+ * virtualization — `BoardFramesLayer` only swaps a frame's BODY for a poster
+ * when it goes offscreen, the `.frame` box itself always stays mounted.
+ */
+function measureFrameRects(layerEl: HTMLElement, canvasRootEl: HTMLElement): MarqueeFrame[] {
+  const origin = canvasRootEl.getBoundingClientRect()
+  const frames: MarqueeFrame[] = []
+  for (const el of layerEl.querySelectorAll<HTMLElement>('[data-page-id]')) {
+    const pageId = el.dataset.pageId
+    if (!pageId) continue
+    const rect = el.getBoundingClientRect()
+    frames.push({
+      pageId,
+      x: rect.left - origin.left,
+      y: rect.top - origin.top,
+      width: rect.width,
+      height: rect.height,
+    })
+  }
+  return frames
+}
 
 /**
  * Wires the marquee gesture onto `canvasRootRef.current` and returns the
@@ -68,9 +92,15 @@ const EMPTY_PAGES: Page[] = []
  * before it has crossed the drag threshold). The caller (`BoardFramesLayer`)
  * portals this into the canvas root for rendering — see that component for
  * why the portal target has to be OUTSIDE the transformed `.layer`.
+ *
+ * `framesLayerRef` points at `BoardFramesLayer`'s own `.layer` div, which is
+ * both the frame-rect source and the "are we on a studio board at all?" gate:
+ * it is only rendered in studio board mode, so a null ref means a drag on the
+ * CMS/Visual-Component canvas, which must fall through to the pan gesture.
  */
 export function useMarqueeSelection(
   canvasRootRef: RefObject<HTMLElement | null> | undefined,
+  framesLayerRef: RefObject<HTMLElement | null>,
 ): MarqueeRect | null {
   // Marquee drag (WS-7.1). `marqueeDragRef` carries the in-progress gesture;
   // `marqueeRect` is only set once movement crosses MARQUEE_DRAG_THRESHOLD_PX,
@@ -83,6 +113,7 @@ export function useMarqueeSelection(
     startY: number
     additive: boolean
     baseSelection: string[]
+    frames: MarqueeFrame[]
   } | null>(null)
   const [marqueeRect, setMarqueeRect] = useState<MarqueeRect | null>(null)
   // Mirrors `marqueeRect` for the native pointer-event effect below, which
@@ -117,8 +148,8 @@ export function useMarqueeSelection(
       if (e.button !== 0) return
       if (e.target !== canvasRootEl) return
       if (isCanvasSpacePanActive(document)) return
-      const board = selectActiveBoard(useEditorStore.getState())
-      if (!board) return
+      const layerEl = framesLayerRef.current
+      if (!layerEl) return
       const rect = canvasRootEl.getBoundingClientRect()
       marqueeDragRef.current = {
         pointerId: e.pointerId,
@@ -126,6 +157,7 @@ export function useMarqueeSelection(
         startY: e.clientY - rect.top,
         additive: e.shiftKey,
         baseSelection: useEditorStore.getState().selectedFrameIds,
+        frames: measureFrameRects(layerEl, canvasRootEl),
       }
       canvasRootEl.setPointerCapture(e.pointerId)
       // Claim the whole gesture — see the module doc for why this
@@ -146,8 +178,6 @@ export function useMarqueeSelection(
 
       setMarqueeRectBoth(next)
       const state = useEditorStore.getState()
-      const board = selectActiveBoard(state)
-      if (!board) return
       // A non-additive marquee REPLACES the selection, and that has to include
       // the node selection — `setSelectedFrameIds` only clears it when it
       // selects at least one frame, so a drag across genuinely empty board
@@ -155,15 +185,7 @@ export function useMarqueeSelection(
       // "a marquee that selects nothing must end at nothing selected").
       // Self-limiting: after the first clearing move the set is already empty.
       if (!drag.additive && state.selectedNodeIds.length > 0) state.clearSelection()
-      const pages = state.site?.pages ?? EMPTY_PAGES
-      const marqueeFrames: MarqueeFrame[] = resolveFramesWithPages(board, pages).map(({ frame, page }) => ({
-        pageId: page.id,
-        x: frame.x,
-        y: frame.y,
-        width: frame.width ?? FRAME_WIDTH,
-        height: (frame.height ?? FRAME_HEIGHT) + FRAME_HEADER_HEIGHT,
-      }))
-      const hits = framesInMarquee(marqueeFrames, next, { panX: state.panX, panY: state.panY, zoom: state.zoom })
+      const hits = framesInMarquee(drag.frames, next)
       const nextIds = drag.additive
         ? [...drag.baseSelection, ...hits.filter((id) => !drag.baseSelection.includes(id))]
         : hits
@@ -199,7 +221,7 @@ export function useMarqueeSelection(
       canvasRootEl.removeEventListener('pointercancel', handlePointerEnd)
       canvasRootEl.removeEventListener('click', handleClick)
     }
-  }, [canvasRootRef, setMarqueeRectBoth])
+  }, [canvasRootRef, framesLayerRef, setMarqueeRectBoth])
 
   return marqueeRect
 }

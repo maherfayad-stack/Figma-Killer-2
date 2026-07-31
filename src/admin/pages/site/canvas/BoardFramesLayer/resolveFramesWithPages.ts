@@ -2,11 +2,9 @@
  * `board.frames` is membership — resolve each against `site.pages`, dropping
  * any frame whose page no longer exists (deleted since it was added). Single
  * source of truth for this derivation: `BoardFramesLayer.tsx`'s render body
- * uses it for the frame list / selection bounding box, and
- * `useMarqueeSelection.ts`'s pointermove handler recomputes it fresh from
- * `useEditorStore.getState()` on every move rather than closing over a stale
- * render-scoped value. Its own module (not exported from `BoardFramesLayer.tsx`)
- * so the two don't import each other.
+ * uses it for the frame list and the multi-selection bounding box. Its own
+ * module (not exported from `BoardFramesLayer.tsx`) so callers don't have to
+ * import the component to get at it.
  */
 import type { Page } from '@core/page-tree'
 import type { Board, BoardFrame } from '@core/studio-board'

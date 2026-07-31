@@ -1,26 +1,30 @@
 /**
- * framesInMarquee — pure board→screen intersection test for a marquee
- * (drag-to-select) selection box, WS-7.1.
+ * framesInMarquee — pure rect-intersection test for a marquee (drag-to-select)
+ * selection box, WS-7.1.
  *
- * Sibling of `frameVirtualization.ts` and deliberately shaped like it: same
- * board→screen transform math (`screenX = panX + boardX * zoom`), no React,
- * no DOM reads, unit-testable without a browser. Where `isFrameOnScreen`
- * asks "does this frame intersect the viewport", `framesInMarquee` asks
- * "does this frame intersect the marquee the user is dragging" — the
- * marquee rect is already in the SAME screen space as the viewport box
- * (`[0, width] x [0, height]` of the untransformed canvas root), so the
- * caller is responsible for subtracting `canvasRootRef`'s own
- * `getBoundingClientRect()` origin from raw `clientX`/`clientY` before
- * calling this, exactly as `BoardFramesLayer` already does for
- * `viewportSize`.
+ * Both sides are in the SAME space: canvas-root-relative screen pixels
+ * (`[0, width] x [0, height]` of the untransformed canvas root). The caller
+ * measures each frame's RENDERED box once at pointerdown — see
+ * `useMarqueeSelection.ts`'s `measureFrameRects` — and subtracts the canvas
+ * root's own `getBoundingClientRect()` origin, exactly as it already does for
+ * the raw `clientX`/`clientY` the marquee rect is built from.
+ *
+ * `board-03`: this used to take BOARD-space rects plus the pan/zoom transform
+ * and derive the screen rect itself, sized `(frame.height ?? FRAME_HEIGHT)`.
+ * That rect is a fiction for any frame the author has never resized:
+ * `canvas-04`'s auto-height frames render `height: auto` with `--frame-h`
+ * only as a `min-height`, so an eSIM-sized screen draws thousands of board
+ * units taller than its nominal rect — and a marquee dragged across the part
+ * of it the user can actually SEE selected nothing. Fresh boards are entirely
+ * auto-height (`boardSlice`'s `addFrame`/`seedFramesForActiveBoard` save
+ * position only), so that was the common case, not the edge case. Hit-testing
+ * the rendered box makes the gesture mean what it looks like it means.
+ *
+ * Sibling of `frameVirtualization.ts`, which still owns the board→screen
+ * transform for the virtualization window — that one is asking a different
+ * question ("should this frame mount at all"), and answers it before any DOM
+ * exists to measure.
  */
-
-import type { FrameRect, ViewportState } from './frameVirtualization'
-
-/** A marquee-selectable frame: its board-space rect plus the id selecting it resolves to. */
-export interface MarqueeFrame extends FrameRect {
-  pageId: string
-}
 
 /** The drag rectangle, in screen space (canvas-root-relative pixels), already normalized to a non-negative width/height. */
 export interface MarqueeRect {
@@ -28,6 +32,11 @@ export interface MarqueeRect {
   y: number
   width: number
   height: number
+}
+
+/** A marquee-selectable frame: its rendered screen-space rect plus the id selecting it resolves to. */
+export interface MarqueeFrame extends MarqueeRect {
+  pageId: string
 }
 
 /**
@@ -46,17 +55,12 @@ export function marqueeRectFromPoints(
 }
 
 /**
- * The `pageId`s of every frame whose board-space rect intersects `marquee`,
- * given the current pan/zoom transform. Intersection, not containment — a
- * frame partially inside the marquee is selected, matching the spec ("drag
- * to select intersecting frames") and Figma's own marquee behaviour.
+ * The `pageId`s of every frame whose rendered rect intersects `marquee`.
+ * Intersection, not containment — a frame partially inside the marquee is
+ * selected, matching the spec ("drag to select intersecting frames") and
+ * Figma's own marquee behaviour. Touching edges do not count as intersecting.
  */
-export function framesInMarquee(
-  frames: readonly MarqueeFrame[],
-  marquee: MarqueeRect,
-  viewport: Pick<ViewportState, 'panX' | 'panY' | 'zoom'>,
-): string[] {
-  const { panX, panY, zoom } = viewport
+export function framesInMarquee(frames: readonly MarqueeFrame[], marquee: MarqueeRect): string[] {
   const mLeft = marquee.x
   const mTop = marquee.y
   const mRight = marquee.x + marquee.width
@@ -64,12 +68,9 @@ export function framesInMarquee(
 
   const selected: string[] = []
   for (const frame of frames) {
-    const left = panX + frame.x * zoom
-    const top = panY + frame.y * zoom
-    const right = left + frame.width * zoom
-    const bottom = top + frame.height * zoom
-
-    if (left < mRight && right > mLeft && top < mBottom && bottom > mTop) {
+    const right = frame.x + frame.width
+    const bottom = frame.y + frame.height
+    if (frame.x < mRight && right > mLeft && frame.y < mBottom && bottom > mTop) {
       selected.push(frame.pageId)
     }
   }

@@ -191,8 +191,11 @@ export function BoardFramesLayer() {
 
   // Marquee drag (WS-7.1) — screen-space rect, portaled outside the
   // transformed layer below. Gesture wiring + arbitration lives in
-  // `useMarqueeSelection.ts` (own module, see its doc comment).
-  const marqueeRect = useMarqueeSelection(viewportActions?.canvasRootRef)
+  // `useMarqueeSelection.ts` (own module, see its doc comment). `layerRef` is
+  // both its frame-rect source (it hit-tests each frame's RENDERED box) and
+  // its "are we on a studio board?" gate — `.layer` renders in board mode only.
+  const layerRef = useRef<HTMLDivElement>(null)
+  const marqueeRect = useMarqueeSelection(viewportActions?.canvasRootRef, layerRef)
 
   if (!board) return null
 
@@ -223,6 +226,7 @@ export function BoardFramesLayer() {
 
   return (
     <div
+      ref={layerRef}
       className={styles.layer}
       data-testid="board-frames-layer"
     >
@@ -473,6 +477,7 @@ function BoardFrameView({
     >
       <div
         className={styles.header}
+        data-testid="board-frame-header"
         onPointerDown={handleHeaderPointerDown}
         onPointerMove={handleHeaderPointerMove}
         onPointerUp={endDrag}

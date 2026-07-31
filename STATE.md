@@ -290,6 +290,137 @@ are the remaining WS-2 items, not yet dispatched. See
 
 ## Recently landed
 
+### board-03 — the marquee was never broken; its SPEC was. And the marquee was hit-testing a rect that doesn't exist
+- **Agent:** canvas-engineer
+- **Stage:** done — browser-verified against `studio-workspace/maherfayad-stack-eSIM`
+- **Updated:** 2026-07-31
+- **Scope:** `src/admin/pages/site/canvas/BoardFramesLayer/{framesInMarquee.ts,useMarqueeSelection.ts,BoardFramesLayer.tsx,frameGrid.ts,resolveFramesWithPages.ts}`,
+  `src/__tests__/canvas/framesInMarquee.test.ts`,
+  `tests/e2e/board-frame-bulk-selection.e2e.ts`, `docs/agent-refs/editor-store.md`.
+  Nothing under `studio-workspace/` (its pre-existing dogfood modifications are
+  left exactly as found), nothing in `src/core/page-parser/` (`lock-01`'s).
+
+- **Verdict up front, because two agents were sent the wrong way by this.**
+  `board-02`'s marquee **works**. A real `page.mouse` drag from empty board
+  space selects every frame the rectangle crosses, live and mid-drag, draws the
+  rect, paints the ring, and keeps the selection on mouseup. What was broken was
+  **its own e2e spec's arithmetic**, and it broke for the most ordinary reason
+  possible: the user dogfooded the board.
+  Separately — and only found because the fix forced a hard look at what the
+  gesture actually hit-tests — the marquee **was** measuring a rectangle that
+  does not exist on screen. That half is a real product bug and is fixed.
+
+- **Part 1 — the harness bug (why the spec failed).** `board-02`'s
+  `zoomOutUntilNarrow` used "is a frame under 260 px wide" as a proxy for zoom,
+  on the stated premise that *"every board frame's board-space width is the
+  fixed `FRAME_WIDTH` (1024) unless manually resized"*. Since that was written,
+  the user resized every eSIM frame to **393** and dragged
+  `booking-confirmation-screen` to board **x = −758.68**. So:
+  1. the zoom loop's exit condition was already true at the default 50% zoom —
+     it zoomed out **zero** times;
+  2. `centerFrameTopsInView` then centred the span of two frames now 2 256 board
+     units apart, i.e. 1 128 px at that zoom, inside a **918 px** canvas;
+  3. `start = { x: boxA.x - 20 }` therefore computed to **x ≈ 237**, which is
+     125 px to the LEFT of the canvas root (the Explorer panel starts at 362).
+     `page.mouse.down()` pressed the Explorer panel. `end.x` computed to
+     **1 405** in a 1 280-wide viewport.
+  Nothing was ever pressed on the canvas, so nothing was ever selected, and the
+  failure message read exactly like a product regression. It was not. This is
+  the same class `select-01` hit one spec over — **check the harness before the
+  product when a canvas spec's coordinates are DERIVED rather than MEASURED.**
+- **Part 1 fix:** the spec now derives its whole gesture from what is rendered.
+  It zooms out until enough frames *fit* (not until one is N px wide), scans for
+  a drag origin that `elementFromPoint`s to the canvas root, and computes which
+  frames a rect crosses **from their measured boxes**, rejecting any candidate
+  rect where a frame sits within 6 px of an edge (so a rounding disagreement can
+  never masquerade as a bug). The assertions are unchanged in kind and one was
+  strengthened: instead of "frameA yes, frameB not yet", the mid-drag state must
+  equal *exactly* the frames the partial rect crosses, and that set must be a
+  strict, non-empty subset of the final one. Two phases added: the painted
+  selection ring is asserted (`outline: 2px solid`, the user's own read of
+  "selected"), and a drag that crosses nothing must end at nothing selected.
+  Every hard-coded page id is gone — including the 15-id `allBoardFrameIds`
+  list, now read off the board.
+- **Part 2 — the real product bug.** `framesInMarquee` took **board-space**
+  rects and derived the screen rect itself, sizing each frame
+  `(frame.height ?? FRAME_HEIGHT) + FRAME_HEADER_HEIGHT`. That rect is a fiction
+  for any frame the author has never resized: `canvas-04`'s auto-height frames
+  render `height: auto` with `--frame-h` only as a `min-height`, so they draw far
+  taller than their nominal box — and a marquee across the part of such a frame
+  the user can **see** selected nothing. This is not an edge case: `boardSlice`'s
+  `addFrame`/`seedFramesForActiveBoard` save position only, so **every frame on a
+  freshly seeded board is auto-height**. Measured in Chromium on the real eSIM
+  board: `homepage-screen` renders **329 px** under auto-height against its
+  **149 px** stored box — 2.2×. Dragging a marquee through the grown band
+  selected `["esim-activate-settings-screen"]` before the fix and
+  `["homepage-screen", "esim-activate-settings-screen"]` after (negative control
+  run by stashing only this diff, twice).
+- **Part 2 fix:** `useMarqueeSelection` measures every frame's **rendered** box
+  once at pointerdown (`measureFrameRects`) and hit-tests that. One layout pass
+  per gesture — a marquee owns the pointer for its whole duration and nothing
+  moves a frame meanwhile. `framesInMarquee` is now a plain screen-space
+  rect-intersection with no pan/zoom argument; `frameVirtualization.ts` still
+  owns the board→screen transform, because it answers a different question
+  ("should this frame mount at all") before any DOM exists to measure.
+  `.layer` gained a ref, which doubles as the "are we on a studio board?" gate
+  the `selectActiveBoard` lookup used to be. `BoardFrameView`'s header gained
+  `data-testid="board-frame-header"`, matching its existing `board-frame-body`
+  sibling, so a spec can click a header without guessing at the title text.
+- **Decisions:**
+  - *The spec computes its expectations from measured DOM boxes, not from a
+    fixture.* It reimplements a five-line intersection rule to do so — that is
+    deliberate: this spec exists to prove the INPUT path, and deriving the
+    expectation from rendered geometry is an independent source of truth from
+    the store the product reads. The geometry rule itself keeps its unit tests.
+  - *Did not touch the `FRAME_HEADER_HEIGHT = 48` constant.* It is now used only
+    by virtualization and the multi-selection bounding box. It is ~24 board units
+    larger than the header's real CSS height (which is content-driven padding, not
+    a fixed box), so both of those over-reach slightly at the bottom edge. Real,
+    small, and not this work order's — noted here rather than fixed blind.
+- **Landmines:**
+  - **`studio-workspace/` is a live document, and specs that hard-code its
+    geometry rot silently into fake product regressions.** `board.frames` carries
+    user-chosen x/y/width/height; `.studio/boards.json` in the working tree is
+    already 758 units away from what `board-02` measured. Any future canvas spec
+    must MEASURE — canvas root box, frame boxes, `elementFromPoint` — and must
+    never assume `FRAME_WIDTH`/`FRAME_HEIGHT`, a grid layout, or that a named
+    page id is on screen.
+  - **The e2e webServer must be started deliberately.** Ports 5174/3002 were free
+    here; `bun run e2e:dev` in the background plus `E2E_REUSE_SERVER=1` for each
+    iteration is the fast loop. The dev server on 5173 (`scripts/dev.ts`) is a
+    different tree and does not conflict.
+  - The auto-height defect can be reproduced **without writing to user data**:
+    set `body.dataset.frameAutoHeight = 'true'` on a frame's
+    `[data-testid="board-frame-body"]` from `page.evaluate` and re-measure the
+    `.frame` box. Pure CSS, no store write, nothing reaches disk.
+- **Verification:**
+  - `tests/e2e/board-frame-bulk-selection.e2e.ts` — **passes**. Negative control:
+    the SAME spec against this diff's product half stashed **fails** at *"marquee
+    did not select every frame its rect crossed, before mouseup"* — so the spec
+    gates the fix, it does not merely tolerate it.
+  - `tests/e2e/canvas-deselect.e2e.ts` (`select-01`) and
+    `tests/e2e/instance-selection-ui.e2e.ts` (`instance-ui-01`) — **both pass**
+    on this tree, run in the same invocation. Nothing they verified regressed.
+  - What a real mouse drag does now, observed: 15 frames on the board, canvas
+    918 × 684; drag from (374, 72) to (1272, 712) selects **4 frames**
+    (`booking-confirmation`, `booking-details`, `homepage`,
+    `esim-activate-intro`), with **1** already selected live at the mid-drag
+    sample and all 4 live before mouseup; the ring is `2px solid` on each; a
+    24 px drag over empty space ends at 0 selected; Escape clears; header click
+    + Shift-click gives 2; Ctrl+A from the Align-left button gives all 15.
+  - `./node_modules/.bin/tsc -b` → **exit 0** (`standing-08`: the pinned
+    compiler, never `npx tsc`). `eslint` on every changed file → **exit 0**.
+  - `bun test src/__tests__/canvas src/__tests__/architecture` → 1029 pass /
+    4 fail — all 4 are `standing-01`'s Windows path/separator gates (`CodeMirror
+    lazy-load`, `dispatcher HTML pipeline`, `Error boundary coverage`,
+    `Keybindings registry`), byte-identical to `select-01`'s baseline.
+    `framesInMarquee.test.ts` + `module-size-budgets` → 15 pass / 0 fail;
+    `src/__tests__/editor-store` → 365 pass / 0 fail.
+- **Human action needed:** dogfood a board whose frames you have **never
+  resized** (a freshly imported project) and drag a marquee across the lower
+  half of a tall screen — that is the case this fixes and the one no board in
+  the repo currently exhibits.
+
 ### select-01 — Escape stopped working the moment you touched a panel; and the lock census says the locks are mostly honest, with one over-broad class
 - **Agent:** canvas-engineer
 - **Stage:** done — browser-verified against `studio-workspace/maherfayad-stack-eSIM`
@@ -1590,8 +1721,25 @@ into this work order while other agents are live in the tree. Logged as debt.
 
 ### board-02 — bulk frame selection: marquee, header click, and Escape now actually work; Ctrl+A no longer hostage to focus
 - **Agent:** canvas-engineer
-- **Stage:** done
-- **Updated:** 2026-07-31
+- **Stage:** done — **but its e2e spec rotted within the day; see the correction below and `board-03`**
+- **Updated:** 2026-07-31 (corrected by `board-03`, same day)
+
+> **Correction (`board-03`).** Every product claim in this entry still holds —
+> the marquee, the header click, Escape, and Ctrl+A all work under a real mouse
+> and real keys, re-confirmed in Chromium. What did **not** hold is
+> `tests/e2e/board-frame-bulk-selection.e2e.ts`, which started failing within
+> hours of landing and cost `instance-ui-01` and `select-01` time each proving
+> the failure wasn't theirs. Cause: this entry's own Landmine block records the
+> spec's zoom/centring helpers as a pattern to COPY, and both of them derive
+> coordinates from `FRAME_WIDTH`/`FRAME_HEIGHT` and from two named page ids.
+> The user then resized every eSIM frame to 393 units and moved one 758 units
+> left, and the derived drag start landed on the Explorer panel — 125 px outside
+> the canvas. **Do not copy those two helpers.** `board-03` replaced them with
+> measured geometry and rewrote the spec around it. `board-03` also found and
+> fixed a genuine defect this work order did not look at: the marquee was
+> hit-testing a nominal board-space rect, which is wrong for every auto-height
+> frame (i.e. every frame on a freshly seeded board).
+
 - **Verdict up front:**
   - Marquee selects multiple frames, **live**, mid-drag — **yes**.
   - Ctrl/Cmd+A with focus on a panel (not typing) selects all frames — **yes**.
@@ -1780,7 +1928,7 @@ into this work order while other agents are live in the tree. Logged as debt.
     shows as modified in `git status` from that other agent's work, not
     mine. If the dev server won't boot, check whether the failing file is
     actually yours before debugging it.
-  - `tests/e2e/board-frame-bulk-selection.e2e.ts`'s marquee/pan setup
+  - ~~`tests/e2e/board-frame-bulk-selection.e2e.ts`'s marquee/pan setup
     zooms out via real Ctrl+wheel (not the keyboard `-` shortcut) and
     centers on each target frame's TOP-band midpoint, not its full
     bounding box — `esim`-style auto-height frames (`canvas-04`) can be
@@ -1788,7 +1936,18 @@ into this work order while other agents are live in the tree. Logged as debt.
     the NOMINAL `FRAME_HEIGHT`/`FRAME_HEADER_HEIGHT` rect, not the visually
     grown one, so only the top band needs to be on-screen. Copy this
     pattern (not a full-bbox center) for any future e2e spec that needs two
-    board frames on screen together.
+    board frames on screen together.~~
+    **RETRACTED by `board-03` — do not copy it.** Both helpers are deleted.
+    The zoom loop used "is a frame under 260 px wide" as a stand-in for zoom
+    level, which is only true while every frame is the default 1024 units
+    wide, and the centring used two page ids that stopped fitting on screen
+    together the moment the user rearranged the board — the spec's drag then
+    started 125 px outside the canvas and selected nothing. Measure the
+    canvas root box, the frame boxes, and `elementFromPoint`; assume nothing.
+    And note what this landmine is really admitting: the marquee hit-tests
+    the NOMINAL rect while the user sees the GROWN one. That was a live
+    product bug, worked around in the test instead of fixed. `board-03`
+    fixed it — the marquee now hit-tests each frame's rendered box.
   - `page.getByTestId('canvas-root').focus()` (Playwright's own `.focus()`)
     is NOT interchangeable with a synthetic `page.mouse.click()`'s
     default focus-follows-mousedown for driving `page.keyboard.press` reliably

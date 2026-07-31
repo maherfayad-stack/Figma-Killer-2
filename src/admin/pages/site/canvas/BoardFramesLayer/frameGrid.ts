@@ -15,10 +15,11 @@ export const FRAME_GAP = 80
 export const GRID_COLUMNS = 2
 
 /**
- * Header height (board units) added to a frame's own height for on-screen /
- * marquee intersection tests, so the drag header itself isn't cut off the
- * rect. Shared by `BoardFramesLayer.tsx` (selection bounding box) and
- * `useMarqueeSelection.ts` (marquee hit-testing).
+ * Header height (board units) added to a frame's own height for on-screen
+ * intersection tests, so the drag header itself isn't cut off the rect.
+ * Shared by `BoardFramesLayer.tsx`'s virtualization window and its
+ * multi-selection bounding box. NOT used by the marquee, which hit-tests each
+ * frame's rendered box instead (`board-03` — see `framesInMarquee.ts`).
  */
 export const FRAME_HEADER_HEIGHT = 48
 
