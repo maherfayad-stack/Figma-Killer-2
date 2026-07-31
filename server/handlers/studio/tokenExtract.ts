@@ -86,8 +86,7 @@ import { resolveProjectDir } from '../studioProjects'
 import { readStudioFrameworkFile, writeStudioFrameworkFile } from '../studioFramework'
 import { readCappedFile } from './styleCompileFileRead'
 import { compileProjectStyles } from './styleCompile'
-import { probeProject } from './projectProbe'
-import { readStudioMeta } from './studioMeta'
+import { resolveProjectProfile } from './projectProbe'
 import type { ProbeWarning, ProjectProfile } from './projectProfileSchema'
 import { classifyCssText, hasAnyTokens, type ClassifiedTokens } from './tokenExtractCssScan'
 import { extractTailwindThemeTokens } from './tokenExtractTailwind'
@@ -219,7 +218,7 @@ const TokensBodySchema = Type.Object({
 })
 
 function resolveProfile(dir: string): ProjectProfile {
-  return readStudioMeta(dir).profile ?? probeProject(dir)
+  return resolveProjectProfile(dir)
 }
 
 /**

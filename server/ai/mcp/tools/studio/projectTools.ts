@@ -31,7 +31,7 @@ import {
   resolveProjectDir,
 } from '../../../../handlers/studioProjects'
 import { readStudioMeta } from '../../../../handlers/studio/studioMeta'
-import { probeProject } from '../../../../handlers/studio/projectProbe'
+import { resolveProjectProfile } from '../../../../handlers/studio/projectProbe'
 import { startInstallJob, getInstallJob, probeInstallStatus } from '../../../../handlers/studio/installDeps'
 import { loadStudioPages } from '../../../../handlers/studioPageLoad'
 
@@ -60,20 +60,23 @@ const listProjectsTool: AiTool = {
     return {
       projects: projects.map((p) => {
         const meta = readStudioMeta(p.dir)
+        // `resolveProjectProfile` rather than the raw cache: a profile probed
+        // before `node_modules` existed reports `componentPackages: []`
+        // forever, and this listing is exactly where an agent decides whether
+        // a project has a design system worth reading.
+        const profile = resolveProjectProfile(p.dir)
         return {
           dir: p.dir,
           name: p.name,
           pageCount: p.pageCount,
           trust: meta.trust ?? 'static',
-          profile: meta.profile
-            ? {
-                framework: meta.profile.framework,
-                packageManager: meta.profile.packageManager,
-                componentPackages: meta.profile.componentPackages,
-                tailwind: meta.profile.styleToolchain.tailwind !== null,
-                warningCount: meta.profile.warnings.length,
-              }
-            : null,
+          profile: {
+            framework: profile.framework,
+            packageManager: profile.packageManager,
+            componentPackages: profile.componentPackages,
+            tailwind: profile.styleToolchain.tailwind !== null,
+            warningCount: profile.warnings.length,
+          },
         }
       }),
     }
@@ -95,7 +98,7 @@ const projectProfileTool: AiTool = {
     const { dir: dirInput } = input as { dir?: string }
     const dir = resolveProjectDir(dirInput)
     const meta = readStudioMeta(dir)
-    const profile = meta.profile ?? probeProject(dir)
+    const profile = resolveProjectProfile(dir)
     return { dir, name: projectDisplayName(dir), trust: meta.trust ?? 'static', profile }
   },
 }

@@ -27,6 +27,18 @@
  * without importing this module (which imports it back). Add fields there,
  * not here.
  *
+ * **The profile is cached, and a cache can outlive its truth.** The probe
+ * runs at import time; dependency install runs after it. So every consumer
+ * reads the profile through `resolveProjectProfile(dir)` — never
+ * `readStudioMeta(dir).profile ?? probeProject(dir)`, the hand-rolled idiom
+ * this function replaced in six places — which detects a profile computed
+ * without `node_modules` on a project that now HAS `node_modules`, re-probes,
+ * and heals the cache. `installDeps.ts` additionally calls
+ * `reprobeProjectProfile` the instant an install job succeeds, so the refresh
+ * is eager for the case we can observe and lazy for every case we cannot (a
+ * project imported and installed before this existed; an install whose
+ * completion this process never saw because it restarted).
+ *
  * **A project's app root is not always its project directory** (`approot-01`).
  * A GitHub import can land its real app one level down (`journey-screens/`),
  * two levels down inside a monorepo (`apps/web/`), or anywhere a bounded
@@ -50,15 +62,16 @@
  * composes at the top level — `server/handlers/studio.ts` wires it in
  * (that file is the orchestrator's, not touched here).
  */
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readdirSync } from 'node:fs'
 import { join, relative, resolve, sep } from 'node:path'
 import { EXCLUDED_WORKSPACE_DIR_NAMES, listWorkspaceFiles } from '@core/page-parser'
 import { findEntryFile } from '@core/studio-sync/collectPageStylesheets'
-import { Type, type Static, type TSchema } from '@core/utils/typeboxHelpers'
-import { safeParseJson } from '@core/utils/jsonValidate'
+import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { compiledCheck } from '@core/utils/typeboxCompiler'
 import { badRequest, jsonResponse, readValidatedBody } from '../../http'
 import { resolveProjectDir } from '../studioProjects'
+import { readJsonFileSafe, readTextCapped } from './cappedFileRead'
+import { DEPENDENCIES_NOT_INSTALLED, detectComponentPackages } from './componentPackageDetect'
 import { mergeStudioMeta, readStudioMeta } from './studioMeta'
 import type { ProbeWarning, ProjectProfile } from './projectProfileSchema'
 
@@ -71,11 +84,6 @@ const PackageJsonSchema = Type.Object({
   devDependencies: Type.Optional(Type.Record(Type.String(), Type.String())),
 })
 type PackageJsonShape = Static<typeof PackageJsonSchema>
-
-const PackageEntrySchema = Type.Object({
-  types: Type.Optional(Type.String()),
-  typings: Type.Optional(Type.String()),
-})
 
 const VersionOnlySchema = Type.Object({ version: Type.Optional(Type.String()) })
 
@@ -102,23 +110,6 @@ const NON_PAGES_DIR_SEGMENTS = new Set(['public', '__tests__', '__mocks__'])
 // ---------------------------------------------------------------------------
 // Small file-read primitives
 // ---------------------------------------------------------------------------
-
-function readTextCapped(absPath: string, maxBytes: number): string | undefined {
-  try {
-    const stat = statSync(absPath)
-    if (!stat.isFile() || stat.size > maxBytes) return undefined
-    return readFileSync(absPath, 'utf8')
-  } catch {
-    return undefined
-  }
-}
-
-function readJsonFileSafe<T extends TSchema>(absPath: string, schema: T, maxBytes: number): Static<T> | undefined {
-  const text = readTextCapped(absPath, maxBytes)
-  if (text === undefined) return undefined
-  const result = safeParseJson(text, schema)
-  return result.ok ? result.value : undefined
-}
 
 /** JSON.parse, retrying once with `//` line-comments and `/* *\/` block comments stripped — a best-effort JSONC reader for hand-edited tsconfig files. Never throws. */
 function parseJsonLoose(text: string): unknown {
@@ -461,40 +452,6 @@ function detectCssInJs(pkg: PackageJsonShape | undefined): 'styled-components' |
 }
 
 // ---------------------------------------------------------------------------
-// Component packages
-// ---------------------------------------------------------------------------
-
-const REACT_COMPONENT_EXPORT_RE =
-  /export\s+(?:declare\s+)?(?:const|function|class)\s+[A-Z][A-Za-z0-9]*\b[^;{]*(?:JSX\.Element|ReactElement|React\.FC\b|\bFC<|React\.ComponentType|ComponentType<)/
-
-function isComponentPackage(root: string, name: string): boolean {
-  const pkgDir = join(root, 'node_modules', ...name.split('/'))
-  const entry = readJsonFileSafe(join(pkgDir, 'package.json'), PackageEntrySchema, 200_000)
-  const candidates = [entry?.types, entry?.typings, 'index.d.ts', 'dist/index.d.ts'].filter(
-    (v): v is string => Boolean(v),
-  )
-  for (const rel of candidates) {
-    const text = readTextCapped(join(pkgDir, ...rel.split('/')), 200_000)
-    if (text && REACT_COMPONENT_EXPORT_RE.test(text)) return true
-  }
-  return false
-}
-
-function detectComponentPackages(root: string, pkg: PackageJsonShape | undefined, warnings: ProbeWarning[]): string[] {
-  const names = pkg ? [...new Set([...Object.keys(pkg.dependencies ?? {}), ...Object.keys(pkg.devDependencies ?? {})])] : []
-  if (names.length === 0) return []
-  if (!existsSync(join(root, 'node_modules'))) {
-    warnings.push({
-      code: 'dependencies-not-installed',
-      message: 'package.json lists dependencies but node_modules is missing, so package-component detection was skipped.',
-      fix: 'Run dependency install (WS-1.4), then re-run the project probe.',
-    })
-    return []
-  }
-  return names.filter((name) => isComponentPackage(root, name)).sort()
-}
-
-// ---------------------------------------------------------------------------
 // Aliases — tsconfig `paths` merged UNDER vite `resolve.alias` (vite wins)
 // ---------------------------------------------------------------------------
 
@@ -614,6 +571,73 @@ export function probeProject(dir: string): ProjectProfile {
 }
 
 // ---------------------------------------------------------------------------
+// The cached profile — and keeping it from outliving its truth
+// ---------------------------------------------------------------------------
+
+/**
+ * A cached profile is STALE when it says `node_modules` was missing and
+ * `node_modules` is now on disk.
+ *
+ * This is the one detectable way the cache can silently go wrong, and it is
+ * the common one: the probe runs at IMPORT time, dependency install runs
+ * AFTER it, and until this check existed nothing ever re-probed. Every
+ * install-dependent field (`componentPackages` above all, plus a Tailwind
+ * version resolved from `node_modules`) was therefore frozen at its
+ * pre-install value forever, for every project ever imported.
+ *
+ * The check is cheap on the fast path: the warning-code scan short-circuits
+ * for any profile that was computed WITH dependencies installed (the steady
+ * state), so the `existsSync` only ever runs for a profile that is a
+ * candidate for being stale. Once healed, the fresh profile no longer carries
+ * the warning, so it never runs again — this cannot loop.
+ *
+ * `appRoot` is read from the profile itself rather than via `resolveAppRoot`
+ * (`./appRoot.ts`) on purpose: that helper reads the profile back, and the
+ * profile is what we are in the middle of validating.
+ */
+function isProfileStale(dir: string, profile: ProjectProfile): boolean {
+  if (!profile.warnings.some((w) => w.code === DEPENDENCIES_NOT_INSTALLED)) return false
+  const appRootAbs = profile.appRoot ? join(dir, ...profile.appRoot.split('/')) : dir
+  return existsSync(join(appRootAbs, 'node_modules'))
+}
+
+/**
+ * **The one way to read a project's profile.** Returns the cached
+ * `.studio/meta.json` profile when it is still true, re-probes and heals the
+ * cache when it is not, and falls back to a fresh un-persisted probe when
+ * there is no cache at all.
+ *
+ * The three behaviours are deliberately different:
+ * - **No cache** → probe, do NOT persist. Unchanged from before this
+ *   function existed, and it keeps `GET`-shaped callers side-effect-free for
+ *   a project that has simply never been probed.
+ * - **Fresh cache** → return it. No disk walk.
+ * - **Stale cache** → probe AND persist. A cache we have just proven wrong is
+ *   worth correcting: leaving it would mean re-probing on every subsequent
+ *   read, forever, and every OTHER consumer would keep reading the wrong
+ *   value. This is a regenerable derived artefact, not user intent, so
+ *   rewriting it is not the "a GET must not write" case that rule is about.
+ */
+export function resolveProjectProfile(dir: string): ProjectProfile {
+  const cached = readStudioMeta(dir).profile
+  if (!cached) return probeProject(dir)
+  if (!isProfileStale(dir, cached)) return cached
+  return reprobeProjectProfile(dir)
+}
+
+/**
+ * Unconditionally re-probe and persist. Used by the probe route's `POST`
+ * (the explicit user action) and by `installDeps.ts` the moment an install
+ * job succeeds — the exact point at which `componentPackages` and the rest of
+ * the install-dependent profile become knowable.
+ */
+export function reprobeProjectProfile(dir: string): ProjectProfile {
+  const profile = probeProject(dir)
+  mergeStudioMeta(dir, { profile })
+  return profile
+}
+
+// ---------------------------------------------------------------------------
 // Route — GET/POST /admin/api/studio/probe
 // ---------------------------------------------------------------------------
 
@@ -622,11 +646,13 @@ const ProbeBodySchema = Type.Object({
 })
 
 /**
- * `GET  /admin/api/studio/probe?dir=<abs>` → `{ profile }`. Read-only: returns
- * the cached `.studio/meta.json` profile when present, else probes fresh
- * WITHOUT persisting — a GET must not write. No re-validation is needed here:
- * `readStudioMeta` validates `profile` against `ProjectProfileSchema` itself
- * and drops a stale cache, so an absent value already means "probe fresh".
+ * `GET  /admin/api/studio/probe?dir=<abs>` → `{ profile }`. Goes through
+ * `resolveProjectProfile`, so a cache that has outlived its truth (probed
+ * before `node_modules` existed) is healed here rather than served — see that
+ * function's doc for why that one write is not the "a GET must not write"
+ * case. No shape re-validation is needed: `readStudioMeta` validates
+ * `profile` against `ProjectProfileSchema` itself and drops a cache that no
+ * longer matches, so an absent value already means "probe fresh".
  *
  * `POST /admin/api/studio/probe  { dir }` → `{ profile }`. Always re-probes,
  * then persists via `mergeStudioMeta` (never clobbers `displayName`/
@@ -638,8 +664,7 @@ export async function tryServeStudioProbe(req: Request, url: URL, pathname: stri
   if (req.method === 'GET') {
     try {
       const dir = resolveProjectDir(url.searchParams.get('dir'))
-      const profile = readStudioMeta(dir).profile ?? probeProject(dir)
-      return jsonResponse({ profile })
+      return jsonResponse({ profile: resolveProjectProfile(dir) })
     } catch (err) {
       console.error('[studio/projectProbe]', err)
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
@@ -651,9 +676,7 @@ export async function tryServeStudioProbe(req: Request, url: URL, pathname: stri
       const body = await readValidatedBody(req, ProbeBodySchema)
       if (!body) return badRequest('invalid probe body')
       const dir = resolveProjectDir(body.dir)
-      const profile = probeProject(dir)
-      mergeStudioMeta(dir, { profile })
-      return jsonResponse({ profile })
+      return jsonResponse({ profile: reprobeProjectProfile(dir) })
     } catch (err) {
       console.error('[studio/projectProbe]', err)
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })

@@ -15,8 +15,7 @@ import { Type } from '@core/utils/typeboxHelpers'
 import { decodeSourceNodeId } from '@core/page-tree'
 import type { AiTool } from '../../../runtime/types'
 import { resolveProjectDir } from '../../../../handlers/studioProjects'
-import { readStudioMeta } from '../../../../handlers/studio/studioMeta'
-import { probeProject } from '../../../../handlers/studio/projectProbe'
+import { resolveProjectProfile } from '../../../../handlers/studio/projectProbe'
 import { loadStudioPages } from '../../../../handlers/studioPageLoad'
 import { PARSER_FIDELITY_CODES, probeWarningToFinding } from './fidelityCodes'
 
@@ -95,8 +94,7 @@ export const studioFidelityReportTool: AiTool = {
     const dir = resolveProjectDir(dirInput)
     const cap = maxFindingsPerPage ?? MAX_FINDINGS_PER_PAGE
 
-    const meta = readStudioMeta(dir)
-    const profile = meta.profile ?? probeProject(dir)
+    const profile = resolveProjectProfile(dir)
     const projectFindings = profile.warnings.map(probeWarningToFinding)
 
     const { pages } = await loadStudioPages(dir)

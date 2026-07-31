@@ -96,7 +96,7 @@ import { projectsRootDir, resolveProjectDir } from '../studioProjects'
 import { resolveAppRoot } from './appRoot'
 import { buildPackageManifest, resolvePackageDtsEntry, resolvePackageTsxEntry } from './packageManifest'
 import type { ComponentSpec } from './packageManifestSchema'
-import { probeProject } from './projectProbe'
+import { resolveProjectProfile } from './projectProbe'
 import type { ProbeWarning } from './projectProfileSchema'
 import { runCappedSubprocess, minimalSubprocessEnv } from './subprocessRunner'
 import { DEFAULT_TRUST_TIER, readStudioMeta, type TrustTier } from './studioMeta'
@@ -125,7 +125,7 @@ export type BundledComponentSpec = ComponentSpec & { pkg: string }
 // ---------------------------------------------------------------------------
 
 function componentPackageDemand(dir: string): string[] {
-  const profile = readStudioMeta(dir).profile ?? probeProject(dir)
+  const profile = resolveProjectProfile(dir)
   return [...profile.componentPackages].sort()
 }
 

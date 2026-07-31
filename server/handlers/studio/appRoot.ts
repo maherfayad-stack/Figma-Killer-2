@@ -26,8 +26,7 @@
  * (worse) resolving outside the project.
  */
 import { resolve } from 'node:path'
-import { probeProject } from './projectProbe'
-import { readStudioMeta } from './studioMeta'
+import { resolveProjectProfile } from './projectProbe'
 import { isRealpathContained } from './workspacePackageResolve'
 
 /**
@@ -57,6 +56,6 @@ export function joinAppRoot(dir: string, appRoot: string): string {
  * to avoid a redundant read.
  */
 export function resolveAppRoot(dir: string): string {
-  const appRoot = readStudioMeta(dir).profile?.appRoot ?? probeProject(dir).appRoot
+  const appRoot = resolveProjectProfile(dir).appRoot
   return joinAppRoot(dir, appRoot)
 }

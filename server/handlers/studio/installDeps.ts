@@ -94,6 +94,7 @@ import { projectsRootDir, resolveProjectDir } from '../studioProjects'
 import { resolveAppRoot } from './appRoot'
 import { captureSubprocess, minimalSubprocessEnv, type SpawnedProcessLike } from './subprocessRunner'
 import { readInstallJobFile, writeInstallJobFile, type PersistedInstallJob } from './installJobStore'
+import { reprobeProjectProfile } from './projectProbe'
 
 // ---------------------------------------------------------------------------
 // Package manager detection
@@ -335,6 +336,23 @@ async function runInstallJob(
   } else if (result.exitCode === 0) {
     job.status = 'done'
     job.warnings = detectPostinstallWarnings(job.dir)
+    // A successful install is the exact moment the install-DEPENDENT half of
+    // the profile becomes knowable: `componentPackages` (which packages ship
+    // React components) is detected by reading `node_modules`, so a profile
+    // probed before this point reports none — permanently, since the probe
+    // otherwise only ever runs at import. That left every imported project
+    // with zero registered package components and no error anywhere, which is
+    // why an `@alm-design/design-system` `<ActionSheet>` rendered as bare
+    // unstyled text on the board.
+    //
+    // Failure here must not fail the install: the job DID succeed, and
+    // `resolveProjectProfile` heals a stale cache on the next read anyway.
+    // This re-probe is the fast path, not the only path.
+    try {
+      reprobeProjectProfile(job.dir)
+    } catch (err) {
+      console.error('[studio:install] post-install re-probe failed:', err)
+    }
   } else {
     job.status = 'failed'
   }
