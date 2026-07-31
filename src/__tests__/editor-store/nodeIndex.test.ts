@@ -276,13 +276,29 @@ describe('editor store node-index wiring', () => {
     expect(useEditorStore.getState()._nodeIdToPageIds.get(newId)).toEqual(['page-a'])
   })
 
-  it('deleteNode on the shared id from one page leaves the other page\'s mapping intact', () => {
+  it('deleteNode REFUSES a shared id outright, leaving both pages mapped', () => {
+    // This asserted a per-page decrement until `struct-01` gave structural
+    // edits a source target. `SHARED_ID` is `app/blog/layout.tsx:4:7` — route
+    // chrome, one piece of source markup rendered by every page that uses the
+    // layout. There is no edit that deletes it from page-a alone: rewriting
+    // `layout.tsx` deletes it from page-b too. So `refuseStructuralEdit`
+    // declines it BEFORE mutating, and the honest index outcome is that
+    // nothing changed at all.
+    //
+    // The per-page decrement itself is still exercised — by `removePage` and
+    // by the `applyNodeIndexPatch` unit tests above — it just can no longer
+    // be reached through a delete, because that delete would have been a lie.
     useEditorStore.getState().loadSite(sharedNodeSite())
     useEditorStore.setState({ activePageId: 'page-a' })
 
     useEditorStore.getState().deleteNode(SHARED_ID)
 
-    expect(useEditorStore.getState()._nodeIdToPageIds.get(SHARED_ID)).toEqual(['page-b'])
+    expect([...(useEditorStore.getState()._nodeIdToPageIds.get(SHARED_ID) ?? [])].sort())
+      .toEqual(['page-a', 'page-b'])
+    // And the node itself survives on both pages — a refusal is a no-op, not
+    // a partial apply.
+    const pages = useEditorStore.getState().site?.pages ?? []
+    expect(pages.every((p) => p.nodes[SHARED_ID] !== undefined)).toBe(true)
   })
 
   it('duplicateNode on a node with a textOrigin increments the shared count', () => {
