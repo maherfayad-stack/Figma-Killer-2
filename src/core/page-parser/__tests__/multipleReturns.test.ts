@@ -404,7 +404,7 @@ describe('`&&` inside JSX', () => {
     // `useState(initialStep)`'s argument is an IDENTIFIER, not a bare
     // literal — it only resolves because `initialStep` is itself a
     // defaulted parameter. This is the one-hop recursion
-    // `resolveConditionDefaultLiteral` performs.
+    // `findDefaultLiteralNode` (`defaultLiteralBindings.ts`) performs.
     const { nodes } = load('pages/StepFlow.jsx')
     const sections = nodes.filter((n) => n.name === 'section')
     expect(sections).toHaveLength(1)
@@ -495,5 +495,180 @@ describe('`&&` inside JSX', () => {
     const li = nodes.find((n) => n.name === 'li')!
     expect(li.locked).toBe(true)
     expect(li.lockReason).toBe('dynamic — rendered in code')
+  })
+})
+
+/**
+ * parser-07 — the two FALLBACK forms, `value || <Fallback/>` and
+ * `value ?? <Fallback/>`.
+ *
+ * They look interchangeable and are not: `||` falls through on FALSINESS,
+ * `??` only on NULLISHNESS. `{count || <Empty/>}` with `count === 0` renders
+ * `<Empty/>`; `{count ?? <Empty/>}` with the same `count` renders `0`. Getting
+ * that backwards shows a fallback state on a screen that has real content, so
+ * the pair of `useState(0)` tests below is the load-bearing one.
+ *
+ * Before parser-07 neither form was a branch point at all: `||` was treated as
+ * an unresolvable dynamic surface (fallback rendered LOCKED, no note, no
+ * alternative) and `??` was not recognised, so ordinary descent walked BOTH
+ * operands and stacked them whenever the left side was JSX.
+ */
+describe('a `||` / `??` fallback inside JSX', () => {
+  it('renders the `||` fallback unlocked, with the truthy state recorded as an alternative', () => {
+    write(
+      'pages/OrUnknown.jsx',
+      [
+        'export default function OrUnknown({ name }) {',
+        '  return <div>{name || <em className="anon">Anonymous</em>}</div>',
+        '}',
+        '',
+      ].join('\n'),
+    )
+
+    // `name` is a prop with no default — genuinely undecidable. The fallback is
+    // the only JSX here, so it renders, but it is an ORDINARY editable node now
+    // (it used to carry DYNAMIC_LOCK_REASON), and the state where `name` wins is
+    // recorded rather than silently assumed away.
+    const { nodes } = load('pages/OrUnknown.jsx')
+    const em = nodes.find((n) => n.name === 'em')!
+    expect(em.locked).toBe(false)
+    expect(em.lockReason).toBeUndefined()
+    expect(em.resolution?.note).toContain('cannot evaluate')
+    expect(em.branchAlternatives).toHaveLength(1)
+    expect(em.branchAlternatives?.[0]!.label).toBe('name')
+  })
+
+  it('drops the `||` fallback entirely when the left side is statically truthy', () => {
+    write(
+      'pages/OrTruthy.jsx',
+      [
+        'const NAME = "Ada"',
+        'export default function OrTruthy() {',
+        '  return <div>{NAME || <em className="anon">Anonymous</em>}</div>',
+        '}',
+        '',
+      ].join('\n'),
+    )
+
+    // `NAME` always wins, so `<em>` is JSX the source placed at a position that
+    // never paints — nothing to render, not even locked.
+    const { nodes } = load('pages/OrTruthy.jsx')
+    expect(nodes.find((n) => n.name === 'em')).toBeUndefined()
+  })
+
+  it('keeps the `||` fallback with NO alternative when the left side is statically falsy', () => {
+    write(
+      'pages/OrFalsy.jsx',
+      [
+        'const NAME = ""',
+        'export default function OrFalsy() {',
+        '  return <div>{NAME || <em className="anon">Anonymous</em>}</div>',
+        '}',
+        '',
+      ].join('\n'),
+    )
+
+    // The parser is CERTAIN here, so there is no other state to offer.
+    const { nodes } = load('pages/OrFalsy.jsx')
+    const em = nodes.find((n) => n.name === 'em')!
+    expect(em.locked).toBe(false)
+    expect(em.resolution?.note).toContain('statically falsy')
+    expect(em.branchAlternatives).toBeUndefined()
+  })
+
+  it('renders the `||` fallback for a useState(0) binding — 0 is falsy', () => {
+    write(
+      'pages/OrZero.jsx',
+      [
+        'export default function OrZero() {',
+        '  const [count] = useState(0)',
+        '  return <div>{count || <em className="empty">No items</em>}</div>',
+        '}',
+        '',
+      ].join('\n'),
+    )
+
+    const { nodes } = load('pages/OrZero.jsx')
+    const em = nodes.find((n) => n.name === 'em')!
+    expect(em.resolution?.note).toContain('statically falsy')
+    expect(em.branchAlternatives).toBeUndefined()
+  })
+
+  it('does NOT render the `??` fallback for that same useState(0) binding — 0 is not null', () => {
+    write(
+      'pages/NullishZero.jsx',
+      [
+        'export default function NullishZero() {',
+        '  const [count] = useState(0)',
+        '  return <div>{count ?? <em className="empty">No items</em>}</div>',
+        '}',
+        '',
+      ].join('\n'),
+    )
+
+    // The whole reason `??` gets its own decision path: answering this with a
+    // truthiness test would paint an empty state over a screen showing `0`.
+    const { nodes } = load('pages/NullishZero.jsx')
+    expect(nodes.find((n) => n.name === 'em')).toBeUndefined()
+  })
+
+  it('renders the `??` fallback for a useState(null) binding, with no alternative', () => {
+    write(
+      'pages/NullishNull.jsx',
+      [
+        'export default function NullishNull() {',
+        '  const [error] = useState(null)',
+        '  return <div>{error ?? <em className="placeholder">All good</em>}</div>',
+        '}',
+        '',
+      ].join('\n'),
+    )
+
+    const { nodes } = load('pages/NullishNull.jsx')
+    const em = nodes.find((n) => n.name === 'em')!
+    expect(em.locked).toBe(false)
+    expect(em.resolution?.note).toContain('statically null')
+    expect(em.branchAlternatives).toBeUndefined()
+  })
+
+  it('records the fallback as an alternative when `??` cannot be decided', () => {
+    write(
+      'pages/NullishUnknown.jsx',
+      [
+        'export default function NullishUnknown({ error }) {',
+        '  return <div>{error ?? <em className="placeholder">All good</em>}</div>',
+        '}',
+        '',
+      ].join('\n'),
+    )
+
+    const { nodes } = load('pages/NullishUnknown.jsx')
+    const em = nodes.find((n) => n.name === 'em')!
+    expect(em.locked).toBe(false)
+    expect(em.resolution?.note).toContain('cannot evaluate')
+    expect(em.branchAlternatives).toHaveLength(1)
+    expect(em.branchAlternatives?.[0]!.label).toBe('error')
+  })
+
+  it('picks ONE side when both operands of a fallback carry JSX, instead of stacking them', () => {
+    write(
+      'pages/BothJsx.jsx',
+      [
+        'export default function BothJsx() {',
+        '  return <div>{(<em className="primary">P</em>) || <em className="fallback">F</em>}</div>',
+        '}',
+        '',
+      ].join('\n'),
+    )
+
+    // The degenerate shape, kept as the regression: ordinary descent used to
+    // walk both operands and render two <em>s on top of each other. `a || b` is
+    // `a ? a : b`, so the left operand is preferred — the same "first-written
+    // branch" rule the ternary default uses.
+    const { nodes } = load('pages/BothJsx.jsx')
+    const ems = nodes.filter((n) => n.name === 'em')
+    expect(ems).toHaveLength(1)
+    expect(ems[0]!.props.className).toBe('primary')
+    expect(ems[0]!.branchAlternatives).toHaveLength(1)
   })
 })

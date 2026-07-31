@@ -30,6 +30,7 @@ import {
 } from 'ts-morph'
 import * as path from 'node:path'
 import { resolveCssModuleImport, resolveImageAssetImport, resolveRawTextImport } from './assetImports'
+import { findDefaultLiteralNode } from './defaultLiteralBindings'
 import { evaluateBinaryOperator, evaluateUnaryOperator } from './staticEvalOperators'
 import type { FunctionLike } from './types'
 
@@ -142,21 +143,6 @@ export function trackTruncation(budget: Budget, evaluate: () => StaticValue): { 
  */
 export function createEvalScope(sourceFile: SourceFile, componentFn?: FunctionLike): EvalScope {
   return { sourceFile, locals: buildComponentLocals(componentFn) }
-}
-
-/**
- * The nearest enclosing component/hook function body, or `undefined` for a
- * module-scope expression. Shared by Tier B's provider tracing
- * (`./staticEvalCalls`'s `traceProvider`) and parser-07's
- * `resolveConditionDefaultLiteral` above — both need to walk from an
- * arbitrary expression up to the function whose top-level statements might
- * declare the binding they care about.
- */
-export function enclosingFunctionLike(node: Node): FunctionLike | undefined {
-  return node.getFirstAncestor(
-    (a): a is FunctionLike =>
-      Node.isArrowFunction(a) || Node.isFunctionDeclaration(a) || Node.isFunctionExpression(a),
-  )
 }
 
 function buildComponentLocals(fn: FunctionLike | undefined): ReadonlyMap<string, LocalBinding> {
@@ -303,7 +289,7 @@ export function evaluateNode(exprIn: Node, scope: EvalScope, budget: Budget, dep
  *
  * Three callers: Tier C's `if`-chain walk in `./staticEvalCalls` and
  * `evaluateConditionalExpression` below, both selecting a VALUE, plus (via
- * the public composer's `evaluateStaticCondition`, `./staticEval.ts`)
+ * the public composer's `evaluateStaticTruthiness`, `./staticEval.ts`)
  * `parsePageFile.ts`'s `selectJsxBranch` — the ONE place a JSX branch may be
  * picked using this. That is a narrow, deliberate exception, not a reopening
  * of the ban: §7.7 is about GUESSING (hook state, a runtime prop) — rendering
@@ -363,177 +349,23 @@ export function evaluateCondition(expr: Node, scope: EvalScope, budget: Budget, 
 
 /**
  * `evaluateNode`, plus (parser-07) a fallback to a binding's own DEFAULT
- * literal value when the ordinary binding chain can't resolve the
- * identifier. Used ONLY by `evaluateCondition`'s two identifier-reading spots
- * (a comparator's operand, and a bare-boolean condition) — deliberately NOT
+ * literal value when the ordinary binding chain can't resolve the identifier
+ * — see `./defaultLiteralBindings`, which owns that read and explains why it
+ * is Tier A rather than the banned Tier D.
+ *
+ * Used ONLY by `evaluateCondition`'s two identifier-reading spots (a
+ * comparator's operand, and a bare-boolean condition) — deliberately NOT
  * wired into `resolveIdentifier`/`buildComponentLocals`, the chain every
- * OTHER Tier A/B resolution shares. See `resolveConditionDefaultLiteral`'s
- * doc comment for why that would be the wrong place: it would also feed Tier
- * B.4's dynamic-dictionary-key pick (`translations[lang]` where `lang` is
+ * OTHER Tier A/B resolution shares. That would also feed Tier B.4's
+ * dynamic-dictionary-key pick (`translations[lang]` where `lang` is
  * `useState('en')`), silently overriding the `previewLocale` option the
  * language-switcher pattern depends on.
  */
 function evaluateConditionOperand(node: Node, scope: EvalScope, budget: Budget, depth: number): StaticValue {
   const value = evaluateNode(node, scope, budget, depth + 1)
   if (value.kind !== 'unresolved') return value
-  return resolveConditionDefaultLiteral(node, scope, budget, depth + 1) ?? value
-}
-
-/**
- * parser-07 — reads a binding's own DEFAULT literal value directly off the
- * source, for the two shapes a JSX branch guard's condition overwhelmingly
- * turns out to be when it isn't already a module-scope const: a
- * `useState(<default>)` binding, or a destructured prop parameter's own
- * `= <default>`. This is Tier A, not Tier D: nothing is EXECUTED (no hook
- * runs, no setter is simulated, no state transition is modeled, no call site
- * is guessed at) — the literal the author wrote in the signature/hook call is
- * read the same way a `const` initializer already is, and the result is the
- * component's FIRST PAINT with no props passed, exactly what a design tool
- * parsing a screen standalone should show by default for
- * `{showDataHelp && <Overlay/>}` / `step === 'intro' ? <A/> : <B/>` guards.
- *
- * Measured on the real eSIM corpus: `ActivationFlowScreen`'s
- * `const [step, setStep] = useState(initialStep)` where
- * `({ initialStep = 'intro', introVariant = 'checklist' })` is the SHAPE that
- * actually gates its five `step === '…' && <Screen/>` overlays — the
- * `useState` argument is not itself a bare literal, it's a PARAMETER that
- * carries one, and `introVariant` isn't `useState`-backed at all, it's a
- * plain defaulted prop compared directly. Both need this to resolve, or the
- * fix does nothing on the one screen it was written for.
- *
- * Two lookups, checked in order — a name is never both:
- * 1. **A destructured parameter's own default** (`{ introVariant = 'checklist' }`):
- *    `findParamDefaultLiteral` reads the FIRST parameter's object-binding
- *    pattern, same shape `buildSubstitutionEnv` (`componentSubstitution.ts`)
- *    already reads for a locally-inlined call site's fallback value — this is
- *    the SAME literal-default read, just reached when there is no call site
- *    at all (a page parsed standalone).
- * 2. **A `const [x] = useState(<default>)` binding**: `resolveLiteralExpression`
- *    accepts the `useState(...)` argument either as a bare literal
- *    (string/template/number/`true`/`false`/`null`) OR — the
- *    `ActivationFlowScreen` shape — as an identifier that is ITSELF a
- *    defaulted parameter, recursing into lookup 1 exactly once (parameter
- *    defaults are always literals, so one hop is enough; no cycle is
- *    possible). A genuinely COMPUTED or prop-derived initializer with no
- *    default anywhere (`useState(props.x)`, `useState(compute())`) has no
- *    single value to read and falls through to `undefined` — today's
- *    "cannot decide" behaviour.
- *
- * Both lookups share one more-guard: the binding must never be reassigned
- * elsewhere in the function body (a plain `x = ...`, not a call to the setter
- * — the setter itself never rewrites this identifier's text). A
- * `let`-declared pair that IS hand-mutated outside React's setter contract
- * would misrepresent even the first paint, so that falls through to
- * `undefined` too. Only the function's own TOP-LEVEL statements/first
- * parameter are scanned — same simplification `buildComponentLocals` already
- * makes (flat, not block-scoped).
- *
- * Kept OUT of `buildComponentLocals`/`resolveIdentifier` on purpose — see
- * `evaluateConditionOperand`'s doc comment for the concrete regression that
- * would cause.
- */
-function resolveConditionDefaultLiteral(
-  identifier: Node,
-  scope: EvalScope,
-  budget: Budget,
-  depth: number,
-): StaticValue | undefined {
-  if (!Node.isIdentifier(identifier)) return undefined
-  const fn = enclosingFunctionLike(identifier)
-  if (!fn) return undefined
-  const name = identifier.getText()
-
-  const paramDefault = findParamDefaultLiteral(name, fn)
-  if (paramDefault) {
-    if (isReassignedInBody(name, fn)) return undefined
-    return evaluateNode(paramDefault, scope, budget, depth + 1)
-  }
-
-  const body = fn.getBody()
-  if (!body || !Node.isBlock(body)) return undefined
-  for (const statement of body.getStatements()) {
-    if (!Node.isVariableStatement(statement)) continue
-    for (const decl of statement.getDeclarations()) {
-      const nameNode = decl.getNameNode()
-      if (!Node.isArrayBindingPattern(nameNode)) continue
-      const [first] = nameNode.getElements()
-      if (!first || !Node.isBindingElement(first)) continue
-      const elName = first.getNameNode()
-      if (!Node.isIdentifier(elName) || elName.getText() !== name) continue
-
-      const init = decl.getInitializer()
-      const arg = init && extractStateArgument(init)
-      if (!arg) return undefined
-      const literal = resolveLiteralExpression(arg, fn)
-      if (!literal) return undefined
-      if (isReassignedInBody(name, fn)) return undefined
-      return evaluateNode(literal, scope, budget, depth + 1)
-    }
-  }
-  return undefined
-}
-
-/** `useState`'s sole argument node, whatever it is — see `resolveConditionDefaultLiteral`. Named without a `use` prefix on purpose — it is not a hook, and `eslint-plugin-react-hooks` treats any `use*` function name as one. */
-function extractStateArgument(init: Node): Node | undefined {
-  if (!Node.isCallExpression(init)) return undefined
-  const callee = init.getExpression()
-  if (!Node.isIdentifier(callee) || callee.getText() !== 'useState') return undefined
-  return init.getArguments()[0]
-}
-
-/** `expr` itself when it is a bare literal, or — one hop — a defaulted parameter's own literal default when `expr` is an identifier naming one. See `resolveConditionDefaultLiteral`. */
-function resolveLiteralExpression(expr: Node, fn: FunctionLike): Node | undefined {
-  if (isBareLiteral(expr)) return expr
-  if (Node.isIdentifier(expr)) return findParamDefaultLiteral(expr.getText(), fn)
-  return undefined
-}
-
-function isBareLiteral(node: Node): boolean {
-  const kind = node.getKind()
-  return (
-    Node.isStringLiteral(node) ||
-    Node.isNoSubstitutionTemplateLiteral(node) ||
-    Node.isNumericLiteral(node) ||
-    kind === SyntaxKind.TrueKeyword ||
-    kind === SyntaxKind.FalseKeyword ||
-    kind === SyntaxKind.NullKeyword
-  )
-}
-
-/**
- * `name`'s own `= <literal>` default in `fn`'s FIRST parameter's destructured
- * object-binding pattern (`function Foo({ introVariant = 'checklist' })`),
- * or `undefined` when `fn` has no such parameter, the pattern isn't a plain
- * object destructure, `name` isn't one of its elements, or its default isn't
- * itself a bare literal. Same shape (and same "only the first parameter, only
- * one level" scope) `componentSubstitution.ts`'s `buildSubstitutionEnv` reads
- * for a call site's own fallback value — this is that identical literal-read,
- * reached when there is no call site at all.
- */
-function findParamDefaultLiteral(name: string, fn: FunctionLike): Node | undefined {
-  const first = fn.getParameters()[0]
-  if (!first) return undefined
-  const pattern = first.getNameNode()
-  if (!Node.isObjectBindingPattern(pattern)) return undefined
-  for (const element of pattern.getElements()) {
-    if (element.getDotDotDotToken()) continue
-    const elName = element.getNameNode()
-    if (!Node.isIdentifier(elName) || elName.getText() !== name) continue
-    const init = element.getInitializer()
-    return init && isBareLiteral(init) ? init : undefined
-  }
-  return undefined
-}
-
-/** Whether `name` is the target of a plain `name = ...` assignment anywhere in `fn`'s body — see `resolveConditionDefaultLiteral`. */
-function isReassignedInBody(name: string, fn: FunctionLike): boolean {
-  const body = fn.getBody()
-  if (!body) return false
-  return body.getDescendantsOfKind(SyntaxKind.BinaryExpression).some((bin) => {
-    if (bin.getOperatorToken().getKind() !== SyntaxKind.EqualsToken) return false
-    const left = bin.getLeft()
-    return Node.isIdentifier(left) && left.getText() === name
-  })
+  const literal = findDefaultLiteralNode(node)
+  return literal ? evaluateNode(literal, scope, budget, depth + 1) : value
 }
 
 /**

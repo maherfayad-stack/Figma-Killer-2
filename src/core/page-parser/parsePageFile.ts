@@ -20,7 +20,6 @@ import * as path from 'node:path'
 import {
   Node,
   Project,
-  SyntaxKind,
   type JsxAttribute,
   type JsxElement,
   type JsxSelfClosingElement,
@@ -597,18 +596,18 @@ function processChildren(
  * `expandStaticLoop`'s doc comment for why that must happen at every level,
  * not only where a list is a direct `{items.map(…)}` child).
  *
- * A ternary or `&&` met on the way down is a BRANCH POINT (parser-06):
- * `selectJsxBranch` picks exactly one side to descend into, instead of both —
- * or (parser-07) none, for a statically-false `&&` — see that function's doc
- * comment. This is the SAME "select, don't stack" rule `getReturnedJsxRoots`
- * applies one level up, for the same reason: rendering every branch of a
- * runtime conditional shows a screen no user ever sees. A dynamic construct
- * this walk could NOT resolve a single branch/row
- * for (an unresolved `.map`, any other call, `||`) re-derives its own lock
- * instead of silently inheriting whichever ambient `locked`/`reason` this
- * walk started with — necessary now that `&&`/a ternary no longer forces
- * their whole subtree locked: `{ok && items.map(unresolvable)}` must still
- * lock `items.map`'s contents even though `&&` itself does not.
+ * A conditional met on the way down is a BRANCH POINT: `selectJsxBranch` picks
+ * exactly one side to descend into instead of both — or (parser-07) none, for
+ * a statically-false `&&` — across all four shapes (`? :`, `&&`, `||`, `??`).
+ * This is the SAME "select, don't stack" rule `getReturnedJsxRoots` applies one
+ * level up, for the same reason: rendering every branch of a runtime
+ * conditional shows a screen no user ever sees. A dynamic construct this walk
+ * could NOT resolve a single branch/row for (an unresolved `.map`, any other
+ * call) re-derives its own lock instead of silently inheriting whichever
+ * ambient `locked`/`reason` this walk started with — necessary now that a
+ * conditional no longer forces its whole subtree locked:
+ * `{ok && items.map(unresolvable)}` must still lock `items.map`'s contents even
+ * though `&&` itself does not.
  */
 function collectFromExpression(
   expr: Node,
@@ -670,14 +669,11 @@ function walkExpressionForJsx(
     return
   }
 
-  // A dynamic construct `selectJsxBranch` does not own (an unresolved `.map`,
-  // any other function call, or `||`) re-triggers the SAME lock
-  // `isLockingExpression` applies at the top level — see this function's doc
+  // A dynamic construct `selectJsxBranch` does not own — an unresolved `.map`,
+  // or any other function call — re-triggers the SAME lock
+  // `isLockingExpression` applies at the top level; see this function's doc
   // comment for why that can no longer be assumed to already be true here.
-  if (
-    Node.isCallExpression(node) ||
-    (Node.isBinaryExpression(node) && node.getOperatorToken().getKind() === SyntaxKind.BarBarToken)
-  ) {
+  if (Node.isCallExpression(node)) {
     node.forEachChild((child) => walkExpressionForJsx(child, ctx, true, DYNAMIC_LOCK_REASON, ids))
     return
   }

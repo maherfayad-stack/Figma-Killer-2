@@ -16,6 +16,13 @@ Their partial work is committed and the tree **builds and lints clean**, but
 four tests fail from work that stopped halfway. Resume those five work orders
 from the queue below; do not start anything new first.
 
+> **`parser-07` is DONE** (see its entry under "Recently landed"). Its `&&`
+> branch-selection work had already landed inside the squash commit `fb4821b`
+> with no `STATE.md` entry, which made it look unfinished — **do not
+> re-implement it.** The resumed session verified it against the real corpus
+> (1096 → 803 nodes, four screens un-stacked), added the `||`/`??` siblings, and
+> graduated `staticEvalCore.ts` off `debt-01`'s grandfathered ledger.
+
 **Resume wave dispatched 2026-07-31 (orchestrator).** Three of the five are
 running now, chosen to be file-disjoint so they cannot collide:
 
@@ -66,11 +73,16 @@ Full reasoning in the `infra-01` entry under "Recently landed".
   that an open SQLite file can be unlinked). A fifth `standing-01`-class
   Windows-only harness failure. Real fix = `DbClient.close()`, unclaimed.
 
-### `debt-01` — three files over the size ceiling
-`fsCodemodAdapter.ts` (890), `staticEvalCore.ts` (831),
-`studioWriteback.ts` (738). Each has a named extraction candidate in
-`module-size-budgets.test.ts`'s `GRANDFATHERED` comments. The ratchet still
-binds: none may grow another line without extracting first.
+### `debt-01` — two files over the size ceiling
+`fsCodemodAdapter.ts` (890) and `studioWriteback.ts` (738). Each has a named
+extraction candidate in `module-size-budgets.test.ts`'s `GRANDFATHERED`
+comments. The ratchet still binds: neither may grow another line without
+extracting first.
+
+`staticEvalCore.ts` (was 831) **graduated in `parser-07`** — its default-literal
+read moved to the leaf `src/core/page-parser/defaultLiteralBindings.ts`, taking
+it to 663, under the 700 ceiling. Its ledger entry is gone; the ordinary gate
+holds it now.
 
 ---
 
@@ -183,6 +195,121 @@ are the remaining WS-2 items, not yet dispatched. See
 ---
 
 ## Recently landed
+
+### parser-07 — a conditional inside JSX renders ONE branch, not all of them
+- **Agent:** parser-surgeon (resumed after the spend-limit termination)
+- **Stage:** done
+- **Updated:** 2026-07-31
+- **Goal:** `{cond && <Sheet/>}` (and its `? :` / `||` / `??` siblings) stops
+  painting every guarded overlay at once. Done = the three named broken eSIM
+  screens render one state, measured on the real corpus, not just green tests.
+- **Scope:** `src/core/page-parser/{branchSelection.ts,defaultLiteralBindings.ts,
+  staticEval.ts,staticEvalCore.ts,staticEvalCalls.ts,parsePageFile.ts}`,
+  `src/core/page-parser/__tests__/multipleReturns.test.ts`,
+  `src/__tests__/architecture/module-size-budgets.test.ts`,
+  `docs/features/studio-import.md`, `docs/agent-refs/path-index.md`.
+
+#### The `&&` half was already committed — this session verified it and measured it
+
+The terminated agent's `&&` work landed inside the squash commit `fb4821b`, with
+no `STATE.md` entry, so it read as unfinished. It is not. **Do not re-implement
+it.** Measured before/after on `studio-workspace/maherfayad-stack-eSIM`, by
+loading all 15 pages read-only through `loadStudioPages` against a temp-dir COPY
+of the corpus, with the `&&` static check disabled and then enabled:
+
+| Board | Nodes across 15 pages |
+|---|---|
+| `&&` rendered unconditionally (pre-parser-07) | **1096** |
+| `&&` honours a statically-decidable condition | **803** (−293, −27%) |
+
+Per screen — the four that changed, and what stopped bleeding in:
+
+| Screen | Before | After | Was stacking |
+|---|---|---|---|
+| `esim-activation-flow-screen` | 259 | **46** | all 5 step overlays at once — OnboardingCarousel + ActivateIntro + ActivateSettings + QrCode + EsimSuccess (+ EsimData, ManualEntry) |
+| `esim-topup-flow-screen` | 76 | **45** | `EsimDataScreen` on top of `EsimSuccessScreen` |
+| `esim-esim-success-screen` | 75 | **44** | `EsimDataScreen` ("Data is switched off") over the success sheet |
+| `esim-activate-settings-screen` | 54 | **36** | `ManualEntryScreen` over the settings sheet (a 4th screen nobody had named) |
+
+**All three named screens now render correctly, plus a fourth.** The remaining
+overlay on each is the one the source actually shows on first paint.
+
+#### Corpus census — every conditional-JSX site, and whether it resolves
+
+32 sites across `journey-screens/src` (16 ternary, 16 `&&`, **0 `||`, 0 `??`**):
+**7 statically true · 10 statically false · 15 undecidable.** The 15 are genuine
+runtime props (`label`, `actionLabel`, `stepLabel`, `isDark`, `addOn.image`, …)
+with no default anywhere — correctly left to the heuristic, each recording a
+`branchAlternatives` entry. Board totals after: 803 nodes, 26 heuristic-fallback
+notes, 45 recorded alternatives.
+
+#### What this session added on top
+
+1. **`||` and `??` are branch points now.** `||` was in `isLockingExpression`, so
+   its fallback rendered LOCKED with no note and no alternative; `??` was not
+   recognised at all and ordinary descent walked BOTH operands, stacking them
+   whenever the left side was also JSX. `isLockingExpression` is now only
+   `CallExpression` — every conditional is a selection, every call is the
+   dynamic surface.
+2. **`??` asks a different question, deliberately.** `||` falls through on
+   FALSINESS, `??` only on NULLISHNESS: `{count || <Empty/>}` with
+   `useState(0)` renders `<Empty/>`, `{count ?? <Empty/>}` renders `0`.
+   `evaluateStaticNullish` exists so a truthiness test can never paint an empty
+   state over a screen holding `0`/`''`/`false`. That pair of tests in
+   `multipleReturns.test.ts` is the load-bearing one — if someone "simplifies"
+   the two into one call, they have reintroduced the bug.
+3. **`evaluateStaticCondition` → `evaluateStaticTruthiness`, and it now coerces.**
+   The old entry only answered for a *boolean* literal, so `const NAME = ""`
+   guarding a `||` was undecidable — which made `||` resolution useless, since a
+   `||`'s left operand is by nature a value, not a comparison. It now falls back
+   to `evaluateExpression` + `Boolean(...)`. `evaluateCondition` in
+   `staticEvalCore.ts` is untouched and still refuses to coerce, because `{name}`
+   in TEXT position must resolve to `"Ada"`, never to `true`.
+4. **`staticEvalCore.ts` graduated off the grandfathered ledger.** `debt-01`
+   froze it at 831. Extracting parser-07's default-literal read into the pure-AST
+   leaf `defaultLiteralBindings.ts` — which `staticEval.ts` needed to share
+   anyway for `??` — took it to **663**, under the 700 ceiling. Its
+   `GRANDFATHERED` entry is deleted; two remain (`fsCodemodAdapter.ts` 890,
+   `studioWriteback.ts` 738).
+- **Next step:** none for this work order. The natural sequel is a UI affordance
+  for `branchAlternatives` — 45 are recorded on the board and
+  `BranchChoiceNotice.tsx` is the only surface reading them; a per-node branch
+  picker (editor state, never written to source) is specced but not built.
+- **Decisions:**
+  - A `useState(<literal>)` / defaulted-parameter initial value IS statically
+    readable and represents FIRST PAINT — Tier A, not the banned Tier D. Nothing
+    executes; the literal is read the way a `const` initializer already is.
+  - The default-literal read stays wired ONLY into condition evaluation, never
+    into `resolveIdentifier`/`buildComponentLocals`. Wiring it in generally would
+    feed Tier B.4's dynamic-dictionary-key pick (`translations[lang]` where
+    `lang` is `useState('en')`) and silently override `previewLocale`.
+  - `||` prefers a JSX **left** operand when undecidable (`a || b` is `a ? a : b`,
+    so the ternary's "first-written branch" rule applies); when the left is a
+    plain value the fallback is the only JSX, so it renders and the left-hand
+    state becomes the alternative.
+- **Landmines:**
+  - **A statically-false `&&` records NOTHING** — no node, so no `resolution`
+    note either. Counting "statically false" notes to measure this fix returns
+    zero and looks like the fix did not land. Count NODES, or count which
+    components got inlined (`fromComponent`), as the tables above do.
+  - `loadStudioPages` WRITES `.studio/cache/styles-*.{css,json}` into the project
+    directory. Measure against a temp-dir copy, never against
+    `studio-workspace/` itself.
+  - `resolution` is first-write-wins. A node that already carries a Tier B.4
+    note ("showing the `en` branch") never gets the branch note, so a branch
+    outcome can change with the heuristic-note count staying flat. That is
+    exactly what the one alternative that disappeared this session was:
+    `addonCopy[addOn.key].subtext` for the `esim` add-on resolves to a real
+    string, so item 1 of 3 became *certain* rather than heuristic.
+- **Verification:** `bun test src/core/page-parser` → **190 pass / 0 fail** (10
+  new tests for the fallback forms). `bun run build` → clean. `bun run lint` →
+  clean. Full `bun test` run: see the note below on parallel sessions.
+  Corpus measurement: the two tables above, `loadStudioPages` over a temp copy.
+- **Human action needed:** dogfood the canvas at `/admin/site?studio` on the
+  eSIM project — confirm `esim-activation-flow-screen`, `esim-topup-flow-screen`,
+  `esim-esim-success-screen` and `esim-activate-settings-screen` each show ONE
+  sheet. Node counts prove the extra subtrees are gone; only a browser proves
+  the remaining one is the right one.
 
 ### infra-01 — one token engine, the `--` naming decision, install-job durability
 - **Agent:** server-engineer (resumed after the spend-limit termination)

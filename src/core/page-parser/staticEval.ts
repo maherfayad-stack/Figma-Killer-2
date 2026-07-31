@@ -46,6 +46,7 @@
  * indirection exists instead of a direct import cycle.
  */
 import type { Node, SourceFile } from 'ts-morph'
+import { findDefaultLiteralNode } from './defaultLiteralBindings'
 import { evaluateCall } from './staticEvalCalls'
 import {
   createBudget,
@@ -81,27 +82,82 @@ export function evaluateExpression(expr: Node, scope: EvalScope, opts: StaticEva
 }
 
 /**
- * Resolves `expr` to a definite `true`/`false`, or `undefined` when it is not
- * statically decidable — `evaluateCondition`'s own narrow contract (`&&`/`||`/
- * `!`, the six comparisons, a bare boolean; see its doc comment), exposed
- * through the public composer for `parsePageFile.ts`'s JSX branch selection
- * (parser-06).
+ * Whether `expr` is statically TRUTHY, or `undefined` when that is not
+ * decidable from source alone. The question `selectJsxBranch`
+ * (`./branchSelection`) asks for a ternary, `&&` and `||`.
+ *
+ * Two passes, because JS truthiness is two different problems:
+ *   1. `evaluateCondition`'s narrow structural contract — `&&`/`||`/`!`, the
+ *      six comparisons, a bare boolean. This is what answers
+ *      `step === 'intro'` and `!items.length`.
+ *   2. When that declines, the ordinary evaluator, COERCED. `evaluateCondition`
+ *      deliberately refuses to coerce (`{name}` in text position must resolve
+ *      to `"Ada"`, never to `true`), but the branch question genuinely is
+ *      `Boolean(value)`: `{NAME || <Anon/>}` with `const NAME = ""` renders
+ *      `<Anon/>`, and a guard like `{name && <Badge/>}` on a resolved,
+ *      non-empty string really does always paint. Without this pass every
+ *      `||` guard is undecidable, since a `||`'s left operand is by nature a
+ *      VALUE rather than a comparison. A `fn` binding is truthy.
+ *   3. Failing both, parser-07's default-literal read
+ *      (`./defaultLiteralBindings`), so `useState(false)`/`useState('')`
+ *      resolve on first paint.
  *
  * This is a DELIBERATE, narrow exception to `evaluateCondition`'s own warning
  * against ever using it to pick a JSX branch: that warning is about GUESSING
  * (hook state, a runtime prop) misrepresenting a stateful screen as one fixed
- * state. Nothing is guessed here — a condition this resolves is fully
- * determined by source text (a literal, a module-scope const), which is a
- * real answer, not a guess, and it OUTRANKS the "pick the consequent"
+ * state. Nothing is guessed here — anything this resolves is fully determined
+ * by source text, which is a real answer, and it OUTRANKS the positional
  * heuristic `selectJsxBranch` falls back to when this returns `undefined`.
- * Never called for a condition this can't decide from source alone.
  */
-export function evaluateStaticCondition(expr: Node, scope: EvalScope, opts: StaticEvalOptions = {}): boolean | undefined {
+export function evaluateStaticTruthiness(expr: Node, scope: EvalScope, opts: StaticEvalOptions = {}): boolean | undefined {
   const budget = createBudget(opts, evaluateCall)
+  let structural: boolean | undefined
   try {
-    return evaluateCondition(expr, scope, budget, 0)
+    structural = evaluateCondition(expr, scope, budget, 0)
   } catch (err) {
     console.error('[staticEval]', err)
     return undefined
   }
+  if (structural !== undefined) return structural
+  return coerce(expr, scope, opts, (value) => Boolean(value))
+}
+
+/**
+ * Whether `expr` is statically `null`/`undefined`, or `undefined` when that is
+ * not decidable from source alone. The `??` counterpart to
+ * `evaluateStaticTruthiness` — and it exists precisely BECAUSE it is not the
+ * same question: `??` falls through to its right operand only on nullishness,
+ * so `0`, `''` and `false` all keep the LEFT side, where `||` would discard
+ * them. Answering `{x ?? <Fallback/>}` with a truthiness test would hide the
+ * left value and render the fallback for every falsy-but-present value.
+ *
+ * There is no structural pass here: `evaluateCondition` answers a truthiness
+ * question, and coercing its `false` to "nullish" is exactly the bug this
+ * function exists to avoid.
+ */
+export function evaluateStaticNullish(expr: Node, scope: EvalScope, opts: StaticEvalOptions = {}): boolean | undefined {
+  return coerce(expr, scope, opts, (value) => value === null || value === undefined)
+}
+
+/**
+ * Resolves `expr` to a value and answers `test` about it, falling back to
+ * parser-07's default-literal read when the ordinary binding chain bottoms out
+ * on an unresolvable identifier — so `const [error] = useState(null)` guarding
+ * `{error ?? <Placeholder/>}` still resolves to what first paint shows. A `fn`
+ * value is a real, non-null, truthy binding. Anything still unresolved is
+ * `undefined`, and `selectJsxBranch` falls back to its stated heuristic.
+ */
+function coerce(
+  expr: Node,
+  scope: EvalScope,
+  opts: StaticEvalOptions,
+  test: (value: unknown) => boolean,
+): boolean | undefined {
+  const direct = evaluateExpression(expr, scope, opts)
+  if (direct.kind === 'literal') return test(direct.value)
+  if (direct.kind === 'fn') return test({})
+  const literal = findDefaultLiteralNode(expr)
+  if (!literal) return undefined
+  const viaDefault = evaluateExpression(literal, scope, opts)
+  return viaDefault.kind === 'literal' ? test(viaDefault.value) : undefined
 }

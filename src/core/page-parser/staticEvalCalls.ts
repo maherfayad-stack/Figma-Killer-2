@@ -27,9 +27,9 @@ import {
   type PropertyAccessExpression,
 } from 'ts-morph'
 import type { FunctionLike } from './types'
+import { enclosingFunctionLike } from './defaultLiteralBindings'
 import {
   createEvalScope,
-  enclosingFunctionLike,
   evaluateCondition,
   evaluateNode,
   findDefaultExportedVariable,
