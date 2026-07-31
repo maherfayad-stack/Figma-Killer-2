@@ -88,9 +88,11 @@ export function planSourceMove(
   if (!newParent.children.includes(nodeId)) {
     const refusal =
       refuseStructuralEdit({ kind: 'reparent', node }) ??
-      // Dragging a node that is NOT source-derived into a parent that is: from
-      // source's point of view that is an insertion, not a move.
-      refuseStructuralEdit({ ...studioParent(tree, newParentId), kind: 'insert' })
+      // Dragging a node that is NOT source-derived into a studio tree. Unlike
+      // an insert from the picker — which asks the SOURCE to grow an element
+      // and re-reads it — this node already exists only on the canvas, so there
+      // is no markup to relocate and no way to mint any.
+      refuseCanvasOnlyNodeIntoSource(tree, newParent)
     return refusal ? { ok: false, refusal } : { ok: true, commit: null }
   }
 
@@ -142,10 +144,105 @@ export function planSourceDelete(
   return { ok: true, commit: commit.length > 0 ? commit : null }
 }
 
-/** Whether a new node may be added under `parentId` — refused on every studio-imported tree. */
-export function planSourceInsert(tree: NodeTree<PageNode>, parentId: string): StructuralPlan<never> {
-  const refusal = refuseStructuralEdit({ ...studioParent(tree, parentId), kind: 'insert' })
-  return refusal ? { ok: false, refusal } : { ok: true, commit: null }
+/** Where a new element is written: inside which container, optionally beside which existing child. */
+export interface SourceInsertCommit {
+  /** The container element the new child is written into — a real source node, never the synthetic page root. */
+  parentNodeId: string
+  /** The existing child the new element is written next to, or `null` to append as the last child. */
+  anchorNodeId: string | null
+  position: 'before' | 'after'
+}
+
+/**
+ * Whether a new element may be written into `parentId`, and if so where.
+ *
+ * Two resolutions happen before the rule is asked:
+ *
+ *  1. **The synthetic page root becomes the page's returned root element.**
+ *     `<pageId>:body` is not a source location — nothing was written at it — so
+ *     it can never be a container. A page's JSX returns exactly one root
+ *     element, and that element is what "add this to the page" means. When the
+ *     root has anything other than exactly one source-derived child (an empty
+ *     imported page, or a route composed from layout chrome), there is no
+ *     single honest answer and it refuses with what the user can do about it.
+ *  2. **The anchor is a refinement, not a requirement.** `index` names a
+ *     position among the CANVAS's children, which is not the source's child
+ *     list. When the neighbour it points at is an ordinary element in the same
+ *     file, the insert is written against it; when it is not (a `.map` row, an
+ *     inlined component, an expression child), the element is appended as the
+ *     last child instead. Appending is a real position, not a silent no-op —
+ *     and the user can then drag it, which already writes.
+ */
+export function planSourceInsert(
+  tree: NodeTree<PageNode>,
+  parentId: string,
+  index?: number,
+): StructuralPlan<SourceInsertCommit> {
+  const container = resolveInsertContainer(tree, parentId)
+  if (!container.ok) return container
+
+  const node = container.node
+  if (!isSourceDerivedNodeId(node.id)) return { ok: true, commit: null }
+
+  const refusal = refuseStructuralEdit({ kind: 'insert', node })
+  if (refusal) return { ok: false, refusal }
+
+  return { ok: true, commit: { parentNodeId: node.id, ...resolveInsertAnchor(tree, node, index) } }
+}
+
+/** The container an insert into `parentId` really targets — see `planSourceInsert`'s doc for the page-root case. */
+function resolveInsertContainer(
+  tree: NodeTree<PageNode>,
+  parentId: string,
+): { ok: true; node: PageNode } | { ok: false; refusal: StructuralRefusal } {
+  const parent = tree.nodes[parentId]
+  if (!parent) {
+    return {
+      ok: false,
+      refusal: {
+        reason: 'insert',
+        message: 'The element this would be added to is no longer on the board. Reload the project and try again.',
+      },
+    }
+  }
+  if (parentId !== tree.rootNodeId || !isStudioPageRootId(tree.rootNodeId)) return { ok: true, node: parent }
+
+  const sourceChildren = parent.children.filter((id) => isSourceDerivedNodeId(id))
+  const only = sourceChildren.length === 1 ? tree.nodes[sourceChildren[0]!] : undefined
+  if (!only) {
+    return {
+      ok: false,
+      refusal: {
+        reason: 'insert',
+        message:
+          sourceChildren.length === 0
+            ? 'This page has no element in its code to add anything inside. Add a root element to the file first.'
+            : 'This page has several top-level elements, so Studio cannot tell which one to add this inside. Select the container you want it in, then add it.',
+      },
+    }
+  }
+  return { ok: true, node: only }
+}
+
+/** The existing child a new element is written beside, resolved from a canvas child index. */
+function resolveInsertAnchor(
+  tree: NodeTree<PageNode>,
+  container: PageNode,
+  index: number | undefined,
+): { anchorNodeId: string | null; position: 'before' | 'after' } {
+  const children = container.children
+  if (index === undefined || index >= children.length) return { anchorNodeId: null, position: 'after' }
+
+  const addressable = (id: string | undefined): boolean =>
+    id !== undefined &&
+    isSourceDerivedNodeId(id) &&
+    refuseStructuralEdit({ kind: 'insert', node: tree.nodes[id] ?? { id } }) === null
+
+  const previous = children[index - 1]
+  if (addressable(previous)) return { anchorNodeId: previous!, position: 'after' }
+  const next = children[index]
+  if (addressable(next)) return { anchorNodeId: next!, position: 'before' }
+  return { anchorNodeId: null, position: 'after' }
 }
 
 /** Whether `nodeIds` may be duplicated or wrapped — refused on every studio-imported node. */
@@ -189,14 +286,22 @@ export function toastStructuralRefusal(
  * location to recognise it by — hence `isStudioPageRootId`, which the page-tree
  * module owns alongside the rest of the id grammar.
  */
-function studioParent(
+/**
+ * The refusal for dropping a canvas-only node into a studio-imported tree, or
+ * `null` when the destination is an ordinary CMS tree (where a nanoid node is
+ * exactly what belongs).
+ */
+function refuseCanvasOnlyNodeIntoSource(
   tree: NodeTree<PageNode>,
-  parentId: string,
-): { node: { id: string }; sourceBacked: boolean } {
-  const parent = tree.nodes[parentId]
-  if (!parent) return { node: { id: parentId }, sourceBacked: false }
-  if (isSourceDerivedNodeId(parent.id)) return { node: parent, sourceBacked: true }
-  return { node: parent, sourceBacked: isStudioPageRootId(tree.rootNodeId) }
+  newParent: PageNode,
+): StructuralRefusal | null {
+  const intoStudioTree = isSourceDerivedNodeId(newParent.id) || isStudioPageRootId(tree.rootNodeId)
+  if (!intoStudioTree) return null
+  return {
+    reason: 'insert',
+    message:
+      'This element exists only on the canvas — there is no markup for it in the code, so Studio has nothing to move into the file. Add the component from the picker instead, which writes it to the source.',
+  }
 }
 
 /**

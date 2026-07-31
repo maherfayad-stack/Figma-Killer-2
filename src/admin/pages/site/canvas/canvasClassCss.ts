@@ -2,7 +2,6 @@ import {
   bagToCSS,
   createStyleRuleCssEmitter,
   generateClassCSS,
-  PUBLISHER_RESET_CSS,
   type ViewportContext,
   type ResponsiveCssOptions,
 } from '@core/publisher'
@@ -35,19 +34,15 @@ function buildCanvasClassCSS(
 ): string {
   const blocks: string[] = []
 
-  // Publisher reset, identical to what `publishPage()` ships. Each canvas
-  // breakpoint frame is its own iframe with its own `<body>`, so we use the
-  // unscoped reset (low-specificity `:where(body) { ... }` rules) rather
-  // than the legacy `[data-breakpoint-id]`-scoped variant. The unscoped reset
-  // matches the published cascade exactly — user CSS like
-  // `body { color: var(--color-fg) }` wins over the reset's `:where(body)`
-  // baseline, the way it does on the live site. Editor chrome lives outside
-  // the iframe so the reset can't leak into the toolbars / panels.
-  blocks.push(PUBLISHER_RESET_CSS)
+  // The publisher reset is NOT part of this string. It is emitted by
+  // `ClassStyleInjector` into its own `@layer reset`, below `@layer vendor` —
+  // bundling it in here put a zero-specificity reset one cascade layer ABOVE
+  // every design system's package CSS, which layer order let it annihilate.
+  // See `canvasCssLayers.ts` for the full account.
 
-  // Fonts go first (after the reset) so `@font-face` declarations exist before
-  // any rule that references the family — browsers tolerate the reverse order,
-  // but the ordering keeps generated CSS easier to inspect.
+  // Fonts go first so `@font-face` declarations exist before any rule that
+  // references the family — browsers tolerate the reverse order, but the
+  // ordering keeps generated CSS easier to inspect.
   const fontsCss = generateFontsCss(fonts)
   if (fontsCss) blocks.push(fontsCss)
   const frameworkCss = generateFrameworkRootCss({
@@ -130,8 +125,9 @@ export function createCanvasClassCssMemo(
 }
 
 /**
- * Generate the canvas class-registry CSS (publisher reset + fonts +
- * framework root CSS + the publisher's `generateClassCSS` output).
+ * Generate the canvas class-registry CSS (fonts + framework root CSS + the
+ * publisher's `generateClassCSS` output). The publisher reset is emitted
+ * separately, into its own lower cascade layer — see `canvasCssLayers.ts`.
  * Identity-memoized — see `createCanvasClassCssMemo`.
  */
 export const generateCanvasClassCSS: CanvasClassCssGenerator = createCanvasClassCssMemo()

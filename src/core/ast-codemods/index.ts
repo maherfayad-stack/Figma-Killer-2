@@ -21,6 +21,14 @@ export type {
   DeleteJsxRefusal,
   DeleteJsxRefusalReason,
 } from './deleteJsxElement'
+export { insertJsxElement } from './insertJsxElement'
+export type {
+  InsertJsxElementParams,
+  InsertJsxElementResult,
+  InsertJsxRefusal,
+  InsertJsxRefusalReason,
+  InsertableJsxPropValue,
+} from './insertJsxElement'
 export { detachComponentInstance } from './detachComponent'
 export type {
   DetachComponentParams,

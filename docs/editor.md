@@ -439,7 +439,7 @@ Each iframe `<head>` receives up to seven `<style>` elements (three from `ClassS
 |---|---|---|---|
 | `<style id="studio-editor-chrome">` | `EditorChromeInjector` | **unlayered** | Editor-only chrome: placeholder, slot-instance, list placeholder, unknown-module fallback |
 | `<style id="mc-vendor">` | `ProjectCssInjector` | `@layer vendor` | Read-only package CSS: `@alm-design/design-system`'s bundled stylesheet + the open project's own bare-specifier package CSS (WS-2.3). Ordered below `user-authored` — see [`docs/features/canvas-iframe-per-frame.md`](features/canvas-iframe-per-frame.md) → "Vendor vs. user-authored ordering". |
-| `<style id="mc-classes">` | `ClassStyleInjector` | `@layer user-authored` | Publisher reset + framework CSS + class registry CSS |
+| `<style id="mc-classes">` | `ClassStyleInjector` | `@layer reset` + `@layer user-authored` | Publisher reset (in the LOWEST layer, so it loses to vendor package CSS as well as to author CSS) + framework CSS + class registry CSS |
 | `<style id="mc-classes-preview">` | `ClassStyleInjector` | `@layer user-authored` | Higher-specificity preview rule while a property control is hovered; empty for state-pseudo rules |
 | `<style id="mc-classes-force-state">` | `ClassStyleInjector` | `@layer user-authored` | Forced state preview: paints the active state-pseudo rule onto the selected node via a doubled `[data-node-id]` selector |
 | `<style id="mc-user-styles">` | `UserStylesheetInjector` | `@layer user-authored` | User-uploaded stylesheets (verbatim, unscoped) |

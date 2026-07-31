@@ -37,12 +37,23 @@
  *     spread, a dynamic child, a branch the source chooses at runtime. The
  *     source does not place this element at a fixed position, so neither can
  *     we.
- *   - **`reparent`**, **`insert`**, **`duplicate`**, **`wrap`** — each needs a
- *     source position that does not exist yet (a new JSX child, a new wrapper
- *     element, a copy with no line and column of its own). Deliberately NOT
- *     built this pass rather than approximated: a new node minted with a
- *     nanoid id can never be written back, so accepting the gesture would
- *     recreate the silent no-op in a new place.
+ *   - **`reparent`**, **`duplicate`**, **`wrap`** — each needs a source
+ *     position that does not exist yet (a new wrapper element, a copy with no
+ *     line and column of its own). Deliberately NOT built rather than
+ *     approximated: a new node minted with a nanoid id can never be written
+ *     back, so accepting the gesture would recreate the silent no-op in a new
+ *     place.
+ *
+ * **`insert` is the exception, and the shape of its answer is why.** It used to
+ * refuse alongside those three, for the same stated reason — but a design-system
+ * component added from the picker never needs a canvas-minted node at all:
+ * `insertJsxElement` writes the element (and the import that names it) into the
+ * user's file, and the board re-reads it, so what appears on the canvas is an
+ * ordinary parsed node with a real `rel:line:col`. The question is therefore not
+ * "does this new node have a source position" but "is this CONTAINER a place a
+ * child can honestly be written", which is the same placement question a reorder
+ * asks about an element. `planSourceInsert` resolves the container (the synthetic
+ * page root becomes the page's returned root element) and asks it here.
  *   - **`multi-select`** — several elements REORDERED at once. Each move shifts
  *     the others' line numbers, and the anchor a reorder writes against is
  *     resolved per element; one gesture, N interdependent targets. (A multi
@@ -100,7 +111,9 @@ const GESTURE: Record<StructuralEditKind, string> = {
   reorder: 'Moved',
   reparent: 'Moved',
   delete: 'Deleted',
-  insert: 'Added',
+  // An insert is asked about the CONTAINER it lands in, not about a node that
+  // exists yet, so its refusals read "Added into <what this container is>".
+  insert: 'Added into',
   duplicate: 'Duplicated',
   wrap: 'Wrapped',
 }
@@ -122,16 +135,9 @@ export function refuseStructuralEdit(input: {
   anchor?: SourceStructureNode | null
   /** True when this gesture reorders more than one node at once. */
   multi?: boolean
-  /**
-   * Answers question 1 for the one node that cannot answer it from its own id:
-   * the synthetic page root (`isStudioPageRootId`), which is where an insert
-   * into an EMPTY imported page lands. Never a way to opt an ordinary CMS node
-   * into these rules — the id test still runs for everything else.
-   */
-  sourceBacked?: boolean
 }): StructuralRefusal | null {
   const { kind, node, anchor, multi } = input
-  if (!input.sourceBacked && !isSourceDerivedNodeId(node.id)) return null
+  if (!isSourceDerivedNodeId(node.id)) return null
 
   const gesture = GESTURE[kind]
 
@@ -143,11 +149,17 @@ export function refuseStructuralEdit(input: {
           'Studio can reorder an element among its own siblings in the code, but not move it into a different parent yet — that needs a source position the element does not have. Move it in the file instead.',
       }
     case 'insert':
-      return {
-        reason: 'insert',
-        message:
-          'Studio cannot add a new element to imported code yet. A node created on the canvas has no line and column of its own, so there is nowhere to write it — add it in the file instead.',
-      }
+      // An insert is asked about the CONTAINER, not about a node that exists —
+      // the new element has no id yet, and it never gets a canvas-minted one:
+      // `insertJsxElement` writes it to the file and the board re-reads it. So
+      // the only question is whether this container is a place the codemod can
+      // honestly write a child, which is the same placement question a reorder
+      // asks. `refusePlacement` below answers it.
+      //
+      // The synthetic page root is the one container with no source location of
+      // its own; `planSourceInsert` resolves it to the page's returned root
+      // element before asking, so it never reaches here.
+      break
     case 'duplicate':
       return {
         reason: 'duplicate',
@@ -180,7 +192,11 @@ export function refuseStructuralEdit(input: {
   const placement = refusePlacement(node, gesture)
   if (placement) return placement
 
-  if (kind === 'delete') return null
+  // An insert is written INTO this container, so a plain container at a known
+  // location is the whole requirement — there is no sibling to write against
+  // (the anchor is an optional refinement `planSourceInsert` drops when it is
+  // not addressable, since appending is still an honest position).
+  if (kind === 'delete' || kind === 'insert') return null
 
   if (!anchor) {
     return {
@@ -244,6 +260,37 @@ function refusePlacement(node: SourceStructureNode, gesture: string): Structural
 /** Lower-cases the first character so a refusal can be quoted mid-sentence. */
 function lowerFirst(text: string): string {
   return text.length > 0 ? text[0]!.toLowerCase() + text.slice(1) : text
+}
+
+/**
+ * The refusal for adding an ALREADY-MINTED node to a studio-imported tree, or
+ * `null` when the destination is an ordinary CMS tree.
+ *
+ * This is the other half of `insert`, and the distinction is the node's origin,
+ * not the container. The editor's own picker path never mints a node: it asks
+ * `insertJsxElement` to write the element into the file and re-reads the board,
+ * so what lands is a real parsed node — and `refuseStructuralEdit`'s `insert`
+ * case asks only whether the CONTAINER can hold a written child.
+ * `applyTreeOperation`'s callers (a plugin, an agent) hand over a node object
+ * that already exists, id and all, and that id can never be a source location.
+ * Accepting it would put something on the board that no file describes, which
+ * is the silent no-op `struct-01` exists to prevent — so it refuses, and points
+ * at the path that does work.
+ *
+ * `studioPageRoot` answers the question for the one container that cannot
+ * answer it from its own id: the synthetic `<pageId>:body` root of an imported
+ * page, which is where an insert into an EMPTY one lands.
+ */
+export function refuseMintedNodeInsert(input: {
+  parent: SourceStructureNode
+  studioPageRoot: boolean
+}): StructuralRefusal | null {
+  if (!input.studioPageRoot && !isSourceDerivedNodeId(input.parent.id)) return null
+  return {
+    reason: 'insert',
+    message:
+      'This element was created in the editor, so it has no markup in your project for Studio to write. Add a component from the canvas picker instead — that one writes the element and its import into the file.',
+  }
 }
 
 /**

@@ -15,6 +15,7 @@ Legend: 🟢 Studio (active work) · 🟡 shared infrastructure Studio depends o
 | 🟢 `server/handlers/studioPageLoad.ts` | The parse → inline → CSS → convert pipeline. `resolveModuleId` (element → module) lives here. |
 | 🟢 `server/handlers/studioProjects.ts` | Project discovery, `.studio/meta.json`, `discoverPageFiles`, `projectPagesDir`. |
 | 🟢 `server/handlers/studioWriteback.ts` | `StudioEdit` shapes, `studioEditLocation`, dedupe, path containment, `applyStudioEdit`. |
+| 🟠 `server/handlers/studioStructuralWriteback.ts` | The `move`/`delete`/`insert` edit kinds — schemas + dispatch into the structural codemods. Sibling of `studioCssWriteback.ts`; `studioWriteback.ts` imports it, never the reverse. |
 | 🟢 `server/handlers/studioCss.ts` | Imported `.css` → `StyleRule` registry, deterministic ids, happy-dom CSSOM. `loadStudioStyles`'s `extraCss` param merges in `styleCompile.ts`'s compiled output. |
 | 🟢 `server/handlers/studio/projectProbe.ts` | WS-1.2 — `dir → ProjectProfile`: framework, pages dir, style toolchain, aliases, component packages, and (`approot-01`) app-root detection (`detectAppRoot`) — a project's app root is not always its project directory (monorepos, `journey-screens/`-style named subdirectories). Every OTHER detector runs rooted at the resolved app root; every returned path is re-prefixed with `appRoot` to stay project-relative. `pagesDir` ranking (`rankPagesDirCandidates`) scores a candidate's whole RECURSIVE subtree, not just its direct files. Also exports `tryServeStudioProbe`, wired into `STUDIO_SUB_ROUTERS`. |
 | 🟢 `server/handlers/studio/projectProfileSchema.ts` | Pure schema leaf: `ProjectProfileSchema`/`ProjectProfile`, `ProbeWarning` — kept separate from `projectProbe.ts` to avoid a load cycle with `studioMeta.ts` (which persists a probe result and is read back by the probe for caching). |
@@ -67,7 +68,7 @@ Legend: 🟢 Studio (active work) · 🟡 shared infrastructure Studio depends o
 | 🟢 `src/core/page-parser/inlineSvg.ts` | `<svg>` written as JSX → markup for `base.svg`. |
 | 🟢 `src/core/page-parser/jsxAttributeReaders.ts` | How each attribute shape is read. |
 | 🟢 `src/core/page-parser/nodeResolution.ts` | Resolved value → `resolution` metadata. Never locks the node — see `withResolution`. |
-| 🟢 `src/core/ast-codemods/` | **Every source write.** `setJsxProp`, `setJsxText`, `setJsxStyle`, `setStringLiteral`, `setJsxTagName`, `setImportSpecifier` (WS-8.3), `detachComponent`/`extractComponentCopy`/`swapComponentInstance` (WS-4.4/4.5), `resolveComponentCallSite` (shared "what does this JSX tag refer to" resolution the three of them share). |
+| 🟢 `src/core/ast-codemods/` | **Every source write.** `setJsxProp`, `setJsxText`, `setJsxStyle`, `setStringLiteral`, `setJsxTagName`, `setImportSpecifier` (WS-8.3), `detachComponent`/`extractComponentCopy`/`swapComponentInstance` (WS-4.4/4.5), `resolveComponentCallSite` (shared "what does this JSX tag refer to" resolution the three of them share), plus the structural trio `moveJsxElement`/`deleteJsxElement`/`insertJsxElement` (`struct-01`) — those three LOCATE with the AST and write a byte-exact splice of the original text (`jsxChildRange.ts`). |
 | 🟢 `src/core/studio-sync/parsedPageToSitePage.ts` | `ParsedPage` → editor `Page` (moduleId, text prop, classIds, codeProps) — WS-4.2: an `instanceOf` node's `props` become `{componentName, source, sourceFile, callSiteProps}`, codeProps prefixed `callSiteProps:<name>`. |
 | 🟢 `src/modules/base/instance/` | WS-4.2 — `studio.instance` module: renders `<>{children}</>`, zero DOM. |
 | 🟢 `src/core/studio-sync/collectPageStylesheets.ts` | Which `.css` a page depends on, in cascade order. |
@@ -109,7 +110,7 @@ Legend: 🟢 Studio (active work) · 🟡 shared infrastructure Studio depends o
 | 🟡 `src/admin/pages/site/canvas/UserStylesheetInjector.tsx` | User stylesheets. |
 | 🟢 `src/admin/pages/site/canvas/CanvasAnimationInjector.tsx` | Freeze CSS animations in design frames. |
 | 🟢 `src/admin/pages/site/canvas/ProjectCssInjector.tsx` | Read-only vendor package CSS into iframes (`@layer vendor`) — Alm's bundled CSS + the open project's own bare-specifier package CSS (WS-2.3). |
-| 🟡 `src/admin/pages/site/canvas/canvasCssLayers.ts` | `vendor`/`user-authored` cascade-layer names + ordering pre-declaration. |
+| 🟡 `src/admin/pages/site/canvas/canvasCssLayers.ts` | `reset`/`vendor`/`user-authored` cascade-layer names + ordering pre-declaration. **The reset is the LOWEST layer** — above `vendor` its `:where()` rules annihilate every design system. |
 | 🟡 `src/admin/pages/site/canvas/useIframeFrameAutoHeight.ts` | Frame height + the definite `body` height `%` chains need. |
 | 🟡 `src/admin/pages/site/canvas/AgentSnapshotFrame.tsx` | Offscreen deterministic frame for agent screenshots. |
 

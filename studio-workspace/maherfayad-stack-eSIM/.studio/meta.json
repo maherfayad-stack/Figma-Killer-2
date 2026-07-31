@@ -16,18 +16,15 @@
       "postcssConfigPath": null,
       "cssInJs": null
     },
-    "componentPackages": [],
+    "componentPackages": [
+      "@alm-design/design-system"
+    ],
     "aliases": {},
     "warnings": [
       {
         "code": "pages-dir-heuristic",
         "message": "No routing framework convention matched; guessed the pages directory \"journey-screens/src/screens\" by ranking directories on the fraction of files with a JSX-returning default export.",
         "fix": "Confirm the pages directory in the import dialog, or set \"pagesDir\" explicitly in .studio/meta.json."
-      },
-      {
-        "code": "dependencies-not-installed",
-        "message": "package.json lists dependencies but node_modules is missing, so package-component detection was skipped.",
-        "fix": "Run dependency install (WS-1.4), then re-run the project probe."
       }
     ],
     "pagesDirCandidates": [

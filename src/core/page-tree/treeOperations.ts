@@ -36,7 +36,12 @@ import {
   updateNodeProps,
   wrapNode,
 } from './mutations'
-import { SourceStructureError, refuseStructuralEdit, type StructuralEditKind } from './sourceStructure'
+import {
+  SourceStructureError,
+  refuseMintedNodeInsert,
+  refuseStructuralEdit,
+  type StructuralEditKind,
+} from './sourceStructure'
 import { isStudioPageRootId } from './sourceNodeId'
 
 interface ApplyTreeOperationResult {
@@ -56,14 +61,22 @@ function assertSourceStructureWritable(
   if (refusal) throw new SourceStructureError(refusal, nodeId)
 }
 
-/** Throw if a new node cannot be added under this parent — including the synthetic root of an imported page. */
+/**
+ * Throw if an already-minted node cannot be added under this parent —
+ * including the synthetic root of an imported page.
+ *
+ * This dispatcher's callers (plugins, agents) hand over a node object that
+ * already has an id, and an id minted outside a parse can never be a source
+ * location. That is a different question from the editor's own picker path,
+ * which mints nothing and asks the source to grow the element instead — see
+ * `refuseMintedNodeInsert` for the full distinction.
+ */
 function assertSourceInsertable(tree: NodeTree<PageNode>, parentId: string): void {
   const parent = tree.nodes[parentId]
   if (!parent) return
-  const refusal = refuseStructuralEdit({
-    kind: 'insert',
-    node: parent,
-    sourceBacked: isStudioPageRootId(tree.rootNodeId),
+  const refusal = refuseMintedNodeInsert({
+    parent,
+    studioPageRoot: isStudioPageRootId(tree.rootNodeId),
   })
   if (refusal) throw new SourceStructureError(refusal, parentId)
 }

@@ -290,6 +290,54 @@ are the remaining WS-2 items, not yet dispatched. See
 
 ## Recently landed
 
+### struct-02 — a design system now RENDERS, and a component can be added to imported code
+- **Agent:** main
+- **Stage:** done — browser-verified against a temp fixture; both defects reproduced BEFORE the fix and asserted after
+- **Updated:** 2026-08-01
+- **Goal:** the user's *"the importing of ALM components from add to canvas modules tab, and how it renders — it renders as just text, with no styles or anything"*. Two independent defects, one per clause.
+- **Scope:**
+  - New: `src/core/ast-codemods/insertJsxElement.ts` (+ `__tests__/insertJsxElement.test.ts`), `tests/e2e/design-system-insert.e2e.ts`.
+  - Edited: `src/admin/pages/site/canvas/{canvasCssLayers,canvasClassCss}.ts`, `ClassStyleInjector.tsx`, `src/core/page-tree/{sourceStructure,treeOperations,index}.ts`, `src/admin/pages/site/store/slices/site/{structuralSourceEdits,nodeActions}.ts`, `src/admin/pages/site/studio/{studioSaveRequests,registerProjectModules}.ts`, `src/modules/alm/register.tsx`, `src/core/module-engine/types.ts`, `src/core/ast-codemods/index.ts`, `server/handlers/studioWriteback.ts`, tests + docs.
+
+#### Defect 1 — the publisher reset sat one cascade layer ABOVE the design system, and annihilated it
+
+**This is why every `@alm-design` / `pkg.*` component rendered as unstyled text — everywhere on the board, not only inserted ones.** The classes were right (`class="btn btn--primary btn--size-default"`), the ~120 KB of package CSS was present and parsed in `#mc-vendor`, and every string assertion in the unit tests passed. But `PUBLISHER_RESET_CSS` was bundled into `generateCanvasClassCSS`'s output, which `ClassStyleInjector` wraps in `@layer user-authored` — one layer above `@layer vendor`. **Layer order beats specificity outright**, so the reset's zero-specificity `:where()` rules won anyway:
+
+| reset rule | beat |
+|---|---|
+| `:where(*) { margin: 0; padding: 0 }` | `.btn { padding: 12px 22px }` |
+| `:where(button) { background: none; border: 0 }` | the button's fill |
+| `:where(input, button, …) { font: inherit; color: inherit }` | its type colour and `Open Sans` |
+
+Measured on a real `<Button>` before: `background rgba(0, 0, 0, 0)`, `padding 0px`, `color rgb(0, 0, 0)`, `font system-ui` — keeping only the `border-radius` the reset happens not to mention. After: `rgb(12, 154, 176)` / `12px 22px` / `rgb(255, 255, 255)` / `Open Sans`.
+
+**Fix: a third layer.** `CANVAS_CSS_LAYER_ORDER` is now `@layer reset, vendor, user-authored;`, and `ClassStyleInjector` emits the reset in its own `@layer reset` block instead of folding it into the author CSS. `:where()` still keeps the reset losing inside its own layer; the LAYER is what keeps it losing to vendor CSS. A reset is by definition the lowest-priority thing in a document, so it gets the lowest layer.
+
+- **Landmine — a unit test cannot see this class of bug.** happy-dom does not resolve cascade layers, so every existing assertion about the generated CSS string passed while the button was invisible. Only `getComputedStyle` in a real engine distinguishes "the rule is in the document" from "the rule applies". If you touch layer ordering, the assertion belongs in `tests/e2e/design-system-insert.e2e.ts`, not in a `.test.tsx`.
+
+#### Defect 2 — insert was a blanket refusal; it now writes the `.tsx`
+
+Picking any component from **Add to canvas → Modules** toasted *"Studio cannot add a new element to imported code yet"* and did nothing. `struct-01` refused `insert` alongside `reparent`/`duplicate`/`wrap` for a stated reason — *a node minted with a nanoid id can never be written back* — and that reason is sound but **does not apply to this gesture**: the editor never has to mint a node. `insertJsxElement` writes the element **and the `import` that names it** into the user's file, and the board re-reads it, so what lands is an ordinary parsed node with a real `rel:line:col`, editable like any other.
+
+- `insertNode` on a studio tree therefore **mutates nothing and returns `''`** — it plans, commits, and lets the reload bring the node in. The success toast is pushed by `commitStudioInsert`, because until the write lands there is nothing to report.
+- **Two writes, one target.** The JSX child and the import are two halves of one indivisible statement (a `<Button/>` with no `Button` in scope is not valid code); both are computed against the original text and spliced in one pass, so the file is never half-written. What it refuses to do is guess: a name already bound in that file to something else refuses `binding-conflict` rather than shadowing the user's own symbol.
+- **`ModuleDefinition.sourceImport`** (`{ specifier, name }`) is how the store learns the JSX spelling — declared by `register.tsx` and `registerProjectModules.ts`, in the same "one declared field, generic dispatch" idiom as `inlineTextEdit` / `imageEdit`. Nothing in the store is coupled to `@alm-design`.
+- **The synthetic page root is resolved, not asked.** `<pageId>:body` is not a source location; `planSourceInsert` retargets it to the page's single returned root element, and refuses with an actionable sentence when there are zero or several.
+- **The anchor is a refinement, not a requirement.** A canvas child index does not name a source position; when the neighbour it points at is not addressable (a `.map` row, an inlined component), the element is appended as the last child rather than refusing. Appending is a real position — and the user can then drag it, which already writes.
+- **`refuseStructuralEdit`'s `insert` case now asks about the CONTAINER** (is this a `.map` row / inlined / route chrome / code-placed?), not about a node that does not exist. The plugin/agent path keeps the old answer under a new, honest name — `refuseMintedNodeInsert` — because `applyTreeOperation`'s callers really do hand over a pre-minted node. The now-dead `sourceBacked` parameter went with it.
+
+- **Decisions:**
+  - *Byte-exactness held to `struct-01`'s standard.* The AST only LOCATES; the write is a splice of the original bytes. Indentation is COPIED from a sibling where one exists (a tab-indented file stays tab-indented) and the quote character is copied from an existing import. Every codemod test asserts a WHOLE FILE.
+  - *An empty container is the one case that rewrites existing bytes* — the whitespace-only run between `>` and `</` — and a self-closing `<div />` parent is reopened into a paired tag. Both are local, and only ever touch whitespace or the `/>` the user wrote.
+  - *`reparent`, `duplicate` and `wrap` still refuse.* Their `struct-01` reasoning is untouched: each needs a source position for markup that already exists on the canvas, and only an insert can ask the source to create one.
+- **Verification:**
+  - `tests/e2e/design-system-insert.e2e.ts` — 2 tests, both green against real Chromium. **Both defects were reproduced first**: the pre-fix run captured the refusal toast verbatim, an unchanged `Home.tsx`, and the transparent / zero-padding computed style.
+  - `src/core/ast-codemods/__tests__/insertJsxElement.test.ts` — 14 cases, whole-file assertions (append, before-anchor, new import line, empty container, self-closing parent, shared line, number/boolean props, no-op import, tab indentation, 4 refusals, and a stale-file re-read).
+  - `server/handlers/__tests__/studioWriteback.test.ts` — 5 new cases for the `insert` kind, including a cross-file anchor downgrading to append and a refusal surfacing through the batch.
+- **Not built, deliberately:** adding the package to the project's `package.json`. The `import` is written; if the project does not already depend on that package the user installs it from the Dependencies panel. `setDependency` writes the CMS store's package.json, not the studio project's file on disk, so wiring it here would have been a second silent no-op — the exact failure mode this entry exists to remove.
+- **Human action needed:** dogfood `/admin/site?studio` on `maherfayad-stack-eSIM`. Every design-system component should now be styled — that is the visible half, and it affects the whole board. Then Add to canvas → Modules → pick a component with a plain container selected: the `.tsx` should gain the element, and the board should show it styled and still there after a reload.
+
+
 ### struct-01 — a structural edit now writes the user's `.tsx` or refuses out loud; it never silently vanishes
 - **Agent:** studio-implementer
 - **Stage:** done — browser-verified against a temp fixture project, and the write was proved to discriminate

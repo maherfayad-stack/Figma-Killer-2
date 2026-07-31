@@ -295,6 +295,106 @@ describe('applyStudioEdit — the asset kind (WS-8.3)', () => {
  * rendering markup that no longer matches disk — the exact silent divergence
  * between canvas and source this codebase refuses to ship.
  */
+/**
+ * The `insert` edit kind — adding a design-system component from the canvas
+ * picker. `nodeId` names the CONTAINER, not the new element: the element has
+ * no location until this write gives it one, which is what lets the editor
+ * skip minting a canvas node at all.
+ */
+describe('applyStudioEdit — the insert kind', () => {
+  const HOME = `import { Chip } from '@alm-design/design-system'
+
+export default function Home() {
+  return (
+    <section className="wrap">
+      <Chip label="a" />
+    </section>
+  )
+}
+`
+
+  it('writes the element and its import, leaving every other byte alone', () => {
+    write('src/Home.tsx', HOME)
+
+    const applied = applyStudioEdit(tmpDir, {
+      kind: 'insert',
+      nodeId: 'src/Home.tsx:5:6',
+      name: 'Button',
+      importSpecifier: '@alm-design/design-system',
+      props: { label: 'Buy now', variant: 'primary' },
+    })
+
+    expect(applied.applied).toBe(true)
+    expect(read('src/Home.tsx')).toBe(
+      `import { Chip, Button } from '@alm-design/design-system'
+
+export default function Home() {
+  return (
+    <section className="wrap">
+      <Chip label="a" />
+      <Button label="Buy now" variant="primary" />
+    </section>
+  )
+}
+`,
+    )
+  })
+
+  it('writes against an anchor sibling when one is given', () => {
+    write('src/Home.tsx', HOME)
+
+    applyStudioEdit(tmpDir, {
+      kind: 'insert',
+      nodeId: 'src/Home.tsx:5:6',
+      anchorNodeId: 'src/Home.tsx:6:8',
+      position: 'before',
+      name: 'Button',
+      importSpecifier: '@alm-design/design-system',
+    })
+
+    expect(read('src/Home.tsx')).toContain('      <Button />\n      <Chip label="a" />\n')
+  })
+
+  it('drops a cross-file anchor and appends, rather than refusing the whole insert', () => {
+    // The anchor is a refinement; the container named by `nodeId` is still an
+    // honest place to write. Refusing here would lose the user's action over a
+    // detail they never expressed.
+    write('src/Home.tsx', HOME)
+
+    const applied = applyStudioEdit(tmpDir, {
+      kind: 'insert',
+      nodeId: 'src/Home.tsx:5:6',
+      anchorNodeId: 'src/Other.tsx:3:4',
+      position: 'before',
+      name: 'Button',
+      importSpecifier: '@alm-design/design-system',
+    })
+
+    expect(applied.applied).toBe(true)
+    expect(read('src/Home.tsx')).toContain('      <Chip label="a" />\n      <Button />\n')
+  })
+
+  it('reports a refusal through the batch rather than throwing', () => {
+    write('src/Home.tsx', `import { Button } from './ui/Button'\n\nexport default function Home() {\n  return (\n    <section>\n      <Button />\n    </section>\n  )\n}\n`)
+    const before = read('src/Home.tsx')
+
+    const result = applyStudioEditBatch(tmpDir, [{
+      kind: 'insert',
+      nodeId: 'src/Home.tsx:5:6',
+      name: 'Button',
+      importSpecifier: '@alm-design/design-system',
+    }])
+
+    expect(result.written).toBe(0)
+    expect(result.refusals?.[0]?.reason).toBe('binding-conflict')
+    expect(read('src/Home.tsx')).toBe(before)
+  })
+
+  it('is always treated as shared — the write shifts every line below it', () => {
+    expect(isSharedSourceNodeId('src/Home.tsx:5:6', 'insert')).toBe(true)
+  })
+})
+
 describe('isSharedSourceNodeId', () => {
   it('flags an inlined component instance', () => {
     expect(isSharedSourceNodeId('pages/Home.tsx:12:5~components/Card.tsx:3:1')).toBe(true)

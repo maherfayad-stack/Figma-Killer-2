@@ -44,31 +44,17 @@ function resolvedMedia(path = '/uploads/hero.png'): RenderResolvedMedia {
 }
 
 describe('generateCanvasClassCSS', () => {
-  it('prepends the unscoped publisher reset so the iframe cascade matches the published page', () => {
+  it('does NOT carry the publisher reset — that belongs to a lower cascade layer', () => {
+    // The reset is emitted separately by `ClassStyleInjector` into `@layer
+    // reset`, below `@layer vendor`. Bundling it into this string put it inside
+    // `@layer user-authored`, ABOVE vendor package CSS, where its
+    // zero-specificity `:where()` rules annihilated every design-system
+    // component style. See `canvasCssLayers.ts` and `canvasCssLayerOrder.test`.
     const css = generateCanvasClassCSS({}, [])
 
-    // Each canvas breakpoint frame is its own iframe — the reset lives inside
-    // the iframe document and never touches editor chrome. We emit the
-    // SAME unscoped reset the publisher ships, so the cascade is identical
-    // between canvas preview and live site.
-    expect(css).toContain(':where(*, *::before, *::after) { box-sizing: border-box; }')
-    expect(css).toContain(':where(*) { margin: 0; padding: 0; }')
-    expect(css).toContain('font-family: system-ui')
-    // No `[data-breakpoint-id]` prefix on the reset itself — it's unscoped.
-    expect(css).not.toMatch(/\[data-breakpoint-id\][^{]*\{[^}]*box-sizing/)
-  })
-
-  it('uses :where()-style low-specificity body baseline so user CSS wins', () => {
-    // The published `<body>` rule is `:where(body) { line-height; font-family }`
-    // — specificity 0,0,0 so any user rule like `body { color: red }` wins.
-    // The canvas now mirrors that exactly (was previously a concrete
-    // `[data-breakpoint-id] { color: #000 }` rule which beat user CSS at
-    // specificity 0,1,0; not needed anymore because the iframe has its own
-    // body and the editor's globals.css can't cascade in).
-    const css = generateCanvasClassCSS({}, [])
-    expect(css).toContain(':where(body)')
-    // Body color isn't pinned — UA default applies until user CSS overrides.
-    expect(css).not.toMatch(/\[data-breakpoint-id\][^{]*\{[^}]*color:\s*#000/)
+    expect(css).not.toContain(':where(*, *::before, *::after) { box-sizing: border-box; }')
+    expect(css).not.toContain(':where(*) { margin: 0; padding: 0; }')
+    expect(css).not.toContain(':where(body)')
   })
 
   it('uses the viewport context media query for canvas breakpoint styles', () => {

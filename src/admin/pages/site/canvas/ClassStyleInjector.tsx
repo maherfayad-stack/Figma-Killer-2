@@ -41,12 +41,16 @@
 import { useEffect } from 'react'
 import { useEditorStore } from '@site/store/store'
 import { styleRuleSelector, type ConditionDef, type StyleRule } from '@core/page-tree'
-import { collectBackgroundImagePaths, collectSiteStyleBackgroundImagePaths } from '@core/publisher'
+import {
+  collectBackgroundImagePaths,
+  collectSiteStyleBackgroundImagePaths,
+  PUBLISHER_RESET_CSS,
+} from '@core/publisher'
 import { useResponsiveEditorMediaAssets } from '@admin/shared/media/hooks/useResponsiveBackgroundStyle'
 import { selectorStatePseudo } from '@site/cssStatePseudo'
 import { generateCanvasClassCSS, generateForcedStateCSS, generatePreviewClassCSS } from './canvasClassCss'
 import { resolveViewportUnitsForCanvas, type CanvasViewport } from './resolveViewportUnits'
-import { CANVAS_CSS_LAYER_ORDER, USER_AUTHORED_LAYER } from './canvasCssLayers'
+import { CANVAS_CSS_LAYER_ORDER, RESET_LAYER, USER_AUTHORED_LAYER } from './canvasCssLayers'
 
 interface ClassStyleInjectorProps {
   /**
@@ -139,20 +143,25 @@ export function ClassStyleInjector({ targetDocument, viewport }: ClassStyleInjec
       fonts,
       { mediaAssets: responsiveMediaAssets, mediaSignature: responsiveMediaSignature },
     )
-    // Wrap in a named cascade layer so editor-chrome CSS (unlayered, from
-    // EditorChromeInjector) always wins over author CSS regardless of specificity.
-    // The publisher reset, framework CSS, and class rules are all inside the layer;
-    // their relative cascade among themselves is preserved (source order + specificity
-    // within the layer). User CSS (also @layer user-authored) still wins over the
-    // zero-specificity :where() publisher reset — same as before. The
-    // `CANVAS_CSS_LAYER_ORDER` prelude also pins `user-authored` ABOVE
-    // `@layer vendor` (`ProjectCssInjector`, WS-2.3) regardless of which
-    // stylesheet's rule body the browser encounters first — see
-    // `canvasCssLayers.ts`.
+    // Two layers out of one <style> tag, because the reset and the author CSS
+    // sit on OPPOSITE sides of vendor package CSS:
+    //
+    //   @layer reset          the zero-specificity publisher baseline, which
+    //                         must lose to a design system's own package CSS.
+    //                         Emitted above `@layer vendor` it annihilated it
+    //                         — see `canvasCssLayers.ts`.
+    //   @layer user-authored  fonts + framework root CSS + the class registry,
+    //                         which must WIN over vendor CSS.
+    //
+    // Editor-chrome CSS stays unlayered (`EditorChromeInjector`) and so beats
+    // all three regardless of specificity. The `CANVAS_CSS_LAYER_ORDER` prelude
+    // pins the relative order no matter which stylesheet's rule body the
+    // browser encounters first.
     const css = forCanvas(generated)
+    const resetBlock = `@layer ${RESET_LAYER} {\n${PUBLISHER_RESET_CSS}\n}`
     styleEl.textContent = css
-      ? `${CANVAS_CSS_LAYER_ORDER}\n@layer ${USER_AUTHORED_LAYER} {\n${css}\n}`
-      : `${CANVAS_CSS_LAYER_ORDER}\n/* no classes */`
+      ? `${CANVAS_CSS_LAYER_ORDER}\n${resetBlock}\n@layer ${USER_AUTHORED_LAYER} {\n${css}\n}`
+      : `${CANVAS_CSS_LAYER_ORDER}\n${resetBlock}\n/* no classes */`
   }, [
     targetDocument,
     viewport,

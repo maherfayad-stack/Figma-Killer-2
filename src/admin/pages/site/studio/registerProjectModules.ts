@@ -440,6 +440,10 @@ async function syncProjectModules(dir: string): Promise<void> {
       schema: buildSchema(spec.props),
       propsSchema: buildPropsSchema(spec.props),
       defaults: buildDefaults(spec),
+      // How this component is spelled in the user's source, so adding it from
+      // the picker can write `import { X } from '<pkg>'` + `<X />` into the
+      // file — see `ModuleDefinition.sourceImport`.
+      sourceImport: { specifier: spec.pkg, name: spec.name },
       component: makePackageComponent(spec.pkg, spec.name, Comp, Provider),
       // Publish (HTML) path is out of scope, same as `register.tsx` — the canvas uses `component` above.
       render: () => ({ html: '' }),

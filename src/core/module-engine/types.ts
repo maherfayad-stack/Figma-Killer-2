@@ -320,6 +320,23 @@ export interface ModuleDefinition<
   imageEdit?: { prop: string }
 
   /**
+   * How this module is SPELLED in a user's React source — the JSX tag name and
+   * the module specifier it is imported from.
+   *
+   * Set only by modules that stand for a real component in a real package
+   * (`alm.*` and every `pkg.<package>.<Name>`); a `base.*` block module has no
+   * source spelling and omits it. Its one consumer is the Studio insert path:
+   * adding a component from the picker does not mint a canvas node, it asks
+   * `insertJsxElement` to write `<Button />` plus its `import` into the user's
+   * file and re-reads the board. Without this field the store would have to
+   * parse the module id back into a package name, which is exactly the
+   * hardcoded-`@alm-design` coupling `registerProjectModules.ts` exists to
+   * remove — so the module that knows the answer declares it, the same way
+   * `inlineTextEdit` / `imageEdit` declare theirs.
+   */
+  sourceImport?: { specifier: string; name: string }
+
+  /**
    * How the publisher's node walker dispatches this module. Makes the
    * otherwise-invisible two-tier render contract explicit on the definition:
    *

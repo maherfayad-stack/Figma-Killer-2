@@ -18,7 +18,7 @@ The load path is `GET /admin/api/studio/load?dir=<abs>` → `loadStudioPages` (`
 - **A component's array/object props survive.** `<ActionSheet actions={[{ label }, { label }]}/>` reaches the canvas as a real array, so the design-system component renders its buttons. HTML elements stay scalar-only (an attribute is a string).
 - **Non-literal values are statically resolved** where it is safe to — `{t.homepage.greeting}` becomes `"Hi Muhammad"`. The resolved **prop** is read-only (writing an edited literal back over the expression would destroy the binding in the user's source file), but the **node is not locked**: it is an ordinary element at a known line and column.
 - **Imported CSS is read-only.** `.css` files become `StyleRule`s and `node.classIds`, but **nothing is ever written back to a `.css` file**. An edit made in the CSS Classes panel is lost on the next reload. See [CSS is one-way](#css-is-one-way).
-- **Writeback covers values, plus two structural verbs** — a sibling reorder and a delete (`struct-01`, below) — and only for nodes whose id is a real single source location. Every other structural gesture (reparent, insert, duplicate, wrap) **refuses with a reason**; none of them silently no-ops any more.
+- **Writeback covers values, plus three structural verbs** — a sibling reorder, a delete (`struct-01`, below) and an insert (adding a design-system component from the picker, which writes the element *and* its import) — and only for nodes whose id is a real single source location. Every other structural gesture (reparent, duplicate, wrap) **refuses with a reason**; none of them silently no-ops any more.
 
 ---
 

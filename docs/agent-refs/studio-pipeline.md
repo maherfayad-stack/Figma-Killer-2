@@ -163,8 +163,22 @@ therefore reached **no** code path at all: the tree changed, the save reported
 success, the `.tsx` was untouched, and the change was gone on reload. In Studio
 the repository IS the document, so that was a silent no-op.
 
-Two kinds now exist — **`move`** (`moveJsxElement`) and **`delete`**
-(`deleteJsxElement`) — and everything else refuses out loud.
+Three kinds now exist — **`move`** (`moveJsxElement`), **`delete`**
+(`deleteJsxElement`) and **`insert`** (`insertJsxElement`) — and everything else
+refuses out loud.
+
+**`insert` is the one that does not mint a node.** Adding a design-system
+component from the picker writes `<Button … />` *and* the `import` that names it
+into the user's file, then reloads the board — so what appears on the canvas is
+an ordinary parsed node with a real `rel:line:col`, not a nanoid the editor
+invented. That is why it can exist at all while `duplicate`/`wrap`/`reparent`
+still refuse: they need a source position for markup that already exists on the
+canvas, and an insert asks the source to create one. The module declares its own
+source spelling via `ModuleDefinition.sourceImport` (`{ specifier, name }`), so
+nothing in the store is coupled to a particular design system. The
+plugin/agent dispatcher (`applyTreeOperation`) still refuses, via
+`refuseMintedNodeInsert` — those callers hand over a node object whose id was
+minted outside a parse.
 
 **The gate runs before the mutation, not after.** One pure rule,
 `refuseStructuralEdit(...)` in `src/core/page-tree/sourceStructure.ts`, is
@@ -178,7 +192,8 @@ from the node id and `lockReason` alone:
 | `shared-component` | an inlined id — the markup is in the component's own file, so a move there moves every instance |
 | `route-chrome` | a Next `layout`/`template` — one file, many frames |
 | `code-placed` | the parser recorded a structural `lockReason` |
-| `reparent` / `insert` / `duplicate` / `wrap` | needs a source position that does not exist yet; a node minted with a nanoid id can never be written back |
+| `reparent` / `duplicate` / `wrap` | needs a source position that does not exist yet; a node minted with a nanoid id can never be written back |
+| `insert` | asked about the CONTAINER, not a node — it refuses only when the container itself is a `.map` row / inlined / route chrome / code-placed |
 | `multi-select` | several elements REORDERED at once (a multi DELETE is fine — the batch is ordered bottom-to-top) |
 | `cross-file` / `no-sibling-anchor` | a reorder is written as "put this before that one", so it needs a plain sibling in the same file |
 

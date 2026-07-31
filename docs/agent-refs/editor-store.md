@@ -69,9 +69,16 @@ rather than mutating a studio-imported tree in a way nothing can write back.
 **Structural actions refuse before they mutate (`struct-01`).** `insertNode`,
 `deleteNode(s)`, `moveNode(s)`, `duplicateNode(s)` and `wrapNode(s)` ask
 `structuralSourceEdits.ts` first. On a studio-imported tree they either commit a
-`move`/`delete` edit to the user's `.tsx` (`commitStudioMove` /
-`commitStudioDelete`) or toast a reason and do nothing — never both nothing and
-nothing said, which is what they used to do. Announced, not silent: unlike a
+`move`/`delete`/`insert` edit to the user's `.tsx` (`commitStudioMove` /
+`commitStudioDelete` / `commitStudioInsert`) or toast a reason and do nothing —
+never both nothing and nothing said, which is what they used to do.
+
+**`insertNode` does not mutate a studio tree at all.** It plans the write
+(`planSourceInsert` — which resolves the synthetic page root to the page's
+returned root element, and downgrades an unaddressable anchor to "append"),
+commits it, and returns `''`. The new node arrives via the reload, with a real
+source id. The success toast is therefore pushed by `commitStudioInsert`, not by
+the inserter: until the write lands there is nothing to report. Announced, not silent: unlike a
 value refusal, the gesture is always a deliberate one a person just made.
 
 **`updateNodeProps` and `setNodeInlineStyles` refuse a patch if *any* key is

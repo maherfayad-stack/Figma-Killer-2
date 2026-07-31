@@ -40,7 +40,7 @@ import type { NodeTree, PageNode } from '@core/page-tree'
 import { subtreeHasOutlet, treeHasOutlet } from '@core/templates'
 import { wouldCreateCycle, syncSlotInstances, applySlotSyncResult } from '@core/visualComponents'
 import { pushToast } from '@ui/components/Toast'
-import { commitStudioDelete, commitStudioMove } from '@site/studio/studioSaveRequests'
+import { commitStudioDelete, commitStudioInsert, commitStudioMove } from '@site/studio/studioSaveRequests'
 import { resolveActiveTreeTarget } from './helpers'
 import { createDeleteNodesAction } from './deleteNodesAction'
 import { duplicateNodeWithScopedClasses } from './duplicateWithScopedClasses'
@@ -55,6 +55,27 @@ import {
 import { pruneCanvasSelectionDraft } from '../selectionSlice'
 import { indexStyleRulesByName, linkImportedClassNames, mergeImportedStyleRules } from './importLinking'
 import type { SiteSlice, SiteSliceHelpers } from './types'
+
+/**
+ * The subset of a module's defaults that has an unambiguous JSX spelling, for
+ * an insert that is written to the user's source.
+ *
+ * A design-system module's `propsSchema` is `Unknown` for every prop (see
+ * `registerProjectModules.ts`) precisely because the real shapes are unknown,
+ * so the defaults bag can hold a handler, an object, an array, or a slot
+ * sentinel. Those are dropped rather than serialized: writing a guess into
+ * someone's repository is worse than writing nothing, and the component's own
+ * default applies to a prop that is simply absent.
+ */
+function literalJsxProps(props: Record<string, unknown>): Record<string, string | number | boolean> {
+  const literals: Record<string, string | number | boolean> = {}
+  for (const [key, value] of Object.entries(props)) {
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+      literals[key] = value
+    }
+  }
+  return literals
+}
 
 type NodeActions = Pick<
   SiteSlice,
@@ -147,6 +168,51 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
     return true
   }
 
+  /**
+   * Adds a module to a studio-imported tree by writing it to the user's source
+   * instead of mutating the tree, or `false` when this is an ordinary CMS tree
+   * that should take the normal in-memory path.
+   *
+   * The board is NOT updated here and no node id is returned, because there is
+   * no honest one to return: the element does not exist until the codemod has
+   * written it, and its id is the `line:col` that write produces. The commit
+   * reloads on every outcome, which is what brings the new node in — the same
+   * "one-shot commit, then re-sync with disk" shape `move`/`delete` use, minus
+   * the optimistic mutation they can afford and this cannot.
+   */
+  const writeInsertToSource = (moduleId: string, defaults: Record<string, unknown> | undefined, parentId: string, index?: number): boolean => {
+    const tree = readTree()
+    if (!tree) return false
+    const plan = planSourceInsert(tree, parentId, index)
+    if (!plan.ok) {
+      toastStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.insert, plan.refusal)
+      return true
+    }
+    if (!plan.commit) return false // an ordinary CMS tree — nothing to write
+
+    const mod = registry.get(moduleId)
+    const sourceImport = mod?.sourceImport
+    if (!sourceImport) {
+      // A `base.*` block module has no spelling in a user's repository. The
+      // picker already hides these in studio mode (`moduleAvailability`), so
+      // this is the programmatic path — an agent or a plugin — and it gets the
+      // same sentence a person would.
+      toastStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.insert, {
+        reason: 'insert',
+        message: `"${mod?.name ?? moduleId}" is an editor building block, not a component in your project's code, so there is nothing Studio could write to the file. Add a design-system component instead.`,
+      })
+      return true
+    }
+
+    void commitStudioInsert({
+      ...plan.commit,
+      name: sourceImport.name,
+      importSpecifier: sourceImport.specifier,
+      props: literalJsxProps({ ...(mod?.defaults ?? {}), ...(defaults ?? {}) }),
+    })
+    return true
+  }
+
   const refuseCopy = (kind: 'duplicate' | 'wrap', nodeIds: readonly string[]): boolean => {
     const tree = readTree()
     if (!tree) return false
@@ -158,7 +224,11 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
 
   const actions: NodeActions = {
     insertNode: (moduleId, defaults, parentId, index) => {
-      if (refuseInsertInto(parentId)) return ''
+      // On a studio-imported tree the insert is a SOURCE write, not a tree
+      // mutation — see `writeInsertToSource`. It returns true for both of its
+      // outcomes (written, or refused out loud); either way nothing is minted
+      // here, so there is no id to hand back.
+      if (writeInsertToSource(moduleId, defaults, parentId, index)) return ''
       const mod = registry.get(moduleId)
       const resolvedDefaults = { ...(mod?.defaults ?? {}), ...defaults }
       const newNode = createNode(moduleId, resolvedDefaults)

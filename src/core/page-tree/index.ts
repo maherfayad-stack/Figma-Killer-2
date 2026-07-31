@@ -37,7 +37,7 @@ export {
 } from './sourceWritability'
 export type { SourceWritableNode } from './sourceWritability'
 // The structural counterpart: can this node's PLACE be written back?
-export { SourceStructureError, refuseStructuralEdit } from './sourceStructure'
+export { SourceStructureError, refuseMintedNodeInsert, refuseStructuralEdit } from './sourceStructure'
 export type {
   SourceStructureNode,
   StructuralEditKind,

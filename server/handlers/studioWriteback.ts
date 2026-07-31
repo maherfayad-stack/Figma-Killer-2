@@ -8,28 +8,36 @@
  * full Request/Response round trip.
  *
  * A batch of typed edits (`kind: 'prop' | 'text' | 'style' | 'literal' | 'tag'
- * | 'asset' | 'detach' | 'swap' | 'move' | 'delete' | 'css'`). The `css` kind is
- * owned end to end by
- * the sibling `studioCssWriteback.ts` — it targets a FILE + SELECTOR rather
- * than a decoded `line:col`, and writes through a postcss CST instead of
- * ts-morph, so it shares none of this module's machinery. Most edits' nodeId is decoded back to a source location and
- * dispatched to the matching `ast-codemods` writer (`setJsxProp` /
- * `setJsxText` / `setJsxStyle` / `setStringLiteral` / `setJsxTagName` /
- * `setImportSpecifier` / `moveJsxElement` / `deleteJsxElement`) via
- * `applyStudioEdit`. Synthetic nodes (e.g. the
- * `index:body` root) don't match the loc pattern and are skipped. The save
- * route applies each edit independently — one codemod throwing (e.g. a text
- * edit landing on an element with mixed children) is logged and skipped by
- * the route rather than aborting the whole batch.
+ * | 'asset' | 'detach' | 'swap' | 'move' | 'delete' | 'insert' | 'css'`).
+ *
+ * This module owns the VALUE kinds, which all share one shape: decode the
+ * `nodeId` back to a `rel:line:col`, path-guard it, and hand it to the matching
+ * `ast-codemods` writer (`setJsxProp` / `setJsxText` / `setJsxStyle` /
+ * `setStringLiteral` / `setJsxTagName` / `setImportSpecifier`) — a rewrite in
+ * place that leaves the file's line count alone. Two SIBLINGS own the kinds
+ * that do not fit that shape, and both dependencies run one way (this module
+ * folds their schemas into `StudioEditSchema` and calls in; neither imports
+ * back):
+ *
+ *   - `studioCssWriteback.ts` — `css`. Its target is a FILE + SELECTOR rather
+ *     than a decoded `line:col`, and it writes through a postcss CST.
+ *   - `studioStructuralWriteback.ts` — `move` / `delete` / `insert`. These
+ *     change WHERE markup is: they take a second location (an anchor sibling),
+ *     they change the file's line count (invalidating every id below them,
+ *     which is why `isSharedSourceNodeId` always reports them as shared), and
+ *     each can refuse for reasons only the AST can see.
+ *
+ * Synthetic nodes (e.g. the `index:body` root) don't match the loc pattern and
+ * are skipped. The save route applies each edit independently — one codemod
+ * throwing (e.g. a text edit landing on an element with mixed children) is
+ * logged and skipped by the route rather than aborting the whole batch.
  */
 import { isAbsolute, join, resolve, sep } from 'node:path'
 import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import { EXCLUDED_WORKSPACE_DIR_NAMES, INLINE_ID_SEPARATOR } from '@core/page-parser'
 import { isInlinedNodeId, isRouteChromeNodeId } from '@core/page-tree'
 import {
-  deleteJsxElement,
   detachComponentInstance,
-  moveJsxElement,
   setImportSpecifier,
   setJsxProp,
   setJsxStyle,
@@ -39,6 +47,11 @@ import {
   swapComponentInstance,
 } from '@core/ast-codemods'
 import { applyCssEdit, CssEditSchema } from './studioCssWriteback'
+import {
+  applyStructuralEdit,
+  isStructuralEditKind,
+  StructuralEditSchemas,
+} from './studioStructuralWriteback'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 
 const NODE_LOC_ID = /^(.*):(\d+):(\d+)$/
@@ -160,32 +173,6 @@ const SwapEditSchema = Type.Object({
   newComponentFile: Type.String(),
 })
 
-/**
- * One sibling reorder (`struct-01`) — `moveJsxElement`. `nodeId` is the moved
- * element's own location; `anchorNodeId` is the sibling it is written against,
- * because an INDEX does not name a position in the source (one `{items.map(…)}`
- * child contributes N canvas nodes, a `{cond && <X/>}` contributes one of two,
- * whitespace contributes none) while "immediately before/after that element"
- * does. Both ids decode through the same `studioEditLocation` every other kind
- * shares, so ordering and touched-file collection keep working.
- */
-const MoveEditSchema = Type.Object({
-  kind: Type.Literal('move'),
-  nodeId: Type.String(),
-  anchorNodeId: Type.String(),
-  position: Type.Union([Type.Literal('before'), Type.Literal('after')]),
-})
-
-/**
- * One element removal (`struct-01`) — `deleteJsxElement`. Like `detach`/`swap`
- * this can REFUSE with a specific reason (it is the component's root return,
- * it would orphan an import) rather than simply "no writable location".
- */
-const DeleteEditSchema = Type.Object({
-  kind: Type.Literal('delete'),
-  nodeId: Type.String(),
-})
-
 /** Discriminated union of every studio edit kind — `kind` is the discriminator. */
 export const StudioEditSchema = Type.Union([
   PropEditSchema,
@@ -196,8 +183,7 @@ export const StudioEditSchema = Type.Union([
   AssetEditSchema,
   DetachEditSchema,
   SwapEditSchema,
-  MoveEditSchema,
-  DeleteEditSchema,
+  ...StructuralEditSchemas,
   CssEditSchema,
 ])
 export type StudioEdit = Static<typeof StudioEditSchema>
@@ -307,7 +293,7 @@ function isWritableSourceRel(rel: string): boolean {
  */
 export function isSharedSourceNodeId(nodeId: string, kind?: StudioEdit['kind']): boolean {
   if (kind === 'asset' || kind === 'detach' || kind === 'swap') return true
-  if (kind === 'move' || kind === 'delete') return true
+  if (kind !== undefined && isStructuralEditKind(kind)) return true
   return isInlinedNodeId(nodeId) || isRouteChromeNodeId(nodeId)
 }
 
@@ -547,31 +533,22 @@ export function applyStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyO
     case 'tag':
       setJsxTagName({ ...loc, tag: edit.tag })
       return { applied: true }
-    case 'move': {
-      // `struct-01` — the anchor decodes through the same guard as every other
-      // target, so a hand-crafted `anchorNodeId` cannot name a file outside the
-      // workspace or a file that is not app source. Both ends must also live in
-      // the SAME file: the codemod requires them to be siblings, but that check
-      // reads an AST, and a cross-file pair should never get that far.
-      const anchor = studioEditLocation(edit.anchorNodeId)
-      if (!anchor || anchor.rel !== target.rel) {
-        throw new StudioEditRefusalError(
-          'cross-file',
-          'The element this move is written against is not in the same file, so there is no single place to write the new order.',
-        )
-      }
-      const result = moveJsxElement({
-        ...loc,
-        anchorLine: anchor.line,
-        anchorCol: anchor.col,
-        position: edit.position,
-      })
-      if (!result.ok) throw new StudioEditRefusalError(result.refusal.reason, result.refusal.message)
-      return { applied: true }
-    }
-    case 'delete': {
-      const result = deleteJsxElement(loc)
-      if (!result.ok) throw new StudioEditRefusalError(result.refusal.reason, result.refusal.message)
+    case 'move':
+    case 'delete':
+    case 'insert': {
+      // Both ends decode through the same guard, so a hand-crafted
+      // `anchorNodeId` cannot name a file outside the workspace or a file that
+      // is not app source — and a cross-file anchor is dropped here rather than
+      // reaching a codemod that would need an AST to notice. What each kind
+      // does with a missing anchor is `applyStructuralEdit`'s call.
+      const anchorId = 'anchorNodeId' in edit ? edit.anchorNodeId : undefined
+      const anchor = anchorId ? studioEditLocation(anchorId) : null
+      const result = applyStructuralEdit(
+        loc,
+        edit,
+        anchor && anchor.rel === target.rel ? anchor : null,
+      )
+      if (!result.ok) throw new StudioEditRefusalError(result.reason, result.message)
       return { applied: true }
     }
     case 'detach': {
@@ -605,14 +582,14 @@ export function applyStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyO
  */
 export interface StudioEditRefusal {
   nodeId: string
-  kind: 'detach' | 'swap' | 'move' | 'delete' | 'css'
+  kind: 'detach' | 'swap' | 'move' | 'delete' | 'insert' | 'css'
   reason: string
   message: string
 }
 
 /** The edit kinds whose refusal is a NAMED, expected outcome rather than a codemod exception. */
 function isRefusingEditKind(kind: StudioEdit['kind']): kind is StudioEditRefusal['kind'] {
-  return kind === 'detach' || kind === 'swap' || kind === 'move' || kind === 'delete' || kind === 'css'
+  return kind === 'detach' || kind === 'swap' || kind === 'css' || isStructuralEditKind(kind)
 }
 
 /** The result of applying a batch of studio edits — `POST /admin/api/studio/save`'s own response shape. */

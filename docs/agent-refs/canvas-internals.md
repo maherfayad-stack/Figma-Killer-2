@@ -32,7 +32,8 @@ IframeFrameSurface                       (the primitive)
   <iframe srcDoc="<!doctype html>…">
     head ← EditorChromeInjector          unlayered  — editor chrome only
     head ← ProjectCssInjector            @layer vendor — read-only package CSS (WS-2.3)
-    head ← ClassStyleInjector            @layer user-authored — reset + class registry
+    head ← ClassStyleInjector            @layer reset — publisher reset (LOWEST)
+                                         @layer user-authored — class registry
     head ← UserStylesheetInjector        @layer user-authored — user stylesheets
     head ← CanvasAnimationInjector       !important — design frames only
     head ← CanvasScrollUnrollInjector    !important — design frames only, toggleable
@@ -42,11 +43,23 @@ IframeFrameSurface                       (the primitive)
 
 **Cascade order matters and is deliberate.** Unlayered always beats `@layer`d
 regardless of specificity, so user CSS can never override editor chrome.
+The order is **`reset` → `vendor` → `user-authored`**, pinned by a bare
+`@layer reset, vendor, user-authored;` pre-declaration every canvas injector
+opens with.
+
 `@layer vendor` (`ProjectCssInjector` — `@alm-design/design-system`'s bundled
 CSS plus the open project's own bare-specifier package CSS, e.g. `import
 '@acme/ui/dist/style.css'`) is deliberately ordered BELOW `@layer
-user-authored`, via a bare `@layer vendor, user-authored;` pre-declaration
-every vendor/user-authored injector opens with — see
+user-authored` so the user's own edits win over a package default.
+
+**`@layer reset` is below BOTH, and that is load-bearing.** The publisher reset
+is written entirely in `:where(...)`, i.e. at zero specificity, precisely so
+anything overrides it — but that only works while it shares a layer with the
+rules it must lose to. It used to be bundled into `@layer user-authored`, one
+layer above `vendor`, and layer order beats specificity outright: `:where(*) {
+padding: 0 }` beat `.btn { padding: 12px 22px }`, so **every design-system
+component on the board rendered as unstyled text**. A reset is the
+lowest-priority thing in a document, so it gets the lowest layer. See
 `src/admin/pages/site/canvas/canvasCssLayers.ts` and
 `docs/features/canvas-iframe-per-frame.md`'s "Vendor vs. user-authored
 ordering". Vendor CSS is read-only: never parsed into a `StyleRule`, never in

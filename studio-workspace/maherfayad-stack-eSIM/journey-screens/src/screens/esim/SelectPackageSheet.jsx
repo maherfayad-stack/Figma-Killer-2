@@ -92,7 +92,7 @@ export default function SelectPackageSheet({ onClose, onConfirm }) {
 
           <div className="package-sheet__footer">
             <Button
-              variant="primary"
+              variant="secondary"
               label={t.common.confirm}
               onClick={handleConfirm}
               disabled={selected == null}

@@ -132,6 +132,11 @@ never silently no-ops.
   local import is now editable: `ParsedNode.assetOrigin` names the import's
   own specifier literal, `setImportSpecifier` rewrites it, `POST
   /admin/api/studio/asset-upload` lands the new file in the workspace
+- Structural writeback: a sibling **reorder**, a **delete**, and an **insert**
+  (adding a design-system component from the canvas picker writes the element
+  *and* its `import` into the `.tsx`, then re-reads the board — so the new node
+  is a real parsed node, not a canvas-minted one). Everything else refuses out
+  loud (`refuseStructuralEdit`)
 - MCP server with a live editor bridge + `studio_import_project`
 
 ### What does NOT work today (the roadmap)
@@ -143,7 +148,10 @@ auto-runs it), CSS-in-JS ·
 npm package components (only the hardcoded `@alm-design/design-system`) ·
 component instances, swap, detach · scroll unrolling · CSS
 write-back to disk · frame multi-select and bulk actions · Figma-grade
-inspector interactions · visual-audit MCP tools.
+inspector interactions · visual-audit MCP tools · **reparent / duplicate /
+wrap** (all still refuse) · adding a component whose package the project does
+not depend on yet (the `import` is written, `package.json` is not — install it
+from the Dependencies panel).
 
 All of it is specced in [`STUDIO-IMPORT-V2-PLAN.md`](STUDIO-IMPORT-V2-PLAN.md).
 **Read the relevant workstream section before designing anything.**

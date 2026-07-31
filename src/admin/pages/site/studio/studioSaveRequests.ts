@@ -182,14 +182,62 @@ export async function commitStudioDelete(nodeIds: readonly string[]): Promise<vo
 }
 
 /**
+ * Adding a new element to the user's `.tsx` — the write behind picking a
+ * design-system component out of the canvas inserter.
+ *
+ * Nothing is minted on the canvas first. A node created in the editor carries a
+ * nanoid id that could never be written back, which is exactly why `insert`
+ * used to be refused outright; instead the SOURCE grows the element (plus the
+ * `import` that names it) and the reload below brings it in as an ordinary
+ * parsed node with a real `rel:line:col`. That is why the success toast is
+ * pushed HERE rather than by the inserter: until the write lands there is
+ * nothing to report, and the inserter has no way to know whether it did.
+ */
+export async function commitStudioInsert(insert: {
+  parentNodeId: string
+  anchorNodeId: string | null
+  position: 'before' | 'after'
+  name: string
+  importSpecifier: string
+  props: Record<string, string | number | boolean>
+}): Promise<void> {
+  await commitStructural(
+    [
+      {
+        kind: 'insert',
+        nodeId: insert.parentNodeId,
+        ...(insert.anchorNodeId ? { anchorNodeId: insert.anchorNodeId, position: insert.position } : {}),
+        name: insert.name,
+        importSpecifier: insert.importSpecifier,
+        props: insert.props,
+      },
+    ],
+    'Add refused',
+    { title: `Added ${insert.name}`, body: 'Written to your project source.' },
+  )
+}
+
+/**
  * Shared body of the structural commits: post, report what the source refused,
  * and re-sync the board with disk whatever happened.
+ *
+ * `success` is passed only by commits with no optimistic canvas change to
+ * stand in for the result — an insert shows nothing at all until the reload, so
+ * silence would be indistinguishable from a no-op. A move or a delete has
+ * already updated the tree, so it stays quiet on success.
  */
-async function commitStructural(edits: readonly Record<string, unknown>[], refusalTitle: string): Promise<void> {
+async function commitStructural(
+  edits: readonly Record<string, unknown>[],
+  refusalTitle: string,
+  success?: { title: string; body: string },
+): Promise<void> {
   try {
     const result = await postEdits(edits)
     for (const refusal of result.refusals ?? []) {
       pushToast({ kind: 'error', title: refusalTitle, body: refusal.message })
+    }
+    if (success && result.written > 0) {
+      pushToast({ kind: 'success', title: success.title, body: success.body, location: 'module-inserter' })
     }
     // A skip with no refusal means the location decoded to nothing writable at
     // all — the id was stale against disk. Same remedy, but say so rather than

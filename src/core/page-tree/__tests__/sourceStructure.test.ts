@@ -13,11 +13,14 @@ import {
   isRouteChromeNodeId,
   isSourceDerivedNodeId,
   isStudioPageRootId,
+  refuseMintedNodeInsert,
   refuseStructuralEdit,
 } from '../index'
 
 const PLAIN = 'pages/Home.tsx:12:6'
 const SIBLING = 'pages/Home.tsx:14:6'
+const LIST_ROW = 'pages/Home.tsx:12:6#3'
+const INLINED = 'pages/Home.tsx:12:6~ui/Icon.tsx:2:4'
 
 describe('studio node id grammar', () => {
   it('recognises the ids the importer mints and nothing else', () => {
@@ -80,9 +83,33 @@ describe('refuseStructuralEdit', () => {
 
   it('refuses every gesture that would need a source position that does not exist yet', () => {
     expect(refuseStructuralEdit({ kind: 'reparent', node: { id: PLAIN } })?.reason).toBe('reparent')
-    expect(refuseStructuralEdit({ kind: 'insert', node: { id: PLAIN } })?.reason).toBe('insert')
     expect(refuseStructuralEdit({ kind: 'duplicate', node: { id: PLAIN } })?.reason).toBe('duplicate')
     expect(refuseStructuralEdit({ kind: 'wrap', node: { id: PLAIN } })?.reason).toBe('wrap')
+  })
+
+  it('allows an INSERT into a plain container — the new element is written, not minted', () => {
+    // `insertJsxElement` writes the element and its import into the file and the
+    // board re-reads it, so the question here is only whether this container can
+    // hold a written child. No anchor is needed: appending is a real position.
+    expect(refuseStructuralEdit({ kind: 'insert', node: { id: PLAIN } })).toBeNull()
+  })
+
+  it('refuses an insert into a container whose own placement is not writable', () => {
+    expect(refuseStructuralEdit({ kind: 'insert', node: { id: LIST_ROW } })?.reason).toBe('list-row')
+    expect(refuseStructuralEdit({ kind: 'insert', node: { id: INLINED } })?.reason).toBe('shared-component')
+    expect(refuseStructuralEdit({ kind: 'insert', node: { id: 'app/layout.tsx:3:4' } })?.reason).toBe('route-chrome')
+    expect(
+      refuseStructuralEdit({ kind: 'insert', node: { id: PLAIN, lockReason: 'a spread' } })?.reason,
+    ).toBe('code-placed')
+  })
+
+  it('refuses adding an ALREADY-MINTED node to a studio tree, and only there', () => {
+    // The plugin/agent path (`applyTreeOperation`): the node object arrives with
+    // an id of its own, which can never be a source location.
+    expect(refuseMintedNodeInsert({ parent: { id: PLAIN }, studioPageRoot: false })?.reason).toBe('insert')
+    expect(refuseMintedNodeInsert({ parent: { id: 'home:body' }, studioPageRoot: true })?.reason).toBe('insert')
+    // An ordinary CMS tree is completely unaffected.
+    expect(refuseMintedNodeInsert({ parent: { id: 'V1StGXR8_Z5jdHi6B-myT' }, studioPageRoot: false })).toBeNull()
   })
 
   it('refuses a multi REORDER but not a multi DELETE', () => {
@@ -104,10 +131,10 @@ describe('refuseStructuralEdit', () => {
     )
   })
 
-  it('answers for the synthetic page root only when the caller says it is source-backed', () => {
+  it('says nothing about the synthetic page root — it is not a source location', () => {
+    // The root is never asked this question any more: `planSourceInsert`
+    // resolves it to the page's returned root element first, and the
+    // minted-node path asks `refuseMintedNodeInsert` instead (above).
     expect(refuseStructuralEdit({ kind: 'insert', node: { id: 'home:body' } })).toBeNull()
-    expect(refuseStructuralEdit({ kind: 'insert', node: { id: 'home:body' }, sourceBacked: true })?.reason).toBe(
-      'insert',
-    )
   })
 })
