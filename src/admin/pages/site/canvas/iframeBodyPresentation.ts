@@ -56,7 +56,9 @@ export function applyIframeBodyPresentation(
   }
 
   const declarations = normaliseInlineStyles(presentation.style)
-  if (body.dataset.studioIframeInteraction === 'canvas') {
+  // Every design-frame variant ('canvas' and the off-screen 'capture' surface)
+  // owns these declarations; only 'live' hands them back to the authored body.
+  if (body.dataset.studioIframeInteraction !== 'live') {
     for (const property of CANVAS_BODY_RESET_PROPERTIES) declarations.delete(property)
   }
   // Snapshot every touched declaration BEFORE applying any of them. A

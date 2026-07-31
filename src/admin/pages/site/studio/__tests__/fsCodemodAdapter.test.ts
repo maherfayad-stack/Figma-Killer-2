@@ -68,7 +68,14 @@ describe('fsCodemodAdapter — write-loop safety + framework sync', () => {
       if (path === '/admin/api/studio/load') {
         const { pages, ...meta } = body as { pages: unknown[]; [k: string]: unknown }
         const lines = [
-          { kind: 'meta', ...meta, pageCount: pages.length },
+          // `styleRuleSources` (panel-02, the `StyleRule.id → (file, selector,
+          // pos)` map CSS write-back needs) is REQUIRED on the meta line, so a
+          // fixture without it fails the whole union with the unhelpful
+          // `<root>: Expected union value`. Defaulted here rather than in each
+          // fixture, for the same reason the flat→NDJSON translation lives
+          // here: a call site that does not care about CSS sources should not
+          // have to name the field. A fixture that does care still overrides.
+          { kind: 'meta', styleRuleSources: {}, ...meta, pageCount: pages.length },
           ...pages.map((page) => ({ kind: 'page', page })),
         ]
         return new Response(

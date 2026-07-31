@@ -20,8 +20,16 @@ import { CANVAS_VIEWPORT_HEIGHT } from './resolveViewportUnits'
  * - 'live': a single real-size frame. The iframe is its own scroll viewport
  *   (published height behaviour), real cursors and text selection apply, and
  *   no events are forwarded — there is nothing to pan.
+ * - 'capture': an off-screen frame rendered ONLY to be read back — the agent
+ *   snapshot surface. It shares 'canvas' sizing and presentation (grow to
+ *   content, animations held at their last keyframe, scroll regions unrolled)
+ *   because the point is to capture what the design frame WOULD show. What it
+ *   must not have is interactive editor chrome: nothing can be selected in a
+ *   frame that is `inert` and `aria-hidden`, so a selection overlay there is
+ *   pure contamination of the captured body. `agentBreakpointCapture.test.tsx`
+ *   asserts the captured body contains the authored content and nothing else.
  */
-export type IframeInteraction = 'canvas' | 'live'
+export type IframeInteraction = 'canvas' | 'live' | 'capture'
 
 /**
  * Inline declarations owned by the design-frame sizing contract. Authored

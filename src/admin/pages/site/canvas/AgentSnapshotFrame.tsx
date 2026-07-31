@@ -63,6 +63,7 @@ export function AgentSnapshotFrame({
         <IframeFrameSurface
           breakpointId={breakpoint.id}
           width={breakpoint.width}
+          interaction="capture"
           dataAttrs={{ 'data-agent-snapshot-iframe': requestId }}
         >
           <CanvasTemplateContext.Provider value={templateContext}>

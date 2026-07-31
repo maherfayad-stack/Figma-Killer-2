@@ -117,17 +117,16 @@ const GRANDFATHERED: Record<string, number> = {
   // JSX (drag/insert/duplicate/delete) plus its two selection actions moved to
   // SelectionToolbar.tsx, leaving the overlay owning measurement alone. Under
   // CEILING, so it is now held by the normal ceiling rule.
-  // WS-5.1 (canvas-05) mounted CanvasSelectionOverlayInjector alongside the
-  // file's existing per-frame injectors, tipping it from 691 to 711 lines —
-  // a small, cohesive addition (one more injector in the same composition
-  // pattern as EditorChromeInjector/CanvasAnimationInjector), not new bloat.
-  // A real extraction candidate exists (the ~200-line cross-iframe pointer/
-  // keyboard-forwarding effect into its own hook, matching the file's own
-  // useIframeCursorBridge.ts/useCanvasFormControlSuppression.ts pattern) but
-  // is deliberately left for a follow-up rather than rushed alongside this
-  // change — that effect is exactly the kind of delicate, easy-to-regress
-  // cross-iframe event logic this file's own docblock warns about.
-  'src/admin/pages/site/canvas/IframeFrameSurface.tsx': 711,
+  // IframeFrameSurface.tsx graduated (711 → 695) when the `interaction:
+  // 'capture'` mode was added: rather than raise the cap for five new lines,
+  // the bootstrap-document identity (`IFRAME_SRC_DOC` + the one-time
+  // `claimIframeSrcDocument` sentinel claim) moved whole to
+  // `iframeSrcDocument.ts` — a self-contained, React-free concern that had no
+  // reason to live inside the component. Under CEILING, so it is now held by
+  // the normal ceiling rule. The larger candidate its old note named (the
+  // ~200-line cross-iframe pointer/keyboard-forwarding effect → its own hook)
+  // is still available and still deliberately deferred: that effect is exactly
+  // the delicate, easy-to-regress logic this file's docblock warns about.
   // server/repositories/media.ts graduated: the row ↔ asset mapping unit was
   // extracted into server/repositories/mediaAssetMapping.ts, dropping media.ts
   // to 583 lines — under CEILING, so it's now held by the normal ceiling rule.

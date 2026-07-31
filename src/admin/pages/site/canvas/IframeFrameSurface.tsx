@@ -95,28 +95,7 @@ import { useEditorStore } from '@site/store/store'
 import { closestReadonlyRegion, isElementLike } from './readonlyRegion'
 import { CanvasDocumentContext, CanvasFrameElementContext } from './CanvasContexts'
 import styles from './IframeFrameSurface.module.css'
-
-const IFRAME_DOCUMENT_SENTINEL = 'data-studio-canvas-document'
-const IFRAME_SRC_DOC = `<!doctype html><html ${IFRAME_DOCUMENT_SENTINEL}><head></head><body></body></html>`
-const IFRAME_DOCUMENT_FLAG = '__studioCanvasDocument'
-
-type StudioIframeDocument = Document & { [IFRAME_DOCUMENT_FLAG]?: true }
-
-function claimIframeSrcDocument(doc: Document): boolean {
-  const taggedDocument = doc as StudioIframeDocument
-  if (taggedDocument[IFRAME_DOCUMENT_FLAG]) return true
-  if (!doc.documentElement.hasAttribute(IFRAME_DOCUMENT_SENTINEL)) return false
-
-  // The sentinel identifies the final srcDoc only during bootstrap. Remove it
-  // before authored CSS/DOM selectors run, then keep the identity off-DOM so
-  // the editor document matches published <html> structure.
-  doc.documentElement.removeAttribute(IFRAME_DOCUMENT_SENTINEL)
-  Object.defineProperty(taggedDocument, IFRAME_DOCUMENT_FLAG, {
-    configurable: true,
-    value: true,
-  })
-  return true
-}
+import { IFRAME_SRC_DOC, claimIframeSrcDocument } from './iframeSrcDocument'
 
 /** Stable empty list so a script-less frame doesn't churn the injector's deps. */
 const EMPTY_RUNTIME_SCRIPTS: InjectableRuntimeScript[] = []
@@ -182,8 +161,9 @@ export interface IframeFrameSurfaceHandle {
   /** Convenience: the iframe's body. `null` until loaded. */
   contentBody: HTMLBodyElement | null
   /**
-   * The in-iframe selection-overlay root (WS-5.1) — `null` in live mode
-   * (never mounted) and until `CanvasSelectionOverlayInjector` creates it.
+   * The in-iframe selection-overlay root (WS-5.1) — `null` in live and
+   * capture modes (never mounted) and until `CanvasSelectionOverlayInjector`
+   * creates it.
    * `BreakpointSelectionOverlay` portals rings/badge into this instead of the
    * parent canvas root, so they live in the same coordinate space as the
    * element they track.
@@ -212,6 +192,10 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
     ref,
     ) {
       const isLive = interaction === 'live'
+      // A capture frame is a design frame in every presentation respect —
+      // it differs only in carrying no interactive editor chrome. See
+      // {@link IframeInteraction}.
+      const isCapture = interaction === 'capture'
       const iframeRef = useRef<HTMLIFrameElement | null>(null)
       const [iframeDoc, setIframeDoc] = useState<Document | null>(null)
       const [overlayRoot, setOverlayRoot] = useState<HTMLDivElement | null>(null)
@@ -673,7 +657,7 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
                 {/* Design frames only: selection/hover rings + the node-name badge
                     render INSIDE this document (WS-5.1) so they track the element
                     with zero zoom/pan conversion. See its own docblock. */}
-                {!isLive && (
+                {!isLive && !isCapture && (
                   <CanvasSelectionOverlayInjector
                     targetDocument={iframeDoc}
                     parentDocument={document}

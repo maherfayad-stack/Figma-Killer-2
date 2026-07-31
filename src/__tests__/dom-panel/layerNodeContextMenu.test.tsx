@@ -18,6 +18,7 @@ import { LayerNodeContextMenu } from '@site/panels/DomPanel/LayerNodeContextMenu
 import { PropertiesPanel } from '@site/panels/PropertiesPanel/PropertiesPanel'
 import { useEditorStore } from '@site/store/store'
 import { makeNode, makePage, makeSite } from '../fixtures'
+import { rebuildNodeIndexes } from '@site/store/slices/site/nodeIndex'
 import type { VisualComponent } from '@core/visualComponents'
 import {
   ConfirmDeleteContext,
@@ -799,8 +800,26 @@ describe('LayerNodeContextMenu — multi-delete confirmation', () => {
         c: makeNode({ id: 'c', moduleId: 'base.text' }),
       },
     })
+    const site = makeSite({ pages: [home], files: [], visualComponents: [] })
+    // `deleteNodes` resolves each id's page through `_nodeIdToPageIds` (WS-5.2,
+    // so a selection can span board frames). The store keeps that index in step
+    // via `loadSite`/`createSite` and an incremental patch on every mutation —
+    // but assigning `site` straight through `setState` runs none of that, so
+    // without this the index is empty, every id is dropped as "not on any
+    // page", and multi-delete silently no-ops.
+    // Fresh Maps, not the store's own: Mutative freezes committed state, so
+    // rebuilding in place throws "Cannot modify frozen object".
+    const indexes = {
+      nodeIdToPageIds: new Map<string, string[]>(),
+      textOriginKeyToCount: new Map<string, number>(),
+      inlineTailToCount: new Map<string, number>(),
+    }
+    rebuildNodeIndexes(indexes, site)
     useEditorStore.setState({
-      site: makeSite({ pages: [home], files: [], visualComponents: [] }),
+      site,
+      _nodeIdToPageIds: indexes.nodeIdToPageIds,
+      _textOriginKeyToCount: indexes.textOriginKeyToCount,
+      _inlineTailToCount: indexes.inlineTailToCount,
       activePageId: 'page-multi',
       selectedNodeId: 'b',
       selectedNodeIds: ['a', 'b'],
