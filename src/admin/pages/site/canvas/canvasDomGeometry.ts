@@ -176,6 +176,24 @@ export interface ClientRectLike {
 const MAX_TRANSPARENT_WRAPPER_DEPTH = 4
 
 /**
+ * Anything the canvas can measure a box from: a real DOM `Element`, or a
+ * SYNTHETIC stand-in for a node that rendered no element of its own.
+ *
+ * The second case exists for zero-DOM fragment nodes — `studio.instance`
+ * (WS-4.2) renders `<>{children}</>` and therefore spreads `data-node-id`
+ * nowhere, so `[data-node-id="…"]` finds nothing to measure. `canvasNodeLookup`
+ * builds a synthetic source whose rect is the union of the node's shallowest
+ * rendered descendants; because every measurement path here and in
+ * `canvasOverlayGeometry` only ever calls `getBoundingClientRect()` (and, for
+ * the box-less fallback below, reads `children`), such a stand-in flows through
+ * all of them unchanged.
+ */
+export interface CanvasRectSource {
+  getBoundingClientRect(): ClientRectLike
+  readonly children?: HTMLCollection
+}
+
+/**
  * The box a canvas node element actually occupies, or `null` when it occupies
  * none at all.
  *
@@ -190,7 +208,7 @@ const MAX_TRANSPARENT_WRAPPER_DEPTH = 4
  * boxed descendant returns `null`, which is what both callers already did with a
  * zero rect.
  */
-export function nodeVisualRect(element: Element, depth: number = 0): ClientRectLike | null {
+export function nodeVisualRect(element: CanvasRectSource, depth: number = 0): ClientRectLike | null {
   const rect = element.getBoundingClientRect()
   if (rect.width !== 0 || rect.height !== 0) return rect
   if (depth >= MAX_TRANSPARENT_WRAPPER_DEPTH) return null

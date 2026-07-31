@@ -42,11 +42,11 @@
  * - One overlay per breakpoint frame. Drop indicators stay inside the
  *   breakpoint viewport (they only appear during a drag, and the
  *   transform-scaled coordinate path is established for them).
- * - Resolves the rendered element via `[data-node-id="X"]` directly — each
- *   module spreads `nodeWrapperProps` onto its own root tag, so the matched
- *   element IS the rendered `<article>` / `<h1>` / grid `<div>` / etc., and
- *   `nodeVisualRect` (used by both measurement paths) falls back to the
- *   union of children for box-less (`display: contents`) nodes.
+ * - Resolves the rendered element via `[data-node-id="X"]` — each module
+ *   spreads `nodeWrapperProps` onto its own root tag, so the match IS the
+ *   rendered `<article>` / `<h1>` / `<div>`. Box-less (`display: contents`)
+ *   nodes fall back to the union of their children (`nodeVisualRect`), and
+ *   zero-DOM fragment nodes to their rendered descendants (`canvasNodeLookup`).
  * - Clears style positioning when the tracked node disappears or the
  *   selection/hover clears.
  *
@@ -59,7 +59,7 @@
 
 import { use, useEffect, useEffectEvent, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { selectActiveCanvasPage, useEditorStore } from '@site/store/store'
+import { selectCanvasPageFor, useEditorStore } from '@site/store/store'
 import {
   getNodeDisplayName,
   getNodeHtmlTag,
@@ -70,13 +70,9 @@ import { registry } from '@core/module-engine'
 import type { VisualComponent } from '@core/visualComponents'
 import { useEditorPermissions } from '@site/editorPermissionsContext'
 import { useShallow } from 'zustand/react/shallow'
-import { Button } from '@ui/components/Button'
 import { cn } from '@ui/cn'
-import { CopyPlusSolidIcon } from 'pixel-art-icons/icons/copy-plus-solid'
-import { TrashSolidIcon } from 'pixel-art-icons/icons/trash-solid'
-import { HandGrabSolidIcon } from 'pixel-art-icons/icons/hand-grab-solid'
-import { CanvasViewportActionsContext } from './CanvasContexts'
-import { CanvasInsertModuleButton } from './CanvasInsertModuleButton'
+import { CanvasPageContext, CanvasViewportActionsContext } from './CanvasContexts'
+import { SelectionToolbar } from './SelectionToolbar'
 import { useCanvasReorderDrag } from './useCanvasReorderDrag'
 import { useCanvasTreeLadderOverlay } from './CanvasTreeLadderOverlay'
 import { CanvasNodeElementCache } from './canvasNodeLookup'
@@ -88,6 +84,7 @@ import {
   unionCanvasOverlayRects,
   type CanvasOverlayRect,
 } from './canvasOverlayGeometry'
+import type { CanvasRectSource } from './canvasDomGeometry'
 import {
   dropIndicatorStyle,
   hideOverlayElement,
@@ -171,20 +168,6 @@ interface BreakpointSelectionOverlayProps {
   overlayRoot: HTMLElement | null
 }
 
-function duplicateSelectedLayers() {
-  const ids = useEditorStore.getState().selectedNodeIds
-  if (ids.length === 0) return
-  useEditorStore.getState().duplicateNodes(ids)
-}
-
-function deleteSelectedLayers() {
-  const ids = useEditorStore.getState().selectedNodeIds
-  if (ids.length === 0) return
-  const state = useEditorStore.getState()
-  state.deleteNodes(ids)
-  state.clearSelection()
-}
-
 export function BreakpointSelectionOverlay({
   breakpointId,
   viewportRef,
@@ -221,10 +204,10 @@ export function BreakpointSelectionOverlay({
     const rule = s.site?.styleRules[classId]
     return rule ? styleRuleSelector(rule) : null
   })
-  // Node metadata for the in-iframe badge label (WS-5.1) — the active page's
-  // node map is an O(1) lookup, same active-page selector CanvasTreeLadderOverlay
-  // already uses; this is NOT the O(pages × nodes) scan `standing-03` flags.
-  const activePage = useEditorStore(selectActiveCanvasPage)
+  // THIS frame's page (board: one page per frame) — O(1) node-map reads for the
+  // in-iframe badge label (WS-5.1) and the zero-DOM fragment-node rect fallback.
+  const framePageId = use(CanvasPageContext)
+  const framePage = useEditorStore((s) => selectCanvasPageFor(s, framePageId))
   const visualComponents = useEditorStore((s) => s.site?.visualComponents ?? EMPTY_VISUAL_COMPONENTS)
   // One ref per selected node, keyed by id. Stable across renders while the
   // id stays in the selection — when an id is removed, its ring entry is
@@ -390,7 +373,7 @@ export function BreakpointSelectionOverlay({
     // regression. It also covers the brief design-mode startup window before
     // the injector's own effect has created the root.
     let fallbackSession: ReturnType<typeof createCanvasOverlayMeasureSession> | null = null
-    const measureRing = (target: HTMLElement | null): CanvasOverlayRect | null => {
+    const measureRing = (target: CanvasRectSource | null): CanvasOverlayRect | null => {
       if (overlayRoot) return measureIframeLocalRect(target)
       fallbackSession ??= createCanvasOverlayMeasureSession(iframe, canvasRoot)
       return fallbackSession.measure(target)
@@ -401,7 +384,7 @@ export function BreakpointSelectionOverlay({
     const ringPlacements: Array<{ id: string; ring: HTMLDivElement | null; rect: CanvasOverlayRect | null }> = []
     for (const id of selectedNodeIds) {
       trackedIds.add(id)
-      const rect = measureRing(elementCache.resolve(iframeDoc, id))
+      const rect = measureRing(elementCache.resolve(iframeDoc, id, framePage))
       ringPlacements.push({ id, ring: ringRefs.current?.get(id) ?? null, rect })
     }
 
@@ -409,7 +392,7 @@ export function BreakpointSelectionOverlay({
     let hoverRect: CanvasOverlayRect | null = null
     if (hoverId) {
       trackedIds.add(hoverId)
-      hoverRect = measureRing(elementCache.resolve(iframeDoc, hoverId))
+      hoverRect = measureRing(elementCache.resolve(iframeDoc, hoverId, framePage))
     }
     elementCache.retainOnly(trackedIds)
 
@@ -432,7 +415,7 @@ export function BreakpointSelectionOverlay({
     if (overlayRoot && showRings) {
       for (const { id, rect } of ringPlacements) {
         const badge = badgeRefs.current?.get(id) ?? null
-        positionNodeBadge(badge, rect, resolveNodeBadgeLabel(activePage, id, visualComponents))
+        positionNodeBadge(badge, rect, resolveNodeBadgeLabel(framePage, id, visualComponents))
       }
     }
 
@@ -467,7 +450,7 @@ export function BreakpointSelectionOverlay({
     // studio board frame that owns it.
     let inspectorRect: CanvasOverlayRect | null = null
     for (const id of selectedNodeIds) {
-      const rect = session.measure(elementCache.resolve(iframeDoc, id))
+      const rect = session.measure(elementCache.resolve(iframeDoc, id, framePage))
       if (showToolbar && rect) toolbarUnion = unionCanvasOverlayRects(toolbarUnion, rect)
       if (inspectorNodeId === id) inspectorRect = rect
     }
@@ -524,58 +507,12 @@ export function BreakpointSelectionOverlay({
   }, [hasOverlayWork, iframeElement])
 
   const toolbar = showToolbar ? (
-    <div
-      ref={toolbarRef}
-      role="group"
-      aria-label="Selection actions"
-      className={styles.selectionToolbar}
-      data-canvas-selection-toolbar="true"
-      data-canvas-toolbar-mode={toolbarMode}
-      data-canvas-dragging={reorderDrag.dragging ? 'true' : undefined}
-      // The toolbar is portaled into the canvas root, whose onClick clears the
-      // selection on background clicks. Without this guard a toolbar click
-      // bubbles up, clears the selection, and unmounts the toolbar mid-action
-      // (e.g. the Insert-module action would clear the selection as the canvas
-      // reselects the element behind). Same pattern as CanvasNotch.
-      onClick={(event) => event.stopPropagation()}
-    >
-      <Button
-        variant="secondary"
-        size="xs"
-        iconOnly
-        aria-label="Drag selected layers"
-        tooltip="Drag selected layers"
-        className={cn(styles.selectionToolbarButton, styles.dragToolbarButton)}
-        onPointerDown={reorderDrag.handlePointerDown}
-      >
-        <HandGrabSolidIcon size={13} color="var(--text)" />
-      </Button>
-      <CanvasInsertModuleButton buttonClassName={styles.selectionToolbarButton} />
-
-      <Button
-        variant="secondary"
-        size="xs"
-        iconOnly
-        aria-label="Duplicate selected layers"
-        tooltip="Duplicate selected layers"
-        className={styles.selectionToolbarButton}
-        onClick={duplicateSelectedLayers}
-      >
-        <CopyPlusSolidIcon size={13} color="var(--text)" />
-      </Button>
-      <Button
-        variant="secondary"
-        size="xs"
-        iconOnly
-        tone="danger"
-        aria-label="Delete selected layers"
-        tooltip="Delete selected layers"
-        className={styles.selectionToolbarButton}
-        onClick={deleteSelectedLayers}
-      >
-        <TrashSolidIcon size={13} color="var(--danger-light)" />
-      </Button>
-    </div>
+    <SelectionToolbar
+      toolbarRef={toolbarRef}
+      mode={toolbarMode}
+      dragging={reorderDrag.dragging}
+      onDragPointerDown={reorderDrag.handlePointerDown}
+    />
   ) : null
 
   // Rings and the selector-affinity pool render INSIDE the iframe document

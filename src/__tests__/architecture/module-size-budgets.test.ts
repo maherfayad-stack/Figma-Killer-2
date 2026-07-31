@@ -118,16 +118,11 @@ const GRANDFATHERED: Record<string, number> = {
   // hints by living beside them.
   'server/handlers/studioWriteback.ts': 738,
   'src/admin/pages/site/store/slices/visualComponentsSlice.ts': 715,
-  // WS-5.1 (canvas-05) is the component's own primary work: rings/badge move
-  // into the in-iframe overlay, the toolbar/inspector keep a parent-doc
-  // anchor gated on a dirty flag instead of recomputing every RAF tick, and
-  // a live-mode fallback preserves the pre-fix rendering where the new
-  // injector never mounts — genuine new logic, not incidental bloat, but a
-  // real extraction candidate exists for a follow-up: the ~50-line toolbar
-  // JSX block (drag/insert/duplicate/delete buttons) is self-contained
-  // enough to become its own `SelectionToolbar.tsx`, taking `reorderDrag` +
-  // the two action callbacks as props.
-  'src/admin/pages/site/canvas/BreakpointSelectionOverlay.tsx': 718,
+  // BreakpointSelectionOverlay.tsx graduated (718 → 655) when `instance-ui-01`
+  // performed the extraction its own grandfather note had named: the toolbar
+  // JSX (drag/insert/duplicate/delete) plus its two selection actions moved to
+  // SelectionToolbar.tsx, leaving the overlay owning measurement alone. Under
+  // CEILING, so it is now held by the normal ceiling rule.
   // WS-5.1 (canvas-05) mounted CanvasSelectionOverlayInjector alongside the
   // file's existing per-frame injectors, tipping it from 691 to 711 lines —
   // a small, cohesive addition (one more injector in the same composition

@@ -18,7 +18,7 @@
  * the browser scrolled behind the user's back on iframe focus; that scroll is
  * now impossible, so compensating for it would be dead arithmetic.
  */
-import { nodeVisualRect } from './canvasDomGeometry'
+import { nodeVisualRect, type CanvasRectSource } from './canvasDomGeometry'
 
 export interface CanvasOverlayRect {
   x: number
@@ -31,7 +31,7 @@ export interface CanvasOverlayMeasureSession {
   /** Canvas-root client rect, or null in the fixed/body fallback mode. */
   canvasRect: DOMRect | null
   /** Measure one iframe element into canvas-root-relative overlay coords. */
-  measure(target: HTMLElement | null): CanvasOverlayRect | null
+  measure(target: CanvasRectSource | null): CanvasOverlayRect | null
 }
 
 /**
@@ -104,7 +104,7 @@ export function measureCanvasElementRect(
  * PARENT-document chrome (the toolbar, `InPlaceInspector`) needs, since that
  * chrome genuinely lives in a different coordinate space.
  */
-export function measureIframeLocalRect(target: HTMLElement | null): CanvasOverlayRect | null {
+export function measureIframeLocalRect(target: CanvasRectSource | null): CanvasOverlayRect | null {
   if (
     !target ||
     typeof (target as { getBoundingClientRect?: unknown }).getBoundingClientRect !== 'function'

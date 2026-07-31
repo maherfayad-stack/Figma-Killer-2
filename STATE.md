@@ -30,7 +30,7 @@ running now, chosen to be file-disjoint so they cannot collide:
 |---|---|---|
 | `parser-07` | `src/core/page-parser/` | **done** — `dfcdb9d`, audited |
 | `infra-01` | `server/handlers/studio/` + token extraction | **done** — `09f9ffe`, audited |
-| `instance-ui-01` | `src/admin/pages/site/panels/PropertiesPanel/` + canvas selection | running |
+| `instance-ui-01` | `src/admin/pages/site/panels/PropertiesPanel/` + canvas selection | **done** — browser-verified, see its entry. Its predecessor had built nearly all of it; three bugs kept every part of it from working in a real browser |
 | `test-infra-01` | `server/db/` + test helpers | running — dispatched after `infra-01` freed a slot |
 
 **Orchestrator error worth not repeating:** `parser-07` was listed above as
@@ -39,11 +39,10 @@ already landed inside `fb4821b`. A commit with no `STATE.md` entry is
 indistinguishable from unfinished work — **write the handoff entry in the same
 commit as the code**, not after.
 
-`panel-02` and `perf-01` are **deliberately held**, not forgotten:
-- `panel-02` shares `studioWriteback.ts` and `fsCodemodAdapter.ts` with work
-  `instance-ui-01` may touch — dispatch it once `instance-ui-01` lands.
-- `perf-01` touches canvas rendering, which `instance-ui-01` also touches for
-  click-to-select-the-instance — same reason, same ordering.
+`panel-02` and `perf-01` were held behind `instance-ui-01`, which has now landed
+— **both are free to dispatch.** Note for `perf-01`: `instance-ui-01` touched
+`NodeRenderer.tsx` (one Enter-key guard) and split
+`BreakpointSelectionOverlay.tsx`'s toolbar out into `SelectionToolbar.tsx`.
 
 Each resumed agent was told to `git status` / `git diff` FIRST, because its
 predecessor's partial edits are in the tree and re-deriving them would be waste.
@@ -93,6 +92,11 @@ extraction candidate in `module-size-budgets.test.ts`'s `GRANDFATHERED`
 comments. The ratchet still binds: neither may grow another line without
 extracting first.
 
+`BreakpointSelectionOverlay.tsx` (was 718) **graduated in `instance-ui-01`** —
+the toolbar JSX and its two selection actions moved to the new
+`SelectionToolbar.tsx`, exactly the extraction its own grandfather note had
+named, taking it to 655. Its ledger entry is gone.
+
 `staticEvalCore.ts` (was 831) **graduated in `parser-07`** — its default-literal
 read moved to the leaf `src/core/page-parser/defaultLiteralBindings.ts`, taking
 it to 663, under the 700 ceiling. Its ledger entry is gone; the ordinary gate
@@ -128,7 +132,7 @@ test.
 | 5 | `mcp-01` — WS-9 studio MCP tools: export/diff frames, fidelity report, bulk codemods | — | done (partial — see `mcp-01` below: fidelity report, orientation, bulk edits, codemods, guidelines resource shipped; export/render/diff frames deliberately NOT built this pass) |
 | 6 | `panel-01` — WS-6 Figma inspector: `ScrubInput`, target chip, align bar, typed prop controls, CSS write-back | `pkg-02` (`PropKind`) | done (partial — see entry below: `ScrubInput`/`AlignBar`/`MixedValue` shipped and wired into real usage; CSS write-back is the pure codemod primitive only, not end-to-end; full WS-6.1 Figma section reorder not attempted, only Position/Size promoted) |
 | 7 | `canvas-06` — overlay/bottom-sheet render fidelity across all 15 eSIM screens | `canvas-05` | done — see entry below |
-| 8 | `parser-05` — WS-4 instance model: `studio.instance` fragment nodes, call-site props, detach, swap | `pkg-02` | done (engine layer — parser/codemods/MCP; panel UI, click-to-select-the-instance, and package-instance detach not built — see entry below) |
+| 8 | `parser-05` — WS-4 instance model: `studio.instance` fragment nodes, call-site props, detach, swap | `pkg-02` | done (engine layer — parser/codemods/MCP). Its named gap — panel UI, click-to-select-the-instance, Enter/Esc — is **closed by `instance-ui-01`**, browser-verified. Still not built: package-instance detach, and a project-wide component catalog for the Swap picker |
 | 9 | `perf-01` — WS-5.3–5.6: iframe virtualization + frozen posters, no re-render on pan/zoom, page cache + NDJSON streaming, `scripts/bench/studioBoard.bench.ts` budgets | `canvas-05`, `board-02` | queued |
 
 Added after `mcp-01` measured the board:
@@ -209,6 +213,125 @@ are the remaining WS-2 items, not yet dispatched. See
 ---
 
 ## Recently landed
+
+### instance-ui-01 — clicking a component selects the instance, and you can see it
+- **Agent:** canvas-engineer (resumed after the spend-limit termination)
+- **Stage:** done
+- **Updated:** 2026-07-31
+- **Goal:** close the panel + selection gap `parser-05` named as its own honest
+  gap — click a component and get the `studio.instance`, Enter/Esc to step in
+  and out, edit call-site props, and meet detach's refusal in the user's terms.
+- **Scope:** `src/admin/pages/site/canvas/{canvasNodeLookup.ts,canvasDomGeometry.ts,
+  canvasOverlayGeometry.ts,BreakpointSelectionOverlay.tsx,SelectionToolbar.tsx,
+  NodeRenderer.tsx,useCanvasKeyboardShortcuts.ts,useInstanceEntryKeyboard.ts}`,
+  `src/__tests__/canvas/fragmentNodeRect.test.ts`,
+  `tests/e2e/instance-selection-ui.e2e.ts`,
+  `src/__tests__/architecture/module-size-budgets.test.ts`.
+
+- **What the predecessor had already built (do not re-derive):** essentially the
+  whole feature. `InstanceCallSiteView.tsx` + its CSS, `propLockReason.ts`, the
+  `renderModuleTabContent` branch, `updateInstanceCallSiteProp`,
+  `enterInstance`/`exitInstance`/`enterSelectedInstance` +
+  `enteredInstanceIds`, `findEnclosingInstance`, `NodeRenderer`'s click/hover/
+  double-click redirects, and `useInstanceEntryKeyboard` were all committed
+  already. This entry is about the **three things that stopped any of it from
+  working in a browser**, none of which a unit test could have seen.
+
+- **Done so far — the three real bugs, all found by driving the browser:**
+  1. **The selected instance drew NO selection ring.** A `studio.instance` is a
+     bare React Fragment (`InstanceEditor.tsx`), so it spreads `data-node-id`
+     nowhere; the overlay resolves every ring through
+     `[data-node-id="…"]`, got `null`, and drew nothing. The node was
+     selectable and had an open Properties panel with no canvas feedback at
+     all. Fixed with `fragmentNodeRectSource` in `canvasNodeLookup.ts`: a
+     synthetic `CanvasRectSource` spanning the node's SHALLOWEST rendered
+     descendants. It flows unchanged through `nodeVisualRect`,
+     `measureIframeLocalRect` and the measure session because all three only
+     ever call `getBoundingClientRect()` — that is why the fix is a widened
+     structural type, not a new measurement path.
+  2. **Enter selected the page `<body>` instead of stepping in.** An instance
+     has no element, so DOM focus after selecting one sits on whatever was last
+     clicked — frequently the iframe `<body>`, itself a canvas node carrying
+     `NodeRenderer`'s "Enter/Space = click me" handler. It fired first, replaced
+     the instance selection with the page root, and by the time the bridged
+     keystroke reached `useInstanceEntryKeyboard` the selection was no longer an
+     instance. `NodeRenderer`'s Enter branch now yields when the selection is a
+     `studio.instance`.
+  3. **Escape cleared the whole selection instead of stepping out one level.**
+     `useCanvasKeyboardShortcuts`'s Escape branch calls `clearSelection()`
+     unconditionally and never checked `defaultPrevented` — and `clearSelection`
+     resets `enteredInstanceIds`, so whichever handler lost the race, the stack
+     was empty by the time `exitInstance()` ran. Fixed by making that branch
+     instance-aware (check `defaultPrevented`, then try `exitInstance()`), so
+     the two handlers are coordinated and the ordering no longer matters.
+  4. `BreakpointSelectionOverlay.tsx` **graduated off `debt-01`** (718 → 655):
+     performed the extraction its own grandfather note had named —
+     `SelectionToolbar.tsx` now owns the toolbar JSX and its two selection
+     actions, leaving the overlay owning measurement. Its `GRANDFATHERED` entry
+     is deleted, not raised.
+
+- **Next step:** none for this work order. Natural follow-ups, both real and
+  both deliberately NOT done here: a project-wide component catalog for the Swap
+  picker (today's candidates are only local components already instantiated
+  elsewhere on the loaded board), and package-instance detach.
+
+- **Decisions:**
+  - *Instance geometry is the union of shallowest rendered descendants*, not the
+    first one found and not the parent's box — a component with two root
+    elements would otherwise under-measure. Guarded on an O(1)
+    "does this frame render this tree" check (`tree.rootNodeId`'s element, always
+    present because `applyIframeBodyPresentation` stamps it on the iframe
+    `<body>`), because otherwise every board frame that does NOT own the selected
+    node would walk the subtree on every RAF tick.
+  - *Fragment rect sources are not cached* — unlike an element they have no
+    `isConnected` to invalidate against, and they must re-read on every call or
+    the ring lags a reflow. The walk is bounded (`MAX_FRAGMENT_DESCENT`).
+  - *Clicking selects the NEAREST not-yet-entered instance*, not the outermost.
+    This is a deliberate deviation from Figma (which selects the outermost
+    top-level object) and it is what the predecessor's `findEnclosingInstance`
+    already implemented; it was left as-is because on this corpus the nearest
+    instance is the thing the user is pointing at. If a later work order wants
+    Figma-exact behaviour, that is the one function to change.
+
+- **Landmines:**
+  - **`E2E_REUSE_SERVER=1` reused a STALE leftover Playwright webServer**, and
+    cost this session well over an hour. Every studio board spec failed with
+    *"Could not load CMS site — `<root>`: Expected union value"*, which looks
+    exactly like a schema regression. It is not: the stale server predated
+    WS-5.5, ignored `?stream=1`, and answered the NDJSON request with the old
+    single-JSON envelope, which has no `kind` and so fails
+    `StudioLoadStreamLineSchema`'s union. Calling `tryServeStudio` directly
+    proved the code correct. **If a board spec fails at
+    `board-frames-layer`, kill whatever holds ports 5174/3002 and start fresh
+    before suspecting anything else.**
+  - A COLD `pageParseCache` re-parses the corpus before the board mounts, well
+    past Playwright's 10 s default. The admin shell shows its CMS "could not
+    load" state meanwhile — transient, not a failure.
+  - Editing a call-site prop **does not live-update the canvas**. The subtree was
+    produced by the parser at load time with the old value already substituted;
+    the new text appears after a save + re-parse. The panel and the dirty flag
+    update immediately. Stated plainly in the e2e spec rather than papered over.
+  - Auto-save is real and Studio overrides its delay. The e2e spec disables it
+    via `localStorage['studio-editor-prefs']` and only ever clicks Detach on a
+    component that REFUSES, so nothing in `studio-workspace/` is written.
+
+- **Verification:**
+  - `tests/e2e/instance-selection-ui.e2e.ts` — **PASSES against the real
+    `maherfayad-stack-eSIM` board**, driving real mouse and real keys. Observed:
+    clicking the price text selects the `<Price>` call site
+    (`…/BookingConfirmationScreen.jsx:99:20`) and rings it; the ring encloses the
+    clicked element; Enter moves the selection to
+    `…:99:20~…/Price.jsx:6:6` (inside the component's own file); Escape returns it
+    to `…:99:20`; the `value` call-site control seeds from the parsed literal
+    `"69"` and takes `"88"`; detaching `SheetHeader` refuses with a readable
+    reason (`useLanguage()` → `uses-hooks`).
+  - `bun test src/__tests__/canvas/` — 549 pass, 0 fail (includes the new
+    `fragmentNodeRect.test.ts`). `bun run build` and `bun run lint` clean.
+  - `canvas-selection-overlay-zoom.e2e.ts` and `instance-fragment-node.e2e.ts`
+    pass. **`board-frame-bulk-selection.e2e.ts` fails — NOT mine**: verified by
+    `git stash`ing this work and reproducing the identical marquee-mid-drag
+    failure on a clean tree. It belongs to `board-02`.
+- **Human action needed:** none.
 
 ### parser-07 — a conditional inside JSX renders ONE branch, not all of them
 - **Agent:** parser-surgeon (resumed after the spend-limit termination)

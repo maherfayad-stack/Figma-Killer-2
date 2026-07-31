@@ -405,6 +405,26 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
       // field the author placed inside their page), we leave the
       // keystroke alone so it can land in the field.
       if (isEditableTextTarget(e.target)) return
+      // instance-ui-01 — Enter belongs to the instance-entry gesture (Figma's
+      // "Enter steps INTO the component") whenever the current selection is a
+      // `studio.instance`. A browser pass is what caught this: an instance
+      // renders no element, so DOM focus after selecting one sits on whatever
+      // was last clicked — often the iframe `<body>`, which is itself a canvas
+      // node with this very handler. Enter therefore fired "click me" on the
+      // BODY, replacing the instance selection with the page root, and by the
+      // time the parent-document listener (`useInstanceEntryKeyboard`) saw the
+      // bridged keystroke the selection was no longer an instance, so nothing
+      // was entered and the following Escape had nothing to step out of.
+      // Yielding here cannot strand the keystroke: `useInstanceEntryKeyboard`
+      // is unconditionally mounted for the same editable, non-live canvas.
+      if (e.key === 'Enter') {
+        const state = useEditorStore.getState()
+        const selectedId = state.selectedNodeId
+        const selected = selectedId
+          ? selectCanvasPageFor(state, contextPageId)?.nodes[selectedId]
+          : null
+        if (selected?.moduleId === 'studio.instance') return
+      }
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault()
         handleNodeClick(nodeId, e as unknown as React.MouseEvent)

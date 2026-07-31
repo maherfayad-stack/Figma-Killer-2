@@ -167,6 +167,23 @@ export function useCanvasKeyboardShortcuts(
     // must run before the selectedNodeId guard so pressing Escape while in
     // VC mode with nothing selected still returns to the page canvas.
     if (event.key === 'Escape') {
+      // instance-ui-01 — Escape steps OUT of an entered `studio.instance` one
+      // level at a time (Figma's component/instance model) BEFORE it means
+      // "clear the selection". Two guards, because which handler sees the
+      // keystroke first depends on where DOM focus happens to sit: an instance
+      // renders no element, so focus after selecting one is wherever the last
+      // click left it — sometimes inside a breakpoint iframe (the keystroke
+      // arrives at `useInstanceEntryKeyboard`'s document-capture listener via
+      // `IframeFrameSurface`'s bridge), sometimes in this document (it reaches
+      // this React handler). `defaultPrevented` covers the first case — the
+      // step-out already happened and clearing here would immediately undo it,
+      // which is exactly the bug a browser pass caught. The `exitInstance()`
+      // call covers the second, where this is the only handler that runs.
+      if (event.nativeEvent.defaultPrevented) return
+      if (useEditorStore.getState().exitInstance()) {
+        event.preventDefault()
+        return
+      }
       clearSelection()
       useEditorStore.getState().clearFrameSelection()
       if (activeDocument?.kind === 'visualComponent') {
