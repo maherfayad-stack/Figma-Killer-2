@@ -5699,6 +5699,37 @@ into this work order while other agents are live in the tree. Logged as debt.
 
 ## Standing notes
 
+### standing-08 — NEVER type-check with `npx tsc`. It is the wrong compiler.
+
+**This repo pins `typescript@~6.0.3`. `npx tsc` resolves and downloads
+`5.9.3` instead**, because there is no `tsc` on PATH for npx to prefer. The two
+disagree about `lib` defaults and about discriminated-union narrowing, so the
+old compiler invents **~100–200 errors that do not exist**:
+
+- `error TS2488: Type 'NodeList' must have a '[Symbol.iterator]()' method`
+  (×14) — reads like a missing `DOM.Iterable` in `tsconfig.app.json`.
+- `error TS2339: Property 'error' does not exist on type '{ ok: true; … }'`
+  (×91) — reads like a broken `SchemaResult` narrowing across the whole repo.
+
+**Both are phantoms.** With the pinned compiler the same tree is `exit 0`,
+zero errors:
+
+```sh
+./node_modules/.bin/tsc -b     # correct — this is what `bun run build` runs
+npx tsc -b                     # WRONG — silently a different compiler
+```
+
+`bun run build` is `tsc -b && bun run scripts/vite.ts build`, and bun resolves
+`tsc` from `node_modules/.bin`, so **`bun run build` has always been right.**
+Use it, or the explicit `./node_modules/.bin/tsc` path.
+
+Recorded because **two agents on 2026-07-31 hit this independently and both
+misdiagnosed it** — one as "a tsconfig `lib`/`target` regression from a
+concurrent session", one as "another agent's in-flight refactor". Either
+would have sent the next person hunting a bug that does not exist. If you are
+about to report a large, cross-cutting `tsc` breakage in files nobody touched,
+**check `npx tsc --version` against `package.json` before you write it down.**
+
 ### standing-01 — the full suite runs now: 34 pre-existing failures, not ~200
 **Rewritten 2026-07-31 by `test-infra-01`. The old numbers are dead — do not
 quote "~200 failures" or "never run the full suite" any more.**
