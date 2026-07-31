@@ -53,7 +53,7 @@ import { useCanvasRenameDialog } from './useCanvasRenameDialog'
 import { CanvasLayerContextMenu } from './CanvasLayerContextMenu'
 import { useCanvasLayerContextMenu } from './useCanvasLayerContextMenu'
 import { useCanvasKeyboardShortcuts, isTextInputTarget } from './useCanvasKeyboardShortcuts'
-import { useInstanceEntryKeyboard } from './useInstanceEntryKeyboard'
+import { useCanvasSelectionKeyboard } from './useCanvasSelectionKeyboard'
 import { clientPointToEditorDoc } from './canvasDomGeometry'
 import { useConfirmDelete } from '@admin/shared/dialogs/ConfirmDeleteDialog'
 import { useEditorPreference, readEditorSelectPreference } from '@site/preferences/editorPreferences'
@@ -119,7 +119,6 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
   const setActiveBreakpoint = useEditorStore((s) => s.setActiveBreakpoint)
   const startInlineEdit = useEditorStore((s) => s.startInlineEdit)
   const setFocusedPanel = useEditorStore((s) => s.setFocusedPanel)
-  const setActiveDocument = useEditorStore((s) => s.setActiveDocument)
   const activeDocument = useEditorStore((s) => s.activeDocument)
   const {
     context: templatePreviewContext,
@@ -351,8 +350,6 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
     canvasKeyDown,
     selectedNodeId,
     editable,
-    activeDocument,
-    setActiveDocument,
     clearSelection,
     requestDeleteNode,
     deleteNodes,
@@ -447,10 +444,12 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
     return () => document.removeEventListener('keydown', onKeyDown)
   }, [editable, isLive])
 
-  // ─── instance-ui-01 — Enter enters / Esc exits a `studio.instance` ─────────
-  // Extracted to useInstanceEntryKeyboard.ts (module-size-budgets) — see that
-  // file for why this is a document-level listener, not React `onKeyDown`.
-  useInstanceEntryKeyboard(editable, isLive)
+  // ─── Enter / Escape: the whole selection ladder ────────────────────────────
+  // Enter steps into a `studio.instance` (instance-ui-01); Escape steps back
+  // out, and otherwise clears the node + frame selection and leaves VC mode
+  // (select-01). Document-level, not React `onKeyDown` — see that file for why
+  // focus-scoping silently killed Escape the moment the user touched a panel.
+  useCanvasSelectionKeyboard(editable, isLive)
 
   // ─── Canvas background click → deselect ───────────────────────────────────
   //

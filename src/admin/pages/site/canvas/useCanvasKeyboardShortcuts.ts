@@ -3,17 +3,23 @@
  *
  * Single source of truth for the canvas-level shortcuts that act on the
  * current selection. The handler delegates to `useCanvas` for zoom/pan
- * keys, runs an Escape branch that also exits VC mode, then routes the
- * remaining keys through the keybindings registry into per-family
- * helpers (delete / duplicate / clipboard).
+ * keys, then routes the remaining keys through the keybindings registry
+ * into per-family helpers (delete / duplicate / clipboard).
  *
  * Splitting out of `CanvasRoot` keeps "add a new layers.* shortcut" a
  * one-line edit inside this file rather than a churn-y diff against the
  * 500+ line canvas component.
+ *
+ * **Escape is deliberately NOT handled here** (`select-01`). This is a React
+ * `onKeyDown` on the canvas div, so it only fires while a canvas descendant
+ * holds DOM focus — and selecting a node auto-opens the Properties panel, so
+ * one click into it left Escape doing nothing at all. The whole Enter/Escape
+ * selection ladder lives in `useCanvasSelectionKeyboard.ts`, on `document`,
+ * scoped by intent rather than focus — the same move `board-02` made for
+ * `board.selectAllFrames` below.
  */
 
 import { useEditorStore } from '@site/store/store'
-import type { ActiveDocument } from '@site/store/slices/uiSlice'
 import { getKeybindingForCommand } from '@admin/spotlight/keybindings'
 
 type CanvasKeyEvent = React.KeyboardEvent<HTMLDivElement>
@@ -25,10 +31,7 @@ interface CanvasKeyboardShortcutsDeps {
   selectedNodeId: string | null
   /** True when the canvas is editable (false for read-only / preview). */
   editable: boolean
-  /** Drives the VC-mode-exit branch on Escape. */
-  activeDocument: ActiveDocument | null
-  setActiveDocument: (next: ActiveDocument | null) => void
-  /** Selection clearing happens unconditionally on Escape. */
+  /** Multi-delete clears the selection it just destroyed. */
   clearSelection: () => void
   /** Delete branch — routes through the editor confirm flow for a single node. */
   requestDeleteNode: (nodeId: string) => void
@@ -134,8 +137,6 @@ export function useCanvasKeyboardShortcuts(
     canvasKeyDown,
     selectedNodeId,
     editable,
-    activeDocument,
-    setActiveDocument,
     clearSelection,
     requestDeleteNode,
     deleteNodes,
@@ -163,34 +164,10 @@ export function useCanvasKeyboardShortcuts(
 
     if (runShortcut?.(event.nativeEvent)) return
 
-    // Escape exits VC mode regardless of selection (SF-1 / CR #666). This
-    // must run before the selectedNodeId guard so pressing Escape while in
-    // VC mode with nothing selected still returns to the page canvas.
-    if (event.key === 'Escape') {
-      // instance-ui-01 — Escape steps OUT of an entered `studio.instance` one
-      // level at a time (Figma's component/instance model) BEFORE it means
-      // "clear the selection". Two guards, because which handler sees the
-      // keystroke first depends on where DOM focus happens to sit: an instance
-      // renders no element, so focus after selecting one is wherever the last
-      // click left it — sometimes inside a breakpoint iframe (the keystroke
-      // arrives at `useInstanceEntryKeyboard`'s document-capture listener via
-      // `IframeFrameSurface`'s bridge), sometimes in this document (it reaches
-      // this React handler). `defaultPrevented` covers the first case — the
-      // step-out already happened and clearing here would immediately undo it,
-      // which is exactly the bug a browser pass caught. The `exitInstance()`
-      // call covers the second, where this is the only handler that runs.
-      if (event.nativeEvent.defaultPrevented) return
-      if (useEditorStore.getState().exitInstance()) {
-        event.preventDefault()
-        return
-      }
-      clearSelection()
-      useEditorStore.getState().clearFrameSelection()
-      if (activeDocument?.kind === 'visualComponent') {
-        setActiveDocument(null)
-      }
-      return
-    }
+    // Escape (step out of an instance / clear the selection / leave VC mode) is
+    // NOT handled here — see this module's doc comment. It lives in
+    // `useCanvasSelectionKeyboard.ts`, on `document`, for the same reason
+    // `board.selectAllFrames` does below.
 
     // `board.selectAllFrames` (⌘/Ctrl+A) is NOT handled here (board-02):
     // this handler is a React `onKeyDown` on the canvas div, so it only

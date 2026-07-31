@@ -193,7 +193,7 @@ test.describe('instance-ui-01: click selects the instance, Enter/Esc step in and
     //
     // Real keystrokes. Focus is inside the canvas iframe at this point
     // (`focusNodeWithoutScrolling` focuses the clicked element on every node
-    // click), which is precisely why `useInstanceEntryKeyboard` listens on the
+    // click), which is precisely why `useCanvasSelectionKeyboard` listens on the
     // parent `document` and `IframeFrameSurface` re-dispatches iframe keydowns
     // there — if that bridge is broken, this step is where it shows.
     // The ring's `data-canvas-overlay-node-id` is the node id the overlay is

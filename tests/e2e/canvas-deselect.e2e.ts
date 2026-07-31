@@ -5,25 +5,25 @@ import { expect, test, type FrameLocator, type Locator, type Page } from '@playw
  * nothing selected.**
  *
  * The user dogfooded the board and reported "I can't deselect after selecting."
- * No unit test in this repo could see it: happy-dom has no iframes with their
- * own event loop, so it cannot model the one mechanism that broke it — a
- * keystroke that originates inside a canvas frame's `<iframe>`, is re-dispatched
- * by `IframeFrameSurface`'s bridge onto the PARENT `document`, and therefore
- * never reaches any React `onKeyDown` (React 19 delegates to its root container,
- * a descendant of `document`; an event whose target IS `document` propagates
- * document → window only). `useCanvasKeyboardShortcuts` — where the generic
- * "Escape clears the selection" branch used to live — is exactly such a React
- * `onKeyDown`, and clicking a node focuses the element inside the iframe
- * (`focusNodeWithoutScrolling`), so after ANY normal selection Escape was
- * delivered to a handler that could not run.
+ * The mechanism, found by driving this browser: the generic "Escape clears the
+ * selection" branch used to live in `useCanvasKeyboardShortcuts`, a React
+ * `onKeyDown` on the canvas div — so it only fired while a DOM descendant of
+ * the canvas held focus. Selecting a node AUTO-OPENS the Properties panel, and
+ * the moment the user clicks into it (or the zoom buttons, or any other
+ * chrome) focus leaves the canvas and Escape silently does nothing, for the
+ * rest of the session. That is the Escape twin of the Ctrl+A defect `board-02`
+ * fixed the same way, and no unit test could see it: happy-dom has no layout,
+ * no real focus model, and no iframes with their own event loop.
  *
- * The four claims below are the whole precedence ladder, asserted end to end:
+ * The claims below are the whole precedence ladder, asserted end to end:
  *
  *   1. Select a node, press Escape → nothing selected.
- *   2. Select a node, click empty board background → nothing selected.
- *   3. Enter an instance, press Escape → steps OUT to the instance (does NOT
+ *   2. Select a node, click into the Properties panel so focus leaves the
+ *      canvas, press Escape → nothing selected. (The reported bug.)
+ *   3. Select a node, click empty board background → nothing selected.
+ *   4. Enter an instance, press Escape → steps OUT to the instance (does NOT
  *      clear); press Escape again → nothing selected.
- *   4. A marquee drag that hits no frame ends with nothing selected.
+ *   5. A marquee drag that hits no frame ends with nothing selected.
  *
  * "Nothing selected" is read from the canvas the way a user reads it: the
  * in-iframe selection ring (`[data-canvas-selection-ring="true"]`, WS-5.1) is
@@ -92,37 +92,85 @@ async function clickInFrame(page: Page, target: Locator): Promise<void> {
 }
 
 /**
- * A viewport point that hit-tests to the canvas root itself — genuine empty
- * board background. Scanned rather than guessed because the board's frames move
- * with every pan, and because `.layer`/`.transformLayer` are 0×0 in studio board
- * mode (see `useMarqueeSelection`'s module doc), so background points resolve
- * straight to `[data-studio-canvas-root]`.
+ * Wait until the editor shell has stopped moving. Selecting a node auto-opens
+ * the docked Properties panel, which animates the canvas viewport's width — so
+ * a background point scanned during that animation is over a frame (or over the
+ * panel) by the time the click lands. Two identical consecutive samples of the
+ * canvas root's box is the cheapest honest "settled" signal.
  */
-async function findEmptyBackgroundPoint(page: Page): Promise<{ x: number; y: number }> {
-  const point = await page.evaluate(() => {
-    const root = document.querySelector('[data-studio-canvas-root="true"]')
-    if (!(root instanceof HTMLElement)) return null
-    const rect = root.getBoundingClientRect()
-    const STEPS = 24
-    for (let row = 1; row < STEPS; row += 1) {
-      for (let col = STEPS - 1; col >= 1; col -= 1) {
-        const x = rect.left + (rect.width * col) / STEPS
-        const y = rect.top + (rect.height * row) / STEPS
-        if (document.elementFromPoint(x, y) === root) return { x, y }
-      }
-    }
-    return null
-  })
-  expect(point, 'no empty canvas background point found in the viewport').not.toBeNull()
-  return point!
+async function waitForCanvasLayoutToSettle(page: Page, canvasRoot: Locator): Promise<void> {
+  let previous = ''
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    const box = await canvasRoot.boundingBox()
+    const current = JSON.stringify(box)
+    if (current === previous) return
+    previous = current
+    await page.waitForTimeout(100)
+  }
+}
+
+/**
+ * A viewport RECT whose every corner hit-tests to the canvas root itself —
+ * genuine empty board background. Scanned rather than guessed because the
+ * board's frames move with every pan, and because `.layer`/`.transformLayer`
+ * are 0×0 in studio board mode (see `useMarqueeSelection`'s module doc), so
+ * background points resolve straight to `[data-studio-canvas-root]`.
+ *
+ * `size` is the drag extent the caller intends to use: a marquee that clips a
+ * frame is a frame-selecting marquee, not an empty one, so the whole rect has
+ * to be background — not just its origin.
+ */
+async function findEmptyBackgroundRect(
+  page: Page,
+  size: { width: number; height: number } = { width: 0, height: 0 },
+): Promise<{ x: number; y: number }> {
+  const scan = () =>
+    page.evaluate(
+      ({ width, height }) => {
+        const root = document.querySelector('[data-studio-canvas-root="true"]')
+        if (!(root instanceof HTMLElement)) return null
+        const rect = root.getBoundingClientRect()
+        const STEPS = 24
+        const isBackground = (x: number, y: number) => document.elementFromPoint(x, y) === root
+        for (let row = 1; row < STEPS; row += 1) {
+          for (let col = STEPS - 1; col >= 1; col -= 1) {
+            const x = rect.left + (rect.width * col) / STEPS
+            const y = rect.top + (rect.height * row) / STEPS
+            if (x + width > rect.right || y + height > rect.bottom) continue
+            const corners: Array<[number, number]> = [
+              [x, y],
+              [x + width, y],
+              [x, y + height],
+              [x + width, y + height],
+              [x + width / 2, y + height / 2],
+            ]
+            if (corners.every(([cx, cy]) => isBackground(cx, cy))) return { x, y }
+          }
+        }
+        return null
+      },
+      size,
+    )
+
+  // Re-scan until two consecutive scans agree: a point can stop being
+  // background between the scan and the click while the shell is animating.
+  let previous: { x: number; y: number } | null = null
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const point = await scan()
+    if (point && previous && point.x === previous.x && point.y === previous.y) return point
+    previous = point
+    await page.waitForTimeout(120)
+  }
+  expect(previous, 'no stable empty canvas background rect found in the viewport').not.toBeNull()
+  return previous!
 }
 
 test.describe('select-01: deselect always gets you back to nothing selected', () => {
-  // Four interaction phases against a 15-page corpus board, plus a possible
+  // Five interaction phases against a 15-page corpus board, plus a possible
   // cold ts-morph parse on open — the 60s default covers none of that.
   test.setTimeout(300_000)
 
-  test('Escape, background click, instance step-out, and an empty marquee all end at nothing selected', async ({
+  test('Escape, panel focus, background click, instance step-out, and an empty marquee all end at nothing selected', async ({
     page,
   }) => {
     const projectDir = await findProjectDir(page, PROJECT_FOLDER_NAME)
@@ -172,18 +220,53 @@ test.describe('select-01: deselect always gets you back to nothing selected', ()
       'Escape did not clear the selection — this is the reported "I can\'t deselect" defect',
     ).toHaveCount(0, { timeout: 10_000 })
 
-    // ── 2. Select, then click empty board background → nothing selected ────
+    // ── 2. THE REPORTED BUG: Escape after focus has left the canvas ────────
+    // Selecting a node auto-opens the Properties panel. One click into it and
+    // the canvas no longer holds DOM focus, which is exactly when the old
+    // React-`onKeyDown` Escape branch stopped running at all.
     await clickInFrame(page, priceValue)
     await expect(rings, 'clicking a node drew no selection ring').toHaveCount(1, { timeout: 10_000 })
 
-    const background = await findEmptyBackgroundPoint(page)
+    const propertiesPanel = page.getByTestId('properties-panel')
+    await expect(
+      propertiesPanel,
+      'selecting a node did not open the Properties panel',
+    ).toBeVisible({ timeout: 10_000 })
+    await waitForCanvasLayoutToSettle(page, canvasRoot)
+    const panelBox = await propertiesPanel.boundingBox()
+    expect(panelBox, 'the Properties panel has no bounding box').not.toBeNull()
+    // Near the top edge of the panel — its header strip, which carries no
+    // control that could change the document.
+    await page.mouse.click(panelBox!.x + panelBox!.width / 2, panelBox!.y + 8)
+    expect(
+      await page.evaluate(() => {
+        const root = document.querySelector('[data-studio-canvas-root="true"]')
+        return root instanceof Element && document.activeElement instanceof Element
+          ? root.contains(document.activeElement)
+          : false
+      }),
+      'the panel click did not move focus out of the canvas, so this phase proves nothing',
+    ).toBe(false)
+
+    await page.keyboard.press('Escape')
+    await expect(
+      rings,
+      'Escape did nothing once focus had left the canvas — this is the reported "I can\'t deselect" defect',
+    ).toHaveCount(0, { timeout: 10_000 })
+
+    // ── 3. Select, then click empty board background → nothing selected ────
+    await clickInFrame(page, priceValue)
+    await expect(rings, 'clicking a node drew no selection ring').toHaveCount(1, { timeout: 10_000 })
+
+    await waitForCanvasLayoutToSettle(page, canvasRoot)
+    const background = await findEmptyBackgroundRect(page)
     await page.mouse.click(background.x, background.y)
     await expect(
       rings,
       'clicking empty board background did not clear the selection',
     ).toHaveCount(0, { timeout: 10_000 })
 
-    // ── 3. Instance ladder: Escape steps OUT first, and only then clears ───
+    // ── 4. Instance ladder: Escape steps OUT first, and only then clears ───
     await clickInFrame(page, priceValue)
     await expect(
       detachButton,
@@ -217,18 +300,17 @@ test.describe('select-01: deselect always gets you back to nothing selected', ()
       'Escape with a selection and nothing entered did not clear the selection',
     ).toHaveCount(0, { timeout: 10_000 })
 
-    // ── 4. A marquee drag that hits no frame ends at nothing selected ──────
+    // ── 5. A marquee drag that hits no frame ends at nothing selected ──────
     await clickInFrame(page, priceValue)
     await expect(rings, 'clicking a node drew no selection ring').toHaveCount(1, { timeout: 10_000 })
 
-    const dragStart = await findEmptyBackgroundPoint(page)
-    const dragEnd = { x: dragStart.x + 60, y: dragStart.y + 60 }
-    const dragEndIsBackground = await page.evaluate(
-      ({ x, y }) =>
-        document.elementFromPoint(x, y) === document.querySelector('[data-studio-canvas-root="true"]'),
-      dragEnd,
-    )
-    expect(dragEndIsBackground, 'the marquee drag would have crossed a frame').toBe(true)
+    await waitForCanvasLayoutToSettle(page, canvasRoot)
+    const MARQUEE_EXTENT = 60
+    const dragStart = await findEmptyBackgroundRect(page, {
+      width: MARQUEE_EXTENT,
+      height: MARQUEE_EXTENT,
+    })
+    const dragEnd = { x: dragStart.x + MARQUEE_EXTENT, y: dragStart.y + MARQUEE_EXTENT }
 
     await page.mouse.move(dragStart.x, dragStart.y)
     await page.mouse.down()

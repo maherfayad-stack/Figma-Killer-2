@@ -147,6 +147,18 @@ events. Four cases are bridged explicitly:
    same-origin document via `collectSameOriginDocuments`. Cross-realm
    `instanceof Node` fails, so use `isNode` (`src/ui/lib/sameOriginDocuments.ts`).
 
+**A canvas shortcut that must work from anywhere cannot be a React `onKeyDown`.**
+`useCanvasKeyboardShortcuts` is a React handler on the canvas div, so it only
+fires while a canvas descendant holds DOM focus — and selecting a node
+auto-opens the Properties panel, so one click into it takes focus out of the
+canvas for the rest of the session. Two shortcut families are therefore
+document-level and scoped by *intent* instead: `board.selectAllFrames`
+(`CanvasRoot.tsx`, `board-02`) and the whole Enter/Escape selection ladder
+(`useCanvasSelectionKeyboard.ts`, `select-01`) — step into an instance, step
+out of one, clear the node + frame selection, leave VC mode. Adding a shortcut
+that a user would expect to work "wherever I am" belongs there, not in the
+React handler.
+
 **During an inline edit both keyboard paths must stand down.**
 `useCanvasKeyboardShortcuts` bails on `activeInlineEdit`, and
 `IframeFrameSurface.onKeyDown` returns early without forwarding — otherwise

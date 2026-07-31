@@ -37,6 +37,11 @@
  * suppresses the single trailing native 'click' event mouseup generates —
  * without that, `CanvasRoot`'s background-click-to-deselect handler would
  * immediately clear the selection the drag just made.
+ *
+ * `select-01`: a non-additive marquee also clears any NODE selection as soon as
+ * it passes the threshold. It is a replacing gesture, and `setSelectedFrameIds`
+ * only drops the node selection when it selects at least one frame — so a drag
+ * over empty board used to end with the old node still selected.
  */
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 import { useEditorStore } from '@site/store/store'
@@ -143,6 +148,13 @@ export function useMarqueeSelection(
       const state = useEditorStore.getState()
       const board = selectActiveBoard(state)
       if (!board) return
+      // A non-additive marquee REPLACES the selection, and that has to include
+      // the node selection — `setSelectedFrameIds` only clears it when it
+      // selects at least one frame, so a drag across genuinely empty board
+      // ended with the previously selected node still ringed (`select-01`:
+      // "a marquee that selects nothing must end at nothing selected").
+      // Self-limiting: after the first clearing move the set is already empty.
+      if (!drag.additive && state.selectedNodeIds.length > 0) state.clearSelection()
       const pages = state.site?.pages ?? EMPTY_PAGES
       const marqueeFrames: MarqueeFrame[] = resolveFramesWithPages(board, pages).map(({ frame, page }) => ({
         pageId: page.id,

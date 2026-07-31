@@ -523,7 +523,8 @@ Canvas-internal values are not CSS tokens — they are raw integers intentionall
 | `CanvasTreeLadderRowButton.tsx` | Single row button in the Alt/Option inspect ladder              |
 | `useCanvas.ts`                  | Pan/zoom gesture hook; `centerOnBreakpointFrame` for initial viewport focus |
 | `canvasFocusTarget.ts`          | `resolveCanvasFocusTarget` — which change re-frames the canvas (the board when there is one, the page otherwise; once per unit) so selecting never moves the viewport |
-| `useCanvasKeyboardShortcuts.ts` | Editor keyboard shortcuts (delete, duplicate, wrap, …)          |
+| `useCanvasKeyboardShortcuts.ts` | Editor keyboard shortcuts (delete, duplicate, wrap, …) — React `onKeyDown`, so focus-scoped to the canvas by construction |
+| `useCanvasSelectionKeyboard.ts` | The Enter/Escape selection ladder: step into a `studio.instance`, step back out, otherwise clear the node + frame selection and leave VC mode. Document-level and scoped by intent, so it still works once focus has moved to a panel |
 | `useRuntimeScriptBuild.ts`      | Builds the bundled runtime scripts for the Run-scripts toggle    |
 | `useIframeCursorBridge.ts`      | Bridges iframe-native cursor movement to parent-doc callbacks (used by breakpoint activation tooltip) |
 | `CanvasComposedTree.tsx`        | Renders the active document inside its matching template chain (wrappers read-only, active doc editable) |

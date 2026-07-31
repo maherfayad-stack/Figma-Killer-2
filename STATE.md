@@ -290,6 +290,154 @@ are the remaining WS-2 items, not yet dispatched. See
 
 ## Recently landed
 
+### select-01 — Escape stopped working the moment you touched a panel; and the lock census says the locks are mostly honest, with one over-broad class
+- **Agent:** canvas-engineer
+- **Stage:** done — browser-verified against `studio-workspace/maherfayad-stack-eSIM`
+- **Updated:** 2026-07-31
+- **Scope:** `src/admin/pages/site/canvas/{useCanvasSelectionKeyboard.ts (renamed from
+  useInstanceEntryKeyboard.ts),useCanvasKeyboardShortcuts.ts,CanvasRoot.tsx,NodeRenderer.tsx}`,
+  `src/admin/pages/site/canvas/BoardFramesLayer/useMarqueeSelection.ts`,
+  `src/__tests__/canvas/canvasSelectionKeyboard.test.tsx` (new),
+  `tests/e2e/canvas-deselect.e2e.ts`, `tests/e2e/instance-selection-ui.e2e.ts` (comment only),
+  `docs/agent-refs/canvas-internals.md`, `docs/editor.md`. **Nothing under
+  `src/core/page-parser/` — see "Reported, not fixed" below.**
+
+- **Verdict up front.** The user's *"I can't deselect after selecting"* is real,
+  and it is **not** what the reproduction spec's own docblock guessed. The
+  predecessor's hypothesis (the bridged-iframe keystroke never reaching a React
+  `onKeyDown`) is **wrong** — React attaches its delegated listeners to the
+  portal container too, so a keydown born inside a frame iframe DOES reach
+  `CanvasRoot`'s `onKeyDown` through the fiber tree. Escape from inside the
+  canvas always worked, and I measured it working four separate times before
+  finding the real one.
+  **The real defect: `useCanvasKeyboardShortcuts` is a React `onKeyDown` on the
+  canvas div, so it only fires while a canvas descendant holds DOM focus — and
+  selecting a node AUTO-OPENS the Properties panel.** One click into that panel
+  (or on the zoom buttons, or any other chrome) and Escape does nothing, for the
+  rest of the session. Observed in Chromium: select the price node → click the
+  Properties panel header → `activeElement` is `aside[properties-panel]`,
+  OUTSIDE the canvas → Escape → the ring stays. Same with focus on the "Zoom
+  out" button. **This is the exact Escape twin of the Ctrl+A bug `board-02`
+  fixed, in the same file, by the same move.**
+
+- **Fix.** `useInstanceEntryKeyboard.ts` → **`useCanvasSelectionKeyboard.ts`**,
+  now the single owner of the whole ladder, all of it on `document`:
+  1. capture listener (unchanged from `instance-ui-01`): Enter steps into a
+     `studio.instance`, Escape steps out one level, `stopPropagation` only when
+     it actually claims;
+  2. new bubble listener: Escape clears the node selection + the frame selection
+     and leaves VC mode. Scoped by **intent**, never by focus — it stands down
+     for `activeInlineEdit`, a text-input target, an already-`defaultPrevented`
+     keystroke, a focus inside `[role=dialog|alertdialog|menu|listbox]`, and for
+     "there is nothing to clear".
+  The Escape branch is **deleted** from `useCanvasKeyboardShortcuts`, along with
+  its now-unused `activeDocument`/`setActiveDocument` deps — one owner, not two.
+- **Second, smaller fix (`useMarqueeSelection.ts`).** A non-additive marquee is a
+  *replacing* gesture, but `setSelectedFrameIds` only drops the node selection
+  when it selects ≥1 frame — so a drag across genuinely empty board left the
+  previously selected node ringed. It now clears the node selection once, on the
+  first move past the drag threshold.
+
+- **Decisions:**
+  - *Bubble phase, `preventDefault` only, never `stopPropagation`* for the generic
+    branch. Anything that owns Escape more locally (`CanvasTreeLadderOverlay`,
+    an inline edit) registers earlier and marks the event handled, which stands
+    this listener down; and a `Dialog` mounted LATER (its document listener is
+    registered on open, i.e. after this one) still gets its own Escape-to-close.
+    The `[role=dialog]` guard is what keeps the selection from being cleared
+    underneath an open modal.
+  - *Capture phase kept for the instance branch* exactly as `instance-ui-01` left
+    it. Its `stopPropagation` also means the bubble listener never runs for a
+    claimed step-out — the two can't fight.
+  - *The e2e spec's two mechanics were wrong and are fixed, not weakened.* Its
+    background-point scanner picked a point while the docked Properties panel was
+    still ANIMATING open, so the point was over a frame (or over the panel) by
+    the time the click landed — that is the whole reason the committed spec
+    failed at phase 2, and it is not a product defect. `findEmptyBackgroundRect`
+    now re-scans until two consecutive scans agree and validates all four corners
+    of the intended drag rect (the old helper added +60/+60 blindly, which
+    crossed a frame on this board). A `waitForCanvasLayoutToSettle` helper waits
+    out the sidebar animation. Every assertion is unchanged; a fifth phase was
+    ADDED for the real bug (click the panel, then Escape).
+
+- **Reported, not fixed — the lock census (Bug 2).** Read-only, all 15 pages of
+  `maherfayad-stack-eSIM`, via `loadStudioPages` (the real pipeline). **802 nodes,
+  276 locked = 34.4%.** (`parser-05`'s 29.1% is not comparable — `parser-07`'s
+  branch selection changed the node count.) By reason:
+
+  | reason | count | share of locks | of those: ≥1 editable prop / no props / all props code-valued |
+  |---|---|---|---|
+  | `value from <expr>` (resolution-only) | 149 | 54.0% | **147** / 0 / 2 |
+  | `item N of <ARRAY>` (`.map` row) | 117 | 42.4% | 31 / 23 / 63 |
+  | `dynamic — rendered in code` | 8 | 2.9% | 8 / 0 / 0 |
+  | spread props | 2 | 0.7% | 2 / 0 / 0 |
+
+  **The `.map`, dynamic and spread locks (127, 46%) are load-bearing and correct** —
+  one piece of source JSX renders every row, so there is no single honest write
+  target for a move or a delete, and the notice says exactly that.
+  **The 149 `value from …` locks are over-broad, and they are the majority.**
+  `withResolutionLock` (`src/core/page-parser/resolutionLock.ts`) sets
+  `locked: true` on a node because ONE of its VALUES had to be resolved by the
+  evaluator — while `ParsedNode.locked`'s own doc comment says it is
+  "Deliberately NOT a statement about its values", and the per-prop truth already
+  lives in `codeProps` (`sourceWritability.ts`). `<h1>{c.heading}</h1>` is an
+  ordinary element at a known line and column: moving or deleting it is a
+  precise, single-target AST edit. What it costs the user today: those nodes
+  cannot be dragged / reparented / reordered (`page-tree/dnd.ts`,
+  `useCanvasReorderDrag.ts`), and every one of them renders `SourceLockedNotice`
+  whose first clause — *"This element can't be moved or deleted from here"* — is
+  false for them. That is the exact tooltip in the user's screenshot.
+  **Proposed change (parser territory, NOT made here):** in `withResolutionLock`,
+  a resolution with no structural reason should return
+  `{ locked: false, resolution }` and leave the read-only truth to `codeProps` —
+  the same call `branchAlternatives` already makes ("the parser is certain of the
+  STRUCTURE here"). `SourceLockedNotice` then needs a variant for
+  "structure is fine, these values are not". `src/core/page-parser/` is
+  `parser-08`'s; `resolutionLock.ts` is in its working diff right now.
+  Nothing was loosened here. Tier D stays banned.
+
+- **Landmines:**
+  - **`page.mouse.click` on a "background" point scanned a moment earlier is a
+    race on this board.** Selecting a node opens the docked Properties panel,
+    which animates the canvas viewport's width; the panel occupies x ≥ 920 of a
+    1280 viewport once open. Any future canvas spec that scans for a click point
+    must settle the layout first and re-validate the point.
+  - **Every element on the eSIM screens resolves to a `studio.instance`.** I
+    walked all 107 `[data-node-id]` elements in `booking-confirmation-screen`
+    and could not find one whose click selects a non-instance node —
+    `findEnclosingInstance` redirects them all. Any spec that needs a "plain"
+    node must build its own fixture.
+  - The predecessor's docblock hypothesis in `canvas-deselect.e2e.ts` was
+    confidently wrong and would have sent the next agent to the wrong file. It is
+    rewritten with what the browser actually showed. **A hypothesis written as a
+    docblock reads like a finding — say which one it is.**
+
+- **Verification:**
+  - `tests/e2e/canvas-deselect.e2e.ts` — **passes**, all five phases, real mouse
+    and real keys against the real 15-frame eSIM board. Before the fix it failed;
+    the panel-focus phase fails on unmodified HEAD and passes after.
+  - `bun test src/__tests__/canvas src/__tests__/architecture` → 1030 pass / 4
+    fail. All 4 are `standing-01`'s Windows path/separator gates (`CodeMirror
+    lazy-load`, `dispatcher HTML pipeline`, `Error boundary coverage`,
+    `Keybindings registry`) — reproduced identically on a `git stash`ed tree.
+  - New `canvasSelectionKeyboard.test.tsx` → 10 pass (ladder order + every
+    stand-down rule).
+  - `tests/e2e/instance-selection-ui.e2e.ts` — **passes** on this tree (run
+    alone). It failed once when run in the same invocation as the board-02 spec,
+    at board load, never reaching an interaction: cross-spec pollution on the
+    shared server, not a selection regression.
+  - `tests/e2e/board-frame-bulk-selection.e2e.ts` — **still fails**, at
+    `board-02`'s own live-mid-drag assertion (`marquee did not select frameA
+    live`). **Not mine, and proved so**: reverting ONLY my `useMarqueeSelection`
+    hunk (`git checkout` on that one file, leaving the parallel agent's tree
+    alone) reproduces the identical failure. `instance-ui-01` recorded the same
+    verdict for the same assertion. `board-02`'s marquee is broken again on this
+    board and nobody owns it.
+  - `./node_modules/.bin/tsc -b` → exit 0. `eslint` on all six changed files →
+    exit 0.
+- **Human action needed:** decide whether the `value from …` lock narrowing above
+  goes to `parser-08` or a new work order. Everything else is done.
+
 ### panel-02 — CSS write-back reaches disk, and the feature that "existed" was writing nothing at all
 - **Agent:** resumed `panel-02` (predecessor terminated by the spend limit)
 - **Stage:** done — browser-verified against a temp fixture project
