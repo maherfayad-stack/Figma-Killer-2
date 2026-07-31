@@ -26,11 +26,18 @@ from the queue below; do not start anything new first.
 **Resume wave dispatched 2026-07-31 (orchestrator).** Three of the five are
 running now, chosen to be file-disjoint so they cannot collide:
 
-| Work order | Owns | Why it went first |
+| Work order | Owns | Outcome |
 |---|---|---|
-| `parser-07` | `src/core/page-parser/` | last known cause of visibly-broken screens (3 of 15) |
-| `infra-01` | `server/handlers/studio/` + token extraction | owns all 4 genuinely-failing tests |
-| `instance-ui-01` | `src/admin/pages/site/panels/PropertiesPanel/` + canvas selection | `parser-05` shipped the engine and named this as its gap |
+| `parser-07` | `src/core/page-parser/` | **done** — `dfcdb9d`, audited |
+| `infra-01` | `server/handlers/studio/` + token extraction | **done** — `09f9ffe`, audited |
+| `instance-ui-01` | `src/admin/pages/site/panels/PropertiesPanel/` + canvas selection | running |
+| `test-infra-01` | `server/db/` + test helpers | running — dispatched after `infra-01` freed a slot |
+
+**Orchestrator error worth not repeating:** `parser-07` was listed above as
+"terminated mid-edit" because THIS STOP BLOCK said so. Its work had in fact
+already landed inside `fb4821b`. A commit with no `STATE.md` entry is
+indistinguishable from unfinished work — **write the handoff entry in the same
+commit as the code**, not after.
 
 `panel-02` and `perf-01` are **deliberately held**, not forgotten:
 - `panel-02` shares `studioWriteback.ts` and `fsCodemodAdapter.ts` with work
@@ -51,6 +58,13 @@ predecessor's partial edits are in the tree and re-deriving them would be waste.
 - **`ProjectCssInjector` (5 tests)** — its NDJSON mock was missing
   `styleRuleSources`, a field `panel-02` added to `StudioLoadStreamLineSchema`
   before it stopped.
+
+**Correction (audited 2026-07-31):** the split below was reported as "4 broken +
+4 pre-existing". It was **3 + 5**. `site_publish` runs **11 assertions, all
+passing**, then dies in *teardown* with Windows `EBUSY` unlinking an open SQLite
+file — a `standing-01` environment failure, not a token-system one. Root cause:
+`DbClient` has no `close()`, so nothing releases the handle. That is
+`test-infra-01`'s work order.
 
 Net: **17 failures → 8**, of which **4 are the long-standing Windows-only ones**
 (`standing-01`).
