@@ -32,7 +32,7 @@
 
 .sourceBadge {
   flex-shrink: 0;
-  padding: 2px var(--space-2xs);
+  padding: var(--space-4xs) var(--space-2xs);
   border-radius: var(--radius);
   background: var(--bg-surface-2);
   color: var(--text-disabled);
@@ -105,7 +105,7 @@
 .swapList {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-4xs);
   margin: var(--space-2xs) 0 0;
   padding: 0;
   list-style: none;

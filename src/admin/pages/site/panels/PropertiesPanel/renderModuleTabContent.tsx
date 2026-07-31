@@ -36,6 +36,7 @@ import type { ActiveDocument } from '../../store/slices/uiSlice'
 import { isStudioMode } from '@site/studio/studioMode'
 import { LoopPropertiesView } from './LoopPropertiesView'
 import { InstanceCallSiteView } from './InstanceCallSiteView'
+import { propLockReason } from './propLockReason'
 import { ParamPromotableRow } from './ParamPromotableRow'
 import { FormSettingsPanel } from './FormSettingsPanel'
 import { isFormSettingsModule } from './formSettingsAnalysis'
@@ -198,21 +199,3 @@ function isPromotedFormProperty(selectedNode: PageNode, key: string): boolean {
   return selectedNode.moduleId === 'base.form' && PROMOTED_FORM_PROPERTY_KEYS.has(key)
 }
 
-/**
- * Why this one prop cannot be edited, or `undefined` when it can.
- *
- * Delegates the decision to `isPropWritableToSource` — the same predicate the
- * store's `updateNodeProps` guard uses — so the panel offers exactly the controls
- * the store will accept. When the two disagree the panel wins visually and the
- * store wins in fact, which is precisely the shape of "I typed and nothing
- * happened".
- *
- * The reason shown is the node's `lockReason` when it has one, because the parser
- * writes that phrase to be read by a person ("value from c.hotelsTag", "item 2 of
- * DEALS"). A prop can be code-valued on a node with no structural lock at all —
- * one resolved attribute among literals — so there is a fallback.
- */
-export function propLockReason(node: PageNode, propKey: string): string | undefined {
-  if (isPropWritableToSource(node, propKey)) return undefined
-  return node.lockReason ?? 'set in code'
-}

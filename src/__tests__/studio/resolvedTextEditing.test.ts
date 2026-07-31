@@ -29,7 +29,7 @@ import {
   hasWritableSourceLocation,
   styleValueKey,
 } from '@core/page-tree'
-import { propLockReason } from '@site/panels/PropertiesPanel/renderModuleTabContent'
+import { propLockReason } from '@site/panels/PropertiesPanel/propLockReason'
 import '@modules/base'
 import { useEditorStore } from '@site/store/store'
 

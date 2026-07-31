@@ -21,7 +21,7 @@
 import { useEditorStore } from '@site/store/store'
 import { registry } from '@core/module-engine'
 import { PropertyControlRenderer } from '@site/property-controls/PropertyControlRenderer'
-import { propLockReason } from '@site/panels/PropertiesPanel/renderModuleTabContent'
+import { propLockReason } from '@site/panels/PropertiesPanel/propLockReason'
 import { findNodeById } from './findNodeById'
 import { visibleInspectorControls } from './visibleInspectorControls'
 import styles from './InPlaceInspector.module.css'

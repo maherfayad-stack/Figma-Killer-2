@@ -91,6 +91,31 @@ const EXEMPT = new Set<string>([
  * shorter; the goal is an empty object.
  */
 const GRANDFATHERED: Record<string, number> = {
+  // The three entries below were pushed over CEILING by the M2–M4 feature wave
+  // (WS-2 through WS-9) and are recorded as DEBT, not as accepted design —
+  // `STATE.md`'s `debt-01` names the extraction planned for each. They were
+  // grandfathered rather than split in place because the wave that grew them
+  // ended abruptly (an account spend limit terminated five agents mid-edit),
+  // and a three-file responsibility split with no capacity left to verify it
+  // is a worse risk than a recorded, ratcheted cap. The ratchet still applies:
+  // none of them may grow another line without extracting first.
+  //
+  // `fsCodemodAdapter.ts` absorbed the client half of several workstreams at
+  // once — asset edits (`saveStudioAssetEdit`, WS-8.3), the vendor-CSS store
+  // (WS-2.3), token application (`tokens-01`), and the detach/swap refusal
+  // path (WS-4). Extraction candidate: one module per edit kind, leaving the
+  // adapter as the dispatcher its name promises.
+  'src/admin/pages/site/studio/fsCodemodAdapter.ts': 890,
+  // `staticEvalCore.ts` grew with CSS-Modules resolution (WS-2.2), the
+  // `cn()`/`clsx()` builtin, and `evaluateStaticCondition` (parser-06/07).
+  // Extraction candidate: the identifier/import resolution half is already a
+  // distinct responsibility from the expression evaluator.
+  'src/core/page-parser/staticEvalCore.ts': 831,
+  // `studioWriteback.ts` gained the `asset`, `detach`, and `swap` edit kinds
+  // plus `isSharedSourceNodeId`. Extraction candidate: the schema union and
+  // the per-kind dispatch are separable, as `applyStudioEditBatch` already
+  // hints by living beside them.
+  'server/handlers/studioWriteback.ts': 738,
   'src/admin/pages/site/store/slices/visualComponentsSlice.ts': 715,
   // WS-5.1 (canvas-05) is the component's own primary work: rings/badge move
   // into the in-iframe overlay, the toolbar/inspector keep a parent-doc
