@@ -8,7 +8,10 @@
  * full Request/Response round trip.
  *
  * A batch of typed edits (`kind: 'prop' | 'text' | 'style' | 'literal' | 'tag'
- * | 'asset' | 'detach' | 'swap' | 'css'`). Most edits' nodeId is decoded back to a source location and
+ * | 'asset' | 'detach' | 'swap' | 'css'`). The `css` kind is owned end to end by
+ * the sibling `studioCssWriteback.ts` — it targets a FILE + SELECTOR rather
+ * than a decoded `line:col`, and writes through a postcss CST instead of
+ * ts-morph, so it shares none of this module's machinery. Most edits' nodeId is decoded back to a source location and
  * dispatched to the matching `ast-codemods` writer (`setJsxProp` /
  * `setJsxText` / `setJsxStyle` / `setStringLiteral` / `setJsxTagName` /
  * `setImportSpecifier`) via `applyStudioEdit`. Synthetic nodes (e.g. the
@@ -18,7 +21,7 @@
  * the route rather than aborting the whole batch.
  */
 import { isAbsolute, join, resolve, sep } from 'node:path'
-import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import { EXCLUDED_WORKSPACE_DIR_NAMES, INLINE_ID_SEPARATOR } from '@core/page-parser'
 import {
   detachComponentInstance,
@@ -30,7 +33,7 @@ import {
   setStringLiteral,
   swapComponentInstance,
 } from '@core/ast-codemods'
-import { classifyStylesheetEditability, setDeclaration } from '@core/css-codemods'
+import { applyCssEdit, CssEditSchema } from './studioCssWriteback'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 
 const NODE_LOC_ID = /^(.*):(\d+):(\d+)$/
@@ -150,33 +153,6 @@ const SwapEditSchema = Type.Object({
   newComponentName: Type.String(),
   newComponentSource: Type.Union([Type.Literal('local'), Type.Literal('package')]),
   newComponentFile: Type.String(),
-})
-
-/**
- * One CSS declaration writeback (WS-6.3, `panel-02`) — `setDeclaration`
- * (`@core/css-codemods`), a postcss CST round-trip. Scoped to a rule's BASE
- * declarations only this pass — a breakpoint/condition-scoped override
- * (`@media`) is a real, documented gap; `setDeclarationAtMedia` is ready for
- * it, this edit kind just doesn't carry a query yet.
- *
- * `file`/`selector` are `server/handlers/studioCss.ts`'s
- * `StyleRuleSource` for this rule id, resolved by the CLIENT at load time —
- * a CSS rule's write target is a FILE + SELECTOR, not a `line:col`, so it
- * cannot be encoded in `nodeId` the way every other edit kind's target is.
- * `nodeId` is carried anyway (synthesized, never decodes to a location) only
- * so this kind satisfies the shared `{ nodeId: string }` constraint every
- * ordering/dedup helper below uses — `applyStudioEdit` special-cases
- * `kind === 'css'` before ever calling `studioEditLocation` on it, and the
- * synthesized id never collides with a real `rel:line:col` (see
- * `NODE_LOC_ID`).
- */
-const CssEditSchema = Type.Object({
-  kind: Type.Literal('css'),
-  nodeId: Type.String(),
-  file: Type.String(),
-  selector: Type.String(),
-  property: Type.String(),
-  value: Type.String(),
 })
 
 /** Discriminated union of every studio edit kind — `kind` is the discriminator. */
@@ -460,79 +436,6 @@ function relativeImportSpecifier(fromFileRel: string, toFileRel: string): string
 }
 
 /**
- * Validates that `fileRel` — the project-relative `.css` path
- * `studioCss.ts`'s `StyleRuleSource` mapped a `StyleRule.id` to at load time
- * — is safe to write, and resolves it to an absolute path. Same adversarial
- * posture as `resolveContainedAssetPath` above: reject absolute/UNC/drive-
- * letter forms, `..`/empty segments on either separator, and any
- * `EXCLUDED_WORKSPACE_DIR_NAMES` segment; require a literal `.css` extension
- * (the codemod parses real CSS syntax, and `studioCss.ts` never maps a
- * `.scss`/`.sass`/`.less` file for exactly this reason — see its doc); then
- * require CONTAINMENT ON THE REAL PATH after resolving symlinks. `null` on
- * any violation, or when the file doesn't exist — a stylesheet pointing
- * nowhere is worse than refusing the edit.
- */
-function resolveContainedCssPath(dir: string, fileRel: string): string | null {
-  if (fileRel.length === 0) return null
-  if (isAbsolute(fileRel)) return null
-  if (/^[a-zA-Z]:/.test(fileRel)) return null // Windows drive path
-  if (fileRel.startsWith('\\\\') || fileRel.startsWith('//')) return null // UNC path
-  if (!/\.css$/i.test(fileRel)) return null
-
-  const segments = fileRel.split(/[\\/]+/).filter((segment) => segment.length > 0)
-  if (segments.length === 0) return null
-  if (segments.some((segment) => segment === '..' || segment === '.')) return null
-  if (segments.some((segment) => EXCLUDED_WORKSPACE_DIR_NAMES.has(segment))) return null
-
-  const root = resolve(dir)
-  const resolved = resolve(join(dir, ...segments))
-  if (resolved !== root && !resolved.startsWith(root + sep)) return null
-
-  let real: string
-  try {
-    real = realpathSync(resolved)
-  } catch {
-    return null // missing file — nowhere honest to write a declaration
-  }
-  let realRoot: string
-  try {
-    realRoot = realpathSync(root)
-  } catch {
-    return null
-  }
-  if (real !== realRoot && !real.startsWith(realRoot + sep)) return null
-
-  return resolved
-}
-
-/**
- * WS-6.3 — dispatches a `kind: 'css'` edit to `setDeclaration`
- * (`@core/css-codemods`, a postcss CST round-trip that preserves everything
- * it didn't touch). `classifyStylesheetEditability` runs FIRST: a `.min.css`
- * or a build-output path (`dist/`, `.next/`, …) has no honest hand-editable
- * source at this layer, and REFUSES with the classifier's own specific
- * reason via `StudioEditRefusalError` — a real, informative outcome per
- * `meta-03` decision 3, not a silent skip. A path that fails the
- * containment/extension/existence guard (`resolveContainedCssPath`) returns
- * `{ applied: false }` instead — the same "refuse, never guess" posture
- * `resolveContainedAssetPath`'s own unsafe-target case takes above; nothing
- * legitimate produces one; a client only ever sends a `file` this exact
- * project's own load response mapped for this rule id.
- */
-function applyCssEdit(dir: string, edit: Extract<StudioEdit, { kind: 'css' }>): StudioEditApplyOutcome {
-  const editability = classifyStylesheetEditability(edit.file)
-  if (editability.kind === 'compiled') {
-    throw new StudioEditRefusalError('compiled-stylesheet', editability.reason)
-  }
-  const filePath = resolveContainedCssPath(dir, edit.file)
-  if (filePath === null) return { applied: false }
-  const cssText = readFileSync(filePath, 'utf8')
-  const result = setDeclaration(cssText, edit.selector, edit.property, edit.value)
-  if (result.changed) writeFileSync(filePath, result.css, 'utf8')
-  return { applied: true }
-}
-
-/**
  * Applies one typed studio edit to the .tsx source under `dir`, dispatching
  * on `edit.kind` to the matching `ast-codemods` writer. Extracted as a pure
  * helper (dir + edit in, codemod side effect out) so it's unit-testable
@@ -586,8 +489,14 @@ export function applyStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyO
   // `edit.selector`), never the nodeId-encoded `rel:line:col` every other
   // kind decodes below; `edit.nodeId` here is a synthesized, non-decodable
   // string (see `CssEditSchema`'s doc), so it must branch off before
-  // `studioEditLocation` ever sees it.
-  if (edit.kind === 'css') return applyCssEdit(dir, edit)
+  // `studioEditLocation` ever sees it. `studioCssWriteback` RETURNS its
+  // refusals rather than throwing (it is a leaf that knows nothing about this
+  // module); translating them here keeps one refusal channel for every kind.
+  if (edit.kind === 'css') {
+    const outcome = applyCssEdit(dir, edit)
+    if ('refusal' in outcome) throw new StudioEditRefusalError(outcome.refusal.reason, outcome.refusal.message)
+    return { applied: outcome.applied }
+  }
 
   const target = studioEditLocation(edit.nodeId)
   if (!target) return { applied: false } // synthetic node (e.g. body) — no source location

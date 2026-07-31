@@ -18,7 +18,7 @@ import { Button, type ButtonProps } from '@ui/components/Button'
 import { pushToast } from '@ui/components/Toast'
 import { getErrorMessage } from '@core/utils/errorMessage'
 import { requestCmsSiteReload } from '@admin/state/adminEvents'
-import { createStudioPage } from '@site/studio/fsCodemodAdapter'
+import { createStudioPage } from '@site/studio/studioSaveRequests'
 import { FilePlusSolidIcon } from 'pixel-art-icons/icons/file-plus-solid'
 
 interface NewPageButtonProps {

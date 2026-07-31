@@ -488,3 +488,116 @@ describe('applyStudioEdit — the css kind (WS-6.3)', () => {
     expect(result.sharedComponents).toBe(false)
   })
 })
+
+/**
+ * `panel-02` — the honest-target gate (`analyzeDeclarationTarget`) reaching
+ * the real dispatch, not just its own unit tests. Each case below is a write
+ * that WOULD have succeeded at the filesystem level and changed nothing the
+ * user could see, because `setDeclaration` targets the FIRST matching rule
+ * while the CSS cascade lets the LAST declaration win. A silent no-op is the
+ * worst available outcome here, so each one refuses with a reason instead —
+ * and, critically, leaves the file byte-identical.
+ */
+describe('applyStudioEditBatch — css edits refuse rather than write invisibly', () => {
+  it('refuses when the selector is declared twice and the later block sets the same property', () => {
+    const before = '.hero {\n  color: red;\n}\n\n.hero {\n  color: green;\n}\n'
+    write('src/screens/Home.css', before)
+
+    const result = applyStudioEditBatch(tmpDir, [{
+      kind: 'css',
+      nodeId: 'css:src/screens/Home.css#.hero#color',
+      file: 'src/screens/Home.css',
+      selector: '.hero',
+      property: 'color',
+      value: 'blue',
+    }])
+
+    expect(result.written).toBe(0)
+    expect(result.refusals).toHaveLength(1)
+    expect(result.refusals[0]).toMatchObject({ kind: 'css', reason: 'duplicate-selector' })
+    expect(read('src/screens/Home.css')).toBe(before)
+  })
+
+  it('refuses when a shorthand later in the same rule would reset the edited longhand', () => {
+    const before = '.hero {\n  padding-top: 2px;\n  padding: 0;\n}\n'
+    write('src/screens/Home.css', before)
+
+    const result = applyStudioEditBatch(tmpDir, [{
+      kind: 'css',
+      nodeId: 'css:src/screens/Home.css#.hero#padding-top',
+      file: 'src/screens/Home.css',
+      selector: '.hero',
+      property: 'padding-top',
+      value: '12px',
+    }])
+
+    expect(result.refusals[0]).toMatchObject({ kind: 'css', reason: 'shorthand-override' })
+    expect(result.refusals[0]!.message).toContain('padding')
+    expect(read('src/screens/Home.css')).toBe(before)
+  })
+
+  it('refuses when an !important shorthand outranks the edited longhand from any position', () => {
+    const before = '.hero {\n  margin: 0 !important;\n  margin-left: 4px;\n}\n'
+    write('src/screens/Home.css', before)
+
+    const result = applyStudioEditBatch(tmpDir, [{
+      kind: 'css',
+      nodeId: 'css:src/screens/Home.css#.hero#margin-left',
+      file: 'src/screens/Home.css',
+      selector: '.hero',
+      property: 'margin-left',
+      value: '9px',
+    }])
+
+    expect(result.refusals[0]).toMatchObject({ kind: 'css', reason: 'important-override' })
+    expect(read('src/screens/Home.css')).toBe(before)
+  })
+
+  it('refuses a property declared twice inside one rule', () => {
+    const before = '.hero {\n  color: red;\n  color: green;\n}\n'
+    write('src/screens/Home.css', before)
+
+    const result = applyStudioEditBatch(tmpDir, [{
+      kind: 'css',
+      nodeId: 'css:src/screens/Home.css#.hero#color',
+      file: 'src/screens/Home.css',
+      selector: '.hero',
+      property: 'color',
+      value: 'blue',
+    }])
+
+    expect(result.refusals[0]).toMatchObject({ kind: 'css', reason: 'duplicate-declaration' })
+    expect(read('src/screens/Home.css')).toBe(before)
+  })
+
+  it('still writes when a duplicate selector exists but does not touch this property', () => {
+    write('src/screens/Home.css', '.hero {\n  color: red;\n}\n\n.hero {\n  margin: 0;\n}\n')
+
+    const result = applyStudioEditBatch(tmpDir, [{
+      kind: 'css',
+      nodeId: 'css:src/screens/Home.css#.hero#color',
+      file: 'src/screens/Home.css',
+      selector: '.hero',
+      property: 'color',
+      value: 'blue',
+    }])
+
+    expect(result.written).toBe(1)
+    expect(result.refusals).toHaveLength(0)
+    expect(read('src/screens/Home.css')).toBe('.hero {\n  color: blue;\n}\n\n.hero {\n  margin: 0;\n}\n')
+  })
+
+  it('one refusal does not abort the rest of the batch', () => {
+    write('src/screens/Bad.css', '.a {\n  color: red;\n  color: green;\n}\n')
+    write('src/screens/Good.css', '.b {\n  color: red;\n}\n')
+
+    const result = applyStudioEditBatch(tmpDir, [
+      { kind: 'css', nodeId: 'css:a', file: 'src/screens/Bad.css', selector: '.a', property: 'color', value: 'blue' },
+      { kind: 'css', nodeId: 'css:b', file: 'src/screens/Good.css', selector: '.b', property: 'color', value: 'blue' },
+    ])
+
+    expect(result.written).toBe(1)
+    expect(result.refusals).toHaveLength(1)
+    expect(read('src/screens/Good.css')).toBe('.b {\n  color: blue;\n}\n')
+  })
+})

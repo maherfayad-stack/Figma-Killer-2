@@ -33,7 +33,7 @@ import { getErrorMessage } from '@core/utils/errorMessage'
 import { ImageSolidIcon } from 'pixel-art-icons/icons/image-solid'
 import { CloudUploadSolidIcon } from 'pixel-art-icons/icons/cloud-upload-solid'
 import { uploadStudioAsset } from '@site/studio/uploadStudioAsset'
-import { saveStudioAssetEdit } from '@site/studio/fsCodemodAdapter'
+import { saveStudioAssetEdit } from '@site/studio/studioSaveRequests'
 import styles from './ImageSourceSection.module.css'
 
 interface ImageSourceSectionProps {

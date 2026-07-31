@@ -38,7 +38,6 @@ import type { IPersistenceAdapter, SaveSiteOptions } from '@core/persistence/typ
 import {
   type Page,
   type SiteDocument,
-  type StyleRule,
   ConditionDefSchema,
   PageSchema,
   StyleRuleSchema,
@@ -48,7 +47,6 @@ import {
   styleValueKey,
 } from '@core/page-tree'
 import { apiRequest, ndjsonRequest } from '@core/http'
-import { camelToKebabCssProperty } from '@core/css-codemods'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { FrameworkSettingsSchema } from '@core/framework-schema'
 import { createDefaultSiteDocument } from '@site/store/slices/site/defaults'
@@ -61,6 +59,13 @@ import { pushToast } from '@ui/components/Toast'
 import { getStudioWorkspaceDir } from './studioWorkspaceDir'
 import { fetchExtractedTokens, type TokenExtractionStatus } from './studioTokenStatus'
 import { setStudioTrustTier, TrustTierSchema } from './studioProjectTrust'
+import { StudioSaveResponseSchema, setStudioLoadedDir, studioWriteDir } from './studioSaveRequests'
+import {
+  StyleRuleSourceSchema,
+  collectStyleRuleEdits,
+  commitBaseline as commitStyleRuleBaseline,
+  setStudioStyleRuleSources,
+} from './styleRuleWriteback'
 
 
 /**
@@ -90,16 +95,6 @@ export type ComponentSource = Static<typeof ComponentSourceSchema>
  * only needs to describe the wire shape THIS client actually consumes.
  * MUST stay in sync with `studioLoadStreamLines` in `server/handlers/studio.ts`.
  */
-/**
- * `panel-02` (WS-6.3) — a `StyleRule.id`'s write-back target, exactly
- * `server/handlers/studioCss.ts`'s `StyleRuleSource`. A rule id absent from
- * the meta line's `styleRuleSources` map has no hand-editable `.css` source.
- */
-const StyleRuleSourceSchema = Type.Object({
-  file: Type.String(),
-  selector: Type.String(),
-})
-
 const StudioLoadStreamLineSchema = Type.Union([
   Type.Object({
     kind: Type.Literal('meta'),
@@ -120,215 +115,6 @@ const StudioLoadStreamLineSchema = Type.Union([
   }),
 ])
 
-/**
- * POST /admin/api/studio/save response. `shifted` is true when a write changed
- * a file's line count (e.g. `setJsxStyle` collapsing a multiline `style={{…}}`
- * to one line) — the in-memory `line:col` node ids are then stale against disk
- * and must be re-derived by re-parsing (see the `shifted` branch in saveSite).
- */
-const StudioSaveResponseSchema = Type.Object({
-  ok: Type.Boolean(),
-  written: Type.Number(),
-  skipped: Type.Number(),
-  shifted: Type.Boolean(),
-  /**
-   * True when any edit in the batch targeted an inlined node, whose writeback
-   * goes to the component's own file and therefore changes EVERY instance of
-   * it. The other instances on the board still show their old values, so the
-   * client reloads — same remedy as `shifted`, different cause.
-   */
-  sharedComponents: Type.Boolean(),
-  /**
-   * WS-4.4/4.5 — every `detach`/`swap` edit in the batch that REFUSED rather
-   * than writing, with a specific reason + message (`StudioEditRefusal` on
-   * the server). `Type.Optional` (not every server build has this field yet
-   * mid-rollout; tolerant like every other response schema here) and defaults
-   * to empty when read below.
-   */
-  refusals: Type.Optional(Type.Array(Type.Object({
-    nodeId: Type.String(),
-    kind: Type.String(),
-    reason: Type.String(),
-    message: Type.String(),
-  }))),
-  /**
-   * instance-ui-01 — every `swap` edit in the batch that SUCCEEDED, with
-   * what changed on the call site (mirrors `refusals` for the failure case).
-   * `Type.Optional`, same tolerant-rollout reasoning as `refusals` above.
-   */
-  swapDetails: Type.Optional(Type.Array(Type.Object({
-    nodeId: Type.String(),
-    removedProps: Type.Array(Type.String()),
-    unfilledRequiredProps: Type.Array(Type.String()),
-  }))),
-})
-
-/** POST /admin/api/studio/page response — the newly scaffolded page. */
-const StudioCreatePageResponseSchema = Type.Object({
-  ok: Type.Boolean(),
-  relPath: Type.String(),
-  /** Kebab id derived from the file path — the value a board frame references. */
-  pageId: Type.String(),
-  title: Type.String(),
-})
-export type CreatedStudioPage = Static<typeof StudioCreatePageResponseSchema>
-
-/**
- * Creates a new page (`pages/<Component>.tsx` with a starter component) in the
- * active project and resolves to its `{ pageId, title }`. Targets the SAME
- * `dir` every other studio call uses (`getStudioWorkspaceDir`), so the file
- * lands in the project the canvas is currently showing. `name` is optional —
- * omit it and the server auto-names the page `Page`, `Page2`, …. Throws
- * `ApiError` on failure (e.g. a name collision → 409) so the caller can toast
- * the message. The caller reloads the workspace afterwards
- * (`requestCmsSiteReload`) to render the new page.
- */
-export function createStudioPage(name?: string): Promise<CreatedStudioPage> {
-  const overrideDir = getStudioWorkspaceDir()
-  const body: { name?: string; dir?: string } = {}
-  if (name) body.name = name
-  if (overrideDir) body.dir = overrideDir
-  return apiRequest('/admin/api/studio/page', {
-    method: 'POST',
-    body,
-    schema: StudioCreatePageResponseSchema,
-  })
-}
-
-/**
- * Commits ONE `kind: 'asset'` edit immediately — WS-8.3's "replace this
- * image" action — instead of letting the ordinary optimistic prop-diff loop
- * in `saveSite` pick it up. Deliberately a direct, standalone `apiRequest`
- * call, same shape as `createStudioPage` above, rather than routed through
- * `updateNodeProps`:
- *
- *   - An image swap is a discrete, deliberate commit (pick a file, confirm),
- *     not a value the user is continuously typing — there is nothing to debounce.
- *   - The edit's target is `PageNode.assetOrigin` (the import declaration),
- *     never the node's own `src` prop — writing it as an ordinary prop diff
- *     would need `updateNodeProps`'s codeProps guard to special-case this one
- *     prop, which the store slices do not currently know how to do.
- *   - The save route ALWAYS reports an asset edit as shared
- *     (`isSharedSourceNodeId`'s `kind === 'asset'` branch) because the import
- *     it rewrites can back more than one node — so this always reloads on a
- *     successful write, the same remedy `saveSite` uses for `shifted`/
- *     `sharedComponents`, without needing to wait for the next autosave tick.
- *
- * `nodeId` is the ORIGIN's own `rel:line:col` (`PageNode.assetOrigin`), not
- * the editing node's id — same convention the `literal` edit kind uses for
- * resolved text. `assetPath` is the new file's workspace-relative POSIX path,
- * from `uploadStudioAsset`'s response or an existing asset the picker offered.
- */
-export async function saveStudioAssetEdit(nodeId: string, assetPath: string): Promise<void> {
-  const overrideDir = getStudioWorkspaceDir()
-  const result = await apiRequest('/admin/api/studio/save', {
-    method: 'POST',
-    body: { dir: overrideDir ?? loadedDir, edits: [{ kind: 'asset', nodeId, assetPath }] },
-    schema: StudioSaveResponseSchema,
-  })
-
-  if (result.skipped > 0) {
-    pushToast({
-      kind: 'error',
-      title: 'Image was not saved to source',
-      body: 'The import naming this image could not be rewritten — it may no longer exist at the location the canvas last saw.',
-    })
-    return
-  }
-  if (result.written > 0) requestCmsSiteReload()
-}
-
-/**
- * instance-ui-01 — the outcome of a single `detach`/`swap` edit, as reported
- * to the Properties panel. Mirrors the server's `StudioEditRefusal` /
- * `StudioEditSwapDetail` shapes (`server/handlers/studioWriteback.ts`)
- * one-for-one, without importing them — same "browser/server agree on the
- * wire shape, not the type" split every other schema in this file follows.
- */
-export type InstanceCodemodResult =
-  | { ok: true; swapDetail?: { removedProps: string[]; unfilledRequiredProps: string[] } }
-  | { ok: false; reason: string; message: string }
-
-/**
- * WS-4.4 — the Properties panel's Detach action. A direct, standalone
- * `apiRequest` call (same shape as `saveStudioAssetEdit` above), not routed
- * through `updateNodeProps`/`saveSite`'s diff loop: detach is a deliberate,
- * one-shot structural rewrite (replace the call site with its own inlined
- * JSX), not a value the diff loop's "what did the user type" model fits.
- *
- * A refusal (`uses-hooks`, `maps-over-props`, …) is a NAMED, expected
- * outcome — returned to the caller rather than just toasted, so the panel
- * can offer the `extractComponentCopy` escape hatch inline for the specific
- * reasons that warrant it. `detach` always shifts lines (a call site is
- * replaced by a whole subtree) and is always reported `sharedComponents` by
- * the server (`isSharedSourceNodeId`'s `kind === 'detach'` branch), so a
- * successful write always reloads the board — the detached node's OWN id is
- * about to become stale, same reasoning `saveStudioAssetEdit` already
- * documents for `asset`.
- */
-export async function detachInstance(nodeId: string): Promise<InstanceCodemodResult> {
-  const overrideDir = getStudioWorkspaceDir()
-  const result = await apiRequest('/admin/api/studio/save', {
-    method: 'POST',
-    body: { dir: overrideDir ?? loadedDir, edits: [{ kind: 'detach', nodeId }] },
-    schema: StudioSaveResponseSchema,
-  })
-  const refusal = (result.refusals ?? [])[0]
-  if (refusal) return { ok: false, reason: refusal.reason, message: refusal.message }
-  if (result.written > 0) requestCmsSiteReload()
-  return { ok: true }
-}
-
-/**
- * WS-4.5 — the Properties panel's Swap action. Same standalone-call shape as
- * `detachInstance` above. On success, `swapDetail` names the props the new
- * component dropped and the required props it still needs — the codemod's
- * own numbers, never re-derived here.
- */
-export async function swapInstance(
-  nodeId: string,
-  target: { newComponentName: string; newComponentSource: 'local' | 'package'; newComponentFile: string },
-): Promise<InstanceCodemodResult> {
-  const overrideDir = getStudioWorkspaceDir()
-  const result = await apiRequest('/admin/api/studio/save', {
-    method: 'POST',
-    body: { dir: overrideDir ?? loadedDir, edits: [{ kind: 'swap', nodeId, ...target }] },
-    schema: StudioSaveResponseSchema,
-  })
-  const refusal = (result.refusals ?? [])[0]
-  if (refusal) return { ok: false, reason: refusal.reason, message: refusal.message }
-  if (result.written > 0) requestCmsSiteReload()
-  const swapDetail = (result.swapDetails ?? []).find((detail) => detail.nodeId === nodeId)
-  return { ok: true, swapDetail }
-}
-
-/** POST /admin/api/studio/extract-component response — see that route's module doc. */
-const ExtractComponentResponseSchema = Type.Union([
-  Type.Object({ ok: Type.Literal(true), newFile: Type.String(), newComponentName: Type.String() }),
-  Type.Object({ ok: Type.Literal(false), reason: Type.String(), message: Type.String() }),
-])
-
-/**
- * WS-4.4's detach-refusal escape hatch — the Properties panel's "Card uses
- * useState — duplicate it as Card2.tsx and edit that instead?" offer.
- * Duplicates the instance's own component under a fresh name and repoints
- * THIS call site at the copy; always reloads on success (same "always
- * shifts lines, always shared" posture `detachInstance`/`swapInstance`
- * document — a brand-new file plus a rewritten import is exactly the shape
- * of edit that invalidates in-memory node ids downstream of it).
- */
-export async function extractInstanceCopy(nodeId: string): Promise<InstanceCodemodResult & { newFile?: string; newComponentName?: string }> {
-  const overrideDir = getStudioWorkspaceDir()
-  const result = await apiRequest('/admin/api/studio/extract-component', {
-    method: 'POST',
-    body: { dir: overrideDir ?? loadedDir, nodeId },
-    schema: ExtractComponentResponseSchema,
-  })
-  if (!result.ok) return { ok: false, reason: result.reason, message: result.message }
-  requestCmsSiteReload()
-  return { ok: true, newFile: result.newFile, newComponentName: result.newComponentName }
-}
-
 /** GET /admin/api/studio/framework response — `null` when nothing is persisted yet. */
 const StudioFrameworkLoadResponseSchema = Type.Object({
   framework: Type.Union([FrameworkSettingsSchema, Type.Null()]),
@@ -340,8 +126,13 @@ const StudioFrameworkSaveResponseSchema = Type.Object({
   framework: FrameworkSettingsSchema,
 })
 
-/** Remembered from the last load so saveSite can tell the server which folder to write. */
-let loadedDir: string | null = null
+/**
+ * Remembered from the last load so saveSite can tell the server which folder
+ * to write. Held by `studioSaveRequests`, which every one-shot commit shares.
+ */
+function loadedDir(): string | null {
+  return studioWriteDir()
+}
 
 /**
  * Serialized `site.settings.framework` as of the last load/save — lets
@@ -365,20 +156,6 @@ let componentSources: Record<string, ComponentSource> = {}
 let paletteHiddenModuleIds: readonly string[] = []
 
 /**
- * `panel-02` (WS-6.3) — `StyleRule.id -> (file, selector)` from the last
- * load's meta-line `styleRuleSources` (see `StyleRuleSourceSchema`'s doc). A
- * rule id absent here has no hand-editable `.css` source: `StyleTargetChip`
- * reads this to explain why, and `saveSite`'s CSS diff below never attempts
- * a write for it.
- */
-let styleRuleSources: Record<string, { file: string; selector: string }> = {}
-
-/** The current workspace's `StyleRule.id -> (file, selector)` write-back map, from the last load. */
-export function getStudioStyleRuleSources(): Record<string, { file: string; selector: string }> {
-  return styleRuleSources
-}
-
-/**
  * Every source-backed node's values AS LOADED, keyed by node id, so `saveSite`
  * can write only what the user actually changed.
  *
@@ -393,25 +170,6 @@ export function getStudioStyleRuleSources(): Record<string, { file: string; sele
  * covers both prop and style diffing.
  */
 let loadedValues = new Map<string, Record<string, string | number | boolean>>()
-
-/**
- * `panel-02` (WS-6.3) — every style rule's BASE `styles` bag as loaded, keyed
- * by rule id. Same "only write what the user actually changed" discipline as
- * `loadedValues` above, applied to `site.styleRules` instead of node props.
- *
- * Scoped to BASE declarations only — `contextStyles` (breakpoint/condition
- * overrides) are not diffed or written back this pass; see
- * `server/handlers/studioWriteback.ts`'s `CssEditSchema` doc for the honest
- * gap and what would close it (`setDeclarationAtMedia` already exists).
- */
-let loadedStyleRuleValues = new Map<string, Record<string, unknown>>()
-
-/** Snapshot for `loadedStyleRuleValues` — see its doc comment. */
-function snapshotStyleRuleValues(rules: Record<string, StyleRule>): Map<string, Record<string, unknown>> {
-  const snapshot = new Map<string, Record<string, unknown>>()
-  for (const [id, rule] of Object.entries(rules)) snapshot.set(id, { ...rule.styles })
-  return snapshot
-}
 
 /** Snapshot for `loadedValues` — see its doc comment. */
 function snapshotNodeValues(pages: readonly Page[]): Map<string, Record<string, string | number | boolean>> {
@@ -502,8 +260,9 @@ function setStudioVendorCss(next: string): void {
  * apply the result to). Throws `ApiError` on failure so the caller can toast.
  */
 export async function refreshExtractedTokens(): Promise<TokenExtractionStatus> {
-  if (loadedDir === null) throw new Error('[fsCodemodAdapter] refreshExtractedTokens called before a project loaded')
-  const { framework, status } = await fetchExtractedTokens(loadedDir)
+  const dir = loadedDir()
+  if (dir === null) throw new Error('[fsCodemodAdapter] refreshExtractedTokens called before a project loaded')
+  const { framework, status } = await fetchExtractedTokens(dir)
   useEditorStore.getState().applyExtractedFrameworkTokens(framework)
   lastSyncedFrameworkJson = JSON.stringify(framework)
   return status
@@ -600,16 +359,15 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
       trust,
       paletteHiddenModuleIds: loadedPaletteHiddenModuleIds,
     } = meta
-    loadedDir = dir
+    setStudioLoadedDir(dir)
     componentSources = sources
-    styleRuleSources = loadedStyleRuleSources
     paletteHiddenModuleIds = loadedPaletteHiddenModuleIds
     setStudioVendorCss(loadedVendorCss)
     setStudioTrustTier(trust)
     // Baseline for the save-time diff — see `loadedValues`.
     loadedValues = snapshotNodeValues(pages)
-    // `panel-02` (WS-6.3) — baseline for the CSS write-back diff, see `loadedStyleRuleValues`.
-    loadedStyleRuleValues = snapshotStyleRuleValues(styleRules)
+    // `panel-02` (WS-6.3) — the CSS write-back map + its diff baseline.
+    setStudioStyleRuleSources(loadedStyleRuleSources, styleRules)
     // Distinct from `site.name` (the "Studio" product wordmark, unchanged per
     // project) — this is the per-project display name shown under the brand
     // in the toolbar (see Toolbar.tsx's StudioProjectLabel).
@@ -774,45 +532,43 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
       }
     }
 
-    // `panel-02` (WS-6.3) — CSS write-back. Diffs each rule's BASE `styles`
-    // bag against the load-time baseline (`loadedStyleRuleValues` — a
-    // breakpoint/condition override in `contextStyles` is NOT diffed here,
-    // an explicit, documented gap) and emits a `kind: 'css'` edit for any
-    // rule this project's load mapped to a real `.css` file + selector
-    // (`styleRuleSources`). A rule with no mapping — Tailwind/Sass/PostCSS
-    // output, a CSS Modules compile, an ambient rule with no source — is
-    // left alone here: `StyleTargetChip` already told the user, at the
-    // point they started editing, that this class's changes stay
-    // preview-only, so silently not attempting a write is the honest
-    // outcome, not a swallowed error. A property REMOVED since load (present
-    // in the baseline, absent from `rule.styles` now) is also left alone —
-    // `setDeclaration` only sets a value, it has no "remove" operation yet.
-    for (const [ruleId, rule] of Object.entries(site.styleRules)) {
-      const source = styleRuleSources[ruleId]
-      if (!source) continue
-      const baseline = loadedStyleRuleValues.get(ruleId) ?? {}
-      for (const [property, value] of Object.entries(rule.styles)) {
-        if (typeof value !== 'string' && typeof value !== 'number') continue
-        if (Object.is(baseline[property], value)) continue
-        // `rule.styles` keys are camelCase (`CSSPropertyBag`'s convention
-        // everywhere in this editor) — the codemod writes into a real .css
-        // file, which only understands kebab-case property names.
-        const kebabProperty = camelToKebabCssProperty(property)
-        edits.push({
-          kind: 'css',
-          nodeId: `css:${source.file}#${source.selector}#${kebabProperty}`,
-          file: source.file,
-          selector: source.selector,
-          property: kebabProperty,
-          value: String(value),
-        })
-      }
+    // `panel-02` (WS-6.3) — CSS write-back, owned by `styleRuleWriteback.ts`:
+    // it diffs each rule's BASE `styles` bag against the load-time baseline
+    // and reports both the edits to send and the classes the user changed
+    // that have NO hand-editable `.css` source. See that module's doc for why
+    // the second list exists — an unmapped rule used to be skipped silently,
+    // which meant a Tailwind project's style edits vanished on reload with
+    // nothing ever said about it.
+    const cssPlan = collectStyleRuleEdits(site.styleRules)
+    edits.push(...cssPlan.edits)
+
+    if (cssPlan.unmapped.length > 0) {
+      const names = cssPlan.unmapped.join(', ')
+      pushToast({
+        kind: 'error',
+        title: 'Style not saved to source',
+        body:
+          `${names} ${cssPlan.unmapped.length === 1 ? 'has' : 'have'} no hand-editable CSS file in this project ` +
+          '(a generated utility class, a CSS Modules compile, or a build artefact), so this change stays on the ' +
+          'canvas only and will be lost on reload. Style the element instead to write it to source.',
+      })
+    }
+
+    if (cssPlan.unwritableContexts.length > 0) {
+      pushToast({
+        kind: 'error',
+        title: 'Breakpoint override not saved to source',
+        body:
+          `${cssPlan.unwritableContexts.join(', ')} changed under a breakpoint or condition. Studio can only write ` +
+          'a class’s default declarations back to CSS today, so this override stays on the canvas only and ' +
+          'will be lost on reload.',
+      })
     }
 
     if (edits.length > 0) {
       const result = await apiRequest('/admin/api/studio/save', {
         method: 'POST',
-        body: { dir: loadedDir, edits },
+        body: { dir: loadedDir(), edits },
         schema: StudioSaveResponseSchema,
       })
 
@@ -874,6 +630,15 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
       }
     }
 
+    // `panel-02` — advance the CSS diff baseline to what was just sent, so one
+    // user change produces exactly one write attempt and exactly one refusal
+    // message. Without this every later autosave tick would re-send an
+    // already-applied declaration and re-toast an already-reported refusal on
+    // a two-second timer. See `styleRuleWriteback`'s "Baseline discipline".
+    if (cssPlan.edits.length > 0 || cssPlan.unmapped.length > 0 || cssPlan.unwritableContexts.length > 0) {
+      commitStyleRuleBaseline(site.styleRules)
+    }
+
     // Framework settings (Colors/Typography/Spacing) live outside the
     // per-node edit batch above — sync them independently so a framework-only
     // change (no node prop/text/style edits at all) still persists.
@@ -881,7 +646,7 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
     if (nextFrameworkJson !== lastSyncedFrameworkJson) {
       await apiRequest('/admin/api/studio/framework', {
         method: 'POST',
-        body: { dir: loadedDir, framework: site.settings.framework },
+        body: { dir: loadedDir(), framework: site.settings.framework },
         schema: StudioFrameworkSaveResponseSchema,
       })
       lastSyncedFrameworkJson = nextFrameworkJson

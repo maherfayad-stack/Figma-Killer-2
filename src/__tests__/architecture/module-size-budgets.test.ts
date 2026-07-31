@@ -91,32 +91,26 @@ const EXEMPT = new Set<string>([
  * shorter; the goal is an empty object.
  */
 const GRANDFATHERED: Record<string, number> = {
-  // The two entries below were pushed over CEILING by the M2–M4 feature wave
-  // (WS-2 through WS-9) and are recorded as DEBT, not as accepted design —
-  // `STATE.md`'s `debt-01` names the extraction planned for each. They were
-  // grandfathered rather than split in place because the wave that grew them
-  // ended abruptly (an account spend limit terminated five agents mid-edit),
-  // and a three-file responsibility split with no capacity left to verify it
-  // is a worse risk than a recorded, ratcheted cap. The ratchet still applies:
-  // neither may grow another line without extracting first.
+  // `debt-01`'s ledger is now EMPTY of the M2–M4 feature wave's three
+  // entries — all three graduated by performing the extraction their own
+  // grandfather note had named, rather than by raising a cap:
   //
-  // The third, `src/core/page-parser/staticEvalCore.ts` (831), GRADUATED in
-  // parser-07: its parser-07 default-literal read moved out to the leaf
-  // `src/core/page-parser/defaultLiteralBindings.ts` (which `staticEval.ts`
-  // needed to share anyway, for `??`'s nullish check), taking the file to 663
-  // — under CEILING, so it is held by the ordinary gate now.
+  //   - `src/core/page-parser/staticEvalCore.ts` (831 → 663) in `parser-07`:
+  //     the default-literal read moved to the leaf
+  //     `src/core/page-parser/defaultLiteralBindings.ts`.
+  //   - `src/admin/pages/site/studio/fsCodemodAdapter.ts` (890 → 645) in
+  //     `panel-02`, following its note exactly ("one module per edit kind,
+  //     leaving the adapter as the dispatcher its name promises"): the
+  //     one-shot commits and the `/save` wire contract moved to
+  //     `studioSaveRequests.ts`, the CSS diff + `StyleRule.id → (file,
+  //     selector)` map to `styleRuleWriteback.ts`.
+  //   - `server/handlers/studioWriteback.ts` (738 → 645) in `panel-02`: the
+  //     `kind: 'css'` edit — a different target shape (file + selector, not
+  //     `line:col`) written by a different engine (postcss, not ts-morph) —
+  //     moved whole to `studioCssWriteback.ts`.
   //
-  // `fsCodemodAdapter.ts` absorbed the client half of several workstreams at
-  // once — asset edits (`saveStudioAssetEdit`, WS-8.3), the vendor-CSS store
-  // (WS-2.3), token application (`tokens-01`), and the detach/swap refusal
-  // path (WS-4). Extraction candidate: one module per edit kind, leaving the
-  // adapter as the dispatcher its name promises.
-  'src/admin/pages/site/studio/fsCodemodAdapter.ts': 890,
-  // `studioWriteback.ts` gained the `asset`, `detach`, and `swap` edit kinds
-  // plus `isSharedSourceNodeId`. Extraction candidate: the schema union and
-  // the per-kind dispatch are separable, as `applyStudioEditBatch` already
-  // hints by living beside them.
-  'server/handlers/studioWriteback.ts': 738,
+  // All four are held by the ordinary CEILING rule now. Do not re-add an
+  // entry here to make room for a feature; extract instead.
   'src/admin/pages/site/store/slices/visualComponentsSlice.ts': 715,
   // BreakpointSelectionOverlay.tsx graduated (718 → 655) when `instance-ui-01`
   // performed the extraction its own grandfather note had named: the toolbar

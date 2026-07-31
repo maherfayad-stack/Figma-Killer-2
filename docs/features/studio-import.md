@@ -620,11 +620,37 @@ Studio reloads the whole site document on `requestCmsSiteReload()` and on a `shi
 
 Two files defining the same class name collapse onto one id, later-parsed file winning — close enough to cascade order for a read-only view, and it keeps `classIds` unambiguous.
 
-### CSS is one-way
+### CSS write-back (WS-6.3, `panel-02`)
 
-**There is no CSS writeback codemod.** Editing one of these rules in the CSS Classes panel updates the in-memory site document and is **lost on the next reload**. The `.css` file on disk is never rewritten.
+CSS is **two-way for plain, hand-authored `.css` files**. Editing a class in the inspector updates the in-memory document and, on the next save, rewrites that declaration in the source file through a postcss CST round-trip (`@core/css-codemods`'s `setDeclaration`) — one declaration changes, every other byte of the file survives.
 
-This is a real, user-visible sharp edge and it must not be discovered by losing work. Two-way CSS editing would need a CSS-text codemod alongside `ast-codemods` — a separate initiative.
+The path, end to end:
+
+| Stage | Owner |
+|---|---|
+| `StyleRule.id → (file, selector)`, resolved at load | `studioCss.ts`'s `sources`, carried on the load stream's `styleRuleSources` |
+| Client diff → `kind: 'css'` edits | `src/admin/pages/site/studio/styleRuleWriteback.ts` |
+| Route + guards + codemod | `server/handlers/studioCssWriteback.ts` |
+| The pure codemods | `src/core/css-codemods/` |
+
+**The `studio` context is the base declaration set.** Every board frame mounts a synthetic breakpoint (`id: 'studio'`, `BoardFramesLayer.tsx`), so every inspector edit lands in `contextStyles.studio`, never in the rule's `styles` bag. The diff folds the two (`effectiveStudioStyles`) — reading `styles` alone compares two identical objects and emits nothing, which is exactly how this shipped once with green codemod tests and zero declarations reaching disk. `src/__tests__/studio/styleRuleWriteback.test.ts` pins the id the two modules must agree on.
+
+**Refusal is a first-class outcome, not an error path.** A selector matches many elements, a rule can be redeclared, and a shorthand can undo a longhand — so `setDeclaration`'s first-match rule and the last-declaration-wins cascade disagree more often than they look. `analyzeDeclarationTarget` refuses, with a sentence the user can act on, whenever the write would change the file and change nothing on screen:
+
+| Refusal | When |
+|---|---|
+| `duplicate-selector` | the selector is declared again later and that block also sets this property |
+| `duplicate-declaration` | the property is declared twice inside the target rule |
+| `shorthand-override` | a covering shorthand (`padding` over `padding-top`) follows the property |
+| `important-override` | a covering shorthand carries `!important` |
+| `compiled-stylesheet` | `.module.css`, `.min.css`, or a `dist/`-style build path (`classifyStylesheetEditability`) |
+
+**What still does not reach disk**, reported to the user rather than dropped silently (`meta-03` decision 3's third tier):
+
+- A rule with **no mapped `.css` source** — a Tailwind/Sass/PostCSS-generated class or a CSS Modules compile. The correct edit for Tailwind is an element `className` change, which is a separate feature; until it exists the user is told the change is canvas-only.
+- A **real breakpoint/condition override** (`mobile`, a `@media` condition). Writing one needs `setDeclarationAtMedia` plus the condition's query, which the `css` edit kind does not carry yet.
+
+Both surface as toasts on save. Silence is the one outcome that loses a user's work without telling them, so neither is a silent skip.
 
 ### Compiled styles — Tailwind, Sass, PostCSS, CSS Modules (WS-2.1/2.2)
 
@@ -740,3 +766,6 @@ here once it is genuinely detectable.
 | Literal writeback + writable-path guard | `server/handlers/__tests__/studioWriteback.test.ts` |
 | `setStringLiteral` fail-closed behaviour | `src/core/ast-codemods/__tests__/setStringLiteral.test.ts` |
 | Resolved text is editable at its origin, and nothing else is | `src/__tests__/studio/resolvedTextEditing.test.ts` |
+| CSS write-back: honest-target refusals | `src/core/css-codemods/__tests__/analyzeDeclarationTarget.test.ts` |
+| CSS write-back: the client diff + the synthetic `studio` breakpoint id | `src/__tests__/studio/styleRuleWriteback.test.ts` |
+| CSS write-back: a real browser edit reaching a real `.css` file, and a real refusal | `tests/e2e/css-writeback.e2e.ts` |

@@ -45,7 +45,13 @@ commit as the code**, not after.
 what was actually missing was anyone running it in a browser. It also found
 that **no `scripts/bench/` browser bench can execute under Bun on Windows** and
 that they report success anyway — read its Landmines before trusting a green
-bench. `panel-02` is still in flight (its files are dirty in the tree).
+bench. `panel-02` is **done** (see its entry) — and it is the third instance of
+the same pattern: its predecessor's work was already committed and looked
+complete, but it wrote nothing to disk at all. **Note for anyone in the canvas:**
+CSS write-back reads `BoardFramesLayer.tsx`'s synthetic `id: 'studio'`
+breakpoint, because that is the context every inspector edit actually lands in.
+A source-text gate in `src/__tests__/studio/styleRuleWriteback.test.ts` keeps
+the two honest — if you rename that id, CSS write-back silently stops writing.
 
 Each resumed agent was told to `git status` / `git diff` FIRST, because its
 predecessor's partial edits are in the tree and re-deriving them would be waste.
@@ -90,11 +96,18 @@ Full reasoning in the `infra-01` entry under "Recently landed".
   Windows-only harness failure. Real fix = `DbClient.close()` — **shipped by
   `test-infra-01`; that test and 180 others in the same class now pass.**
 
-### `debt-01` — two files over the size ceiling
-`fsCodemodAdapter.ts` (890) and `studioWriteback.ts` (738). Each has a named
-extraction candidate in `module-size-budgets.test.ts`'s `GRANDFATHERED`
-comments. The ratchet still binds: neither may grow another line without
-extracting first.
+### `debt-01` — CLOSED (2026-07-31)
+All three files that the M2–M4 wave pushed over the 700-line ceiling have
+**graduated off the grandfathered ledger by extracting, not by raising a cap**.
+`module-size-budgets.test.ts`'s `GRANDFATHERED` map no longer lists any of them.
+
+- `staticEvalCore.ts` 831 → 663 (`parser-07`)
+- `BreakpointSelectionOverlay.tsx` 718 → 655 (`instance-ui-01`)
+- `fsCodemodAdapter.ts` 890 → 645 and `studioWriteback.ts` 738 → 645
+  (`panel-02`) — each following the extraction its own grandfather note named.
+
+The ordinary `CEILING` rule holds them all now. Do not re-add an entry to make
+room for a feature; extract instead.
 
 `BreakpointSelectionOverlay.tsx` (was 718) **graduated in `instance-ui-01`** —
 the toolbar JSX and its two selection actions moved to the new
@@ -171,7 +184,7 @@ Added after `panel-01` and the integration audits:
 
 | # | Work order | Depends on | State |
 |---|---|---|---|
-| 12 | `panel-02` — wire CSS write-back end to end: `StyleRule.id → (file, selector, pos)` mapping at load, a save route, and the tiered policy (`meta-03` decision 3). `src/core/css-codemods/` exists and is byte-exact tested but reaches nothing. | `parser-05` (shares `studioWriteback.ts`) | queued |
+| 12 | `panel-02` — wire CSS write-back end to end: `StyleRule.id → (file, selector, pos)` mapping at load, a save route, and the tiered policy (`meta-03` decision 3). `src/core/css-codemods/` exists and is byte-exact tested but reaches nothing. | `parser-05` (shares `studioWriteback.ts`) | **done** — browser-verified; see its entry below. Its predecessor had built nearly all of it and it wrote nothing at all: every studio edit lands in `contextStyles.studio`, not `styles` |
 | 13 | `perf-01` — duplicate of row 9 above | `board-02` (owns `useCanvas.ts`) | done — see entry below |
 | 14 | `infra-01` — install jobs are in-memory, so a dev-server restart silently loses one and the UI shows nothing. Also: `designImport.ts` is a **second** token-import system duplicating `tokenExtract.ts` with a known correctness gap on nested corpora — resolve to one. | — | queued |
 
@@ -217,6 +230,111 @@ are the remaining WS-2 items, not yet dispatched. See
 ---
 
 ## Recently landed
+
+### panel-02 — CSS write-back reaches disk, and the feature that "existed" was writing nothing at all
+- **Agent:** resumed `panel-02` (predecessor terminated by the spend limit)
+- **Stage:** done — browser-verified against a temp fixture project
+- **Updated:** 2026-07-31
+- **Lead with this:** my predecessor had already built **almost all of it** and
+  committed it inside the squash `fb4821b` with no `STATE.md` entry — the
+  `StyleRule.id → (file, selector)` map, the `kind: 'css'` edit, the save
+  dispatch, the path guards, the `StyleTargetChip` tier UI, and the client
+  diff were all there and all unit-tested green. **It wrote nothing. Ever.**
+  Not one declaration had ever reached a `.css` file. The same "committed code
+  with no handoff looks unfinished" trap the STOP block records for `parser-07`
+  — except here the code also silently did not work. Read the root cause below
+  before touching this area.
+- **Root cause — the `studio` context IS the base declaration set.** Every board
+  frame mounts a SYNTHETIC breakpoint (`id: 'studio'`, `BoardFramesLayer.tsx`'s
+  `buildStudioBreakpoint`, sized per frame). So `StyleSurface`'s
+  `activeContextId` is `'studio'` for **every** edit a user makes on a studio
+  board, and every value they type lands in `contextStyles.studio` — never in
+  `rule.styles`. The diff read `rule.styles`, compared two identical bags on
+  every save, and emitted zero edits. The feature's own documented scope
+  ("BASE declarations only") described a set that is **always empty in Studio**.
+  No unit test could see this: the codemods were byte-exact correct, the diff
+  was correct against the shape it was given, and the shape it is actually
+  given only exists once a board frame mounts. `effectiveStudioStyles` now folds
+  the studio context over the base bag, and
+  `src/__tests__/studio/styleRuleWriteback.test.ts` pins the id both modules
+  must agree on, so it cannot regress silently.
+- **Refusal, designed in rather than bolted on.** CSS makes CLAUDE.md's
+  "exactly one honest target" invariant sharp: `setDeclaration` writes the
+  FIRST matching rule while the cascade honours the LAST. New pure analyzer
+  `src/core/css-codemods/analyzeDeclarationTarget.ts` runs on the same text
+  about to be written and refuses — with a sentence a person can act on —
+  whenever the write would change the file and change nothing on screen:
+  `duplicate-selector`, `duplicate-declaration`, `shorthand-override`,
+  `important-override`. Joins the existing `compiled-stylesheet` refusal from
+  `classifyStylesheetEditability`. All refusals ride the channel `detach`/`swap`
+  already built (`StudioEditRefusalError` → `refusals[]` → toast).
+- **Two silent skips became reported outcomes.** A rule with no mapped `.css`
+  source (Tailwind/Sass/CSS-Modules output — `meta-03` decision 3's third tier)
+  and a real breakpoint/condition override both used to `continue` quietly on
+  save. `StyleTargetChip` warns at edit time, but a warning already dismissed is
+  not consent for a later silent no-op, and on reload the work is just gone.
+  Both now toast on save with what happened and why. `commitBaseline` advances
+  the diff baseline after each round trip so one change produces exactly one
+  attempt and exactly one message — without it every 2s autosave tick re-toasts
+  the same refusal forever.
+- **`debt-01`'s ledger is now EMPTY.** Both remaining grandfathered files
+  graduated by doing the extraction their own notes named, not by raising a cap:
+  - `fsCodemodAdapter.ts` **890 → 645** — one module per edit kind, exactly as
+    its note said: `studioSaveRequests.ts` (the `/save` wire contract + the
+    one-shot commits: create page, asset, detach, swap, extract) and
+    `styleRuleWriteback.ts` (the CSS diff + the source map).
+  - `studioWriteback.ts` **738 → 645** — the `css` kind moved whole to
+    `studioCssWriteback.ts`. It targets a file+selector, not a `line:col`, and
+    writes through postcss, not ts-morph, so it shared none of that module's
+    machinery. Dependency runs one way; the new module returns refusals rather
+    than throwing, and `studioWriteback` translates, keeping one refusal channel.
+- **Scope:**
+  - New: `src/core/css-codemods/analyzeDeclarationTarget.ts` (+ tests),
+    `server/handlers/studioCssWriteback.ts`,
+    `src/admin/pages/site/studio/{studioSaveRequests.ts,styleRuleWriteback.ts}`,
+    `src/__tests__/studio/styleRuleWriteback.test.ts`,
+    `tests/e2e/css-writeback.e2e.ts`.
+  - Edited: `server/handlers/studioWriteback.ts` (+ its test),
+    `src/admin/pages/site/studio/fsCodemodAdapter.ts`,
+    `src/core/css-codemods/index.ts`,
+    `src/__tests__/architecture/module-size-budgets.test.ts` (both ledger
+    entries deleted), the four import sites of the moved exports
+    (`NewPageButton`, `ImageSourceSection`, `InstanceCallSiteView`,
+    `StyleSurface`), `docs/features/studio-import.md` ("CSS is one-way" was
+    stale and is now the write-back section).
+- **Verification — the browser is the reason this entry says "done".**
+  `tests/e2e/css-writeback.e2e.ts`, 2 tests, both passing against real Chromium:
+  1. select a class-styled element, type a width in the inspector, and the
+     declaration appears in the real `pages/Home.css` — asserted **byte-exact**
+     against the original file with one substring replaced, so the comment,
+     blank lines, and unrelated rules are all proven intact.
+  2. a doubly-declared selector surfaces the refusal toast and leaves the file
+     **byte-identical**.
+  Also `bun run build` clean, `bun run lint` clean, and the unit suites for
+  every file I touched. The 4 failing architecture tests (CodeMirror lazy-load,
+  publish lifecycle bus, a Windows-path ENOENT in error-boundary-coverage,
+  keybindings matchers) are the known set and are **not mine**.
+  **The spec writes only to an OS temp fixture** (`os.tmpdir()`, removed in
+  `afterAll`) — `studio-workspace/` is never read or written.
+- **Landmines for the next agent:**
+  - `E2E_REUSE_SERVER` is not the only stale-server trap. Orphaned e2e-dev
+    trees also hold `.tmp/e2e-agent.db`, and `scripts/e2e-dev.ts` deletes that
+    file at startup — so a leftover process makes the webServer die with
+    `EBUSY` and Playwright reports "webServer was not able to start", which
+    looks nothing like the actual cause. Kill the e2e-dev tree AND ports
+    5174/3002, in a loop until the ports are genuinely free, before every run.
+  - Running e2e leaves a scaffolded `studio-workspace/untitled/` behind
+    (`auth.setup.ts` navigates to the editor with no project selected).
+    Untracked, never stage it.
+- **Not built, deliberately:** `setDeclarationAtMedia` is written and tested but
+  still unwired — the `css` edit kind carries no media query, so a real
+  breakpoint override reports instead of writing. The Tailwind tier's real fix
+  (edit the element's utility classes instead of a declaration) is a separate
+  feature; today it reports. Property REMOVAL is not written either —
+  `setDeclaration` only sets, and deleting lines from a user's stylesheet as a
+  side effect of a diff is not something to do casually.
+- **Next step:** none required. The honest follow-ups are the three above.
+- **Human action needed:** none.
 
 ### perf-01 — WS-5.3–5.6 measured in a real browser: pan/zoom is already 60fps, and the perf gate could never run
 - **Agent:** perf-hunter
