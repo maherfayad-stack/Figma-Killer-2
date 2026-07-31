@@ -23,6 +23,9 @@ export {
   decodeSourceNodeId,
   hasWritableSourceLocation,
   isInlinedNodeId,
+  isRouteChromeNodeId,
+  isSourceDerivedNodeId,
+  isStudioPageRootId,
 } from './sourceNodeId'
 export type { SourceNodeLocation } from './sourceNodeId'
 export {
@@ -33,6 +36,14 @@ export {
   styleValueKey,
 } from './sourceWritability'
 export type { SourceWritableNode } from './sourceWritability'
+// The structural counterpart: can this node's PLACE be written back?
+export { SourceStructureError, refuseStructuralEdit } from './sourceStructure'
+export type {
+  SourceStructureNode,
+  StructuralEditKind,
+  StructuralRefusal,
+  StructuralRefusalReason,
+} from './sourceStructure'
 export {
   TreeOperationSchema,
   TreeMutateResultSchema,
@@ -152,8 +163,8 @@ export {
   pasteSubtree,
   wrapNode,
   wrapNodes,
-  applyTreeOperation,
 } from './mutations'
+export { applyTreeOperation } from './treeOperations'
 
 export {
   addPage,

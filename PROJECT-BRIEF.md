@@ -62,15 +62,22 @@ studio-workspace/<project>/          ← a real React repo. THE source of truth.
   Board canvas                        src/admin/pages/site/canvas/
   one <iframe> per frame              IframeFrameSurface.tsx
         │
-        │  user edits a prop / text / style / tag
+        │  user edits a prop / text / style / tag, or reorders / deletes
+        │  an element
         ▼
   Typed StudioEdit batch              POST /admin/api/studio/save
         │
         ▼
   AST codemods                        src/core/ast-codemods/
   rewrite the user's .tsx             (setJsxProp, setJsxText, setJsxStyle,
-                                       setStringLiteral, setJsxTagName)
+                                       setStringLiteral, setJsxTagName,
+                                       moveJsxElement, deleteJsxElement)
 ```
+
+A structural gesture that CANNOT be written (a `.map` row, a shared component,
+a new node with no source position) is refused before the tree mutates, with a
+reason — `refuseStructuralEdit` in `src/core/page-tree/sourceStructure.ts`. It
+never silently no-ops.
 
 **Two invariants that explain 80% of the code's weirdness:**
 

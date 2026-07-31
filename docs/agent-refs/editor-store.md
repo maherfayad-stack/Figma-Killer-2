@@ -57,11 +57,22 @@ moveNode · duplicateNode · wrapNode
 Gate: `no-vc-mode-branches-in-mutations.test.ts`.
 
 Plugins reach the same engine via `applyTreeOperation(tree, op)` from
-`@core/page-tree`, dispatched on `op.kind`.
+`@core/page-tree` (`treeOperations.ts` — the dispatcher, split from the
+primitives in `struct-01`), dispatched on `op.kind`. Its structural branches
+run the same source gate the store actions do and throw `SourceStructureError`
+rather than mutating a studio-imported tree in a way nothing can write back.
 
 ---
 
 ## Studio-specific store behaviour
+
+**Structural actions refuse before they mutate (`struct-01`).** `insertNode`,
+`deleteNode(s)`, `moveNode(s)`, `duplicateNode(s)` and `wrapNode(s)` ask
+`structuralSourceEdits.ts` first. On a studio-imported tree they either commit a
+`move`/`delete` edit to the user's `.tsx` (`commitStudioMove` /
+`commitStudioDelete`) or toast a reason and do nothing — never both nothing and
+nothing said, which is what they used to do. Announced, not silent: unlike a
+value refusal, the gesture is always a deliberate one a person just made.
 
 **`updateNodeProps` and `setNodeInlineStyles` refuse a patch if *any* key is
 code-valued** — all-or-nothing, because a half-applied patch is a canvas that

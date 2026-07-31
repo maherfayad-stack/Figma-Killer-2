@@ -20,6 +20,7 @@
 import { apiRequest } from '@core/http'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { requestCmsSiteReload } from '@admin/state/adminEvents'
+import { getErrorMessage } from '@core/utils/errorMessage'
 import { pushToast } from '@ui/components/Toast'
 import { getStudioWorkspaceDir } from './studioWorkspaceDir'
 
@@ -124,11 +125,96 @@ export function createStudioPage(name?: string): Promise<CreatedStudioPage> {
 
 /** Post one edit to `/save` and return the parsed response. The shared body of every one-shot commit below. */
 function postOneEdit(edit: Record<string, unknown>): Promise<StudioSaveResponse> {
+  return postEdits([edit])
+}
+
+/** Post a batch of edits to `/save`. The save route orders them bottom-to-top before applying. */
+function postEdits(edits: readonly Record<string, unknown>[]): Promise<StudioSaveResponse> {
   return apiRequest('/admin/api/studio/save', {
     method: 'POST',
-    body: { dir: studioWriteDir(), edits: [edit] },
+    body: { dir: studioWriteDir(), edits },
     schema: StudioSaveResponseSchema,
   })
+}
+
+/**
+ * `struct-01` — a sibling reorder, committed to the user's `.tsx` the moment
+ * the drag ends.
+ *
+ * A one-shot commit rather than a `saveSite` diff, for the reason every other
+ * one-shot commit in this module is one and then a sharper one: `saveSite`
+ * walks node VALUES and has no notion of parent, order, or child list at all,
+ * which is exactly why a structural edit used to vanish silently. There is
+ * also nothing to debounce — a drag ends once.
+ *
+ * `anchorNodeId` is the sibling the moved element is written against, not an
+ * index: see `MoveEditSchema` in `server/handlers/studioWriteback.ts` for why
+ * an index computed on the canvas does not name a position in the source.
+ *
+ * The store has already refused everything it can decide from the node ids
+ * (`refuseStructuralEdit`); what can still come back is the residue only the
+ * AST can answer — these two are not really siblings in the code, their
+ * formatting will not admit a byte-exact move. Those arrive as refusals, and
+ * because the store applied the move optimistically, the board is then showing
+ * something the file does not say. Reloading is what makes it honest again,
+ * which is why it happens on EVERY outcome: a successful write shifted every
+ * `line:col` id below it, and a refused one has to be taken back.
+ */
+export async function commitStudioMove(
+  nodeId: string,
+  anchorNodeId: string,
+  position: 'before' | 'after',
+): Promise<void> {
+  await commitStructural([{ kind: 'move', nodeId, anchorNodeId, position }], 'Move refused')
+}
+
+/**
+ * `struct-01` — removing one or more elements from the user's `.tsx`.
+ *
+ * Several ids in one request on purpose: `applyStudioEditBatch` orders a batch
+ * bottom-to-top, so removing a lower element cannot move a higher one's line,
+ * which makes a multi-select delete a single honest transaction rather than N
+ * racing ones.
+ */
+export async function commitStudioDelete(nodeIds: readonly string[]): Promise<void> {
+  if (nodeIds.length === 0) return
+  await commitStructural(nodeIds.map((nodeId) => ({ kind: 'delete', nodeId })), 'Delete refused')
+}
+
+/**
+ * Shared body of the structural commits: post, report what the source refused,
+ * and re-sync the board with disk whatever happened.
+ */
+async function commitStructural(edits: readonly Record<string, unknown>[], refusalTitle: string): Promise<void> {
+  try {
+    const result = await postEdits(edits)
+    for (const refusal of result.refusals ?? []) {
+      pushToast({ kind: 'error', title: refusalTitle, body: refusal.message })
+    }
+    // A skip with no refusal means the location decoded to nothing writable at
+    // all — the id was stale against disk. Same remedy, but say so rather than
+    // letting the change quietly reappear after the reload with no explanation.
+    const unexplained = result.skipped - (result.refusals ?? []).length
+    if (unexplained > 0) {
+      pushToast({
+        kind: 'error',
+        title: refusalTitle,
+        body: 'The code no longer has an element at the position the canvas was showing. The board has been reloaded from the files on disk.',
+      })
+    }
+  } catch (err) {
+    // Fire-and-forget from the store's mutation guard, so this is the only
+    // place the failure can be reported — and the reload below is what puts
+    // the board back in step with the file it failed to change.
+    console.error('[studioSaveRequests] structural edit failed:', err)
+    pushToast({
+      kind: 'error',
+      title: refusalTitle,
+      body: getErrorMessage(err, 'The change could not be written to the project source.'),
+    })
+  } finally {
+    requestCmsSiteReload()
+  }
 }
 
 /**

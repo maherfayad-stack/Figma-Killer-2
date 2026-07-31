@@ -53,6 +53,10 @@ uneditable.
 | `locked` / `lockReason` | **Structure**: the source does not simply place this node — a `.map` generated it, an unresolved ternary/`&&`/call the parser could not pick a single branch for, or a spread feeds it | Cannot be moved, deleted, reordered, wrapped |
 | `codeProps: string[]` | **Values**: prop names with no writable target, because the source holds an expression, not a literal. Inline styles appear as `style:<property>` | Those props are read-only; **siblings stay editable** |
 
+The structural half has its own predicate, the exact sibling of
+`isPropWritableToSource` — `refuseStructuralEdit(...)` in
+`src/core/page-tree/sourceStructure.ts`. See "Structural writeback" below.
+
 It runs both ways. A resolved value (`{c.heading}`) records `codeProps` and
 `resolution` and **does not lock its node** — `lock-01` deleted that lock, which
 was 149 of the 276 locks on the real board (34.4% -> 15.8% locked) and made the
@@ -148,6 +152,61 @@ parsed first" decide whether any copy resolved.
 Codemods live in `src/core/ast-codemods/` and preserve the file's quote style
 and formatting. Edits apply **bottom-to-top** so earlier writes don't shift
 later line numbers.
+
+---
+
+## Structural writeback (`struct-01`)
+
+`StudioEdit` used to carry value kinds only (`prop | text | style | literal |
+tag | asset | detach | swap | css`). A move, delete, insert, duplicate or wrap
+therefore reached **no** code path at all: the tree changed, the save reported
+success, the `.tsx` was untouched, and the change was gone on reload. In Studio
+the repository IS the document, so that was a silent no-op.
+
+Two kinds now exist — **`move`** (`moveJsxElement`) and **`delete`**
+(`deleteJsxElement`) — and everything else refuses out loud.
+
+**The gate runs before the mutation, not after.** One pure rule,
+`refuseStructuralEdit(...)` in `src/core/page-tree/sourceStructure.ts`, is
+asked by the store's structural actions (`structuralSourceEdits.ts`) and by
+`applyTreeOperation` (so a plugin or an agent rides the same gate). It answers
+from the node id and `lockReason` alone:
+
+| Refusal | Because |
+|---|---|
+| `list-row` | a `.map` row — one piece of JSX renders every row |
+| `shared-component` | an inlined id — the markup is in the component's own file, so a move there moves every instance |
+| `route-chrome` | a Next `layout`/`template` — one file, many frames |
+| `code-placed` | the parser recorded a structural `lockReason` |
+| `reparent` / `insert` / `duplicate` / `wrap` | needs a source position that does not exist yet; a node minted with a nanoid id can never be written back |
+| `multi-select` | several elements REORDERED at once (a multi DELETE is fine — the batch is ordered bottom-to-top) |
+| `cross-file` / `no-sibling-anchor` | a reorder is written as "put this before that one", so it needs a plain sibling in the same file |
+
+The AST adds the refusals only it can answer: `not-siblings`,
+`expression-child` (the element comes out of `{cond && <X/>}`, so its position
+is decided at runtime), `mixed-indentation`, `no-jsx-parent` (it is what the
+component returns), `orphans-import` (deleting it would leave an import unused,
+which fails the user's own build), `stale-source`.
+
+**A reorder is written against an ANCHOR, never an index.** The editor's child
+list and the JSX child list are different lists. `planSourceMove` simulates the
+move, finds the neighbour the node lands beside, and sends
+`{ nodeId, anchorNodeId, position }`.
+
+**Byte-exactness.** These codemods use the AST only to LOCATE; the write is a
+splice of the original bytes (`jsxChildRange.ts`), and it refuses outright if
+the text on disk differs from the text ts-morph parsed. An AST rewrite that
+reformats an untouched sibling is a defect.
+
+**Commit shape.** Structural edits are one-shot commits
+(`commitStudioMove` / `commitStudioDelete` in `studioSaveRequests.ts`), like
+asset/detach/swap — never the `saveSite` diff, which has no notion of parent or
+order. They always reload afterwards: a successful write shifted every
+`line:col` below it, and a refused one has to be taken back.
+
+Measured on the 15-page eSIM corpus (787 source-derived nodes): **28.8%
+reorder**, **17.0% delete**; the rest refuse, `shared-component` (48.5%) being
+by far the largest bucket.
 
 ---
 

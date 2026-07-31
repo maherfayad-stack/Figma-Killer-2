@@ -93,6 +93,7 @@ There is no separate `pages` table, no `page_versions` table. Everything content
 The canonical TypeBox schemas for tree mutation RPCs live with the tree engine:
 
 - `TreeOperationSchema` validates the 11 `applyTreeOperation` variants. Insert operations require a complete `PageNode`.
+  `applyTreeOperation` itself lives in `src/core/page-tree/treeOperations.ts` (split from `mutations.ts` in `struct-01`: the primitives are one module, the dispatcher — which carries a policy — is another). Its STRUCTURAL branches call `refuseStructuralEdit` (`sourceStructure.ts`) and throw `SourceStructureError` when the operation could never be written back to a studio-imported `.tsx`, so a plugin or an agent gets the same reason a person does instead of a mutation that vanishes on the next parse. Ordinary CMS trees (nanoid ids) are unaffected — the rule gates itself on the studio id grammar.
 - `TreeMutateResultSchema` validates the `{ tree, affectedNodeIds }` response shape.
 - `parsePageNodeTree(value)` validates a `NodeTree` payload and then checks tree invariants that JSON Schema cannot express: `rootNodeId` must exist, node-map keys must match each node's `id`, child IDs must resolve, and the reachable tree must be acyclic.
 

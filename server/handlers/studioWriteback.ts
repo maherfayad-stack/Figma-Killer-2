@@ -8,13 +8,15 @@
  * full Request/Response round trip.
  *
  * A batch of typed edits (`kind: 'prop' | 'text' | 'style' | 'literal' | 'tag'
- * | 'asset' | 'detach' | 'swap' | 'css'`). The `css` kind is owned end to end by
+ * | 'asset' | 'detach' | 'swap' | 'move' | 'delete' | 'css'`). The `css` kind is
+ * owned end to end by
  * the sibling `studioCssWriteback.ts` — it targets a FILE + SELECTOR rather
  * than a decoded `line:col`, and writes through a postcss CST instead of
  * ts-morph, so it shares none of this module's machinery. Most edits' nodeId is decoded back to a source location and
  * dispatched to the matching `ast-codemods` writer (`setJsxProp` /
  * `setJsxText` / `setJsxStyle` / `setStringLiteral` / `setJsxTagName` /
- * `setImportSpecifier`) via `applyStudioEdit`. Synthetic nodes (e.g. the
+ * `setImportSpecifier` / `moveJsxElement` / `deleteJsxElement`) via
+ * `applyStudioEdit`. Synthetic nodes (e.g. the
  * `index:body` root) don't match the loc pattern and are skipped. The save
  * route applies each edit independently — one codemod throwing (e.g. a text
  * edit landing on an element with mixed children) is logged and skipped by
@@ -23,8 +25,11 @@
 import { isAbsolute, join, resolve, sep } from 'node:path'
 import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import { EXCLUDED_WORKSPACE_DIR_NAMES, INLINE_ID_SEPARATOR } from '@core/page-parser'
+import { isInlinedNodeId, isRouteChromeNodeId } from '@core/page-tree'
 import {
+  deleteJsxElement,
   detachComponentInstance,
+  moveJsxElement,
   setImportSpecifier,
   setJsxProp,
   setJsxStyle,
@@ -155,6 +160,32 @@ const SwapEditSchema = Type.Object({
   newComponentFile: Type.String(),
 })
 
+/**
+ * One sibling reorder (`struct-01`) — `moveJsxElement`. `nodeId` is the moved
+ * element's own location; `anchorNodeId` is the sibling it is written against,
+ * because an INDEX does not name a position in the source (one `{items.map(…)}`
+ * child contributes N canvas nodes, a `{cond && <X/>}` contributes one of two,
+ * whitespace contributes none) while "immediately before/after that element"
+ * does. Both ids decode through the same `studioEditLocation` every other kind
+ * shares, so ordering and touched-file collection keep working.
+ */
+const MoveEditSchema = Type.Object({
+  kind: Type.Literal('move'),
+  nodeId: Type.String(),
+  anchorNodeId: Type.String(),
+  position: Type.Union([Type.Literal('before'), Type.Literal('after')]),
+})
+
+/**
+ * One element removal (`struct-01`) — `deleteJsxElement`. Like `detach`/`swap`
+ * this can REFUSE with a specific reason (it is the component's root return,
+ * it would orphan an import) rather than simply "no writable location".
+ */
+const DeleteEditSchema = Type.Object({
+  kind: Type.Literal('delete'),
+  nodeId: Type.String(),
+})
+
 /** Discriminated union of every studio edit kind — `kind` is the discriminator. */
 export const StudioEditSchema = Type.Union([
   PropEditSchema,
@@ -165,6 +196,8 @@ export const StudioEditSchema = Type.Union([
   AssetEditSchema,
   DetachEditSchema,
   SwapEditSchema,
+  MoveEditSchema,
+  DeleteEditSchema,
   CssEditSchema,
 ])
 export type StudioEdit = Static<typeof StudioEditSchema>
@@ -241,42 +274,17 @@ function isWritableSourceRel(rel: string): boolean {
   return WRITABLE_SOURCE_EXTENSION.test(rel)
 }
 
-/** True when this id came from a component inlined at a call site — one edit here rewrites every instance. */
-export function isInlinedNodeId(nodeId: string): boolean {
-  return nodeId.includes(INLINE_ID_SEPARATOR)
-}
-
-/**
- * A Next.js App Router `layout.tsx`/`template.tsx` is composed into EVERY route
- * beneath it, so one file backs many board frames. Unlike an inlined component,
- * those nodes keep their own plain `relFile:line:col` id (there is exactly one
- * composed position per route, so there is nothing to disambiguate) — which
- * means `isInlinedNodeId` does not catch them, and an edit to a shared nav
- * would rewrite `layout.tsx` while every OTHER route's frame kept showing the
- * old markup. Silent divergence between canvas and source is the one failure
- * this codebase treats as unacceptable, so this predicate closes it.
- *
- * Matched on the filename alone, deliberately: a non-Next project that happens
- * to have a `layout.tsx` is then treated as shared too. That direction is the
- * safe one — the only cost is one redundant board reload, whereas missing a
- * genuinely shared file costs the user a stale frame they cannot see is stale.
- */
-function isRouteChromeNodeId(nodeId: string): boolean {
-  const location = studioEditLocation(nodeId)
-  if (!location) return false
-  const basename = location.rel.split(/[/\\]/).pop() ?? ''
-  return ROUTE_CHROME_FILE.test(basename)
-}
-
-/** `layout`/`template` at any App Router segment depth — the files Next composes into every route below them. */
-const ROUTE_CHROME_FILE = /^(layout|template)\.(tsx|ts|jsx|js)$/i
-
 /**
  * True when an edit to this node invalidates OTHER frames on the board —
  * because the id is an inlined component instance, because it belongs to
  * route chrome composed into many routes, or (WS-8.3) because it is an ASSET
  * edit. The save route returns this as `sharedComponents` so the client knows
  * to reload rather than trust its in-memory copy of the other frames.
+ *
+ * `isInlinedNodeId`/`isRouteChromeNodeId` are the page-tree module's own id
+ * grammar (`@core/page-tree/sourceNodeId.ts`) — the same predicates the
+ * editor's structural refusal consults, so the "this write is shared" answer
+ * cannot drift between the two sides of the wire.
  *
  * An asset edit's target is an IMPORT DECLARATION, which any number of JSX
  * usages in the same file can read (`<img src={hero}/>` appearing twice) —
@@ -293,9 +301,13 @@ const ROUTE_CHROME_FILE = /^(layout|template)\.(tsx|ts|jsx|js)$/i
  * element) and therefore always shift line numbers, invalidating every OTHER
  * node id below them in the same file whether or not this particular node
  * happened to be an inlined/shared one.
+ *
+ * `struct-01` — `move`/`delete` join them for the same reason: relocating or
+ * removing a JSX child always changes the line count of every node id below it.
  */
 export function isSharedSourceNodeId(nodeId: string, kind?: StudioEdit['kind']): boolean {
   if (kind === 'asset' || kind === 'detach' || kind === 'swap') return true
+  if (kind === 'move' || kind === 'delete') return true
   return isInlinedNodeId(nodeId) || isRouteChromeNodeId(nodeId)
 }
 
@@ -535,6 +547,33 @@ export function applyStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyO
     case 'tag':
       setJsxTagName({ ...loc, tag: edit.tag })
       return { applied: true }
+    case 'move': {
+      // `struct-01` — the anchor decodes through the same guard as every other
+      // target, so a hand-crafted `anchorNodeId` cannot name a file outside the
+      // workspace or a file that is not app source. Both ends must also live in
+      // the SAME file: the codemod requires them to be siblings, but that check
+      // reads an AST, and a cross-file pair should never get that far.
+      const anchor = studioEditLocation(edit.anchorNodeId)
+      if (!anchor || anchor.rel !== target.rel) {
+        throw new StudioEditRefusalError(
+          'cross-file',
+          'The element this move is written against is not in the same file, so there is no single place to write the new order.',
+        )
+      }
+      const result = moveJsxElement({
+        ...loc,
+        anchorLine: anchor.line,
+        anchorCol: anchor.col,
+        position: edit.position,
+      })
+      if (!result.ok) throw new StudioEditRefusalError(result.refusal.reason, result.refusal.message)
+      return { applied: true }
+    }
+    case 'delete': {
+      const result = deleteJsxElement(loc)
+      if (!result.ok) throw new StudioEditRefusalError(result.refusal.reason, result.refusal.message)
+      return { applied: true }
+    }
     case 'detach': {
       const result = detachComponentInstance({ ...loc, workspaceRoot: dir })
       if (!result.ok) throw new StudioEditRefusalError(result.refusal.reason, result.refusal.message)
@@ -558,16 +597,22 @@ export function applyStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyO
 }
 
 /**
- * One `detach`/`swap`/`css` edit that refused rather than writing — surfaced
- * to the client so it can show the SPECIFIC reason (a toast with an offer,
- * per WS-4.4's plan; `StyleTargetChip`'s per-tier message for `css`) instead
- * of a generic "skipped" count.
+ * One `detach`/`swap`/`move`/`delete`/`css` edit that refused rather than
+ * writing — surfaced to the client so it can show the SPECIFIC reason (a toast
+ * with an offer, per WS-4.4's plan; `StyleTargetChip`'s per-tier message for
+ * `css`; the AST-only structural reasons for `move`/`delete`) instead of a
+ * generic "skipped" count.
  */
 export interface StudioEditRefusal {
   nodeId: string
-  kind: 'detach' | 'swap' | 'css'
+  kind: 'detach' | 'swap' | 'move' | 'delete' | 'css'
   reason: string
   message: string
+}
+
+/** The edit kinds whose refusal is a NAMED, expected outcome rather than a codemod exception. */
+function isRefusingEditKind(kind: StudioEdit['kind']): kind is StudioEditRefusal['kind'] {
+  return kind === 'detach' || kind === 'swap' || kind === 'move' || kind === 'delete' || kind === 'css'
 }
 
 /** The result of applying a batch of studio edits — `POST /admin/api/studio/save`'s own response shape. */
@@ -625,7 +670,7 @@ export function applyStudioEditBatch(dir: string, edits: readonly StudioEdit[]):
         skipped += 1
       }
     } catch (err) {
-      if (err instanceof StudioEditRefusalError && (edit.kind === 'detach' || edit.kind === 'swap' || edit.kind === 'css')) {
+      if (err instanceof StudioEditRefusalError && isRefusingEditKind(edit.kind)) {
         refusals.push({ nodeId: edit.nodeId, kind: edit.kind, reason: err.reason, message: err.message })
       } else {
         console.error('[studio]', err)

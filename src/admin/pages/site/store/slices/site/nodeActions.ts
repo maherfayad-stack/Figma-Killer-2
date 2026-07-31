@@ -8,13 +8,17 @@
  * MUST NOT contain their own `kind === 'visualComponent'` branch — that
  * routing is the sole job of `mutateActiveTree`. Gated by
  * `src/__tests__/architecture/no-vc-mode-branches-in-mutations.test.ts`.
+ *
+ * `struct-01` — the STRUCTURAL actions (`insertNode`, `deleteNode(s)`,
+ * `moveNode(s)`, `duplicateNode(s)`, `wrapNode(s)`) additionally consult
+ * `structuralSourceEdits.ts` before mutating, so that on a studio-imported
+ * tree they either write the user's `.tsx` or refuse with a readable reason.
+ * They never do neither, which is what they used to do.
  */
 
-import { nanoid } from 'nanoid'
 import { registry } from '@core/module-engine'
 
 import {
-  cloneScopedClassesForNodeMap,
   createNode,
   insertNode,
   deleteNode,
@@ -24,9 +28,7 @@ import {
   renameNode,
   toggleNodeLocked,
   toggleNodeHidden,
-  moveNode,
   moveNodes,
-  duplicateNode,
   wrapNode,
   wrapNodes,
   reindexNodeParents,
@@ -34,12 +36,22 @@ import {
   isPropWritableToSource,
   isStylePatchWritableToSource,
 } from '@core/page-tree'
-import type { NodeTree, PageNode, SiteDocument } from '@core/page-tree'
+import type { NodeTree, PageNode } from '@core/page-tree'
 import { subtreeHasOutlet, treeHasOutlet } from '@core/templates'
 import { wouldCreateCycle, syncSlotInstances, applySlotSyncResult } from '@core/visualComponents'
 import { pushToast } from '@ui/components/Toast'
-import { depthInTree, resolveActiveTreeTarget } from './helpers'
-import { groupNodeIdsByPage } from './nodeTreeGrouping'
+import { commitStudioDelete, commitStudioMove } from '@site/studio/studioSaveRequests'
+import { resolveActiveTreeTarget } from './helpers'
+import { createDeleteNodesAction } from './deleteNodesAction'
+import { duplicateNodeWithScopedClasses } from './duplicateWithScopedClasses'
+import {
+  STRUCTURAL_REFUSAL_TITLE,
+  planSourceCopy,
+  planSourceDelete,
+  planSourceInsert,
+  planSourceMove,
+  toastStructuralRefusal,
+} from './structuralSourceEdits'
 import { pruneCanvasSelectionDraft } from '../selectionSlice'
 import { indexStyleRulesByName, linkImportedClassNames, mergeImportedStyleRules } from './importLinking'
 import type { SiteSlice, SiteSliceHelpers } from './types'
@@ -70,51 +82,6 @@ type NodeActions = Pick<
   | 'setNodeDynamicBinding'
   | 'clearNodeDynamicBinding'
 >
-
-/**
- * Build the oldId → newId map for the entire subtree rooted at `nodeId`.
- * Pre-computed so callers can clone scoped classes (which key on
- * `scope.nodeId`) against the same id remap that the duplicate mutation will
- * apply to the nodes themselves.
- */
-function buildSubtreeIdMap(
-  tree: NodeTree<PageNode>,
-  nodeId: string,
-): Map<string, string> {
-  const idMap = new Map<string, string>()
-  const stack = [nodeId]
-  while (stack.length > 0) {
-    const id = stack.pop()!
-    if (idMap.has(id)) continue
-    const node = tree.nodes[id]
-    if (!node) continue
-    idMap.set(id, nanoid())
-    stack.push(...node.children)
-  }
-  return idMap
-}
-
-/**
- * Duplicate a node subtree AND clone every per-node scoped class owned by the
- * subtree. Mirrors the contract used by `clipboardSlice.pasteNode` and
- * `visualComponentsSlice.clonePageSubtreeToFlatNodes` so the publisher can
- * never end up with two nodes pointing at the same scoped class — see F-0005.
- *
- * Must run inside a Mutative recipe (mutates `tree` and `site` directly).
- */
-function duplicateNodeWithScopedClasses(
-  tree: NodeTree<PageNode>,
-  site: SiteDocument,
-  nodeId: string,
-): string {
-  const nodeIdMap = buildSubtreeIdMap(tree, nodeId)
-  if (nodeIdMap.size === 0) return ''
-
-  const { added, classIdRemap } = cloneScopedClassesForNodeMap(nodeIdMap, site.styleRules)
-  for (const cls of added) site.styleRules[cls.id] = cls
-
-  return duplicateNode(tree, nodeId, { nodeIdMap, classIdRemap })
-}
 
 function recordPatchChanges(
   current: Record<string, unknown>,
@@ -159,8 +126,39 @@ function coalesceKeyForPatch(
 export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
   const { get, set, mutateActiveTree, mutateActiveTreeAndSite, mutateTreesForNodeIds } = helpers
 
+  /**
+   * The active tree, read-only, for the structural gate below. Every guard
+   * has to answer BEFORE the mutation runs — a refusal that arrives from
+   * inside a Mutative recipe has already changed the document it is refusing.
+   */
+  const readTree = (): NodeTree<PageNode> | null => resolveActiveTreeTarget(get())?.tree ?? null
+
+  /**
+   * `struct-01` — refuse a structural gesture that cannot be written back to
+   * a studio-imported `.tsx`. Returns true when the caller must stop.
+   * A `null` tree (no site loaded) is not this guard's business.
+   */
+  const refuseInsertInto = (parentId: string): boolean => {
+    const tree = readTree()
+    if (!tree) return false
+    const plan = planSourceInsert(tree, parentId)
+    if (plan.ok) return false
+    toastStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.insert, plan.refusal)
+    return true
+  }
+
+  const refuseCopy = (kind: 'duplicate' | 'wrap', nodeIds: readonly string[]): boolean => {
+    const tree = readTree()
+    if (!tree) return false
+    const plan = planSourceCopy(tree, kind, nodeIds)
+    if (plan.ok) return false
+    toastStructuralRefusal(STRUCTURAL_REFUSAL_TITLE[kind], plan.refusal)
+    return true
+  }
+
   const actions: NodeActions = {
     insertNode: (moduleId, defaults, parentId, index) => {
+      if (refuseInsertInto(parentId)) return ''
       const mod = registry.get(moduleId)
       const resolvedDefaults = { ...(mod?.defaults ?? {}), ...defaults }
       const newNode = createNode(moduleId, resolvedDefaults)
@@ -193,6 +191,7 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
 
     insertImportedNodes: (parentId, fragment, opts) => {
       if (fragment.rootIds.length === 0) return []
+      if (refuseInsertInto(parentId)) return []
       const insertedRootIds: string[] = []
       mutateActiveTreeAndSite((tree, site) => {
         const parent = tree.nodes[parentId]
@@ -258,6 +257,7 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
 
     insertComponentRef: (parentId, componentId, index) => {
       if (!componentId) return null
+      if (refuseInsertInto(parentId)) return null
 
       const { activeDocument, site } = get()
 
@@ -304,11 +304,19 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
     },
 
     deleteNode: (nodeId) => {
+      // `struct-01` — refuse BEFORE mutating, so a delete the source cannot
+      // take never removes the element from the canvas either.
+      const plan = planSourceDelete([readTree()?.nodes[nodeId]])
+      if (!plan.ok) {
+        toastStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.delete, plan.refusal)
+        return
+      }
       const deleted = mutateActiveTree((tree) => {
         if (!tree.nodes[nodeId]) return false
         deleteNode(tree, nodeId)
         return true
       })
+      if (deleted && plan.commit) void commitStudioDelete(plan.commit)
       // Drop the deleted node (and any descendants swept with it) from the
       // canvas selection so no phantom selection ring survives. Pruning by
       // tree-membership also clears `selectedNodeIds`, not just the anchor.
@@ -464,21 +472,30 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
     },
 
     moveNode: (nodeId, newParentId, newIndex) => {
-      mutateActiveTree((tree) => {
-        moveNode(tree, nodeId, newParentId, newIndex)
-        return true
-      })
+      actions.moveNodes([nodeId], newParentId, newIndex)
     },
 
     moveNodes: (nodeIds, newParentId, newIndex) => {
       if (nodeIds.length === 0) return
-      mutateActiveTree((tree) => {
-        moveNodes(tree, nodeIds, newParentId, newIndex)
+      // `struct-01` — a move on a studio-imported tree is written to the
+      // user's `.tsx` as "put this element next to that sibling", so the
+      // anchor has to be resolved against the tree BEFORE it changes.
+      const tree = readTree()
+      const plan = tree ? planSourceMove(tree, nodeIds, newParentId, newIndex) : null
+      if (plan && !plan.ok) {
+        toastStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.move, plan.refusal)
+        return
+      }
+      mutateActiveTree((draft) => {
+        moveNodes(draft, nodeIds, newParentId, newIndex)
         return true
       })
+      const commit = plan?.commit
+      if (commit) void commitStudioMove(commit.nodeId, commit.anchorNodeId, commit.position)
     },
 
     duplicateNode: (nodeId) => {
+      if (refuseCopy('duplicate', [nodeId])) return ''
       let newId = ''
       let blockedByOutlet = false
       // Per-node "module-style" classes (scope.type === 'node') must be cloned
@@ -505,6 +522,7 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
 
     duplicateNodes: (nodeIds) => {
       if (nodeIds.length === 0) return []
+      if (refuseCopy('duplicate', nodeIds)) return []
       const newIds: string[] = []
       let blockedByOutlet = false
       mutateActiveTreeAndSite((tree, site) => {
@@ -530,72 +548,10 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
       return newIds
     },
 
-    deleteNodes: (nodeIds) => {
-      if (nodeIds.length === 0) return
-      const cur = get()
-      const target = resolveActiveTreeTarget(cur)
-      if (!target) return
-
-      // Depths precomputed ONCE against FROZEN (pre-draft) trees: sorting
-      // inside the recipe would walk ancestor chains through Mutative draft
-      // proxies — every node access materializes one — twice per comparison.
-      const orderLeavesFirst = (tree: NodeTree<PageNode>, ids: string[]): string[] => {
-        const depthById = new Map(ids.map((id) => [id, depthInTree(tree, id)] as const))
-        // Sort by depth-DESC so leaves go first — descendants of an
-        // already-deleted id are gone, and the "node not found" guard below
-        // handles the redundant case cleanly.
-        return [...ids].sort((a, b) => depthById.get(b)! - depthById.get(a)!)
-      }
-      const deleteOrdered = (tree: NodeTree<PageNode>, ordered: string[]): boolean => {
-        let changed = false
-        for (const id of ordered) {
-          if (id === tree.rootNodeId) continue
-          if (!tree.nodes[id]) continue
-          deleteNode(tree, id)
-          changed = true
-        }
-        return changed
-      }
-
-      let deleted: boolean
-      if (target.vc) {
-        // VC canvas mode has no board frames to span — single tree, exactly
-        // the pre-WS-7.3 behaviour.
-        const ordered = orderLeavesFirst(target.tree, nodeIds)
-        deleted = mutateActiveTree((tree) => deleteOrdered(tree, ordered))
-      } else {
-        // Page mode — WS-7.3: a MultiSelectionInspector selection can now
-        // span several board frames/pages. Group by page and pre-sort each
-        // page's OWN subset against its frozen tree before the transaction.
-        const idsByPage = groupNodeIdsByPage(cur, nodeIds)
-        const ordered: string[] = []
-        for (const [pageId, ids] of idsByPage) {
-          const page = cur.site?.pages.find((p) => p.id === pageId)
-          ordered.push(...(page ? orderLeavesFirst(page, ids) : ids))
-        }
-        deleted = mutateTreesForNodeIds(ordered, (tree, idsOnThisTree) => deleteOrdered(tree, idsOnThisTree))
-      }
-
-      if (!deleted) return
-      if (target.vc) {
-        // Same selection cleanup as `deleteNode`: drop every deleted id (and
-        // any descendants) so the multi-selection array doesn't keep
-        // phantom ids.
-        set((state) => { pruneCanvasSelectionDraft(state) })
-        return
-      }
-      // Cross-page prune (WS-7.3) — `pruneCanvasSelectionDraft` only checks
-      // the ACTIVE tree, which misses a delete on a page that wasn't active.
-      set((state) => {
-        const stillExists = (id: string) => Boolean(state.site?.pages.some((p) => p.nodes[id]))
-        const surviving = state.selectedNodeIds.filter(stillExists)
-        if (surviving.length === state.selectedNodeIds.length) return
-        state.selectedNodeIds = surviving
-        state.selectedNodeId = surviving.length > 0 ? surviving[surviving.length - 1]! : null
-      })
-    },
+    deleteNodes: createDeleteNodesAction(helpers),
 
     wrapNode: (nodeId, containerModuleId, defaults = {}) => {
+      if (refuseCopy('wrap', [nodeId])) return ''
       // Auto-resolve the module's schema defaults so the wrapper node renders correctly.
       // Without this, wrapNode(id, 'base.container') produces props:{} → props.tag=undefined
       // → React.createElement(undefined) → "Element type is invalid" crash (Task #414).
@@ -611,6 +567,7 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
 
     wrapNodes: (nodeIds, containerModuleId, defaults = {}) => {
       if (nodeIds.length === 0) return null
+      if (refuseCopy('wrap', nodeIds)) return null
       // Same defaults-resolution rule as `wrapNode` (Task #414 — defaults must
       // come from the module registry so the wrapper renders).
       const mod = registry.get(containerModuleId)

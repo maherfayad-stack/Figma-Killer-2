@@ -126,6 +126,9 @@ Legend: 🟢 Studio (active work) · 🟡 shared infrastructure Studio depends o
 | 🟡 `src/admin/pages/site/store/slices/inlineEditSlice.ts` | In-place contentEditable sessions. |
 | 🟡 `src/admin/pages/site/store/slices/styleRuleSlice.ts` | Class registry mutations. |
 | 🟡 `src/core/page-tree/mutations.ts` | **All tree mutations**, tree-agnostic. |
+| 🟡 `src/core/page-tree/treeOperations.ts` | `applyTreeOperation` — the plugin/agent dispatcher over those mutations, plus the structural source gate. |
+| 🔴 `src/core/page-tree/sourceStructure.ts` | **Can this node's PLACE be written back?** `refuseStructuralEdit` — the structural sibling of `sourceWritability.ts`. |
+| 🔴 `src/admin/pages/site/store/slices/site/structuralSourceEdits.ts` | The store's structural gate: refuse before mutating, resolve the reorder anchor, issue the commit. |
 
 ## Panels / UI
 

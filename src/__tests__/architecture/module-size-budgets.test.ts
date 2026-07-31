@@ -140,8 +140,11 @@ const GRANDFATHERED: Record<string, number> = {
   // inline. The node deep-clone primitive lives in its own module
   // (cloneNode.ts) so the three duplicate/paste/duplicatePage callers share one
   // clone. See docs/reference/page-tree.md (parentId).
-  // Ratcheted 880 → 760 when the page-roster mutations moved to pageMutations.ts.
-  'src/core/page-tree/mutations.ts': 760,
+  // src/core/page-tree/mutations.ts graduated (760 → 678) in `struct-01`: the
+  // tagged-union dispatcher `applyTreeOperation` — a policy layer over the
+  // primitives, with its own reason to change (it now runs the structural
+  // source gate) — moved whole to `treeOperations.ts`. Under CEILING, so it is
+  // held by the normal ceiling rule now.
   // server/plugins/host/handlers/content.ts graduated (786 → 661) when the
   // DB→wire projection helpers moved to contentProjection.ts.
   'src/admin/pages/site/panels/TypographyPanel/FontsSection/AddGoogleFontDialog.tsx': 751,

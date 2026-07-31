@@ -18,7 +18,7 @@ The load path is `GET /admin/api/studio/load?dir=<abs>` → `loadStudioPages` (`
 - **A component's array/object props survive.** `<ActionSheet actions={[{ label }, { label }]}/>` reaches the canvas as a real array, so the design-system component renders its buttons. HTML elements stay scalar-only (an attribute is a string).
 - **Non-literal values are statically resolved** where it is safe to — `{t.homepage.greeting}` becomes `"Hi Muhammad"`. The resolved **prop** is read-only (writing an edited literal back over the expression would destroy the binding in the user's source file), but the **node is not locked**: it is an ordinary element at a known line and column.
 - **Imported CSS is read-only.** `.css` files become `StyleRule`s and `node.classIds`, but **nothing is ever written back to a `.css` file**. An edit made in the CSS Classes panel is lost on the next reload. See [CSS is one-way](#css-is-one-way).
-- **Writeback is prop/text/style only**, and only for nodes whose id is a real single source location.
+- **Writeback covers values, plus two structural verbs** — a sibling reorder and a delete (`struct-01`, below) — and only for nodes whose id is a real single source location. Every other structural gesture (reparent, insert, duplicate, wrap) **refuses with a reason**; none of them silently no-ops any more.
 
 ---
 
@@ -691,6 +691,58 @@ The path, end to end:
 - A **real breakpoint/condition override** (`mobile`, a `@media` condition). Writing one needs `setDeclarationAtMedia` plus the condition's query, which the `css` edit kind does not carry yet.
 
 Both surface as toasts on save. Silence is the one outcome that loses a user's work without telling them, so neither is a silent skip.
+
+## Structural write-back — move and delete (`struct-01`)
+
+Until `struct-01` the `StudioEdit` union carried value kinds only, and `saveSite` walked node values only. Nothing in the pipeline diffed parent, child, or order — so a structural gesture produced **no edit at all**: the layers tree moved, the save reported success, the `.tsx` was untouched, and the change was gone on the next reload. In Studio the repository IS the document, so an edit the repository never saw did not happen. That is the exact failure the "one honest write target" invariant exists to prevent, and it applied to 526 of 802 nodes on the real corpus before `lock-01` widened it further by correctly unlocking 149 more.
+
+### One rule, asked before anything mutates
+
+`refuseStructuralEdit(...)` (`src/core/page-tree/sourceStructure.ts`) is the structural sibling of `isPropWritableToSource`. It is pure, reads a node id plus `lockReason`, and gates itself on the id grammar — an ordinary CMS node (a nanoid) is untouched by it. Three consumers, so the answer cannot drift:
+
+| Consumer | Where |
+|---|---|
+| The editor's structural store actions (layers drag, canvas drag, context menus, Delete, spotlight, agent) | `src/admin/pages/site/store/slices/site/structuralSourceEdits.ts` |
+| Plugins and agents | `applyTreeOperation` (`src/core/page-tree/treeOperations.ts`), which throws `SourceStructureError` |
+| The write itself | `moveJsxElement` / `deleteJsxElement` re-derive the same facts from the AST |
+
+| Refusal | Because |
+|---|---|
+| `list-row` | a `.map` row — one piece of source JSX renders every row |
+| `shared-component` | an inlined id: the markup lives in the component's own file, so moving it here moves every instance. (Stricter than the VALUE rule, which writes and warns — a drag says "move THIS one", and there is no way to honour that.) |
+| `route-chrome` | a Next `layout`/`template`, composed into every route below it |
+| `code-placed` | the parser recorded a structural `lockReason` (spread, dynamic child) |
+| `reparent`, `insert`, `duplicate`, `wrap` | each needs a source position that does not exist yet. Deliberately not approximated: a node minted with a nanoid id can never be written back, so accepting the gesture would recreate the silent no-op somewhere new |
+| `multi-select` | several elements REORDERED at once. A multi DELETE is allowed — `applyStudioEditBatch` orders bottom-to-top, so no removal can move another's line |
+| `cross-file`, `no-sibling-anchor` | a reorder is written as "put this before that one", so it needs a plain sibling in the same file |
+
+### The two codemods
+
+`src/core/ast-codemods/moveJsxElement.ts` relocates a JSX child to sit immediately before or after a named sibling. **An anchor, not an index** — the editor's child list and the JSX child list are not the same list (one `{items.map(…)}` child contributes N canvas nodes, `{cond && <X/>}` contributes one of two, whitespace contributes none), so an index computed on the canvas does not name a position in the source, while "immediately after that element" does under every one of those shapes.
+
+`src/core/ast-codemods/deleteJsxElement.ts` removes a JSX child and the line it owned. It **refuses `orphans-import`** when every remaining reference to some imported binding lived inside the deleted subtree: leaving the import behind fails the user's own `noUnusedLocals` build, and removing it too would make one edit touch a second, unrelated place in the file. It also tidies up nothing else — no collapsing an emptied parent, no reformatting the gap.
+
+Both share `jsxChildRange.ts`, which is where the byte-exactness lives: **the AST only LOCATES; the write is a splice of the original bytes**, and it refuses outright (`stale-source`) if the text on disk is not the text ts-morph parsed. A whole-line element moves with its indentation and trailing newline; an element sharing a line moves alone; mixing the two refuses (`mixed-indentation`) rather than reformatting code the user did not touch. Their AST-only refusals: `not-siblings`, `expression-child` (the element is produced by `{cond && <X/>}` — `parser-06` leaves those nodes unlocked, correctly, because their VALUES are editable, so this is the check that keeps their POSITION honest), `no-jsx-parent` (it is what the component returns; deleting it leaves `return ;`).
+
+### Commit shape
+
+Structural edits are **one-shot commits** (`commitStudioMove` / `commitStudioDelete` in `studioSaveRequests.ts`), like asset/detach/swap — never the `saveSite` diff, which has no notion of parent or order and is the reason this gap existed. The store refuses everything decidable from ids before mutating; the residual AST refusals arrive after the optimistic mutation, so every outcome ends in a reload — a successful write shifted every `line:col` below it, and a refused one has to be taken back.
+
+### Measured on the real corpus
+
+15 eSIM pages, 802 nodes, 787 of them source-derived. Outcomes are real codemod runs against a throwaway copy, not estimates:
+
+| | reorder | delete |
+|---|---|---|
+| **writes** | **227 (28.8%)** | **134 (17.0%)** |
+| `shared-component` | 382 (48.5%) | 382 (48.5%) |
+| `list-row` | 117 (14.9%) | 117 (14.9%) |
+| `no-sibling-anchor` | 55 (7.0%) | — |
+| `orphans-import` | — | 137 (17.4%) |
+| `no-jsx-parent` | — | 12 (1.5%) |
+| `expression-child` | 6 (0.8%) | 5 (0.6%) |
+
+`shared-component` dominates because this corpus composes heavily out of local components. The clearest follow-ups, in order of how many nodes they would unlock: deleting an element **together with** the import it orphans (137 nodes), and reordering inside a component's own file with an explicit "this changes every instance" confirmation (382).
 
 ### Compiled styles — Tailwind, Sass, PostCSS, CSS Modules (WS-2.1/2.2)
 

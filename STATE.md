@@ -4,7 +4,7 @@ Shared memory for every agent working on this repo. **Read before working, write
 before stopping.** Format and rules: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protocol.md).
 
 Entry ids are `<area>-<nn>`. Areas in use: `parser`, `canvas`, `store`, `panel`,
-`server`, `mcp`, `perf`, `sec`, `test`, `docs`, `meta`, `style`, `asset`.
+`server`, `mcp`, `perf`, `sec`, `test`, `docs`, `meta`, `style`, `asset`, `struct`.
 
 ---
 
@@ -290,6 +290,60 @@ are the remaining WS-2 items, not yet dispatched. See
 
 ## Recently landed
 
+### struct-01 — a structural edit now writes the user's `.tsx` or refuses out loud; it never silently vanishes
+- **Agent:** studio-implementer
+- **Stage:** done — browser-verified against a temp fixture project, and the write was proved to discriminate
+- **Updated:** 2026-08-01
+- **Lead with this:** `lock-01`'s own landmine note was right — *"There is NO structural writeback, for any node."* `StudioEdit` had no `move`/`delete`/`insert`/`reorder` kind, and `saveSite` walked node VALUES only, so a drag in the layers tree updated the tree, reported a successful save, changed no byte of the repository, and lost the move on reload. Two verbs now write, everything else refuses with a sentence a person can act on, and **nothing does neither.**
+- **Scope:**
+  - New: `src/core/page-tree/sourceStructure.ts` (+ `__tests__/sourceStructure.test.ts`), `src/core/page-tree/treeOperations.ts`, `src/core/ast-codemods/{jsxChildRange,moveJsxElement,deleteJsxElement}.ts` (+ `__tests__/structuralJsxCodemods.test.ts`), `src/admin/pages/site/store/slices/site/{structuralSourceEdits,deleteNodesAction,duplicateWithScopedClasses}.ts`, `tests/e2e/structural-writeback.e2e.ts`.
+  - Edited: `src/core/page-tree/{sourceNodeId,mutations,index}.ts`, `server/handlers/studioWriteback.ts`, `src/admin/pages/site/studio/studioSaveRequests.ts`, `src/admin/pages/site/store/slices/site/nodeActions.ts`, `src/__tests__/architecture/module-size-budgets.test.ts`, `PROJECT-BRIEF.md`, `docs/features/studio-import.md`, `docs/agent-refs/{studio-pipeline,editor-store,path-index,conventions-quickref}.md`, `docs/reference/page-tree.md`.
+
+#### One rule, asked BEFORE the mutation
+`refuseStructuralEdit` (`src/core/page-tree/sourceStructure.ts`) is the structural sibling of `isPropWritableToSource`: pure, reads a node id plus `lockReason`, and gates itself on the studio id grammar so an ordinary CMS node is completely unaffected (the first test in its suite). Three consumers, so the answer cannot drift: the store's structural actions (`structuralSourceEdits.ts`), `applyTreeOperation` (plugins/agents get `SourceStructureError`), and the codemods, which re-derive the same facts from the AST. It reuses `hasWritableSourceLocation` / `isInlinedNodeId` / route-chrome rather than inventing a parallel notion of writability — and `isRouteChromeNodeId`/`isInlinedNodeId` were DUPLICATED in `server/handlers/studioWriteback.ts`; they now live once, in `sourceNodeId.ts`, with the server importing them.
+
+#### What writes
+- **`move`** (`moveJsxElement`) — a sibling reorder, written as *"put this element immediately before/after that one"*. **An anchor, never an index:** the editor's child list and the JSX child list are not the same list (one `{items.map(...)}` child contributes N canvas nodes, `{cond && <X/>}` one of two, whitespace none), so a canvas index does not name a source position while "next to that element" does under all of them.
+- **`delete`** (`deleteJsxElement`) — removes the JSX child and the line it owned.
+- Both are **one-shot commits** (`commitStudioMove`/`commitStudioDelete`), like asset/detach/swap — never the `saveSite` diff, which has no notion of parent or order and is precisely why the gap existed. Every outcome reloads: a write shifted every `line:col` below it, a refusal has to be taken back.
+
+#### Byte-exactness, held to `panel-02`'s standard
+The AST only LOCATES; the write is a splice of the ORIGINAL bytes (`jsxChildRange.ts`), and it refuses outright (`stale-source`) if the text on disk is not the text ts-morph parsed. A whole-line element moves with its indentation and trailing newline; an element sharing a line moves alone; **mixing the two refuses** (`mixed-indentation`) rather than reformatting code the user did not touch. The unit tests assert whole files, not substrings.
+
+#### Census — 15 real eSIM pages, 787 source-derived nodes, real codemod runs on a throwaway copy
+| | reorder | delete |
+|---|---|---|
+| **writes** | **227 (28.8%)** | **134 (17.0%)** |
+| `shared-component` | 382 (48.5%) | 382 (48.5%) |
+| `list-row` | 117 (14.9%) | 117 (14.9%) |
+| `no-sibling-anchor` | 55 (7.0%) | — |
+| `orphans-import` | — | 137 (17.4%) |
+| `no-jsx-parent` | — | 12 (1.5%) |
+| `expression-child` | 6 (0.8%) | 5 (0.6%) |
+
+- **Decisions:**
+  - *Reparent, insert, duplicate and wrap are REFUSED, not approximated.* Each needs a source position that does not exist yet, and a node minted with a nanoid id can never be written back — accepting the gesture would recreate the silent no-op somewhere new. The conservative half of the work order, taken deliberately.
+  - *`shared-component` refuses for STRUCTURE even though the same id WRITES for values.* A value edit through an inlined node is at least what the user typed, applied uniformly, and the panel warns via `fromComponent`. A drag says "move THIS one", and moving markup in the component's own file honours no reading of that. Biggest bucket (48.5%) and the biggest available follow-up.
+  - *A multi DELETE is allowed; a multi REORDER is not.* `applyStudioEditBatch` already orders bottom-to-top, so no removal can move another element's line — but each reorder is written against an anchor a previous write may have moved.
+  - *`orphans-import` refuses rather than deleting the import too.* Leaving it fails the user's own `noUnusedLocals` build; removing it makes one edit touch a second, unrelated place in the file. Neither is one honest target. Deleting one of several uses of the same import is allowed, and tested.
+  - *`expression-child` is a NEW refusal nothing before this could make.* `parser-06` leaves a branch-chosen node unlocked — correctly, its values are editable — so only the AST can see that `{cond && <X/>}` gives it no fixed child position.
+- **Extractions, no new grandfather entries** (`debt-01` stays empty):
+  - `src/core/page-tree/mutations.ts` **760 → 677** — `applyTreeOperation` moved whole to `treeOperations.ts` (primitives vs. a dispatcher carrying a policy: two reasons to change). **Its ledger entry is deleted; it graduated.**
+  - `src/admin/pages/site/store/slices/site/nodeActions.ts` **671 → 628** despite the new guards — `deleteNodes` (cross-page grouping, leaves-first ordering, cross-page selection prune) and the scoped-class duplicate helpers moved to their own modules.
+- **Verification:**
+  - `tests/e2e/structural-writeback.e2e.ts` — **2 tests, both passing against real Chromium.** (1) dragging one sibling past another in the layers tree rewrites `pages/Home.tsx`, asserted **byte-exact** against the original with the two blocks swapped, so the comment, the blank line, and the untouched `<div>` subtree are all proven intact. (2) dragging an element into a DIFFERENT parent surfaces `role="alert"` with the reparent reason, the layers tree is **unchanged** (refused before mutating), and the file is **byte-identical**.
+  - **Proved it discriminates:** making the commit a no-op (`if (commit && false)`) fails test 1 at exactly `the reorder never reached pages/Home.tsx on disk`, with the tree still moving — i.e. it reproduces the original bug precisely. Reverted, re-run green.
+  - `bun run build` → exit 0. `bun run lint` → exit 0. New unit suites: 14 codemod cases (whole-file byte assertions), 12 rule cases. `src/core/page-tree`, `src/core/ast-codemods`, `src/__tests__/architecture`, `src/__tests__/studio`, `src/__tests__/persistence`, `src/admin/pages/site/studio/__tests__`, `server/handlers/__tests__/studio*` all pass except the known pre-existing set (publish lifecycle bus, error-boundary ENOENT, keybindings matchers, CodeMirror lazy-load, plus `selectorStability` on `InstanceCallSiteView.tsx`) — none in this diff.
+  - `git status --porcelain -- studio-workspace/` is unchanged from the snapshot taken before I started. The e2e fixture is an `os.tmpdir()` project removed in `afterAll`; `studio-workspace/` was never read or written by the browser pass.
+- **Landmines for the next agent:**
+  - **In studio mode, `getByRole('tree', { name: 'Page element tree' })` matches NOTHING** even though the panel is plainly on screen. `StudioPagesTree` nests `DomPanel`'s `role="tree"` inside its OWN `role="tree"`, and a `tree` is not a permitted child of a `tree`, so Chrome prunes the inner node out of the accessibility tree entirely. Use `getByTestId('dom-panel-tree')` and `[data-studio-node-id]`. Studio also has **no "Layers" tab** to click — the tree is always embedded, so the `if (!tree.isVisible()) click('Layers')` idiom hangs for the full test timeout.
+  - **A studio project with no `.css` renders NO class attributes.** `className` is translated to `classIds` at parse time and the prop is deleted, so a fixture without a stylesheet cannot be addressed by `.my-class` inside the canvas iframe. Use `[data-node-id="rel:line:col"]`.
+  - **The parser's column convention is 1-based at the character AFTER `<`.** Off by one and every id you compute misses. `src/core/ast-codemods/__tests__/fixtureLocation.ts` holds the canonical arithmetic.
+  - `loadStudioPages` does **not** populate `node.parentId` — the store reindexes at hydration (`lifecycleActions.ts`). Any script reasoning about siblings straight off the loader must call `reindexNodeParents` first, or it concludes that nothing has a sibling.
+  - The isolated stack is left at `.tmp/struct01/` (ports 3013/5185, own DB, own state file). **Bind vite on `localhost`, not `127.0.0.1`** — vite listens on localhost only, and `VITE_ALLOWED_ORIGIN` must match the origin the browser actually sends or every POST 403s.
+- **Not built, deliberately:** reparent, insert, duplicate, wrap (all refuse); deleting an element together with the import it orphans (137 nodes — the single biggest available unlock); a reorder inside a component's own file behind an explicit "this changes every instance" confirmation (382 nodes).
+- **Human action needed:** dogfood `/admin/site?studio`. Drag a section past its sibling in Layers on a page that is not built out of shared components — the `.tsx` should change, and stay changed across a reload. Then drag something into a different parent: expect a toast, and expect the row NOT to move.
+
 ### lock-01 — a resolved VALUE stopped locking its element: 34.4% -> 15.8% locked, and the notice stopped saying something false
 - **Agent:** parser-surgeon
 - **Stage:** done — browser-verified against `studio-workspace/maherfayad-stack-eSIM`
@@ -321,7 +375,7 @@ The 127 that remain are exactly `select-01`'s load-bearing set: one piece of sou
   - *The notice strips the `callSiteProps:` namespace* when naming read-only props. The row the user reads it against is labelled `title`, not `callSiteProps:title`.
   - *`fidelityReport`'s `value from ` early-return was deleted, not kept "just in case"* — the parser cannot produce that reason any more, so it was dead code. `locked` in its per-page score drops accordingly; `resolved` and `CODE_VALUED_PROP` are unchanged.
 - **Landmines:**
-  - **There is NO structural writeback, for any node.** `StudioEditPayload` has `prop | text | style | literal | tag | asset | css`, and the server's `StudioEditSchema` adds only `detach | swap`. A move/reorder/delete is canvas+store state that never reaches disk — 526 of 802 nodes were already unlocked and in exactly that boat, so this change does not create that gap, it just lets more nodes share it. Making moves persist is a new codemod, not a lock question.
+  - **~~There is NO structural writeback, for any node.~~ CLOSED by `struct-01` (2026-08-01) — read its entry.** As written: `StudioEditPayload` had `prop | text | style | literal | tag | asset | css`, and the server's `StudioEditSchema` added only `detach | swap`. A move/reorder/delete was canvas+store state that never reached disk — 526 of 802 nodes were already unlocked and in exactly that boat, so this change does not create that gap, it just lets more nodes share it. Making moves persist is a new codemod, not a lock question.
   - **The layers-tree drag is a measurement race near a scroll edge.** BOTH dnd-kit and `useDomPanelDnd` auto-scroll when the pointer comes within 32px of an edge; rows are measured once at drag start, so a drag begun on a row near the bottom scrolls the list out from under those rects and **no drop target ever resolves** — indistinguishable from a refused drop. `row.scrollIntoView({block:'center'})` + a 500ms settle + small pointer steps fixes it; the e2e spec documents this inline. Real product fragility, not a test artifact.
   - **Do not kill ports 5174/3002 to run a browser pass while another agent is live.** `scripts/e2e-dev.ts` DELETES `.tmp/e2e-agent.db` at startup and `.tmp/e2e-owner-state.json` is shared, so a second `bun run e2e:dev` destroys the other agent's run. I ran an isolated stack instead: `PORT=3012 VITE_ALLOWED_ORIGIN=http://127.0.0.1:5184 DATABASE_URL=sqlite:.tmp/lock01/db.sqlite bun server/index.ts` plus `PORT=3012 vite --port 5184`, driven by `.tmp/lock01/playwright.config.ts` (its own setup project and its own state file). Both files are left in `.tmp/lock01/` for the next agent. **`VITE_ALLOWED_ORIGIN` is required** or every POST fails `Forbidden: invalid origin`.
   - The e2e/dev CMS process runs **without `--watch`**: a page-parser change needs that process restarted before a browser pass can see it.

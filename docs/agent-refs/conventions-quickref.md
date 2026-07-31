@@ -116,6 +116,15 @@ are one-liners over `mutateActiveTree`. **They must not contain a
 `kind === 'visualComponent'` branch.**
 **Gate:** `no-vc-mode-branches-in-mutations.test.ts`.
 
+**A structural action on a studio-imported tree must write source or refuse —
+never neither (`struct-01`).** `insertNode`, `deleteNode(s)`, `moveNode(s)`,
+`duplicateNode(s)`, `wrapNode(s)` ask `refuseStructuralEdit`
+(`src/core/page-tree/sourceStructure.ts`) BEFORE mutating, via
+`store/slices/site/structuralSourceEdits.ts`, and commit a `move`/`delete`
+`StudioEdit` when it allows. `applyTreeOperation` asks the same function so
+plugins and agents ride the same gate. If you add a structural surface, ask
+this function — do not re-derive the rule.
+
 ---
 
 ## 8. Safety (filesystem + untrusted input)

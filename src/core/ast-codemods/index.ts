@@ -12,6 +12,15 @@ export { setImportSpecifier, ImportSpecifierTargetError } from './setImportSpeci
 export type { SetImportSpecifierParams } from './setImportSpecifier'
 export { setJsxTagName, JsxTagNameTargetError } from './setJsxTagName'
 export type { SetJsxTagNameParams } from './setJsxTagName'
+export { moveJsxElement } from './moveJsxElement'
+export type { MoveJsxElementParams, MoveJsxElementResult, MoveJsxRefusal, MoveJsxRefusalReason } from './moveJsxElement'
+export { deleteJsxElement } from './deleteJsxElement'
+export type {
+  DeleteJsxElementParams,
+  DeleteJsxElementResult,
+  DeleteJsxRefusal,
+  DeleteJsxRefusalReason,
+} from './deleteJsxElement'
 export { detachComponentInstance } from './detachComponent'
 export type {
   DetachComponentParams,

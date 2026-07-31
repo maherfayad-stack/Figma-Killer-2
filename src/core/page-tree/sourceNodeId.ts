@@ -37,6 +37,17 @@ export const LOOP_ID_SEPARATOR = '#'
 /** `<rel>:<line>:<col>` — anchored, so an iteration suffix cannot match. */
 const SOURCE_LOCATION = /^(.*):(\d+):(\d+)$/
 
+/**
+ * `<rel>:<line>:<col>` followed by any number of `.map` iteration suffixes
+ * (nested loops append one per level — see `parsePageFile`'s `idSuffix`).
+ * Deliberately WIDER than `SOURCE_LOCATION`: this asks "did the studio
+ * importer mint this id?", not "can an edit land on it".
+ */
+const SOURCE_DERIVED_ID = /^(.+):(\d+):(\d+)(#\d+)*$/
+
+/** `layout`/`template` at any App Router segment depth. */
+const ROUTE_CHROME_FILE = /^(layout|template)\.(tsx|ts|jsx|js)$/i
+
 /** A decoded studio source location: workspace-relative file plus 1-based line/column. */
 export interface SourceNodeLocation {
   rel: string
@@ -78,4 +89,54 @@ export function hasWritableSourceLocation(nodeId: string): boolean {
 /** True when this id came from a component inlined at a call site — one edit here rewrites every instance. */
 export function isInlinedNodeId(nodeId: string): boolean {
   return nodeId.includes(INLINE_ID_SEPARATOR)
+}
+
+/**
+ * True when the studio importer minted this id at all — a source location,
+ * with or without `.map` iteration suffixes, with or without a call-site
+ * prefix. `false` for a CMS node (a nanoid, which has no `:`) and for the
+ * synthetic page root.
+ *
+ * The complement of `hasWritableSourceLocation`, not a weaker version of it:
+ * an id can be source-derived and still have nowhere honest to write (a
+ * `.map` row). Guards that must distinguish "not our business" from "ours,
+ * and refused" need BOTH questions, which is why they are two functions.
+ */
+export function isSourceDerivedNodeId(nodeId: string): boolean {
+  const target = nodeId.split(INLINE_ID_SEPARATOR).pop() ?? nodeId
+  return SOURCE_DERIVED_ID.test(target)
+}
+
+/**
+ * True for the synthetic root `parsedPageToSitePage` mints for every imported
+ * page (`<pageId>:body`). It is not a source location — nothing was written at
+ * it — so a structural edit whose only target is this node has nowhere to go,
+ * and callers need to be able to say so on an EMPTY imported page, where no
+ * child id is available to answer the question instead.
+ *
+ * A CMS page's root is a nanoid and never matches.
+ */
+export function isStudioPageRootId(rootNodeId: string): boolean {
+  return rootNodeId.endsWith(':body') && !isSourceDerivedNodeId(rootNodeId)
+}
+
+/**
+ * True when this node lives in a Next.js App Router `layout.tsx`/`template.tsx`
+ * — one file composed into EVERY route beneath it, so one board frame's edit
+ * silently rewrites markup every other frame is also showing.
+ *
+ * Unlike an inlined component, those nodes keep a plain `relFile:line:col` id
+ * (there is exactly one composed position per route, so there is nothing to
+ * disambiguate), which means `isInlinedNodeId` does not catch them.
+ *
+ * Matched on the filename alone, deliberately: a non-Next project that happens
+ * to have a `layout.tsx` is then treated as shared too. That direction is the
+ * safe one — the cost of a false positive is a refusal the user can work
+ * around, the cost of a false negative is a frame they cannot see is stale.
+ */
+export function isRouteChromeNodeId(nodeId: string): boolean {
+  const location = decodeSourceNodeId(nodeId)
+  if (!location) return false
+  const basename = location.rel.split(/[/\\]/).pop() ?? ''
+  return ROUTE_CHROME_FILE.test(basename)
 }
