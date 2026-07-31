@@ -227,8 +227,18 @@ const LENGTH_RE = /^-?\d*\.?\d+(px|rem|em|pt)$/
  * Name hints are the FALLBACK, only consulted once `isCssColorValue` has
  * already ruled the resolved value out as a color — see `classifyDeclaration`.
  */
-const SPACING_NAME_HINT_RE = /space|spacing|gap\b|padding|margin|radius|size|width|height|inset/i
+const SPACING_NAME_HINT_RE = /space|spacing|gap\b|padding|margin|radius|width|height|inset/i
 const TYPOGRAPHY_NAME_HINT_RE = /font|text|type|leading|tracking|heading/i
+/**
+ * `size` names a measurement but NOT what is being measured, so unlike the
+ * hints above it cannot decide a family on its own — the rest of the name
+ * does. `--icon-size` is spacing; `--type-display-size` is a type step. It is
+ * therefore consulted only AFTER the typography hint has had its turn, which
+ * is why it is not folded into `SPACING_NAME_HINT_RE` (doing so made every
+ * `--{font,text,type}-*-size` token classify as spacing, silently emptying the
+ * typography ladder of any design system that suffixes its size steps).
+ */
+const GENERIC_SIZE_NAME_HINT_RE = /size/i
 const TYPOGRAPHY_DETAIL_SUFFIX_RE = /-(weight|lh|line-height|ls|letter-spacing|family)$/i
 
 export type Classification = 'color' | 'spacing' | 'typography-size' | 'typography-detail' | 'unclassified'
@@ -245,12 +255,16 @@ export type Classification = 'color' | 'spacing' | 'typography-size' | 'typograp
  */
 export function classifyDeclaration(name: string, resolved: string): Classification {
   if (isCssColorValue(resolved)) return 'color'
+  // A hint that names a layout dimension outright wins over a typography hint
+  // (`--heading-margin-block` is spacing, not type).
   if (SPACING_NAME_HINT_RE.test(name) && LENGTH_RE.test(resolved)) return 'spacing'
   if (TYPOGRAPHY_NAME_HINT_RE.test(name)) {
     if (TYPOGRAPHY_DETAIL_SUFFIX_RE.test(name)) return 'typography-detail'
     if (/-size$/i.test(name) || LENGTH_RE.test(resolved)) return 'typography-size'
     return 'typography-detail'
   }
+  // Generic `size` last: only once no typography hint claimed the name.
+  if (GENERIC_SIZE_NAME_HINT_RE.test(name) && LENGTH_RE.test(resolved)) return 'spacing'
   return 'unclassified'
 }
 

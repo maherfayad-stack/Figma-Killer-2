@@ -2,11 +2,14 @@ import { describe, expect, it } from 'bun:test'
 import {
   buildTokenCandidates,
   classifyToken,
-  convertLengthToPx,
   extractJsonTokens,
   extractJsTokens,
   extractRootCustomProperties,
 } from '../parseCssTokens'
+// `toPx` lives in the shared engine, not here — `parseCssTokens` used to
+// re-export it under a second name, which was a pure alias with no behaviour
+// of its own. This file is still its only coverage, so the tests stay.
+import { toPx } from '../../studio/tokenExtractCssScan'
 import { isCandidateTokenFile } from '../shared'
 
 describe('extractRootCustomProperties', () => {
@@ -75,30 +78,30 @@ describe('extractRootCustomProperties', () => {
   })
 })
 
-describe('convertLengthToPx', () => {
+describe('toPx', () => {
   it('passes px through unchanged', () => {
-    expect(convertLengthToPx('16px')).toBe(16)
+    expect(toPx('16px')).toBe(16)
   })
 
   it('converts rem/em against the standard 16px browser default', () => {
-    expect(convertLengthToPx('1rem')).toBe(16)
-    expect(convertLengthToPx('1.25rem')).toBe(20)
-    expect(convertLengthToPx('0.5em')).toBe(8)
+    expect(toPx('1rem')).toBe(16)
+    expect(toPx('1.25rem')).toBe(20)
+    expect(toPx('0.5em')).toBe(8)
   })
 
   it('converts pt using the standard 96/72 ratio', () => {
-    expect(convertLengthToPx('12pt')).toBeCloseTo(16, 5)
+    expect(toPx('12pt')).toBeCloseTo(16, 5)
   })
 
   it('returns null for context-dependent units (%, vh, vw, ch)', () => {
-    expect(convertLengthToPx('100%')).toBeNull()
-    expect(convertLengthToPx('50vh')).toBeNull()
-    expect(convertLengthToPx('2ch')).toBeNull()
+    expect(toPx('100%')).toBeNull()
+    expect(toPx('50vh')).toBeNull()
+    expect(toPx('2ch')).toBeNull()
   })
 
   it('returns null for a non-length value', () => {
-    expect(convertLengthToPx('#4f46e5')).toBeNull()
-    expect(convertLengthToPx('var(--x)')).toBeNull()
+    expect(toPx('#4f46e5')).toBeNull()
+    expect(toPx('var(--x)')).toBeNull()
   })
 })
 

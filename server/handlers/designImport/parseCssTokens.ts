@@ -113,12 +113,30 @@ function toTokenCategory(kind: Classification): TokenCategory {
 // :root custom-property extraction (delegates to the shared engine)
 // ---------------------------------------------------------------------------
 
+/**
+ * Drops the leading `--` from a CSS custom-property name, producing this
+ * module's public token IDENTITY (see `ExtractedCssVar.name`).
+ *
+ * The shared engine keys its scope maps by the RAW `--name` because there it
+ * is a map key that `var(--x)` references must match exactly. That is an
+ * internal detail of resolution, and it stops at this boundary: `--` is CSS
+ * *syntax*, re-added at emission time by `@core/framework`'s
+ * `convertToVariableDeclarationName`, exactly the way a `.` is re-added to a
+ * class name. Carrying it in the identity double-prefixes every consumer —
+ * `DesignImportDialog` renders `--{c.name}`, and the bare form is also the
+ * only convention the CSS, JSON, and JS/TS sources can share in one preview
+ * list (a JSON file's `{"space-md": …}` leaf has no `--` to begin with).
+ */
+function bareTokenName(name: string): string {
+  return name.replace(/^--/, '')
+}
+
 /** Extracts every classifiable `--name: value;` declaration from every global-token-host block in `css` (see module doc), `var()`-resolved against `css`'s own root scope. Exported for its own test coverage; `buildTokenCandidates` is the real entry point. */
 export function extractRootCustomProperties(css: string, file: string): ExtractedCssVar[] {
   const { light } = collectRootScopeMaps(css)
   const out: ExtractedCssVar[] = []
   for (const [name, raw] of light) {
-    out.push({ name, value: resolveVarValue(raw, light), file })
+    out.push({ name: bareTokenName(name), value: resolveVarValue(raw, light), file })
   }
   return out
 }
@@ -139,9 +157,6 @@ export function extractRootCustomProperties(css: string, file: string): Extracte
 export function classifyToken(name: string, value: string): TokenCategory {
   return toTokenCategory(classifyDeclaration(name, value.trim()))
 }
-
-/** Converts a CSS length to a plain px number, or `null` if the unit isn't safely convertible (or the value isn't a length at all). Re-exported from the shared engine — kept under this module's own name since it's part of this module's public/tested surface. */
-export const convertLengthToPx = toPx
 
 // ---------------------------------------------------------------------------
 // JSON token extraction
@@ -259,9 +274,15 @@ function buildCssCandidates(cssFiles: ReadonlyArray<{ relPath: string; contents:
     }
   }
 
+  // `light` and `nameToFile` are both keyed by the RAW `--name` (that is what
+  // `var()` resolution has to match); the `--` is dropped only on the way out.
   const out: ExtractedCssVar[] = []
   for (const [name, raw] of light) {
-    out.push({ name, value: resolveVarValue(raw, light), file: nameToFile.get(name) ?? cssFiles[0]!.relPath })
+    out.push({
+      name: bareTokenName(name),
+      value: resolveVarValue(raw, light),
+      file: nameToFile.get(name) ?? cssFiles[0]!.relPath,
+    })
   }
   return out
 }
@@ -311,11 +332,11 @@ export function buildTokenCandidates(
     if (category === 'color') {
       colors.push({ id: nextCandidateId(), name: v.name, value: v.value, file: v.file })
     } else if (category === 'typography') {
-      const px = convertLengthToPx(v.value)
+      const px = toPx(v.value)
       if (px !== null) typography.push({ id: nextCandidateId(), name: v.name, value: v.value, px, file: v.file })
       else otherCount += 1
     } else if (category === 'spacing') {
-      const px = convertLengthToPx(v.value)
+      const px = toPx(v.value)
       if (px !== null) spacing.push({ id: nextCandidateId(), name: v.name, value: v.value, px, file: v.file })
       else otherCount += 1
     } else {

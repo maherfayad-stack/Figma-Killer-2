@@ -48,17 +48,23 @@ predecessor's partial edits are in the tree and re-deriving them would be waste.
 Net: **17 failures → 8**, of which **4 are the long-standing Windows-only ones**
 (`standing-01`).
 
-### The 4 genuinely-broken tests, and why they were NOT force-fixed
-All four belong to **`infra-01`'s half-finished token-system dedup**:
-`design-import/preview` ×2, `extractProjectTokens`'s typography ladder, and
-`site_publish`. The visible symptom is a naming contract change — the preview
-now returns `--brand-500` (the real custom-property name) where the old
-`designImport` engine returned `brand-500`.
+### The 4 genuinely-broken tests — RESOLVED by `infra-01` (2026-07-31)
+Three of the four were real, and are fixed; the fourth was misattributed.
+Full reasoning in the `infra-01` entry under "Recently landed".
 
-**Which is correct is `infra-01`'s design decision, and it was interrupted
-before making it.** Forcing the tests green would cement whichever guess the
-next person makes into a user-facing contract. Resume `infra-01`, decide the
-naming deliberately, then update the tests to the decision.
+- **Naming decided: the BARE name (`brand-500`).** `--` is CSS syntax, re-added
+  at emission — not part of a token's identity. `DesignImportDialog` already
+  renders `--{c.name}`, so the raw form was showing users `----brand-500`.
+- **The typography-ladder failure was a real classification bug**, not a stale
+  assertion: the dedup put a bare `size` into the spacing name hints, which
+  (being checked first) swallowed every `--{font,text,type}-*-size` token. On
+  the real eSIM corpus this imported the **entire type ladder as a second
+  spacing group**, with 0 typography. Now 8 type steps + 1 spacing group.
+- **`site_publish` does NOT belong to this work order.** All 11 of its
+  assertions pass; it fails in *teardown* with Windows `EBUSY` from
+  `createTestDb.ts` (whose own comment documents the POSIX-only assumption
+  that an open SQLite file can be unlinked). A fifth `standing-01`-class
+  Windows-only harness failure. Real fix = `DbClient.close()`, unclaimed.
 
 ### `debt-01` — three files over the size ceiling
 `fsCodemodAdapter.ts` (890), `staticEvalCore.ts` (831),
@@ -177,6 +183,144 @@ are the remaining WS-2 items, not yet dispatched. See
 ---
 
 ## Recently landed
+
+### infra-01 — one token engine, the `--` naming decision, install-job durability
+- **Agent:** server-engineer (resumed after the spend-limit termination)
+- **Stage:** done
+- **Updated:** 2026-07-31
+
+#### Decision 1 — the token naming contract is the BARE name (`brand-500`)
+
+The STOP block left this open: `/design-import/preview` had started returning
+`--brand-500` where it used to return `brand-500`. **Decided: bare.** The `--`
+is CSS *syntax*, re-added at emission; it is not part of a token's identity.
+Five independent pieces of evidence, none of them "whichever makes the test
+green":
+
+1. `ExtractedCssVar.name`'s own doc comment already reads *"Custom property
+   name, without the leading `--`"*. The code had drifted from its documented
+   type — the predecessor changed the producer and never touched the type.
+2. `DesignImportDialog.tsx:365` renders `<span>--{c.name}</span>` — the `--`
+   is supplied by the **presentation** layer. With the raw name the user was
+   being shown **`----brand-500`**. This was a live, shipped UI defect.
+3. Every downstream consumer strips it anyway: `normalizeFrameworkColorSlug`
+   (`/^--+/`), `typographyStepName`, `spacingStepName`, `namePrefix`.
+4. The size path does **not** strip it. `applyDesignImportTokens` puts
+   `c.name` straight into `manualSizes[].name` — a scale STEP name that then
+   feeds `group.steps` and `expandClassPattern`. A step literally named
+   `--space-md` is user-visible in the panel and in generated class names.
+5. Only the bare form is a convention all three source shapes can share. The
+   JSON/JS extractors produce bare names natively (`{"space-md": …}` has no
+   `--`), so the raw form made one preview list mix two conventions.
+
+Implemented as `bareTokenName()` in `parseCssTokens.ts`, applied at the two
+points where `ExtractedCssVar` is constructed. The shared engine keeps raw
+`--` keys internally — they are `var()` resolution map keys and must match
+exactly. **The rule: `--` lives inside the CSS scan engine and stops at the
+boundary; every name handed to a user or to framework settings is bare.**
+
+#### Decision 2 — `size` is a generic qualifier, not a spacing hint
+
+Chasing the typography-ladder failure found a **real classification bug**, not
+a test that needed updating. The dedup merged `designImport`'s broader hint set
+into `SPACING_NAME_HINT_RE`, which added a bare `size`. Since spacing is
+checked before typography, `size` then swallowed **every** `--{font,text,type}
+-*-size` token.
+
+`size` names a measurement but not *what* is measured — the rest of the name
+does (`--icon-size` is spacing; `--type-display-size` is a type step). Split
+out as `GENERIC_SIZE_NAME_HINT_RE` and consulted **last**, after typography has
+had its turn. Specific dimension words (`padding`/`margin`/`width`/…) still
+outrank typography, so `--heading-margin-block` stays spacing.
+
+#### Measured on the real corpus (read-only, never mutated)
+
+`studio-workspace/maherfayad-stack-eSIM`, via `probeProject` +
+`extractProjectTokens`, source `vendor-css`:
+
+| | before | after |
+|---|---|---|
+| colors | 171 | **171** (unchanged) |
+| typography | **0** ❌ | **8 steps in 1 group** ✅ |
+| spacing | 22 in **2** groups ❌ | **14 in 1 group** ✅ |
+
+Before, the eSIM design system's entire type ladder was imported **as a second
+spacing group** — a group literally named `type` whose steps were
+`type-meta-size … type-display-size`, with the Typography panel showing
+nothing at all. After: one `type` group
+(`meta,eyebrow,caption,body,subtitle,title,headline,display`) and one `space`
+group. This restores the `171 colors + 1 typography + 1 spacing` shape STATE
+had on record — that record predated the hint-set regression.
+
+#### Dedup: resolved to one system, no shims
+
+`designImport.ts` and `tokenExtract.ts` are **not** duplicates in trigger and
+both survive by design: one fetches an EXTERNAL github/npm source (wizard),
+the other scans the OPEN project on disk (automatic, nested-corpus aware via
+`probeProject`). What *was* duplicated — the classifier — is now one engine
+(`tokenExtractCssScan.ts`). Finished here by deleting
+`export const convertLengthToPx = toPx`, a pure re-export alias (the "thin
+adapter" CLAUDE.md bans), and moving its call sites and tests to `toPx`.
+
+#### Part B — install-job durability: already built, verified end to end
+
+The predecessor had built this fully (`installJobStore.ts` →
+`.studio/install-job.json`, disk state, no schema change). Per the integration-
+gap warning I traced **the consumer** rather than trusting the unit tests, and
+the chain is genuinely closed: `probeInstallStatus` returns
+`job: resolvePersistedJobStatus(root)` → client `probeDependencyInstall(dir)`
+→ `InstallDependenciesPrompt`'s mount effect resumes polling from
+`result.job`. `getDependencyInstallJob` does pass `dir`. `tryServeStudioTokens`
+is likewise already in `STUDIO_SUB_ROUTERS` — the "needs wiring to go live"
+note under `tokens-01` is **stale**.
+
+**Demonstrated for real** (not just unit tests), two separate `bun` processes
+with a real `SIGKILL`, against a throwaway project created and then deleted
+under `studio-workspace/`:
+
+- Killed **mid-install** → fresh process resolves the orphaned `running`
+  record to **`interrupted`**, carrying *"The server restarted while this
+  install was running (pid 129932) — its outcome could not be observed."*
+  No phantom `running`, no 404.
+- Killed **after completion** → the `done` record survives verbatim, log and
+  exit code intact.
+- Both recovery paths confirmed: `/install/status` (id-less, the UI mount
+  path) and `/install/:id?dir=` (the UI poll path).
+
+Security re-audited, not regressed: `minimalSubprocessEnv` is a strict
+allowlist built key-by-key from `process.env` (never forwarded wholesale),
+`--ignore-scripts` is unconditional, and `isDirWithinWorkspace` checks
+containment on the **realpath** with a separator-aware prefix. The persisted
+record holds no secret (id/dir/pm/status/log/exitCode/warnings/timestamps/pid).
+Added `.studio/install-job.json` to `.gitignore` — per-machine operational
+state (absolute path + pid), same class as the already-ignored `daemon.json`.
+
+#### `site_publish` was MISATTRIBUTED — it is not a token failure
+
+The STOP block named it as one of infra-01's four. It is not, and I did not
+force it green. All **11 of its assertions pass**; the failure is
+`EBUSY: resource busy or locked, rm 'C:\…\cms-test-<uuid>'` thrown in
+**teardown**. The source is `src/__tests__/helpers/createTestDb.ts`, whose own
+comment states the platform assumption: *"bun:sqlite doesn't expose a close()
+method on our DbClient interface; on macOS/Linux the file can still be deleted
+while the handle is open."* On Windows it cannot. This is a fifth Windows-only
+harness failure of the `standing-01` class, reproducible on repeated runs, and
+untouchable by any token change. **A real fix means adding `close()` to
+`DbClient`** — both adapters plus the `tx: DbClient` handed to `transaction()`
+— which is a cross-cutting change to a shared foundation, wrong to smuggle
+into this work order while other agents are live in the tree. Logged as debt.
+
+- **Files changed:** `server/handlers/designImport/parseCssTokens.ts`,
+  `server/handlers/designImport/__tests__/parseCssTokens.test.ts`,
+  `server/handlers/studio/tokenExtractCssScan.ts`, `.gitignore`, `STATE.md`.
+- **Verification:** the 3 genuinely-broken tests now pass **because the code is
+  right** — no assertion was edited to match output. `parseCssTokens.test.ts`'s
+  10 further failures (all `--` naming) fell out of the same one-line decision,
+  which is itself corroboration: those assertions were written before the
+  drift and unanimously expected bare names.
+- **Next agent:** `debt-01` still binds (`fsCodemodAdapter.ts` 890,
+  `staticEvalCore.ts` 831, `studioWriteback.ts` 738 — none may grow). The
+  `DbClient.close()` gap above is unclaimed.
 
 ### parser-05 — WS-4 instance model: components as instances, detach, swap
 - **Agent:** parser-surgeon

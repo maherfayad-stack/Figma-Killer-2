@@ -88,6 +88,10 @@ docs/superpowers/
 .turbo/
 .studio/daemon.json
 .studio/vite/
+# Install-job durability sidecar: per-machine operational state (absolute app-root
+# path + pid of the process that spawned the install), rewritten on every install.
+# Same class as daemon.json above — it must survive a server restart, not a clone.
+.studio/install-job.json
 
 # Playwright/E2E run output — generated, not source
 test-results/
