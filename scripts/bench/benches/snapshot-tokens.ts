@@ -182,20 +182,26 @@ function flattenForBench(
 /** Assemble the full draft SiteDocument (shell + pages + VCs) from the dev DB. */
 async function loadSeededSite(deps: Deps): Promise<SiteDocument | null> {
   const db = deps.createSqliteClient(DEV_DB_PATH)
-  const shell = await deps.getDraftSite(db)
-  if (!shell) return null
-  const [pageRows, vcRows] = await Promise.all([
-    deps.listDataRows(db, 'pages'),
-    deps.listDataRows(db, 'components'),
-  ])
-  const pages = pageRows.map(deps.pageFromRow)
-  const visualComponents = deps.validateVisualComponents(
-    vcRows.flatMap((r: DataRow) => {
-      const vc = deps.visualComponentFromRow(r)
-      return vc ? [vc] : []
-    }),
-  )
-  return { ...shell, pages, visualComponents }
+  try {
+    const shell = await deps.getDraftSite(db)
+    if (!shell) return null
+    const [pageRows, vcRows] = await Promise.all([
+      deps.listDataRows(db, 'pages'),
+      deps.listDataRows(db, 'components'),
+    ])
+    const pages = pageRows.map(deps.pageFromRow)
+    const visualComponents = deps.validateVisualComponents(
+      vcRows.flatMap((r: DataRow) => {
+        const vc = deps.visualComponentFromRow(r)
+        return vc ? [vc] : []
+      }),
+    )
+    return { ...shell, pages, visualComponents }
+  } finally {
+    // The bench holds no long-lived DB; releasing the handle keeps the dev
+    // database file unlocked for whatever runs next.
+    await db.close()
+  }
 }
 
 /** Pick the editor's default active breakpoint id for a site. */

@@ -18,10 +18,27 @@ export function placeholder(dialect: Dialect, index: number): string {
 }
 
 /**
+ * Thrown when `close()` is called on the handle a `transaction()` callback
+ * receives. That handle *borrows* the owning client's connection for the life
+ * of the callback and releases it when the callback settles — closing it would
+ * tear the connection out from under an open transaction.
+ */
+export class TransactionHandleCloseError extends Error {
+  constructor() {
+    super(
+      'close() was called on a transaction handle. A transaction borrows its connection ' +
+        'and releases it when the callback settles — close the owning DbClient instead.',
+    )
+    this.name = 'TransactionHandleCloseError'
+  }
+}
+
+/**
  * The shared DB client interface. Used by repositories and handlers.
  * Tagged-template callable returning DbResult, plus:
  *   - .unsafe(...) — execute raw SQL strings (e.g. stored migration blocks)
  *   - .transaction(fn) — runs a callback inside a DB transaction
+ *   - .close()      — release the underlying connection / file handle
  *   - .dialect      — which SQL dialect the backing database speaks
  */
 export interface DbClient {
@@ -31,5 +48,19 @@ export interface DbClient {
   ): Promise<DbResult<Row>>
   unsafe<Row = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<DbResult<Row>>
   transaction<T>(fn: (tx: DbClient) => Promise<T>): Promise<T>
+  /**
+   * Release the resources this client owns: the SQLite database file handle
+   * (including its `-wal` / `-shm` companions) or the Postgres connection pool.
+   * Queries issued after `close()` throw.
+   *
+   * Anything that creates a client for a bounded lifetime — a test, a script,
+   * a one-shot task — must close it. On Windows an open SQLite handle keeps a
+   * hard lock on the file, so skipping this makes the containing directory
+   * un-deletable (`EBUSY`).
+   *
+   * Calling this on the handle passed to a `transaction()` callback throws
+   * `TransactionHandleCloseError` — that handle does not own the connection.
+   */
+  close(): Promise<void>
   readonly dialect: Dialect
 }

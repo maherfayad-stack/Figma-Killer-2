@@ -1,9 +1,9 @@
 import { SQL } from 'bun'
-import type { DbClient, DbResult } from './client'
+import { TransactionHandleCloseError, type DbClient, type DbResult } from './client'
 
 export function createPostgresClient(connectionString: string): DbClient {
   const sql = new SQL(connectionString)
-  return wrapSql(sql)
+  return wrapSql(sql, 'owner')
 }
 
 /**
@@ -48,7 +48,16 @@ function resultRowCount<Row>(result: Row[]): number {
   return typeof count === 'number' ? count : result.length
 }
 
-function wrapSql(sql: SQL): DbClient {
+/**
+ * Wrap a Bun SQL instance as a DbClient.
+ *
+ * `ownership` decides what `close()` means. The `'owner'` client holds the
+ * connection pool and closing it drains and shuts the pool down. A
+ * `'transaction'` client wraps the connection Bun reserved for `sql.begin()`;
+ * that connection is released when the callback settles, so closing it is a
+ * caller bug and is refused rather than releasing the pool early.
+ */
+function wrapSql(sql: SQL, ownership: 'owner' | 'transaction'): DbClient {
   const fn = (async <Row = Record<string, unknown>>(
     strings: TemplateStringsArray,
     ...values: unknown[]
@@ -68,8 +77,16 @@ function wrapSql(sql: SQL): DbClient {
   }
 
   fn.transaction = async <T>(cb: (tx: DbClient) => Promise<T>): Promise<T> => {
-    return await sql.begin(async (txSql) => cb(wrapSql(txSql as unknown as SQL)))
+    return await sql.begin(async (txSql) => cb(wrapSql(txSql as unknown as SQL, 'transaction')))
   }
+
+  fn.close = ownership === 'owner'
+    ? async () => {
+        await sql.close()
+      }
+    : async () => {
+        throw new TransactionHandleCloseError()
+      }
 
   return Object.assign(fn, { dialect: 'postgres' as const })
 }

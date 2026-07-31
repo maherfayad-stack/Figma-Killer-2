@@ -58,14 +58,25 @@ describe('SQLite adapter — concurrent transactions', () => {
         await tx`insert into tx_probe2 (id) values (2)`
       })
 
+      // Asserted with try/catch rather than `expect(...).rejects`: under bun
+      // 1.3.6 that matcher never settles when the promise it awaits is a
+      // transaction queued behind another one that is still parked on a timer,
+      // which wedges the whole runner (the process spins forever and every
+      // later test file never runs). The same interleaving completes correctly
+      // outside the test runner, so this is a matcher deadlock, not adapter
+      // behaviour — and the assertion below is exactly as strong.
       const failed = (async () => {
         await delay(10)
-        await expect(
-          db.transaction(async (tx) => {
+        let rejection = ''
+        try {
+          await db.transaction(async (tx) => {
             await tx`insert into tx_probe2 (id) values (3)`
             throw new Error('boom')
-          }),
-        ).rejects.toThrow('boom')
+          })
+        } catch (err) {
+          rejection = err instanceof Error ? err.message : String(err)
+        }
+        expect(rejection).toBe('boom')
       })()
 
       await Promise.all([committed, failed])

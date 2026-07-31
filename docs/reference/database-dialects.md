@@ -106,10 +106,19 @@ export interface DbClient {
 
   unsafe<Row>(sql: string, params?: unknown[]): Promise<DbResult<Row>>
   transaction<T>(fn: (tx: DbClient) => Promise<T>): Promise<T>
+  close(): Promise<void>
 
   readonly dialect: Dialect
 }
 ```
+
+### Closing a client
+
+`close()` releases what the client owns: the SQLite file handle (plus its `-wal` / `-shm` companions) on the SQLite adapter, the connection pool on the Postgres adapter. The long-lived server client is never closed — it lives as long as the process. **Anything that creates a client for a bounded lifetime must close it:** tests, benchmarks, one-shot scripts.
+
+This is not optional housekeeping. Windows keeps a hard lock on an open SQLite file, so deleting the file (or the directory holding it) before closing fails with `EBUSY` — which is exactly how the test suite used to leak thousands of locked `%TEMP%\cms-test-*` directories and report passing tests as failures.
+
+The handle a `transaction()` callback receives *borrows* the owner's connection and is released when the callback settles. Calling `close()` on it throws `TransactionHandleCloseError` rather than tearing the connection out from under an open transaction.
 
 `DbClient` is callable as a **tagged template**:
 
@@ -336,7 +345,7 @@ await db.transaction(async (tx) => {
 })
 ```
 
-The callback receives a `DbClient` scoped to the transaction. If it throws, the transaction is rolled back.
+The callback receives a `DbClient` scoped to the transaction. If it throws, the transaction is rolled back. That scoped handle must not be closed — it borrows the owning client's connection (see "Closing a client").
 
 ---
 
@@ -353,6 +362,7 @@ The callback receives a `DbClient` scoped to the transaction. If it throws, the 
 | Reading a JSON value as a string and then `JSON.parse`ing | Read it as `Record<string, unknown>` — auto-parsed in SQLite, auto-decoded in PG |
 | Adding a migration to only one dialect's file          | Mirror it to the other — `migration-parity.test.ts` enforces this |
 | Hand-running `db.unsafe(...)` for queryable statements | Use the tagged-template form — `unsafe` is for stored migration blocks |
+| Deleting a SQLite file (or its directory) while a client still holds it | `await db.close()` first — otherwise Windows fails the unlink with `EBUSY` |
 | DB-level CHECK constraints that enumerate application domain values (e.g. `check (provider_id in ('anthropic', 'openai'))`) | Put the validation at the application boundary via a TypeBox `Type.Union` / `Type.Literal` — see `server/ai/handlers/credentials.ts`. A DB enum that duplicates the list forces a destructive migration (especially on SQLite) every time a new value is added. |
 
 ---

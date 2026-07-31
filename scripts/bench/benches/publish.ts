@@ -101,6 +101,7 @@ function dbBytes(path: string): number {
   return total
 }
 
+/** Remove a SQLite database's files. Only safe when no client has it open. */
 function cleanupDbFiles(path: string): void {
   for (const file of [path, `${path}-wal`, `${path}-shm`]) {
     try {
@@ -109,6 +110,15 @@ function cleanupDbFiles(path: string): void {
       // best-effort cleanup
     }
   }
+}
+
+/**
+ * Close the client, then remove its database files. Windows keeps a hard lock
+ * on an open SQLite file, so the close has to happen first.
+ */
+async function disposeDb(bench: { db: Db; path: string }): Promise<void> {
+  await bench.db.close()
+  cleanupDbFiles(bench.path)
 }
 
 function unavailableRow(label: string, err: unknown): BenchRow {
@@ -249,12 +259,12 @@ export const publishBench: BenchModule = {
         if (isLast) {
           published = { db: fresh.db, path: fresh.path, uploadsDir, pageCount: n }
         } else {
-          cleanupDbFiles(fresh.path)
+          await disposeDb(fresh)
           rmSync(uploadsDir, { recursive: true, force: true })
         }
       } catch (err) {
         publishRows.push(unavailableRow(`${fmtNum(n)} pages × ~${NODES_PER_PAGE} nodes`, err))
-        if (fresh) cleanupDbFiles(fresh.path)
+        if (fresh) await disposeDb(fresh)
         rmSync(uploadsDir, { recursive: true, force: true })
       }
     }
@@ -420,7 +430,7 @@ export const publishBench: BenchModule = {
         } catch (err) {
           rowRouteRows.push(unavailableRow(`row-route lookup @ ${fmtNum(ROWS)} rows`, err))
         } finally {
-          if (fresh) cleanupDbFiles(fresh.path)
+          if (fresh) await disposeDb(fresh)
         }
       }
 
@@ -509,7 +519,7 @@ export const publishBench: BenchModule = {
         } catch (err) {
           saveRows.push(unavailableRow('site save round-trip', err))
         } finally {
-          if (fresh) cleanupDbFiles(fresh.path)
+          if (fresh) await disposeDb(fresh)
         }
       }
 
@@ -570,7 +580,7 @@ export const publishBench: BenchModule = {
       }
     } finally {
       if (published) {
-        cleanupDbFiles(published.path)
+        await disposeDb(published)
         rmSync(published.uploadsDir, { recursive: true, force: true })
       }
     }

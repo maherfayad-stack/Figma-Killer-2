@@ -84,7 +84,8 @@ Full reasoning in the `infra-01` entry under "Recently landed".
   assertions pass; it fails in *teardown* with Windows `EBUSY` from
   `createTestDb.ts` (whose own comment documents the POSIX-only assumption
   that an open SQLite file can be unlinked). A fifth `standing-01`-class
-  Windows-only harness failure. Real fix = `DbClient.close()`, unclaimed.
+  Windows-only harness failure. Real fix = `DbClient.close()` — **shipped by
+  `test-infra-01`; that test and 180 others in the same class now pass.**
 
 ### `debt-01` — two files over the size ceiling
 `fsCodemodAdapter.ts` (890) and `studioWriteback.ts` (738). Each has a named
@@ -213,6 +214,77 @@ are the remaining WS-2 items, not yet dispatched. See
 ---
 
 ## Recently landed
+
+### test-infra-01 — `DbClient.close()`, and the test signal becomes trustworthy
+- **Agent:** test-engineer
+- **Stage:** done
+- **Updated:** 2026-07-31
+- **Goal:** kill the Windows-only `EBUSY` failure class at its source and report
+  honest before/after full-suite numbers.
+- **Scope:** `server/db/{client,sqlite,postgres}.ts`,
+  `src/__tests__/helpers/createTestDb.ts`,
+  `src/__tests__/db/{createDbClient,sqlite-transaction-concurrency}.test.ts`,
+  `src/__tests__/server/pluginScheduler.test.ts`,
+  `scripts/bench/benches/{db,publish,snapshot-tokens}.ts`,
+  `docs/reference/database-dialects.md`. Adapters only — no repository, handler
+  or schema change, no migration.
+- **Done so far:**
+  - **Measured first.** Baseline `bun test`: **7436 pass / 215 fail**, of which
+    **181** carry an `EBUSY … rm '…\cms-test-…'` block in teardown. After:
+    **7618 pass / 34 fail**, **0 EBUSY**, **0 new failures** (fail sets diffed
+    line by line — the 34 are byte-identical to the baseline's non-EBUSY set).
+  - **`DbClient.close()` is now required, not optional** (`server/db/client.ts`).
+    No shim, no `close?()`, no `closeIfSupported`. Every test fake casts with
+    `as DbClient`, so no fake needed touching.
+  - **The fix has two halves, and only having the first is why an earlier,
+    obvious-looking fix would have failed.** (1) `close()` exists and teardown
+    calls it before `rm`. (2) `db.close()` alone is *not enough*: bun's
+    `db.query()` cache **evicts**, an evicted `Statement` is finalized only by
+    the GC, and `sqlite3_close_v2` defers the real close until the last
+    statement is finalized — so the client closed into a zombie that still held
+    the `.db`/`-wal`/`-shm` files. `Bun.gc(true)` before `close()` made the lock
+    vanish, which is how this was pinned. The adapter now owns its statement
+    cache (`Map<string, Statement>` in `sqlite.ts`) and finalizes every entry in
+    `close()`. Symptom to recognise: `db.close(true)` throws `database is
+    locked` while `close(false)` silently leaves the file locked.
+  - **The full suite used to wedge forever** — CPU-spinning, no output, no
+    completion. It was NOT machine load: `sqlite-transaction-concurrency.test.ts`
+    test 2 deadlocks in `await expect(tx).rejects.toThrow(...)` under bun 1.3.6
+    when the awaited promise is a transaction queued behind one still parked on
+    a timer. Identical code completes correctly under `bun run`, and a
+    try/catch assertion of the same strength passes — so it is a matcher
+    deadlock, not adapter behaviour. Swapped to try/catch with the reasoning in
+    a comment at the call site.
+  - Postgres adapter closes the pool (`sql.close()`); the `transaction()` handle
+    on **both** adapters refuses `close()` with `TransactionHandleCloseError`
+    (it borrows the connection, it does not own it). SQLite's transaction handle
+    is now a distinct object rather than the client itself, which is what makes
+    that refusal expressible.
+  - Fixed the same leak in the benches (`scripts/bench/benches/{db,publish,
+    snapshot-tokens}.ts`) — they unlinked live SQLite files, so `bun run bench`
+    was broken on Windows too.
+- **Next step:** none for this work order. Optional follow-up for whoever wants
+  it: `%TEMP%` holds ~4 200 orphaned `cms-test-*` directories left by every run
+  before this fix; they are unlocked now and safe to delete, and clearing them
+  measurably speeds up `mkdtemp`.
+- **Decisions:** `close()` is required on the interface — a shared foundation
+  with two implementors and no third-party consumers has no reason to carry an
+  optional method. `close()` on a transaction handle throws instead of being a
+  silent no-op, because a caller doing it has a real bug.
+- **Landmines:**
+  - Do **not** "simplify" `sqlite.ts` back to bare `db.query()` at the call
+    sites. The `statements` map is not a perf tweak — it is what makes `close()`
+    actually close on Windows.
+  - `db.close(false)` returning is not proof the file is released. If you need
+    the file gone, finalize statements first (the adapter does this for you).
+  - `expect(...).rejects` is not safe on a promise that is queued behind another
+    in-flight transaction under bun 1.3.6. It wedges the whole runner, silently.
+- **Verification:** full `bun test` before and after on this machine (215 → 34
+  fail, 0 EBUSY, 0 new failures); `npx eslint` clean on every file in scope;
+  `tsc -b` reports 108 errors, **none** in any file this entry touched — they
+  are a parallel agent's in-flight `src/core/*` refactor.
+- **Human action needed:** none. `standing-01` has been rewritten with the new
+  numbers; read that before triaging any failure.
 
 ### instance-ui-01 — clicking a component selects the instance, and you can see it
 - **Agent:** canvas-engineer (resumed after the spend-limit termination)
@@ -5507,21 +5579,48 @@ into this work order while other agents are live in the tree. Logged as debt.
 
 ## Standing notes
 
-### standing-01 — ~200 full-suite failures are pre-existing and Windows-only
-Measured 2026-07-30 on `feat/alm-figma-killer-studio-shell`. `bun test` reports
-roughly 6768 pass / 201 fail. Sampled causes are all **environmental on
-Windows**, not logic:
+### standing-01 — the full suite runs now: 34 pre-existing failures, not ~200
+**Rewritten 2026-07-31 by `test-infra-01`. The old numbers are dead — do not
+quote "~200 failures" or "never run the full suite" any more.**
 
-- `EBUSY` unlinking temp SQLite databases under `%TEMP%\cms-test-*`,
-- doubled absolute paths (`src\C:\Users\...`) in architecture gates that join
-  paths,
-- mixed `\` / `/` separators defeating string comparisons
-  (`codemirror-lazy-only.test.ts`, `dispatcher-html-pipeline.test.ts`).
+`bun test` now **completes** in ~300 s and reports **7618 pass / 34 fail /
+1 skip** across 772 files on this Windows machine. Measured before/after on the
+same tree, same machine:
 
-**Triage rule:** before assuming you broke something, run only the suites
-covering your change. `bun run build` is the reliable whole-repo signal — it
-type-checks everything and is separator-agnostic. Do **not** try to fix these;
-they belong to the environment, not to your diff.
+| | pass | fail |
+|---|---|---|
+| before `test-infra-01` | 7436 | **215** |
+| after | 7618 | **34** |
+
+**181 of the 215 were one bug** — `EBUSY` unlinking temp SQLite databases under
+`%TEMP%\cms-test-*`. Root cause and fix are in the `test-infra-01` entry:
+`DbClient` had no `close()`, and bun's own statement cache evicts prepared
+statements that only the GC finalizes, so `sqlite3_close_v2` closed into a
+zombie that kept the file locked. Both halves are fixed; the EBUSY class is
+**gone, not reduced** (`grep -c EBUSY` over a full run: 0).
+
+The suite also used to **wedge forever** — nobody could finish a full run. Cause
+was not load: `sqlite-transaction-concurrency.test.ts` deadlocked in
+`expect(...).rejects` (see `test-infra-01`). Also fixed.
+
+**The 34 that remain are genuinely not yours** (unchanged before → after, zero
+new failures introduced). They are:
+
+- **Windows path/separator gates** — `codemirror-lazy-only`,
+  `dispatcher-html-pipeline`, `error-boundary-coverage`,
+  `keybindings-registry-single-source`, `selectorStability`,
+  `siteExplorerPanel`, `plugin-sdk/lintCli`, `cacheLayout` (×2),
+  `cmsMigrations`. These join or compare paths and lose on `\` vs `/`. Nobody
+  has fixed them; they are still the honest "not my failure" bucket.
+- **Plugin QuickJS/worker suites** — `pluginServerRuntime` (×7),
+  `pluginWorkerRpcTimeout` (×3).
+- **In-flight work from parallel agents** — `fsCodemodAdapter` (×12),
+  `layerNodeContextMenu`, `agentBreakpointCapture`.
+
+**Triage rule (updated):** run the full suite — it works and it is fast enough.
+Diff your failures against the 34 above. Anything else is yours. `tsc -b`
+currently reports ~108 errors, all in `src/core/*` from another agent's
+in-flight refactor; that number is *not* a `test-infra-01` regression.
 
 ### standing-02 — verification split: browser for layout, static gates elsewhere
 **Amended 2026-07-31.** The original rule was "never run a browser pass, the

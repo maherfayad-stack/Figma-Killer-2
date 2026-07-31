@@ -13,10 +13,12 @@ export interface TestDb {
  * Create a fresh DB for tests. Defaults to an isolated temp-file SQLite DB
  * with all migrations applied. Each call produces a unique, independent DB.
  *
+ * `cleanup()` closes the client before removing anything — an open SQLite
+ * handle keeps a hard lock on the file on Windows, so unlinking it first fails
+ * with `EBUSY` and the temp directory leaks.
+ *
  * Set `DB=postgres TEST_POSTGRES_URL=postgres://...` to run against a real
- * Postgres instance instead. The helper supports that mode at the type level;
- * connection-pool teardown is left to process exit until DbClient grows a
- * close() method.
+ * Postgres instance instead; there `cleanup()` drains the connection pool.
  *
  * @example
  * const { db, cleanup } = await createTestDb()
@@ -35,9 +37,7 @@ export async function createTestDb(): Promise<TestDb> {
     return {
       db,
       cleanup: async () => {
-        // TODO: extend DbClient with a close() method to properly terminate the
-        // Postgres connection pool. For now the process-level teardown is enough
-        // for the opt-in PG test mode.
+        await db.close()
       },
     }
   }
@@ -51,10 +51,8 @@ export async function createTestDb(): Promise<TestDb> {
   return {
     db,
     cleanup: async () => {
-      // Remove the entire temp directory. bun:sqlite doesn't expose a close()
-      // method on our DbClient interface; on macOS/Linux the file can still be
-      // deleted while the handle is open, and the handle goes out of scope once
-      // the test function returns.
+      // Release the file handle first, then remove the whole temp directory.
+      await db.close()
       await fs.rm(path.dirname(tmpFile), { recursive: true, force: true })
     },
   }

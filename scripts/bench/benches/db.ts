@@ -50,7 +50,7 @@ export const dbBench: BenchModule = {
 
   async run(ctx: BenchContext): Promise<BenchResult> {
     log.step('Spinning up an isolated DB with full migrations')
-    const { db: _db, path, migrateMs } = await freshDb('warm')
+    const { db: warmDb, path, migrateMs } = await freshDb('warm')
 
     try {
       const migrationsRow: BenchRow[] = [
@@ -90,6 +90,8 @@ export const dbBench: BenchModule = {
             },
           })
         } finally {
+          // Close before unlinking — Windows locks an open SQLite file.
+          await fresh.db.close()
           unlinkSync(fresh.path)
         }
       }
@@ -160,6 +162,8 @@ export const dbBench: BenchModule = {
             })
           }
         } finally {
+          // Close before unlinking — Windows locks an open SQLite file.
+          await fresh.db.close()
           unlinkSync(fresh.path)
         }
       }
@@ -217,6 +221,8 @@ export const dbBench: BenchModule = {
               },
             })
           } finally {
+            // Close before unlinking — Windows locks an open SQLite file.
+            await fresh.db.close()
             unlinkSync(fresh.path)
           }
         }
@@ -241,6 +247,7 @@ export const dbBench: BenchModule = {
         ],
       }
     } finally {
+      await warmDb.close()
       try {
         unlinkSync(path)
       } catch {

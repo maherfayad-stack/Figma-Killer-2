@@ -1,5 +1,5 @@
-import { Database } from 'bun:sqlite'
-import type { DbClient, DbResult } from './client'
+import { Database, type Statement } from 'bun:sqlite'
+import { TransactionHandleCloseError, type DbClient, type DbResult } from './client'
 
 type BindableValue = string | number | null | Uint8Array
 
@@ -76,6 +76,25 @@ function isSelectishStatement(sql: string): boolean {
   return /^select/i.test(trimmed) || /\breturning\b/i.test(sql)
 }
 
+/**
+ * The handle a `transaction()` callback receives. It runs every statement on
+ * the owning client's single connection — which is the whole point, since the
+ * BEGIN is open on that connection — but it does not own it, so `close()` is
+ * refused rather than silently tearing down the database mid-transaction.
+ */
+function createTransactionHandle(owner: DbClient): DbClient {
+  const tx = (<Row = Record<string, unknown>>(
+    strings: TemplateStringsArray,
+    ...values: unknown[]
+  ): Promise<DbResult<Row>> => owner<Row>(strings, ...values)) as DbClient
+  tx.unsafe = owner.unsafe
+  tx.transaction = owner.transaction
+  tx.close = async () => {
+    throw new TransactionHandleCloseError()
+  }
+  return Object.assign(tx, { dialect: 'sqlite' as const })
+}
+
 export function createSqliteClient(filename: string): DbClient {
   const db = new Database(filename)
 
@@ -84,16 +103,38 @@ export function createSqliteClient(filename: string): DbClient {
   db.exec('PRAGMA synchronous = NORMAL')
   db.exec('PRAGMA busy_timeout = 5000')
 
+  /**
+   * Prepared statements, keyed by SQL string, owned by this client.
+   *
+   * `db.query()` also caches, but that cache evicts, and an evicted statement
+   * is only finalized when the GC collects its wrapper. `sqlite3_close_v2`
+   * (what `db.close()` calls) defers the actual close until the last statement
+   * is finalized, so a client with evicted-but-uncollected statements closes
+   * into a zombie that still holds the file — on Windows that means the `.db`,
+   * `-wal` and `-shm` files stay locked and their directory cannot be removed.
+   * Holding our own strong references makes the lifetime explicit: every
+   * statement this client prepared is finalized in `close()`.
+   */
+  const statements = new Map<string, Statement>()
+
+  function prepared(sql: string): Statement {
+    const cached = statements.get(sql)
+    if (cached) return cached
+    const stmt = db.query(sql)
+    statements.set(sql, stmt)
+    return stmt
+  }
+
   const fn = (async <Row = Record<string, unknown>>(
     strings: TemplateStringsArray,
     ...values: unknown[]
   ): Promise<DbResult<Row>> => {
     const { sql, params } = renderTemplate(strings, values)
-    // db.query() returns a prepared statement cached by the exact SQL string
-    // (db.prepare() recompiles on every call). Tagged-template call sites
-    // render an identical SQL string per site, so steady-state queries skip
-    // compilation entirely; params are still bound fresh on each .all()/.run().
-    const stmt = db.query(sql)
+    // Prepared once per distinct SQL string (db.prepare() recompiles on every
+    // call). Tagged-template call sites render an identical SQL string per
+    // site, so steady-state queries skip compilation entirely; params are
+    // still bound fresh on each .all()/.run().
+    const stmt = prepared(sql)
     if (isSelectishStatement(sql)) {
       const rows = stmt.all(...params) as Row[]
       return { rows: rows.map(parseJsonColumns), rowCount: rows.length }
@@ -114,7 +155,7 @@ export function createSqliteClient(filename: string): DbClient {
       return { rows: [], rowCount: 0 }
     }
     // Cached prepared statement — same rationale as the template path above.
-    const stmt = db.query(rawSql)
+    const stmt = prepared(rawSql)
     const bindParams = (params ?? []).map(toBindable)
     const rows = stmt.all(...bindParams) as Row[]
     return { rows: rows.map(parseJsonColumns), rowCount: rows.length }
@@ -136,7 +177,7 @@ export function createSqliteClient(filename: string): DbClient {
       // runs while another transaction is open.
       await fn.unsafe('BEGIN')
       try {
-        const result = await cb(fn)
+        const result = await cb(createTransactionHandle(fn))
         await fn.unsafe('COMMIT')
         return result
       } catch (err) {
@@ -156,6 +197,17 @@ export function createSqliteClient(filename: string): DbClient {
       () => undefined,
     )
     return result
+  }
+
+  // Finalize every statement this client prepared, then close. Both halves are
+  // required: SQLite will not release the file while a statement is alive, and
+  // Windows holds a hard lock on an open database file — so anything with a
+  // bounded lifetime (tests, scripts, one-shot tasks) must call this before
+  // deleting the file, and the close must actually complete.
+  fn.close = async () => {
+    for (const stmt of statements.values()) stmt.finalize()
+    statements.clear()
+    db.close(false)
   }
 
   return Object.assign(fn, { dialect: 'sqlite' as const })

@@ -37,28 +37,35 @@ describe('createDbClient — DATABASE_URL dialect selection', () => {
         join(dir, 'bare-path', 'cms.db'),
       ]) {
         const { db, migrations } = createDbClient(databaseUrl)
+        try {
+          expect(db.dialect).toBe('sqlite')
+          expect(migrations).toBe(sqliteMigrations)
 
-        expect(db.dialect).toBe('sqlite')
-        expect(migrations).toBe(sqliteMigrations)
+          await runMigrations(db, migrations)
+          await runMigrations(db, migrations)
 
-        await runMigrations(db, migrations)
-        await runMigrations(db, migrations)
-
-        const { rows } = await db<{ count: number }>`select count(*) as count from schema_migrations`
-        expect(rows[0]?.count).toBe(sqliteMigrations.length)
+          const { rows } = await db<{ count: number }>`select count(*) as count from schema_migrations`
+          expect(rows[0]?.count).toBe(sqliteMigrations.length)
+        } finally {
+          // The temp dir cannot be removed while the file handle is open.
+          await db.close()
+        }
       }
     })
   })
 
-  test('selects Postgres clients and Postgres migrations for supported Postgres schemes', () => {
+  test('selects Postgres clients and Postgres migrations for supported Postgres schemes', async () => {
     for (const databaseUrl of [
       'postgres://studio:secret@127.0.0.1:65432/studio',
       'postgresql://studio:secret@127.0.0.1:65432/studio',
     ]) {
       const { db, migrations } = createDbClient(databaseUrl)
-
-      expect(db.dialect).toBe('postgres')
-      expect(migrations).toBe(pgMigrations)
+      try {
+        expect(db.dialect).toBe('postgres')
+        expect(migrations).toBe(pgMigrations)
+      } finally {
+        await db.close()
+      }
     }
   })
 
