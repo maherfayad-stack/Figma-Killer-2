@@ -281,3 +281,134 @@ describe('static loop expansion', () => {
     expect(items.map((n) => n.text)).toEqual(['1', '2'])
   })
 })
+
+/**
+ * parser-08 — a conditional INSIDE an expanded row resolves per row.
+ *
+ * `iterationEvalContext` already bound the callback's parameters, and
+ * `selectJsxBranch` already consulted them; what was missing is that a property
+ * the row's object does NOT have evaluated to `unresolved` ("we could not read
+ * this") rather than `undefined` ("the source says there is nothing here"). So
+ * every row after the first threw away a Tier A answer and fell back to the
+ * positional heuristic — on the real eSIM board that painted a broken
+ * `<img src>` placeholder on top of the icon of two of three add-on rows.
+ */
+describe('a branch inside an expanded loop row', () => {
+  it('picks a DIFFERENT ternary side per row from the iteration variable', () => {
+    write(
+      'pages/AddOns.jsx',
+      [
+        "const ADD_ONS = [",
+        "  { key: 'esim', image: 'chip.png' },",
+        "  { key: 'checkin', icon: 'check.svg' },",
+        "  { key: 'baggage', icon: 'bag.svg' },",
+        ']',
+        'export default function AddOns() {',
+        '  return (',
+        '    <div>',
+        '      {ADD_ONS.map((addOn) => (',
+        '        <div key={addOn.key}>',
+        '          {addOn.image ? (',
+        '            <img src={addOn.image} alt="" />',
+        '          ) : (',
+        '            <span data-icon={addOn.icon} />',
+        '          )}',
+        '        </div>',
+        '      ))}',
+        '    </div>',
+        '  )',
+        '}',
+        '',
+      ].join('\n'),
+    )
+
+    const nodes = loadNodes('pages/AddOns.jsx', evalOptions())
+    // Exactly one branch per row: the image row gets the <img>, the two
+    // icon rows get the <span>. Never both, and never three of either.
+    expect(nodes.filter((n) => n.name === 'img')).toHaveLength(1)
+    expect(nodes.filter((n) => n.name === 'span')).toHaveLength(2)
+  })
+
+  it('drops a `&&` whose guard is a property the row does not have', () => {
+    write(
+      'pages/Subtext.jsx',
+      [
+        "const COPY = { a: { title: 'A', subtext: 'more' }, b: { title: 'B' } }",
+        "const ROWS = [{ key: 'a' }, { key: 'b' }]",
+        'export default function Subtext() {',
+        '  return (',
+        '    <div>',
+        '      {ROWS.map((row) => (',
+        '        <div key={row.key}>',
+        '          <p>{COPY[row.key].title}</p>',
+        '          {COPY[row.key].subtext && <em>{COPY[row.key].subtext}</em>}',
+        '        </div>',
+        '      ))}',
+        '    </div>',
+        '  )',
+        '}',
+        '',
+      ].join('\n'),
+    )
+
+    const nodes = loadNodes('pages/Subtext.jsx', evalOptions())
+    expect(textsOf(nodes, 'p')).toEqual(['A', 'B'])
+    expect(textsOf(nodes, 'em')).toEqual(['more'])
+  })
+
+  it('resolves `i < items.length - 1` from the bound index parameter', () => {
+    write(
+      'pages/Rules.jsx',
+      [
+        "const ROWS = ['a', 'b', 'c']",
+        'export default function Rules() {',
+        '  return (',
+        '    <div>',
+        '      {ROWS.map((row, i) => (',
+        '        <div key={row}>',
+        '          <p>{row}</p>',
+        '          {i < ROWS.length - 1 && <hr />}',
+        '        </div>',
+        '      ))}',
+        '    </div>',
+        '  )',
+        '}',
+        '',
+      ].join('\n'),
+    )
+
+    const nodes = loadNodes('pages/Rules.jsx', evalOptions())
+    expect(textsOf(nodes, 'p')).toEqual(['a', 'b', 'c'])
+    // A separator between rows, not after the last one.
+    expect(nodes.filter((n) => n.name === 'hr')).toHaveLength(2)
+  })
+
+  it('still declines when a SPREAD could have supplied the missing key', () => {
+    write(
+      'pages/Spread.jsx',
+      [
+        "const BASE = { image: 'fallback.png' }",
+        "const ROWS = [{ ...BASE, key: 'a' }, { key: 'b' }]",
+        'export default function Spread() {',
+        '  return (',
+        '    <div>',
+        '      {ROWS.map((row) => (',
+        '        <div key={row.key}>{row.image ? <img alt="" /> : <span />}</div>',
+        '      ))}',
+        '    </div>',
+        '  )',
+        '}',
+        '',
+      ].join('\n'),
+    )
+
+    // Row `b` is a complete literal with no `image`, so it resolves to the
+    // <span>. Row `a` carries a spread this evaluator did not read, so its
+    // `image` stays genuinely unknown and the heuristic (prefer the consequent)
+    // renders the <img>. The point is that an INCOMPLETE object never claims
+    // a key is absent.
+    const nodes = loadNodes('pages/Spread.jsx', evalOptions())
+    expect(nodes.filter((n) => n.name === 'img')).toHaveLength(1)
+    expect(nodes.filter((n) => n.name === 'span')).toHaveLength(1)
+  })
+})

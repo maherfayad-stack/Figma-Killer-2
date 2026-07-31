@@ -59,6 +59,7 @@ Legend: 🟢 Studio (active work) · 🟡 shared infrastructure Studio depends o
 | 🟢 `src/core/page-parser/staticEvalCore.ts` | Tier A + recursive walker + binding resolution. |
 | 🟢 `src/core/page-parser/staticEvalCalls.ts` | Tier B (hook → provider) + Tier C (pure calls). |
 | 🟢 `src/core/page-parser/staticEvalOperators.ts` | Tier A operators, `Math.*`, `\|\|`/`&&`/`??`. |
+| 🟢 `src/core/page-parser/staticEvalValues.ts` | Pure leaf: operations on an ALREADY-RESOLVED value — `pluck`, `withNote`, `unresolved`, `originOf`. parser-08: a key missing from a **complete** object/array resolves to `{kind:'undefined'}`, which is a real answer, not `unresolved`. |
 | 🟢 `src/core/page-parser/defaultLiteralBindings.ts` | parser-07: a binding's own FIRST-PAINT literal — a `useState(<default>)` arg or a destructured param's `= <default>`. Pure AST leaf; returns the `Node`, never a value. |
 | 🟢 `src/core/page-parser/branchSelection.ts` | Which branch renders: multi-return, `? :`, `&&`, `\|\|`, `??`. Records the untaken side as `branchAlternatives`. |
 | 🟢 `src/core/page-parser/componentSources.ts` | local vs package classification; the workspace-wide ts-morph `Project` (**tsconfig `paths` already resolve here**). |

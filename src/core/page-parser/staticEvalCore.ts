@@ -14,6 +14,13 @@
  * (`./staticEval`) injects once when it builds the `Budget` for a top-level
  * `evaluateExpression` call. `./staticEvalCalls` imports everything it needs
  * FROM this module (one direction only); this module imports nothing back.
+ *
+ * Two pure leaves sit UNDER this one and are shared with `./staticEvalCalls`
+ * and `./staticEvalOperators`, which is what keeps that graph one-directional:
+ * `./staticEvalTypes` (the value/scope types) and `./staticEvalValues`
+ * (operations and constructors over an ALREADY-RESOLVED value — `unresolved`,
+ * `withNote`, `pluck`, `originOf`). Anything that must evaluate a
+ * sub-expression stays here, because only this module owns the recursion.
  */
 import {
   Node,
@@ -28,10 +35,19 @@ import {
   type TemplateExpression,
   type VariableDeclaration,
 } from 'ts-morph'
-import * as path from 'node:path'
 import { resolveCssModuleImport, resolveImageAssetImport, resolveRawTextImport } from './assetImports'
 import { findDefaultLiteralNode } from './defaultLiteralBindings'
 import { evaluateBinaryOperator, evaluateUnaryOperator } from './staticEvalOperators'
+import {
+  comparableValue,
+  isComparable,
+  mathConstant,
+  originOf,
+  pluck,
+  unresolved,
+  unwrapParens,
+  withNote,
+} from './staticEvalValues'
 import type { FunctionLike } from './types'
 
 // ---------------------------------------------------------------------------
@@ -49,7 +65,6 @@ export type {
 } from './staticEvalTypes'
 import type {
   EvalScope,
-  ValueOrigin,
   LocalBinding,
   PageEvalBudget,
   StaticEvalOptions,
@@ -194,37 +209,6 @@ function bumpSteps(budget: Budget): boolean {
   return true
 }
 
-export function unresolved(reason: string, partial?: string): StaticValue {
-  return partial !== undefined ? { kind: 'unresolved', reason, partial } : { kind: 'unresolved', reason }
-}
-
-export function unwrapParens(node: Node): Node {
-  let current = node
-  while (Node.isParenthesizedExpression(current)) current = current.getExpression()
-  return current
-}
-
-/** Propagates a Tier B.4 branch-pick note through a member-access chain, without ever overwriting a MORE specific (deeper) note already attached. */
-/**
- * `{ origin }` for a literal token, or `{}` when it cannot be addressed — no
- * configured workspace root, or a file outside it (a `node_modules` dictionary
- * is not the user's to rewrite).
- */
-function originOf(literal: Node, budget: Budget): { origin?: ValueOrigin } {
-  const root = budget.workspaceRoot
-  if (!root) return {}
-  const sourceFile = literal.getSourceFile()
-  const rel = path.relative(path.resolve(root), path.resolve(sourceFile.getFilePath()))
-  if (rel.length === 0 || rel.startsWith('..') || path.isAbsolute(rel)) return {}
-  const { line, column } = sourceFile.getLineAndColumnAtPos(literal.getStart())
-  return { origin: { rel: rel.split(path.sep).join('/'), line, col: column } }
-}
-
-export function withNote(value: StaticValue, note: string | undefined): StaticValue {
-  if (!note || value.kind === 'unresolved' || value.kind === 'fn' || value.note) return value
-  return { ...value, note }
-}
-
 // ---------------------------------------------------------------------------
 // Core recursive evaluator (Tier A)
 // ---------------------------------------------------------------------------
@@ -243,10 +227,10 @@ export function evaluateNode(exprIn: Node, scope: EvalScope, budget: Budget, dep
     // source file, so every path that merely passes the value along — an
     // identifier, a const, `pluck` off an object, an array index — carries it for
     // free, and every path that COMPUTES a new value cannot.
-    return { kind: 'literal', value: expr.getLiteralText(), ...originOf(expr, budget) }
+    return { kind: 'literal', value: expr.getLiteralText(), ...originOf(expr, budget.workspaceRoot) }
   }
   if (Node.isNumericLiteral(expr)) {
-    return { kind: 'literal', value: expr.getLiteralValue(), ...originOf(expr, budget) }
+    return { kind: 'literal', value: expr.getLiteralValue(), ...originOf(expr, budget.workspaceRoot) }
   }
   const kind = expr.getKind()
   if (kind === SyntaxKind.TrueKeyword) return { kind: 'literal', value: true }
@@ -336,14 +320,19 @@ export function evaluateCondition(expr: Node, scope: EvalScope, budget: Budget, 
     if (!compare) return undefined
     const left = evaluateConditionOperand(n.getLeft(), scope, budget, depth)
     const right = evaluateConditionOperand(n.getRight(), scope, budget, depth)
-    if (left.kind !== 'literal' || right.kind !== 'literal') return undefined
-    return compare(left.value, right.value)
+    if (!isComparable(left) || !isComparable(right)) return undefined
+    return compare(comparableValue(left), comparableValue(right))
   }
   if (Node.isPrefixUnaryExpression(n) && n.getOperatorToken() === SyntaxKind.ExclamationToken) {
     const inner = evaluateCondition(n.getOperand(), scope, budget, depth)
     return inner === undefined ? undefined : !inner
   }
   const value = evaluateConditionOperand(n, scope, budget, depth)
+  // A statically-`undefined` condition is decided, not coerced: there is no
+  // value here to render, so the condition is false. (Every OTHER non-boolean
+  // value still declines — see this function's doc comment on why coercion
+  // belongs in `evaluateStaticTruthiness`, not here.)
+  if (value.kind === 'undefined') return false
   return value.kind === 'literal' && typeof value.value === 'boolean' ? value.value : undefined
 }
 
@@ -426,40 +415,15 @@ function evaluateTemplate(expr: TemplateExpression, scope: EvalScope, budget: Bu
   return { kind: 'literal', value: text }
 }
 
-/**
- * `Math`'s numeric constants. Its FUNCTIONS were already callable (see
- * `isWhitelistedCall` in `./staticEvalCalls`), but a constant is a property
- * access, so `2 * Math.PI * RADIUS` — the circumference every progress ring in
- * every codebase is drawn from — resolved to nothing.
- */
-const MATH_CONSTANTS: ReadonlyMap<string, number> = new Map(
-  (['E', 'LN2', 'LN10', 'LOG2E', 'LOG10E', 'PI', 'SQRT1_2', 'SQRT2'] as const)
-    .map((key) => [key, Math[key]]),
-)
-
 function evaluatePropertyAccess(expr: PropertyAccessExpression, scope: EvalScope, budget: Budget, depth: number): StaticValue {
   const objectExpr = expr.getExpression()
   const name = expr.getName()
   if (Node.isIdentifier(objectExpr) && objectExpr.getText() === 'Math') {
-    const constant = MATH_CONSTANTS.get(name)
+    const constant = mathConstant(name)
     if (constant !== undefined) return { kind: 'literal', value: constant }
   }
   const object = evaluateNode(objectExpr, scope, budget, depth + 1)
   return pluck(object, name)
-}
-
-export function pluck(value: StaticValue, key: string): StaticValue {
-  if (value.kind === 'object') {
-    const found = value.entries.get(key)
-    return found === undefined ? unresolved(`property "${key}" not found`) : withNote(found, value.note)
-  }
-  if (value.kind === 'array') {
-    const idx = Number(key)
-    if (Number.isInteger(idx) && idx >= 0 && idx < value.items.length) return withNote(value.items[idx]!, value.note)
-    return unresolved(`index "${key}" not found on array`)
-  }
-  if (value.kind === 'unresolved') return value
-  return unresolved(`cannot read property "${key}" of a ${value.kind} value`)
 }
 
 /** Tier A computed member + array index, and Tier B.4's dynamic-key dictionary branch pick. */
@@ -496,6 +460,11 @@ function evaluateElementAccess(expr: ElementAccessExpression, scope: EvalScope, 
  */
 function evaluateObjectLiteral(expr: ObjectLiteralExpression, scope: EvalScope, budget: Budget, depth: number): StaticValue {
   const entries = new Map<string, StaticValue>()
+  // See `StaticValue`'s `complete` doc: only something that can contribute a key
+  // this walk cannot NAME clears it. A named key whose value is unreadable is
+  // recorded as `unresolved` below and leaves the key set intact, so `pluck` can
+  // still answer "there is no `image` on this row" for every OTHER key.
+  let complete = true
   for (const prop of expr.getProperties()) {
     if (Node.isPropertyAssignment(prop)) {
       const nameNode = prop.getNameNode()
@@ -504,28 +473,48 @@ function evaluateObjectLiteral(expr: ObjectLiteralExpression, scope: EvalScope, 
         : Node.isStringLiteral(nameNode) || Node.isNumericLiteral(nameNode)
           ? String(nameNode.getLiteralValue())
           : undefined
-      if (key === undefined) continue // computed key — not in the corpus, skipped like extractInlineStyles' policy
+      if (key === undefined) {
+        complete = false // computed key — it could be ANY name, so no absence is decidable
+        continue
+      }
       const init = prop.getInitializer()
-      if (!init) continue
+      if (!init) {
+        entries.set(key, unresolved('property has no initializer'))
+        continue
+      }
       entries.set(key, evaluateNode(init, scope, budget, depth))
       continue
     }
     if (Node.isShorthandPropertyAssignment(prop)) {
       const name = prop.getName()
       entries.set(name, resolveIdentifier(name, scope, budget, depth + 1))
+      continue
     }
-    // Spread / method / getter-setter properties: skipped — same "best-effort, never guess" policy.
+    if (Node.isMethodDeclaration(prop) || Node.isGetAccessorDeclaration(prop) || Node.isSetAccessorDeclaration(prop)) {
+      const name = prop.getName()
+      entries.set(name, unresolved(`"${name}" is a method or accessor, not a readable value`))
+      continue
+    }
+    complete = false // spread — an unknown set of keys arrives from somewhere else
   }
-  return { kind: 'object', entries }
+  return { kind: 'object', entries, complete }
 }
 
 /** Same depth policy as `evaluateObjectLiteral` — see its doc comment. */
 function evaluateArrayLiteral(expr: ArrayLiteralExpression, scope: EvalScope, budget: Budget, depth: number): StaticValue {
   const items: StaticValue[] = []
+  // A spread contributes an unknown NUMBER of items, so the array's own length
+  // stops being what the source spells out.
+  let complete = true
   for (const el of expr.getElements()) {
-    items.push(Node.isSpreadElement(el) ? unresolved('spread element') : evaluateNode(el, scope, budget, depth))
+    if (Node.isSpreadElement(el)) {
+      complete = false
+      items.push(unresolved('spread element'))
+      continue
+    }
+    items.push(evaluateNode(el, scope, budget, depth))
   }
-  return { kind: 'array', items }
+  return { kind: 'array', items, complete }
 }
 
 // ---------------------------------------------------------------------------
@@ -534,6 +523,9 @@ function evaluateArrayLiteral(expr: ArrayLiteralExpression, scope: EvalScope, bu
 
 export function resolveIdentifier(name: string, scope: EvalScope, budget: Budget, depth: number): StaticValue {
   const local = scope.locals.get(name)
+  // `undefined` is an ordinary identifier in the AST, and a binding may shadow
+  // it — hence after the locals lookup, before every other resolution path.
+  if (!local && name === 'undefined') return { kind: 'undefined' }
   if (local) {
     if (local.kind === 'resolved') return local.value
     if (local.kind === 'expr') return evaluateNode(local.node, scope, budget, depth + 1)
@@ -563,7 +555,9 @@ export function resolveIdentifier(name: string, scope: EvalScope, budget: Budget
         for (const [localName, globalName] of Object.entries(cssModule)) {
           entries.set(localName, { kind: 'literal', value: globalName })
         }
-        return { kind: 'object', entries }
+        // The compile step emits every class the stylesheet declares, so a name
+        // that is not here is genuinely not a class in that module.
+        return { kind: 'object', entries, complete: true }
       }
       return unresolved(`cannot resolve the import target for "${name}"`)
     }

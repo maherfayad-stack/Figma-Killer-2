@@ -93,8 +93,12 @@ function staticValueToPropValue(value: StaticValue): ParsedPropValue | undefined
       }
       return Object.keys(entries).length > 0 ? entries : undefined
     }
-    // A bare function or an unresolved value carries nothing renderable.
+    // A bare function, a statically-absent value, or an unresolved one carries
+    // nothing renderable. `undefined` lands here for the same reason `null`
+    // does above: React renders neither, and a prop the source leaves absent
+    // must stay absent so the component falls back to its own default.
     case 'fn':
+    case 'undefined':
     case 'unresolved':
       return undefined
   }

@@ -24,13 +24,10 @@
 import { Node, SyntaxKind } from 'ts-morph'
 import type { BinaryExpression, PrefixUnaryExpression } from 'ts-morph'
 import type { StaticValue } from './staticEvalTypes'
+import { unresolved } from './staticEvalValues'
 
 /** Resolves one operand — `evaluateNode`, bound to the current scope/budget/depth. */
 type EvaluateOperand = (node: Node) => StaticValue
-
-function unresolved(reason: string): StaticValue {
-  return { kind: 'unresolved', reason }
-}
 
 /**
  * `&&`/`||`/`??` in VALUE position return one of their operands, not a boolean —
@@ -51,6 +48,11 @@ function evaluateLogical(
   }
 
   const left = evaluate(expr.getLeft())
+  // A statically-absent left operand is decided, not unknown: `x && y` is
+  // `undefined`, `x || y` and `x ?? y` are both `y`.
+  if (left.kind === 'undefined') {
+    return opKind === SyntaxKind.AmpersandAmpersandToken ? left : evaluate(expr.getRight())
+  }
   if (left.kind !== 'literal') return left.kind === 'unresolved' ? left : undefined
 
   const takeRight = opKind === SyntaxKind.QuestionQuestionToken
@@ -129,6 +131,11 @@ export function evaluateUnaryOperator(
 
   const operand = evaluate(expr.getOperand())
   if (operand.kind === 'unresolved') return operand
+  // `!undefined` is `true` — the negated form of the same guard `pluck` now
+  // answers (`{!addOn.image && <Placeholder/>}`).
+  if (operand.kind === 'undefined') {
+    return opKind === SyntaxKind.ExclamationToken ? { kind: 'literal', value: true } : undefined
+  }
   if (operand.kind !== 'literal') return undefined
 
   if (opKind === SyntaxKind.ExclamationToken) return { kind: 'literal', value: !operand.value }

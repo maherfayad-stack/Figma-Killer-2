@@ -156,6 +156,12 @@ function coerce(
   const direct = evaluateExpression(expr, scope, opts)
   if (direct.kind === 'literal') return test(direct.value)
   if (direct.kind === 'fn') return test({})
+  // parser-08 — a value the source states is ABSENT is decided, not unknown:
+  // falsy for `&&`/`||`/a ternary, nullish for `??`. This is the one line that
+  // makes a per-row `.map` guard (`addOn.image ? <img/> : <Icon/>`) resolve on
+  // the rows that have no image, instead of falling back to the heuristic and
+  // painting a broken `<img>` over the icon.
+  if (direct.kind === 'undefined') return test(undefined)
   const literal = findDefaultLiteralNode(expr)
   if (!literal) return undefined
   const viaDefault = evaluateExpression(literal, scope, opts)

@@ -47,9 +47,16 @@ export type Substitution = { kind: 'value'; value: ParsedPropValue } | { kind: '
  * dropped (functions, unresolved values) were never representable anyway.
  */
 function toStaticValue(value: ParsedPropValue): StaticValue {
-  if (Array.isArray(value)) return { kind: 'array', items: value.map(toStaticValue) }
+  // `complete: true` on both: this is a plain JS value the parser already
+  // finished reading, so its keys and its length ARE what they are — there is
+  // no unread spread or computed key left to surprise `pluck`.
+  if (Array.isArray(value)) return { kind: 'array', items: value.map(toStaticValue), complete: true }
   if (typeof value === 'object') {
-    return { kind: 'object', entries: new Map(Object.entries(value).map(([k, v]) => [k, toStaticValue(v)])) }
+    return {
+      kind: 'object',
+      entries: new Map(Object.entries(value).map(([k, v]) => [k, toStaticValue(v)])),
+      complete: true,
+    }
   }
   return { kind: 'literal', value }
 }

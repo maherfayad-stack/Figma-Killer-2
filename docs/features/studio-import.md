@@ -46,6 +46,8 @@ src/core/page-parser/
 ├── staticEvalCore.ts         — Tier A + the recursive walker + binding resolution
 ├── staticEvalCalls.ts        — Tier B (hook → provider) + Tier C (pure calls)
 ├── staticEvalOperators.ts    — Tier A operators: arithmetic, concatenation, unary, `&&`/`||`/`??`
+├── staticEvalValues.ts       — pure leaf: operations on an ALREADY-RESOLVED value (`pluck`, `withNote`,
+│                                `unresolved`, `originOf`) — shared by Core/Calls/Operators without a cycle
 ├── assetImports.ts           — imports that name a FILE: `?raw` → text, image → `studio-asset:` path
 └── resolutionLock.ts         — resolved value → lock + `resolution`; scalar vs structured prop values
 
@@ -235,6 +237,22 @@ Also **operators** (`staticEvalOperators.ts`), which are pure functions of sourc
 
 Arithmetic in a JSX value is ordinary React and none of it resolved before: `const CIRCUMFERENCE = 2 * Math.PI * RADIUS` is how every progress ring is drawn, and `Math.max(0, Math.min(100, pct))` is how a percentage is clamped. `Math.*` calls had been *admitted* by `isWhitelistedCallShape` since Tier C landed, but nothing computed them — `Math` is not a resolvable binding, so the receiver check rejected all of them.
 
+#### "Absent" is an answer, not a failure (parser-08)
+
+`StaticValue` has a `{ kind: 'undefined' }` variant that is **distinct from `unresolved`**. `unresolved` means *the parser could not read this*; `undefined` means *the parser read it and the source says there is nothing here*. Collapsing the two threw away a Tier A answer at every conditional downstream — see [A branch inside an expanded loop row](#a-branch-inside-an-expanded-loop-row-parser-08).
+
+It is produced in exactly three places, all of which the source genuinely determines:
+
+| Shape | Result |
+|---|---|
+| A key missing from a **`complete`** object value | `undefined` |
+| An index past the end of a **`complete`** array value | `undefined` |
+| The `undefined` keyword itself (unless a local binding shadows it) | `undefined` |
+
+`complete` is the guard rail. An object is complete when every key it has is one this walk could NAME — a **spread** (`{ ...base, x: 1 }`) or a **computed key** (`{ [k]: v }`) clears it, because either can put something at a name the evaluator never saw, and then a missing key is merely unknown. A key whose *value* is unreadable (a method, an accessor) is recorded as `unresolved` and leaves the key set intact, so absence of every *other* key stays decidable. An array is complete when it has no spread element, which is also what makes **`.length`** resolvable — and `.length` is what decides `{i < items.length - 1 && <Separator/>}`, the standard way a list omits its trailing rule.
+
+Downstream, an absent value behaves like JS: falsy for `&&`/`||`/a ternary, nullish for `??`, `true` under `!`, comparable against `undefined`, and — like `null` — never written into a prop, so the component keeps its own default.
+
 ### Tier B — hook → context provider
 
 Traces `useLanguage()` → `useContext(Ctx)` → the single `<Ctx.Provider value={…}>` in the workspace, unwraps a `useMemo`, and evaluates the value object **in the provider component's own scope** (the shape is almost always `value={value}` referring to a `const` in that component's body).
@@ -257,7 +275,7 @@ Calls a resolvable arrow/function inside `qualifiesForTierC`'s explicit envelope
 
 JSX conditional-branch selection, hook state, effects, async. Do not implement these anywhere in this module. The line is **executing code**: control flow whose outcome the parser cannot know, state it would have to simulate, work it would have to run.
 
-Picking a ternary branch is the sharpest case, and it stays banned because it can look right and be a lie — a stateful screen has many states, and rendering one as if it were the markup misrepresents the source. **The parser's answer to a branch is always "render all of it, lock all of it"** — for a ternary child, a `&&`, and (since the multi-return change below) a component's several `return`s alike.
+Picking a ternary branch is the sharpest case: *guessing* one stays banned, because it can look right and be a lie — a stateful screen has many states, and rendering one as if it were the markup misrepresents the source. What the parser does instead is stated in [One `return` renders](#one-return-renders--the-parser-selects-a-branch-parser-06) below: a condition it can actually READ from source decides the branch, and a condition it cannot falls back to a **stated positional heuristic** that records the branch it did not take, rather than to an evaluation. Neither is Tier D — the banned thing is running code, not preferring a position.
 
 A **loop inside a callee's body** is likewise not executed, so a call like `applyTokens(svg)` does not resolve. Where the value is raw SVG markup there is a documented fallback — see [SVG through a transform](#svg-through-a-transform-the-evaluator-cannot-run).
 
@@ -324,6 +342,26 @@ Both prefer a JSX left operand when the condition can't be decided (`a || b` is 
 Both are Tier A, not Tier D — nothing is executed, no hook runs, no setter is simulated, no call site is guessed at; the literal the author wrote in the signature/hook call is read the same way a `const` initializer already is, and the result is the component's FIRST PAINT with no props passed, exactly what a design tool should show by default. The boundary is narrow and deliberate: the default must itself be a bare literal (a computed/prop-derived value with no default anywhere stays unresolvable), the binding must never be reassigned elsewhere in the function body (a `let`-mutated pair falls back to unresolvable too), only the function's own top-level statements/first parameter are scanned (flat, not block-scoped — same simplification `buildComponentLocals` already makes), and — critically — this is wired ONLY into condition evaluation, never into the general identifier-resolution chain (`resolveIdentifier`/`buildComponentLocals`) every other Tier A/B path shares. Wiring it in generally would also feed Tier B.4's dynamic-dictionary-key pick (`translations[lang]` where `lang` is `useState('en')`), silently overriding the `previewLocale` option the language-switcher pattern depends on — see `staticEval.test.ts`'s provider-tracing tests.
 
 Measured on the eSIM corpus, before parser-06: 176 `MULTI_BRANCH_ALL_RENDERED` findings. See `STATE.md`'s `parser-06`/`parser-07` entries for the after counts.
+
+### A branch inside an expanded loop row (parser-08)
+
+An expanded `.map` row already binds the callback's parameters (`iterationEvalContext`), and `selectJsxBranch` already consults them — the row's identity is statically determined, so a guard written against the iteration variable is a **Tier A** question, per row, not a guess.
+
+What was missing is the previous section: a property the row's object does **not** have evaluated to `unresolved` rather than `undefined`, so every row but the first threw its real answer away and fell back to the positional heuristic. On the real eSIM board that put a broken `<img src>` placeholder over the icon of two of the three add-on rows on `BookingConfirmationScreen`:
+
+```jsx
+const ADD_ONS = [{ key: 'esim', image: esimChip }, { key: 'checkin', icon: … }, …]
+…
+{ADD_ONS.map((addOn, i) => (
+  {addOn.image ? <img src={addOn.image}/> : <Icon svg={addOn.icon}/>}   // ← per row now
+  {addonCopy[addOn.key].subtext && <p>…</p>}                            // ← per row now
+  {i < ADD_ONS.length - 1 && <Separator/>}                              // ← per row now
+))}
+```
+
+All three resolve per row now: one branch each, the subtext only on the row that has one, and a separator between rows but not after the last.
+
+**What still does not resolve, and why:** a guard on a **prop the call site did not pass** (`{actionLabel && <button/>}` inside `SectionTitle`). A locally-inlined component is parsed by `parseJsxTree` *before* `applySubstitutions` binds the call site's props, so branch selection cannot see them — the fix is threading the call-site scope into the parse, not another evaluator rule. That is 15 of the 20 evaluations still undecidable on the corpus.
 
 ### Locked nodes still show their text
 

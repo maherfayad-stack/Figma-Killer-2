@@ -702,6 +702,157 @@ are the remaining WS-2 items, not yet dispatched. See
     failure on a clean tree. It belongs to `board-02`.
 - **Human action needed:** none.
 
+### parser-08 — a conditional inside an expanded `.map` row resolves PER ROW
+- **Agent:** parser-surgeon
+- **Stage:** done — measured against the real eSIM corpus, read-only
+- **Updated:** 2026-07-31
+- **Goal:** `{addOn.image ? <img/> : <Icon/>}` inside `ADD_ONS.map(...)` stops
+  rendering the `<img>` branch on the two rows that have no image. The user
+  dogfooded the board and reported a broken "No image selected" placeholder
+  sitting on top of the icon and overlapping the title on
+  `BookingConfirmationScreen`.
+- **Scope:** `src/core/page-parser/{staticEvalTypes.ts,staticEvalValues.ts (new),
+  staticEvalCore.ts,staticEvalOperators.ts,staticEvalCalls.ts,staticEval.ts,
+  resolutionLock.ts,componentSubstitution.ts}`,
+  `src/core/page-parser/__tests__/{staticEval.test.ts,staticLoopExpansion.test.ts}`,
+  `docs/features/studio-import.md`, `docs/agent-refs/{path-index.md,studio-pipeline.md}`.
+  **Nothing in `branchSelection.ts` or `parsePageFile.ts`** — see the correction below.
+
+#### The work order's diagnosis was half right — correct the record
+
+The work order says "static loop expansion binds the iteration variable, but
+branch selection never consults those per-iteration bindings." **It does consult
+them.** `expandStaticLoop` already builds a per-row `ParseContext` from
+`iterationEvalContext`, and `selectJsxBranch` already evaluates its condition
+against it. The census proves it: before the fix, `addOn.image` resolved
+**`true` on row 0** and undecidable on rows 1 and 2. If the binding were absent,
+row 0 would have been undecidable too.
+
+**The real defect is one level down, in the evaluator's value model:** `pluck`
+returned `unresolved` for a key an object does not have. `unresolved` means
+"the parser could not read this"; a key missing from a fully-read object literal
+means "the parser read it and the source says there is nothing here". Collapsing
+the two threw the Tier A answer away on exactly the rows where the answer was
+"absent", so those rows fell back to the positional heuristic — which prefers
+the consequent, i.e. the `<img>`.
+
+#### The fix
+
+`StaticValue` gains `{ kind: 'undefined' }`, distinct from `unresolved`, plus a
+`complete` flag on `object`/`array`:
+
+| Produced when | Guard |
+|---|---|
+| A key is missing from a **complete** object | A spread (`{...base}`) or a computed key (`{[k]: v}`) clears `complete` — either can supply a name this walk never saw, so absence stays unknown |
+| An index is past the end of a **complete** array | A spread element clears `complete` |
+| The `undefined` keyword | Only when no local binding shadows it |
+
+A key whose VALUE is unreadable (a method, an accessor) is now recorded in
+`entries` as `unresolved` instead of being skipped, so the key set stays intact
+and absence of every *other* key is still decidable.
+
+Downstream it behaves like JS: falsy for `&&`/`||`/a ternary, nullish for `??`,
+`true` under `!`, comparable against `undefined`, and — like `null` — never
+written into a prop. `.length` on a complete array also resolves, which is what
+decides `{i < items.length - 1 && <Separator/>}`.
+
+#### Measured on the real corpus (all 15 pages via `loadStudioPages`, temp-dir COPY)
+
+| | Before | After |
+|---|---|---|
+| Nodes across 15 pages | 803 | **802** |
+| `booking-confirmation-screen` | 125 | **124** |
+| Every other page | — | **unchanged** |
+| Recorded `resolution` notes | 268 | 266 |
+| `branchAlternatives` | 45 | **40** |
+
+Node count barely moves because the win is *substitution*, not deletion: −2
+subtext `<p>`, −1 trailing `<Separator/>`, +2 for the two `<Icon>`s that replaced
+two `<img>`s (an inlined `Icon` is 2 nodes, an `<img>` is 1).
+
+**Conditional-site census** — 43 branch evaluations at 21 distinct sites. Note
+this counts sites the walk actually REACHES during a real load; `parser-07`'s
+"32 sites" was a static sweep of `journey-screens/src`, which also counts sites
+inside branches that are never walked. Different denominators, same corpus.
+
+| | true | false | undecidable |
+|---|---|---|---|
+| Per evaluation, before | 9 | 7 | **27** |
+| Per evaluation, after | 11 | 12 | **20** |
+
+**Seven evaluations moved from undecidable to statically resolved**, all three
+loop-bound sites, each now deciding *differently per row*:
+
+| Site | Before | After |
+|---|---|---|
+| `addOn.image` (ternary) | true, undecidable, undecidable | **true, false, false** |
+| `addonCopy[addOn.key].subtext` (`&&`) | true, undecidable, undecidable | **true, false, false** |
+| `i < ADD_ONS.length - 1` (`&&`) | undecidable ×3 | **true, true, false** |
+
+**The three add-on rows now render exactly one branch each** — verified from the
+loaded tree, not inferred: row 0 has `…jsx:116:24#0` (`<img>`) and no node at
+118; rows 1 and 2 have `…jsx:118:24#1/#2` (`<Icon>` → `studio.instance` +
+`base.svg`) and no node at 116. The subtext `<p>` exists only on `#0`; the
+`<Separator/>` exists on `#0` and `#1` and not on the last row.
+
+#### What still does NOT resolve — the next work order
+
+**A guard on a prop the call site did not pass.** That is 15 of the 20 remaining
+undecidable evaluations: `SectionTitle.actionLabel` (7), `ProgressSignal.label`
+(6), `EsimSuccessScreen.stepLabel` (2). `inlineLocalComponents` calls
+`parseJsxTree` on the component's own file **before** `applySubstitutions` binds
+the call site's props, so branch selection is provably running with a scope that
+does not contain them — even though the same call site knows `actionLabel` was
+never passed, which is statically `undefined` by exactly the rule this work
+order just established. The fix is threading a param-bound scope INTO
+`parseJsxTree` (not another evaluator rule), and it is genuinely architectural:
+that scope currently exists only as `applySubstitutions`' second pass, and
+merging the two is the real change. **Do not attempt it as an evaluator tweak.**
+
+The other 5 are genuine runtime state with no default anywhere:
+`BookingDetailsScreen.subtitleParts` (2), `EsimStatusBanner.tone === 'install'`
+(2), `SelectPackageSheet.isData` (1). Correctly left to the heuristic.
+
+#### `staticEvalCore.ts` stayed under the ceiling by extracting, not by a cap
+
+The change pushed it 663 → 731. Extracted `staticEvalValues.ts` — a pure leaf
+holding operations on an ALREADY-RESOLVED value (`pluck`, `withNote`,
+`unresolved`, `unwrapParens`, `originOf`, the `Math` constants, the comparison
+coercion) — taking Core to **657**. `debt-01` is untouched, `GRANDFATHERED`
+unchanged. The extraction also deleted a real duplicate: `staticEvalOperators.ts`
+carried its own private copy of `unresolved` precisely because it could not
+import Core's without a cycle.
+
+- **Next step:** the call-site-prop scope described above. Nothing else in this
+  work order is unfinished.
+- **Decisions:**
+  - `{ kind: 'undefined' }` is a NEW variant, not `{kind:'literal', value: undefined}`.
+    Widening the literal union would have made every existing
+    `kind === 'literal'` check silently accept an absent value and stringify it
+    to `"undefined"` in a prop. A separate kind fails closed everywhere it is
+    not handled.
+  - `complete` is per-VALUE, not per-evaluator-option. A spread makes ONE object
+    undecidable, not the whole page — `{...BASE, key:'a'}` and `{key:'b'}` in the
+    same array resolve differently, and the test asserts exactly that.
+  - Method/accessor keys are recorded as `unresolved` entries rather than
+    clearing `complete`. They are named keys; only an unnameable key (spread,
+    computed) can invalidate an absence claim.
+- **Landmines:**
+  - **`unresolved` vs `undefined` is load-bearing.** Anyone "simplifying" `pluck`
+    to return `unresolved` for a missing key reintroduces the exact board defect.
+    The four tests in `staticLoopExpansion.test.ts`'s
+    `'a branch inside an expanded loop row'` describe are the guard.
+  - The corpus measurement writes `.studio/cache/`. **Always copy the project to
+    an OS temp dir first** — `studio-workspace/` is real user data. I never wrote
+    to it; the `maherfayad-stack-eSIM` modifications in the working tree during
+    this run (`boards.json`, `meta.json`, `SelectPackageSheet.jsx`, new
+    `.studio/cache/*`) came from a concurrent browser/dogfood session and are
+    **not staged in this commit**.
+  - `bun run build` reports 4 errors in `src/admin/pages/site/canvas/` from
+    `select-01`'s in-flight work (`useInstanceEntryKeyboard` → renamed). Zero in
+    `src/core/page-parser/`. `bun test`: 7685 pass / 20 fail, and the 20 are
+    `standing-01`'s exact known set — the delta from 7675 is my 10 new tests.
+
 ### parser-07 — a conditional inside JSX renders ONE branch, not all of them
 - **Agent:** parser-surgeon (resumed after the spend-limit termination)
 - **Stage:** done

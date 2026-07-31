@@ -43,8 +43,34 @@ export interface ValueOrigin {
 
 export type StaticValue =
   | { kind: 'literal'; value: string | number | boolean | null; note?: string; origin?: ValueOrigin }
-  | { kind: 'object'; entries: Map<string, StaticValue>; note?: string }
-  | { kind: 'array'; items: StaticValue[]; note?: string }
+  /**
+   * Statically known to BE `undefined` — a real answer, not a failure.
+   *
+   * `unresolved` means "the parser could not read this"; this means "the parser
+   * read it and the source says there is nothing here". Keeping them apart is
+   * what lets a branch resolve: inside an expanded `.map` row over
+   * `[{ image: chip }, { icon: a }]`, `addOn.image` is a resolved image on row
+   * 0 and *absent* on row 1 — and absent is exactly as decidable as present.
+   * Reported as `unresolved`, the second row threw a Tier A answer away and
+   * fell back to the positional heuristic, which rendered the `<img>` branch of
+   * a ternary on a row that has no image.
+   *
+   * Only ever produced where the source genuinely determines it: a key missing
+   * from a `complete` object, an index past the end of a `complete` array, and
+   * the `undefined` keyword itself.
+   */
+  | { kind: 'undefined' }
+  /**
+   * `complete` — every key the source states is in `entries`, so a key that is
+   * NOT in `entries` is statically `undefined`. False when a spread
+   * (`{ ...base, x: 1 }`) or a computed key (`{ [k]: v }`) could contribute a
+   * key this evaluator cannot name; then a missing key is merely unknown.
+   * A key whose VALUE could not be read (a method, an accessor) is present in
+   * `entries` as `unresolved` and does not make the object incomplete.
+   */
+  | { kind: 'object'; entries: Map<string, StaticValue>; complete: boolean; note?: string }
+  /** `complete` — the LENGTH is what the source states (no spread element), so `.length` and an out-of-range index are decidable. */
+  | { kind: 'array'; items: StaticValue[]; complete: boolean; note?: string }
   | { kind: 'fn'; node: ArrowFunctionOrDecl }
   | { kind: 'unresolved'; reason: string; partial?: string }
 

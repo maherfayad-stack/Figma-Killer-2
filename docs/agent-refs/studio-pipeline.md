@@ -101,10 +101,10 @@ A **bounded partial evaluator, not a JS interpreter**. Do not blur the tiers.
 
 | Tier | Resolves | File |
 |---|---|---|
-| **A** | literals, module/cross-file consts, member chains, array indexing, template literals, operators (`+ - * / % **`, `!`, `\|\|`, `&&`, `??`), `Math.*` constants and pure fns | `staticEvalCore.ts`, `staticEvalOperators.ts` |
+| **A** | literals, module/cross-file consts, member chains, array indexing, template literals, operators (`+ - * / % **`, `!`, `\|\|`, `&&`, `??`), `Math.*` constants and pure fns, `.length` on a spread-free array, and (parser-08) `{kind:'undefined'}` for a key missing from a **complete** object/array — a real answer, not `unresolved` | `staticEvalCore.ts`, `staticEvalOperators.ts`, `staticEvalValues.ts` |
 | **B** | `useLanguage()` → `useContext(Ctx)` → the single `<Ctx.Provider value={…}>`; unwraps `useMemo`; picks a dictionary branch by `previewLocale` and records a `note` | `staticEvalCalls.ts` |
 | **C** | pure function calls in an explicit envelope: concise body, or bare `if (c) return …` / `return …`; no assignment, loop, `await`, `new`. Whitelist: `String`, `Number`, `Math.*`, `.toFixed`, `.padStart`, `.toUpperCase`, `.toLowerCase`, `.trim`, `.join`, and `cn()`/`clsx()`/`classNames()`/`classnames()` (WS-2.2 — matched by identifier name, implements the join itself, never calls the user's actual function) | `staticEvalCalls.ts` |
-| **D** | **BANNED.** JSX branch selection, hook state, effects, async. | — |
+| **D** | **BANNED.** *Guessing* a JSX branch, hook state, effects, async. (Selecting a branch from a condition Tier A/B can READ, or from a stated positional heuristic, is `branchSelection.ts`'s job and is not this.) | — |
 
 WS-2.2: `import styles from './Card.module.css'` resolves through `assetImports.ts`'s
 `resolveCssModuleImport`, the same "import with no `SourceFile`" mechanism `?raw`

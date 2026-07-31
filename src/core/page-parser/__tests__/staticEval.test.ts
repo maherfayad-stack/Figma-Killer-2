@@ -622,3 +622,107 @@ describe('staticEval — non-regression (literal-only pages are unaffected)', ()
     expect(p.resolution).toEqual({ source: 't.greeting' })
   })
 })
+
+/**
+ * parser-08 — "the source says there is nothing here" is an ANSWER, distinct
+ * from "the parser could not read this". Everything downstream that picks a JSX
+ * branch depends on the difference; see `StaticValue`'s `'undefined'` variant.
+ */
+describe('staticEval — statically absent values', () => {
+  it('a key missing from a fully-read object literal resolves to `undefined`, not unresolved', () => {
+    const file = write(
+      'Page.tsx',
+      [
+        "const ROW = { key: 'checkin', icon: 'check.svg' }",
+        'export default function Page() {',
+        '  return <img src={ROW.image} alt={ROW.icon} />',
+        '}',
+        '',
+      ].join('\n'),
+    )
+    const project = createWorkspaceProject(tmpDir)
+    expect(evalAttr(project, file, 'src')).toEqual({ kind: 'undefined' })
+    expect(evalAttr(project, file, 'alt')).toMatchObject({ kind: 'literal', value: 'check.svg' })
+  })
+
+  it('a SPREAD keeps a missing key unknown — it could have arrived from elsewhere', () => {
+    const file = write(
+      'Page.tsx',
+      [
+        "const BASE = { image: 'a.png' }",
+        "const ROW = { ...BASE, key: 'checkin' }",
+        'export default function Page() {',
+        '  return <img src={ROW.image} alt="" />',
+        '}',
+        '',
+      ].join('\n'),
+    )
+    const project = createWorkspaceProject(tmpDir)
+    expect(evalAttr(project, file, 'src').kind).toBe('unresolved')
+  })
+
+  it('resolves `.length` on an array literal the source spells out', () => {
+    const file = write(
+      'Page.tsx',
+      [
+        "const ROWS = ['a', 'b', 'c']",
+        'export default function Page() {',
+        '  return <img width={ROWS.length} height={ROWS.length - 1} alt="" />',
+        '}',
+        '',
+      ].join('\n'),
+    )
+    const project = createWorkspaceProject(tmpDir)
+    expect(evalAttr(project, file, 'width')).toMatchObject({ kind: 'literal', value: 3 })
+    expect(evalAttr(project, file, 'height')).toMatchObject({ kind: 'literal', value: 2 })
+  })
+
+  it('declines `.length` when a spread element makes the count unknown', () => {
+    const file = write(
+      'Page.tsx',
+      [
+        "const MORE = ['b', 'c']",
+        "const ROWS = ['a', ...MORE]",
+        'export default function Page() {',
+        '  return <img width={ROWS.length} alt="" />',
+        '}',
+        '',
+      ].join('\n'),
+    )
+    const project = createWorkspaceProject(tmpDir)
+    expect(evalAttr(project, file, 'width').kind).toBe('unresolved')
+  })
+
+  it('reads the `undefined` keyword, and compares against it', () => {
+    const file = write(
+      'Page.tsx',
+      [
+        "const ROW = { key: 'a' }",
+        'export default function Page() {',
+        '  return <img width={undefined} height={ROW.image === undefined} alt="" />',
+        '}',
+        '',
+      ].join('\n'),
+    )
+    const project = createWorkspaceProject(tmpDir)
+    expect(evalAttr(project, file, 'width')).toEqual({ kind: 'undefined' })
+    expect(evalAttr(project, file, 'height')).toMatchObject({ kind: 'literal', value: true })
+  })
+
+  it('an absent left operand falls through `||` and `??`, and short-circuits `&&`', () => {
+    const file = write(
+      'Page.tsx',
+      [
+        "const ROW = { key: 'a' }",
+        'export default function Page() {',
+        "  return <img src={ROW.image || 'fallback.png'} alt={ROW.image ?? 'none'} width={ROW.image && 'x'} />",
+        '}',
+        '',
+      ].join('\n'),
+    )
+    const project = createWorkspaceProject(tmpDir)
+    expect(evalAttr(project, file, 'src')).toMatchObject({ kind: 'literal', value: 'fallback.png' })
+    expect(evalAttr(project, file, 'alt')).toMatchObject({ kind: 'literal', value: 'none' })
+    expect(evalAttr(project, file, 'width')).toEqual({ kind: 'undefined' })
+  })
+})

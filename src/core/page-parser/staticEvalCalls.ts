@@ -35,15 +35,13 @@ import {
   findDefaultExportedVariable,
   findImportBinding,
   trackTruncation,
-  unresolved,
-  unwrapParens,
-  withNote,
   type ArrowFunctionOrDecl,
   type Budget,
   type EvalScope,
   type LocalBinding,
   type StaticValue,
 } from './staticEvalCore'
+import { unresolved, unwrapParens, withNote } from './staticEvalValues'
 
 const WHITELISTED_COERCIONS: ReadonlySet<string> = new Set(['String', 'Number'])
 const WHITELISTED_METHODS: ReadonlySet<string> = new Set([
@@ -470,7 +468,9 @@ function tryFilterBoolean(
   if (receiver.items.some((i) => i.kind !== 'literal')) return unresolved('filter() on an array with unresolved items')
 
   const items = receiver.items.filter((i) => Boolean((i as Extract<StaticValue, { kind: 'literal' }>).value))
-  return { kind: 'array', items }
+  // Every item was a literal and the filter ran to completion, so the result's
+  // own length is exactly what the source determines.
+  return { kind: 'array', items, complete: true }
 }
 
 function tryWhitelistedPrimitiveCall(
