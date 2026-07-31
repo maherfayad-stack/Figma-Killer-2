@@ -16,18 +16,9 @@
  */
 import { WarningDiamondSolidIcon } from 'pixel-art-icons/icons/warning-diamond-solid'
 import { useEditorStore } from '@site/store/store'
+import { isInlinedNodeId } from '@core/page-tree'
+import { inlineTailKey } from '@site/store/slices/site/nodeIndex'
 import styles from './SharedComponentNotice.module.css'
-
-/**
- * An inlined node's id is `callSite~component:line:col` and its writeback
- * target is that tail, so two nodes with the same tail are two instances of one
- * shared component writing to the same line (`studioEditLocation`, server-side).
- *
- * The separator is mirrored rather than imported for the same reason
- * `fsCodemodAdapter` mirrors it: importing `@core/page-parser` into browser
- * code drags ts-morph into this bundle.
- */
-const INLINE_ID_SEPARATOR = '~'
 
 interface SharedComponentNoticeProps {
   /** The component this element was inlined out of, e.g. `'SheetHeader'`. */
@@ -37,18 +28,17 @@ interface SharedComponentNoticeProps {
 }
 
 export function SharedComponentNotice({ componentName, nodeId }: SharedComponentNoticeProps) {
-  // A primitive selector: no object identity to keep stable, and the O(nodes)
-  // scan only runs for a node that is actually part of a shared component.
+  // A primitive selector: no object identity to keep stable, reading the O(1)
+  // `_inlineTailToCount` index (WS-5.2) instead of scanning every node of
+  // every page on every store change. An inlined node's id is
+  // `callSite~component:line:col` and its writeback target is that tail, so
+  // two nodes with the same tail are two instances of one shared component
+  // writing to the same line (`studioEditLocation`, server-side).
   const instanceCount = useEditorStore((s) => {
-    const target = nodeId.split(INLINE_ID_SEPARATOR).pop()
-    if (!target || !nodeId.includes(INLINE_ID_SEPARATOR) || !s.site) return 1
-    let count = 0
-    for (const page of s.site.pages) {
-      for (const id of Object.keys(page.nodes)) {
-        if (id.split(INLINE_ID_SEPARATOR).pop() === target) count += 1
-      }
-    }
-    return count
+    if (!isInlinedNodeId(nodeId)) return 1
+    const tail = inlineTailKey(nodeId)
+    if (!tail) return 1
+    return s._inlineTailToCount.get(tail) ?? 1
   })
 
   return (

@@ -131,6 +131,10 @@ export const ImageModule: ModuleDefinition<ImageProps> = {
   trusted: true,
   canHaveChildren: false,
 
+  // WS-8.3 — the one prop this module reads its image from. Tells the
+  // Properties Panel which prop to offer the Studio-aware image picker for.
+  imageEdit: { prop: 'src' },
+
   propsSchema: ImagePropsSchema,
 
   schema: {

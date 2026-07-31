@@ -5,6 +5,7 @@ import type { BaseNode } from '@core/page-tree'
 import type { NodeTree } from '@core/page-tree'
 import type { PageNode } from '@core/page-tree'
 import { flattenSubtree, getParent } from '@core/page-tree'
+import { selectActiveBoard } from './boardSlice'
 
 /**
  * Selection mode for `selectNode`:
@@ -300,23 +301,52 @@ function applySelection(
 }
 
 /**
+ * Resolve a node id to its node + owning tree, WS-7.3-aware: on a studio
+ * board, a multi-selection may span any of the board's OWN curated frames
+ * (`selectActiveBoard(state).frames`), not just the single active page —
+ * `_nodeIdToPageIds` (WS-5.2) finds every page that carries `id` and this
+ * picks the first one that's actually a frame on the active board. Outside
+ * board mode (CMS editing, VC canvas) this is exactly `getActiveTree`'s own
+ * lookup — unchanged behaviour.
+ */
+function resolveSelectableNode(
+  state: EditorStore,
+  id: string,
+): { node: BaseNode; tree: NodeTree<PageNode> } | null {
+  const board = selectActiveBoard(state)
+  if (board) {
+    const framePageIds = new Set(board.frames.map((f) => f.pageId))
+    for (const pageId of state._nodeIdToPageIds.get(id) ?? []) {
+      if (!framePageIds.has(pageId)) continue
+      const page = state.site?.pages.find((p) => p.id === pageId)
+      const node = page?.nodes[id]
+      if (page && node) return { node, tree: page }
+    }
+    return null
+  }
+  const tree = getActiveTree(state)
+  const node = tree?.nodes[id]
+  return tree && node ? { node, tree } : null
+}
+
+/**
  * Filter ids to only those that may legally participate in a multi-selection.
  * Rules:
  * - The page/VC tree root cannot be part of a multi-selection (only solo).
  * - A `base.slot-instance` whose parent is a `base.visual-component-ref` is
  *   structural (managed by syncSlotInstances) and may not be multi-selected.
- * - All ids must come from the active document's tree (cross-tree multi-select
- *   is not supported).
+ * - Every id must resolve via `resolveSelectableNode` — the active
+ *   document's tree normally, or (WS-7.3) any page curated as a frame on the
+ *   active studio board.
  *
  * Returned ids preserve input order.
  */
 function filterMultiSelectableIds(state: EditorStore, ids: string[]): string[] {
-  const tree = getActiveTree(state)
-  if (!tree) return []
   const result: string[] = []
   for (const id of ids) {
-    const node = tree.nodes[id]
-    if (!node) continue
+    const resolved = resolveSelectableNode(state, id)
+    if (!resolved) continue
+    const { node, tree } = resolved
     if (id === tree.rootNodeId) continue
     if (node.moduleId === 'base.slot-instance') {
       const parent = getParent(tree, id)
@@ -330,17 +360,22 @@ function filterMultiSelectableIds(state: EditorStore, ids: string[]): string[] {
 /**
  * Compute the set of node ids between `anchorId` and `targetId` along the
  * active tree's depth-first pre-order. Inclusive of both endpoints. Returns
- * an empty array when either id is absent from the active tree.
+ * an empty array when either id is absent from the active tree, OR when they
+ * resolve to different trees (WS-7.3: a shift-click range spanning two board
+ * frames has no single depth-first order to walk — it falls back to
+ * `selectNode`'s own "range collapsed to replace-select" branch instead).
  */
 function computeRangeIds(
   state: EditorStore,
   anchorId: string,
   targetId: string,
 ): string[] {
-  const tree = getActiveTree(state)
-  if (!tree) return []
-  if (!tree.nodes[anchorId] || !tree.nodes[targetId]) return []
+  const anchorResolved = resolveSelectableNode(state, anchorId)
+  const targetResolved = resolveSelectableNode(state, targetId)
+  if (!anchorResolved || !targetResolved) return []
+  if (anchorResolved.tree !== targetResolved.tree) return []
 
+  const tree = targetResolved.tree
   const flat = flattenSubtree(tree, tree.rootNodeId)
   const a = flat.indexOf(anchorId)
   const b = flat.indexOf(targetId)
@@ -350,18 +385,16 @@ function computeRangeIds(
 }
 
 /**
- * Whether `id` lives in the same tree as the existing selection. Empty
- * selections are always considered "same tree".
+ * Whether `id` may join the existing multi-selection. Empty selections are
+ * always eligible. WS-7.3: on a studio board this is "does `id` resolve to
+ * some frame on the active board", the same board-wide scope
+ * `resolveSelectableNode` uses — NOT "is `id` on the same single page as the
+ * anchor". Outside board mode this is exactly the old same-tree check.
  */
 function sameTree(state: EditorStore, existingIds: string[], id: string): boolean {
   if (existingIds.length === 0) return true
-  const tree = getActiveTree(state)
-  if (!tree) return false
-  if (!tree.nodes[id]) return false
-  // Spot-check: the existing anchor must also live in this tree. If not, the
-  // selection is stale (active document changed) and we should refuse.
-  const anchor = existingIds[existingIds.length - 1]
-  return Boolean(tree.nodes[anchor])
+  const anchor = existingIds[existingIds.length - 1]!
+  return resolveSelectableNode(state, id) !== null && resolveSelectableNode(state, anchor) !== null
 }
 
 /**

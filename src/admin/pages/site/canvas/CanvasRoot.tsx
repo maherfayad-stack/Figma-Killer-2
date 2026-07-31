@@ -415,6 +415,10 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
   const handleCanvasClick = () => {
     contextMenu.close()
     clearSelection()
+    // WS-7.1 — a background click also deselects any board-frame
+    // multi-selection (a no-op outside studio board mode, where
+    // `selectedFrameIds` never leaves its empty default).
+    useEditorStore.getState().clearFrameSelection()
   }
 
   // Resolve the active breakpoint object for the live surface (which wants the

@@ -29,7 +29,7 @@ import {
   type VariableDeclaration,
 } from 'ts-morph'
 import * as path from 'node:path'
-import { resolveImageAssetImport, resolveRawTextImport } from './assetImports'
+import { resolveCssModuleImport, resolveImageAssetImport, resolveRawTextImport } from './assetImports'
 import { evaluateBinaryOperator, evaluateUnaryOperator } from './staticEvalOperators'
 import type { FunctionLike } from './types'
 
@@ -80,6 +80,8 @@ export interface Budget {
   preferredKey: string | undefined
   pageBudget: PageEvalBudget | undefined
   workspaceRoot: string | undefined
+  /** WS-2.2 — see `StaticEvalOptions.cssModuleClassMaps`. */
+  cssModuleClassMaps: Readonly<Record<string, Readonly<Record<string, string>>>> | undefined
   callEvaluator: CallEvaluator
   /**
    * Set whenever a guard (depth, per-call steps, page budget, cycle) cut an
@@ -109,6 +111,7 @@ export function createBudget(opts: StaticEvalOptions, callEvaluator: CallEvaluat
     preferredKey: opts.preferredKey,
     pageBudget: opts.pageBudget,
     workspaceRoot: opts.workspaceRoot,
+    cssModuleClassMaps: opts.cssModuleClassMaps,
     callEvaluator,
     truncated: false,
   }
@@ -522,8 +525,16 @@ export function resolveIdentifier(name: string, scope: EvalScope, budget: Budget
       // asset's value is its CONTENTS, an image asset's is its PATH.
       const rawText = resolveRawTextImport(scope.sourceFile, name, budget.workspaceRoot)
       if (rawText !== undefined) return { kind: 'literal', value: rawText }
-      const assetPath = resolveImageAssetImport(scope.sourceFile, name, budget.workspaceRoot)
-      if (assetPath !== undefined) return { kind: 'literal', value: assetPath }
+      const asset = resolveImageAssetImport(scope.sourceFile, name, budget.workspaceRoot)
+      if (asset !== undefined) return { kind: 'literal', value: asset.path, origin: asset.origin }
+      const cssModule = resolveCssModuleImport(scope.sourceFile, name, budget.workspaceRoot, budget.cssModuleClassMaps)
+      if (cssModule !== undefined) {
+        const entries = new Map<string, StaticValue>()
+        for (const [localName, globalName] of Object.entries(cssModule)) {
+          entries.set(localName, { kind: 'literal', value: globalName })
+        }
+        return { kind: 'object', entries }
+      }
       return unresolved(`cannot resolve the import target for "${name}"`)
     }
     return evaluateImportedName(imported.targetFile, imported.exportedName, budget, depth)

@@ -40,6 +40,7 @@ import { canComponentizeNode } from '@site/componentization'
 import { SharedComponentNotice } from './SharedComponentNotice'
 import { SourceLockedNotice } from './SourceLockedNotice'
 import { useEditorStore } from '@site/store/store'
+import { textOriginKey } from '@site/store/slices/site/nodeIndex'
 import styles from './PropertiesPanel.module.css'
 
 interface PropertiesPanelBodyProps {
@@ -92,20 +93,13 @@ export function PropertiesPanelBody(props: PropertiesPanelBodyProps): React.Reac
   // screen using it — stated before the user commits, the same way
   // `SharedComponentNotice` states a shared component's blast radius.
   //
-  // A primitive selector (no object identity to keep stable), and the O(nodes)
-  // scan only runs for a node that actually has an origin.
+  // A primitive selector (no object identity to keep stable) reading the O(1)
+  // `_textOriginKeyToCount` index (WS-5.2) instead of scanning every node of
+  // every page on every store change.
   const sharedTextOriginCount = useEditorStore((s) => {
     const origin = selectedNode?.textOrigin
     if (!origin || !s.site) return 1
-    const key = `${origin.rel}:${origin.line}:${origin.col}`
-    let count = 0
-    for (const page of s.site.pages) {
-      for (const node of Object.values(page.nodes)) {
-        const other = node.textOrigin
-        if (other && `${other.rel}:${other.line}:${other.col}` === key) count += 1
-      }
-    }
-    return count
+    return s._textOriginKeyToCount.get(textOriginKey(origin)) ?? 1
   })
 
   // Selector multi-selection (Selectors panel checkboxes) takes priority — the

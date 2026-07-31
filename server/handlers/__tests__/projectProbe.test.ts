@@ -1,0 +1,444 @@
+/**
+ * projectProbe.ts + studioMeta.ts — unit tests for WS-1.2.
+ *
+ * `probeProject` covers one fixture per detected framework shape, plus a
+ * style-toolchain / alias-merge / component-package pass. The "no framework
+ * detected" fixture deliberately shares NOTHING with the eSIM corpus other
+ * suites in this repo were grown on (see `genericRepoShapes.test.ts`'s doc
+ * comment for why that discipline exists): `.jsx` not `.tsx`, arrow
+ * components assigned to `const` then exported separately, a `lib/` root
+ * instead of `src/`, a barrel file alongside the pages.
+ *
+ * `readStudioMeta`/`mergeStudioMeta` cover the tolerant-partial-file and
+ * degrade-don't-throw contracts `studioMeta.ts`'s module doc calls out as the
+ * trap: a meta carrying only `pagesDir` must still resolve, a malformed file
+ * must degrade to `{}` rather than throw, and a `pagesDir` escape attempt
+ * must be stripped rather than trusted.
+ */
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import * as fs from 'node:fs'
+import * as os from 'node:os'
+import * as path from 'node:path'
+import { probeProject, tryServeStudioProbe } from '../studio/projectProbe'
+import type { ProjectProfile } from '../studio/projectProfileSchema'
+import { mergeStudioMeta, readStudioMeta, writeStudioMeta } from '../studio/studioMeta'
+
+let tmpDir: string
+
+beforeEach(() => {
+  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'project-probe-'))
+})
+
+afterEach(() => {
+  fs.rmSync(tmpDir, { recursive: true, force: true })
+})
+
+function write(relPath: string, contents: string): void {
+  const full = path.join(tmpDir, ...relPath.split('/'))
+  fs.mkdirSync(path.dirname(full), { recursive: true })
+  fs.writeFileSync(full, contents, 'utf8')
+}
+
+function writePackageJson(deps: Record<string, string> = {}, devDeps: Record<string, string> = {}): void {
+  write('package.json', JSON.stringify({ name: 'fixture', dependencies: deps, devDependencies: devDeps }))
+}
+
+// ---------------------------------------------------------------------------
+// Framework detection
+// ---------------------------------------------------------------------------
+
+describe('probeProject — framework detection', () => {
+  it('detects a Next.js App Router project', () => {
+    writePackageJson({ next: '^14.0.0', react: '^18.0.0' })
+    write('next.config.js', 'module.exports = {}\n')
+    write('app/page.tsx', 'export default function Page() { return <div>Home</div> }\n')
+    write('app/about/page.tsx', 'export default function About() { return <div>About</div> }\n')
+
+    const profile = probeProject(tmpDir)
+    expect(profile.framework).toBe('next-app')
+    expect(profile.pagesDir).toBe('app')
+    expect(profile.routeStyle).toBe('file-router')
+  })
+
+  it('detects a Next.js Pages Router project', () => {
+    writePackageJson({ next: '^14.0.0' })
+    write('next.config.mjs', 'export default {}\n')
+    write('pages/index.tsx', 'export default function Home() { return <div>Home</div> }\n')
+
+    const profile = probeProject(tmpDir)
+    expect(profile.framework).toBe('next-pages')
+    expect(profile.pagesDir).toBe('pages')
+    expect(profile.routeStyle).toBe('file-router')
+  })
+
+  it('warns rather than misclassifying when next.config exists with no app/ or pages/ dir', () => {
+    writePackageJson({ next: '^14.0.0' })
+    write('next.config.js', 'module.exports = {}\n')
+
+    const profile = probeProject(tmpDir)
+    expect(profile.framework).toBe('unknown')
+    expect(profile.warnings.some((w) => w.code === 'next-config-no-routes-found')).toBe(true)
+  })
+
+  it('detects a Vite project and its entry file from index.html', () => {
+    writePackageJson({ vite: '^5.0.0', react: '^18.0.0' })
+    write('vite.config.ts', 'export default {}\n')
+    write('index.html', '<html><body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body></html>\n')
+    write('src/main.tsx', 'console.log("entry")\n')
+
+    const profile = probeProject(tmpDir)
+    expect(profile.framework).toBe('vite')
+    expect(profile.entryFiles).toEqual(['src/main.tsx'])
+  })
+
+  it('detects a CRA project via the react-scripts dependency', () => {
+    writePackageJson({ 'react-scripts': '^5.0.1', react: '^18.0.0' })
+    write('src/index.tsx', 'console.log("entry")\n')
+
+    const profile = probeProject(tmpDir)
+    expect(profile.framework).toBe('cra')
+    expect(profile.entryFiles).toEqual(['src/index.tsx'])
+  })
+
+  it('ranks pages-directory candidates by JSX-default-export density on a repo sharing nothing with the eSIM corpus', () => {
+    // No framework config, no framework dependency at all.
+    writePackageJson({})
+
+    // `lib/screens/` — three arrow components, each a separate default export
+    // (named const, exported on its own line — not `export default () =>`).
+    write(
+      'lib/screens/Home.jsx',
+      ["const Home = () => (", '  <main>', '    <h1>Home</h1>', '  </main>', ')', '', 'export default Home', ''].join('\n'),
+    )
+    write(
+      'lib/screens/About.jsx',
+      ["const About = () => (", '  <section>About</section>', ')', '', 'export default About', ''].join('\n'),
+    )
+    write(
+      'lib/screens/Contact.jsx',
+      ["const Contact = () => (", '  <section>Contact</section>', ')', '', 'export default Contact', ''].join('\n'),
+    )
+    // A barrel sitting alongside the screens — not itself JSX-returning.
+    write('lib/screens/index.js', ["export { default as Home } from './Home'", ''].join('\n'))
+
+    // `lib/components/` — one JSX-returning default export (lower match count).
+    write(
+      'lib/components/Button.jsx',
+      ["const Button = (props) => <button {...props} />", '', 'export default Button', ''].join('\n'),
+    )
+
+    // `lib/utils/` — a default export that is NOT JSX. Must be excluded entirely.
+    write('lib/utils/format.jsx', ['export default function formatDate(d) {', '  return String(d)', '}', ''].join('\n'))
+
+    const profile = probeProject(tmpDir)
+    expect(profile.framework).toBe('unknown')
+    expect(profile.pagesDir).toBe('lib/screens')
+    expect(profile.routeStyle).toBe('flat')
+    expect(profile.warnings.some((w) => w.code === 'pages-dir-heuristic')).toBe(true)
+    expect(profile.pagesDirCandidates).toBeDefined()
+    const dirs = profile.pagesDirCandidates!.map((c) => c.dir)
+    expect(dirs).toContain('lib/screens')
+    expect(dirs).not.toContain('lib/utils')
+    expect(dirs[0]).toBe('lib/screens')
+  })
+
+  it('falls back to the default pages dir with a warning when nothing looks like a page at all', () => {
+    writePackageJson({})
+    write('lib/utils/format.js', 'export default function formatDate(d) { return String(d) }\n')
+
+    const profile = probeProject(tmpDir)
+    expect(profile.pagesDir).toBe('pages')
+    expect(profile.warnings.some((w) => w.code === 'pages-dir-not-found')).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Style toolchain
+// ---------------------------------------------------------------------------
+
+describe('probeProject — style toolchain', () => {
+  it('detects Tailwind v3 via its config file', () => {
+    writePackageJson({}, { tailwindcss: '^3.4.1' })
+    write('tailwind.config.js', 'module.exports = {}\n')
+
+    const profile = probeProject(tmpDir)
+    expect(profile.styleToolchain.tailwind).toEqual({ version: '3.4.1', configPath: 'tailwind.config.js' })
+  })
+
+  it('detects Tailwind v4 via an `@import "tailwindcss"` in a stylesheet, not by config presence', () => {
+    writePackageJson({}, { tailwindcss: '^4.0.0' })
+    write('src/index.css', '@import "tailwindcss";\n\nbody { margin: 0; }\n')
+
+    const profile = probeProject(tmpDir)
+    expect(profile.styleToolchain.tailwind).toEqual({ version: '4.0.0', configPath: 'src/index.css' })
+  })
+
+  it('warns when tailwindcss is a dependency but neither signal is found', () => {
+    writePackageJson({}, { tailwindcss: '^4.0.0' })
+
+    const profile = probeProject(tmpDir)
+    expect(profile.styleToolchain.tailwind).toBeNull()
+    expect(profile.warnings.some((w) => w.code === 'tailwind-config-not-found')).toBe(true)
+  })
+
+  it('detects CSS Modules by a *.module.css file anywhere in the tree', () => {
+    writePackageJson({})
+    write('src/components/Card.module.css', '.card { padding: 8px; }\n')
+
+    expect(probeProject(tmpDir).styleToolchain.cssModules).toBe(true)
+  })
+
+  it('detects Sass by a .scss file even with no declared dependency', () => {
+    writePackageJson({})
+    write('src/styles/theme.scss', '$primary: hotpink;\n')
+
+    expect(probeProject(tmpDir).styleToolchain.sass).toBe(true)
+  })
+
+  it('detects a postcss config path', () => {
+    writePackageJson({})
+    write('postcss.config.js', 'module.exports = {}\n')
+
+    expect(probeProject(tmpDir).styleToolchain.postcssConfigPath).toBe('postcss.config.js')
+  })
+
+  it('detects styled-components as the css-in-js library', () => {
+    writePackageJson({ 'styled-components': '^6.0.0' })
+
+    expect(probeProject(tmpDir).styleToolchain.cssInJs).toBe('styled-components')
+  })
+
+  it('reports no style toolchain signals for a plain, dependency-free project', () => {
+    writePackageJson({})
+
+    const { styleToolchain } = probeProject(tmpDir)
+    expect(styleToolchain).toEqual({
+      tailwind: null,
+      cssModules: false,
+      sass: false,
+      postcssConfigPath: null,
+      cssInJs: null,
+    })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Aliases — tsconfig paths merged UNDER vite resolve.alias
+// ---------------------------------------------------------------------------
+
+describe('probeProject — aliases', () => {
+  it('reads tsconfig paths, stripping the trailing wildcard on both sides', () => {
+    writePackageJson({})
+    write(
+      'tsconfig.json',
+      JSON.stringify({ compilerOptions: { paths: { '@/*': ['./src/*'], '@shared/*': ['./shared/*'] } } }),
+    )
+
+    const { aliases } = probeProject(tmpDir)
+    expect(aliases['@/']).toBe('./src/')
+    expect(aliases['@shared/']).toBe('./shared/')
+  })
+
+  it('lets a vite resolve.alias entry win over a tsconfig paths entry for the same key', () => {
+    writePackageJson({ vite: '^5.0.0' })
+    write('tsconfig.json', JSON.stringify({ compilerOptions: { paths: { '@': ['./src'], '@shared': ['./shared'] } } }))
+    write(
+      'vite.config.ts',
+      [
+        "import path from 'path'",
+        "export default {",
+        '  resolve: {',
+        '    alias: {',
+        "      '@': path.resolve(__dirname, './app'),",
+        '    },',
+        '  },',
+        '}',
+        '',
+      ].join('\n'),
+    )
+
+    const { aliases } = probeProject(tmpDir)
+    // Vite wins for the colliding key…
+    expect(aliases['@']).toBe('./app')
+    // …but a tsconfig-only key survives untouched.
+    expect(aliases['@shared']).toBe('./shared')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Component packages
+// ---------------------------------------------------------------------------
+
+describe('probeProject — component packages', () => {
+  function writeInstalledPackage(name: string, dts: string): void {
+    write(`node_modules/${name}/package.json`, JSON.stringify({ name, version: '1.0.0', types: 'index.d.ts' }))
+    write(`node_modules/${name}/index.d.ts`, dts)
+  }
+
+  it('flags a dependency whose entry .d.ts exports a PascalCase React-component declaration', () => {
+    writePackageJson({ 'acme-ui': '^1.0.0', 'acme-utils': '^1.0.0' })
+    writeInstalledPackage('acme-ui', 'export declare const Button: React.FC<{ label: string }>;\n')
+    writeInstalledPackage('acme-utils', 'export declare function noop(): void;\n')
+
+    const { componentPackages } = probeProject(tmpDir)
+    expect(componentPackages).toEqual(['acme-ui'])
+  })
+
+  it('warns instead of scanning when dependencies are declared but node_modules is missing', () => {
+    writePackageJson({ 'acme-ui': '^1.0.0' })
+
+    const profile = probeProject(tmpDir)
+    expect(profile.componentPackages).toEqual([])
+    expect(profile.warnings.some((w) => w.code === 'dependencies-not-installed')).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// studioMeta — tolerant partial reads, degrade-don't-throw, pagesDir escape
+// ---------------------------------------------------------------------------
+
+describe('readStudioMeta', () => {
+  it('resolves a partial meta.json containing only pagesDir', () => {
+    write('.studio/meta.json', JSON.stringify({ pagesDir: 'src/screens' }))
+    expect(readStudioMeta(tmpDir)).toEqual({ pagesDir: 'src/screens' })
+  })
+
+  it('degrades a malformed meta.json to {} rather than throwing', () => {
+    write('.studio/meta.json', '{ this is not valid json')
+    expect(() => readStudioMeta(tmpDir)).not.toThrow()
+    expect(readStudioMeta(tmpDir)).toEqual({})
+  })
+
+  it('returns {} when no meta.json exists at all', () => {
+    expect(readStudioMeta(tmpDir)).toEqual({})
+  })
+
+  it('strips a pagesDir of "../.." rather than trusting it', () => {
+    write('.studio/meta.json', JSON.stringify({ displayName: 'Evil', pagesDir: '../..' }))
+    const meta = readStudioMeta(tmpDir)
+    expect(meta.pagesDir).toBeUndefined()
+    expect(meta.displayName).toBe('Evil')
+  })
+
+  it('strips an absolute pagesDir override', () => {
+    const absoluteElsewhere = path.join(os.tmpdir(), 'somewhere-else')
+    write('.studio/meta.json', JSON.stringify({ pagesDir: absoluteElsewhere }))
+    expect(readStudioMeta(tmpDir).pagesDir).toBeUndefined()
+  })
+
+  // `profile` is a regenerable cache and its schema WILL gain fields as the
+  // probe grows. `parseJsonWithFallback` is all-or-nothing, so without the
+  // targeted retry in `readStudioMeta` the first shape change would fail the
+  // whole file and take `pagesDir` with it — losing the one field that cannot
+  // be recovered by re-probing, on every already-imported project on disk.
+  it('drops a stale profile cache WITHOUT losing user intent alongside it', () => {
+    write(
+      '.studio/meta.json',
+      JSON.stringify({
+        displayName: 'Imported repo',
+        pagesDir: 'src/screens',
+        previewLocale: 'en',
+        profile: { framework: 'from-a-future-version', somethingRemoved: true },
+      }),
+    )
+    const meta = readStudioMeta(tmpDir)
+    expect(meta.profile).toBeUndefined()
+    expect(meta.pagesDir).toBe('src/screens')
+    expect(meta.displayName).toBe('Imported repo')
+    expect(meta.previewLocale).toBe('en')
+  })
+
+  it('keeps a profile that still matches the current schema', () => {
+    const profile = probeProject(tmpDir)
+    write('.studio/meta.json', JSON.stringify({ pagesDir: 'src/screens', profile }))
+    expect(readStudioMeta(tmpDir).profile).toEqual(profile)
+  })
+})
+
+describe('mergeStudioMeta', () => {
+  it('patches one field without clobbering sibling fields', () => {
+    writeStudioMeta(tmpDir, { displayName: 'Original', pagesDir: 'src/screens' })
+    const merged = mergeStudioMeta(tmpDir, { previewLocale: 'en' })
+    expect(merged).toEqual({ displayName: 'Original', pagesDir: 'src/screens', previewLocale: 'en' })
+    expect(readStudioMeta(tmpDir)).toEqual(merged)
+  })
+
+  it('creates a fresh meta.json when none exists yet', () => {
+    const merged = mergeStudioMeta(tmpDir, { displayName: 'Fresh' })
+    expect(merged).toEqual({ displayName: 'Fresh' })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Route — tryServeStudioProbe
+// ---------------------------------------------------------------------------
+
+describe('tryServeStudioProbe', () => {
+  function makeRequest(pathAndQuery: string, init?: RequestInit): { req: Request; url: URL; pathname: string } {
+    const url = new URL(`http://localhost${pathAndQuery}`)
+    const req = new Request(url, init)
+    return { req, url, pathname: url.pathname }
+  }
+
+  it('returns null for an unrelated path', async () => {
+    const { req, url, pathname } = makeRequest('/admin/api/studio/other')
+    expect(await tryServeStudioProbe(req, url, pathname)).toBeNull()
+  })
+
+  it('GET probes fresh and does not persist when no cached profile exists', async () => {
+    writePackageJson({ vite: '^5.0.0' })
+    write('vite.config.ts', 'export default {}\n')
+
+    const { req, url, pathname } = makeRequest(`/admin/api/studio/probe?dir=${encodeURIComponent(tmpDir)}`)
+    const res = await tryServeStudioProbe(req, url, pathname)
+    expect(res).not.toBeNull()
+    const body = (await res!.json()) as { profile: ProjectProfile }
+    expect(body.profile.framework).toBe('vite')
+    // Read-only — must not have written a meta.json.
+    expect(fs.existsSync(path.join(tmpDir, '.studio', 'meta.json'))).toBe(false)
+  })
+
+  it('GET returns the cached profile verbatim without re-probing', async () => {
+    writePackageJson({ vite: '^5.0.0' })
+    write('vite.config.ts', 'export default {}\n')
+    const cachedProfile: ProjectProfile = {
+      framework: 'astro',
+      pagesDir: 'src/pages',
+      routeStyle: 'file-router',
+      entryFiles: [],
+      packageManager: 'bun',
+      styleToolchain: { tailwind: null, cssModules: false, sass: false, postcssConfigPath: null, cssInJs: null },
+      componentPackages: [],
+      aliases: {},
+      warnings: [],
+    }
+    writeStudioMeta(tmpDir, { profile: cachedProfile })
+
+    const { req, url, pathname } = makeRequest(`/admin/api/studio/probe?dir=${encodeURIComponent(tmpDir)}`)
+    const res = await tryServeStudioProbe(req, url, pathname)
+    const body = (await res!.json()) as { profile: ProjectProfile }
+    // A live probe of this fixture would say "vite" — proving the cache was used, not a fresh probe.
+    expect(body.profile.framework).toBe('astro')
+  })
+
+  it('POST re-probes and persists the profile via a merging write', async () => {
+    writePackageJson({ 'react-scripts': '^5.0.1' })
+    write('src/index.tsx', 'console.log("entry")\n')
+    writeStudioMeta(tmpDir, { displayName: 'Keep Me', pagesDir: 'src' })
+
+    const { req, url, pathname } = makeRequest('/admin/api/studio/probe', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ dir: tmpDir }),
+    })
+    const res = await tryServeStudioProbe(req, url, pathname)
+    expect(res).not.toBeNull()
+    const body = (await res!.json()) as { profile: ProjectProfile }
+    expect(body.profile.framework).toBe('cra')
+
+    const onDisk = readStudioMeta(tmpDir)
+    expect(onDisk.displayName).toBe('Keep Me')
+    expect(onDisk.pagesDir).toBe('src')
+    expect((onDisk.profile as ProjectProfile).framework).toBe('cra')
+  })
+})

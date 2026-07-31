@@ -307,6 +307,19 @@ export interface ModuleDefinition<
   inlineTextEdit?: { prop: string; multiline?: boolean }
 
   /**
+   * Opt-in Studio image-source editing (WS-8.3). `prop` names the single
+   * `type: 'image'`-schema prop this module reads its image from
+   * (`base.image` -> `'src'`). Mirrors `inlineTextEdit`'s "one declared prop,
+   * generic UI dispatch" shape: the Properties Panel resolves this once
+   * (`registry.get(moduleId)?.imageEdit`) rather than special-casing a
+   * moduleId string, and it is what tells the panel to offer the Studio-aware
+   * image picker (upload / replace) instead of the read-only fallback when
+   * `PageNode.assetOrigin` names an honest writeback target for it — see
+   * `src/admin/pages/site/panels/PropertiesPanel/ImageSourceSection.tsx`.
+   */
+  imageEdit?: { prop: string }
+
+  /**
    * How the publisher's node walker dispatches this module. Makes the
    * otherwise-invisible two-tier render contract explicit on the definition:
    *

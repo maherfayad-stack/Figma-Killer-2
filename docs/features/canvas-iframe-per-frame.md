@@ -12,7 +12,7 @@ Each viewport frame runs in its own `<iframe>` with its own `<html><body>`. The 
 - **Design mode** renders one `IframeFrameSurface` per framed viewport context inside `CanvasTransformLayer` (pan/zoom). All frames mount as soon as the page document is in the store — the tree is already in memory, so there is nothing to stagger; `CanvasTransformLayer` renders skeleton frames only while the document itself hasn't loaded yet (`page === null`). **Live mode** renders a single real-size `IframeFrameSurface` inside `CanvasLiveSurface` (normal scroll).
 - Both modes are fully editable — click-to-select, properties panel, structural edits all work. Neither is a read-only preview.
 - Agent evidence can request any configured viewport. Each capture renders once through an offscreen `AgentSnapshotFrame` at the configured width, then removes it without changing the visible canvas state.
-- CSS arrives in each iframe via three injectors: `EditorChromeInjector` (unlayered), `ClassStyleInjector` (`@layer user-authored`), `UserStylesheetInjector` (`@layer user-authored`).
+- CSS arrives in each iframe via four injectors: `EditorChromeInjector` (unlayered), `ProjectCssInjector` (`@layer vendor` — package CSS, read-only), `ClassStyleInjector` (`@layer user-authored`), `UserStylesheetInjector` (`@layer user-authored`). `vendor` is explicitly ordered below `user-authored` so the user's own edits always win over a package default — see "CSS injection into iframes" below.
 - Wheel, pointer, and keyboard events are forwarded from inside the iframe to the parent's gesture / reorder-drag / shortcut handlers. `Tab` is blocked to prevent tab-walking inside the design preview.
 - Plugin canvas modules use a separate, sandboxed `ModuleSandboxFrame` (not `IframeFrameSurface`).
 
@@ -37,7 +37,10 @@ Source: `src/admin/pages/site/canvas/IframeFrameSurface.tsx`
 IframeFrameSurface
   <iframe srcDoc="<!doctype html><html>…">
     (inside iframe document, via createPortal)
-    ├── EditorChromeInjector   (head: unlayered editor chrome CSS)
+    ├── EditorChromeInjector      (head: unlayered editor chrome CSS)
+    ├── ProjectCssInjector         (head: @layer vendor — package CSS, read-only)
+    ├── CanvasAnimationInjector    (head: design frames only — freeze motion)
+    ├── CanvasScrollUnrollInjector (head: design frames only — unroll scroll regions)
     ├── ClassStyleInjector     (head: @layer user-authored — publisher reset + class registry)
     ├── UserStylesheetInjector (head: @layer user-authored — user-uploaded stylesheets)
     ├── {children}             (body: React node tree via NodeRenderer)
@@ -119,21 +122,42 @@ Because the live frame sits flush against the top of the surface, both top-edge 
 
 ## CSS injection into iframes
 
-Five `<style>` elements are injected per iframe (three from `ClassStyleInjector`, one each from the other two injectors):
+Eight `<style>` elements are injected per iframe (three from `ClassStyleInjector`, one each from the other five injectors), plus two design-frame-only injectors that inject none in live mode:
 
 | Injector | `id` attribute | Cascade layer | Purpose |
 |---|---|---|---|
 | `EditorChromeInjector` | `studio-editor-chrome` | **unlayered** | Editor chrome: placeholder, slot-instance, unknown-module styles. Copies safe required design tokens from parent `:root` onto iframe `:root`. The editor UI font, admin text-size tokens, and admin spacing tokens are forwarded as **chrome-namespaced** `--chrome-font-sans`, `--chrome-text-*`, and `--chrome-space-*` aliases, not as `--font-sans`, `--text-*`, or `--space-*`, because the injector is unlayered and would otherwise clobber the site's own Framework tokens. |
-| `ClassStyleInjector` | `mc-classes` | `@layer user-authored` | Publisher reset + framework CSS + class registry CSS |
+| `ProjectCssInjector` | `mc-vendor` | `@layer vendor` | **Read-only** package CSS (WS-2.3): `@alm-design/design-system`'s bundled stylesheet (Studio's own dependency, `?inline`-imported at Studio's build time) concatenated with the OPEN project's own bare-specifier package CSS (`import '@acme/ui/dist/style.css'`, resolved against the project's own `node_modules` server-side by `styleCompile.ts`'s `collectVendorCss`, threaded onto the client via `GET /admin/api/studio/load`'s `vendorCss` field). Opens with a bare `@layer vendor, user-authored;` pre-declaration — see "Vendor vs. user-authored ordering" below. Never parsed into a `StyleRule`; never editable. |
+| `CanvasAnimationInjector` | `studio-canvas-animation` | **unlayered**, `!important` | Design frames only — see "Freeze and unroll" below. |
+| `CanvasScrollUnrollInjector` | `studio-canvas-scroll-unroll` | **unlayered**, `!important` | Design frames only, toggleable — see "Freeze and unroll" below. |
+| `ClassStyleInjector` | `mc-classes` | `@layer user-authored` | Publisher reset + framework CSS + class registry CSS. Also opens with the `@layer vendor, user-authored;` pre-declaration. |
 | `ClassStyleInjector` | `mc-classes-preview` | `@layer user-authored` | Higher-specificity preview rule (doubled selector) while a property control is hovered. Empty for state-pseudo rules — those use `mc-classes-force-state` instead. |
 | `ClassStyleInjector` | `mc-classes-force-state` | `@layer user-authored` | Force-paints the active state-pseudo rule (`.btn:hover`, `.card:focus`, etc.) onto the selected node via a doubled `[data-node-id]` selector so the state is visible/editable without physically triggering it. Mirrors the full `contextStyles` emission per breakpoint and condition. |
-| `UserStylesheetInjector` | `mc-user-styles` | `@layer user-authored` | User-uploaded stylesheets (verbatim, unscoped) |
+| `UserStylesheetInjector` | `mc-user-styles` | `@layer user-authored` | User-uploaded stylesheets (verbatim, unscoped). Also opens with the `@layer vendor, user-authored;` pre-declaration. |
 
-Unlayered rules always beat `@layer`-d rules regardless of specificity. User CSS can never override editor chrome even with a high-specificity selector.
+Unlayered rules always beat `@layer`-d rules regardless of specificity. User CSS can never override editor chrome even with a high-specificity selector — and, since `EditorChromeInjector` outranks every layer, neither can vendor CSS.
 
 `mc-classes-preview` and `mc-classes-force-state` share the same `@layer user-authored` as `mc-classes`. Their doubled selectors (`.foo.foo` for the preview, `[data-node-id="…"][data-node-id="…"]` for the forced state) raise specificity above the base class rule without leaving the layer — same-layer higher specificity wins, keeping the user cascade intact.
 
 `EditorChromeInjector` uses **stable `data-*` attribute selectors** (`data-canvas-module-placeholder`, `data-studio-slot-instance`, etc.) — not hashed CSS Module class names which only exist in the parent document.
+
+### Vendor vs. user-authored ordering
+
+`ProjectCssInjector`'s package CSS must render but stay **read-only** and lose to the user's own class/stylesheet edits. The naive way to make it lose — injecting it unlayered, the way the single-purpose `AlmDesignSystemCssInjector` it replaced used to — gets this backwards: unlayered CSS **always** beats `@layer`d CSS regardless of specificity, so an unlayered vendor stylesheet would beat `@layer user-authored` even when the user has explicitly overridden a class.
+
+The fix: `ProjectCssInjector`'s content lives in its own named layer, `@layer vendor`, and cascade-layer priority is lowest-declared-first, highest-declared-last — so `vendor` only loses to `user-authored` if `vendor` is the one declared FIRST anywhere in the document. Layer declaration order is fixed by the first time either name is mentioned across the WHOLE document (source order across every `<style>` tag), not by which injector's mount effect happens to run first. `ProjectCssInjector`, `ClassStyleInjector`, and `UserStylesheetInjector` therefore all open their stylesheet with the same bare pre-declaration, `@layer vendor, user-authored;` (`CANVAS_CSS_LAYER_ORDER` in `canvasCssLayers.ts`) — whichever `<style>` tag actually lands in the iframe's `<head>` first is the one that fixes the order for the whole document, and repeating the statement on every side means it doesn't matter which one that is.
+
+`CanvasAnimationInjector`/`CanvasScrollUnrollInjector` stay unlayered + `!important` and are unaffected by this: `!important` declarations always beat non-`!important` ones regardless of cascade layer, so the freeze/unroll rules keep winning against both `@layer vendor` and `@layer user-authored` content exactly as they did when vendor CSS was unlayered.
+
+### Freeze and unroll — a design frame is a still, whole screen
+
+Two injectors, design frames only (`!isLive` in `IframeFrameSurface`), never mounted in live mode, never reach the publisher.
+
+**`CanvasAnimationInjector`** (`src/admin/pages/site/canvas/CanvasAnimationInjector.tsx`) freezes every source of motion: CSS animations run once and hold (`animation-iteration-count: 1; animation-fill-mode: forwards`, or `animation-play-state: paused` when the `freezePoint` prop is `'start'` instead of the default `'end'` — see the file's docblock for when each is correct), CSS transitions are killed (`transition: none`), smooth scrolling is disabled (`scroll-behavior: auto`), `<video>`/`<audio>` are paused and stripped of `autoplay` (both at mount and for elements inserted later, via a `MutationObserver`), and `window.matchMedia` inside the iframe is patched so a `(prefers-reduced-motion: reduce)` JS check reports true. **What it cannot freeze:** animated GIF/WebP/APNG frame-advance (decoded by the image codec, not CSS — no rule can pause it), JS-driven animation (framer-motion, GSAP, a raw `requestAnimationFrame` loop — only runs when "Run scripts" is on, and this injector does not intercept `requestAnimationFrame`), `<canvas>`/WebGL loops, and the browser's own native CSS `@media (prefers-reduced-motion: reduce)` evaluation (an OS-level signal; only `matchMedia`, a JS API, can be patched from inside the iframe — a stylesheet `@media` block written directly by the author is unaffected).
+
+**`CanvasScrollUnrollInjector`** (`src/admin/pages/site/canvas/CanvasScrollUnrollInjector.tsx`, decision logic in `canvasScrollUnroll.ts`) turns an imported app's internal scroll regions (the common `html, body, #root { height: 100% }` shell with a `flex: 1; overflow: auto` region) into content-sized blocks, so the frame shows the whole screen instead of a scrollable box. A blanket stylesheet rule (`overflow: visible`, `min-height: auto`) resolves the common flex-region case; a bounded, `MutationObserver`-triggered, `requestAnimationFrame`-coalesced JS pass (never per animation frame, never per pointermove) tags two cases a stylesheet alone can't detect: `position: fixed` chrome becomes `position: absolute` (not `static`, which would reflow it) via `data-studio-unroll="fixed"`, and a panel with an explicit clipping height (`height: 100vh`) that isn't a flex item gets `height: auto` floored at its measured original height via `data-studio-unroll="explicit-height"` + a `--studio-unroll-min-height` custom property. Toggleable per board via the `enabled` prop (default on). **Deliberately never writes `body`'s or `html`'s `height`** — that stays owned by `useIframeFrameAutoHeight`'s pin (below); the injector only ever tags `body`'s descendants. **What it does not handle:** a `position`/height change applied by a class or `style`-attribute toggle on an *existing* element (no node inserted/removed) isn't re-tagged until a later DOM edit triggers a settle pass; a plain (non-flex-item) `height: 100%` chain nested deeper than `MAX_UNROLL_PASSES` may need a further settle to fully converge; animated GIF/WebP/APNG, JS-driven animation, and `<canvas>`/WebGL are unaffected for the same reasons as the animation injector.
+
+The pin/unroll interaction is the one place these two systems (`useIframeFrameAutoHeight`'s body-height pin and the scroll unroll) share a boundary — see "Height, and the feedback loop" above and `src/__tests__/canvas/canvasScrollUnrollPinInteraction.test.tsx` for the regression contract.
 
 ---
 
@@ -217,8 +241,13 @@ Tests that render the canvas and query nodes must use the `iframeCanvasQuery.ts`
   - `src/admin/shared/CanvasFrameSkeleton/CanvasFrameSkeleton.tsx` — shared frame skeleton for the document-loading / startup states
   - `src/admin/pages/site/canvas/useIframeCursorBridge.ts` — surfaces iframe cursor movement to parent-doc callbacks
   - `src/admin/pages/site/canvas/EditorChromeInjector.tsx` — unlayered chrome CSS
+  - `src/admin/pages/site/canvas/ProjectCssInjector.tsx` — read-only vendor package CSS (`@layer vendor`), WS-2.3
+  - `src/admin/pages/site/canvas/canvasCssLayers.ts` — `vendor`/`user-authored` layer names + the explicit ordering pre-declaration
+  - `src/admin/pages/site/canvas/CanvasAnimationInjector.tsx` — design-frame motion freeze (animations, transitions, scroll-behavior, media pause, reduced-motion)
+  - `src/admin/pages/site/canvas/CanvasScrollUnrollInjector.tsx` — design-frame scroll-region unroll; decision logic in `canvasScrollUnroll.ts`
   - `src/admin/pages/site/canvas/ClassStyleInjector.tsx` — class registry CSS
   - `src/admin/pages/site/canvas/UserStylesheetInjector.tsx` — user stylesheet CSS
+  - `server/handlers/studio/styleCompile.ts` — `collectVendorCss`: server-side bare-specifier `.css` import scan + resolution against the project's own `node_modules`
   - `src/admin/pages/site/canvas/RuntimeScriptInjector.tsx` — opt-in runtime scripts
   - `src/admin/pages/site/canvas/useRuntimeScriptBuild.ts` — script bundle builder
   - `src/admin/pages/site/store/slices/canvasSlice.ts` — `canvasView`, `runScripts`
@@ -228,5 +257,9 @@ Tests that render the canvas and query nodes must use the `iframeCanvasQuery.ts`
   - `src/__tests__/canvas/canvasMode.test.tsx` — design/live toggle + script build contract
   - `src/__tests__/canvas/panToCenterBreakpointFrame.test.ts` — centering geometry unit tests
   - `src/__tests__/canvas/canvasFrameMounting.test.tsx` — frame-mount contract: all frames mount once the document is in the store (no staggering, robust to a suspended `requestAnimationFrame`); skeleton frames render while no document is loaded; design mode hides root iframe overflow, live mode leaves it scrollable
+  - `src/__tests__/canvas/canvasAnimationInjector.test.tsx` / `canvasAnimationInjectorMounting.test.tsx` — animation freeze, transitions, scroll-behavior, media pause, reduced-motion, freeze-point, design/live scope
+  - `src/__tests__/canvas/canvasScrollUnroll.test.ts` — pure classification + stylesheet-text contract for the scroll unroll
+  - `src/__tests__/canvas/canvasScrollUnrollInjector.test.tsx` / `canvasScrollUnrollMounting.test.tsx` — DOM wiring + design/live scope for the scroll unroll
+  - `src/__tests__/canvas/canvasScrollUnrollPinInteraction.test.tsx` — regression coverage for the body-height pin ⇄ scroll-unroll interaction
 - Gate tests:
   - `src/__tests__/architecture/site-editor-shell-lazy-body.test.ts` — skeleton usage and lazy-boundary gates

@@ -99,6 +99,48 @@
  *       Validates `framework` against `FrameworkSettingsSchema` and writes it
  *       to `.studio/framework.json`. 400 on an invalid shape.
  *
+ * Routes owned by a sub-router (see `STUDIO_SUB_ROUTERS` below), documented
+ * in the module they live in rather than here:
+ *
+ *   GET/POST /admin/api/studio/probe          → `studio/projectProbe.ts`
+ *       WS-1.2 — derives a `ProjectProfile` (framework, pages dir, style
+ *       toolchain, aliases, component packages) by reading files only. GET
+ *       serves the `.studio/meta.json` cache and never writes; POST re-probes
+ *       and persists.
+ *
+ *   POST /admin/api/studio/import-upload      → `studio/importUpload.ts`
+ *       WS-1.1 — the same ingest engine `import-github` uses, fed by an
+ *       uploaded `.zip` or an `<input webkitdirectory>` folder instead of a
+ *       fetched zipball. Entry decisions, size/count budgets, and the
+ *       traversal guards all live in `studio/archiveIngest.ts` and are shared
+ *       by both routes; the target directory is derived server-side here for
+ *       the same reason `import-github`'s schema has no `dir` field.
+ *
+ *   POST/GET /admin/api/studio/component-bundle → `studio/componentBundle.ts`
+ *       WS-3.2 — bundles the project's own package components for the canvas.
+ *       Tier 1: `Bun.build` runs in a subprocess (a package may execute a Bun
+ *       macro at build time), and React is `external`, resolved through the
+ *       plugin runtime's existing import map so the bundle shares the admin's
+ *       React instance — two copies would mean "Invalid hook call". Refuses at
+ *       Tier 0 and on a React major mismatch rather than crashing later.
+ *
+ *   POST /admin/api/studio/asset-upload       → `studio/assetUpload.ts`
+ *       WS-8.3 — writes an uploaded image into the workspace so an
+ *       import-bound `<img src={heroImg}>` can be repointed. Content type is
+ *       decided by magic-number sniffing, never by the declared filename or
+ *       MIME; containment is checked on the real path after resolving
+ *       symlinks, walking to the nearest existing ancestor for a target
+ *       directory that does not exist yet.
+ *
+ *   POST /admin/api/studio/install            → `studio/installDeps.ts`
+ *   GET  /admin/api/studio/install/:id
+ *   GET  /admin/api/studio/install/status
+ *       WS-1.4 — `bun install --ignore-scripts` as a polled job. A 3-minute
+ *       install cannot sit inside one HTTP round trip, and `--ignore-scripts`
+ *       is mandatory: a postinstall script is arbitrary code execution, which
+ *       must not happen before the user consents to a trust tier that allows
+ *       it.
+ *
  * This module is the HTTP routing layer only — request wiring, body
  * validation, and error-envelope mapping. The actual page-parser/ast-codemods
  * work (Node/ts-morph, never the browser) lives in sibling modules by
@@ -119,6 +161,7 @@ import {
   nextPageName,
   nextProjectName,
   pageComponentNameFromInput,
+  mergeProjectFrameDefaults,
   projectDisplayName,
   projectPagesDir,
   projectsRootDir,
@@ -129,6 +172,7 @@ import {
   writeProjectMeta,
   type StudioProjectSummary,
 } from './studioProjects'
+import { readStudioMeta } from './studio/studioMeta'
 import { readStudioFrameworkFile, writeStudioFrameworkFile } from './studioFramework'
 import { buildStudioDownloadResponse } from './studioDownload'
 import { resolveStudioAssetResponse } from './studioAsset'
@@ -136,11 +180,35 @@ import { pageIdFromRelPath, loadStudioPages } from './studioPageLoad'
 import {
   applyStudioEdit,
   dedupeStudioEdits,
-  isInlinedNodeId,
+  isSharedSourceNodeId,
   orderStudioEditsForApply,
   studioEditFile,
   StudioEditSchema,
 } from './studioWriteback'
+import { tryServeStudioProbe } from './studio/projectProbe'
+import { tryServeStudioInstall } from './studio/installDeps'
+import { tryServeStudioIngest } from './studio/importUpload'
+import { tryServeStudioAssetUpload } from './studio/assetUpload'
+import { tryServeStudioComponentBundle } from './studio/componentBundle'
+
+/**
+ * Sub-routers for the newer studio namespaces, each owning one concern and its
+ * own `/admin/api/studio/<name>` paths. They are consulted before this module's
+ * own route table below.
+ *
+ * Route handling lives with the feature rather than in this file for the same
+ * reason `server/router.ts` composes an array of `tryServe*` handlers instead
+ * of one switch: a single shared route table is the file every concurrent
+ * change has to touch, and it grows without bound. Each entry returns `null`
+ * for a path it does not own, so ordering here is not load-bearing.
+ */
+const STUDIO_SUB_ROUTERS = [
+  tryServeStudioProbe,
+  tryServeStudioInstall,
+  tryServeStudioIngest,
+  tryServeStudioAssetUpload,
+  tryServeStudioComponentBundle,
+] as const
 
 /** Body of POST /admin/api/studio/save — a batch of typed source writebacks. */
 const SaveBodySchema = Type.Object({
@@ -182,6 +250,17 @@ const CreateProjectBodySchema = Type.Object({
 const RenameProjectBodySchema = Type.Object({
   dir: Type.Optional(Type.String()),
   name: Type.String(),
+})
+
+/**
+ * Body of POST /admin/api/studio/frame-defaults (WS-7.2 — "apply to all
+ * pages"). Both fields optional: a bulk width-only apply must be able to
+ * merge without touching a previously-saved default height.
+ */
+const FrameDefaultsBodySchema = Type.Object({
+  dir: Type.Optional(Type.String()),
+  width: Type.Optional(Type.Number({ minimum: 1 })),
+  height: Type.Optional(Type.Number({ minimum: 1 })),
 })
 
 /**
@@ -228,12 +307,17 @@ export async function tryServeStudio(
   url: URL,
   pathname: string,
 ): Promise<Response | null> {
+  for (const subRouter of STUDIO_SUB_ROUTERS) {
+    const response = await subRouter(req, url, pathname)
+    if (response) return response
+  }
+
   if (pathname === '/admin/api/studio/load' && req.method === 'GET') {
     try {
       const dir = resolveProjectDir(url.searchParams.get('dir'))
       const projectName = projectDisplayName(dir)
-      const { pages, componentSources, styleRules, conditions } = await loadStudioPages(dir)
-      return jsonResponse({ dir, projectName, pages, componentSources, styleRules, conditions })
+      const { pages, componentSources, styleRules, conditions, vendorCss } = await loadStudioPages(dir)
+      return jsonResponse({ dir, projectName, pages, componentSources, styleRules, conditions, vendorCss })
     } catch (err) {
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
     }
@@ -266,8 +350,10 @@ export async function tryServeStudio(
       const ordered = orderStudioEditsForApply(dedupeStudioEdits(edits))
 
       // An edit on an inlined node rewrites the component's own file, so every
-      // OTHER instance on the board is now stale. The client reloads on this.
-      const sharedComponents = edits.some((edit) => isInlinedNodeId(edit.nodeId))
+      // OTHER instance on the board is now stale — as does an edit to App
+      // Router chrome (`layout.tsx`), which one file composes into many routes.
+      // The client reloads on this.
+      const sharedComponents = edits.some((edit) => isSharedSourceNodeId(edit.nodeId, edit.kind))
 
       // Snapshot each touched file's line count so we can tell the client
       // whether any write shifted line numbers. If so, the client's in-memory
@@ -342,6 +428,32 @@ export async function tryServeStudio(
       mkdirSync(dirname(file), { recursive: true })
       writeFileSync(file, serializeBoardsFile(boards))
       return jsonResponse({ ok: true, boards })
+    } catch (err) {
+      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+    }
+  }
+
+  // WS-7.2 — per-project default frame width/height, persisted in
+  // <dir>/.studio/meta.json's `frameDefaults` (studioMeta.ts). Read at board
+  // load so `addFrame`/`seedFramesForActiveBoard` can size a NEW frame to
+  // match; written by the bulk frame inspector's "apply to all pages" action.
+  if (pathname === '/admin/api/studio/frame-defaults' && req.method === 'GET') {
+    try {
+      const dir = resolveProjectDir(url.searchParams.get('dir'))
+      const frameDefaults = readStudioMeta(dir).frameDefaults ?? {}
+      return jsonResponse({ dir, frameDefaults })
+    } catch (err) {
+      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+    }
+  }
+
+  if (pathname === '/admin/api/studio/frame-defaults' && req.method === 'POST') {
+    try {
+      const body = await readValidatedBody(req, FrameDefaultsBodySchema)
+      if (!body) return badRequest('invalid frame-defaults body')
+      const dir = resolveProjectDir(body.dir)
+      const frameDefaults = mergeProjectFrameDefaults(dir, { width: body.width, height: body.height })
+      return jsonResponse({ ok: true, frameDefaults })
     } catch (err) {
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
     }

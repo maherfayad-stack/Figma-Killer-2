@@ -38,6 +38,7 @@ import { subtreeHasOutlet, treeHasOutlet } from '@core/templates'
 import { wouldCreateCycle, syncSlotInstances, applySlotSyncResult } from '@core/visualComponents'
 import { pushToast } from '@ui/components/Toast'
 import { depthInTree, resolveActiveTreeTarget } from './helpers'
+import { groupNodeIdsByPage } from './nodeTreeGrouping'
 import { pruneCanvasSelectionDraft } from '../selectionSlice'
 import { indexStyleRulesByName, linkImportedClassNames, mergeImportedStyleRules } from './importLinking'
 import type { SiteSlice, SiteSliceHelpers } from './types'
@@ -154,7 +155,7 @@ function coalesceKeyForPatch(
 }
 
 export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
-  const { get, set, mutateActiveTree, mutateActiveTreeAndSite } = helpers
+  const { get, set, mutateActiveTree, mutateActiveTreeAndSite, mutateTreesForNodeIds } = helpers
 
   const actions: NodeActions = {
     insertNode: (moduleId, defaults, parentId, index) => {
@@ -500,22 +501,21 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
 
     deleteNodes: (nodeIds) => {
       if (nodeIds.length === 0) return
-      // Precompute depths ONCE against the FROZEN pre-mutation tree: sorting
-      // inside the recipe would walk ancestor chains through the Mutative
-      // draft (every node access materializes a draft proxy), twice per
-      // comparison. Sorting against pre-draft state is safe because the
-      // recipe re-checks `tree.nodes[id]` before each delete.
-      const target = resolveActiveTreeTarget(get())
+      const cur = get()
+      const target = resolveActiveTreeTarget(cur)
       if (!target) return
-      const depthById = new Map<string, number>()
-      for (const id of nodeIds) depthById.set(id, depthInTree(target.tree, id))
-      // Sort by depth-DESC so leaves go first — descendants of an
-      // already-deleted id are gone, and the "node not found" guard handles
-      // the redundant case cleanly.
-      const ordered = [...nodeIds].sort(
-        (a, b) => depthById.get(b)! - depthById.get(a)!,
-      )
-      const deleted = mutateActiveTree((tree) => {
+
+      // Depths precomputed ONCE against FROZEN (pre-draft) trees: sorting
+      // inside the recipe would walk ancestor chains through Mutative draft
+      // proxies — every node access materializes one — twice per comparison.
+      const orderLeavesFirst = (tree: NodeTree<PageNode>, ids: string[]): string[] => {
+        const depthById = new Map(ids.map((id) => [id, depthInTree(tree, id)] as const))
+        // Sort by depth-DESC so leaves go first — descendants of an
+        // already-deleted id are gone, and the "node not found" guard below
+        // handles the redundant case cleanly.
+        return [...ids].sort((a, b) => depthById.get(b)! - depthById.get(a)!)
+      }
+      const deleteOrdered = (tree: NodeTree<PageNode>, ordered: string[]): boolean => {
         let changed = false
         for (const id of ordered) {
           if (id === tree.rootNodeId) continue
@@ -524,12 +524,44 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
           changed = true
         }
         return changed
-      })
-      // Same selection cleanup as `deleteNode`: drop every deleted id (and any
-      // descendants) so the multi-selection array doesn't keep phantom ids.
-      if (deleted) {
-        set((state) => { pruneCanvasSelectionDraft(state) })
       }
+
+      let deleted: boolean
+      if (target.vc) {
+        // VC canvas mode has no board frames to span — single tree, exactly
+        // the pre-WS-7.3 behaviour.
+        const ordered = orderLeavesFirst(target.tree, nodeIds)
+        deleted = mutateActiveTree((tree) => deleteOrdered(tree, ordered))
+      } else {
+        // Page mode — WS-7.3: a MultiSelectionInspector selection can now
+        // span several board frames/pages. Group by page and pre-sort each
+        // page's OWN subset against its frozen tree before the transaction.
+        const idsByPage = groupNodeIdsByPage(cur, nodeIds)
+        const ordered: string[] = []
+        for (const [pageId, ids] of idsByPage) {
+          const page = cur.site?.pages.find((p) => p.id === pageId)
+          ordered.push(...(page ? orderLeavesFirst(page, ids) : ids))
+        }
+        deleted = mutateTreesForNodeIds(ordered, (tree, idsOnThisTree) => deleteOrdered(tree, idsOnThisTree))
+      }
+
+      if (!deleted) return
+      if (target.vc) {
+        // Same selection cleanup as `deleteNode`: drop every deleted id (and
+        // any descendants) so the multi-selection array doesn't keep
+        // phantom ids.
+        set((state) => { pruneCanvasSelectionDraft(state) })
+        return
+      }
+      // Cross-page prune (WS-7.3) — `pruneCanvasSelectionDraft` only checks
+      // the ACTIVE tree, which misses a delete on a page that wasn't active.
+      set((state) => {
+        const stillExists = (id: string) => Boolean(state.site?.pages.some((p) => p.nodes[id]))
+        const surviving = state.selectedNodeIds.filter(stillExists)
+        if (surviving.length === state.selectedNodeIds.length) return
+        state.selectedNodeIds = surviving
+        state.selectedNodeId = surviving.length > 0 ? surviving[surviving.length - 1]! : null
+      })
     },
 
     wrapNode: (nodeId, containerModuleId, defaults = {}) => {
@@ -553,8 +585,16 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
       const mod = registry.get(containerModuleId)
       const resolvedDefaults = { ...(mod?.defaults ?? {}), ...defaults }
       let wrapperId: string | null = null
-      mutateActiveTree((tree) => {
-        wrapperId = wrapNodes(tree, nodeIds, containerModuleId, resolvedDefaults)
+      // WS-7.3: a selection spanning several board frames wraps each page's
+      // own subset independently — one wrapper node cannot hold children
+      // from two different files. `wrapperId` ends up holding the LAST
+      // touched page's wrapper id; existing single-page callers are
+      // unaffected (`mutateTreesForNodeIds` takes the plain single-tree path
+      // whenever every id is on one page/VC, so this stays the same one id
+      // it always returned).
+      mutateTreesForNodeIds(nodeIds, (tree, idsOnThisTree) => {
+        const id = wrapNodes(tree, idsOnThisTree, containerModuleId, resolvedDefaults)
+        if (id) wrapperId = id
         return true
       })
       return wrapperId

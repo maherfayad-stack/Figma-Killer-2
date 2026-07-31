@@ -1,0 +1,48 @@
+/**
+ * Tab-specific styles for the Upload / Local-folder panels. The GitHub
+ * panel's field/label/error styles come from the shared
+ * SiteCreateDialog.module.css (see ImportProjectDialog.tsx) — kept there
+ * rather than duplicated here.
+ */
+
+.tabPanelBody {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xl);
+    padding-top: var(--space-l);
+}
+
+.pickRow {
+    display: flex;
+    align-items: center;
+    gap: var(--space-m);
+    flex-wrap: wrap;
+}
+
+.pickedSummary {
+    font-size: var(--text-s);
+    color: var(--text-muted);
+}
+
+.pickedSummaryEmpty {
+    font-size: var(--text-s);
+    color: var(--text-subtle);
+}
+
+.progressTrack {
+    /* Default so `width: var(--import-progress)` below never reads an unset
+       custom property; JS overrides it inline per CLAUDE.md's dynamic-var rule. */
+    --import-progress: 0%;
+    height: 6px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface-2);
+    overflow: hidden;
+}
+
+.progressFill {
+    height: 100%;
+    border-radius: var(--radius-sm);
+    background: var(--success);
+    width: var(--import-progress);
+    transition: width 120ms ease-out;
+}

@@ -31,18 +31,48 @@ That is why:
 IframeFrameSurface                       (the primitive)
   <iframe srcDoc="<!doctype html>…">
     head ← EditorChromeInjector          unlayered  — editor chrome only
+    head ← ProjectCssInjector            @layer vendor — read-only package CSS (WS-2.3)
     head ← ClassStyleInjector            @layer user-authored — reset + class registry
     head ← UserStylesheetInjector        @layer user-authored — user stylesheets
-    head ← AlmDesignSystemCssInjector    unlayered  — design-system CSS
     head ← CanvasAnimationInjector       !important — design frames only
+    head ← CanvasScrollUnrollInjector    !important — design frames only, toggleable
     body ← createPortal(<NodeRenderer/>)
     body ← RuntimeScriptInjector         only when "Run scripts" is on
 ```
 
 **Cascade order matters and is deliberate.** Unlayered always beats `@layer`d
-regardless of specificity, so user CSS can never override editor chrome. The
-animation injector needs `!important` because it must beat *another unlayered*
-stylesheet (the design system's) whose selectors are more specific than `*`.
+regardless of specificity, so user CSS can never override editor chrome.
+`@layer vendor` (`ProjectCssInjector` — `@alm-design/design-system`'s bundled
+CSS plus the open project's own bare-specifier package CSS, e.g. `import
+'@acme/ui/dist/style.css'`) is deliberately ordered BELOW `@layer
+user-authored`, via a bare `@layer vendor, user-authored;` pre-declaration
+every vendor/user-authored injector opens with — see
+`src/admin/pages/site/canvas/canvasCssLayers.ts` and
+`docs/features/canvas-iframe-per-frame.md`'s "Vendor vs. user-authored
+ordering". Vendor CSS is read-only: never parsed into a `StyleRule`, never in
+the editable class registry. The animation injector needs `!important`
+because `!important` declarations always beat non-`!important` ones
+regardless of layer — it has to beat both `@layer vendor` and `@layer
+user-authored` selectors that are more specific than `*`.
+
+**A design frame must be a still, whole screen — two injectors, both design-
+frame-only, both `!isLive` in `IframeFrameSurface`, neither ever reaches the
+publisher.** `CanvasAnimationInjector` freezes CSS animations (freeze-point
+`'end'`/`'start'` — see its docblock), kills transitions and smooth scroll,
+pauses `<video>`/`<audio>` (mount + `MutationObserver` for later inserts), and
+patches `matchMedia` for `prefers-reduced-motion` (JS reads only — it cannot
+retarget the browser's native CSS `@media` evaluation, and it cannot freeze
+animated GIF/WebP/APNG, JS-driven animation, or `<canvas>`/WebGL — say so,
+don't fake it). `CanvasScrollUnrollInjector` turns an app shell's internal
+`overflow: auto` scroll regions into content-sized blocks: a blanket
+stylesheet handles the common flex-region case, and a bounded (one settle per
+`MutationObserver` batch, never per pointermove), tag-then-style JS pass
+handles `position: fixed` chrome (→ `position: absolute`, tagged
+`data-studio-unroll="fixed"`) and explicit clipping heights (→ `height: auto`
+floored at the measured original, tagged
+`data-studio-unroll="explicit-height"`). It **never writes `body`'s or
+`html`'s `height`** — see "Height, and the feedback loop" below for why that
+specific boundary is load-bearing.
 
 `EditorChromeInjector` uses stable `data-*` selectors, never hashed CSS Module
 class names (those only exist in the parent document). It forwards admin tokens
@@ -88,6 +118,17 @@ frame height (floored at 800), and **unpins to `auto` before each measurement**
 so a shrinking page can still shrink.
 
 If you touch height logic, you must not break either direction. Test both.
+
+**`CanvasScrollUnrollInjector` shares this boundary and must never cross it.**
+Unrolling makes content taller, so the frame has to grow — the existing
+unpin-before-measure logic already handles that direction, and the unroll
+injector composes with it by only ever growing content *inside* body (never
+touching `body`/`html`'s own `height`), which makes `body.scrollHeight` report
+the larger number the auto-height hook already watches. An earlier draft of
+the unroll stylesheet forced `body, html { height: auto !important }` —
+`!important` beats a plain inline style regardless of origin, so that would
+have overridden the pin outright and collapsed every `height: 100%` chain.
+Regression coverage: `src/__tests__/canvas/canvasScrollUnrollPinInteraction.test.tsx`.
 
 ---
 

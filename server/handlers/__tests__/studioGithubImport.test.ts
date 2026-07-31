@@ -1,7 +1,13 @@
 /**
- * studioGithubImport.ts — unit tests for the pure GitHub-URL / zip-entry
- * helpers (Phase 7B), plus `runGithubImport` exercised end-to-end against an
+ * studioGithubImport.ts — unit tests for the pure GitHub-URL helpers
+ * (Phase 7B), plus `runGithubImport` exercised end-to-end against an
  * in-memory zip and a stubbed `fetchImpl` — no real network calls.
+ *
+ * The zip-entry decision helpers (`resolveZipEntryRelPath`, `isSafeRelPath`)
+ * moved to `studio/archiveIngest.ts` (WS-1.1 — one shared ingest engine for
+ * both the GitHub and upload import routes); their tests moved to
+ * `archiveIngest.test.ts`. This file keeps only what's genuinely
+ * GitHub-specific.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import * as fs from 'node:fs'
@@ -13,7 +19,6 @@ import {
   defaultGithubImportDir,
   GithubImportError,
   parseGithubRepoUrl,
-  resolveZipEntryRelPath,
   runGithubImport,
 } from '../studioGithubImport'
 
@@ -91,47 +96,6 @@ describe('buildGithubZipballUrl', () => {
     expect(buildGithubZipballUrl('acme', 'widgets', 'feature/x')).toBe(
       'https://api.github.com/repos/acme/widgets/zipball/feature%2Fx',
     )
-  })
-})
-
-describe('resolveZipEntryRelPath', () => {
-  it('strips the zipball root folder', () => {
-    expect(resolveZipEntryRelPath('acme-widgets-abc123/pages/Home.tsx')).toBe('pages/Home.tsx')
-  })
-
-  it('skips a directory entry', () => {
-    expect(resolveZipEntryRelPath('acme-widgets-abc123/pages/')).toBeNull()
-  })
-
-  it('skips the root folder entry itself', () => {
-    expect(resolveZipEntryRelPath('acme-widgets-abc123/')).toBeNull()
-  })
-
-  it('skips an entry with no root folder at all', () => {
-    expect(resolveZipEntryRelPath('README.md')).toBeNull()
-  })
-
-  it('rejects path traversal', () => {
-    expect(resolveZipEntryRelPath('acme-widgets-abc123/../../etc/passwd')).toBeNull()
-  })
-
-  it('rejects an excluded directory anywhere in the path', () => {
-    expect(resolveZipEntryRelPath('acme-widgets-abc123/node_modules/x/index.js')).toBeNull()
-    expect(resolveZipEntryRelPath('acme-widgets-abc123/.git/HEAD')).toBeNull()
-  })
-
-  it('scopes to a subdir, stripping it from the result', () => {
-    expect(resolveZipEntryRelPath('acme-widgets-abc123/apps/web/src/App.tsx', 'apps/web')).toBe(
-      'src/App.tsx',
-    )
-  })
-
-  it('skips an entry outside the requested subdir', () => {
-    expect(resolveZipEntryRelPath('acme-widgets-abc123/apps/other/index.ts', 'apps/web')).toBeNull()
-  })
-
-  it('rejects an unsafe subdir', () => {
-    expect(resolveZipEntryRelPath('acme-widgets-abc123/a/b.ts', '../evil')).toBeNull()
   })
 })
 

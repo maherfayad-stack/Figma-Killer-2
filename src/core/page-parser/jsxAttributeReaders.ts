@@ -23,6 +23,7 @@ import { LOOP_ID_SEPARATOR } from '@core/page-tree'
 import type { ParsedNode, ParsedPropValue } from './types'
 import { tryResolveExpression, tryResolvePropValue, type PageEvalContext, type Resolution } from './resolutionLock'
 import type { ValueOrigin } from './staticEvalTypes'
+import { STUDIO_ASSET_SENTINEL } from './assetImports'
 
 /**
  * Everything one parse pass needs to read values and record nodes. Built once
@@ -247,11 +248,16 @@ export function extractProps(
   attributes: (JsxAttribute | JsxSpreadAttribute)[],
   ctx: ParseContext,
   kind: ParsedNode['kind'] = 'element',
-): { props: Record<string, ParsedPropValue>; resolutions: Resolution[]; codeProps: string[] } {
+): { props: Record<string, ParsedPropValue>; resolutions: Resolution[]; codeProps: string[]; assetOrigin?: ValueOrigin } {
   const result: Record<string, ParsedPropValue> = {}
   const resolutions: Resolution[] = []
   /** Names whose value came from code, not a literal attribute — see `ParsedNode.codeProps`. */
   const codeProps: string[] = []
+  // First resolved import-backed asset value wins — mirrors `textOrigin`'s
+  // "only the first" scoping (see its doc comment in `./types`): a node
+  // rarely has more than one image-shaped prop, and picking one honest target
+  // beats guessing which of several an edit meant.
+  let assetOrigin: ValueOrigin | undefined
 
   for (const attribute of attributes) {
     if (!Node.isJsxAttribute(attribute)) continue // skip {...spread} attributes
@@ -302,8 +308,23 @@ export function extractProps(
         resolutions.push({ source: expression.getText(), note: resolved.note })
         // The value shown is what the expression evaluates to; the source holds
         // the expression. Writing an edit here would replace the binding with a
-        // baked literal, so this one prop is not a writeback target.
+        // baked literal, so this one prop is not a writeback target — UNLESS
+        // it's an import-backed asset (see below), which has a different, honest
+        // target one hop away.
         codeProps.push(name)
+        // An image import (`src={heroImg}`) resolves to a `studio-asset:` value
+        // carrying the import specifier's own location — see
+        // `resolveImageAssetImport`. That is `ParsedNode.assetOrigin`, the one
+        // honest writeback target for this prop (WS-8.3): editing it rewrites
+        // the IMPORT, never the JSX (which stays `src={heroImg}` unchanged).
+        if (
+          assetOrigin === undefined &&
+          resolved.origin !== undefined &&
+          typeof resolved.value === 'string' &&
+          resolved.value.startsWith(STUDIO_ASSET_SENTINEL)
+        ) {
+          assetOrigin = resolved.origin
+        }
         continue
       }
       // A component's prop may also be an array/object. No `Resolution` is
@@ -327,7 +348,7 @@ export function extractProps(
     }
   }
 
-  return { props: result, resolutions, codeProps }
+  return { props: result, resolutions, codeProps, ...(assetOrigin ? { assetOrigin } : {}) }
 }
 
 /**

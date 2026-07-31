@@ -10,7 +10,7 @@
  * fetch + tar read, which nothing in this codebase does yet.
  */
 import { gunzipSync } from 'fflate'
-import { isSafeRelPath } from '../studioGithubImport'
+import { isSafeRelPath } from '../studio/archiveIngest'
 import { readTarEntries } from './tarReader'
 import {
   DesignImportError,

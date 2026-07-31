@@ -65,6 +65,7 @@ export function makeNode(overrides: Partial<PageNode> & { id?: string } = {}): P
     classIds: overrides.classIds ?? [],
     dynamicBindings: overrides.dynamicBindings,
     propBindings: overrides.propBindings,
+    textOrigin: overrides.textOrigin,
   }
 }
 

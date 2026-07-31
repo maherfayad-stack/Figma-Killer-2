@@ -37,6 +37,22 @@
  * would need a CSS-text codemod alongside `ast-codemods`, which is a separate
  * initiative. This is documented in `docs/features/studio-import.md`; do not
  * let a user discover it by losing work.
+ *
+ * ## WS-2.1 — compiled styles (`extraCss`)
+ *
+ * `loadStudioStyles`'s optional `extraCss` parameter is
+ * `server/handlers/studio/styleCompile.ts`'s `CompiledStyles.css` — Sass,
+ * PostCSS/Tailwind output, and rewritten CSS Modules selectors, already
+ * concatenated into one blob. It is parsed through this SAME
+ * `cssToStyleRules` call, right after the entry stylesheets and before each
+ * page's own CSS, so its rules land in the identical registry with the
+ * identical deterministic id scheme — one producer feeding one consumer, not
+ * a second styling system. `*.module.css` files are excluded from the
+ * ordinary per-file discovery below (`isCompiledElsewhere`) because
+ * `styleCompile.ts` already reads, renames, and contributes them via
+ * `extraCss` — discovering them again here would additionally register their
+ * UNSCOPED selector names, which no literal `className` in the source ever
+ * references.
  */
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
@@ -93,6 +109,9 @@ export function classIdsForClassName(className: string, classIdsByName: Record<s
   return ids
 }
 
+/** `*.module.css`/`.scss`/`.sass`/`.less` — already compiled and rewritten by `styleCompile.ts`, contributed via `extraCss` instead. See this module's "WS-2.1 — compiled styles" doc. */
+const COMPILED_ELSEWHERE_RE = /\.module\.(css|scss|sass|less)$/i
+
 /**
  * Reads and parses every stylesheet the given parsed pages import, merging
  * them into one registry in cascade order. Never throws — an unreadable or
@@ -101,25 +120,28 @@ export function classIdsForClassName(className: string, classIdsByName: Record<s
  *
  * `pages` carries each page's parsed tree alongside the workspace-relative
  * path it came from, which is what `collectPageStylesheets` needs to walk
- * outward from.
+ * outward from. `extraCss`, when non-empty, is `styleCompile.ts`'s compiled
+ * output — parsed through the same engine right after the entry stylesheets;
+ * see this module's "WS-2.1" doc for why.
  */
 export async function loadStudioStyles(
   pages: readonly { parsed: ParsedPage; relFile: string }[],
   project: Project,
   workspaceRoot: string,
+  extraCss?: string,
 ): Promise<StudioStyles> {
   const sheets = new Map<string, PageStylesheet>()
   // Global stylesheets FIRST — resets and design tokens must precede the
   // per-screen rules that reference them. See `collectEntryStylesheets`.
   for (const sheet of collectEntryStylesheets(project, workspaceRoot)) {
-    if (!sheets.has(sheet.absPath)) sheets.set(sheet.absPath, sheet)
+    if (!sheets.has(sheet.absPath) && !COMPILED_ELSEWHERE_RE.test(sheet.relPath)) sheets.set(sheet.absPath, sheet)
   }
   for (const { parsed, relFile } of pages) {
     for (const sheet of collectPageStylesheets(parsed, relFile, project, workspaceRoot)) {
-      if (!sheets.has(sheet.absPath)) sheets.set(sheet.absPath, sheet)
+      if (!sheets.has(sheet.absPath) && !COMPILED_ELSEWHERE_RE.test(sheet.relPath)) sheets.set(sheet.absPath, sheet)
     }
   }
-  if (sheets.size === 0) return EMPTY_STYLES
+  if (sheets.size === 0 && !extraCss) return EMPTY_STYLES
 
   const SheetCtor = await loadSheetConstructor()
   if (!SheetCtor) return EMPTY_STYLES
@@ -129,10 +151,7 @@ export async function loadStudioStyles(
   const classIdsByName: Record<string, string> = {}
   let order = 0
 
-  for (const sheet of sheets.values()) {
-    const cssText = readStylesheet(sheet)
-    if (cssText === undefined) continue
-
+  const mergeParsedCss = (cssText: string): void => {
     const parsed = cssToStyleRules(cssText, { sheetConstructor: SheetCtor })
     for (const condition of parsed.conditions) conditionsById.set(condition.id, condition)
 
@@ -143,6 +162,14 @@ export async function loadStudioStyles(
       styleRules[id] = { ...rule, id, order: order++, createdAt: IMPORTED_RULE_TIMESTAMP, updatedAt: IMPORTED_RULE_TIMESTAMP }
       if (rule.kind === 'class') classIdsByName[rule.name] = id
     }
+  }
+
+  if (extraCss) mergeParsedCss(extraCss)
+
+  for (const sheet of sheets.values()) {
+    const cssText = readStylesheet(sheet)
+    if (cssText === undefined) continue
+    mergeParsedCss(cssText)
   }
 
   return { styleRules, conditions: [...conditionsById.values()], classIdsByName }

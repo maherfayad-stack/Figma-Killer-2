@@ -25,6 +25,8 @@
  * out while it runs. Only ever growing, with a hard ceiling, terminates.
  */
 
+import { SCROLL_UNROLL_ORIGINAL_OVERFLOW_ATTR } from './canvasScrollUnroll'
+
 /** Ceiling on the fitted height. A pathological page (a `88vh` hero feeding its own container) stops here instead of growing without bound. */
 export const MAX_FRAME_FIT_HEIGHT = 20000
 
@@ -84,10 +86,45 @@ export function resolveFrameFitHeight({
 /**
  * Every scroll region's hidden-content height, in document order.
  *
- * Only `auto`/`scroll` overflow counts: a `hidden` region is the design
- * deliberately clipping (an avatar mask, a marquee), not content the author
- * expects a reader to reach, and growing the frame to "reveal" it would break
- * the design's own intent.
+ * `hidden`/`clip` is excluded: that is the design deliberately clipping (an
+ * avatar mask, a marquee), not content the author expects a reader to reach,
+ * and growing the frame to "reveal" it would break the design's own intent.
+ *
+ * EVERY OTHER overflow value counts, not just `auto`/`scroll`. An element
+ * with an EXPLICIT height (not `auto`) and `overflow: visible` can still
+ * have `scrollHeight > clientHeight` — a `position: absolute; inset: 0`
+ * overlay root sized against `body`'s pin (see iframeBodyReset.ts's "Body is
+ * the containing block" comment) is the common shape: its own box is a fixed
+ * height, but a taller child paints past it rather than being clipped or
+ * scrolled, because CSS never grows an explicit-height box to fit content —
+ * only `height: auto` boxes do that. `visible` means the author wants that
+ * excess SEEN, which is exactly what this frame's own root `overflow: hidden`
+ * clip boundary (the same file, same "Body is the containing block" comment)
+ * would otherwise silently defeat if nothing ever grew the pin to match.
+ *
+ * **Do not broaden this gate to "everything except hidden/clip" again.** That
+ * was tried (`canvas-02`) to fix the eSIM manual-entry-sheet clipping, and a
+ * real-browser pass (`test-01`) showed it makes things strictly worse: the
+ * frame rendered as a blank box. The reason is definitional — for an
+ * `overflow: visible` element, `scrollHeight` counts children that are
+ * *already painted and visible*. That excess is not hidden content, so
+ * treating it as a deficit is measuring the wrong thing, and because the
+ * caller takes `Math.max(...)` a single large bogus value pins body at
+ * 2000px+ and pushes real content out of the frame's fixed device box.
+ *
+ * The genuine defect that attempt was chasing (`canvas-04`): in a DESIGN
+ * frame, `CanvasScrollUnrollInjector` forces every element's `overflow-y` to
+ * `visible !important`, unconditionally, before this function ever runs —
+ * so reading `getComputedStyle(el).overflowY` here always sees `visible`,
+ * even for an element the AUTHOR wrote as `overflow-y: auto`. This function
+ * was permanently blind to exactly the regions it exists to find. The fix
+ * stays a narrow `auto`/`scroll` gate (never broadened — see above) but reads
+ * the PRE-unroll value the injector recorded
+ * (`SCROLL_UNROLL_ORIGINAL_OVERFLOW_ATTR`, `canvasScrollUnroll.ts`) instead
+ * of the computed value it has since overwritten. In live mode, or before
+ * the injector's first settle, no recording exists yet — computed style is
+ * the correct fallback there (nothing has overwritten it). See `STATE.md`
+ * (`canvas-02`, `test-01`, `canvas-04`) for the full evidence.
  */
 export function collectScrollDeficits(doc: Document): number[] {
   const view = doc.defaultView
@@ -97,7 +134,7 @@ export function collectScrollDeficits(doc: Document): number[] {
   for (const el of doc.body.querySelectorAll('*')) {
     const scrollHeight = el.scrollHeight
     if (scrollHeight <= el.clientHeight + 1) continue
-    const overflowY = view.getComputedStyle(el).overflowY
+    const overflowY = el.getAttribute(SCROLL_UNROLL_ORIGINAL_OVERFLOW_ATTR) ?? view.getComputedStyle(el).overflowY
     if (overflowY !== 'auto' && overflowY !== 'scroll') continue
     deficits.push(scrollHeight - el.clientHeight)
   }

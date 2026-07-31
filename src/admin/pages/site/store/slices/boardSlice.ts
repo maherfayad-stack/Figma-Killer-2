@@ -39,6 +39,29 @@
  * the boards auto-save effect (`AdminCanvasLayout`'s `useStudioBoardsPersistence`
  * only ever reads/writes `boards`). `setBoardSnapGuides` never flips
  * `boardsDirty` for the same reason — guides are drawn, not persisted.
+ *
+ * Frame multi-selection (WS-7.1): `selectedFrameIds` is a SEPARATE selection
+ * domain from `selectedNodeIds` (selectionSlice) — a board frame is not a
+ * node. `selectFrame`/`selectAllFrames` clear the node selection when they
+ * make the frame selection non-empty (and vice versa in selectionSlice), so
+ * the Properties panel always shows exactly one of "frame(s) selected" or
+ * "node(s) selected", never both. Bulk frame actions (WS-7.2 — set size,
+ * device preset, apply-to-all-pages, fit-to-content, align/distribute, tidy)
+ * all resolve their target set from `selectedFrameIds` against the active
+ * board and go through the same pure `upsertFrame`/`resizeFrame` transforms
+ * as the single-frame actions above, so every write round-trips through
+ * `parseBoardsFile` identically.
+ *
+ * `frameDefaults` (WS-7.2 — "apply to all pages") mirrors the per-project
+ * default in `.studio/meta.json`'s `frameDefaults` (`server/handlers/studio/
+ * studioMeta.ts`) — `AdminCanvasLayout` hydrates it via `setFrameDefaults`
+ * alongside the boards load, and `addFrame`/`seedFramesForActiveBoard` read
+ * it so a page added AFTER "apply to all pages" inherits the same width
+ * instead of falling back to the hardcoded `FRAME_WIDTH`. This slice never
+ * calls the meta.json endpoint itself — persisting the default is the UI
+ * action's job (`frameDefaultsApi.ts`), matching every other project-meta
+ * write in this codebase (rename, probe) — the store stays a pure state
+ * container with no direct HTTP calls.
  */
 import type { EditorStoreSliceCreator, EditorStore } from '@site/store/types'
 import type { Board, BoardsFile, DocBlock, NoteColor, StickyNote } from '@core/studio-board'
@@ -59,13 +82,22 @@ import {
   removeFrame as removeFrameFromBoard,
   resizeFrame,
 } from '@core/studio-board'
-import { defaultFramePosition } from '@site/canvas/BoardFramesLayer/frameGrid'
+import { defaultFramePosition, FRAME_WIDTH, FRAME_HEIGHT } from '@site/canvas/BoardFramesLayer/frameGrid'
+import { alignFrames, distributeFrames, type AlignableFrame, type FrameAlignEdge } from '@site/canvas/BoardFramesLayer/frameAlign'
+
+export type { FrameAlignEdge }
 
 const DEFAULT_NOTE_COLOR: NoteColor = 'yellow'
 const DEFAULT_NOTE_WIDTH = 180
 const DEFAULT_NOTE_HEIGHT = 120
 const DEFAULT_DOC_WIDTH = 320
 const DEFAULT_DOC_HEIGHT = 200
+
+/** Mirrors `FrameDefaultsSchema` in `server/handlers/studio/studioMeta.ts` — kept as a plain client-local shape so this browser module never imports server code. */
+export interface FrameDefaults {
+  width?: number
+  height?: number
+}
 
 interface BoardSlice {
   /** The parsed `.studio/boards.json` contents. */
@@ -156,6 +188,59 @@ interface BoardSlice {
    * `boardsDirty`: guides are drawn, not persisted.
    */
   setBoardSnapGuides: (guides: SnapGuide[]) => void
+
+  // ── Frame multi-selection (WS-7.1) ───────────────────────────────────────
+  /** Selected frame ids (page ids), on the ACTIVE board. Distinct from node selection. */
+  selectedFrameIds: string[]
+  /**
+   * Select a frame. `replace` (default) clears the set and selects only
+   * `pageId`; `toggle` (Shift-click) adds it if absent, removes it if
+   * present. Selecting a frame clears the node selection (mutual
+   * exclusivity — see module doc).
+   */
+  selectFrame: (pageId: string, mode?: 'replace' | 'toggle') => void
+  /** Replace the frame selection wholesale — the marquee-drag live-update path. No-op if the set is reference-unchanged in length AND content is trivially empty-to-empty. */
+  setSelectedFrameIds: (pageIds: string[]) => void
+  /** Replace the frame selection with every frame on the active board (⌘/Ctrl+A on empty canvas). */
+  selectAllFrames: () => void
+  /** Empty the frame selection. No-op if already empty. */
+  clearFrameSelection: () => void
+
+  // ── Per-project frame size default (WS-7.2 — "apply to all pages") ──────
+  /** Local mirror of `.studio/meta.json`'s `frameDefaults` — hydrated by `AdminCanvasLayout`, read by `addFrame`/`seedFramesForActiveBoard`. */
+  frameDefaults: FrameDefaults
+  /** Replace the local `frameDefaults` mirror (load-time hydration; does not itself persist anything). */
+  setFrameDefaults: (defaults: FrameDefaults) => void
+
+  // ── Bulk frame actions (WS-7.2) — all operate on `selectedFrameIds` ─────
+  /**
+   * Set width and/or height on every selected frame. Pass `null` for a
+   * dimension to leave it unchanged per-frame (mixed-value support: typing
+   * only W in the bulk inspector must not clobber each frame's own H).
+   */
+  setSelectedFramesSize: (width: number | null, height: number | null) => void
+  /**
+   * The literal "apply to all pages" ask: writes `width` to EVERY frame on
+   * the active board (not just the selection) and updates the local
+   * `frameDefaults` mirror so a page added later inherits it via
+   * `addFrame`/`seedFramesForActiveBoard`. Does not touch `.studio/
+   * meta.json` itself — the calling UI persists that through
+   * `frameDefaultsApi.ts` (see module doc).
+   */
+  applyWidthToAllFrames: (width: number) => void
+  /**
+   * Set each named frame's height individually — the generic primitive
+   * behind "fit height to content": the UI measures each selected frame's
+   * live iframe content height and passes the result here so the store
+   * itself never reaches into the DOM.
+   */
+  setFrameHeights: (heightsByPageId: Record<string, number>) => void
+  /** Align every selected frame to a shared edge/center line. No-op below 2 selected frames. */
+  alignSelectedFrames: (edge: FrameAlignEdge) => void
+  /** Space selected frames evenly along an axis, extremes fixed. No-op below 3 selected frames. */
+  distributeSelectedFrames: (axis: 'horizontal' | 'vertical') => void
+  /** Re-lay every selected frame into the standard add-time grid, in selection order. */
+  tidySelectedFrames: () => void
 }
 
 declare module '@site/store/types' {
@@ -182,6 +267,8 @@ export const createBoardSlice: EditorStoreSliceCreator<BoardSlice> = (set, get) 
   boardsLoaded: false,
   boardsDirty: false,
   boardSnapGuides: [],
+  selectedFrameIds: [],
+  frameDefaults: {},
 
   loadBoards: (file) => {
     if (file.boards.length > 0) {
@@ -359,16 +446,21 @@ export const createBoardSlice: EditorStoreSliceCreator<BoardSlice> = (set, get) 
   },
 
   addFrame: (pageId) => {
-    const { boards, activeBoardId } = get()
+    const { boards, activeBoardId, frameDefaults } = get()
     const board = getActiveBoard(boards, activeBoardId)
     if (!board) return
     if (board.frames.some((f) => f.pageId === pageId)) return
     const { x, y } = defaultFramePosition(board.frames.length)
-    set({ boards: upsertBoard(boards, upsertFrame(board, { pageId, x, y })), boardsDirty: true })
+    // WS-7.2 — a page added after "apply to all pages" inherits the
+    // project's frame default instead of the hardcoded FRAME_WIDTH/HEIGHT.
+    const frame: Parameters<typeof upsertFrame>[1] = { pageId, x, y }
+    if (frameDefaults.width) frame.width = frameDefaults.width
+    if (frameDefaults.height) frame.height = frameDefaults.height
+    set({ boards: upsertBoard(boards, upsertFrame(board, frame)), boardsDirty: true })
   },
 
   seedFramesForActiveBoard: (pageIds) => {
-    const { boards, activeBoardId } = get()
+    const { boards, activeBoardId, frameDefaults } = get()
     const board = getActiveBoard(boards, activeBoardId)
     if (!board) return
     const existingIds = new Set(board.frames.map((f) => f.pageId))
@@ -377,7 +469,10 @@ export const createBoardSlice: EditorStoreSliceCreator<BoardSlice> = (set, get) 
 
     const nextBoard = missingIds.reduce((acc, pageId, i) => {
       const { x, y } = defaultFramePosition(board.frames.length + i)
-      return upsertFrame(acc, { pageId, x, y })
+      const frame: Parameters<typeof upsertFrame>[1] = { pageId, x, y }
+      if (frameDefaults.width) frame.width = frameDefaults.width
+      if (frameDefaults.height) frame.height = frameDefaults.height
+      return upsertFrame(acc, frame)
     }, board)
     set({ boards: upsertBoard(boards, nextBoard), boardsDirty: true })
   },
@@ -385,6 +480,169 @@ export const createBoardSlice: EditorStoreSliceCreator<BoardSlice> = (set, get) 
   markBoardsClean: () => set({ boardsDirty: false }),
 
   setBoardSnapGuides: (guides) => set({ boardSnapGuides: guides }),
+
+  // ── Frame multi-selection (WS-7.1) ───────────────────────────────────────
+
+  selectFrame: (pageId, mode = 'replace') => {
+    const { selectedFrameIds } = get()
+    const nextIds =
+      mode === 'toggle'
+        ? selectedFrameIds.includes(pageId)
+          ? selectedFrameIds.filter((id) => id !== pageId)
+          : [...selectedFrameIds, pageId]
+        : [pageId]
+    set((state) => {
+      state.selectedFrameIds = nextIds
+      // Mutual exclusivity (module doc) — a frame selection replaces any
+      // node selection so the Properties panel shows exactly one inspector.
+      if (nextIds.length > 0 && state.selectedNodeIds.length > 0) {
+        state.selectedNodeIds = []
+        state.selectedNodeId = null
+      }
+    })
+  },
+
+  setSelectedFrameIds: (pageIds) => {
+    const { selectedFrameIds } = get()
+    if (selectedFrameIds.length === 0 && pageIds.length === 0) return
+    if (
+      selectedFrameIds.length === pageIds.length &&
+      selectedFrameIds.every((id, i) => id === pageIds[i])
+    ) {
+      return
+    }
+    set((state) => {
+      state.selectedFrameIds = pageIds
+      if (pageIds.length > 0 && state.selectedNodeIds.length > 0) {
+        state.selectedNodeIds = []
+        state.selectedNodeId = null
+      }
+    })
+  },
+
+  selectAllFrames: () => {
+    const { boards, activeBoardId } = get()
+    const board = getActiveBoard(boards, activeBoardId)
+    if (!board || board.frames.length === 0) return
+    const ids = board.frames.map((f) => f.pageId)
+    set((state) => {
+      state.selectedFrameIds = ids
+      if (state.selectedNodeIds.length > 0) {
+        state.selectedNodeIds = []
+        state.selectedNodeId = null
+      }
+    })
+  },
+
+  clearFrameSelection: () => {
+    if (get().selectedFrameIds.length === 0) return
+    set({ selectedFrameIds: [] })
+  },
+
+  // ── Per-project frame size default (WS-7.2) ─────────────────────────────
+
+  setFrameDefaults: (defaults) => set({ frameDefaults: defaults }),
+
+  // ── Bulk frame actions (WS-7.2) ─────────────────────────────────────────
+
+  setSelectedFramesSize: (width, height) => {
+    const { boards, activeBoardId, selectedFrameIds } = get()
+    const board = getActiveBoard(boards, activeBoardId)
+    if (!board || selectedFrameIds.length === 0) return
+    let nextBoard = board
+    for (const pageId of selectedFrameIds) {
+      const frame = nextBoard.frames.find((f) => f.pageId === pageId)
+      if (!frame) continue
+      const w = width ?? frame.width ?? FRAME_WIDTH
+      const h = height ?? frame.height ?? FRAME_HEIGHT
+      nextBoard = resizeFrame(nextBoard, pageId, w, h)
+    }
+    set({ boards: upsertBoard(boards, nextBoard), boardsDirty: true })
+  },
+
+  applyWidthToAllFrames: (width) => {
+    const { boards, activeBoardId, frameDefaults } = get()
+    const board = getActiveBoard(boards, activeBoardId)
+    if (!board || board.frames.length === 0) return
+    let nextBoard = board
+    for (const frame of board.frames) {
+      // Preserve each frame's own height (explicit, or the shared default
+      // made explicit) — only width is the "apply to all pages" ask.
+      nextBoard = resizeFrame(nextBoard, frame.pageId, width, frame.height ?? FRAME_HEIGHT)
+    }
+    set({
+      boards: upsertBoard(boards, nextBoard),
+      boardsDirty: true,
+      frameDefaults: { ...frameDefaults, width },
+    })
+  },
+
+  setFrameHeights: (heightsByPageId) => {
+    const { boards, activeBoardId } = get()
+    const board = getActiveBoard(boards, activeBoardId)
+    if (!board) return
+    let nextBoard = board
+    let changed = false
+    for (const [pageId, height] of Object.entries(heightsByPageId)) {
+      const frame = nextBoard.frames.find((f) => f.pageId === pageId)
+      if (!frame || !Number.isFinite(height) || height <= 0) continue
+      nextBoard = resizeFrame(nextBoard, pageId, frame.width ?? FRAME_WIDTH, height)
+      changed = true
+    }
+    if (!changed) return
+    set({ boards: upsertBoard(boards, nextBoard), boardsDirty: true })
+  },
+
+  alignSelectedFrames: (edge) => {
+    const { boards, activeBoardId, selectedFrameIds } = get()
+    const board = getActiveBoard(boards, activeBoardId)
+    if (!board || selectedFrameIds.length < 2) return
+    const rects: AlignableFrame[] = []
+    for (const pageId of selectedFrameIds) {
+      const frame = board.frames.find((f) => f.pageId === pageId)
+      if (frame) rects.push({ pageId, x: frame.x, y: frame.y, width: frame.width ?? FRAME_WIDTH, height: frame.height ?? FRAME_HEIGHT })
+    }
+    if (rects.length < 2) return
+    const positions = alignFrames(rects, edge)
+    let nextBoard = board
+    for (const [pageId, pos] of positions) {
+      nextBoard = upsertFrame(nextBoard, { pageId, x: pos.x, y: pos.y })
+    }
+    set({ boards: upsertBoard(boards, nextBoard), boardsDirty: true })
+  },
+
+  distributeSelectedFrames: (axis) => {
+    const { boards, activeBoardId, selectedFrameIds } = get()
+    const board = getActiveBoard(boards, activeBoardId)
+    if (!board || selectedFrameIds.length < 3) return
+    const rects: AlignableFrame[] = []
+    for (const pageId of selectedFrameIds) {
+      const frame = board.frames.find((f) => f.pageId === pageId)
+      if (frame) rects.push({ pageId, x: frame.x, y: frame.y, width: frame.width ?? FRAME_WIDTH, height: frame.height ?? FRAME_HEIGHT })
+    }
+    const positions = distributeFrames(rects, axis)
+    if (positions.size === 0) return
+    let nextBoard = board
+    for (const [pageId, pos] of positions) {
+      nextBoard = upsertFrame(nextBoard, { pageId, x: pos.x, y: pos.y })
+    }
+    set({ boards: upsertBoard(boards, nextBoard), boardsDirty: true })
+  },
+
+  tidySelectedFrames: () => {
+    const { boards, activeBoardId, selectedFrameIds } = get()
+    const board = getActiveBoard(boards, activeBoardId)
+    if (!board || selectedFrameIds.length === 0) return
+    let nextBoard = board
+    let index = 0
+    for (const pageId of selectedFrameIds) {
+      if (!nextBoard.frames.some((f) => f.pageId === pageId)) continue
+      const { x, y } = defaultFramePosition(index)
+      nextBoard = upsertFrame(nextBoard, { pageId, x, y })
+      index += 1
+    }
+    set({ boards: upsertBoard(boards, nextBoard), boardsDirty: true })
+  },
 })
 
 /** Select the active board (or `null` — not studio mode / not loaded yet). */

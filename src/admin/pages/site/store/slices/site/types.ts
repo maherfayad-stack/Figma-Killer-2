@@ -380,6 +380,20 @@ export interface SiteSlice {
   _historyCoalesceKey: string | null
   undo: () => void
   redo: () => void
+
+  // ─── Node-lookup indexes (WS-5.2) ────────────────────────────────────────
+  /**
+   * Every page id a node id currently appears on — many-valued because a
+   * composed Next.js `layout.tsx` node shares one id across every route
+   * beneath it (see `nodeIndex.ts` doc comment, `STATE.md` → `meta-05`).
+   * Built at load, maintained incrementally by every mutation. Read through
+   * `applyNodeIndexPatch`/`rebuildNodeIndexes` — never mutate directly.
+   */
+  _nodeIdToPageIds: Map<string, string[]>
+  /** How many nodes across the site resolve text from the same source literal. */
+  _textOriginKeyToCount: Map<string, number>
+  /** How many nodes across the site were inlined from the same local-component call site. */
+  _inlineTailToCount: Map<string, number>
 }
 
 // ---------------------------------------------------------------------------
@@ -458,5 +472,17 @@ export interface SiteSliceHelpers {
    */
   mutateAllPagesAndSite: (
     fn: (site: SiteDocument, helpers: SiteImportTransaction) => SiteMutationResult,
+  ) => boolean
+
+  /**
+   * WS-7.3 — mutate every page tree that contains at least one of `nodeIds`,
+   * running `fn` once per distinct page with just that page's own matching
+   * ids. Falls back to the plain single-tree `mutateActiveTree` path when
+   * every id resolves to (at most) one page, or in VC mode. See the
+   * implementation in `site/helpers.ts` for the full contract.
+   */
+  mutateTreesForNodeIds: (
+    nodeIds: string[],
+    fn: (tree: NodeTree<PageNode>, idsOnThisTree: string[]) => SiteMutationResult,
   ) => boolean
 }

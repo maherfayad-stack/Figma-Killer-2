@@ -59,6 +59,22 @@ export const PageNodeSchema = Type.Object({
     col: Type.Number(),
   })),
   /**
+   * Studio import (WS-8.3) — where the IMPORT DECLARATION naming this node's
+   * resolved image lives, when one of its props (`src`) resolved to a
+   * `studio-asset:` sentinel traced back to `import heroImg from './hero.png'`.
+   *
+   * Same shape and same reasoning as `textOrigin` above, aimed at a different
+   * literal: the JSX (`src={heroImg}`) is never the writeback target, but the
+   * import's own module-specifier string IS an ordinary literal at a known
+   * position, and `setImportSpecifier` rewrites exactly that. See
+   * `ParsedNode.assetOrigin` in `@core/page-parser`.
+   */
+  assetOrigin: Type.Optional(Type.Object({
+    rel: Type.String(),
+    line: Type.Number(),
+    col: Type.Number(),
+  })),
+  /**
    * Studio import — the prop names on this node that are NOT writable back to
    * source, because the source holds an expression rather than a literal
    * attribute. Inline-style entries appear as `style:<property>`.
@@ -108,6 +124,11 @@ function parseTextOrigin(raw: unknown): { rel: string; line: number; col: number
   return { rel: r.rel, line: r.line, col: r.col }
 }
 
+/** Parse a raw `assetOrigin` field — same per-field tolerance as `textOrigin` (identical shape, different meaning). */
+function parseAssetOrigin(raw: unknown): { rel: string; line: number; col: number } | undefined {
+  return parseTextOrigin(raw)
+}
+
 /** Parse a raw `codeProps` field, keeping only the string entries. */
 function parseCodeProps(raw: unknown): string[] | undefined {
   if (!Array.isArray(raw)) return undefined
@@ -143,6 +164,7 @@ export function parsePageNode(raw: unknown, nodePath: string): PageNode {
   // back into a dead field, and turn a code-valued prop back into one the editor
   // believes it may overwrite.
   const textOrigin = parseTextOrigin(r.textOrigin)
+  const assetOrigin = parseAssetOrigin(r.assetOrigin)
   const codeProps = parseCodeProps(r.codeProps)
 
   return {
@@ -150,6 +172,7 @@ export function parsePageNode(raw: unknown, nodePath: string): PageNode {
     ...(dynamicBindings !== undefined ? { dynamicBindings } : {}),
     ...(resolution !== undefined ? { resolution } : {}),
     ...(textOrigin !== undefined ? { textOrigin } : {}),
+    ...(assetOrigin !== undefined ? { assetOrigin } : {}),
     ...(codeProps !== undefined ? { codeProps } : {}),
     ...(typeof r.fromComponent === 'string' && r.fromComponent.length > 0
       ? { fromComponent: r.fromComponent }

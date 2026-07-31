@@ -18,7 +18,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { applyStudioEdit, studioEditLocation } from '../studioWriteback'
+import { applyStudioEdit, isSharedSourceNodeId, studioEditLocation } from '../studioWriteback'
 
 let tmpDir: string
 
@@ -180,5 +180,152 @@ describe('applyStudioEdit — the tag kind', () => {
     expect(
       applyStudioEdit(tmpDir, { kind: 'tag', nodeId: '../outside.tsx:1:1', tag: 'section' }),
     ).toBe(false)
+  })
+})
+
+describe('applyStudioEdit — the asset kind (WS-8.3)', () => {
+  it('rewrites the import specifier to a relative path reaching the new asset', () => {
+    write('src/pages/Home.tsx', "import heroImg from './hero.png'\nexport const x = heroImg\n")
+    write('src/pages/hero-2.png', 'binary-ish-content')
+
+    const applied = applyStudioEdit(tmpDir, {
+      kind: 'asset',
+      nodeId: 'src/pages/Home.tsx:1:21',
+      assetPath: 'src/pages/hero-2.png',
+    })
+
+    expect(applied).toBe(true)
+    expect(read('src/pages/Home.tsx')).toContain("import heroImg from './hero-2.png'")
+  })
+
+  it('computes an ascending relative specifier when the new asset lives in a sibling tree', () => {
+    write('src/pages/Home.tsx', "import heroImg from './old.png'\n")
+    write('assets/uploads/new-hero.png', 'x')
+
+    const applied = applyStudioEdit(tmpDir, {
+      kind: 'asset',
+      nodeId: 'src/pages/Home.tsx:1:21',
+      assetPath: 'assets/uploads/new-hero.png',
+    })
+
+    expect(applied).toBe(true)
+    expect(read('src/pages/Home.tsx')).toContain("import heroImg from '../../assets/uploads/new-hero.png'")
+  })
+
+  it('refuses an assetPath that escapes the workspace', () => {
+    write('src/pages/Home.tsx', "import heroImg from './old.png'\n")
+    const outside = path.join(path.dirname(tmpDir), 'outside.png')
+    fs.writeFileSync(outside, 'x', 'utf8')
+
+    try {
+      const applied = applyStudioEdit(tmpDir, {
+        kind: 'asset',
+        nodeId: 'src/pages/Home.tsx:1:21',
+        assetPath: '../outside.png',
+      })
+      expect(applied).toBe(false)
+      expect(read('src/pages/Home.tsx')).toContain("'./old.png'")
+    } finally {
+      fs.rmSync(outside, { force: true })
+    }
+  })
+
+  it('refuses an assetPath that does not exist on disk', () => {
+    write('src/pages/Home.tsx', "import heroImg from './old.png'\n")
+
+    const applied = applyStudioEdit(tmpDir, {
+      kind: 'asset',
+      nodeId: 'src/pages/Home.tsx:1:21',
+      assetPath: 'src/assets/gone.png',
+    })
+
+    expect(applied).toBe(false)
+    expect(read('src/pages/Home.tsx')).toContain("'./old.png'")
+  })
+
+  it('refuses an assetPath through a symlink escaping the workspace', () => {
+    const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-writeback-outside-'))
+    try {
+      fs.writeFileSync(path.join(outsideDir, 'secret.png'), 'x', 'utf8')
+      write('src/pages/Home.tsx', "import heroImg from './old.png'\n")
+      fs.mkdirSync(path.join(tmpDir, 'src', 'assets'), { recursive: true })
+      const link = path.join(tmpDir, 'src', 'assets', 'linked.png')
+      try {
+        fs.symlinkSync(path.join(outsideDir, 'secret.png'), link, 'file')
+      } catch {
+        return // symlink creation unsupported/unprivileged in this environment — skip
+      }
+
+      const applied = applyStudioEdit(tmpDir, {
+        kind: 'asset',
+        nodeId: 'src/pages/Home.tsx:1:21',
+        assetPath: 'src/assets/linked.png',
+      })
+
+      expect(applied).toBe(false)
+      expect(read('src/pages/Home.tsx')).toContain("'./old.png'")
+    } finally {
+      fs.rmSync(outsideDir, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses an assetPath with backslash traversal segments', () => {
+    write('src/pages/Home.tsx', "import heroImg from './old.png'\n")
+
+    const applied = applyStudioEdit(tmpDir, {
+      kind: 'asset',
+      nodeId: 'src/pages/Home.tsx:1:21',
+      assetPath: 'src\\..\\..\\outside.png',
+    })
+
+    expect(applied).toBe(false)
+  })
+
+  it('writes nothing for an escaping nodeId, same guard every other kind gets', () => {
+    expect(
+      applyStudioEdit(tmpDir, { kind: 'asset', nodeId: '../outside.tsx:1:1', assetPath: 'src/x.png' }),
+    ).toBe(false)
+  })
+})
+
+/**
+ * `sharedComponents` in the save response is what tells the client its OTHER
+ * frames went stale. Miss a case and the user edits a shared nav, sees it
+ * change on the frame they're looking at, and every other frame quietly keeps
+ * rendering markup that no longer matches disk — the exact silent divergence
+ * between canvas and source this codebase refuses to ship.
+ */
+describe('isSharedSourceNodeId', () => {
+  it('flags an inlined component instance', () => {
+    expect(isSharedSourceNodeId('pages/Home.tsx:12:5~components/Card.tsx:3:1')).toBe(true)
+  })
+
+  it('flags ANY asset edit unconditionally — an import can back more than one JSX usage', () => {
+    // A plain, non-inlined, non-chrome id would otherwise read as "not shared".
+    expect(isSharedSourceNodeId('src/pages/Home.tsx:1:21', 'asset')).toBe(true)
+    // The same id, for a different edit kind, is not inherently shared.
+    expect(isSharedSourceNodeId('src/pages/Home.tsx:1:21', 'prop')).toBe(false)
+    expect(isSharedSourceNodeId('src/pages/Home.tsx:1:21')).toBe(false)
+  })
+
+  it('flags App Router chrome, which one file composes into every route below it', () => {
+    expect(isSharedSourceNodeId('app/layout.tsx:4:3')).toBe(true)
+    expect(isSharedSourceNodeId('app/blog/layout.tsx:4:3')).toBe(true)
+    expect(isSharedSourceNodeId('app/blog/template.jsx:9:1')).toBe(true)
+  })
+
+  it('does not flag an ordinary page node, which backs exactly one frame', () => {
+    expect(isSharedSourceNodeId('app/blog/first/page.tsx:2:10')).toBe(false)
+    expect(isSharedSourceNodeId('pages/Home.tsx:12:5')).toBe(false)
+  })
+
+  it('does not flag a file that merely CONTAINS the word layout', () => {
+    expect(isSharedSourceNodeId('components/LayoutGrid.tsx:1:1')).toBe(false)
+    expect(isSharedSourceNodeId('app/layouts.tsx:1:1')).toBe(false)
+  })
+
+  it('does not flag an id with no decodable location', () => {
+    expect(isSharedSourceNodeId('index:body')).toBe(false)
+    expect(isSharedSourceNodeId('../../.ssh/config:1:1')).toBe(false)
   })
 })

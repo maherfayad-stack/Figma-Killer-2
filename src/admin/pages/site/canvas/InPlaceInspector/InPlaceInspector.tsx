@@ -19,38 +19,15 @@
  * to null when the node is missing or isn't a design-system component.
  */
 import { useEditorStore } from '@site/store/store'
-import type { EditorStore } from '@site/store/store'
-import type { BaseNode } from '@core/page-tree'
 import { registry } from '@core/module-engine'
 import { PropertyControlRenderer } from '@site/property-controls/PropertyControlRenderer'
 import { propLockReason } from '@site/panels/PropertiesPanel/renderModuleTabContent'
+import { findNodeById } from './findNodeById'
 import { visibleInspectorControls } from './visibleInspectorControls'
 import styles from './InPlaceInspector.module.css'
 
 interface InPlaceInspectorProps {
   nodeId: string
-}
-
-/**
- * Resolve a node by id across every page and (when active) the open Visual
- * Component tree. Studio's board mode renders several pages simultaneously —
- * unlike `selectSelectedNode`, which only looks at the single active
- * document — so this searches the whole site rather than assuming the
- * selected node lives on the active page.
- */
-function findNodeById(state: EditorStore, nodeId: string): BaseNode | null {
-  if (!state.site) return null
-  for (const page of state.site.pages) {
-    const node = page.nodes[nodeId]
-    if (node) return node
-  }
-  const activeDocument = state.activeDocument
-  if (activeDocument?.kind === 'visualComponent') {
-    const vc = state.site.visualComponents?.find((v) => v.id === activeDocument.vcId)
-    const node = vc?.tree.nodes[nodeId]
-    if (node) return node
-  }
-  return null
 }
 
 export function InPlaceInspector({ nodeId }: InPlaceInspectorProps) {

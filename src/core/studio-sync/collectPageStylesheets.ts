@@ -34,11 +34,16 @@
  * ## What is deliberately NOT collected
  *
  * Only relative specifiers (`./x.css`, `../y.css`). A bare package specifier
- * (`@alm-design/design-system/dist/styles.css`) is skipped: those components
- * render through their own `alm.*` modules, which carry their own styling, and
- * pulling a dependency's whole stylesheet into the site's editable class list
- * would bury the user's own classes. Anything resolving outside the workspace
- * root is rejected outright.
+ * (`@alm-design/design-system/dist/styles.css`) is skipped here: pulling a
+ * dependency's whole stylesheet into the site's EDITABLE class list would
+ * bury the user's own classes. Anything resolving outside the workspace root
+ * is rejected outright.
+ *
+ * Bare-specifier `.css` imports are NOT simply dropped, though — WS-2.3
+ * collects them through a completely separate path,
+ * `server/handlers/studio/styleCompile.ts`'s `collectVendorCss`, and injects
+ * the raw bytes into the canvas iframe as a read-only `@layer vendor` bucket
+ * (`ProjectCssInjector`) that never touches `site.styleRules`/`classIds`.
  */
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
@@ -122,8 +127,13 @@ export function collectEntryStylesheets(project: Project, workspaceRoot: string)
   return [...collected.values()]
 }
 
-/** The path in `index.html`'s module script tag, else the first conventional candidate that exists. */
-function findEntryFile(root: string): string | undefined {
+/**
+ * The path in `index.html`'s module script tag, else the first conventional
+ * candidate that exists. Exported: `server/handlers/studio/projectProbe.ts`
+ * (WS-1.2) reuses this exact walk to find a Vite/CRA project's app entry
+ * file rather than re-implementing a second `index.html` scan.
+ */
+export function findEntryFile(root: string): string | undefined {
   const indexHtml = path.join(root, 'index.html')
   if (existsSync(indexHtml)) {
     try {

@@ -497,6 +497,9 @@ function processElement(
     // Only when the text came from a `.map` iteration's own scope would this be
     // ambiguous, and `idSuffix` marks those ids as unwritable anyway.
     ...(textResult?.origin ? { textOrigin: textResult.origin } : {}),
+    // WS-8.3 — where the import naming this node's resolved image lives, when
+    // one of its props traced back to one. See `ParsedNode.assetOrigin`.
+    ...(propsResult.assetOrigin ? { assetOrigin: propsResult.assetOrigin } : {}),
     ...(styleResult.styles !== undefined ? { inlineStyles: styleResult.styles } : {}),
     ...(lock.resolution ? { resolution: lock.resolution } : {}),
   }

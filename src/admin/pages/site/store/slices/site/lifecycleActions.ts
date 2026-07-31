@@ -17,6 +17,7 @@ import { clearCanvasSelectionDraft } from '../selectionSlice'
 import { createDefaultSiteDocument } from './defaults'
 import { emptyDirtyMarks } from './dirtyTracking'
 import { reconcileFrameworkClasses } from './framework/reconcile'
+import { clearNodeIndexes, rebuildNodeIndexes } from './nodeIndex'
 import type { SiteSlice, SiteSliceHelpers } from './types'
 
 type LifecycleActions = Pick<
@@ -66,6 +67,17 @@ export function createLifecycleActions({
         state.hasUnsavedChanges = false
         // A brand-new site has no stored rows at all — first save is full.
         state._dirtySave = { ...emptyDirtyMarks(), all: true }
+        // Fresh site, fresh indexes — cheap (one page) and simplest-correct.
+        // `site` (the local, pre-spread var) has the same `pages` as
+        // `state.site` — the spread above only overrides `runtime`.
+        rebuildNodeIndexes(
+          {
+            nodeIdToPageIds: state._nodeIdToPageIds,
+            textOriginKeyToCount: state._textOriginKeyToCount,
+            inlineTailToCount: state._inlineTailToCount,
+          },
+          site,
+        )
       })
       return site
     },
@@ -108,6 +120,19 @@ export function createLifecycleActions({
         state.canRedo = false
         state.hasUnsavedChanges = false
         state._dirtySave = emptyDirtyMarks()
+        // Full reload — including a re-parse after a `shifted: true` save,
+        // where every `line:col` id below the shifted line changed. There is
+        // no pre/post patch set to diff incrementally against (this IS the
+        // new baseline), so a full rebuild is not just simplest but correct.
+        // `site` (the param, pre-spread) has the same `pages` as `state.site`.
+        rebuildNodeIndexes(
+          {
+            nodeIdToPageIds: state._nodeIdToPageIds,
+            textOriginKeyToCount: state._textOriginKeyToCount,
+            inlineTailToCount: state._inlineTailToCount,
+          },
+          site,
+        )
       })
     },
 
@@ -126,6 +151,11 @@ export function createLifecycleActions({
         state.canUndo = false
         state.canRedo = false
         state._dirtySave = emptyDirtyMarks()
+        clearNodeIndexes({
+          nodeIdToPageIds: state._nodeIdToPageIds,
+          textOriginKeyToCount: state._textOriginKeyToCount,
+          inlineTailToCount: state._inlineTailToCount,
+        })
       })
     },
 

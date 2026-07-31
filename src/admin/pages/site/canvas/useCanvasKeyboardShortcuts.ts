@@ -163,9 +163,21 @@ export function useCanvasKeyboardShortcuts(
     // VC mode with nothing selected still returns to the page canvas.
     if (event.key === 'Escape') {
       clearSelection()
+      useEditorStore.getState().clearFrameSelection()
       if (activeDocument?.kind === 'visualComponent') {
         setActiveDocument(null)
       }
+      return
+    }
+
+    // WS-7.1 — ⌘/Ctrl+A on an empty canvas (no node selected) selects every
+    // frame on the active studio board. Runs before the `!selectedNodeId`
+    // guard below on purpose: node selection has no "select all" of its own,
+    // so this only ever competes with the browser's native select-all, which
+    // `preventDefault` already suppresses in an editable-field-free canvas.
+    if (!selectedNodeId && getKeybindingForCommand('board.selectAllFrames')?.match(event)) {
+      event.preventDefault()
+      useEditorStore.getState().selectAllFrames()
       return
     }
 

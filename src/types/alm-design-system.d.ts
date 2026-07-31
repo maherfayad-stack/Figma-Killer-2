@@ -9,7 +9,8 @@
  * untyped ambient module is the right shim — the real prop shapes live in the
  * manifest, not in package typings.
  *
- * The `?inline` CSS import used by `AlmDesignSystemCssInjector` is typed by
- * `vite/client`, not here.
+ * The `?inline` CSS import used by `ProjectCssInjector` (one of its two
+ * vendor CSS sources — see that file's doc) is typed by `vite/client`, not
+ * here.
  */
 declare module '@alm-design/design-system'

@@ -23,6 +23,8 @@ import { applyStudioEdit, dedupeStudioEdits, orderStudioEditsForApply } from '..
 import { assignPageIds, pageIdFromRelPath } from '../studioPageLoad'
 import { discoverPageFiles, listStudioProjects, pageComponentNameFromInput } from '../studioProjects'
 import { collectWorkspaceFiles } from '../studioDownload'
+import { probeProject } from '../studio/projectProbe'
+import { mergeStudioMeta } from '../studio/studioMeta'
 
 describe('orderStudioEditsForApply', () => {
   it('sorts bottom-to-top: descending line, then descending column', () => {
@@ -742,6 +744,110 @@ describe('GET /admin/api/studio/load — Phase 7A multi-file workspace', () => {
 
     expect(body.pages).toEqual([])
     expect(body.componentSources).toEqual({})
+  })
+})
+
+describe('GET /admin/api/studio/load — Next.js App Router (WS-1.3)', () => {
+  let tmpDir: string
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-load-next-app-'))
+  })
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  function write(relPath: string, contents: string): void {
+    const full = path.join(tmpDir, ...relPath.split('/'))
+    fs.mkdirSync(path.dirname(full), { recursive: true })
+    fs.writeFileSync(full, contents, 'utf8')
+  }
+
+  /** Probes the fixture for real (same as the ingest pipeline would) and persists the profile, so `loadStudioPages` branches on a genuine `ProjectProfile`, not a hand-typed stand-in. */
+  function persistNextAppProfile(): void {
+    const profile = probeProject(tmpDir)
+    expect(profile.framework).toBe('next-app') // guards the fixture itself, not the thing under test
+    mergeStudioMeta(tmpDir, { profile })
+  }
+
+  async function load(): Promise<{
+    pages: Array<{ id: string; slug: string; title: string; nodes: Record<string, { id: string; moduleId: string; props: Record<string, unknown> }> }>
+  }> {
+    const url = new URL(`http://localhost/admin/api/studio/load?dir=${encodeURIComponent(tmpDir)}`)
+    const req = new Request(url)
+    const res = await tryServeStudio(req, undefined, url, url.pathname)
+    expect(res).not.toBeNull()
+    return res!.json()
+  }
+
+  it('names the frame after the ROUTE, not "page"/"page (2)"', async () => {
+    write('next.config.js', 'module.exports = {}\n')
+    write(
+      'app/layout.tsx',
+      ['export default function RootLayout({ children }) {', '  return <html><body>{children}</body></html>', '}', ''].join('\n'),
+    )
+    write(
+      'app/(marketing)/pricing/page.tsx',
+      ['export default function PricingPage() {', '  return <main>Pricing</main>', '}', ''].join('\n'),
+    )
+    write(
+      'app/dashboard/page.tsx',
+      ['export default function DashboardPage() {', '  return <main>Dashboard</main>', '}', ''].join('\n'),
+    )
+    persistNextAppProfile()
+
+    const { pages } = await load()
+
+    expect(pages.map((p) => p.id).sort()).toEqual(['/dashboard', '/pricing'])
+    expect(pages.map((p) => p.title).sort()).toEqual(['/dashboard', '/pricing'])
+    expect(pages.every((p) => p.slug !== 'page')).toBe(true)
+  })
+
+  it('composes the root layout around the page, and a node from each file writes back to that file', async () => {
+    write('next.config.js', 'module.exports = {}\n')
+    write(
+      'app/layout.tsx',
+      [
+        'export default function RootLayout({ children }) {',
+        '  return <html><body className="shell">{children}</body></html>',
+        '}',
+        '',
+      ].join('\n'),
+    )
+    write(
+      'app/pricing/page.tsx',
+      ['export default function PricingPage() {', '  return <main className="pricing">Pricing</main>', '}', ''].join('\n'),
+    )
+    persistNextAppProfile()
+
+    const { pages } = await load()
+    const pricing = pages.find((p) => p.id === '/pricing')!
+    const nodes = Object.values(pricing.nodes)
+
+    // The composed tree includes BOTH the layout's own element (<body>) and
+    // the page's own element (<main>) — nothing was dropped or fabricated.
+    const body = nodes.find((n) => n.id.startsWith('app/layout.tsx:'))
+    const main = nodes.find((n) => n.id.startsWith('app/pricing/page.tsx:'))
+    expect(body).toBeDefined()
+    expect(main).toBeDefined()
+    expect(body!.id.startsWith('app/layout.tsx:')).toBe(true)
+    expect(main!.id.startsWith('app/pricing/page.tsx:')).toBe(true)
+
+    // Writeback: an edit to the LAYOUT node lands in app/layout.tsx...
+    const wroteLayout = applyStudioEdit(tmpDir, { kind: 'prop', nodeId: body!.id, prop: 'data-chrome', value: 'ok' })
+    expect(wroteLayout).toBe(true)
+    expect(fs.readFileSync(path.join(tmpDir, 'app', 'layout.tsx'), 'utf8')).toContain('data-chrome="ok"')
+
+    // ...and an edit to the PAGE node lands in app/pricing/page.tsx — never
+    // the other file.
+    const wrotePage = applyStudioEdit(tmpDir, { kind: 'prop', nodeId: main!.id, prop: 'data-content', value: 'ok' })
+    expect(wrotePage).toBe(true)
+    const pageSource = fs.readFileSync(path.join(tmpDir, 'app', 'pricing', 'page.tsx'), 'utf8')
+    expect(pageSource).toContain('data-content="ok"')
+    expect(pageSource).not.toContain('data-chrome')
+    const layoutSource = fs.readFileSync(path.join(tmpDir, 'app', 'layout.tsx'), 'utf8')
+    expect(layoutSource).not.toContain('data-content')
   })
 })
 

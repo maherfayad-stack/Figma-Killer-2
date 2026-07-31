@@ -3,7 +3,8 @@
  * `value`) and Tier C (calling a resolvable pure arrow/function) call
  * evaluation, plus the whitelisted primitive method/coercion calls §7.5
  * names (`String`, `Number`, `Math.*`, `.toFixed`, `.padStart`,
- * `.toUpperCase`, `.toLowerCase`, `.trim`, `.join`). See `./staticEval`'s doc
+ * `.toUpperCase`, `.toLowerCase`, `.trim`, `.join`) and the WS-2.2
+ * `cn`/`clsx`/`classnames` class-name-join built-in. See `./staticEval`'s doc
  * comment for the full tier-boundary explanation — this is the single
  * highest-risk file per the plan's §10 risk register, so keep every
  * capability inside its named tier's explicit envelope; never blur into
@@ -73,6 +74,9 @@ export function evaluateCall(expr: CallExpression, scope: EvalScope, budget: Bud
 
   const memoized = tryUseMemoUnwrap(expr, callee, scope, budget, depth)
   if (memoized) return memoized
+
+  const classJoin = tryClassNameJoinBuiltin(expr, callee, scope, budget, depth)
+  if (classJoin) return classJoin
 
   const whitelisted = tryWhitelistedPrimitiveCall(expr, callee, scope, budget, depth)
   if (whitelisted) return whitelisted
@@ -254,6 +258,66 @@ function tryUseMemoUnwrap(
   const body = factory.getBody()
   if (Node.isBlock(body)) return unresolved('useMemo factory has a block body — outside the evaluator envelope')
   return evaluateNode(unwrapParens(body), scope, budget, depth + 1)
+}
+
+// -- `cn`/`clsx`/`classnames` — WS-2.2's built-in class-name join -------------
+
+/**
+ * Identifier names treated as the `clsx`/`classnames` join, whichever package
+ * (or local re-export, e.g. shadcn's `cn = (...a) => twMerge(clsx(a))`) they
+ * actually came from. Matched by name only, the same way `mathFunction` above
+ * matches a bare `Math` identifier without checking provenance — no user code
+ * ever runs, so a same-named local function that means something else just
+ * gets a wrong-but-bounded string instead of `unresolved`, and every real
+ * corpus that defines `cn`/`clsx`/`classNames` uses exactly this semantics.
+ */
+const CLASS_NAME_JOIN_BUILTIN_NAMES: ReadonlySet<string> = new Set(['cn', 'clsx', 'classNames', 'classnames'])
+
+/**
+ * `cn(...)`/`clsx(...)`/`classnames(...)` — a pure string join, added to Tier
+ * C's whitelist as a built-in per §WS-2.2 rather than attempted through the
+ * general Tier C envelope (the real library's source is a tight loop over
+ * `arguments`, well outside `qualifiesForTierC`'s shape). Documented, tiny
+ * semantics matching the real libraries closely enough for a static reader:
+ * truthy strings/numbers are kept, falsy scalars and booleans are dropped,
+ * arrays are flattened recursively, and an object's keys are kept when their
+ * value is truthy. An argument that doesn't statically resolve (a runtime
+ * condition on unknown state, an unresolvable identifier) is simply DROPPED
+ * from the join rather than failing the whole call — the same "best-effort,
+ * never guess" degrade every other Tier A/B/C path uses for a partial result.
+ */
+function tryClassNameJoinBuiltin(
+  expr: CallExpression,
+  callee: Node,
+  scope: EvalScope,
+  budget: Budget,
+  depth: number,
+): StaticValue | undefined {
+  if (!Node.isIdentifier(callee) || !CLASS_NAME_JOIN_BUILTIN_NAMES.has(callee.getText())) return undefined
+  const parts: string[] = []
+  for (const argExpr of expr.getArguments()) {
+    appendClassNameValue(evaluateNode(argExpr, scope, budget, depth + 1), parts)
+  }
+  return { kind: 'literal', value: parts.join(' ') }
+}
+
+function appendClassNameValue(value: StaticValue, parts: string[]): void {
+  if (value.kind === 'literal') {
+    if (typeof value.value === 'string' && value.value.length > 0) parts.push(value.value)
+    else if (typeof value.value === 'number' && value.value !== 0) parts.push(String(value.value))
+    return // booleans, null, 0, and '' contribute nothing — same as the real libraries
+  }
+  if (value.kind === 'array') {
+    for (const item of value.items) appendClassNameValue(item, parts)
+    return
+  }
+  if (value.kind === 'object') {
+    for (const [key, entryValue] of value.entries) {
+      if (entryValue.kind === 'literal' && Boolean(entryValue.value)) parts.push(key)
+    }
+    return
+  }
+  // `unresolved`/`fn` — dropped, not failed. See this section's doc comment.
 }
 
 // -- Tier C: calling a resolvable pure arrow/function -------------------------

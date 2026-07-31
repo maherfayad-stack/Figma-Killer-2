@@ -25,8 +25,8 @@ Zustand + Mutative, composed from slices. Source:
 |---|---|
 | `siteSlice.ts` | The site document, `loadSite`, `saveSite`, the 11 named tree actions |
 | `site/helpers.ts` | `resolveActiveTreeTarget`, `mutateActiveTree` — **the only place that knows which tree is active** |
-| `boardSlice.ts` | Boards, frames, `addFrame`, `setFramePosition`, `setFrameSize`, `seedFramesForActiveBoard` |
-| `selectionSlice.ts` | `selectedNodeId`, `selectedNodeIds`, multi-select, focus target |
+| `boardSlice.ts` | Boards, frames, `addFrame`, `setFramePosition`, `setFrameSize`, `seedFramesForActiveBoard`, `selectedFrameIds` (WS-7.1 frame multi-select), `frameDefaults` + bulk frame actions (WS-7.2) |
+| `selectionSlice.ts` | `selectedNodeId`, `selectedNodeIds`, multi-select, focus target — WS-7.3: on a studio board, a multi-selection may span any of the board's own curated frames, not just the active page (`resolveSelectableNode`) |
 | `canvasSlice.ts` | `canvasView` ('design' \| 'live'), zoom/pan, `activeBreakpointId`, `runScripts` |
 | `inlineEditSlice.ts` | `activeInlineEdit` — one session globally |
 | `styleRuleSlice.ts` | The CSS class registry |
@@ -98,6 +98,45 @@ If you add a mutation, decide its coalesce key deliberately. Wrong key = either
 one undo wipes unrelated work, or every keystroke is its own entry.
 
 ---
+
+## Frame multi-select and bulk actions (WS-7)
+
+**A board frame is not a node.** `boardSlice.selectedFrameIds` is a wholly
+separate selection domain from `selectionSlice.selectedNodeIds` — selecting a
+frame clears the node selection and vice versa (mutual exclusivity), so
+`PropertiesPanel` always shows exactly one of the frame inspector
+(`FrameBulkInspector`) or the node inspector.
+
+- **Selection entry points:** frame header click (replace) / Shift-click
+  (toggle) in `BoardFramesLayer.tsx`; `⌘/Ctrl+A` on empty canvas
+  (`selectAllFrames`, wired through the keybindings registry as the virtual
+  command `board.selectAllFrames`); marquee-drag on empty canvas
+  (`framesInMarquee.ts`, pure board→screen math next to
+  `frameVirtualization.ts`).
+- **Bulk frame actions** (`setSelectedFramesSize`, `applyWidthToAllFrames`,
+  `setFrameHeights`, `alignSelectedFrames`, `distributeSelectedFrames`,
+  `tidySelectedFrames`) all resolve their target set from `selectedFrameIds`
+  against the active board and go through the same `upsertFrame`/`resizeFrame`
+  pure transforms as the single-frame actions, so every write still
+  round-trips through `parseBoardsFile` — no parallel validator.
+- **`frameDefaults`** mirrors `.studio/meta.json`'s `frameDefaults`
+  (server-owned, `mergeProjectFrameDefaults` in `studioProjects.ts`,
+  `/admin/api/studio/frame-defaults`). The store never calls that endpoint
+  itself — `applyWidthToAllFrames` only updates local state + every frame's
+  width; the calling UI (`FrameBulkInspector`) persists the default via
+  `frameDefaultsApi.ts` afterward. `addFrame`/`seedFramesForActiveBoard`
+  consult the local mirror so a page added later inherits it.
+- **Cross-frame node multi-select (WS-7.3):** on a studio board,
+  `selectionSlice`'s `sameTree`/`filterMultiSelectableIds` widen their scope
+  from "the single active page" to "any page curated as a frame on the active
+  board" (`resolveSelectableNode`). Outside board mode this is unchanged
+  (same-page-only). `deleteNodes`/`wrapNodes` route through
+  `site/helpers.ts`'s `mutateTreesForNodeIds`, which groups selected ids by
+  page (`site/nodeTreeGrouping.ts`'s `groupNodeIdsByPage`, built on the
+  WS-5.2 `_nodeIdToPageIds` index) and runs one `runHistoricMutation`
+  transaction across every touched page — a cross-frame bulk action is still
+  ONE undo step. A shared/composed node id (Next.js route chrome) is mutated
+  on every page copy it appears on, matching the save route's own dedup.
 
 ## Adding state — checklist
 

@@ -33,10 +33,12 @@ import type {
 } from '@core/page-tree'
 import type { LoopEntitySource } from '@core/loops/types'
 import type { ActiveDocument } from '../../store/slices/uiSlice'
+import { isStudioMode } from '@site/studio/studioMode'
 import { LoopPropertiesView } from './LoopPropertiesView'
 import { ParamPromotableRow } from './ParamPromotableRow'
 import { FormSettingsPanel } from './FormSettingsPanel'
 import { isFormSettingsModule } from './formSettingsAnalysis'
+import { ImageSourceSection } from './ImageSourceSection'
 
 const PROMOTED_FORM_PROPERTY_KEYS = new Set(['mode', 'formId', 'targetTableId'])
 
@@ -96,6 +98,20 @@ export function renderModuleTabContent(args: ModuleTabContentArgs): React.ReactN
     selectedNodeId !== null &&
     isFormSettingsModule(selectedNode.moduleId)
 
+  // WS-8.3 — a Studio-imported node whose module declares `imageEdit` gets the
+  // dedicated image picker (upload / replace against the WORKSPACE, not the
+  // CMS media library) INSTEAD of the schema-driven `type: 'image'` row,
+  // whenever there is something honest for it to do: an `assetOrigin` to
+  // rewrite (the import-bound case WS-8.3 unlocks), or an ordinary writable
+  // literal `src`. A node this control can do nothing for (locked, no traced
+  // origin) falls through to the schema loop's existing `CodeValueControl`
+  // below unchanged.
+  const imageEditProp = definition.imageEdit?.prop
+  const showImageSource =
+    isStudioMode() &&
+    imageEditProp !== undefined &&
+    (selectedNode.assetOrigin !== undefined || isPropWritableToSource(selectedNode, imageEditProp))
+
   return (
     <>
       {showFormSettings && (
@@ -106,12 +122,23 @@ export function renderModuleTabContent(args: ModuleTabContentArgs): React.ReactN
         />
       )}
 
+      {showImageSource && imageEditProp !== undefined && (
+        <ImageSourceSection
+          node={selectedNode}
+          prop={imageEditProp}
+          value={resolvedPropsForBreakpoint[imageEditProp]}
+          onChange={updateModuleProp}
+        />
+      )}
+
       {Object.entries(definition.schema).map(([key, control]: [string, PropertyControl]) => {
         // Hidden controls carry a type for the engine (escaping dispatch) but
         // render no editor surface — e.g. base.outlet.html, a publisher-filled
         // binding target the author never edits.
         if (control.hidden) return null
         if (isPromotedFormProperty(selectedNode, key)) return null
+        // Already rendered above as the dedicated Studio image picker.
+        if (showImageSource && key === imageEditProp) return null
         if (control.condition && !evaluateCondition(control.condition, resolvedPropsForBreakpoint)) {
           return null
         }

@@ -10,6 +10,7 @@
  *   - `./site/types`            — SiteSlice interface + patch types + helpers contract
  *   - `./site/defaults`         — createDefaultSiteDocument + MAX_HISTORY
  *   - `./site/helpers`          — buildSiteHelpers (mutate* + patch-based history) + depthInTree
+ *   - `./site/nodeIndex`        — nodeIdToPageIds / textOriginKeyToCount / inlineTailToCount (WS-5.2)
  *   - `./site/undoRedoActions`  — undo / redo
  *   - `./site/lifecycleActions` — createSite / loadSite / clearSite / updateSiteName
  *   - `./site/pageActions`      — page CRUD + template conversions
@@ -64,6 +65,12 @@ export const createSiteSlice: EditorStoreSliceCreator<SiteSlice> = (set, get) =>
     canUndo: false,
     canRedo: false,
     _historyCoalesceKey: null,
+
+    // Node-lookup indexes (WS-5.2) — rebuilt whole in loadSite/createSite,
+    // maintained incrementally by helpers.ts/undoRedoActions.ts. See nodeIndex.ts.
+    _nodeIdToPageIds: new Map(),
+    _textOriginKeyToCount: new Map(),
+    _inlineTailToCount: new Map(),
 
     // mutateAllPagesAndSite is the public entry point for the Super Import
     // wizard — one Cmd+Z reverts the entire import.

@@ -110,7 +110,7 @@ const PreviewOverlay = lazy(() =>
 )
 
 // Studio-only toolbar actions — only rendered when `?studio` is present
-// (see `studioMode` below). lazy() keeps ImportGithubButton/DownloadCodeButton
+// (see `studioMode` below). lazy() keeps ImportProjectButton/DownloadCodeButton
 // (plus their `downloadStudioCode.ts` client) out of the eager SitePage route
 // chunk for the (default) non-studio CMS editor. Bundled behind ONE lazy
 // boundary (`StudioToolbarActions`) rather than two, so the SitePage shell
@@ -357,6 +357,20 @@ function useStudioBoardsPersistence(studioMode: boolean): void {
             title: 'Failed to load boards',
             body: getErrorMessage(err, 'Unknown error loading studio boards'),
           })
+        })
+
+      // WS-7.2 — the per-project frame default (`.studio/meta.json`'s
+      // `frameDefaults`), so a page added THIS session inherits a width set
+      // via "apply to all pages" earlier. Best-effort: an absent/failed fetch
+      // just leaves the mirror at its `{}` default (no toast — this is a
+      // background hydration, not a user-triggered action).
+      import('@site/studio/frameDefaultsApi')
+        .then(({ fetchFrameDefaults }) => fetchFrameDefaults(getStudioWorkspaceDir()))
+        .then((defaults) => {
+          if (!cancelled) useEditorStore.getState().setFrameDefaults(defaults)
+        })
+        .catch((err) => {
+          console.error('[AdminCanvasLayout] frame-defaults load failed:', err)
         })
     }
 

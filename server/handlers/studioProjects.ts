@@ -10,9 +10,10 @@
  * `studio.ts` (the HTTP endpoint layer) so that file stays focused on request
  * wiring rather than growing into a god-module.
  */
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
-import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path'
+import { existsSync, readdirSync, statSync } from 'node:fs'
+import { basename, join, resolve, sep } from 'node:path'
 import { EXCLUDED_WORKSPACE_DIR_NAMES, listWorkspaceFiles } from '@core/page-parser'
+import { mergeStudioMeta, readStudioMeta, writeStudioMeta, type StudioMeta } from './studio/studioMeta'
 
 /**
  * Root that holds every studio project. Each immediate subfolder of
@@ -52,6 +53,103 @@ export function discoverPageFiles(pagesDir: string): string[] {
   return listWorkspaceFiles(pagesDir).filter((relPath) => PAGE_FILE_EXTENSIONS.some((ext) => relPath.endsWith(ext)))
 }
 
+// ---------------------------------------------------------------------------
+// Next.js App Router (WS-1.3) — route discovery + layout chain. Only ever
+// consulted when `ProjectProfile.framework === 'next-app'` (the probe already
+// detected this, `meta-04`); `discoverPageFiles` above is UNCHANGED and stays
+// the only page-discovery path for every other framework.
+// ---------------------------------------------------------------------------
+
+/** A `page.tsx`/`page.jsx` anywhere under `app/`, whatever the nesting. */
+const NEXT_APP_PAGE_FILE_RE = /(^|\/)page\.(tsx|jsx)$/
+
+/** One discovered App Router route: its `page.tsx` file and the URL it renders at. */
+export interface AppRouterRoute {
+  /** POSIX path to the route's `page.tsx`/`page.jsx`, relative to the app router directory (`app/` by default). */
+  relPath: string
+  /** The route derived from `relPath` — see `routeFromAppPageRelPath`. */
+  route: string
+}
+
+/**
+ * Discovers every ROUTE under a Next.js App Router directory — one
+ * `page.tsx`/`page.jsx` per route, which is what should get one frame on the
+ * board (`app/(marketing)/pricing/page.tsx` -> `/pricing`). `layout.tsx` and
+ * `template.tsx` files are real and are discovered separately
+ * (`collectAppRouterLayoutChain`) — they compose AROUND a route's page, they
+ * are never routes of their own.
+ *
+ * Reuses `listWorkspaceFiles`'s sorted, excluded-dir-aware walk (skips
+ * `.git`/`node_modules`/`.next`/etc, same list every other workspace scan
+ * uses), so an `app/api/hello/route.ts` handler or a `loading.tsx`/`error.tsx`
+ * boundary is walked over but never matches `NEXT_APP_PAGE_FILE_RE`.
+ */
+export function discoverAppRouterRoutes(appDir: string): AppRouterRoute[] {
+  return listWorkspaceFiles(appDir)
+    .filter((relPath) => NEXT_APP_PAGE_FILE_RE.test(relPath))
+    .map((relPath) => ({ relPath, route: routeFromAppPageRelPath(relPath) }))
+}
+
+/**
+ * `app/(marketing)/pricing/page.tsx` -> `/pricing`. Pure string transform of
+ * the file's directory segments — the file's own name (`page.tsx`) is always
+ * dropped, it names the file, not a path segment.
+ *
+ *   - A route GROUP (`(marketing)`) organizes files without appearing in the
+ *     URL — dropped entirely.
+ *   - A parallel-route slot (`@modal`) names a slot, not a path segment —
+ *     dropped entirely, same reasoning.
+ *   - A dynamic segment (`[slug]`) becomes `:slug` — still one segment,
+ *     readable instead of bracketed.
+ *   - A catch-all (`[...slug]`) or optional catch-all (`[[...slug]]`) becomes
+ *     `*slug` — reads as "the rest of the path", and is unambiguous next to
+ *     the `:slug` form above.
+ *
+ * A page with every segment stripped (e.g. `app/(marketing)/page.tsx`, the
+ * marketing group's own index) is the root route, `/`.
+ */
+export function routeFromAppPageRelPath(relPath: string): string {
+  const dirSegments = relPath.split('/').slice(0, -1)
+  const routeSegments = dirSegments
+    .filter((segment) => !/^\(.*\)$/.test(segment) && !segment.startsWith('@'))
+    .map((segment) => {
+      const catchAll = /^\[\[?\.\.\.([^\]]+)\]?\]$/.exec(segment)
+      if (catchAll) return `*${catchAll[1]}`
+      const dynamic = /^\[([^.[\]]+)\]$/.exec(segment)
+      if (dynamic) return `:${dynamic[1]}`
+      return segment
+    })
+  return routeSegments.length > 0 ? `/${routeSegments.join('/')}` : '/'
+}
+
+/**
+ * The `layout.tsx`/`layout.jsx` chain a route composes through, OUTERMOST
+ * first: `app/layout.tsx` (Next requires a root layout), then each ancestor
+ * segment's own `layout.tsx` down to — but not including — the page file
+ * itself, in the order `composeAppRouterRoute` needs to wrap from the
+ * outside in.
+ *
+ * Walks the page's RAW directory segments, route groups included — they are
+ * real directories on disk (`app/(marketing)/layout.tsx` is a real file even
+ * though `(marketing)` never appears in the URL). A directory with neither a
+ * `.tsx` nor a `.jsx` layout simply contributes nothing at that level.
+ */
+export function collectAppRouterLayoutChain(appDir: string, pageRelPath: string): string[] {
+  const dirSegments = pageRelPath.split('/').slice(0, -1)
+  const chain: string[] = []
+  for (let depth = 0; depth <= dirSegments.length; depth++) {
+    const ancestorSegments = dirSegments.slice(0, depth)
+    for (const ext of ['tsx', 'jsx']) {
+      const relLayoutPath = [...ancestorSegments, `layout.${ext}`].join('/')
+      if (existsSync(join(appDir, ...ancestorSegments, `layout.${ext}`))) {
+        chain.push(relLayoutPath)
+        break
+      }
+    }
+  }
+  return chain
+}
+
 /** One on-disk studio project — an immediate subfolder of `studio-workspace/`. */
 export interface StudioProjectSummary {
   /** Absolute directory path — passed straight to `setStudioWorkspaceDir`. */
@@ -62,105 +160,75 @@ export interface StudioProjectSummary {
   pageCount: number
 }
 
-/** Page count for a project directory, 0 when its (possibly overridden) pages dir doesn't exist. */
+/**
+ * Page count for a project directory, 0 when its (possibly overridden) pages
+ * dir doesn't exist. A `next-app` project counts ROUTES (`page.tsx` files),
+ * not every `.tsx`/`.jsx` under `app/` — that directory is full of
+ * `layout.tsx`/`template.tsx`/`route.ts` files that are not pages of their
+ * own, and `discoverPageFiles` (used for every other framework) has no notion
+ * of that distinction. Branches on the cached probe profile, never a guess —
+ * an unprobed project (no `.studio/meta.json` yet) falls back to the
+ * `discoverPageFiles` count unchanged, exactly today's behaviour.
+ */
 function pageCountFor(dir: string): number {
   const pagesDir = projectPagesDir(dir)
-  return existsSync(pagesDir) ? discoverPageFiles(pagesDir).length : 0
+  if (!existsSync(pagesDir)) return 0
+  if (readStudioMeta(dir).profile?.framework === 'next-app') return discoverAppRouterRoutes(pagesDir).length
+  return discoverPageFiles(pagesDir).length
 }
 
 /**
- * Per-project display-name + page-source sidecar, alongside the existing
- * `.studio/boards.json` and `.studio/framework.json` conventions.
+ * `.studio/meta.json` — displayName decouples the user-facing project name
+ * from the folder slug (a stable identifier assigned once at creation time;
+ * renaming the FOLDER mid-session would invalidate any already-open
+ * `studioWorkspaceDir` pointer), `pagesDir` overrides where a real-world
+ * repo's screens live on disk (e.g. `'src/screens'`), and `previewLocale`
+ * (§7.4) is the static evaluator's `preferredKey` for a dictionary indexed by
+ * a non-static key.
  *
- * `displayName` decouples the user-facing project name from the folder slug:
- * the folder is a stable identifier assigned once at creation time (never
- * renamed — renaming a directory mid-session would invalidate any
- * already-open `studioWorkspaceDir` pointer), while the display name can
- * change freely by just rewriting this small JSON file.
- *
- * `pagesDir` overrides where the project's pages live on disk — a
- * project-root-relative POSIX path (e.g. `'src/screens'`), for a real-world
- * repo (a GitHub import, typically) whose screens don't sit at the
- * hand-authored default of `<dir>/pages`. Optional; `projectPagesDir` is the
- * only place that should read it. See its doc comment for the containment
- * guard.
- *
- * `previewLocale` (§7.4) is the `preferredKey` the page-parser's static
- * evaluator uses when it resolves a dictionary indexed by a non-static key
- * (`translations[lang]`) — e.g. `"en"` picks the English branch instead of
- * falling back to the object's first key. Optional; unset means "first key in
- * source order", which is also what an unconfigured project falls back to via
- * `projectPreviewLocale` below.
+ * Ownership of the file itself — schema, read, write, merge-write — lives in
+ * `./studio/studioMeta.ts` (WS-1.2: TypeBox-validated, additively extended
+ * with `trust`, `profile` (the cached project probe), and `frameDefaults`).
+ * The functions below keep their original names/signatures so every existing
+ * caller (`studio.ts`, `studioProjects.test.ts`) needs no changes; only the
+ * implementation now delegates to the schema-validated reader/writer.
  */
-interface StudioProjectMeta {
-  displayName: string
-  pagesDir?: string
-  previewLocale?: string
-}
-
-function projectMetaFile(dir: string): string {
-  return join(dir, '.studio', 'meta.json')
-}
-
-/**
- * `pagesDir` override guard: a non-empty string, never absolute, never
- * containing a `..` segment (on either `/` or `\` separators — the value is
- * hand-editable JSON, so it can't be trusted to already be POSIX-clean).
- */
-function isSafePagesDirOverride(value: string): boolean {
-  if (value.trim().length === 0 || isAbsolute(value)) return false
-  return !value.split(/[\\/]+/).some((segment) => segment === '..')
-}
-
-/**
- * Reads `.studio/meta.json`, or `null` when absent/unparsable. Each field is
- * accepted independently and tolerantly — a hand-written meta carrying ONLY
- * `pagesDir` (no `displayName` at all) still yields `{ pagesDir }` here, so
- * `projectPagesDir`'s override isn't silently lost just because the file
- * doesn't also set a display name. Callers reading `displayName` already
- * treat a missing value as "fall back to the folder name"
- * (`projectDisplayName`), so returning a partial object changes nothing for
- * them.
- */
-function readProjectMeta(dir: string): Partial<StudioProjectMeta> | null {
-  const file = projectMetaFile(dir)
-  if (!existsSync(file)) return null
-  try {
-    const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'))
-    if (!parsed || typeof parsed !== 'object') return null
-    const meta: Partial<StudioProjectMeta> = {}
-    if ('displayName' in parsed && typeof parsed.displayName === 'string' && parsed.displayName.trim().length > 0) {
-      meta.displayName = parsed.displayName
-    }
-    if ('pagesDir' in parsed && typeof parsed.pagesDir === 'string' && isSafePagesDirOverride(parsed.pagesDir)) {
-      meta.pagesDir = parsed.pagesDir
-    }
-    if ('previewLocale' in parsed && typeof parsed.previewLocale === 'string' && parsed.previewLocale.trim().length > 0) {
-      meta.previewLocale = parsed.previewLocale
-    }
-    return meta
-  } catch {
-    return null
-  }
-}
 
 /** Writes `.studio/meta.json`, creating the `.studio/` sidecar dir if needed. */
-export function writeProjectMeta(dir: string, meta: StudioProjectMeta): void {
-  const file = projectMetaFile(dir)
-  mkdirSync(dirname(file), { recursive: true })
-  writeFileSync(file, JSON.stringify(meta, null, 2))
+export function writeProjectMeta(dir: string, meta: StudioMeta): void {
+  writeStudioMeta(dir, meta)
 }
 
 /**
- * Rewrites ONLY the display name in `.studio/meta.json`, preserving whatever
+ * Rewrites ONLY the given fields in `.studio/meta.json`, preserving whatever
  * else is already there (a `pagesDir` override from a GitHub import, most
- * importantly — `writeProjectMeta` itself has no merge semantics, it writes
- * exactly the object it's given, so a naive `writeProjectMeta(dir, {
- * displayName })` on rename would silently erase an imported project's page
- * source override). Used by the rename endpoint.
+ * importantly — `writeProjectMeta` itself has no merge semantics). Used by
+ * the rename endpoint.
  */
 export function renameProjectDisplayName(dir: string, displayName: string): void {
-  writeProjectMeta(dir, { ...(readProjectMeta(dir) ?? {}), displayName })
+  mergeStudioMeta(dir, { displayName })
+}
+
+/**
+ * WS-7.2 — "apply to all pages": merges `patch` into `.studio/meta.json`'s
+ * `frameDefaults`, preserving whatever field the patch doesn't mention (a
+ * width-only apply must not erase a previously-saved default height). Used
+ * by the `/admin/api/studio/frame-defaults` route.
+ */
+export function mergeProjectFrameDefaults(
+  dir: string,
+  patch: { width?: number; height?: number },
+): { width?: number; height?: number } {
+  const existing = readStudioMeta(dir).frameDefaults ?? {}
+  // Spreading `patch` directly would set e.g. `width: undefined` on a
+  // height-only call, which JSON.stringify then drops on write — silently
+  // erasing a previously-saved width. Only overwrite fields the caller
+  // actually supplied.
+  const merged = { ...existing }
+  if (patch.width !== undefined) merged.width = patch.width
+  if (patch.height !== undefined) merged.height = patch.height
+  mergeStudioMeta(dir, { frameDefaults: merged })
+  return merged
 }
 
 /**
@@ -170,19 +238,29 @@ export function renameProjectDisplayName(dir: string, displayName: string): void
  * instead of the folder name.
  */
 export function projectDisplayName(dir: string): string {
-  return readProjectMeta(dir)?.displayName ?? basename(dir) ?? dir
+  return readStudioMeta(dir).displayName ?? basename(dir) ?? dir
 }
 
 /**
- * Absolute pages dir for a project: `.studio/meta.json`'s `pagesDir` override
- * when present and safe, else the default `<dir>/pages`. Belt-and-braces
- * containment check even though `readProjectMeta` already rejects absolute
- * paths and `..` segments — a hand-edited `meta.json` gets no other gate
- * before this value is joined onto a real filesystem path.
+ * Absolute pages dir for a project, in precedence order: `.studio/meta.json`'s
+ * explicit `pagesDir` override (hand-set, or set at import time) when present
+ * and safe; else the cached probe's `ProjectProfile.pagesDir` (WS-1.2/1.3) —
+ * for a `next-app` project this is `'app'`, and without this fallback a
+ * probed-but-not-explicitly-overridden Next project would scan the
+ * nonexistent `<dir>/pages` and find nothing; else the default `<dir>/pages`.
+ *
+ * An explicit override always wins over the probe: a user who has confirmed
+ * or hand-set `pagesDir` knows something the probe's own heuristics don't.
+ *
+ * Belt-and-braces containment check runs on the FINAL joined path regardless
+ * of which of the three sources it came from — a hand-edited `meta.json` gets
+ * no other gate before this value is joined onto a real filesystem path, and
+ * `profile.pagesDir` is schema-typed as a bare string with no traversal check
+ * of its own.
  */
 export function projectPagesDir(dir: string): string {
-  const override = readProjectMeta(dir)?.pagesDir
-  const pagesDir = join(dir, override ?? 'pages')
+  const meta = readStudioMeta(dir)
+  const pagesDir = join(dir, meta.pagesDir ?? meta.profile?.pagesDir ?? 'pages')
   const root = resolve(dir)
   const resolved = resolve(pagesDir)
   if (resolved !== root && !resolved.startsWith(root + sep)) {
@@ -198,7 +276,7 @@ export function projectPagesDir(dir: string): string {
  * implements when left unset).
  */
 export function projectPreviewLocale(dir: string): string | undefined {
-  return readProjectMeta(dir)?.previewLocale
+  return readStudioMeta(dir).previewLocale
 }
 
 /**

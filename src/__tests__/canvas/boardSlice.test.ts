@@ -26,6 +26,12 @@ function resetBoardState() {
     boardsLoaded: false,
     boardsDirty: false,
     boardSnapGuides: [],
+    // WS-7.1/7.2 — reset alongside the rest; `useEditorStore` is the
+    // process-wide singleton every test file in this run shares (see the
+    // module doc above), so a leftover selection or frame default here would
+    // leak into unrelated test files.
+    selectedFrameIds: [],
+    frameDefaults: {},
   })
 }
 

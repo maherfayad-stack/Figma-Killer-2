@@ -20,7 +20,7 @@
  * cause a reload that re-arms the autosave loop.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { fsCodemodAdapter } from '../fsCodemodAdapter'
+import { fsCodemodAdapter, getStudioVendorCss, subscribeStudioVendorCss } from '../fsCodemodAdapter'
 import { CMS_SITE_RELOAD_EVENT } from '@admin/state/adminEvents'
 import { makeNode, makePage, makeSite } from '../../../../../__tests__/fixtures'
 
@@ -39,7 +39,7 @@ describe('fsCodemodAdapter — write-loop safety + framework sync', () => {
 
   function stubFetch(responses: Record<string, unknown> = {}) {
     const defaults: Record<string, unknown> = {
-      '/admin/api/studio/load': { dir: '/tmp/studio-test', projectName: 'studio-test', pages: [], componentSources: {}, styleRules: {}, conditions: [] },
+      '/admin/api/studio/load': { dir: '/tmp/studio-test', projectName: 'studio-test', pages: [], componentSources: {}, styleRules: {}, conditions: [], vendorCss: '' },
       '/admin/api/studio/framework': { framework: null },
       '/admin/api/studio/save': { ok: true, written: 1, skipped: 0, shifted: false, sharedComponents: false },
     }
@@ -304,6 +304,53 @@ describe('fsCodemodAdapter — write-loop safety + framework sync', () => {
       const reloads = await countReloads(() => fsCodemodAdapter.saveSite(editedSite()))
 
       expect(reloads).toBe(0)
+    })
+  })
+
+  // ─── WS-2.3 — vendor CSS reactive store ────────────────────────────────────
+  describe('vendor CSS (WS-2.3) — reactive external store', () => {
+    it('exposes the loaded vendorCss via getStudioVendorCss()', async () => {
+      stubFetch({
+        '/admin/api/studio/load': {
+          dir: '/tmp/studio-test', projectName: 'studio-test', pages: [], componentSources: {},
+          styleRules: {}, conditions: [], vendorCss: '.btn--primary { color: hotpink }',
+        },
+      })
+
+      await fsCodemodAdapter.loadSite()
+
+      expect(getStudioVendorCss()).toBe('.btn--primary { color: hotpink }')
+    })
+
+    it('notifies subscribers when a fresh load changes the value, and dedupes a same-value load', async () => {
+      stubFetch({
+        '/admin/api/studio/load': {
+          dir: '/tmp/studio-test', projectName: 'studio-test', pages: [], componentSources: {},
+          styleRules: {}, conditions: [], vendorCss: '.a { color: red }',
+        },
+      })
+      await fsCodemodAdapter.loadSite()
+
+      let notifications = 0
+      const unsubscribe = subscribeStudioVendorCss(() => { notifications += 1 })
+
+      // Same value again — the store must not notify (ProjectCssInjector
+      // shouldn't re-inject its <style> tag on every unrelated reload).
+      await fsCodemodAdapter.loadSite()
+      expect(notifications).toBe(0)
+
+      // A genuinely different value — must notify exactly once.
+      stubFetch({
+        '/admin/api/studio/load': {
+          dir: '/tmp/studio-test', projectName: 'studio-test', pages: [], componentSources: {},
+          styleRules: {}, conditions: [], vendorCss: '.b { color: blue }',
+        },
+      })
+      await fsCodemodAdapter.loadSite()
+      expect(notifications).toBe(1)
+      expect(getStudioVendorCss()).toBe('.b { color: blue }')
+
+      unsubscribe()
     })
   })
 })

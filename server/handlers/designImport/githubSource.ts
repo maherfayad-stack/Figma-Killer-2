@@ -2,19 +2,18 @@
  * designImport/githubSource — fetches a GitHub repo's zipball and returns
  * every matching source file found (in memory — nothing is written to disk
  * here; that only happens if the user applies the import, via a separate
- * "copy CSS" step). Reuses `studioGithubImport.ts`'s URL parsing, zipball URL
- * builder, and zip-entry path-traversal guard — the exact same trusted
+ * "copy CSS" step). Reuses `studioGithubImport.ts`'s URL parsing + zipball
+ * URL builder, and `studio/archiveIngest.ts`'s zip-entry path-traversal
+ * guard (`resolveZipEntryRelPath`, `stripRootFolder: true` — a GitHub
+ * zipball always nests under one root folder) — the exact same trusted
  * fetch, just filtered to token-scannable files instead of writing every
  * file to a project directory. `.css` files are unconditionally accepted;
  * JSON/JS/TS files are accepted only when their name looks like a token
  * definition — see `isCandidateTokenFile`.
  */
 import { unzipSync, type Unzipped } from 'fflate'
-import {
-  buildGithubZipballUrl,
-  parseGithubRepoUrl,
-  resolveZipEntryRelPath,
-} from '../studioGithubImport'
+import { buildGithubZipballUrl, parseGithubRepoUrl } from '../studioGithubImport'
+import { resolveZipEntryRelPath } from '../studio/archiveIngest'
 import {
   DesignImportError,
   isCandidateTokenFile,
@@ -103,7 +102,7 @@ export async function fetchGithubCssSource(
   try {
     zip = unzipSync(zipBytes, {
       filter(file) {
-        const relPath = resolveZipEntryRelPath(file.name, options.subdir)
+        const relPath = resolveZipEntryRelPath(file.name, { stripRootFolder: true, subdir: options.subdir })
         if (relPath === null) return false
         const lower = relPath.toLowerCase()
         if (!lower.endsWith('.css') && !isCandidateTokenFile(relPath)) return false

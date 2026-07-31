@@ -164,6 +164,26 @@ export interface ParsedNode {
    */
   textOrigin?: ValueOrigin
   /**
+   * Where an IMPORTED IMAGE's own module-specifier string literal lives, when
+   * one of this node's props resolved to a `studio-asset:` sentinel through
+   * `resolveImageAssetImport` (WS-8.3): `<img src={heroImg}/>` ->
+   * `import heroImg from './hero.png'` -> this points at `'./hero.png'`.
+   *
+   * The exact same trick as `textOrigin` above, applied to a different literal
+   * shape: the JSX is never the writeback target (writing a baked path over
+   * `src={heroImg}` would delete the binding), but the import statement one
+   * hop away is an ordinary string literal at a known position, and
+   * `setImportSpecifier` rewrites exactly that. Absent when the prop resolved
+   * to something other than a traceable image import (a literal `src="..."`
+   * needs no origin — `setJsxProp` already writes it directly — or the import
+   * could not be traced to a real file inside the workspace at all).
+   *
+   * Scoped to the FIRST such prop found, same "only one, deliberately" policy
+   * as `textOrigin` — see its doc comment for why picking more than one would
+   * risk pointing an edit at the wrong prop's literal.
+   */
+  assetOrigin?: ValueOrigin
+  /**
    * Set on every node produced by inlining a local component (§2), naming the
    * component it came from (`'SheetHeader'`). Provenance, NOT a lock: the node
    * is editable, and its writeback target is that component's own source

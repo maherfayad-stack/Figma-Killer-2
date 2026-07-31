@@ -222,6 +222,20 @@ export const KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
     scope: 'canvas',
     ignoreInEditableField: true,
   },
+
+  // ── Board (studio frame multi-select — WS-7.1) ──────────────────────────
+  // Virtual id: no matching spotlight Command (frame selection isn't a
+  // palette action) — `displayName` is the help-screen fallback title, same
+  // pattern as `spotlight.open`.
+  {
+    commandId: 'board.selectAllFrames',
+    displayName: 'Select all frames',
+    shortcut: { mac: '⌘A', win: 'Ctrl+A' },
+    ariaKeyshortcuts: isPlatformMac() ? 'Meta+A' : 'Control+A',
+    match: (e) => (e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === 'a',
+    scope: 'canvas',
+    ignoreInEditableField: true,
+  },
 ]
 
 // ─── Lookup helpers ───────────────────────────────────────────────────────────

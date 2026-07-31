@@ -5,7 +5,7 @@
  * needs a project directory, which only exists in studio mode (see
  * `FrameworkPanel.tsx`'s `isStudioMode()` gate around this component).
  *
- * Lazy-loaded — same pattern as `ImportGithubButton`/`SettingsModal`: pulls in
+ * Lazy-loaded — same pattern as `ImportProjectButton`/`SettingsModal`: pulls in
  * the `Dialog` primitive + the import client, closed 99% of the time, kept
  * out of the eager Site route shell.
  */

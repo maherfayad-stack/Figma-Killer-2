@@ -20,10 +20,34 @@
  * per page, passed to BOTH that page's own `parsePageFile` call and its
  * `inlineLocalComponents` call, so a locally-inlined component's own values
  * (e.g. a nested `useLanguage()` call) resolve under the same budget.
+ *
+ * WS-1.3 — `loadStudioPages` branches on the cached `ProjectProfile.framework`
+ * (never a guess): `framework === 'next-app'` routes through
+ * `buildAppRouterPageEntries` (route-derived page ids, `RootLayout(SegmentLayout(
+ * Page))` composition via `@core/page-parser`'s `composeAppRouterRoute`); every
+ * other framework keeps `buildStandardPageEntries`, which is
+ * `pageIdFromRelPath`/`assignPageIds`/the original per-page parse loop, moved
+ * verbatim into its own function — same inputs, same outputs, byte for byte.
+ *
+ * WS-2.1/2.2 — `loadStudioPages` runs `styleCompile.ts`'s `compileProjectStyles`
+ * BEFORE parsing any route, for one reason: WS-2.2's `import styles from
+ * './Card.module.css'` resolution needs `moduleClassMaps` inside the SAME
+ * per-page evaluator options bag every other value resolves through, so it has
+ * to exist before `parsePageFile`/`inlineLocalComponents` run. The compiled
+ * CSS blob (Tailwind/Sass/PostCSS output, rewritten CSS Modules selectors) is
+ * threaded into `loadStudioStyles` as `extraCss`, parsed by the same
+ * `cssToStyleRules` engine as every plain-CSS import.
+ *
+ * WS-2.3 — `compiledStyles.vendorCss` (package `.css` reached via a bare-
+ * specifier import) rides along on the SAME `compileProjectStyles` call but
+ * takes a completely separate path from there: it is never parsed, never
+ * merged into `styleRules`/`classIds`, and is returned to the caller
+ * verbatim as `StudioLoadResult.vendorCss` — see that field's doc.
  */
 import { existsSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
 import {
+  composeAppRouterRoute,
   createPageEvalBudget,
   createWorkspaceProject,
   inlineLocalComponents,
@@ -31,6 +55,7 @@ import {
   resolveComponentSources,
   STUDIO_ASSET_SENTINEL,
   type ComponentSource,
+  type ParsedPage,
   type ParsedPropValue,
   type StaticEvalOptions,
 } from '@core/page-parser'
@@ -38,7 +63,17 @@ import type { ConditionDef, Page, StyleRule } from '@core/page-tree'
 import { TEXT_HTML_TAG_SET } from '@modules/base/utils/htmlTag'
 import { parsedPageToSitePage } from '@core/studio-sync/parsedPageToSitePage'
 import { classIdsForClassName, loadStudioStyles } from './studioCss'
-import { discoverPageFiles, projectPagesDir, projectPreviewLocale } from './studioProjects'
+import { probeProject } from './studio/projectProbe'
+import { compileProjectStyles } from './studio/styleCompile'
+import { readStudioMeta } from './studio/studioMeta'
+import {
+  collectAppRouterLayoutChain,
+  discoverAppRouterRoutes,
+  discoverPageFiles,
+  projectPagesDir,
+  projectPreviewLocale,
+  type AppRouterRoute,
+} from './studioProjects'
 
 const CONTAINER_TAGS: ReadonlySet<string> = new Set([
   'div', 'section', 'main', 'header', 'footer', 'nav', 'article', 'aside',
@@ -210,42 +245,44 @@ export interface StudioLoadResult {
   styleRules: Record<string, StyleRule>
   /** §6 — reusable `@media`/`@container`/`@supports` conditions the rules reference. */
   conditions: ConditionDef[]
+  /**
+   * WS-2.3 — `styleCompile.ts`'s `CompiledStyles.vendorCss`: raw CSS read
+   * from package `.css` files reached via a bare-specifier import. NEVER
+   * parsed into `styleRules`/`classIds` above — the client injects it as its
+   * own read-only, below-`user-authored` cascade-layer bucket
+   * (`ProjectCssInjector`).
+   */
+  vendorCss: string
+}
+
+/** One route's worth of parsed content, whatever framework produced it — the common shape `loadStudioPages`'s style-collection + convert tail operates over. */
+interface RoutePageEntry {
+  expanded: ParsedPage
+  pageId: string
+  slug: string
+  title: string
+  /** The route's OWN file, workspace-relative POSIX — `collectPageStylesheets`'s "page first" anchor. A composed route's layout files still contribute their own CSS, discovered from their nodes' own `loc.file` (see that module's doc). */
+  relFile: string
+  componentSources: Record<string, ComponentSource>
 }
 
 /**
- * Recursively discovers every page file under `dir`'s pages directory
- * (`projectPagesDir` — `<dir>/pages` by default, or the `.studio/meta.json`
- * `pagesDir` override) and parses EACH into an Studio `Page`. Returns empty
- * results (not an error) when the pages directory doesn't exist yet.
- *
- * Every page is parsed against one shared, workspace-wide ts-morph `Project`
- * (`createWorkspaceProject`) so a page's local-component imports resolve to
- * real files elsewhere in the tree; `resolveComponentSources` classifies each
- * `kind: 'component'` node as **local** (import resolves inside the
- * workspace) or **package** (an npm dependency, read-only prop surface). The
- * merged classification for every page is returned as `componentSources`,
- * keyed by node id.
+ * `assignPageIds`'s per-page parse loop, UNCHANGED — moved into its own
+ * function so `loadStudioPages` can branch on framework without touching this
+ * path at all. Every non-`next-app` project's page discovery and parse stays
+ * byte for byte identical to before WS-1.3.
  */
-export async function loadStudioPages(dir: string): Promise<StudioLoadResult> {
-  const pagesDir = projectPagesDir(dir)
-  if (!existsSync(pagesDir)) return { pages: [], componentSources: {}, styleRules: {}, conditions: [] }
-
+function buildStandardPageEntries(
+  pagesDir: string,
+  dir: string,
+  project: ReturnType<typeof createWorkspaceProject>,
+  preferredKey: string | undefined,
+  cssModuleClassMaps: Record<string, Record<string, string>> | undefined,
+): RoutePageEntry[] {
   const relPaths = discoverPageFiles(pagesDir)
   const pageIds = assignPageIds(relPaths)
 
-  // One shared, workspace-wide ts-morph Project so a page's local
-  // component imports resolve to real files elsewhere in the tree —
-  // a fresh per-file Project (parsePageFile's own default) can't see
-  // across files at all. See createWorkspaceProject's doc comment.
-  const project = createWorkspaceProject(dir)
-  const componentSources: Record<string, ComponentSource> = {}
-  // §7.4 — `preferredKey` for a dynamically-indexed dictionary (`translations[lang]`).
-  const preferredKey = projectPreviewLocale(dir)
-
-  // Parse + inline EVERY page first, then resolve CSS, then convert. The CSS
-  // registry is site-wide (pages routinely share a stylesheet), so it has to be
-  // complete before any page can turn a `className` into `classIds`.
-  const expandedPages = relPaths.map((relPath) => {
+  return relPaths.map((relPath) => {
     const file = join(pagesDir, ...relPath.split('/'))
     const pageId = pageIds.get(relPath)!
     // §7 — one evaluator options bag PER PAGE, shared between this page's own
@@ -253,7 +290,9 @@ export async function loadStudioPages(dir: string): Promise<StudioLoadResult> {
     // step budget (and the module-namespace memo cache inside staticEval.ts)
     // covers the whole page's worth of value resolution, not just one call.
     // `workspaceRoot` enables `?raw` text-import resolution (inline SVG icons).
-    const evalOptions: StaticEvalOptions = { preferredKey, pageBudget: createPageEvalBudget(), workspaceRoot: dir }
+    // `cssModuleClassMaps` (WS-2.2) is `styleCompile.ts`'s compiled output —
+    // enables `import styles from './Card.module.css'` -> `styles.card`.
+    const evalOptions: StaticEvalOptions = { preferredKey, pageBudget: createPageEvalBudget(), workspaceRoot: dir, cssModuleClassMaps }
     const parsed = parsePageFile(file, dir, project, evalOptions)
     // `resolveComponentSources` MUST run on the pre-inline tree — it keys
     // off call-site node ids, which only exist before splicing (§2.6).
@@ -261,24 +300,171 @@ export async function loadStudioPages(dir: string): Promise<StudioLoadResult> {
     // resolved fresh, inside `inlineLocalComponents` itself, against that
     // sub-tree's own file.
     const sources = resolveComponentSources(project, file, dir, parsed)
-    Object.assign(componentSources, sources)
     const expanded = inlineLocalComponents(parsed, sources, project, dir, { evalOptions })
-    return { expanded, pageId, relPath, relFile: relative(dir, file).split(sep).join('/') }
-  })
-
-  // §6 — read every stylesheet the pages import, in cascade order.
-  const { styleRules, conditions, classIdsByName } = await loadStudioStyles(
-    expandedPages.map(({ expanded, relFile }) => ({ parsed: expanded, relFile })),
-    project,
-    dir,
-  )
-  const resolveClassIds = (className: string): string[] => classIdsForClassName(className, classIdsByName)
-
-  const pages = expandedPages.map(({ expanded, pageId, relPath }) => {
-    const page = parsedPageToSitePage(expanded, {
+    return {
+      expanded,
       pageId,
       slug: pageId,
       title: relPath.split('/').pop()!.replace(/\.(tsx|jsx)$/, ''),
+      relFile: relative(dir, file).split(sep).join('/'),
+      componentSources: sources,
+    }
+  })
+}
+
+/**
+ * Assigns each App Router route its page id: the ROUTE ITSELF
+ * (`app/(marketing)/pricing/page.tsx` -> `/pricing`), not the generic
+ * kebab-cased file-path id `assignPageIds` derives for every other
+ * framework — which for App Router would slug EVERY route to end in
+ * `-page` (the file is always literally named `page.tsx`) and would embed a
+ * route group's parens as if they were a real path segment.
+ *
+ * Two route FILES legitimately deriving the SAME route is not something a
+ * real Next.js build would allow, but an imported/hand-edited repo might
+ * still have it (e.g. two route groups both defining `/pricing`) — collision
+ * gets the same numeric-suffix dedupe `assignPageIds` uses, so ids stay
+ * unique for whatever `discoverAppRouterRoutes` returns.
+ */
+function assignAppRouterPageIds(routes: readonly AppRouterRoute[]): Map<string, string> {
+  const seenCounts = new Map<string, number>()
+  const assigned = new Map<string, string>()
+  for (const { relPath, route } of routes) {
+    const seen = seenCounts.get(route) ?? 0
+    seenCounts.set(route, seen + 1)
+    assigned.set(relPath, seen === 0 ? route : `${route}-${seen + 1}`)
+  }
+  return assigned
+}
+
+/**
+ * A URL-safe form of a derived route, for `Page.slug` (documented as
+ * "URL-safe" in `page.ts`) — the route itself carries `/`, `:`, and `*`, none
+ * of which belong in a slug. `/` (the root route) becomes `'home'`, matching
+ * the same fallback `pageIdFromRelPath` uses when a path slugs to nothing.
+ */
+function slugFromAppRoute(route: string): string {
+  const slug = route.replace(/^\//, '').replace(/\//g, '-').replace(/[:*]/g, '')
+  return slug.length > 0 ? slug : 'home'
+}
+
+/**
+ * WS-1.3 — one entry per App Router ROUTE (`page.tsx`), each composed with
+ * its layout chain via `@core/page-parser`'s `composeAppRouterRoute`. The
+ * page's own local-component inlining runs exactly as it does for every
+ * other framework; composition (and the layout chain's OWN local-component
+ * inlining) is `composeAppRouterRoute`'s job — see that module's doc for why
+ * order matters and what it declines rather than guesses at.
+ */
+function buildAppRouterPageEntries(
+  pagesDir: string,
+  dir: string,
+  project: ReturnType<typeof createWorkspaceProject>,
+  preferredKey: string | undefined,
+  cssModuleClassMaps: Record<string, Record<string, string>> | undefined,
+): RoutePageEntry[] {
+  const routes = discoverAppRouterRoutes(pagesDir)
+  const pageIds = assignAppRouterPageIds(routes)
+
+  return routes.map(({ relPath, route }) => {
+    const file = join(pagesDir, ...relPath.split('/'))
+    const pageId = pageIds.get(relPath)!
+    const evalOptions: StaticEvalOptions = { preferredKey, pageBudget: createPageEvalBudget(), workspaceRoot: dir, cssModuleClassMaps }
+
+    const parsed = parsePageFile(file, dir, project, evalOptions)
+    const sources = resolveComponentSources(project, file, dir, parsed)
+    const pageExpanded = inlineLocalComponents(parsed, sources, project, dir, { evalOptions })
+
+    const layoutAbsFiles = collectAppRouterLayoutChain(pagesDir, relPath).map((relLayoutPath) =>
+      join(pagesDir, ...relLayoutPath.split('/')),
+    )
+    const composed = composeAppRouterRoute({
+      page: pageExpanded,
+      pageAbsFile: file,
+      layoutAbsFiles,
+      project,
+      workspaceRoot: dir,
+      evalOptions,
+    })
+
+    return {
+      expanded: composed.page,
+      pageId,
+      slug: slugFromAppRoute(route),
+      title: route,
+      relFile: relative(dir, file).split(sep).join('/'),
+      componentSources: { ...sources, ...composed.componentSources },
+    }
+  })
+}
+
+/**
+ * Recursively discovers every page/route under `dir`'s pages directory
+ * (`projectPagesDir` — `<dir>/pages` by default, or the `.studio/meta.json`
+ * `pagesDir` override) and parses EACH into an Studio `Page`. Returns empty
+ * results (not an error) when the pages directory doesn't exist yet.
+ *
+ * Branches on the cached `ProjectProfile.framework` (`meta-04`'s probe),
+ * never a guess: `next-app` routes through `buildAppRouterPageEntries`
+ * (route-derived ids, `RootLayout(SegmentLayout(Page))` composition); every
+ * other framework — including an unprobed project, no `.studio/meta.json`
+ * `profile` yet — keeps `buildStandardPageEntries` exactly as it always was.
+ *
+ * Every page is parsed against one shared, workspace-wide ts-morph `Project`
+ * (`createWorkspaceProject`) so a page's local-component imports resolve to
+ * real files elsewhere in the tree; `resolveComponentSources` classifies each
+ * `kind: 'component'` node as **local** (import resolves inside the
+ * workspace) or **package** (an npm dependency, read-only prop surface). The
+ * merged classification for every page/route is returned as
+ * `componentSources`, keyed by node id.
+ */
+export async function loadStudioPages(dir: string): Promise<StudioLoadResult> {
+  const pagesDir = projectPagesDir(dir)
+  if (!existsSync(pagesDir)) return { pages: [], componentSources: {}, styleRules: {}, conditions: [], vendorCss: '' }
+
+  // One shared, workspace-wide ts-morph Project so a page's local
+  // component imports resolve to real files elsewhere in the tree —
+  // a fresh per-file Project (parsePageFile's own default) can't see
+  // across files at all. See createWorkspaceProject's doc comment.
+  const project = createWorkspaceProject(dir)
+  // §7.4 — `preferredKey` for a dynamically-indexed dictionary (`translations[lang]`).
+  const preferredKey = projectPreviewLocale(dir)
+  const meta = readStudioMeta(dir)
+  const framework = meta.profile?.framework
+
+  // WS-2.1 — compile Tailwind/Sass/PostCSS/CSS-Modules BEFORE parsing: WS-2.2
+  // needs `moduleClassMaps` in hand so `import styles from './Card.module.css'`
+  // resolves during the SAME evaluator pass that resolves everything else.
+  // Never re-probes (`meta.profile` only) and never persists — this is the
+  // read path, same posture as `tryServeStudioProbe`'s GET branch.
+  const profile = meta.profile ?? probeProject(dir)
+  const { styles: compiledStyles } = await compileProjectStyles(dir, profile)
+
+  // Parse + inline EVERY route first, then resolve CSS, then convert. The CSS
+  // registry is site-wide (pages routinely share a stylesheet), so it has to be
+  // complete before any page can turn a `className` into `classIds`.
+  const routeEntries = framework === 'next-app'
+    ? buildAppRouterPageEntries(pagesDir, dir, project, preferredKey, compiledStyles.moduleClassMaps)
+    : buildStandardPageEntries(pagesDir, dir, project, preferredKey, compiledStyles.moduleClassMaps)
+
+  const componentSources: Record<string, ComponentSource> = {}
+  for (const entry of routeEntries) Object.assign(componentSources, entry.componentSources)
+
+  // §6 — read every stylesheet the pages import, in cascade order, plus the
+  // WS-2.1 compiled blob (Tailwind/Sass/PostCSS output, rewritten CSS Modules).
+  const { styleRules, conditions, classIdsByName } = await loadStudioStyles(
+    routeEntries.map(({ expanded, relFile }) => ({ parsed: expanded, relFile })),
+    project,
+    dir,
+    compiledStyles.css,
+  )
+  const resolveClassIds = (className: string): string[] => classIdsForClassName(className, classIdsByName)
+
+  const pages = routeEntries.map(({ expanded, pageId, slug, title }) => {
+    const page = parsedPageToSitePage(expanded, {
+      pageId,
+      slug,
+      title,
       resolveModuleId,
       resolveTextProp,
       resolveClassIds,
@@ -289,5 +475,5 @@ export async function loadStudioPages(dir: string): Promise<StudioLoadResult> {
     return page
   })
 
-  return { pages, componentSources, styleRules, conditions }
+  return { pages, componentSources, styleRules, conditions, vendorCss: compiledStyles.vendorCss }
 }

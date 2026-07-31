@@ -302,18 +302,35 @@ built-in (they are pure string joins with a documented, tiny semantics —
 strings kept, falsy dropped, object keys kept when truthy). Bounded, no
 execution of user code.
 
-#### 2.3 Package CSS
+#### 2.3 Package CSS — done (`canvas-03`)
 
-Generalize `AlmDesignSystemCssInjector` into `ProjectCssInjector`:
+Generalized `AlmDesignSystemCssInjector` into `ProjectCssInjector`
+(`src/admin/pages/site/canvas/ProjectCssInjector.tsx`):
 
-- Collect `.css` files imported from **bare specifiers**
-  (`import '@acme/ui/dist/style.css'`) — today those are deliberately skipped.
-  Keep them out of the *editable* class registry (the current, correct reason:
-  they'd bury the user's own classes) but **inject them into the iframe** as a
-  separate unlayered-below-user stylesheet so components look right.
-- Two style buckets in each iframe, ordered: `vendor` (read-only, from packages)
-  → `@layer user-authored` (the editable class registry). A `<style id="mc-vendor">`
-  added to the injector table in `docs/features/canvas-iframe-per-frame.md`.
+- `server/handlers/studio/styleCompile.ts`'s `collectVendorCss` collects
+  `.css` files imported from **bare specifiers**
+  (`import '@acme/ui/dist/style.css'`) — a text scan (`findBareCssImportSpecifiers`)
+  plus a resolve-and-read against the project's own `node_modules`
+  (`resolvePackageCssPath`), Tier 0 safe (no code execution, so no trust gate).
+  Kept out of the *editable* class registry (the current, correct reason:
+  they'd bury the user's own classes) and **injected into the iframe** as
+  `CompiledStyles.vendorCss`, threaded through `GET /admin/api/studio/load`.
+- Two style buckets in each iframe, ordered: `@layer vendor` (read-only, from
+  packages — `ProjectCssInjector`'s `<style id="mc-vendor">`) →
+  `@layer user-authored` (the editable class registry). The naive "unlayered"
+  approach the old Alm-only injector used would have made vendor CSS beat
+  `@layer user-authored` unconditionally (unlayered always beats `@layer`d
+  regardless of specificity) — the fix is an explicit `@layer vendor,
+  user-authored;` pre-declaration every vendor/user-authored injector opens
+  with (`canvasCssLayers.ts`), pinning `vendor` below `user-authored`
+  regardless of DOM/mount order. Added to the injector table in
+  `docs/features/canvas-iframe-per-frame.md`.
+- `ProjectCssInjector` carries TWO sources into the same bucket: the open
+  project's own vendor CSS above, plus `@alm-design/design-system`'s own
+  bundled stylesheet (Studio's OWN dependency, `?inline`-imported at build
+  time — what the single-purpose Alm injector used to inject alone). Kept per
+  `standing-07` until the generic package-component pipeline (WS-3) is proven
+  to render the eSIM board equivalently.
 
 #### 2.4 Computed `className` — close the biggest fidelity hole
 
@@ -885,28 +902,28 @@ same rationale, same `!important` justification:
 | Motion source | Rule |
 |---|---|
 | CSS animations | `animation-iteration-count: 1; animation-fill-mode: forwards` ✅ shipped |
-| CSS transitions | `transition: none !important` — a transition mid-flight during a layout change reads as canvas jitter, and it's never wanted on a static surface |
-| Smooth scrolling | `scroll-behavior: auto !important` |
-| `<video>` / `<audio>` | pause + `removeAttribute('autoplay')` on mount and on DOM insert (a `MutationObserver` in the injector) |
-| Animated GIF/WebP/APNG | Can't be frozen by CSS. Leave, and document. |
-| JS animation (framer-motion, GSAP) | Only runs when "Run scripts" is on. Add a design-mode rule: **Run scripts is forced off in design frames** unless explicitly enabled per-frame. |
-| `prefers-reduced-motion` | Inject `(prefers-reduced-motion: reduce)` as the iframe's matched state, so a well-behaved app disables its own motion |
+| CSS transitions | `transition: none !important` ✅ shipped |
+| Smooth scrolling | `scroll-behavior: auto !important` ✅ shipped |
+| `<video>` / `<audio>` | pause + `removeAttribute('autoplay')` on mount and on DOM insert (a `MutationObserver` in the injector) ✅ shipped |
+| Animated GIF/WebP/APNG | Can't be frozen by CSS. Left alone, documented in the injector's docblock and `docs/features/canvas-iframe-per-frame.md`. |
+| JS animation (framer-motion, GSAP) | Only runs when "Run scripts" is on. **Not shipped by canvas-01** — "Run scripts is forced off in design frames unless explicitly enabled per-frame" is a `runScripts`/store-level default, not an injector concern; out of this work order's scope. Still open. |
+| `prefers-reduced-motion` | ✅ shipped, JS-only: `window.matchMedia` inside the iframe is patched so a `(prefers-reduced-motion: reduce)` check reports true. Does **not** retarget the browser's native CSS `@media` evaluation (an OS-level signal no page-injected script can force) — documented as a known limitation, not faked. |
 
-**Freeze point toggle**, per project: `end` (today's `forwards`, correct for
-entrance animations) vs `start` (`animation-play-state: paused` at delay 0 —
-correct for a fade-out ping whose end state is invisible). Default `end`; the
-known consequence is already documented in the injector and the toggle is the
-fix for it.
+**Freeze point toggle** ✅ shipped as a prop: `freezePoint?: 'end' | 'start'` on
+`CanvasAnimationInjector`, default `'end'` (today's `forwards`, correct for
+entrance animations); `'start'` is `animation-play-state: paused`, correct for
+a fade-out ping whose end state is invisible. The prop takes a value only —
+**not** wired to `.studio/meta.json` persistence (a concurrent agent owns that
+schema); the orchestrator wires the toggle/persistence on top of this.
 
-#### 8.2 Unroll every scroll region (requirement 9, second half)
+#### 8.2 Unroll every scroll region (requirement 9, second half) ✅ shipped
 
-The unaddressed half, and the one that most breaks "see the whole screen".
 An imported app shell is `height: 100%` + a `flex: 1; overflow: auto` region.
 Inside a frame, that region clips — so the design canvas shows a scrollable
 box, not a screen.
 
-New `CanvasScrollUnrollInjector`, design frames only, toggleable per board
-("Unroll scroll" in the canvas toolbar, on by default for imported projects):
+`CanvasScrollUnrollInjector` (design frames only, `enabled` prop, default on;
+decision logic split into `canvasScrollUnroll.ts`):
 
 ```css
 /* every scroll container becomes content-sized */
@@ -915,34 +932,49 @@ New `CanvasScrollUnrollInjector`, design frames only, toggleable per board
   overflow-x: visible !important;
   overflow-y: visible !important;
   scroll-behavior: auto !important;
+  min-height: auto !important;
 }
-/* a flex child that was a scroll viewport must be allowed to grow */
-* { min-height: auto !important; }
-/* sticky/fixed chrome would float mid-frame; pin it into flow */
-[data-instatic-unroll] { position: static !important; }
-html, body { overflow: visible !important; height: auto !important; }
+/* sticky/fixed chrome would float mid-frame; pin it into flow.
+   CORRECTED from this plan's original draft: `position: static` would
+   reflow fixed chrome into the document instead of keeping its authored
+   offsets meaningful — `absolute` is what actually stays visually in place. */
+[data-studio-unroll="fixed"] { position: absolute !important; }
+[data-studio-unroll="explicit-height"] {
+  height: auto !important;
+  min-height: var(--studio-unroll-min-height) !important;
+}
 ```
 
-Two things need more than a stylesheet and belong in the injector's JS half:
+Two corrections from this plan's original draft, both load-bearing:
 
-- **`position: fixed`** elements (a bottom nav, a header) must become
-  `position: absolute` relative to the frame, not `static`, or the layout
-  reflows into something the app never looks like. A `MutationObserver` +
-  `getComputedStyle` pass tags them with `data-instatic-unroll="fixed"` and the
-  stylesheet pins them to the frame's top/bottom. Cost is bounded: one pass per
-  DOM settle, not per frame.
-- **Elements with an explicit `height` that clips** (`height: 100vh` on an inner
-  panel) get `height: auto; min-height: <original>` so nothing shrinks but
-  everything can grow.
+- **`data-instatic-unroll` → `data-studio-unroll`.** The repo-wide rename made
+  every DOM attribute `data-studio-*`; the old token never existed in this
+  codebase.
+- **No blanket `html, body { height: auto !important }`.** The draft CSS above
+  would have overridden `useIframeFrameAutoHeight`'s body-height pin outright
+  (`!important` beats a plain inline style regardless of origin), collapsing
+  every `height: 100%` chain. The shipped stylesheet never declares a bare
+  `height` on the universal `*` rule — only the tag-scoped
+  `explicit-height` selector does, and the JS pass only ever walks `body`'s
+  DESCENDANTS (never `body`/`html` themselves).
 
-Interaction with `useIframeFrameAutoHeight`: unrolling makes content taller, the
-frame grows, `%` chains still resolve against the pinned body height. The
-existing unpin-before-measure logic already handles the shrink direction. Add a
-regression test for the pin/unroll interaction specifically — it's the one place
-these two systems can fight.
+The JS half (tag-then-style, `getComputedStyle` + a bounded, `requestAnimationFrame`-
+coalesced, `MutationObserver`-triggered pass — one settle, not per frame, never
+per pointermove):
+
+- **`position: fixed`** elements tagged `data-studio-unroll="fixed"`.
+- **Elements with an explicit `height` that clips** tagged
+  `data-studio-unroll="explicit-height"`, with the original box height
+  recorded into `--studio-unroll-min-height`.
+
+Interaction with `useIframeFrameAutoHeight`: ✅ regression-tested —
+`src/__tests__/canvas/canvasScrollUnrollPinInteraction.test.tsx` asserts the
+body pin stays a definite px value (never `auto`) through a mutation that also
+triggers the unroll's own tagging pass.
 
 **This must never affect the publisher or writeback.** Design-mode injector
-only, same scope contract as `CanvasAnimationInjector`.
+only, same scope contract as `CanvasAnimationInjector`. Confirmed: no page-tree
+mutation, no codemod path touches `data-studio-unroll`.
 
 #### 8.3 Image upload (requirement 8)
 

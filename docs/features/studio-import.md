@@ -474,9 +474,33 @@ Two deliberate narrowings versus `?raw`:
 - **The file must exist.** A path nothing can serve is worse than no path: the canvas would render a broken image instead of an empty one.
 - **Installed-package specifiers are not resolved.** The asset endpoint refuses to serve out of `node_modules`, so a path it would never honour is not worth emitting.
 
-A resolved `src` **locks its node**, like every other resolved value. That is correct here and not merely incidental: `src={esimChip}` binds to an import, and the only honest writeback — changing the import — does not exist, so leaving the field editable would write an `/admin/api/...` URL into the user's repository.
+A resolved `src` **locks its node**, like every other resolved value: `src={esimChip}` binds to an import, and writing an `/admin/api/...` URL over that expression would delete the binding — the JSX itself is never a writeback target. `codeProps` still names `src` for exactly this reason.
 
 `resolveStudioAssetResponse` rejects absolute and UNC paths, `..` traversal on either separator, anything under `EXCLUDED_WORKSPACE_DIR_NAMES`, and symlink escapes. Everything rejected is a 404.
+
+### The import is editable, at its origin (WS-8.3)
+
+Same shape of fix as resolved text above, aimed at a different literal. `<img src={heroImg}>` was locked for a correct reason — the JSX is not a writeback target — but the reason it stayed locked forever was that no codemod could reach the one place that IS honest: the import declaration naming the file.
+
+`ParsedNode.assetOrigin` (`ValueOrigin`, same shape as `textOrigin`) records where an image import's own module-specifier string literal physically lives — `import heroImg from './hero.png'` → `assetOrigin` points at `'./hero.png'`, in the file HOLDING the import, not the asset file itself. Attached at `resolveImageAssetImport` (`assetImports.ts`), the one place that resolves an image import to its `studio-asset:` sentinel — mirroring `textOrigin`'s rule that `origin` is attached at the one place a literal is read, this one is attached at the one place an import's OWN specifier literal is identified, whether or not the target file exists (a missing file still has a real specifier to redirect).
+
+How each piece knows:
+
+| Layer | Mechanism |
+|---|---|
+| Evaluator | `resolveImageAssetImport` returns `{ path, origin }`; `origin` is the specifier's own `(rel, line, col)`, computed against the IMPORTING file — a different file than the one `originOf` addresses for an ordinary literal |
+| Parser | `extractProps` captures the first resolved prop whose value is a `studio-asset:` sentinel as `ParsedNode.assetOrigin` (same "only the first" scoping as `textOrigin`, and for the same reason) |
+| Sync | `parsedPageToSitePage` copies `assetOrigin` straight across onto `PageNode`, unconditionally — unlike `textOrigin`, an asset prop STAYS in `codeProps` (an ordinary `setJsxProp` write there is still wrong); `assetOrigin`'s presence is what tells a caller a DIFFERENT edit kind exists for it |
+| Panel | `ImageSourceSection` (`PropertiesPanel/`) offers the picker whenever `assetOrigin` is set, or the prop is plain-writable (a literal `src="..."`); a node with neither falls through to the existing `CodeValueControl` |
+| Client save | `saveStudioAssetEdit` (`fsCodemodAdapter.ts`) commits ONE `kind: 'asset'` edit immediately on pick — not queued into the ordinary optimistic prop diff, because the target is the import, not the node's own `src` |
+| Server | `kind: 'asset'` `StudioEdit` (`studioWriteback.ts`) carries `assetPath` — the NEW file's workspace-relative path, validated by `resolveContainedAssetPath` (full symlink-aware containment guard) before `applyStudioEdit` computes the relative specifier and calls the codemod |
+| Codemod | `setImportSpecifier` replaces the specifier literal at that exact position, preserving quote style — `setStringLiteral`'s narrower sibling, additionally requiring the literal be a real `ImportDeclaration`'s own module specifier |
+
+**Uploading a new file.** `POST /admin/api/studio/asset-upload` (`server/handlers/studio/assetUpload.ts`) writes into the workspace — a caller-supplied `targetDir` (defaulting to `src/assets`), full path-containment guard (including real-path symlink resolution), a byte cap enforced by streamed count, and the actual file content SNIFFED against real image magic numbers before anything is written (the declared filename/MIME type is never trusted for either the accept/reject decision or the extension actually written).
+
+**Shared imports reload the board.** `isSharedSourceNodeId` treats every `kind: 'asset'` edit as shared, unconditionally — unlike an inlined component or route chrome, there is no cheap way to tell from the id alone whether ANOTHER node in the same file reads the same import, so the client always reloads on a successful write. Same "fail toward the reload" policy `meta-05` established for route chrome.
+
+**Literal `src` needed no new writeback.** `src="/img/hero.png"` was always just `setJsxProp` — WS-8.3 only added the picker UI in front of it (still routed through the ordinary optimistic prop diff, not `saveStudioAssetEdit`).
 
 ---
 
@@ -515,6 +539,25 @@ Two files defining the same class name collapse onto one id, later-parsed file w
 
 This is a real, user-visible sharp edge and it must not be discovered by losing work. Two-way CSS editing would need a CSS-text codemod alongside `ast-codemods` — a separate initiative.
 
+### Compiled styles — Tailwind, Sass, PostCSS, CSS Modules (WS-2.1/2.2)
+
+`server/handlers/studio/styleCompile.ts` is what makes an imported app look like itself beyond plain CSS. The design decision: **run the workspace's own toolchain, never reimplement it.** `loadStudioPages` calls `compileProjectStyles(dir, profile)` before parsing any route, and its `CompiledStyles.css` is fed into the SAME `cssToStyleRules` engine as every plain-CSS import (`loadStudioStyles`'s `extraCss` parameter) — one new producer, not a second styling system.
+
+Two trust postures, by toolchain:
+
+- **CSS Modules is Tier 0 (`static`) safe.** `.module.css` selectors are rewritten to hashed global class names (`Card_card__a1b2`) by a small, self-contained transform this module owns — no workspace code ever runs, so it works unconditionally, even on a freshly-imported project. The resulting `{ localName: globalName }` map per file feeds `import styles from './Card.module.css'` in the evaluator (below).
+- **Sass/Less/PostCSS/Tailwind (v3 and v4) are Tier 1.** Compiling them means running the workspace's own installed `sass`/`postcss` package and, for PostCSS, the workspace's own `postcss.config.*` — a config file is an arbitrary JS module. At Tier 0 (every fresh import's default — `meta-03` decision 1) this returns a `style-toolchain-requires-trust-promotion` warning instead of compiling; it never auto-promotes. **`sec-01`:** the compile itself runs in a SUBPROCESS (`server/handlers/studio/styleCompileWorker.ts`, spawned via `subprocessRunner.ts`'s `runCappedSubprocess` from `styleCompileTier1.ts`), never in the admin server's own process — `cwd` is the workspace directory, `env` is an explicit minimal set (no `STUDIO_SECRET_KEY`/`DATABASE_URL`/AI provider keys forwarded), the process is killed on a timeout, and stdout/stderr are capped. Compilers are resolved from `<dir>/node_modules/<pkg>` by an explicit, symlink-containment-checked path (`workspacePackageResolve.ts`), never the host admin server's own `node_modules`. This is still a blast-radius boundary, not a filesystem/network sandbox — Tier 1 is explicit, informed, revocable consent to run the workspace's own code. Compiled once per distinct input, cached under `.studio/cache/styles-<hash>.{css,json}`.
+
+### CSS Modules through the evaluator (WS-2.2)
+
+`import styles from './Card.module.css'` then `className={styles.card}` — the evaluator already resolved member chains off a resolved object, it just had no value for `styles`. `src/core/page-parser/assetImports.ts`'s `resolveCssModuleImport` teaches `resolveIdentifier` one more "an import with no `SourceFile`" case, sourced from `styleCompile.ts`'s `moduleClassMaps` (threaded through as `StaticEvalOptions.cssModuleClassMaps`). Everything downstream — `classIdsForClassName`, member chains, template literals — works for free. `cn()`/`clsx()`/`classNames()`/`classnames()` are a Tier C built-in (matched by identifier name, not import provenance): a pure string join with clsx's own tiny semantics — truthy strings/numbers kept, falsy scalars dropped, arrays flattened, object keys kept when truthy — implemented directly rather than calling the user's actual function, so it executes no user code and stays inside §7's envelope.
+
+### Package CSS (WS-2.3)
+
+`import '@acme/ui/dist/style.css'` — a bare-specifier stylesheet import — is a THIRD, separate input `styleCompile.ts` produces, alongside `css`/`moduleClassMaps`: `CompiledStyles.vendorCss`. Unlike Sass/PostCSS/Tailwind, this needs **no trust promotion** — resolving a bare specifier against `<dir>/node_modules/<pkg>/<subpath>` and reading the already-built `.css` file is a text scan plus a file read, never code execution, so `collectVendorCss` runs unconditionally at every trust tier (only `node_modules` existing is required; missing it degrades to a `vendor-css-requires-install` warning pointing at `POST /admin/api/studio/install`).
+
+`vendorCss` never joins `css`/`moduleClassMaps` and is never parsed through `cssToStyleRules` — it rides `loadStudioPages`'s return value as its own field, reaches the client as `GET /admin/api/studio/load`'s `vendorCss`, and is injected into the canvas iframe by `ProjectCssInjector` as a read-only `@layer vendor` bucket, explicitly ordered below the editable `@layer user-authored` bucket so a user's own class edit always wins over a package default. See `docs/features/canvas-iframe-per-frame.md`'s "Vendor vs. user-authored ordering" for the cascade-layer mechanics, and `docs/agent-refs/canvas-internals.md`. `ProjectCssInjector` also carries `@alm-design/design-system`'s own bundled stylesheet (Studio's own dependency, not the open project's) — the same bucket now serves both sources.
+
 ### The frame gives percentage heights a definite basis
 
 An imported screen is not a document that flows — it is an app shell: `html, body, #root { height: 100% }` under a `height: 100%` flex column, with the scrolling done by a `flex: 1` region inside. A percentage height only resolves against a parent whose height is **definite**; against `auto` it degrades to `auto`. So a design-canvas body left at `height: auto` (grow-to-content) collapses the whole chain and computes the scroll region to 0.
@@ -536,7 +579,10 @@ Honest list, all deliberate:
 - **A transform's own effect.** `applyTokens(svg)` loops, so the call does not resolve; the icon renders with the source's raw fills instead of the token-substituted ones ([why](#svg-through-a-transform-the-evaluator-cannot-run)). A transform written without a loop resolves normally.
 - **`.map` over data the parser cannot read.** A resolved array is expanded ([above](#bounded-loop-expansion--not-tier-d)); an array reached through props/state/fetch stays one locked, opaque node.
 - **Multi-stage screens show every stage at once**, stacked and locked, because choosing one is Tier D. Honest, but a screen with four stages is four screens tall on the board.
-- **Computed `className`.** `` className={`esb esb--${tone}`} `` keeps only its static prefix, so the variant class never attaches.
+- **Computed `className` whose interpolation isn't statically resolvable.** `` className={`esb esb--${tone}`} `` keeps only its static prefix when `tone` cannot be resolved. As of WS-2.2 this is much narrower than it used to be — a CSS Modules value (`styles.card`), a resolved const, or a `cn()`/`clsx()` call now resolves through the evaluator — but a genuinely runtime-only interpolation (component state, an unresolvable prop) still keeps only the prefix. The plan's WS-2.4 variant probe (pick the default variant from an enumerable prop union, record a `resolution.note`) is not implemented.
+- **CSS Modules only compiles `.module.css`.** `.module.scss`/`.module.sass`/`.module.less` are detected (`css-module-sass-not-supported` warning) but not compiled — that needs Sass/Less compilation (Tier 1) BEFORE the class-name renamer could run, and this slice doesn't wire that chain.
+- **Sass/Less/PostCSS/Tailwind compilation needs the project promoted past Tier 0.** A freshly-imported project defaults to Tier 0 (`static`, `meta-03` decision 1) and never auto-promotes; `styleCompile.ts` returns a `style-toolchain-requires-trust-promotion` warning and compiles nothing until the user explicitly promotes the project's trust tier.
+- **CSS-in-JS is detected, never compiled.** `ProjectProfile.styleToolchain.cssInJs` names `styled-components`/`emotion`/`stitches` when present; `styleCompile.ts` does nothing with it. A component styled this way renders structurally correct and unstyled.
 - **Linked package dependencies.** A `?raw` import from a symlinked `file:../pkg` (or a pnpm store) does not resolve — containment is checked on the real path ([why](#installed-package-specifiers)). Install the package instead.
 - **A JSX-valued prop that is not an icon.** `iconPropFromJsx` recovers inline SVG markup one level deep; a prop holding a nested layout is dropped rather than flattened.
 - **Only the `previewLocale` branch.** The other locale exists in the dictionary but is not rendered; RTL is not applied.

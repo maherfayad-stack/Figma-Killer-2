@@ -132,6 +132,15 @@ Studio reads and writes the user's repo. Every path is untrusted.
 - A write target is derived **server-side**. Never accept a caller-supplied
   directory for anything that clears or overwrites.
 - Every rejection is a 404 or a typed error — never a partial write.
+- **Subprocesses** (running a package manager, or — `sec-01` — a workspace's
+  own Sass/PostCSS/Tailwind compiler): argv array, never a shell string.
+  `cwd` is the workspace, never the Studio repo root. `env` is an explicit,
+  minimal set built by `subprocessRunner.ts`'s `minimalSubprocessEnv` —
+  never `process.env` forwarded wholesale (that would leak
+  `STUDIO_SECRET_KEY`/`DATABASE_URL`/AI provider keys to code the workspace
+  controls). Timeout + capped stdout/stderr via the same module's
+  `runCappedSubprocess`/`captureSubprocess` — reuse it, don't re-roll the
+  spawn/timeout/cap mechanics per caller.
 
 ---
 

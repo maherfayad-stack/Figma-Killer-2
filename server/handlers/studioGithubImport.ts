@@ -6,6 +6,14 @@
  * does all the parsing, same as it already does for the hand-authored
  * `studio-workspace/`.
  *
+ * This is one of TWO fetch strategies over `studio/archiveIngest.ts`'s
+ * shared ingest engine — the other is `studio/importUpload.ts` (an uploaded
+ * `.zip` or a picked folder). Everything about "which entries are safe,
+ * which budgets apply, how the target directory gets cleared and
+ * repopulated" lives in that shared module; this file owns only what's
+ * actually GitHub-specific: parsing the URL, building the zipball request,
+ * and fetching it.
+ *
  * Flow (`runGithubImport`):
  *   1. `parseGithubRepoUrl` — pure URL → `{ owner, repo }`, rejecting anything
  *      that isn't `https://github.com/<owner>/<repo>` (`.git` suffix and a
@@ -18,58 +26,59 @@
  *      never have to guess `main` vs `master`. Private repos need `token`,
  *      sent as `Authorization: Bearer <token>` — never read from env, never
  *      logged.
- *   3. The response body is read through `readBytesWithLimit`, capped at
- *      `MAX_IMPORT_DOWNLOAD_BYTES` — a huge/hostile archive is rejected before
- *      it is ever fully buffered.
+ *   3. The response body is read through `readBytesWithLimit` (shared),
+ *      capped at `MAX_ARCHIVE_BYTES` — a huge/hostile archive is rejected
+ *      before it is ever fully buffered.
  *   4. `unzipSync(bytes, { filter })` — fflate's filter callback runs BEFORE
- *      each entry is inflated, so path-traversal / excluded-dir / per-file /
- *      total-size / file-count rejection all happen without ever allocating
- *      the rejected entry's decompressed bytes (the zip-bomb mitigation).
- *      `resolveZipEntryRelPath` is the pure per-entry decision: strips the
- *      zipball's top-level `<repo>-<sha>/` folder, applies `subdir` scoping,
- *      and runs the same path-traversal / excluded-dir guard the download
- *      export already relies on (`EXCLUDED_WORKSPACE_DIR_NAMES`).
- *   5. The target directory — `studio-workspace/<owner>-<repo>/` by
- *      default, never the user's hand-authored `studio-workspace/` — is
- *      cleared and repopulated. Clearing is safe here specifically because
- *      this per-repo directory IS the explicit target of this operation (the
- *      CLAUDE.md rule against deleting a non-explicit target does not apply);
- *      it also means re-importing the same repo doesn't leave stale files
- *      behind after an upstream rename/delete.
+ *      each entry is inflated, driven by the shared `createArchiveEntryDecider`
+ *      (`stripRootFolder: true` — a GitHub zipball always nests content under
+ *      one top-level `<repo>-<sha>/` folder), so path-traversal / excluded-dir
+ *      / per-file / total-size / file-count rejection all happen without ever
+ *      allocating the rejected entry's decompressed bytes (the zip-bomb
+ *      mitigation).
+ *   5. `writeArchiveToWorkspace` (shared) clears and repopulates the target
+ *      directory — `studio-workspace/<owner>-<repo>/` by default, never the
+ *      user's hand-authored `studio-workspace/`. Clearing is safe here
+ *      specifically because this per-repo directory IS the explicit target of
+ *      this operation (the CLAUDE.md rule against deleting a non-explicit
+ *      target does not apply); it also means re-importing the same repo
+ *      doesn't leave stale files behind after an upstream rename/delete.
  *
  * Safety model: nothing fetched here is ever executed — this module only
  * writes bytes to disk; parsing back into pages happens later, statically,
  * through ts-morph (`/admin/api/studio/load`), same as any other workspace.
  */
-import { dirname, join, resolve } from 'node:path'
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { join, resolve } from 'node:path'
 import { unzipSync, type Unzipped } from 'fflate'
 import {
-  EXCLUDED_WORKSPACE_DIR_NAMES,
-  WORKSPACE_MAX_FILE_BYTES,
-  WORKSPACE_MAX_FILES,
-} from '@core/page-parser'
-
-/** Compressed-download cap — rejected before the body is ever fully buffered. */
-const MAX_IMPORT_DOWNLOAD_BYTES = 100 * 1024 * 1024 // 100 MB
-
-/**
- * Aggregate *uncompressed* budget across every accepted file. Bounds the
- * worst case memory footprint of `unzipSync`'s output independently of the
- * per-file (`WORKSPACE_MAX_FILE_BYTES`) and file-count (`WORKSPACE_MAX_FILES`)
- * caps — those two alone could still add up to tens of GB.
- */
-const MAX_IMPORT_TOTAL_BYTES = 300 * 1024 * 1024 // 300 MB
+  ArchiveIngestError,
+  MAX_ARCHIVE_BYTES,
+  createArchiveEntryDecider,
+  readBytesWithLimit,
+  writeArchiveToWorkspace,
+} from './studio/archiveIngest'
 
 /** Thrown for every rejection `runGithubImport` wants mapped to a specific HTTP status. */
-export class GithubImportError extends Error {
-  readonly status: number
-
+export class GithubImportError extends ArchiveIngestError {
   constructor(message: string, status: number) {
-    super(message)
+    super(message, status)
     this.name = 'GithubImportError'
-    this.status = status
   }
+}
+
+/**
+ * The shared engine (`archiveIngest.ts`) throws plain `ArchiveIngestError`
+ * for its own rejections (oversized body, `.studio/` guard, empty archive).
+ * `runGithubImport`'s external contract is "throws `GithubImportError`", so
+ * every rejection from the shared engine is rethrown wearing that type here
+ * — callers (`server/handlers/studio.ts`) only ever check `instanceof
+ * GithubImportError`.
+ */
+function asGithubImportError(err: unknown): never {
+  if (err instanceof ArchiveIngestError) {
+    throw new GithubImportError(err.message, err.status)
+  }
+  throw err
 }
 
 const GITHUB_HOSTS = new Set(['github.com', 'www.github.com'])
@@ -118,58 +127,6 @@ export function buildGithubZipballUrl(owner: string, repo: string, ref?: string)
 }
 
 /**
- * True when every path segment is a plain name — no traversal, no absolute
- * path, no drive letter. Exported: shared with `server/handlers/designImport/`
- * (the npm-tarball fetcher runs the same guard over tar entry names) — one
- * path-safety primitive, not a second hand-rolled copy.
- */
-export function isSafeRelPath(relPath: string): boolean {
-  if (relPath.length === 0 || relPath.startsWith('/') || relPath.includes('\\')) return false
-  const segments = relPath.split('/')
-  return segments.every(
-    (segment) =>
-      segment.length > 0 &&
-      segment !== '.' &&
-      segment !== '..' &&
-      !segment.includes(':') &&
-      !EXCLUDED_WORKSPACE_DIR_NAMES.has(segment),
-  )
-}
-
-/**
- * Resolves one zip entry's name to the workspace-relative path it should be
- * written to, or `null` when the entry should be skipped silently (a
- * directory entry, the zipball's own root folder, outside the requested
- * `subdir`, or — the path-traversal guard — anything that would normalize
- * outside the target directory). Pure; unit-tested directly against raw zip
- * entry names, no filesystem or network involved.
- *
- * GitHub zipballs always nest content under one top-level `<repo>-<sha>/`
- * folder; that prefix is stripped unconditionally (whatever it's actually
- * named — we never assume the exact `owner-repo-sha` shape).
- */
-export function resolveZipEntryRelPath(entryName: string, subdir?: string): string | null {
-  if (entryName.endsWith('/')) return null // directory entry — nothing to write
-
-  const firstSlash = entryName.indexOf('/')
-  if (firstSlash === -1) return null // no root folder to strip — not a shape we expect; skip defensively
-  const withoutRoot = entryName.slice(firstSlash + 1)
-  if (withoutRoot.length === 0) return null
-
-  let rel = withoutRoot
-  if (subdir) {
-    const normalizedSubdir = subdir.replace(/^\/+/, '').replace(/\/+$/, '')
-    if (normalizedSubdir.length === 0 || !isSafeRelPath(normalizedSubdir)) return null
-    const prefix = `${normalizedSubdir}/`
-    if (!rel.startsWith(prefix)) return null
-    rel = rel.slice(prefix.length)
-    if (rel.length === 0) return null
-  }
-
-  return isSafeRelPath(rel) ? rel : null
-}
-
-/**
  * Default, repo-scoped import target — its own project folder under
  * `studio-workspace/`, alongside every hand-authored project. Never the root
  * itself: the target is `studio-workspace/<owner>-<repo>/`, so the import's
@@ -177,52 +134,6 @@ export function resolveZipEntryRelPath(entryName: string, subdir?: string): stri
  */
 export function defaultGithubImportDir(owner: string, repo: string): string {
   return join(process.cwd(), 'studio-workspace', `${owner}-${repo}`)
-}
-
-/**
- * Reads a Response body into memory, aborting once `maxBytes` is exceeded
- * (checking `content-length` up front, then the actual streamed byte count —
- * a spoofed/missing header can't bypass the cap). Mirrors `readJsonWithLimit`
- * in `server/http.ts`, adapted for a binary body instead of JSON.
- */
-async function readBytesWithLimit(res: Response, maxBytes: number): Promise<Uint8Array> {
-  const contentLength = res.headers.get('content-length')
-  if (contentLength) {
-    const parsed = Number(contentLength)
-    if (Number.isFinite(parsed) && parsed > maxBytes) {
-      throw new GithubImportError(
-        `The repository archive is larger than the ${Math.round(maxBytes / (1024 * 1024))} MB import limit.`,
-        413,
-      )
-    }
-  }
-
-  const reader = res.body?.getReader()
-  if (!reader) return new Uint8Array(await res.arrayBuffer())
-
-  const chunks: Uint8Array[] = []
-  let received = 0
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    received += value.byteLength
-    if (received > maxBytes) {
-      await reader.cancel().catch(() => {})
-      throw new GithubImportError(
-        `The repository archive is larger than the ${Math.round(maxBytes / (1024 * 1024))} MB import limit.`,
-        413,
-      )
-    }
-    chunks.push(value)
-  }
-
-  const bytes = new Uint8Array(received)
-  let offset = 0
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset)
-    offset += chunk.byteLength
-  }
-  return bytes
 }
 
 export interface GithubImportOptions {
@@ -302,35 +213,23 @@ export async function runGithubImport(
     )
   }
 
-  const zipBytes = await readBytesWithLimit(res, MAX_IMPORT_DOWNLOAD_BYTES)
+  const zipBytes = await readBytesWithLimit(
+    res,
+    MAX_ARCHIVE_BYTES,
+    `The repository archive is larger than the ${Math.round(MAX_ARCHIVE_BYTES / (1024 * 1024))} MB import limit.`,
+  ).catch(asGithubImportError)
 
-  let skipped = 0
-  let totalBytes = 0
-  const nameToRelPath = new Map<string, string>()
+  // GitHub zipballs always nest content under one top-level `<repo>-<sha>/`
+  // folder — `stripRootFolder: true` unconditionally, never a per-archive
+  // guess (that guess only applies to an arbitrary user-uploaded zip; see
+  // `studio/importUpload.ts`'s `detectSharedZipRoot`).
+  const decider = createArchiveEntryDecider({ stripRootFolder: true, subdir: options.subdir })
 
   let zip: Unzipped
   try {
     zip = unzipSync(zipBytes, {
       filter(file) {
-        const relPath = resolveZipEntryRelPath(file.name, options.subdir)
-        if (relPath === null) return false // directory entry / outside subdir / unsafe — not reported as a skip
-
-        if (file.originalSize > WORKSPACE_MAX_FILE_BYTES) {
-          skipped += 1
-          return false
-        }
-        if (nameToRelPath.size >= WORKSPACE_MAX_FILES) {
-          skipped += 1
-          return false
-        }
-        if (totalBytes + file.originalSize > MAX_IMPORT_TOTAL_BYTES) {
-          skipped += 1
-          return false
-        }
-
-        totalBytes += file.originalSize
-        nameToRelPath.set(file.name, relPath)
-        return true
+        return decider.decide(file.name, file.originalSize)
       },
     })
   } catch (err) {
@@ -340,7 +239,7 @@ export async function runGithubImport(
     )
   }
 
-  if (Object.keys(zip).length === 0) {
+  if (decider.accepted.size === 0) {
     throw new GithubImportError(
       'No importable files were found — check the branch/ref and the subdir, if one was given.',
       422,
@@ -349,33 +248,7 @@ export async function runGithubImport(
 
   const targetDir = resolve(options.dir ?? defaultGithubImportDir(owner, repo))
 
-  // Clearing the target keeps a re-import of the same repo from leaving stale
-  // files behind after an upstream rename/delete. That is only safe because
-  // the target is derived server-side from the parsed repo — `dir` is an
-  // internal (test-only) option and is NOT part of the request schema, so no
-  // caller can turn this into an arbitrary recursive delete.
-  //
-  // Defense in depth: a `.studio/` directory marks a hand-authored studio
-  // workspace (boards, sticky notes — user data with no other copy). Refuse to
-  // clear one no matter who asked, rather than trusting the caller.
-  if (existsSync(join(targetDir, '.studio'))) {
-    throw new GithubImportError(
-      `Refusing to import into ${targetDir}: it is an existing studio workspace (has a .studio/ directory). Imports must target their own directory.`,
-      400,
-    )
-  }
-  rmSync(targetDir, { recursive: true, force: true })
-  mkdirSync(targetDir, { recursive: true })
-
-  let files = 0
-  for (const [entryName, contents] of Object.entries(zip)) {
-    const relPath = nameToRelPath.get(entryName)
-    if (!relPath) continue
-    const fullPath = join(targetDir, ...relPath.split('/'))
-    mkdirSync(dirname(fullPath), { recursive: true })
-    writeFileSync(fullPath, Buffer.from(contents))
-    files += 1
-  }
-
-  return { dir: targetDir, files, skipped }
+  return await writeArchiveToWorkspace(targetDir, decider.accepted, (name) => zip[name], decider.skipped).catch(
+    asGithubImportError,
+  )
 }

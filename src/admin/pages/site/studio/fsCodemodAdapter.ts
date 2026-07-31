@@ -85,6 +85,14 @@ const StudioLoadResponseSchema = Type.Object({
   styleRules: Type.Record(Type.String(), StyleRuleSchema),
   /** §6 — reusable `@media`/`@container`/`@supports` conditions referenced by those rules' `contextStyles`. */
   conditions: Type.Array(ConditionDefSchema),
+  /**
+   * WS-2.3 — raw CSS read from package `.css` files the workspace imports via
+   * a bare specifier (`import '@acme/ui/dist/style.css'`), concatenated
+   * verbatim. NEVER parsed into `styleRules` above — read-only, injected into
+   * the canvas iframe as its own cascade-layer bucket by `ProjectCssInjector`.
+   * See `getStudioVendorCss`/`subscribeStudioVendorCss` below.
+   */
+  vendorCss: Type.String(),
 })
 
 /**
@@ -137,6 +145,49 @@ export function createStudioPage(name?: string): Promise<CreatedStudioPage> {
     body,
     schema: StudioCreatePageResponseSchema,
   })
+}
+
+/**
+ * Commits ONE `kind: 'asset'` edit immediately — WS-8.3's "replace this
+ * image" action — instead of letting the ordinary optimistic prop-diff loop
+ * in `saveSite` pick it up. Deliberately a direct, standalone `apiRequest`
+ * call, same shape as `createStudioPage` above, rather than routed through
+ * `updateNodeProps`:
+ *
+ *   - An image swap is a discrete, deliberate commit (pick a file, confirm),
+ *     not a value the user is continuously typing — there is nothing to debounce.
+ *   - The edit's target is `PageNode.assetOrigin` (the import declaration),
+ *     never the node's own `src` prop — writing it as an ordinary prop diff
+ *     would need `updateNodeProps`'s codeProps guard to special-case this one
+ *     prop, which the store slices do not currently know how to do.
+ *   - The save route ALWAYS reports an asset edit as shared
+ *     (`isSharedSourceNodeId`'s `kind === 'asset'` branch) because the import
+ *     it rewrites can back more than one node — so this always reloads on a
+ *     successful write, the same remedy `saveSite` uses for `shifted`/
+ *     `sharedComponents`, without needing to wait for the next autosave tick.
+ *
+ * `nodeId` is the ORIGIN's own `rel:line:col` (`PageNode.assetOrigin`), not
+ * the editing node's id — same convention the `literal` edit kind uses for
+ * resolved text. `assetPath` is the new file's workspace-relative POSIX path,
+ * from `uploadStudioAsset`'s response or an existing asset the picker offered.
+ */
+export async function saveStudioAssetEdit(nodeId: string, assetPath: string): Promise<void> {
+  const overrideDir = getStudioWorkspaceDir()
+  const result = await apiRequest('/admin/api/studio/save', {
+    method: 'POST',
+    body: { dir: overrideDir ?? loadedDir, edits: [{ kind: 'asset', nodeId, assetPath }] },
+    schema: StudioSaveResponseSchema,
+  })
+
+  if (result.skipped > 0) {
+    pushToast({
+      kind: 'error',
+      title: 'Image was not saved to source',
+      body: 'The import naming this image could not be rewritten — it may no longer exist at the location the canvas last saw.',
+    })
+    return
+  }
+  if (result.written > 0) requestCmsSiteReload()
 }
 
 /** GET /admin/api/studio/framework response — `null` when nothing is persisted yet. */
@@ -213,6 +264,40 @@ export function getStudioComponentSources(): Record<string, ComponentSource> {
 }
 
 /**
+ * WS-2.3 — vendor package CSS from the last load (`StudioLoadResponseSchema`'s
+ * `vendorCss` — see its doc). Read-only, concatenated raw bytes; lives OUTSIDE
+ * `SiteDocument` for the same reason `componentSources` does above: it is
+ * ephemeral, server-derived, per-load state, not part of the
+ * persisted/published document shape `SiteDocument` also serves for the CMS
+ * half of this fork.
+ *
+ * A tiny external store (not a Zustand slice) rather than a module-level
+ * variable read imperatively: `ProjectCssInjector` needs to know when a fresh
+ * value has actually landed so it can re-inject, and `useSyncExternalStore`
+ * gives it that without subscribing to `site` itself — a `site` reference
+ * changes on every unrelated node edit (Mutative mints a new root object per
+ * mutation), which would re-run the injector's DOM work far more often than
+ * vendor CSS actually changes (once per project load).
+ */
+let vendorCss = ''
+const vendorCssListeners = new Set<() => void>()
+
+export function getStudioVendorCss(): string {
+  return vendorCss
+}
+
+export function subscribeStudioVendorCss(listener: () => void): () => void {
+  vendorCssListeners.add(listener)
+  return () => vendorCssListeners.delete(listener)
+}
+
+function setStudioVendorCss(next: string): void {
+  if (next === vendorCss) return
+  vendorCss = next
+  for (const listener of vendorCssListeners) listener()
+}
+
+/**
  * Studio's idle-commit cadence — how long the canvas waits after the last
  * edit before writing source back through `saveSite`. Deliberately snappier
  * than the CMS's user-configurable, default-30s cadence (see
@@ -240,6 +325,7 @@ type StudioEditPayload =
   | { kind: 'style'; nodeId: string; style: Record<string, string | number> }
   | { kind: 'literal'; nodeId: string; text: string }
   | { kind: 'tag'; nodeId: string; tag: string }
+  | { kind: 'asset'; nodeId: string; assetPath: string }
 
 /**
  * The HTML tag an element node renders as, or `undefined` when the module has no
@@ -270,12 +356,13 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
     // GitHub-imported) — see studioWorkspaceDir's doc comment for why every
     // studio client call must agree on the same active dir.
     const overrideDir = getStudioWorkspaceDir()
-    const { dir, projectName, pages, componentSources: sources, styleRules, conditions } = await apiRequest('/admin/api/studio/load', {
+    const { dir, projectName, pages, componentSources: sources, styleRules, conditions, vendorCss: loadedVendorCss } = await apiRequest('/admin/api/studio/load', {
       schema: StudioLoadResponseSchema,
       query: overrideDir ? { dir: overrideDir } : undefined,
     })
     loadedDir = dir
     componentSources = sources
+    setStudioVendorCss(loadedVendorCss)
     // Baseline for the save-time diff — see `loadedValues`.
     loadedValues = snapshotNodeValues(pages)
     // Distinct from `site.name` (the "Studio" product wordmark, unchanged per

@@ -73,8 +73,9 @@ import { createPortal } from 'react-dom'
 import { cn } from '@ui/cn'
 import { ClassStyleInjector } from './ClassStyleInjector'
 import { UserStylesheetInjector } from './UserStylesheetInjector'
-import { AlmDesignSystemCssInjector } from './AlmDesignSystemCssInjector'
+import { ProjectCssInjector } from './ProjectCssInjector'
 import { CanvasAnimationInjector } from './CanvasAnimationInjector'
+import { CanvasScrollUnrollInjector } from './CanvasScrollUnrollInjector'
 import { EditorChromeInjector } from './EditorChromeInjector'
 import { RuntimeScriptInjector } from './RuntimeScriptInjector'
 import type { InjectableRuntimeScript } from './useRuntimeScriptBuild'
@@ -656,15 +657,22 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
           createPortal(
             <CanvasFrameElementContext.Provider value={iframeRef.current}>
               <CanvasDocumentContext.Provider value={iframeDoc}>
-                {/* Editor-chrome stylesheet — UNLAYERED so it beats @layer user-authored author CSS */}
+                {/* Editor-chrome stylesheet — UNLAYERED so it beats every other bucket */}
                 <EditorChromeInjector targetDocument={iframeDoc} parentDocument={document} />
-                {/* Design-system CSS (tokens + component styles) so @alm-design modules render styled */}
-                <AlmDesignSystemCssInjector targetDocument={iframeDoc} />
+                {/* Vendor package CSS (Alm design-system + the open project's own
+                    bare-specifier package CSS) — read-only, @layer vendor,
+                    ordered below @layer user-authored. See canvasCssLayers.ts. */}
+                <ProjectCssInjector targetDocument={iframeDoc} />
                 {/* Design frames only: animations play once and hold their last
                     keyframe, so an imported app's infinite shimmers/spinners
                     don't run forever behind the selection ring. Live mode is a
                     visitor preview, so it keeps the real motion. */}
                 {!isLive && <CanvasAnimationInjector targetDocument={iframeDoc} />}
+                {/* Design frames only: internal scroll regions (a flex:1
+                    overflow:auto app shell) become content-sized so the whole
+                    screen is visible instead of a scrollable box. Live mode
+                    scrolls natively and keeps the app's own clipping. */}
+                {!isLive && <CanvasScrollUnrollInjector targetDocument={iframeDoc} />}
                 {/* Author CSS — both wrapped in @layer user-authored inside the injectors */}
                 <ClassStyleInjector targetDocument={iframeDoc} viewport={viewport} />
                 <UserStylesheetInjector targetDocument={iframeDoc} viewport={viewport} />

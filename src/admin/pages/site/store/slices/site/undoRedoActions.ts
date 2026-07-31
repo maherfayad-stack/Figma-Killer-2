@@ -14,6 +14,7 @@ import { clonePackageJson } from '@core/site-dependencies/manifest'
 import { cloneSiteRuntimeConfig } from '@core/site-runtime'
 import { pruneCanvasSelectionDraft } from '../selectionSlice'
 import { collectDirtyFromSitePatches, mergeDirtyMarks } from './dirtyTracking'
+import { applyNodeIndexPatch } from './nodeIndex'
 import type { SiteSlice, SiteSliceHelpers } from './types'
 
 type UndoRedoActions = Pick<SiteSlice, 'undo' | 'redo'>
@@ -44,6 +45,19 @@ export function createUndoRedoActions({ get, set }: SiteSliceHelpers): UndoRedoA
         state.canRedo = true
         state.hasUnsavedChanges = true
         mergeDirtyMarks(state._dirtySave, dirty)
+        // undo bypasses runHistoricMutation (it applies patches directly), so
+        // it is its own node-index invalidation point — same DirtyMarks, same
+        // reasoning as helpers.ts. See nodeIndex.ts.
+        applyNodeIndexPatch(
+          {
+            nodeIdToPageIds: state._nodeIdToPageIds,
+            textOriginKeyToCount: state._textOriginKeyToCount,
+            inlineTailToCount: state._inlineTailToCount,
+          },
+          site,
+          restored,
+          dirty,
+        )
         // Keep activePageId valid
         if (!state.site.pages.find((p) => p.id === state.activePageId)) {
           state.activePageId = state.site.pages[0]?.id ?? null
@@ -73,6 +87,17 @@ export function createUndoRedoActions({ get, set }: SiteSliceHelpers): UndoRedoA
         state.canRedo = state._historyFuture.length > 0
         state.hasUnsavedChanges = true
         mergeDirtyMarks(state._dirtySave, dirty)
+        // redo bypasses runHistoricMutation too — same reasoning as undo above.
+        applyNodeIndexPatch(
+          {
+            nodeIdToPageIds: state._nodeIdToPageIds,
+            textOriginKeyToCount: state._textOriginKeyToCount,
+            inlineTailToCount: state._inlineTailToCount,
+          },
+          site,
+          restored,
+          dirty,
+        )
         // Keep activePageId valid
         if (!state.site.pages.find((p) => p.id === state.activePageId)) {
           state.activePageId = state.site.pages[0]?.id ?? null

@@ -21,6 +21,7 @@ import type { ImportFragment } from '@core/htmlImport'
 import type { NewStyleRule } from '@core/siteImport'
 import { addImportedScriptDependencies, addImportedScripts, addImportedStylesheets } from './importedSiteFiles'
 import { collectDirtyFromSitePatches, mergeDirtyMarks } from './dirtyTracking'
+import { applyNodeIndexPatch } from './nodeIndex'
 import type { EditorStore } from '@site/store/types'
 import { MAX_HISTORY } from './defaults'
 import { reconcileFrameworkClasses } from './framework/reconcile'
@@ -29,6 +30,7 @@ import { addImportedColorTokens, overwriteImportedColorTokens } from './imported
 import { addImportedFonts, addImportedFontTokens, addInstalledFontEntries, overwriteImportedFontTokens } from './importedFonts'
 import type { HistoryEntry, SiteMutationResult, SiteSliceHelpers, SiteSliceRecipe } from './types'
 import type { SiteImportTransaction } from '@core/siteImport'
+import { groupNodeIdsByPage } from './nodeTreeGrouping'
 
 /**
  * Compute a node's depth in a tree by walking the O(1) `parentId` pointer up
@@ -296,7 +298,22 @@ export function buildSiteHelpers(
         // The same patches drive save-dirty attribution: autosave ships only
         // the pages/VCs these paths name, plus explicit deleted-row ids
         // derived from the pre/post membership diff (see dirtyTracking.ts).
-        mergeDirtyMarks(state._dirtySave, collectDirtyFromSitePatches(siteForward, cur.site!, next.site!))
+        const marks = collectDirtyFromSitePatches(siteForward, cur.site!, next.site!)
+        mergeDirtyMarks(state._dirtySave, marks)
+        // Same marks, second consumer: keep the node-lookup indexes (WS-5.2)
+        // in sync with exactly the pages this mutation touched — see
+        // nodeIndex.ts for why reusing DirtyMarks here is correct, not just
+        // convenient.
+        applyNodeIndexPatch(
+          {
+            nodeIdToPageIds: state._nodeIdToPageIds,
+            textOriginKeyToCount: state._textOriginKeyToCount,
+            inlineTailToCount: state._inlineTailToCount,
+          },
+          cur.site!,
+          next.site!,
+          marks,
+        )
       }
       state.hasUnsavedChanges = true
     })
@@ -608,6 +625,61 @@ export function buildSiteHelpers(
     }, null)
   }
 
+  /**
+   * Mutate every PAGE tree that contains at least one of `nodeIds`, running
+   * `fn` once per distinct page with just that page's own matching ids —
+   * WS-7.3: a `MultiSelectionInspector` selection built on a studio board can
+   * span several frames (pages) at once, and every existing multi-node
+   * action (`deleteNodes`, `wrapNodes`) only ever touched the ACTIVE page.
+   *
+   * Resolution uses `_nodeIdToPageIds` (WS-5.2), which is many-valued by
+   * design: a composed Next.js `layout.tsx` node carries the SAME id on
+   * every route beneath it (`meta-05`). `fn` therefore runs against every
+   * page copy of a shared id — matching the save route's own dedup
+   * ("several board nodes can share one writeback target when they are
+   * instances of the same inlined/composed source"), so every frame showing
+   * that shared node stays visually consistent with the one file all of
+   * them will eventually write back to.
+   *
+   * VC canvas mode has no board-frame concept (`_nodeIdToPageIds` only
+   * indexes `site.pages`, never a VC's own tree), so it always takes the
+   * plain single-tree path via `mutateActiveTree` — same as when every id
+   * resolves to at most one page, the overwhelmingly common case. Either
+   * way this stays byte-identical to the pre-WS-7.3 single-tree behaviour.
+   *
+   * One `runHistoricMutation` transaction covers every touched page: a
+   * cross-frame bulk action is still ONE undo step.
+   */
+  function mutateTreesForNodeIds(
+    nodeIds: string[],
+    fn: (tree: NodeTree<PageNode>, idsOnThisTree: string[]) => SiteMutationResult,
+  ): boolean {
+    const cur = get()
+    const target = resolveActiveTreeTarget(cur)
+    if (!target || target.vc) {
+      return mutateActiveTree((tree) => fn(tree, nodeIds))
+    }
+
+    const idsByPage = groupNodeIdsByPage(cur, nodeIds)
+    if (idsByPage.size <= 1) {
+      // Every id is on the active page (or unindexed) — the common,
+      // single-frame case stays on the plain single-tree path.
+      return mutateActiveTree((tree) => fn(tree, nodeIds))
+    }
+
+    return runHistoricMutation((draft) => {
+      const site = draft.site
+      if (!site) return false
+      let mutatedAny = false
+      for (const [pageId, idsOnThisPage] of idsByPage) {
+        const page = site.pages.find((p) => p.id === pageId)
+        if (!page) continue
+        if (fn(page, idsOnThisPage) !== false) mutatedAny = true
+      }
+      return mutatedAny
+    }, null)
+  }
+
   return {
     set,
     get,
@@ -617,5 +689,6 @@ export function buildSiteHelpers(
     mutateSiteWithExplorerReconcile,
     mutateSiteState,
     mutateAllPagesAndSite,
+    mutateTreesForNodeIds,
   }
 }

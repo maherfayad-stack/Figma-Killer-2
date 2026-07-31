@@ -16,7 +16,7 @@ import { getErrorMessage } from '@core/utils/errorMessage'
 // SchedulePublishDialog drags in DateTimePicker (~14 kB pre-minify) + its CSS
 // module, and is opened rarely (the schedule-publish menu action). lazy()
 // keeps it out of the eager SitePage route chunk — same pattern as
-// ImportGithubDialog / SettingsModal / PreviewOverlay. The dialog is only
+// ImportProjectDialog / SettingsModal / PreviewOverlay. The dialog is only
 // rendered once `scheduleDialogOpen` flips true (see JSX below), so the
 // dynamic import isn't even requested until the user opens it.
 const SchedulePublishDialog = lazy(() =>

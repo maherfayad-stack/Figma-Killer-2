@@ -70,6 +70,24 @@
  *
  * Self-gates on `selectActiveBoard`: renders nothing outside studio board
  * mode, so `CanvasTransformLayer` can always mount it without an extra check.
+ *
+ * Frame multi-selection (WS-7.1): distinct from node selection
+ * (`selectedFrameIds`, boardSlice — see that slice's module doc). Three entry
+ * points, all funnelled into the same `selectFrame`/`setSelectedFrameIds`
+ * actions:
+ *   - Header click (`BoardFrameView`) — replace on a plain click, toggle-add
+ *     on Shift-click, mirroring the node-selection click contract in
+ *     `CanvasRoot.onNodeClick`.
+ *   - ⌘/Ctrl+A — wired in `useCanvasKeyboardShortcuts.ts` via `selectAllFrames`.
+ *   - Marquee drag on empty canvas — `handleLayerPointerDown/Move` below,
+ *     armed only when the pointerdown TARGET is the bare `.layer` div itself
+ *     (not a bubbled event from a frame), so dragging a frame's header never
+ *     also starts a marquee. Live-updates the selection every move via the
+ *     pure `framesInMarquee` (screen-space math, unit-tested separately).
+ *     The visual marquee rectangle is portaled OUTSIDE this transformed
+ *     layer (into the canvas root) because it's drawn in screen pixels, not
+ *     board units — rendering it inside `.layer` would scale/pan it with
+ *     the board instead of tracking the cursor.
  */
 import {
   useContext,
@@ -91,14 +109,19 @@ import { useInlineRename } from '@site/hooks/useInlineRename'
 import { CloseIcon } from 'pixel-art-icons/icons/close'
 import { PenSquareSolidIcon } from 'pixel-art-icons/icons/pen-square-solid'
 import { CanvasPageContext, CanvasViewportActionsContext } from '../CanvasContexts'
+import { isCanvasSpacePanActive } from '../canvasPanInput'
 import { BreakpointFrame } from '../BreakpointFrame'
 import { AddFramePicker } from './AddFramePicker'
 import { NewPageButton } from './NewPageButton'
 import { FRAME_WIDTH, FRAME_HEIGHT } from './frameGrid'
 import { FRAME_VIEWPORT_MARGIN, isFrameOnScreen } from './frameVirtualization'
+import { framesInMarquee, marqueeRectFromPoints, type MarqueeFrame, type MarqueeRect } from './framesInMarquee'
 import { resizeFrameRect, MIN_FRAME_SIZE, type FrameResizeRect, type ResizeHandle } from './frameResize'
 import { computeSnap, collectPeerRects, SNAP_THRESHOLD_BOARD_UNITS } from '../boardSnapping'
 import styles from './BoardFramesLayer.module.css'
+
+/** Marquee movement (screen px) before a drag counts as "selecting", so a plain click doesn't flash an empty marquee. */
+const MARQUEE_DRAG_THRESHOLD_PX = 3
 
 /** Header height (board units) added to the frame's own height for the
  * on-screen intersection test, so the drag header itself isn't cut off the
@@ -149,6 +172,24 @@ export function BoardFramesLayer() {
   const zoom = useEditorStore((s) => s.zoom)
   const panX = useEditorStore((s) => s.panX)
   const panY = useEditorStore((s) => s.panY)
+  // WS-7.1 — frame multi-selection, a separate domain from node selection.
+  const selectedFrameIds = useEditorStore((s) => s.selectedFrameIds)
+  const setSelectedFrameIds = useEditorStore((s) => s.setSelectedFrameIds)
+
+  // Marquee drag (WS-7.1) — screen-space rect, portaled outside the
+  // transformed layer (see module doc). `marqueeDragRef` carries the
+  // in-progress gesture; `marqueeRect` is only set once movement crosses
+  // MARQUEE_DRAG_THRESHOLD_PX, so a plain background click never flashes an
+  // empty marquee (and never touches the selection — see CanvasRoot's
+  // background-click handler for the "click empty canvas to deselect" path).
+  const marqueeDragRef = useRef<{
+    pointerId: number
+    startX: number
+    startY: number
+    additive: boolean
+    baseSelection: string[]
+  } | null>(null)
+  const [marqueeRect, setMarqueeRect] = useState<MarqueeRect | null>(null)
 
   // The untransformed canvas root's client size — this layer's ancestor
   // applies `translate(panX, panY) scale(zoom)`, so the root's own box is
@@ -180,8 +221,92 @@ export function BoardFramesLayer() {
       (entry): entry is { frame: BoardFrame; page: Page } => entry.page !== undefined,
     )
 
+  // Marquee: only arms on a genuine empty-canvas primary-button press — the
+  // pointerdown TARGET must be the bare `.layer` div itself (a bubbled event
+  // from a frame/furniture child has `e.target` pointing at that child, not
+  // `.layer`), never during space-held pan, never on a secondary button.
+  const handleLayerPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return
+    if (e.target !== e.currentTarget) return
+    if (isCanvasSpacePanActive(document)) return
+    const canvasRoot = viewportActions?.canvasRootRef.current
+    if (!canvasRoot) return
+    const rect = canvasRoot.getBoundingClientRect()
+    marqueeDragRef.current = {
+      pointerId: e.pointerId,
+      startX: e.clientX - rect.left,
+      startY: e.clientY - rect.top,
+      additive: e.shiftKey,
+      baseSelection: selectedFrameIds,
+    }
+    e.currentTarget.setPointerCapture(e.pointerId)
+  }
+
+  const handleLayerPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = marqueeDragRef.current
+    if (!drag || drag.pointerId !== e.pointerId) return
+    const canvasRoot = viewportActions?.canvasRootRef.current
+    if (!canvasRoot) return
+    const rect = canvasRoot.getBoundingClientRect()
+    const currentX = e.clientX - rect.left
+    const currentY = e.clientY - rect.top
+    const next = marqueeRectFromPoints(drag.startX, drag.startY, currentX, currentY)
+    if (next.width < MARQUEE_DRAG_THRESHOLD_PX && next.height < MARQUEE_DRAG_THRESHOLD_PX) return
+
+    setMarqueeRect(next)
+    const marqueeFrames: MarqueeFrame[] = framesWithPages.map(({ frame, page }) => ({
+      pageId: page.id,
+      x: frame.x,
+      y: frame.y,
+      width: frame.width ?? FRAME_WIDTH,
+      height: (frame.height ?? FRAME_HEIGHT) + FRAME_HEADER_HEIGHT,
+    }))
+    const hits = framesInMarquee(marqueeFrames, next, { panX, panY, zoom })
+    const nextIds = drag.additive
+      ? [...drag.baseSelection, ...hits.filter((id) => !drag.baseSelection.includes(id))]
+      : hits
+    setSelectedFrameIds(nextIds)
+  }
+
+  const endMarqueeDrag = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (marqueeDragRef.current?.pointerId === e.pointerId) {
+      marqueeDragRef.current = null
+      setMarqueeRect(null)
+    }
+  }
+
+  // One bounding box around the whole multi-selection (board-space, so it
+  // lives inside `.layer` and pans/zooms with the frames it encloses).
+  const selectedRects = framesWithPages.filter(({ page }) => selectedFrameIds.includes(page.id))
+  const selectionBoundingBox =
+    selectedRects.length > 1
+      ? (() => {
+          const boxes = selectedRects.map(({ frame }) => ({
+            left: frame.x,
+            top: frame.y,
+            right: frame.x + (frame.width ?? FRAME_WIDTH),
+            bottom: frame.y + (frame.height ?? FRAME_HEIGHT) + FRAME_HEADER_HEIGHT,
+          }))
+          return {
+            x: Math.min(...boxes.map((b) => b.left)),
+            y: Math.min(...boxes.map((b) => b.top)),
+            right: Math.max(...boxes.map((b) => b.right)),
+            bottom: Math.max(...boxes.map((b) => b.bottom)),
+          }
+        })()
+      : null
+
+  const canvasRootEl = viewportActions?.canvasRootRef.current ?? null
+
   return (
-    <div className={styles.layer} data-testid="board-frames-layer">
+    <div
+      className={styles.layer}
+      data-testid="board-frames-layer"
+      onPointerDown={handleLayerPointerDown}
+      onPointerMove={handleLayerPointerMove}
+      onPointerUp={endMarqueeDrag}
+      onPointerCancel={endMarqueeDrag}
+    >
       {framesWithPages.length === 0 ? (
         <div className={styles.emptyState}>
           <p className={styles.emptyStateTitle}>No screens on this board yet</p>
@@ -211,7 +336,9 @@ export function BoardFramesLayer() {
               y={frame.y}
               width={width}
               height={height}
+              hasManualHeight={frame.height !== undefined}
               isActive={page.id === activePageId}
+              isSelected={selectedFrameIds.includes(page.id)}
               isOnScreen={isOnScreen}
               onActivate={() => openPageInCanvas(page.id)}
               onMove={(nx, ny) => setFramePosition(page.id, nx, ny)}
@@ -221,6 +348,31 @@ export function BoardFramesLayer() {
             />
           )
         })
+      )}
+
+      {selectionBoundingBox && (
+        <div
+          className={styles.selectionBoundingBox}
+          style={{
+            '--box-x': `${selectionBoundingBox.x}px`,
+            '--box-y': `${selectionBoundingBox.y}px`,
+            '--box-w': `${selectionBoundingBox.right - selectionBoundingBox.x}px`,
+            '--box-h': `${selectionBoundingBox.bottom - selectionBoundingBox.y}px`,
+          } as CSSProperties}
+        />
+      )}
+
+      {marqueeRect && canvasRootEl && createPortal(
+        <div
+          className={styles.marquee}
+          style={{
+            '--marquee-x': `${marqueeRect.x}px`,
+            '--marquee-y': `${marqueeRect.y}px`,
+            '--marquee-w': `${marqueeRect.width}px`,
+            '--marquee-h': `${marqueeRect.height}px`,
+          } as CSSProperties}
+        />,
+        canvasRootEl,
       )}
     </div>
   )
@@ -252,7 +404,16 @@ interface BoardFrameViewProps {
    * component always receives a concrete size). */
   width: number
   height: number
+  /**
+   * Whether `height` above came from a persisted, author-dragged resize
+   * (`board.frames[].height` is set) rather than the `FRAME_HEIGHT` default
+   * (`canvas-04`). Drives `.frameBody`'s auto-vs-fixed sizing — see the
+   * `data-frame-auto-height` usage below and `BoardFramesLayer.module.css`.
+   */
+  hasManualHeight: boolean
   isActive: boolean
+  /** WS-7.1 — whether this frame is part of the bulk-selection set (`selectedFrameIds`). Distinct from `isActive`. */
+  isSelected: boolean
   isOnScreen: boolean
   onActivate: () => void
   onMove: (x: number, y: number) => void
@@ -267,7 +428,9 @@ function BoardFrameView({
   y,
   width,
   height,
+  hasManualHeight,
   isActive,
+  isSelected,
   isOnScreen,
   onActivate,
   onMove,
@@ -292,6 +455,11 @@ function BoardFrameView({
     // pointerdown must fall through to `onContextMenu` untouched, never
     // arming drag state (see the module doc's "Drag-to-reposition" note).
     if (e.button !== 0) return
+    // WS-7.1 — select on pointerDOWN (not click/mouseup), matching Figma:
+    // pressing a frame's header selects it immediately, and a drag that
+    // follows moves the now-selected frame. Plain click replaces the
+    // selection; Shift-click extends it (toggle-add).
+    useEditorStore.getState().selectFrame(page.id, e.shiftKey ? 'toggle' : 'replace')
     e.currentTarget.setPointerCapture(e.pointerId)
     dragRef.current = {
       pointerId: e.pointerId,
@@ -374,6 +542,7 @@ function BoardFrameView({
       className={styles.frame}
       data-page-id={page.id}
       data-active={isActive ? 'true' : undefined}
+      data-selected={isSelected ? 'true' : undefined}
       style={{ '--frame-x': `${x}px`, '--frame-y': `${y}px` } as CSSProperties}
       onPointerDownCapture={handleActivateCapture}
     >
@@ -434,9 +603,17 @@ function BoardFrameView({
       {/* Sized to the frame's OWN width/height (Phase 6E) — a real "device
           box" for both the live iframe and the offscreen placeholder, so
           resize handles have a consistent box to anchor to regardless of
-          on-screen state. Content taller than `height` scrolls inside. */}
+          on-screen state. Content taller than `height` scrolls inside —
+          UNLESS the frame has never been manually resized, in which case
+          `data-frame-auto-height` (canvas-04) lets the box grow to wrap its
+          already-correctly-fitted iframe instead (see
+          `BoardFramesLayer.module.css`). Gated on `isOnScreen` too: an
+          offscreen frame has no live iframe to size against, so it keeps the
+          fixed fallback box the placeholder needs — same as before. */}
       <div
         className={styles.frameBody}
+        data-testid="board-frame-body"
+        data-frame-auto-height={!hasManualHeight && isOnScreen ? 'true' : undefined}
         style={{ '--frame-w': `${width}px`, '--frame-h': `${height}px` } as CSSProperties}
       >
         {isOnScreen ? (

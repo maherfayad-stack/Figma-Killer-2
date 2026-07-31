@@ -147,6 +147,97 @@ describe('an imported image', () => {
   })
 })
 
+describe('assetOrigin (WS-8.3) — the import specifier behind a resolved image', () => {
+  /** 1-based line/col of `needle`'s first character, mirroring how the parser locates a literal. */
+  function locate(source: string, needle: string): { line: number; col: number } {
+    const index = source.indexOf(needle)
+    if (index < 0) throw new Error(`fixture does not contain ${needle}`)
+    const before = source.slice(0, index)
+    const line = before.split('\n').length
+    const col = index - (before.lastIndexOf('\n') + 1) + 1
+    return { line, col }
+  }
+
+  beforeEach(() => {
+    write('media/one.png', '')
+    write('media/two.jpg', '')
+  })
+
+  it('points at the import specifier, not the JSX attribute', () => {
+    const source = [
+      "import heroImg from '../media/one.png'",
+      'export default function Hero() {',
+      '  return <img src={heroImg} alt="Hero" />',
+      '}',
+      '',
+    ].join('\n')
+    write('pages/Hero.jsx', source)
+
+    const image = images(parse('pages/Hero.jsx'))[0]!
+    expect(image.props.src).toBe(`${STUDIO_ASSET_SENTINEL}media/one.png`)
+    const expected = locate(source, "'../media/one.png'")
+    expect(image.assetOrigin).toEqual({ rel: 'pages/Hero.jsx', line: expected.line, col: expected.col })
+  })
+
+  it('resolves through an alias to the ORIGINAL import statement', () => {
+    const source = [
+      "import one from '../media/one.png'",
+      'export default function Alias() {',
+      '  const hero = one',
+      '  return <img src={hero} />',
+      '}',
+      '',
+    ].join('\n')
+    write('pages/Alias.jsx', source)
+
+    const image = images(parse('pages/Alias.jsx'))[0]!
+    const expected = locate(source, "'../media/one.png'")
+    expect(image.assetOrigin).toEqual({ rel: 'pages/Alias.jsx', line: expected.line, col: expected.col })
+  })
+
+  it('is absent for a literal src (nothing to redirect an import at)', () => {
+    write(
+      'pages/Literal.jsx',
+      ['export default function Literal() { return <img src="/img/hero.png" /> }', ''].join('\n'),
+    )
+
+    expect(images(parse('pages/Literal.jsx'))[0]?.assetOrigin).toBeUndefined()
+  })
+
+  it('is absent when the image import does not resolve (missing file)', () => {
+    write(
+      'pages/Missing.jsx',
+      [
+        "import gone from '../media/gone.png'",
+        'export default function Missing() { return <img src={gone} /> }',
+        '',
+      ].join('\n'),
+    )
+
+    expect(images(parse('pages/Missing.jsx'))[0]?.assetOrigin).toBeUndefined()
+  })
+
+  it('gives two nodes sharing one import the SAME origin (shared-asset case)', () => {
+    const source = [
+      "import one from '../media/one.png'",
+      'export default function Twice() {',
+      '  return (',
+      '    <div>',
+      '      <img src={one} alt="a" />',
+      '      <img src={one} alt="b" />',
+      '    </div>',
+      '  )',
+      '}',
+      '',
+    ].join('\n')
+    write('pages/Twice.jsx', source)
+
+    const [first, second] = images(parse('pages/Twice.jsx'))
+    expect(first?.assetOrigin).toBeDefined()
+    expect(first?.assetOrigin).toEqual(second?.assetOrigin)
+  })
+})
+
 describe('an inline <svg> written as JSX', () => {
   const svgOf = (page: ParsedPage): string | undefined => {
     const node = Object.values(page.nodes).find((n) => n.name === 'svg')

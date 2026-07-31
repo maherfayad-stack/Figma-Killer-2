@@ -23,14 +23,18 @@
  *
  * Cascade isolation via @layer
  * ────────────────────────────
- * This style element is intentionally UNLAYERED. ClassStyleInjector and
- * UserStylesheetInjector both wrap their content in `@layer user-authored`,
- * making all author CSS lower-priority than any unlayered rule. The chrome CSS
- * wins over author rules without needing !important — user stylesheets cannot
+ * This style element is intentionally UNLAYERED. Every other CSS bucket sits
+ * in a named `@layer` — `ProjectCssInjector`'s vendor package CSS in
+ * `@layer vendor`, `ClassStyleInjector`/`UserStylesheetInjector`'s author CSS
+ * in `@layer user-authored`, ordered ABOVE vendor (see `canvasCssLayers.ts`
+ * for why that ordering needs an explicit pre-declaration) — making all of it
+ * lower-priority than any unlayered rule. The chrome CSS wins over both
+ * without needing !important — neither user stylesheets nor vendor CSS can
  * bleed into placeholder / slot-boundary chrome even at high specificity.
  *
  * Mount order inside the portal:
  *   <EditorChromeInjector>   ← <style id="studio-editor-chrome">  (unlayered)
+ *   <ProjectCssInjector>     ← <style id="mc-vendor">          (@layer vendor)
  *   <ClassStyleInjector>     ← <style id="mc-classes">        (@layer user-authored)
  *   <UserStylesheetInjector> ← <style id="mc-user-styles">    (@layer user-authored)
  *   {children}

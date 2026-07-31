@@ -36,6 +36,23 @@
     border-radius: 0 0 var(--radius) var(--radius);
 }
 
+/* canvas-04 — a frame the author has never manually resized (BoardFramesLayer.tsx's
+   `hasManualHeight` is false) grows to wrap its content instead of clipping
+   it inside the fixed `--frame-h` device box above. The iframe INSIDE this
+   box already sizes itself correctly to its own content
+   (`useIframeFrameAutoHeight`/`resolveFrameFitHeight.ts` grow the iframe
+   element's own CSS height to match) — this box only needs to stop being
+   SMALLER than that already-correct child. `--frame-h` still floors it via
+   `min-height` so a frame whose iframe hasn't measured yet doesn't flash to
+   near-zero height. A frame the author HAS dragged to a specific size keeps
+   the fixed, scrolls-internally behaviour above by deliberate design (the
+   configured device size stays true regardless of page content length). */
+.frameBody[data-frame-auto-height='true'] {
+    height: auto;
+    min-height: var(--frame-h);
+    overflow: visible;
+}
+
 .header {
     display: flex;
     align-items: center;
@@ -53,6 +70,46 @@
 
 .frame[data-active='true'] .header {
     box-shadow: var(--canvas-selection-ring);
+}
+
+/* Frame multi-selection (WS-7.1) — distinct from `data-active` (the edit
+   target): a frame can be bulk-selected without being active, and vice
+   versa. Outlines the WHOLE frame box (header + body), not just the header,
+   so a selected-but-inactive frame still reads clearly against its
+   neighbors. */
+.frame[data-selected='true'] {
+    outline: 2px solid var(--canvas-selection-ring-color);
+    outline-offset: 2px;
+}
+
+/* One bounding box around the whole multi-selection, rendered as a sibling
+   of the frames inside the same transformed layer (board-space units, so it
+   pans/zooms with the frames it encloses). Dashed to read as a computed
+   summary rather than a real frame. */
+.selectionBoundingBox {
+    position: absolute;
+    left: var(--box-x);
+    top: var(--box-y);
+    width: var(--box-w);
+    height: var(--box-h);
+    border: 1px dashed var(--canvas-selection-ring-color);
+    border-radius: var(--radius);
+    pointer-events: none;
+}
+
+/* Marquee drag rectangle — portaled OUTSIDE the transformed layer (see
+   BoardFramesLayer.tsx), so its coordinates are plain screen pixels relative
+   to the canvas root, not board units. */
+.marquee {
+    position: absolute;
+    left: var(--marquee-x);
+    top: var(--marquee-y);
+    width: var(--marquee-w);
+    height: var(--marquee-h);
+    background: color-mix(in srgb, var(--canvas-selection-ring-color) 12%, transparent);
+    border: 1px solid var(--canvas-selection-ring-color);
+    pointer-events: none;
+    z-index: 51;
 }
 
 .title {

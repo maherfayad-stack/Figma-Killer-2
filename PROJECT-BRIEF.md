@@ -106,17 +106,35 @@ studio-workspace/<project>/          ← a real React repo. THE source of truth.
 - Static value resolution Tiers A/B/C, `.map` expansion, multi-return rendering
 - Per-prop writability (`codeProps`), resolved-text writeback at its literal origin
 - Plain-CSS import → `StyleRule` registry + `node.classIds`
+- Compiled styles (WS-2.1/2.2): CSS Modules (`.module.css`, Tier 0) rewritten
+  to hashed class names and resolved through the evaluator
+  (`styles.card`, `cn()`/`clsx()`/`classnames()`); Tailwind v3/v4, Sass, and
+  PostCSS compiled by running the workspace's own toolchain once the project
+  is promoted past Tier 0 trust — `server/handlers/studio/styleCompile.ts`
+- Vendor package CSS (WS-2.3): a bare-specifier `.css` import
+  (`import '@acme/ui/dist/style.css'`) is resolved against the project's own
+  `node_modules` and injected into the canvas iframe as a read-only
+  `@layer vendor` bucket (`ProjectCssInjector`), ordered below the editable
+  `@layer user-authored` class registry — Tier 0 safe, no trust gate
 - Board frames with per-frame x/y/w/h, sticky notes, doc cards, frame virtualization
 - iframe-per-frame canvas with cascade-layered CSS injection
 - CSS animations freeze (play once, hold last keyframe)
+- Image upload/replace (WS-8.3) — `<img src={heroImg}>` where `heroImg` is a
+  local import is now editable: `ParsedNode.assetOrigin` names the import's
+  own specifier literal, `setImportSpecifier` rewrites it, `POST
+  /admin/api/studio/asset-upload` lands the new file in the workspace
 - MCP server with a live editor bridge + `studio_import_project`
 
 ### What does NOT work today (the roadmap)
 
-Tailwind / CSS Modules / Sass / CSS-in-JS · npm package components (only the
-hardcoded `@alm-design/design-system`) · component instances, swap, detach ·
-scroll unrolling · image upload · CSS write-back to disk · frame multi-select
-and bulk actions · Figma-grade inspector interactions · visual-audit MCP tools.
+CSS Modules (`.module.css` only — Sass/Less module variants are undetected),
+Tailwind v3/v4 and Sass/PostCSS compilation (WS-2.1 built the pipeline, but it
+requires the project promoted past Tier 0 trust — a fresh import never
+auto-runs it), CSS-in-JS ·
+npm package components (only the hardcoded `@alm-design/design-system`) ·
+component instances, swap, detach · scroll unrolling · CSS
+write-back to disk · frame multi-select and bulk actions · Figma-grade
+inspector interactions · visual-audit MCP tools.
 
 All of it is specced in [`STUDIO-IMPORT-V2-PLAN.md`](STUDIO-IMPORT-V2-PLAN.md).
 **Read the relevant workstream section before designing anything.**

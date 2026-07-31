@@ -2,6 +2,7 @@ import { useRef } from 'react'
 import { useEditorStore } from '@site/store/store'
 import { Panel, useAutoFocusPanel } from '@admin/shared/Panel'
 import { DepsSection } from './DepsSection'
+import { InstallDependenciesPrompt } from './InstallDependenciesPrompt'
 
 interface DependenciesPanelProps {
   variant?: 'docked'
@@ -24,6 +25,7 @@ export function DependenciesPanel({ variant = 'docked' }: DependenciesPanelProps
       testId="dependencies-panel"
       onClose={() => setDependenciesPanelOpen(false)}
     >
+      <InstallDependenciesPrompt />
       <DepsSection />
     </Panel>
   )

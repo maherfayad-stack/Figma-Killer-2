@@ -68,6 +68,17 @@ export interface StaticEvalOptions {
    * imports stay unresolved, exactly as before.
    */
   workspaceRoot?: string
+  /**
+   * WS-2.2 — `{ localClassName -> generatedGlobalClassName }`, one entry per
+   * `*.module.css` file, keyed by workspace-relative POSIX path (the same
+   * `rel` `resolveImportedFile` computes for `?raw`/image imports). Produced
+   * by `server/handlers/studio/styleCompile.ts` and threaded straight through
+   * from `StudioLoadResult` — this evaluator never compiles CSS itself, it
+   * only resolves `import styles from './Card.module.css'` to the object the
+   * compile step already built. Omit and a CSS Modules import stays
+   * unresolved, exactly like an unconfigured `workspaceRoot`.
+   */
+  cssModuleClassMaps?: Readonly<Record<string, Readonly<Record<string, string>>>>
 }
 
 /** A component-body/module-scope binding chain — see `createEvalScope`. */

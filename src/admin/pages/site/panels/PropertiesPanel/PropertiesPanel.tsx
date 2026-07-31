@@ -42,6 +42,7 @@ import { usePropertiesPanelData } from './usePropertiesPanelData'
 import { renderModuleTabContent } from './renderModuleTabContent'
 import { PropertiesPanelBody } from './PropertiesPanelBody'
 import { FrameSizePanel } from './FrameSizePanel'
+import { FrameBulkInspector } from './FrameBulkInspector'
 import { NodeHeader } from './NodeHeader'
 import { SelectorHeader } from './SelectorHeader'
 import { MultiSelectionHeader } from './MultiSelectionInspector'
@@ -90,6 +91,11 @@ export function PropertiesPanel({ variant = 'floating' }: PropertiesPanelProps) 
   const activePageId = useEditorStore((s) => s.activePageId)
   const isActiveBoardFrame =
     isStudioMode() && !!activeBoard && activeBoard.frames.some((f) => f.pageId === activePageId)
+  // WS-7.1/7.2 — a bulk frame selection (distinct from `isActiveBoardFrame`
+  // above, which tracks the single EDITING target, not a multi-select set)
+  // also keeps the panel open and swaps its body for `FrameBulkInspector`.
+  const selectedFrameIds = useEditorStore((s) => s.selectedFrameIds)
+  const isFrameMultiSelect = isStudioMode() && selectedFrameIds.length > 0
 
   // ── ClassPicker ref — for the locked-state 'Add class' CTA ────────────────
   const classPickerRef = useRef<ClassPickerHandle>(null)
@@ -125,7 +131,8 @@ export function PropertiesPanel({ variant = 'floating' }: PropertiesPanelProps) 
     (!data.selectedNodeId &&
       !data.selectedSelectorClass &&
       !data.isSelectorMultiSelect &&
-      !isActiveBoardFrame)
+      !isActiveBoardFrame &&
+      !isFrameMultiSelect)
   ) {
     return null
   }
@@ -178,22 +185,26 @@ export function PropertiesPanel({ variant = 'floating' }: PropertiesPanelProps) 
       <PanelHeader
         panelId="properties"
         title="Properties"
-        titleContent={(
-          <HeaderTitleContent
-            selectedSelectorClass={data.selectedSelectorClass}
-            isSelectorMultiSelect={data.isSelectorMultiSelect}
-            selectedSelectorClassIdsCount={data.selectedSelectorClassIds.length}
-            isMultiSelect={data.isMultiSelect}
-            selectedNodeIdsCount={data.selectedNodeIds.length}
-            selectedNode={data.selectedNode}
-            selectedNodeId={data.selectedNodeId}
-            definition={data.definition}
-            renameClass={data.renameClass}
-            deleteClass={data.deleteClass}
-            selectedSelectorUsage={data.selectedSelectorUsage}
-            renameNode={data.renameNode}
-          />
-        )}
+        titleContent={
+          isFrameMultiSelect ? (
+            <span>{selectedFrameIds.length} frames selected</span>
+          ) : (
+            <HeaderTitleContent
+              selectedSelectorClass={data.selectedSelectorClass}
+              isSelectorMultiSelect={data.isSelectorMultiSelect}
+              selectedSelectorClassIdsCount={data.selectedSelectorClassIds.length}
+              isMultiSelect={data.isMultiSelect}
+              selectedNodeIdsCount={data.selectedNodeIds.length}
+              selectedNode={data.selectedNode}
+              selectedNodeId={data.selectedNodeId}
+              definition={data.definition}
+              renameClass={data.renameClass}
+              deleteClass={data.deleteClass}
+              selectedSelectorUsage={data.selectedSelectorUsage}
+              renameNode={data.renameNode}
+            />
+          )
+        }
         onClose={data.togglePropertiesPanel}
         dragHandleProps={variant === 'floating' ? headerDragProps : undefined}
       >
@@ -208,26 +219,32 @@ export function PropertiesPanel({ variant = 'floating' }: PropertiesPanelProps) 
         aria-label="Properties editor"
         className={styles.propertiesPanel}
       >
-        <FrameSizePanel />
-        <PropertiesPanelBody
-          selectedSelectorClass={data.selectedSelectorClass}
-          selectedSelectorClassId={data.selectedSelectorClassId}
-          selectedSelectorClassIds={data.selectedSelectorClassIds}
-          isSelectorMultiSelect={data.isSelectorMultiSelect}
-          activeBreakpointId={data.activeBreakpointId}
-          isMultiSelect={data.isMultiSelect}
-          selectedNodeIds={data.selectedNodeIds}
-          selectedNode={data.selectedNode}
-          selectedNodeId={data.selectedNodeId}
-          definition={data.definition}
-          activeDocument={data.activeDocument}
-          activeVc={data.activeVc}
-          activeClass={data.activeClass}
-          activeClassId={data.activeClassId}
-          moduleTabContent={moduleTabContent}
-          classPickerRef={classPickerRef}
-          onFocusClassPicker={handleFocusClassPicker}
-        />
+        {isFrameMultiSelect ? (
+          <FrameBulkInspector />
+        ) : (
+          <>
+            <FrameSizePanel />
+            <PropertiesPanelBody
+              selectedSelectorClass={data.selectedSelectorClass}
+              selectedSelectorClassId={data.selectedSelectorClassId}
+              selectedSelectorClassIds={data.selectedSelectorClassIds}
+              isSelectorMultiSelect={data.isSelectorMultiSelect}
+              activeBreakpointId={data.activeBreakpointId}
+              isMultiSelect={data.isMultiSelect}
+              selectedNodeIds={data.selectedNodeIds}
+              selectedNode={data.selectedNode}
+              selectedNodeId={data.selectedNodeId}
+              definition={data.definition}
+              activeDocument={data.activeDocument}
+              activeVc={data.activeVc}
+              activeClass={data.activeClass}
+              activeClassId={data.activeClassId}
+              moduleTabContent={moduleTabContent}
+              classPickerRef={classPickerRef}
+              onFocusClassPicker={handleFocusClassPicker}
+            />
+          </>
+        )}
       </div>
 
     </aside>

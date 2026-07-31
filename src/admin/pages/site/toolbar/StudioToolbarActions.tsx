@@ -1,6 +1,6 @@
 /**
  * StudioToolbarActions — bundles the two Studio-only toolbar buttons
- * (`ImportGithubButton` + `DownloadCodeButton`) behind a single lazy
+ * (`ImportProjectButton` + `DownloadCodeButton`) behind a single lazy
  * boundary.
  *
  * `AdminCanvasLayout` only renders these in Studio mode (`?studio`), which
@@ -10,13 +10,13 @@
  * SitePage route chunk; bundling them into one module means the SitePage
  * shell pays for exactly one `import()` boundary instead of two.
  */
-import { ImportGithubButton } from './ImportGithubButton'
+import { ImportProjectButton } from './ImportProjectButton'
 import { DownloadCodeButton } from './DownloadCodeButton'
 
 export function StudioToolbarActions() {
   return (
     <>
-      <ImportGithubButton />
+      <ImportProjectButton />
       <DownloadCodeButton />
     </>
   )

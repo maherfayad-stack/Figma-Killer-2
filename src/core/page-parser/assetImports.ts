@@ -1,14 +1,15 @@
 /**
- * assetImports — resolves the two kinds of import that name a FILE rather than
- * a JavaScript module, both of which are static values the evaluator can hand
- * back like any other:
+ * assetImports — resolves the three kinds of import that name a FILE rather
+ * than a JavaScript module, all of which are static values the evaluator can
+ * hand back like any other:
  *
- *   - `import icon from './x.svg?raw'`   → the file's text
- *   - `import chip from './chip.png'`    → a `studio-asset:<rel>` sentinel
+ *   - `import icon from './x.svg?raw'`        → the file's text
+ *   - `import chip from './chip.png'`         → a `studio-asset:<rel>` sentinel
+ *   - `import styles from './Card.module.css'` → `{ localName: globalName }`
  *
- * ts-morph only tracks `.ts/.tsx/.js/.jsx`, so neither specifier resolves to a
- * `SourceFile` — `resolveIdentifier` reaches both of these from its "an import
- * with no target file" branch, which is exactly what they are.
+ * ts-morph only tracks `.ts/.tsx/.js/.jsx`, so none of these specifiers
+ * resolve to a `SourceFile` — `resolveIdentifier` reaches all three from its
+ * "an import with no target file" branch, which is exactly what they are.
  *
  * Split out of `staticEvalCore` along a real seam — this module does filesystem
  * and module-specifier resolution, not expression evaluation. It imports nothing
@@ -17,13 +18,22 @@
  */
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import * as path from 'node:path'
-import type { SourceFile } from 'ts-morph'
+import type { Node, SourceFile } from 'ts-morph'
 
 /** Vite's `?raw` text-inlining suffix, e.g. `'./check-line.svg?raw'`. */
 const RAW_TEXT_SPECIFIER_RE = /\.(svg|txt|html?|md|csv)\?raw$/i
 
-/** An import of an image FILE, whose value at runtime is a URL, not text. */
-const IMAGE_SPECIFIER_RE = /\.(png|jpe?g|svg|webp|gif|avif)$/i
+/**
+ * An import of an image FILE, whose value at runtime is a URL, not text.
+ * Exported so the asset-UPLOAD route (`server/handlers/studio/assetUpload.ts`)
+ * validates a new file's extension against the exact same set this module
+ * already treats as "an image import" — one definition, not two that can
+ * drift apart.
+ */
+export const IMAGE_SPECIFIER_RE = /\.(png|jpe?g|svg|webp|gif|avif)$/i
+
+/** `import styles from './Card.module.css'` — a CSS Modules stylesheet, whose value at runtime is `{ localName: generatedGlobalName }`. */
+const CSS_MODULE_SPECIFIER_RE = /\.module\.(css|scss|sass|less)$/i
 
 /** Guards against inlining a huge file into every expression that references it. */
 const MAX_RAW_TEXT_BYTES = 512 * 1024
@@ -72,6 +82,27 @@ function resolveInNodeModules(fromDir: string, specifier: string, resolvedRoot: 
   }
 }
 
+/**
+ * Where an import declaration's own module-specifier string literal
+ * physically lives — the file that WRITES `import heroImg from './hero.png'`,
+ * not the asset it points at. This is what `setImportSpecifier` rewrites, and
+ * what makes `<img src={heroImg}>` an honest writeback target: the JSX itself
+ * can't be the target (there is no literal there to replace), but the import
+ * statement one hop away is an ordinary string literal at a known position.
+ * Structurally identical to `../page-parser`'s `ValueOrigin` (this module
+ * deliberately does not import that type — see this file's own doc comment on
+ * why it has no evaluator dependency), so a caller can hand this straight to
+ * a `StaticValue`'s `origin` field.
+ */
+export interface ImportSpecifierLocation {
+  /** Workspace-relative POSIX path of the file HOLDING the import statement. */
+  rel: string
+  /** 1-based line of the module-specifier string literal token. */
+  line: number
+  /** 1-based column of the module-specifier string literal token. */
+  col: number
+}
+
 /** A file an import names, once it is known to exist inside the workspace. */
 interface ResolvedAssetFile {
   /** Absolute, symlinks followed. */
@@ -80,6 +111,25 @@ interface ResolvedAssetFile {
   rel: string
   /** Size in bytes, already `statSync`'d. */
   bytes: number
+  /** Where the import's OWN specifier literal lives, when it sits inside the workspace. */
+  specifierLocation?: ImportSpecifierLocation
+}
+
+/**
+ * `originOf`'s sibling for an import specifier: the (rel, line, col) of a
+ * literal token, computed against the file that HOLDS it rather than the file
+ * it resolves to. `sourceFile`/`specifierNode` are always the importing file's
+ * own — this never touches the target asset file's location.
+ */
+function importSpecifierLocation(
+  sourceFile: SourceFile,
+  specifierNode: Node,
+  resolvedRoot: string,
+): ImportSpecifierLocation | undefined {
+  const rel = path.relative(resolvedRoot, path.resolve(sourceFile.getFilePath()))
+  if (rel.length === 0 || rel.startsWith('..') || path.isAbsolute(rel)) return undefined
+  const { line, column } = sourceFile.getLineAndColumnAtPos(specifierNode.getStart())
+  return { rel: rel.split(path.sep).join('/'), line, col: column }
 }
 
 /**
@@ -139,7 +189,12 @@ function resolveImportedFile(
       if (rel.startsWith('..') || path.isAbsolute(rel)) return undefined
       const stats = statSync(real)
       if (!stats.isFile()) return undefined
-      return { real, rel: rel.split(path.sep).join('/'), bytes: stats.size }
+      return {
+        real,
+        rel: rel.split(path.sep).join('/'),
+        bytes: stats.size,
+        specifierLocation: importSpecifierLocation(sourceFile, decl.getModuleSpecifier(), resolvedRoot),
+      }
     } catch {
       return undefined // Missing/unreadable asset — unresolved, never a throw.
     }
@@ -172,7 +227,13 @@ export function resolveRawTextImport(
 }
 
 /**
- * `import chip from './chip.png'` -> `studio-asset:src/assets/chip.png`.
+ * `import chip from './chip.png'` -> `studio-asset:src/assets/chip.png`, plus
+ * WHERE the `'./chip.png'` literal itself lives (`origin`) — the one honest
+ * writeback target for an `<img src={chip}>` node (WS-8.3). The image FILE is
+ * not editable in place; the import statement naming it is an ordinary string
+ * literal at a known position, and `setImportSpecifier` rewrites exactly that.
+ * `origin` is `undefined` when the specifier's own file sits outside the
+ * workspace — same "nothing honest to write" policy as everywhere else here.
  *
  * A bundler turns an image import into a URL string, and this is the closest
  * static stand-in: the path, for the load handler to turn into a real URL.
@@ -193,7 +254,38 @@ export function resolveImageAssetImport(
   sourceFile: SourceFile,
   localName: string,
   workspaceRoot: string | undefined,
-): string | undefined {
+): { path: string; origin?: ImportSpecifierLocation } | undefined {
   const file = resolveImportedFile(sourceFile, localName, workspaceRoot, IMAGE_SPECIFIER_RE, false)
-  return file ? `${STUDIO_ASSET_SENTINEL}${file.rel}` : undefined
+  if (!file) return undefined
+  return { path: `${STUDIO_ASSET_SENTINEL}${file.rel}`, origin: file.specifierLocation }
+}
+
+/**
+ * `import styles from './Card.module.css'` -> `{ card: 'Card_card__a1b2', … }`.
+ *
+ * WS-2.2: teaches the evaluator that a CSS Modules import has a static value —
+ * an object whose keys are the file's local class names and whose values are
+ * the generated global names `server/handlers/studio/styleCompile.ts` already
+ * computed. `moduleClassMaps` is that compile step's output, keyed by the same
+ * workspace-relative POSIX path `resolveImportedFile` derives here, so this
+ * function does no compiling of its own — it only looks the file up.
+ *
+ * `undefined` when there is no configured `moduleClassMaps` (styles were never
+ * compiled — e.g. no workspace root, or the load pipeline didn't run the
+ * compile step), when the specifier isn't a `.module.css`-shaped import, or
+ * when the resolved file has no entry in the map (compiled with zero classes,
+ * or genuinely missing — same "unresolved, never a guess" policy as every
+ * other import case here).
+ */
+export function resolveCssModuleImport(
+  sourceFile: SourceFile,
+  localName: string,
+  workspaceRoot: string | undefined,
+  moduleClassMaps: Readonly<Record<string, Readonly<Record<string, string>>>> | undefined,
+): Record<string, string> | undefined {
+  if (!moduleClassMaps) return undefined
+  const file = resolveImportedFile(sourceFile, localName, workspaceRoot, CSS_MODULE_SPECIFIER_RE, false)
+  if (!file) return undefined
+  const classMap = moduleClassMaps[file.rel]
+  return classMap ? { ...classMap } : undefined
 }

@@ -46,6 +46,7 @@ import { useResponsiveEditorMediaAssets } from '@admin/shared/media/hooks/useRes
 import { selectorStatePseudo } from '@site/cssStatePseudo'
 import { generateCanvasClassCSS, generateForcedStateCSS, generatePreviewClassCSS } from './canvasClassCss'
 import { resolveViewportUnitsForCanvas, type CanvasViewport } from './resolveViewportUnits'
+import { CANVAS_CSS_LAYER_ORDER, USER_AUTHORED_LAYER } from './canvasCssLayers'
 
 interface ClassStyleInjectorProps {
   /**
@@ -143,11 +144,15 @@ export function ClassStyleInjector({ targetDocument, viewport }: ClassStyleInjec
     // The publisher reset, framework CSS, and class rules are all inside the layer;
     // their relative cascade among themselves is preserved (source order + specificity
     // within the layer). User CSS (also @layer user-authored) still wins over the
-    // zero-specificity :where() publisher reset — same as before.
+    // zero-specificity :where() publisher reset — same as before. The
+    // `CANVAS_CSS_LAYER_ORDER` prelude also pins `user-authored` ABOVE
+    // `@layer vendor` (`ProjectCssInjector`, WS-2.3) regardless of which
+    // stylesheet's rule body the browser encounters first — see
+    // `canvasCssLayers.ts`.
     const css = forCanvas(generated)
     styleEl.textContent = css
-      ? `@layer user-authored {\n${css}\n}`
-      : '/* no classes */'
+      ? `${CANVAS_CSS_LAYER_ORDER}\n@layer ${USER_AUTHORED_LAYER} {\n${css}\n}`
+      : `${CANVAS_CSS_LAYER_ORDER}\n/* no classes */`
   }, [
     targetDocument,
     viewport,
@@ -193,9 +198,12 @@ export function ClassStyleInjector({ targetDocument, viewport }: ClassStyleInjec
     }, { mediaAssets: responsiveMediaAssets })
     const resolvedPreviewCss = viewport ? resolveViewportUnitsForCanvas(previewCss, viewport) : previewCss
     // Keep in the same @layer so the doubled-selector preview rule still wins
-    // over the regular class rule within the layer (higher specificity).
+    // over the regular class rule within the layer (higher specificity). No
+    // need to repeat CANVAS_CSS_LAYER_ORDER here — the main effect above
+    // always runs first (same component, earlier useEffect) and already
+    // declares it.
     previewEl.textContent = resolvedPreviewCss
-      ? `@layer user-authored {\n${resolvedPreviewCss}\n}`
+      ? `@layer ${USER_AUTHORED_LAYER} {\n${resolvedPreviewCss}\n}`
       : ''
   }, [targetDocument, viewport, classes, previewClassStyles, responsiveMediaAssets])
 
@@ -236,7 +244,7 @@ export function ClassStyleInjector({ targetDocument, viewport }: ClassStyleInjec
       { mediaAssets: responsiveMediaAssets },
     )
     const resolved = viewport ? resolveViewportUnitsForCanvas(forcedCss, viewport) : forcedCss
-    forceEl.textContent = resolved ? `@layer user-authored {\n${resolved}\n}` : ''
+    forceEl.textContent = resolved ? `@layer ${USER_AUTHORED_LAYER} {\n${resolved}\n}` : ''
   }, [
     targetDocument,
     viewport,

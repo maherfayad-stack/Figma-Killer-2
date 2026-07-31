@@ -18,6 +18,7 @@ GET /admin/api/studio/load?dir=<abs>            server/handlers/studio.ts
         4. inlineLocalComponents()               inlineLocalComponents.ts
         5. staticEval — resolve values           staticEval*.ts        Tiers A/B/C
         6. staticLoopExpansion — .map            staticLoopExpansion.ts
+        6.5 compileProjectStyles (WS-2.1)        studio/styleCompile.ts — runs BEFORE step 2, see below
         7. loadStudioStyles — .css → StyleRule   studioCss.ts
         8. parsedPageToSitePage()                studio-sync/
         9. rewriteStudioAssetSentinels()         → /admin/api/studio/asset URLs
@@ -91,8 +92,14 @@ A **bounded partial evaluator, not a JS interpreter**. Do not blur the tiers.
 |---|---|---|
 | **A** | literals, module/cross-file consts, member chains, array indexing, template literals, operators (`+ - * / % **`, `!`, `\|\|`, `&&`, `??`), `Math.*` constants and pure fns | `staticEvalCore.ts`, `staticEvalOperators.ts` |
 | **B** | `useLanguage()` → `useContext(Ctx)` → the single `<Ctx.Provider value={…}>`; unwraps `useMemo`; picks a dictionary branch by `previewLocale` and records a `note` | `staticEvalCalls.ts` |
-| **C** | pure function calls in an explicit envelope: concise body, or bare `if (c) return …` / `return …`; no assignment, loop, `await`, `new`. Whitelist: `String`, `Number`, `Math.*`, `.toFixed`, `.padStart`, `.toUpperCase`, `.toLowerCase`, `.trim`, `.join` | `staticEvalCalls.ts` |
+| **C** | pure function calls in an explicit envelope: concise body, or bare `if (c) return …` / `return …`; no assignment, loop, `await`, `new`. Whitelist: `String`, `Number`, `Math.*`, `.toFixed`, `.padStart`, `.toUpperCase`, `.toLowerCase`, `.trim`, `.join`, and `cn()`/`clsx()`/`classNames()`/`classnames()` (WS-2.2 — matched by identifier name, implements the join itself, never calls the user's actual function) | `staticEvalCalls.ts` |
 | **D** | **BANNED.** JSX branch selection, hook state, effects, async. | — |
+
+WS-2.2: `import styles from './Card.module.css'` resolves through `assetImports.ts`'s
+`resolveCssModuleImport`, the same "import with no `SourceFile`" mechanism `?raw`
+and image imports use — sourced from `StaticEvalOptions.cssModuleClassMaps`,
+which `studioPageLoad.ts` populates from `styleCompile.ts`'s `compileProjectStyles`
+BEFORE parsing (see the loop diagram's step 6.5).
 
 `.map` over a **fully resolved** array is expanded (not Tier D — no branch to
 guess, length comes from source). Guard rails: array *and every item* must
