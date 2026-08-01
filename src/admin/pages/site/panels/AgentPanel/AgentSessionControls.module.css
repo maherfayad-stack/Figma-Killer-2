@@ -1,0 +1,30 @@
+.root {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-s);
+    padding: var(--space-xs) var(--space-m);
+}
+
+.field {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-3xs);
+}
+
+.label {
+    color: var(--text-subtle);
+    font-size: var(--text-3xs);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+/* Real, security-relevant state — earns the danger token, not decorative. */
+.bypassWarning {
+    flex-basis: 100%;
+    margin: 0;
+    color: var(--danger);
+    font-size: var(--text-2xs);
+    line-height: 1.4;
+}

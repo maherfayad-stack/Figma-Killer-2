@@ -68,6 +68,23 @@ export const AiChatRequestBodySchema = Type.Object(
      * Every other driver ignores this field entirely.
      */
     workspaceDir: Type.Optional(Type.String()),
+    /**
+     * WS-12 §5 session controls — `claudeCli` only, ignored by every other
+     * driver (they have no equivalent knob). Both map 1:1 onto the CLI's own
+     * confirmed flags (`--effort`, `--permission-mode`), no translation layer.
+     *
+     * `'bypassPermissions'` is accepted by the WIRE SCHEMA (the UI control
+     * needs to be able to name it, and the client-side refusal needs a real
+     * value to refuse) but `claudeCli.ts` NEVER forwards it to the actual
+     * subprocess — see that file's own doc comment for why this is a hard
+     * rule, not a default that could be relaxed later.
+     */
+    effort: Type.Optional(Type.Union([
+      Type.Literal('low'), Type.Literal('medium'), Type.Literal('high'), Type.Literal('xhigh'), Type.Literal('max'),
+    ])),
+    permissionMode: Type.Optional(Type.Union([
+      Type.Literal('default'), Type.Literal('acceptEdits'), Type.Literal('plan'), Type.Literal('bypassPermissions'),
+    ])),
   },
   { additionalProperties: false },
 )

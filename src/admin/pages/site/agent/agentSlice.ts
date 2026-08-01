@@ -20,7 +20,6 @@ import { nanoid } from 'nanoid'
 import { useAdminUi } from '@admin/state/adminUi'
 import type { EditorStoreSliceCreator } from '@site/store/types'
 import { ApiError, isAbortError, responseErrorMessage } from '@core/http'
-import type { AiChatRequestBody } from '@core/ai'
 import { pushToast } from '@ui/components/Toast'
 import {
   listConversations,
@@ -58,6 +57,7 @@ import {
   type ConfirmedProviderSelection,
 } from './agentProviderUpdate'
 import { failPendingToolCalls } from './toolCallLifecycle'
+import { agentSessionControlsInitialState, createAgentSessionControlsActions, buildChatRequestBody } from './agentSessionControls'
 
 // Session-id is in-memory only. While the editor stays open, follow-up
 // messages reuse the SDK session id (Claude has continuity across the
@@ -283,6 +283,7 @@ export function createAgentSlice(
     isAgentConversationPending: false,
     isAgentProviderPending: false,
     agentComposerEpoch: 0,
+    ...agentSessionControlsInitialState(),
 
     // ── UI actions ───────────────────────────────────────────────────────────
     openAgent() {
@@ -298,6 +299,8 @@ export function createAgentSlice(
         s.isAgentOpen = !s.isAgentOpen
       })
     },
+
+    ...createAgentSessionControlsActions(set),
 
     abortAgent() {
       if (_abortController) _abortController.abort()
@@ -598,17 +601,15 @@ export function createAgentSlice(
           }
         }
 
-        // The open project's absolute dir, when one is open. Only the
-        // claudeCli driver (WS-11) reads this server-side — every other
-        // driver ignores it. `useAdminUi` (not the site editor's own store)
-        // is the one place that already tracks "which project is open".
-        const workspaceDir = useAdminUi.getState().studioProject?.dir
-        const body: AiChatRequestBody = {
+        const { agentEffort, agentPermissionMode } = get()
+        const body = buildChatRequestBody({
           conversationId,
-          content: [...content],
+          content,
           snapshot,
-          ...(workspaceDir ? { workspaceDir } : {}),
-        }
+          workspaceDir: useAdminUi.getState().studioProject?.dir,
+          agentEffort,
+          agentPermissionMode,
+        })
         const res = await fetch('/admin/api/ai/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

@@ -85,28 +85,66 @@ import { generateStudioAgentRoster } from '../../handlers/studio/agentRoster'
 
 const SUPPORTED_AUTH_MODES: AiAuthMode[] = ['apiKey']
 
-/**
- * No session-controls UI exists yet (WS-12 §5.2 owns that). `--effort` is a
- * real, user-requested requirement (not a nicety), so it ships wired with a
- * fixed default rather than waiting for the picker — 'medium' matches the
- * CLI's own implied default weighting (it sits mid-scale of the five
- * confirmed levels: low, medium, high, xhigh, max).
- */
+/** `--effort` is a real, user-requested requirement (WS-12 §5.1), request-driven from `req.effort` with this as the fallback — 'medium' matches the CLI's own implied default weighting (mid-scale of the five confirmed levels). */
 const DEFAULT_EFFORT = 'medium'
 
-/**
- * No session-controls UI exists yet either. `--permission-mode` accepts
- * exactly WS-12 §5.2's four modes plus `auto`/`dontAsk` (confirmed via
- * `--help`), so the mapping is 1:1 with no translation layer whenever that
- * UI ships. `'default'` is the only value used here — never a bypass mode
- * (`bypassPermissions`/`--dangerously-skip-permissions`), per the explicit
- * constraint that this driver must never pass one. Whether `'default'`
- * silently denies (rather than hangs) an MCP tool call in `-p` mode is not
- * yet verified against a real paid turn; if a future dogfood session finds
- * tool calls being denied outright, `'acceptEdits'` is the next thing to try
- * — still not a bypass, just an auto-accept posture for edit-shaped changes.
- */
+/** `--permission-mode` fallback when the request names none. Never itself a bypass value. */
 const DEFAULT_PERMISSION_MODE = 'default'
+
+/**
+ * `--permission-mode` accepts exactly WS-12 §5.2's four modes (plus
+ * `auto`/`dontAsk`, confirmed via `--help` but not part of the user-facing
+ * four) — a 1:1 mapping, no translation layer.
+ *
+ * **`bypassPermissions` is a HARD, PERMANENT refusal, not a default that
+ * could be relaxed later.** This is a direct, acknowledged conflict between
+ * two instructions this driver has received: WS-12 §5.2 asks for all four
+ * modes wired 1:1, but the constraint carried through every WS-11/WS-12 task
+ * in this thread — repeated verbatim as a "Hard rule" — is "Never pass a
+ * permission-bypassing flag (e.g. bypassPermissions, ...)", NAMING this exact
+ * value. A later coordinator instruction asking for the fourth mode does not
+ * override an explicit, standing hard-security constraint by itself — per
+ * this agent's own operating rules, only an explicit human/permission-system
+ * decision can do that, and none was given. So: the wire schema accepts
+ * `'bypassPermissions'` (the UI needs a real value to show as selectable-but-
+ * refused), and `resolvePermissionMode` below refuses it with a clear error
+ * EVENT rather than ever constructing `--permission-mode bypassPermissions`
+ * in argv — checked in two independent places (this function, and the argv
+ * assembly itself asserts the resolved value is never that literal) so a
+ * future edit to one path can't silently reintroduce it. Flagged prominently
+ * in this task's STATE.md handoff for a human to resolve explicitly.
+ */
+function resolvePermissionMode(
+  requested: string | undefined,
+): { ok: true; mode: 'default' | 'acceptEdits' | 'plan' } | { ok: false; message: string } {
+  const mode = requested ?? DEFAULT_PERMISSION_MODE
+  if (mode === 'bypassPermissions') {
+    return {
+      ok: false,
+      message:
+        'Bypass mode is not available in this build — Claude CLI turns never disable permission prompts. Choose Ask before edits, Auto, or Plan instead.',
+    }
+  }
+  if (mode !== 'default' && mode !== 'acceptEdits' && mode !== 'plan') {
+    return { ok: false, message: `Unknown permission mode "${mode}".` }
+  }
+  return { ok: true, mode }
+}
+
+function resolveEffort(requested: string | undefined): 'low' | 'medium' | 'high' | 'xhigh' | 'max' {
+  if (requested === 'low' || requested === 'medium' || requested === 'high' || requested === 'xhigh' || requested === 'max') {
+    return requested
+  }
+  return DEFAULT_EFFORT
+}
+
+/** The second, redundant check `resolvePermissionMode`'s own doc comment describes — throws rather than ever letting a bypass value reach argv. `resolvePermissionMode`'s return type already excludes it, so this can only fire if a future edit widens that type without updating this guard too. */
+function assertNeverBypass(mode: 'default' | 'acceptEdits' | 'plan'): string {
+  if ((mode as string) === 'bypassPermissions') {
+    throw new Error('[ai/claudeCli] refused to construct --permission-mode bypassPermissions — this is a hard rule, not a bug to patch around.')
+  }
+  return mode
+}
 
 /**
  * Conservative aliases the CLI's `--model` flag accepts. Confirmed via
@@ -237,6 +275,15 @@ export async function* streamClaudeCli(
     return
   }
 
+  // Checked before anything else spawns — a refused mode must never reach
+  // argv assembly, let alone a real subprocess.
+  const resolvedMode = resolvePermissionMode(req.permissionMode)
+  if (!resolvedMode.ok) {
+    yield { type: 'error', message: resolvedMode.message }
+    return
+  }
+  const effort = resolveEffort(req.effort)
+
   let configDir: string
   try {
     configDir = ensureClaudeCliConfigDir(options.dataRoot ?? resolveClaudeCliDataRoot(), req.toolContextBase.userId)
@@ -301,9 +348,14 @@ export async function* streamClaudeCli(
     '--model',
     req.modelId,
     '--effort',
-    DEFAULT_EFFORT,
+    effort,
     '--permission-mode',
-    DEFAULT_PERMISSION_MODE,
+    // A defensive, redundant assertion — resolvePermissionMode already
+    // refused a bypass request above, but this is the literal argv value
+    // that would reach a real subprocess, so it re-asserts the invariant
+    // at the point of maximum consequence rather than trusting the earlier
+    // check alone.
+    assertNeverBypass(resolvedMode.mode),
     ...(connector ? ['--mcp-config', buildMcpConfigJson(connector, options.serverPort)] : []),
     // Mandatory whether or not a connector was minted (WS-11 §4.0 trap #4) —
     // without it the CLI merges the user's own ~/.claude.json and the

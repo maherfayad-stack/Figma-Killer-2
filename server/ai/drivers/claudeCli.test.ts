@@ -77,10 +77,20 @@ async function fakeRevokeConnector(_db: unknown, connectorId: string, userId: st
   revokedCalls.push({ connectorId, userId })
 }
 
-/** WS-12 §7 — no-op by default so every existing test stays about argv/spawn, not disk I/O; records calls for the tests that ARE about the roster. */
-let rosterCalls: string[] = []
-function fakeGenerateRoster(dir: string) {
-  rosterCalls.push(dir)
+/**
+ * WS-12 §7 — inert no-op default so every existing test stays about
+ * argv/spawn, not disk I/O. Deliberately holds NO module-level mutable
+ * state (unlike `revokedCalls` above) — the dedicated roster-call tests
+ * capture into a LOCAL array declared inside their own `it()`, the same
+ * pattern `capturedArgv`/`capturedCwd` already use elsewhere in this file.
+ * A shared module-level array reset only in `beforeEach` was the earlier
+ * shape and is exactly what caused the cross-file test-ordering pollution
+ * (`streamClaudeCli — subagent roster generation` passing 23/23 in
+ * isolation but failing in the full suite) — Bun runs every test file in
+ * one shared process without resetting module state between files, so a
+ * `let` at this scope is never truly private to this file's own run.
+ */
+function fakeGenerateRoster() {
   return { written: [], skipped: [] }
 }
 
@@ -126,7 +136,6 @@ function testOptions(overrides: Partial<Parameters<typeof streamClaudeCli>[1]> =
 
 beforeEach(() => {
   revokedCalls = []
-  rosterCalls = []
 })
 
 describe('streamClaudeCli — happy path', () => {
@@ -249,19 +258,30 @@ describe('streamClaudeCli — workspace cwd (WS-11 step 2 fix)', () => {
 
 describe('streamClaudeCli — subagent roster generation (WS-12 §7)', () => {
   it('generates the roster into the resolved workspace root when a real project is open', async () => {
+    // Captured locally, not via shared module state — see `fakeGenerateRoster`'s
+    // own doc comment for why a module-level array here previously caused
+    // test-ordering pollution across the full suite.
+    const calls: string[] = []
     const spawn = fakeCliSpawn({
       stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
     })
-    await collect(baseRequest({ workspaceDir: projectDir }), testOptions({ spawn }))
-    expect(rosterCalls).toEqual([projectDir])
+    await collect(
+      baseRequest({ workspaceDir: projectDir }),
+      testOptions({ spawn, generateRoster: (dir: string) => { calls.push(dir); return { written: [], skipped: [] } } }),
+    )
+    expect(calls).toEqual([projectDir])
   })
 
   it('never generates a roster into the per-user config dir (no workspace open)', async () => {
+    const calls: string[] = []
     const spawn = fakeCliSpawn({
       stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
     })
-    await collect(baseRequest(), testOptions({ spawn }))
-    expect(rosterCalls).toEqual([])
+    await collect(
+      baseRequest(),
+      testOptions({ spawn, generateRoster: (dir: string) => { calls.push(dir); return { written: [], skipped: [] } } }),
+    )
+    expect(calls).toEqual([])
   })
 
   it('a roster-generation failure degrades the turn, never aborts it', async () => {
@@ -314,6 +334,68 @@ describe('streamClaudeCli — session continuity (WS-11 step 2)', () => {
     const a = await claudeCliSessionId('conv-a')
     const b = await claudeCliSessionId('conv-b')
     expect(a).not.toBe(b)
+  })
+})
+
+describe('streamClaudeCli — session controls (WS-12 §5)', () => {
+  it('defaults to --effort medium and --permission-mode default when the request names neither', async () => {
+    let capturedArgv: string[] = []
+    const spawn = fakeCliSpawn({
+      stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
+      onSpawn: (argv) => { capturedArgv = argv },
+    })
+    await collect(baseRequest(), testOptions({ spawn }))
+    expect(capturedArgv[capturedArgv.indexOf('--effort') + 1]).toBe('medium')
+    expect(capturedArgv[capturedArgv.indexOf('--permission-mode') + 1]).toBe('default')
+  })
+
+  it('passes the request\'s own effort straight through', async () => {
+    let capturedArgv: string[] = []
+    const spawn = fakeCliSpawn({
+      stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
+      onSpawn: (argv) => { capturedArgv = argv },
+    })
+    await collect(baseRequest({ effort: 'xhigh' }), testOptions({ spawn }))
+    expect(capturedArgv[capturedArgv.indexOf('--effort') + 1]).toBe('xhigh')
+  })
+
+  it('passes acceptEdits and plan straight through — the two non-default modes this driver actually allows', async () => {
+    for (const mode of ['acceptEdits', 'plan'] as const) {
+      let capturedArgv: string[] = []
+      const spawn = fakeCliSpawn({
+        stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
+        onSpawn: (argv) => { capturedArgv = argv },
+      })
+      await collect(baseRequest({ permissionMode: mode }), testOptions({ spawn }))
+      expect(capturedArgv[capturedArgv.indexOf('--permission-mode') + 1]).toBe(mode)
+    }
+  })
+
+  it('REFUSES bypassPermissions — never spawns, never constructs --permission-mode bypassPermissions', async () => {
+    let spawnCalled = false
+    const spawn = fakeCliSpawn({
+      stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
+      onSpawn: () => { spawnCalled = true },
+    })
+    const events = await collect(baseRequest({ permissionMode: 'bypassPermissions' }), testOptions({ spawn }))
+    expect(spawnCalled).toBe(false)
+    expect(events).toHaveLength(1)
+    expect(events[0]).toMatchObject({ type: 'error' })
+    expect((events[0] as { message: string }).message).toContain('Bypass mode is not available')
+  })
+
+  it('rejects an unrecognised permission mode the same way — refuses, never spawns', async () => {
+    let spawnCalled = false
+    const spawn = fakeCliSpawn({
+      stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
+      onSpawn: () => { spawnCalled = true },
+    })
+    const events = await collect(
+      baseRequest({ permissionMode: 'somethingElse' as never }),
+      testOptions({ spawn }),
+    )
+    expect(spawnCalled).toBe(false)
+    expect(events[0]).toMatchObject({ type: 'error' })
   })
 })
 

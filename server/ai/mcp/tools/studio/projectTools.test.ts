@@ -213,4 +213,59 @@ describe('studio project MCP tools', () => {
     )) as { ok: boolean; error: string }
     expect(result.ok).toBe(false)
   })
+
+  // ── studio_install_deps trust-tier gate (WS-12 §2.3) ──────────────────
+
+  it('studio_install_deps refuses at the default Tier 0 (static) trust — no .studio/meta.json at all', async () => {
+    write(tmpDir, 'package.json', JSON.stringify({ name: 'fixture', dependencies: { react: '^18.0.0' } }))
+    const result = (await tool('studio_install_deps').handler!({ dir: tmpDir }, {} as never)) as {
+      ok: boolean
+      code?: string
+      error?: string
+    }
+    expect(result.ok).toBe(false)
+    expect(result.code).toBe('trust-tier-required')
+    expect(result.error).toContain('Tier 0')
+  })
+
+  it('studio_install_deps refuses at an EXPLICIT static trust tier too', async () => {
+    write(tmpDir, 'package.json', JSON.stringify({ name: 'fixture', dependencies: {} }))
+    write(tmpDir, '.studio/meta.json', JSON.stringify({ trust: 'static' }))
+    const result = (await tool('studio_install_deps').handler!({ dir: tmpDir }, {} as never)) as { ok: boolean; code?: string }
+    expect(result.ok).toBe(false)
+    expect(result.code).toBe('trust-tier-required')
+  })
+
+  it('studio_install_deps proceeds to the normal probe once the project is promoted past Tier 0', async () => {
+    write(tmpDir, 'package.json', JSON.stringify({ name: 'fixture', dependencies: {} }))
+    write(tmpDir, '.studio/meta.json', JSON.stringify({ trust: 'render-packages' }))
+    // An existing (empty) node_modules takes the "already installed" branch
+    // — deliberately, so this test never starts a REAL install subprocess
+    // (which raced this test's own tmpDir cleanup on Windows the one time
+    // this test tried it). This test is only about the TIER GATE letting
+    // the call through to the ordinary probe, not about the probe's own
+    // install-vs-already-installed branching.
+    fs.mkdirSync(path.join(tmpDir, 'node_modules'), { recursive: true })
+    const result = (await tool('studio_install_deps').handler!({ dir: tmpDir }, {} as never)) as {
+      ok: boolean
+      code?: string
+      jobId?: string | null
+      alreadyInstalled?: boolean
+    }
+    expect(result.code).not.toBe('trust-tier-required')
+    expect(result.alreadyInstalled).toBe(true)
+  })
+
+  it('the trust-tier gate has no notion of a permission mode to bypass — nothing in this tool call ever widens it', async () => {
+    // There is no "bypass" input this tool accepts at all: the gate is keyed
+    // purely off .studio/meta.json's own trust field, never off anything the
+    // caller can pass in the tool call itself.
+    write(tmpDir, 'package.json', JSON.stringify({ name: 'fixture', dependencies: {} }))
+    const result = (await tool('studio_install_deps').handler!(
+      { dir: tmpDir, permissionMode: 'bypassPermissions' } as never,
+      {} as never,
+    )) as { ok: boolean; code?: string }
+    expect(result.ok).toBe(false)
+    expect(result.code).toBe('trust-tier-required')
+  })
 })

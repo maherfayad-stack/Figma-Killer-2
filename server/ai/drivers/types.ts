@@ -134,6 +134,15 @@ export interface AiStreamRequest {
    */
   readonly workspaceDir?: string
   /**
+   * WS-12 §5 session controls — `claudeCli` only, every other driver ignores
+   * both. Map 1:1 onto the CLI's own confirmed `--effort`/`--permission-mode`
+   * flags. `permissionMode === 'bypassPermissions'` is a real, selectable
+   * wire value (the UI needs one to refuse), but `claudeCli.ts` never forwards
+   * it to the subprocess — see that file's doc comment.
+   */
+  readonly effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+  readonly permissionMode?: 'default' | 'acceptEdits' | 'plan' | 'bypassPermissions'
+  /**
    * Base for the per-call `ToolContext` the driver builds when invoking a
    * server-side tool handler. Carries db + identity + the per-turn snapshot;
    * drivers add `signal` and pass the whole thing to the handler.

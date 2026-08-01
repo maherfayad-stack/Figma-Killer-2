@@ -57,6 +57,12 @@ export interface AgentSlice {
   /** Remounts local composer drafts on explicit conversation replacement. */
   agentComposerEpoch: number
 
+  /** WS-12 §5.1 session controls — `claudeCli`-only, every other driver ignores both. Initial values + the "never persists" reasoning live in `agentSessionControls.ts`. */
+  agentEffort: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | null
+  agentPermissionMode: 'default' | 'acceptEdits' | 'plan' | 'bypassPermissions'
+  setAgentEffort(effort: AgentSlice['agentEffort']): void
+  setAgentPermissionMode(mode: AgentSlice['agentPermissionMode']): void
+
   openAgent(): void
   closeAgent(): void
   toggleAgent(): void

@@ -39,6 +39,7 @@ import { EmptyState } from '@ui/components/EmptyState'
 import { useDraggablePanel } from '@admin/shared/FloatingWindow'
 import { cn } from '@ui/cn'
 import { ConversationHistory } from './ConversationHistory'
+import { AgentSessionControls } from './AgentSessionControls'
 import { AgentComposer, type ComposerLockReason } from './AgentComposer'
 import {
   AgentImageGallery,
@@ -282,6 +283,7 @@ export function AgentPanel({ variant = 'floating' }: { variant?: PanelVariant })
         )}
       </div>
 
+      <AgentSessionControls />
       <AgentComposer
         key={composerEpoch}
         composerLocked={composerLocked}

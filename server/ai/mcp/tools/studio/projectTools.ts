@@ -127,11 +127,24 @@ const installDepsTool: AiTool = {
   mutates: true,
   requiredCapabilities: ['studio.write'],
   description:
-    'Start a "bun install --ignore-scripts" (or the detected package manager) job for a project as a background job — returns a jobId immediately, never blocks on the install itself (30s-3min). Poll status with studio_install_status. Postinstall scripts never run (arbitrary code execution is refused until the project is explicitly promoted past Tier 0); packages that need one are reported as a warning in the job log instead. Requires studio.write.',
+    'Start a "bun install --ignore-scripts" (or the detected package manager) job for a project as a background job — returns a jobId immediately, never blocks on the install itself (30s-3min). Poll status with studio_install_status. Refuses outright at Tier 0 (static) trust — the agent may ASK the user to promote the project first, never promote it itself. Postinstall scripts never run even once promoted (arbitrary code execution is refused separately); packages that need one are reported as a warning in the job log instead. Requires studio.write.',
   inputSchema: DirInputSchema,
   handler: async (input) => {
     const { dir: dirInput } = input as { dir?: string }
     const dir = resolveProjectDir(dirInput)
+    // WS-12 §2.3 — Tier 0 = read + AST edits only. Installing dependencies
+    // is a real toolchain action; it must refuse here, at the tool's own
+    // authorization boundary, not rely on a caller-supplied mode (this
+    // check has no notion of "bypass" at all — there is nothing for a
+    // permission mode to widen).
+    const trust = readStudioMeta(dir).trust ?? 'static'
+    if (trust === 'static') {
+      return {
+        ok: false,
+        code: 'trust-tier-required',
+        error: 'This project is at Tier 0 (static) trust, which runs nothing. Ask the user to promote the project before installing dependencies — you may not promote it yourself.',
+      }
+    }
     const status = probeInstallStatus(dir)
     if (!status.hasPackageJson) {
       return { ok: false, error: `No package.json found at ${dir}.` }

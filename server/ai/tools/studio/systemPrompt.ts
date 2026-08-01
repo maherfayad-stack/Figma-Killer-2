@@ -38,6 +38,7 @@ import { Type, type Static } from '@core/utils/typeboxHelpers'
 import type { ProjectProfile } from '../../../handlers/studio/projectProfileSchema'
 import type { TrustTier } from '../../../handlers/studio/studioMeta'
 import { SYSTEM_PROMPT_DYNAMIC_BOUNDARY } from '../../runtime/types'
+import type { StudioLiveDigest } from './liveDigest'
 // Imported directly from the MCP tool source, NOT from `./index` (which
 // re-exports this module) — importing back through the barrel would create
 // a module cycle whose top-level `TOOL_NAMES_LINE` evaluation order is
@@ -127,32 +128,64 @@ function boundedList(items: readonly string[], cap: number): string {
   return `${items.slice(0, cap).join(', ')}, +${items.length - cap} more`
 }
 
-function buildDynamicSuffix(ctx: StudioPromptContext): string {
+/** `board`/`activePage`/`selection`/`fidelity`/`install`/`axes` — WS-12 §2.1's live-state lines, rebuilt fresh from disk every turn (never cached across turns, so "the snapshot is rebuilt" per §2.2 point 3 is true by construction, not an extra step). `null`/absent fields degrade to an honest placeholder rather than a fabricated one. */
+function buildLiveDigestLines(live: StudioLiveDigest): string[] {
+  const lines: string[] = []
+  const frameList = live.board.frames.map((f) => `${f.pageId}="${f.title}"@(${f.x},${f.y})`)
+  lines.push(`Board: ${live.board.activeBoardId ?? '(none)'} — frames: [${live.board.frames.length > 0 ? boundedList(frameList, 40) : '(none)'}]`)
+  lines.push(
+    live.activePage
+      ? `Active page: ${live.activePage.id} file=${live.activePage.file ?? '(unknown)'} root=${live.activePage.rootNodeId}`
+      : 'Active page: (none open)',
+  )
+  lines.push(
+    live.selection
+      ? `Selected: ${live.selection.nodeId} <${live.selection.tag ?? live.selection.moduleId}> (writable: ${live.selection.writableProps.length > 0 ? live.selection.writableProps.join(', ') : '(none)'}${live.selection.lockedReason ? `; locked: ${live.selection.lockedReason}` : ''})`
+      : 'Selected: none',
+  )
+  if (live.fidelity) {
+    lines.push(`Fidelity (active page): ${live.fidelity.locked} locked, ${live.fidelity.codeValued} code-valued`)
+  }
+  lines.push(
+    `Deps: ${live.install.hasNodeModules ? 'installed' : live.install.hasPackageJson ? 'not installed' : 'no package.json'} (${live.install.dependencyCount} declared)`,
+  )
+  lines.push(`Axes: ${live.axes.direction} / ${live.axes.locale ?? '(default locale)'} / ${live.axes.colorScheme}`)
+  if (live.staleWarning) lines.push(live.staleWarning)
+  return lines
+}
+
+function buildDynamicSuffix(ctx: StudioPromptContext, live: StudioLiveDigest | null): string {
   const style = [
     ctx.styleToolchain.cssModules ? 'css-modules' : null,
     ctx.styleToolchain.sass ? 'sass' : null,
     ctx.styleToolchain.tailwind ? 'tailwind' : null,
   ].filter((v): v is string => v !== null)
-  return [
+  const lines = [
     `Project: "${ctx.name}" (dir=${ctx.dir}, trust: ${ctx.trust})`,
     `Framework: ${ctx.framework} · pagesDir: ${ctx.pagesDir} · packageManager: ${ctx.packageManager}`,
     `Styling: [${style.length > 0 ? style.join(', ') : '(none detected)'}]`,
     `Component packages: [${boundedList(ctx.componentPackages, 20)}]`,
     `Probe warnings: ${ctx.warningCount}`,
-  ].join(' · ')
+  ]
+  if (live) lines.push(...buildLiveDigestLines(live))
+  return lines.join(' · ')
 }
 
 /**
  * Build the Studio-project system prompt as the cacheable 3-element form.
  * `ctx` is `null` when the open project's profile couldn't be resolved (a
  * transient probe failure) — the suffix degrades to a bare notice rather
- * than fabricating project facts.
+ * than fabricating project facts. `live` is `null` when no browser snapshot
+ * was posted (or it failed to resolve) — the suffix simply omits the
+ * board/selection/fidelity lines rather than fabricating them; the static
+ * prefix's own instructions (call studio_list_pages/studio_find_nodes) still
+ * work with no live digest at all.
  */
-export function buildStudioAgentSystemPrompt(ctx: StudioPromptContext | null): string[] {
+export function buildStudioAgentSystemPrompt(ctx: StudioPromptContext | null, live: StudioLiveDigest | null = null): string[] {
   return [
     STATIC_PROMPT_PREFIX,
     SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
-    ctx ? buildDynamicSuffix(ctx) : 'Project profile unavailable — call studio_project_profile before assuming anything about this project.',
+    ctx ? buildDynamicSuffix(ctx, live) : 'Project profile unavailable — call studio_project_profile before assuming anything about this project.',
   ]
 }
 

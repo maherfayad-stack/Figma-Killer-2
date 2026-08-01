@@ -76,6 +76,8 @@ import {
   type SiteAgentSnapshot,
 } from '../tools/site'
 import { buildStudioAgentSystemPrompt, studioPromptContextFromProfile } from '../tools/studio'
+import { buildStudioLiveDigest } from '../tools/studio/liveDigest'
+import { StudioAgentSnapshotSchema } from '../tools/studio/snapshot'
 import {
   createBridge,
   createConversationsPersister,
@@ -134,7 +136,7 @@ async function handleAiChat(
     throw err
   }
   if (!chatBody) return badRequest('Invalid request body.')
-  const { conversationId, content, snapshot, workspaceDir } = chatBody
+  const { conversationId, content, snapshot, workspaceDir, effort, permissionMode } = chatBody
   // Validated once, reused for both tool selection and prompt assembly below
   // — a client-supplied path is never trusted twice with two different
   // checks that could drift. `null` means either no project is open or the
@@ -295,7 +297,7 @@ async function handleAiChat(
         modelCapabilities.visionInput,
       )
       const systemPrompt = validatedWorkspaceDir
-        ? buildStudioProjectSystemPrompt(validatedWorkspaceDir)
+        ? await buildStudioProjectSystemPrompt(validatedWorkspaceDir, snapshot, conversation.id)
         : buildCmsSiteSystemPrompt(snapshot)
 
       // Capture totals reported by the persister so the audit row can hold
@@ -398,6 +400,8 @@ async function handleAiChat(
           bridge,
           toolContextBase,
           workspaceDir,
+          effort,
+          permissionMode,
         }
 
         const persister = createConversationsPersister(db, conversation.id, {
@@ -515,26 +519,57 @@ export function buildCmsSiteSystemPrompt(snapshot: unknown): string[] {
 }
 
 /**
- * The real Studio-project prompt (WS-12 §4) — used whenever a project is
- * open. Built entirely server-side from `dir` (project profile + trust
- * tier); does NOT consume the client-sent `snapshot`, which is the CMS
- * `SiteAgentSnapshot` shape and carries nothing about a Studio project
- * (board/selection live in `StudioAgentSnapshot`, WS-12 §2.1/step 3 —
- * not built yet; the dynamic suffix degrades gracefully without it).
- * Never throws: a profile-probe failure degrades to the "unavailable"
- * suffix rather than falling back to the CMS prompt, which would silently
- * hand the model the wrong tool vocabulary for an open Studio project.
+ * The real Studio-project prompt (WS-12 §4). Project/profile/trust are
+ * always built server-side from `dir` — the client never carries them (see
+ * `studioAgentSnapshot.ts`'s own doc comment for why). `snapshot` is the
+ * browser's lean `StudioAgentSnapshot` live-state (board/selection/axes ids);
+ * when present and valid it drives `buildStudioLiveDigest` (WS-12 §2.1's
+ * board/activePage/selection/fidelity/install lines, plus the §2.2 staleness
+ * warning). Absent or malformed `snapshot` degrades to the profile-only
+ * suffix — the static prefix's own tool-based instructions still work with
+ * no live digest at all, so this is never a hard failure.
+ *
+ * Never throws: a profile-probe failure degrades to the "unavailable" suffix
+ * rather than falling back to the CMS prompt, which would silently hand the
+ * model the wrong tool vocabulary for an open Studio project.
  */
-export function buildStudioProjectSystemPrompt(dir: string): string[] {
+export async function buildStudioProjectSystemPrompt(
+  dir: string,
+  snapshot: unknown,
+  conversationId: string,
+  /**
+   * Test seam — defaults to the shared production staleness tracker
+   * (`studioSnapshotStaleness`). Tests that exercise the §2.2 staleness rule
+   * pass their OWN `createStalenessTracker()` instance so their assertions
+   * never share state with another test file's run — the exact shape of
+   * cross-test pollution `claudeCli.test.ts`'s roster tests hit once already.
+   */
+  liveDigestOptions?: Parameters<typeof buildStudioLiveDigest>[3],
+): Promise<string[]> {
+  let ctx: ReturnType<typeof studioPromptContextFromProfile>
   try {
     const trust = readStudioMeta(dir).trust ?? 'static'
     const profile = resolveProjectProfile(dir)
     const name = projectDisplayName(dir)
-    return buildStudioAgentSystemPrompt(studioPromptContextFromProfile(dir, name, trust, profile))
+    ctx = studioPromptContextFromProfile(dir, name, trust, profile)
   } catch (err) {
-    console.error('[ai/chat] failed to build the studio project prompt, using the unavailable fallback:', err)
+    console.error('[ai/chat] failed to resolve the studio project profile, using the unavailable fallback:', err)
     return buildStudioAgentSystemPrompt(null)
   }
+
+  let live: Awaited<ReturnType<typeof buildStudioLiveDigest>> | null = null
+  const parsedSnapshot = safeParseValue(StudioAgentSnapshotSchema, snapshot)
+  if (parsedSnapshot.ok) {
+    try {
+      live = await buildStudioLiveDigest(dir, parsedSnapshot.value, conversationId, liveDigestOptions)
+    } catch (err) {
+      console.error('[ai/chat] failed to build the studio live digest, continuing without it:', err)
+    }
+  } else if (snapshot !== undefined && snapshot !== null) {
+    console.error('[ai/chat] invalid studio snapshot, continuing without the live digest:', parsedSnapshot.errors)
+  }
+
+  return buildStudioAgentSystemPrompt(ctx, live)
 }
 
 function emptySiteAgentSnapshot(): SiteAgentSnapshot {
