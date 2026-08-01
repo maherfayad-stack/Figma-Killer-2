@@ -58,9 +58,16 @@ export type { ReturnedJsx }
 
 type JsxOpeningLike = JsxElement | JsxSelfClosingElement
 
-const DYNAMIC_LOCK_REASON = 'dynamic — rendered in code'
-const SPREAD_LOCK_REASON = 'spread props'
-const DYNAMIC_SVG_LOCK_REASON = 'SVG built in code'
+// Exported (not just module-local) so `./canonicalCheck` (WS-13) can match a
+// node's `lockReason` against the exact string a fidelity/canonical finding
+// is about, instead of re-deriving or duplicating these literals — the same
+// reasoning `server/ai/mcp/tools/studio/fidelityReport.ts` documents for its
+// own mirrored copy of this table (that one lives across the browser-bundle
+// boundary and mirrors on purpose; this one is inside the same module and
+// imports directly).
+export const DYNAMIC_LOCK_REASON = 'dynamic — rendered in code'
+export const SPREAD_LOCK_REASON = 'spread props'
+export const DYNAMIC_SVG_LOCK_REASON = 'SVG built in code'
 /** WS-3.4 — a component prop's JSX value, materialized as a real child node. See `captureSlotProps`. */
 const SLOT_LOCK_REASON = 'slot content — fills a component prop'
 

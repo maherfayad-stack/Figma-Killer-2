@@ -175,6 +175,7 @@ Three categories, three voices:
 | [reference/editor-history.md](reference/editor-history.md)       | Patch-based undo/redo history: `HistoryEntry`, `mutate*` helpers, coalescing |
 | [reference/react-compiler.md](reference/react-compiler.md)       | React Compiler memoization rule, three exceptions, enforcement gates |
 | [reference/use-async-resource.md](reference/use-async-resource.md) | `useAsyncResource` — canonical single-resource async load hook; when to use and when not to |
+| [reference/canonical-jsx.md](reference/canonical-jsx.md)         | The authoring subset (WS-13) — ten rules, the `checkCanonicalJsx` validator, the reference fixture |
 
 ### Operations
 

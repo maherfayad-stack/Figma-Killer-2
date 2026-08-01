@@ -20,7 +20,17 @@ export default defineConfig([
   // test scripts — it is a library, not part of the Vite app, so app-only rules
   // (notably `react-refresh/only-export-components`, which is about HMR
   // boundaries) do not apply to it. Lint it with its own `bun run lint` there.
-  globalIgnores(['dist', '.worktrees', '.claude', 'design-system']),
+  //
+  // `studio-workspace/` holds arbitrary user React projects — real imports and
+  // the `__canonical-fixture` reference project alike. Studio PARSES that code
+  // with ts-morph; it never builds or lints it, and React Compiler purity rules
+  // (`react-hooks/purity`, e.g. `Math.random()` in a render path) are rules
+  // about STUDIO'S OWN admin app, not a constraint on what a user's — or a
+  // fixture's — source is allowed to contain. Every existing project under here
+  // happens to be `.jsx`, which this app's `**/*.{ts,tsx}` file matcher already
+  // skips; excluding the whole tree makes that accidental exemption explicit
+  // instead of leaving a `.ts`/`.tsx` file the one shape that would trip it.
+  globalIgnores(['dist', '.worktrees', '.claude', 'design-system', 'studio-workspace']),
   {
     files: ['**/*.{ts,tsx}'],
     extends: [
