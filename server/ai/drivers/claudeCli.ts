@@ -81,6 +81,7 @@ import {
 // the `../mcp` barrel, which also re-exports `handleMcpHttp` and would pull
 // `@modelcontextprotocol/sdk` into this driver's module graph transitively.
 import { MCP_ENDPOINT_PATH } from '../mcp/endpointPath'
+import { PERMISSION_REQUEST_TOOL_NAME, registerPermissionGate } from '../mcp/permissionGate'
 import { readServerConfig } from '../../config'
 import { generateStudioAgentRoster } from '../../handlers/studio/agentRoster'
 import { stageAttachments, cleanupAttachments, describeAttachmentsForPrompt } from './claudeCliAttachments'
@@ -390,6 +391,13 @@ export async function* streamClaudeCli(
     console.error('[ai/claudeCli] failed to mint a session MCP connector — continuing without tools:', err)
   }
 
+  // Bound to the connector the CLI will authenticate with, BEFORE the spawn:
+  // the CLI resolves `--permission-prompt-tool` against `tools/list` during
+  // startup, and the tool is only advertised while this gate is live.
+  const releasePermissionGate = connector
+    ? registerPermissionGate(connector.connectorId, req.bridge)
+    : null
+
   const sessionId = await claudeCliSessionId(req.toolContextBase.conversationId)
   const sessionFlag = isFirstClaudeCliTurn(req.messages.length) ? '--session-id' : '--resume'
 
@@ -416,7 +424,23 @@ export async function* streamClaudeCli(
     // Belt-and-braces at the point of maximum consequence — see
     // `assertBypassOnlyFromExplicitRequest`'s own doc comment.
     assertBypassOnlyFromExplicitRequest(resolvedMode.mode, req.permissionMode),
+    // Attachments are staged to an os.tmpdir() directory OUTSIDE the workspace
+    // cwd, so the CLI's own path-based permission check would otherwise stop to
+    // ask before reading them — "Claude requested permissions to read from
+    // …\attachment-1.jpg, but you haven't granted it yet." That prompt is
+    // nonsense to the user: THEY attached the file, in this turn, and Studio
+    // itself wrote it there. Consent is already unambiguous, so pre-authorise
+    // exactly the directory Studio created and nothing else. Turn-scoped and
+    // torn down in the `finally` below, so this widens access to a directory
+    // that only ever holds this turn's own attachments.
+    ...(attachmentStaging?.dir ? ['--add-dir', attachmentStaging.dir] : []),
     ...(connector ? ['--mcp-config', buildMcpConfigJson(connector, options.serverPort)] : []),
+    // Turns a headless dead end into a question. Without it the CLI has no TTY
+    // to prompt, so any tool needing permission is simply refused and the user
+    // is told to grant something with no way to grant it. With it, the request
+    // is relayed to the open chat as an Allow / Deny card. Only meaningful
+    // alongside a connector — the tool lives on Studio's own MCP server.
+    ...(connector ? ['--permission-prompt-tool', `mcp__studio__${PERMISSION_REQUEST_TOOL_NAME}`] : []),
     // Mandatory whether or not a connector was minted (WS-11 §4.0 trap #4) —
     // without it the CLI merges the user's own ~/.claude.json and the
     // project's .mcp.json and connects to whatever it finds there. Studio
@@ -461,6 +485,9 @@ export async function* streamClaudeCli(
     }
     throw err
   } finally {
+    // Released before the connector is revoked, so no prompt can be relayed
+    // down a bridge whose turn has already ended.
+    releasePermissionGate?.()
     // The token is scoped to THIS turn — expire it with the turn, not the
     // 1-day TTL floor. Never reuse a long-lived connector token.
     if (connector) {

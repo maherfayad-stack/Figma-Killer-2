@@ -27,6 +27,12 @@ import {
   getEditorBridgeForUser,
   type EditorBridgeScope,
 } from './editorBridge'
+import {
+  PERMISSION_REQUEST_TOOL_NAME,
+  getPermissionGate,
+  permissionGateToolDefinition,
+  runPermissionRequest,
+} from './permissionGate'
 
 export interface McpServerContext {
   db: DbClient
@@ -76,7 +82,14 @@ export function buildMcpServer(ctx: McpServerContext): Server {
   const byName = new Map<string, AiTool>(tools.map((t) => [t.name, t]))
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: tools.map((t) => ({
+    tools: [
+      // Advertised only while this connector has a live permission gate — i.e.
+      // only to the per-turn connector the `claudeCli` driver minted, never to
+      // an external MCP client. Listing is mandatory for it to work at all:
+      // the CLI resolves `--permission-prompt-tool` against `tools/list` at
+      // startup and aborts if it is missing.
+      ...(getPermissionGate(ctx.connectorId) ? [permissionGateToolDefinition()] : []),
+      ...tools.map((t) => ({
       name: t.name,
       description: t.description,
       // Our TypeBox object schema IS a valid JSON-Schema tool definition. The
@@ -84,11 +97,25 @@ export function buildMcpServer(ctx: McpServerContext): Server {
       // the SDK's object-schema shape (a type-level adaptation, not a runtime
       // data boundary — every MCP tool's schema is a `Type.Object`).
       inputSchema: t.inputSchema as unknown as { type: 'object'; properties?: Record<string, unknown> },
-    })),
+      })),
+    ],
   }))
 
   server.setRequestHandler(CallToolRequestSchema, async (request): Promise<CallToolResult> => {
     const { name, arguments: args } = request.params
+
+    // Handled before the registry lookup: the permission gate is a protocol
+    // construct, not one of Studio's capability-gated tools. It has no
+    // capability of its own because it grants nothing — it only relays a
+    // question to the human who is already watching this turn.
+    if (name === PERMISSION_REQUEST_TOOL_NAME) {
+      const gate = getPermissionGate(ctx.connectorId)
+      if (!gate) {
+        return { isError: true, content: [{ type: 'text', text: `Unknown tool: ${name}` }] }
+      }
+      return { content: [{ type: 'text', text: await runPermissionRequest(gate, args ?? {}) }] }
+    }
+
     const tool = byName.get(name)
     if (!tool) {
       return { isError: true, content: [{ type: 'text', text: `Unknown tool: ${name}` }] }

@@ -36,6 +36,13 @@ import type {
   ServerStreamEvent,
 } from './types'
 import { getErrorMessage } from '@core/utils/errorMessage'
+import {
+  PERMISSION_REQUEST_TOOL,
+  awaitPermissionDecision,
+  describePermissionRequest,
+  parsePermissionRequestInput,
+  type PermissionDecisionPayload,
+} from './permissionPrompt'
 import { failPendingToolCalls } from './toolCallLifecycle'
 
 // ---------------------------------------------------------------------------
@@ -144,6 +151,25 @@ export async function processStreamEvent(
     }
 
     case 'toolRequest': {
+      // A permission prompt is a question for the USER, not work for the tool
+      // dispatcher — intercepted before dispatch so it never looks for a tool
+      // named `permission_request`. The `toolRequest` shape is reused only as
+      // transport: the server is awaiting a POST to /tool-result either way.
+      if (event.toolName === PERMISSION_REQUEST_TOOL) {
+        const parsed = parsePermissionRequestInput(event.input)
+        // Fail closed, exactly as the server does: a request we cannot read is
+        // one the user cannot meaningfully approve.
+        const decision: PermissionDecisionPayload = parsed
+          ? await promptForPermission(set, parsed.toolName, parsed.input)
+          : { behavior: 'deny', message: 'Studio could not read that permission request.' }
+        if (!bridge.bridgeId) {
+          console.error('[AgentSlice] permission toolRequest received before bridgeReady')
+          break
+        }
+        await postToolResult(bridge.bridgeId, event.requestId, { ok: true, data: decision }, signal)
+        break
+      }
+
       // Defensive: the dispatcher already converts caught throws into
       // `{ ok: false, error }`, but if anything ever escapes (or if
       // the bridge evolves) we still need to ALWAYS POST a result so the
@@ -306,5 +332,29 @@ export async function processStreamEvent(
 
     default:
       break
+  }
+}
+
+/**
+ * Show the Allow / Deny card and wait for the click. The card is store state so
+ * the panel can render it; the promise it resolves is held in
+ * `permissionPrompt.ts` (a resolver is not serialisable state). Always clears
+ * the card, so a denial, an abort, or a thrown error can't strand it on screen.
+ */
+async function promptForPermission(
+  set: EditorStoreSet,
+  toolName: string,
+  input: unknown,
+): Promise<PermissionDecisionPayload> {
+  const request = describePermissionRequest(toolName, input)
+  set((state) => {
+    state.agentPermissionRequest = request
+  })
+  try {
+    return await awaitPermissionDecision(request.id)
+  } finally {
+    set((state) => {
+      if (state.agentPermissionRequest?.id === request.id) state.agentPermissionRequest = null
+    })
   }
 }

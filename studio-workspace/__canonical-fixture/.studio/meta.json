@@ -1,4 +1,7 @@
 {
   "displayName": "Canonical JSX Fixture",
-  "pagesDir": "src/screens"
+  "pagesDir": "src/screens",
+  "agentSession": {
+    "effort": "medium"
+  }
 }

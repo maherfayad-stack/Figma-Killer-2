@@ -42,6 +42,7 @@ import { AgentImagePreview } from './AgentImagePreview'
 import type { AgentImageMenuRequest, AgentPreviewImage } from './agentImageTypes'
 import { MessageBubble } from './MessageBubble'
 import { AgentActivity } from './AgentActivity'
+import { AgentPermissionCard } from './AgentPermissionCard'
 import { groupConsecutiveMessages } from './conversationGroups'
 import styles from './AgentPanel.module.css'
 
@@ -73,6 +74,8 @@ export function AgentPanel({ variant = 'floating' }: { variant?: PanelVariant })
   const startNewAgentConversation = useAgentStore((s) => s.startNewAgentConversation)
   const loadStudioDefault = useAgentStore((s) => s.loadStudioDefault)
   const composerEpoch = useAgentStore((s) => s.agentComposerEpoch)
+  const permissionRequest = useAgentStore((s) => s.agentPermissionRequest)
+  const resolvePermission = useAgentStore((s) => s.resolveAgentPermission)
   const activeCredentialId = useAgentStore((s) => s.agentActiveCredentialId)
   const activeModelId = useAgentStore((s) => s.agentActiveModelId)
   const [previewImage, setPreviewImage] = useState<AgentPreviewImage | null>(null)
@@ -291,6 +294,11 @@ export function AgentPanel({ variant = 'floating' }: { variant?: PanelVariant })
                 the assistant placeholder with the user's message and fills it
                 in as events arrive. */}
             {isStreaming && <AgentActivity message={messages.at(-1) ?? null} />}
+            {/* Below the activity strip, because it is the reason the strip has
+                stopped advancing — the turn is blocked on this answer. */}
+            {permissionRequest && (
+              <AgentPermissionCard request={permissionRequest} onDecide={resolvePermission} />
+            )}
           </>
         )}
 

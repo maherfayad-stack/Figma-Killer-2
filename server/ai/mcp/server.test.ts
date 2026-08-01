@@ -8,6 +8,7 @@ import type { DbClient } from '../../db/client'
 import { resolveBridgeToolResult } from '../runtime'
 import { buildMcpServer } from './server'
 import { createEditorBridgeStream } from './editorBridge'
+import { registerPermissionGate } from './permissionGate'
 
 const decoder = new TextDecoder()
 
@@ -146,5 +147,55 @@ describe('mcp server', () => {
     expect(names).not.toContain('read_page_tree')
     expect(names).not.toContain('mutate_page_tree')
     await client.close()
+  })
+})
+
+describe('mcp server — permission gate exposure', () => {
+  it('does not advertise permission_request to a connector with no gate', async () => {
+    // Every external MCP client (Claude Code, Codex, a remote agent) is this
+    // case: they never register a gate, so the tool is invisible to them.
+    const client = await connectClient(db, ['ai.chat'])
+
+    const { tools } = await client.listTools()
+
+    expect(tools.map((t) => t.name)).not.toContain('permission_request')
+  })
+
+  it('refuses to CALL permission_request without a live gate, rather than prompting nobody', async () => {
+    const client = await connectClient(db, ['ai.chat'])
+
+    const result = await client.callTool({ name: 'permission_request', arguments: { tool_name: 'Read', input: {} } })
+
+    expect(result.isError).toBe(true)
+  })
+
+  it('advertises it to the connector that registered a gate, and relays the answer', async () => {
+    let asked: { toolName: string; input: unknown } | null = null
+    const release = registerPermissionGate('c1', {
+      callBrowser: async (toolName, input) => {
+        asked = { toolName, input }
+        return { ok: true, data: { behavior: 'allow' } }
+      },
+    })
+    try {
+      const client = await connectClient(db, ['ai.chat'])
+
+      const { tools } = await client.listTools()
+      expect(tools.map((t) => t.name)).toContain('permission_request')
+
+      const result = await client.callTool({
+        name: 'permission_request',
+        arguments: { tool_name: 'Read', input: { file_path: '/outside/x.txt' } },
+      })
+
+      const content = result.content as Array<{ type: string; text: string }>
+      expect(JSON.parse(content[0].text)).toEqual({
+        behavior: 'allow',
+        updatedInput: { file_path: '/outside/x.txt' },
+      })
+      expect(asked).not.toBeNull()
+    } finally {
+      release()
+    }
   })
 })

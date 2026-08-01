@@ -15,6 +15,7 @@ import { claudeCliDriver, streamClaudeCli } from './claudeCli'
 import { verifyClaudeCliCredential } from './claudeCliVerify'
 import { claudeCliSessionId } from './claudeCliSession'
 import type { ClaudeCliSessionConnector } from '../mcp/sessionConnector'
+import { getPermissionGate } from '../mcp/permissionGate'
 
 let dataRoot: string
 let projectsRoot: string
@@ -212,6 +213,9 @@ describe('streamClaudeCli — happy path', () => {
           },
         },
       }),
+      // Headless, the CLI has no TTY to prompt in; this routes a permission
+      // request to the open chat instead of it being silently refused.
+      '--permission-prompt-tool', 'mcp__studio__permission_request',
       '--strict-mcp-config',
       // First turn (exactly one message) → establish, not resume.
       '--session-id', expectedSessionId,
@@ -828,5 +832,94 @@ describe('streamClaudeCli — a tool-using turn is visible as it happens', () =>
     // Paired across two different CLI lines, which is the whole reason the
     // translator carries per-turn state.
     expect(events[3]).toMatchObject({ type: 'toolResult', toolCallId: 'toolu_01Fd', toolName: 'Read', ok: true })
+  })
+})
+
+describe('streamClaudeCli — in-chat permission prompts', () => {
+  it('points --permission-prompt-tool at the gate on Studio\'s own MCP server', async () => {
+    let capturedArgv: string[] = []
+    const spawn = fakeCliSpawn({
+      stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
+      onSpawn: (argv) => { capturedArgv = argv },
+    })
+
+    await collect(baseRequest(), testOptions({ spawn }))
+
+    // The `mcp__<server>__<tool>` name must match `buildMcpConfigJson`'s server
+    // key and `permissionGateToolDefinition().name`; the CLI resolves it
+    // against tools/list at startup and aborts when it does not exist.
+    expect(capturedArgv[capturedArgv.indexOf('--permission-prompt-tool') + 1])
+      .toBe('mcp__studio__permission_request')
+  })
+
+  it('registers the gate against the minted connector BEFORE spawning, and releases it after', async () => {
+    let gateDuringSpawn: unknown = 'not-checked'
+    const spawn = fakeCliSpawn({
+      stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
+      // The CLI resolves --permission-prompt-tool against tools/list during
+      // startup, so the gate has to already be live at spawn time.
+      onSpawn: () => { gateDuringSpawn = getPermissionGate('connector-1') },
+    })
+
+    await collect(baseRequest(), testOptions({ spawn }))
+
+    expect(gateDuringSpawn).not.toBeNull()
+    // Released in the driver's finally — a leaked gate would let a later
+    // connector reusing this id prompt down a dead stream.
+    expect(getPermissionGate('connector-1')).toBeNull()
+  })
+
+  it('omits the flag entirely when no connector was minted — the tool lives on the connector\'s server', async () => {
+    let capturedArgv: string[] = []
+    const spawn = fakeCliSpawn({
+      stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
+      onSpawn: (argv) => { capturedArgv = argv },
+    })
+
+    await collect(
+      baseRequest(),
+      testOptions({ spawn, mintConnector: async () => { throw new Error('connector store down') } }),
+    )
+
+    expect(capturedArgv).not.toContain('--permission-prompt-tool')
+    expect(capturedArgv).not.toContain('--mcp-config')
+  })
+
+  it('pre-authorises the attachment staging dir so an attachment never needs approval', async () => {
+    let capturedArgv: string[] = []
+    const spawn = fakeCliSpawn({
+      stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
+      onSpawn: (argv) => { capturedArgv = argv },
+    })
+
+    await collect(
+      baseRequest({
+        messages: [{
+          role: 'user',
+          content: [
+            { kind: 'text', text: 'What is in this screenshot?' },
+            { kind: 'image', mimeType: 'image/png', data: Buffer.from('fake-png').toString('base64') },
+          ],
+        } as AiMessage],
+      }),
+      testOptions({ spawn }),
+    )
+
+    const addDirIndex = capturedArgv.indexOf('--add-dir')
+    expect(addDirIndex).toBeGreaterThan(-1)
+    // Exactly the directory Studio created for this turn, and nothing wider.
+    expect(capturedArgv[addDirIndex + 1]).toContain('studio-claude-cli-attachments-')
+  })
+
+  it('passes no --add-dir when the turn has no attachments', async () => {
+    let capturedArgv: string[] = []
+    const spawn = fakeCliSpawn({
+      stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
+      onSpawn: (argv) => { capturedArgv = argv },
+    })
+
+    await collect(baseRequest(), testOptions({ spawn }))
+
+    expect(capturedArgv).not.toContain('--add-dir')
   })
 })

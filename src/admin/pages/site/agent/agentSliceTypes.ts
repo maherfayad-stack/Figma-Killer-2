@@ -2,6 +2,7 @@ import type { EditorStoreSliceCreator } from '@site/store/types'
 import type { AiToolOutput, AiUserContentBlock } from '@core/ai'
 import type { ConversationView } from '@admin/ai/api'
 import type { AgentMessage } from './types'
+import type { AgentPermissionRequest, PermissionBehavior } from './permissionPrompt'
 
 export interface AgentSliceConfig {
   /**
@@ -56,6 +57,15 @@ export interface AgentSlice {
   isAgentProviderPending: boolean
   /** Remounts local composer drafts on explicit conversation replacement. */
   agentComposerEpoch: number
+
+  /**
+   * The tool call the CLI is currently blocked on, waiting for the user to
+   * approve or decline — null whenever nothing is being asked. At most one is
+   * ever outstanding, because the CLI stops and waits for each answer.
+   * See `permissionPrompt.ts`.
+   */
+  agentPermissionRequest: AgentPermissionRequest | null
+  resolveAgentPermission(id: string, behavior: PermissionBehavior): void
 
   /** WS-12 §5.1 session controls — `claudeCli`-only, every other driver ignores both. Initial values + the "never persists" reasoning live in `agentSessionControls.ts`. */
   agentEffort: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | null

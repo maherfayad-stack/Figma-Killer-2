@@ -1,0 +1,192 @@
+.screen {
+  background-color: var(--color-light);
+  max-width: 390px;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  font-family: "Open Sans", sans-serif;
+  color: var(--color-metal);
+}
+
+/* ── Header ── */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--color-alice);
+}
+
+.closeLink {
+  color: var(--color-aqua-100);
+  font-size: 17px;
+  font-weight: 400;
+  min-width: 48px;
+  cursor: pointer;
+}
+
+.headerTitle {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--color-metal);
+  margin: 0;
+  text-align: center;
+  flex: 1;
+}
+
+.headerSpacer {
+  min-width: 48px;
+}
+
+/* ── Hero ── */
+.hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 32px 24px 28px;
+  gap: 8px;
+}
+
+.brandIcons {
+  display: flex;
+  align-items: flex-end;
+  margin-bottom: 12px;
+}
+
+.airlineBadge {
+  border-radius: 50%;
+  border: 2px solid var(--color-light);
+  z-index: 1;
+}
+
+.checkBadge {
+  margin-left: -10px;
+  border-radius: 50%;
+  border: 2px solid var(--color-light);
+  z-index: 2;
+}
+
+.heroTitle {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--color-metal);
+  margin: 0;
+  text-align: center;
+}
+
+.heroSubtitle {
+  font-size: 14px;
+  color: var(--color-chateau);
+  margin: 0;
+  text-align: center;
+}
+
+.heroAction {
+  margin-top: 16px;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+}
+
+/* ── Sections ── */
+.section {
+  padding: 20px 16px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sectionTitle {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--color-metal);
+  margin: 0;
+}
+
+/* ── Cards ── */
+.card {
+  background-color: var(--color-light);
+  border: 1px solid var(--color-gainsboro);
+  border-radius: 12px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.cardBadge {
+  display: flex;
+}
+
+.cardRow {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.cardEmoji {
+  flex-shrink: 0;
+  border-radius: 8px;
+}
+
+.cardText {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cardTitle {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-metal);
+}
+
+.cardSubtext {
+  font-size: 13px;
+  color: var(--color-chateau);
+  margin: 0;
+}
+
+.cardFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.cardCode {
+  font-size: 14px;
+  color: var(--color-metal);
+}
+
+/* ── Add-ons ── */
+.addonRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.simIcon {
+  flex-shrink: 0;
+  border-radius: 8px;
+}
+
+.addonText {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.addonTitle {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-metal);
+}
+
+.addonSubtext {
+  font-size: 13px;
+  color: var(--color-chateau);
+  margin: 0;
+}

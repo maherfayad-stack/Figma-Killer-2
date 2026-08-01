@@ -28,7 +28,6 @@ import {
 } from '@admin/ai/api'
 import {
   createConversation,
-  fetchStudioDefault,
   rehydrateMessages,
 } from './agentApi'
 import { readNdjsonStream } from '@admin/ai/ndjsonStream'
@@ -57,6 +56,8 @@ import {
   type ConfirmedProviderSelection,
 } from './agentProviderUpdate'
 import { failPendingToolCalls } from './toolCallLifecycle'
+import { abandonPermissionPrompts, settlePermissionDecision } from './permissionPrompt'
+import { loadStudioDefaultInto, resolveStudioCredentials } from './agentDefaultProvider'
 import { agentSessionControlsInitialState, createAgentSessionControlsActions, buildChatRequestBody } from './agentSessionControls'
 
 // Session-id is in-memory only. While the editor stays open, follow-up
@@ -73,31 +74,6 @@ import { agentSessionControlsInitialState, createAgentSessionControlsActions, bu
 
 declare module '@site/store/types' {
   interface EditorStore extends AgentSlice {}
-}
-
-interface ResolvedCredentials {
-  credentialId: string
-  modelId: string
-}
-
-/**
- * Resolve the `(credentialId, modelId)` to use: the staged picker selection if
- * present, otherwise Studio's default fetched from the server. Shared by
- * `loadStudioDefault` (panel open) and `ensureConversationId` (first send) so the
- * default is fetched at most once — whichever runs first stages the values and
- * the other reuses them, never double-fetching.
- */
-async function resolveStudioCredentials(
-  get: AgentSliceGet,
-  signal?: AbortSignal,
-): Promise<ResolvedCredentials | null> {
-  signal?.throwIfAborted()
-  const credentialId = get().agentActiveCredentialId
-  const modelId = get().agentActiveModelId
-  if (credentialId && modelId) return { credentialId, modelId }
-  const credentials = await fetchStudioDefault(signal)
-  signal?.throwIfAborted()
-  return credentials
 }
 
 /**
@@ -283,6 +259,7 @@ export function createAgentSlice(
     isAgentConversationPending: false,
     isAgentProviderPending: false,
     agentComposerEpoch: 0,
+    agentPermissionRequest: null,
     ...agentSessionControlsInitialState(),
 
     // ── UI actions ───────────────────────────────────────────────────────────
@@ -303,8 +280,21 @@ export function createAgentSlice(
     ...createAgentSessionControlsActions(set),
 
     abortAgent() {
+      // Deny before aborting: the CLI is blocked waiting on this answer, and a
+      // parked prompt whose turn is being torn down can never be answered.
+      abandonPermissionPrompts('You stopped the turn before answering.')
+      set({ agentPermissionRequest: null })
       if (_abortController) _abortController.abort()
       else set({ isAgentStreaming: false })
+    },
+
+    resolveAgentPermission(id, behavior) {
+      // The card clears in `promptForPermission`'s finally, keyed by id, so a
+      // stale click (already answered, already abandoned) is a no-op.
+      settlePermissionDecision(id, {
+        behavior,
+        ...(behavior === 'deny' ? { message: 'You declined this action.' } : {}),
+      })
     },
 
     clearAgentMessages() {
@@ -491,33 +481,7 @@ export function createAgentSlice(
     },
 
     async loadStudioDefault() {
-      // Only fill the "nothing chosen yet" gap — never clobber an active
-      // conversation's provider or an explicit user pick.
-      if (get().agentConversationId) return
-      if (get().agentActiveCredentialId && get().agentActiveModelId) return
-      let creds: ResolvedCredentials | null
-      try {
-        creds = await resolveStudioCredentials(get)
-      } catch (err) {
-        // A failed defaults lookup is soft: leave the picker empty so the user
-        // can pick a model. The send-time path still surfaces the actionable
-        // no-provider error if they send without choosing.
-        console.error('[AgentSlice] Failed to load the default model:', err)
-        return
-      }
-      // The request may have been in flight while the user picked a model or
-      // opened a conversation. A late default must never overwrite that newer
-      // explicit state.
-      if (get().agentConversationId) return
-      if (get().agentActiveCredentialId && get().agentActiveModelId) return
-      // No default configured: leave the picker empty (shows its "Choose a
-      // model" placeholder) and let the user pick one.
-      if (!creds) return
-      set({
-        agentActiveCredentialId: creds.credentialId,
-        agentActiveModelId: creds.modelId,
-        agentError: null,
-      })
+      await loadStudioDefaultInto(set, get)
     },
 
     // ── sendAgentMessage ─────────────────────────────────────────────────────
