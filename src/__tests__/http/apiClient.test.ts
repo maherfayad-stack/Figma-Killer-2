@@ -164,6 +164,26 @@ describe('responseErrorMessage', () => {
     expect(await responseErrorMessage(new Response('plain text', { status: 500 }), 'fb')).toBe('plain text')
     expect(await responseErrorMessage(new Response('', { status: 500 }), 'fb')).toBe('fb')
   })
+
+  // With the API server stopped, the Vite proxy answers every call with an
+  // empty 502 — and the caller's fallback then blames the caller's own domain.
+  // A login attempt reported "CMS login failed", which reads as a wrong
+  // password and sends you to check your credentials instead of your terminal.
+  it('names a downed backend instead of using the fallback, for an empty gateway error', async () => {
+    for (const status of [502, 503, 504]) {
+      const message = await responseErrorMessage(new Response('', { status }), 'CMS login failed')
+      expect(message).toContain("Studio server isn't responding")
+      expect(message).toContain('bun run dev')
+      expect(message).not.toContain('CMS login failed')
+    }
+  })
+
+  // A gateway status is only evidence of a downed backend when the body is
+  // empty; a real server message must always win.
+  it('still prefers a real error envelope on a gateway status', async () => {
+    expect(await responseErrorMessage(jsonResponse({ error: 'upstream refused' }, 502), 'fb'))
+      .toBe('upstream refused')
+  })
 })
 
 /** A `Response` whose body streams the given raw chunks, one `enqueue` per array entry — for testing that `ndjsonRequest` correctly handles a line split across chunk boundaries. */

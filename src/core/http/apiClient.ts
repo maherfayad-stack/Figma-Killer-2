@@ -62,9 +62,25 @@ export function isAbortError(err: unknown): boolean {
 }
 
 /**
+ * Statuses the Vite dev proxy returns, with an empty body, when nothing is
+ * listening on the API port. The server itself never answers these — it either
+ * responds with an `{ error }` envelope or does not respond at all — so an
+ * empty one is an unambiguous "the backend is down" in this app's topology.
+ */
+const GATEWAY_STATUSES = new Set([502, 503, 504])
+
+/**
  * Best-effort human-readable message for a failed `Response`. Prefers the
- * server `{ error }` envelope, then the raw response text, then `fallback`.
+ * server `{ error }` envelope, then the raw response text, then a
+ * backend-is-down message for an empty gateway error, then `fallback`.
  * Uses `res.clone()` so the body can still be read again by the caller.
+ *
+ * The gateway branch exists because the fallback lies in exactly the case a
+ * developer hits most: with the API server stopped, every call gets an empty
+ * 502 and reports whatever its caller named as a generic failure — a login
+ * attempt came back "CMS login failed", which reads as "wrong password" and
+ * sends you to check your credentials instead of your terminal. The status
+ * alone is enough to say what actually happened.
  */
 export async function responseErrorMessage(res: Response, fallback: string): Promise<string> {
   try {
@@ -79,6 +95,10 @@ export async function responseErrorMessage(res: Response, fallback: string): Pro
     if (text.trim()) return text.trim()
   } catch {
     // Body unreadable — fall through to fallback.
+  }
+
+  if (GATEWAY_STATUSES.has(res.status)) {
+    return `The Studio server isn't responding (${res.status}). Start it with \`bun run dev\`, then try again.`
   }
 
   return fallback

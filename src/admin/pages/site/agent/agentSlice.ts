@@ -618,9 +618,10 @@ export function createAgentSlice(
         })
 
         if (!res.ok) {
-          const fallback = res.status === 502
-            ? 'AI server is not running. Start it with: bun run dev'
-            : `Agent request failed: ${res.status} ${res.statusText}`
+          // `responseErrorMessage` owns the "backend is down" case now (an
+          // empty 502/503/504 from the dev proxy), so this fallback covers
+          // only a real server response that carried no message.
+          const fallback = `Agent request failed: ${res.status} ${res.statusText}`
           throw new ApiError(await responseErrorMessage(res, fallback), res.status)
         }
 
