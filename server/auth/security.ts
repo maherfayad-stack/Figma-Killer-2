@@ -312,6 +312,27 @@ export function stampSocketIp(req: Request, address: string | null): void {
 }
 
 /**
+ * True when the request's socket peer is this same machine — `127.0.0.1`,
+ * `::1`, or an IPv4-mapped-IPv6 form of either.
+ *
+ * Deliberately reads the raw `x-bun-socket-ip` header `stampSocketIp` wrote
+ * from `server.requestIP(req)`, NOT `clientIp(req)`'s trusted-proxy-aware
+ * `X-Forwarded-For` walk: a request that arrived through a configured
+ * trusted proxy is definitionally not local to this process even if a
+ * forwarded header claims `127.0.0.1`, and this check exists specifically to
+ * gate an action that's meaningless (and yields nothing useful) for a
+ * non-local caller — spawning a terminal window on the server. The header
+ * itself can't be spoofed by a client: `stampSocketIp` strips any inbound
+ * copy before setting its own value.
+ */
+export function isLoopbackRequest(req: Request): boolean {
+  const socketIp = req.headers.get(BUN_SOCKET_IP_HEADER)
+  if (!socketIp) return false
+  const normalized = normalizeIpLiteral(socketIp)
+  return normalized === '127.0.0.1' || normalized === '::1'
+}
+
+/**
  * Best-effort client IP.
  *
  *   1. If the socket peer is a configured trusted proxy, walk

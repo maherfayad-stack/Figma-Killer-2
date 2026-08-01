@@ -212,7 +212,19 @@
 }
 
 .dialogHint {
+    /* `.dialogForm` is an implicit-column grid — without this, a grid item's
+       default `min-width: auto` sizes it to its content's min-content width.
+       `.dialogCode` below holds an unbroken shell one-liner (`white-space:
+       pre`), so its min-content IS the full command length. That forced this
+       whole row — and therefore the dialog itself, since `.dialog` has no
+       independent horizontal scroll region — wider than the dialog, which is
+       what actually produced the horizontal scrollbar (`.body`'s
+       `overflow-y: auto` computes `overflow-x` to `auto` too per the CSS
+       overflow spec, so the scrollbar appeared there). `min-width: 0` lets
+       this item shrink to the track's real width so `.dialogCode`'s own
+       `overflow-x: auto` — bounded, not the dialog — is what scrolls. */
     grid-column: 1 / -1;
+    min-width: 0;
     margin: 0;
     padding: var(--space-m) var(--space-l);
     border-radius: var(--radius);
@@ -224,6 +236,7 @@
 
 .dialogCode {
     display: block;
+    max-width: 100%;
     margin-top: var(--space-s);
     padding: var(--space-xs) var(--space-m);
     border-radius: var(--radius-sm);
@@ -233,6 +246,75 @@
     font-size: var(--text-2xs);
     overflow-x: auto;
     white-space: pre;
+}
+
+/* ── Claude CLI "log in with Claude" section (Add-credential dialog) ──── */
+
+.claudeCliSection {
+    grid-column: 1 / -1;
+    min-width: 0;
+    display: grid;
+    gap: var(--space-m);
+}
+
+.claudeCliActions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-l);
+    flex-wrap: wrap;
+    min-width: 0;
+}
+
+/* `min-width: 0` matters here specifically because this class also wraps the
+   manual-login `<code>` one-liner inside the disclosure body (another
+   implicit-column grid) — same grid-blowout mechanics `.dialogHint` documents
+   above; without it that grid item would refuse to shrink below the
+   unbroken command's min-content width. */
+.claudeCliStatusText {
+    margin: 0;
+    min-width: 0;
+    color: var(--text-subtle);
+    font-size: var(--text-xs);
+    line-height: 1.5;
+}
+
+.claudeCliStatusText.danger {
+    color: var(--danger);
+}
+
+.claudeCliDisclosure {
+    min-width: 0;
+}
+
+.claudeCliDisclosureSummary {
+    cursor: pointer;
+    color: var(--text-subtle);
+    font-size: var(--text-xs);
+    font-weight: 500;
+    list-style: none;
+}
+
+.claudeCliDisclosureSummary::-webkit-details-marker {
+    display: none;
+}
+
+/* The last link in the `min-width: 0` chain, and the one that was missing.
+   This is a grid, so its ITEMS default to `min-width: auto` — and one of them
+   is `.dialogCode`, whose `white-space: pre` makes its min-content the entire
+   unbroken shell one-liner. Without `min-width: 0` on both the container and
+   its items, that min-content propagated back up and widened the dialog
+   itself, so the code block's own `overflow-x: auto` never got the chance to
+   be the thing that scrolls. Every ancestor already had this; only the
+   disclosure body did not, which is why the scrollbar survived the first fix. */
+.claudeCliDisclosureBody {
+    display: grid;
+    gap: var(--space-m);
+    margin-top: var(--space-m);
+    min-width: 0;
+}
+
+.claudeCliDisclosureBody > * {
+    min-width: 0;
 }
 
 /* ── Audit tab ───────────────────────────────────────────────────────── */

@@ -11,10 +11,20 @@
  * Never silently absent (the same rule WS-10's probes follow): every
  * non-`logged-in` case carries a `reason`, and the logged-out case also
  * carries the exact L1 login one-liner to run.
+ *
+ * Also carries `terminalLogin` (`{ available, reason? }`, from
+ * `claudeCliTerminalLaunch.ts`'s `resolveTerminalLaunchSupport`) — whether
+ * THIS request can use the one-click "Log in with Claude" terminal-launch
+ * path (`POST .../claude-cli/login-terminal`) at all. Independent of the CLI
+ * availability classification below: a remote caller or an unsupported
+ * platform can still be `logged-out` while `terminalLogin.available` is
+ * false, in which case the dialog falls back to the manual/paste-a-token
+ * path with `terminalLogin.reason` shown.
  */
 
 import { jsonResponse } from '../../http'
 import { requireCapability } from '../../auth/authz'
+import { isLoopbackRequest } from '../../auth/security'
 import type { DbClient } from '../../db/client'
 import {
   buildClaudeCliLoginCommand,
@@ -24,6 +34,7 @@ import {
   type ClaudeCliPlatformSupport,
 } from '../../handlers/studio/claudeCliEnv'
 import { probeClaudeCliAuth, type ClaudeCliAvailability } from '../drivers/claudeCliProbe'
+import { resolveTerminalLaunchSupport, type TerminalLaunchSupport } from '../drivers/claudeCliTerminalLaunch'
 
 export type ClaudeCliStatusAvailability =
   | 'logged-in'
@@ -32,12 +43,22 @@ export type ClaudeCliStatusAvailability =
   | 'unsupported'
   | 'probe-failed'
 
+/** The full wire shape — what the route actually returns. */
 export interface ClaudeCliStatusResponse {
   readonly availability: ClaudeCliStatusAvailability
   readonly reason?: string
   readonly loginCommand?: string
   readonly subscriptionType?: string
+  readonly terminalLogin: TerminalLaunchSupport
 }
+
+/**
+ * `classifyClaudeCliStatus`'s own return shape — everything except
+ * `terminalLogin`, which depends on the live request (loopback-ness) rather
+ * than the platform/probe inputs this pure function classifies. `handleStatus`
+ * merges `terminalLogin` in separately on every return path.
+ */
+export type ClaudeCliClassification = Omit<ClaudeCliStatusResponse, 'terminalLogin'>
 
 // ---------------------------------------------------------------------------
 // Router entry
@@ -59,9 +80,14 @@ async function handleStatus(req: Request, db: DbClient): Promise<Response> {
   const userOrResponse = await requireCapability(req, db, 'ai.providers.manage')
   if (userOrResponse instanceof Response) return userOrResponse
 
+  // Independent of CLI availability itself — whether the "Log in with
+  // Claude" button in the Add-credential dialog has anything to do. Computed
+  // once and merged onto every return below, including the early ones.
+  const terminalLogin = resolveTerminalLaunchSupport(process.platform, isLoopbackRequest(req))
+
   const platform = claudeCliPlatformSupport()
   if (!platform.supported) {
-    return jsonResponse(classifyClaudeCliStatus(platform, null, null))
+    return jsonResponse({ ...classifyClaudeCliStatus(platform, null, null), terminalLogin })
   }
 
   let configDir: string
@@ -69,13 +95,14 @@ async function handleStatus(req: Request, db: DbClient): Promise<Response> {
     configDir = ensureClaudeCliConfigDir(resolveClaudeCliDataRoot(), userOrResponse.id)
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err)
-    return jsonResponse(
-      classifyClaudeCliStatus(platform, { status: 'probe-failed', reason: detail }, null),
-    )
+    return jsonResponse({
+      ...classifyClaudeCliStatus(platform, { status: 'probe-failed', reason: detail }, null),
+      terminalLogin,
+    })
   }
 
   const availability = await probeClaudeCliAuth({ configDir })
-  return jsonResponse(classifyClaudeCliStatus(platform, availability, configDir))
+  return jsonResponse({ ...classifyClaudeCliStatus(platform, availability, configDir), terminalLogin })
 }
 
 // ---------------------------------------------------------------------------
@@ -93,7 +120,7 @@ export function classifyClaudeCliStatus(
   platform: ClaudeCliPlatformSupport,
   availability: ClaudeCliAvailability | null,
   configDir: string | null,
-): ClaudeCliStatusResponse {
+): ClaudeCliClassification {
   if (!platform.supported) {
     return { availability: 'unsupported', reason: platform.reason }
   }

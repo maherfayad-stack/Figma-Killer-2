@@ -76,6 +76,12 @@ const TestResponseSchema = Type.Object({
 // Claude CLI availability status — see server/ai/handlers/claudeCliStatus.ts.
 // ---------------------------------------------------------------------------
 
+/** Whether THIS request can use the one-click "Log in with Claude" terminal launch — see `claudeCliTerminalLaunch.ts`'s `resolveTerminalLaunchSupport`. */
+const TerminalLoginSupportSchema = Type.Object({
+  available: Type.Boolean(),
+  reason: Type.Optional(Type.String()),
+})
+
 const ClaudeCliStatusResponseSchema = Type.Object({
   availability: Type.Union([
     Type.Literal('logged-in'),
@@ -87,19 +93,45 @@ const ClaudeCliStatusResponseSchema = Type.Object({
   reason: Type.Optional(Type.String()),
   loginCommand: Type.Optional(Type.String()),
   subscriptionType: Type.Optional(Type.String()),
+  terminalLogin: TerminalLoginSupportSchema,
 })
 export type ClaudeCliStatus = Static<typeof ClaudeCliStatusResponseSchema>
 
 /**
  * Zero-cost `claude auth status --json` probe, surfaced for the "disabled
- * with the reason shown" provider picker state (WS-11 step 2). Never throws
- * for a normal unavailable state — every case in {@link ClaudeCliStatus}
+ * with the reason shown" provider picker state (WS-11 step 2) and for the
+ * Add-credential dialog's poll after "Log in with Claude" is clicked. Never
+ * throws for a normal unavailable state — every case in {@link ClaudeCliStatus}
  * carries its own `availability` + `reason`; only a genuine transport/auth
  * failure (network, session expiry) throws via `apiRequest`'s `ApiError`.
  */
 export async function getClaudeCliStatus(signal?: AbortSignal): Promise<ClaudeCliStatus> {
   return apiRequest('/admin/api/ai/providers/claude-cli/status', {
     schema: ClaudeCliStatusResponseSchema,
+    signal,
+  })
+}
+
+const LaunchClaudeCliLoginTerminalResponseSchema = Type.Object({
+  ok: Type.Boolean(),
+  reason: Type.Optional(Type.String()),
+})
+export type LaunchClaudeCliLoginTerminalResult = Static<typeof LaunchClaudeCliLoginTerminalResponseSchema>
+
+/**
+ * Ask the server to open a detached terminal window, on the SAME machine the
+ * server is running on, running `claude auth login` with this user's own
+ * `CLAUDE_CONFIG_DIR` already set. Always resolves — never throws for an
+ * "expected" unavailability (remote session, unsupported platform, no
+ * terminal emulator found); those come back as `{ ok: false, reason }` for
+ * the dialog to render inline, same pattern as {@link testCredential}.
+ */
+export async function launchClaudeCliLoginTerminal(
+  signal?: AbortSignal,
+): Promise<LaunchClaudeCliLoginTerminalResult> {
+  return apiRequest('/admin/api/ai/providers/claude-cli/login-terminal', {
+    method: 'POST',
+    schema: LaunchClaudeCliLoginTerminalResponseSchema,
     signal,
   })
 }

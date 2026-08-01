@@ -5,6 +5,7 @@ import {
   configurePublicOrigins,
   configureTrustedProxyCidrs,
   expectedOrigin,
+  isLoopbackRequest,
   isStateChangingMethod,
   originAllowed,
   publicOriginIsHttps,
@@ -309,5 +310,45 @@ describe('stampSocketIp', () => {
     })
     stampSocketIp(req, null)
     expect(clientIp(req)).toBeNull()
+  })
+})
+
+describe('isLoopbackRequest', () => {
+  it('is true for a stamped IPv4 loopback peer', () => {
+    const req = makeReq('http://localhost:3001/admin/api/ai/providers/claude-cli/login-terminal', { method: 'POST' })
+    stampSocketIp(req, '127.0.0.1')
+    expect(isLoopbackRequest(req)).toBe(true)
+  })
+
+  it('is true for a stamped IPv6 loopback peer', () => {
+    const req = makeReq('http://localhost:3001/admin/api/ai/providers/claude-cli/login-terminal', { method: 'POST' })
+    stampSocketIp(req, '::1')
+    expect(isLoopbackRequest(req)).toBe(true)
+  })
+
+  it('is false for a real remote peer', () => {
+    const req = makeReq('http://localhost:3001/admin/api/ai/providers/claude-cli/login-terminal', { method: 'POST' })
+    stampSocketIp(req, '203.0.113.7')
+    expect(isLoopbackRequest(req)).toBe(false)
+  })
+
+  it('is false when no socket peer was ever stamped', () => {
+    const req = makeReq('http://localhost:3001/admin/api/ai/providers/claude-cli/login-terminal', { method: 'POST' })
+    expect(isLoopbackRequest(req)).toBe(false)
+  })
+
+  it('IGNORES a spoofed X-Forwarded-For claiming loopback from a non-loopback peer', () => {
+    // A remote caller behind a proxy (even a configured trusted one) cannot
+    // claim to be local by forging X-Forwarded-For — this check never
+    // consults it, unlike `clientIp`'s trusted-proxy walk. Opening a
+    // terminal on the server must never be reachable from anywhere but a
+    // genuine local socket connection.
+    configureTrustedProxyCidrs(['172.16.0.0/12'])
+    const req = makeReq('http://localhost:3001/admin/api/ai/providers/claude-cli/login-terminal', {
+      method: 'POST',
+      headers: { 'x-forwarded-for': '127.0.0.1' },
+    })
+    stampSocketIp(req, '172.16.0.4')
+    expect(isLoopbackRequest(req)).toBe(false)
   })
 })
