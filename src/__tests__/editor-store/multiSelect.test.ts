@@ -16,6 +16,7 @@
 
 import { describe, it, expect, beforeEach } from 'bun:test'
 import { useEditorStore } from '@site/store/store'
+import { createBoardsFile, DEFAULT_PREVIEW_AXES } from '@core/studio-board'
 import '@modules/base/index'
 
 function freshStore() {
@@ -24,7 +25,24 @@ function freshStore() {
     activePageId: null,
     selectedNodeId: null,
     selectedNodeIds: [],
+    selectedNodeFrameId: null,
     hoveredNodeId: null,
+    hoveredBreakpointId: null,
+    hoveredFrameId: null,
+    // `useEditorStore` is a module singleton shared by every test file in one
+    // `bun test` process (`canvas-10`), so any field this list forgets keeps
+    // whatever a previously-run file left in it. These four are why: WS-10
+    // Phase 4 made `selectCanvasPageFor` return a LOCALIZED tree when the
+    // selected node's frame carries an `axes.locale` differing from
+    // `previewAxes.locale` and `localizedPages` holds that key. Files that
+    // `setState` a board with locale variants (`inlineEditSlice.test.ts`,
+    // `boardFrameVariantSelection.test.tsx`) leave all of that behind, so the
+    // DFS range walk here ran against a different tree, could not find its own
+    // anchor, and returned a single node. Passed alone, failed in the suite.
+    boards: createBoardsFile(),
+    activeBoardId: null,
+    previewAxes: DEFAULT_PREVIEW_AXES,
+    localizedPages: {},
     activeClassId: null,
     previewClassAssignment: null,
     propertiesPanel: { collapsed: false, x: 0, y: 0, width: 280 },
