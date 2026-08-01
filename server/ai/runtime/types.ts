@@ -194,6 +194,20 @@ export type AiStreamEvent =
    * the live meter during a turn; `usage` stays billing.
    */
   | { type: 'context'; promptTokens: number; cacheReadTokens?: number; cacheCreationTokens?: number; contextTokens?: number }
+  /**
+   * A chunk of extended-thinking / reasoning content, distinct from the
+   * assistant's visible reply (`text`). Ephemeral display only — never
+   * persisted to conversation history, same posture as `context`.
+   *
+   * WS-12 §5.4: currently emitted ONLY by `claudeCliEvents.ts`'s translator,
+   * and that emission is written against the DOCUMENTED Anthropic streaming
+   * shape (`thinking`/`thinking_delta` on a `stream_event`), not verified
+   * against a real CLI turn — see that file's doc comment before assuming
+   * this has been seen on the wire. No other driver emits it. A driver or
+   * turn that never produces one costs nothing: the browser simply never
+   * renders a reasoning block.
+   */
+  | { type: 'reasoning'; text: string }
   /** Terminal error — stream is about to end abnormally. */
   | { type: 'error'; message: string }
   /** Stream ended cleanly. */

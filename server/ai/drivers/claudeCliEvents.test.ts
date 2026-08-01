@@ -163,6 +163,54 @@ describe('translateClaudeCliLine — result (error)', () => {
   })
 })
 
+// WS-12 §5.4 — written against the DOCUMENTED Anthropic streaming shape
+// (`content_block_delta` / `thinking_delta`), UNVERIFIED against a real CLI
+// turn. These tests fix the CONTRACT this driver was built against, not a
+// confirmed observation — see claudeCliEvents.ts's own doc comment.
+describe('translateClaudeCliLine — stream_event (reasoning, unverified shape)', () => {
+  it('emits a reasoning event for a thinking_delta content_block_delta', () => {
+    const result = translateClaudeCliLine(parseClaudeCliLine(JSON.stringify({
+      type: 'stream_event',
+      event: {
+        type: 'content_block_delta',
+        delta: { type: 'thinking_delta', thinking: 'Let me check the node tree first...' },
+      },
+    }))!)
+    expect(result.events).toEqual([{ type: 'reasoning', text: 'Let me check the node tree first...' }])
+    expect(result.turnComplete).toBe(false)
+  })
+
+  it('emits nothing for a stream_event whose delta is a plain text_delta, not thinking_delta', () => {
+    const result = translateClaudeCliLine(parseClaudeCliLine(JSON.stringify({
+      type: 'stream_event',
+      event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'hi' } },
+    }))!)
+    expect(result.events).toEqual([])
+  })
+
+  it('emits nothing for a stream_event with an empty thinking string', () => {
+    const result = translateClaudeCliLine(parseClaudeCliLine(JSON.stringify({
+      type: 'stream_event',
+      event: { type: 'content_block_delta', delta: { type: 'thinking_delta', thinking: '' } },
+    }))!)
+    expect(result.events).toEqual([])
+  })
+
+  it('emits nothing for a stream_event with no inner event at all — never throws', () => {
+    const result = translateClaudeCliLine(parseClaudeCliLine('{"type":"stream_event"}')!)
+    expect(result.events).toEqual([])
+    expect(result.turnComplete).toBe(false)
+  })
+
+  it('emits nothing for a content_block_start carrying a thinking block (only the delta form is handled)', () => {
+    const result = translateClaudeCliLine(parseClaudeCliLine(JSON.stringify({
+      type: 'stream_event',
+      event: { type: 'content_block_start', content_block: { type: 'thinking' } },
+    }))!)
+    expect(result.events).toEqual([])
+  })
+})
+
 describe('translateClaudeCliLine — unrecognised event types', () => {
   it('produces no events for an unknown type rather than throwing', () => {
     const result = translateClaudeCliLine(parseClaudeCliLine('{"type":"user"}')!)

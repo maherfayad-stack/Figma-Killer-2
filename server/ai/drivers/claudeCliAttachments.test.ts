@@ -79,4 +79,100 @@ describe('stageAttachments', () => {
       cleanupAttachments(staging.dir)
     }
   })
+
+  // WS-12 §5.3 follow-up — text-ish FILE attachments, reusing the same
+  // `kind: 'image'` block shape (no new AiContentBlock kind), gated by an
+  // explicit allow-list + size cap rather than staging anything handed to it.
+  describe('text-ish file attachments (allow-list, size cap, refusal)', () => {
+    const textToBase64 = (text: string) => Buffer.from(text, 'utf-8').toString('base64')
+
+    it('stages an allow-listed text-ish file, tagged kind "file"', () => {
+      const blocks: AiContentBlock[] = [
+        { kind: 'image', mimeType: 'text/markdown', data: textToBase64('# spec\n\nhello') },
+      ]
+      const staging = stageAttachments(blocks)!
+      try {
+        expect(staging.files).toHaveLength(1)
+        expect(staging.files[0]!.kind).toBe('file')
+        expect(staging.files[0]!.path).toMatch(/attachment-1\.md$/)
+        expect(staging.refused).toHaveLength(0)
+        expect(readFileSync(staging.files[0]!.path, 'utf-8')).toBe('# spec\n\nhello')
+      } finally {
+        cleanupAttachments(staging.dir)
+      }
+    })
+
+    it('stages JSON and CSV and plain text, each with the right extension', () => {
+      const blocks: AiContentBlock[] = [
+        { kind: 'image', mimeType: 'application/json', data: textToBase64('{"a":1}') },
+        { kind: 'image', mimeType: 'text/csv', data: textToBase64('a,b\n1,2') },
+        { kind: 'image', mimeType: 'text/plain', data: textToBase64('plain') },
+      ]
+      const staging = stageAttachments(blocks)!
+      try {
+        expect(staging.files.map((f) => f.path.match(/\.(\w+)$/)![1])).toEqual(['json', 'csv', 'txt'])
+        expect(staging.refused).toHaveLength(0)
+      } finally {
+        cleanupAttachments(staging.dir)
+      }
+    })
+
+    it('refuses a mime type outside the allow-list, with a reason, and stages nothing for it', () => {
+      const blocks: AiContentBlock[] = [
+        { kind: 'image', mimeType: 'application/octet-stream', data: textToBase64('binary-ish') },
+      ]
+      const staging = stageAttachments(blocks)!
+      expect(staging.files).toHaveLength(0)
+      expect(staging.refused).toHaveLength(1)
+      expect(staging.refused[0]!.mimeType).toBe('application/octet-stream')
+      expect(staging.refused[0]!.reason).toContain('unsupported type')
+      // Refusal-only staging must never leave a directory behind — nothing
+      // was ever written, so there is nothing to clean up.
+      expect(staging.dir).toBe('')
+    })
+
+    it('refuses a text-ish file over the size cap instead of staging it', () => {
+      const huge = 'x'.repeat(300 * 1024) // over the 256 KiB cap
+      const blocks: AiContentBlock[] = [{ kind: 'image', mimeType: 'text/plain', data: textToBase64(huge) }]
+      const staging = stageAttachments(blocks)!
+      expect(staging.files).toHaveLength(0)
+      expect(staging.refused).toHaveLength(1)
+      expect(staging.refused[0]!.reason).toContain('exceeds')
+    })
+
+    it('stages the allow-listed files and refuses the rest in the same turn, without losing either', () => {
+      const blocks: AiContentBlock[] = [
+        { kind: 'image', mimeType: 'image/png', data: ONE_PIXEL_PNG_BASE64 },
+        { kind: 'image', mimeType: 'text/markdown', data: textToBase64('notes') },
+        { kind: 'image', mimeType: 'application/pdf', data: textToBase64('not really a pdf') },
+      ]
+      const staging = stageAttachments(blocks)!
+      try {
+        expect(staging.files).toHaveLength(2)
+        expect(staging.files.map((f) => f.kind)).toEqual(['image', 'file'])
+        expect(staging.refused).toHaveLength(1)
+        expect(staging.refused[0]!.mimeType).toBe('application/pdf')
+      } finally {
+        cleanupAttachments(staging.dir)
+      }
+    })
+
+    it('describeAttachmentsForPrompt separates image vs. file lines and surfaces refusals', () => {
+      const blocks: AiContentBlock[] = [
+        { kind: 'image', mimeType: 'image/png', data: ONE_PIXEL_PNG_BASE64 },
+        { kind: 'image', mimeType: 'text/markdown', data: textToBase64('notes') },
+        { kind: 'image', mimeType: 'application/pdf', data: textToBase64('nope') },
+      ]
+      const staging = stageAttachments(blocks)!
+      try {
+        const description = describeAttachmentsForPrompt(staging)
+        expect(description).toContain('Attached image file(s)')
+        expect(description).toContain('Attached file(s)')
+        expect(description).toContain('could not be staged')
+        expect(description).toContain('application/pdf')
+      } finally {
+        cleanupAttachments(staging.dir)
+      }
+    })
+  })
 })

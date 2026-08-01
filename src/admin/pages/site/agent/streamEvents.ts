@@ -12,6 +12,8 @@
  *   toolResult    a previously-issued tool call completed (ok/error)
  *   toolRequest   server asks the browser to apply a write tool
  *   usage         per-turn token + cost totals
+ *   reasoning     extended-thinking text chunk (WS-12 §5.4, unverified —
+ *                 see server/ai/drivers/claudeCliEvents.ts's doc comment)
  *   error         server-side terminal error
  *   done          stream finished cleanly
  *
@@ -86,6 +88,7 @@ export const ServerStreamEventSchema = Type.Union([
     type: Type.Literal('context'),
     contextTokens: Type.Number(),
   }),
+  Type.Object({ type: Type.Literal('reasoning'), text: Type.String() }),
   Type.Object({ type: Type.Literal('done') }),
   Type.Object({ type: Type.Literal('error'), message: Type.String() }),
 ])
@@ -112,6 +115,26 @@ export async function processStreamEvent(
   switch (event.type) {
     case 'text': {
       textSink.append(assistantId, event.text)
+      break
+    }
+
+    case 'reasoning': {
+      // Flush any pending assistant text first so a reasoning block never
+      // gets spliced into the middle of an in-flight text block — same
+      // ordering discipline `toolCall` already follows. Reasoning deltas
+      // accumulate into the trailing block when one is already open;
+      // otherwise a fresh block starts (mirrors the text-delta pattern).
+      textSink.flush()
+      set((state) => {
+        const msg = state.agentMessages.find((m) => m.id === assistantId)
+        if (!msg) return
+        const last = msg.blocks.at(-1)
+        if (last && last.kind === 'reasoning') {
+          last.text += event.text
+        } else {
+          msg.blocks.push({ kind: 'reasoning', text: event.text })
+        }
+      })
       break
     }
 

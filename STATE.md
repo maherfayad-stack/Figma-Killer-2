@@ -290,6 +290,203 @@ are the remaining WS-2 items, not yet dispatched. See
 
 ## Recently landed
 
+### server-12 — WS-11 + WS-12 arc closed: parity matrix gaps closed, file attachments, reasoning (unverified). Reference entry for cold pickup, not a round log.
+- **Agent:** server-engineer
+- **Stage:** WS-12 is now complete. Every item on the user's own list ("model,
+  effort, bypass-or-ask-before-edits, images, files, reasoning") is built.
+  The one open item is verification, not construction: nobody has confirmed
+  a `reasoning` block actually renders against a real CLI turn (see below).
+- **Updated:** 2026-08-01
+
+**Read this section first if you are picking up WS-11/WS-12 cold. It is the
+map, not the diff.**
+
+#### The shape of the whole thing
+
+Two workstreams landed together because they're one feature end to end: WS-11
+gave Studio a driver that talks to a **subscription-authenticated `claude` CLI
+subprocess** instead of a provider REST API; WS-12 is everything Studio-side
+that makes that driver actually useful for editing a real project — the
+system prompt, the tool roster, subagents, session controls, and the
+guarantee that "the agent can do what you can do in the canvas" is checked,
+not asserted.
+
+**The H2 harness model is the one idea that explains most of the code.**
+Every other AI driver in this repo (`server/ai/drivers/http/`) runs its OWN
+agent loop: call the provider, get tool calls back, execute them, feed
+results back, repeat (`toolLoop.ts`). `claudeCli.ts` does NOT do this — the
+`claude` subprocess owns its own agent loop internally. Studio's job for this
+driver is narrower: build the system prompt, expose tools over MCP (so the
+CLI's own loop can call them), assemble the argv, and translate the CLI's
+NDJSON stdout into the same `AiStreamEvent` wire format every other driver
+emits. If you go looking for "where does claudeCli decide to call a tool
+again after a result comes back" — it doesn't. The CLI decides that. Don't
+try to add that logic here; it belongs to a completely different file
+(`toolLoop.ts`) for a completely different kind of driver.
+
+**Read `server/ai/drivers/claudeCliEvents.ts`'s own doc comment before
+touching anything CLI-shaped.** It documents 4 traps found by an earlier
+round's real probe against the installed binary (auth-state field trap,
+`result.subtype` lying about success, where auth failures actually surface,
+snake_case-vs-camelCase in the SAME event) and this round added a 5th
+category: the `stream_event`/`thinking_delta` shape is NOT verified the same
+way — see "Reasoning" below.
+
+#### File map (the whole arc, not just this round)
+
+| File | Owns |
+|---|---|
+| `server/ai/drivers/claudeCli.ts` | argv construction, spawn, the main `streamClaudeCli` generator, permission-mode + effort resolution, MCP session-connector minting/revocation |
+| `server/ai/drivers/claudeCliEvents.ts` | NDJSON line → `AiStreamEvent` translation; every "verified against the real binary" fact lives in this file's doc comment |
+| `server/ai/drivers/claudeCliAttachments.ts` | image + file staging to a turn-scoped temp dir, by mime-type allow-list |
+| `server/ai/drivers/claudeCliProbe.ts` | `claude auth status --json` — the ONLY auth probe used |
+| `server/ai/drivers/claudeCliSession.ts` | `--session-id`/`--resume` continuity |
+| `server/ai/mcp/tools/studio/` | the Studio MCP tool registry (`index.ts` barrel), the parity matrix (`parityMatrix.ts`), the 3 browser-bridged parity-gap closers (`browserBridgeTools.ts`) |
+| `server/ai/tools/studio/` | system prompt construction (`buildStudioAgentSystemPrompt`), subagent roster generation (`agentRoster.ts`), the snapshot/staleness rule (`snapshot.ts`, `liveDigest.ts`) |
+| `server/ai/handlers/chat.ts` | the one HTTP endpoint every driver streams through; provider-agnostic |
+| `server/ai/handlers/studioAgentSession.ts` | effort/mode session-control persistence (`.studio/meta.json`'s `agentSession` field) |
+| `server/ai/runtime/{runner.ts,types.ts}` | `AiStreamEvent` canonical shape; `runChat` persists text/tool events, forwards everything else (including `reasoning`) untouched |
+| `src/admin/pages/site/agent/executor.ts` | THE single dispatcher for every browser-executed tool — both the in-process HTTP-driver tool loop and MCP-relayed calls (including from `claudeCli`'s minted session connector) go through this one switch statement |
+| `src/admin/pages/site/agent/studioBrowserBridgeTools.ts` | client-side implementations of the 3 parity-gap-closing tools |
+| `src/admin/pages/site/agent/streamEvents.ts` | the browser's NDJSON reducer (`ServerStreamEventSchema` + `processStreamEvent`) |
+| `src/admin/pages/site/panels/AgentPanel/` | `AgentSessionControls.tsx` (model/effort/mode + the Bypass banner), `ToolCallRow.tsx`/`ReasoningRow.tsx` (per-block rendering) |
+
+#### Security posture — read before changing any of this
+
+1. **`--dangerously-skip-permissions`/`--allow-dangerously-skip-permissions`
+   are permanently, unconditionally forbidden.** Never constructed by this
+   driver's argv under any code path, checked or not. This is a DIFFERENT
+   flag from `--permission-mode bypassPermissions`, which is legitimate.
+2. **`bypassPermissions` may only reach argv when the user explicitly
+   selected it THIS turn.** Never a default, never inferred, never
+   persisted. Three independent guard rails (D5 §11.5), each tested, detailed
+   in `server-11` below — don't re-derive them, read that entry.
+3. **File attachments never get a new `AiContentBlock` kind.** They reuse the
+   existing `kind: 'image'` block (its `mimeType` was always an unconstrained
+   string) — `claudeCliAttachments.ts` alone decides image vs. text-ish file
+   vs. refused, by an explicit allow-list + 256 KiB size cap. A mime type
+   outside the allow-list is refused with a reason surfaced in the prompt,
+   never silently staged and never silently dropped.
+4. **Tests never spawn the real binary or make a real provider call.**
+   Every test in `server/ai/drivers/claudeCli*.test.ts` injects `spawn` via
+   the `options` seam; `fakeCliSpawn` fixtures carry hand-written NDJSON.
+
+#### The canvas parity matrix — final state
+
+`server/ai/tools/studio/parityMatrix.ts`: **33 rows, 27 mapped to a real
+tool, 6 explicitly withheld with a stated reason, 0 missing.** The 6 withheld
+are permanent policy, not gaps: trust-tier promotion (consent-only, the agent
+may ask, never self-promote), undo/redo (stays the user's own safety net over
+the agent's writes), pan/zoom/marquee (viewport isn't document state), delete
+a project (no tool may reach that path, full stop), a raw shell command and a
+full-file overwrite (both would break invariant 2 — a write must have exactly
+one honest target).
+
+The 3 gaps `server-11` found and explicitly left open (per that round's own
+instruction to list them, not close them) are now closed: `studio_upload_asset`,
+`studio_set_frame_axes`, `studio_duplicate_frame_as_variant`. All three are
+thin `execution: 'browser', scope: 'site'` wrappers, dispatched through
+`executor.ts` exactly like the pre-existing `studio_export_frames` — **wrappers
+over verbs that already exist and are already tested, never a
+reimplementation.** `parityMatrix.test.ts` now also pins the gap count at 0
+with its own regression test, so a future "missing" row silently downgraded
+to "withheld" fails loudly instead of rotting quietly.
+
+#### Attachments — images AND files, unified staging, one open UI gap
+
+`claudeCliAttachments.ts` stages every eligible content block to a file in a
+fresh turn-scoped temp dir and points the prompt at the absolute path (the
+CLI's own Read tool does the actual reading — there's no confirmed `-p`
+mechanism for inline bytes). Images and text-ish files share the SAME
+function and the SAME `kind: 'image'` wire block — only the mime type differs.
+Refused attachments (unsupported type, over the 256 KiB file cap, bad base64)
+never get staged, and the refusal is appended to the prompt so the model can
+tell the user rather than the attachment just vanishing.
+
+**What's NOT built: the composer's file-picker UI.** A person can attach up
+to 8 images today; there is still no UI control to pick a non-image file.
+The pipeline that would carry one end to end is complete and tested
+(`claudeCliAttachments.test.ts`'s new `describe('text-ish file attachments')`
+block) — wiring `AgentComposer.tsx` to offer a file picker and produce a
+`kind: 'image'` block with a text-ish mime type is a separate, smaller
+follow-up, not attempted this round (composer UI wasn't named in the ask, and
+guessing at file-picker UX wasn't worth the risk this late in the arc).
+
+#### Reasoning — implemented defensively, genuinely unverified
+
+`claudeCliEvents.ts` now recognises `type: "stream_event"` lines wrapping a
+`content_block_delta` whose `delta.type === "thinking_delta"`, emitting a
+`reasoning` `AiStreamEvent`. `--include-partial-messages` was added to
+`claudeCli.ts`'s argv (required for the CLI to emit `stream_event` lines at
+all). The browser renders a `reasoning` block as its own collapsed `<details>`
+row (`ReasoningRow.tsx`), ordered chronologically against text/tool blocks
+the same way tool calls already are, never persisted to conversation history.
+
+**This shape has NOT been observed on the wire.** It is written against the
+documented Anthropic Messages streaming vocabulary only. Every unrecognised
+`stream_event` shape (any other delta type, a missing `event`, a missing
+`delta`) falls through to "emit nothing" — the failure mode is silence, not a
+broken stream or a thrown exception, so shipping this costs nothing if the
+shape turns out to be wrong. **The next person who touches this driver should
+spend one real, deliberate, approved turn against the actual CLI with a
+prompt likely to trigger extended thinking, and confirm whether a reasoning
+block renders.** Until that happens, do not describe this feature as
+"working" in any doc or to a user — "implemented, unverified" is the honest
+and complete description.
+
+#### What to read next, in order
+
+1. This entry, for the map.
+2. `server-11` immediately below, for the bypass-mode security rails and the
+   parity-matrix mechanics in full (not repeated here).
+3. `server-10` below that, for `StudioAgentSnapshot` + the staleness rule +
+   why session controls don't get a DB column.
+4. `docs/features/agent.md` — the living reference doc, updated in the same
+   change as this entry. Prefer it over re-deriving anything from scratch;
+   update it in the same change if you change behaviour it describes.
+
+#### This round's own diff (server-12, on top of baseline `c7bbac3`)
+
+- Closed the 3 parity-matrix gaps: new `server/ai/mcp/tools/studio/browserBridgeTools.ts`,
+  `src/admin/pages/site/agent/studioBrowserBridgeTools.ts`, 3 new TypeBox
+  schemas in `src/core/ai/toolSchemas.ts`, 3 new `executor.ts` dispatch cases,
+  `parityMatrix.ts` rows moved from `missing` to `tool`, `parityMatrix.test.ts`
+  gap-count regression test. New `src/__tests__/agent/studioBrowserBridgeTools.test.ts`
+  (8 tests, real `useEditorStore`, no mocks).
+- File attachments: rewrote `server/ai/drivers/claudeCliAttachments.ts` to
+  stage text-ish files alongside images (allow-list, 256 KiB cap, refusal
+  reporting via `AttachmentStaging.refused` + `describeAttachmentsForPrompt`).
+  6 new tests in `claudeCliAttachments.test.ts`.
+- Reasoning: `AiStreamEvent`/`ServerStreamEvent` gained a `reasoning` variant
+  (`server/ai/runtime/types.ts`, `src/admin/pages/site/agent/types.ts`);
+  `claudeCliEvents.ts` translates `stream_event`/`thinking_delta`;
+  `claudeCli.ts` argv gained `--include-partial-messages`; browser reducer
+  (`streamEvents.ts`) + new `AgentMessageBlock` kind + new
+  `ReasoningRow.tsx`/CSS. 5 new `claudeCliEvents.test.ts` cases, 3 new
+  `agentSlice.test.ts` cases (accumulation, ordering, "no event → no block").
+- Fixed one architecture-gate violation in my own earlier-round file
+  (`studioBrowserBridgeTools.ts` used an inline `err instanceof Error ? ...`
+  ternary instead of `getErrorMessage` — caught by
+  `no-inline-error-ternary.test.ts` on the full-suite run, fixed in this
+  round, not left for someone else).
+- **Verification:** `bunx tsc` (both projects) clean. `bun run build` clean.
+  `bun run lint` clean. `bun test server/ai src/__tests__/agent
+  src/__tests__/architecture/boundary-validation.test.ts` — 539 pass / 0 fail.
+  Full `src/__tests__/architecture` run — 470 pass / 5 fail before my fix,
+  471 pass / 4 fail after; the remaining 4 (`dispatcher-html-pipeline`,
+  `error-boundary-coverage`'s Windows-path bug, `keybindings-registry` on
+  `UndoRedoButtons.tsx`/`useCanvas.ts`) confirmed via `git status` to be
+  outside this round's diff and outside my owned territory (canvas/store
+  files belong to the parallel session this round).
+- **Constraints honored:** read-only git throughout (no stage, no commit).
+  Stayed out of `src/admin/pages/site/{canvas,store}/`, `src/core/page-tree/`,
+  `server/handlers/studio/localizedPage*.ts`, `fsCodemodAdapter.ts` —
+  confirmed via `git status` that none of those paths appear in my diff.
+- **Human action needed:** the one real CLI turn to confirm (or refute) the
+  reasoning event shape, described above. Optionally: wire a file-picker into
+  `AgentComposer.tsx` so a person (not just the agent, which cannot attach
+  its own files) can exercise the file-attachment pipeline end to end.
+
 ### server-11 — Bypass mode implemented (conflict resolved by the coordinator), the parity matrix gate, effort persistence, image attachments
 - **Agent:** server-engineer
 - **Stage:** done, EXCEPT file attachments (non-image) and the §5.4 reasoning

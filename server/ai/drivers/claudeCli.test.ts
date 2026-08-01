@@ -195,6 +195,7 @@ describe('streamClaudeCli — happy path', () => {
       'claude', '-p', 'Hello, Claude.',
       '--output-format', 'stream-json',
       '--verbose',
+      '--include-partial-messages',
       '--model', 'sonnet',
       '--effort', 'medium',
       '--permission-mode', 'default',

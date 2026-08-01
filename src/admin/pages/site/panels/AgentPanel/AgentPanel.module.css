@@ -398,6 +398,36 @@
   width: 100%;
 }
 
+/* ── ReasoningRow — collapsed <details> disclosure for extended-thinking
+   content (WS-12 §5.4). Same shell as ToolCallRow's compact row; the body
+   only renders once the user opens it. ────────────────────────────────── */
+.reasoningRow {
+  border-radius: 12px;
+  background: var(--overlay-10);
+}
+
+.reasoningSummary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-s);
+  padding: var(--space-xs);
+  cursor: pointer;
+  list-style: none;
+}
+
+.reasoningSummary::-webkit-details-marker {
+  display: none;
+}
+
+.reasoningText {
+  margin: 0;
+  padding: 0 var(--space-xs) var(--space-s);
+  color: var(--text-muted);
+  font-size: var(--text-m);
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
 /* ── ToolCallRow — [category icon] [title · detail] [status] ─────────────── */
 .toolCallRow {
   display: grid;

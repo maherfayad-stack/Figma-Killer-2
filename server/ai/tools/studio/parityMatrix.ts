@@ -53,31 +53,17 @@ export const STUDIO_CANVAS_PARITY_MATRIX: readonly ParityRow[] = [
   { action: 'Export a frame render', status: { kind: 'tool', toolNames: ['studio_export_frames'] } },
   { action: 'Render a reference screenshot', status: { kind: 'tool', toolNames: ['studio_render_reference'] } },
   { action: 'Diff a frame against a reference', status: { kind: 'tool', toolNames: ['studio_diff_frames'] } },
-
-  // ── Genuine gaps — confirmed against current code, not withheld by design.
   {
     action: 'Upload a new asset (image) into the project',
-    status: {
-      kind: 'missing',
-      reason:
-        'POST /admin/api/studio/asset-upload (server/handlers/studio/assetUpload.ts) exists and does the real write (sniffed magic-number validation, containment-checked target dir, collision-safe naming) — but nothing wraps it as a tool. An agent today cannot land a NEW image file into the project at all; it can only repoint an existing import (kind: \'asset\' via studio_apply_edits).',
-    },
+    status: { kind: 'tool', toolNames: ['studio_upload_asset'] },
   },
   {
     action: 'Set a board frame\'s preview axes (direction/locale/color-scheme override)',
-    status: {
-      kind: 'missing',
-      reason:
-        'EditorStore.setFrameAxes (src/admin/pages/site/store/slices/boardSlice.ts) is a real, live store action writing BoardFrame.axes — confirmed present, not a stale doc guess. No tool reaches it; an agent cannot say "show me this screen in Arabic" and have it stick to a specific frame.',
-    },
+    status: { kind: 'tool', toolNames: ['studio_set_frame_axes'] },
   },
   {
     action: 'Duplicate a board frame as a variant (different axes, same page)',
-    status: {
-      kind: 'missing',
-      reason:
-        'EditorStore.duplicateFrameAsVariant (same file) is real and live — confirmed present. No tool reaches it; an agent cannot create an RTL/dark variant of an existing screen on the board.',
-    },
+    status: { kind: 'tool', toolNames: ['studio_duplicate_frame_as_variant'] },
   },
 
   // ── Deliberately withheld — by design, not by oversight.

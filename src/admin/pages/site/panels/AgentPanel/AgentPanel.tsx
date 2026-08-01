@@ -52,6 +52,7 @@ import type {
   OpenAgentImageMenu,
 } from './agentImageTypes'
 import { ToolCallRow } from './ToolCallRow'
+import { ReasoningRow } from './ReasoningRow'
 import { formatRelativeTime } from './relativeTime'
 import styles from './AgentPanel.module.css'
 
@@ -356,6 +357,8 @@ function MessageBubble({
       {groupRenderItems(group.messages).map((item) =>
         item.kind === 'text' ? (
           <MarkdownTextBubble key={item.key} text={item.text} isUser={isUser} />
+        ) : item.kind === 'reasoning' ? (
+          <ReasoningRow key={item.key} text={item.text} />
         ) : item.kind === 'images' ? (
           <MessageImageGallery
             key={item.key}
@@ -407,6 +410,7 @@ type MessageBlock = AgentMessage['blocks'][number]
 
 type MessageRenderItem =
   | { kind: 'text'; key: string; text: string }
+  | { kind: 'reasoning'; key: string; text: string }
   | {
       kind: 'images'
       key: string
@@ -421,6 +425,10 @@ function groupRenderItems(messages: AgentMessage[]): MessageRenderItem[] {
       if (block.kind === 'text') {
         // Position-based key, stable as streaming deltas append in place.
         items.push({ kind: 'text', key: `text-${message.id}-${index}`, text: block.text })
+        return
+      }
+      if (block.kind === 'reasoning') {
+        items.push({ kind: 'reasoning', key: `reasoning-${message.id}-${index}`, text: block.text })
         return
       }
       if (block.kind === 'image') {

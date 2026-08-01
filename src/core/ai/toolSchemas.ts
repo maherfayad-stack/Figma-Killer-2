@@ -444,3 +444,53 @@ export const StudioExportFramesInputSchema = Type.Object({
       'WS-10 §5.3 — temporarily overrides the board\'s current direction/colorScheme for the duration of THIS call only (restored afterward), so an agent can request "the RTL rendering" or "the dark rendering" without leaving the live session in that state. Applies to every frame in the batch; a frame that already carries its own per-frame `axes` override (WS-10 §4.4, "duplicate as variant") still uses ITS OWN override — this call-level override only changes the BOARD DEFAULT the frame would otherwise inherit. `locale` is deliberately NOT here: it is parse-time (WS-10 §4.2) and this call cannot trigger a re-parse mid-batch — set the board\'s locale first (POST /admin/api/studio/preview-axes or the toolbar\'s locale control) and wait for it to finish re-parsing, THEN call this tool.',
   })),
 })
+
+// ---------------------------------------------------------------------------
+// studio_set_frame_axes / studio_duplicate_frame_as_variant (WS-12 §6.1) —
+// browser-bridged (execution: 'browser', scope: 'site'), same pattern as
+// studio_export_frames above: this file only declares the shape, the real
+// mutation runs client-side against the live board via `EditorStore.setFrameAxes`/
+// `duplicateFrameAsVariant` (`executor.ts`), the same two actions the
+// toolbar's own preview-axes/duplicate-as-variant controls call.
+//
+// Both address a frame by `pageId` (the id every other Studio tool already
+// returns) rather than a raw board `frameId`, which no tool exposes to an
+// agent at all — when a page has more than one frame/variant on the active
+// board, the FIRST one found is targeted; pass `frameId` explicitly
+// (returned by studio_duplicate_frame_as_variant) to address a specific one.
+// ---------------------------------------------------------------------------
+
+const StudioFrameAxesPatchSchema = Type.Object({
+  direction: Type.Optional(Type.Union([Type.Literal('ltr'), Type.Literal('rtl')])),
+  colorScheme: Type.Optional(Type.Union([Type.Literal('light'), Type.Literal('dark')])),
+  locale: Type.Optional(Type.String({ minLength: 1 })),
+})
+
+export const StudioSetFrameAxesInputSchema = Type.Object({
+  pageId: Type.String({ minLength: 1, description: 'Studio page id (from studio_list_pages) whose board frame gets the override.' }),
+  frameId: Type.Optional(Type.String({ description: 'Address a SPECIFIC frame when the page has more than one (a "duplicate as variant" result) — omit to target the first frame found for pageId.' })),
+  axes: StudioFrameAxesPatchSchema,
+})
+
+export const StudioDuplicateFrameAsVariantInputSchema = Type.Object({
+  pageId: Type.String({ minLength: 1, description: 'Studio page id whose board frame is duplicated as a new, independently-addressable variant frame.' }),
+  frameId: Type.Optional(Type.String({ description: 'Duplicate a SPECIFIC frame when the page already has more than one — omit to duplicate the first frame found for pageId.' })),
+  axes: StudioFrameAxesPatchSchema,
+})
+
+// ---------------------------------------------------------------------------
+// studio_upload_asset (WS-12 §6.1) — browser-bridged: the browser already
+// knows which project is open and POSTs to the EXISTING
+// POST /admin/api/studio/asset-upload endpoint (assetUpload.ts) as real
+// multipart form data — this wraps that endpoint, it does not reimplement
+// its validation (magic-number sniffing, containment, collision-safe naming).
+// ---------------------------------------------------------------------------
+
+export const StudioUploadAssetInputSchema = Type.Object({
+  imageBase64: Type.String({ minLength: 1, description: 'Base64-encoded image bytes to land into the project as a new file.' }),
+  mimeType: Type.Union(
+    [Type.Literal('image/png'), Type.Literal('image/jpeg'), Type.Literal('image/webp')],
+    { description: 'Declared type — the server sniffs the actual bytes and refuses a mismatch, this is only a hint.' },
+  ),
+  targetDir: Type.Optional(Type.String({ description: 'Workspace-relative directory to write into. Defaults to src/assets. Pass the directory an existing import already points at when replacing that import\'s target.' })),
+})

@@ -379,6 +379,13 @@ export async function* streamClaudeCli(
     '--output-format',
     'stream-json',
     '--verbose',
+    // WS-12 §5.4 — required for the `stream_event`/`thinking_delta` events
+    // `claudeCliEvents.ts`'s translator watches for. Additive and low-risk:
+    // it only asks the CLI to also emit partial-message deltas alongside the
+    // existing `assistant`/`result` events already parsed; every event this
+    // driver doesn't recognise already falls through to a no-op default
+    // case, so an unexpected extra event type here cannot break the stream.
+    '--include-partial-messages',
     '--model',
     req.modelId,
     '--effort',

@@ -89,6 +89,7 @@ import {
 } from './codeAssetTools'
 import { runRenderSnapshotAtBreakpoint } from './renderSnapshotAtBreakpoint'
 import { runStudioExportFrames } from './studioExportFrames'
+import { runSetFrameAxes, runDuplicateFrameAsVariant, runUploadAsset } from './studioBrowserBridgeTools'
 import { parseImportedStyleCss, runApplyCss } from './cssTools'
 import {
   activeDocumentNodes,
@@ -659,6 +660,12 @@ export async function executeAgentTool(
       }
       case 'studio_export_frames':
         return await runStudioExportFrames(parseValue(StudioExportFramesInputSchema, rawInput))
+      case 'studio_set_frame_axes':
+        return runSetFrameAxes(rawInput)
+      case 'studio_duplicate_frame_as_variant':
+        return runDuplicateFrameAsVariant(rawInput)
+      case 'studio_upload_asset':
+        return await runUploadAsset(rawInput)
       default:
         return aiToolError(`Unknown studio tool: ${toolName}`)
     }

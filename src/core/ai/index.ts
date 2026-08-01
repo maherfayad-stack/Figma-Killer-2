@@ -74,6 +74,9 @@ export {
   SetSpacingScaleInputSchema,
   RenderSnapshotInputSchema,
   StudioExportFramesInputSchema,
+  StudioSetFrameAxesInputSchema,
+  StudioDuplicateFrameAsVariantInputSchema,
+  StudioUploadAssetInputSchema,
 } from './toolSchemas'
 export type {
   InsertHtmlInput,

@@ -49,11 +49,22 @@ describe('canvas parity matrix (WS-12 §6.1)', () => {
 
   it('reports the current, honest gap count — a regression here means a "missing" row was silently marked "withheld"', () => {
     const missing = STUDIO_CANVAS_PARITY_MATRIX.filter((r) => r.status.kind === 'missing')
-    // Exactly the three confirmed-against-code gaps as of WS-12 steps 5+6:
-    // asset upload, per-frame preview axes, frame-as-variant duplication.
-    // A CHANGE to this number (up or down) is real news — either a new gap
-    // was found, or one was closed — never edit this number without also
-    // updating the matrix rows it counts.
-    expect(missing.length).toBe(3)
+    // Zero as of this task closing all three confirmed gaps from WS-12 steps
+    // 5+6 (asset upload, per-frame preview axes, frame-as-variant
+    // duplication — studio_upload_asset/studio_set_frame_axes/
+    // studio_duplicate_frame_as_variant). A CHANGE to this number is real
+    // news — a new gap was found (up) or one was closed (down, then this
+    // number should drop too) — never edit it without also updating the
+    // matrix rows it counts.
+    expect(missing.length).toBe(0)
+  })
+
+  it('every "tool" row that closes a former gap references a REAL, non-empty toolNames list (no accidental empty array)', () => {
+    for (const name of ['studio_upload_asset', 'studio_set_frame_axes', 'studio_duplicate_frame_as_variant']) {
+      const row = STUDIO_CANVAS_PARITY_MATRIX.find(
+        (r) => r.status.kind === 'tool' && r.status.toolNames.includes(name),
+      )
+      expect(row).toBeDefined()
+    }
   })
 })

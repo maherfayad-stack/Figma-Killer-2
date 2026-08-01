@@ -123,6 +123,20 @@ interface ContextEvent {
   contextTokens: number
 }
 
+/**
+ * A chunk of extended-thinking / reasoning text, separate from the
+ * assistant's visible reply. WS-12 §5.4 — currently emitted only by the
+ * `claudeCli` driver, and that emission is written against the documented
+ * Anthropic streaming shape, unverified against a real CLI turn (see
+ * `server/ai/drivers/claudeCliEvents.ts`'s doc comment). A turn that never
+ * produces one renders no reasoning block — this is a pure display-only
+ * event, never persisted to conversation history.
+ */
+interface ReasoningEvent {
+  type: 'reasoning'
+  text: string
+}
+
 export type ServerStreamEvent =
   | TextEvent
   | BridgeReadyEvent
@@ -131,6 +145,7 @@ export type ServerStreamEvent =
   | ToolResultEvent
   | UsageEvent
   | ContextEvent
+  | ReasoningEvent
   | DoneEvent
   | ErrorEvent
 
@@ -166,6 +181,14 @@ type AgentMessageBlock =
   | Extract<AiContentBlock, { kind: 'text' }>
   | AgentMessageImageBlock
   | { kind: 'toolCall'; toolCall: AgentToolCall }
+  /**
+   * Extended-thinking content (WS-12 §5.4) — rendered as its own collapsed
+   * block, distinct from the assistant's visible `text` blocks, so a reader
+   * can see the model's reasoning without it being mistaken for the reply.
+   * Session-only, same as tool-call blocks: never persisted, never
+   * rehydrated after a reload.
+   */
+  | { kind: 'reasoning'; text: string }
 
 export interface AgentMessageImageBlock {
   kind: 'image'

@@ -8,6 +8,7 @@ import { studioFidelityReportTool } from './fidelityReport'
 import { studioExportMcpTools } from './exportFrames'
 import { studioReferenceMcpTools } from './referenceRender'
 import { studioDiffMcpTools } from './diffFrames'
+import { studioBrowserBridgeMcpTools } from './browserBridgeTools'
 
 export const studioMcpTools: AiTool[] = [
   ...studioProjectMcpTools,
@@ -16,4 +17,5 @@ export const studioMcpTools: AiTool[] = [
   ...studioExportMcpTools,
   ...studioReferenceMcpTools,
   ...studioDiffMcpTools,
+  ...studioBrowserBridgeMcpTools,
 ]

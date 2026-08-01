@@ -72,6 +72,30 @@ const ClaudeCliAssistantMessageSchema = Type.Object(
   { additionalProperties: true },
 )
 
+/**
+ * WS-12 §5.4 — the inner Anthropic SSE event a `type: "stream_event"` CLI
+ * line wraps when the turn is run with `--include-partial-messages`. This
+ * shape is written against the DOCUMENTED Anthropic Messages streaming
+ * vocabulary (`content_block_delta` with `delta.type: "thinking_delta"` and
+ * `delta.thinking: string`, on a block whose own `content_block.type` is
+ * `"thinking"`) — it has NOT been confirmed against a real CLI turn. Every
+ * field is `Optional` and the object is loosely typed on purpose: if the
+ * real event differs, `translateClaudeCliLine` below simply never matches
+ * and emits nothing, rather than throwing.
+ */
+const ClaudeCliInnerStreamEventSchema = Type.Object(
+  {
+    type: Type.Optional(Type.String()),
+    delta: Type.Optional(
+      Type.Object(
+        { type: Type.Optional(Type.String()), thinking: Type.Optional(Type.String()) },
+        { additionalProperties: true },
+      ),
+    ),
+  },
+  { additionalProperties: true },
+)
+
 const ClaudeCliLineSchema = Type.Object(
   {
     type: Type.String(),
@@ -87,6 +111,9 @@ const ClaudeCliLineSchema = Type.Object(
     modelUsage: Type.Optional(Type.Record(Type.String(), ClaudeCliModelUsageEntrySchema)),
     total_cost_usd: Type.Optional(Type.Number()),
     session_id: Type.Optional(Type.String()),
+    // `type: "stream_event"` line only (requires `--include-partial-messages`,
+    // WS-12 §5.4) — the raw inner Anthropic SSE event, unverified shape.
+    event: Type.Optional(ClaudeCliInnerStreamEventSchema),
   },
   { additionalProperties: true },
 )
@@ -169,6 +196,16 @@ export interface ClaudeCliTranslateResult {
  *     accounts for every model in `modelUsage` (including the internal Haiku
  *     classifier call WS-11 §4.0 warns about), which per-model summation from
  *     this driver would not.
+ *   - `stream_event`         → `reasoning` (WS-12 §5.4), ONLY when the wrapped
+ *     inner event is a `content_block_delta` carrying `delta.type ===
+ *     "thinking_delta"` with a non-empty `delta.thinking`. Written against
+ *     the documented Anthropic streaming shape, UNVERIFIED against a real
+ *     CLI turn (`claudeCliInnerStreamEventSchema`'s own doc comment). Every
+ *     other `stream_event` shape (any other delta type, a missing `event`,
+ *     a missing `delta`) intentionally falls through to "nothing" — the
+ *     defensive posture the feature was built with: if the real event never
+ *     arrives or looks different, this driver silently emits nothing rather
+ *     than guessing or throwing.
  */
 export function translateClaudeCliLine(line: ClaudeCliLine): ClaudeCliTranslateResult {
   switch (line.type) {
@@ -216,6 +253,14 @@ export function translateClaudeCliLine(line: ClaudeCliLine): ClaudeCliTranslateR
         events.push({ type: 'done' })
       }
       return { events, turnComplete: true }
+    }
+
+    case 'stream_event': {
+      const thinking = line.event?.delta
+      if (line.event?.type === 'content_block_delta' && thinking?.type === 'thinking_delta' && thinking.thinking) {
+        return { events: [{ type: 'reasoning', text: thinking.thinking }], turnComplete: false }
+      }
+      return { events: [], turnComplete: false }
     }
 
     // `system/init`, `user` (echoed back), and anything unrecognised carry

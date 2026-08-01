@@ -553,6 +553,106 @@ describe('processStreamEvent — chronological text/tool ordering', () => {
 })
 
 // ---------------------------------------------------------------------------
+// processStreamEvent — reasoning (WS-12 §5.4, unverified wire shape — see
+// server/ai/drivers/claudeCliEvents.ts's own doc comment). This test only
+// exercises the BROWSER-side reducer contract: given a `reasoning` event
+// arrives on the wire, it renders as its own block, distinct from and never
+// mixed into the assistant's visible text.
+// ---------------------------------------------------------------------------
+
+describe('processStreamEvent — reasoning', () => {
+  it('accumulates consecutive reasoning deltas into one trailing block', async () => {
+    const { assistantId } = freshAgentState()
+    const bridge = emptyBridge()
+
+    await processStreamEvent(
+      { type: 'reasoning', text: 'Let me check the ' },
+      assistantId,
+      noopTextSink,
+      useEditorStore.setState,
+      bridge,
+      null,
+      executeAgentTool,
+    )
+    await processStreamEvent(
+      { type: 'reasoning', text: 'node tree first.' },
+      assistantId,
+      noopTextSink,
+      useEditorStore.setState,
+      bridge,
+      null,
+      executeAgentTool,
+    )
+
+    const blocks = useEditorStore.getState().agentMessages[0].blocks
+    expect(blocks).toEqual([{ kind: 'reasoning', text: 'Let me check the node tree first.' }])
+  })
+
+  it('keeps reasoning and visible text in separate blocks, in arrival order', async () => {
+    const { assistantId } = freshAgentState()
+    const bridge = emptyBridge()
+    const inlineTextSink: AgentTextStreamSink = {
+      append(id, text) {
+        useEditorStore.setState((state) => {
+          const msg = state.agentMessages.find((m) => m.id === id)
+          if (!msg) return
+          const last = msg.blocks[msg.blocks.length - 1]
+          if (last && last.kind === 'text') {
+            last.text += text
+          } else {
+            msg.blocks.push({ kind: 'text', text })
+          }
+        })
+      },
+      flush() {},
+    }
+
+    await processStreamEvent(
+      { type: 'reasoning', text: 'Thinking about the request…' },
+      assistantId,
+      inlineTextSink,
+      useEditorStore.setState,
+      bridge,
+      null,
+      executeAgentTool,
+    )
+    await processStreamEvent(
+      { type: 'text', text: 'Here is the answer.' },
+      assistantId,
+      inlineTextSink,
+      useEditorStore.setState,
+      bridge,
+      null,
+      executeAgentTool,
+    )
+
+    const blocks = useEditorStore.getState().agentMessages[0].blocks
+    expect(blocks).toEqual([
+      { kind: 'reasoning', text: 'Thinking about the request…' },
+      { kind: 'text', text: 'Here is the answer.' },
+    ])
+  })
+
+  it('a conversation with no reasoning event renders no reasoning block at all', async () => {
+    const { assistantId } = freshAgentState()
+    const bridge = emptyBridge()
+
+    await processStreamEvent(
+      { type: 'text', text: 'Just a plain reply.' },
+      assistantId,
+      noopTextSink,
+      useEditorStore.setState,
+      bridge,
+      null,
+      executeAgentTool,
+    )
+
+    const blocks = useEditorStore.getState().agentMessages[0].blocks
+    expect(blocks.some((b) => b.kind === 'reasoning')).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // sendAgentMessage — request lifecycle
 // ---------------------------------------------------------------------------
 
