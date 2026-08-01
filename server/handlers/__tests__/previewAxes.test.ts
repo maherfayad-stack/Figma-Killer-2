@@ -112,4 +112,46 @@ describe('tryServeStudioPreviewAxes', () => {
       fs.rmSync(outside, { recursive: true, force: true })
     }
   })
+
+  // WS-10 §4.2 (Phase 3) — `locale` joined the wire schema, replacing the old
+  // hand-typed `previewLocale` JSON field this route never touched before.
+  describe('locale', () => {
+    it('POST persists a locale patch alongside direction/colorScheme, all three surviving independent patches', async () => {
+      const first = makeRequest('/admin/api/studio/preview-axes', postBody({ dir: wsDir, previewAxes: { locale: 'ar' } }))
+      await tryServeStudioPreviewAxes(first.req, first.url, first.pathname)
+
+      const { req, url, pathname } = makeRequest(
+        '/admin/api/studio/preview-axes',
+        postBody({ dir: wsDir, previewAxes: { direction: 'rtl' } }),
+      )
+      const res = await tryServeStudioPreviewAxes(req, url, pathname)
+      const body = (await res!.json()) as { previewAxes: { direction: string; colorScheme: string; locale?: string } }
+      expect(body.previewAxes).toEqual({ direction: 'rtl', colorScheme: 'light', locale: 'ar' })
+    })
+
+    it('GET stays "no locale" (undefined, not a fabricated default) when nothing has ever set one', async () => {
+      const { req, url, pathname } = makeRequest(`/admin/api/studio/preview-axes?dir=${encodeURIComponent(wsDir)}`)
+      const res = await tryServeStudioPreviewAxes(req, url, pathname)
+      const body = (await res!.json()) as { previewAxes: { locale?: string } }
+      expect(body.previewAxes.locale).toBeUndefined()
+    })
+
+    it('GET resolves a legacy top-level previewLocale via the readStudioMeta fold, with no POST ever having run', async () => {
+      fs.mkdirSync(path.join(wsDir, '.studio'), { recursive: true })
+      fs.writeFileSync(path.join(wsDir, '.studio', 'meta.json'), JSON.stringify({ previewLocale: 'ar' }))
+      const { req, url, pathname } = makeRequest(`/admin/api/studio/preview-axes?dir=${encodeURIComponent(wsDir)}`)
+      const res = await tryServeStudioPreviewAxes(req, url, pathname)
+      const body = (await res!.json()) as { previewAxes: { locale?: string } }
+      expect(body.previewAxes.locale).toBe('ar')
+    })
+
+    it('POST rejects an empty-string locale (minLength 1)', async () => {
+      const { req, url, pathname } = makeRequest(
+        '/admin/api/studio/preview-axes',
+        postBody({ dir: wsDir, previewAxes: { locale: '' } }),
+      )
+      const res = await tryServeStudioPreviewAxes(req, url, pathname)
+      expect(res!.status).toBe(400)
+    })
+  })
 })

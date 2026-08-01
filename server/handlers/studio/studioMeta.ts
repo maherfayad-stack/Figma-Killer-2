@@ -57,21 +57,22 @@ const FrameDefaultsSchema = Type.Object({
 })
 
 /**
- * WS-10 Phase 1 — the board-global preview axes a user has explicitly set,
+ * WS-10 Phase 1/3 — the board-global preview axes a user has explicitly set,
  * persisted per project (D5: "Axes persist PER PROJECT in .studio/meta.json").
- * Both fields optional so a project that never touched the toggle keeps
- * opening exactly as it does today; `readPersistedPreviewAxes` in
- * `./previewAxes.ts` fills in `DEFAULT_PREVIEW_AXES` for whatever is absent.
+ * Every field optional so a project that never touched a toggle keeps opening
+ * exactly as it does today; `resolvePreviewAxes` in `./previewAxes.ts` fills
+ * in `DEFAULT_PREVIEW_AXES` for whatever is absent.
  *
- * Deliberately NOT `@core/studio-board`'s full `PreviewAxesSchema` — that type
- * also carries `locale` (Phase 2, parse-time, a different persistence
- * mechanism: the existing `previewLocale` field above). Defined narrowly here
- * so this file's shape doesn't drift if/when `PreviewAxes` grows a field this
- * sidecar has no reason to persist.
+ * `locale` (WS-10 §4.2, Phase 3) supersedes the legacy top-level
+ * `previewLocale` field below — see `readStudioMeta`'s fold. Kept as its own
+ * narrow copy of `@core/studio-board`'s `PreviewAxesSchema` fields (not that
+ * schema directly) so this file's persisted shape doesn't drift if/when
+ * `PreviewAxes` grows a field this sidecar has no reason to persist.
  */
 const PersistedPreviewAxesSchema = Type.Object({
   direction: Type.Optional(Type.Union([Type.Literal('ltr'), Type.Literal('rtl')])),
   colorScheme: Type.Optional(Type.Union([Type.Literal('light'), Type.Literal('dark')])),
+  locale: Type.Optional(Type.String({ minLength: 1 })),
 })
 
 export const StudioMetaSchema = Type.Object({
@@ -79,7 +80,16 @@ export const StudioMetaSchema = Type.Object({
   displayName: Type.Optional(Type.String({ minLength: 1 })),
   /** Project-root-relative POSIX override for where pages live (e.g. `'src/screens'`). Containment-checked again after parsing — see module doc. */
   pagesDir: Type.Optional(Type.String({ minLength: 1 })),
-  /** §7.4 — the `preferredKey` the static evaluator uses to resolve a dictionary indexed by a non-static key. */
+  /**
+   * LEGACY (WS-10 §5.2) — the `preferredKey` the static evaluator uses to
+   * resolve a dictionary indexed by a non-static key (§7.4). Superseded by
+   * `previewAxes.locale` below; kept here ONLY so `StudioMetaSchema` still
+   * PARSES an already-imported project's hand-edited or pre-Phase-3
+   * `meta.json` without rejecting the whole file. `readStudioMeta` folds this
+   * into `previewAxes.locale` on read and never returns it — nothing
+   * downstream reads `previewLocale` any more; use
+   * `projectPreviewLocale`/`previewAxes.locale` instead.
+   */
   previewLocale: Type.Optional(Type.String({ minLength: 1 })),
   trust: Type.Optional(TrustTierSchema),
   /**
@@ -146,11 +156,35 @@ export function readStudioMeta(dir: string): StudioMeta {
     meta = parseJsonWithFallback(rawWithoutProfile(raw), StudioMetaSchema, {})
   }
 
+  meta = foldLegacyPreviewLocale(meta)
+
   if (meta.pagesDir !== undefined && !isSafePagesDirOverride(meta.pagesDir)) {
     const { pagesDir: _unsafePagesDir, ...rest } = meta
     return rest
   }
   return meta
+}
+
+/**
+ * WS-10 §5.2 — folds a legacy top-level `previewLocale` into
+ * `previewAxes.locale` on READ, and drops `previewLocale` from the returned
+ * object so nothing downstream ever sees it. This is a data migration on ONE
+ * read path, not an old-and-new code path (CLAUDE.md's "no back-compat
+ * shims" is about code, not user data on disk — `.studio/meta.json` is
+ * hand-editable and already exists for every already-imported project, the
+ * same category as the DB-schema exception): `writeStudioMeta`/
+ * `mergeStudioMeta` never persist a fresh `previewLocale` again, because the
+ * one caller that used to (the toolbar's now-retired hand-typed field) has
+ * been replaced by `previewAxes.locale` (`previewAxes.ts`'s route). An
+ * existing `previewAxes.locale` wins over a legacy `previewLocale` if a file
+ * somehow carries both (the newer field is the one a real user action just
+ * set).
+ */
+function foldLegacyPreviewLocale(meta: StudioMeta): StudioMeta {
+  if (meta.previewLocale === undefined) return meta
+  const { previewLocale, ...rest } = meta
+  if (rest.previewAxes?.locale !== undefined) return rest
+  return { ...rest, previewAxes: { ...rest.previewAxes, locale: previewLocale } }
 }
 
 /**

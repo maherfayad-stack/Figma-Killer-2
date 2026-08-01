@@ -436,4 +436,11 @@ export const StudioExportFramesInputSchema = Type.Object({
     maximum: 3,
     description: 'Output pixel-density multiplier applied to each frame\'s native captured size (e.g. 2 for a retina-equivalent PNG). Still capped so no image edge exceeds the shared vision-safe limit. Default 1.',
   })),
+  axes: Type.Optional(Type.Object({
+    direction: Type.Optional(Type.Union([Type.Literal('ltr'), Type.Literal('rtl')])),
+    colorScheme: Type.Optional(Type.Union([Type.Literal('light'), Type.Literal('dark')])),
+  }, {
+    description:
+      'WS-10 §5.3 — temporarily overrides the board\'s current direction/colorScheme for the duration of THIS call only (restored afterward), so an agent can request "the RTL rendering" or "the dark rendering" without leaving the live session in that state. Applies to every frame in the batch; a frame that already carries its own per-frame `axes` override (WS-10 §4.4, "duplicate as variant") still uses ITS OWN override — this call-level override only changes the BOARD DEFAULT the frame would otherwise inherit. `locale` is deliberately NOT here: it is parse-time (WS-10 §4.2) and this call cannot trigger a re-parse mid-batch — set the board\'s locale first (POST /admin/api/studio/preview-axes or the toolbar\'s locale control) and wait for it to finish re-parsing, THEN call this tool.',
+  })),
 })

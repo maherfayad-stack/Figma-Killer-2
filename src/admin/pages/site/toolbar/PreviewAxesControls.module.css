@@ -7,3 +7,7 @@
 .axisButton {
     min-width: 44px;
 }
+
+.localeSelect {
+    min-width: 64px;
+}

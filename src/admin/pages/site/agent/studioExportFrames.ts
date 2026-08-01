@@ -43,6 +43,15 @@
  * at once, so the jump is more noticeable. See STATE.md `mcp-02` for the
  * follow-up that removes it (an offscreen, zoom-independent mount once
  * `CanvasRoot.tsx` is free to touch).
+ *
+ * `input.axes` (WS-10 §5.3) — same save/restore shape as pan/zoom/active-page
+ * above: the board's CURRENT `previewAxes.direction`/`colorScheme` are saved,
+ * `setPreviewAxes` applies the override (a render-time attribute effect —
+ * `previewAxesFrameEffect.ts` — so this needs no re-parse and no remount, the
+ * same reason it is safe to flip mid-batch), every frame captures under it,
+ * then the ORIGINAL board axes are restored in the same `finally` as
+ * pan/zoom/active-page. `locale` is never touched here — see the input
+ * schema's own doc for why.
  */
 import {
   aiToolError,
@@ -116,6 +125,8 @@ async function exportFrames(input: StudioExportFramesInput): Promise<AiToolOutpu
   }
 
   const original = { activePageId: store.activePageId, zoom: store.zoom, panX: store.panX, panY: store.panY }
+  const originalAxes = { direction: store.previewAxes.direction, colorScheme: store.previewAxes.colorScheme }
+  if (input.axes) getStoreState().setPreviewAxes(input.axes)
 
   const results: Array<FrameExportSuccess | FrameExportFailure> = []
   const images: AiToolImage[] = []
@@ -197,6 +208,7 @@ async function exportFrames(input: StudioExportFramesInput): Promise<AiToolOutpu
   } finally {
     getStoreState().setCanvasTransform(original.zoom, original.panX, original.panY)
     if (original.activePageId) getStoreState().openPageInCanvas(original.activePageId)
+    if (input.axes) getStoreState().setPreviewAxes(originalAxes)
   }
 
   return aiToolOk({ frames: results }, images)

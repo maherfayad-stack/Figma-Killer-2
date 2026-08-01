@@ -101,6 +101,33 @@ const ColorSchemeCapabilitySchema = Type.Object({
 })
 export type ColorSchemeCapability = Static<typeof ColorSchemeCapabilitySchema>
 
+/**
+ * WS-10 §4.1 — what (if anything) this project's own locale dictionary looks
+ * like, discovered by `localeProbe.ts`. Purely syntactic — see that module's
+ * doc for the three detection rules — so this is a best-effort, best-shot
+ * result, not the real §7.4 evaluator's dictionary resolution.
+ *
+ *   - `keys`      — the locale codes found (e.g. `['en', 'ar']`).
+ *   - `defaultKey`— `'en'` when present among `keys`, else the first key in
+ *     source order — the SAME fallback rule `staticEvalCore.ts`'s
+ *     `evaluateElementAccess` already applies when no `preferredKey` is set,
+ *     so the toolbar's default selection matches what a project already
+ *     renders before the user ever touches the locale control.
+ *   - `source`    — the project-relative file (or directory, for the
+ *     `locales/*.json` rule) the probe found the dictionary in, surfaced so a
+ *     "why does this locale exist" question has a concrete answer.
+ *
+ * Absent (`undefined`) means no locale dictionary was detectable — the
+ * toolbar's locale control then renders disabled with that as the reason
+ * (WS-10 §7.4 "probe honesty"), never a silent no-op `Select`.
+ */
+const LocalesCapabilitySchema = Type.Object({
+  keys: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
+  defaultKey: Type.Optional(Type.String({ minLength: 1 })),
+  source: Type.String({ minLength: 1 }),
+})
+export type LocalesCapability = Static<typeof LocalesCapabilitySchema>
+
 const PagesDirCandidateSchema = Type.Object({
   /** Repo-relative POSIX directory path. */
   dir: Type.String(),
@@ -140,6 +167,8 @@ export const ProjectProfileSchema = Type.Object({
   componentPackages: Type.Array(Type.String()),
   /** WS-10 Phase 1 — see `ColorSchemeCapabilitySchema` above. */
   colorScheme: ColorSchemeCapabilitySchema,
+  /** WS-10 §4.1 — see `LocalesCapabilitySchema` above. `undefined` when the probe found no locale dictionary. */
+  locales: Type.Optional(LocalesCapabilitySchema),
   /** tsconfig `paths` merged UNDER vite `resolve.alias` (vite wins on key collision). */
   aliases: Type.Record(Type.String(), Type.String()),
   warnings: Type.Array(ProbeWarningSchema),

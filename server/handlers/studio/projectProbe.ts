@@ -74,6 +74,7 @@ import { readJsonFileSafe, readTextCapped } from './cappedFileRead'
 import { DEPENDENCIES_NOT_INSTALLED, detectComponentPackages } from './componentPackageDetect'
 import { mergeStudioMeta, readStudioMeta } from './studioMeta'
 import { detectColorScheme } from './colorSchemeDetect'
+import { detectLocales } from './localeProbe'
 import type { ProbeWarning, ProjectProfile } from './projectProfileSchema'
 
 // ---------------------------------------------------------------------------
@@ -548,6 +549,7 @@ export function probeProject(dir: string): ProjectProfile {
 
   const tailwind = detectTailwind(appRootAbs, pkg, warnings)
   const postcssConfigPath = findConfigFile(appRootAbs, POSTCSS_CONFIG_NAMES)
+  const locales = detectLocales(appRootAbs)
 
   return {
     framework: shape.framework,
@@ -569,6 +571,7 @@ export function probeProject(dir: string): ProjectProfile {
     warnings,
     ...(pagesDirCandidates ? { pagesDirCandidates } : {}),
     ...(appRootDetection.candidates ? { appRootCandidates: appRootDetection.candidates } : {}),
+    ...(locales ? { locales } : {}),
   }
 }
 

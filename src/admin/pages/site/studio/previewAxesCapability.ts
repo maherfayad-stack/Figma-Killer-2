@@ -52,7 +52,9 @@ export async function savePreviewAxes(dir: string, patch: Partial<PreviewAxes>):
 }
 
 // ---------------------------------------------------------------------------
-// Dark-mode capability — GET /admin/api/studio/probe (already exists, WS-1.2)
+// Dark-mode + locale capability — GET /admin/api/studio/probe (already
+// exists, WS-1.2). One probe response carries both — see `ProbeResponseSchema`
+// below — so one fetch refreshes both external stores together.
 // ---------------------------------------------------------------------------
 
 /**
@@ -67,11 +69,23 @@ const ColorSchemeCapabilitySchema = Type.Object({
 })
 export type ColorSchemeCapability = Static<typeof ColorSchemeCapabilitySchema>
 
+/** Mirrors `LocalesCapabilitySchema` in `server/handlers/studio/projectProfileSchema.ts` — WS-10 §4.1. */
+const LocalesCapabilitySchema = Type.Object({
+  keys: Type.Array(Type.String()),
+  defaultKey: Type.Optional(Type.String()),
+  source: Type.String(),
+})
+export type LocalesCapability = Static<typeof LocalesCapabilitySchema>
+
 const ProbeResponseSchema = Type.Object({
-  profile: Type.Object({ colorScheme: ColorSchemeCapabilitySchema }),
+  profile: Type.Object({
+    colorScheme: ColorSchemeCapabilitySchema,
+    locales: Type.Optional(LocalesCapabilitySchema),
+  }),
 })
 
 let colorSchemeCapability: ColorSchemeCapability | null = null
+let localesCapability: LocalesCapability | null = null
 const listeners = new Set<() => void>()
 
 /** `null` until the first successful probe fetch for the currently open project — `IframeFrameSurface.tsx` treats `null` as "unknown yet, apply nothing beyond the generic attribute" (see `applyPreviewAxesToFrameDocument`). */
@@ -79,31 +93,46 @@ export function getColorSchemeCapability(): ColorSchemeCapability | null {
   return colorSchemeCapability
 }
 
+/** `null` until the first successful probe fetch, OR when the probe genuinely found no locale dictionary — `PreviewAxesControls.tsx` treats both the same way: the locale control renders disabled with a reason (WS-10 §7.4 "probe honesty"). */
+export function getLocalesCapability(): LocalesCapability | null {
+  return localesCapability
+}
+
 export function subscribeColorSchemeCapability(listener: () => void): () => void {
   listeners.add(listener)
   return () => listeners.delete(listener)
 }
 
-function setColorSchemeCapability(next: ColorSchemeCapability | null): void {
-  colorSchemeCapability = next
+/** Same underlying listener set as `subscribeColorSchemeCapability` — both capabilities refresh together from one probe fetch (`refreshPreviewCapabilities`), so there is no benefit to two separate subscription lists. */
+export function subscribeLocalesCapability(listener: () => void): () => void {
+  listeners.add(listener)
+  return () => listeners.delete(listener)
+}
+
+function notifyCapabilityListeners(): void {
   for (const listener of listeners) listener()
 }
 
-/** Fetches the current project's dark-mode capability via the existing project-probe route and publishes it to the external store. Never throws — a failed probe just leaves the capability `null` (toolbar renders disabled with a generic reason; see `PreviewAxesControls.tsx`). */
-export async function refreshColorSchemeCapability(dir: string): Promise<void> {
+/** Fetches the current project's dark-mode AND locale capabilities via the existing project-probe route and publishes both to their external stores in one notification. Never throws — a failed probe just leaves both capabilities `null` (toolbar renders both controls disabled with a reason; see `PreviewAxesControls.tsx`). */
+export async function refreshPreviewCapabilities(dir: string): Promise<void> {
   try {
     const { profile } = await apiRequest('/admin/api/studio/probe', {
       schema: ProbeResponseSchema,
       query: { dir },
     })
-    setColorSchemeCapability(profile.colorScheme)
+    colorSchemeCapability = profile.colorScheme
+    localesCapability = profile.locales ?? null
   } catch (err) {
-    console.error('[previewAxesCapability] failed to probe color-scheme capability:', err)
-    setColorSchemeCapability(null)
+    console.error('[previewAxesCapability] failed to probe preview capabilities:', err)
+    colorSchemeCapability = null
+    localesCapability = null
   }
+  notifyCapabilityListeners()
 }
 
-/** Resets the capability store — called when the open project changes, so a moment of stale "project A's capability" is never read as if it were project B's. */
-export function clearColorSchemeCapability(): void {
-  setColorSchemeCapability(null)
+/** Resets both capability stores — called when the open project changes, so a moment of stale "project A's capability" is never read as if it were project B's. */
+export function clearPreviewCapabilities(): void {
+  colorSchemeCapability = null
+  localesCapability = null
+  notifyCapabilityListeners()
 }

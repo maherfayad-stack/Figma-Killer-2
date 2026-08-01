@@ -20,6 +20,7 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { probeProject, tryServeStudioProbe } from '../studio/projectProbe'
+import { detectLocales } from '../studio/localeProbe'
 import type { ProjectProfile } from '../studio/projectProfileSchema'
 import { mergeStudioMeta, readStudioMeta, writeStudioMeta } from '../studio/studioMeta'
 
@@ -394,6 +395,81 @@ describe('probeProject — component packages', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Locale capability (WS-10 §4.1)
+//
+// The `translations[lang]`-style fixture below is deliberately shaped exactly
+// like the real `maherfayad-stack-eSIM` corpus (`journey-screens/src/i18n/
+// {translations.js,LanguageContext.jsx}`) — dictionary declared in one file,
+// indexed in another — because `detectLocales(...)` run directly against that
+// real, un-modified project (a throwaway, read-only verification, not a
+// checked-in test) returned exactly `{ keys: ['en','ar'], defaultKey: 'en',
+// source: 'src/i18n/translations.js' }`, confirming the two-pass (declare
+// here, index there) design is not just theoretically necessary but actually
+// what real projects do.
+// ---------------------------------------------------------------------------
+
+describe('detectLocales', () => {
+  it('finds a translations[lang]-style dictionary declared in a DIFFERENT file than where it is indexed', () => {
+    write(
+      'src/i18n/translations.js',
+      "export const translations = {\n  en: { close: 'Close' },\n  ar: { close: 'إغلاق' },\n}\n",
+    )
+    write(
+      'src/i18n/LanguageContext.jsx',
+      "import { translations } from './translations'\nexport function useLanguage(lang) {\n  return translations[lang]\n}\n",
+    )
+    expect(detectLocales(tmpDir)).toEqual({ keys: ['en', 'ar'], defaultKey: 'en', source: 'src/i18n/translations.js' })
+  })
+
+  it('picks "en" as the default when present, regardless of source order', () => {
+    write('src/dict.js', "export const dict = {\n  ar: {},\n  fr: {},\n  en: {},\n}\nconst x = dict[lang]\n")
+    expect(detectLocales(tmpDir)?.defaultKey).toBe('en')
+  })
+
+  it('falls back to the first key in source order when "en" is absent', () => {
+    write('src/dict.js', "export const dict = {\n  fr: {},\n  de: {},\n}\nconst x = dict[lang]\n")
+    expect(detectLocales(tmpDir)?.defaultKey).toBe('fr')
+  })
+
+  it('does not false-positive on a literal (non-dynamic) index', () => {
+    write('src/sizes.js', "export const sizes = {\n  sm: 4,\n  md: 8,\n}\nconst x = sizes['md']\n")
+    expect(detectLocales(tmpDir)).toBeNull()
+  })
+
+  it('ignores an object literal with fewer than 2 locale-shaped keys', () => {
+    write('src/dict.js', "export const dict = {\n  en: {},\n}\nconst x = dict[lang]\n")
+    expect(detectLocales(tmpDir)).toBeNull()
+  })
+
+  it('detects an i18next-style `resources: { en: {...}, ar: {...} }` config object', () => {
+    write(
+      'src/i18n.js',
+      "import i18next from 'i18next'\ni18next.init({\n  resources: {\n    en: { translation: {} },\n    ar: { translation: {} },\n  },\n  lng: 'en',\n})\n",
+    )
+    expect(detectLocales(tmpDir)).toEqual({ keys: ['en', 'ar'], defaultKey: 'en', source: 'src/i18n.js' })
+  })
+
+  it('detects a locales/*.json directory, alphabetically (a directory has no "source order")', () => {
+    write('src/locales/en.json', '{ "hello": "Hello" }')
+    write('src/locales/ar.json', '{ "hello": "مرحبا" }')
+    expect(detectLocales(tmpDir)).toEqual({ keys: ['ar', 'en'], defaultKey: 'en', source: 'src/locales' })
+  })
+
+  it('returns null for a project with no detectable locale dictionary', () => {
+    write('src/App.jsx', 'export default function App() { return <div>Hi</div> }\n')
+    expect(detectLocales(tmpDir)).toBeNull()
+  })
+
+  it('probeProject wires the result onto ProjectProfile.locales, and omits the field entirely when none is found', () => {
+    write('src/dict.js', "export const dict = {\n  en: {},\n  ar: {},\n}\nconst x = dict[lang]\n")
+    expect(probeProject(tmpDir).locales).toEqual({ keys: ['en', 'ar'], defaultKey: 'en', source: 'src/dict.js' })
+
+    const withoutDict = probeProject(fs.mkdtempSync(path.join(os.tmpdir(), 'project-probe-nolocale-')))
+    expect('locales' in withoutDict).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Dark-mode capability (WS-10 §3.1)
 // ---------------------------------------------------------------------------
 
@@ -501,7 +577,10 @@ describe('readStudioMeta', () => {
     expect(meta.profile).toBeUndefined()
     expect(meta.pagesDir).toBe('src/screens')
     expect(meta.displayName).toBe('Imported repo')
-    expect(meta.previewLocale).toBe('en')
+    // WS-10 §5.2 — a legacy `previewLocale` is folded into `previewAxes.locale`
+    // and never returned as `previewLocale` itself; see `foldLegacyPreviewLocale`.
+    expect(meta.previewLocale).toBeUndefined()
+    expect(meta.previewAxes).toEqual({ locale: 'en' })
   })
 
   it('keeps a profile that still matches the current schema', () => {
@@ -509,13 +588,49 @@ describe('readStudioMeta', () => {
     write('.studio/meta.json', JSON.stringify({ pagesDir: 'src/screens', profile }))
     expect(readStudioMeta(tmpDir).profile).toEqual(profile)
   })
+
+  // WS-10 §5.2 — the fold this workstream added: a pre-Phase-3 `meta.json`
+  // (every project imported before this shipped) still resolves to a working
+  // `previewAxes.locale`, and re-reading never surfaces the legacy field.
+  describe('legacy previewLocale fold', () => {
+    it('folds a bare previewLocale into previewAxes.locale', () => {
+      write('.studio/meta.json', JSON.stringify({ previewLocale: 'ar' }))
+      const meta = readStudioMeta(tmpDir)
+      expect(meta.previewLocale).toBeUndefined()
+      expect(meta.previewAxes).toEqual({ locale: 'ar' })
+    })
+
+    it('merges the folded locale onto an existing previewAxes rather than replacing it', () => {
+      write(
+        '.studio/meta.json',
+        JSON.stringify({ previewLocale: 'ar', previewAxes: { direction: 'rtl' } }),
+      )
+      const meta = readStudioMeta(tmpDir)
+      expect(meta.previewAxes).toEqual({ direction: 'rtl', locale: 'ar' })
+    })
+
+    it('an existing previewAxes.locale wins over a legacy previewLocale', () => {
+      write(
+        '.studio/meta.json',
+        JSON.stringify({ previewLocale: 'ar', previewAxes: { locale: 'en' } }),
+      )
+      const meta = readStudioMeta(tmpDir)
+      expect(meta.previewAxes).toEqual({ locale: 'en' })
+    })
+
+    it('a file with no previewLocale at all is untouched', () => {
+      write('.studio/meta.json', JSON.stringify({ previewAxes: { direction: 'ltr' } }))
+      const meta = readStudioMeta(tmpDir)
+      expect(meta.previewAxes).toEqual({ direction: 'ltr' })
+    })
+  })
 })
 
 describe('mergeStudioMeta', () => {
   it('patches one field without clobbering sibling fields', () => {
     writeStudioMeta(tmpDir, { displayName: 'Original', pagesDir: 'src/screens' })
-    const merged = mergeStudioMeta(tmpDir, { previewLocale: 'en' })
-    expect(merged).toEqual({ displayName: 'Original', pagesDir: 'src/screens', previewLocale: 'en' })
+    const merged = mergeStudioMeta(tmpDir, { trust: 'render-packages' })
+    expect(merged).toEqual({ displayName: 'Original', pagesDir: 'src/screens', trust: 'render-packages' })
     expect(readStudioMeta(tmpDir)).toEqual(merged)
   })
 

@@ -82,7 +82,7 @@ export interface StaticEvalOptions {
   maxDepth?: number
   /** Max nodes visited per top-level `evaluateExpression` call. Default 2000. */
   maxSteps?: number
-  /** Preferred key indexing a dictionary with a non-static key (`translations[lang]`) — falls back to the first key in source order. Sourced from `.studio/meta.json`'s `previewLocale`. */
+  /** Preferred key indexing a dictionary with a non-static key (`translations[lang]`) — falls back to the first key in source order. Sourced from `.studio/meta.json`'s `previewAxes.locale` (WS-10 §4.2; `projectPreviewLocale` in `studioProjects.ts` folds a legacy top-level `previewLocale` into it on read). */
   preferredKey?: string
   /** Global per-page guard, shared across every call for one page load (incl. inlined subtrees) — see `PageEvalBudget`. Create with `createPageEvalBudget()`. */
   pageBudget?: PageEvalBudget

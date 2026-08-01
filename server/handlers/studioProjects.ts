@@ -270,13 +270,17 @@ export function projectPagesDir(dir: string): string {
 }
 
 /**
- * The project's `previewLocale` (§7.4) — `.studio/meta.json`'s value when
- * present, else `undefined` (the evaluator's own fallback is then "first key
- * in source order", which `staticEval.ts`'s `preferredKey` option already
- * implements when left unset).
+ * The project's preview locale (§7.4's `preferredKey`) — `.studio/meta.json`'s
+ * `previewAxes.locale` when present, else `undefined` (the evaluator's own
+ * fallback is then "first key in source order", which `staticEval.ts`'s
+ * `preferredKey` option already implements when left unset). `readStudioMeta`
+ * folds a legacy top-level `previewLocale` (pre-WS-10-§4.2 files) into
+ * `previewAxes.locale` on read, so this one read path is correct for both an
+ * old-shape and a new-shape `meta.json` — see `studioMeta.ts`'s
+ * `foldLegacyPreviewLocale`.
  */
 export function projectPreviewLocale(dir: string): string | undefined {
-  return readStudioMeta(dir).previewLocale
+  return readStudioMeta(dir).previewAxes?.locale
 }
 
 /**

@@ -31,7 +31,7 @@ The load path is `GET /admin/api/studio/load?dir=<abs>` → `loadStudioPages` (`
 server/handlers/
 ├── studio.ts             — HTTP routing only (load / save / asset / framework / download)
 ├── studioPageLoad.ts     — the parse → inline → CSS → convert pipeline
-├── studioProjects.ts     — project discovery, `.studio/meta.json` (displayName, pagesDir, previewLocale)
+├── studioProjects.ts     — project discovery, `.studio/meta.json` (displayName, pagesDir, previewAxes.locale)
 ├── studioCss.ts          — §6: imported .css → StyleRule registry, deterministic ids, happy-dom CSSOM
 ├── studioAsset.ts        — GET /admin/api/studio/asset, path-containment guards
 └── studioWriteback.ts    — StudioEdit shapes, tail-resolved edit locations, dedupe, path containment
@@ -90,7 +90,7 @@ Sits alongside the existing `.studio/boards.json` and `.studio/framework.json`.
 {
   "displayName": "eSIM Journey",
   "pagesDir": "src/screens",
-  "previewLocale": "en"
+  "previewAxes": { "direction": "ltr", "colorScheme": "light", "locale": "en" }
 }
 ```
 
@@ -98,7 +98,7 @@ Sits alongside the existing `.studio/boards.json` and `.studio/framework.json`.
 |---|---|
 | `displayName` | Shown under the brand mark in the toolbar. Decoupled from the folder name so renaming never moves a directory. |
 | `pagesDir` | Project-root-relative POSIX path to the pages directory. Defaults to `<dir>/pages`. Guarded by `isSafePagesDirOverride` — never absolute, never containing a `..` segment on either separator, because this file is hand-editable. |
-| `previewLocale` | The `preferredKey` for the static evaluator's dictionary branch pick (see [Tier B](#tier-b--hook--context-provider)). Unset means "first key in source order". |
+| `previewAxes.locale` | The `preferredKey` for the static evaluator's dictionary branch pick (see [Tier B](#tier-b--hook--context-provider)). Unset means "first key in source order". Set from the toolbar's locale control (WS-10 §4.2), populated from `localeProbe.ts`'s detection — no more hand-typing a key into JSON. A pre-WS-10-§4.2 project's legacy top-level `previewLocale` field still parses and is folded into `previewAxes.locale` on read (`readStudioMeta`'s `foldLegacyPreviewLocale`); nothing downstream reads the legacy field any more. |
 
 Page discovery (`discoverPageFiles`) walks `pagesDir` recursively, returns sorted POSIX paths, and skips `EXCLUDED_WORKSPACE_DIR_NAMES` (`.studio`, `.git`, `node_modules`, `dist`, `.next`, `.turbo`). Both `.tsx` and `.jsx` are page files.
 
@@ -811,7 +811,7 @@ here once it is genuinely detectable.
 | `—` | CSS-in-JS (`styled-components`/`emotion`/`stitches`) is detected, never compiled. |
 | `—` | Linked package dependencies (a `?raw` import from a symlinked `file:../pkg`) do not resolve. |
 | `—` | A JSX-valued prop that is not an icon is dropped rather than flattened. |
-| `—` | Only the `previewLocale` branch renders; the other locale is not shown (Phase 2, WS-10 §4 — locale is parse-time, unlike direction/dark-mode). |
+| `—` | Only ONE locale renders per frame — a project's other locale is not shown SIDE BY SIDE on the same board (WS-10 §4.4/Phase 4, still not implemented — locale is parse-time, unlike direction/dark-mode). Switching the board's own locale (toolbar, probe-driven) DOES work and re-parses the whole project (WS-10 §4.2/Phase 3). |
 | `—` | One attribute of an inline `<svg>` that depends on a prop/state is omitted (the graphic still serialises). |
 | `—` | `{children}` splicing depth (does not occur in practice). |
 | `—` | Renaming a component reference — `studio_codemod`'s `rename-tag` renames HTML elements only. |
@@ -825,7 +825,7 @@ here once it is genuinely detectable.
 - **CSS-in-JS is detected, never compiled.** `ProjectProfile.styleToolchain.cssInJs` names `styled-components`/`emotion`/`stitches` when present; `styleCompile.ts` does nothing with it. A component styled this way renders structurally correct and unstyled.
 - **Linked package dependencies.** A `?raw` import from a symlinked `file:../pkg` (or a pnpm store) does not resolve — containment is checked on the real path ([why](#installed-package-specifiers)). Install the package instead.
 - **A JSX-valued prop that is not an icon.** `iconPropFromJsx` recovers inline SVG markup one level deep; a prop holding a nested layout is dropped rather than flattened.
-- **Only the `previewLocale` branch renders.** The other locale exists in the dictionary but is not shown on the board — locale is parse-time (it changes which dictionary branch the evaluator resolves), so switching it needs a re-parse. `STUDIO-NEXT-WORKSTREAMS.md`'s WS-10 Phase 2. Direction and dark mode are the OPPOSITE case: both are render-time preview axes (a `dir`/`data-studio-scheme` attribute on the frame document, applied without a re-parse) and both shipped in WS-10 Phase 1 — the toolbar's direction/color-scheme toggle (`PreviewAxesControls.tsx`), board-global, persisted per project in `.studio/meta.json`'s `previewAxes`.
+- **Only ONE locale renders per frame — side-by-side locale variants are not implemented yet.** The board's locale IS switchable (WS-10 §4.2/Phase 3, shipped): a toolbar `Select`, populated by `localeProbe.ts`'s detection (a `translations[lang]`-style dictionary, an i18next/react-intl `resources` map, or a `locales/*.json` directory — never a hand-typed JSON string any more), persisted per project in `.studio/meta.json`'s `previewAxes.locale`. Because `preferredKey` selects a dictionary BRANCH during evaluation (`staticEvalCore.ts:440`'s `evaluateElementAccess`), switching it is genuinely PARSE-TIME — a real project re-parse, not a frame attribute toggle — so `PreviewAxesControls.tsx` persists the new locale then calls `requestCmsSiteReload()`, and the whole board re-parses and re-renders in that locale. What is NOT implemented: two frames of the SAME page showing two DIFFERENT locales AT ONCE (WS-10 §4.4/Phase 4, "duplicate this frame as Arabic") — that needs a second, per-`(pageId, locale)` parsed tree kept alongside the board's default, plus a per-frame "which tree do I render" dimension the existing per-frame `(frameId, nodeId)` selection/hover re-keying (WS-10 Phase 2) does not by itself provide; see `STATE.md`'s handoff for the architecture finding. Direction and dark mode are the OPPOSITE case, both render-time (a `dir`/`data-studio-scheme` attribute on the frame document, applied without a re-parse) and both already side-by-side-capable per frame since WS-10 Phase 2 (`BoardFrame.axes`, "duplicate as variant").
 - **One attribute of an inline `<svg>` that depends on a prop or state.** The graphic serialises; the unresolvable attribute is omitted ([above](#an-svg-written-as-jsx-elements-is-serialised)). A ring drawn from `strokeDashoffset={f(props.percent)}` shows its track without its progress arc.
 - **An image behind hook state.** `SLIDE_IMAGES[index]` where `index` is `useState(0)` does not resolve. Not a Tier D ban (parser-07 established that reading a `useState(<literal>)`'s own initial value is a Tier A source read, not execution) — a deliberate SCOPING decision: that read is wired only into `evaluateCondition` (JSX branch selection), never into `resolveIdentifier`/`buildComponentLocals`, the chain element/property access shares with Tier B.4's dynamic-dictionary-key pick. Wiring it in generally would silently override the `previewLocale` option for the common `useState('en')` language-switcher shape — see [One `return` renders](#one-return-renders--the-parser-selects-a-branch-parser-06)'s `&&` section. The two carousel slides on the eSIM corpus are the only instances of the array-index case.
 - **A ternary/`&&` branch the heuristic guesses wrong.** `selectJsxBranch` (parser-06) prefers the CONSEQUENT unless the condition is statically decidable, so `{addOn.image ? <img …/> : <Icon …/>}` renders `<img>` even for the items that actually carry an `icon` at runtime — the untaken `<Icon …/>` is recorded as a `branchAlternatives` entry (label + location), not rendered. Was previously "every branch renders", which showed BOTH; this is now a single, sometimes-wrong guess instead of an always-honest stack. Extract the condition to a module-scope const to get the real answer instead of the guess.

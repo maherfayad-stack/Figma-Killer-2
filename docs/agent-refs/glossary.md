@@ -3,7 +3,7 @@
 Terms that mean something specific here. Alphabetical.
 
 **`.studio/`** — per-project sidecar directory inside a workspace. Holds
-`meta.json` (displayName, pagesDir, previewLocale), `boards.json` (frames, notes,
+`meta.json` (displayName, pagesDir, previewAxes), `boards.json` (frames, notes,
 docs), `framework.json` (color/type/spacing tokens). Excluded from imports and
 downloads. Its presence marks a directory as a real studio workspace — the
 GitHub import refuses to clear one.
@@ -65,18 +65,27 @@ an opaque `alm.*` node today with a read-only prop surface.
 **`ParsedPage` / `ParsedNode`** — the parser's own output shape, before
 `parsedPageToSitePage` converts it into the editor's `Page`.
 
-**`previewLocale`** — which dictionary branch Tier B picks when a value indexes a
-translations object with runtime state. Unset means first key in source order.
-The choice is recorded in `resolution.note`. Parse-time (WS-10 Phase 2
-territory) — distinct from `previewAxes` below, which is render-time.
+**preferred key / `preferredKey`** — which dictionary branch Tier B picks when a
+value indexes a translations object with runtime state (`translations[lang]`).
+Unset means first key in source order. The choice is recorded in
+`resolution.note`. Sourced from `PreviewAxes.locale` below (`previewAxes.ts`'s
+`projectPreviewLocale`) — genuinely PARSE-TIME, unlike `direction`/`colorScheme`
+in the same triple. A pre-WS-10-§4.2 project's legacy top-level `previewLocale`
+JSON field still parses and is folded into `previewAxes.locale` on read
+(`studioMeta.ts`'s `foldLegacyPreviewLocale`) — nothing downstream reads that
+legacy field name any more.
 
-**`PreviewAxes`** (WS-10 Phase 1) — the board's render-time preview triple:
-`direction` (`'ltr'|'rtl'`), `colorScheme` (`'light'|'dark'`), and a Phase-2
-`locale` field not yet wired to anything. Board-global, persisted per project
-in `.studio/meta.json`'s `previewAxes` field — separate from, and NOT a
-replacement for, `previewLocale` above. Applied to a frame document as an
-attribute effect (`dir`, `lang`, `data-studio-scheme`), never a remount —
-see `docs/agent-refs/canvas-internals.md`'s "Preview axes" section.
+**`PreviewAxes`** (WS-10) — the board's preview triple: `direction`
+(`'ltr'|'rtl'`) and `colorScheme` (`'light'|'dark'`) are RENDER-TIME (an
+attribute effect on the frame document — `dir`, `lang`, `data-studio-scheme` —
+never a remount, see `docs/agent-refs/canvas-internals.md`'s "Preview axes"
+section); `locale` is PARSE-TIME (§4.2, Phase 3 — selects `preferredKey`
+above, so changing it re-parses the whole project). Board-global by default,
+persisted per project in `.studio/meta.json`'s `previewAxes` field; a
+`BoardFrame` can also carry its OWN `axes` override (Phase 2, "duplicate as
+variant") for `direction`/`colorScheme` — side-by-side per-frame `locale`
+variants are NOT implemented (Phase 4, gated on a second per-`(pageId,
+locale)` parsed-tree mechanism this codebase does not have yet).
 
 **Resolution / resolved value** — a value the static evaluator computed from the
 AST. Resolving a value **locks that prop** (writing a literal there would replace

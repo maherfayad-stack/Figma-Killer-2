@@ -1,38 +1,62 @@
 /**
- * PreviewAxesControls — WS-10 Phase 1 §5.1: the board-global direction (RTL)
- * and dark-mode toggle. Both axes are render-time (see `previewAxes.ts`'s
- * module doc) — toggling either is free: no re-parse, no frame remount (the
- * canvas applies them via an attribute effect, `IframeFrameSurface.tsx`).
+ * PreviewAxesControls — WS-10's board-global direction (RTL), dark-mode, and
+ * (§4.2, Phase 3) locale controls.
  *
- * The dark-mode button is the one that can be genuinely inapplicable — a
- * project with no detectable dark-mode mechanism renders it DISABLED WITH
- * THE REASON in its tooltip (WS-10 §7.4 "probe honesty"), never a silent
- * no-op toggle. Direction has no such gate: `dir` always applies (whether the
- * result looks CORRECT for a project written with physical CSS properties is
- * a separate, honest finding — `RTL_PHYSICAL_PROPERTY` — not a reason to
- * disable the toggle itself).
+ * Direction and dark-mode are RENDER-TIME (see `previewAxes.ts`'s module
+ * doc) — toggling either is free: no re-parse, no frame remount (the canvas
+ * applies them via an attribute effect, `IframeFrameSurface.tsx`).
  *
- * Same shape as `ZoomControls.tsx`: a `role="group"` of `Button`s, disabled +
- * tooltip for the inapplicable case, never an absent control.
+ * Locale is the ONE axis that is different in kind: `preferredKey` selects a
+ * DICTIONARY BRANCH during evaluation (`staticEvalCore.ts`'s
+ * `evaluateElementAccess`), which is parse-time. Switching it costs a real
+ * project re-parse — `configHash` (`studioPageLoad.ts`) already includes
+ * `preferredKey`, so the cache correctly busts and switching BACK to a
+ * previously-parsed locale is free; the client side of that cost is: persist
+ * the new locale, then `requestCmsSiteReload()`, which re-fetches the whole
+ * site document. The `Select` disables itself for the duration
+ * (`isReparsing`) so a second click can't queue a second reload mid-flight.
+ *
+ * Both the dark-mode button and the locale `Select` can be genuinely
+ * inapplicable — a project with no detectable mechanism/dictionary renders
+ * DISABLED WITH THE REASON in its tooltip/label (WS-10 §7.4 "probe
+ * honesty"), never a silent no-op. Direction has no such gate: `dir` always
+ * applies (whether the result looks CORRECT for a project written with
+ * physical CSS properties is a separate, honest finding —
+ * `RTL_PHYSICAL_PROPERTY` — not a reason to disable the toggle itself).
+ *
+ * Same shape as `ZoomControls.tsx`: a `role="group"` of controls, disabled +
+ * reason for the inapplicable case, never an absent control.
  */
+import { useState, useSyncExternalStore, type ChangeEvent } from 'react'
 import { useAdminUi } from '@admin/state/adminUi'
 import { useEditorStore } from '@site/store/store'
+import { requestCmsSiteReload } from '@admin/state/adminEvents'
 import { Button } from '@ui/components/Button'
-import { useSyncExternalStore } from 'react'
-import { getColorSchemeCapability, savePreviewAxes, subscribeColorSchemeCapability } from '@site/studio/previewAxesCapability'
+import { Select } from '@ui/components/Select'
+import {
+  getColorSchemeCapability,
+  getLocalesCapability,
+  savePreviewAxes,
+  subscribeColorSchemeCapability,
+  subscribeLocalesCapability,
+} from '@site/studio/previewAxesCapability'
 import styles from './PreviewAxesControls.module.css'
 
 const NO_DARK_MODE_REASON = 'No dark-mode stylesheet was detected in this project (no `.dark`/`[data-theme]` selector and no `@media (prefers-color-scheme: dark)` rule).'
+const NO_LOCALE_REASON = 'No locale dictionary was detected in this project (no `translations[lang]`-style index, i18next/react-intl `resources` map, or `locales/*.json` directory).'
 
 export function PreviewAxesControls() {
   const dir = useAdminUi((s) => s.studioProject?.dir ?? null)
   const previewAxes = useEditorStore((s) => s.previewAxes)
   const setPreviewAxes = useEditorStore((s) => s.setPreviewAxes)
-  const capability = useSyncExternalStore(subscribeColorSchemeCapability, getColorSchemeCapability, getColorSchemeCapability)
+  const colorScheme = useSyncExternalStore(subscribeColorSchemeCapability, getColorSchemeCapability, getColorSchemeCapability)
+  const locales = useSyncExternalStore(subscribeLocalesCapability, getLocalesCapability, getLocalesCapability)
+  const [isReparsing, setIsReparsing] = useState(false)
 
   const isRtl = previewAxes.direction === 'rtl'
   const isDark = previewAxes.colorScheme === 'dark'
-  const schemeApplies = capability !== null && capability.mechanism !== 'none'
+  const schemeApplies = colorScheme !== null && colorScheme.mechanism !== 'none'
+  const localeApplies = locales !== null
 
   const toggleDirection = () => {
     const direction = isRtl ? 'ltr' : 'rtl'
@@ -41,9 +65,28 @@ export function PreviewAxesControls() {
   }
 
   const toggleScheme = () => {
-    const colorScheme = isDark ? 'light' : 'dark'
-    setPreviewAxes({ colorScheme })
-    if (dir) void savePreviewAxes(dir, { colorScheme })
+    const colorSchemeValue = isDark ? 'light' : 'dark'
+    setPreviewAxes({ colorScheme: colorSchemeValue })
+    if (dir) void savePreviewAxes(dir, { colorScheme: colorSchemeValue })
+  }
+
+  const currentLocale = previewAxes.locale ?? locales?.defaultKey ?? locales?.keys[0] ?? ''
+
+  const handleLocaleChange = (event: ChangeEvent<HTMLSelectElement>) => {
+    const locale = event.target.value
+    if (!locale || locale === currentLocale || isReparsing) return
+    setPreviewAxes({ locale })
+    setIsReparsing(true)
+    void (async () => {
+      try {
+        if (dir) await savePreviewAxes(dir, { locale })
+      } finally {
+        // Re-parse machinery already exists (`configHash` includes
+        // `preferredKey`) — this reload is what actually asks for it.
+        requestCmsSiteReload()
+        setIsReparsing(false)
+      }
+    })()
   }
 
   return (
@@ -71,6 +114,23 @@ export function PreviewAxesControls() {
       >
         {isDark ? 'Dark' : 'Light'}
       </Button>
+      <span title={localeApplies ? undefined : NO_LOCALE_REASON}>
+        <Select
+          fieldSize="sm"
+          aria-label={
+            localeApplies
+              ? `Preview locale: ${currentLocale}.${isReparsing ? ' Re-parsing…' : ' Click to switch (re-parses the project).'}`
+              : NO_LOCALE_REASON
+          }
+          data-testid="toolbar-preview-locale"
+          disabled={!localeApplies || isReparsing}
+          value={localeApplies ? currentLocale : ''}
+          onChange={handleLocaleChange}
+          options={(locales?.keys ?? []).map((key) => ({ value: key, label: key.toUpperCase() }))}
+          placeholder={localeApplies ? undefined : '—'}
+          className={styles.localeSelect}
+        />
+      </span>
     </div>
   )
 }

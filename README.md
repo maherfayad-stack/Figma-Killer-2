@@ -78,7 +78,7 @@ sidecar pointing at its real screens directory:
 {
   "displayName": "eSIM Journey",
   "pagesDir": "src/screens",
-  "previewLocale": "en"
+  "previewAxes": { "direction": "ltr", "colorScheme": "light", "locale": "en" }
 }
 ```
 

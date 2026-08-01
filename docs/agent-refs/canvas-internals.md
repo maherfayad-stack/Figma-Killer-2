@@ -109,13 +109,15 @@ Both modes are **fully editable**. Neither is a read-only preview.
 
 ---
 
-## Preview axes (WS-10 Phase 1) — direction + dark mode, without a remount
+## Preview axes (WS-10) — direction, dark mode, and locale
 
 The board previews a project along a `PreviewAxes` triple
 (`src/core/studio-board/previewAxes.ts`): `direction` (`'ltr'|'rtl'`),
-`colorScheme` (`'light'|'dark'`), and a reserved-but-unused-yet `locale`
-field (Phase 2 — parse-time, needs a re-parse, out of scope here). Both
-Phase 1 axes are **render-time**: no re-parse, no frame remount.
+`colorScheme` (`'light'|'dark'`), and `locale` (a project's own dictionary
+key). `direction`/`colorScheme` are **render-time**: no re-parse, no frame
+remount. `locale` is genuinely different — it is **parse-time** (see
+"Locale (WS-10 §4.2/Phase 3)" below) — the one axis that changes *which
+nodes exist*, not just an attribute on them.
 
 **Applied via an attribute effect, never `srcDoc`/a React `key`.**
 `IframeFrameSurface.tsx` reads `previewAxes` from the store and the
@@ -166,6 +168,87 @@ brace/comment/string-aware scanner to find candidate `@media` spans in the
 RAW text (so nested at-rules and `@layer` wrappers are never touched), and
 validates each candidate in ISOLATION (`@media <prelude> {}`, never the
 whole file) through the CSSOM before splicing it in.
+
+### Per-frame axes + `(frameId, nodeId)` (WS-10 Phase 2)
+
+A `BoardFrame` can carry its OWN `axes?: Partial<PreviewAxes>` (`direction`/
+`colorScheme` only — see "Locale" below for why `locale` is excluded here),
+overriding the board default PER AXIS via `IframeFrameSurface.tsx`'s
+`axesOverride` prop → `useApplyPreviewAxes`'s merge. "Duplicate as variant"
+(`BoardFramesLayer.tsx`'s context menu) creates a second `BoardFrame` of the
+SAME page, its own `id`, positioned beside the source — so an RTL and an LTR
+(or light/dark) copy of one screen sit side by side.
+
+**Two frames of one page share every node id** (trap #2 — an id is a source
+location AND the one legitimate write target; the two variants parse from
+the same file). Before this phase, `selectedNodeId`/`hoveredNodeId` had no
+notion of WHICH frame produced a click, so selecting a node in one variant
+rang its twin too. Fixed by adding an orthogonal `(frameId, nodeId)`
+dimension, not by touching the id grammar:
+
+- `CanvasFrameContext` (`canvas/CanvasContexts.ts`) — ambient per-frame
+  identity for `NodeRenderer`, mirroring `CanvasBreakpointContext`. Set by
+  `BoardFramesLayer.tsx` around each `<BreakpointFrame frameId={frame.id}>`.
+- `selectedNodeFrameId`/`hoveredFrameId` (`selectionSlice.ts`) — the frame a
+  selection/hover currently belongs to. `null` means "board-wide" (used
+  outside Studio board mode, where frame identity doesn't exist).
+- `BreakpointSelectionOverlay.tsx` reads `selectedNodeIds`/`hoveredNodeId`
+  scoped to ITS `frameId` — a node selected in a different frame renders as
+  if nothing were selected in this one, even though the DOM element with
+  that same `data-node-id` exists here too.
+
+This is the general mechanism, not a direction/scheme special case — Phase 4
+(locale) is meant to extend it, not replace it. See `STATE.md`'s `canvas-08`
+handoff for the "does selection leak between variants" proof
+(`boardFrameVariantSelection.test.tsx`) and the full file list.
+
+**Known gap:** inline text-edit sessions (`activeInlineEdit`) are still keyed
+by `(nodeId, breakpointId)`, NOT `frameId` — not extended in Phase 2, not
+proven broken either, just not yet re-keyed.
+
+### Locale (WS-10 §4.2/Phase 3 shipped; §4.4/Phase 4 per-frame NOT shipped)
+
+`locale` selects `preferredKey`, which Tier B.4 uses to pick a dictionary
+BRANCH during evaluation (`staticEvalCore.ts:440`'s `evaluateElementAccess`)
+— a different PARSE, producing different nodes and different `textOrigin`s.
+This is why it cannot be an attribute effect like the other two axes.
+
+**Phase 3 (board-global, shipped):** `server/handlers/studio/localeProbe.ts`
+detects a project's own locale dictionary (purely syntactic — see that
+module's doc for the three detection rules); `PreviewAxesControls.tsx`'s
+locale `Select` is populated from it (no more hand-typed JSON key). Choosing
+one calls `savePreviewAxes(dir, { locale })` (persists to `.studio/meta.json`'s
+`previewAxes.locale`) then `requestCmsSiteReload()` — a REAL re-parse of the
+whole project. `studioPageLoad.ts`'s `configHash` already includes
+`preferredKey`, so this correctly busts the on-disk parse cache, and
+switching back to a previously-used locale is cache-free. The `Select`
+disables itself for the duration (`isReparsing`) so a second click can't
+queue a second reload mid-flight.
+
+**Phase 4 (per-frame locale variants, side-by-side — NOT shipped):** unlike
+`direction`/`colorScheme`, giving one frame its own `locale` is not just a
+render-time attribute — it needs a DIFFERENT parsed tree for that frame,
+because a locale change produces different nodes. The Phase 2 `(frameId,
+nodeId)` re-keying above is necessary but **not sufficient** on its own: it
+answers "which frame does this selection/hover belong to" for a SHARED tree;
+it does not answer "which tree does this frame render," which today is
+always `site.pages` (one `Page`/one parsed tree per `pageId`, full stop —
+`src/core/page-tree/siteDocument.ts`). Making a frame's `axes.locale`
+actually render requires, at minimum: (1) a second, additive parse path that
+builds per-`(pageId, locale)` entries for the union of locales actually in
+use on the board (not every probed locale — §4.5), cached alongside the
+default the same way `configHash` already caches by `preferredKey`; (2) a
+new per-frame "which tree do I render" selection at mount time
+(`BreakpointFrame.tsx`/`IframeFrameSurface.tsx`), choosing the locale-variant
+tree instead of `site.pages` when `frame.axes.locale` is set; (3) extending
+"duplicate as variant"'s UI (and `coerceAxesOverride` in
+`src/core/studio-board/serialize.ts`, which deliberately drops `locale` from
+a persisted `BoardFrame.axes` today) once (1) and (2) exist — do NOT add a
+"Duplicate as Arabic" menu item before the render path can actually honor it
+(WS-10 §7.4 "probe honesty" — an affordance that silently does nothing is
+exactly the failure mode that rule exists to prevent). The node id grammar
+itself does NOT change for this — trap #2 holds precisely the same way it
+does for the render-time axes; only the RENDER SOURCE per frame is new.
 
 ## Height, and the feedback loop
 

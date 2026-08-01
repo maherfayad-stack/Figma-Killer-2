@@ -108,7 +108,7 @@ never silently no-ops.
 ### What works today (do not rebuild)
 
 - GitHub zipball import with path-traversal / zip-bomb guards
-- Multi-file page discovery + `.studio/meta.json` (`displayName`, `pagesDir`, `previewLocale`)
+- Multi-file page discovery + `.studio/meta.json` (`displayName`, `pagesDir`, `previewAxes` — `direction`/`colorScheme`/`locale`)
 - ts-morph parse, local-component inlining through barrels, tsconfig `paths` aliases
 - Static value resolution Tiers A/B/C, `.map` expansion, multi-return/ternary/`&&`
   branch **selection** (parser-06 — one branch chosen, unlocked; the rest recorded

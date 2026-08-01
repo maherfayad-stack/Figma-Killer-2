@@ -290,6 +290,349 @@ are the remaining WS-2 items, not yet dispatched. See
 
 ## Recently landed
 
+### server-09 — WS-12 steps 5+6: the subagent roster and the meta agents
+- **Agent:** server-engineer
+- **Stage:** done (WS-12 sequencing steps 5+6 of 6 — step 3, `StudioAgentSnapshot`, and step 4, session-controls UI, are still not built)
+- **Updated:** 2026-08-01
+- **Goal:** WS-12 §7 — generate the nine-agent subagent roster (§7.1 build,
+  §7.2 design, §7.3 meta) + §7.4 reference files into `<project>/.claude/`,
+  proved end-to-end against the real `claude` binary (`claude agents`, zero
+  cost — never `-p`), with the two §9 gates (registry parity, no-privilege-
+  escalation) as automated tests.
+- **Scope:**
+  - New `server/handlers/studio/agentRoster.ts` — `generateStudioAgentRoster(dir)`.
+    Builds all 9 agent `.md` files + 6 reference files, writes them with
+    hash-based regeneration (never clobbers a file the user hand-edited since
+    Studio last wrote it — trap #12), never throws (degrades to
+    `{ written: [], skipped: [] }` on any probe failure).
+  - New `server/handlers/studio/agentRoster.test.ts` — 15 tests: roster
+    completeness, both §9 gates (every tool named exists in
+    `studioAgentTools`; no subagent holds a tool outside it), the explicit-
+    tools-line guard (no agent ever inherits the CLI's Bash/Write/Edit by
+    omission), the two meta-authoring agents hold zero tools, `studio-tools.md`
+    is generated from the live registry, reference files stay short pointers
+    (not restatements), `almosafer-ds-expert`'s honest degrade-when-absent
+    AND its embed-when-present path (seeded via a fabricated `.studio/meta.json`
+    cache + real `node_modules/@alm-design/design-system/{CLAUDE.md,design.md}`
+    fixtures, to stay decoupled from the parallel session's live
+    `componentPackageDetect.ts`/`projectProbe.ts` edits), and the two
+    regeneration-semantics cases (no-op on unchanged content; skip-and-report
+    on a user edit).
+  - `server/ai/drivers/claudeCli.ts` (+ `.test.ts`) — `generateStudioAgentRoster`
+    called right before every real spawn (`workspaceCwd` non-null), "written
+    beside the MCP config" (WS-12 §8's own file table), via a new
+    `options.generateRoster` test seam (same pattern as `mintConnector`/
+    `revokeConnector`). Wrapped in an EXTRA try/catch on top of the
+    function's own internal one (belt-and-braces — a future change to that
+    contract shouldn't be able to silently reintroduce a turn-aborting
+    throw); 3 new tests (generates into the resolved workspace root, never
+    generates into the per-user config-dir fallback, a thrown failure
+    degrades the turn rather than aborting it).
+  - `docs/features/agent.md` — new "Studio-project system prompt, tools, and
+    subagents (WS-12)" section. This ALSO covers `server-08`'s step 1b+2 work
+    (deliberately deferred there — the doc-owning session was mid-edit in
+    adjacent territory at the time; confirmed clear to land now), so this is
+    the first place the full prompt/toolset/roster picture is documented
+    together, including the real `claude agents` transcript (see
+    Verification below).
+- **AgentPanel attribution — confirmed already settled.** The coordinator's
+  ack (this task's own dispatch message) confirms `server-08`'s fix rode into
+  `7eb2c30` and the tree is green; nothing further to do here.
+- **Decisions:**
+  - **Every subagent's `tools:` frontmatter is explicit, never omitted** —
+    including an EMPTY list for `agent-creator`/`system-prompt-expert`. This
+    is the actual mechanism enforcing "no shell tool, no raw file-write
+    tool, no trust promotion" for the roster: omitting `tools` inherits the
+    CLI's full built-in set (confirmed via `claude --help`'s own `--tools`
+    flag description: "the built-in set"), which would silently hand ANY
+    subagent Bash/Write/Edit regardless of what I intended. Verified this is
+    a real risk, not a hypothetical, before deciding to make every list
+    explicit.
+  - **`almosafer-ds-expert` embeds CLAUDE.md/design.md content server-side at
+    GENERATION time, not via a subagent tool call.** A subagent cannot reach
+    `node_modules` at all: `studio_read_file` — the only file-read tool any
+    subagent holds — refuses any `node_modules` segment by design (the same
+    containment guard every other Studio read uses; loosening it for this
+    one case would be a real hole). Embedding a live-at-generation-time
+    snapshot (refreshed every real chat turn, since generation reruns every
+    turn) is the honest middle ground between "vendor a copy that goes stale
+    forever" (what §7.2 explicitly forbids) and "give this one subagent an
+    unrestricted Read tool" (which I judged a worse trade — a real
+    filesystem-safety regression for one agent's convenience). Documented
+    this reasoning inline (both the function's own doc comment and
+    `agent.md`) rather than silently picking one side.
+  - **`claude agents` verification stays manual, not automated** — the
+    binding constraint from WS-11 ("tests must never spawn the real binary")
+    reads unqualified, not scoped to spend-risk commands only. `claude agents`
+    is genuinely zero-cost (no `-p`, no model call, no network), but I chose
+    the conservative reading over arguing a narrower one, and did the
+    verification as a one-off, reported with its real transcript instead —
+    see Verification.
+  - **Model field left unset on every generated agent** (inherits the parent
+    session's model) — I have no verified basis for assigning specific
+    models per role (e.g. "scout should use haiku"), and inventing one would
+    be an unverified claim shipped as if it were a decision. Flagged as an
+    open question for whoever owns WS-12 step 4 (session controls), not
+    silently decided here.
+- **Verification:**
+  - `bunx tsc -p tsconfig.node.json --noEmit` / `tsconfig.app.json` — both clean.
+  - `bun run build` / `bun run lint` — clean.
+  - `bun test server/ai server/handlers/studio/agentRoster.test.ts
+    src/__tests__/agent src/__tests__/architecture src/core/ai` — **950 pass
+    / 4 fail**, same 4 pre-existing failures as `server-08`'s baseline
+    (`CodeMirror lazy-load enforcement`, `dispatcher HTML pipeline`, the
+    Windows-path `error-boundary-coverage` bug, `keybindings-registry` on
+    `UndoRedoButtons.tsx`/`useCanvas.ts`) — confirmed via `git status` none
+    are in this task's diff. **Zero new failures against the 8020/20
+    baseline** the coordinator cited.
+  - **`claude agents` proof — real binary, real transcript, zero cost.** Generated
+    the roster into a real fixture project under the scratchpad temp dir via
+    `bun -e "import { generateStudioAgentRoster } ..."`, then ran
+    `claude agents --setting-sources project` from that directory (no `-p`,
+    no model call, no network beyond whatever the CLI itself does on
+    startup):
+    ```
+    14 active agents
+
+    Project agents:
+      agent-creator · inherit
+      almosafer-ds-expert · inherit
+      design-critic · inherit
+      fidelity-auditor · inherit
+      screen-builder · inherit
+      screen-scout · inherit
+      style-surgeon · inherit
+      synthesizer · inherit
+      system-prompt-expert · inherit
+
+    Built-in agents:
+      claude-code-guide · haiku
+      Explore · haiku
+      general-purpose · inherit
+      Plan · inherit
+      statusline-setup · sonnet
+    ```
+    All nine resolved by exact name, additively alongside the CLI's own five
+    built-ins — proves both "generation actually worked end to end" (§9 gate
+    3) and "merges rather than replaces" (the probe fact this whole design
+    depends on). Full transcript also lives in `docs/features/agent.md`.
+- **Landmines:**
+  - The scratchpad fixture project used for the `claude agents` proof still
+    exists on disk (session-isolated temp dir) — harmless, not part of any
+    deliverable, not cleaned up since scratchpad cleanup isn't required.
+  - `agentRoster.ts` imports `resolveProjectProfile`/`ProjectProfile`/
+    `readStudioMeta` and `resolveAppRoot` — all **read-only**, all from files
+    explicitly named as the parallel session's active territory this round
+    (`projectProbe.ts`, `projectProfileSchema.ts`, `studioMeta.ts`). Re-ran
+    `tsc` after noticing further concurrent edits to those files mid-task;
+    still clean at time of this handoff — same caveat `server-08` already
+    flagged: this describes a snapshot, not a guarantee that holds after the
+    next commit to those files.
+  - WS-12 step 3 (`StudioAgentSnapshot` — live board/selection/fidelity in
+    the dynamic suffix) and step 4 (session-controls UI: model/effort/
+    permission-mode pickers) remain unbuilt — both still require
+    `canvas`/`store` access this task didn't have.
+- **Next step:** WS-12 step 3 (needs canvas/store access), step 4 (session
+  controls UI — also the natural home for deciding per-role subagent models,
+  flagged above as unresolved).
+- **Human action needed:** none blocking.
+
+### server-08 — WS-12 steps 1b+2: the real Studio system prompt, studio_create_page/studio_read_file, and settling the AgentPanel attribution
+- **Agent:** server-engineer
+- **Stage:** done (WS-12 sequencing steps 1+2 of 6 — `StudioAgentSnapshot`/step 3 onward not built, see "Next step")
+- **Updated:** 2026-08-01
+- **AgentPanel attribution, settled with evidence (the coordinator asked me to
+  re-check this against committed history rather than trust my earlier
+  claim):** the 11 `AgentPanel.test.tsx` failures ARE mine — specifically
+  `server-06`'s (`d70ffda`), NOT `server-05`'s scope collapse (`d53eff7`).
+  Proof, done with read-only git only (no stash): `git show
+  d53eff7:src/admin/ai/api.ts` has no `expiresAt` field on
+  `CredentialViewSchema` at all; `git show d70ffda:...` is the commit that
+  added it as a REQUIRED field, without updating the 5 existing test fixture
+  objects across `agentPanel.test.tsx`/`modelPicker.test.tsx` that predate it.
+  I confirmed by temporarily overwriting both test files with their exact
+  `git show HEAD:<path>` content (via the `Write` tool, not git — the fix
+  itself was already sitting uncommitted in my own working tree from
+  Task 2.5, correctly, but I hadn't proven WHICH commit broke it), ran
+  `bun test` and reproduced exactly 11/29 failures with `TEST_CREDENTIAL`
+  rendering "No credentials yet" (silent TypeBox validation failure via
+  `useAsyncResource`'s `swallowErrors: true`), then restored my own fix from
+  a saved copy and re-confirmed 29/29 green. The fix (`expiresAt: null,` on
+  5 fixture objects) is still sitting uncommitted in the tree from Task 2.5 —
+  never lost, just never separately reported against a commit hash until now.
+- **Goal:** WS-12 §10 sequencing steps 1+2 — "'studio' scope + prompt + wire
+  the 14 existing tools" (superseded to "no scope, live-context branch" per
+  §8.1 D3) and "the 5 parity tools + the description fix" (delegated as 2 of
+  the 5: `studio_create_page` + `studio_read_file`, the two the coordinator
+  named — `studio_upload_asset`/`studio_set_axes`/`studio_duplicate_frame`
+  were NOT in scope for this task and are not built). Step 2 is WS-12's own
+  "the milestone... the difference between a chat that discusses the project
+  and one that builds in it."
+- **Scope:**
+  - New `server/ai/tools/studio/{systemPrompt.ts,index.ts}` — the real Studio
+    prompt (§4) + the in-process toolset, plus `systemPrompt.test.ts` (the
+    registry-parity gate, §9).
+  - New `server/handlers/studio/workspaceDir.ts` — `resolveValidatedWorkspaceDir`,
+    extracted from `claudeCliEnv.ts`'s `resolveClaudeCliWorkspaceCwd` (now a
+    thin alias over it) because WS-12 needed the EXACT SAME client-supplied-dir
+    validation for a second, unrelated purpose (tool/prompt selection) and a
+    second copy of a containment check is a real risk (one gets patched, the
+    other doesn't), not acceptable duplication.
+  - `server/ai/mcp/tools/studio/projectTools.ts` — new `studio_create_page`
+    (wraps `createScaffoldedPage`, WS-13's own scaffolder — did NOT
+    reimplement it) and `studio_read_file` (new containment-checked read
+    primitive, reusing `EXCLUDED_WORKSPACE_DIR_NAMES` +
+    `isRealpathContained` + `readTextCapped` — all EXISTING, already-tested
+    primitives, no new path-guard logic invented). `studio_read_file` also
+    runs `checkCanonicalJsx`/`summarizeCanonicalFindings` on a `.tsx`/`.jsx`
+    read and folds in a `canonical` summary — `canonicalCheck.ts`'s OWN doc
+    comment names this exact caller ("the single signal step 4's scaffolder
+    and WS-12's agent should check"), so this is the intended integration
+    point, not scope creep. Both tools are the SAME `AiTool` objects
+    `/_studio/mcp` already serves to `claudeCli`/external clients — one
+    implementation, two consumers.
+  - `server/ai/mcp/tools/studio/editTools.ts` — `studio_apply_edits`'
+    description fix (§1.1), corrected against the REAL `StudioEditSchema`
+    union (12 kinds, not 8): the plan doc only flagged `insert`/`delete`/`move`
+    as missing, but `css` was ALSO undocumented — caught by checking the
+    schema directly rather than trusting the plan. Also corrected a claim I
+    almost shipped wrong: `detach`/`swap` are NOT same-line-count "value"
+    edits (they inline/retarget a whole component body, typically many
+    lines) — verified against `applyStudioEditBatch`'s actual line-count-diff
+    `shifted` computation before asserting anything about it in the
+    description.
+  - `server/ai/tools/index.ts` — `selectStudioTools` gains an optional
+    `context: { studioProjectOpen: boolean }` (default `false` — every
+    existing single-arg call site is unaffected), picking `studioAgentTools`
+    (real Studio tools) vs. the existing CMS `studioTools`/`siteTools`.
+  - `server/ai/handlers/chat.ts` — validates `workspaceDir` ONCE
+    (`resolveValidatedWorkspaceDir`), reused for BOTH tool selection and
+    prompt assembly; `buildStudioSystemPrompt` renamed to
+    `buildCmsSiteSystemPrompt` (it was always the CMS prompt — "Studio" now
+    legitimately means the real design tool too, and the old name was
+    actively misleading while building this); new
+    `buildStudioProjectSystemPrompt(dir)` builds the real prompt server-side
+    from `resolveProjectProfile`/`readStudioMeta`/`projectDisplayName` —
+    never throws, degrades to the prompt's own "unavailable" suffix on a
+    probe failure rather than silently falling back to the CMS prompt (which
+    would hand the model the wrong tool vocabulary for an open project).
+  - `src/core/ai/chatRequest.ts` — doc comment on `workspaceDir` corrected:
+    no longer "claudeCli only", now names both consumers and what each
+    re-validates it for.
+  - Renamed-through: `src/__tests__/agent/chatSnapshotValidation.test.ts`
+    (`buildStudioSystemPrompt` → `buildCmsSiteSystemPrompt`, sed-renamed,
+    re-verified green).
+  - Fixed `src/__tests__/architecture/ai-handlers-capability-gated.test.ts` —
+    a genuine pre-existing gate bug this task's own `claudeCliStatus.test.ts`
+    (from `server-07`, already committed in `cbb96d8`) exposed: the gate
+    `readdirSync`s `server/ai/handlers/` FLAT and never excluded `*.test.ts`,
+    so a colocated test file (the first ever placed directly in that
+    directory — every other `server/ai/*` test lives elsewhere) was flagged
+    as "a handler that doesn't call requireCapability", which it isn't — it
+    tests a pure function factored OUT of the handler specifically so it
+    doesn't need a request/response round trip. Fixed the gate itself
+    (excludes `*.test.ts`/`*.spec.ts`) rather than moving the test file to
+    dodge the scan — CLAUDE.md: "when your change drifts a structural rule,
+    fix the rule's gate test in the same change."
+  - New tests: `server/ai/mcp/tools/studio/projectTools.test.ts` (+9 for the
+    2 new tools — 3 create_page happy/auto-name/conflict, 6 read_file
+    happy/canonical/non-jsx/missing/oversized/traversal/absolute/node_modules),
+    `server/ai/tools/studio/systemPrompt.test.ts` (registry-parity gate, 4
+    tests), `src/__tests__/agent/studioProjectSystemPrompt.test.ts` (3, real
+    temp-dir fixture, no mocked probe), `src/__tests__/agent/aiToolCapabilityGate.test.ts`
+    (+4 for the new `studioProjectOpen` context, including the
+    `ai.tools.write` **and** `studio.write` two-axis case).
+  - `docs/features/agent.md` intentionally NOT touched this task — WS-12's
+    prompt/tool docs belong there but the parallel session that owns
+    `docs/features/studio-import.md`/`docs/agent-refs/studio-pipeline.md`
+    is actively editing adjacent doc territory in the SAME shared tree right
+    now (confirmed live via repeated `git status` during this task); adding
+    to `agent.md` risked a doc merge collision for no functional gain this
+    task needed. Flagged as a real gap for whoever lands this batch.
+- **Decisions:**
+  - **The prompt's dynamic suffix is server-only** (project profile + trust
+    tier via `resolveProjectProfile`/`readStudioMeta`), NOT the full WS-12
+    §2.1 `StudioAgentSnapshot` (board/frames/selection/axes/fidelity) — that
+    needs a LIVE editor snapshot, which means touching
+    `src/admin/pages/site/{canvas,store}/` (explicitly off-limits this task)
+    and is WS-12's own sequencing step 3, not step 1/2. The prompt still
+    works end-to-end without it; it just can't yet say what's selected on
+    the canvas right now.
+  - **`studio_read_file`'s `canonical` field, not a separate verification
+    tool.** No tool anywhere currently reports "is this file canonical" —
+    confirmed by grep before writing the prompt's "verify" step, so the
+    prompt does NOT claim `studio_export_frames` checks canonical-ness
+    (it doesn't). Wiring `checkCanonicalJsx` into `studio_read_file` instead
+    of `studio_list_pages`/the shared page-load pipeline was deliberate:
+    `loadStudioPages`/`ParsedPage` are hot, actively-edited-by-others files;
+    `studio_read_file` is code I own outright this task, and the check only
+    fires for a `.tsx`/`.jsx` path (never asserted for anything else).
+  - **`insert` has no raw-intrinsic-tag path** — verified by reading
+    `insertJsxElement.ts`'s `resolveImportEdit` line by line: it
+    unconditionally writes `import { name } from specifier` for whatever
+    `name` it's given, with no lowercase/intrinsic special case. The prompt
+    and the tool description both say this explicitly ("always import a real
+    named component") rather than repeating the plan doc's implication that
+    a bare `<div>` insert is possible — it isn't, today.
+  - **No `scope` reintroduced, no DB column, no migration.** WS-12 §8.1 D3's
+    reasoning (one agent, no persisted discriminator) is honored — the
+    Studio-vs-CMS toolset/prompt choice is made per-request from
+    `workspaceDir` (validated live, never stored), the exact same posture
+    `claudeCli.ts`'s own `cwd` decision already uses.
+- **Landmines:**
+  - **The shared tree had a SECOND concurrent session land mid-task** (not
+    the one `server-07`'s entry already flagged) — `git status` partway
+    through this task showed `previewAxesCapability.ts`,
+    `PreviewAxesControls.tsx`, `localeProbe.ts` (new),
+    `projectProfileSchema.ts`, `studioMeta.ts`, `projectProbe.ts` and several
+    docs files modified/added that this task never touched. Re-ran
+    `bunx tsc --noEmit` (both projects) AFTER noticing this, specifically to
+    catch a concurrent shape change to `ProjectProfile`/`TrustTier` (types
+    this task's new `systemPrompt.ts` imports) breaking silently — still
+    clean. Whoever lands next should re-verify once more before merge, since
+    this describes a snapshot mid-flight, not a final state.
+  - `TrustTier`'s real literals are `'static' | 'render-packages' |
+    'run-project'`, NOT `'static' | 'sandboxed' | 'full'` — I guessed wrong
+    on the first pass (caught immediately by `tsc`, not shipped).
+    `StyleToolchainSchema.{sass,cssModules}` are already `boolean`, NOT the
+    nullable-object shape `tailwind` uses — also caught by `tsc` before
+    shipping a `!== null` comparison against a boolean.
+  - Studio's two toolsets now BOTH mean "Studio" in ways that could still
+    confuse the next reader: `studioTools`/`selectStudioTools` (`tools/index.ts`)
+    is the D3-collapsed "one agent" concept and currently equals the CMS
+    `siteTools`; `studioAgentTools` (`tools/studio/index.ts`) is the REAL
+    design-tool toolset. Renaming the former was explicitly out of scope
+    (12 call sites, real churn) — flagged here rather than silently left
+    for the next agent to trip over.
+- **Verification:**
+  - `bunx tsc -p tsconfig.node.json --noEmit` and `tsconfig.app.json` — both
+    clean, re-run twice (once before, once after noticing the concurrent
+    session's edits landed).
+  - `bun run build` (`tsc -b && vite build`) — clean.
+  - `bun run lint` — 0 errors, 0 warnings on the final pass.
+  - `bun test server/ai src/__tests__/agent src/__tests__/ui/modelPicker.test.tsx
+    src/__tests__/panels/agentPanel.test.tsx src/__tests__/architecture
+    src/core/ai` — **961 pass / 4 fail**; all 4 confirmed pre-existing and
+    outside this task's diff via `git status`/`git diff` (`CodeMirror
+    lazy-load enforcement`, `dispatcher HTML pipeline`/`publish.ts`, a
+    Windows-path `ENOENT` in `error-boundary-coverage.test.ts`, and the
+    `keybindings-registry` gate on `UndoRedoButtons.tsx`/`useCanvas.ts` —
+    the last two are canvas-territory files this task was told to stay out
+    of). One architecture failure WAS mine (`ai-handlers-capability-gated`,
+    tripped by `server-07`'s already-committed `claudeCliStatus.test.ts`) —
+    fixed the gate itself, see Scope above, now 0 fail on that gate.
+- **Next step:** WS-12 step 3 (`StudioAgentSnapshot` — the live board/
+  selection/fidelity dynamic suffix, needs `canvas`/`store` access this task
+  didn't have), step 4 (session controls UI), steps 5-6 (subagent roster +
+  reference files, `.claude/agents/` generation). Also: `docs/features/agent.md`
+  needs the new prompt/toolset documented (deliberately deferred, see Scope).
+- **Human action needed:** none blocking — this task's work is fully
+  functional standalone. Recommend landing this alongside whichever session
+  currently has `projectProfileSchema.ts`/`studioMeta.ts`/`projectProbe.ts`
+  mid-edit, and re-running `bun test`/`bun run build` once more after both
+  are committed together, since this task's `systemPrompt.ts` imports types
+  from exactly those files.
+
 ### server-07 — Claude CLI provider, steps 2+3: workspace cwd, widened argv, MCP tool routing (WS-11)
 - **Agent:** server-engineer
 - **Stage:** done (steps 2+3 of 4 — step 4, session-controls UI for effort/permission-mode, is WS-12 §5.2's, deliberately not built here)
@@ -1177,6 +1520,297 @@ are the remaining WS-2 items, not yet dispatched. See
   finding), so "Duplicate as Dark/Light" should NOT appear in the context
   menu at all (not disabled — absent) — confirm that too, since a wrongly
   shown-but-broken menu item would be a worse UX than an absent one.
+
+### canvas-09 — WS-10 Phases 3+5: locale probe + board-global switch, MCP axes param; Phase 4 (per-frame locale) scoped but NOT shipped
+- **Agent:** canvas-engineer
+- **Stage:** done (Phase 3 + Phase 5); Phase 4 explicitly NOT attempted — architecture finding only, see below
+- **Updated:** 2026-08-01
+- **Goal:** WS-10 Phases 3-5 (`STUDIO-NEXT-WORKSTREAMS.md` §4.1-§4.5, §5.3-§5.4)
+  — discover a project's own locale dictionary, replace the hand-typed
+  `previewLocale` JSON field with a probe-driven toolbar control, and thread
+  `PreviewAxes` into the one MCP tool that needed it. Phase 4 (side-by-side
+  locale variants, "duplicate this frame as Arabic") was explicitly requested
+  but is **not implemented** — see "Phase 4: why not, and what it actually
+  needs" below. This was a direct requirement, not a maybe: report back
+  whether the probe works on a real project, what a locale switch actually
+  costs, and whether Phase 4 needs more than Phase 2's `(frameId, nodeId)`
+  keying. All three are answered below.
+- **Scope:**
+  - **Phase 3 — probe + board-global switch:**
+    - New `server/handlers/studio/localeProbe.ts` — `detectLocales(root)`,
+      purely syntactic (never executes), three detection rules in order:
+      (1) a `translations[lang]`-style dynamic-dictionary index — TWO-PASS
+      (every top-level object-literal declaration in the project, by name;
+      then every `name[indexExpr]` access), because the dictionary and the
+      file that INDEXES it are usually different files (confirmed against
+      the real eSIM corpus below); (2) an i18next/react-intl `resources: {
+      en: {...}, ar: {...} }` config object; (3) a `locales/*.json`
+      directory. `extractTopLevelKeys` is a shared brace/string-aware
+      depth-1 key scanner.
+    - `server/handlers/studio/projectProfileSchema.ts` — new
+      `LocalesCapabilitySchema`/`LocalesCapability` (`keys`, `defaultKey?`,
+      `source`), `ProjectProfile.locales?`.
+    - `server/handlers/studio/projectProbe.ts` — wires `detectLocales` in,
+      omitting the field entirely (not `null`) when nothing is found.
+    - `server/handlers/studio/studioMeta.ts` — `PersistedPreviewAxesSchema`
+      gains `locale?`; new `foldLegacyPreviewLocale` in `readStudioMeta`
+      folds a pre-Phase-3 top-level `previewLocale` into `previewAxes.locale`
+      on READ and never returns the legacy field — the ONE place a data
+      migration on disk is correct per CLAUDE.md (`.studio/meta.json` is
+      user data, same category as the DB-schema exception), not a
+      code-level back-compat shim. `previewLocale` stays in
+      `StudioMetaSchema` ONLY so an old file still parses.
+    - `server/handlers/studioProjects.ts` — `projectPreviewLocale` now reads
+      `readStudioMeta(dir).previewAxes?.locale` (the fold makes this the ONE
+      correct read path for both an old-shape and new-shape file).
+    - `server/handlers/studio/previewAxes.ts` — `PreviewAxesPatchSchema`
+      gains `locale?`; this route is now the ONE place a client sets
+      locale, replacing the retired hand-typed JSON field.
+    - `src/admin/pages/site/studio/previewAxesCapability.ts` — added
+      `LocalesCapability`/`getLocalesCapability`/`subscribeLocalesCapability`;
+      renamed `refreshColorSchemeCapability`/`clearColorSchemeCapability` →
+      `refreshPreviewCapabilities`/`clearPreviewCapabilities` (one probe
+      fetch now populates BOTH the colorScheme and locales stores off ONE
+      shared listener set — they always change together, so there is no
+      reason for two).
+    - `src/admin/pages/site/studio/usePreviewAxesHydration.ts` — updated to
+      the renamed functions; no behavioral change (still one effect per
+      project-dir change).
+    - `src/admin/pages/site/toolbar/PreviewAxesControls.tsx` — new locale
+      `Select` (options from the probe, disabled with reason when
+      `locales === null`, per §7.4 "probe honesty" — same posture the
+      dark-mode button already had). Choosing a locale: `setPreviewAxes`
+      (store), `savePreviewAxes` (persist), then `requestCmsSiteReload()` —
+      genuinely different from direction/colorScheme, which touch neither.
+      Disables itself for the duration (`isReparsing`) so a second click
+      can't queue a second reload mid-flight.
+    - `src/core/page-parser/staticEvalTypes.ts` — one stale doc-comment fix
+      (`preferredKey`'s source field name).
+  - **Phase 5 — MCP + docs:**
+    - `src/core/ai/toolSchemas.ts` — `StudioExportFramesInputSchema` gains
+      an optional `axes: { direction?, colorScheme? }` (deliberately NO
+      `locale` — see "Why `studio_export_frames` gets `direction`/
+      `colorScheme` but not `locale`" below).
+    - `src/admin/pages/site/agent/studioExportFrames.ts` — saves the
+      board's current `direction`/`colorScheme`, applies `input.axes` for
+      the batch (same save/restore shape the tool already uses for pan/
+      zoom/active-page), restores in the same `finally`.
+    - `studio_render_reference`/`studio_diff_frames` — audited, deliberately
+      NOT given an axes param; see the finding below.
+    - Docs updated in this same change: `docs/features/studio-import.md`
+      (meta.json example + both `previewLocale` limitation rows — rewritten
+      to state what Phase 3 actually shipped and what Phase 4 still
+      doesn't), `docs/agent-refs/canvas-internals.md` (renamed the "Preview
+      axes (WS-10 Phase 1)" section, since it never got backfilled for
+      Phase 2 either — added a "Per-frame axes + `(frameId, nodeId)`" and a
+      "Locale" subsection covering Phase 2/3/4 in one place), `docs/agent-
+      refs/{path-index.md,glossary.md,studio-pipeline.md}`,
+      `PROJECT-BRIEF.md`, `README.md`.
+  - Tests: `server/handlers/__tests__/projectProbe.test.ts` (new
+    `detectLocales` describe block — synthetic fixtures for all three
+    detection rules, deliberately shaped like the real eSIM corpus for rule
+    1; plus a `probeProject` wiring test; plus the legacy-fold describe
+    block under `readStudioMeta`), `server/handlers/__tests__/previewAxes.test.ts`
+    (new `locale` describe block), `src/admin/pages/site/toolbar/__tests__/PreviewAxesControls.test.tsx`
+    (rewritten for the renamed capability functions + 3 new locale tests,
+    including a real "click AR, assert `CMS_SITE_RELOAD_EVENT` fires"
+    round-trip).
+  - **Not touched:** `server/ai/` outside `server/ai/mcp/tools/studio/` and
+    `src/core/ai/` — a parallel session has in-flight work in
+    `server/ai/drivers/claudeCli.ts`/`agentRoster.ts` (confirmed via `git
+    status`, not mine).
+- **Question 1 — does the locale probe work on a real project?** Yes,
+  verified directly, not just unit-tested. Ran `detectLocales(...)` against
+  the REAL, un-modified `studio-workspace/maherfayad-stack-eSIM/journey-screens`
+  (a throwaway, read-only test — written, run, then deleted, same pattern as
+  `canvas-08`'s `boards.json` verification): result was exactly `{"keys":
+  ["en","ar"],"defaultKey":"en","source":"src/i18n/translations.js"}`. This
+  is exactly right — the eSIM corpus's `translations.js` exports `{ en:
+  {...}, ar: {...} }` and is indexed via `translations[lang]` from a
+  DIFFERENT file, `LanguageContext.jsx` — which is precisely why
+  `detectDictionaryIndex` had to become a two-pass (declare-anywhere,
+  index-anywhere) scan rather than a same-file-only one; a same-file-only
+  first draft of this function does NOT find the real fixture's dictionary.
+- **Question 2 — what does a locale switch actually cost?** A REAL project
+  re-parse — not a frame attribute toggle like direction/colorScheme. The
+  mechanism was already half-built: `studioPageLoad.ts`'s `configHash`
+  already includes `preferredKey` (`hashWorkspaceConfig([framework,
+  preferredKey, ...])`), so the on-disk parse cache already busts correctly
+  on a locale change and switching BACK to a previously-parsed locale is
+  cache-free — that part needed no new code. What Phase 3 actually added on
+  the cost side: `PreviewAxesControls.tsx` calls `requestCmsSiteReload()`
+  after persisting the new locale, which triggers the SAME full site
+  re-fetch a manual save/reload does — every page on the board re-parses,
+  not just the one being looked at (there is no per-page-only reload path
+  today). The `Select` disables itself for the duration so a user can't
+  queue a second locale switch mid-reload. Not measured in wall-clock ms in
+  this pass (no browser dogfood run — see Human action needed) but the
+  mechanism is the existing whole-site reload path, not a new one.
+- **Question 3 — does Phase 4 need more than Phase 2's `(frameId, nodeId)`
+  keying?** **Yes — confirmed, not assumed.** Phase 2's keying answers "which
+  frame does this selection/hover belong to" for a tree BOTH frames already
+  share. Phase 4 needs a frame to render a DIFFERENT tree, and nothing in
+  this codebase supports that: `site.pages` is `Page[]`, one entry per
+  `pageId`, one parsed tree, full stop (`src/core/page-tree/siteDocument.ts`)
+  — there is no `(pageId, locale)` keying anywhere in the store, the parse
+  cache (`studioPageLoad.ts`), or the frame-mount path
+  (`BreakpointFrame.tsx`/`IframeFrameSurface.tsx`, which both read `site.pages`
+  by `pageId` alone). Making "duplicate as variant" actually apply a
+  different locale to one frame needs, at minimum, three NEW pieces beyond
+  Phase 2's mechanism: (1) a second, additive parse path building entries
+  per `(pageId, locale)` for the union of locales actually in use on the
+  board (§4.5 — not every probed locale), (2) a per-frame "which tree do I
+  render" selection at mount time, and (3) extending "duplicate as
+  variant"'s UI + `coerceAxesOverride` (`src/core/studio-board/serialize.ts`
+  — currently and deliberately still drops `locale` from a persisted
+  `BoardFrame.axes`, untouched by this task) once (1) and (2) exist. Full
+  reasoning: `docs/agent-refs/canvas-internals.md`'s new "Locale (WS-10
+  §4.2/Phase 3 shipped; §4.4/Phase 4 per-frame NOT shipped)" subsection.
+- **Why Phase 4 was not attempted this task, deliberately:** §7.3 of the
+  workstream doc names exactly this risk — "§4.3 attempted opportunistically
+  ... it is gated on the id grammar" (now the tree-selection grammar, not the
+  id grammar, but the same shape of risk: looks like a small addition,
+  isn't). (1)+(2) above touch `site.pages`, the node-lookup maps
+  (`_nodeIdToPageIds`), the parse cache, AND the frame-mount path — the same
+  four subsystems `canvas-08`'s own Landmines section warns fight each
+  other. Attempting that in the time available for this task, on top of an
+  already-large shared working tree with two other sessions live in it,
+  would have meant either a rushed, undertested cross-store change or a
+  half-migrated one — the CLAUDE.md "no band-aids" rule cuts the OTHER way
+  here: a half-shipped per-locale-tree mechanism left mid-migration is a
+  worse outcome than a clean scope boundary with the real architecture
+  documented. **No UI affordance for it was added either** — no "Duplicate
+  as Arabic" menu item — because WS-10 §7.4's own rule ("disabled with a
+  reason, never a silent no-op") means an affordance that visually exists
+  but doesn't actually apply the locale would be a worse failure than an
+  absent one, exactly the class of bug `canvas-07`'s audit caught for dark
+  mode.
+- **Why `studio_export_frames` gets `direction`/`colorScheme` but not
+  `locale` (§5.3 finding):** audited all three visual-audit-trio tools
+  before adding anything, rather than mechanically adding a `PreviewAxes`
+  param everywhere the doc's wording suggested:
+  - `studio_export_frames` — captures the LIVE Studio canvas. `direction`/
+    `colorScheme` are render-time attribute effects, so a temporary
+    save/apply/restore around the batch (mirroring the tool's existing pan/
+    zoom/active-page save/restore) is safe and cheap. `locale` is parse-time
+    and this call has no re-parse step — adding it here without one would
+    either silently do nothing (§7.4 violation) or require the tool to
+    trigger and await a full site re-parse mid-batch, an entirely different
+    and much more expensive operation this tool was never designed for.
+  - `studio_render_reference` — boots the PROJECT'S OWN dev server and
+    navigates a real browser to a `route` the caller supplies. A project's
+    own locale mechanism (the eSIM corpus: `?lang=ar` via `getUrlParam`) is
+    already fully expressible through that `route` string — adding a
+    Studio-side axes param here would be redundant at best and misleading
+    at worst (implying Studio can force a real running app's locale, which
+    it cannot — that's entirely the project's own code).
+  - `studio_diff_frames` — a generic two-PNG pixel-diff tool with no
+    knowledge of "project" or "frame" at all. Has no axis to apply.
+  No new tests for `studioExportFrames.ts`'s axes handling — this file was
+  ALREADY untested before this change (its own module doc explains why: it
+  drives real DOM capture through `waitForAgentRenderFrame`/
+  `captureAgentRenderSnapshot`, hard to unit-test meaningfully under
+  happy-dom, historically verified by dogfood). The change itself mirrors
+  the tool's own existing, already-relied-upon save/restore pattern
+  byte-for-byte; flagged here as a real gap rather than silently left
+  uncovered.
+- **Decisions:**
+  - `LocalesCapability.defaultKey` prefers `'en'` when present, else the
+    first key found — matching `evaluateElementAccess`'s own "no
+    `preferredKey` set" fallback (first key in SOURCE order for an object
+    literal), so the toolbar's default selection matches what a project
+    already renders before anyone touches the control. For the
+    `locales/*.json` directory rule specifically, keys are sorted
+    alphabetically before picking a default — a directory listing has no
+    "source order" the way an object literal's keys do, so alphabetical is
+    the honest deterministic choice rather than an accidental
+    filesystem-dependent one (`readdirSync` order is NOT guaranteed, and
+    differed between the first and second run of the exact same test on
+    this machine while writing the test).
+  - `foldLegacyPreviewLocale`'s precedence: an EXISTING `previewAxes.locale`
+    wins over a legacy `previewLocale` if a file somehow carries both — the
+    newer field is the one a real user action (a POST through the toolbar)
+    just set.
+  - The locale `Select`'s disabled-reason is a native `title` attribute on a
+    wrapping `<span>` (Select has no `tooltip` prop the way `Button` does);
+    the `aria-label` on the trigger itself also carries the full reason, so
+    the honesty rule holds for screen readers even without the hover
+    tooltip.
+- **Landmines:**
+  - **`previewAxesFrameEffect.ts`'s `useApplyPreviewAxes` hook has a real
+    `react-hooks/exhaustive-deps` trap if you add a fourth thing to merge
+    into `effectiveAxes`**: computing the merged object as a `const` ABOVE
+    the `useEffect` and putting IT in the dep array recomputes a fresh
+    object every render, defeating the dep check (`canvas-08` hit this and
+    fixed it by moving the computation INSIDE the effect body, depending on
+    the raw inputs instead). If you touch this hook for Phase 4, keep the
+    computation inside the effect.
+  - **`server/handlers/studio/projectProbe.ts` is now at 692/700 lines** —
+    right at the module-size ceiling this task's own `detectLocales` wiring
+    pushed it toward. The next probe addition needs either extraction (the
+    `colorSchemeDetect.ts`/`localeProbe.ts` precedent) or it WILL fail
+    `module-size-budgets.test.ts`.
+  - **`readStudioMeta`'s fold order matters**: `foldLegacyPreviewLocale` runs
+    AFTER the two-pass schema-parse-with-profile-retry, BEFORE the
+    `pagesDir` containment strip. If you add another folded/migrated field
+    to this function, insert it in the SAME position (after parse, before
+    the containment guard) — the containment guard's early-return paths
+    (`return rest`) do NOT go through the fold, so a fold added after that
+    point would silently skip the "unsafe pagesDir" case.
+  - **A same-shape synthetic fixture can pass while missing a real bug**:
+    the FIRST draft of `detectDictionaryIndex` only looked for the
+    dictionary's declaration in the SAME file as the indexing access, and
+    every hand-written synthetic test I wrote for it (single-file fixtures)
+    passed. Only running it against the REAL eSIM corpus (declaration in
+    `translations.js`, index in `LanguageContext.jsx` — two different files)
+    caught that this doesn't work in practice. If you extend this probe,
+    verify against the real fixture before trusting a synthetic one, same
+    as `canvas-08`'s "same-id-as-pageId fixture proves nothing" landmine.
+- **Verification:**
+  - `bun test` (full suite): **8022 pass / 21 fail** (1 skip), up from the
+    ~7970/20 baseline `canvas-08`'s handoff reported (the coordinator's own
+    audit fixed that entry's one real failure — `server/handlers/studio.ts`'s
+    module-size overage — before dispatching this task; confirmed via
+    `module-size-budgets.test.ts` passing clean, 5/5, in this run). Of the
+    21: 20 match `standing-01`'s exact named set (byte-for-byte, cross-
+    checked by name). The 21st — `streamClaudeCli — subagent roster
+    generation (WS-12 §7) > generates the roster into the resolved
+    workspace root when a real project is open` — is NOT mine: it lives in
+    `server/ai/drivers/claudeCli.test.ts`, which `git status` shows modified
+    by the concurrently-active WS-11/agent session (new, uncommitted
+    `server/handlers/studio/agentRoster.ts`), and re-running that exact
+    test FILE in isolation (`bun test server/ai/drivers/claudeCli.test.ts`)
+    passes 23/23 — an order-dependent flake in another session's in-flight
+    work, not a regression from this change. Did not attempt to fix it —
+    not mine, per the standing triage rule.
+  - Targeted re-run, all green: `server/handlers/__tests__/{previewAxes,
+    projectProbe}.test.ts` + `server/handlers/studio` (93 pass, 0 fail),
+    `src/admin/pages/site/toolbar/__tests__/PreviewAxesControls.test.tsx`
+    (6 pass, 0 fail), `src/admin/pages/site/{toolbar,studio,canvas}` (59
+    pass, 0 fail).
+  - `bun run build` — exit 0 (full `tsc -b && vite build`).
+  - `bun run lint` — exit 0, 0 warnings.
+  - No tree-mutating git command was used at any point in this task
+    (read-only `status`/`diff`/`log` only), per the coordinator's standing
+    instruction from `canvas-08`.
+- **Human action needed:** dogfood on `studio-workspace/maherfayad-stack-eSIM`
+  at `/admin/site?studio`. Open the toolbar's preview-axes group — a third
+  control (a `Select`) should now sit beside LTR/Light, showing `EN`/`AR`
+  (this project's real detected locale keys), NOT disabled. Choose `AR`: the
+  whole board should show a brief re-parse (the `Select` itself disables for
+  that moment), then every visible frame re-renders in Arabic copy —
+  confirm the TEXT actually changes (e.g. a button label), not just that
+  nothing crashes. Switch back to `EN` and confirm it returns instantly-ish
+  (cache-hit, no visible stall, per the `configHash` reasoning above). Then
+  try editing a piece of Arabic text on the canvas while `AR` is selected
+  and confirm (via `git diff` on `translations.js`, or re-opening) that the
+  edit landed in the `ar` branch of `translations.js`, not `en` — this is
+  §4.4's "payoff worth testing explicitly" and was NOT re-verified in this
+  task (no browser dogfood run — this is existing `textOrigin` behavior
+  Phase 3 didn't touch, but it is the single most valuable thing to confirm
+  before calling locale support real). Separately: right-click a frame's
+  title bar and confirm NO "Duplicate as \<locale\>" menu item appears
+  anywhere — Phase 4 is deliberately absent, not broken.
 
 ### parser-10 — WS-13 step 4: canonical scaffolding, auto-placed on the board
 - **Agent:** parser-surgeon
