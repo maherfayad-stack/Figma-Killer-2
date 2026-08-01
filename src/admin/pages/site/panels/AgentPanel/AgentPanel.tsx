@@ -284,7 +284,7 @@ export function AgentPanel({ variant = 'floating' }: { variant?: PanelVariant })
         )}
       </div>
 
-      <AgentSessionControls />
+      <AgentSessionControls hasCredentials={credentials.length > 0} />
       <AgentComposer
         key={composerEpoch}
         composerLocked={composerLocked}

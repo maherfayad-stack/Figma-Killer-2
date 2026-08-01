@@ -38,12 +38,12 @@ import { fetchStudioAgentEffort, persistStudioAgentEffort } from '@site/agent'
 import styles from './AgentSessionControls.module.css'
 
 const EFFORT_OPTIONS = [
-  { value: '', label: 'Effort: default' },
-  { value: 'low', label: 'Effort: low' },
-  { value: 'medium', label: 'Effort: medium' },
-  { value: 'high', label: 'Effort: high' },
-  { value: 'xhigh', label: 'Effort: x-high' },
-  { value: 'max', label: 'Effort: max' },
+  { value: '', label: 'Default' },
+  { value: 'low', label: 'Low' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'high', label: 'High' },
+  { value: 'xhigh', label: 'X-high' },
+  { value: 'max', label: 'Max' },
 ]
 
 const MODE_OPTIONS = [
@@ -53,7 +53,19 @@ const MODE_OPTIONS = [
   { value: 'bypassPermissions', label: 'Bypass' },
 ]
 
-export function AgentSessionControls() {
+interface AgentSessionControlsProps {
+  /**
+   * Whether at least one usable AI credential exists. Reuses the same
+   * `listCredentials` fetch `AgentPanel` already runs for the composer's
+   * "No credentials yet" empty state — do not re-derive this elsewhere.
+   * Effort and permission-mode configure a session that literally cannot
+   * start without a credential, so with none configured this component
+   * renders nothing at all (not a disabled control).
+   */
+  hasCredentials: boolean
+}
+
+export function AgentSessionControls({ hasCredentials }: AgentSessionControlsProps) {
   const effortId = useId()
   const modeId = useId()
 
@@ -88,6 +100,11 @@ export function AgentSessionControls() {
   }, [studioProjectDir, setAgentEffort])
 
   const isBypass = agentPermissionMode === 'bypassPermissions'
+
+  // Effort and permission mode configure a session that can't start without
+  // a credential — with none configured, don't render dead controls above
+  // the composer's own "Add AI credentials to start chatting" empty state.
+  if (!hasCredentials) return null
 
   return (
     <div className={styles.root}>
