@@ -21,6 +21,13 @@ import styles from './ContextMenu.module.css'
 interface ContextMenuSubmenuProps {
   /** Trigger label — displayed on the submenu row */
   label: ReactNode
+  /**
+   * Accessible name for the submenu panel (`role="menu"`). When `label` is
+   * a plain string it's reused automatically; pass this explicitly when
+   * `label` is a richer node (e.g. the trigger row also shows the current
+   * value) so the panel still gets a name.
+   */
+  ariaLabel?: string
   /** Optional icon shown to the left of the label (use pixel-art-icons) */
   icon?: ReactNode
   /**
@@ -74,6 +81,7 @@ const SUBMENU_AUTO_PRIORITY = ['right', 'left'] as const
  */
 export function ContextMenuSubmenu({
   label,
+  ariaLabel,
   icon,
   onClose,
   children,
@@ -241,6 +249,7 @@ export function ContextMenuSubmenu({
         role="menuitem"
         aria-haspopup="menu"
         aria-expanded={open}
+        aria-label={ariaLabel}
         fullWidth
         align="between"
         className={cn(styles.item, styles.submenuTrigger)}
@@ -275,7 +284,7 @@ export function ContextMenuSubmenu({
         <div
           ref={submenuRef}
           role="menu"
-          aria-label={typeof label === 'string' ? label : undefined}
+          aria-label={ariaLabel ?? (typeof label === 'string' ? label : undefined)}
           className={styles.menu}
           data-scrollable={maxHeight != null ? '' : undefined}
           data-side={position?.side}

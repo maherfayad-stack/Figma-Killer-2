@@ -57,6 +57,18 @@
     color: var(--text-subtle);
 }
 
+/* Trailing secondary value (e.g. reasoning effort) — subtler tone than the
+   model label, sitting between it and the chevron in the inline trigger. */
+.triggerTrailingLabel {
+    color: var(--text-subtle);
+    font-weight: 400;
+    white-space: nowrap;
+}
+
+.inlineTrigger .triggerTrailingLabel {
+    font-size: var(--text-2xs);
+}
+
 .staticState {
     display: inline-flex;
     align-items: center;

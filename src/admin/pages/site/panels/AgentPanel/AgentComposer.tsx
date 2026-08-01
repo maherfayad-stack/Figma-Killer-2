@@ -19,7 +19,8 @@ import { SendSolidIcon } from 'pixel-art-icons/icons/send-solid'
 import { SquareSolidIcon } from 'pixel-art-icons/icons/square-solid'
 import { ImageSolidIcon } from 'pixel-art-icons/icons/image-solid'
 import { ContextMeter } from './ContextMeter'
-import { ModelPicker } from './ModelPicker'
+import { ModelEffortPicker } from './ModelEffortPicker'
+import { AgentSessionControls } from './AgentSessionControls'
 import {
   type AgentPreviewImage,
   type OpenAgentImageMenu,
@@ -245,14 +246,14 @@ export function AgentComposer({
           />
         )}
         <div className={styles.inputControls}>
-          <ModelPicker
-            className={styles.inputControlsPicker}
-            credentials={credentials}
-            credentialsLoaded={credentialsLoaded}
-            onRefreshCredentials={onRefreshCredentials}
-            disabled={isStreaming || conversationPending || providerPending || submitting}
-          />
+          <AgentSessionControls hasCredentials={credentials.length > 0} />
           <div className={styles.inputControlActions}>
+            <ModelEffortPicker
+              credentials={credentials}
+              credentialsLoaded={credentialsLoaded}
+              onRefreshCredentials={onRefreshCredentials}
+              disabled={isStreaming || conversationPending || providerPending || submitting}
+            />
             <ContextMeter
               credentialId={activeCredentialId}
               modelId={activeModel?.id ?? activeModelId}

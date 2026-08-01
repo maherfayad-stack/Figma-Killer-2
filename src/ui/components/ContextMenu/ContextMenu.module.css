@@ -117,6 +117,15 @@
     color: currentColor;
 }
 
+/* Trailing checkmark on a `selected` ContextMenuItem — pushed to the row's
+   end regardless of how many other children (labels, meta clusters) sit
+   before it. */
+.itemCheck {
+    margin-inline-start: auto;
+    flex-shrink: 0;
+    color: currentColor;
+}
+
 .separator {
     width: auto;
     margin: var(--space-3xs) var(--space-xs);

@@ -15,6 +15,11 @@
  *
  * Long lists (e.g. OpenRouter's 300+ models) get an in-menu search box and a
  * scrollable, viewport-clamped menu via the shared ContextMenu primitive.
+ *
+ * `trailingLabel`/`menuFooter` let a caller fold ONE more related setting
+ * into this same trigger + menu (AgentPanel's `ModelEffortPicker` uses this
+ * for reasoning effort) without forking a second "what models exist"
+ * data source — the fetch/group/search logic above stays the only one.
  */
 
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
@@ -60,6 +65,26 @@ interface ModelPickerProps {
   disabled?: boolean
   /** Auto-enable the in-menu search once loaded models exceed this. Default 8. */
   searchThreshold?: number
+  /**
+   * Optional secondary value rendered after the model label inside the
+   * `'inline'` trigger, in a subtler tone — e.g. the active reasoning
+   * effort (AgentPanel's `ModelEffortPicker`). ModelPicker stays agnostic
+   * to what this represents; `trailingLabelKind` (e.g. `'effort'`) only
+   * feeds the trigger's accessible name so the extra state isn't
+   * visual-only. Ignored for `'field'` variant.
+   */
+  trailingLabel?: string
+  /** Required alongside `trailingLabel` — folded into the accessible name as `"<model>, <kind>: <trailingLabel>"`. */
+  trailingLabelKind?: string
+  /**
+   * Optional extra content appended to the SAME dropdown, after the model
+   * groups — e.g. a nested "Effort ›" submenu. Receives the menu's own
+   * close function so a pick inside this content can dismiss the whole
+   * trigger too, matching model selection's close-on-pick behavior. Keeps
+   * "model + related session setting" as one control with one menu instead
+   * of two triggers a user has to separately discover.
+   */
+  menuFooter?: (closeMenu: () => void) => ReactNode
 }
 
 const SEP = '\0'
@@ -121,6 +146,9 @@ export function ModelPicker({
   ariaLabel = 'Pick a model',
   disabled = false,
   searchThreshold = 8,
+  trailingLabel,
+  trailingLabelKind,
+  menuFooter,
 }: ModelPickerProps) {
   const baseId = useId()
   const menuId = `${baseId}-menu`
@@ -321,6 +349,15 @@ export function ModelPicker({
     }
   }
 
+  // Inline trigger's accessible name: plain visible text by default (the
+  // model label), or an explicit aria-label folding in `trailingLabel` when
+  // present — the trigger's raw textContent ("Opus 4.5Medium") would read as
+  // one run-on word to a screen reader without it.
+  const inlineAriaLabel = trailingLabel
+    ? `${activeLabel}, ${trailingLabelKind ?? 'value'}: ${trailingLabel}`
+    : undefined
+  const inlineTooltip = trailingLabelKind ? `Model & ${trailingLabelKind}` : 'Model'
+
   return (
     <div className={cn(className, styles.root)}>
       <Button
@@ -332,12 +369,13 @@ export function ModelPicker({
         fullWidth={variant === 'field'}
         disabled={disabled}
         onClick={toggle}
-        // Inline trigger takes its accessible name from the 'Model' tooltip;
-        // the field trigger has no tooltip, so it carries the aria-label.
-        tooltip={variant === 'inline' ? 'Model' : undefined}
+        // Inline trigger takes its accessible name from the 'Model' tooltip
+        // (or an explicit aria-label when a trailing value is present); the
+        // field trigger has no tooltip, so it carries the aria-label.
+        tooltip={variant === 'inline' ? inlineTooltip : undefined}
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-label={variant === 'field' ? ariaLabel : undefined}
+        aria-label={variant === 'field' ? ariaLabel : inlineAriaLabel}
         className={variant === 'field' ? styles.fieldTrigger : styles.inlineTrigger}
       >
         <span
@@ -345,6 +383,9 @@ export function ModelPicker({
         >
           {activeLabel}
         </span>
+        {variant === 'inline' && trailingLabel && (
+          <span className={styles.triggerTrailingLabel}>{trailingLabel}</span>
+        )}
         <ChevronDownIcon size={variant === 'field' ? 12 : 10} aria-hidden="true" />
       </Button>
 
@@ -424,8 +465,7 @@ export function ModelPicker({
                     <ContextMenuItem
                       key={key}
                       id={entry?.optionId}
-                      role="menuitemradio"
-                      aria-checked={isSelected}
+                      selected={isSelected}
                       active={entry?.optionId === activeOptionId}
                       disabled={disabled}
                       onMouseEnter={() => setActiveKey(key)}
@@ -452,6 +492,7 @@ export function ModelPicker({
               return items
             })
           )}
+          {menuFooter?.(closeMenu)}
         </ContextMenu>
       )}
     </div>

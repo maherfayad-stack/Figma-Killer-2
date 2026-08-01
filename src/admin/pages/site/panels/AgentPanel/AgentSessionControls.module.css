@@ -1,40 +1,15 @@
+/* AgentSessionControls — the composer's compact permission-mode trigger.
+   No labelled form rows, no filled banner: the value itself (plus, while
+   Bypass is on, the trigger's own danger tone) IS the control. */
+
 .root {
-    display: flex;
-    flex-direction: column;
+    position: relative;
+    display: inline-flex;
+    min-width: 0;
 }
 
-.controls {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: var(--space-s);
-    padding: var(--space-xs) var(--space-m);
-}
-
-.field {
+.trigger {
     display: inline-flex;
     align-items: center;
     gap: var(--space-3xs);
-}
-
-.label {
-    color: var(--text-subtle);
-    font-size: var(--text-3xs);
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-}
-
-/* D5 §11.5 rail 2 — a persistent, FILLED banner (not just colored text) so
-   Bypass being active is visible without looking for it, for as long as it
-   stays on. Real, security-relevant state — earns the danger token. */
-.bypassBanner {
-    margin: 0;
-    padding: var(--space-xs) var(--space-m);
-    background: var(--danger);
-    color: var(--bg-surface);
-    font-size: var(--text-2xs);
-    font-weight: 700;
-    line-height: 1.4;
-    text-align: center;
 }

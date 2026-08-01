@@ -21,39 +21,27 @@
  * @see Guideline #410 — 3 Self-Contained Independent Panels
  */
 
-import { useRef, useEffect, useState, memo } from 'react'
+import { useRef, useEffect, useState } from 'react'
 import { useAgentStore, useAgentStoreApi } from '@admin/ai/useAgentStore'
 import { useAsyncResource } from '@admin/lib/useAsyncResource'
 import { useAdminNavigate } from '@admin/lib/useAdminNavigate'
-import { useAuthenticatedAdminUser } from '@admin/sessionContext'
-import { listCredentials } from '@admin/ai/api'
-import { renderMarkdownToHtml, type AgentMessage, type AgentToolCall } from '@site/agent'
+import { getClaudeCliStatus, listCredentials, type ClaudeCliStatus } from '@admin/ai/api'
 import { AiBoxSolidIcon } from 'pixel-art-icons/icons/ai-box-solid'
 import { AiSettingsSolidIcon } from 'pixel-art-icons/icons/ai-settings-solid'
 import { EditSolidIcon } from 'pixel-art-icons/icons/edit-solid'
 import { ArrowRightIcon } from 'pixel-art-icons/icons/arrow-right'
 import { PanelHeader } from '@admin/shared/PanelHeader'
-import { UserAvatar } from '@admin/shared/UserAvatar'
 import { Button } from '@ui/components/Button'
 import { EmptyState } from '@ui/components/EmptyState'
 import { useDraggablePanel } from '@admin/shared/FloatingWindow'
 import { cn } from '@ui/cn'
 import { ConversationHistory } from './ConversationHistory'
-import { AgentSessionControls } from './AgentSessionControls'
 import { AgentComposer, type ComposerLockReason } from './AgentComposer'
-import {
-  AgentImageGallery,
-} from './AgentImageGallery'
 import { AgentImageContextMenu } from './AgentImageContextMenu'
 import { AgentImagePreview } from './AgentImagePreview'
-import type {
-  AgentImageMenuRequest,
-  AgentPreviewImage,
-  OpenAgentImageMenu,
-} from './agentImageTypes'
-import { ToolCallRow } from './ToolCallRow'
-import { ReasoningRow } from './ReasoningRow'
-import { formatRelativeTime } from './relativeTime'
+import type { AgentImageMenuRequest, AgentPreviewImage } from './agentImageTypes'
+import { MessageBubble } from './MessageBubble'
+import { groupConsecutiveMessages } from './conversationGroups'
 import styles from './AgentPanel.module.css'
 
 const PANEL_WIDTH = 320
@@ -97,6 +85,37 @@ export function AgentPanel({ variant = 'floating' }: { variant?: PanelVariant })
   const credentialsLoaded = credentialsResource.data !== null || !credentialsResource.loading
   const noCredentials = credentialsLoaded && credentials.length === 0
   const noProviderError = agentError?.startsWith('No AI provider configured') ?? false
+
+  // "Is there a usable provider?", not "does a credential row exist?" — a
+  // `claudeCli` host that's logged in (WS-11 §3 P2: the terminal "Log in
+  // with Claude" flow stores no row at all, by design) is a real, almost-
+  // ready provider, not nothing. Zero-cost, no-model-call probe
+  // (`claude auth status --json` via the same endpoint `ProvidersTab.tsx`
+  // polls) — swallowed on failure, same as the credentials fetch above.
+  // This refines the EMPTY-STATE MESSAGING (a genuinely dead "no provider
+  // configured" screen vs. a specific, one-step-away next action); it does
+  // NOT unlock sending — `chat.ts` still resolves a turn's provider through
+  // a stored `ai_provider_credentials` row (`conversation.credentialId`),
+  // and `ModelPicker` has no credential-less option to pick. Wiring an
+  // actual ambient-claudeCli send path is a separate, larger change (a new
+  // dispatch shape in `chat.ts` + a synthetic picker entry), not attempted
+  // here.
+  const [claudeCliStatus, setClaudeCliStatus] = useState<ClaudeCliStatus | null>(null)
+  useEffect(() => {
+    if (!noCredentials) return
+    let cancelled = false
+    void getClaudeCliStatus()
+      .then((status) => {
+        if (!cancelled) setClaudeCliStatus(status)
+      })
+      .catch(() => {
+        /* swallow — empty state falls back to the generic copy */
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [noCredentials])
+  const claudeCliLoggedIn = claudeCliStatus?.availability === 'logged-in'
   // The composer can't run a turn without an active (credential, model) — one
   // is either preloaded from Studio's default or picked in the model picker.
   // Locking off `hasActiveProvider` (not a sticky error string) is what keeps
@@ -260,10 +279,10 @@ export function AgentPanel({ variant = 'floating' }: { variant?: PanelVariant })
         className={styles.thread}
       >
         {messages.length === 0 ? (
-          <AgentEmptyState mode={lockReason ?? 'prompt'} />
+          <AgentEmptyState mode={lockReason ?? 'prompt'} claudeCliLoggedIn={claudeCliLoggedIn} />
         ) : (
           <>
-            {lockReason && <AgentCredentialAlert mode={lockReason} />}
+            {lockReason && <AgentCredentialAlert mode={lockReason} claudeCliLoggedIn={claudeCliLoggedIn} />}
             {groupConsecutiveMessages(messages).map((group) => (
               <MessageBubble
                 key={group.id}
@@ -284,7 +303,6 @@ export function AgentPanel({ variant = 'floating' }: { variant?: PanelVariant })
         )}
       </div>
 
-      <AgentSessionControls hasCredentials={credentials.length > 0} />
       <AgentComposer
         key={composerEpoch}
         composerLocked={composerLocked}
@@ -309,251 +327,19 @@ export function AgentPanel({ variant = 'floating' }: { variant?: PanelVariant })
   )
 }
 
-// ---------------------------------------------------------------------------
-// MessageBubble
-// ---------------------------------------------------------------------------
-
-interface ConversationGroup {
-  id: string
-  role: AgentMessage['role']
-  messages: AgentMessage[]
-}
-
-function MessageBubble({
-  group,
-  onOpenImage,
-  onOpenImageMenu,
-}: {
-  group: ConversationGroup
-  onOpenImage(image: AgentPreviewImage): void
-  onOpenImageMenu: OpenAgentImageMenu
-}) {
-  const isUser = group.role === 'user'
-  const user = useAuthenticatedAdminUser()
-  const startedAt = group.messages[0]?.timestamp
-  const relativeTime = startedAt ? formatRelativeTime(startedAt) : ''
-
-  return (
-    <div className={styles.messageTurn}>
-      {/* Role marker — avatar + name + relative time, once per turn. The user
-          reuses their Gravatar; the agent gets the robot glyph. */}
-      <div className={styles.roleLabel}>
-        {isUser ? (
-          <UserAvatar user={user} size={16} alt={null} />
-        ) : (
-          <span className={styles.roleAvatarAi} aria-hidden="true">
-            <AiBoxSolidIcon size={11} />
-          </span>
-        )}
-        <span className={styles.roleName}>{isUser ? 'You' : 'Assistant'}</span>
-        {relativeTime && <span className={styles.roleTime}>· {relativeTime}</span>}
-      </div>
-
-      {/* Chronological blocks — text and tool calls render in the order
-          Claude actually emitted them, so a "text → tool → text" sequence
-          shows two separate text bubbles around the tool badges. Text is
-          rendered as markdown (bold, lists, inline code, links, …) via a
-          DOMPurify-sanitised HTML pipeline. */}
-      {groupRenderItems(group.messages).map((item) =>
-        item.kind === 'text' ? (
-          <MarkdownTextBubble key={item.key} text={item.text} isUser={isUser} />
-        ) : item.kind === 'reasoning' ? (
-          <ReasoningRow key={item.key} text={item.text} />
-        ) : item.kind === 'images' ? (
-          <MessageImageGallery
-            key={item.key}
-            images={item.images}
-            isUser={isUser}
-            onOpenImage={onOpenImage}
-            onOpenImageMenu={onOpenImageMenu}
-          />
-        ) : (
-          // A run of consecutive tool calls shares one container so the rows
-          // stack tightly; text blocks around them stay separate bubbles.
-          <div key={item.key} className={styles.toolCallsContainer}>
-            {item.toolCalls.map((toolCall) => (
-              <ToolCallRow key={toolCall.id} toolCall={toolCall} />
-            ))}
-            <ToolPreviewGallery
-              toolCalls={item.toolCalls}
-              onOpenImage={onOpenImage}
-              onOpenImageMenu={onOpenImageMenu}
-            />
-          </div>
-        ),
-      )}
-    </div>
-  )
-}
-
-// Collapse the flat message list into conversational turns: consecutive
-// messages of the same role become one group (one bubble, one role label).
-// The agent emits each tool call as its own message, so without this a burst
-// of tool activity would render as a stack of repeated "Assistant" labels.
-function groupConsecutiveMessages(messages: AgentMessage[]): ConversationGroup[] {
-  const groups: ConversationGroup[] = []
-  for (const message of messages) {
-    const last = groups.at(-1)
-    if (last && last.role === message.role) {
-      last.messages.push(message)
-      continue
-    }
-    groups.push({ id: message.id, role: message.role, messages: [message] })
-  }
-  return groups
-}
-
-// Flatten a turn's blocks (across its messages) in emission order, coalescing
-// each run of consecutive tool-call blocks into one item so they render inside
-// a single tight container; text blocks stay separate bubbles.
-type MessageBlock = AgentMessage['blocks'][number]
-
-type MessageRenderItem =
-  | { kind: 'text'; key: string; text: string }
-  | { kind: 'reasoning'; key: string; text: string }
-  | {
-      kind: 'images'
-      key: string
-      images: Array<{ key: string; src: string }>
-    }
-  | { kind: 'tools'; key: string; toolCalls: AgentToolCall[] }
-
-function groupRenderItems(messages: AgentMessage[]): MessageRenderItem[] {
-  const items: MessageRenderItem[] = []
-  for (const message of messages) {
-    message.blocks.forEach((block: MessageBlock, index) => {
-      if (block.kind === 'text') {
-        // Position-based key, stable as streaming deltas append in place.
-        items.push({ kind: 'text', key: `text-${message.id}-${index}`, text: block.text })
-        return
-      }
-      if (block.kind === 'reasoning') {
-        items.push({ kind: 'reasoning', key: `reasoning-${message.id}-${index}`, text: block.text })
-        return
-      }
-      if (block.kind === 'image') {
-        const image = {
-          key: `image-${message.id}-${index}`,
-          src: block.src,
-        }
-        const last = items.at(-1)
-        if (last?.kind === 'images') last.images.push(image)
-        else items.push({ kind: 'images', key: image.key, images: [image] })
-        return
-      }
-      const last = items.at(-1)
-      if (last && last.kind === 'tools') {
-        last.toolCalls.push(block.toolCall)
-        return
-      }
-      items.push({ kind: 'tools', key: `tools-${block.toolCall.id}`, toolCalls: [block.toolCall] })
-    })
-  }
-  return items
-}
-
-function MessageImageGallery({
-  images,
-  isUser,
-  onOpenImage,
-  onOpenImageMenu,
-}: {
-  images: Array<{ key: string; src: string }>
-  isUser: boolean
-  onOpenImage(image: AgentPreviewImage): void
-  onOpenImageMenu: OpenAgentImageMenu
-}) {
-  const galleryImages = images.map((image, index): AgentPreviewImage => ({
-    id: image.key,
-    src: image.src,
-    alt: images.length === 1
-      ? isUser ? 'Attachment from you' : 'Image from assistant'
-      : isUser
-        ? `Attachment ${index + 1} of ${images.length} from you`
-        : `Image ${index + 1} of ${images.length} from assistant`,
-    title: isUser ? 'Your attachment' : 'Assistant image',
-    filename: isUser
-      ? `your-attachment-${index + 1}`
-      : `assistant-image-${index + 1}`,
-  }))
-
-  return (
-    <AgentImageGallery
-      images={galleryImages}
-      label={isUser ? 'Images from you' : 'Images from assistant'}
-      onOpenImage={onOpenImage}
-      onOpenImageMenu={onOpenImageMenu}
-    />
-  )
-}
-
-function ToolPreviewGallery({
-  toolCalls,
-  onOpenImage,
-  onOpenImageMenu,
-}: {
-  toolCalls: AgentToolCall[]
-  onOpenImage(image: AgentPreviewImage): void
-  onOpenImageMenu: OpenAgentImageMenu
-}) {
-  const images = toolCalls.flatMap((toolCall) =>
-    (toolCall.previewImages ?? []).map((src, index): AgentPreviewImage => ({
-      id: `${toolCall.id}-preview-${index}`,
-      src,
-      alt: `Image ${index + 1} captured while running ${toolCall.actionType}`,
-      title: 'Tool result image',
-      filename: `${toolCall.actionType}-${index + 1}`,
-    })),
-  )
-  return (
-    <AgentImageGallery
-      images={images}
-      label="Images captured by assistant tools"
-      onOpenImage={onOpenImage}
-      onOpenImageMenu={onOpenImageMenu}
-    />
-  )
-}
-
-// ---------------------------------------------------------------------------
-// MarkdownTextBubble — parses + sanitises the block text and injects it via
-// dangerouslySetInnerHTML. Memoised render so streaming deltas don't re-parse
-// markdown for unchanged blocks.
-// ---------------------------------------------------------------------------
-
-interface MarkdownTextBubbleProps {
-  text: string
-  isUser: boolean
-}
-
-// Exception #2: React.memo re-render bailout on a hot, list-rendered component
-// (one per text block, re-rendered on every streaming delta).
-const MarkdownTextBubble = memo(function MarkdownTextBubble({
-  text,
-  isUser,
-}: MarkdownTextBubbleProps) {
-  const html = renderMarkdownToHtml(text)
-  // Empty/whitespace-only blocks don't render at all (avoids stray bubbles
-  // around stripped-out tool blocks during streaming).
-  if (!html) return null
-  return (
-    <div
-      className={cn(
-        styles.messageText,
-        isUser ? styles.messageTextUser : styles.messageTextAssistant,
-        styles.markdownText,
-      )}
-      // Safe: sanitised by DOMPurify (via sanitizeRichtext) before reaching here.
-      dangerouslySetInnerHTML={{ __html: html }}
-    />
-  )
-})
 
 // ---------------------------------------------------------------------------
 // Empty state
 // ---------------------------------------------------------------------------
 
-function AgentEmptyState({ mode }: { mode: ComposerLockReason | 'prompt' }) {
+function AgentEmptyState({
+  mode,
+  claudeCliLoggedIn = false,
+}: {
+  mode: ComposerLockReason | 'prompt'
+  /** Claude Code is logged in on this host but has no stored credential yet — a specific, one-step-away state, not a dead end. See `AgentPanel`'s own doc comment on the `claudeCliStatus` fetch. */
+  claudeCliLoggedIn?: boolean
+}) {
   if (mode === 'setup') {
     return (
       <EmptyState
@@ -561,8 +347,10 @@ function AgentEmptyState({ mode }: { mode: ComposerLockReason | 'prompt' }) {
         size="large"
         role="alert"
         icon={<AiSettingsSolidIcon size={34} />}
-        title="Connect an AI provider"
-        description="Add a provider credential, then choose a default model before starting a chat."
+        title={claudeCliLoggedIn ? 'Finish setting up Claude Code' : 'Connect an AI provider'}
+        description={claudeCliLoggedIn
+          ? 'Claude Code is logged in on this device. Add it as a credential in AI settings to start chatting.'
+          : 'Add a provider credential, then choose a default model before starting a chat.'}
         action={<AgentSettingsButton variant="emptyState" label="Open AI settings" />}
       />
     )
@@ -593,12 +381,20 @@ function AgentEmptyState({ mode }: { mode: ComposerLockReason | 'prompt' }) {
   )
 }
 
-function AgentCredentialAlert({ mode }: { mode: ComposerLockReason }) {
+function AgentCredentialAlert({
+  mode,
+  claudeCliLoggedIn = false,
+}: {
+  mode: ComposerLockReason
+  claudeCliLoggedIn?: boolean
+}) {
   return (
     <div role="alert" className={styles.credentialAlert}>
       <p className={styles.credentialAlertText}>
         {mode === 'setup'
-          ? 'No AI provider credentials are configured yet.'
+          ? claudeCliLoggedIn
+            ? 'Claude Code is logged in on this device — add it as a credential in AI settings.'
+            : 'No AI provider credentials are configured yet.'
           : 'Choose a model below, or set a default in AI settings.'}
       </p>
       <AgentSettingsButton

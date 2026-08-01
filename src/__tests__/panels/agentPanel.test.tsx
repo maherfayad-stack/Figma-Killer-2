@@ -304,10 +304,11 @@ describe('AgentPanel', () => {
 
     expect(screen.getByText('No credentials yet')).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Model' })).toBeNull()
-    // Effort and permission-mode configure a session that can't start
+    // Model+effort and permission-mode configure a session that can't start
     // without a credential — they must not render at all, not just disabled.
-    expect(screen.queryByLabelText('Effort')).toBeNull()
-    expect(screen.queryByLabelText('Mode')).toBeNull()
+    // (Effort lives inside the model trigger's own menu, so with no
+    // credentials there is no model trigger at all to open it from.)
+    expect(screen.queryByRole('button', { name: /Permission mode/ })).toBeNull()
   })
 
   it('shows the build prompt when a provider is active (default preloaded)', async () => {
@@ -349,12 +350,11 @@ describe('AgentPanel', () => {
     // independent of credential state.
     expect(screen.getByTestId('agent-settings-header-button')).toBeTruthy()
     expect(screen.getByTestId('agent-new-chat-header-button')).toBeTruthy()
-    // A usable credential exists, so the effort + permission-mode session
-    // controls render above the composer.
+    // A usable credential exists, so the composer's permission-mode trigger
+    // renders (defaulting to "Ask before edits") in the control row.
     await waitFor(() => {
-      expect(screen.getByLabelText('Effort')).toBeTruthy()
+      expect(screen.getByRole('button', { name: 'Permission mode: Ask before edits' })).toBeTruthy()
     })
-    expect(screen.getByLabelText('Mode')).toBeTruthy()
   })
 
   it('autofocuses the composer when the open panel has no focused control', async () => {
