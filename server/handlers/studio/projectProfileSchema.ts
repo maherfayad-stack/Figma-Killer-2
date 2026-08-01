@@ -165,8 +165,18 @@ export const ProjectProfileSchema = Type.Object({
   styleToolchain: StyleToolchainSchema,
   /** Dependency names whose entry `.d.ts` exports a PascalCase React-component-shaped declaration. */
   componentPackages: Type.Array(Type.String()),
-  /** WS-10 Phase 1 — see `ColorSchemeCapabilitySchema` above. */
-  colorScheme: ColorSchemeCapabilitySchema,
+  /**
+   * WS-10 Phase 1 — see `ColorSchemeCapabilitySchema` above. **Optional, and it
+   * must stay that way.** `.studio/meta.json` is user data written by whatever
+   * version of Studio last probed the project, and `readStudioMeta` soft-falls
+   * back to `{}` on a validation failure rather than throwing. So a REQUIRED
+   * field added here does not surface as an error — it silently drops the whole
+   * `profile`, taking `pagesDir` with it, and the project loads zero pages. That
+   * is exactly what shipping this as required did to every project imported
+   * before WS-10. `undefined` means "probed by an older Studio, or not probed
+   * yet"; consumers already treat that as unknown (`previewAxesCapability.ts`).
+   */
+  colorScheme: Type.Optional(ColorSchemeCapabilitySchema),
   /** WS-10 §4.1 — see `LocalesCapabilitySchema` above. `undefined` when the probe found no locale dictionary. */
   locales: Type.Optional(LocalesCapabilitySchema),
   /** tsconfig `paths` merged UNDER vite `resolve.alias` (vite wins on key collision). */

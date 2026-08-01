@@ -79,7 +79,10 @@ export type LocalesCapability = Static<typeof LocalesCapabilitySchema>
 
 const ProbeResponseSchema = Type.Object({
   profile: Type.Object({
-    colorScheme: ColorSchemeCapabilitySchema,
+    // Optional for the same reason it is optional on the persisted profile: a
+    // project probed by an older Studio has no `colorScheme` at all, and a
+    // required field here would fail the whole probe response.
+    colorScheme: Type.Optional(ColorSchemeCapabilitySchema),
     locales: Type.Optional(LocalesCapabilitySchema),
   }),
 })
@@ -120,7 +123,7 @@ export async function refreshPreviewCapabilities(dir: string): Promise<void> {
       schema: ProbeResponseSchema,
       query: { dir },
     })
-    colorSchemeCapability = profile.colorScheme
+    colorSchemeCapability = profile.colorScheme ?? null
     localesCapability = profile.locales ?? null
   } catch (err) {
     console.error('[previewAxesCapability] failed to probe preview capabilities:', err)

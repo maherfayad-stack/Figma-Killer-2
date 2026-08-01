@@ -715,3 +715,53 @@ describe('tryServeStudioProbe', () => {
     expect((onDisk.profile as ProjectProfile).framework).toBe('cra')
   })
 })
+
+/**
+ * A `.studio/meta.json` is user data written by whatever Studio version last
+ * probed the project, and `readStudioMeta` soft-falls back to `{}` rather than
+ * throwing. So a newly-REQUIRED profile field does not fail loudly — it drops
+ * the entire `profile`, taking `pagesDir` with it, and the board silently loads
+ * zero pages. WS-10 Phase 1 shipped `colorScheme` required and did exactly that
+ * to every project imported before it. These tests are the gate.
+ */
+describe('readStudioMeta — forward compatibility with older meta.json files', () => {
+  it('keeps the profile (and pagesDir) when a newer optional field is absent', () => {
+    // Deliberately hand-written in the pre-WS-10 shape: no colorScheme, no locales.
+    fs.mkdirSync(path.join(tmpDir, '.studio'), { recursive: true })
+    fs.writeFileSync(
+      path.join(tmpDir, '.studio', 'meta.json'),
+      JSON.stringify({
+        displayName: 'Legacy',
+        profile: {
+          framework: 'vite',
+          appRoot: 'app',
+          pagesDir: 'app/src/screens',
+          routeStyle: 'flat',
+          entryFiles: ['app/src/main.jsx'],
+          packageManager: 'npm',
+          styleToolchain: { tailwind: null, cssModules: false, sass: false, postcssConfigPath: null, cssInJs: null },
+          componentPackages: [],
+          aliases: {},
+          warnings: [],
+        },
+      }),
+    )
+
+    const meta = readStudioMeta(tmpDir)
+    expect(meta.displayName).toBe('Legacy')
+    expect(meta.profile).toBeDefined()
+    expect((meta.profile as ProjectProfile).pagesDir).toBe('app/src/screens')
+    expect((meta.profile as ProjectProfile).colorScheme).toBeUndefined()
+  })
+
+  it('drops only unknown junk, never a profile that is merely older', () => {
+    fs.mkdirSync(path.join(tmpDir, '.studio'), { recursive: true })
+    fs.writeFileSync(
+      path.join(tmpDir, '.studio', 'meta.json'),
+      JSON.stringify({ displayName: 'Junk', profile: { framework: 'not-a-framework' } }),
+    )
+    // A genuinely invalid profile SHOULD be dropped — that is the soft fallback
+    // working as designed. The bug was dropping a VALID older one.
+    expect(readStudioMeta(tmpDir).profile).toBeUndefined()
+  })
+})
