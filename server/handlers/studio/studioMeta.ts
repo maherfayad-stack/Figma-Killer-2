@@ -57,6 +57,22 @@ const FrameDefaultsSchema = Type.Object({
 })
 
 /**
+ * WS-12 §5.1 — session controls that persist PER PROJECT, so reopening a
+ * project restores the reasoning effort you were using. `mode`
+ * (`--permission-mode`) is the ONE control in §5.1's list that is
+ * DELIBERATELY absent here and always will be — D5 §11.5's Bypass guard
+ * rail is "it never persists", and that only holds if there is nowhere for
+ * it to be written in the first place. Model selection already persists
+ * through the existing credential/model-default mechanism, not this file.
+ */
+const AgentSessionSchema = Type.Object({
+  effort: Type.Optional(Type.Union([
+    Type.Literal('low'), Type.Literal('medium'), Type.Literal('high'), Type.Literal('xhigh'), Type.Literal('max'),
+  ])),
+})
+export type AgentSession = Static<typeof AgentSessionSchema>
+
+/**
  * WS-10 Phase 1/3 — the board-global preview axes a user has explicitly set,
  * persisted per project (D5: "Axes persist PER PROJECT in .studio/meta.json").
  * Every field optional so a project that never touched a toggle keeps opening
@@ -114,6 +130,8 @@ export const StudioMetaSchema = Type.Object({
   paletteHiddenModuleIds: Type.Optional(Type.Array(Type.String())),
   /** WS-10 Phase 1 — see `PersistedPreviewAxesSchema` above. */
   previewAxes: Type.Optional(PersistedPreviewAxesSchema),
+  /** WS-12 §5.1 — see `AgentSessionSchema` above. */
+  agentSession: Type.Optional(AgentSessionSchema),
 })
 export type StudioMeta = Static<typeof StudioMetaSchema>
 

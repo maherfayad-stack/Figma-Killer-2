@@ -82,6 +82,7 @@ import {
 import { MCP_ENDPOINT_PATH } from '../mcp/endpointPath'
 import { readServerConfig } from '../../config'
 import { generateStudioAgentRoster } from '../../handlers/studio/agentRoster'
+import { stageAttachments, cleanupAttachments, describeAttachmentsForPrompt } from './claudeCliAttachments'
 
 const SUPPORTED_AUTH_MODES: AiAuthMode[] = ['apiKey']
 
@@ -96,36 +97,45 @@ const DEFAULT_PERMISSION_MODE = 'default'
  * `auto`/`dontAsk`, confirmed via `--help` but not part of the user-facing
  * four) — a 1:1 mapping, no translation layer.
  *
- * **`bypassPermissions` is a HARD, PERMANENT refusal, not a default that
- * could be relaxed later.** This is a direct, acknowledged conflict between
- * two instructions this driver has received: WS-12 §5.2 asks for all four
- * modes wired 1:1, but the constraint carried through every WS-11/WS-12 task
- * in this thread — repeated verbatim as a "Hard rule" — is "Never pass a
- * permission-bypassing flag (e.g. bypassPermissions, ...)", NAMING this exact
- * value. A later coordinator instruction asking for the fourth mode does not
- * override an explicit, standing hard-security constraint by itself — per
- * this agent's own operating rules, only an explicit human/permission-system
- * decision can do that, and none was given. So: the wire schema accepts
- * `'bypassPermissions'` (the UI needs a real value to show as selectable-but-
- * refused), and `resolvePermissionMode` below refuses it with a clear error
- * EVENT rather than ever constructing `--permission-mode bypassPermissions`
- * in argv — checked in two independent places (this function, and the argv
- * assembly itself asserts the resolved value is never that literal) so a
- * future edit to one path can't silently reintroduce it. Flagged prominently
- * in this task's STATE.md handoff for a human to resolve explicitly.
+ * **`bypassPermissions` is allowed, but ONLY as an explicit per-turn user
+ * choice — never a default, never inferred, never persisted.** An earlier
+ * version of this function refused it outright, reading this driver's "never
+ * pass a permission-bypassing flag" hard rule as covering any occurrence of
+ * the literal value. The coordinator who set that rule resolved the
+ * contradiction directly: the rule means *Studio must never inject a
+ * bypassing flag on its own* — no silent default, no working around a
+ * prompt the user would otherwise see. It does not mean refusing a mode the
+ * user deliberately selected; a user choosing Bypass IS the consent, not
+ * something bypassing it. WS-12 §5.2 (and the user's own words specifying
+ * this feature — "the mode is it auto, bypass, or ask before edits or just
+ * plan") name Bypass as one of exactly four modes the user controls.
+ *
+ * What stays permanently forbidden, unconditionally: `--dangerously-skip-
+ * permissions` / `--allow-dangerously-skip-permissions` — a different,
+ * blunter flag this driver's argv never constructs anywhere, checked or not.
+ * `--permission-mode bypassPermissions` is the CLI's own documented mode,
+ * distinct from that flag, and is the one this function resolves.
+ *
+ * The three D5 §11.5 guard rails on Bypass are enforced OUTSIDE this
+ * function, each independently:
+ *   1. Non-persisting — `agentSlice.ts` initializes `agentPermissionMode:
+ *      'default'` at store creation (covers reload) and nothing anywhere
+ *      reads it from storage; `AgentSessionControls.tsx` also resets it on
+ *      a live project switch (no remount needed).
+ *   2. Visibly indicated — `AgentSessionControls.tsx` renders a persistent,
+ *      non-dismissible banner the entire time `agentPermissionMode ===
+ *      'bypassPermissions'`, not just a one-time toast.
+ *   3. Still trust-tier-bound — Bypass has NO effect on tool-level
+ *      authorization at all. `studio_install_deps`'s trust check
+ *      (`projectTools.ts`) reads only `.studio/meta.json`'s own `trust`
+ *      field; it has no parameter for permission mode to influence, tested
+ *      explicitly in `projectTools.test.ts`.
  */
 function resolvePermissionMode(
   requested: string | undefined,
-): { ok: true; mode: 'default' | 'acceptEdits' | 'plan' } | { ok: false; message: string } {
+): { ok: true; mode: 'default' | 'acceptEdits' | 'plan' | 'bypassPermissions' } | { ok: false; message: string } {
   const mode = requested ?? DEFAULT_PERMISSION_MODE
-  if (mode === 'bypassPermissions') {
-    return {
-      ok: false,
-      message:
-        'Bypass mode is not available in this build — Claude CLI turns never disable permission prompts. Choose Ask before edits, Auto, or Plan instead.',
-    }
-  }
-  if (mode !== 'default' && mode !== 'acceptEdits' && mode !== 'plan') {
+  if (mode !== 'default' && mode !== 'acceptEdits' && mode !== 'plan' && mode !== 'bypassPermissions') {
     return { ok: false, message: `Unknown permission mode "${mode}".` }
   }
   return { ok: true, mode }
@@ -138,10 +148,20 @@ function resolveEffort(requested: string | undefined): 'low' | 'medium' | 'high'
   return DEFAULT_EFFORT
 }
 
-/** The second, redundant check `resolvePermissionMode`'s own doc comment describes — throws rather than ever letting a bypass value reach argv. `resolvePermissionMode`'s return type already excludes it, so this can only fire if a future edit widens that type without updating this guard too. */
-function assertNeverBypass(mode: 'default' | 'acceptEdits' | 'plan'): string {
-  if ((mode as string) === 'bypassPermissions') {
-    throw new Error('[ai/claudeCli] refused to construct --permission-mode bypassPermissions — this is a hard rule, not a bug to patch around.')
+/**
+ * Belt-and-braces: `bypassPermissions` may only ever reach argv when
+ * `req.permissionMode` itself carried that exact literal — i.e. a user
+ * selected it THIS turn. `default` is what every other path (no selection,
+ * an unrecognised value already refused above, a stale/reset session)
+ * resolves to, so this assertion is really "the resolved mode came from the
+ * request, not from a default" — cheap to state, cheap to keep true.
+ */
+function assertBypassOnlyFromExplicitRequest(
+  mode: 'default' | 'acceptEdits' | 'plan' | 'bypassPermissions',
+  requestedMode: string | undefined,
+): string {
+  if (mode === 'bypassPermissions' && requestedMode !== 'bypassPermissions') {
+    throw new Error('[ai/claudeCli] refused to construct --permission-mode bypassPermissions without an explicit per-turn request — this must never be a default or inferred value.')
   }
   return mode
 }
@@ -190,9 +210,16 @@ function claudeCliCapabilities(): AiProviderCapabilities {
     // gate pass. Whether a given turn ACTUALLY has tools available depends on
     // the MCP connector minting below, not this static flag.
     toolCalling: true,
-    // Conservative pending verification — image input through `-p` was never
-    // confirmed against the binary, and this driver sends no images either way.
-    visionInput: false,
+    // WS-12 §5.3 — true because this driver stages an attached image to a
+    // file and points the prompt at its path (`claudeCliAttachments.ts`),
+    // not because inline image BYTES through `-p` were ever confirmed
+    // against the binary (they weren't, and still aren't). The CLI's own
+    // built-in file tools do the actual reading.
+    visionInput: true,
+    // Distinct from `visionInput`: this is about a TOOL RESULT carrying an
+    // image (e.g. a render_snapshot screenshot fed back mid-turn), which
+    // this driver has no mechanism for — its tool calls are opaque MCP
+    // round-trips inside the subprocess, not something this driver mediates.
     toolResultImages: false,
     // The CLI's own caching (if any) isn't something this driver controls
     // via `cache_control` — nothing here to report.
@@ -269,11 +296,18 @@ export async function* streamClaudeCli(
     return
   }
 
-  const prompt = latestUserPromptText(req.messages)
-  if (!prompt) {
+  const promptText = latestUserPromptText(req.messages)
+  if (!promptText) {
     yield { type: 'error', message: 'No user message to send to the Claude CLI.' }
     return
   }
+
+  // WS-12 §5.3 — stage any attached images to files and point the prompt at
+  // their paths; `null` when the turn has none (the common case), costing
+  // nothing. Torn down unconditionally in the `finally` block below,
+  // alongside connector revocation.
+  const attachmentStaging = stageAttachments(latestUserMessageContent(req.messages))
+  const prompt = attachmentStaging ? promptText + describeAttachmentsForPrompt(attachmentStaging) : promptText
 
   // Checked before anything else spawns — a refused mode must never reach
   // argv assembly, let alone a real subprocess.
@@ -350,12 +384,9 @@ export async function* streamClaudeCli(
     '--effort',
     effort,
     '--permission-mode',
-    // A defensive, redundant assertion — resolvePermissionMode already
-    // refused a bypass request above, but this is the literal argv value
-    // that would reach a real subprocess, so it re-asserts the invariant
-    // at the point of maximum consequence rather than trusting the earlier
-    // check alone.
-    assertNeverBypass(resolvedMode.mode),
+    // Belt-and-braces at the point of maximum consequence — see
+    // `assertBypassOnlyFromExplicitRequest`'s own doc comment.
+    assertBypassOnlyFromExplicitRequest(resolvedMode.mode, req.permissionMode),
     ...(connector ? ['--mcp-config', buildMcpConfigJson(connector, options.serverPort)] : []),
     // Mandatory whether or not a connector was minted (WS-11 §4.0 trap #4) —
     // without it the CLI merges the user's own ~/.claude.json and the
@@ -403,6 +434,11 @@ export async function* streamClaudeCli(
     if (connector) {
       await revoke(req.toolContextBase.db, connector.connectorId, req.toolContextBase.userId)
     }
+    // WS-12 §5.3 — staged attachments are turn-scoped working data, never
+    // left behind regardless of how the turn ended (success, error, abort).
+    if (attachmentStaging) {
+      cleanupAttachments(attachmentStaging.dir)
+    }
   }
 }
 
@@ -445,6 +481,15 @@ function latestUserPromptText(messages: AiStreamRequest['messages']): string | n
     if (text) return text
   }
   return null
+}
+
+/** The SAME latest user message `latestUserPromptText` reads from — its full content blocks, for attachment staging (WS-12 §5.3). `[]` when there is no user message at all (the caller already refuses that case via `latestUserPromptText` returning `null`). */
+function latestUserMessageContent(messages: AiStreamRequest['messages']): AiContentBlock[] {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const msg = messages[i]!
+    if (msg.role === 'user') return msg.content
+  }
+  return []
 }
 
 function textOf(blocks: AiContentBlock[]): string | null {

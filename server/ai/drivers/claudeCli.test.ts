@@ -5,7 +5,7 @@
  * database). Fixtures use the exact CLI event shapes WS-11 §4.0 verified.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AiMessage } from '../runtime/types'
@@ -62,6 +62,19 @@ function fakeCliSpawn(opts: FakeCliOptions): SubprocessSpawnFn {
 
 function userMessage(text: string): AiMessage {
   return { role: 'user', content: [{ kind: 'text', text }] }
+}
+
+const ONE_PIXEL_PNG_BASE64 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
+
+function userMessageWithImage(text: string): AiMessage {
+  return {
+    role: 'user',
+    content: [
+      { kind: 'text', text },
+      { kind: 'image', mimeType: 'image/png', data: ONE_PIXEL_PNG_BASE64 },
+    ],
+  }
 }
 
 function credentials(apiKey: string | null): AiResolvedCredential {
@@ -371,20 +384,7 @@ describe('streamClaudeCli — session controls (WS-12 §5)', () => {
     }
   })
 
-  it('REFUSES bypassPermissions — never spawns, never constructs --permission-mode bypassPermissions', async () => {
-    let spawnCalled = false
-    const spawn = fakeCliSpawn({
-      stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
-      onSpawn: () => { spawnCalled = true },
-    })
-    const events = await collect(baseRequest({ permissionMode: 'bypassPermissions' }), testOptions({ spawn }))
-    expect(spawnCalled).toBe(false)
-    expect(events).toHaveLength(1)
-    expect(events[0]).toMatchObject({ type: 'error' })
-    expect((events[0] as { message: string }).message).toContain('Bypass mode is not available')
-  })
-
-  it('rejects an unrecognised permission mode the same way — refuses, never spawns', async () => {
+  it('rejects an unrecognised permission mode — refuses, never spawns', async () => {
     let spawnCalled = false
     const spawn = fakeCliSpawn({
       stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
@@ -396,6 +396,43 @@ describe('streamClaudeCli — session controls (WS-12 §5)', () => {
     )
     expect(spawnCalled).toBe(false)
     expect(events[0]).toMatchObject({ type: 'error' })
+  })
+
+  // ── Bypass mode (WS-12 §5.2, D5 §11.5) — resolved: a user-selected mode ──
+  // ── IS the consent; only a Studio-injected default/inference is forbidden.
+  describe('bypassPermissions', () => {
+    it('IS forwarded when the request explicitly names it — a deliberate user choice, not a Studio default', async () => {
+      let capturedArgv: string[] = []
+      const spawn = fakeCliSpawn({
+        stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
+        onSpawn: (argv) => { capturedArgv = argv },
+      })
+      const events = await collect(baseRequest({ permissionMode: 'bypassPermissions' }), testOptions({ spawn }))
+      expect(capturedArgv[capturedArgv.indexOf('--permission-mode') + 1]).toBe('bypassPermissions')
+      expect(events.some((e) => e.type === 'error')).toBe(false)
+    })
+
+    it('never appears in argv when the request is empty — the default resolves to "default", never inferred as bypass', async () => {
+      let capturedArgv: string[] = []
+      const spawn = fakeCliSpawn({
+        stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
+        onSpawn: (argv) => { capturedArgv = argv },
+      })
+      await collect(baseRequest(), testOptions({ spawn }))
+      expect(capturedArgv[capturedArgv.indexOf('--permission-mode') + 1]).toBe('default')
+      expect(capturedArgv).not.toContain('bypassPermissions')
+    })
+
+    it('--dangerously-skip-permissions is never constructed by this driver, under any request shape — a different, still-forbidden flag', async () => {
+      let capturedArgv: string[] = []
+      const spawn = fakeCliSpawn({
+        stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
+        onSpawn: (argv) => { capturedArgv = argv },
+      })
+      await collect(baseRequest({ permissionMode: 'bypassPermissions' }), testOptions({ spawn }))
+      expect(capturedArgv).not.toContain('--dangerously-skip-permissions')
+      expect(capturedArgv).not.toContain('--allow-dangerously-skip-permissions')
+    })
   })
 })
 
@@ -536,6 +573,52 @@ describe('streamClaudeCli — prompt assembly', () => {
       messages: [userMessage('first'), userMessage('second'), userMessage('third')],
     }), testOptions({ spawn }))
     expect(capturedArgv[2]).toBe('third')
+  })
+})
+
+describe('streamClaudeCli — attachments (WS-12 §5.3)', () => {
+  it('stages an attached image to a real file and appends its path to the prompt', async () => {
+    let capturedArgv: string[] = []
+    // Existence is checked INSIDE onSpawn — the driver's own `finally` block
+    // deletes the staged file once `collect()` resolves, so checking after
+    // the fact would always see it already cleaned up.
+    let existedAtSpawnTime = false
+    const spawn = fakeCliSpawn({
+      stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
+      onSpawn: (argv) => {
+        capturedArgv = argv
+        const match = argv[2]?.match(/Attached image file\(s\).*?: (.+attachment-1\.png)/)
+        existedAtSpawnTime = Boolean(match?.[1] && existsSync(match[1]))
+      },
+    })
+    await collect(baseRequest({ messages: [userMessageWithImage('describe this')] }), testOptions({ spawn }))
+    expect(capturedArgv[2]).toContain('describe this')
+    expect(capturedArgv[2]).toContain('Attached image file(s)')
+    expect(existedAtSpawnTime).toBe(true)
+  })
+
+  it('cleans up the staged file after the turn ends', async () => {
+    let stagedDir: string | undefined
+    const spawn = fakeCliSpawn({
+      stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
+      onSpawn: (argv) => {
+        const match = argv[2]?.match(/: (.+)attachment-1\.png/)
+        stagedDir = match?.[1]
+      },
+    })
+    await collect(baseRequest({ messages: [userMessageWithImage('describe this')] }), testOptions({ spawn }))
+    expect(stagedDir).toBeDefined()
+    expect(existsSync(stagedDir!)).toBe(false)
+  })
+
+  it('a text-only turn stages nothing and does not touch the prompt', async () => {
+    let capturedArgv: string[] = []
+    const spawn = fakeCliSpawn({
+      stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
+      onSpawn: (argv) => { capturedArgv = argv },
+    })
+    await collect(baseRequest({ messages: [userMessage('just text')] }), testOptions({ spawn }))
+    expect(capturedArgv[2]).toBe('just text')
   })
 })
 

@@ -136,9 +136,10 @@ export interface AiStreamRequest {
   /**
    * WS-12 §5 session controls — `claudeCli` only, every other driver ignores
    * both. Map 1:1 onto the CLI's own confirmed `--effort`/`--permission-mode`
-   * flags. `permissionMode === 'bypassPermissions'` is a real, selectable
-   * wire value (the UI needs one to refuse), but `claudeCli.ts` never forwards
-   * it to the subprocess — see that file's doc comment.
+   * flags. `permissionMode === 'bypassPermissions'` IS forwarded — but only
+   * when the caller explicitly set this field to that value; `claudeCli.ts`'s
+   * own default never resolves to it. See that file's `resolvePermissionMode`
+   * doc comment for the full D5 §11.5 guard-rail reasoning.
    */
   readonly effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max'
   readonly permissionMode?: 'default' | 'acceptEdits' | 'plan' | 'bypassPermissions'

@@ -73,11 +73,12 @@ export const AiChatRequestBodySchema = Type.Object(
      * driver (they have no equivalent knob). Both map 1:1 onto the CLI's own
      * confirmed flags (`--effort`, `--permission-mode`), no translation layer.
      *
-     * `'bypassPermissions'` is accepted by the WIRE SCHEMA (the UI control
-     * needs to be able to name it, and the client-side refusal needs a real
-     * value to refuse) but `claudeCli.ts` NEVER forwards it to the actual
-     * subprocess — see that file's own doc comment for why this is a hard
-     * rule, not a default that could be relaxed later.
+     * `'bypassPermissions'` is a real, forwardable mode (WS-12 §5.2, D5
+     * §11.5) — but ONLY as an explicit per-turn user choice. It is never the
+     * default this field falls back to when omitted, and Studio never infers
+     * or persists it — see `claudeCli.ts`'s `resolvePermissionMode` doc
+     * comment for the full reasoning and the belt-and-braces that enforces
+     * this at the point the flag would actually reach a subprocess.
      */
     effort: Type.Optional(Type.Union([
       Type.Literal('low'), Type.Literal('medium'), Type.Literal('high'), Type.Literal('xhigh'), Type.Literal('max'),

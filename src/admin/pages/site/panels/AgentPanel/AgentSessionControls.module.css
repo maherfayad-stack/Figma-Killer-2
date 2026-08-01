@@ -1,5 +1,10 @@
 .root {
     display: flex;
+    flex-direction: column;
+}
+
+.controls {
+    display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: var(--space-s);
@@ -20,11 +25,16 @@
     letter-spacing: 0.04em;
 }
 
-/* Real, security-relevant state — earns the danger token, not decorative. */
-.bypassWarning {
-    flex-basis: 100%;
+/* D5 §11.5 rail 2 — a persistent, FILLED banner (not just colored text) so
+   Bypass being active is visible without looking for it, for as long as it
+   stays on. Real, security-relevant state — earns the danger token. */
+.bypassBanner {
     margin: 0;
-    color: var(--danger);
+    padding: var(--space-xs) var(--space-m);
+    background: var(--danger);
+    color: var(--bg-surface);
     font-size: var(--text-2xs);
+    font-weight: 700;
     line-height: 1.4;
+    text-align: center;
 }

@@ -164,6 +164,55 @@ export async function fetchStudioDefault(
   }
 }
 
+// ---------------------------------------------------------------------------
+// Studio agent session persistence (WS-12 §5.1) — effort only. `mode` is
+// deliberately never sent here at all — see `studioAgentSession.ts`'s own
+// doc comment for why Bypass's "never persists" rail requires there be
+// nowhere to write it, not just a client that chooses not to.
+// ---------------------------------------------------------------------------
+
+const STUDIO_SESSION_PATH = '/admin/api/ai/studio-session'
+const EffortValueSchema = Type.Union([
+  Type.Literal('low'), Type.Literal('medium'), Type.Literal('high'), Type.Literal('xhigh'), Type.Literal('max'),
+])
+const StudioSessionResponseSchema = Type.Object({ effort: Type.Union([EffortValueSchema, Type.Null()]) })
+
+/** Soft fetch, matching `fetchStudioDefault`'s posture: any failure just means "no persisted effort yet". */
+export async function fetchStudioAgentEffort(
+  dir: string,
+  signal?: AbortSignal,
+): Promise<Static<typeof EffortValueSchema> | null> {
+  try {
+    const body = await apiRequest(STUDIO_SESSION_PATH, {
+      query: { dir },
+      schema: StudioSessionResponseSchema,
+      signal,
+    })
+    return body.effort
+  } catch (err) {
+    if (signal?.aborted || isAbortError(err)) throw err
+    console.error('[AgentSlice] Failed to fetch the persisted studio session effort:', err)
+    return null
+  }
+}
+
+export async function persistStudioAgentEffort(
+  dir: string,
+  effort: Static<typeof EffortValueSchema> | null,
+): Promise<void> {
+  try {
+    await apiRequest(STUDIO_SESSION_PATH, {
+      method: 'POST',
+      body: { dir, effort },
+      schema: StudioSessionResponseSchema,
+    })
+  } catch (err) {
+    // Best-effort — a failed persist just means the next reopen falls back
+    // to the server default, not a broken send.
+    console.error('[AgentSlice] Failed to persist the studio session effort:', err)
+  }
+}
+
 const CreatedConversationEnvelopeSchema = Type.Object(
   { conversation: Type.Object({ id: Type.String() }) },
   { additionalProperties: true },

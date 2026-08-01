@@ -318,6 +318,36 @@ Every agent's `tools:` frontmatter is **explicit and non-empty-or-omitted** — 
    ```
    All nine generated agents resolved by name, additively alongside the CLI's own five built-ins — confirming both "the roster generates correctly" and "generation merges rather than replaces", against a real `claude agents` run, zero cost.
 
+### Session controls — model, effort, mode, attachments (WS-12 §5)
+
+**Model** — `ModelPicker.tsx`, populated live from each provider (no hardcoded list). **Effort** and **mode** are `AgentSessionControls.tsx`, above the composer: `--effort` (`low|medium|high|xhigh|max`) and `--permission-mode` (`default|acceptEdits|plan|bypassPermissions`), both request-driven end to end (`chatRequest.ts` → `AiStreamRequest` → `claudeCli.ts`'s argv), request-body fields every non-`claudeCli` driver ignores.
+
+**Bypass mode is real, resolved from an earlier, mistaken refusal.** An initial pass refused `bypassPermissions` outright, reading this driver's "never pass a permission-bypassing flag" rule as covering the literal value under any circumstance. The coordinator who set that rule resolved the contradiction directly: the rule means Studio must never INJECT a bypassing flag on its own — no silent default, no working around a prompt the user would otherwise see. A user deliberately selecting Bypass IS the consent, not something that rule forbids. `--dangerously-skip-permissions`/`--allow-dangerously-skip-permissions` (a different, blunter flag) remain permanently, unconditionally forbidden — this driver's argv never constructs either, checked or not.
+
+D5 §11.5's three guard rails, each owned by exactly one piece of code, each independently tested:
+
+1. **Non-persisting** — `agentSlice.ts` initializes `agentPermissionMode: 'default'` at store creation (covers reload); `AgentSessionControls.tsx` also resets it on a live Studio-project switch via a `useAdminUi` effect (covers switching without a remount). Nothing anywhere reads or writes it to storage — `.studio/meta.json`'s `agentSession` schema has no field for it at all, so there is nowhere to persist it even by accident.
+2. **Visibly indicated while active** — a persistent, filled banner (not a one-time toast) renders directly above the composer for the entire time `agentPermissionMode === 'bypassPermissions'`.
+3. **Still trust-tier-bound** — Bypass has zero effect on tool-level authorization. `studio_install_deps`'s trust check (`projectTools.ts`) reads only `.studio/meta.json`'s `trust` field; the tool call has no permission-mode parameter for a mode to influence in the first place. Tested explicitly (`projectTools.test.ts`): a tool call carrying `permissionMode: 'bypassPermissions'` in its input is refused at Tier 0 exactly the same as one that doesn't.
+
+`resolvePermissionMode` (`claudeCli.ts`) resolves the request; a second, independent `assertBypassOnlyFromExplicitRequest` sits at the literal argv-construction site and throws if `bypassPermissions` would ever reach argv WITHOUT the original request itself having named it — belt-and-braces against a future default/inference path reintroducing it silently.
+
+**Effort persists per project** (D5) — `.studio/meta.json`'s `agentSession.effort`, round-tripped through `GET/POST /admin/api/ai/studio-session` (`server/ai/handlers/studioAgentSession.ts` — lives under `server/ai/handlers/`, not `server/handlers/studio/`, specifically so it needs no change to `studio.ts`'s own sub-router array). Mode is never accepted by this route's request schema at all — the same "nowhere to write it" enforcement as the store-level rail above.
+
+**Attachments — images route to the CLI by staged file path** (`claudeCliDriver`'s `visionInput` capability flipped to `true`). There is no confirmed `-p` mechanism for inline image bytes (`--input-format stream-json`'s stdin shape remains unverified, per WS-11's own finding), so `claudeCliAttachments.ts` writes each attached image to a fresh, turn-scoped temp directory and appends its absolute path to the prompt text — the CLI's own built-in Read tool (the top-level session is never `--tools`-restricted, unlike the generated subagents) does the actual reading. The staging directory is torn down unconditionally in the driver's own `finally` block, alongside MCP connector revocation. **File attachments (non-image) are not yet built** — the panel has no file-picker UI at all today, and passing one through needs a new `AiContentBlock` kind, a shared schema change this task did not make; `claudeCliAttachments.ts`'s staging mechanism itself is already generic enough to extend once that kind exists. **The reasoning/thinking block (§5.4) is also not yet built** — verifying the stream-json event shape the CLI emits for it needs either documentation this task didn't have or a real paid turn, which test discipline forbids; not fabricated.
+
+### Canvas parity matrix (WS-12 §6.1/§9)
+
+`server/ai/tools/studio/parityMatrix.ts` is the enforcement mechanism for "the agent can do what you can do in the canvas" — not documentation. Every real editor action resolves to exactly one status: a real tool (name-checked against the live registry), an explicitly withheld action (a stated reason — undo/redo, viewport pan/zoom, trust promotion, project deletion, a shell tool, a raw file-overwrite), or a confirmed gap. `parityMatrix.test.ts` gates all of it, including the inverse direction (every registered mutating tool is referenced by at least one row — an orphaned tool is itself a finding).
+
+**Three confirmed gaps, checked against the actual current code, not carried over from the WS-12 planning doc's own (now-stale) table:**
+
+| Editor action | Where it's real | Gap |
+|---|---|---|
+| Upload a new image asset into the project | `POST /admin/api/studio/asset-upload` (`assetUpload.ts`) — the real write, with sniffed magic-number validation | No tool wraps it. An agent can only repoint an EXISTING import (`kind: 'asset'`), never land a brand-new file. |
+| Set a board frame's preview axes (direction/locale/color-scheme) | `EditorStore.setFrameAxes` (`boardSlice.ts`) — real, live | No tool reaches it. An agent cannot make "show this screen in Arabic" stick to a specific frame. |
+| Duplicate a board frame as a variant | `EditorStore.duplicateFrameAsVariant` (same file) — real, live | No tool reaches it. An agent cannot create an RTL/dark variant of an existing screen on the board. |
+
 ---
 
 ## Flow

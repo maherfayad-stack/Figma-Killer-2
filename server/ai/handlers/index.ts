@@ -18,6 +18,7 @@ import { tryHandleAiConversations } from './conversations'
 import { tryHandleAiDefaults } from './defaults'
 import { tryHandleAiModels } from './models'
 import { tryHandleAiClaudeCliStatus } from './claudeCliStatus'
+import { tryHandleAiStudioAgentSession } from './studioAgentSession'
 import { tryHandleAiMcpConnectors } from '../mcp/handlers/connectors'
 import { tryHandleAiEditorBridge } from '../mcp/handlers/editorBridge'
 
@@ -49,6 +50,7 @@ export function tryHandleAi(
     tryHandleAiConversations(req, db, url, pathname) ??
     tryHandleAiDefaults(req, db, pathname) ??
     tryHandleAiClaudeCliStatus(req, db, pathname) ??
+    tryHandleAiStudioAgentSession(req, db, pathname) ??
     tryHandleAiModels(req, db, url, pathname)
   )
 }
