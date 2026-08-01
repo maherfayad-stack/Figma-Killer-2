@@ -18,6 +18,7 @@ import { resolveProjectDir } from '../../../../handlers/studioProjects'
 import { resolveProjectProfile } from '../../../../handlers/studio/projectProbe'
 import { loadStudioPages } from '../../../../handlers/studioPageLoad'
 import { PARSER_FIDELITY_CODES, probeWarningToFinding } from './fidelityCodes'
+import { findPhysicalPropertiesOnNode } from './rtlPhysicalPropertyScan'
 
 const MAX_FINDINGS_PER_PAGE = 100
 
@@ -98,7 +99,7 @@ export const studioFidelityReportTool: AiTool = {
     const profile = resolveProjectProfile(dir)
     const projectFindings = profile.warnings.map(probeWarningToFinding)
 
-    const { pages } = await loadStudioPages(dir)
+    const { pages, styleRules } = await loadStudioPages(dir)
     const targetPages = pageId ? pages.filter((p) => p.id === pageId) : pages
 
     const pageReports = targetPages.map((page) => {
@@ -165,6 +166,27 @@ export const studioFidelityReportTool: AiTool = {
               fix: def?.fix ?? '',
               impact: def?.impact ?? '',
             })
+          }
+        }
+
+        // WS-10 §2.3 — physical-direction CSS on a node's own class rules.
+        // Informational, not a lock: the RTL preview does not correct this,
+        // it reports it (see `RTL_PHYSICAL_PROPERTY`'s own doc).
+        if (node.classIds && node.classIds.length > 0) {
+          const physicalProps = findPhysicalPropertiesOnNode(node.classIds, styleRules)
+          if (physicalProps.length > 0) {
+            findingCounts.RTL_PHYSICAL_PROPERTY = (findingCounts.RTL_PHYSICAL_PROPERTY ?? 0) + 1
+            if (findings.length < cap) {
+              const def = codeDefFor('RTL_PHYSICAL_PROPERTY')
+              findings.push({
+                code: 'RTL_PHYSICAL_PROPERTY',
+                nodeId,
+                ...locFields,
+                message: `${def?.title ?? 'RTL_PHYSICAL_PROPERTY'}: ${physicalProps.join(', ')}.`,
+                fix: def?.fix ?? '',
+                impact: def?.impact ?? '',
+              })
+            }
           }
         }
       }

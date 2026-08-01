@@ -38,6 +38,10 @@
  * `ClassStyleInjector`/`UserStylesheetInjector`. It's real page CSS, not
  * editor-only chrome, so live mode needs it exactly as a design frame does.
  * Only `CanvasAnimationInjector`/`CanvasScrollUnrollInjector` are design-only.
+ *
+ * WS-10 Phase 1 — a package's own `prefers-color-scheme` media query (many
+ * design systems ship one) is rewritten the same way `UserStylesheetInjector`
+ * rewrites the project's own CSS — see `darkSchemeCssTransform.ts`.
  */
 import { useEffect, useSyncExternalStore } from 'react'
 // Vite `?inline` yields the processed CSS as a default string export. This is
@@ -46,6 +50,7 @@ import { useEffect, useSyncExternalStore } from 'react'
 import almDesignSystemCss from '@alm-design/design-system/dist/index.css?inline'
 import { getStudioVendorCss, subscribeStudioVendorCss } from '@site/studio/fsCodemodAdapter'
 import { CANVAS_CSS_LAYER_ORDER, VENDOR_LAYER } from './canvasCssLayers'
+import { rewritePrefersColorScheme } from './darkSchemeCssTransform'
 
 const STYLE_TAG_ID = 'mc-vendor'
 
@@ -66,7 +71,9 @@ export function ProjectCssInjector({ targetDocument }: { targetDocument?: Docume
       // repeats the declaration regardless.
       doc.head.insertBefore(styleEl, doc.head.firstChild)
     }
-    const vendorCss = [almDesignSystemCss as string, projectVendorCss].filter(Boolean).join('\n\n')
+    const vendorCss = rewritePrefersColorScheme(
+      [almDesignSystemCss as string, projectVendorCss].filter(Boolean).join('\n\n'),
+    )
     styleEl.textContent = vendorCss
       ? `${CANVAS_CSS_LAYER_ORDER}\n@layer ${VENDOR_LAYER} {\n${vendorCss}\n}`
       : `${CANVAS_CSS_LAYER_ORDER}\n/* no vendor css */`

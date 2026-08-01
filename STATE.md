@@ -290,6 +290,457 @@ are the remaining WS-2 items, not yet dispatched. See
 
 ## Recently landed
 
+### server-05 — Collapse the AI agent "scope" concept to a single Studio agent (WS-12 §8.1 D3)
+- **Agent:** server-engineer
+- **Stage:** done
+- **Updated:** 2026-08-01
+- **Goal:** Studio has exactly one agent. Remove `scope` as a route segment, request
+  field, type union, and switch discriminator across the AI runtime, client, and docs.
+  No DB migration (the CHECK-constrained `scope` columns are vestigial, pinned to a
+  permitted constant).
+- **Scope:**
+  - `server/ai/{runtime/types.ts,tools/{index,types,capabilityGate,site/index}.ts,
+    drivers/{types.ts,openai.ts,http/execTool.ts},handlers/{chat,defaults,conversations,
+    credentials,audit,toolResult}.ts,conversations/{types,store}.ts,defaults/store.ts,
+    audit/store.ts,mcp/server.ts,legacyScope.ts (new)}`
+  - `src/admin/{ai/api.ts,pages/ai/tabs/{DefaultsTab,AuditTab}.tsx,
+    pages/ai/AiPage.module.css,pages/dashboard/widgets/AiUsageWidget.tsx,
+    pages/site/agent/{types,agentSliceTypes,agentSliceConfig.site,agentConfig,agentApi,
+    agentSlice,index}.ts,pages/site/panels/AgentPanel/{AgentPanel.tsx,
+    ConversationHistory.tsx}.tsx,pages/users/utils/audit.ts}`
+  - Tests: ~25 files under `src/__tests__/{ai,agent,server,users,panels}/` and
+    `server/ai/mcp/tools/*.test.ts`; `tests/e2e/ai.e2e.ts` (AI-002/003/004/005/006, CAP-005)
+  - Docs: `docs/features/agent.md`, `docs/agent-refs/path-index.md`
+- **Done so far:**
+  - Deleted `ToolScope`/`AgentToolScope`. `AiTool.scope` kept but retyped to
+    `AiToolBridgeScope = 'site' | 'shared'` — a *different*, still-load-bearing concept
+    (MCP browser-tool bridge routing in `mcp/server.ts`), not the removed chat scope.
+    Called this out explicitly in `runtime/types.ts` so nobody re-conflates them.
+  - `scopeToolset()` → `studioTools` (= `siteTools`, the 35-tool set unchanged) +
+    `selectStudioTools(capabilities)`, no scope arg.
+  - Routes unsuffixed: `POST /admin/api/ai/chat`, `GET/PUT/DELETE /admin/api/ai/defaults`,
+    `GET /admin/api/ai/conversations` (no `?scope=`, returns all of the user's
+    conversations regardless of historical scope value).
+  - `server/ai/legacyScope.ts` — new, single home for `LEGACY_SCOPE_COLUMN = 'site'`,
+    imported by `defaults/store.ts` (`setDefault`/`clearDefault`/`getDefault`, no scope
+    param) and `conversations/store.ts` (`createConversationForUser`). Nothing reads the
+    column back — `ConversationRecord`/`ConversationView`/`DefaultRecord` no longer carry
+    a `scope` field at all (not just unused — removed from the SELECT column lists too).
+  - `ToolContext`/`ToolContextBase` lost their `scope` field entirely (was read in exactly
+    two places: the OpenAI prompt-cache key, now `studio:${hash}` without a scope segment,
+    and audit-event metadata, now dropped).
+  - Deleted `getUsageByScope`/`UsageByScopeRow`/the Audit tab's "By surface" panel —
+    with one scope this rollup was always a single row identical to `totals`, i.e. it
+    *was* the discriminator the task says must go, not merely a consumer of it.
+  - `DefaultsTab.tsx` collapsed from a per-scope grid to one form ("Studio agent" row).
+  - `src/admin/pages/users/utils/audit.ts`'s `aiScopeLabel` deleted — `ai.default.*` /
+    `ai.chat.*` audit titles no longer interpolate a scope ("AI chat started", not
+    "AI chat in site started").
+  - `docs/features/agent.md`: fixed every route/type mention **and** deleted the
+    "Content workspace tools — 15 total" section + `src/admin/pages/content/agent/`
+    file-tree entries — those described `content_*` tools and files that were recon-
+    confirmed not to exist on disk (`server/ai/tools/content/`, `src/admin/pages/content/`
+    are absent). That fiction was itself the four-scope model this task removes, so
+    cleaning it out was in-scope, not a tangential doc fix.
+- **Recon vs. reality:** everything in the task's recon block checked out. One thing
+  recon didn't flag: `src/admin/pages/dashboard/widgets/AiUsageWidget.tsx` computed a
+  `topScope(data)` caption from `data.byScope` — found only by `tsc`. Also not flagged:
+  `src/__tests__/ai/defaultsHandler.test.ts` (PUT/DELETE `/admin/api/ai/defaults/data`)
+  and the whole of `tests/e2e/ai.e2e.ts` (six tests hardcoded `/admin/api/ai/chat/site`,
+  `?scope=site`, `for (const scope of ['site','content','data','plugin'])` cleanup loops,
+  and asserted the old "Per-scope defaults" / "Model for data" UI strings) — both needed
+  real rewrites, not just import fixes.
+- **Decisions:**
+  - Kept `AiTool.scope` (renamed type only) rather than renaming the field — it is a
+    pre-existing, unrelated concept (browser-bridge routing) that happens to share the
+    word "scope"; renaming the field would have touched ~40 unrelated lines in
+    `writeTools.ts`/`readTools.ts` for no benefit.
+  - Renamed `loadScopeDefault` → `loadStudioDefault` and `resolveScopeCredentials` →
+    `resolveStudioCredentials` (store action + internal helper) even though not explicitly
+    listed in the task — same reasoning as the audit rollup: leaving "scope" in a
+    still-live identifier name after deleting the concept it named would be a half-measure.
+  - Did NOT rename `server/ai/tools/site/` or `siteTools`/`SiteAgentSnapshot`/
+    `buildSiteSystemPrompt` — "site" there names the Studio site-editor domain (unrelated
+    to the deleted chat-scope union), confirmed by checking every call site.
+- **Landmines:**
+  - `Value.Parse`'s Clean step silently strips unknown JSON properties, so old test
+    fixtures with a stray `scope: 'site'` field in a *string* JSON payload (not a typed
+    object literal) don't fail at runtime — they just carry dead weight. Cleaned up where
+    convenient but did not chase every one; TypeScript object literals assigned to
+    `ToolContext`/`CreateConversationInput` **do** fail (excess-property check), so those
+    were the ones that actually mattered.
+  - `agentSlice.test.ts`'s `defaultsResponse()` mock still returned the old
+    `{ defaults: { site: {...} } }` shape — silently made `ensureConversationId` return
+    null (no default resolved), which masked itself as "conversation POST never happens"
+    three tests later, not as a defaults-shape error. Worth grepping mock response bodies
+    by shape, not just by URL, when a wire contract changes.
+  - `bun test` run via `Bash(run_in_background)` piped through a bare `| tail -N` can
+    silently truncate — one run showed 2 of 20 real failures until re-run with `tee` to a
+    file. Redirecting `bun test > file` directly (no pipe) also truncated for unclear
+    reasons; `tee` was the one that reliably captured the full run.
+- **Verification:**
+  - `bun run build` (tsc -b --force + vite build) — exit 0.
+  - `bun run lint` — exit 0.
+  - `bun test` — **7836 pass / 20 fail** (full suite). All 20 failures are in files this
+    change never touched (`cacheLayout.test.ts`, `codemirror-lazy-only`,
+    `dispatcher-html-pipeline`, `error-boundary-coverage`, `keybindings-registry-single-
+    source`, `plugin-sdk/lintCli`, `cmsMigrations`, `pluginServerRuntime` ×7,
+    `pluginWorkerRpcTimeout` ×3, `siteExplorerPanel`, `selectorStability`) — matches the
+    20 pre-existing fails already logged in `standing-01`. Confirmed via `git status`
+    (none of those 12 files appear in this change's diff).
+  - Targeted re-run after every edit: `bun test src/__tests__/ai server/ai
+    src/__tests__/agent src/__tests__/users src/__tests__/server/apiSecurityBoundary.test.ts
+    src/__tests__/server/capabilityRouteMatrix.test.ts src/__tests__/panels` —
+    **1074 pass / 0 fail**.
+- **Human action needed:** none for static gates. `tests/e2e/ai.e2e.ts` (AI-002 etc.)
+  was rewritten but not run (Playwright, needs a live server) — worth a real run before
+  merge given how much of it changed. Not committed per instructions — human review first.
+
+### canvas-07 — WS-10 Phase 1: preview axes (direction/RTL + dark mode, board-global)
+- **Agent:** canvas-engineer
+- **Stage:** done
+- **Updated:** 2026-08-01
+- **Goal:** WS-10 Phase 1 (`STUDIO-NEXT-WORKSTREAMS.md`) — direction (RTL) and dark-mode
+  become first-class, board-global, render-time preview axes: no re-parse, no frame
+  remount. Locale (Phase 2, parse-time) is explicitly OUT of scope.
+- **Coordinator audit (same day):** accepted the no-remount proof, the hand-rolled
+  scanner over a regex, and the isolated-candidate CSSOM validation outright. One real
+  defect found and fixed in this same entry: the dark-mode toggle was a silent no-op
+  for the single most common case (see "Defect found + fixed" below) — inverted exactly
+  the §7.4 honesty rule the phase is built on. `RTL_PHYSICAL_PROPERTY` was initially
+  flagged as possible Phase-5 scope creep and then confirmed IN scope on re-read of
+  §2.3 — no change needed there.
+- **Scope:**
+  - New leaf: `src/core/studio-board/previewAxes.ts` (`PreviewAxes`/`DEFAULT_PREVIEW_AXES`),
+    exported from `src/core/studio-board/index.ts`.
+  - Store: `src/admin/pages/site/store/slices/canvasSlice.ts` (`previewAxes`/`setPreviewAxes`).
+  - Canvas: `src/admin/pages/site/canvas/{IframeFrameSurface.tsx,previewAxesFrameEffect.ts,
+    darkSchemeCssTransform.ts,UserStylesheetInjector.tsx,ProjectCssInjector.tsx,
+    ClassStyleInjector.tsx}` + `src/core/siteImport/index.ts` (exports `getSheetConstructor`).
+  - Server: `server/handlers/studio/{projectProfileSchema.ts,colorSchemeDetect.ts,
+    projectProbe.ts,studioMeta.ts,previewAxes.ts}` + `server/handlers/studio.ts`
+    (wires `tryServeStudioPreviewAxes` into `STUDIO_SUB_ROUTERS`).
+  - Client wiring: `src/admin/pages/site/studio/{previewAxesCapability.ts,
+    usePreviewAxesHydration.ts}`, mounted from `AdminCanvasEditorBody.tsx`.
+  - Toolbar: `src/admin/pages/site/toolbar/{PreviewAxesControls.tsx,
+    PreviewAxesControls.module.css}`, mounted from `StudioToolbarActions.tsx`.
+  - RTL honesty finding: `server/ai/mcp/tools/studio/{fidelityCodes.ts,
+    rtlPhysicalPropertyScan.ts,fidelityReport.ts}` — new `RTL_PHYSICAL_PROPERTY` code.
+  - Docs: `docs/features/studio-import.md` (limitations table — see Decisions),
+    `docs/agent-refs/{path-index.md,canvas-internals.md,glossary.md}`.
+  - Tests (all new): `server/handlers/__tests__/previewAxes.test.ts`,
+    `server/handlers/__tests__/projectProbe.test.ts` (colorScheme describe block),
+    `src/admin/pages/site/canvas/__tests__/{darkSchemeCssTransform.test.ts,
+    previewAxesFrameEffect.test.ts,styleRuleDarkModeRoundTrip.test.ts}`,
+    `src/__tests__/canvas/previewAxesFrameAttributes.test.tsx`,
+    `src/admin/pages/site/toolbar/__tests__/PreviewAxesControls.test.tsx`,
+    `server/ai/mcp/tools/studio/rtlPhysicalPropertyScan.test.ts` + additions to
+    `fidelityReport.test.ts`. Also fixed 3 pre-existing hand-authored `ProjectProfile`
+    test fixtures that were missing the new required `colorScheme` field
+    (`appRoot.test.ts`, `studioProjects.test.ts` ×2) — a required-schema-field addition
+    invalidates every literal fixture built before it existed; `readStudioMeta`'s own
+    stale-cache-drop mechanism (see its module doc) is what surfaced these as real
+    failures rather than silent corruption.
+  - **Not touched:** `server/ai/` outside `server/ai/mcp/tools/studio/` — a parallel
+    agent has a large in-flight refactor there (coordinator instruction, respected).
+- **Done so far:** everything above — Phase 1 is complete and verified, including the
+  post-audit fix.
+  - **Direction:** `dir`/`lang` applied to the frame document's `<html>` via a plain
+    `useEffect` (`useApplyPreviewAxes` in `previewAxesFrameEffect.ts`), reading
+    `previewAxes` from the store. `lang` is `'ar'` on `rtl` (Phase 1 has no real
+    per-project locale — documented as a deliberate, honest simplification), cleared
+    on `ltr`. Proven NOT to remount the frame: `previewAxesFrameAttributes.test.tsx`
+    asserts the same `<iframe>` element and the same `contentDocument` survive a
+    direction+scheme toggle.
+  - **Dark mode detection (`server/handlers/studio/colorSchemeDetect.ts`):** Tailwind
+    v3 `darkMode: 'class'|'selector'` (plain or array form) → `'class'`/`.dark`; else a
+    `.dark` class selector or `[data-theme="dark"]`/`[data-scheme="dark"]` attribute
+    selector found anywhere in the project's CSS (word-boundary-safe — does not
+    false-positive on `.darkened`; requires the literal `dark` VALUE, not just the
+    attribute name, or a project that only styles `[data-theme="light"]` would be
+    misdetected) → `'class'`; else a bare `@media (prefers-color-scheme: dark)` found
+    anywhere → `'media'`; else `'none'`. `'class'` is checked first and wins over an
+    incidental media query. A compound condition (`(min-width: 600px) and
+    (prefers-color-scheme: dark)`) intentionally reports `'none'` — false negative is
+    the honest failure mode, not a mechanism the canvas can actually force.
+  - **Dark mode apply:** `'class'` mechanism toggles the project's own exact
+    class/attribute (`previewAxesFrameEffect.ts`'s `parseClassSchemeSelector`).
+    `'media'` mechanism is handled by `darkSchemeCssTransform.ts` at THREE injection
+    points now (see "Defect found + fixed"). `data-studio-scheme` + inline
+    `color-scheme` are ALWAYS set on the frame root regardless of mechanism — harmless
+    when nothing matches it, and it's what the CSS rewrite targets.
+  - **Persistence:** `.studio/meta.json` gains an optional `previewAxes: {direction?,
+    colorScheme?}` (Phase 1 only — `locale` stays on the existing separate
+    `previewLocale` field, untouched). New `GET/POST /admin/api/studio/preview-axes`
+    (`server/handlers/studio/previewAxes.ts`), same shape as `trustTier.ts`: GET
+    resolves persisted+defaults, POST merge-patches so a direction toggle can never
+    clobber a saved color scheme and vice versa. Hydrated once per project open via
+    `usePreviewAxesHydration.ts`.
+  - **UI:** `PreviewAxesControls.tsx` — two `Button`s (text-label toggles, `ZoomControls.tsx`'s
+    exact pattern — no icon exists in the vendored `pixel-art-icons` set for RTL/dark-mode,
+    checked before choosing text). Dark-mode button is `aria-disabled` + tooltip-explained
+    when the probe found `mechanism: 'none'` — never a silent no-op (§7.4 "probe honesty").
+    Direction has no such gate — `dir` always applies.
+- **Defect found + fixed (coordinator audit, same day):** the dark-mode toggle was a
+  silent no-op for the single most common case — an imported project's OWN
+  `@media (prefers-color-scheme: dark)` (from its own `.css`), and the identical
+  condition a user authors by hand via `ConditionBuilder.tsx`'s "Dark mode" preset,
+  both parse into `site.styleRules`'s structured registry and re-emit through
+  `generateCanvasClassCSS`/`generateClassCSS` via `ClassStyleInjector.tsx` — a THIRD
+  CSS path the initial pass never wired the rewrite into. Because `colorSchemeDetect.ts`
+  scans the project's own CSS files, that project's dark-mode control was DETECTED,
+  ENABLED, and did NOTHING on click — precisely inverting §7.4's "disabled with a
+  reason, never a silent no-op" rule, in the case that matters most (an imported React
+  repo's dark mode is almost always in its own CSS, not a vendor package's).
+  - **Fix:** `ClassStyleInjector.tsx` now pipes all three CSS strings it emits (the
+    main registry, the hover-preview overlay, the forced-state overlay) through
+    `rewritePrefersColorScheme` on the way into the `<style>` tag — CANVAS-SIDE ONLY,
+    strictly AFTER calling `generateCanvasClassCSS`/`generateForcedStateCSS`/
+    `generatePreviewClassCSS`. `generateClassCSS`/`createStyleRuleCssEmitter`
+    (`@core/publisher`) are UNCHANGED — the published page must keep emitting the real
+    `@media` query, because a real visitor's browser resolves it correctly; the rewrite
+    exists only because the canvas cannot emulate that media feature per-iframe.
+  - **Proof, not assumption:** `styleRuleDarkModeRoundTrip.test.ts` starts from a real
+    project stylesheet (`@media (prefers-color-scheme: dark) { .hero {...} }`), parses
+    it through `cssToStyleRules` (confirms the structured registry does NOT strip or
+    normalize the condition — answers the coordinator's "check first" question: it
+    doesn't, verified), asserts the PUBLISHER path (`generateClassCSS`) emits the real
+    untouched `@media` query, and asserts the CANVAS path (the same generated string,
+    piped through `rewritePrefersColorScheme`) responds to `data-studio-scheme`
+    instead. That publisher-side assertion is what stops someone "simplifying" this
+    later by moving the rewrite down into the shared emitter.
+- **Next step (Phase 2, not started):** locale probe (`localeProbe.ts`), board-global
+  locale switch (re-parse on change), `BoardFrame.axes?: Partial<PreviewAxes>` per-frame
+  override + "duplicate as variant", `(frameId, nodeId)` selection re-keying, MCP
+  `PreviewAxes` param on the visual-audit trio. See WS-10 §4-§5 in
+  `STUDIO-NEXT-WORKSTREAMS.md`.
+- **Decisions:**
+  - `PreviewAxes.locale` field exists in the type NOW (unused) so Phase 2 never has to
+    reshape the triple or the future `BoardFrame.axes` override — see
+    `previewAxes.ts`'s own module doc.
+  - The dark-mode CSS rewrite now runs at all THREE places `@media
+    (prefers-color-scheme: ...)` can reach a canvas frame: `UserStylesheetInjector.tsx`,
+    `ProjectCssInjector.tsx` (raw CSS text), and `ClassStyleInjector.tsx` (structured
+    `site.styleRules` re-emitted as text). `@core/publisher` itself — the shared
+    `generateClassCSS`/`createStyleRuleCssEmitter` engine — is never touched; the
+    rewrite is applied to the GENERATED TEXT, strictly canvas-side. See "Defect found
+    + fixed" above.
+  - `RTL_PHYSICAL_PROPERTY` scans `site.styleRules` unconditionally (every node with
+    `classIds`, regardless of the board's CURRENT direction toggle) rather than only
+    when previewing RTL — the MCP tool is a stateless/headless call with no live board
+    state to read, and every other fidelity code in this file is computed the same way
+    (from the parsed tree, never from live UI state). Confirmed in scope by the
+    coordinator on re-read of §2.3 — it is Phase 1, not Phase 5.
+  - Did not implement the properties-panel surfacing WS-10 §2.3 also asks for
+    (`SourceConstraintNotice`-style treatment) — MCP-only for now. Noted as a gap, not
+    silently dropped.
+  - `.studio/meta.json`'s `previewAxes` gets its OWN dedicated `GET/POST` route
+    (mirroring `trustTier.ts`) rather than being folded into the big `/admin/api/studio/load`
+    NDJSON payload — that payload (`studioPageLoad.ts`'s stream lines,
+    `fsCodemodAdapter.ts`'s `StudioLoadStreamLineSchema`) is already delicate (STATE.md's
+    `panel-02`/`infra-01` entries both record a shape-drift break there) and axes are
+    click-driven editor-session UI state, not something every page load needs to compute.
+- **Landmines:**
+  - **`happy-dom`'s CSSOM does not support `@layer` at all — promoted to a standing
+    note, `standing-09`.** Read it before touching `darkSchemeCssTransform.ts` OR
+    `cssToStyleRules.ts` (`@core/siteImport`). Short version: `sheet.replaceSync()`
+    silently drops every rule inside an `@layer` block, with zero warning.
+    `darkSchemeCssTransform.ts` is designed around this (isolated-candidate validation
+    only, never a whole-file round-trip). `cssToStyleRules.ts` is NOT — confirmed by
+    direct experiment that it already silently loses rules from any imported project
+    using `@layer` (Tailwind v4's default output wraps everything in one). That is a
+    live, pre-existing, unrelated-to-WS-10 defect, not fixed here — see `standing-09`
+    for the reproduction and what a real fix needs.
+  - `IframeFrameSurface.tsx` and `server/handlers/studio/projectProbe.ts` were both
+    pushed OVER the 700-line module-size ceiling by this change's first pass. Fixed by
+    extraction, not grandfathering: `useApplyPreviewAxes` (the store reads + the effect)
+    moved into `previewAxesFrameEffect.ts` (`IframeFrameSurface.tsx` now calls it in one
+    line); `detectColorScheme` + its regexes moved into the new
+    `server/handlers/studio/colorSchemeDetect.ts`. Both files are now exactly at/under
+    700 — if you add to either again, check `bun test
+    src/__tests__/architecture/module-size-budgets.test.ts` before considering the
+    change done. `ClassStyleInjector.tsx` had headroom (282→~300 lines) and did not need
+    the same treatment.
+  - No icon in the vendored `pixel-art-icons` set fits RTL/dark-mode (checked: no
+    moon/sun/flip/mirror/contrast/direction icon exists) — `PreviewAxesControls.tsx`
+    uses text-label buttons (`LTR`/`RTL`, `Light`/`Dark`), `ZoomControls.tsx`'s exact
+    precedent for a numeric/text toggle button. Don't reach for an icon that doesn't
+    exist; either add one via `bun run icons:sync` or follow this precedent.
+- **Verification (re-run after the post-audit fix):**
+  - `bun test` (full suite): **7840 pass / 20 fail** (1 skip) — 4 new tests added by the
+    fix, 0 regressions. All 20 failures confirmed pre-existing and unrelated by name +
+    `git status` cross-check (7 plugin QuickJS runtime, 3 worker-RPC timeout, 2
+    runtime-cache layout, 8 unrelated architecture/CSS gates — `codemirror-lazy-only`,
+    `dispatcher-html-pipeline`, `error-boundary-coverage`,
+    `keybindings-registry-single-source`, `studio-plugin lint`, `CMS migrations`,
+    `SiteExplorerPanel`, `Zustand selector stability` — none touch a file in this
+    entry's Scope; the Zustand-selector one is `InstanceCallSiteView.tsx`, not
+    `canvasSlice.ts`). Matches `standing-01`'s documented count exactly. Baseline before
+    this task was 7836/20; delta is +4 pass / +0 fail.
+  - `bun run build` — exit 0.
+  - `bun run lint` — exit 0.
+  - Targeted re-run after the fix: `classStyleInjector.test.ts`,
+    `classStyleInjectorMedia.test.tsx`, `canvasCssLayerOrder.test.tsx`,
+    `styleRuleDarkModeRoundTrip.test.ts` — all pass, 0 regressions in existing
+    `ClassStyleInjector` coverage.
+- **Human action needed:** dogfood — open `/admin/site?studio` on
+  `studio-workspace/maherfayad-stack-eSIM`, click the toolbar's `LTR`/`Light` toggle
+  group (Studio-mode only, next to Import/Download). Toggling `RTL` should flip `dir`
+  on every visible frame instantly (no flash/remount, no board jump). Toggling `Dark`
+  — this eSIM project has no detectable dark-mode CSS today, so the button should show
+  disabled with a tooltip explaining why (not just do nothing); confirm that tooltip
+  reads sensibly. To see the dark toggle actually apply end to end, test against (or
+  add) a project whose OWN `.css` has a `.dark`/`[data-theme]` selector or
+  `@media (prefers-color-scheme: dark)` block — all three CSS paths (the project's own
+  stylesheets, vendor/package CSS, CMS-authored stylesheets) now respond to the toggle.
+
+### parser-09 — Canonical JSX: the spec, the validator, the fixture (WS-13 steps 1-3)
+- **Agent:** parser-surgeon
+- **Stage:** done
+- **Updated:** 2026-08-01
+- **Goal:** WS-13 §6 steps 1-3 — write `docs/reference/canonical-jsx.md` (the spec), the
+  verification fixture, and `canonicalCheck.ts` + tests. Step 4 (scaffold canonical by
+  construction in `POST /admin/api/studio/page`) is explicitly NOT in scope — next agent's
+  entry point.
+- **Coordinator audit (same day):** accepted the spec, the per-rule "Validator caveat" work,
+  the fixture, and the doc↔registry parity gate outright. One defect found: `CanonicalRuleDef`
+  had no severity, so an `'advisory'`-shaped finding (`literal-props` on a const prop,
+  `static-class-name` on `styles.x`, `no-wrapper-elements`'s admitted heuristic) was
+  indistinguishable from a genuine `no-spread-props` violation — which falsified WS-13 §3's own
+  premise ("almost exactly zero findings") and left step 4/WS-12 with no single signal to
+  self-check against. Fixed in this same entry — see Decisions below. The coordinator's proposed
+  7-violation/3-advisory split was verified against the actual code and adopted with **zero
+  disagreements** (their reasoning matched mine in every one of the three `'advisory'` cases).
+- **Scope:**
+  - New: `docs/reference/canonical-jsx.md`, `src/core/page-parser/canonicalCheck.ts`,
+    `src/core/page-parser/__tests__/canonicalCheck.test.ts`,
+    `studio-workspace/__canonical-fixture/` (README + package.json + `.studio/meta.json` +
+    `src/data/plans.ts`, `src/components/PlanCard.{tsx,module.css}`,
+    `src/screens/{CanonicalScreen.tsx,CanonicalScreen.css,CanonicalScreen.module.css,
+    NonCanonicalScreen.tsx,NonCanonicalScreen.scss}`).
+  - Edited: `src/core/page-parser/{index.ts,parsePageFile.ts}` (exported
+    `DYNAMIC_LOCK_REASON`/`SPREAD_LOCK_REASON`/`DYNAMIC_SVG_LOCK_REASON`, barrel exports for
+    `canonicalCheck`), `eslint.config.js` (see Landmines — `studio-workspace` now in
+    `globalIgnores`).
+- **Done so far:**
+  - `canonicalCheck.ts`: a rule registry (`CANONICAL_JSX_RULES`, 10 entries, mirrors
+    `fidelityCodes.ts`'s pattern) + `checkCanonicalJsx(input)` — a thin composition layer over
+    signals `parsePageFile.ts` already produces (`lockReason`, `codeProps`, `codeText`,
+    `branchAlternatives`), plus two genuinely new checks (`single-styling-mechanism` — a
+    textual import-specifier scan for Sass/Less/CSS-in-JS, needs `sourceText`;
+    `no-wrapper-elements` — a heuristic over single-child, prop-less, style-less, text-less
+    element nodes) and one that needs external context (`direct-component-imports`, needs
+    `componentSources` from `resolveComponentSources`). Reports only — never throws, never
+    mutates, matches `parsePageFile`'s never-throw contract.
+  - Doc <-> registry parity gate (`canonicalCheck.test.ts`'s last `describe`), same pattern as
+    `fidelityCodes.test.ts`.
+  - 29 tests: registry shape, graceful-skip when optional context is omitted, one
+    positive+negative pair per rule against the on-disk fixture, plus rule 8's negative case
+    generated at test time (see Landmines).
+- **Next step:** WS-13 step 4 — `server/handlers/studio.ts`'s `POST /admin/api/studio/page`
+  scaffolds canonical by construction (D5: `.tsx` default, match project convention when one
+  exists). Not started.
+- **Decisions:**
+  - *Canonical rule ids are a SEPARATE vocabulary from `PARSER_FIDELITY_CODES`*, not a reuse of
+    the same `code` strings — because one fidelity signal (`CODE_VALUED_PROP`) has to feed TWO
+    different canonical rules (`literal-props` for an ordinary prop, `static-class-name` for
+    `className` specifically) at different granularity, which a shared vocabulary can't express
+    without inventing a fake distinction in the fidelity registry itself.
+  - *`literal-props`/`literal-text`/`static-class-name` skip any node produced inside a `.map`
+    expansion* — not just the loop row itself (`hasWritableSourceLocation` false), but anything
+    INLINED into it too, detected by checking whether `LOOP_ID_SEPARATOR` ('#') appears ANYWHERE
+    in the node's id (composite ids prepend the loop-suffixed call-site id, so the marker
+    survives). Without this a canonical `.map` over a const array would ALSO fail these three
+    rules on every row — a value read off the loop's own bound parameter is data-derived by
+    construction, which `const-array-map` already accounts for.
+  - *`static-class-name` fires on the canonical `styles.x` shape too* — deliberately, not a bug.
+    `className={styles.card}` and a genuinely non-canonical computed `className` resolve through
+    the identical `extractProps` path and land in `codeProps` the same way, because a
+    CSS-Modules-resolved class name really cannot be typed over in the Properties panel. The
+    finding means "read-only in the panel", not "non-canonical" — documented prominently in the
+    doc's rule-6 section and demonstrated in the fixture (`CanonicalScreen.tsx`'s root
+    `<section>` uses `styles.hero` and IS expected to show exactly one `static-class-name`
+    finding).
+  - *`studio-workspace` added to `eslint.config.js`'s `globalIgnores`* (see Landmines) — a
+    config fix, not a fixture workaround.
+  - **(post-audit) `CanonicalRuleDef`/`CanonicalFinding` gained a `tier: 'violation' | 'advisory'`
+    field**, plus `summarizeCanonicalFindings(findings) -> { violations, advisories, isCanonical
+    }`. Classification (verified against the code, not taken on the coordinator's word):
+    `single-return`/`literal-text`/`const-array-map`/`no-spread-props`/
+    `single-styling-mechanism`/`static-svg`/`direct-component-imports` = `'violation'` (every
+    shape each signal fires on is genuinely non-canonical); `literal-props`/`static-class-name`/
+    `no-wrapper-elements` = `'advisory'` (the signal cannot tell a permitted shape from a
+    forbidden one, or the heuristic accepts a false positive — exactly the three cases already
+    called out in the caveats above). The doc↔registry parity gate now checks tier agreement too
+    (`**Tier:**` line per rule section, regex-extracted). **Did not suppress or "fix" the
+    advisory findings themselves** — the detection stays exactly as it was; only its severity
+    changed. `isCanonical` is `violations === 0`, which is the signal WS-13's step 4 scaffolder
+    and WS-12's agent should self-check against instead of a raw finding count.
+- **Landmines (not already in the 578-line doc — told `studio-scribe` to add these):**
+  - **`docs/features/studio-import.md`'s claim that a computed `className` "keeps only its
+    static prefix" does not hold for the ordinary `extractProps` path.** `evaluateTemplate`
+    (`staticEvalCore.ts:404`) DOES compute a `partial` prefix on an unresolvable template
+    literal, but `tryResolveExpression` (`nodeResolution.ts`) only accepts `result.kind ===
+    'literal'` and silently discards the `unresolved` variant — `partial` is NEVER read back out
+    by any caller in `jsxAttributeReaders.ts`. A `className` that fails to resolve is dropped
+    entirely: no `props` entry, no `codeProps` entry, no signal of any kind. The static-prefix
+    fallback IS real, but only inside `componentSubstitution.ts`'s call-site `className` re-read
+    during LOCAL COMPONENT INLINING (`componentSubstitution.ts:238-269`) — a completely
+    different, narrower code path than the one the doc's prose implies.
+  - **`DYNAMIC_SVG_LOCK_REASON` ('SVG built in code' / `SVG_BUILT_DYNAMICALLY`) is reachable,
+    for a JSX-authored `<svg>`, ONLY when the serialized markup exceeds 64 KB
+    (`MAX_MARKUP_LENGTH`, `inlineSvg.ts`).** `serializeInlineSvg` OMITS an unresolvable attribute
+    or child rather than failing the element — `<svg><circle strokeDashoffset={f(x)}/></svg>`
+    still serializes (missing that one attribute), it does not lock. Confirmed empirically: no
+    existing test in the repo exercises this lock reason at all. The doc's own "a dynamic
+    attribute is dropped" phrasing in the fidelity-code table is technically about a DIFFERENT,
+    wholly undetected shape — `dangerouslySetInnerHTML={{__html: applyTokens(svg)}}` where the
+    transform's fallback also fails — which does not lock the node at all (falls through to
+    ordinary non-svg element processing, no `svg` prop, no reason).
+  - **`BRANCH_AUTO_SELECTED` and `DYNAMIC_CONTENT_UNRESOLVED` are both broader than their
+    WS-13-table one-liners suggest.** `branchAlternatives` (rule 1) fires for a nested
+    ternary/`&&`/`||`/`??` one level into the JSX, not only a component with more than one
+    top-level `return`. `DYNAMIC_LOCK_REASON` (rule 4) fires for ANY unresolvable
+    JSX-producing `CallExpression` the walk meets (`isLockingExpression`), not narrowly for
+    `.map` alone.
+  - **A prop that is a bare reference to a module-scope `const` still lands in `codeProps`,
+    indistinguishable from hook state.** `ParsedNode.codeProps`/`resolution` record THAT a value
+    is code, never WHY — `resolution` is node-scoped (first resolution only, `withResolution` in
+    `nodeResolution.ts`), so there is no reliable per-prop provenance to tell "identifier bound to
+    a plain const" (rule 2 explicitly permits this) from "hook state" (rule 2 forbids it) apart.
+    `literal-props`/`static-class-name` are therefore honest but imprecise in this one direction
+    — documented as a stated limitation, not silently absorbed.
+  - **`eslint.config.js`'s `**/*.{ts,tsx}` file matcher already applied to `studio-workspace/`**
+    — every EXISTING project there happens to be `.jsx` (accidentally exempt), so a `.tsx`
+    fixture (chosen per D5's "match project convention, `.tsx` default") tripped
+    `react-hooks/purity` on `Math.random()` in the non-canonical fixture's own JSX. Fixed at the
+    config level (`studio-workspace` added to `globalIgnores`) rather than avoiding `Math.random`
+    in the fixture, because the underlying gap is real: Studio parses that tree with ts-morph, it
+    never builds or lints it, so React Compiler purity rules have no business applying to
+    arbitrary (or fixture) user source there.
+  - **Rule 8's real negative case (>64 KB inline SVG) doesn't fit a "small, reviewable" committed
+    fixture** — exercised via a synthetically generated tmpdir fixture in `canonicalCheck.test.ts`
+    instead of `studio-workspace/__canonical-fixture/`. Documented explicitly in both the doc and
+    the test file so nobody "fixes" this by trying to commit a 64 KB file.
+- **Verification (post-tier-fix, final):**
+  - `bun test src/core/page-parser src/core/ast-codemods src/__tests__/studio` — 390 pass, 0 fail.
+  - `bun test src/core/page-parser/__tests__/canonicalCheck.test.ts` — 34 pass (29 original + 5
+    tier/summary-specific: registry tier classification, `isCanonical` true on the canonical
+    screen despite its advisory finding, `isCanonical` false on the non-canonical screen, every
+    finding's `tier` matches its rule's registered tier, doc↔registry tier parity).
+  - `bun test server/ai/mcp/tools/studio/fidelityCodes.test.ts` — 4 pass in isolation before this
+    session ended; **failed once mid-session** (`every registered fidelity code appears in the
+    doc table`, missing `RTL_PHYSICAL_PROPERTY`) — confirmed via `git log -- docs/features/
+    studio-import.md` to be a DIFFERENT, WS-10 (RTL) parallel session's in-flight commit, not
+    caused by this work order (this session never touched that file). Not mine to fix.
+  - `bun test src/__tests__/architecture` — 470 pass, 5 fail, all in files this session never
+    touched (`IframeFrameSurface.tsx`, `projectProbe.ts`, `main.tsx`, `UndoRedoButtons.tsx`,
+    `useCanvas.ts`, `publishedHtmlPipeline.ts`) — pre-existing, confirmed via `git status`/`git
+    diff` against this session's own scope.
+  - `bun run build` — exit 0.
+  - `bun run lint` — exit 0 (after the `eslint.config.js` fix above).
+- **Human action needed:** none — static gates only, no UI surface added.
+
 ### struct-02 — a design system now RENDERS, and a component can be added to imported code
 - **Agent:** main
 - **Stage:** done — browser-verified against a temp fixture; both defects reproduced BEFORE the fix and asserted after
@@ -6625,6 +7076,44 @@ handoff to a scratch file; the orchestrator merges into `STATE.md` once, after
 the wave lands. Only apply this when agents are genuinely running in parallel —
 a solo dispatch (like `server-04`) writes directly to both files, per that
 task's own dispatch note.
+
+### standing-09 — happy-dom's CSSOM silently drops EVERY rule inside an `@layer` block, with no warning — and this is not hypothetical, it already affects live imports
+
+Verified by direct experiment (`canvas-07`, 2026-08-01): `sheet.replaceSync('@layer base { .hero { color: red } } .plain { color: blue }')`
+against happy-dom's `GlobalWindow().CSSStyleSheet` produces exactly ONE rule
+(`.plain`). `.hero`, and the `@layer` statement itself, vanish — not as a
+`dropped-at-rule` warning, not as anything observable at all. happy-dom's CSS
+parser does not implement `@layer` in any form.
+
+Two real consequences, one fixed, one not:
+
+1. **`darkSchemeCssTransform.ts` (WS-10 Phase 1) never round-trips a whole
+   stylesheet through this CSSOM** — it validates only tiny isolated
+   candidate spans (`@media <prelude> {}`), never the file. This is why it is
+   safe against a Tailwind v4 project (which wraps its entire generated CSS
+   in `@layer theme, base, components, utilities;`). **Fixed / designed
+   around, not a live bug.**
+
+2. **`cssToStyleRules.ts` (`@core/siteImport`) calls `sheet.replaceSync()` on
+   the WHOLE input CSS text** — the same happy-dom CSSOM, same limitation.
+   Confirmed by direct experiment (same method as above, run against
+   `cssToStyleRules` itself, not just the raw CSSOM): a project stylesheet
+   containing `@layer base { .hero {...} }` imports ZERO rules for anything
+   inside the layer, with **zero warnings** — the parser doesn't know
+   anything was dropped, so `parsed-at-rule`/`dropped-at-rule` never fires
+   either. This is `studioCss.ts`'s `loadStudioStyles`'s actual engine —
+   the same one every Studio-imported project's `.css` goes through at load
+   time. **This is a live, un-fixed defect**, not a hypothetical: any
+   imported project using Tailwind v4 (default output: everything wrapped in
+   `@layer theme, base, components, utilities;`) or hand-rolled `@layer`
+   cascade management loses those rules from `site.styleRules` entirely,
+   silently, today — independent of and unrelated to WS-10. **Not fixed by
+   `canvas-07`** — explicitly out of scope for that task (a real fix needs
+   either a CSSOM that supports `@layer`, or a pre-pass that unwraps `@layer`
+   blocks before handing text to `replaceSync`, or a warning at minimum).
+   Whoever picks this up: reproduce with `cssToStyleRules('@layer base { .x
+   { color: red } }')` → `rules` is `[]` with no warning, before designing a
+   fix.
 
 ---
 

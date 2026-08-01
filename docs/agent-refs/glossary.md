@@ -67,7 +67,16 @@ an opaque `alm.*` node today with a read-only prop surface.
 
 **`previewLocale`** — which dictionary branch Tier B picks when a value indexes a
 translations object with runtime state. Unset means first key in source order.
-The choice is recorded in `resolution.note`.
+The choice is recorded in `resolution.note`. Parse-time (WS-10 Phase 2
+territory) — distinct from `previewAxes` below, which is render-time.
+
+**`PreviewAxes`** (WS-10 Phase 1) — the board's render-time preview triple:
+`direction` (`'ltr'|'rtl'`), `colorScheme` (`'light'|'dark'`), and a Phase-2
+`locale` field not yet wired to anything. Board-global, persisted per project
+in `.studio/meta.json`'s `previewAxes` field — separate from, and NOT a
+replacement for, `previewLocale` above. Applied to a frame document as an
+attribute effect (`dir`, `lang`, `data-studio-scheme`), never a remount —
+see `docs/agent-refs/canvas-internals.md`'s "Preview axes" section.
 
 **Resolution / resolved value** — a value the static evaluator computed from the
 AST. Resolving a value **locks that prop** (writing a literal there would replace

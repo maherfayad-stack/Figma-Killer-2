@@ -73,6 +73,7 @@ import { resolveProjectDir } from '../studioProjects'
 import { readJsonFileSafe, readTextCapped } from './cappedFileRead'
 import { DEPENDENCIES_NOT_INSTALLED, detectComponentPackages } from './componentPackageDetect'
 import { mergeStudioMeta, readStudioMeta } from './studioMeta'
+import { detectColorScheme } from './colorSchemeDetect'
 import type { ProbeWarning, ProjectProfile } from './projectProfileSchema'
 
 // ---------------------------------------------------------------------------
@@ -563,6 +564,7 @@ export function probeProject(dir: string): ProjectProfile {
       cssInJs: detectCssInJs(pkg),
     },
     componentPackages: detectComponentPackages(appRootAbs, pkg, warnings),
+    colorScheme: detectColorScheme(appRootAbs),
     aliases: { ...extractTsconfigAliases(appRootAbs), ...extractViteAliases(appRootAbs) },
     warnings,
     ...(pagesDirCandidates ? { pagesDirCandidates } : {}),

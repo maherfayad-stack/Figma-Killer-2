@@ -72,6 +72,7 @@ describe('resolveAppRoot', () => {
       packageManager: 'bun',
       styleToolchain: { tailwind: null, cssModules: false, sass: false, postcssConfigPath: null, cssInJs: null },
       componentPackages: [],
+      colorScheme: { mechanism: 'none' },
       aliases: {},
       warnings: [],
     } satisfies ProjectProfile

@@ -12,6 +12,7 @@
 // ── Phase 1 ──────────────────────────────────────────────────────────────────
 
 export { cssToStyleRules } from './cssToStyleRules'
+export { getSheetConstructor } from './cssomSheet'
 
 
 // ── Phase 2 — input ingestion ─────────────────────────────────────────────────

@@ -394,6 +394,62 @@ describe('probeProject — component packages', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Dark-mode capability (WS-10 §3.1)
+// ---------------------------------------------------------------------------
+
+describe('probeProject — colorScheme', () => {
+  it('reports "none" when no dark-mode mechanism is detectable', () => {
+    write('src/App.css', '.btn { color: black; }\n')
+    expect(probeProject(tmpDir).colorScheme).toEqual({ mechanism: 'none' })
+  })
+
+  it('detects a Tailwind v3 class-based darkMode config', () => {
+    writePackageJson({ tailwindcss: '^3.4.0' })
+    write('tailwind.config.js', 'module.exports = { darkMode: "class", theme: {} }\n')
+    expect(probeProject(tmpDir).colorScheme).toEqual({ mechanism: 'class', selector: '.dark' })
+  })
+
+  it('detects a Tailwind v3 array-form darkMode config', () => {
+    writePackageJson({ tailwindcss: '^3.4.0' })
+    write('tailwind.config.js', "module.exports = { darkMode: ['class', '.dark-mode'], theme: {} }\n")
+    expect(probeProject(tmpDir).colorScheme).toEqual({ mechanism: 'class', selector: '.dark' })
+  })
+
+  it('detects a hand-authored .dark class selector with no Tailwind at all', () => {
+    write('src/theme.css', ':root { --bg: white; }\n.dark { --bg: black; }\n')
+    expect(probeProject(tmpDir).colorScheme).toEqual({ mechanism: 'class', selector: '.dark' })
+  })
+
+  it('does not false-positive on a class name that merely starts with "dark"', () => {
+    write('src/theme.css', '.darkened { opacity: 0.5; }\n')
+    expect(probeProject(tmpDir).colorScheme).toEqual({ mechanism: 'none' })
+  })
+
+  it('detects a [data-theme="dark"] attribute selector', () => {
+    write('src/theme.css', '[data-theme="dark"] { --bg: black; }\n')
+    expect(probeProject(tmpDir).colorScheme).toEqual({ mechanism: 'class', selector: '[data-theme="dark"]' })
+  })
+
+  it('detects @media (prefers-color-scheme: dark) when there is no class mechanism', () => {
+    write('src/theme.css', '@media (prefers-color-scheme: dark) {\n  body { color: white; }\n}\n')
+    expect(probeProject(tmpDir).colorScheme).toEqual({ mechanism: 'media' })
+  })
+
+  it('prefers the class mechanism over an incidental prefers-color-scheme query', () => {
+    write(
+      'src/theme.css',
+      '.dark { --bg: black; }\n@media (prefers-color-scheme: dark) {\n  body { color: white; }\n}\n',
+    )
+    expect(probeProject(tmpDir).colorScheme).toEqual({ mechanism: 'class', selector: '.dark' })
+  })
+
+  it('does not match a compound media condition — false negative is the honest outcome', () => {
+    write('src/theme.css', '@media (min-width: 768px) and (prefers-color-scheme: dark) {\n  body { color: white; }\n}\n')
+    expect(probeProject(tmpDir).colorScheme).toEqual({ mechanism: 'none' })
+  })
+})
+
+// ---------------------------------------------------------------------------
 // studioMeta — tolerant partial reads, degrade-don't-throw, pagesDir escape
 // ---------------------------------------------------------------------------
 
@@ -510,6 +566,7 @@ describe('tryServeStudioProbe', () => {
       packageManager: 'bun',
       styleToolchain: { tailwind: null, cssModules: false, sass: false, postcssConfigPath: null, cssInJs: null },
       componentPackages: [],
+      colorScheme: { mechanism: 'none' },
       aliases: {},
       warnings: [],
     }

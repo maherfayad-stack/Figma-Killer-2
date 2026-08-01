@@ -6,6 +6,7 @@ import {
   clampPan,
   nearestZoomStep,
 } from '@site/canvas/math'
+import { DEFAULT_PREVIEW_AXES, type PreviewAxes } from '@core/studio-board'
 
 type CanvasMode = 'select' | 'pan' | 'insert'
 
@@ -83,6 +84,15 @@ interface CanvasSlice {
    * persisted breakpoint configuration.
    */
   agentSnapshotCaptureRequest: AgentSnapshotCaptureRequest | null
+  /**
+   * WS-10 Phase 1 — the board's render-time preview axes (direction,
+   * color scheme; `locale` is Phase 2, see `previewAxes.ts`'s module doc).
+   * Board-global, not per-frame (that's WS-10 Phase 2's `BoardFrame.axes`
+   * override). Persisted per project in `.studio/meta.json` — see
+   * `PreviewAxesControls.tsx`, which hydrates this on project open and
+   * writes through on every toggle.
+   */
+  previewAxes: PreviewAxes
 
   setZoom: (zoom: number) => void
   setPan: (x: number, y: number) => void
@@ -99,6 +109,13 @@ interface CanvasSlice {
   toggleBreakpointCollapsed: (id: string) => void
   /** Mount or release the agent's one-shot offscreen snapshot frame. */
   setAgentSnapshotCaptureRequest: (request: AgentSnapshotCaptureRequest | null) => void
+  /**
+   * Merge a partial update into `previewAxes` (e.g. `{ direction: 'rtl' }`).
+   * Editor-session state only — persistence to `.studio/meta.json` is the
+   * caller's job (`PreviewAxesControls.tsx`), same split `setActiveBreakpoint`
+   * vs. a breakpoint's own persisted config uses elsewhere in this slice.
+   */
+  setPreviewAxes: (patch: Partial<PreviewAxes>) => void
   resetView: () => void
   /**
    * Step zoom up to the next preset level. When `originX`/`originY` are
@@ -132,6 +149,7 @@ export const createCanvasSlice: EditorStoreSliceCreator<CanvasSlice> = (set, get
   runScripts: false,
   collapsedBreakpointIds: [],
   agentSnapshotCaptureRequest: null,
+  previewAxes: DEFAULT_PREVIEW_AXES,
 
   setZoom: (zoom) => set({ zoom: clampZoom(zoom) }),
 
@@ -165,6 +183,10 @@ export const createCanvasSlice: EditorStoreSliceCreator<CanvasSlice> = (set, get
 
   setAgentSnapshotCaptureRequest: (agentSnapshotCaptureRequest) => set({
     agentSnapshotCaptureRequest,
+  }),
+
+  setPreviewAxes: (patch) => set((s) => {
+    s.previewAxes = { ...s.previewAxes, ...patch }
   }),
 
   resetView: () => set({ zoom: RESET_ZOOM, panX: 0, panY: 0 }),

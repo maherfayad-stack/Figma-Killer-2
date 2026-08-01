@@ -152,6 +152,14 @@ export const PARSER_FIDELITY_CODES: readonly FidelityCodeDef[] = [
     fix: 'If this prop should be editable, change its call-site value to a literal, or extract it to a named constant the evaluator can resolve and treat as content.',
     impact: 'Named in codeProps — the Properties panel shows those specific fields as read-only.',
   },
+  {
+    code: 'RTL_PHYSICAL_PROPERTY',
+    title: 'Style uses a physical (not logical) direction property',
+    severity: 'info',
+    description: 'This node\'s style rules declare a physical-direction property (`margin-left`/`padding-right`/`left`/`right`/`text-align: left`/…) rather than a logical one (`margin-inline-start`, `inset-inline-end`, `text-align: start`, …). WS-10\'s RTL preview does not correct this — it is a real, honest finding: a project written with physical properties LOOKS WRONG in RTL because it IS wrong in RTL.',
+    fix: 'Replace the physical property with its logical equivalent (`margin-left` → `margin-inline-start`, `text-align: left` → `text-align: start`, …) so the layout mirrors correctly under `dir="rtl"`.',
+    impact: 'Spacing/alignment does not mirror when this page is previewed (or shipped) right-to-left.',
+  },
 ]
 
 export const ALL_FIDELITY_CODES: readonly FidelityCodeDef[] = [

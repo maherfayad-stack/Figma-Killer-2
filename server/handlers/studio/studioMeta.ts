@@ -56,6 +56,24 @@ const FrameDefaultsSchema = Type.Object({
   height: Type.Optional(Type.Number({ minimum: 1 })),
 })
 
+/**
+ * WS-10 Phase 1 — the board-global preview axes a user has explicitly set,
+ * persisted per project (D5: "Axes persist PER PROJECT in .studio/meta.json").
+ * Both fields optional so a project that never touched the toggle keeps
+ * opening exactly as it does today; `readPersistedPreviewAxes` in
+ * `./previewAxes.ts` fills in `DEFAULT_PREVIEW_AXES` for whatever is absent.
+ *
+ * Deliberately NOT `@core/studio-board`'s full `PreviewAxesSchema` — that type
+ * also carries `locale` (Phase 2, parse-time, a different persistence
+ * mechanism: the existing `previewLocale` field above). Defined narrowly here
+ * so this file's shape doesn't drift if/when `PreviewAxes` grows a field this
+ * sidecar has no reason to persist.
+ */
+const PersistedPreviewAxesSchema = Type.Object({
+  direction: Type.Optional(Type.Union([Type.Literal('ltr'), Type.Literal('rtl')])),
+  colorScheme: Type.Optional(Type.Union([Type.Literal('light'), Type.Literal('dark')])),
+})
+
 export const StudioMetaSchema = Type.Object({
   /** Decouples the user-facing project name from the folder slug. See `projectDisplayName`. */
   displayName: Type.Optional(Type.String({ minLength: 1 })),
@@ -84,6 +102,8 @@ export const StudioMetaSchema = Type.Object({
    * fixed name list doesn't recognize as overlay/portal components).
    */
   paletteHiddenModuleIds: Type.Optional(Type.Array(Type.String())),
+  /** WS-10 Phase 1 — see `PersistedPreviewAxesSchema` above. */
+  previewAxes: Type.Optional(PersistedPreviewAxesSchema),
 })
 export type StudioMeta = Static<typeof StudioMetaSchema>
 

@@ -96,6 +96,7 @@ import { closestReadonlyRegion, isElementLike } from './readonlyRegion'
 import { CanvasDocumentContext, CanvasFrameElementContext } from './CanvasContexts'
 import styles from './IframeFrameSurface.module.css'
 import { IFRAME_SRC_DOC, claimIframeSrcDocument } from './iframeSrcDocument'
+import { useApplyPreviewAxes } from './previewAxesFrameEffect'
 
 /** Stable empty list so a script-less frame doesn't churn the injector's deps. */
 const EMPTY_RUNTIME_SCRIPTS: InjectableRuntimeScript[] = []
@@ -203,6 +204,10 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
     useIframeCursorBridge(iframeRef, iframeDoc, { onCursorMove, onCursorLeave })
     useCanvasFormControlSuppression(iframeDoc, { breakpointId, enabled: !isLive })
     useIframeFrameAutoHeight({ iframeRef, iframeDoc, isLive })
+    // WS-10 Phase 1 — direction/color-scheme, an attribute effect on the
+    // already-mounted frame document (never `srcDoc`/a `key` — see
+    // `previewAxesFrameEffect.ts`).
+    useApplyPreviewAxes(iframeDoc)
 
     // Bridge the iframe handle out to the parent (selection overlay reads
     // `iframeElement` to translate inside-iframe rects into editor coordinates).

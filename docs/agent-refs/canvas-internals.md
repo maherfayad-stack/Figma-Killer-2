@@ -109,6 +109,64 @@ Both modes are **fully editable**. Neither is a read-only preview.
 
 ---
 
+## Preview axes (WS-10 Phase 1) — direction + dark mode, without a remount
+
+The board previews a project along a `PreviewAxes` triple
+(`src/core/studio-board/previewAxes.ts`): `direction` (`'ltr'|'rtl'`),
+`colorScheme` (`'light'|'dark'`), and a reserved-but-unused-yet `locale`
+field (Phase 2 — parse-time, needs a re-parse, out of scope here). Both
+Phase 1 axes are **render-time**: no re-parse, no frame remount.
+
+**Applied via an attribute effect, never `srcDoc`/a React `key`.**
+`IframeFrameSurface.tsx` reads `previewAxes` from the store and the
+project's `ColorSchemeCapability` probe result from an external store
+(`previewAxesCapability.ts`), and a plain `useEffect` calls
+`applyPreviewAxesToFrameDocument` (`previewAxesFrameEffect.ts`) on the
+ALREADY-MOUNTED `iframeDoc.documentElement`:
+- `dir` — the load-bearing mechanism. Trap #1 applies: no wrapper `<div
+  dir="rtl">`, the attribute lands on the document element the frame already
+  has.
+- `lang` — `'ar'` when `rtl` (Phase 1 has no real per-project locale to
+  reach for yet — see `previewAxesFrameEffect.ts`'s doc), cleared on `ltr`.
+- `data-studio-scheme` + inline `color-scheme` — always set, regardless of
+  the project's detected mechanism. This is the attribute
+  `darkSchemeCssTransform.ts`'s rewritten CSS matches against.
+- When the probe detected a `'class'`-mechanism project (a `.dark` class or
+  `[data-theme="dark"]` attribute), that EXACT selector is also toggled —
+  the project's own gate, so its styles respond as they would in the real
+  app.
+
+Why this matters: wiring either axis through `srcDoc` or a `key` would
+remount the frame on every toggle — ~100-140ms per frame (`perf-01`'s
+budget) — which a board-wide toggle across every frame cannot pay.
+`previewAxesFrameAttributes.test.tsx` asserts the SAME iframe element and
+the SAME `contentDocument` survive a toggle.
+
+### Dark mode's two real mechanisms, and the CSS-rewrite one
+
+`prefers-color-scheme` is a real user-preference media feature — it cannot
+be forced per-iframe from CSS, in EITHER direction (a light preview on a
+dark-OS host would still show dark; a dark preview on a light-OS host would
+never activate). So for a `'media'`-mechanism project,
+`darkSchemeCssTransform.ts` rewrites `@media (prefers-color-scheme:
+dark|light)` into `:where(html[data-studio-scheme='dark|light']) { ... }`
+on the INJECTED COPY only (never the file on disk), applied inside
+`UserStylesheetInjector.tsx`/`ProjectCssInjector.tsx` before the CSS lands
+in the iframe. `:where()` keeps the rewrite specificity-neutral — CSS
+nesting gives each inner rule an implicit `:where(...) <selector>`
+descendant combinator, matching exactly the same elements the original
+(unscoped, inside the media query) selector matched.
+
+**Landmine:** do not round-trip a WHOLE stylesheet through the CSSOM to do
+this rewrite. happy-dom's CSS parser does not support `@layer` at all and
+silently DROPS every rule inside one — a real hazard for a Tailwind v4
+project, which wraps its entire generated CSS in
+`@layer theme, base, components, utilities;`. The transform instead uses a
+brace/comment/string-aware scanner to find candidate `@media` spans in the
+RAW text (so nested at-rules and `@layer` wrappers are never touched), and
+validates each candidate in ISOLATION (`@media <prelude> {}`, never the
+whole file) through the CSSOM before splicing it in.
+
 ## Height, and the feedback loop
 
 Design frames grow to content. `vh`/`vmin`/`vmax` size against the iframe

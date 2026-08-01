@@ -153,6 +153,11 @@
  *       must not happen before the user consents to a trust tier that allows
  *       it.
  *
+ *   GET/POST /admin/api/studio/preview-axes    → `studio/previewAxes.ts`
+ *       WS-10 Phase 1 — reads/writes `.studio/meta.json`'s `previewAxes`
+ *       field (direction, color scheme; per-project, per D5). The toolbar's
+ *       RTL / dark-mode toggle.
+ *
  * This module is the HTTP routing layer only — request wiring, body
  * validation, and error-envelope mapping. The actual page-parser/ast-codemods
  * work (Node/ts-morph, never the browser) lives in sibling modules by
@@ -199,6 +204,7 @@ import { tryServeStudioComponentBundle } from './studio/componentBundle'
 import { tryServeStudioTokens } from './studio/tokenExtract'
 import { tryServeStudioTrustTier } from './studio/trustTier'
 import { tryServeStudioExtractComponent } from './studio/extractComponent'
+import { tryServeStudioPreviewAxes } from './studio/previewAxes'
 
 /**
  * Sub-routers for the newer studio namespaces, each owning one concern and its
@@ -220,6 +226,7 @@ const STUDIO_SUB_ROUTERS = [
   tryServeStudioTrustTier,
   tryServeStudioTokens,
   tryServeStudioExtractComponent,
+  tryServeStudioPreviewAxes,
 ] as const
 
 /** Body of POST /admin/api/studio/save — a batch of typed source writebacks. */

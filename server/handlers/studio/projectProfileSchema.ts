@@ -74,6 +74,33 @@ const StyleToolchainSchema = Type.Object({
   ]),
 })
 
+/**
+ * WS-10 Phase 1 (§3.1) — how (if at all) this project expresses dark mode in
+ * its own CSS. Two real mechanisms exist and the canvas has to handle them
+ * differently, so this is a probe result, not a toggle:
+ *
+ *   - `'class'`  — a Tailwind `darkMode: 'class' | 'selector'` config, or a
+ *     `.dark` / `[data-theme=…]` / `[data-scheme=…]` selector present in the
+ *     project's own CSS. `selector` names the exact one detected. Applying
+ *     the scheme is then a plain class/attribute toggle on the frame's
+ *     `<html>` — see `IframeFrameSurface.tsx`.
+ *   - `'media'`  — the project's CSS contains
+ *     `@media (prefers-color-scheme: dark)`. `prefers-color-scheme` cannot be
+ *     forced per-iframe from CSS (it's a real user-preference media feature,
+ *     not overridable), so the canvas rewrites that query on the INJECTED
+ *     COPY only — see `darkSchemeCssTransform.ts`. The project's file on disk
+ *     is never touched.
+ *   - `'none'`   — neither was found. The toolbar's dark-mode control renders
+ *     disabled with this as the reason (never a silent no-op toggle — WS-10
+ *     §7.4 "probe honesty").
+ */
+const ColorSchemeCapabilitySchema = Type.Object({
+  mechanism: Type.Union([Type.Literal('media'), Type.Literal('class'), Type.Literal('none')]),
+  /** The exact class/attribute selector detected — only present for `'class'`. */
+  selector: Type.Optional(Type.String()),
+})
+export type ColorSchemeCapability = Static<typeof ColorSchemeCapabilitySchema>
+
 const PagesDirCandidateSchema = Type.Object({
   /** Repo-relative POSIX directory path. */
   dir: Type.String(),
@@ -111,6 +138,8 @@ export const ProjectProfileSchema = Type.Object({
   styleToolchain: StyleToolchainSchema,
   /** Dependency names whose entry `.d.ts` exports a PascalCase React-component-shaped declaration. */
   componentPackages: Type.Array(Type.String()),
+  /** WS-10 Phase 1 — see `ColorSchemeCapabilitySchema` above. */
+  colorScheme: ColorSchemeCapabilitySchema,
   /** tsconfig `paths` merged UNDER vite `resolve.alias` (vite wins on key collision). */
   aliases: Type.Record(Type.String(), Type.String()),
   warnings: Type.Array(ProbeWarningSchema),

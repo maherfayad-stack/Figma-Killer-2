@@ -22,6 +22,14 @@
  * exact bytes the published page receives — same stylesheet selection (scope
  * + enable state), same cascade order (priority, then path), same comment
  * wrapping.
+ *
+ * WS-10 Phase 1 — `prefers-color-scheme` rewrite
+ * ────────────────────────────────────────────────
+ * Applied unconditionally (a no-op when the CSS has no such media query — see
+ * `darkSchemeCssTransform.ts`'s cheap short-circuit): a project whose dark
+ * mode is expressed via a media query gets it rewritten into an attribute
+ * selector Studio's own preview-axes toggle controls, on this injected copy
+ * only. The file on disk is never touched.
  */
 
 import { useEffect } from 'react'
@@ -29,6 +37,7 @@ import { useEditorStore } from '@site/store/store'
 import { collectUserStylesheetCss } from '@core/publisher'
 import { resolveViewportUnitsForCanvas, type CanvasViewport } from './resolveViewportUnits'
 import { CANVAS_CSS_LAYER_ORDER, USER_AUTHORED_LAYER } from './canvasCssLayers'
+import { rewritePrefersColorScheme } from './darkSchemeCssTransform'
 
 const STYLE_TAG_ID = 'mc-user-styles'
 
@@ -59,7 +68,8 @@ export function UserStylesheetInjector({ targetDocument, viewport }: UserStylesh
   // iframe height explode.
   const activePage = site ? site.pages.find((page) => page.id === activePageId) ?? site.pages[0] : undefined
   const collected = site && activePage ? collectUserStylesheetCss(site, activePage) : ''
-  const css = viewport ? resolveViewportUnitsForCanvas(collected, viewport) : collected
+  const viewportResolved = viewport ? resolveViewportUnitsForCanvas(collected, viewport) : collected
+  const css = rewritePrefersColorScheme(viewportResolved)
 
   useEffect(() => {
     const targetDoc = targetDocument ?? document

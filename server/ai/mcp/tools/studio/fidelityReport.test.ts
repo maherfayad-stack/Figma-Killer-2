@@ -104,6 +104,39 @@ describe('studio_fidelity_report', () => {
     expect(finding.fix.length).toBeGreaterThan(0)
   })
 
+  it('flags a node whose class rule uses physical (not logical) direction CSS with RTL_PHYSICAL_PROPERTY', async () => {
+    write(tmpDir, 'pages/Home.css', '.hero { margin-left: 8px; text-align: right; }\n')
+    write(
+      tmpDir,
+      'pages/Home.tsx',
+      ["import './Home.css'", 'export default function Home() {', '  return <div className="hero">Hi</div>', '}', ''].join('\n'),
+    )
+
+    const result = (await studioFidelityReportTool.handler!({ dir: tmpDir }, {} as never)) as {
+      pages: Array<{ findingCounts: Record<string, number>; findings: Array<{ code: string; message: string; fix: string }> }>
+    }
+    const page = result.pages[0]!
+    expect(page.findingCounts.RTL_PHYSICAL_PROPERTY).toBe(1)
+    const finding = page.findings.find((f) => f.code === 'RTL_PHYSICAL_PROPERTY')!
+    expect(finding.message).toContain('margin-left')
+    expect(finding.message).toContain('text-align: right')
+    expect(finding.fix.length).toBeGreaterThan(0)
+  })
+
+  it('does not flag a class rule that uses only logical/direction-neutral CSS', async () => {
+    write(tmpDir, 'pages/Home.css', '.hero { margin-inline-start: 8px; text-align: center; }\n')
+    write(
+      tmpDir,
+      'pages/Home.tsx',
+      ["import './Home.css'", 'export default function Home() {', '  return <div className="hero">Hi</div>', '}', ''].join('\n'),
+    )
+
+    const result = (await studioFidelityReportTool.handler!({ dir: tmpDir }, {} as never)) as {
+      pages: Array<{ findingCounts: Record<string, number> }>
+    }
+    expect(result.pages[0]!.findingCounts.RTL_PHYSICAL_PROPERTY).toBeUndefined()
+  })
+
   it('surfaces the project probe warnings as projectFindings, reusing the same codes', async () => {
     // No pages dir at all — the probe should emit pages-dir-not-found.
     const result = (await studioFidelityReportTool.handler!({ dir: tmpDir }, {} as never)) as {

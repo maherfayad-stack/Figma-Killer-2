@@ -36,6 +36,27 @@
  *   generated ONCE per change and frames 2..N reuse the cached string. Only
  *   the per-frame viewport-unit resolution still runs per injector — its
  *   output genuinely differs per frame width.
+ *
+ * WS-10 Phase 1 — `prefers-color-scheme` rewrite
+ * ────────────────────────────────────────────────
+ * An imported project's OWN `@media (prefers-color-scheme: dark)` block (from
+ * its own `.css`, parsed by `cssToStyleRules.ts`'s "unmatched @media" path
+ * into a `ConditionDef`) — and the SAME condition a user can author by hand
+ * via `ConditionBuilder.tsx`'s "Dark mode" preset — both re-emit through this
+ * SAME `generateCanvasClassCSS`/`createStyleRuleCssEmitter` engine, which is
+ * ALSO what the publisher's `generateClassCSS` calls to build the real
+ * published stylesheet. All three CSS strings this injector produces (the
+ * main registry, the hover-preview overlay, the forced-state overlay) are
+ * therefore piped through `rewritePrefersColorScheme` on the way into the
+ * `<style>` tag — CANVAS-SIDE ONLY, after generation, never inside
+ * `generateClassCSS`/`createStyleRuleCssEmitter` itself. `@core/publisher` is
+ * not touched: a real browser DOES support `prefers-color-scheme` correctly
+ * per visitor, so the published page must keep emitting the genuine `@media`
+ * query — the rewrite exists purely because the canvas cannot emulate that
+ * media feature per-iframe. See `darkSchemeCssTransform.ts`'s own doc for the
+ * mechanism, and `styleRuleDarkModeRoundTrip.test.ts` for the test that
+ * proves the two paths diverge exactly as intended (canvas rewrites, publish
+ * doesn't).
  */
 
 import { useEffect } from 'react'
@@ -51,6 +72,7 @@ import { selectorStatePseudo } from '@site/cssStatePseudo'
 import { generateCanvasClassCSS, generateForcedStateCSS, generatePreviewClassCSS } from './canvasClassCss'
 import { resolveViewportUnitsForCanvas, type CanvasViewport } from './resolveViewportUnits'
 import { CANVAS_CSS_LAYER_ORDER, RESET_LAYER, USER_AUTHORED_LAYER } from './canvasCssLayers'
+import { rewritePrefersColorScheme } from './darkSchemeCssTransform'
 
 interface ClassStyleInjectorProps {
   /**
@@ -157,7 +179,7 @@ export function ClassStyleInjector({ targetDocument, viewport }: ClassStyleInjec
     // all three regardless of specificity. The `CANVAS_CSS_LAYER_ORDER` prelude
     // pins the relative order no matter which stylesheet's rule body the
     // browser encounters first.
-    const css = forCanvas(generated)
+    const css = rewritePrefersColorScheme(forCanvas(generated))
     const resetBlock = `@layer ${RESET_LAYER} {\n${PUBLISHER_RESET_CSS}\n}`
     styleEl.textContent = css
       ? `${CANVAS_CSS_LAYER_ORDER}\n${resetBlock}\n@layer ${USER_AUTHORED_LAYER} {\n${css}\n}`
@@ -205,7 +227,9 @@ export function ClassStyleInjector({ targetDocument, viewport }: ClassStyleInjec
       breakpointId: previewClassStyles.breakpointId ?? null,
       styles: previewClassStyles.styles,
     }, { mediaAssets: responsiveMediaAssets })
-    const resolvedPreviewCss = viewport ? resolveViewportUnitsForCanvas(previewCss, viewport) : previewCss
+    const resolvedPreviewCss = rewritePrefersColorScheme(
+      viewport ? resolveViewportUnitsForCanvas(previewCss, viewport) : previewCss,
+    )
     // Keep in the same @layer so the doubled-selector preview rule still wins
     // over the regular class rule within the layer (higher specificity). No
     // need to repeat CANVAS_CSS_LAYER_ORDER here — the main effect above
@@ -252,7 +276,9 @@ export function ClassStyleInjector({ targetDocument, viewport }: ClassStyleInjec
       inflight,
       { mediaAssets: responsiveMediaAssets },
     )
-    const resolved = viewport ? resolveViewportUnitsForCanvas(forcedCss, viewport) : forcedCss
+    const resolved = rewritePrefersColorScheme(
+      viewport ? resolveViewportUnitsForCanvas(forcedCss, viewport) : forcedCss,
+    )
     forceEl.textContent = resolved ? `@layer ${USER_AUTHORED_LAYER} {\n${resolved}\n}` : ''
   }, [
     targetDocument,
