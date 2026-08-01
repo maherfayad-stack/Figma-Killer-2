@@ -18,10 +18,11 @@
  * (mirrors `appRoot.ts`'s containment discipline for project-relative paths).
  */
 
-import { mkdirSync, chmodSync, existsSync, realpathSync, rmSync, statSync } from 'node:fs'
+import { mkdirSync, chmodSync, existsSync, rmSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { assertPathWithin } from '../../util/pathWithin'
 import { projectsRootDir } from '../studioProjects'
+import { resolveValidatedWorkspaceDir } from './workspaceDir'
 
 /** 0700 — owner read/write/execute only. Best-effort on Windows (NTFS ACLs, not POSIX mode bits). */
 const CONFIG_DIR_MODE = 0o700
@@ -134,46 +135,18 @@ export function buildClaudeCliLoginCommand(configDir: string): string {
  * the availability PROBE only, which must never risk a real project's
  * `CLAUDE.md` cache-creation cost (WS-11 §4.0).
  *
- * Containment mirrors `appRoot.ts`'s discipline: resolve symlinks on BOTH
- * sides before the containment check, never on the textual path alone — a
- * project pulled from GitHub can contain symlinks, and a prefix check on an
- * un-resolved path is bypassable. Returns `null` (never throws) for anything
- * that doesn't check out — a chat turn degrades to the config-dir cwd rather
- * than failing outright, since a missing/invalid workspace is a legitimate
- * client-side state (e.g. no project open), not a bug worth crashing on.
+ * A thin, name-preserving alias over `resolveValidatedWorkspaceDir`
+ * (`workspaceDir.ts`) — the validation itself moved there once WS-12's chat
+ * handler needed the exact same check for a second, unrelated purpose
+ * (choosing Studio tools/prompt vs. the CMS site's). Keeping this name and
+ * signature means `claudeCli.ts`, its tests, and `docs/features/agent.md`
+ * needed no changes.
  */
 export function resolveClaudeCliWorkspaceCwd(
   requestedDir: string | null | undefined,
   projectsRoot: string = projectsRootDir(),
 ): string | null {
-  if (!requestedDir) return null
-  const resolved = resolve(requestedDir)
-  if (!existsSync(resolved)) return null
-  let stat: ReturnType<typeof statSync>
-  try {
-    stat = statSync(resolved)
-  } catch {
-    return null
-  }
-  if (!stat.isDirectory()) return null
-
-  let realResolved: string
-  let realRoot: string
-  try {
-    realResolved = realpathSync(resolved)
-    realRoot = realpathSync(projectsRoot)
-  } catch {
-    return null
-  }
-  try {
-    assertPathWithin(realRoot, realResolved)
-  } catch {
-    return null
-  }
-  // Return the caller's own resolved (non-realpath'd) path — the CLI should
-  // see the project at the path the browser knows it by, not a symlink target
-  // that may not match what `.studio/meta.json` and the rest of Studio use.
-  return resolved
+  return resolveValidatedWorkspaceDir(requestedDir, projectsRoot)
 }
 
 // ---------------------------------------------------------------------------

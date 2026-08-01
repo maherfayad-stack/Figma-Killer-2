@@ -2,11 +2,11 @@ import { describe, expect, it, beforeAll } from 'bun:test'
 import { parseSiteDocument } from '@core/page-tree'
 import { makePage, makeSite } from '../publisher/helpers'
 
-let buildStudioSystemPrompt: typeof import('../../../server/ai/handlers/chat')['buildStudioSystemPrompt']
+let buildCmsSiteSystemPrompt: typeof import('../../../server/ai/handlers/chat')['buildCmsSiteSystemPrompt']
 
 beforeAll(async () => {
   await import('../../../src/modules/base') // register base modules in this process
-  ;({ buildStudioSystemPrompt } = await import('../../../server/ai/handlers/chat'))
+  ;({ buildCmsSiteSystemPrompt } = await import('../../../server/ai/handlers/chat'))
 })
 
 function validSnapshot() {
@@ -29,9 +29,9 @@ function validSnapshot() {
   }
 }
 
-describe('buildStudioSystemPrompt — site snapshot validation', () => {
+describe('buildCmsSiteSystemPrompt — site snapshot validation', () => {
   it('passes a valid snapshot through to the prompt builder', () => {
-    const prompt = buildStudioSystemPrompt(validSnapshot())
+    const prompt = buildCmsSiteSystemPrompt(validSnapshot())
     expect(prompt).toHaveLength(3)
     expect(prompt.join(' ')).toContain('Passthrough Page')
     // The empty-fallback title must NOT appear for a real snapshot.
@@ -43,7 +43,7 @@ describe('buildStudioSystemPrompt — site snapshot validation', () => {
     const malformed = { page: 'not-a-page', site: 42, selectedNodeId: {}, activeBreakpointId: 7 }
     let prompt: string[] | undefined
     expect(() => {
-      prompt = buildStudioSystemPrompt(malformed)
+      prompt = buildCmsSiteSystemPrompt(malformed)
     }).not.toThrow()
     expect(prompt).toHaveLength(3)
     // Empty fallback uses the "Untitled" placeholder page.
@@ -51,9 +51,9 @@ describe('buildStudioSystemPrompt — site snapshot validation', () => {
   })
 
   it('falls back to the empty snapshot when no snapshot is posted', () => {
-    const fromUndefined = buildStudioSystemPrompt(undefined)
-    const fromNull = buildStudioSystemPrompt(null)
-    const fromMalformed = buildStudioSystemPrompt({ page: 'nope' })
+    const fromUndefined = buildCmsSiteSystemPrompt(undefined)
+    const fromNull = buildCmsSiteSystemPrompt(null)
+    const fromMalformed = buildCmsSiteSystemPrompt({ page: 'nope' })
     expect(fromUndefined.join(' ')).toContain('Untitled')
     // Missing and malformed both resolve to the same empty-fallback prompt.
     expect(fromNull).toEqual(fromUndefined)

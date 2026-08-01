@@ -13,16 +13,26 @@
  * an external agent instead of making it re-derive locations by hand.
  *
  * Capability posture: every tool here is a READ except `studio_install_deps`
- * (spawns a real subprocess, downloads packages) — that one alone declares
+ * and `studio_create_page` (write a job / write a file), which declare
  * `mutates: true` + `requiredCapabilities: ['studio.write']`. The reads have
  * no `requiredCapabilities`, which `toolAllowedForCapabilities` treats as
  * "any ai.chat caller" — same posture `get_context`/`site_list_documents`
  * use for read-only orientation tools.
+ *
+ * `studio_create_page` and `studio_read_file` (WS-12 §3) close the two gaps
+ * that made "the agent can create a screen" impossible: without the first
+ * there was no tool wrapping `POST /admin/api/studio/page`
+ * (`../../../../handlers/studio/pageScaffold.ts`) at all — screen creation
+ * simply wasn't reachable — and without the second, composing a new screen
+ * had no way to read a SIBLING screen or a component's own source to match
+ * the project's conventions (`studio_get_node_source` reads one already-known
+ * node's few lines of context; this reads a whole file by path).
  */
+import { join, sep } from 'node:path'
 import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { Type } from '@core/utils/typeboxHelpers'
 import { decodeSourceNodeId } from '@core/page-tree'
+import { EXCLUDED_WORKSPACE_DIR_NAMES, checkCanonicalJsx, parsePageFile, summarizeCanonicalFindings } from '@core/page-parser'
 import type { AiTool } from '../../../runtime/types'
 import {
   listStudioProjects,
@@ -34,6 +44,9 @@ import { readStudioMeta } from '../../../../handlers/studio/studioMeta'
 import { resolveProjectProfile } from '../../../../handlers/studio/projectProbe'
 import { startInstallJob, getInstallJob, probeInstallStatus } from '../../../../handlers/studio/installDeps'
 import { loadStudioPages } from '../../../../handlers/studioPageLoad'
+import { createScaffoldedPage } from '../../../../handlers/studio/pageScaffold'
+import { readTextCapped } from '../../../../handlers/studio/cappedFileRead'
+import { isRealpathContained } from '../../../../handlers/studio/workspacePackageResolve'
 
 const DirInputSchema = Type.Object(
   {
@@ -337,6 +350,140 @@ const findNodesTool: AiTool = {
   },
 }
 
+// ---------------------------------------------------------------------------
+// studio_create_page (WS-12 §3) — wraps POST /admin/api/studio/page
+// ---------------------------------------------------------------------------
+
+const CreatePageInputSchema = Type.Object(
+  {
+    dir: Type.Optional(
+      Type.String({ description: 'Absolute project directory. Defaults to the first project under studio-workspace/.' }),
+    ),
+    name: Type.Optional(
+      Type.String({
+        description:
+          'Component/file name, turned into a PascalCase identifier (e.g. "order summary" -> OrderSummary.tsx). Omit to auto-name Page, Page2, ... — collisions with an existing name return a conflict rather than overwriting it.',
+      }),
+    ),
+  },
+  { additionalProperties: false },
+)
+
+const createPageTool: AiTool = {
+  name: 'studio_create_page',
+  scope: 'shared',
+  execution: 'server',
+  mutates: true,
+  requiredCapabilities: ['studio.write'],
+  description:
+    'Scaffold a new page/screen: writes a canonical-by-construction .tsx (or .jsx, matching the project\'s own convention) file, auto-places its board frame at the next free grid slot so it is immediately visible, and returns { relPath, pageId, title, rootNodeId }. This is the ONLY way to create a screen — there is no other tool and no raw-file-write path. rootNodeId is read back by actually parsing the file just written (never invented) — pass it to studio_apply_edits\' insert edits as the container to compose structure into. Returns { ok:false, conflict } instead of overwriting when the name is already taken. Requires studio.write.',
+  inputSchema: CreatePageInputSchema,
+  handler: async (input) => {
+    const { dir: dirInput, name } = input as { dir?: string; name?: string }
+    const dir = resolveProjectDir(dirInput)
+    const result = createScaffoldedPage(dir, name ?? '')
+    if (!result.ok) return { ok: false, error: result.conflict }
+    return {
+      ok: true,
+      dir,
+      relPath: result.relPath,
+      pageId: result.pageId,
+      title: result.title,
+      rootNodeId: result.rootNodeId ?? null,
+    }
+  },
+}
+
+// ---------------------------------------------------------------------------
+// studio_read_file (WS-12 §3) — bounded, containment-checked file read
+// ---------------------------------------------------------------------------
+
+/** Generous enough for a real screen/component file; matches the order of magnitude `projectProbe.ts` uses for a single config file. */
+const READ_FILE_MAX_BYTES = 200_000
+
+const ReadFileInputSchema = Type.Object(
+  {
+    dir: Type.Optional(
+      Type.String({ description: 'Absolute project directory. Defaults to the first project under studio-workspace/.' }),
+    ),
+    path: Type.String({
+      description:
+        'Project-relative POSIX path, e.g. "src/screens/Home.tsx" or "src/components/SheetHeader.tsx". Never absolute, never containing "..".',
+    }),
+  },
+  { additionalProperties: false },
+)
+
+/**
+ * Resolve a caller-supplied, project-relative path to a safe absolute file
+ * path, or `null` when it doesn't check out — the same adversarial posture
+ * `studioAsset.ts` applies to the (also attacker-controlled) asset path:
+ * reject absolute/UNC/drive-letter forms, reject any `..` segment split on
+ * BOTH separators, reject any segment named in `EXCLUDED_WORKSPACE_DIR_NAMES`
+ * (`node_modules`, `.git`, …), then re-check containment on the REAL path
+ * (`isRealpathContained`) so a symlink planted inside `dir` — a GitHub import
+ * can contain one — can't point the read outside it.
+ */
+function resolveSafeWorkspaceFile(dir: string, rawPath: string): string | null {
+  if (/^[a-zA-Z]:/.test(rawPath)) return null // Windows drive path
+  if (rawPath.startsWith('\\\\') || rawPath.startsWith('//') || rawPath.startsWith('/')) return null
+  const segments = rawPath.split(/[\\/]+/).filter((segment) => segment.length > 0)
+  if (segments.length === 0) return null
+  if (segments.some((segment) => segment === '..' || segment === '')) return null
+  if (segments.some((segment) => EXCLUDED_WORKSPACE_DIR_NAMES.has(segment))) return null
+
+  const root = join(dir)
+  const resolved = join(dir, ...segments)
+  if (resolved !== root && !resolved.startsWith(root + sep)) return null
+  if (!isRealpathContained(resolved, dir)) return null
+  return resolved
+}
+
+/**
+ * When `rawPath` looks like a JSX/TSX page-shaped file, also run the WS-13
+ * canonical check on it and fold in a compact summary — the "confirm the
+ * screen is still canonical" step of the create-a-screen flow, without a
+ * dedicated tool. `checkCanonicalJsx`/`summarizeCanonicalFindings`'s own doc
+ * comments name this exact caller ("the single signal step 4's scaffolder and
+ * WS-12's agent should check"). Never thrown, never asserted for a file that
+ * isn't page-shaped: `parsePageFile` never throws (a guard trip just yields
+ * an empty page), so a plain component/util file degrades to
+ * `isCanonical: true, violations: 0` rather than a false negative — harmless
+ * either way, since the caller only reads this field on a `.tsx`/`.jsx` path
+ * it already expects to be a screen.
+ */
+function canonicalSummaryFor(resolved: string, dir: string, rawPath: string): { isCanonical: boolean; violations: number; advisories: number } | undefined {
+  if (!/\.(tsx|jsx)$/.test(rawPath)) return undefined
+  try {
+    const parsed = parsePageFile(resolved, dir)
+    const findings = checkCanonicalJsx({ page: parsed })
+    return summarizeCanonicalFindings(findings)
+  } catch {
+    return undefined
+  }
+}
+
+const readFileTool: AiTool = {
+  name: 'studio_read_file',
+  scope: 'shared',
+  execution: 'server',
+  description:
+    `Read a workspace file by project-relative path, up to ${READ_FILE_MAX_BYTES.toLocaleString('en-US')} bytes. studio_get_node_source reads the few lines around ONE already-known node; this reads a whole file — use it to read a SIBLING screen or a component's own source before composing a new screen, so the result matches the project's existing conventions (imports, component vocabulary, class naming, file layout) instead of guessing. For a .tsx/.jsx path, also returns canonical: { isCanonical, violations, advisories } — the WS-13 canonical-JSX check (isCanonical is violations===0; advisories are informational, never disqualifying) — use this to confirm a screen you just composed is still fully editable. Returns { ok:false, error } for a missing file, a directory, an oversized file, or a path that fails containment (absolute, "..", or a symlink escaping the project) — never a partial read.`,
+  inputSchema: ReadFileInputSchema,
+  handler: async (input) => {
+    const { dir: dirInput, path: rawPath } = input as { dir?: string; path: string }
+    const dir = resolveProjectDir(dirInput)
+    const resolved = resolveSafeWorkspaceFile(dir, rawPath)
+    if (!resolved) return { ok: false, error: `"${rawPath}" is not a readable path inside this project.` }
+    const content = readTextCapped(resolved, READ_FILE_MAX_BYTES)
+    if (content === undefined) {
+      return { ok: false, error: `"${rawPath}" does not exist, is not a regular file, or exceeds ${READ_FILE_MAX_BYTES.toLocaleString('en-US')} bytes.` }
+    }
+    const canonical = canonicalSummaryFor(resolved, dir, rawPath)
+    return { ok: true, dir, path: rawPath, content, ...(canonical ? { canonical } : {}) }
+  },
+}
+
 export const studioProjectMcpTools: AiTool[] = [
   listProjectsTool,
   projectProfileTool,
@@ -345,4 +492,6 @@ export const studioProjectMcpTools: AiTool[] = [
   listPagesTool,
   getNodeSourceTool,
   findNodesTool,
+  createPageTool,
+  readFileTool,
 ]

@@ -98,6 +98,44 @@ describe('selectStudioTools capability filtering', () => {
     ])
     expect(withWrite.some((t) => t.mutates)).toBe(true)
   })
+
+  // WS-12 §3 — a turn against an open Studio project gets the real Studio
+  // tools instead of the CMS site tools, chosen per-request from live
+  // context (never a stored discriminator — WS-12 §8.1 D3).
+  it('defaults to the CMS site toolset when no context is passed (existing single-arg callers unaffected)', () => {
+    const names = selectStudioTools(['ai.chat'])
+    expect(names.some((t) => t.name.startsWith('site_'))).toBe(true)
+    expect(names.some((t) => t.name.startsWith('studio_'))).toBe(false)
+  })
+
+  it('returns the real Studio tools when studioProjectOpen is true', () => {
+    const names = selectStudioTools(['ai.chat'], { studioProjectOpen: true }).map((t) => t.name)
+    expect(names).toContain('studio_list_pages')
+    expect(names).toContain('studio_get_node_source')
+    expect(names.some((n) => n.startsWith('site_'))).toBe(false)
+  })
+
+  it('gates studio_create_page/studio_apply_edits behind ai.tools.write + studio.write, same posture as every other Studio write tool', () => {
+    const withoutWrite = selectStudioTools(['ai.chat'], { studioProjectOpen: true })
+    expect(withoutWrite.some((t) => t.name === 'studio_create_page')).toBe(false)
+    expect(withoutWrite.some((t) => t.name === 'studio_apply_edits')).toBe(false)
+
+    // ai.tools.write alone is not enough — every Studio write tool also
+    // declares requiredCapabilities: ['studio.write'] (ANY-OF), a SEPARATE
+    // axis from the mutates flag.
+    const withOnlyToolsWrite = selectStudioTools(['ai.chat', 'ai.tools.write'], { studioProjectOpen: true })
+    expect(withOnlyToolsWrite.some((t) => t.name === 'studio_create_page')).toBe(false)
+
+    const withBoth = selectStudioTools(['ai.chat', 'ai.tools.write', 'studio.write'], { studioProjectOpen: true })
+    expect(withBoth.some((t) => t.name === 'studio_create_page')).toBe(true)
+    expect(withBoth.some((t) => t.name === 'studio_apply_edits')).toBe(true)
+  })
+
+  it('offers studio_read_file/studio_find_nodes to a read-only caller (no requiredCapabilities)', () => {
+    const names = selectStudioTools(['ai.chat'], { studioProjectOpen: true }).map((t) => t.name)
+    expect(names).toContain('studio_read_file')
+    expect(names).toContain('studio_find_nodes')
+  })
 })
 
 const noopBridge: AiBrowserBridge = {

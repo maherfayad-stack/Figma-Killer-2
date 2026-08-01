@@ -5,8 +5,8 @@
  *   {
  *     conversationId: string,
  *     content:        Array<{ kind: 'text' | 'image', ... }>,
- *     snapshot?:      unknown   // live Site editor snapshot for this turn
- *     workspaceDir?:  string    // open project's absolute dir (claudeCli only, WS-11)
+ *     snapshot?:      unknown   // live CMS Site editor snapshot for this turn
+ *     workspaceDir?:  string    // open Studio project's absolute dir
  *   }
  *
  * The conversation row already carries `(credentialId, modelId)` from when
@@ -14,10 +14,18 @@
  *   1. Verifies `ai.chat` + ownership of the conversation.
  *   2. Loads + decrypts the credential (rejects if rotated).
  *   3. Resolves the driver for the credential's provider.
- *   4. Builds an `AiStreamRequest` (system prompt + tools + history).
+ *   4. Validates `workspaceDir` once (`resolveValidatedWorkspaceDir`) and uses
+ *      the result for TWO things (WS-12): which toolset `selectStudioTools`
+ *      offers (the real Studio tools vs. the CMS `site` tools), and which
+ *      system prompt gets built below. `workspaceDir` is also forwarded
+ *      verbatim on `AiStreamRequest` for `claudeCli` (WS-11), which does its
+ *      OWN, separate validation before using it as a subprocess `cwd` — this
+ *      handler's validation is for tool/prompt selection only, not a trust
+ *      decision claudeCli.ts can skip re-making.
+ *   5. Builds an `AiStreamRequest` (system prompt + tools + history).
  *      Write tools are filtered out unless the caller has `ai.tools.write`.
- *   5. Persists the user message, then runs `runChat({ ... })`.
- *   6. Streams NDJSON events back as the driver produces them.
+ *   6. Persists the user message, then runs `runChat({ ... })`.
+ *   7. Streams NDJSON events back as the driver produces them.
  */
 
 import { safeParseValue } from '@core/utils/typeboxHelpers'
@@ -67,6 +75,7 @@ import {
   SiteAgentSnapshotSchema,
   type SiteAgentSnapshot,
 } from '../tools/site'
+import { buildStudioAgentSystemPrompt, studioPromptContextFromProfile } from '../tools/studio'
 import {
   createBridge,
   createConversationsPersister,
@@ -74,6 +83,10 @@ import {
   runChat,
 } from '../runtime'
 import { normalizeContextTokens } from '../contextTokens'
+import { resolveValidatedWorkspaceDir } from '../../handlers/studio/workspaceDir'
+import { resolveProjectProfile } from '../../handlers/studio/projectProbe'
+import { readStudioMeta } from '../../handlers/studio/studioMeta'
+import { projectDisplayName } from '../../handlers/studioProjects'
 import type { AiStreamEvent } from '../runtime/types'
 import type { AiStreamRequest } from '../drivers/types'
 
@@ -122,6 +135,13 @@ async function handleAiChat(
   }
   if (!chatBody) return badRequest('Invalid request body.')
   const { conversationId, content, snapshot, workspaceDir } = chatBody
+  // Validated once, reused for both tool selection and prompt assembly below
+  // — a client-supplied path is never trusted twice with two different
+  // checks that could drift. `null` means either no project is open or the
+  // requested dir failed containment (not this project's own real dir, or
+  // outside studio-workspace/ entirely) — both degrade to the CMS toolset,
+  // never to trusting the raw client value.
+  const validatedWorkspaceDir = resolveValidatedWorkspaceDir(workspaceDir)
 
   const conversation = await readConversationForUser(db, user.id, conversationId)
   if (!conversation) {
@@ -169,7 +189,7 @@ async function handleAiChat(
     req.signal,
   )
   if (modelCapabilities === REQUEST_ABORTED) return clientClosedRequest()
-  const tools = selectStudioTools(user.capabilities)
+  const tools = selectStudioTools(user.capabilities, { studioProjectOpen: validatedWorkspaceDir !== null })
   if (requestedImage && !modelCapabilities.visionInput) {
     return jsonResponse(
       { error: 'The selected model does not support image input. Choose a vision-capable model.' },
@@ -274,7 +294,9 @@ async function handleAiChat(
         buildMessageHistory([...existingRecords, appendedMessage]),
         modelCapabilities.visionInput,
       )
-      const systemPrompt = buildStudioSystemPrompt(snapshot)
+      const systemPrompt = validatedWorkspaceDir
+        ? buildStudioProjectSystemPrompt(validatedWorkspaceDir)
+        : buildCmsSiteSystemPrompt(snapshot)
 
       // Capture totals reported by the persister so the audit row can hold
       // them when the stream completes (we read them off the conversation row
@@ -471,7 +493,13 @@ function waitForRequest<T>(promise: Promise<T>, signal: AbortSignal): Promise<T 
   })
 }
 
-export function buildStudioSystemPrompt(snapshot: unknown): string[] {
+/**
+ * The CMS Site editor's prompt — used whenever no Studio project is open
+ * (`validatedWorkspaceDir === null`). Named for what it builds, not for
+ * "the Studio agent" (WS-12 §8.1 D3 collapsed that concept to "the one
+ * agent"; it does not mean every prompt is the Studio-project one).
+ */
+export function buildCmsSiteSystemPrompt(snapshot: unknown): string[] {
   if (snapshot === undefined || snapshot === null) {
     return buildSiteSystemPrompt(emptySiteAgentSnapshot())
   }
@@ -484,6 +512,29 @@ export function buildStudioSystemPrompt(snapshot: unknown): string[] {
     return buildSiteSystemPrompt(emptySiteAgentSnapshot())
   }
   return buildSiteSystemPrompt(result.value)
+}
+
+/**
+ * The real Studio-project prompt (WS-12 §4) — used whenever a project is
+ * open. Built entirely server-side from `dir` (project profile + trust
+ * tier); does NOT consume the client-sent `snapshot`, which is the CMS
+ * `SiteAgentSnapshot` shape and carries nothing about a Studio project
+ * (board/selection live in `StudioAgentSnapshot`, WS-12 §2.1/step 3 —
+ * not built yet; the dynamic suffix degrades gracefully without it).
+ * Never throws: a profile-probe failure degrades to the "unavailable"
+ * suffix rather than falling back to the CMS prompt, which would silently
+ * hand the model the wrong tool vocabulary for an open Studio project.
+ */
+export function buildStudioProjectSystemPrompt(dir: string): string[] {
+  try {
+    const trust = readStudioMeta(dir).trust ?? 'static'
+    const profile = resolveProjectProfile(dir)
+    const name = projectDisplayName(dir)
+    return buildStudioAgentSystemPrompt(studioPromptContextFromProfile(dir, name, trust, profile))
+  } catch (err) {
+    console.error('[ai/chat] failed to build the studio project prompt, using the unavailable fallback:', err)
+    return buildStudioAgentSystemPrompt(null)
+  }
 }
 
 function emptySiteAgentSnapshot(): SiteAgentSnapshot {

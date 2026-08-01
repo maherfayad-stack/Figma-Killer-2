@@ -21,8 +21,14 @@ describe('ai-handlers-capability-gated gate', () => {
   it('every handler file calls requireCapability at least once', () => {
     if (!existsSync(HANDLERS_DIR)) return
 
+    // A colocated `*.test.ts` (e.g. `claudeCliStatus.test.ts` beside
+    // `claudeCliStatus.ts`) is never itself a route handler — it tests one,
+    // often a pure function factored OUT of the handler specifically so it
+    // doesn't need a real request/response round trip. Scanning it for
+    // `requireCapability()` would be a false positive on the gate itself,
+    // not a real bypass.
     const handlerFiles = readdirSync(HANDLERS_DIR)
-      .filter((f) => extname(f) === '.ts' && f !== 'index.ts')
+      .filter((f) => extname(f) === '.ts' && f !== 'index.ts' && !f.endsWith('.test.ts') && !f.endsWith('.spec.ts'))
       .map((f) => join(HANDLERS_DIR, f))
 
     expect(handlerFiles.length).toBeGreaterThan(0)

@@ -107,4 +107,110 @@ describe('studio project MCP tools', () => {
     expect(result.matches.length).toBe(1)
     expect(result.truncated).toBe(true)
   })
+
+  // ── studio_create_page (WS-12 §3) ─────────────────────────────────────
+
+  it('studio_create_page scaffolds a canonical file, places its frame, and returns a real rootNodeId', async () => {
+    const result = (await tool('studio_create_page').handler!(
+      { dir: tmpDir, name: 'Order Summary' },
+      {} as never,
+    )) as { ok: boolean; relPath: string; pageId: string; title: string; rootNodeId: string | null }
+    expect(result.ok).toBe(true)
+    expect(result.relPath).toBe('OrderSummary.tsx')
+    expect(result.title).toBe('OrderSummary')
+    expect(fs.existsSync(path.join(tmpDir, 'pages', 'OrderSummary.tsx'))).toBe(true)
+    // Node ids are source locations — never invented — so this must decode
+    // back to the file just written (trap #2).
+    expect(result.rootNodeId).toContain('OrderSummary.tsx')
+
+    const boardsFile = path.join(tmpDir, '.studio', 'boards.json')
+    expect(fs.existsSync(boardsFile)).toBe(true)
+    const boards = JSON.parse(fs.readFileSync(boardsFile, 'utf8')) as { boards: Array<{ frames: Array<{ pageId: string }> }> }
+    expect(boards.boards[0]!.frames.some((f) => f.pageId === result.pageId)).toBe(true)
+  })
+
+  it('studio_create_page auto-names Page, Page2, ... when no name is given', async () => {
+    const first = (await tool('studio_create_page').handler!({ dir: tmpDir }, {} as never)) as { relPath: string }
+    const second = (await tool('studio_create_page').handler!({ dir: tmpDir }, {} as never)) as { relPath: string }
+    expect(first.relPath).not.toBe(second.relPath)
+  })
+
+  it('studio_create_page returns ok:false with a conflict message rather than overwriting an existing page', async () => {
+    await tool('studio_create_page').handler!({ dir: tmpDir, name: 'Checkout' }, {} as never)
+    const result = (await tool('studio_create_page').handler!(
+      { dir: tmpDir, name: 'Checkout' },
+      {} as never,
+    )) as { ok: boolean; error: string }
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain('already exists')
+  })
+
+  // ── studio_read_file (WS-12 §3) ───────────────────────────────────────
+
+  it('studio_read_file reads back a real file verbatim, with a canonical summary for a .tsx path', async () => {
+    const result = (await tool('studio_read_file').handler!(
+      { dir: tmpDir, path: 'pages/Home.tsx' },
+      {} as never,
+    )) as { ok: boolean; content: string; canonical?: { isCanonical: boolean; violations: number; advisories: number } }
+    expect(result.ok).toBe(true)
+    expect(result.content).toContain('hero')
+    expect(result.canonical).toBeDefined()
+    expect(typeof result.canonical!.isCanonical).toBe('boolean')
+    expect(result.canonical!.violations).toBe(0)
+  })
+
+  it('studio_read_file omits the canonical summary for a non-JSX file', async () => {
+    write(tmpDir, 'README.md', '# hello')
+    const result = (await tool('studio_read_file').handler!(
+      { dir: tmpDir, path: 'README.md' },
+      {} as never,
+    )) as { ok: boolean; content: string; canonical?: unknown }
+    expect(result.ok).toBe(true)
+    expect(result.content).toBe('# hello')
+    expect(result.canonical).toBeUndefined()
+  })
+
+  it('studio_read_file returns ok:false for a missing file', async () => {
+    const result = (await tool('studio_read_file').handler!(
+      { dir: tmpDir, path: 'pages/DoesNotExist.tsx' },
+      {} as never,
+    )) as { ok: boolean; error: string }
+    expect(result.ok).toBe(false)
+    expect(result.error).toBeTruthy()
+  })
+
+  it('studio_read_file rejects an oversized file rather than truncating it silently', async () => {
+    write(tmpDir, 'pages/Huge.tsx', 'a'.repeat(200_001))
+    const result = (await tool('studio_read_file').handler!(
+      { dir: tmpDir, path: 'pages/Huge.tsx' },
+      {} as never,
+    )) as { ok: boolean; error: string }
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain('exceeds')
+  })
+
+  it('studio_read_file rejects a ".." traversal attempt', async () => {
+    const result = (await tool('studio_read_file').handler!(
+      { dir: tmpDir, path: '../../../../etc/passwd' },
+      {} as never,
+    )) as { ok: boolean; error: string }
+    expect(result.ok).toBe(false)
+  })
+
+  it('studio_read_file rejects an absolute path', async () => {
+    const result = (await tool('studio_read_file').handler!(
+      { dir: tmpDir, path: process.platform === 'win32' ? 'C:\\Windows\\win.ini' : '/etc/passwd' },
+      {} as never,
+    )) as { ok: boolean; error: string }
+    expect(result.ok).toBe(false)
+  })
+
+  it('studio_read_file rejects a path reaching into node_modules', async () => {
+    write(tmpDir, 'node_modules/pkg/index.js', 'module.exports = {}')
+    const result = (await tool('studio_read_file').handler!(
+      { dir: tmpDir, path: 'node_modules/pkg/index.js' },
+      {} as never,
+    )) as { ok: boolean; error: string }
+    expect(result.ok).toBe(false)
+  })
 })

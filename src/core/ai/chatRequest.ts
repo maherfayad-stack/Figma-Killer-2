@@ -50,17 +50,22 @@ export const AiChatRequestBodySchema = Type.Object(
   {
     conversationId: Type.String({ minLength: 1 }),
     content: AiUserContentSchema,
-    // Studio's own shape (the live editor snapshot). buildStudioSystemPrompt
-    // validates it separately.
+    // The CMS Site editor's own shape (the live editor snapshot) — used only
+    // when no Studio project is open. `buildCmsSiteSystemPrompt` validates it
+    // separately.
     snapshot: Type.Optional(Type.Unknown()),
     /**
-     * The open project's absolute directory, when one is open. Only the
-     * `claudeCli` driver (WS-11) uses this — it's the ONLY driver that spawns
-     * a real filesystem process, so it's the only one for which "which
-     * project" is a meaningful, security-relevant question. The server
-     * re-validates this is a genuine, contained studio project
-     * (`resolveClaudeCliWorkspaceCwd`) before ever using it as a spawn `cwd`
-     * — never trusted as-is. Every other driver ignores this field.
+     * The open Studio project's absolute directory, when one is open.
+     * Re-validated server-side (`resolveValidatedWorkspaceDir`) before use —
+     * never trusted as-is. Two independent consumers, each re-validating for
+     * its own purpose:
+     *   - `chat.ts` (WS-12): which toolset/prompt this turn gets — the real
+     *     Studio tools when a project is genuinely open, the CMS `site`
+     *     tools otherwise.
+     *   - `claudeCli.ts` (WS-11): the ONLY driver that spawns a real
+     *     filesystem process, so the ONLY one for which "which project" is
+     *     also a spawn-`cwd` question, not just a tool-selection one.
+     * Every other driver ignores this field entirely.
      */
     workspaceDir: Type.Optional(Type.String()),
   },
