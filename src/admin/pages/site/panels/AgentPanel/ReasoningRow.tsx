@@ -1,15 +1,18 @@
 /**
- * ReasoningRow — a collapsed disclosure for extended-thinking content
- * (WS-12 §5.4). Same visual family as `ToolCallRow`'s compact row, but the
- * body is hidden behind a native `<details>` toggle rather than always
- * rendered inline — thinking traces run long and are secondary to the
- * assistant's actual reply.
+ * ReasoningRow — extended-thinking content (WS-12 §5.4), in the same visual
+ * family as `ToolCallRow`'s compact row.
  *
- * Currently only ever populated by the `claudeCli` driver, and only if the
- * CLI's stream actually carries the documented Anthropic `thinking_delta`
- * shape this driver watches for (unverified — see
- * `server/ai/drivers/claudeCliEvents.ts`). A conversation that never
- * receives a `reasoning` event never renders this component at all.
+ * Open by default. It shipped collapsed, on the reasoning that thinking traces
+ * run long and are secondary to the actual reply — but during a long
+ * tool-using turn the reply is the one thing that hasn't arrived yet, so a
+ * collapsed row made a working agent look like a hung one. Watching it think
+ * IS the content until the answer exists. It stays a `<details>` so anyone
+ * re-reading a finished conversation can fold the traces away.
+ *
+ * Only the `claudeCli` driver populates this, from the CLI's
+ * `thinking_delta` stream events — confirmed against a real v2.1.114 turn.
+ * A conversation that never receives a `reasoning` event never renders this
+ * component at all.
  */
 import { SparklesSolidIcon } from 'pixel-art-icons/icons/sparkles-solid'
 import styles from './AgentPanel.module.css'
@@ -17,7 +20,7 @@ import styles from './AgentPanel.module.css'
 export function ReasoningRow({ text }: { text: string }) {
   if (!text.trim()) return null
   return (
-    <details className={styles.reasoningRow}>
+    <details className={styles.reasoningRow} open>
       <summary className={styles.reasoningSummary}>
         <span className={styles.toolCallIcon} aria-hidden="true">
           <SparklesSolidIcon size={15} />

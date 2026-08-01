@@ -33,10 +33,46 @@ const ClaudeCliTextBlockSchema = Type.Object(
   { additionalProperties: true },
 )
 
-/** Non-text content blocks (tool_use, thinking, …) exist but are unused while
- *  step 1 ships with no tools — matched loosely so they don't fail the parse. */
+/**
+ * A tool the model invoked. Verified against a real turn (v2.1.114): arrives
+ * as a block on an `assistant` line, `{"type":"tool_use","id":"toolu_…",
+ * "name":"Read","input":{…}}`.
+ */
+const ClaudeCliToolUseBlockSchema = Type.Object(
+  {
+    type: Type.Literal('tool_use'),
+    id: Type.String(),
+    name: Type.String(),
+    input: Type.Optional(Type.Unknown()),
+  },
+  { additionalProperties: true },
+)
+
+/**
+ * That tool's outcome. Verified against the same turn: arrives on a `user`
+ * line (the CLI echoes the tool-result turn it feeds back to the model),
+ * carrying only `tool_use_id` — never the tool's NAME, which is why pairing
+ * needs the per-turn `ClaudeCliTurnState` below.
+ */
+const ClaudeCliToolResultBlockSchema = Type.Object(
+  {
+    type: Type.Literal('tool_result'),
+    tool_use_id: Type.String(),
+    is_error: Type.Optional(Type.Boolean()),
+    content: Type.Optional(Type.Unknown()),
+  },
+  { additionalProperties: true },
+)
+
+/**
+ * Loose tail of the union — `thinking`, `redacted_thinking`, and anything a
+ * future CLI adds. Deliberately last: TypeBox accepts the first matching
+ * member, so the typed shapes above must precede it to narrow correctly.
+ */
 const ClaudeCliContentBlockSchema = Type.Union([
   ClaudeCliTextBlockSchema,
+  ClaudeCliToolUseBlockSchema,
+  ClaudeCliToolResultBlockSchema,
   Type.Object({ type: Type.String() }, { additionalProperties: true }),
 ])
 
@@ -190,6 +226,24 @@ export interface ClaudeCliTranslateResult {
 }
 
 /**
+ * Per-turn memory the translator needs but must not own.
+ *
+ * The CLI splits a tool call across two lines: the `assistant` line names it
+ * (`tool_use.name`), and the later `user` line reports its outcome carrying
+ * only `tool_use_id`. Emitting a `toolResult` therefore requires remembering
+ * what that id was called. That memory is turn-scoped, so it lives with the
+ * caller's stream loop — a module-level map here would leak names between
+ * concurrent chats in the same server process.
+ */
+export interface ClaudeCliTurnState {
+  readonly toolNames: Map<string, string>
+}
+
+export function createClaudeCliTurnState(): ClaudeCliTurnState {
+  return { toolNames: new Map() }
+}
+
+/**
  * Translate one parsed CLI line into wire `AiStreamEvent`s.
  *
  *   - `system/init`         → nothing (informational only).
@@ -216,20 +270,68 @@ export interface ClaudeCliTranslateResult {
  *     arrives or looks different, this driver silently emits nothing rather
  *     than guessing or throwing.
  */
-export function translateClaudeCliLine(line: ClaudeCliLine): ClaudeCliTranslateResult {
+export function translateClaudeCliLine(
+  line: ClaudeCliLine,
+  state: ClaudeCliTurnState,
+): ClaudeCliTranslateResult {
   switch (line.type) {
     case 'assistant': {
       // Synthetic auth-failure message — no text to show; the terminal
       // `result` event is the honest error surface.
       if (line.message?.model === SYNTHETIC_MODEL) return { events: [], turnComplete: false }
+      const events: AiStreamEvent[] = []
       const text = (line.message?.content ?? [])
         .filter((block): block is Static<typeof ClaudeCliTextBlockSchema> => block.type === 'text')
         .map((block) => block.text)
         .join('')
-      return {
-        events: text ? [{ type: 'text', text }] : [],
-        turnComplete: false,
+      if (text) events.push({ type: 'text', text })
+
+      // `thinking` blocks are deliberately NOT translated here. The same
+      // reasoning already arrived token-by-token as `thinking_delta` on the
+      // `stream_event` lines below (confirmed on a real turn: 8 deltas, then
+      // the complete block). Emitting both would print the model's reasoning
+      // twice, because the browser appends reasoning text to the open block.
+      for (const block of line.message?.content ?? []) {
+        if (block.type !== 'tool_use') continue
+        const toolUse = block as Static<typeof ClaudeCliToolUseBlockSchema>
+        state.toolNames.set(toolUse.id, toolUse.name)
+        events.push({
+          type: 'toolCall',
+          toolCallId: toolUse.id,
+          toolName: toolUse.name,
+          input: toolUse.input ?? {},
+          status: 'pending',
+        })
       }
+      return { events, turnComplete: false }
+    }
+
+    // The CLI echoes back the tool-result turn it feeds to the model. This is
+    // the ONLY signal that a tool finished, so it is what closes out the
+    // pending row in the panel.
+    //
+    // Note what these two cases are and are not: the subprocess already ran
+    // the tool itself (this driver's loop-ownership fork — see `claudeCli.ts`).
+    // `toolCall`/`toolResult` are the display half of Studio's tool wire and
+    // are honest here; `toolRequest` — which asks the BROWSER to execute — is
+    // never emitted from this driver, and must not be.
+    case 'user': {
+      const events: AiStreamEvent[] = []
+      for (const block of line.message?.content ?? []) {
+        if (block.type !== 'tool_result') continue
+        const result = block as Static<typeof ClaudeCliToolResultBlockSchema>
+        events.push({
+          type: 'toolResult',
+          toolCallId: result.tool_use_id,
+          // Falls back to the id when the pairing `tool_use` was never seen
+          // (a resumed session replaying only the tail). The browser matches
+          // on `toolCallId` and ignores this field, so a miss costs nothing.
+          toolName: state.toolNames.get(result.tool_use_id) ?? result.tool_use_id,
+          ok: !result.is_error,
+          error: result.is_error ? toolResultErrorText(result.content) : undefined,
+        })
+      }
+      return { events, turnComplete: false }
     }
 
     case 'result': {
@@ -272,11 +374,29 @@ export function translateClaudeCliLine(line: ClaudeCliLine): ClaudeCliTranslateR
       return { events: [], turnComplete: false }
     }
 
-    // `system/init`, `user` (echoed back), and anything unrecognised carry
+    // `system/init`, `rate_limit_event`, and anything unrecognised carry
     // nothing this driver surfaces on the wire.
     default:
       return { events: [], turnComplete: false }
   }
+}
+
+/**
+ * A failed `tool_result`'s content is either a plain string or the Anthropic
+ * block array. Anything else (or nothing) gets a generic line rather than
+ * `[object Object]`.
+ */
+function toolResultErrorText(content: unknown): string {
+  if (typeof content === 'string' && content.trim()) return content.trim()
+  if (Array.isArray(content)) {
+    const text = content
+      .map((block) => (typeof block === 'object' && block !== null && 'text' in block ? String((block as { text: unknown }).text) : ''))
+      .filter(Boolean)
+      .join('\n')
+      .trim()
+    if (text) return text
+  }
+  return 'Tool call failed.'
 }
 
 function claudeCliResultErrorMessage(line: ClaudeCliLine): string {

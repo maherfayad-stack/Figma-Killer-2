@@ -6,6 +6,7 @@
  */
 import { describe, expect, it } from 'bun:test'
 import {
+  createClaudeCliTurnState,
   parseClaudeCliLine,
   parseClaudeCliLineValue,
   translateClaudeCliLine,
@@ -35,7 +36,7 @@ describe('translateClaudeCliLine — system/init', () => {
   it('produces no wire events (informational only)', () => {
     const result = translateClaudeCliLine(parseClaudeCliLine(
       '{"type":"system","subtype":"init","cwd":"/data/claude-cli/u1","session_id":"s1","model":"claude-sonnet-4-6"}',
-    )!)
+    )!, createClaudeCliTurnState())
     expect(result.events).toEqual([])
     expect(result.turnComplete).toBe(false)
   })
@@ -49,7 +50,7 @@ describe('translateClaudeCliLine — assistant', () => {
         model: 'claude-sonnet-4-6',
         content: [{ type: 'text', text: 'Hello from the CLI.' }],
       },
-    }))!)
+    }))!, createClaudeCliTurnState())
     expect(result.events).toEqual([{ type: 'text', text: 'Hello from the CLI.' }])
     expect(result.turnComplete).toBe(false)
   })
@@ -61,7 +62,7 @@ describe('translateClaudeCliLine — assistant', () => {
         model: 'claude-sonnet-4-6',
         content: [{ type: 'text', text: 'Part one. ' }, { type: 'text', text: 'Part two.' }],
       },
-    }))!)
+    }))!, createClaudeCliTurnState())
     expect(result.events).toEqual([{ type: 'text', text: 'Part one. Part two.' }])
   })
 
@@ -74,7 +75,7 @@ describe('translateClaudeCliLine — assistant', () => {
       type: 'assistant',
       error: 'authentication_failed',
       message: { model: '<synthetic>', content: [] },
-    }))!)
+    }))!, createClaudeCliTurnState())
     expect(result.events).toEqual([])
     expect(result.turnComplete).toBe(false)
   })
@@ -83,7 +84,7 @@ describe('translateClaudeCliLine — assistant', () => {
     const result = translateClaudeCliLine(parseClaudeCliLine(JSON.stringify({
       type: 'assistant',
       message: { model: 'claude-sonnet-4-6', content: [] },
-    }))!)
+    }))!, createClaudeCliTurnState())
     expect(result.events).toEqual([])
   })
 })
@@ -107,7 +108,7 @@ describe('translateClaudeCliLine — result (success)', () => {
       },
       total_cost_usd: 0.168,
       session_id: 's1',
-    }))!)
+    }))!, createClaudeCliTurnState())
 
     expect(result.turnComplete).toBe(true)
     expect(result.events).toEqual([
@@ -127,7 +128,7 @@ describe('translateClaudeCliLine — result (success)', () => {
       is_error: true,
       result: 'authentication_failed: not logged in',
       usage: { input_tokens: 0, output_tokens: 0 },
-    }))!)
+    }))!, createClaudeCliTurnState())
 
     expect(result.turnComplete).toBe(true)
     const errorEvent = result.events.find((e) => e.type === 'error')
@@ -143,7 +144,7 @@ describe('translateClaudeCliLine — result (error)', () => {
       subtype: 'error_max_turns',
       is_error: true,
       usage: { input_tokens: 10, output_tokens: 0 },
-    }))!)
+    }))!, createClaudeCliTurnState())
 
     expect(result.turnComplete).toBe(true)
     expect(result.events.some((e) => e.type === 'done')).toBe(false)
@@ -156,7 +157,7 @@ describe('translateClaudeCliLine — result (error)', () => {
       subtype: 'error_max_turns',
       is_error: true,
       usage: { input_tokens: 10, output_tokens: 4 },
-    }))!)
+    }))!, createClaudeCliTurnState())
 
     expect(result.events[0]).toMatchObject({ type: 'context', promptTokens: 10 })
     expect(result.events[1]).toMatchObject({ type: 'usage', promptTokens: 10, completionTokens: 4 })
@@ -175,7 +176,7 @@ describe('translateClaudeCliLine — stream_event (reasoning, unverified shape)'
         type: 'content_block_delta',
         delta: { type: 'thinking_delta', thinking: 'Let me check the node tree first...' },
       },
-    }))!)
+    }))!, createClaudeCliTurnState())
     expect(result.events).toEqual([{ type: 'reasoning', text: 'Let me check the node tree first...' }])
     expect(result.turnComplete).toBe(false)
   })
@@ -184,7 +185,7 @@ describe('translateClaudeCliLine — stream_event (reasoning, unverified shape)'
     const result = translateClaudeCliLine(parseClaudeCliLine(JSON.stringify({
       type: 'stream_event',
       event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'hi' } },
-    }))!)
+    }))!, createClaudeCliTurnState())
     expect(result.events).toEqual([])
   })
 
@@ -192,12 +193,12 @@ describe('translateClaudeCliLine — stream_event (reasoning, unverified shape)'
     const result = translateClaudeCliLine(parseClaudeCliLine(JSON.stringify({
       type: 'stream_event',
       event: { type: 'content_block_delta', delta: { type: 'thinking_delta', thinking: '' } },
-    }))!)
+    }))!, createClaudeCliTurnState())
     expect(result.events).toEqual([])
   })
 
   it('emits nothing for a stream_event with no inner event at all — never throws', () => {
-    const result = translateClaudeCliLine(parseClaudeCliLine('{"type":"stream_event"}')!)
+    const result = translateClaudeCliLine(parseClaudeCliLine('{"type":"stream_event"}')!, createClaudeCliTurnState())
     expect(result.events).toEqual([])
     expect(result.turnComplete).toBe(false)
   })
@@ -206,14 +207,14 @@ describe('translateClaudeCliLine — stream_event (reasoning, unverified shape)'
     const result = translateClaudeCliLine(parseClaudeCliLine(JSON.stringify({
       type: 'stream_event',
       event: { type: 'content_block_start', content_block: { type: 'thinking' } },
-    }))!)
+    }))!, createClaudeCliTurnState())
     expect(result.events).toEqual([])
   })
 })
 
 describe('translateClaudeCliLine — unrecognised event types', () => {
   it('produces no events for an unknown type rather than throwing', () => {
-    const result = translateClaudeCliLine(parseClaudeCliLine('{"type":"user"}')!)
+    const result = translateClaudeCliLine(parseClaudeCliLine('{"type":"user"}')!, createClaudeCliTurnState())
     expect(result.events).toEqual([])
     expect(result.turnComplete).toBe(false)
   })
@@ -229,5 +230,122 @@ describe('parseClaudeCliLineValue', () => {
     expect(parseClaudeCliLineValue('not an object')).toBeNull()
     expect(parseClaudeCliLineValue(null)).toBeNull()
     expect(parseClaudeCliLineValue(42)).toBeNull()
+  })
+})
+
+// Fixtures below are copied verbatim from a real v2.1.114 turn ("Read note.txt
+// and tell me the first word") captured with --include-partial-messages.
+// Before this translation existed the panel showed nothing at all while the
+// CLI worked: thinking streamed but tool activity was dropped, so a long
+// tool-using task looked like a hang.
+describe('translateClaudeCliLine — tool calls', () => {
+  const toolUseLine = JSON.stringify({
+    type: 'assistant',
+    message: {
+      model: 'claude-haiku-4-5-20251001',
+      content: [
+        { type: 'thinking', thinking: 'Let me read the file.', signature: 'EsUCCpMB' },
+        {
+          type: 'tool_use',
+          id: 'toolu_01Fd8yb4wZNR9RuUTS4muQQp',
+          name: 'Read',
+          input: { file_path: 'C:\note.txt' },
+          caller: { type: 'direct' },
+        },
+      ],
+    },
+  })
+
+  const toolResultLine = JSON.stringify({
+    type: 'user',
+    message: {
+      content: [
+        {
+          tool_use_id: 'toolu_01Fd8yb4wZNR9RuUTS4muQQp',
+          type: 'tool_result',
+          content: '1\tbanana split\n',
+        },
+      ],
+    },
+  })
+
+  it('emits a pending toolCall from an assistant tool_use block', () => {
+    const result = translateClaudeCliLine(parseClaudeCliLine(toolUseLine)!, createClaudeCliTurnState())
+    expect(result.events).toEqual([
+      {
+        type: 'toolCall',
+        toolCallId: 'toolu_01Fd8yb4wZNR9RuUTS4muQQp',
+        toolName: 'Read',
+        input: { file_path: 'C:\note.txt' },
+        status: 'pending',
+      },
+    ])
+    expect(result.turnComplete).toBe(false)
+  })
+
+  // The reasoning already streamed as `thinking_delta`; emitting it again from
+  // the complete block would print the model's thinking twice, because the
+  // browser appends reasoning text to the open block.
+  it('does not re-emit a thinking block that already streamed as deltas', () => {
+    const result = translateClaudeCliLine(parseClaudeCliLine(toolUseLine)!, createClaudeCliTurnState())
+    expect(result.events.some((e) => e.type === 'reasoning')).toBe(false)
+  })
+
+  it('closes the call out with a toolResult, naming the tool the id belongs to', () => {
+    const state = createClaudeCliTurnState()
+    translateClaudeCliLine(parseClaudeCliLine(toolUseLine)!, state)
+    const result = translateClaudeCliLine(parseClaudeCliLine(toolResultLine)!, state)
+    expect(result.events).toEqual([
+      {
+        type: 'toolResult',
+        toolCallId: 'toolu_01Fd8yb4wZNR9RuUTS4muQQp',
+        toolName: 'Read',
+        ok: true,
+        error: undefined,
+      },
+    ])
+  })
+
+  it('surfaces a failed tool result with its message', () => {
+    const state = createClaudeCliTurnState()
+    translateClaudeCliLine(parseClaudeCliLine(toolUseLine)!, state)
+    const failed = JSON.stringify({
+      type: 'user',
+      message: {
+        content: [{
+          tool_use_id: 'toolu_01Fd8yb4wZNR9RuUTS4muQQp',
+          type: 'tool_result',
+          is_error: true,
+          content: 'File does not exist.',
+        }],
+      },
+    })
+    const result = translateClaudeCliLine(parseClaudeCliLine(failed)!, state)
+    expect(result.events[0]).toMatchObject({ ok: false, error: 'File does not exist.' })
+  })
+
+  // Turn state is per-turn on purpose: a module-level map would leak tool
+  // names between concurrent chats in the same server process.
+  it('falls back to the id when the pairing tool_use was never seen', () => {
+    const result = translateClaudeCliLine(parseClaudeCliLine(toolResultLine)!, createClaudeCliTurnState())
+    expect(result.events[0]).toMatchObject({
+      toolCallId: 'toolu_01Fd8yb4wZNR9RuUTS4muQQp',
+      toolName: 'toolu_01Fd8yb4wZNR9RuUTS4muQQp',
+    })
+  })
+
+  it('emits text and tool calls together, in block order, from one assistant line', () => {
+    const mixed = JSON.stringify({
+      type: 'assistant',
+      message: {
+        model: 'claude-haiku-4-5-20251001',
+        content: [
+          { type: 'text', text: 'Reading the file now.' },
+          { type: 'tool_use', id: 'toolu_2', name: 'Grep', input: { pattern: 'x' } },
+        ],
+      },
+    })
+    const result = translateClaudeCliLine(parseClaudeCliLine(mixed)!, createClaudeCliTurnState())
+    expect(result.events.map((e) => e.type)).toEqual(['text', 'toolCall'])
   })
 })

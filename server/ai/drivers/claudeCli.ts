@@ -70,7 +70,7 @@ import {
   type ClaudeCliPlatformSupport,
 } from '../../handlers/studio/claudeCliEnv'
 import { spawnClaudeCliNdjson, ClaudeCliSpawnError } from './claudeCliSpawn'
-import { parseClaudeCliLineValue, translateClaudeCliLine } from './claudeCliEvents'
+import { createClaudeCliTurnState, parseClaudeCliLineValue, translateClaudeCliLine } from './claudeCliEvents'
 import { claudeCliSessionId, isFirstClaudeCliTurn } from './claudeCliSession'
 import {
   mintClaudeCliSessionConnector,
@@ -426,6 +426,8 @@ export async function* streamClaudeCli(
   ]
 
   let sawTerminalEvent = false
+  // Turn-scoped, never module-scoped — see `ClaudeCliTurnState`.
+  const turnState = createClaudeCliTurnState()
   try {
     for await (const raw of spawnClaudeCliNdjson({
       argv,
@@ -446,7 +448,7 @@ export async function* streamClaudeCli(
 
       const line = parseClaudeCliLineValue(raw.value)
       if (!line) continue
-      const { events, turnComplete } = translateClaudeCliLine(line)
+      const { events, turnComplete } = translateClaudeCliLine(line, turnState)
       if (turnComplete) sawTerminalEvent = true
       for (const event of events) yield event
     }

@@ -739,3 +739,69 @@ describe('verifyClaudeCliCredential', () => {
     expect(capturedArgv[capturedArgv.indexOf('--model') + 1]).toBe('haiku')
   })
 })
+
+// Golden transcript: the line sequence a real v2.1.114 tool-using turn emits,
+// end-to-end through spawn → NDJSON reader → parse → translate. Regression for
+// a panel that showed nothing but "Working…" for the whole turn, because
+// tool_use / tool_result blocks were dropped on the floor and only the final
+// text ever reached the browser.
+describe('streamClaudeCli — a tool-using turn is visible as it happens', () => {
+  it('streams reasoning, the tool call, its result, then the answer', async () => {
+    const spawn = fakeCliSpawn({
+      stdoutLines: [
+        { type: 'system', subtype: 'init', cwd: '/x', session_id: 's1', model: 'claude-haiku-4-5-20251001' },
+        { type: 'stream_event', event: { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'Let me read ' } } },
+        { type: 'stream_event', event: { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'the file.' } } },
+        {
+          type: 'assistant',
+          message: {
+            model: 'claude-haiku-4-5-20251001',
+            content: [
+              { type: 'thinking', thinking: 'Let me read the file.', signature: 'EsUCCpMB' },
+              { type: 'tool_use', id: 'toolu_01Fd', name: 'Read', input: { file_path: 'C:\note.txt' } },
+            ],
+          },
+        },
+        {
+          type: 'user',
+          message: { content: [{ tool_use_id: 'toolu_01Fd', type: 'tool_result', content: '1\tbanana split\n' }] },
+        },
+        {
+          type: 'assistant',
+          message: { model: 'claude-haiku-4-5-20251001', content: [{ type: 'text', text: 'The first word is **banana**.' }] },
+        },
+        {
+          type: 'result',
+          subtype: 'success',
+          is_error: false,
+          result: 'The first word is **banana**.',
+          usage: { input_tokens: 12, output_tokens: 30 },
+          total_cost_usd: 0.001,
+        },
+      ],
+    })
+
+    const events = await collect(baseRequest({ workspaceDir: projectDir }), testOptions({ spawn }))
+
+    expect(events.map((e) => e.type)).toEqual([
+      'reasoning',
+      'reasoning',
+      'toolCall',
+      'toolResult',
+      'text',
+      'context',
+      'usage',
+      'done',
+    ])
+    expect(events[2]).toEqual({
+      type: 'toolCall',
+      toolCallId: 'toolu_01Fd',
+      toolName: 'Read',
+      input: { file_path: 'C:\note.txt' },
+      status: 'pending',
+    })
+    // Paired across two different CLI lines, which is the whole reason the
+    // translator carries per-turn state.
+    expect(events[3]).toMatchObject({ type: 'toolResult', toolCallId: 'toolu_01Fd', toolName: 'Read', ok: true })
+  })
+})
