@@ -77,6 +77,13 @@ async function fakeRevokeConnector(_db: unknown, connectorId: string, userId: st
   revokedCalls.push({ connectorId, userId })
 }
 
+/** WS-12 §7 — no-op by default so every existing test stays about argv/spawn, not disk I/O; records calls for the tests that ARE about the roster. */
+let rosterCalls: string[] = []
+function fakeGenerateRoster(dir: string) {
+  rosterCalls.push(dir)
+  return { written: [], skipped: [] }
+}
+
 function baseRequest(overrides: Partial<AiStreamRequest> = {}): AiStreamRequest {
   return {
     systemPrompt: ['You are a test.'],
@@ -112,12 +119,14 @@ function testOptions(overrides: Partial<Parameters<typeof streamClaudeCli>[1]> =
     serverPort: 3001,
     mintConnector: fakeMintConnector,
     revokeConnector: fakeRevokeConnector,
+    generateRoster: fakeGenerateRoster,
     ...overrides,
   }
 }
 
 beforeEach(() => {
   revokedCalls = []
+  rosterCalls = []
 })
 
 describe('streamClaudeCli — happy path', () => {
@@ -235,6 +244,39 @@ describe('streamClaudeCli — workspace cwd (WS-11 step 2 fix)', () => {
     })
     await collect(baseRequest({ workspaceDir: projectDir }), testOptions({ spawn }))
     expect(capturedCwd).toBe(projectDir)
+  })
+})
+
+describe('streamClaudeCli — subagent roster generation (WS-12 §7)', () => {
+  it('generates the roster into the resolved workspace root when a real project is open', async () => {
+    const spawn = fakeCliSpawn({
+      stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
+    })
+    await collect(baseRequest({ workspaceDir: projectDir }), testOptions({ spawn }))
+    expect(rosterCalls).toEqual([projectDir])
+  })
+
+  it('never generates a roster into the per-user config dir (no workspace open)', async () => {
+    const spawn = fakeCliSpawn({
+      stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
+    })
+    await collect(baseRequest(), testOptions({ spawn }))
+    expect(rosterCalls).toEqual([])
+  })
+
+  it('a roster-generation failure degrades the turn, never aborts it', async () => {
+    const spawn = fakeCliSpawn({
+      stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
+    })
+    const throwingRoster = () => {
+      throw new Error('boom')
+    }
+    const events = await collect(
+      baseRequest({ workspaceDir: projectDir }),
+      testOptions({ spawn, generateRoster: throwingRoster as never }),
+    )
+    expect(events.some((e) => e.type === 'error')).toBe(false)
+    expect(events.some((e) => e.type === 'done')).toBe(true)
   })
 })
 

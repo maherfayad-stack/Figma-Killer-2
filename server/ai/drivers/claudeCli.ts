@@ -81,6 +81,7 @@ import {
 // `@modelcontextprotocol/sdk` into this driver's module graph transitively.
 import { MCP_ENDPOINT_PATH } from '../mcp/endpointPath'
 import { readServerConfig } from '../../config'
+import { generateStudioAgentRoster } from '../../handlers/studio/agentRoster'
 
 const SUPPORTED_AUTH_MODES: AiAuthMode[] = ['apiKey']
 
@@ -204,6 +205,8 @@ export interface StreamClaudeCliOptions {
   readonly mintConnector?: typeof mintClaudeCliSessionConnector
   /** Test seam — defaults to `revokeClaudeCliSessionConnector`. */
   readonly revokeConnector?: typeof revokeClaudeCliSessionConnector
+  /** Test seam — defaults to `generateStudioAgentRoster` (WS-12 §7). */
+  readonly generateRoster?: typeof generateStudioAgentRoster
 }
 
 export async function* streamClaudeCli(
@@ -248,6 +251,20 @@ export async function* streamClaudeCli(
   // doc comment's "workspace cwd" section for why this distinction matters.
   const workspaceCwd = resolveClaudeCliWorkspaceCwd(req.workspaceDir, options.projectsRoot)
   const cwd = workspaceCwd ?? configDir
+
+  // Subagent roster (WS-12 §7) — "written beside the MCP config": regenerated
+  // on every real turn against an open project, right alongside the MCP
+  // config below. Best-effort — a probe failure degrades this turn to "no
+  // subagents", never blocks the chat itself. Never attempted for the
+  // config-dir fallback (no real project to profile there).
+  const generateRoster = options.generateRoster ?? generateStudioAgentRoster
+  if (workspaceCwd) {
+    try {
+      generateRoster(workspaceCwd)
+    } catch (err) {
+      console.error('[ai/claudeCli] failed to generate the subagent roster — continuing without one:', err)
+    }
+  }
 
   const env = minimalSubprocessEnv([], {
     CLAUDE_CONFIG_DIR: configDir,

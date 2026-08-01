@@ -231,7 +231,92 @@ claude -p <prompt> --output-format stream-json --verbose --model <id>
 
 **Cost warning.** A single trivial prompt run against a real project cost $0.168 in testing because it cache-created ~27k tokens of `CLAUDE.md` and project context. The availability probe must always spawn with an empty/neutral `cwd`, never a real project — `claudeCliProbe.ts` uses `os.tmpdir()` for exactly this reason. A real chat turn is different: it deliberately spawns in the real project directory now (see "Workspace cwd" above) because that's required for `.claude/agents/*.md` and `CLAUDE.md` discovery to work — the cost is the price of those features actually functioning, not a residual bug.
 
-**Tests never spawn the real binary.** Every test (`server/ai/drivers/claudeCli*.test.ts`, `server/ai/handlers/claudeCliStatus.test.ts`, `server/handlers/__tests__/claudeCliEnv.test.ts`) injects a fake `spawn` matching `subprocessRunner.ts`'s `SubprocessSpawnFn`, or a fake `mintConnector`/`revokeConnector`, and feeds recorded NDJSON fixtures shaped like the verified CLI contract. No test makes a real API call or mints a real database-backed connector against a live process.
+**Tests never spawn the real binary.** Every test (`server/ai/drivers/claudeCli*.test.ts`, `server/ai/handlers/claudeCliStatus.test.ts`, `server/handlers/__tests__/claudeCliEnv.test.ts`, `server/handlers/studio/agentRoster.test.ts`) injects a fake `spawn` matching `subprocessRunner.ts`'s `SubprocessSpawnFn`, or a fake `mintConnector`/`revokeConnector`/`generateRoster`, and feeds recorded NDJSON fixtures shaped like the verified CLI contract. No test makes a real API call or mints a real database-backed connector against a live process. `claude agents` (a zero-cost, zero-network listing command — no `-p`, no model call) is verified MANUALLY, not from the automated suite — see "Subagent roster" below for the transcript.
+
+---
+
+## Studio-project system prompt, tools, and subagents (WS-12)
+
+WS-12's finding: the in-canvas agent had **no Studio mode at all**. Even after WS-12 §8.1 D3 collapsed the app's separate agent "scopes" into one agent, that one agent still ran the CMS page-builder prompt/toolset (`site_insert_html`, `<studio-outlet>`, `data.rows` — "System prompt" above) unconditionally, including against an open Studio project (a real React repo), where none of that vocabulary can work. This section is the fix: a real Studio-project prompt, a real Studio toolset, and a generated subagent roster — chosen per-request from live context, never a persisted discriminator.
+
+### Choosing the toolset/prompt — no scope, a live-context branch
+
+`server/ai/handlers/chat.ts` validates the request's `workspaceDir` exactly once (`resolveValidatedWorkspaceDir`, `server/handlers/studio/workspaceDir.ts` — the same containment check `claudeCli.ts`'s own `cwd` decision uses, extracted to one shared module so a symlink-escape fix can't apply to only one caller) and reuses the result for two independent decisions:
+
+- **Tools** — `selectStudioTools(capabilities, { studioProjectOpen })` (`server/ai/tools/index.ts`) returns `studioAgentTools` (the real Studio toolset, `server/ai/tools/studio/index.ts` — the SAME `AiTool` objects `/_studio/mcp` serves externally) when a project is open, else the existing CMS `siteTools`.
+- **Prompt** — `buildStudioProjectSystemPrompt(dir)` (exported from `chat.ts`) builds the real Studio prompt server-side from `resolveProjectProfile`/`readStudioMeta`/`projectDisplayName` — it does **not** consume the client-sent `snapshot` (the CMS `SiteAgentSnapshot` shape, meaningless for a Studio project). `buildCmsSiteSystemPrompt` (renamed from the old, now-misleading `buildStudioSystemPrompt` — "Studio" now legitimately means the real design tool too) handles the CMS path, unchanged.
+
+### The Studio prompt (`server/ai/tools/studio/systemPrompt.ts`)
+
+Same cacheable 3-element form as the CMS prompt. Every factual claim in the static prefix was checked against the code that makes it true before shipping, not assumed from the planning doc:
+
+- **Canonical means zero `violation`-tier findings, not zero findings** — three of the ten rules (`literal-props`, `static-class-name`, `no-wrapper-elements`) are `advisory` and fire on legitimate canonical code (a CSS-Modules `styles.x` always trips `static-class-name`). Verified against `canonicalCheck.ts`'s own `CanonicalTier`/`CANONICAL_JSX_RULES`.
+- **`insert` has no raw-intrinsic-tag path.** Verified by reading `insertJsxElement.ts`'s `resolveImportEdit`: it unconditionally writes `import { name } from specifier` for whatever `name` it's given — there is no lowercase/intrinsic special case. The prompt says "always import a real named component", not "you can insert a bare `<div>`".
+- **No tool claims to verify canonical-ness except `studio_read_file`'s own `canonical` field** (added alongside this prompt) — nothing else does, so the prompt doesn't claim `studio_export_frames` checks it.
+
+The dynamic suffix is server-only (project profile + trust tier) — it does **not** yet carry board/frames/selection (WS-12 §2.1's `StudioAgentSnapshot`, sequencing step 3, not built as of this writing — it needs a live editor snapshot, which means touching canvas/store code this work deliberately stayed out of).
+
+### The Studio toolset (`server/ai/tools/studio/index.ts`)
+
+`studioAgentTools` = every tool `/_studio/mcp` already exposes to external clients (`server/ai/mcp/tools/studio/`) plus two added for this: `studio_create_page` (wraps `POST /admin/api/studio/page`'s scaffolder — canonical by construction, auto-placed board frame, real `rootNodeId`) and `studio_read_file` (bounded, containment-checked read of a workspace file by relative path; for a `.tsx`/`.jsx` path it also runs the canonical check and returns a `canonical: { isCanonical, violations, advisories }` summary). One implementation, two consumers — fixing a tool's behaviour in its `server/ai/mcp/tools/studio/*.ts` source file fixes it for both the in-canvas agent and every external MCP client (`claudeCli`, Claude Code, remote agents) at once.
+
+**Deliberately withheld from every tool and every agent, no exceptions:** a shell tool, a raw file-write tool, and trust promotion. An agent may *ask* the user to promote a project's trust tier; it may never perform the promotion itself.
+
+### Subagent roster (WS-12 §7) — `server/handlers/studio/agentRoster.ts`
+
+**Confirmed by probe** (zero-cost — `claude --help`/`claude agents --help`, never `-p`): under `-p`, the CLI auto-discovers `.claude/agents/*.md` from its working directory, and generated agents **merge with**, rather than replace, the CLI's own built-in roster (`Explore`, `general-purpose`, `Plan`, …). D4: the generated roster lands in `<project>/.claude/`, committed with the rest of the user's repo — WS-11's cwd fix is what makes discovery reach anything at all (spawn in the wrong place and there are silently zero subagents).
+
+`generateStudioAgentRoster(dir)` is called from `claudeCli.ts`'s `streamClaudeCli`, right before every real turn spawns (`workspaceDir` validated non-null) — "written beside the MCP config", alongside `buildMcpConfigJson`. Best-effort: a probe failure logs and degrades the turn to "no subagents", never blocks the chat (`claudeCli.test.ts`'s "a roster-generation failure degrades the turn, never aborts it").
+
+**The nine-agent roster:**
+
+| Agent | Tools | Owns |
+|---|---|---|
+| `screen-scout` | 6 read tools | Read-only orientation — file:line answers, never opinions. Holds no write tool at all. |
+| `screen-builder` | create/read/find/apply-edits | Scaffolds and composes in Canonical JSX; owns the insert/move/delete batch and the staleness discipline. |
+| `style-surgeon` | apply-edits + read tools | Styling only, through the project's existing mechanism — never a second one. |
+| `fidelity-auditor` | 4 verify tools | Verification, run last — the one that can say "it didn't work". |
+| `design-critic` | export/render | Visual judgement on a RENDERED frame — hierarchy, spacing, contrast, state coverage. |
+| `almosafer-ds-expert` | project-profile/find/read | ALM 2.0 authority — see "The ALM design-system expert" below. |
+| `synthesizer` | 3 read tools | Turns scattered findings into one ordered plan with open questions named — edits nothing. |
+| `agent-creator` | **none** | Drafts new subagent definitions as text — never writes a file itself. |
+| `system-prompt-expert` | **none** | Reviews prompt quality across the roster as text — never applies a change. |
+
+Every agent's `tools:` frontmatter is **explicit and non-empty-or-omitted** — omitting it inherits the CLI's full built-in set (`Bash`, `Write`, `Edit`, …), which would silently hand a subagent a shell and a raw file-write path, exactly what WS-12 withholds. `agent-creator` and `system-prompt-expert` get an **empty** list on purpose: an agent that can mint or rewrite another agent must never also hold a tool, or "propose a change" quietly becomes "apply a change" with no human in the loop.
+
+**The ALM design-system expert.** `@alm-design/design-system` ships its own `CLAUDE.md` (technical API) and `design.md` (intent/content guidelines) inside `node_modules`. §7.2's rule is "read from the installed package, never vendor a copy" — but a subagent literally cannot reach `node_modules` itself: `studio_read_file`, the only file-read tool any subagent holds, refuses any `node_modules` segment by design (the same containment guard every other Studio read uses). So `agentRoster.ts` reads both files **server-side, at roster-generation time** (capped, ~50 KB each) and embeds their current text directly into the agent's own prompt body — a live snapshot refreshed on every regeneration (every real chat turn), not the "vendored once, forgotten forever" copy the rule warns against, though a subagent invoked between two regenerations reads whatever the last regeneration captured. When the package isn't a dependency (or its files are missing), the agent degrades honestly ("I have nothing authoritative to consult") rather than reasoning about ALM components from memory.
+
+**Reference files (§7.4)** — `.claude/{canonical-jsx,studio-invariants,node-ids-and-writeback,studio-tools,studio-design-principles,project-conventions}.md`. Each is a compact **pointer**, not a restatement — `canonical-jsx.md`'s generated file explicitly names `docs/reference/canonical-jsx.md` as the full contract rather than duplicating it (a restated copy would drift the first time the real doc changes). `studio-tools.md` is **generated from the live tool registry**, never hand-written — a hand-written tool list is wrong the first time a tool is renamed, and every agent would inherit the error at once. `project-conventions.md` is the one genuinely per-project file — framework, pages directory, styling mechanism, component packages, straight from `studio_project_profile`.
+
+**Regeneration never clobbers a user edit (trap #12).** `.claude/.studio-generated.json` records the hash of what Studio itself last wrote for each generated file. A file is only overwritten when its on-disk content still matches that recorded hash — i.e. the user hasn't touched it since. A file that doesn't match (hand-edited, or never Studio-written) is left alone and reported `skipped`, never silently clobbered.
+
+**Gates (§9):**
+1. Every tool named in any agent definition exists in `studioAgentTools` — `agentRoster.test.ts`, mirrors `fidelityCodes.test.ts`'s registry⇄doc pattern (extended from the prompt-only version `systemPrompt.test.ts` already gates).
+2. No generated subagent holds a tool the main agent lacks — trivially true here (every roster tool is sourced from `studioAgentTools` itself), asserted directly rather than assumed.
+3. `claude agents` resolves the generated roster — proven manually against the real, installed binary (never in the automated suite):
+   ```
+   $ claude agents --setting-sources project
+   14 active agents
+
+   Project agents:
+     agent-creator · inherit
+     almosafer-ds-expert · inherit
+     design-critic · inherit
+     fidelity-auditor · inherit
+     screen-builder · inherit
+     screen-scout · inherit
+     style-surgeon · inherit
+     synthesizer · inherit
+     system-prompt-expert · inherit
+
+   Built-in agents:
+     claude-code-guide · haiku
+     Explore · haiku
+     general-purpose · inherit
+     Plan · inherit
+     statusline-setup · sonnet
+   ```
+   All nine generated agents resolved by name, additively alongside the CLI's own five built-ins — confirming both "the roster generates correctly" and "generation merges rather than replaces", against a real `claude agents` run, zero cost.
 
 ---
 
