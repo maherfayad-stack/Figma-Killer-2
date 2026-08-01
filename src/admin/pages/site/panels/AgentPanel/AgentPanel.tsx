@@ -41,6 +41,7 @@ import { AgentImageContextMenu } from './AgentImageContextMenu'
 import { AgentImagePreview } from './AgentImagePreview'
 import type { AgentImageMenuRequest, AgentPreviewImage } from './agentImageTypes'
 import { MessageBubble } from './MessageBubble'
+import { AgentActivity } from './AgentActivity'
 import { groupConsecutiveMessages } from './conversationGroups'
 import styles from './AgentPanel.module.css'
 
@@ -253,12 +254,6 @@ export function AgentPanel({ variant = 'floating' }: { variant?: PanelVariant })
         >
           <EditSolidIcon size={14} />
         </Button>
-        {isStreaming && (
-          <span className={styles.streamingBadge}>
-            <span className={styles.streamingDot} aria-hidden="true" />
-            Working…
-          </span>
-        )}
         {/* "AI settings" — always available; routes to /admin/ai. */}
         <AgentSettingsButton
           variant="header"
@@ -291,6 +286,11 @@ export function AgentPanel({ variant = 'floating' }: { variant?: PanelVariant })
                 onOpenImageMenu={openImageMenu}
               />
             ))}
+            {/* Live "what am I doing" strip, under the turn it describes. The
+                streaming turn is always the last message — the store pushes
+                the assistant placeholder with the user's message and fills it
+                in as events arrive. */}
+            {isStreaming && <AgentActivity message={messages.at(-1) ?? null} />}
           </>
         )}
 

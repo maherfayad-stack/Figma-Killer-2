@@ -149,9 +149,68 @@ export function getToolCallDisplay(actionType: string, params: unknown): ToolCal
     case 'set_active_collection':
       return display('Opening collection', collectionDetail(p), 'open', 'read')
 
+    // ── The `claude` CLI's own built-in tools ────────────────────────────
+    // Studio's MCP tools above are the ones Studio implements. These are the
+    // ones the CLI runs itself, and until the driver forwarded `tool_use`
+    // blocks they never reached this panel at all — so a turn spent reading
+    // and editing the user's repo rendered as an unbroken silence.
+    case 'task':
+      // The one that matters most for "who is working": the CLI's Task tool
+      // delegates to a named subagent, and both the roster name and the
+      // one-line brief are right there in the params.
+      return display(
+        subagentTitle(p),
+        optionalString(p.description),
+        'users',
+        'neutral',
+      )
+    case 'read':
+      return display('Reading', fileNameDetail(p.file_path), 'document', 'read')
+    case 'write':
+      return display('Writing', fileNameDetail(p.file_path), 'add', 'write')
+    case 'edit':
+      return display('Editing', fileNameDetail(p.file_path), 'edit', 'write')
+    case 'notebook_edit':
+      return display('Editing notebook', fileNameDetail(p.notebook_path), 'edit', 'write')
+    case 'glob':
+      return display('Finding files', optionalString(p.pattern), 'collection', 'read')
+    case 'grep':
+      return display('Searching', optionalString(p.pattern), 'collection', 'read')
+    case 'bash':
+    case 'power_shell':
+      return display('Running a command', commandDetail(p), 'runtime', 'neutral')
+    case 'web_fetch':
+      return display('Fetching a page', optionalString(p.url), 'open', 'read')
+    case 'web_search':
+      return display('Searching the web', optionalString(p.query), 'open', 'read')
+    case 'todo_write':
+      return display('Updating its plan', '', 'template', 'neutral')
+    case 'skill':
+      return display('Using a skill', optionalString(p.skill), 'runtime', 'neutral')
+
     default:
       return display(`Running ${humanizeToolName(toolName)}`, '', 'tool', 'neutral')
   }
+}
+
+/** `Task` names the agent it delegates to — surface that, not the word "Task". */
+function subagentTitle(params: Record<string, unknown>): string {
+  const agent = optionalString(params.subagent_type)
+  return agent ? `Delegating to ${agent}` : 'Delegating to a subagent'
+}
+
+/** Just the basename — a full absolute path is unreadable in a 320px panel. */
+function fileNameDetail(value: unknown): string {
+  const path = optionalString(value)
+  if (!path) return ''
+  const parts = path.split(/[\\/]/)
+  return parts[parts.length - 1] ?? path
+}
+
+/** The command itself, clipped — the detail line is one line, not a terminal. */
+function commandDetail(params: Record<string, unknown>): string {
+  const command = optionalString(params.command) || optionalString(params.description)
+  return command.length > 60 ? `${command.slice(0, 60)}…` : command
 }
 
 function display(title: string, detail: string, icon: ToolCallIcon, tone: ToolCallTone): ToolCallDisplay {

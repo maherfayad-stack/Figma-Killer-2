@@ -609,3 +609,131 @@
   color: var(--danger);
   background: var(--bg-surface);
 }
+
+/* ── Live activity strip ─────────────────────────────────────────────────────
+   Shown under the in-flight assistant turn. Same surface family as
+   .toolCallRow and .reasoningRow so a running turn and its finished steps
+   read as one stack. */
+.activity {
+  min-width: 0;
+  margin-top: var(--space-2xs);
+  border-radius: 12px;
+  background: var(--overlay-10);
+}
+
+.activitySummary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: var(--space-s);
+  min-width: 0;
+  padding: var(--space-xs);
+  cursor: pointer;
+  list-style: none;
+}
+
+.activitySummary::-webkit-details-marker { display: none; }
+
+.activitySummary:hover { background: var(--overlay-15); border-radius: 12px; }
+
+.activitySpinner {
+  display: inline-flex;
+  color: var(--text-muted);
+  animation: activitySpin 1.4s linear infinite;
+}
+
+@keyframes activitySpin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.activityCopy {
+  display: grid;
+  gap: var(--space-3xs);
+  min-width: 0;
+}
+
+.activityHeadline {
+  font-size: var(--text-xs);
+  color: var(--text-default);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.activityMeta {
+  font-size: var(--text-2xs);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.activityChevron {
+  display: inline-flex;
+  color: var(--text-muted);
+  transition: transform 120ms ease;
+}
+
+.activity[open] .activityChevron { transform: rotate(90deg); }
+
+.activityEmpty {
+  margin: 0;
+  padding: 0 var(--space-xs) var(--space-xs) var(--space-l);
+  font-size: var(--text-2xs);
+  color: var(--text-muted);
+}
+
+.activitySteps {
+  display: grid;
+  gap: var(--space-3xs);
+  margin: 0;
+  padding: 0 var(--space-xs) var(--space-xs) var(--space-s);
+  list-style: none;
+}
+
+.activityStep {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  column-gap: var(--space-s);
+  min-width: 0;
+}
+
+.activityStepIcon {
+  display: inline-flex;
+  color: var(--success);
+}
+
+.activityStepIconPending {
+  color: var(--text-muted);
+  animation: activitySpin 1.4s linear infinite;
+}
+
+.activityStepIconError {
+  color: var(--danger-light);
+}
+
+.activityStepCopy {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2xs);
+  min-width: 0;
+}
+
+.activityStepTitle {
+  font-size: var(--text-2xs);
+  color: var(--text-default);
+  white-space: nowrap;
+}
+
+.activityStepDetail {
+  font-size: var(--text-2xs);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .activitySpinner,
+  .activityStepIconPending { animation: none; }
+}
