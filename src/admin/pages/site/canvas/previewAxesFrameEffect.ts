@@ -100,16 +100,25 @@ export function applyPreviewAxesToFrameDocument(
  * module's top doc for why that has to be an attribute effect, never
  * `srcDoc`/a `key`.
  */
-export function useApplyPreviewAxes(iframeDoc: Document | null): void {
-  const previewAxes = useEditorStore((s) => s.previewAxes)
+export function useApplyPreviewAxes(
+  iframeDoc: Document | null,
+  axesOverride?: Partial<PreviewAxes>,
+): void {
+  const boardAxes = useEditorStore((s) => s.previewAxes)
   const colorSchemeCapability = useSyncExternalStore(
     subscribeColorSchemeCapability,
     getColorSchemeCapability,
     getColorSchemeCapability,
   )
-
   useEffect(() => {
     if (!iframeDoc?.documentElement) return
-    applyPreviewAxesToFrameDocument(iframeDoc.documentElement, previewAxes, colorSchemeCapability)
-  }, [iframeDoc, previewAxes, colorSchemeCapability])
+    // WS-10 Phase 2 (§4.4) — a "duplicate as variant" board frame's own
+    // `BoardFrame.axes` overrides the board-global default PER AXIS, not
+    // wholesale — a frame that only overrides `direction` still inherits the
+    // board's current `colorScheme`. Computed inside the effect (rather than
+    // as a `const` above it) so the dependency array can name the two actual
+    // inputs instead of a fresh object literal recomputed every render.
+    const effectiveAxes: PreviewAxes = axesOverride ? { ...boardAxes, ...axesOverride } : boardAxes
+    applyPreviewAxesToFrameDocument(iframeDoc.documentElement, effectiveAxes, colorSchemeCapability)
+  }, [iframeDoc, boardAxes, axesOverride, colorSchemeCapability])
 }

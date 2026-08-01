@@ -14,6 +14,7 @@ import {
   discoverAppRouterRoutes,
   discoverPageFiles,
   mergeProjectFrameDefaults,
+  nextPageName,
   projectPagesDir,
   renameProjectDisplayName,
   routeFromAppPageRelPath,
@@ -165,6 +166,40 @@ describe('discoverPageFiles — .jsx/.tsx discovery', () => {
     write('Home.module.css')
     write('README.md')
     expect(discoverPageFiles(tmpDir)).toEqual(['Home.jsx'])
+  })
+})
+
+/**
+ * nextPageName — WS-13 step 4 gave this an `ext` parameter, because the
+ * default `.tsx`-only collision check silently returned an already-taken
+ * name for an all-`.jsx` project (its own doc comment explains the failure
+ * mode this closes).
+ */
+describe('nextPageName', () => {
+  let tmpDir: string
+  let pagesDir: string
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-next-page-name-'))
+    pagesDir = path.join(tmpDir, 'pages')
+    fs.mkdirSync(pagesDir, { recursive: true })
+  })
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  it('defaults to checking .tsx', () => {
+    fs.writeFileSync(path.join(pagesDir, 'Page.tsx'), 'export default function Page() { return null }')
+    expect(nextPageName(pagesDir)).toBe('Page2')
+  })
+
+  it('checks the SAME extension the caller is about to write, when given one', () => {
+    fs.writeFileSync(path.join(pagesDir, 'Page.jsx'), 'export default function Page() { return null }')
+    // A .tsx-only check would miss this and wrongly return "Page" again.
+    expect(nextPageName(pagesDir, '.jsx')).toBe('Page2')
+    // The SAME dir has no Page.tsx yet, so a .tsx check still sees "Page" free.
+    expect(nextPageName(pagesDir, '.tsx')).toBe('Page')
   })
 })
 

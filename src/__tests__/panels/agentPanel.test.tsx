@@ -21,6 +21,7 @@ const TEST_CREDENTIAL = {
   keyFingerprintCurrent: true,
   createdAt: '2026-06-01T10:00:00.000Z',
   lastUsedAt: null,
+  expiresAt: null,
 } as const
 
 function installModelFetch(
@@ -319,6 +320,7 @@ describe('AgentPanel', () => {
             keyFingerprintCurrent: true,
             createdAt: '2026-06-01T10:00:00.000Z',
             lastUsedAt: null,
+            expiresAt: null,
           }],
         })
       }
@@ -454,6 +456,7 @@ describe('AgentPanel', () => {
             keyFingerprintCurrent: true,
             createdAt: '2026-06-01T10:00:00.000Z',
             lastUsedAt: null,
+            expiresAt: null,
           }],
         })
       }
@@ -511,6 +514,7 @@ describe('AgentPanel', () => {
             keyFingerprintCurrent: true,
             createdAt: '2026-06-01T10:00:00.000Z',
             lastUsedAt: null,
+            expiresAt: null,
           }],
         })
       }

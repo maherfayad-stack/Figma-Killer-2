@@ -14,8 +14,7 @@
  * itself. Frames without a saved size fall back to `FRAME_WIDTH`/`FRAME_HEIGHT`
  * — the same fallback `BoardFramesLayer` itself uses at render time.
  */
-import type { Board } from '@core/studio-board'
-import { FRAME_WIDTH, FRAME_HEIGHT } from './BoardFramesLayer/frameGrid'
+import { FRAME_WIDTH, FRAME_HEIGHT, type Board } from '@core/studio-board'
 
 /** A furniture rect in board-space units (top-left + size). */
 export interface SnapRect {

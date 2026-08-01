@@ -27,8 +27,7 @@ import { useState } from 'react'
 import { useEditorStore } from '@site/store/store'
 import { selectActiveBoard } from '@site/store/slices/boardSlice'
 import { isStudioMode } from '@site/studio/studioMode'
-import { DEVICE_PRESETS, findMatchingPreset, type DevicePreset } from '@core/studio-board'
-import { FRAME_WIDTH, FRAME_HEIGHT } from '@site/canvas/BoardFramesLayer/frameGrid'
+import { DEVICE_PRESETS, findMatchingPreset, FRAME_WIDTH, FRAME_HEIGHT, type DevicePreset } from '@core/studio-board'
 import { MIN_FRAME_SIZE } from '@site/canvas/BoardFramesLayer/frameResize'
 import { Select } from '@ui/components/Select'
 import { Input } from '@ui/components/Input'
@@ -73,7 +72,7 @@ export function FrameSizePanel() {
 
   const handlePresetChange = (value: string) => {
     const preset = DEVICE_PRESETS.find((p) => presetOptionValue(p) === value)
-    if (preset) setFrameSize(frame.pageId, preset.width, preset.height)
+    if (preset) setFrameSize(frame.id, preset.width, preset.height)
   }
 
   return (
@@ -101,13 +100,13 @@ export function FrameSizePanel() {
           label="W"
           ariaLabel="Frame width"
           value={width}
-          onCommit={(next) => setFrameSize(frame.pageId, next, height)}
+          onCommit={(next) => setFrameSize(frame.id, next, height)}
         />
         <FrameDimensionInput
           label="H"
           ariaLabel="Frame height"
           value={height}
-          onCommit={(next) => setFrameSize(frame.pageId, width, next)}
+          onCommit={(next) => setFrameSize(frame.id, width, next)}
         />
       </div>
     </div>

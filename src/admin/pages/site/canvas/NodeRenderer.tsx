@@ -7,16 +7,15 @@
  * - Per-node Zustand selector: subscribes ONLY to the specific node's data.
  *   Editing node A never re-renders NodeRenderer for node B.
  * - Selection/hover handled via CanvasSelectionContext (no DOM event bubbling).
- * - selectedNodeId / hoveredNodeId are NOT in context (Perf fix #495):
- *   Each NodeRenderer subscribes directly to its own boolean — only the 2
- *   affected nodes re-render per selection/hover event (O(2) not O(N)).
+ * - selectedNodeId / hoveredNodeId are NOT in context (Perf fix #495): each
+ *   NodeRenderer subscribes directly to its own boolean — only the 2 affected
+ *   nodes re-render per selection/hover event (O(2) not O(N)).
  * - Zustand re-runs EVERY subscriber's selector on EVERY store set, so the
  *   per-node selectors below must be O(1)-ish per sweep: the active-page
  *   resolution is single-slot memoized in `selectActivePage`, the
- *   form-preview helpers cache their parent index per tree identity
- *   (`canvasFormPreview.ts`), and `getCanvasNodeClassIds` passes the node's
- *   own array through untouched when no preview applies — selector outputs
- *   stay referentially stable for unchanged data.
+ *   form-preview helpers cache their parent index per tree identity, and
+ *   `getCanvasNodeClassIds` passes the node's own array through untouched
+ *   when no preview applies — selector outputs stay referentially stable.
  */
 
 import { memo, use, useLayoutEffect, useRef, useSyncExternalStore } from 'react'
@@ -32,7 +31,7 @@ import { WarningDiamondSolidIcon } from 'pixel-art-icons/icons/warning-diamond-s
 import { ErrorBoundary } from '@ui/components/ErrorBoundary'
 import { ModuleSandboxFrame } from './ModuleSandboxFrame'
 import { PackageComponentPlaceholder } from './PackageComponentPlaceholder'
-import { CanvasBreakpointContext, CanvasPageContext, CanvasSelectionContext, CanvasTemplateContext } from './CanvasContexts'
+import { CanvasBreakpointContext, CanvasFrameContext, CanvasPageContext, CanvasSelectionContext, CanvasTemplateContext } from './CanvasContexts'
 import {
   addEditorFormPreviewProps,
   resolveEditorFormPreviewState,
@@ -59,11 +58,12 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
   // "the active canvas document" — every CMS/VC frame. Board frames provide a
   // page id so this NodeRenderer resolves against that frame's own page.
   const contextPageId = use(CanvasPageContext)
-  // Per-node subscription — editing this node's props only re-renders THIS component.
-  // Uses selectCanvasPageFor so VC canvas mode (pageId null) works alongside
-  // board multi-frame mode (pageId set).
+  // Per-node subscription — editing this node's props only re-renders THIS
+  // component. selectCanvasPageFor covers VC canvas mode (pageId null) too.
   const node = useEditorStore((s) => selectCanvasPageFor(s, contextPageId)?.nodes[nodeId] ?? null)
   const breakpointId = use(CanvasBreakpointContext)
+  // WS-10 Phase 2 — owning BoardFrame id (`null` outside board context). NOT `breakpointId` — see `CanvasFrameContext`'s doc.
+  const frameId = use(CanvasFrameContext)
   const templateContext = use(CanvasTemplateContext)
 
   // Per-node selection/hover subscriptions (Perf fix — Contribution #495).
@@ -74,11 +74,20 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
   // in a multi-selection shows the selection ring. The selector still resolves
   // to a boolean, so per-node memoization isn't disturbed — only rows whose
   // `includes(nodeId)` result flips will re-render.
-  const isSelected = useEditorStore((s) => s.selectedNodeIds.includes(nodeId))
+  //
+  // WS-10 Phase 2 — `selectedNodeFrameId`/`hoveredFrameId` scope to the
+  // originating BoardFrame ("null means global", mirroring `hoveredBreakpointId`)
+  // so a "duplicate as variant" sibling (same node ids, trap #2) doesn't light up.
+  const isSelected = useEditorStore(
+    (s) =>
+      s.selectedNodeIds.includes(nodeId) &&
+      (!s.selectedNodeFrameId || s.selectedNodeFrameId === frameId),
+  )
   const isHovered = useEditorStore(
     (s) =>
       s.hoveredNodeId === nodeId &&
-      (!s.hoveredBreakpointId || s.hoveredBreakpointId === breakpointId),
+      (!s.hoveredBreakpointId || s.hoveredBreakpointId === breakpointId) &&
+      (!s.hoveredFrameId || s.hoveredFrameId === frameId),
   )
   // Inline text edit session — true only in the SESSION'S frame. This frame's
   // node becomes the contentEditable surface; every OTHER breakpoint frame
@@ -132,7 +141,7 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
     if (page) {
       const enclosingInstance = findEnclosingInstance(page, clickedNodeId, state.enteredInstanceIds)
       if (enclosingInstance !== null) {
-        onNodeClick(enclosingInstance, e, breakpointId)
+        onNodeClick(enclosingInstance, e, breakpointId, frameId)
         return
       }
     }
@@ -145,15 +154,15 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
       )
       if (enclosing !== null && !enclosing.isInsideSlotContent) {
         // Clicked inside a VC body (not slot content) — route to the ref.
-        onNodeClick(enclosing.refId, e, breakpointId)
+        onNodeClick(enclosing.refId, e, breakpointId, frameId)
         return
       }
     }
-    onNodeClick(clickedNodeId, e, breakpointId)
+    onNodeClick(clickedNodeId, e, breakpointId, frameId)
   }
 
   const handleNodeContextMenu = (clickedNodeId: string, e: React.MouseEvent) => {
-    onNodeContextMenu(clickedNodeId, e, breakpointId)
+    onNodeContextMenu(clickedNodeId, e, breakpointId, frameId)
   }
 
   /**
@@ -174,11 +183,11 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
       const enclosingInstance = findEnclosingInstance(page, clickedNodeId, state.enteredInstanceIds)
       if (enclosingInstance !== null) {
         state.enterInstance(enclosingInstance)
-        onNodeClick(clickedNodeId, e, breakpointId)
+        onNodeClick(clickedNodeId, e, breakpointId, frameId)
         return
       }
     }
-    onNodeDoubleClick(clickedNodeId, e, breakpointId)
+    onNodeDoubleClick(clickedNodeId, e, breakpointId, frameId)
   }
 
   const handleNodeHover = (hoveredNodeId: string | null) => {
@@ -191,7 +200,7 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
       if (page) {
         const enclosingInstance = findEnclosingInstance(page, hoveredNodeId, state.enteredInstanceIds)
         if (enclosingInstance !== null) {
-          onNodeHover(enclosingInstance, breakpointId)
+          onNodeHover(enclosingInstance, breakpointId, frameId)
           return
         }
       }
@@ -203,12 +212,12 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
           hoveredNodeId,
         )
         if (enclosing !== null && !enclosing.isInsideSlotContent) {
-          onNodeHover(enclosing.refId, breakpointId)
+          onNodeHover(enclosing.refId, breakpointId, frameId)
           return
         }
       }
     }
-    onNodeHover(hoveredNodeId, breakpointId)
+    onNodeHover(hoveredNodeId, breakpointId, frameId)
   }
 
   // Subscribe to module registry changes so plugin module packs that activate

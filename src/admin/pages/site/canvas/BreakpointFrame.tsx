@@ -20,6 +20,7 @@
 import { useRef, useState, type CSSProperties } from 'react'
 import type { Page, Breakpoint } from '@core/page-tree'
 import type { TemplateRenderDataContext } from '@core/templates/dynamicBindings'
+import type { PreviewAxes } from '@core/studio-board'
 import { CanvasComposedTree } from './CanvasComposedTree'
 import { BreakpointSelectionOverlay } from './BreakpointSelectionOverlay'
 import { CanvasBreakpointContext, CanvasTemplateContext } from './CanvasContexts'
@@ -47,6 +48,19 @@ interface BreakpointFrameProps {
   templateContext?: TemplateRenderDataContext
   /** Opt-in runtime scripts injected into this frame; empty/undefined = none. */
   runtimeScripts?: InjectableRuntimeScript[]
+  /**
+   * WS-10 Phase 2 — the owning `BoardFrame.id` (board frames only; `undefined`
+   * for CMS/VC frames). Forwarded to `BreakpointSelectionOverlay` so
+   * selection/hover stay scoped to this frame — see `CanvasFrameContext`'s doc.
+   */
+  frameId?: string | null
+  /**
+   * WS-10 Phase 2 — this frame's per-frame preview-axes override (a
+   * "duplicate as variant" frame's `BoardFrame.axes`). Merged onto the
+   * board-global `previewAxes` by `IframeFrameSurface`'s
+   * `useApplyPreviewAxes` — `undefined` for every non-board frame.
+   */
+  axesOverride?: Partial<PreviewAxes>
 }
 
 export function BreakpointFrame({
@@ -58,6 +72,8 @@ export function BreakpointFrame({
   onActivate,
   templateContext,
   runtimeScripts,
+  frameId,
+  axesOverride,
 }: BreakpointFrameProps) {
   // --bp-width drives both label width and viewport width via CSS (dynamic value)
   const bpStyle = { '--bp-width': `${breakpoint.width}px` } as CSSProperties
@@ -231,6 +247,7 @@ export function BreakpointFrame({
           onCursorLeave={handleFrameCursorLeave}
           onReadonlyOpen={handleReadonlyOpen}
           runtimeScripts={runtimeScripts}
+          axesOverride={axesOverride}
         >
           <CanvasTemplateContext.Provider value={templateContext}>
             <CanvasBreakpointContext.Provider value={breakpoint.id}>
@@ -249,6 +266,7 @@ export function BreakpointFrame({
           viewportRef={viewportRef}
           iframeElement={iframeEl}
           overlayRoot={overlayRoot}
+          frameId={frameId}
         />
         <CursorTooltip
           content={`Click to activate ${breakpoint.label} breakpoint`}

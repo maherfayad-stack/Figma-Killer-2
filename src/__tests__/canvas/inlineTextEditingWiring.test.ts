@@ -33,7 +33,10 @@ describe('inline text editing wiring (in-place contentEditable)', () => {
 
   it('the double-click context channel carries the originating breakpoint', () => {
     const src = readFileSync(CONTEXTS, 'utf-8')
-    expect(src).toContain('onNodeDoubleClick: (nodeId: string, e: MouseEvent, breakpointId?: string) => void')
+    // WS-10 Phase 2 added a trailing `frameId` param (board-frame identity —
+    // a separate dimension from `breakpointId`, see `CanvasFrameContext`'s
+    // doc) alongside the pre-existing `breakpointId` this gate checks for.
+    expect(src).toContain('onNodeDoubleClick: (nodeId: string, e: MouseEvent, breakpointId?: string, frameId?: string | null) => void')
   })
 
   it('NodeRenderer builds an InlineEditBinding for the edited node in the session frame', () => {

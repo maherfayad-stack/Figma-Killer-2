@@ -54,7 +54,7 @@ import {
 import type { Static } from '@core/utils/typeboxHelpers'
 import type { EditorStore } from '@site/store/types'
 import { selectActiveBoard } from '@site/store/slices/boardSlice'
-import { FRAME_WIDTH, FRAME_HEIGHT } from '@site/canvas/BoardFramesLayer/frameGrid'
+import { FRAME_WIDTH, FRAME_HEIGHT } from '@core/studio-board'
 import { getAgentStoreApi } from './storeRef'
 import { captureAgentRenderSnapshot, waitForAgentRenderFrame } from './renderEvidence'
 import { waitForDelay, waitForDocumentQuiet, waitForPromise } from '../canvas/canvasCaptureSettle'

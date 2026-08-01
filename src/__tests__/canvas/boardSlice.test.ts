@@ -122,14 +122,19 @@ describe('renameBoard', () => {
   it('renames a board without changing its frames/notes', () => {
     state().loadBoards(createBoardsFile())
     const boardId = state().activeBoardId!
-    state().setFramePosition('home', 1, 2)
+    // WS-10 Phase 2 — frame CREATION is `addFrame`'s job exclusively;
+    // `setFramePosition` only moves an EXISTING frame, addressed by its own
+    // `id` (not `pageId`) now that a page can have more than one frame.
+    state().addFrame('home')
+    const frameId = selectActiveBoard(state())!.frames[0]!.id
+    state().setFramePosition(frameId, 1, 2)
     state().markBoardsClean()
 
     state().renameBoard(boardId, 'Checkout flow')
 
     const board = state().boards.boards.find((b) => b.id === boardId)
     expect(board?.name).toBe('Checkout flow')
-    expect(board?.frames).toEqual([{ pageId: 'home', x: 1, y: 2 }])
+    expect(board?.frames).toEqual([{ id: frameId, pageId: 'home', x: 1, y: 2 }])
     expect(state().boardsDirty).toBe(true)
   })
 
@@ -408,29 +413,52 @@ describe('removeDoc', () => {
 // ---------------------------------------------------------------------------
 
 describe('setFramePosition', () => {
-  it('inserts a new frame position on the active board and marks dirty', () => {
+  // WS-10 Phase 2 — `setFramePosition` moves an EXISTING frame by its own
+  // `id`; it no longer creates one (that's `addFrame`'s exclusive job — see
+  // `boardSlice.ts`'s module doc). A frame always exists by the time a drag
+  // can call this in production (`BoardFramesLayer.tsx` only renders drag
+  // handles for frames already in `board.frames`).
+  it('moves an existing frame (by id) and marks dirty', () => {
     state().loadBoards(createBoardsFile())
+    state().addFrame('home')
+    const frameId = selectActiveBoard(state())!.frames[0]!.id
     state().markBoardsClean()
 
-    state().setFramePosition('home', 100, 200)
+    state().setFramePosition(frameId, 100, 200)
 
     const board = selectActiveBoard(state())
     expect(board?.frames).toHaveLength(1)
-    expect(board?.frames[0]).toEqual({ pageId: 'home', x: 100, y: 200 })
+    expect(board?.frames[0]).toEqual({ id: frameId, pageId: 'home', x: 100, y: 200 })
     expect(state().boardsDirty).toBe(true)
   })
 
-  it('updates an existing frame position instead of duplicating it', () => {
+  it('moving the same frame again updates it in place, never duplicating it', () => {
     state().loadBoards(createBoardsFile())
-    state().setFramePosition('home', 100, 200)
+    state().addFrame('home')
+    const frameId = selectActiveBoard(state())!.frames[0]!.id
+    state().setFramePosition(frameId, 100, 200)
     state().markBoardsClean()
 
-    state().setFramePosition('home', 42, 84)
+    state().setFramePosition(frameId, 42, 84)
 
     const board = selectActiveBoard(state())
     expect(board?.frames).toHaveLength(1)
-    expect(board?.frames[0]).toEqual({ pageId: 'home', x: 42, y: 84 })
+    expect(board?.frames[0]).toEqual({ id: frameId, pageId: 'home', x: 42, y: 84 })
     expect(state().boardsDirty).toBe(true)
+  })
+
+  it('leaves board.frames structurally unchanged for an unknown frame id', () => {
+    state().loadBoards(createBoardsFile())
+    state().markBoardsClean()
+
+    // `moveFrame` (the pure `@core/studio-board` transform) is a genuine
+    // no-op for a missing id; the store action itself doesn't distinguish
+    // "found and moved" from "not found" before flipping `boardsDirty` —
+    // same pre-existing posture the old pageId-keyed version had, unchanged
+    // by this refactor.
+    state().setFramePosition('not-a-real-frame-id', 0, 0)
+
+    expect(selectActiveBoard(state())?.frames).toHaveLength(0)
   })
 
   it('is a no-op with no active board', () => {
@@ -441,9 +469,9 @@ describe('setFramePosition', () => {
 })
 
 describe('removeFrame', () => {
-  it('removes a page\'s frame position from the active board', () => {
+  it('removes every frame of a page from the active board', () => {
     state().loadBoards(createBoardsFile())
-    state().setFramePosition('home', 100, 200)
+    state().addFrame('home')
     state().markBoardsClean()
 
     state().removeFrame('home')
@@ -459,6 +487,23 @@ describe('removeFrame', () => {
   })
 })
 
+describe('removeFrameById', () => {
+  it('removes ONE frame instance without touching a sibling of the same page', () => {
+    state().loadBoards(createBoardsFile())
+    state().addFrame('home')
+    const sourceId = selectActiveBoard(state())!.frames[0]!.id
+    const variantId = state().duplicateFrameAsVariant(sourceId, { direction: 'rtl' })!
+    state().markBoardsClean()
+
+    state().removeFrameById(variantId)
+
+    const frames = selectActiveBoard(state())?.frames
+    expect(frames).toHaveLength(1)
+    expect(frames?.[0]?.id).toBe(sourceId)
+    expect(state().boardsDirty).toBe(true)
+  })
+})
+
 // ---------------------------------------------------------------------------
 // addFrame / seedFramesForActiveBoard
 // ---------------------------------------------------------------------------
@@ -471,7 +516,11 @@ describe('addFrame', () => {
     state().addFrame('home')
 
     const board = selectActiveBoard(state())
-    expect(board?.frames).toEqual([{ pageId: 'home', x: 0, y: 0 }])
+    // WS-10 Phase 2 — every frame now carries its own generated `id`
+    // (`toMatchObject`, not `toEqual`, since the id is a fresh uuid).
+    expect(board?.frames).toHaveLength(1)
+    expect(board?.frames[0]).toMatchObject({ pageId: 'home', x: 0, y: 0 })
+    expect(typeof board?.frames[0]?.id).toBe('string')
     expect(state().boardsDirty).toBe(true)
   })
 
@@ -496,7 +545,7 @@ describe('addFrame', () => {
     state().addFrame('c')
 
     const frames = selectActiveBoard(state())?.frames
-    expect(frames?.[0]).toEqual({ pageId: 'a', x: 0, y: 0 })
+    expect(frames?.[0]).toMatchObject({ pageId: 'a', x: 0, y: 0 })
     expect(frames?.[1].x).toBeGreaterThan(0)
     expect(frames?.[1].y).toBe(0)
     expect(frames?.[2].x).toBe(0)

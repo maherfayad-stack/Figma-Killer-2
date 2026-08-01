@@ -17,8 +17,15 @@
 import { describe, it, expect, beforeEach, afterAll } from 'bun:test'
 import { useEditorStore } from '@site/store/store'
 import { selectActiveBoard } from '@site/store/slices/boardSlice'
-import { createBoard, createBoardsFile, parseBoardsFile, serializeBoardsFile, type BoardsFile } from '@core/studio-board'
-import { FRAME_WIDTH, FRAME_HEIGHT } from '@site/canvas/BoardFramesLayer/frameGrid'
+import {
+  createBoard,
+  createBoardsFile,
+  parseBoardsFile,
+  serializeBoardsFile,
+  FRAME_WIDTH,
+  FRAME_HEIGHT,
+  type BoardsFile,
+} from '@core/studio-board'
 
 function resetBoardState() {
   useEditorStore.setState({
@@ -43,10 +50,17 @@ function state() {
   return useEditorStore.getState()
 }
 
-/** Load a board with N frames at (i*500, 0), widths/heights as given. */
-function loadBoardWithFrames(frames: Array<{ pageId: string; x: number; y: number; width?: number; height?: number }>) {
+/**
+ * Load a board with N frames at (i*500, 0), widths/heights as given.
+ * WS-10 Phase 2 — `id` defaults to `pageId`, mirroring `coerceFrame`'s own
+ * synthesis for a pre-Phase-2 shape (every fixture here has exactly one
+ * frame per page, so `pageId` is a perfectly valid, unique frame id) — every
+ * per-frame boardSlice action is now id-keyed, so a fixture without one
+ * would make every lookup collide on the first frame.
+ */
+function loadBoardWithFrames(frames: Array<{ pageId: string; x: number; y: number; width?: number; height?: number; id?: string }>) {
   const board = createBoard('board-1', 'Board 1')
-  board.frames = frames
+  board.frames = frames.map((f) => ({ id: f.pageId, ...f }))
   const file: BoardsFile = { version: 1, boards: [board] }
   state().loadBoards(file)
 }

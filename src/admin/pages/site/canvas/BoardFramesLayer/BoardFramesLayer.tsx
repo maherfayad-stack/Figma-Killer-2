@@ -9,13 +9,13 @@
  * `site.pages` (different flows/screens). Each `BoardFrame` is resolved
  * against `site.pages` by `pageId`; a frame whose page has since been
  * deleted is silently skipped. Membership is managed by `boardSlice`'s
- * `addFrame` / `seedFramesForActiveBoard` / `removeFrame` — this component
+ * `addFrame` / `seedFramesForActiveBoard` / `removeFrameById` — this component
  * only reads `board.frames`, it never invents a page that isn't on the list
  * (see `AddFramePicker` for adding one, and each frame header's right-click
  * "Remove from board" for removing one).
  *
  * Position: every `BoardFrame` on the list carries a saved `x`/`y` (assigned
- * at add-time by `defaultFramePosition`, `@site/canvas/BoardFramesLayer/frameGrid`)
+ * at add-time by `defaultFramePosition`, `@core/studio-board`)
  * and persists a new one the moment it's dragged, via `setFramePosition`
  * (boardSlice).
  *
@@ -26,7 +26,12 @@
  * Per-frame content: each frame wraps its `BreakpointFrame` in a
  * `CanvasPageContext.Provider value={page.id}>`, so `NodeRenderer` resolves
  * that frame's content against ITS OWN page (`selectCanvasPageFor`) instead
- * of falling back to the single active document.
+ * of falling back to the single active document. WS-10 Phase 2 adds a
+ * SECOND, separate provider alongside it — `CanvasFrameContext.Provider
+ * value={frame.id}` — so a "duplicate as variant" sibling frame of the same
+ * page (same node ids, trap #2) can be told apart for selection/hover
+ * scoping. See that context's own doc for why this can't just reuse the
+ * page id or the synthetic breakpoint id.
  *
  * Activation + edit routing: a page becomes the one editing machinery acts
  * on (`mutateActiveTree` → `resolveActiveTreeTarget`) via `activePageId`.
@@ -65,8 +70,10 @@
  * `.frame` div, its position (`--frame-x/--frame-y`), the drag header, and
  * its title/rename/context-menu all stay mounted and functional on
  * placeholders too, so position, activation, drag, rename, and removal work
- * regardless of on-screen state. `key={page.id}` on the list ensures React
- * cleanly (re)mounts a fresh iframe when a frame re-enters the viewport.
+ * regardless of on-screen state. `key={frame.id}` on the list (WS-10 Phase 2
+ * — was `page.id`, which two "duplicate as variant" frames of one page would
+ * collide on) ensures React cleanly (re)mounts a fresh iframe when a frame
+ * re-enters the viewport, and gives each variant its own component identity.
  *
  * Self-gates on `selectActiveBoard`: renders nothing outside studio board
  * mode, so `CanvasTransformLayer` can always mount it without an extra check.
@@ -91,6 +98,7 @@ import {
   useEffect,
   useRef,
   useState,
+  useSyncExternalStore,
   type CSSProperties,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
@@ -99,16 +107,18 @@ import { createPortal } from 'react-dom'
 import { useEditorStore } from '@site/store/store'
 import { selectActiveBoard } from '@site/store/slices/boardSlice'
 import type { Breakpoint, Page } from '@core/page-tree'
+import type { BoardFrame, PreviewAxes } from '@core/studio-board'
 import { Input } from '@ui/components/Input'
 import { ContextMenu, ContextMenuItem } from '@ui/components/ContextMenu'
 import { useInlineRename } from '@site/hooks/useInlineRename'
 import { CloseIcon } from 'pixel-art-icons/icons/close'
 import { PenSquareSolidIcon } from 'pixel-art-icons/icons/pen-square-solid'
-import { CanvasPageContext, CanvasViewportActionsContext } from '../CanvasContexts'
+import { CopyPlusSolidIcon } from 'pixel-art-icons/icons/copy-plus-solid'
+import { CanvasFrameContext, CanvasPageContext, CanvasViewportActionsContext } from '../CanvasContexts'
 import { BreakpointFrame } from '../BreakpointFrame'
 import { AddFramePicker } from './AddFramePicker'
 import { NewPageButton } from './NewPageButton'
-import { FRAME_WIDTH, FRAME_HEIGHT, FRAME_HEADER_HEIGHT } from './frameGrid'
+import { FRAME_WIDTH, FRAME_HEIGHT, FRAME_HEADER_HEIGHT } from '@core/studio-board'
 import { FRAME_VIEWPORT_MARGIN, isFrameOnScreen } from './frameVirtualization'
 import { resizeFrameRect, MIN_FRAME_SIZE, type FrameResizeRect, type ResizeHandle } from './frameResize'
 import { computeSnap, collectPeerRects, SNAP_THRESHOLD_BOARD_UNITS } from '../boardSnapping'
@@ -117,6 +127,7 @@ import { useMarqueeSelection } from './useMarqueeSelection'
 import { useFramePosterCapture } from './useFramePosterCapture'
 import { getFramePoster } from './frameSnapshotCache'
 import { FramePosterPlaceholder } from './FramePosterPlaceholder'
+import { getColorSchemeCapability, subscribeColorSchemeCapability } from '@site/studio/previewAxesCapability'
 import styles from './BoardFramesLayer.module.css'
 
 /**
@@ -158,7 +169,8 @@ export function BoardFramesLayer() {
   const openPageInCanvas = useEditorStore((s) => s.openPageInCanvas)
   const setFramePosition = useEditorStore((s) => s.setFramePosition)
   const setFrameSize = useEditorStore((s) => s.setFrameSize)
-  const removeFrame = useEditorStore((s) => s.removeFrame)
+  const removeFrameById = useEditorStore((s) => s.removeFrameById)
+  const duplicateFrameAsVariant = useEditorStore((s) => s.duplicateFrameAsVariant)
   const renamePage = useEditorStore((s) => s.renamePage)
   const zoom = useEditorStore((s) => s.zoom)
   const panX = useEditorStore((s) => s.panX)
@@ -253,7 +265,8 @@ export function BoardFramesLayer() {
           )
           return (
             <BoardFrameView
-              key={page.id}
+              key={frame.id}
+              frame={frame}
               page={page}
               x={frame.x}
               y={frame.y}
@@ -264,10 +277,11 @@ export function BoardFramesLayer() {
               isSelected={selectedFrameIds.includes(page.id)}
               isOnScreen={isOnScreen}
               onActivate={() => openPageInCanvas(page.id)}
-              onMove={(nx, ny) => setFramePosition(page.id, nx, ny)}
-              onResize={(nw, nh) => setFrameSize(page.id, nw, nh)}
-              onRemove={() => removeFrame(page.id)}
+              onMove={(nx, ny) => setFramePosition(frame.id, nx, ny)}
+              onResize={(nw, nh) => setFrameSize(frame.id, nw, nh)}
+              onRemove={() => removeFrameById(frame.id)}
               onRename={(title) => renamePage(page.id, title)}
+              onDuplicateAsVariant={(axes) => duplicateFrameAsVariant(frame.id, axes)}
             />
           )
         })
@@ -319,6 +333,8 @@ interface ResizeDragState {
 }
 
 interface BoardFrameViewProps {
+  /** WS-10 Phase 2 — the frame's own identity + its per-axis preview override, if any. See `types.ts`'s `BoardFrame` doc. */
+  frame: BoardFrame
   page: Page
   x: number
   y: number
@@ -343,9 +359,12 @@ interface BoardFrameViewProps {
   onResize: (width: number, height: number) => void
   onRemove: () => void
   onRename: (title: string) => void
+  /** WS-10 Phase 2 — "duplicate as variant": create a sibling frame of this page with the given axis override. */
+  onDuplicateAsVariant: (axes: Partial<PreviewAxes>) => void
 }
 
 function BoardFrameView({
+  frame,
   page,
   x,
   y,
@@ -360,11 +379,25 @@ function BoardFrameView({
   onResize,
   onRemove,
   onRename,
+  onDuplicateAsVariant,
 }: BoardFrameViewProps) {
   const dragRef = useRef<DragState | null>(null)
   const resizeRef = useRef<ResizeDragState | null>(null)
   const [rename, renameInputRef] = useInlineRename({ onCommit: onRename })
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
+  // WS-10 Phase 2 — "duplicate as variant" flips whichever axis it targets
+  // relative to what this frame is ACTUALLY previewing right now (its own
+  // override merged onto the board default), never the raw board default —
+  // otherwise duplicating an already-overridden RTL frame "as RTL" would be
+  // a no-op flip instead of producing the LTR sibling the label promises.
+  const boardAxes = useEditorStore((s) => s.previewAxes)
+  const effectiveAxes: PreviewAxes = { ...boardAxes, ...frame.axes }
+  const colorSchemeCapability = useSyncExternalStore(
+    subscribeColorSchemeCapability,
+    getColorSchemeCapability,
+    getColorSchemeCapability,
+  )
+  const schemeVariantApplies = colorSchemeCapability !== null && colorSchemeCapability.mechanism !== 'none'
   // WS-5.3 — frozen poster for this frame's offscreen placeholder. Capture
   // reads the live iframe straight out of `frameBodyRef` while on screen; see
   // `useFramePosterCapture.ts`'s own doc comment for why it doesn't mount a
@@ -470,6 +503,7 @@ function BoardFrameView({
     <div
       className={styles.frame}
       data-page-id={page.id}
+      data-frame-id={frame.id}
       data-active={isActive ? 'true' : undefined}
       data-selected={isSelected ? 'true' : undefined}
       style={{ '--frame-x': `${x}px`, '--frame-y': `${y}px` } as CSSProperties}
@@ -520,6 +554,33 @@ function BoardFrameView({
             <span aria-hidden="true"><PenSquareSolidIcon size={13} /></span>
             Rename
           </ContextMenuItem>
+          {/* WS-10 Phase 2 (§4.3-§4.4) — "duplicate as variant": a second
+              frame of the SAME page, beside this one, with one preview axis
+              flipped. Direction always applies (no probe gate — `dir`
+              always works, same as the toolbar toggle); the color-scheme
+              variant is omitted (not disabled) when the probe found no
+              dark-mode mechanism, so the menu never offers a duplicate that
+              would look identical to its source. */}
+          <ContextMenuItem
+            onClick={() => {
+              setContextMenu(null)
+              onDuplicateAsVariant({ direction: effectiveAxes.direction === 'rtl' ? 'ltr' : 'rtl' })
+            }}
+          >
+            <span aria-hidden="true"><CopyPlusSolidIcon size={13} /></span>
+            Duplicate as {effectiveAxes.direction === 'rtl' ? 'LTR' : 'RTL'}
+          </ContextMenuItem>
+          {schemeVariantApplies && (
+            <ContextMenuItem
+              onClick={() => {
+                setContextMenu(null)
+                onDuplicateAsVariant({ colorScheme: effectiveAxes.colorScheme === 'dark' ? 'light' : 'dark' })
+              }}
+            >
+              <span aria-hidden="true"><CopyPlusSolidIcon size={13} /></span>
+              Duplicate as {effectiveAxes.colorScheme === 'dark' ? 'Light' : 'Dark'}
+            </ContextMenuItem>
+          )}
           <ContextMenuItem
             danger
             onClick={() => { setContextMenu(null); onRemove() }}
@@ -549,12 +610,22 @@ function BoardFrameView({
       >
         {isOnScreen ? (
           <CanvasPageContext.Provider value={page.id}>
-            <BreakpointFrame
-              page={page}
-              breakpoint={buildStudioBreakpoint(width)}
-              isActive={isActive}
-              onActivate={onActivate}
-            />
+            {/* WS-10 Phase 2 — this frame's OWN id, so NodeRenderer can tag
+                every selection/hover it originates with the frame it came
+                from (`selectedNodeFrameId`/`hoveredFrameId`). Without this a
+                "duplicate as variant" sibling of this page — sharing every
+                node id (trap #2) — would light up from a selection made in
+                THIS frame. See `CanvasFrameContext`'s doc. */}
+            <CanvasFrameContext.Provider value={frame.id}>
+              <BreakpointFrame
+                page={page}
+                breakpoint={buildStudioBreakpoint(width)}
+                isActive={isActive}
+                onActivate={onActivate}
+                frameId={frame.id}
+                axesOverride={frame.axes}
+              />
+            </CanvasFrameContext.Provider>
           </CanvasPageContext.Provider>
         ) : (
           <FramePosterPlaceholder title={page.title} posterUrl={getFramePoster(page, width)} />

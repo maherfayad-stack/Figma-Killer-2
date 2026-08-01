@@ -100,6 +100,8 @@ import {
 import styles from './BreakpointSelectionOverlay.module.css'
 
 const EMPTY_VISUAL_COMPONENTS: readonly VisualComponent[] = []
+/** Stable empty fallback for the frame-scoped selection read below (Guideline #239 — no inline `?? []`). */
+const EMPTY_SELECTED_NODE_IDS: readonly string[] = []
 
 /** Two nullable rects are equal when every field matches (or both are null). */
 function overlayRectsEqual(a: CanvasOverlayRect | null, b: CanvasOverlayRect | null): boolean {
@@ -166,6 +168,16 @@ interface BreakpointSelectionOverlayProps {
    * pan conversion, no drift. `null` until the injector's effect runs.
    */
   overlayRoot: HTMLElement | null
+  /**
+   * WS-10 Phase 2 — the owning `BoardFrame.id`, or `null` outside board
+   * context (every CMS/VC frame — unchanged, unscoped behaviour: "Selection
+   * applies to all frames simultaneously" below still holds there). When set,
+   * both the selection ring/toolbar/inspector AND the hover ring are scoped
+   * to this frame — a "duplicate as variant" sibling of the same page shares
+   * every node id (trap #2) but must not light up from a selection/hover
+   * that originated in ITS sibling.
+   */
+  frameId?: string | null
 }
 
 export function BreakpointSelectionOverlay({
@@ -173,20 +185,34 @@ export function BreakpointSelectionOverlay({
   viewportRef,
   iframeElement,
   overlayRoot,
+  frameId = null,
 }: BreakpointSelectionOverlayProps) {
   // Multi-select: render one ring per selected node. `useShallow` keeps the
   // subscription stable when the array reference changes but its contents
   // are equal (matters because selectedNodeIds is a new array every set call).
-  const selectedNodeIds = useEditorStore(useShallow((s) => s.selectedNodeIds))
+  //
+  // WS-10 Phase 2 — frame-scoped when the selection originated from a board
+  // frame (`selectedNodeFrameId` set): a "duplicate as variant" sibling of
+  // the same page shares every node id (trap #2), so without this an
+  // rtl/dark variant would show the SAME selection ring as its light/ltr
+  // sibling. `null` origin (every CMS/VC selection) keeps the existing
+  // "every frame mirrors the selection" behaviour — see the module doc.
+  const selectedNodeIds = useEditorStore(useShallow((s) =>
+    s.selectedNodeFrameId === null || s.selectedNodeFrameId === frameId
+      ? s.selectedNodeIds
+      : EMPTY_SELECTED_NODE_IDS,
+  ))
   // `hoveredBreakpointId === null` means "global hover" — i.e. the hover did
   // not originate from a specific breakpoint frame on the canvas (e.g. it was
   // triggered by hovering a row in the DOM panel). In that case every frame
   // mirrors the hover so the user sees the highlight wherever they're looking.
   // When the hover originated from the canvas itself, scope it to the owning
   // frame so adjacent breakpoint previews don't all light up at once.
+  // `hoveredFrameId` is the SAME idea one dimension over — see its own doc.
   const hoveredNodeId = useEditorStore((s) =>
     s.hoveredNodeId &&
-    (s.hoveredBreakpointId === null || s.hoveredBreakpointId === breakpointId)
+    (s.hoveredBreakpointId === null || s.hoveredBreakpointId === breakpointId) &&
+    (s.hoveredFrameId === null || s.hoveredFrameId === frameId)
       ? s.hoveredNodeId
       : null,
   )

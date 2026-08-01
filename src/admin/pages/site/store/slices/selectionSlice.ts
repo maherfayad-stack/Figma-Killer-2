@@ -19,6 +19,13 @@ type SelectionMode = 'replace' | 'toggle' | 'range'
 
 interface SelectNodeOptions {
   preservePropertiesPanelCollapse?: boolean
+  /**
+   * WS-10 Phase 2 — the `BoardFrame.id` this selection originated from, or
+   * `null`/omitted for a selection that isn't frame-scoped (every CMS/VC
+   * canvas click, and anywhere selection is driven from outside the canvas —
+   * the DOM panel, Spotlight, an agent tool). See `selectedNodeFrameId`'s doc.
+   */
+  frameId?: string | null
 }
 
 interface SelectionSlice {
@@ -35,10 +42,31 @@ interface SelectionSlice {
    * `selectedNodeIds` instead.
    */
   selectedNodeId: string | null
+  /**
+   * WS-10 Phase 2 — the `BoardFrame.id` the CURRENT selection originated
+   * from, or `null` for an unscoped selection (every CMS/VC selection, and
+   * every board selection made before "duplicate as variant" exists). Read
+   * by `NodeRenderer.tsx`/`BreakpointSelectionOverlay.tsx` so selecting a
+   * node in one variant frame does not also ring it in a sibling frame of
+   * the same page (trap #2 — the two frames legitimately share the node id).
+   * One value for the whole multi-selection, mirroring `hoveredBreakpointId`'s
+   * "single origin" shape — multi-select happens within one frame.
+   */
+  selectedNodeFrameId: string | null
   /** Hovered node ID — null if no hover */
   hoveredNodeId: string | null
   /** Breakpoint frame that owns the current canvas hover; null means global hover */
   hoveredBreakpointId: string | null
+  /**
+   * WS-10 Phase 2 — the `BoardFrame.id` that owns the current canvas hover;
+   * `null` means global (every CMS/VC frame, and every board frame before
+   * "duplicate as variant" ever produces a second frame of the same page).
+   * A SEPARATE dimension from `hoveredBreakpointId` — every board frame
+   * shares the synthetic `'studio'` breakpoint id (CSS write-back needs that
+   * literal), so breakpoint-scoping alone can't tell two variant frames of
+   * the same page apart. See `CanvasFrameContext`'s doc.
+   */
+  hoveredFrameId: string | null
 
   /**
    * instance-ui-01 — Figma's nesting model for `studio.instance` fragment
@@ -71,7 +99,7 @@ interface SelectionSlice {
   addToSelection: (id: string) => void
   /** Remove a node from the selection set (no-op if absent). */
   removeFromSelection: (id: string) => void
-  hoverNode: (id: string | null, breakpointId?: string | null) => void
+  hoverNode: (id: string | null, breakpointId?: string | null, frameId?: string | null) => void
   clearSelection: () => void
 
   /**
@@ -109,8 +137,10 @@ declare module '@site/store/types' {
 export const createSelectionSlice: EditorStoreSliceCreator<SelectionSlice> = (set, get) => ({
   selectedNodeIds: [],
   selectedNodeId: null,
+  selectedNodeFrameId: null,
   hoveredNodeId: null,
   hoveredBreakpointId: null,
+  hoveredFrameId: null,
   enteredInstanceIds: [],
 
   selectNode: (id, mode = 'replace', options) => {
@@ -123,6 +153,7 @@ export const createSelectionSlice: EditorStoreSliceCreator<SelectionSlice> = (se
       set((state) => {
         state.selectedNodeIds = []
         state.selectedNodeId = null
+        state.selectedNodeFrameId = null
         state.activeClassId = null
         state.inlineStyleEditing = false
         state.propertiesPanel.collapsed = shouldCollapseProperties
@@ -199,16 +230,19 @@ export const createSelectionSlice: EditorStoreSliceCreator<SelectionSlice> = (se
     applySelection(set, current, next)
   },
 
-  hoverNode: (id, breakpointId = null) => set({
+  hoverNode: (id, breakpointId = null, frameId = null) => set({
     hoveredNodeId: id,
     hoveredBreakpointId: id ? breakpointId : null,
+    hoveredFrameId: id ? frameId : null,
   }),
 
   clearSelection: () => set({
     selectedNodeIds: [],
     selectedNodeId: null,
+    selectedNodeFrameId: null,
     hoveredNodeId: null,
     hoveredBreakpointId: null,
+    hoveredFrameId: null,
     activeClassId: null,
     inlineStyleEditing: false,
     componentizeEditorRequest: null,
@@ -280,8 +314,10 @@ export const createSelectionSlice: EditorStoreSliceCreator<SelectionSlice> = (se
 export function clearCanvasSelectionDraft(state: EditorStore): void {
   state.selectedNodeIds = []
   state.selectedNodeId = null
+  state.selectedNodeFrameId = null
   state.hoveredNodeId = null
   state.hoveredBreakpointId = null
+  state.hoveredFrameId = null
   state.activeClassId = null
   // A document/page switch invalidates any inline text-edit session — the
   // node it points at is no longer on the canvas. Live keystrokes already
@@ -329,8 +365,10 @@ export function pruneCanvasSelectionDraft(state: EditorStore): void {
   state.selectedNodeIds = surviving
   state.selectedNodeId = surviving.length > 0 ? surviving[surviving.length - 1] : null
   if (surviving.length === 0) {
+    state.selectedNodeFrameId = null
     state.hoveredNodeId = null
     state.hoveredBreakpointId = null
+    state.hoveredFrameId = null
     state.activeClassId = null
   }
 }
@@ -366,6 +404,13 @@ function applySelection(
 
   const idsChanged = !arraysEqual(current.selectedNodeIds, nextIds)
   const anchorChanged = !Object.is(current.selectedNodeId, nextAnchor)
+  // WS-10 Phase 2 — re-clicking the SAME node id from a DIFFERENT board frame
+  // (the "duplicate as variant" case: two frames legitimately share every
+  // node id) must still move the ring — `nextIds`/`nextAnchor` are unchanged,
+  // so this has to be its own change signal or the early-return below would
+  // silently keep the ring on the frame that was selected first.
+  const nextFrameId = options.frameId ?? null
+  const frameIdChanged = !Object.is(current.selectedNodeFrameId, nextFrameId)
   // Re-selecting the same node when the panel was manually collapsed must
   // re-open it (matches the J7+J8 user flow). The check is symmetric:
   // collapse on empty selection, expand on any selection — even the same one.
@@ -377,11 +422,12 @@ function applySelection(
   const inlineEditingChanged =
     anchorChanged && !Object.is(current.inlineStyleEditing, nextInlineEditing)
 
-  if (!idsChanged && !anchorChanged && !panelChanged && !activeClassChanged && !inlineEditingChanged) return
+  if (!idsChanged && !anchorChanged && !frameIdChanged && !panelChanged && !activeClassChanged && !inlineEditingChanged) return
 
   set((state) => {
     state.selectedNodeIds = nextIds
     state.selectedNodeId = nextAnchor
+    state.selectedNodeFrameId = nextAnchor ? nextFrameId : null
     if (nextAnchor) state.selectedSelectorClassId = null
     state.activeClassId = nextActiveClassId
     if (shouldPreservePropertiesCollapse) {

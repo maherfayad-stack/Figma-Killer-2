@@ -1,15 +1,21 @@
 /**
  * NewPageButton — one click creates a brand-new page in the active project (a
- * real `pages/<Component>.tsx` file, auto-named `Page`, `Page2`, …) and drops
- * it onto the active board as a frame. Studio users author pages, not just
- * curate already-made ones — no naming step first.
+ * real `pages/<Component>.tsx` file, auto-named `Page`, `Page2`, …). Studio
+ * users author pages, not just curate already-made ones — no naming step
+ * first.
  *
- * Flow: click → `createStudioPage()` writes the starter file (server picks the
- * next free `PageN` name) and returns its derived `pageId` → `addFrame(pageId)`
- * places it on the active board → `requestCmsSiteReload()` re-parses the
- * workspace so the new page renders in its frame. Self-gates on
- * `selectActiveBoard`, like `AddFramePicker`: renders nothing outside studio
- * board mode.
+ * Flow: click → `createStudioPage()` writes the starter file (server picks
+ * the next free `PageN` name) and auto-places it on the project's board
+ * SERVER-SIDE (WS-13 step 4, D5 §11.3 — the same write path an MCP/agent
+ * caller with no browser tab open goes through) → `requestCmsSiteReload()`
+ * re-parses the workspace AND re-fetches `.studio/boards.json`
+ * (`useStudioBoardsPersistence` in `AdminCanvasLayout.tsx` listens on the same
+ * reload event), which is what actually brings the new frame onto THIS
+ * board. No client-side `addFrame` call — the server's placement is the one
+ * source of truth, so a page created here and one created by the agent land
+ * identically instead of two independent grid-slot computations racing to be
+ * the last write. Self-gates on `selectActiveBoard`, like `AddFramePicker`:
+ * renders nothing outside studio board mode.
  */
 import { useState } from 'react'
 import { useEditorStore } from '@site/store/store'
@@ -38,7 +44,6 @@ export function NewPageButton({
   ariaLabel,
 }: NewPageButtonProps = {}) {
   const board = useEditorStore(selectActiveBoard)
-  const addFrame = useEditorStore((s) => s.addFrame)
   const [busy, setBusy] = useState(false)
 
   if (!board) return null
@@ -47,11 +52,9 @@ export function NewPageButton({
     if (busy) return
     setBusy(true)
     try {
-      const page = await createStudioPage()
-      // Place the new page on the active board immediately — `addFrame` only
-      // references the pageId, so it's safe before the reload brings the page
-      // into `site.pages`; the reload then renders it in the frame.
-      addFrame(page.pageId)
+      await createStudioPage()
+      // The server already placed the frame (see module doc) — reload picks
+      // up the page in `site.pages` AND the board frame that now references it.
       requestCmsSiteReload()
     } catch (err) {
       console.error('[NewPageButton] create page failed:', err)

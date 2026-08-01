@@ -17,7 +17,7 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { zipSync, strToU8 } from 'fflate'
-import { INLINE_ID_SEPARATOR } from '@core/page-parser'
+import { INLINE_ID_SEPARATOR, checkCanonicalJsx, parsePageFile } from '@core/page-parser'
 import { tryServeStudio } from '../studio'
 import { applyStudioEdit, dedupeStudioEdits, orderStudioEditsForApply } from '../studioWriteback'
 import { assignPageIds, pageIdFromRelPath } from '../studioPageLoad'
@@ -594,13 +594,76 @@ describe('POST /admin/api/studio/page', () => {
   it('writes pages/<Component>.tsx and returns the derived pageId for a supplied name', async () => {
     const res = await post({ dir: tmpDir, name: 'contact us' })
     expect(res.status).toBe(200)
-    const body = (await res.json()) as { ok: boolean; relPath: string; pageId: string; title: string }
-    expect(body).toEqual({ ok: true, relPath: 'ContactUs.tsx', pageId: 'contact-us', title: 'ContactUs' })
+    const body = (await res.json()) as { ok: boolean; relPath: string; pageId: string; title: string; rootNodeId?: string }
+    expect(body).toMatchObject({ ok: true, relPath: 'ContactUs.tsx', pageId: 'contact-us', title: 'ContactUs' })
+    // Trap #2 — the id must be a real source location the server derived by
+    // parsing the file it just wrote, never a constructed string.
+    expect(body.rootNodeId).toMatch(/^pages\/ContactUs\.tsx:\d+:\d+$/)
 
     const file = path.join(tmpDir, 'pages', 'ContactUs.tsx')
     expect(fs.existsSync(file)).toBe(true)
     const source = fs.readFileSync(file, 'utf8')
     expect(source).toContain('export default function ContactUs()')
+  })
+
+  it('the scaffolded page passes checkCanonicalJsx with zero violations', async () => {
+    const res = await post({ dir: tmpDir, name: 'Contact Us' })
+    const body = (await res.json()) as { relPath: string }
+    const file = path.join(tmpDir, 'pages', body.relPath)
+    const parsed = parsePageFile(file, tmpDir)
+    const findings = checkCanonicalJsx({ page: parsed })
+    const violations = findings.filter((f) => f.tier === 'violation')
+    expect(violations).toEqual([])
+  })
+
+  it('auto-places the new page as a board frame in .studio/boards.json', async () => {
+    const res = await post({ dir: tmpDir, name: 'Home' })
+    const body = (await res.json()) as { pageId: string }
+
+    const boardsFile = path.join(tmpDir, '.studio', 'boards.json')
+    expect(fs.existsSync(boardsFile)).toBe(true)
+    const boards = JSON.parse(fs.readFileSync(boardsFile, 'utf8')) as {
+      boards: { frames: { id: string; pageId: string; x: number; y: number }[] }[]
+    }
+    expect(boards.boards).toHaveLength(1)
+    const frame = boards.boards[0]!.frames.find((f) => f.pageId === body.pageId)
+    // WS-10 Phase 2 — every frame carries its own `id` now; assert its
+    // presence without pinning the random value.
+    expect(typeof frame?.id).toBe('string')
+    expect(frame).toMatchObject({ pageId: body.pageId, x: 0, y: 0 })
+  })
+
+  it('a second page lands at the next free grid slot, not on top of the first', async () => {
+    await post({ dir: tmpDir, name: 'First' })
+    const second = (await (await post({ dir: tmpDir, name: 'Second' })).json()) as { pageId: string }
+
+    const boardsFile = path.join(tmpDir, '.studio', 'boards.json')
+    const boards = JSON.parse(fs.readFileSync(boardsFile, 'utf8')) as {
+      boards: { frames: { pageId: string; x: number; y: number }[] }[]
+    }
+    const frame = boards.boards[0]!.frames.find((f) => f.pageId === second.pageId)
+    expect(frame).toMatchObject({ x: 1024 + 80, y: 0 }) // FRAME_WIDTH + FRAME_GAP, column 2
+  })
+
+  it('matches the project convention: an all-.jsx project gets a new .jsx page', async () => {
+    const pagesDir = path.join(tmpDir, 'pages')
+    fs.mkdirSync(pagesDir, { recursive: true })
+    fs.writeFileSync(path.join(pagesDir, 'Existing.jsx'), 'export default function Existing() { return <div /> }\n')
+
+    const res = await post({ dir: tmpDir, name: 'Second Page' })
+    const body = (await res.json()) as { relPath: string }
+    expect(body.relPath).toBe('SecondPage.jsx')
+    expect(fs.existsSync(path.join(pagesDir, 'SecondPage.jsx'))).toBe(true)
+  })
+
+  it('defaults to .tsx when the project has no pages yet, or a mix', async () => {
+    const noPages = (await (await post({ dir: tmpDir, name: 'Fresh' })).json()) as { relPath: string }
+    expect(noPages.relPath).toBe('Fresh.tsx')
+
+    const pagesDir = path.join(tmpDir, 'pages')
+    fs.writeFileSync(path.join(pagesDir, 'AlreadyTs.tsx'), 'export default function AlreadyTs() { return <div /> }\n')
+    const mixed = (await (await post({ dir: tmpDir, name: 'Mixed' })).json()) as { relPath: string }
+    expect(mixed.relPath).toBe('Mixed.tsx')
   })
 
   it('auto-names Page, Page2, Page3, … when no name is supplied', async () => {

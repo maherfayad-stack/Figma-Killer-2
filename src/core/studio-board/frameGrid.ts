@@ -1,13 +1,15 @@
 /**
  * frameGrid — the default grid-slot layout new board frames spawn into.
  *
- * Shared by `BoardFramesLayer` (which no longer needs to compute a fallback
- * position — every rendered `BoardFrame` carries a saved `x`/`y` now — but
- * still needs the pixel dimensions to size its empty-state card) and
- * `boardSlice` (`addFrame` / `seedFramesForActiveBoard`, which assign a new
- * frame's initial position from its index in the board's frame list). Living
- * in one module keeps the two agreeing on frame size / gap / column count
- * without either importing the other's component code.
+ * Shared by client canvas code (`BoardFramesLayer` for its empty-state card
+ * sizing; `boardSlice`'s `addFrame`/`seedFramesForActiveBoard`, which assign
+ * a new frame's initial position from its index in the board's frame list)
+ * AND the server (`server/handlers/studio.ts`'s `POST /admin/api/studio/page`
+ * scaffolder, WS-13 step 4 — "auto-place the frame", D5 §11.3). Living in
+ * `@core/studio-board` rather than under `src/admin/` is what lets both sides
+ * agree on frame size / gap / column count without one importing the other's
+ * layer — the server must never import admin/canvas code, and this constant
+ * table has nothing UI-specific in it.
  */
 export const FRAME_WIDTH = 1024
 export const FRAME_HEIGHT = 800

@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import {
   createBoard,
   createBoardsFile,
+  duplicateFrame,
   moveDoc,
   moveFrame,
   moveNote,
@@ -9,10 +10,12 @@ import {
   removeBoard,
   removeDoc,
   removeFrame,
+  removeFramesForPage,
   removeNote,
   renameBoard,
   resizeFrame,
   serializeBoardsFile,
+  setFrameAxes,
   upsertBoard,
   upsertDoc,
   upsertFrame,
@@ -244,7 +247,14 @@ describe('removeDoc', () => {
   })
 })
 
+// WS-10 Phase 2 — `id` defaults to `pageId` here purely because that's a
+// convenient, readable default for single-frame-per-page fixtures (and
+// matches what `serialize.ts`'s `coerceFrame` synthesizes for legacy data).
+// The "frames keyed by id, not pageId" block below exercises the case where
+// they DIVERGE — two frames, same pageId, different id — since a fixture
+// where they always match can't actually prove id-keying over pageId-keying.
 const frame = (overrides: Partial<BoardFrame> = {}): BoardFrame => ({
+  id: 'p1',
   pageId: 'p1',
   x: 0,
   y: 0,
@@ -258,7 +268,7 @@ describe('upsertFrame', () => {
     expect(result.frames).toEqual([frame()])
   })
 
-  test('replaces a frame keyed by pageId', () => {
+  test('replaces a frame keyed by id', () => {
     const board = upsertFrame(createBoard('b1', 'Board 1'), frame())
     const replacement = frame({ x: 10, y: 20 })
     const result = upsertFrame(board, replacement)
@@ -276,11 +286,12 @@ describe('upsertFrame', () => {
 
   test('merges a partial update, preserving unmentioned fields (width/height)', () => {
     // Regression: a resized frame kept its size, then a position-only update
-    // (setFramePosition passes just { pageId, x, y }) dropped width/height,
-    // snapping the frame back to the render default on the next drag.
+    // (setFramePosition passes just { id, pageId, x, y }) dropped
+    // width/height, snapping the frame back to the render default on the
+    // next drag.
     const sized = upsertFrame(createBoard('b1', 'Board 1'), frame({ width: 393, height: 852 }))
-    const moved = upsertFrame(sized, { pageId: 'p1', x: 40, y: 60 })
-    expect(moved.frames[0]).toEqual({ pageId: 'p1', x: 40, y: 60, width: 393, height: 852 })
+    const moved = upsertFrame(sized, { id: 'p1', pageId: 'p1', x: 40, y: 60 })
+    expect(moved.frames[0]).toEqual({ id: 'p1', pageId: 'p1', x: 40, y: 60, width: 393, height: 852 })
   })
 })
 
@@ -291,23 +302,48 @@ describe('moveFrame', () => {
     expect(result.frames[0]).toEqual(frame({ x: 5, y: 7 }))
   })
 
-  test('is a no-op for a missing pageId', () => {
+  test('is a no-op for a missing id', () => {
     const board = upsertFrame(createBoard('b1', 'Board 1'), frame())
     const result = moveFrame(board, 'missing', 5, 7)
     expect(result).toBe(board)
   })
 })
 
-describe('removeFrame', () => {
-  test('drops the frame with the given pageId', () => {
+describe('removeFrame (id-keyed, single frame)', () => {
+  test('drops the frame with the given id', () => {
     const board = upsertFrame(createBoard('b1', 'Board 1'), frame())
     const result = removeFrame(board, 'p1')
     expect(result.frames).toEqual([])
   })
 
-  test('is a no-op for a missing pageId', () => {
+  test('is a no-op for a missing id', () => {
     const board = upsertFrame(createBoard('b1', 'Board 1'), frame())
     const result = removeFrame(board, 'missing')
+    expect(result.frames).toEqual(board.frames)
+  })
+
+  test('removing one variant frame never touches its sibling of the same page', () => {
+    let board = createBoard('b1', 'Board 1')
+    board = upsertFrame(board, frame({ id: 'frame-source' }))
+    board = upsertFrame(board, frame({ id: 'frame-variant', x: 600 }))
+    const result = removeFrame(board, 'frame-variant')
+    expect(result.frames).toEqual([frame({ id: 'frame-source' })])
+  })
+})
+
+describe('removeFramesForPage', () => {
+  test('drops every frame of the given page, including duplicated variants', () => {
+    let board = createBoard('b1', 'Board 1')
+    board = upsertFrame(board, frame({ id: 'frame-source' }))
+    board = upsertFrame(board, frame({ id: 'frame-variant', x: 600 }))
+    board = upsertFrame(board, { id: 'other-page', pageId: 'p2', x: 0, y: 0 })
+    const result = removeFramesForPage(board, 'p1')
+    expect(result.frames).toEqual([{ id: 'other-page', pageId: 'p2', x: 0, y: 0 }])
+  })
+
+  test('is a no-op for a missing pageId', () => {
+    const board = upsertFrame(createBoard('b1', 'Board 1'), frame())
+    const result = removeFramesForPage(board, 'missing')
     expect(result.frames).toEqual(board.frames)
   })
 })
@@ -325,7 +361,7 @@ describe('resizeFrame', () => {
     expect(result.frames[0]).toEqual(frame({ width: 834, height: 1194 }))
   })
 
-  test('is a no-op for a missing pageId', () => {
+  test('is a no-op for a missing id', () => {
     const board = upsertFrame(createBoard('b1', 'Board 1'), frame())
     const result = resizeFrame(board, 'missing', 393, 852)
     expect(result).toBe(board)
@@ -341,7 +377,92 @@ describe('resizeFrame', () => {
   test('leaves x/y untouched', () => {
     const board = upsertFrame(createBoard('b1', 'Board 1'), frame({ x: 10, y: 20 }))
     const result = resizeFrame(board, 'p1', 393, 852)
-    expect(result.frames[0]).toEqual({ pageId: 'p1', x: 10, y: 20, width: 393, height: 852 })
+    expect(result.frames[0]).toEqual({ id: 'p1', pageId: 'p1', x: 10, y: 20, width: 393, height: 852 })
+  })
+})
+
+describe('frames keyed by id, not pageId (WS-10 Phase 2)', () => {
+  test('moveFrame moves only the addressed variant, leaving its same-page sibling in place', () => {
+    let board = createBoard('b1', 'Board 1')
+    board = upsertFrame(board, frame({ id: 'frame-source' }))
+    board = upsertFrame(board, frame({ id: 'frame-variant', x: 600 }))
+    const result = moveFrame(board, 'frame-variant', 900, 40)
+    expect(result.frames).toEqual([
+      frame({ id: 'frame-source' }),
+      frame({ id: 'frame-variant', x: 900, y: 40 }),
+    ])
+  })
+
+  test('resizeFrame resizes only the addressed variant', () => {
+    let board = createBoard('b1', 'Board 1')
+    board = upsertFrame(board, frame({ id: 'frame-source' }))
+    board = upsertFrame(board, frame({ id: 'frame-variant', x: 600 }))
+    const result = resizeFrame(board, 'frame-variant', 393, 852)
+    expect(result.frames).toEqual([
+      frame({ id: 'frame-source' }),
+      frame({ id: 'frame-variant', x: 600, width: 393, height: 852 }),
+    ])
+  })
+})
+
+describe('setFrameAxes', () => {
+  test('sets an axes override on the addressed frame', () => {
+    const board = upsertFrame(createBoard('b1', 'Board 1'), frame())
+    const result = setFrameAxes(board, 'p1', { direction: 'rtl' })
+    expect(result.frames[0]).toEqual(frame({ axes: { direction: 'rtl' } }))
+  })
+
+  test('clearing (undefined) drops the axes field entirely rather than setting it to undefined', () => {
+    const board = upsertFrame(createBoard('b1', 'Board 1'), frame({ axes: { direction: 'rtl' } }))
+    const result = setFrameAxes(board, 'p1', undefined)
+    expect(result.frames[0]).toEqual(frame())
+    expect('axes' in result.frames[0]).toBe(false)
+  })
+
+  test('only touches the addressed frame, not a same-page sibling', () => {
+    let board = createBoard('b1', 'Board 1')
+    board = upsertFrame(board, frame({ id: 'frame-source' }))
+    board = upsertFrame(board, frame({ id: 'frame-variant', x: 600 }))
+    const result = setFrameAxes(board, 'frame-variant', { colorScheme: 'dark' })
+    expect(result.frames).toEqual([
+      frame({ id: 'frame-source' }),
+      frame({ id: 'frame-variant', x: 600, axes: { colorScheme: 'dark' } }),
+    ])
+  })
+
+  test('is a no-op for a missing id', () => {
+    const board = upsertFrame(createBoard('b1', 'Board 1'), frame())
+    const result = setFrameAxes(board, 'missing', { direction: 'rtl' })
+    expect(result).toBe(board)
+  })
+})
+
+describe('duplicateFrame', () => {
+  test('adds a new frame of the same page, at the given position, carrying the given axes', () => {
+    const board = upsertFrame(createBoard('b1', 'Board 1'), frame({ id: 'frame-source', width: 393, height: 852 }))
+    const result = duplicateFrame(board, 'frame-source', {
+      id: 'frame-variant',
+      x: 900,
+      y: 0,
+      axes: { direction: 'rtl' },
+    })
+    expect(result).not.toBeNull()
+    expect(result!.frames).toEqual([
+      frame({ id: 'frame-source', width: 393, height: 852 }),
+      frame({ id: 'frame-variant', x: 900, y: 0, width: 393, height: 852, axes: { direction: 'rtl' } }),
+    ])
+  })
+
+  test('never mutates the source frame', () => {
+    const board = upsertFrame(createBoard('b1', 'Board 1'), frame({ id: 'frame-source' }))
+    duplicateFrame(board, 'frame-source', { id: 'frame-variant', x: 900, y: 0, axes: {} })
+    expect(board.frames).toEqual([frame({ id: 'frame-source' })])
+  })
+
+  test('returns null for a missing sourceFrameId, and never writes to the user\'s source', () => {
+    const board = upsertFrame(createBoard('b1', 'Board 1'), frame({ id: 'frame-source' }))
+    const result = duplicateFrame(board, 'missing', { id: 'frame-variant', x: 0, y: 0, axes: {} })
+    expect(result).toBeNull()
   })
 })
 
@@ -425,8 +546,8 @@ describe('parseBoardsFile tolerance', () => {
 
     const partial = result.boards.find((b) => b.id === 'partial') as Board
     expect(partial.frames).toEqual([
-      { pageId: 'p1', x: 1, y: 2 },
-      { pageId: 'p1', x: 0, y: 0 },
+      { id: 'p1', pageId: 'p1', x: 1, y: 2 },
+      { id: 'p1', pageId: 'p1', x: 0, y: 0 },
     ])
     expect(partial.notes).toEqual([
       { id: 'n1', x: 0, y: 0, w: 200, h: 120, text: '', color: 'yellow' },
@@ -481,7 +602,7 @@ describe('parseBoardsFile — frame width/height (Phase 6E)', () => {
     }
     const result = parseBoardsFile(raw)
     const parsedFrame = result.boards[0].frames[0]
-    expect(parsedFrame).toEqual({ pageId: 'p1', x: 0, y: 0 })
+    expect(parsedFrame).toEqual({ id: 'p1', pageId: 'p1', x: 0, y: 0 })
     expect('width' in parsedFrame).toBe(false)
     expect('height' in parsedFrame).toBe(false)
   })
@@ -500,7 +621,7 @@ describe('parseBoardsFile — frame width/height (Phase 6E)', () => {
       ],
     }
     const result = parseBoardsFile(raw)
-    expect(result.boards[0].frames[0]).toEqual({ pageId: 'p1', x: 0, y: 0, width: 393, height: 852 })
+    expect(result.boards[0].frames[0]).toEqual({ id: 'p1', pageId: 'p1', x: 0, y: 0, width: 393, height: 852 })
   })
 
   test('a zero, negative, or non-numeric width/height is dropped (not coerced to a default)', () => {
@@ -530,6 +651,144 @@ describe('parseBoardsFile — frame width/height (Phase 6E)', () => {
   test('serialize round-trip preserves width/height', () => {
     let board = createBoard('b1', 'Board 1')
     board = upsertFrame(board, frame({ pageId: 'home', width: 393, height: 852 }))
+    const file: BoardsFile = upsertBoard(createBoardsFile(), board)
+    const parsed = parseBoardsFile(serializeBoardsFile(file))
+    expect(parsed).toEqual(file)
+  })
+})
+
+describe('parseBoardsFile — frame id/axes (WS-10 Phase 2)', () => {
+  // The back-compat contract the coordinator asked to have verified: every
+  // frame in a pre-Phase-2 `boards.json` (real example:
+  // `studio-workspace/maherfayad-stack-eSIM/.studio/boards.json`, 15 frames,
+  // zero `id` fields) has no `id`. `coerceFrame` must synthesize one instead
+  // of dropping the frame or throwing — a frame is the largest thing on a
+  // board a user can lose.
+  test('a frame with no id is synthesized from pageId (legacy boards.json)', () => {
+    const raw = {
+      version: 1,
+      boards: [{ id: 'legacy', name: 'Legacy Board', frames: [{ pageId: 'home', x: 0, y: 0 }], notes: [], docs: [] }],
+    }
+    const result = parseBoardsFile(raw)
+    expect(result.boards[0].frames[0]).toEqual({ id: 'home', pageId: 'home', x: 0, y: 0 })
+  })
+
+  test('an explicit id is preserved as-is, even when it differs from pageId (a duplicated variant)', () => {
+    const raw = {
+      version: 1,
+      boards: [
+        {
+          id: 'b1',
+          name: 'Board 1',
+          frames: [{ id: 'frame-variant', pageId: 'home', x: 900, y: 0 }],
+          notes: [],
+          docs: [],
+        },
+      ],
+    }
+    const result = parseBoardsFile(raw)
+    expect(result.boards[0].frames[0]).toEqual({ id: 'frame-variant', pageId: 'home', x: 900, y: 0 })
+  })
+
+  test('an empty-string id is treated as absent and synthesized from pageId', () => {
+    const raw = {
+      version: 1,
+      boards: [{ id: 'b1', name: 'Board 1', frames: [{ id: '', pageId: 'home', x: 0, y: 0 }], notes: [], docs: [] }],
+    }
+    const result = parseBoardsFile(raw)
+    expect(result.boards[0].frames[0].id).toBe('home')
+  })
+
+  test('two frames of the same page keep DISTINCT ids when both are explicit', () => {
+    const raw = {
+      version: 1,
+      boards: [
+        {
+          id: 'b1',
+          name: 'Board 1',
+          frames: [
+            { id: 'frame-source', pageId: 'home', x: 0, y: 0 },
+            { id: 'frame-variant', pageId: 'home', x: 900, y: 0, axes: { direction: 'rtl' } },
+          ],
+          notes: [],
+          docs: [],
+        },
+      ],
+    }
+    const result = parseBoardsFile(raw)
+    expect(result.boards[0].frames).toEqual([
+      { id: 'frame-source', pageId: 'home', x: 0, y: 0 },
+      { id: 'frame-variant', pageId: 'home', x: 900, y: 0, axes: { direction: 'rtl' } },
+    ])
+  })
+
+  test('a valid axes override (direction and/or colorScheme) is kept', () => {
+    const raw = {
+      version: 1,
+      boards: [
+        {
+          id: 'b1',
+          name: 'Board 1',
+          frames: [{ id: 'f1', pageId: 'home', x: 0, y: 0, axes: { direction: 'rtl', colorScheme: 'dark' } }],
+          notes: [],
+          docs: [],
+        },
+      ],
+    }
+    const result = parseBoardsFile(raw)
+    expect(result.boards[0].frames[0].axes).toEqual({ direction: 'rtl', colorScheme: 'dark' })
+  })
+
+  test('a frame with no axes key parses with no axes field at all (not axes: undefined)', () => {
+    const raw = {
+      version: 1,
+      boards: [{ id: 'b1', name: 'Board 1', frames: [{ id: 'f1', pageId: 'home', x: 0, y: 0 }], notes: [], docs: [] }],
+    }
+    const result = parseBoardsFile(raw)
+    expect('axes' in result.boards[0].frames[0]).toBe(false)
+  })
+
+  test('an invalid axes value (bad direction/colorScheme, or a non-object) is dropped entirely', () => {
+    const raw = {
+      version: 1,
+      boards: [
+        {
+          id: 'b1',
+          name: 'Board 1',
+          frames: [
+            { id: 'f1', pageId: 'home', x: 0, y: 0, axes: { direction: 'sideways' } },
+            { id: 'f2', pageId: 'home', x: 0, y: 0, axes: 'not-an-object' },
+          ],
+          notes: [],
+          docs: [],
+        },
+      ],
+    }
+    const result = parseBoardsFile(raw)
+    expect('axes' in result.boards[0].frames[0]).toBe(false)
+    expect('axes' in result.boards[0].frames[1]).toBe(false)
+  })
+
+  test('a locale field on axes (Phase 4 territory) is silently ignored, not rejected', () => {
+    const raw = {
+      version: 1,
+      boards: [
+        {
+          id: 'b1',
+          name: 'Board 1',
+          frames: [{ id: 'f1', pageId: 'home', x: 0, y: 0, axes: { direction: 'rtl', locale: 'ar' } }],
+          notes: [],
+          docs: [],
+        },
+      ],
+    }
+    const result = parseBoardsFile(raw)
+    expect(result.boards[0].frames[0].axes).toEqual({ direction: 'rtl' })
+  })
+
+  test('serialize round-trip preserves a per-frame axes override', () => {
+    let board = createBoard('b1', 'Board 1')
+    board = upsertFrame(board, { id: 'f1', pageId: 'home', x: 0, y: 0, axes: { direction: 'rtl' } })
     const file: BoardsFile = upsertBoard(createBoardsFile(), board)
     const parsed = parseBoardsFile(serializeBoardsFile(file))
     expect(parsed).toEqual(file)

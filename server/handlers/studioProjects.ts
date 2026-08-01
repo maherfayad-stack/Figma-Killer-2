@@ -354,15 +354,20 @@ export function pageComponentNameFromInput(name: string): string {
 
 /**
  * Next available auto page name for a project's `pages/` dir: `Page`, then
- * `Page2`, `Page3`, … — the first whose `<name>.tsx` file doesn't already
+ * `Page2`, `Page3`, … — the first whose `<name><ext>` file doesn't already
  * exist. Used when a page is created without a user-supplied name (the
- * one-click "New page" action). The loop is bounded defensively; in practice
- * it returns within the first few iterations.
+ * one-click "New page" action). `ext` defaults to `.tsx` (D5's scaffold
+ * default) but MUST be the extension the caller is about to write — passing
+ * the wrong one checks for collisions against files that were never going to
+ * exist (e.g. checking `.tsx` in an all-`.jsx` project always finds nothing
+ * free, and a real `Page.jsx` collision goes undetected until the write
+ * itself 409s). The loop is bounded defensively; in practice it returns
+ * within the first few iterations.
  */
-export function nextPageName(pagesDir: string): string {
+export function nextPageName(pagesDir: string, ext: '.tsx' | '.jsx' = '.tsx'): string {
   for (let n = 1; n < 100_000; n++) {
     const name = n === 1 ? 'Page' : `Page${n}`
-    if (!existsSync(join(pagesDir, `${name}.tsx`))) return name
+    if (!existsSync(join(pagesDir, `${name}${ext}`))) return name
   }
   // Unreachable in practice — a project with 100k pages is not a real case.
   return `Page${Date.now()}`

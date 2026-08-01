@@ -10,12 +10,23 @@
  * Frames: `board.frames` is the source of truth for which pages are curated
  * onto a board — `BoardFramesLayer` renders exactly this list (resolved
  * against `site.pages`), not "every page". `addFrame` / `seedFramesForActiveBoard`
- * add membership at a default grid slot; `setFramePosition` upserts a
- * position (works for both "first drag" and subsequent moves); `setFrameSize`
+ * add membership at a default grid slot; `setFramePosition` moves an EXISTING
+ * frame (works for both "first drag" and subsequent moves — the frame object
+ * always already exists by drag time, `addFrame` owns creation); `setFrameSize`
  * (Phase 6E) persists a frame's own width/height (canvas drag-resize or the
  * design tab's device-preset picker) — a frame without a saved size renders
- * at the shared `FRAME_WIDTH`/`FRAME_HEIGHT` default; `removeFrame`
- * drops membership without touching the underlying page.
+ * at the shared `FRAME_WIDTH`/`FRAME_HEIGHT` default; `removeFrameById` drops
+ * ONE frame instance without touching the underlying page or any sibling
+ * frame of the same page; `removeFrame` (pageId) drops every frame of a page.
+ *
+ * WS-10 Phase 2 — every per-frame action above is keyed by `BoardFrame.id`,
+ * NOT `pageId` (a duplicated variant means two frames share one `pageId` —
+ * see `@core/studio-board`'s `types.ts` for the full reasoning; trap #2, the
+ * NODE id grammar itself does not change). `duplicateFrameAsVariant` is the
+ * "make this usable" action: a second frame of the same page beside the
+ * source, with one axis flipped. `selectedFrameIds` (WS-7.1 multi-select,
+ * below) stays PAGE-id-keyed on purpose — see that section for the accepted
+ * scope boundary this creates once a duplicated variant exists.
  *
  * Doc blocks: `board.docs` mirrors the sticky-note shape exactly (`addDoc` /
  * `moveDoc` / `updateDocMarkdown` / `removeDoc`) — markdown-authored
@@ -28,9 +39,10 @@
  *
  * All mutations route through the pure `@core/studio-board` transforms
  * (`upsertBoard`, `upsertNote`, `moveNote`, `removeNote`, `upsertDoc`,
- * `moveDoc`, `removeDoc`, `upsertFrame`, `removeFrame`, …) rather than
- * hand-mutating `Board` / `BoardsFile` objects, so this slice stays a thin
- * translation from store actions to the pure board model.
+ * `moveDoc`, `removeDoc`, `upsertFrame`, `moveFrame`, `resizeFrame`,
+ * `removeFrame`, `removeFramesForPage`, `setFrameAxes`, `duplicateFrame`, …)
+ * rather than hand-mutating `Board` / `BoardsFile` objects, so this slice
+ * stays a thin translation from store actions to the pure board model.
  *
  * Snap guides (Phase 6B): `boardSnapGuides` is a TRANSIENT UI field — the
  * alignment guide lines `BoardGuidesLayer` draws while a frame/note/doc is
@@ -42,15 +54,18 @@
  *
  * Frame multi-selection (WS-7.1): `selectedFrameIds` is a SEPARATE selection
  * domain from `selectedNodeIds` (selectionSlice) — a board frame is not a
- * node. `selectFrame`/`selectAllFrames` clear the node selection when they
- * make the frame selection non-empty (and vice versa in selectionSlice), so
- * the Properties panel always shows exactly one of "frame(s) selected" or
- * "node(s) selected", never both. Bulk frame actions (WS-7.2 — set size,
- * device preset, apply-to-all-pages, fit-to-content, align/distribute, tidy)
- * all resolve their target set from `selectedFrameIds` against the active
- * board and go through the same pure `upsertFrame`/`resizeFrame` transforms
- * as the single-frame actions above, so every write round-trips through
- * `parseBoardsFile` identically.
+ * node, and (WS-10 Phase 2) it stays PAGE-id-keyed rather than converting to
+ * frame ids: a real, accepted, documented scope boundary, not an oversight —
+ * once a page has a duplicated variant, the bulk actions below resolve a page
+ * id to its FIRST matching frame (`firstFrameForPage`), never a specific one.
+ * The single-frame path (drag, resize handles, `FrameSizePanel`, "duplicate
+ * as variant", "remove from board") stays fully frame-id-precise regardless.
+ * `selectFrame`/`selectAllFrames` clear the node selection when they make the
+ * frame selection non-empty (and vice versa in selectionSlice), so the
+ * Properties panel always shows exactly one of "frame(s)" or "node(s)"
+ * selected, never both. Bulk actions (WS-7.2 — set size, device preset,
+ * apply-to-all-pages, fit-to-content, align/distribute, tidy) go through the
+ * same pure `moveFrame`/`resizeFrame` transforms the single-frame actions do.
  *
  * `frameDefaults` (WS-7.2 — "apply to all pages") mirrors the per-project
  * default in `.studio/meta.json`'s `frameDefaults` (`server/handlers/studio/
@@ -64,7 +79,7 @@
  * container with no direct HTTP calls.
  */
 import type { EditorStoreSliceCreator, EditorStore } from '@site/store/types'
-import type { Board, BoardsFile, DocBlock, NoteColor, StickyNote } from '@core/studio-board'
+import type { Board, BoardsFile, DocBlock, NoteColor, PreviewAxes, StickyNote } from '@core/studio-board'
 import type { SnapGuide } from '@site/canvas/boardSnapping'
 import {
   createBoard,
@@ -79,11 +94,17 @@ import {
   moveDoc as moveDocOnBoard,
   removeDoc as removeDocFromBoard,
   upsertFrame,
-  removeFrame as removeFrameFromBoard,
+  moveFrame,
   resizeFrame,
+  removeFrame as removeFrameById,
+  removeFramesForPage,
+  setFrameAxes as setFrameAxesOnBoard,
+  duplicateFrame,
+  defaultFramePosition,
+  FRAME_WIDTH,
 } from '@core/studio-board'
-import { defaultFramePosition, FRAME_WIDTH, FRAME_HEIGHT } from '@site/canvas/BoardFramesLayer/frameGrid'
-import { alignFrames, distributeFrames, type AlignableFrame, type FrameAlignEdge } from '@site/canvas/BoardFramesLayer/frameAlign'
+import type { FrameAlignEdge } from '@site/canvas/BoardFramesLayer/frameAlign'
+import * as bulk from './boardBulkFrameActions'
 
 export type { FrameAlignEdge }
 
@@ -92,6 +113,8 @@ const DEFAULT_NOTE_WIDTH = 180
 const DEFAULT_NOTE_HEIGHT = 120
 const DEFAULT_DOC_WIDTH = 320
 const DEFAULT_DOC_HEIGHT = 200
+/** WS-10 Phase 2 — horizontal gap between a source frame and its "duplicate as variant" sibling. */
+const VARIANT_GAP = 48
 
 /** Mirrors `FrameDefaultsSchema` in `server/handlers/studio/studioMeta.ts` — kept as a plain client-local shape so this browser module never imports server code. */
 export interface FrameDefaults {
@@ -154,20 +177,22 @@ interface BoardSlice {
   /** Delete a doc block from the active board. */
   removeDoc: (docId: string) => void
   /**
-   * Persist a page's frame position on the active board — inserts a new
-   * `BoardFrame` if the page has none yet, updates it otherwise. No-op with
-   * no active board.
+   * Reposition ONE existing frame by its own `id` (WS-10 Phase 2). No-op if
+   * that frame id doesn't exist on the active board, or there is no active
+   * board — frame CREATION is `addFrame`/`seedFramesForActiveBoard`'s job
+   * exclusively.
    */
-  setFramePosition: (pageId: string, x: number, y: number) => void
+  setFramePosition: (frameId: string, x: number, y: number) => void
   /**
-   * Persist a page's frame size (Phase 6E — resizable frames + device
-   * presets) on the active board. No-op with no active board, or if the
-   * page has no frame yet (unlike `setFramePosition`, resize never creates a
-   * frame — `addFrame`/`seedFramesForActiveBoard` own frame creation).
+   * Persist ONE frame's own width/height (Phase 6E — resizable frames +
+   * device presets), by `id` (WS-10 Phase 2). No-op with no active board, or
+   * if the frame id doesn't exist.
    */
-  setFrameSize: (pageId: string, width: number, height: number) => void
-  /** Remove a page's saved frame position from the active board. */
+  setFrameSize: (frameId: string, width: number, height: number) => void
+  /** Remove EVERY frame of `pageId` from the active board (e.g. the page itself was deleted, or a bulk multi-select remove — `selectedFrameIds` is page-id-keyed, see module doc). */
   removeFrame: (pageId: string) => void
+  /** WS-10 Phase 2 — remove ONE frame instance by its own `id`, never touching a sibling "duplicate as variant" of the same page. This is what `BoardFrameView`'s "Remove from board" menu item calls. */
+  removeFrameById: (frameId: string) => void
   /**
    * Add a `BoardFrame` for `pageId` to the ACTIVE board at a default grid
    * slot. No-op if the page is already a frame on the board, or there is no
@@ -180,6 +205,21 @@ interface BoardSlice {
    * active board or when every id is already a frame.
    */
   seedFramesForActiveBoard: (pageIds: string[]) => void
+  /**
+   * WS-10 Phase 2 (§4.3-§4.5) — "duplicate as variant": create a second
+   * frame of `sourceFrameId`'s page, positioned beside it, carrying
+   * `axesOverride` as its OWN `BoardFrame.axes` (merged onto the board
+   * default per-axis at render time — see `previewAxesFrameEffect.ts`).
+   * Selects the new frame (mirrors `selectFrame`'s mutual-exclusivity with
+   * node selection). Returns the new frame's id, or `null` if `sourceFrameId`
+   * doesn't exist / there is no active board. Writes ONLY to the in-memory
+   * `boards` state (persisted to `.studio/boards.json` like any other board
+   * edit) — never touches the user's source (`studio-workspace/*` is user
+   * data, trap #12).
+   */
+  duplicateFrameAsVariant: (sourceFrameId: string, axesOverride: Partial<PreviewAxes>) => string | null
+  /** WS-10 Phase 2 — set (or clear, passing `undefined`) one frame's per-axis preview override by `id`. No-op if the frame id doesn't exist. */
+  setFrameAxes: (frameId: string, axes: Partial<PreviewAxes> | undefined) => void
   /** Clear the dirty flag after a successful save. */
   markBoardsClean: () => void
   /**
@@ -190,7 +230,7 @@ interface BoardSlice {
   setBoardSnapGuides: (guides: SnapGuide[]) => void
 
   // ── Frame multi-selection (WS-7.1) ───────────────────────────────────────
-  /** Selected frame ids (page ids), on the ACTIVE board. Distinct from node selection. */
+  /** Selected frame ids (page ids), on the ACTIVE board. Distinct from node selection. Page-id-keyed — see module doc's WS-10 Phase 2 note. */
   selectedFrameIds: string[]
   /**
    * Select a frame. `replace` (default) clears the set and selects only
@@ -424,25 +464,32 @@ export const createBoardSlice: EditorStoreSliceCreator<BoardSlice> = (set, get) 
     set({ boards: upsertBoard(boards, removeDocFromBoard(board, docId)), boardsDirty: true })
   },
 
-  setFramePosition: (pageId, x, y) => {
+  setFramePosition: (frameId, x, y) => {
     const { boards, activeBoardId } = get()
     const board = getActiveBoard(boards, activeBoardId)
     if (!board) return
-    set({ boards: upsertBoard(boards, upsertFrame(board, { pageId, x, y })), boardsDirty: true })
+    set({ boards: upsertBoard(boards, moveFrame(board, frameId, x, y)), boardsDirty: true })
   },
 
-  setFrameSize: (pageId, width, height) => {
+  setFrameSize: (frameId, width, height) => {
     const { boards, activeBoardId } = get()
     const board = getActiveBoard(boards, activeBoardId)
     if (!board) return
-    set({ boards: upsertBoard(boards, resizeFrame(board, pageId, width, height)), boardsDirty: true })
+    set({ boards: upsertBoard(boards, resizeFrame(board, frameId, width, height)), boardsDirty: true })
   },
 
   removeFrame: (pageId) => {
     const { boards, activeBoardId } = get()
     const board = getActiveBoard(boards, activeBoardId)
     if (!board) return
-    set({ boards: upsertBoard(boards, removeFrameFromBoard(board, pageId)), boardsDirty: true })
+    set({ boards: upsertBoard(boards, removeFramesForPage(board, pageId)), boardsDirty: true })
+  },
+
+  removeFrameById: (frameId) => {
+    const { boards, activeBoardId } = get()
+    const board = getActiveBoard(boards, activeBoardId)
+    if (!board) return
+    set({ boards: upsertBoard(boards, removeFrameById(board, frameId)), boardsDirty: true })
   },
 
   addFrame: (pageId) => {
@@ -453,7 +500,7 @@ export const createBoardSlice: EditorStoreSliceCreator<BoardSlice> = (set, get) 
     const { x, y } = defaultFramePosition(board.frames.length)
     // WS-7.2 — a page added after "apply to all pages" inherits the
     // project's frame default instead of the hardcoded FRAME_WIDTH/HEIGHT.
-    const frame: Parameters<typeof upsertFrame>[1] = { pageId, x, y }
+    const frame: Parameters<typeof upsertFrame>[1] = { id: crypto.randomUUID(), pageId, x, y }
     if (frameDefaults.width) frame.width = frameDefaults.width
     if (frameDefaults.height) frame.height = frameDefaults.height
     set({ boards: upsertBoard(boards, upsertFrame(board, frame)), boardsDirty: true })
@@ -469,12 +516,52 @@ export const createBoardSlice: EditorStoreSliceCreator<BoardSlice> = (set, get) 
 
     const nextBoard = missingIds.reduce((acc, pageId, i) => {
       const { x, y } = defaultFramePosition(board.frames.length + i)
-      const frame: Parameters<typeof upsertFrame>[1] = { pageId, x, y }
+      const frame: Parameters<typeof upsertFrame>[1] = { id: crypto.randomUUID(), pageId, x, y }
       if (frameDefaults.width) frame.width = frameDefaults.width
       if (frameDefaults.height) frame.height = frameDefaults.height
       return upsertFrame(acc, frame)
     }, board)
     set({ boards: upsertBoard(boards, nextBoard), boardsDirty: true })
+  },
+
+  duplicateFrameAsVariant: (sourceFrameId, axesOverride) => {
+    const { boards, activeBoardId } = get()
+    const board = getActiveBoard(boards, activeBoardId)
+    if (!board) return null
+    const source = board.frames.find((f) => f.id === sourceFrameId)
+    if (!source) return null
+
+    const newFrameId = crypto.randomUUID()
+    const nextBoard = duplicateFrame(board, sourceFrameId, {
+      id: newFrameId,
+      // Beside the source, same row — the primary way users reach this
+      // feature (§4.4), so it must never land exactly on top of its sibling.
+      x: source.x + (source.width ?? FRAME_WIDTH) + VARIANT_GAP,
+      y: source.y,
+      axes: axesOverride,
+    })
+    if (!nextBoard) return null
+
+    set((state) => {
+      state.boards = upsertBoard(boards, nextBoard)
+      state.boardsDirty = true
+      // Select the new frame, mirroring `selectFrame`'s mutual-exclusivity
+      // with node selection — the user's next action is almost always
+      // "look at the variant I just made".
+      state.selectedFrameIds = [source.pageId]
+      if (state.selectedNodeIds.length > 0) {
+        state.selectedNodeIds = []
+        state.selectedNodeId = null
+      }
+    })
+    return newFrameId
+  },
+
+  setFrameAxes: (frameId, axes) => {
+    const { boards, activeBoardId } = get()
+    const board = getActiveBoard(boards, activeBoardId)
+    if (!board) return
+    set({ boards: upsertBoard(boards, setFrameAxesOnBoard(board, frameId, axes)), boardsDirty: true })
   },
 
   markBoardsClean: () => set({ boardsDirty: false }),
@@ -543,104 +630,54 @@ export const createBoardSlice: EditorStoreSliceCreator<BoardSlice> = (set, get) 
 
   setFrameDefaults: (defaults) => set({ frameDefaults: defaults }),
 
-  // ── Bulk frame actions (WS-7.2) ─────────────────────────────────────────
-
+  // ── Bulk frame actions (WS-7.2) — pure transforms live in
+  // `boardBulkFrameActions.ts` (module-size split); this is just the
+  // `set`/`get` wiring around them, uniform across all six.
   setSelectedFramesSize: (width, height) => {
     const { boards, activeBoardId, selectedFrameIds } = get()
     const board = getActiveBoard(boards, activeBoardId)
-    if (!board || selectedFrameIds.length === 0) return
-    let nextBoard = board
-    for (const pageId of selectedFrameIds) {
-      const frame = nextBoard.frames.find((f) => f.pageId === pageId)
-      if (!frame) continue
-      const w = width ?? frame.width ?? FRAME_WIDTH
-      const h = height ?? frame.height ?? FRAME_HEIGHT
-      nextBoard = resizeFrame(nextBoard, pageId, w, h)
-    }
+    const nextBoard = board && bulk.setSelectedFramesSize(board, selectedFrameIds, width, height)
+    if (!nextBoard) return
     set({ boards: upsertBoard(boards, nextBoard), boardsDirty: true })
   },
 
   applyWidthToAllFrames: (width) => {
     const { boards, activeBoardId, frameDefaults } = get()
     const board = getActiveBoard(boards, activeBoardId)
-    if (!board || board.frames.length === 0) return
-    let nextBoard = board
-    for (const frame of board.frames) {
-      // Preserve each frame's own height (explicit, or the shared default
-      // made explicit) — only width is the "apply to all pages" ask.
-      nextBoard = resizeFrame(nextBoard, frame.pageId, width, frame.height ?? FRAME_HEIGHT)
-    }
-    set({
-      boards: upsertBoard(boards, nextBoard),
-      boardsDirty: true,
-      frameDefaults: { ...frameDefaults, width },
-    })
+    const nextBoard = board && bulk.applyWidthToAllFrames(board, width)
+    if (!nextBoard) return
+    set({ boards: upsertBoard(boards, nextBoard), boardsDirty: true, frameDefaults: { ...frameDefaults, width } })
   },
 
   setFrameHeights: (heightsByPageId) => {
     const { boards, activeBoardId } = get()
     const board = getActiveBoard(boards, activeBoardId)
-    if (!board) return
-    let nextBoard = board
-    let changed = false
-    for (const [pageId, height] of Object.entries(heightsByPageId)) {
-      const frame = nextBoard.frames.find((f) => f.pageId === pageId)
-      if (!frame || !Number.isFinite(height) || height <= 0) continue
-      nextBoard = resizeFrame(nextBoard, pageId, frame.width ?? FRAME_WIDTH, height)
-      changed = true
-    }
-    if (!changed) return
+    const nextBoard = board && bulk.setFrameHeights(board, heightsByPageId)
+    if (!nextBoard) return
     set({ boards: upsertBoard(boards, nextBoard), boardsDirty: true })
   },
 
   alignSelectedFrames: (edge) => {
     const { boards, activeBoardId, selectedFrameIds } = get()
     const board = getActiveBoard(boards, activeBoardId)
-    if (!board || selectedFrameIds.length < 2) return
-    const rects: AlignableFrame[] = []
-    for (const pageId of selectedFrameIds) {
-      const frame = board.frames.find((f) => f.pageId === pageId)
-      if (frame) rects.push({ pageId, x: frame.x, y: frame.y, width: frame.width ?? FRAME_WIDTH, height: frame.height ?? FRAME_HEIGHT })
-    }
-    if (rects.length < 2) return
-    const positions = alignFrames(rects, edge)
-    let nextBoard = board
-    for (const [pageId, pos] of positions) {
-      nextBoard = upsertFrame(nextBoard, { pageId, x: pos.x, y: pos.y })
-    }
+    const nextBoard = board && bulk.alignSelectedFrames(board, selectedFrameIds, edge)
+    if (!nextBoard) return
     set({ boards: upsertBoard(boards, nextBoard), boardsDirty: true })
   },
 
   distributeSelectedFrames: (axis) => {
     const { boards, activeBoardId, selectedFrameIds } = get()
     const board = getActiveBoard(boards, activeBoardId)
-    if (!board || selectedFrameIds.length < 3) return
-    const rects: AlignableFrame[] = []
-    for (const pageId of selectedFrameIds) {
-      const frame = board.frames.find((f) => f.pageId === pageId)
-      if (frame) rects.push({ pageId, x: frame.x, y: frame.y, width: frame.width ?? FRAME_WIDTH, height: frame.height ?? FRAME_HEIGHT })
-    }
-    const positions = distributeFrames(rects, axis)
-    if (positions.size === 0) return
-    let nextBoard = board
-    for (const [pageId, pos] of positions) {
-      nextBoard = upsertFrame(nextBoard, { pageId, x: pos.x, y: pos.y })
-    }
+    const nextBoard = board && bulk.distributeSelectedFrames(board, selectedFrameIds, axis)
+    if (!nextBoard) return
     set({ boards: upsertBoard(boards, nextBoard), boardsDirty: true })
   },
 
   tidySelectedFrames: () => {
     const { boards, activeBoardId, selectedFrameIds } = get()
     const board = getActiveBoard(boards, activeBoardId)
-    if (!board || selectedFrameIds.length === 0) return
-    let nextBoard = board
-    let index = 0
-    for (const pageId of selectedFrameIds) {
-      if (!nextBoard.frames.some((f) => f.pageId === pageId)) continue
-      const { x, y } = defaultFramePosition(index)
-      nextBoard = upsertFrame(nextBoard, { pageId, x, y })
-      index += 1
-    }
+    const nextBoard = board && bulk.tidySelectedFrames(board, selectedFrameIds)
+    if (!nextBoard) return
     set({ boards: upsertBoard(boards, nextBoard), boardsDirty: true })
   },
 })

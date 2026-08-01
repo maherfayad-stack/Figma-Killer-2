@@ -21,6 +21,7 @@ function credential(over: Partial<CredentialView> = {}): CredentialView {
     keyFingerprintCurrent: true,
     createdAt: '2026-01-01T00:00:00Z',
     lastUsedAt: null,
+    expiresAt: null,
     ...over,
   } as CredentialView
 }

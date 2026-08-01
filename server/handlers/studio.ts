@@ -83,11 +83,25 @@
  *       with a starter `pages/Home.tsx`. Returns the created `{ project }`.
  *
  *   POST /admin/api/studio/page   body: { dir?, name? }
- *       Scaffolds a new page in a project: one `pages/<Component>.tsx` starter
- *       file. `name` is optional — omit it for the one-click "New page" action
+ *       WS-13 step 4 — scaffolds a new page CANONICAL BY CONSTRUCTION: one
+ *       starter file (`starterPage`, `studioProjects.ts` — literal props,
+ *       literal text, no stylesheet at all, so it passes `checkCanonicalJsx`
+ *       with zero violations regardless of the project's own styling
+ *       mechanism, see `pageScaffold.test.ts`), auto-placed on the board's
+ *       first board at the next free grid slot (D5 section 11.3 — a
+ *       scaffolded screen the user cannot see is not a screen), written
+ *       straight to `.studio/boards.json` rather than waiting on a browser
+ *       round trip. The file's extension matches the project's own
+ *       convention — `.tsx` unless every existing page is `.jsx` (D5).
+ *       `name` is optional — omit it for the one-click "New page" action
  *       and the server auto-names it `Page`, `Page2`, …. Returns
- *       `{ ok, relPath, pageId, title }` so the client can drop a board frame
- *       for it, then reload the workspace to render it.
+ *       `{ ok, relPath, pageId, title, rootNodeId }`; `rootNodeId` is read by
+ *       actually parsing the file just written (trap #2 — a node id is a
+ *       source location, never constructed) and is what WS-12 section 3's
+ *       `studio_create_page` needs to address the new screen at all. The
+ *       client still reloads the workspace afterward to render it — this
+ *       route's own write is enough for a headless/agent caller to compose
+ *       into immediately, with no browser tab ever open.
  *
  *   GET  /admin/api/studio/framework?dir=<abs>
  *       Reads the project's `.studio/framework.json` sidecar (colors/
@@ -175,9 +189,7 @@ import { GithubImportError, parseGithubRepoUrl, runGithubImport } from './studio
 import {
   discoverPageFiles,
   listStudioProjects,
-  nextPageName,
   nextProjectName,
-  pageComponentNameFromInput,
   mergeProjectFrameDefaults,
   projectDisplayName,
   projectPagesDir,
@@ -193,7 +205,7 @@ import { readStudioMeta, DEFAULT_TRUST_TIER } from './studio/studioMeta'
 import { readStudioFrameworkFile, writeStudioFrameworkFile } from './studioFramework'
 import { buildStudioDownloadResponse } from './studioDownload'
 import { resolveStudioAssetResponse } from './studioAsset'
-import { pageIdFromRelPath, loadStudioPages } from './studioPageLoad'
+import { loadStudioPages } from './studioPageLoad'
 import { applyStudioEditBatch, StudioEditSchema } from './studioWriteback'
 import { probeProject, tryServeStudioProbe } from './studio/projectProbe'
 import { mergeStudioMeta } from './studio/studioMeta'
@@ -205,6 +217,7 @@ import { tryServeStudioTokens } from './studio/tokenExtract'
 import { tryServeStudioTrustTier } from './studio/trustTier'
 import { tryServeStudioExtractComponent } from './studio/extractComponent'
 import { tryServeStudioPreviewAxes } from './studio/previewAxes'
+import { createScaffoldedPage } from './studio/pageScaffold'
 
 /**
  * Sub-routers for the newer studio namespaces, each owning one concern and its
@@ -646,27 +659,18 @@ export async function tryServeStudio(
     }
   }
 
-  // Scaffold a new page in a project — one `pages/<Component>.tsx` starter file.
-  // The name is turned into a PascalCase identifier (never `..`, never a
-  // separator) so it can't escape the project's pages/ dir. Returns the derived
-  // `pageId` (kebab of the file path) so the client can drop a board frame for
-  // it immediately, then reload the workspace to render it.
+  // Scaffold a new page in a project — WS-13 step 4: canonical by
+  // construction, auto-placed on the board, with a real `rootNodeId`. The
+  // name is turned into a PascalCase identifier (never `..`, never a
+  // separator) so it can't escape the project's pages/ dir. See this route's
+  // own module-doc entry above and `./studio/pageScaffold.ts`.
   if (pathname === '/admin/api/studio/page' && req.method === 'POST') {
     try {
       const body = await readValidatedBody(req, CreatePageBodySchema)
       if (!body) return badRequest('invalid page body')
-      const dir = resolveProjectDir(body.dir)
-      const pagesDir = projectPagesDir(dir)
-      // A supplied name wins; otherwise auto-name `Page`, `Page2`, … (one-click).
-      const componentName = pageComponentNameFromInput(body.name ?? '') || nextPageName(pagesDir)
-      const relPath = `${componentName}.tsx`
-      const file = join(pagesDir, relPath)
-      if (existsSync(file)) {
-        return jsonResponse({ error: `A page named "${componentName}" already exists.` }, { status: 409 })
-      }
-      mkdirSync(pagesDir, { recursive: true })
-      writeFileSync(file, starterPage(componentName))
-      return jsonResponse({ ok: true, relPath, pageId: pageIdFromRelPath(relPath), title: componentName })
+      const result = createScaffoldedPage(resolveProjectDir(body.dir), body.name ?? '')
+      if (!result.ok) return jsonResponse({ error: result.conflict }, { status: 409 })
+      return jsonResponse(result)
     } catch (err) {
       console.error('[studio]', err)
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })

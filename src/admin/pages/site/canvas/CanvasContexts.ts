@@ -1,11 +1,27 @@
 import { createContext, type MouseEvent, type RefObject } from 'react'
 import type { TemplateRenderDataContext } from '@core/templates/dynamicBindings'
 
+/**
+ * WS-10 Phase 2 — `frameId` is a SEPARATE dimension from `breakpointId`, not
+ * an alias for it. `breakpointId` is load-bearing for CSS write-back and the
+ * `data-breakpoint-id` selector scope (`styleRuleWriteback.test.ts` gates the
+ * literal `'studio'` id every board frame shares — see `BoardFramesLayer.tsx`'s
+ * "KNOWN LIMITATION"), so it CANNOT be repurposed to carry per-`BoardFrame`
+ * identity. `frameId` is `null` outside board context (every CMS/VC frame,
+ * where selection/hover intentionally stay UNSCOPED — see
+ * `BreakpointSelectionOverlay.tsx`'s "Selection applies to all frames
+ * simultaneously" doc) and the owning `BoardFrame.id` inside one. Two board
+ * frames of the SAME page ("duplicate as variant") share every node id
+ * (trap #2 — a node id is a write target, not a display identity), so this is
+ * the only thing that can tell them apart for editor-session state.
+ */
+export const CanvasFrameContext = createContext<string | null>(null)
+
 interface CanvasSelectionContextValue {
-  onNodeClick: (nodeId: string, e: MouseEvent, breakpointId?: string) => void
-  onNodeHover: (nodeId: string | null, breakpointId?: string) => void
-  onNodeContextMenu: (nodeId: string, e: MouseEvent, breakpointId?: string) => void
-  onNodeDoubleClick: (nodeId: string, e: MouseEvent, breakpointId?: string) => void
+  onNodeClick: (nodeId: string, e: MouseEvent, breakpointId?: string, frameId?: string | null) => void
+  onNodeHover: (nodeId: string | null, breakpointId?: string, frameId?: string | null) => void
+  onNodeContextMenu: (nodeId: string, e: MouseEvent, breakpointId?: string, frameId?: string | null) => void
+  onNodeDoubleClick: (nodeId: string, e: MouseEvent, breakpointId?: string, frameId?: string | null) => void
 }
 
 export const CanvasSelectionContext = createContext<CanvasSelectionContextValue>({

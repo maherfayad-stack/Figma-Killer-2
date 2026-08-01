@@ -13,7 +13,8 @@ export interface CanvasTreeLadderRow {
 interface CanvasTreeLadderSelectionController {
   activeBreakpointId: string | null
   setActiveBreakpoint: (breakpointId: string) => void
-  selectNode: (nodeId: string) => void
+  /** Matches `selectionSlice.ts`'s real `selectNode` shape — WS-10 Phase 2 needs the `frameId` option so a ladder commit stays scoped to its own board frame. */
+  selectNode: (nodeId: string, mode?: 'replace' | 'toggle' | 'range', options?: { frameId?: string | null }) => void
 }
 
 interface CanvasTreeLadderRect {
@@ -106,12 +107,16 @@ export function commitCanvasTreeLadderSelection(
   controller: CanvasTreeLadderSelectionController,
   nodeId: string | null,
   breakpointId: string,
+  frameId: string | null = null,
 ): boolean {
   if (!nodeId) return false
   if (controller.activeBreakpointId !== breakpointId) {
     controller.setActiveBreakpoint(breakpointId)
   }
-  controller.selectNode(nodeId)
+  // WS-10 Phase 2 — same frame-scoping the primary click path applies, so an
+  // Alt-hover ladder commit inside a "duplicate as variant" frame doesn't
+  // also ring its sibling.
+  controller.selectNode(nodeId, 'replace', { frameId })
   return true
 }
 

@@ -86,17 +86,14 @@ import { useCanvasFormControlSuppression } from './useCanvasFormControlSuppressi
 import { CANVAS_VIEWPORT_HEIGHT, type CanvasViewport } from './resolveViewportUnits'
 import { useIframeFrameAutoHeight } from './useIframeFrameAutoHeight'
 import { applyIframeBodyReset, type IframeInteraction } from './iframeBodyReset'
-import {
-  isCanvasSpacePanActive,
-  setCanvasSpacePanActive,
-  shouldStartCanvasPointerPan,
-} from './canvasPanInput'
+import { isCanvasSpacePanActive, setCanvasSpacePanActive, shouldStartCanvasPointerPan } from './canvasPanInput'
 import { useEditorStore } from '@site/store/store'
 import { closestReadonlyRegion, isElementLike } from './readonlyRegion'
 import { CanvasDocumentContext, CanvasFrameElementContext } from './CanvasContexts'
 import styles from './IframeFrameSurface.module.css'
 import { IFRAME_SRC_DOC, claimIframeSrcDocument } from './iframeSrcDocument'
 import { useApplyPreviewAxes } from './previewAxesFrameEffect'
+import type { PreviewAxes } from '@core/studio-board'
 
 /** Stable empty list so a script-less frame doesn't churn the injector's deps. */
 const EMPTY_RUNTIME_SCRIPTS: InjectableRuntimeScript[] = []
@@ -152,6 +149,8 @@ interface IframeFrameSurfaceProps {
    * alongside the live editor.
    */
   runtimeScripts?: InjectableRuntimeScript[]
+  /** WS-10 Phase 2 — a "duplicate as variant" frame's `BoardFrame.axes`, merged onto the board-global axes in `useApplyPreviewAxes`. `undefined` outside board context. */
+  axesOverride?: Partial<PreviewAxes>
 }
 
 export interface IframeFrameSurfaceHandle {
@@ -189,6 +188,7 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
       interaction = 'canvas',
       runtimeScripts,
       onReadonlyOpen,
+      axesOverride,
     },
     ref,
     ) {
@@ -204,10 +204,10 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
     useIframeCursorBridge(iframeRef, iframeDoc, { onCursorMove, onCursorLeave })
     useCanvasFormControlSuppression(iframeDoc, { breakpointId, enabled: !isLive })
     useIframeFrameAutoHeight({ iframeRef, iframeDoc, isLive })
-    // WS-10 Phase 1 — direction/color-scheme, an attribute effect on the
-    // already-mounted frame document (never `srcDoc`/a `key` — see
-    // `previewAxesFrameEffect.ts`).
-    useApplyPreviewAxes(iframeDoc)
+    // WS-10 — direction/color-scheme, an attribute effect (never `srcDoc`/a
+    // `key` — see `previewAxesFrameEffect.ts`). `axesOverride` (Phase 2) is a
+    // per-frame override merged onto the board-global axes inside the hook.
+    useApplyPreviewAxes(iframeDoc, axesOverride)
 
     // Bridge the iframe handle out to the parent (selection overlay reads
     // `iframeElement` to translate inside-iframe rects into editor coordinates).

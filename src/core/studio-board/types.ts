@@ -1,3 +1,5 @@
+import type { PreviewAxes } from './previewAxes'
+
 export type NoteColor = 'yellow' | 'green' | 'blue' | 'pink' | 'gray'
 
 export interface StickyNote {
@@ -12,15 +14,37 @@ export interface StickyNote {
 
 // a page rendered as a frame at (x,y). `width`/`height` are optional — a
 // frame without them falls back to the shared `FRAME_WIDTH`/`FRAME_HEIGHT`
-// defaults (`@site/canvas/BoardFramesLayer/frameGrid`) at render time, so
+// defaults (`./frameGrid`) at render time, so
 // pre-6E `boards.json` files keep opening at their original 1024×800 size
 // with no migration needed.
+//
+// `id` (WS-10 Phase 2) is the frame's OWN identity — separate from `pageId`.
+// Before "duplicate as variant" a board never had two frames of the same
+// page, so `pageId` alone was an unambiguous frame key; a duplicated variant
+// breaks that (two `BoardFrame`s, same `pageId`, different `axes`), so every
+// per-frame operation (position, size, axes, removal) now addresses a frame
+// by `id`. `pageId` keeps meaning exactly what it always did — which page's
+// node tree this frame renders — and a NODE's id is UNCHANGED (trap #2): two
+// variant frames of one page legitimately share every node id, because
+// editing either one has to hit the same JSX. `id` is required on every
+// frame this codebase WRITES; `serialize.ts`'s `coerceFrame` synthesizes it
+// from `pageId` for a pre-Phase-2 `boards.json` (which never had more than
+// one frame per page, so `pageId` is a perfectly stable, deterministic,
+// already-unique substitute — no migration needed, no id churn on re-save).
+//
+// `axes` (WS-10 Phase 2, §4.4) overrides the board-global `PreviewAxes`
+// PER AXIS, not wholesale — a frame overriding only `direction` still
+// inherits the board's current `colorScheme`. `undefined`/absent means
+// "inherit the board default", matching the same optional-field precedent
+// `width`/`height` already established for this interface.
 export interface BoardFrame {
+  id: string
   pageId: string
   x: number
   y: number
   width?: number
   height?: number
+  axes?: Partial<PreviewAxes>
 }
 
 // a markdown-authored documentation card, rendered as canvas furniture

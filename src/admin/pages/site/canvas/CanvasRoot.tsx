@@ -268,7 +268,7 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
 
   // ─── Selection context value ───────────────────────────────────────────────
 
-  const onNodeClick = (nodeId: string, e: React.MouseEvent, breakpointId?: string) => {
+  const onNodeClick = (nodeId: string, e: React.MouseEvent, breakpointId?: string, frameId?: string | null) => {
     e.stopPropagation()
     if (breakpointId && breakpointId !== activeBreakpointId) {
       setActiveBreakpoint(breakpointId)
@@ -285,15 +285,18 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
       : e.metaKey || e.ctrlKey
         ? 'toggle'
         : 'replace'
-    selectNode(nodeId, mode)
+    // WS-10 Phase 2 — `frameId` scopes this selection to the originating
+    // BoardFrame so a sibling "duplicate as variant" frame of the same page
+    // doesn't also light up. See `selectedNodeFrameId`'s doc.
+    selectNode(nodeId, mode, { frameId })
     setFocusedPanel('canvas')
   }
 
-  const onNodeHover = (nodeId: string | null, breakpointId?: string) => {
-    hoverNode(nodeId, breakpointId)
+  const onNodeHover = (nodeId: string | null, breakpointId?: string, frameId?: string | null) => {
+    hoverNode(nodeId, breakpointId, frameId)
   }
 
-  const onNodeContextMenu = (nodeId: string, e: React.MouseEvent, breakpointId?: string) => {
+  const onNodeContextMenu = (nodeId: string, e: React.MouseEvent, breakpointId?: string, frameId?: string | null) => {
     e.preventDefault()
     e.stopPropagation()
     if (!editable) return
@@ -305,7 +308,7 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
     // the selection with just this node — matches Figma / VS Code behavior.
     const currentIds = useEditorStore.getState().selectedNodeIds
     if (!currentIds.includes(nodeId)) {
-      selectNode(nodeId)
+      selectNode(nodeId, 'replace', { frameId })
     }
     setFocusedPanel('canvas')
     // The right-click event originates inside the per-breakpoint iframe, so
