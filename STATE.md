@@ -8,7 +8,78 @@ Entry ids are `<area>-<nn>`. Areas in use: `parser`, `canvas`, `store`, `panel`,
 
 ---
 
-## Where this stands (2026-07-31, end of the resume wave)
+## Where this stands (2026-08-01, end of the four-workstream wave)
+
+**WS-10, WS-11, WS-12 and WS-13 are all code-complete.** Fourteen commits from
+`5effb9d` to `fca5d29`, on `feat/alm-figma-killer-studio-shell`, nothing pushed.
+The plan they implement is `STUDIO-NEXT-WORKSTREAMS.md`, whose open-decision
+lists are all closed (see its "Decisions taken" table, D1–D5).
+
+| | |
+|---|---|
+| `bun test` | **8118 pass / 20 fail / 1 skip** — the 20 are `standing-01`'s exact set (7 plugin QuickJS, 3 worker-RPC, 2 runtime-cache, 8 architecture/Windows gates) |
+| `bun run build` | exit 0 |
+| `bun run lint` | exit 0 |
+
+Verified by the orchestrator on a stable tree after every agent had landed —
+not taken on report. That mattered: three `selectionSlice` failures were filed
+as "not mine" by two agents in a row and were in fact this wave's
+(`fca5d29`).
+
+### What shipped
+
+- **WS-13 — Canonical JSX.** `docs/reference/canonical-jsx.md` + `canonicalCheck.ts`
+  (`parser-09`, `parser-10`). Ten rules, seven `violation` / three `advisory`;
+  `isCanonical` means zero violations, NOT zero findings. `POST /admin/api/studio/page`
+  scaffolds canonical by construction and its test round-trips through real HTTP.
+- **WS-10 — Preview axes.** RTL, dark mode, locale; per-frame variants side by
+  side; locale-variant text writeback (`canvas-07` … `canvas-11`).
+- **WS-11 — Claude subscription login.** Per-user `CLAUDE_CONFIG_DIR`, L1
+  terminal login / L2 pasted `setup-token`, tools routed through Studio's own
+  MCP endpoint (`server-06`, `server-07`).
+- **WS-12 — The Studio agent.** Scope collapsed to one; Studio system prompt;
+  `studio_create_page`/`studio_read_file`; nine-agent roster in `<project>/.claude/`;
+  session controls incl. bypass with three rails; parity matrix at 0 gaps
+  (`server-05`, `server-11`, `server-12`).
+
+### Bugs found that predate this wave — none fixed here, all deliberate
+
+1. **`standing-09` — `cssToStyleRules` loses every `@layer` rule.** `replaceSync`
+   drops them silently. Tailwind v4 wraps its whole output in one `@layer`, so
+   **an imported Tailwind v4 project is missing its entire style registry
+   today.** Reproduction in `standing-09`. Deserves its own change.
+2. **`studio-import.md`'s computed-`className` claim was false** — the
+   static-prefix fallback exists only in `componentSubstitution.ts`'s call-site
+   re-read, not the ordinary `extractProps` path. Corrected in `7eb2c30`.
+3. **`ai-handlers-capability-gated.test.ts` never excluded `*.test.ts`** from its
+   `readdirSync`, so the gate was weaker than it read. Fixed in `5c8195b`.
+
+### Known gaps, named rather than hidden
+
+- **Undo does not cover a locale-variant text edit** — such a session never goes
+  through the tree mutations undo records (`canvas-11`).
+- **A Properties-panel prop/style edit on a locale-variant frame resolves through
+  the DEFAULT tree**, so it is not locale-specific. This is a silent wrong-target
+  risk; it is in `docs/features/studio-import.md`'s limitations table.
+- **Reasoning (WS-12 §5.4) is written against the documented Anthropic streaming
+  shape and is UNVERIFIED against the real CLI.** Unrecognised events no-op.
+- **The composer's file-picker UI is not wired** — the staging path behind it is.
+- **`studio-workspace/untitled/` is committed user data** and its ALM CSS paths
+  exceed the Windows path limit, so the repo cannot be checked out into a deep
+  directory. Unrelated to this wave; it should come out.
+
+### The orchestration lesson worth keeping
+
+Agents shared **one working tree with no isolation**. A `git stash` in one
+session silently reverted another's tracked-file edits to HEAD and cost it hours
+of redone work; tree-mutating git commands were then banned outright for the
+rest of the wave. A `git add -A` by the orchestrator swept a third session's
+half-written driver into an unrelated commit, which had to be split back out.
+**Use `isolation: "worktree"`, or stage explicit paths and never `-A`.**
+
+---
+
+## Where this stood (2026-07-31, end of the resume wave)
 
 **All five spend-limit-terminated work orders are done**, plus `test-infra-01`
 which came out of auditing them. Verified by the orchestrator, not taken on
