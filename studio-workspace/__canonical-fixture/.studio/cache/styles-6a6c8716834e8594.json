@@ -1,0 +1,1 @@
+{"css":"/* studio: css module src/components/PlanCard.module.css */\n.PlanCard_card__25f1b {\n  border: 1px solid #d9d9d9;\n  border-radius: 8px;\n  padding: 12px;\n}\n\n.PlanCard_name__d3b29 {\n  font-weight: 600;\n}\n","moduleClassMaps":{"src/components/PlanCard.module.css":{"card":"PlanCard_card__25f1b","name":"PlanCard_name__d3b29"}},"vendorCss":""}

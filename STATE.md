@@ -8,6 +8,130 @@ Entry ids are `<area>-<nn>`. Areas in use: `parser`, `canvas`, `store`, `panel`,
 
 ---
 
+### mcp-06 — Mid-turn message queue, and making 100 KB design docs actually readable
+- **Agent:** coordinator (direct)
+- **Stage:** done.
+- **Updated:** 2026-08-02
+
+**1. The agent had never read the design system's docs. Not once.**
+`@alm-design/design-system` ships `CLAUDE.md` (103,147 B, ~30,300 tokens) and `design.md` (106,076 B, ~31,200). The CLI `Read` cap is 25,000. **Both files individually exceed it**, so every attempt in the project's history failed — 209 KB of component APIs and house style the agent has never seen. That is the actual reason generated screens used 2 of 42 components and ignored `design.md`: it was designing against rules it could not open.
+
+`studio_read_package_doc` (new, `server/ai/mcp/tools/studio/packageDocTools.ts`) addresses markdown by its own structure instead of raising a cap:
+- `outline: true` → every heading + byte size (67 sections for CLAUDE.md, **271** for design.md), a few hundred tokens.
+- `section: "Button"` → that heading's body only. Measured: **5,241 bytes instead of 30,300 tokens.**
+- The whole file is never returned by any input — a tool that could still be asked for 30k tokens would just reproduce the failure it exists to fix.
+
+Deliberately NOT `studio_read_file`: that tool is containment-checked to the project, and the package resolves from the **repo root** node_modules (hoisted, above the project). Widening that containment to read documentation would weaken the guard on the user's own source. This is a narrower door: markdown only, package root only, read-only, resolved by walking up. Escape attempts (`../../../SECRET.md`, a package name with separators, non-markdown) are tested.
+
+**2. Mid-turn messages were silently discarded.**
+The server permits one stream per conversation and 409s the second. Correct — but the composer rendered its Textarea inside `{!isStreaming && (…)}`, so **the input was removed from the DOM during a turn**. That is why typing while busy did nothing: there was nowhere to type. The 409 guard implied a queue nobody had built.
+
+Now: the textarea always renders, a mid-turn submit parks the message (`agentQueuedMessage`), a chip shows what is queued with a Cancel, and `flushQueuedMessage()` sends it from the turn's `finally`. Holds one (typing twice means the second). Cleared BEFORE sending so a failed send cannot re-fire, and cleared by `abortAgent` — Stop must mean stop.
+
+**Facts worth keeping**
+- `flushQueuedMessage` defers via `queueMicrotask`: it runs inside the ending turn's `finally` and `sendAgentMessage` re-enters the same slice. Letting the call unwind first keeps turns sequential rather than nested.
+- **`conhost.exe` also holds the inherited listening socket.** A server launched via PowerShell `Start-Process -WindowStyle Hidden` leaves a conhost that keeps port 3001 bound after bun dies — on top of the leaked `claude`/`node` children. When 3001 is wedged, check for conhost parented to the dead PID, not just claude. Launching with `nohup bun server/index.ts &` avoids creating one.
+
+**Verification:** `bunx tsc -b`, `bun run lint`, `bun run build` clean. `bun test` → 20 failures, identical to the pre-existing baseline. New: 12 package-doc tests, 7 queue tests. Verified live against the real 103 KB file (67 sections, Button section 5,241 B) and the real 106 KB design.md (271 sections).
+
+---
+
+### server-14 — Leaked `claude` subprocesses wedged port 3001 and hung every turn
+- **Agent:** coordinator (direct)
+- **Stage:** done (Windows); POSIX tree-kill deliberately not implemented.
+- **Updated:** 2026-08-02
+- **Goal:** user's turns hung mid-tool and the chat 502'd. Not the permission gate (my first guess, wrong — `permission_request` never appeared in any transcript).
+
+**The actual chain**
+1. `bun --watch`'s watcher hit `EBUSY` and panicked — `integer overflow`, 18 times in one log. Aggravated by running `bun run build` and the full suite against the watched tree while the app was in use.
+2. Bun auto-restarted and failed: `EADDRINUSE` at `server/index.ts:61`.
+3. It failed because a **leaked `claude` subprocess had inherited the server's listening socket** and kept 3001 bound.
+4. That left a zombie: port in `Listen`/`Established`, owning PID already dead, health check returning `000`. The browser's `/tool-result` POSTs went into a dead socket, so the CLI waited forever — every turn, with nothing able to recover.
+
+**Root cause in our code:** `spawnClaudeCliNdjson`'s `finally` cleared the timeout and removed the abort listener but **never killed the child**. A consumer that stopped early (`break`, throw, GC) therefore left a live process with nothing left in the world able to stop it. Nine orphans from one turn were observed (spawned within 9 seconds — CLI subagents), plus the socket-holding one.
+
+**Fixed:** `finally` now kills when stdout was not fully drained, and `kill()` also reaps descendants via `taskkill /T /F` — `proc.kill()` signals only the direct child, and the CLI spawns its own subagents. Regression tests **verified to fail without the fix** (2 fail / 8 pass with the kill removed; 10 pass restored).
+
+**Not done, knowingly:** POSIX descendant reaping. It wants `detached` + `kill(-pgid)` at the spawn call, not a `taskkill` translation, and the bug has only been observed on Windows. Left undone rather than half-done and untested.
+
+**Operational facts**
+- **Do not run the dev server with `--watch` while dogfooding.** Use `bun server/index.ts`. The watcher crash is the trigger for the whole chain.
+- When 3001 is wedged: the owning PID is usually already dead. Killing it is not enough — find the inheriting child with
+  `Get-CimInstance Win32_Process -Filter "Name='claude.exe'" | Where-Object { $_.CommandLine -match 'AppData\\Roaming\\npm' }`
+  and kill that. **Do not mass-kill by process name** — the developer's own Claude Code / VS Code extension processes are also `claude.exe`; filter by the npm-global path.
+
+**The agent deleted the repo's test fixtures AGAIN** — `CanonicalScreen.{tsx,css,module.css}`, `NonCanonicalScreen.{tsx,scss}`, twice now, restored with `git checkout` both times. `__canonical-fixture` is simultaneously a Studio project and the parser test corpus. **This will keep happening until the two roles are separated.** Treat as urgent.
+
+**Confirmed working live:** the new scaffold wrote `Page2.tsx` AND `Page2.module.css` in a real turn — the CSS-module starter is in effect.
+
+**Verification:** `bunx tsc -b`, `bun run lint`, `bun run build` clean. `bun test` → 20 failures, identical to the pre-existing baseline.
+
+---
+
+### mcp-05 — Why the agent burned 53 steps and shipped a non-responsive screen with 2 of 42 components
+- **Agent:** coordinator (direct)
+- **Stage:** done for items 1–5 below; two items deliberately NOT done (named at the end).
+- **Updated:** 2026-08-02
+- **Goal:** user reported the agent was slow (53 steps, unfinished), ignored most of the design system, produced fixed-width screens, and could not reach Figma MCP.
+
+**Diagnosis came from the CLI's own transcripts**, not from reasoning: `.data/claude-cli/<user>/projects/<project>/<session>.jsonl`, with subagent transcripts under `<session>/subagents/`. Read them before theorising about agent behaviour — a script that aggregates `tool_use` blocks by name and target answers "where did the time go" in one pass. Parent turn: 28 tool calls, 330 s, 18 of them `Read`.
+
+**The single biggest cost was a file that cannot be read.** `node_modules/@alm-design/design-system/CLAUDE.md` is **103 KB** — over the CLI `Read` tool's 25,000-token cap — and the transcript shows it attempted **5 times** in the parent alone. `.studio/framework.json` (97 KB, 226 colour tokens at ~420 B each) failed the same way, in the parent *and* again in a subagent, because nothing is shared between agents.
+
+**Root cause of three symptoms at once:** the design system ships its own MCP server (`node_modules/@alm-design/design-system/mcp/server.js`, tools `list_components` / `get_component` / `find_component` / `validate_props` / `get_tokens`) built precisely so the 103 KB file never needs loading. Studio's `--strict-mcp-config` made it unreachable. Same flag blocked Figma MCP.
+
+**What shipped**
+1. `server/ai/drivers/projectMcpServers.ts` (new) — merges a project's `.mcp.json` servers into the generated config, but ONLY names listed in `.studio/meta.json`'s new `approvedMcpServers`. `--strict-mcp-config` is KEPT. Read that module's doc comment before touching it; the opt-in shape is deliberate.
+2. `starterPage` (`studioProjects.ts`) now returns `{ component, styles, stylesFileName }` and writes a CSS module — was inline styles, hardcoded `#666`, fixed `padding: 64px`. **This template is the most-copied code in any project**: a generated screen came back with `width: 375px` on its root and zero media queries in 233 lines, because it copied the starter's habits. Both call sites (`pageScaffold.ts`, `studio.ts`) write both files.
+3. `agentRoster.ts`'s design-principles doc gained a "Responsive by default" section and a "Use the design system before writing CSS" section, both citing the concrete failures.
+4. `src/core/page-parser/jsxTextEntities.ts` (new) — `JsxText.getText()` returns authored source, so `it&apos;s` reached the canvas with the entity visible. Decodes named + numeric refs in one regex pass (so `&amp;lt;` → `&lt;`, never `<`); unknown entities are left as authored.
+5. Fixture declares `@alm-design/design-system` in `package.json` (was zero dependencies, which is why the agent concluded "not installed" and went hunting outside the workspace).
+
+**Facts worth not rediscovering**
+- **Hooks do NOT fire via `--settings` in `-p` mode** (CLI 2.1.114). Tested inline JSON and a settings file, absolute command path, marker file never written, read succeeded both times. So Studio CANNOT intercept the CLI's built-in `Read`; the only lever is removing the *reason* to read. Do not plan around a PreToolUse hook.
+- **`--strict-mcp-config` earns its keep beyond MCP hygiene.** A probe without it picked up the developer's personal MCP servers and one had an invalid schema — `400 tools.224.custom.input_schema does not support oneOf/allOf/anyOf` — which kills the entire turn.
+- **The dogfooding agent DELETED five tracked test fixtures** (`CanonicalScreen.{tsx,css,module.css}`, `NonCanonicalScreen.{tsx,scss}`) while working in `__canonical-fixture`. Restored with `git checkout`. `__canonical-fixture` is simultaneously a Studio project and the repo's parser test corpus — **an agent working in it can delete the tests**. That collision is unresolved and is a real hazard.
+
+**Deliberately not done**
+- **Approval UI for project MCP servers.** The mechanism is complete and tested; approving still means hand-editing `.studio/meta.json`. `listProjectMcpServers` returns a `summary` per server for the prompt to render.
+- **create-screen → board.** Reported broken, NOT reproduced: `createScaffoldedPage` already calls `autoPlaceBoardFrame(dir, pageId)` and its tests pass. Needs a live repro before any fix — do not "fix" it blind.
+
+**Verification:** `bunx tsc -b`, `bun run build`, `bun run lint` all clean. `bun test` → 20 failures, byte-identical to the pre-existing baseline (plugin VM, publisher bus, migrations, keybindings, CodeMirror, SiteExplorer, another session's `InstanceCallSiteView.tsx`).
+
+---
+
+### mcp-04 — In-chat permission prompts for the Claude CLI, plus `--add-dir` for staged attachments
+- **Agent:** coordinator (direct)
+- **Stage:** done — shipped, gated, and documented. NOT yet dogfooded end-to-end (see "What is still unverified").
+- **Updated:** 2026-08-01
+- **Goal:** the user hit "Claude requested permissions to read from …ttachment-1.jpg, but you haven't granted it yet" with no way to grant it, and asked to be able to approve in the chat directly.
+
+**Root cause, two separate faults:**
+1. The CLI runs headless (`-p`), so it has no TTY to prompt in. Any tool needing permission was simply refused, and the refusal text told the user to grant something the UI gave them no way to grant.
+2. Attachments are staged to `os.tmpdir()`, outside the workspace cwd — so the CLI asked permission to read a file *the user attached in that same turn*.
+
+**What shipped**
+- `--add-dir <staging dir>` (`claudeCli.ts`) — pre-authorises exactly the directory Studio created for this turn, nothing wider, torn down with the turn. Fault 2 is gone as a class.
+- `server/ai/mcp/permissionGate.ts` (new) — per-connector registry + `runPermissionRequest`. The CLI calls `mcp__studio__permission_request`; the gate relays it via `bridge.callBrowser` and answers `{"behavior":"allow"|"deny"}`.
+- `server/ai/mcp/server.ts` — handles that tool BEFORE the registry lookup (it is a protocol construct, not a capability-gated tool) and lists it ONLY when a gate is live.
+- Browser: `permissionPrompt.ts` (park/settle/abandon + `describePermissionRequest`), interception in `streamEvents.ts` before the tool dispatcher, `agentPermissionRequest` store state, `AgentPermissionCard.tsx`.
+
+**Facts worth not rediscovering**
+- **`--permission-prompt-tool` is REAL in CLI 2.1.114 but absent from `--help`.** Confirmed by elimination: an invented flag errors with `unknown option`, this one does not. Do not delete it because you cannot find it in the help text.
+- **The gate tool MUST appear in `tools/list`.** Unlisted, the CLI aborts at startup: `not found. Available MCP tools: …`. This is why "advertise only when a gate is registered" is the scoping mechanism that keeps it off external connectors — there is no "callable but hidden" option.
+- **Measured behaviour:** `allow` → the tool runs; `deny` → blocked and recorded in the result's `permission_denials` array.
+- **Everything fails closed.** No gate, no browser, timeout, malformed answer, thrown bridge, stopped turn → `deny`. If you add a path here, it denies too.
+- `agentSlice.ts` sat at EXACTLY the 700-line ceiling, so any addition broke `module-size-budgets`. Made room by extracting `loadStudioDefault` + `resolveStudioCredentials` into `agentDefaultProvider.ts` (their proper home) rather than raising the ceiling.
+
+**What is still unverified**
+- The full loop — real CLI → live Studio MCP endpoint → browser click → CLI resumes — has NOT been run. The mechanism was proven against the real binary with a standalone gate server, and Studio's own half is covered by unit tests plus real MCP-protocol tests over `InMemoryTransport`, but nobody has yet clicked Allow in the panel. **Next person: run one turn that reads a file outside the project and confirm the card appears and the turn continues.**
+
+**Verification:** `bunx tsc -b` clean; `bun run build` clean; `bun run lint` clean; `bun test` → 20 failures, all pre-existing and unrelated (plugin VM, publisher bus, migrations, keybindings, CodeMirror, SiteExplorer, selector stability in another session's `InstanceCallSiteView.tsx`).
+
+**Repo hygiene note:** a parallel session committed the whole working tree — including this work, mid-flight — as `566d931 "Add ALM Design System styles and tokens"`. The commit message does not describe this change. Not rewritten, because the branch is shared.
+
+---
+
 ### server-13 — Add-credential dialog: horizontal-scroll fix + click-to-authorize Claude Code login. Heavy mid-task coordinator correction; read before touching claudeCli.ts, credentials.ts, or ProvidersTab.tsx.
 - **Agent:** server-engineer
 - **Stage:** done (my scope) — two adjacent, larger fixes were made by the coordinator directly in the shared tree during this task; see "What the coordinator did" below, which I did not originate but had to reconcile with and is now load-bearing.

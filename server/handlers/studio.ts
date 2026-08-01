@@ -628,7 +628,9 @@ export async function tryServeStudio(
       }
       const pagesDir = projectPagesDir(dir)
       mkdirSync(pagesDir, { recursive: true })
-      writeFileSync(join(pagesDir, 'Home.tsx'), starterPage('Home'))
+      const home = starterPage('Home')
+      writeFileSync(join(pagesDir, 'Home.tsx'), home.component)
+      writeFileSync(join(pagesDir, home.stylesFileName), home.styles)
       writeProjectMeta(dir, { displayName })
       const project: StudioProjectSummary = { dir, name: displayName, pageCount: 1 }
       return jsonResponse({ project })

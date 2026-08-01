@@ -82,6 +82,7 @@ import {
 // `@modelcontextprotocol/sdk` into this driver's module graph transitively.
 import { MCP_ENDPOINT_PATH } from '../mcp/endpointPath'
 import { PERMISSION_REQUEST_TOOL_NAME, registerPermissionGate } from '../mcp/permissionGate'
+import { approvedProjectMcpServers } from './projectMcpServers'
 import { readServerConfig } from '../../config'
 import { generateStudioAgentRoster } from '../../handlers/studio/agentRoster'
 import { stageAttachments, cleanupAttachments, describeAttachmentsForPrompt } from './claudeCliAttachments'
@@ -434,7 +435,17 @@ export async function* streamClaudeCli(
     // torn down in the `finally` below, so this widens access to a directory
     // that only ever holds this turn's own attachments.
     ...(attachmentStaging?.dir ? ['--add-dir', attachmentStaging.dir] : []),
-    ...(connector ? ['--mcp-config', buildMcpConfigJson(connector, options.serverPort)] : []),
+    // Project-declared MCP servers the user approved by name — how a project's
+    // own design-system or Figma server reaches the agent without dropping
+    // `--strict-mcp-config`. Empty unless explicitly approved; see
+    // `projectMcpServers.ts` for why consent is required.
+    ...(connector
+      ? ['--mcp-config', buildMcpConfigJson(
+          connector,
+          options.serverPort,
+          workspaceCwd ? approvedProjectMcpServers(workspaceCwd) : {},
+        )]
+      : []),
     // Turns a headless dead end into a question. Without it the CLI has no TTY
     // to prompt, so any tool needing permission is simply refused and the user
     // is told to grant something with no way to grant it. With it, the request
@@ -513,10 +524,19 @@ export async function* streamClaudeCli(
  * turn-scoped connector's bearer token. `127.0.0.1` (not a public hostname) —
  * this is a subprocess of THIS server talking back to itself.
  */
-function buildMcpConfigJson(connector: ClaudeCliSessionConnector, serverPort?: number): string {
+function buildMcpConfigJson(
+  connector: ClaudeCliSessionConnector,
+  serverPort?: number,
+  projectServers: Record<string, unknown> = {},
+): string {
   const port = serverPort ?? readServerConfig().port
   return JSON.stringify({
     mcpServers: {
+      // Project servers first, so Studio's own entry always wins a name
+      // collision. `listProjectMcpServers` already drops an entry named
+      // `studio`; this ordering means even a future gap there cannot let a
+      // project redirect Studio's own tool calls.
+      ...projectServers,
       studio: {
         type: 'http',
         url: `http://127.0.0.1:${port}${MCP_ENDPOINT_PATH}`,

@@ -132,6 +132,19 @@ export const StudioMetaSchema = Type.Object({
   previewAxes: Type.Optional(PersistedPreviewAxesSchema),
   /** WS-12 §5.1 — see `AgentSessionSchema` above. */
   agentSession: Type.Optional(AgentSessionSchema),
+  /**
+   * Names of servers in the project's own `.mcp.json` that the user has
+   * approved for Studio to spawn/connect. An allow-list of NAMES, never the
+   * server definitions themselves — the definitions stay in `.mcp.json` where
+   * the project owns them, and this records only consent.
+   *
+   * Absent or empty means none are approved, which is the default and the
+   * safe state: `.mcp.json` can name any executable on the machine, and
+   * Studio launching it merely because a repo asked would be arbitrary code
+   * execution on project open. Approval is per project and per server name.
+   * See `projectMcpServers.ts`.
+   */
+  approvedMcpServers: Type.Optional(Type.Array(Type.String())),
 })
 export type StudioMeta = Static<typeof StudioMetaSchema>
 

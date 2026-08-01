@@ -76,7 +76,11 @@ export function createScaffoldedPage(dir: string, nameInput: string): ScaffoldPa
   const file = join(pagesDir, relPath)
   if (existsSync(file)) return { ok: false, conflict: `A page named "${componentName}" already exists.` }
   mkdirSync(pagesDir, { recursive: true })
-  writeFileSync(file, starterPage(componentName))
+  const starter = starterPage(componentName)
+  writeFileSync(file, starter.component)
+  // Written alongside the component, never lazily: the component imports it by
+  // name, so a missing stylesheet is a broken page, not a deferred nicety.
+  writeFileSync(join(pagesDir, starter.stylesFileName), starter.styles)
   const pageId = pageIdFromRelPath(relPath)
   // D5 §11.3 — a scaffolded screen the user cannot see is not a screen.
   autoPlaceBoardFrame(dir, pageId)

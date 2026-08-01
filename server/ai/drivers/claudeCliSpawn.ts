@@ -121,6 +121,7 @@ export async function* spawnClaudeCliNdjson(
     } catch {
       // already exited — nothing to kill
     }
+    killDescendants(proc)
   }
 
   const onAbort = (): void => kill()
@@ -138,15 +139,62 @@ export async function* spawnClaudeCliNdjson(
   // uses, just without waiting for exit before doing anything with stdout).
   const stderrPromise = pumpCapped(proc.stderr, maxStderrBytes)
 
+  let drainedStdout = false
   try {
     yield* readLines(proc.stdout)
+    drainedStdout = true
   } finally {
     clearTimeout(timer)
     options.signal.removeEventListener('abort', onAbort)
+    // The leak this closes: a generator abandoned before stdout ran dry — the
+    // consumer `break`s out of the `for await`, throws, or is garbage-collected
+    // — used to fall through here having cleared the timeout AND removed the
+    // abort listener, leaving a live `claude` process with nothing left in the
+    // world able to stop it. Observed in the wild: nine orphaned CLI processes
+    // from a single turn, plus one holding the server's inherited listening
+    // socket open, which kept port 3001 bound after the server died and made
+    // every restart fail with EADDRINUSE.
+    if (!drainedStdout) kill()
   }
 
   const [stderrResult, exitCode] = await Promise.all([stderrPromise, proc.exited])
   yield { kind: 'exit', exitCode, stderr: stderrResult.text, timedOut }
+}
+
+/**
+ * Kill the child's own descendants.
+ *
+ * `proc.kill()` signals ONLY the direct child, and the `claude` CLI spawns its
+ * own subagent processes — so killing the parent used to strand them. They then
+ * hold every handle they inherited, including this server's listening socket.
+ *
+ * Best-effort and deliberately silent: the process may already be gone, and a
+ * failure to reap a descendant must never turn into a turn-level error. Skipped
+ * entirely when `pid` is absent, which is exactly the injected-fake case in
+ * tests — no test ever shells out to a real process killer.
+ *
+ * **Windows only, and knowingly so.** This was diagnosed on Windows, where the
+ * damage is worst: children inherit the server's listening socket, so one
+ * stranded process keeps the port bound and blocks every restart. The POSIX
+ * equivalent wants a process group (`detached` + `kill(-pgid)`) rather than a
+ * `taskkill` translation, which is a different change to the spawn call itself
+ * — not done here rather than half-done and untested on a platform this bug has
+ * not been observed on.
+ */
+function killDescendants(proc: SpawnedProcessLike): void {
+  const pid = proc.pid
+  if (pid === undefined) return
+  if (process.platform !== 'win32') return
+  try {
+    // /T = tree (the process and its descendants), /F = force.
+    Bun.spawn(['taskkill', '/pid', String(pid), '/T', '/F'], {
+      stdout: 'ignore',
+      stderr: 'ignore',
+      stdin: 'ignore',
+    })
+  } catch {
+    // Nothing to reap, or taskkill unavailable — the direct kill above stands.
+  }
 }
 
 async function* readLines(

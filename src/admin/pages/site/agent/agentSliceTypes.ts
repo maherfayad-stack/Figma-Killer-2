@@ -67,6 +67,18 @@ export interface AgentSlice {
   agentPermissionRequest: AgentPermissionRequest | null
   resolveAgentPermission(id: string, behavior: PermissionBehavior): void
 
+  /**
+   * A message typed while a turn was still streaming, sent automatically once
+   * that turn finishes. The server allows exactly one stream per conversation
+   * (409 otherwise), so this is the queue that guard always implied but never
+   * had — without it, "the agent is busy" silently swallowed what you typed.
+   * Holds at most one: the composer sends one draft at a time, and typing
+   * twice means you meant the second one.
+   */
+  agentQueuedMessage: AiUserContentBlock[] | null
+  queueAgentMessage(content: AiUserContentBlock[]): void
+  cancelQueuedAgentMessage(): void
+
   /** WS-12 §5.1 session controls — `claudeCli`-only, every other driver ignores both. Initial values + the "never persists" reasoning live in `agentSessionControls.ts`. */
   agentEffort: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | null
   agentPermissionMode: 'default' | 'acceptEdits' | 'plan' | 'bypassPermissions'

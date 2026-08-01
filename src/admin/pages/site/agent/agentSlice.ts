@@ -245,6 +245,26 @@ export function createAgentSlice(
     flush: flushPendingText,
   }
 
+  /**
+   * Send whatever the user typed while the previous turn was still running.
+   *
+   * Deferred to a microtask rather than called inline: this runs inside the
+   * `finally` of the turn that just ended, and `sendAgentMessage` re-enters the
+   * same slice — letting the current call unwind first keeps the two turns
+   * strictly sequential instead of nested. The server enforces one stream per
+   * conversation anyway (a 409), so overlapping them would simply be refused.
+   */
+  function flushQueuedMessage(): void {
+    const queued = get().agentQueuedMessage
+    if (!queued || queued.length === 0) return
+    // Cleared BEFORE sending: a send that fails must not leave the message
+    // queued to fire again after the next turn.
+    set({ agentQueuedMessage: null })
+    queueMicrotask(() => {
+      void get().sendAgentMessage(queued)
+    })
+  }
+
   return {
     // ── State ────────────────────────────────────────────────────────────────
     isAgentOpen: false,
@@ -260,6 +280,7 @@ export function createAgentSlice(
     isAgentProviderPending: false,
     agentComposerEpoch: 0,
     agentPermissionRequest: null,
+    agentQueuedMessage: null,
     ...agentSessionControlsInitialState(),
 
     // ── UI actions ───────────────────────────────────────────────────────────
@@ -279,11 +300,23 @@ export function createAgentSlice(
 
     ...createAgentSessionControlsActions(set),
 
+    queueAgentMessage(content) {
+      // Replaces rather than appends: the composer sends one draft at a time,
+      // and a person who types twice while waiting means the second one.
+      set({ agentQueuedMessage: content })
+    },
+
+    cancelQueuedAgentMessage() {
+      set({ agentQueuedMessage: null })
+    },
+
     abortAgent() {
       // Deny before aborting: the CLI is blocked waiting on this answer, and a
       // parked prompt whose turn is being torn down can never be answered.
       abandonPermissionPrompts('You stopped the turn before answering.')
-      set({ agentPermissionRequest: null })
+      // Stopping means stop: a message queued behind this turn must not fire
+      // as soon as the abort lands.
+      set({ agentPermissionRequest: null, agentQueuedMessage: null })
       if (_abortController) _abortController.abort()
       else set({ isAgentStreaming: false })
     },
@@ -656,6 +689,7 @@ export function createAgentSlice(
         if (_abortController === controller) {
           _abortController = null
           set({ isAgentStreaming: false })
+          flushQueuedMessage()
         }
       }
     },

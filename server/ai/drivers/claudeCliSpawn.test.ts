@@ -162,3 +162,72 @@ describe('spawnClaudeCliNdjson', () => {
     }))).rejects.toThrow(ClaudeCliSpawnError)
   })
 })
+
+describe('spawnClaudeCliNdjson — no orphaned child processes', () => {
+  /**
+   * The regression this pins: the generator's `finally` used to clear the
+   * timeout and remove the abort listener WITHOUT killing the child. A consumer
+   * that stopped early therefore left a live `claude` process with nothing in
+   * the world able to stop it — nine orphans from one turn were observed, one
+   * of which held the server's inherited listening socket and made every
+   * restart fail with EADDRINUSE.
+   */
+  it('kills the child when the consumer breaks out of the loop early', async () => {
+    const killable = { wasKilled: () => false }
+    const gen = spawnClaudeCliNdjson({
+      argv: ['claude'],
+      cwd: '/tmp',
+      env: {},
+      stdin: new TextEncoder().encode('hi'),
+      signal: new AbortController().signal,
+      spawn: fakeSpawn({
+        stdoutChunks: ['{"a":1}\n', '{"b":2}\n', '{"c":3}\n'],
+        exitCode: 0,
+        killable,
+      }),
+    })
+
+    for await (const event of gen) {
+      // Stop on the first line, leaving stdout undrained — the abandonment
+      // case. `break` runs the generator's `finally`.
+      if (event.kind === 'line') break
+    }
+
+    expect(killable.wasKilled()).toBe(true)
+  })
+
+  it('kills the child when the consumer throws mid-stream', async () => {
+    const killable = { wasKilled: () => false }
+    const gen = spawnClaudeCliNdjson({
+      argv: ['claude'],
+      cwd: '/tmp',
+      env: {},
+      stdin: new TextEncoder().encode('hi'),
+      signal: new AbortController().signal,
+      spawn: fakeSpawn({ stdoutChunks: ['{"a":1}\n', '{"b":2}\n'], exitCode: 0, killable }),
+    })
+
+    await expect((async () => {
+      for await (const event of gen) {
+        if (event.kind === 'line') throw new Error('consumer exploded')
+      }
+    })()).rejects.toThrow('consumer exploded')
+
+    expect(killable.wasKilled()).toBe(true)
+  })
+
+  it('does NOT kill on a normal, fully-drained run — that would be a spurious kill of an exited process', async () => {
+    const killable = { wasKilled: () => false }
+    const events = await collect(spawnClaudeCliNdjson({
+      argv: ['claude'],
+      cwd: '/tmp',
+      env: {},
+      stdin: new TextEncoder().encode('hi'),
+      signal: new AbortController().signal,
+      spawn: fakeSpawn({ stdoutChunks: ['{"a":1}\n'], exitCode: 0, killable }),
+    }))
+
+    expect(events.at(-1)).toMatchObject({ kind: 'exit', exitCode: 0 })
+    expect(killable.wasKilled()).toBe(false)
+  })
+})

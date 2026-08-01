@@ -24,6 +24,7 @@ import type { ParsedNode, ParsedPropValue } from './types'
 import { tryResolveExpression, tryResolvePropValue, type PageEvalContext, type Resolution } from './nodeResolution'
 import type { ValueOrigin } from './staticEvalTypes'
 import { STUDIO_ASSET_SENTINEL } from './assetImports'
+import { decodeJsxTextEntities } from './jsxTextEntities'
 
 /**
  * Everything one parse pass needs to read values and record nodes. Built once
@@ -447,7 +448,9 @@ export function extractSingleText(
   const only = children[0]!
 
   if (Node.isJsxText(only)) {
-    const text = only.getText().trim()
+    // Decoded because React decodes: the AST hands back the authored source,
+    // so `it&apos;s` would otherwise reach the canvas with the entity visible.
+    const text = decodeJsxTextEntities(only.getText().trim())
     return { text: text.length > 0 ? text : undefined }
   }
 

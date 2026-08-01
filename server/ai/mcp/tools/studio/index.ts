@@ -9,6 +9,7 @@ import { studioExportMcpTools } from './exportFrames'
 import { studioReferenceMcpTools } from './referenceRender'
 import { studioDiffMcpTools } from './diffFrames'
 import { studioBrowserBridgeMcpTools } from './browserBridgeTools'
+import { studioPackageDocMcpTools } from './packageDocTools'
 
 export const studioMcpTools: AiTool[] = [
   ...studioProjectMcpTools,
@@ -18,4 +19,5 @@ export const studioMcpTools: AiTool[] = [
   ...studioReferenceMcpTools,
   ...studioDiffMcpTools,
   ...studioBrowserBridgeMcpTools,
+  ...studioPackageDocMcpTools,
 ]

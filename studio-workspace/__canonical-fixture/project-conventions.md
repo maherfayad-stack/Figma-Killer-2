@@ -6,6 +6,6 @@ do not hand-edit.
 - Project: C:\Users\Admin\Documents\GitHub\Figma Killer 2\studio-workspace\__canonical-fixture
 - Framework: unknown
 - Pages directory: src/screens
-- Package manager: npm
+- Package manager: bun
 - Styling mechanism: css-modules, sass
-- Component packages: (none)
+- Component packages: @alm-design/design-system

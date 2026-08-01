@@ -10,6 +10,14 @@
           "pageId": "home",
           "x": 0,
           "y": 0
+        },
+        {
+          "id": "d5dbce2b-7bb5-48c8-8485-29c5b5bbf355",
+          "pageId": "esim-activation",
+          "x": 1104,
+          "y": 880,
+          "width": 393,
+          "height": 1099.933837890625
         }
       ],
       "notes": [],

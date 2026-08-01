@@ -1,0 +1,269 @@
+/* studio: css module src/components/PlanCard.module.css */
+.PlanCard_card__25f1b {
+  border: 1px solid #d9d9d9;
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.PlanCard_name__d3b29 {
+  font-weight: 600;
+}
+
+
+/* studio: css module src/screens/ESimActivation.module.css */
+.ESimActivation_screen__290b3 {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  background-color: var(--alm-color-bg-page);
+  font-family: system-ui, -apple-system, sans-serif;
+  color: var(--alm-color-text-primary);
+}
+
+/* ── Header ─────────────────────────────────────────── */
+.ESimActivation_header__32c4f {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--alm-space-3) var(--alm-space-5);
+  background-color: var(--alm-color-bg-card);
+  border-bottom: 1px solid var(--alm-color-neutral-200);
+}
+
+.ESimActivation_headerTitle__3d36a {
+  font-size: var(--alm-font-size-md);
+  font-weight: var(--alm-font-weight-semibold);
+  color: var(--alm-color-text-primary);
+  margin: 0;
+}
+
+.ESimActivation_headerSpacer__55d57 {
+  /* mirrors the Close button width so the title stays centred */
+  width: 72px;
+}
+
+/* ── Main ────────────────────────────────────────────── */
+.ESimActivation_main__21c34 {
+  flex: 1;
+  padding: var(--alm-space-6) var(--alm-space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--alm-space-8);
+  max-width: 600px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+/* ── Confirmation hero ───────────────────────────────── */
+.ESimActivation_confirmSection__1de7c {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--alm-space-3);
+  text-align: center;
+  padding: var(--alm-space-4) 0;
+}
+
+.ESimActivation_confirmIconGroup__fda4c {
+  position: relative;
+  display: inline-flex;
+  margin-bottom: var(--alm-space-2);
+}
+
+.ESimActivation_airlineLogo__76738 {
+  width: 56px;
+  height: 56px;
+  border-radius: var(--alm-radius-lg);
+  background-color: var(--alm-color-error);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 26px;
+  color: var(--alm-color-neutral-0);
+}
+
+.ESimActivation_successBadge__bdb6f {
+  position: absolute;
+  bottom: -6px;
+  right: -14px;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--alm-radius-pill);
+  background-color: var(--alm-color-success);
+  border: 2px solid var(--alm-color-bg-card);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--alm-color-neutral-0);
+  font-size: var(--alm-font-size-xs);
+  font-weight: var(--alm-font-weight-bold);
+}
+
+.ESimActivation_confirmTitle__fa43c {
+  font-size: var(--alm-font-size-xl);
+  font-weight: var(--alm-font-weight-bold);
+  color: var(--alm-color-text-primary);
+  margin: 0;
+  line-height: var(--alm-line-height-tight);
+}
+
+.ESimActivation_confirmSubtitle__d20ca {
+  font-size: var(--alm-font-size-sm);
+  color: var(--alm-color-text-secondary);
+  margin: 0;
+}
+
+/* ── Sections ────────────────────────────────────────── */
+.ESimActivation_section__d8db6 {
+  display: flex;
+  flex-direction: column;
+  gap: var(--alm-space-4);
+}
+
+.ESimActivation_sectionTitle__c3cec {
+  font-size: var(--alm-font-size-lg);
+  font-weight: var(--alm-font-weight-bold);
+  color: var(--alm-color-text-primary);
+  margin: 0;
+}
+
+/* ── Offer cards ─────────────────────────────────────── */
+.ESimActivation_offerCard__c361f {
+  background-color: var(--alm-color-bg-card);
+  border-radius: var(--alm-radius-md);
+  border: 1px solid var(--alm-color-neutral-200);
+  padding: var(--alm-space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--alm-space-3);
+  box-shadow: var(--alm-shadow-sm);
+}
+
+.ESimActivation_badgeRow__02cbd {
+  display: flex;
+}
+
+.ESimActivation_offerContent__92707 {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--alm-space-3);
+}
+
+.ESimActivation_offerIcon__a2814 {
+  font-size: 36px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.ESimActivation_offerInfo__2e105 {
+  display: flex;
+  flex-direction: column;
+  gap: var(--alm-space-1);
+}
+
+.ESimActivation_offerTitle__d58da {
+  font-size: var(--alm-font-size-md);
+  font-weight: var(--alm-font-weight-semibold);
+  color: var(--alm-color-text-primary);
+  margin: 0;
+}
+
+.ESimActivation_offerDesc__266ad {
+  font-size: var(--alm-font-size-sm);
+  color: var(--alm-color-text-secondary);
+  margin: 0;
+  line-height: var(--alm-line-height-normal);
+}
+
+.ESimActivation_offerFooter__72d4b {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: var(--alm-space-1);
+  border-top: 1px solid var(--alm-color-neutral-200);
+}
+
+.ESimActivation_promoCode__000eb {
+  font-size: var(--alm-font-size-sm);
+  color: var(--alm-color-text-primary);
+}
+
+.ESimActivation_offerPrice__fb3bd {
+  font-size: var(--alm-font-size-sm);
+  color: var(--alm-color-text-primary);
+}
+
+/* ── Add-on card ─────────────────────────────────────── */
+.ESimActivation_addonCard__dd6b6 {
+  background-color: var(--alm-color-bg-card);
+  border-radius: var(--alm-radius-md);
+  border: 1px solid var(--alm-color-neutral-200);
+  padding: var(--alm-space-4);
+  display: flex;
+  align-items: center;
+  gap: var(--alm-space-3);
+  box-shadow: var(--alm-shadow-sm);
+}
+
+.ESimActivation_addonIcon__01186 {
+  font-size: 32px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.ESimActivation_addonInfo__b9b0b {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--alm-space-1);
+}
+
+.ESimActivation_addonTitle__f7fd8 {
+  font-size: var(--alm-font-size-md);
+  font-weight: var(--alm-font-weight-semibold);
+  color: var(--alm-color-text-primary);
+  margin: 0;
+}
+
+.ESimActivation_addonDesc__aecdf {
+  font-size: var(--alm-font-size-sm);
+  color: var(--alm-color-text-secondary);
+  margin: 0;
+  line-height: var(--alm-line-height-normal);
+}
+
+/* ── Footer ──────────────────────────────────────────── */
+.ESimActivation_footer__fdd6e {
+  height: var(--alm-space-8);
+}
+
+
+/* studio: css module src/screens/Page2.module.css */
+/* Fluid by default: fills the frame it is placed in and caps for
+   readability on wide viewports. Never a fixed width — a screen pinned to one
+   device size stops being a design and becomes a screenshot. */
+.Page2_page__d038d {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.5rem;
+  width: 100%;
+  max-width: 60rem;
+  margin-inline: auto;
+  padding: clamp(1.5rem, 5vw, 4rem);
+}
+
+.Page2_title__9572c {
+  margin: 0;
+  font-size: clamp(1.5rem, 4vw, 2rem);
+  font-weight: 700;
+}
+
+/* currentColor rather than a literal: inherits whatever the project already
+   uses, so the starter never introduces an off-palette hex. */
+.Page2_subtitle__bba20 {
+  margin: 0;
+  color: currentColor;
+  opacity: 0.65;
+}

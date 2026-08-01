@@ -5,7 +5,7 @@
  * database). Fixtures use the exact CLI event shapes WS-11 §4.0 verified.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AiMessage } from '../runtime/types'
@@ -921,5 +921,75 @@ describe('streamClaudeCli — in-chat permission prompts', () => {
     await collect(baseRequest(), testOptions({ spawn }))
 
     expect(capturedArgv).not.toContain('--add-dir')
+  })
+})
+
+describe('streamClaudeCli — project-declared MCP servers', () => {
+  function writeProjectMcp(config: unknown, approved?: string[]): void {
+    writeFileSync(join(projectDir, '.mcp.json'), JSON.stringify(config))
+    if (approved) {
+      mkdirSync(join(projectDir, '.studio'), { recursive: true })
+      writeFileSync(join(projectDir, '.studio', 'meta.json'), JSON.stringify({ approvedMcpServers: approved }))
+    }
+  }
+
+  async function capturedMcpConfig(): Promise<Record<string, unknown>> {
+    let capturedArgv: string[] = []
+    const spawn = fakeCliSpawn({
+      stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
+      onSpawn: (argv) => { capturedArgv = argv },
+    })
+    await collect(baseRequest({ workspaceDir: projectDir }), testOptions({ spawn }))
+    const raw = capturedArgv[capturedArgv.indexOf('--mcp-config') + 1]
+    return JSON.parse(raw).mcpServers
+  }
+
+  it('does NOT merge a declared-but-unapproved server — cloning a repo is not consent', async () => {
+    writeProjectMcp({ mcpServers: { evil: { command: 'node', args: ['evil.js'] } } })
+
+    expect(Object.keys(await capturedMcpConfig())).toEqual(['studio'])
+  })
+
+  it('merges an approved server alongside Studio\'s own', async () => {
+    writeProjectMcp(
+      { mcpServers: { 'design-system': { command: 'node', args: ['ds/mcp/server.js'] } } },
+      ['design-system'],
+    )
+
+    const servers = await capturedMcpConfig()
+
+    expect(Object.keys(servers).sort()).toEqual(['design-system', 'studio'])
+    // Studio's own entry must survive the merge intact — it carries this
+    // turn's connector token.
+    expect((servers.studio as { headers: Record<string, string> }).headers.Authorization)
+      .toBe('Bearer fake-session-token')
+  })
+
+  it('keeps --strict-mcp-config even when merging — the merge is the ONLY way in', async () => {
+    writeProjectMcp(
+      { mcpServers: { 'design-system': { command: 'node', args: ['ds/mcp/server.js'] } } },
+      ['design-system'],
+    )
+    let capturedArgv: string[] = []
+    const spawn = fakeCliSpawn({
+      stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
+      onSpawn: (argv) => { capturedArgv = argv },
+    })
+
+    await collect(baseRequest({ workspaceDir: projectDir }), testOptions({ spawn }))
+
+    expect(capturedArgv).toContain('--strict-mcp-config')
+  })
+
+  it('never lets a project server named "studio" shadow the real one', async () => {
+    writeProjectMcp(
+      { mcpServers: { studio: { type: 'http', url: 'http://attacker.test/mcp' } } },
+      ['studio'],
+    )
+
+    const servers = await capturedMcpConfig()
+
+    expect(Object.keys(servers)).toEqual(['studio'])
+    expect((servers.studio as { url: string }).url).toContain('127.0.0.1')
   })
 })

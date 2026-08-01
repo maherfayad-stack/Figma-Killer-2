@@ -377,19 +377,76 @@ export function nextPageName(pagesDir: string, ext: '.tsx' | '.jsx' = '.tsx'): s
   return `Page${Date.now()}`
 }
 
+/** The `.tsx`/`.jsx` source and its co-located CSS module, written together. */
+export interface StarterPageFiles {
+  readonly component: string
+  readonly styles: string
+  readonly stylesFileName: string
+}
+
 /**
  * Starter page written into a freshly-created page/project so its canvas isn't
  * empty. `componentName` is both the default-export function name and the
  * heading text.
+ *
+ * **This template is the single most copied code in any Studio project**, and
+ * that is the whole reason it looks like this. An agent asked to build a screen
+ * reads the existing page first and continues whatever pattern it finds, so a
+ * starter that used inline `style={{…}}`, a hardcoded `#666`, and fixed pixel
+ * padding taught exactly those three habits to every screen generated
+ * afterwards — observed directly: a generated screen came back with
+ * `width: 375px` hardcoded on its root and not one media query in 233 lines.
+ *
+ * So the starter ships the habits we want copied instead:
+ *   - a co-located CSS module, never inline styles
+ *   - fluid width with a readability cap, never a device-width constant
+ *   - no literal colour — `currentColor` inherits whatever the project uses
+ *
+ * Deliberately NOT token-based: a brand-new project has no token scale yet,
+ * and referencing `var(--…)` names that don't exist would teach a habit that
+ * renders wrong. `clamp()` needs no project setup to be correct.
  */
-export function starterPage(componentName: string): string {
-  return `export default function ${componentName}() {
+export function starterPage(componentName: string): StarterPageFiles {
+  const stylesFileName = `${componentName}.module.css`
+  const component = `import styles from './${stylesFileName}'
+
+export default function ${componentName}() {
   return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "24px", padding: "64px" }}>
-      <h1 style={{ fontSize: "32px", fontWeight: 700 }}>${componentName}</h1>
-      <p style={{ color: "#666" }}>Start editing this page in Studio.</p>
-    </div>
+    <main className={styles.page}>
+      <h1 className={styles.title}>${componentName}</h1>
+      <p className={styles.subtitle}>Start editing this page in Studio.</p>
+    </main>
   )
 }
 `
+  const styles = `/* Fluid by default: fills the frame it is placed in and caps for
+   readability on wide viewports. Never a fixed width — a screen pinned to one
+   device size stops being a design and becomes a screenshot. */
+.page {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.5rem;
+  width: 100%;
+  max-width: 60rem;
+  margin-inline: auto;
+  padding: clamp(1.5rem, 5vw, 4rem);
+}
+
+.title {
+  margin: 0;
+  font-size: clamp(1.5rem, 4vw, 2rem);
+  font-weight: 700;
+}
+
+/* currentColor rather than a literal: inherits whatever the project already
+   uses, so the starter never introduces an off-palette hex. */
+.subtitle {
+  margin: 0;
+  color: currentColor;
+  opacity: 0.65;
+}
+`
+  return { component, styles, stylesFileName }
 }

@@ -56,6 +56,9 @@ export function AgentComposer({
   const isOpen = useAgentStore((state) => state.isAgentOpen)
   const sendAgentMessage = useAgentStore((state) => state.sendAgentMessage)
   const abortAgent = useAgentStore((state) => state.abortAgent)
+  const queueAgentMessage = useAgentStore((state) => state.queueAgentMessage)
+  const queuedMessage = useAgentStore((state) => state.agentQueuedMessage)
+  const cancelQueuedAgentMessage = useAgentStore((state) => state.cancelQueuedAgentMessage)
   const activeCredentialId = useAgentStore((state) => state.agentActiveCredentialId)
   const activeModelId = useAgentStore((state) => state.agentActiveModelId)
   const [draft, setDraft] = useState('')
@@ -117,8 +120,7 @@ export function AgentComposer({
 
   async function submit(): Promise<void> {
     if (
-      isStreaming
-      || conversationPending
+      conversationPending
       || providerPending
       || submitting
       || modelCannotRunAgent
@@ -137,6 +139,16 @@ export function AgentComposer({
     if (text) content.push({ kind: 'text', text })
     for (const entry of pending) {
       if (entry.block) content.push(entry.block)
+    }
+
+    // Mid-turn: park it instead of dropping it. The server permits one stream
+    // per conversation, so sending now would just 409 — the slice sends this
+    // the moment the running turn finishes.
+    if (isStreaming) {
+      queueAgentMessage(content)
+      setDraft('')
+      attachments.clear()
+      return
     }
 
     setSubmitting(true)
@@ -170,6 +182,9 @@ export function AgentComposer({
   }
 
   const imageBlocksSend = imageStatus !== 'none' && imageStatus !== 'ready'
+  // Nothing to send is a disabled Send, not a no-op click — mid-turn the
+  // button queues, so it must only be live when there IS something to queue.
+  const hasDraftToSend = draft.trim().length > 0 || hasAttachments
   const sendDisabled =
     composerLocked
     || conversationPending
@@ -186,6 +201,7 @@ export function AgentComposer({
   else if (imageStatus === 'model-error') sendTooltip = 'Could not verify image support'
   else if (imageStatus === 'unsupported-model') sendTooltip = 'Choose a vision-capable model'
   else if (imageStatus === 'error') sendTooltip = 'Remove the failed image'
+  else if (isStreaming) sendTooltip = 'Send when the current turn finishes'
 
   return (
     <div className={styles.inputBar}>
@@ -216,6 +232,22 @@ export function AgentComposer({
           Choose an agent-capable model that supports tool calling.
         </p>
       )}
+      {queuedMessage && (
+        <div className={styles.queuedMessage} role="status">
+          <span className={styles.queuedText}>
+            Queued: {queuedPreview(queuedMessage)}
+          </span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            onClick={cancelQueuedAgentMessage}
+            aria-label="Cancel queued message"
+          >
+            Cancel
+          </Button>
+        </div>
+      )}
       <form
         onSubmit={(event) => {
           event.preventDefault()
@@ -223,15 +255,16 @@ export function AgentComposer({
         }}
         className={styles.inputForm}
       >
-        {!isStreaming && (
-          <Textarea
+        <Textarea
             ref={inputRef}
             value={draft}
             placeholder={lockReason === 'setup'
               ? 'Add AI credentials to start chatting'
               : lockReason === 'chooseModel'
                 ? 'Choose a model below to start'
-                : 'Tell me what to build… (attach images or press Enter to send)'}
+                : isStreaming
+                  ? 'Type your next message — it sends when this turn finishes'
+                  : 'Tell me what to build… (attach images or press Enter to send)'}
             aria-label="Message to AI assistant"
             rows={2}
             resize="none"
@@ -244,7 +277,6 @@ export function AgentComposer({
               event.target.style.height = `${Math.min(event.target.scrollHeight, 120)}px`
             }}
           />
-        )}
         <div className={styles.inputControls}>
           <AgentSessionControls hasCredentials={credentials.length > 0} />
           <div className={styles.inputControlActions}>
@@ -282,7 +314,22 @@ export function AgentComposer({
             >
               <ImageSolidIcon size={14} aria-hidden="true" />
             </FileUpload>
-            {isStreaming ? (
+            {/* Send stays available DURING a turn — it queues rather than
+                sending. Previously it was swapped out for Stop, so a message
+                typed mid-turn had no button at all and only Enter could
+                submit it, which nothing told the user. */}
+            <Button
+              type="submit"
+              variant="primary"
+              size="sm"
+              iconOnly
+              disabled={sendDisabled || !hasDraftToSend}
+              tooltip={sendTooltip}
+              aria-label={isStreaming ? 'Queue message' : 'Send'}
+            >
+              <SendSolidIcon size={14} />
+            </Button>
+            {isStreaming && (
               <Button
                 type="button"
                 variant="destructive"
@@ -294,22 +341,20 @@ export function AgentComposer({
               >
                 <SquareSolidIcon size={14} />
               </Button>
-            ) : (
-              <Button
-                type="submit"
-                variant="primary"
-                size="sm"
-                iconOnly
-                disabled={sendDisabled}
-                tooltip={sendTooltip}
-                aria-label="Send"
-              >
-                <SendSolidIcon size={14} />
-              </Button>
             )}
           </div>
         </div>
       </form>
     </div>
   )
+}
+
+/** A one-line preview of what is waiting, so the chip says WHICH message is queued rather than just that one is. */
+function queuedPreview(content: AiUserContentBlock[]): string {
+  const text = content.find((block) => block.kind === 'text')
+  const label = text && 'text' in text ? text.text.trim() : ''
+  const images = content.filter((block) => block.kind === 'image').length
+  if (!label) return images > 0 ? `${images} image${images === 1 ? '' : 's'}` : 'message'
+  const trimmed = label.length > 60 ? `${label.slice(0, 60)}…` : label
+  return images > 0 ? `${trimmed} (+${images})` : trimmed
 }

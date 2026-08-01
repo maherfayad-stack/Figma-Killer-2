@@ -3,5 +3,12 @@
   "pagesDir": "src/screens",
   "agentSession": {
     "effort": "medium"
-  }
+  },
+  "previewAxes": {
+    "direction": "ltr",
+    "colorScheme": "light"
+  },
+  "approvedMcpServers": [
+    "design-system"
+  ]
 }
