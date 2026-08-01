@@ -27,7 +27,7 @@ import {
 } from '@ui/components/ContextMenu'
 import { ChevronDownIcon } from 'pixel-art-icons/icons/chevron-down'
 import { cn } from '@ui/cn'
-import { type AiModel, type CredentialView, listModels } from '@admin/ai/api'
+import { type AiModel, type ClaudeCliStatus, type CredentialView, getClaudeCliStatus, listModels } from '@admin/ai/api'
 import styles from './ModelPicker.module.css'
 
 export interface ModelChoice {
@@ -64,6 +64,26 @@ interface ModelPickerProps {
 
 const SEP = '\0'
 const choiceKey = (credentialId: string, modelId: string) => `${credentialId}${SEP}${modelId}`
+
+/**
+ * A claudeCli credential's group is genuinely unusable — not merely
+ * "logged out" — only when the host can't run the `claude` binary at all:
+ * not installed, or macOS (which can't isolate per-user logins via
+ * `CLAUDE_CONFIG_DIR`). Both block the L1 login path AND any stored L2
+ * setup-token credential, since the token is only ever handed to the same
+ * subprocess. Returns `null` when the group is usable (including when the
+ * status hasn't loaded yet, or the probe itself failed inconclusively).
+ */
+function claudeCliHostBlockedReason(
+  cred: CredentialView,
+  status: ClaudeCliStatus | null,
+): string | null {
+  if (cred.providerId !== 'claudeCli' || !status) return null
+  if (status.availability === 'not-installed' || status.availability === 'unsupported') {
+    return status.reason ?? 'Claude CLI is unavailable on this host.'
+  }
+  return null
+}
 
 /** A per-million-token USD price → compact label. `$3`, `$0.50`, `$1.25`. */
 function formatPerMTok(value: number): string {
@@ -112,6 +132,32 @@ export function ModelPicker({
   const [query, setQuery] = useState('')
   const [activeKey, setActiveKey] = useState<string | null>(null)
   const [modelsByCred, setModelsByCred] = useState<Record<string, AiModel[]>>({})
+  const [claudeCliStatus, setClaudeCliStatus] = useState<ClaudeCliStatus | null>(null)
+
+  // The Claude CLI is a local subprocess, not an HTTP provider (WS-11): a
+  // stored `claudeCli` credential can still be unusable on THIS host if the
+  // `claude` binary isn't installed, or if the platform can't isolate
+  // per-user logins (macOS). Fetch that host-level status once whenever a
+  // claudeCli credential is present, so those groups can be shown
+  // disabled-with-reason instead of failing silently on first send. A
+  // "logged out" status is deliberately NOT treated as blocking here — a
+  // stored credential carries its own setup-token, sent as an env var at
+  // spawn time, independent of the host's own CLI login state.
+  useEffect(() => {
+    if (claudeCliStatus) return
+    if (!credentials.some((c) => c.providerId === 'claudeCli')) return
+    let cancelled = false
+    void getClaudeCliStatus()
+      .then((status) => {
+        if (!cancelled) setClaudeCliStatus(status)
+      })
+      .catch(() => {
+        /* swallow — groups render as normally available until this resolves */
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [credentials, claudeCliStatus])
 
   // Lazy-load models. Two-phase: closed → only the selected credential's
   // models (to label the trigger); open → every credential (to fill the list).
@@ -168,14 +214,19 @@ export function ModelPicker({
       cred,
       models: (modelsByCred[cred.id] ?? []).filter((m) => matches(cred, m)),
       loaded: Boolean(modelsByCred[cred.id]),
+      blockedReason: claudeCliHostBlockedReason(cred, claudeCliStatus),
     }))
     // While searching, hide groups with no matching models. With no query,
     // keep every group (including still-loading ones).
     .filter((g) => (q === '' ? true : g.models.length > 0))
 
-  // Flatten the visible models for keyboard navigation + option ids.
+  // Flatten the visible models for keyboard navigation + option ids. A
+  // host-blocked group (claudeCli not installed / unsupported platform) is
+  // still rendered so its reason is visible, but excluded here — its models
+  // aren't real options.
   const flat: Array<{ credentialId: string; modelId: string; optionId: string }> = []
   for (const group of groups) {
+    if (group.blockedReason) continue
     for (const model of group.models) {
       flat.push({
         credentialId: group.cred.id,
@@ -346,9 +397,16 @@ export function ModelPicker({
                     {group.cred.displayLabel}
                     <span className={styles.groupProvider}> · {group.cred.providerId}</span>
                   </span>
+                  {group.blockedReason && <span className={styles.groupWarning}>Unavailable</span>}
                 </div>,
               )
-              if (group.models.length === 0) {
+              if (group.blockedReason) {
+                items.push(
+                  <ContextMenuItem key={`${credentialId}:host-blocked`} disabled>
+                    <span>{group.blockedReason}</span>
+                  </ContextMenuItem>,
+                )
+              } else if (group.models.length === 0) {
                 items.push(
                   <ContextMenuItem key={`${credentialId}:loading`} disabled>
                     <span>{group.loaded ? 'No models available' : 'Loading models…'}</span>

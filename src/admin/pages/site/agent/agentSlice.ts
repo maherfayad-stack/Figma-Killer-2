@@ -17,6 +17,7 @@
  */
 
 import { nanoid } from 'nanoid'
+import { useAdminUi } from '@admin/state/adminUi'
 import type { EditorStoreSliceCreator } from '@site/store/types'
 import { ApiError, isAbortError, responseErrorMessage } from '@core/http'
 import type { AiChatRequestBody } from '@core/ai'
@@ -597,7 +598,17 @@ export function createAgentSlice(
           }
         }
 
-        const body: AiChatRequestBody = { conversationId, content: [...content], snapshot }
+        // The open project's absolute dir, when one is open. Only the
+        // claudeCli driver (WS-11) reads this server-side — every other
+        // driver ignores it. `useAdminUi` (not the site editor's own store)
+        // is the one place that already tracks "which project is open".
+        const workspaceDir = useAdminUi.getState().studioProject?.dir
+        const body: AiChatRequestBody = {
+          conversationId,
+          content: [...content],
+          snapshot,
+          ...(workspaceDir ? { workspaceDir } : {}),
+        }
         const res = await fetch('/admin/api/ai/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

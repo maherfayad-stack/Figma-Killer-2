@@ -5,7 +5,7 @@
  * is the wire-safe `CredentialView` (no plaintext, no ciphertext).
  */
 
-import { useId, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import { useAsyncResource } from '@admin/lib/useAsyncResource'
 import { Button } from '@ui/components/Button'
 import { Dialog } from '@ui/components/Dialog'
@@ -15,11 +15,13 @@ import { PlusIcon } from 'pixel-art-icons/icons/plus'
 import { TrashSolidIcon } from 'pixel-art-icons/icons/trash-solid'
 import { CheckIcon } from 'pixel-art-icons/icons/check'
 import {
+  type ClaudeCliStatus,
   type CredentialView,
   type CreateCredentialBody,
   type TestResult,
   createCredential,
   deleteCredential,
+  getClaudeCliStatus,
   listCredentials,
   testCredential,
 } from '../../../ai/api'
@@ -302,11 +304,45 @@ function AddCredentialDialog({
   const [baseUrl, setBaseUrl] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [claudeCliStatus, setClaudeCliStatus] = useState<ClaudeCliStatus | null>(null)
+
+  // The Claude CLI is a local subprocess (WS-11), not an HTTP provider — the
+  // dialog needs to know, before the user tries, whether it can work on this
+  // host at all. Fetched once per dialog open; never blocks the rest of the
+  // form (a fetch failure just leaves the provider selectable — the actual
+  // credential create call is the authoritative check either way).
+  useEffect(() => {
+    let cancelled = false
+    void getClaudeCliStatus()
+      .then((status) => {
+        if (!cancelled) setClaudeCliStatus(status)
+      })
+      .catch(() => {
+        /* swallow — dialog stays usable without the status hint */
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const providerSpec = PROVIDERS.find((p) => p.id === providerId)!
   const effectiveAuthMode = providerSpec.authMode
   const baseUrlPlaceholder =
     providerId === 'ollama' ? 'http://localhost:11434' : 'https://api.groq.com/openai/v1'
+
+  // Only a true host-level blocker (binary missing, or macOS's Keychain
+  // isolation gap) disables the option outright — both make the L1 login
+  // path AND any stored L2 setup-token credential unusable, since either way
+  // the same `claude` subprocess has to run. "Logged out" and an inconclusive
+  // probe are NOT disabling here: this dialog's whole purpose for claudeCli is
+  // either showing the L1 login command or accepting a pasted L2 setup-token.
+  const claudeCliBlocked =
+    claudeCliStatus?.availability === 'not-installed' || claudeCliStatus?.availability === 'unsupported'
+  const providerOptions = PROVIDERS.map((p) => ({
+    value: p.id,
+    label: p.id === 'claudeCli' && claudeCliBlocked ? `${p.label} — unavailable` : p.label,
+    disabled: p.id === 'claudeCli' && claudeCliBlocked,
+  }))
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -338,9 +374,22 @@ function AddCredentialDialog({
             id={providerInputId}
             value={providerId}
             onChange={(e) => setProviderId(e.currentTarget.value as ProviderId)}
-            options={PROVIDERS.map((p) => ({ value: p.id, label: p.label }))}
+            options={providerOptions}
           />
         </div>
+
+        {providerId === 'claudeCli' && claudeCliStatus && claudeCliStatus.availability !== 'logged-in' && (
+          <p role="status" className={styles.dialogHint}>
+            {claudeCliStatus.reason}
+            {claudeCliStatus.loginCommand && (
+              <>
+                {' '}Run this in your own shell to log in, or paste a{' '}
+                <code>claude setup-token</code> value below instead:
+                <code className={styles.dialogCode}>{claudeCliStatus.loginCommand}</code>
+              </>
+            )}
+          </p>
+        )}
 
         <div className={styles.dialogField}>
           <label htmlFor={labelInputId} className={styles.dialogFieldLabel}>Display label</label>

@@ -90,6 +90,16 @@
     letter-spacing: 0;
 }
 
+/* Host-level unavailability (claudeCli not installed / unsupported platform)
+   — a real state, not decorative, so it earns the warning token. */
+.groupWarning {
+    margin-inline-start: var(--space-s);
+    color: var(--warning-text);
+    font-weight: 600;
+    text-transform: none;
+    letter-spacing: 0;
+}
+
 /* Label takes the available width; the meta cluster keeps its natural size.
    Ellipsis is only a last-resort safety — the wider menu fits full names. */
 .modelLabel {

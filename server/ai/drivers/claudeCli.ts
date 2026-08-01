@@ -6,7 +6,7 @@
  * token Studio ever reads, subscription login (Pro/Max) works directly
  * because the CLI carries whatever login the user already has.
  *
- * ## The loop-ownership fork (WS-11 §4.1, step 1 scope note)
+ * ## The loop-ownership fork (WS-11 §4.1)
  *
  * Every other driver in this directory is a thin HTTP adapter: `runToolLoop`
  * (`http/toolLoop.ts`) owns the multi-turn agent loop, tool dispatch, and
@@ -14,29 +14,48 @@
  * driver does NOT use `runToolLoop` — the `claude` subprocess owns its own
  * agent loop internally. Turn structure, retries, and tool-permission prompts
  * are the CLI's, not `toolLoop.ts`'s. That is a genuine behavioural fork from
- * every other driver, not an oversight.
+ * every other driver, not an oversight — do not paper over it.
  *
- * **Step 1 (this file) ships with NO tools wired through.** `req.tools` is
- * accepted (the interface requires it) but never forwarded to the CLI — no
- * `--mcp-config` is passed, so the subprocess genuinely has zero tools of its
- * own either. Routing Studio's real toolset through `/_studio/mcp` (so a
- * `claude` turn can actually touch the canvas) is WS-11 step 3, deliberately
- * not built here — see `docs/features/agent.md`. A chat that streams text and
- * nothing else is step 1's whole proof: if `claude -p` streams a reply into
- * the AgentPanel using the user's own login, the premise holds.
+ * `req.tools` (Studio's generic `AiTool[]` list) is therefore never forwarded
+ * to the CLI directly — it wouldn't mean anything to it. Instead (step 3),
+ * the subprocess is launched with `--mcp-config` pointing at Studio's own
+ * `/_studio/mcp` endpoint, carrying a connector token minted and scoped to
+ * this one chat turn (`mcp/sessionConnector.ts`). The CLI's own MCP client
+ * discovers Studio's real toolset — including browser-bridged writes,
+ * relayed through the SAME `(userId, scope)` live bridge an external Claude
+ * Code connector uses (`docs/features/mcp-connectors.md`) — with zero
+ * duplicated tool-routing code. `--strict-mcp-config` is mandatory: without
+ * it the CLI merges the user's own `~/.claude.json` and the project's
+ * `.mcp.json` and connects to whatever it finds there. Studio ships exactly
+ * the toolset it intends and no more.
  *
- * **Also deliberately out of step 1's scope**, both because nothing upstream
- * of this driver threads the information through yet:
- *   - No project `cwd`. `AiStreamRequest`/`ToolContextBase` carry no workspace
- *     path today, so this driver spawns inside the user's own Claude CLI
- *     config directory — guaranteed empty of any `CLAUDE.md`/`.claude/agents`,
- *     which doubles as avoiding WS-11 §4.0's cost trap (a real project's
- *     `CLAUDE.md` can cache-create tens of thousands of tokens per turn).
- *   - No multi-turn history replay. Every other driver replays the full
- *     `AiMessage[]` log each turn (no server-side session). This driver has
- *     no verified mechanism for that yet (no `--resume`/session-id wiring),
- *     so it sends only the latest user message's text as the `-p` prompt.
- *     A real multi-turn conversation is a later step.
+ * ## The workspace `cwd` (WS-11 step 2 fix)
+ *
+ * A REAL chat turn spawns in the resolved, containment-checked project
+ * directory (`resolveClaudeCliWorkspaceCwd`) — not the per-user config dir.
+ * This is what makes `.claude/agents/*.md` auto-discovery work at all (the
+ * entire WS-12 §7 subagent roster reaches the CLI through it — spawn in the
+ * wrong place and there are silently zero subagents), plus `CLAUDE.md`
+ * discovery and the tools' own view of the project. The per-user config dir
+ * remains right for the availability PROBE only
+ * (`server/ai/drivers/claudeCliProbe.ts`), which must never risk a real
+ * project's `CLAUDE.md` cache-creation cost (WS-11 §4.0's $0.168 warning) —
+ * when no workspace is open (or it fails containment), a chat turn falls back
+ * to the config dir too, a documented degraded case, not a crash.
+ *
+ * ## Multi-turn continuity (WS-11 step 2)
+ *
+ * `--input-format stream-json` exists (`--help` confirms it, plus
+ * `--replay-user-messages` for exactly that mode) but its stdin JSON message
+ * shape is NOT verified against the binary — establishing it with confidence
+ * would mean sending a real paid turn, which this driver's tests must never
+ * do. So this driver uses the CONFIRMED alternative instead:
+ * `--session-id`/`--resume`, keyed by a UUID deterministically derived from
+ * the Studio conversation id (`claudeCliSession.ts`) — no new DB column,
+ * because the same id always hashes to the same UUID. `req.messages` is
+ * still only consulted for the LATEST user message text (the `-p` prompt);
+ * the CLI's own session file is what remembers the rest, not a replayed
+ * `AiMessage[]` log the way every HTTP driver in this directory does it.
  */
 
 import type { AiAuthMode, AiContentBlock, AiProviderId, AiStreamEvent } from '../runtime/types'
@@ -46,20 +65,60 @@ import {
   claudeCliPlatformSupport,
   ensureClaudeCliConfigDir,
   resolveClaudeCliDataRoot,
+  resolveClaudeCliWorkspaceCwd,
   type ClaudeCliPlatformSupport,
 } from '../../handlers/studio/claudeCliEnv'
 import { spawnClaudeCliNdjson, ClaudeCliSpawnError } from './claudeCliSpawn'
 import { parseClaudeCliLineValue, translateClaudeCliLine } from './claudeCliEvents'
+import { claudeCliSessionId, isFirstClaudeCliTurn } from './claudeCliSession'
+import {
+  mintClaudeCliSessionConnector,
+  revokeClaudeCliSessionConnector,
+  type ClaudeCliSessionConnector,
+} from '../mcp/sessionConnector'
+// Imported from the small, SDK-free `endpointPath.ts` module directly — NOT
+// the `../mcp` barrel, which also re-exports `handleMcpHttp` and would pull
+// `@modelcontextprotocol/sdk` into this driver's module graph transitively.
+import { MCP_ENDPOINT_PATH } from '../mcp/endpointPath'
+import { readServerConfig } from '../../config'
 
 const SUPPORTED_AUTH_MODES: AiAuthMode[] = ['apiKey']
 
 /**
- * Conservative aliases the CLI's `--model` flag accepts (confirmed present
- * in `--help`; WS-11 §4.0 verified the flag shape, not a specific catalogue).
- * There is no verified "list models" command — the CLI is the source of
- * truth for what a given install supports, not `/v1/models` (no API key to
- * call that with) — so this is a static, explicitly-labelled fallback, the
- * same pattern Ollama's driver uses when it has no live catalogue.
+ * No session-controls UI exists yet (WS-12 §5.2 owns that). `--effort` is a
+ * real, user-requested requirement (not a nicety), so it ships wired with a
+ * fixed default rather than waiting for the picker — 'medium' matches the
+ * CLI's own implied default weighting (it sits mid-scale of the five
+ * confirmed levels: low, medium, high, xhigh, max).
+ */
+const DEFAULT_EFFORT = 'medium'
+
+/**
+ * No session-controls UI exists yet either. `--permission-mode` accepts
+ * exactly WS-12 §5.2's four modes plus `auto`/`dontAsk` (confirmed via
+ * `--help`), so the mapping is 1:1 with no translation layer whenever that
+ * UI ships. `'default'` is the only value used here — never a bypass mode
+ * (`bypassPermissions`/`--dangerously-skip-permissions`), per the explicit
+ * constraint that this driver must never pass one. Whether `'default'`
+ * silently denies (rather than hangs) an MCP tool call in `-p` mode is not
+ * yet verified against a real paid turn; if a future dogfood session finds
+ * tool calls being denied outright, `'acceptEdits'` is the next thing to try
+ * — still not a bypass, just an auto-accept posture for edit-shaped changes.
+ */
+const DEFAULT_PERMISSION_MODE = 'default'
+
+/**
+ * Conservative aliases the CLI's `--model` flag accepts. Confirmed via
+ * `--help`: "Provide an alias for the latest model (e.g. 'sonnet' or 'opus')
+ * or a model's full name (e.g. 'claude-sonnet-4-6')" — 'haiku' is the third
+ * documented Claude family and follows the same alias convention, but is not
+ * independently confirmed. There is no verified "list installed models"
+ * command, so this stays a static fallback rather than a live catalogue —
+ * `catalogueSource: 'fallback'` is the SAME staleness signal Ollama's driver
+ * uses when it has no live catalogue either (the picker/credential-seeding
+ * code already treats fallback entries as non-authoritative; see
+ * `seedEmptyDefaults` in `handlers/credentials.ts`, which refuses to
+ * auto-default a model from a fallback-only list).
  */
 const FALLBACK_MODELS: AiProviderModel[] = [
   {
@@ -87,13 +146,13 @@ const FALLBACK_MODELS: AiProviderModel[] = [
 
 function claudeCliCapabilities(): AiProviderCapabilities {
   return {
-    // Reported true so the chat handler's tool-calling gate
-    // (`tools.length > 0 && !modelCapabilities.toolCalling` → 422) doesn't
-    // block every turn — Claude models genuinely tool-call; step 1 simply
-    // doesn't route Studio's tools to this driver yet (see file doc comment).
+    // Claude models genuinely tool-call; reporting true here is what lets
+    // the chat handler's `tools.length > 0 && !modelCapabilities.toolCalling`
+    // gate pass. Whether a given turn ACTUALLY has tools available depends on
+    // the MCP connector minting below, not this static flag.
     toolCalling: true,
-    // Conservative pending verification — WS-11 §4.0 didn't confirm image
-    // input through `-p`, and step 1 sends no images either way.
+    // Conservative pending verification — image input through `-p` was never
+    // confirmed against the binary, and this driver sends no images either way.
     visionInput: false,
     toolResultImages: false,
     // The CLI's own caching (if any) isn't something this driver controls
@@ -123,10 +182,12 @@ export const claudeCliDriver: AiProvider = {
 
 /**
  * The `stream()` implementation, factored out of the `AiProvider` object so
- * tests can inject a fake spawn and platform-support result without a real
- * `claude` binary or a real subprocess — the `AiProvider` interface itself
- * has no room for test seams (every other driver's tests inject at the
- * `fetch` layer instead; this driver's equivalent boundary is `spawn`).
+ * tests can inject a fake spawn, platform-support result, and MCP
+ * connector mint/revoke without a real `claude` binary, a real subprocess,
+ * or a real database — the `AiProvider` interface itself has no room for
+ * test seams (every other driver's tests inject at the `fetch` layer
+ * instead; this driver's equivalent boundary is `spawn` plus the two MCP
+ * connector functions).
  */
 export interface StreamClaudeCliOptions {
   /** Test seam — defaults to `Bun.spawn` via `claudeCliSpawn.ts`. */
@@ -135,6 +196,14 @@ export interface StreamClaudeCliOptions {
   readonly platformSupport?: ClaudeCliPlatformSupport
   /** Test seam — defaults to `resolveClaudeCliDataRoot()` (env-derived). */
   readonly dataRoot?: string
+  /** Test seam — defaults to `studio-workspace/` (`projectsRootDir()`). */
+  readonly projectsRoot?: string
+  /** Test seam — defaults to `readServerConfig().port`. */
+  readonly serverPort?: number
+  /** Test seam — defaults to `mintClaudeCliSessionConnector`. */
+  readonly mintConnector?: typeof mintClaudeCliSessionConnector
+  /** Test seam — defaults to `revokeClaudeCliSessionConnector`. */
+  readonly revokeConnector?: typeof revokeClaudeCliSessionConnector
 }
 
 export async function* streamClaudeCli(
@@ -174,10 +243,36 @@ export async function* streamClaudeCli(
     return
   }
 
+  // The real workspace root when one is open and passes containment; the
+  // per-user config dir (guaranteed CLAUDE.md-free) otherwise. See the file
+  // doc comment's "workspace cwd" section for why this distinction matters.
+  const workspaceCwd = resolveClaudeCliWorkspaceCwd(req.workspaceDir, options.projectsRoot)
+  const cwd = workspaceCwd ?? configDir
+
   const env = minimalSubprocessEnv([], {
     CLAUDE_CONFIG_DIR: configDir,
     ...(req.credentials.apiKey ? { CLAUDE_CODE_OAUTH_TOKEN: req.credentials.apiKey } : {}),
   })
+
+  const mint = options.mintConnector ?? mintClaudeCliSessionConnector
+  const revoke = options.revokeConnector ?? revokeClaudeCliSessionConnector
+  let connector: ClaudeCliSessionConnector | null = null
+  try {
+    connector = await mint(
+      req.toolContextBase.db,
+      req.toolContextBase.userId,
+      req.toolContextBase.capabilities,
+      req.toolContextBase.conversationId,
+    )
+  } catch (err) {
+    // Fail soft: a turn without tools is degraded, not broken. Blocking the
+    // entire chat over a transient connector-store hiccup would be worse
+    // than a turn that can only talk, same as step 1 shipped with by design.
+    console.error('[ai/claudeCli] failed to mint a session MCP connector — continuing without tools:', err)
+  }
+
+  const sessionId = await claudeCliSessionId(req.toolContextBase.conversationId)
+  const sessionFlag = isFirstClaudeCliTurn(req.messages.length) ? '--session-id' : '--resume'
 
   const argv = [
     'claude',
@@ -188,24 +283,25 @@ export async function* streamClaudeCli(
     '--verbose',
     '--model',
     req.modelId,
+    '--effort',
+    DEFAULT_EFFORT,
     '--permission-mode',
-    'default',
-    // Mandatory (WS-11 §4.0 trap #4 — without it the CLI merges the user's
-    // own ~/.claude.json and any project .mcp.json and connects to
-    // whatever it finds there. Studio ships exactly the toolset it
-    // intends — zero, in step 1 — and no more.
+    DEFAULT_PERMISSION_MODE,
+    ...(connector ? ['--mcp-config', buildMcpConfigJson(connector, options.serverPort)] : []),
+    // Mandatory whether or not a connector was minted (WS-11 §4.0 trap #4) —
+    // without it the CLI merges the user's own ~/.claude.json and the
+    // project's .mcp.json and connects to whatever it finds there. Studio
+    // ships exactly the toolset it intends and no more.
     '--strict-mcp-config',
+    sessionFlag,
+    sessionId,
   ]
 
   let sawTerminalEvent = false
   try {
     for await (const raw of spawnClaudeCliNdjson({
       argv,
-      // No project workspace is threaded through yet (see file doc
-      // comment) — spawn inside the user's own config dir, which is
-      // guaranteed to hold no CLAUDE.md and so can never hit the cache-
-      // creation cost trap WS-11 §4.0 warns about.
-      cwd: configDir,
+      cwd,
       env,
       signal: req.signal,
       spawn: options.spawn,
@@ -232,12 +328,44 @@ export async function* streamClaudeCli(
       return
     }
     throw err
+  } finally {
+    // The token is scoped to THIS turn — expire it with the turn, not the
+    // 1-day TTL floor. Never reuse a long-lived connector token.
+    if (connector) {
+      await revoke(req.toolContextBase.db, connector.connectorId, req.toolContextBase.userId)
+    }
   }
 }
 
 // ---------------------------------------------------------------------------
-// Prompt assembly (step 1 — see file doc comment for what's intentionally
-// not here yet: system prompt, multi-turn history, images, tools).
+// MCP config
+// ---------------------------------------------------------------------------
+
+/**
+ * Verified config shape (confirmed both from `--help`'s `claude mcp add
+ * --transport http ... --header "Authorization: Bearer ..."` example and the
+ * coordinator's own probe): an inline JSON string naming one HTTP MCP server,
+ * pointed at Studio's own endpoint on this same running process, carrying the
+ * turn-scoped connector's bearer token. `127.0.0.1` (not a public hostname) —
+ * this is a subprocess of THIS server talking back to itself.
+ */
+function buildMcpConfigJson(connector: ClaudeCliSessionConnector, serverPort?: number): string {
+  const port = serverPort ?? readServerConfig().port
+  return JSON.stringify({
+    mcpServers: {
+      studio: {
+        type: 'http',
+        url: `http://127.0.0.1:${port}${MCP_ENDPOINT_PATH}`,
+        headers: { Authorization: `Bearer ${connector.token}` },
+      },
+    },
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Prompt assembly — see the file doc comment's "Multi-turn continuity"
+// section for why only the latest message is sent here (the CLI's own
+// `--session-id`/`--resume` session remembers the rest, not a replayed log).
 // ---------------------------------------------------------------------------
 
 function latestUserPromptText(messages: AiStreamRequest['messages']): string | null {

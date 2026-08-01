@@ -72,6 +72,38 @@ const TestResponseSchema = Type.Object({
   error: Type.Optional(Type.String()),
 })
 
+// ---------------------------------------------------------------------------
+// Claude CLI availability status — see server/ai/handlers/claudeCliStatus.ts.
+// ---------------------------------------------------------------------------
+
+const ClaudeCliStatusResponseSchema = Type.Object({
+  availability: Type.Union([
+    Type.Literal('logged-in'),
+    Type.Literal('logged-out'),
+    Type.Literal('not-installed'),
+    Type.Literal('unsupported'),
+    Type.Literal('probe-failed'),
+  ]),
+  reason: Type.Optional(Type.String()),
+  loginCommand: Type.Optional(Type.String()),
+  subscriptionType: Type.Optional(Type.String()),
+})
+export type ClaudeCliStatus = Static<typeof ClaudeCliStatusResponseSchema>
+
+/**
+ * Zero-cost `claude auth status --json` probe, surfaced for the "disabled
+ * with the reason shown" provider picker state (WS-11 step 2). Never throws
+ * for a normal unavailable state — every case in {@link ClaudeCliStatus}
+ * carries its own `availability` + `reason`; only a genuine transport/auth
+ * failure (network, session expiry) throws via `apiRequest`'s `ApiError`.
+ */
+export async function getClaudeCliStatus(signal?: AbortSignal): Promise<ClaudeCliStatus> {
+  return apiRequest('/admin/api/ai/providers/claude-cli/status', {
+    schema: ClaudeCliStatusResponseSchema,
+    signal,
+  })
+}
+
 const ModelSchema = Type.Object({
   id: Type.String(),
   label: Type.String(),

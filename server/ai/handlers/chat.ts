@@ -6,6 +6,7 @@
  *     conversationId: string,
  *     content:        Array<{ kind: 'text' | 'image', ... }>,
  *     snapshot?:      unknown   // live Site editor snapshot for this turn
+ *     workspaceDir?:  string    // open project's absolute dir (claudeCli only, WS-11)
  *   }
  *
  * The conversation row already carries `(credentialId, modelId)` from when
@@ -120,7 +121,7 @@ async function handleAiChat(
     throw err
   }
   if (!chatBody) return badRequest('Invalid request body.')
-  const { conversationId, content, snapshot } = chatBody
+  const { conversationId, content, snapshot, workspaceDir } = chatBody
 
   const conversation = await readConversationForUser(db, user.id, conversationId)
   if (!conversation) {
@@ -374,6 +375,7 @@ async function handleAiChat(
           signal: turnSignal,
           bridge,
           toolContextBase,
+          workspaceDir,
         }
 
         const persister = createConversationsPersister(db, conversation.id, {

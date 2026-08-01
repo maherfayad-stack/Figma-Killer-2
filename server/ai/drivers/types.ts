@@ -126,6 +126,14 @@ export interface AiStreamRequest {
   readonly signal: AbortSignal
   readonly bridge: AiBrowserBridge
   /**
+   * The open project's absolute directory, when the browser has one open.
+   * Only `claudeCli` (WS-11) reads this — every HTTP driver ignores it, since
+   * only a real subprocess spawn has a `cwd` to set. Server-validated as a
+   * genuine, contained studio project before use — see
+   * `resolveClaudeCliWorkspaceCwd` in `server/handlers/studio/claudeCliEnv.ts`.
+   */
+  readonly workspaceDir?: string
+  /**
    * Base for the per-call `ToolContext` the driver builds when invoking a
    * server-side tool handler. Carries db + identity + the per-turn snapshot;
    * drivers add `signal` and pass the whole thing to the handler.

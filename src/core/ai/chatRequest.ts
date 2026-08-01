@@ -50,8 +50,19 @@ export const AiChatRequestBodySchema = Type.Object(
   {
     conversationId: Type.String({ minLength: 1 }),
     content: AiUserContentSchema,
-    // Scope-specific shape. The scope prompt builder validates it separately.
+    // Studio's own shape (the live editor snapshot). buildStudioSystemPrompt
+    // validates it separately.
     snapshot: Type.Optional(Type.Unknown()),
+    /**
+     * The open project's absolute directory, when one is open. Only the
+     * `claudeCli` driver (WS-11) uses this — it's the ONLY driver that spawns
+     * a real filesystem process, so it's the only one for which "which
+     * project" is a meaningful, security-relevant question. The server
+     * re-validates this is a genuine, contained studio project
+     * (`resolveClaudeCliWorkspaceCwd`) before ever using it as a spawn `cwd`
+     * — never trusted as-is. Every other driver ignores this field.
+     */
+    workspaceDir: Type.Optional(Type.String()),
   },
   { additionalProperties: false },
 )

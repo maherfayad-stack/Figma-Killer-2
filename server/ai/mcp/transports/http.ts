@@ -16,8 +16,9 @@ import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/
 import type { DbClient } from '../../../db/client'
 import { resolveMcpAuth, unauthorizedResponse } from '../auth'
 import { buildMcpServer } from '../server'
+import { MCP_ENDPOINT_PATH } from '../endpointPath'
 
-export const MCP_ENDPOINT_PATH = '/_studio/mcp'
+export { MCP_ENDPOINT_PATH }
 
 interface McpHttpOptions {
   uploadsDir?: string

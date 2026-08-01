@@ -3,7 +3,7 @@
  * mode, the L1 login one-liner, and macOS platform disablement (WS-11 §2.1/§5.1).
  */
 import { describe, expect, it, afterEach } from 'bun:test'
-import { existsSync, mkdtempSync, rmSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -15,6 +15,7 @@ import {
   ensureClaudeCliConfigDir,
   resolveClaudeCliConfigDir,
   resolveClaudeCliDataRoot,
+  resolveClaudeCliWorkspaceCwd,
 } from '../studio/claudeCliEnv'
 
 const scratchDirs: string[] = []
@@ -118,6 +119,68 @@ describe('buildClaudeCliLoginCommand', () => {
     expect(buildClaudeCliLoginCommand('/data/claude-cli/user-1'))
       .toBe('CLAUDE_CONFIG_DIR=/data/claude-cli/user-1 claude auth login')
   })
+})
+
+describe('resolveClaudeCliWorkspaceCwd (WS-11 step 2 fix)', () => {
+  it('returns the resolved path for a genuine, contained project directory', () => {
+    const root = scratchRoot()
+    const project = join(root, 'my-project')
+    mkdirSync(project, { recursive: true })
+    expect(resolveClaudeCliWorkspaceCwd(project, root)).toBe(project)
+  })
+
+  it('returns null when no directory is supplied', () => {
+    const root = scratchRoot()
+    expect(resolveClaudeCliWorkspaceCwd(undefined, root)).toBeNull()
+    expect(resolveClaudeCliWorkspaceCwd(null, root)).toBeNull()
+    expect(resolveClaudeCliWorkspaceCwd('', root)).toBeNull()
+  })
+
+  it('returns null when the directory does not exist', () => {
+    const root = scratchRoot()
+    expect(resolveClaudeCliWorkspaceCwd(join(root, 'nope'), root)).toBeNull()
+  })
+
+  it('returns null when the path is a file, not a directory', () => {
+    const root = scratchRoot()
+    const filePath = join(root, 'not-a-dir.txt')
+    writeFileSync(filePath, 'x')
+    expect(resolveClaudeCliWorkspaceCwd(filePath, root)).toBeNull()
+  })
+
+  it('returns null for a directory outside the projects root — never trusts the client', () => {
+    const root = scratchRoot()
+    const outside = scratchRoot()
+    expect(resolveClaudeCliWorkspaceCwd(outside, root)).toBeNull()
+  })
+
+  it('returns null for the projects root itself (never a project)', () => {
+    const root = scratchRoot()
+    expect(resolveClaudeCliWorkspaceCwd(root, root)).toBeNull()
+  })
+
+  it('returns null for a path-traversal attempt', () => {
+    const root = scratchRoot()
+    const project = join(root, 'my-project')
+    mkdirSync(project, { recursive: true })
+    expect(resolveClaudeCliWorkspaceCwd(join(project, '..', '..'), root)).toBeNull()
+  })
+
+  // Security-guard's own documented trap: a textual prefix check on an
+  // UNRESOLVED path is bypassable when the path contains a symlink. Skipped
+  // on Windows, where symlink creation needs elevated privileges in CI.
+  if (process.platform !== 'win32') {
+    it('resolves symlinks on BOTH sides before the containment check', () => {
+      const root = scratchRoot()
+      const realProject = join(scratchRoot(), 'real-project')
+      mkdirSync(realProject, { recursive: true })
+      const linkedProject = join(root, 'linked-project')
+      symlinkSync(realProject, linkedProject, 'dir')
+      // The link lives inside root, but its target does not — containment
+      // must be checked on the REAL path, so this must be rejected.
+      expect(resolveClaudeCliWorkspaceCwd(linkedProject, root)).toBeNull()
+    })
+  }
 })
 
 describe('claudeCliPlatformSupport', () => {
