@@ -46,7 +46,7 @@ export async function executeAiTool(
     return { ok: false, error: message }
   }
 
-  // Defence in depth: `selectToolsForScope` should never have offered a
+  // Defence in depth: `selectStudioTools` should never have offered a
   // tool the caller can't use, but re-check before dispatching to either
   // the server handler or the browser bridge anyway.
   if (!toolAllowedForCapabilities(aiTool, toolContextBase.capabilities)) {

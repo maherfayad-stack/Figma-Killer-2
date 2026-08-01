@@ -221,14 +221,14 @@ describe('runToolLoop via openaiDriver (Responses)', () => {
       credentials: { id: 'cr', providerId: 'openai', authMode: 'apiKey', apiKey: 'sk-test', baseUrl: null },
       signal: new AbortController().signal,
       bridge,
-      toolContextBase: { db: {} as never, userId: 'u1', scope: 'site', conversationId: 'c1', snapshot: {} },
+      toolContextBase: { db: {} as never, userId: 'u1', conversationId: 'c1', snapshot: {} },
     }
 
     const events: AiStreamEvent[] = []
     for await (const ev of openaiDriver.stream(req)) events.push(ev)
 
     expect(requestBodies).toHaveLength(2)
-    expect(requestBodies[0]!.prompt_cache_key).toMatch(/^studio:site:/)
+    expect(requestBodies[0]!.prompt_cache_key).toMatch(/^studio:/)
     expect(requestBodies[0]!).not.toHaveProperty('prompt_cache_retention')
     expect(serverCalls).toEqual([{ v: 7 }])
 
@@ -280,7 +280,6 @@ describe('openrouterDriver', () => {
         db: {} as never,
         userId: 'u1',
         capabilities: [],
-        scope: 'site',
         conversationId: 'c1',
         snapshot: {},
       },

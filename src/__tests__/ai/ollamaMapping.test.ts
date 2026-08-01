@@ -172,7 +172,7 @@ function makeRequest(serverCalls: unknown[]): AiStreamRequest {
     credentials: { id: 'cr', providerId: 'ollama', authMode: 'baseUrl', apiKey: null, baseUrl: 'http://localhost:11434' },
     signal: new AbortController().signal,
     bridge,
-    toolContextBase: { db: {} as never, userId: 'u1', scope: 'site', conversationId: 'c1', snapshot: {} },
+    toolContextBase: { db: {} as never, userId: 'u1', conversationId: 'c1', snapshot: {} },
   }
 }
 

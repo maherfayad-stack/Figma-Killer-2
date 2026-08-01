@@ -1,15 +1,9 @@
 import type { EditorStoreSliceCreator } from '@site/store/types'
 import type { AiToolOutput, AiUserContentBlock } from '@core/ai'
 import type { ConversationView } from '@admin/ai/api'
-import type { AgentMessage, AgentToolScope } from './types'
+import type { AgentMessage } from './types'
 
 export interface AgentSliceConfig {
-  /**
-   * Conversation scope. Used in URL paths (`/admin/api/ai/chat/${scope}`,
-   * `?scope=${scope}`), conversation-create body, and the per-scope default
-   * lookup. Keep it aligned with `server/ai/runtime/types.ts → ToolScope`.
-   */
-  readonly scope: AgentToolScope
   /**
    * Build the per-request snapshot. The slice has no knowledge of the host
    * store's shape; the config closure pulls from whatever store the host
@@ -22,8 +16,7 @@ export interface AgentSliceConfig {
    */
   dispatchTool(toolName: string, input: unknown): Promise<AiToolOutput>
   /**
-   * Optional copy override for the "no AI provider configured" error so
-   * each scope can point the user at the right /admin/ai page.
+   * Optional copy override for the "no AI provider configured" error.
    */
   readonly noProviderMessage?: string
 }
@@ -75,7 +68,7 @@ export interface AgentSlice {
   startNewAgentConversation(): void
   deleteAgentConversation(id: string): Promise<void>
   setAgentProvider(credentialId: string, modelId: string): Promise<void>
-  loadScopeDefault(): Promise<void>
+  loadStudioDefault(): Promise<void>
 }
 
 export type EditorStoreSet = Parameters<EditorStoreSliceCreator<AgentSlice>>[0]

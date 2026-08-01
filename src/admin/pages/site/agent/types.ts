@@ -18,14 +18,6 @@ import type { AiContentBlock, AiToolOutput } from '@core/ai'
 // Browser-bridged tools return the same canonical `AiToolOutput` shape the
 // server-side AI runtime waits on: `{ ok, data?, error? }`.
 
-/**
- * Conversation scope shared by every agent surface. Used in URL paths
- * (`/admin/api/ai/chat/${scope}`, `?scope=${scope}`), the conversation-create
- * body, and the per-scope default lookup. Keep it aligned with
- * `server/ai/runtime/types.ts → ToolScope`.
- */
-export type AgentToolScope = 'site' | 'data' | 'plugin'
-
 export interface AgentRenderSnapshotPayload {
   breakpointId: string
   /** Set when the capture was scoped to a single node subtree (the `nodeId` arg). */

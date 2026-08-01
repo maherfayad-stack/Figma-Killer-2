@@ -41,10 +41,6 @@ function aiCredentialLabel(event: CmsAuditEvent): string {
   return metadataString(event.metadata, 'displayLabel') ?? event.targetId ?? 'AI credential'
 }
 
-function aiScopeLabel(event: CmsAuditEvent): string {
-  return metadataString(event.metadata, 'scope') ?? event.targetId ?? 'scope'
-}
-
 function auditUserLabel(
   userId: string | null,
   usersById: Map<string, CmsCurrentUser>,
@@ -94,7 +90,6 @@ export function auditTitle(
   const dataTable = dataTableLabel(event)
   const dataRow = dataRowLabel(event)
   const aiCredential = aiCredentialLabel(event)
-  const aiScope = aiScopeLabel(event)
 
   switch (event.action) {
     case 'login.success':
@@ -176,15 +171,15 @@ export function auditTitle(
     case 'ai.credential.tested':
       return `AI credential ${aiCredential} was tested`
     case 'ai.default.updated':
-      return `AI default for ${aiScope} was updated`
+      return 'The AI default was updated'
     case 'ai.default.cleared':
-      return `AI default for ${aiScope} was cleared`
+      return 'The AI default was cleared'
     case 'ai.chat.started':
-      return `AI chat in ${aiScope} started`
+      return 'AI chat started'
     case 'ai.chat.completed':
-      return `AI chat in ${aiScope} completed`
+      return 'AI chat completed'
     case 'ai.chat.failed':
-      return `AI chat in ${aiScope} failed`
+      return 'AI chat failed'
     case 'ai.mcp_connector.created':
       return `MCP connector was created`
     case 'ai.mcp_connector.revoked':

@@ -1,9 +1,9 @@
 /**
  * Agent store slice — drives the AI Assistant panel.
  *
- * The browser opens a streaming NDJSON request against `/admin/api/ai/chat/
- * ${scope}`. The Bun server selects the configured provider credential and
- * model, then streams through the provider-agnostic direct-HTTP runtime.
+ * The browser opens a streaming NDJSON request against `/admin/api/ai/chat`.
+ * The Bun server selects the configured provider credential and model, then
+ * streams through the provider-agnostic direct-HTTP runtime.
  * The NDJSON wire protocol and its per-event handling live in `streamEvents.ts`;
  * conversation bootstrap lives in `agentApi.ts`; shared tool-result POSTs live
  * in `@admin/ai/toolResultApi`; provider update reconciliation lives in
@@ -27,8 +27,8 @@ import {
   deleteConversation,
 } from '@admin/ai/api'
 import {
-  createConversationForScope,
-  fetchScopeDefault,
+  createConversation,
+  fetchStudioDefault,
   rehydrateMessages,
 } from './agentApi'
 import { readNdjsonStream } from '@admin/ai/ndjsonStream'
@@ -81,28 +81,27 @@ interface ResolvedCredentials {
 
 /**
  * Resolve the `(credentialId, modelId)` to use: the staged picker selection if
- * present, otherwise the per-scope default fetched from the server. Shared by
- * `loadScopeDefault` (panel open) and `ensureConversationId` (first send) so the
+ * present, otherwise Studio's default fetched from the server. Shared by
+ * `loadStudioDefault` (panel open) and `ensureConversationId` (first send) so the
  * default is fetched at most once — whichever runs first stages the values and
  * the other reuses them, never double-fetching.
  */
-async function resolveScopeCredentials(
+async function resolveStudioCredentials(
   get: AgentSliceGet,
-  config: AgentSliceConfig,
   signal?: AbortSignal,
 ): Promise<ResolvedCredentials | null> {
   signal?.throwIfAborted()
   const credentialId = get().agentActiveCredentialId
   const modelId = get().agentActiveModelId
   if (credentialId && modelId) return { credentialId, modelId }
-  const credentials = await fetchScopeDefault(config.scope, signal)
+  const credentials = await fetchStudioDefault(signal)
   signal?.throwIfAborted()
   return credentials
 }
 
 /**
  * Ensure a conversation row exists before streaming. Returns the active row id
- * if one is set; otherwise resolves credentials (staged or scope default),
+ * if one is set; otherwise resolves credentials (staged or Studio's default),
  * creates the row, stages the resolved provider, and returns the new id.
  * Returns null when no provider is configured — the caller surfaces the
  * actionable "set up a provider" error.
@@ -110,18 +109,16 @@ async function resolveScopeCredentials(
 async function ensureConversationId(
   get: AgentSliceGet,
   set: EditorStoreSet,
-  config: AgentSliceConfig,
   signal: AbortSignal,
 ): Promise<string | null> {
   signal.throwIfAborted()
   const existing = get().agentConversationId
   if (existing) return existing
 
-  const creds = await resolveScopeCredentials(get, config, signal)
+  const creds = await resolveStudioCredentials(get, signal)
   if (!creds) return null
 
-  const conv = await createConversationForScope(
-    config.scope,
+  const conv = await createConversation(
     creds.credentialId,
     creds.modelId,
     signal,
@@ -197,16 +194,12 @@ function surfaceAssistantError(
 }
 
 /**
- * Slice factory — site editor + content workspace each call this with their
- * own scope/snapshot/dispatcher config. Returns a Zustand state creator the
- * host store composes via the usual `...createAgentSlice(config)(...args)`
- * spread.
+ * Slice factory — the site editor calls this with its snapshot/dispatcher
+ * config. Returns a Zustand state creator the host store composes via the
+ * usual `...createAgentSlice(config)(...args)` spread.
  *
  * Return type is intentionally an `EditorStoreSliceCreator<AgentSlice>` so
- * the site editor's existing composition keeps working. The content
- * workspace's standalone AgentSlice-only store calls it with a small cast
- * (see `contentAgentStore.ts`) — both at compile time and at runtime the
- * slice only touches AgentSlice keys, so wider stores compose cleanly.
+ * the site editor's existing composition keeps working.
  */
 export function createAgentSlice(
   config: AgentSliceConfig,
@@ -326,17 +319,17 @@ export function createAgentSlice(
         || get().isAgentConversationPending
         || get().isAgentProviderPending
       ) return
-      // Reset to a fresh conversation, then re-apply the scope default so the
+      // Reset to a fresh conversation, then re-apply Studio's default so the
       // composer stays ready (provider + model picked) instead of dropping to
-      // the "choose a model" lock. `loadScopeDefault` only fills the gap when
+      // the "choose a model" lock. `loadStudioDefault` only fills the gap when
       // nothing is chosen — exactly the post-reset state.
       get().clearAgentMessages()
-      void get().loadScopeDefault()
+      void get().loadStudioDefault()
     },
 
     async loadAgentConversations() {
       try {
-        const conversations = await listConversations(config.scope)
+        const conversations = await listConversations()
         set({ agentConversations: conversations })
       } catch (err) {
         console.error('[AgentSlice] Failed to load conversations:', err)
@@ -417,9 +410,9 @@ export function createAgentSlice(
             )
           }
         })
-        // If the active chat was the one deleted, re-apply the scope default so
+        // If the active chat was the one deleted, re-apply Studio's default so
         // the panel stays ready instead of dropping to the "choose a model" lock.
-        if (wasActive) void get().loadScopeDefault()
+        if (wasActive) void get().loadStudioDefault()
       } catch (err) {
         console.error('[AgentSlice] Failed to delete conversation:', err)
         pushToast({
@@ -493,19 +486,19 @@ export function createAgentSlice(
       }
     },
 
-    async loadScopeDefault() {
+    async loadStudioDefault() {
       // Only fill the "nothing chosen yet" gap — never clobber an active
       // conversation's provider or an explicit user pick.
       if (get().agentConversationId) return
       if (get().agentActiveCredentialId && get().agentActiveModelId) return
       let creds: ResolvedCredentials | null
       try {
-        creds = await resolveScopeCredentials(get, config)
+        creds = await resolveStudioCredentials(get)
       } catch (err) {
         // A failed defaults lookup is soft: leave the picker empty so the user
         // can pick a model. The send-time path still surfaces the actionable
         // no-provider error if they send without choosing.
-        console.error('[AgentSlice] Failed to load scope default:', err)
+        console.error('[AgentSlice] Failed to load the default model:', err)
         return
       }
       // The request may have been in flight while the user picked a model or
@@ -513,8 +506,8 @@ export function createAgentSlice(
       // explicit state.
       if (get().agentConversationId) return
       if (get().agentActiveCredentialId && get().agentActiveModelId) return
-      // No default configured for this scope: leave the picker empty (shows
-      // its "Choose a model" placeholder) and let the user pick one.
+      // No default configured: leave the picker empty (shows its "Choose a
+      // model" placeholder) and let the user pick one.
       if (!creds) return
       set({
         agentActiveCredentialId: creds.credentialId,
@@ -582,17 +575,16 @@ export function createAgentSlice(
         ) return { accepted: false }
         const snapshot = config.buildSnapshot()
 
-        // Lazily create the conversation row (staged picker values or scope
-        // default). Null means no provider is configured for this scope.
+        // Lazily create the conversation row (staged picker values or
+        // Studio's default). Null means no provider is configured yet.
         const conversationId = await ensureConversationId(
           get,
           set,
-          config,
           controller.signal,
         )
         if (!conversationId) {
           const message = config.noProviderMessage
-            ?? `No AI provider configured for the "${config.scope}" scope. Open /admin/ai/providers to add a credential, then /admin/ai/defaults to pick one.`
+            ?? 'No AI provider configured. Open /admin/ai/providers to add a credential, then /admin/ai/defaults to pick one.'
           set({ agentError: message })
           pushToast({ kind: 'error', title: "Couldn't send message", body: message })
           return { accepted: false }
@@ -606,7 +598,7 @@ export function createAgentSlice(
         }
 
         const body: AiChatRequestBody = { conversationId, content: [...content], snapshot }
-        const res = await fetch(`/admin/api/ai/chat/${config.scope}`, {
+        const res = await fetch('/admin/api/ai/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),

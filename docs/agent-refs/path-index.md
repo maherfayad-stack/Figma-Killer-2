@@ -17,10 +17,10 @@ Legend: 🟢 Studio (active work) · 🟡 shared infrastructure Studio depends o
 | 🟢 `server/handlers/studioWriteback.ts` | `StudioEdit` shapes, `studioEditLocation`, dedupe, path containment, `applyStudioEdit`. |
 | 🟠 `server/handlers/studioStructuralWriteback.ts` | The `move`/`delete`/`insert` edit kinds — schemas + dispatch into the structural codemods. Sibling of `studioCssWriteback.ts`; `studioWriteback.ts` imports it, never the reverse. |
 | 🟢 `server/handlers/studioCss.ts` | Imported `.css` → `StyleRule` registry, deterministic ids, happy-dom CSSOM. `loadStudioStyles`'s `extraCss` param merges in `styleCompile.ts`'s compiled output. |
-| 🟢 `server/handlers/studio/projectProbe.ts` | WS-1.2 — `dir → ProjectProfile`: framework, pages dir, style toolchain, aliases, component packages, and (`approot-01`) app-root detection (`detectAppRoot`) — a project's app root is not always its project directory (monorepos, `journey-screens/`-style named subdirectories). Every OTHER detector runs rooted at the resolved app root; every returned path is re-prefixed with `appRoot` to stay project-relative. `pagesDir` ranking (`rankPagesDirCandidates`) scores a candidate's whole RECURSIVE subtree, not just its direct files. Also exports `tryServeStudioProbe`, wired into `STUDIO_SUB_ROUTERS`. |
-| 🟢 `server/handlers/studio/projectProfileSchema.ts` | Pure schema leaf: `ProjectProfileSchema`/`ProjectProfile`, `ProbeWarning` — kept separate from `projectProbe.ts` to avoid a load cycle with `studioMeta.ts` (which persists a probe result and is read back by the probe for caching). |
+| 🟢 `server/handlers/studio/projectProbe.ts` | WS-1.2 — `dir → ProjectProfile`: framework, pages dir, style toolchain, aliases, component packages, `detectColorScheme` (WS-10 §3.1 — Tailwind `darkMode: 'class'`, a `.dark`/`[data-theme="dark"]` selector, or `@media (prefers-color-scheme: dark)`, purely syntactic), and (`approot-01`) app-root detection (`detectAppRoot`) — a project's app root is not always its project directory (monorepos, `journey-screens/`-style named subdirectories). Every OTHER detector runs rooted at the resolved app root; every returned path is re-prefixed with `appRoot` to stay project-relative. `pagesDir` ranking (`rankPagesDirCandidates`) scores a candidate's whole RECURSIVE subtree, not just its direct files. Also exports `tryServeStudioProbe`, wired into `STUDIO_SUB_ROUTERS`. |
+| 🟢 `server/handlers/studio/projectProfileSchema.ts` | Pure schema leaf: `ProjectProfileSchema`/`ProjectProfile`, `ProbeWarning`, `ColorSchemeCapability` (WS-10 §3.1 — `mechanism: 'media'\|'class'\|'none'` + detected `selector`) — kept separate from `projectProbe.ts` to avoid a load cycle with `studioMeta.ts` (which persists a probe result and is read back by the probe for caching). |
 | 🟢 `server/handlers/studio/appRoot.ts` | `approot-01` — `resolveAppRoot(dir)`/`joinAppRoot(dir, appRoot)`: `dir → absolute, real-path containment-checked app root`. The one place every `node_modules`/toolchain-touching consumer (`installDeps.ts`, `styleCompile.ts`, `componentBundle.ts`, `packageManifest.ts`'s callers) resolves the app root, instead of five separate joins that can drift apart. |
-| 🟢 `server/handlers/studio/studioMeta.ts` | Schema-validated `.studio/meta.json` (`StudioMetaSchema`): `displayName`, `pagesDir` override, `previewLocale`, `trust`, cached `profile` (`ProjectProfileSchema`, includes `appRoot`), `frameDefaults`, `paletteHiddenModuleIds`. |
+| 🟢 `server/handlers/studio/studioMeta.ts` | Schema-validated `.studio/meta.json` (`StudioMetaSchema`): `displayName`, `pagesDir` override, `previewLocale`, `previewAxes` (WS-10 Phase 1 — `direction`/`colorScheme`, both optional), `trust`, cached `profile` (`ProjectProfileSchema`, includes `appRoot`), `frameDefaults`, `paletteHiddenModuleIds`. |
 | 🟢 `server/handlers/studio/styleCompile.ts` | WS-2.1/2.3 — `dir + ProjectProfile → CompiledStyles`. CSS Modules (Tier 0, own transform) + vendor package CSS (`vendorCss` — bare-specifier `.css` imports resolved against the project's own `node_modules`, Tier 0 safe, no trust gate) + `compileProjectStyles`'s overall orchestration + the on-disk cache, cached under `.studio/cache/styles-<hash>.*`. Tier 1 (Sass/PostCSS/Tailwind) itself lives in `styleCompileTier1.ts` (split out to stay under the module-size budget). |
 | 🟢 `server/handlers/studio/styleCompileTier1.ts` | `compileSass`/`compilePostcssPipeline` — resolves the workspace's own `sass`/`postcss`/`@tailwindcss/postcss`, gated on trust, spawns `styleCompileWorker.ts` to actually run them. |
 | 🟢 `server/handlers/studio/styleCompileWorker.ts` | `sec-01` — the Tier 1 SUBPROCESS entry point. Runs `sass`/`postcss`/`postcss.config.js`/plugin packages OUT of the admin server's own process; reads one `WorkerTask` from argv, writes one `WorkerResult` to stdout. |
@@ -34,6 +34,7 @@ Legend: 🟢 Studio (active work) · 🟡 shared infrastructure Studio depends o
 | 🟢 `server/handlers/studio/componentBundle.ts` | `pkg-01`/WS-3.2 — `POST/GET /admin/api/studio/component-bundle`: `tryServeStudioComponentBundle` sub-router. Tier 1 gate, React major-version skew check, demand list (`ProjectProfile.componentPackages`), barrel generation, `.studio/cache/bundle-<hash>.{js,json}`. Wired into `STUDIO_SUB_ROUTERS`. `approot-01`: the react-version check, cache key, manifest extraction, and the generated barrel entry (placed directly at the resolved app root so `Bun.build`'s upward `node_modules` walk finds it) all resolve against the app root, not necessarily the project directory; the artefact itself stays at `.studio/cache/` under the project directory. |
 | 🟢 `server/handlers/studio/componentBundleWorker.ts` | `pkg-01`/WS-3.2 — the Tier 1 SUBPROCESS entry point: runs `Bun.build` (a package can execute a Bun macro at build time) out of the admin server's own process, via `subprocessRunner.ts`/`minimalSubprocessEnv()`, same posture as `styleCompileWorker.ts`. |
 | 🟢 `server/handlers/studio/trustTier.ts` | `pkg-02`/WS-3.3 — `GET/POST /admin/api/studio/trust-tier`: `tryServeStudioTrustTier` sub-router. Reads/writes `.studio/meta.json`'s `trust` field — the action behind the canvas's "promote this project" placeholder. |
+| 🟢 `server/handlers/studio/previewAxes.ts` | WS-10 Phase 1 — `GET/POST /admin/api/studio/preview-axes`: `tryServeStudioPreviewAxes` sub-router. Reads/writes `.studio/meta.json`'s `previewAxes` field via a merge-patch POST (same shape as `trustTier.ts`). |
 | 🟢 `src/core/module-engine/packageModuleId.ts` | `pkg-02`/WS-3.3 — `packageModuleId`/`sanitizePackageName`: the one `pkg.<sanitized-package>.<ComponentName>` naming scheme, shared by `studioPageLoad.ts`'s `resolveModuleId`, `componentBundle.ts`'s barrel generation, and `registerProjectModules.ts`. |
 | 🟢 `src/core/utils/studioSlotSentinel.ts` | `pkg-02`/WS-3.4 — `studio-slot:<nodeId>` sentinel: a package-component prop value referencing a materialized slot child node. Dependency-free (no ts-morph) so both the parser (server) and `registerProjectModules.ts` (browser) can import it. |
 | 🟢 `server/handlers/studioAsset.ts` | `GET /admin/api/studio/asset` + all path-containment guards. |
@@ -88,13 +89,15 @@ Legend: 🟢 Studio (active work) · 🟡 shared infrastructure Studio depends o
 | 🟢 `src/admin/pages/site/studio/importUploadProject.ts` | Upload/local-folder import client (XHR, for progress). |
 | 🟢 `src/admin/pages/site/studio/downloadStudioCode.ts` | Download-the-code client. |
 | 🟢 `src/admin/pages/site/studio/designImport/` | **Manual** design-token import — user pastes a GitHub URL or npm package spec, previews classified candidates, picks which to apply. Server side: `server/handlers/designImport.ts` + `designImport/parseCssTokens.ts`. `infra-01`: CSS classification now calls straight into `tokenExtractCssScan.ts`'s shared engine (value-first, `var()`-resolved) instead of a separately-drifting name-hint-first classifier — JSON/JS extraction (`extractJsonTokens`/`extractJsTokens`, unique to this manual wizard) stays local, classified through the SAME shared `classifyDeclaration`. Distinct TRIGGER from `tokens-01`'s `tokenExtract.ts` (manual/external source vs. automatic against the currently-open project's own CSS) — one engine, two triggers, not two engines. |
-| 🟢 `src/core/studio-board/` | `Board`, `BoardFrame`, `StickyNote`, `DocBlock`, `parseBoardsFile`, `devicePresets`. |
+| 🟢 `src/core/studio-board/` | `Board`, `BoardFrame`, `StickyNote`, `DocBlock`, `parseBoardsFile`, `devicePresets`, `PreviewAxes`/`DEFAULT_PREVIEW_AXES` (WS-10 Phase 1 — `previewAxes.ts`: `direction`/`colorScheme` render-time, `locale` reserved for Phase 2). |
 
 ## Canvas
 
 | Path | What it owns |
 |---|---|
-| 🟡 `src/admin/pages/site/canvas/IframeFrameSurface.tsx` | The iframe primitive: srcDoc boot, portal, event forwarding. |
+| 🟡 `src/admin/pages/site/canvas/IframeFrameSurface.tsx` | The iframe primitive: srcDoc boot, portal, event forwarding. Also applies `previewAxes` to the frame document as an ATTRIBUTE EFFECT (WS-10 Phase 1 — no remount, see `previewAxesFrameEffect.ts`). |
+| 🟢 `src/admin/pages/site/canvas/previewAxesFrameEffect.ts` | WS-10 Phase 1 — `applyPreviewAxesToFrameDocument`: sets `dir`/`lang`/`data-studio-scheme`/`color-scheme` on a frame's `<html>`, plus the project's own class/attribute dark-mode gate when the probe detected one (`parseClassSchemeSelector`). |
+| 🟢 `src/admin/pages/site/canvas/darkSchemeCssTransform.ts` | WS-10 Phase 1 §3.2 — rewrites `@media (prefers-color-scheme: dark\|light)` into `:where(html[data-studio-scheme='...'])` on the INJECTED COPY only. Brace/comment/string-aware scanner (not a single regex — nested at-rules would break one) + an isolated CSSOM validation per candidate span (never the whole file — happy-dom's CSSOM silently drops `@layer` content). |
 | 🟡 `src/admin/pages/site/canvas/CanvasRoot.tsx` | Canvas shell, mode switching, centering, agent snapshot mounting. |
 | 🟡 `src/admin/pages/site/canvas/CanvasTransformLayer.tsx` | Pan/zoom container; renders all frames. |
 | 🟡 `src/admin/pages/site/canvas/BreakpointFrame.tsx` | One viewport frame (CMS-style responsive frames). |
@@ -107,9 +110,9 @@ Legend: 🟢 Studio (active work) · 🟡 shared infrastructure Studio depends o
 | 🟡 `src/admin/pages/site/canvas/NodeRenderer.tsx` | Node → React element. Inline-edit binding. |
 | 🟡 `src/admin/pages/site/canvas/EditorChromeInjector.tsx` | Unlayered editor chrome CSS into each iframe. |
 | 🟡 `src/admin/pages/site/canvas/ClassStyleInjector.tsx` | Class registry CSS (`@layer user-authored`). |
-| 🟡 `src/admin/pages/site/canvas/UserStylesheetInjector.tsx` | User stylesheets. |
+| 🟡 `src/admin/pages/site/canvas/UserStylesheetInjector.tsx` | User stylesheets. Pipes the collected CSS through `darkSchemeCssTransform.ts` before injection (WS-10 Phase 1). |
 | 🟢 `src/admin/pages/site/canvas/CanvasAnimationInjector.tsx` | Freeze CSS animations in design frames. |
-| 🟢 `src/admin/pages/site/canvas/ProjectCssInjector.tsx` | Read-only vendor package CSS into iframes (`@layer vendor`) — Alm's bundled CSS + the open project's own bare-specifier package CSS (WS-2.3). |
+| 🟢 `src/admin/pages/site/canvas/ProjectCssInjector.tsx` | Read-only vendor package CSS into iframes (`@layer vendor`) — Alm's bundled CSS + the open project's own bare-specifier package CSS (WS-2.3). Also pipes it through `darkSchemeCssTransform.ts` (WS-10 Phase 1) — a package's own dark-mode media query gets rewritten too. |
 | 🟡 `src/admin/pages/site/canvas/canvasCssLayers.ts` | `reset`/`vendor`/`user-authored` cascade-layer names + ordering pre-declaration. **The reset is the LOWEST layer** — above `vendor` its `:where()` rules annihilate every design system. |
 | 🟡 `src/admin/pages/site/canvas/useIframeFrameAutoHeight.ts` | Frame height + the definite `body` height `%` chains need. |
 | 🟡 `src/admin/pages/site/canvas/AgentSnapshotFrame.tsx` | Offscreen deterministic frame for agent screenshots. |
@@ -123,7 +126,7 @@ Legend: 🟢 Studio (active work) · 🟡 shared infrastructure Studio depends o
 | 🟡 `src/admin/pages/site/store/slices/site/helpers.ts` | `resolveActiveTreeTarget`, `mutateActiveTree` — **the only place that knows which tree is active**. |
 | 🟢 `src/admin/pages/site/store/slices/boardSlice.ts` | Boards, frames, positions, sizes. |
 | 🟡 `src/admin/pages/site/store/slices/selectionSlice.ts` | Node selection, multi-select. |
-| 🟡 `src/admin/pages/site/store/slices/canvasSlice.ts` | `canvasView` (design/live), zoom/pan, `runScripts`, `activeBreakpointId`. |
+| 🟡 `src/admin/pages/site/store/slices/canvasSlice.ts` | `canvasView` (design/live), zoom/pan, `runScripts`, `activeBreakpointId`, `previewAxes`/`setPreviewAxes` (WS-10 Phase 1, board-global). |
 | 🟡 `src/admin/pages/site/store/slices/inlineEditSlice.ts` | In-place contentEditable sessions. |
 | 🟡 `src/admin/pages/site/store/slices/styleRuleSlice.ts` | Class registry mutations. |
 | 🟡 `src/core/page-tree/mutations.ts` | **All tree mutations**, tree-agnostic. |
@@ -154,6 +157,9 @@ Legend: 🟢 Studio (active work) · 🟡 shared infrastructure Studio depends o
 | 🟢 `src/admin/pages/site/studio/studioProjectTrust.ts` | `pkg-02`/WS-3.3 — per-project trust-tier external store + `promoteProjectToTier1` (the "promote this project" consent action) + the last `component-bundle` refusal status. Split out of `fsCodemodAdapter.ts` to stay under the module-size ceiling. |
 | 🟢 `src/admin/pages/site/canvas/PackageComponentPlaceholder.tsx` | `pkg-02`/WS-3.3 — `NodeRenderer.tsx`'s fallback for an unregistered `pkg.*` node: Tier-0 "promote this project" button, a bundle-refusal message, or a loading state. Styled via `EditorChromeInjector.tsx`'s `[data-studio-package-placeholder]` (renders inside the per-frame iframe — CSS Modules don't reach there). |
 | 🟡 `src/core/module-engine/` | Module registry, schema, validation. |
+| 🟢 `src/admin/pages/site/studio/previewAxesCapability.ts` | WS-10 Phase 1 — client for `GET/POST /admin/api/studio/preview-axes` (persisted axes) + an external store for the dark-mode `ColorSchemeCapability` probe (`GET /admin/api/studio/probe`), same "tiny external store" pattern as `studioProjectTrust.ts`. |
+| 🟢 `src/admin/pages/site/studio/usePreviewAxesHydration.ts` | WS-10 Phase 1 — on project open, loads persisted axes into `canvasSlice.previewAxes` + refreshes the color-scheme capability probe. Mounted from `AdminCanvasEditorBody.tsx` alongside `useRegisterProjectModules`. |
+| 🟢 `src/admin/pages/site/toolbar/PreviewAxesControls.tsx` | WS-10 Phase 1 §5.1 — the toolbar's direction/dark-mode toggle. Dark-mode renders DISABLED WITH THE REASON when the probe found no mechanism (§7.4 "probe honesty") — never a silent no-op. |
 
 ## AI / MCP
 
@@ -179,7 +185,10 @@ Legend: 🟢 Studio (active work) · 🟡 shared infrastructure Studio depends o
 ## Not ours (dormant CMS)
 
 ⚪ `server/handlers/cms/` · `server/repositories/` · `server/db/` ·
-`server/publish/` · `server/plugins/` · `src/admin/pages/{content,data,dashboard,media,plugins,users}/` ·
+`server/publish/` · `server/plugins/` · `src/admin/pages/{dashboard,plugins,users}/` ·
 `src/core/publisher/` · `src/core/plugin-sdk/` · `src/core/plugins/`
+
+(`src/admin/pages/{content,data,media}/` do not exist on disk — Studio never
+built a separate content/data workspace or media library page.)
 
 Touch only when a Studio change genuinely requires it, and say so in the handoff.

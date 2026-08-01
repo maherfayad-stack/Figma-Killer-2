@@ -1,7 +1,7 @@
 /**
  * Conversations handler — full CRUD over chat history.
  *
- *   GET    /admin/api/ai/conversations?scope=site            list
+ *   GET    /admin/api/ai/conversations                       list
  *   POST   /admin/api/ai/conversations                       create
  *   GET    /admin/api/ai/conversations/:id                   read (+messages)
  *   PUT    /admin/api/ai/conversations/:id                   update
@@ -22,7 +22,7 @@ import { requireCapability } from '../../auth/authz'
 import type { DbClient } from '../../db/client'
 import {
   createConversationForUser,
-  listConversationsForUserScope,
+  listConversationsForUser,
   listMessagesForConversation,
   readMessageForUser,
   readConversationForUser,
@@ -31,12 +31,8 @@ import {
   toConversationView,
   updateConversationForUser,
 } from '../conversations/store'
-import type { ToolScope } from '../runtime/types'
-
-const VALID_SCOPES: ToolScope[] = ['site', 'data', 'plugin']
 
 const CreateBodySchema = Type.Object({
-  scope: Type.Union(VALID_SCOPES.map((s) => Type.Literal(s))),
   title: Type.Optional(Type.String()),
   credentialId: Type.String({ minLength: 1 }),
   modelId: Type.String({ minLength: 1 }),
@@ -51,11 +47,11 @@ const UpdateBodySchema = Type.Object({
 export function tryHandleAiConversations(
   req: Request,
   db: DbClient,
-  url: URL,
+  _url: URL,
   pathname: string,
 ): Promise<Response> | null {
   if (pathname === '/admin/api/ai/conversations') {
-    return dispatchCollection(req, db, url)
+    return dispatchCollection(req, db)
   }
   const imageMatch = pathname.match(
     /^\/admin\/api\/ai\/conversations\/([^/]+)\/messages\/([^/]+)\/images\/(\d+)$/,
@@ -132,28 +128,17 @@ function imageNotFound(): Response {
 // Collection
 // ---------------------------------------------------------------------------
 
-async function dispatchCollection(req: Request, db: DbClient, url: URL): Promise<Response> {
-  if (req.method === 'GET') return handleList(req, db, url)
+async function dispatchCollection(req: Request, db: DbClient): Promise<Response> {
+  if (req.method === 'GET') return handleList(req, db)
   if (req.method === 'POST') return handleCreate(req, db)
   return jsonResponse({ error: 'Method not allowed' }, { status: 405 })
 }
 
-async function handleList(req: Request, db: DbClient, url: URL): Promise<Response> {
+async function handleList(req: Request, db: DbClient): Promise<Response> {
   const userOrResponse = await requireCapability(req, db, 'ai.chat')
   if (userOrResponse instanceof Response) return userOrResponse
 
-  const scopeParam = url.searchParams.get('scope')
-  if (!scopeParam || !VALID_SCOPES.includes(scopeParam as ToolScope)) {
-    return jsonResponse(
-      { error: `Query parameter \`scope\` is required (one of: ${VALID_SCOPES.join(', ')})` },
-      { status: 400 },
-    )
-  }
-  const records = await listConversationsForUserScope(
-    db,
-    userOrResponse.id,
-    scopeParam as ToolScope,
-  )
+  const records = await listConversationsForUser(db, userOrResponse.id)
   return jsonResponse({ conversations: records.map(toConversationView) })
 }
 

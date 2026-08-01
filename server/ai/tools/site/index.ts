@@ -1,12 +1,12 @@
 /**
- * Site-scope tool barrel — exports the toolset and the system prompt builder.
+ * Studio tool barrel — exports the toolset and the system prompt builder.
  *
- * The chat handler imports `siteTools` for `scope === 'site'` and
- * `buildSiteSystemPrompt` when assembling the prompt for a site-scope
- * conversation.
+ * The chat handler imports `siteTools` (re-exported as `studioTools` from
+ * `server/ai/tools`) and `buildSiteSystemPrompt` when assembling the prompt
+ * for the Studio agent's one conversation surface.
  *
  * Write tools (everything in `siteWriteTools` except browser-backed reads) are
- * stamped `mutates: true` so `selectToolsForScope` can filter them out for
+ * stamped `mutates: true` so `selectStudioTools` can filter them out for
  * callers without `ai.tools.write`.
  */
 

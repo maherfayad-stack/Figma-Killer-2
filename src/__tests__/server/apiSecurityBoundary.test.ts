@@ -158,7 +158,7 @@ const CMS_MUTATION_ROUTES: MutationRoute[] = [
 ]
 
 const AI_MUTATION_ROUTES: MutationRoute[] = [
-  { method: 'POST', path: '/admin/api/ai/chat/site' },
+  { method: 'POST', path: '/admin/api/ai/chat' },
   { method: 'POST', path: '/admin/api/ai/tool-result' },
   { method: 'POST', path: '/admin/api/ai/credentials' },
   { method: 'PUT', path: '/admin/api/ai/credentials/credential-1' },
@@ -167,8 +167,8 @@ const AI_MUTATION_ROUTES: MutationRoute[] = [
   { method: 'POST', path: '/admin/api/ai/conversations' },
   { method: 'PUT', path: '/admin/api/ai/conversations/conversation-1' },
   { method: 'DELETE', path: '/admin/api/ai/conversations/conversation-1' },
-  { method: 'PUT', path: '/admin/api/ai/defaults/site' },
-  { method: 'DELETE', path: '/admin/api/ai/defaults/site' },
+  { method: 'PUT', path: '/admin/api/ai/defaults' },
+  { method: 'DELETE', path: '/admin/api/ai/defaults' },
 ]
 
 describe('admin API security boundary', () => {
@@ -237,7 +237,7 @@ describe('admin API security boundary', () => {
       const harness = await createCapabilityTestHarness()
       try {
         for (const origin of ['https://cms.example.com', 'https://site.onrender.com']) {
-          const response = await harness.ai('/admin/api/ai/defaults/site', {
+          const response = await harness.ai('/admin/api/ai/defaults', {
             method: 'PUT',
             headers: { origin },
             json: { credentialId: 'cred-1', modelId: 'model-1' },
@@ -287,7 +287,7 @@ describe('admin API security boundary', () => {
         const { db, wasQueried } = makeThrowingDb()
         const req = makeRequest(
           'PUT',
-          '/admin/api/ai/defaults/site',
+          '/admin/api/ai/defaults',
           { credentialId: 'cred-1', modelId: 'model-1' },
           {
             origin: 'https://evil.example.com',
@@ -327,7 +327,7 @@ describe('admin API security boundary', () => {
     const { db, wasQueried } = makeThrowingDb()
 
     const response = await handleServerRequest(
-      makeRequest('PUT', '/admin/api/ai/defaults/site', { credentialId: 'cred-1', modelId: 'model-1' }, {
+      makeRequest('PUT', '/admin/api/ai/defaults', { credentialId: 'cred-1', modelId: 'model-1' }, {
         origin: 'https://evil.example',
       }),
       { db },
@@ -436,7 +436,7 @@ describe('admin API security boundary', () => {
         capabilities: ['ai.chat'],
       })
 
-      const response = await harness.ai('/admin/api/ai/defaults/site', {
+      const response = await harness.ai('/admin/api/ai/defaults', {
         method: 'PUT',
         cookie: chatOnly.cookie,
         json: { credentialId: 'cred-1', modelId: 'model-1' },
@@ -454,7 +454,7 @@ describe('admin API security boundary', () => {
     try {
       const ownerCookie = await harness.setupOwner()
 
-      const response = await harness.ai('/admin/api/ai/defaults/site', {
+      const response = await harness.ai('/admin/api/ai/defaults', {
         method: 'PUT',
         cookie: ownerCookie,
         headers: { 'content-type': 'application/json' },
@@ -473,7 +473,7 @@ describe('admin API security boundary', () => {
     try {
       const ownerCookie = await harness.setupOwner()
 
-      const response = await harness.ai('/admin/api/ai/defaults/site', {
+      const response = await harness.ai('/admin/api/ai/defaults', {
         method: 'PUT',
         cookie: ownerCookie,
         json: { credentialId: '', modelId: '' },

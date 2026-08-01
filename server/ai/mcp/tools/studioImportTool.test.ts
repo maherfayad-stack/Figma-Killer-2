@@ -22,7 +22,6 @@ function fakeCtx(): ToolContext {
     db: undefined as never, // unused by this tool's handler
     userId: 'u1',
     capabilities: ['ai.tools.write', 'site.structure.edit'],
-    scope: 'site',
     conversationId: 'mcp:test',
     snapshot: null,
     signal: new AbortController().signal,

@@ -129,10 +129,10 @@ describe('audit event formatting', () => {
         event: auditEvent({
           action: 'ai.default.updated',
           targetType: 'ai_default',
-          targetId: 'site',
-          metadata: { scope: 'site' },
+          targetId: 'default',
+          metadata: { credentialId: 'cred_1', modelId: 'claude-sonnet-4-6' },
         }),
-        expected: 'AI default for site was updated',
+        expected: 'The AI default was updated',
       },
       {
         event: auditEvent({
@@ -148,9 +148,9 @@ describe('audit event formatting', () => {
           action: 'ai.chat.failed',
           targetType: 'ai_conversation',
           targetId: 'conversation_1',
-          metadata: { scope: 'site' },
+          metadata: {},
         }),
-        expected: 'AI chat in site failed',
+        expected: 'AI chat failed',
       },
     ]
 

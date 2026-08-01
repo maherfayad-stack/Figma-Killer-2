@@ -15,7 +15,7 @@ export type {
   AgentSliceConfig,
 } from './agentSliceTypes'
 
-// Site-editor wiring (scope, snapshot, dispatcher) handed to the factory.
+// Site-editor wiring (snapshot, dispatcher) handed to the factory.
 export { siteAgentSliceConfig } from './agentSliceConfig.site'
 
 // Stream protocol — schema + per-event reducer + NDJSON reader.

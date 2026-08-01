@@ -132,7 +132,7 @@ function ndjsonResponse(events: object[]): Response {
 
 const defaultsResponse = () =>
   new Response(
-    JSON.stringify({ defaults: { site: { credentialId: 'cred-1', modelId: 'claude-sonnet-4-6' } } }),
+    JSON.stringify({ default: { credentialId: 'cred-1', modelId: 'claude-sonnet-4-6' } }),
     { status: 200, headers: { 'Content-Type': 'application/json' } },
   )
 
@@ -153,7 +153,6 @@ const conversationDetailMessagesResponse = (
   new Response(JSON.stringify({
     conversation: {
       id,
-      scope: 'site',
       title: 'Image',
       credentialId: selection.credentialId,
       modelId: selection.modelId,
@@ -565,7 +564,7 @@ describe('sendAgentMessage — request lifecycle', () => {
     const intercept = captureFetchByRoute({
       '/admin/api/ai/defaults': defaultsResponse,
       '/admin/api/ai/conversations': () => conversationCreateResponse('conv-1'),
-      '/admin/api/ai/chat/site': () => ndjsonResponse([
+      '/admin/api/ai/chat': () => ndjsonResponse([
         { type: 'bridgeReady', bridgeId: 'b-1' },
         { type: 'text', text: 'Inserting hero…' },
         { type: 'done' },
@@ -582,7 +581,7 @@ describe('sendAgentMessage — request lifecycle', () => {
     // Three calls: GET defaults → POST conversations → POST chat/site.
     const defaultsCalls = intercept.calls.filter((c) => c.url === '/admin/api/ai/defaults')
     const conversationCalls = intercept.calls.filter((c) => c.url === '/admin/api/ai/conversations')
-    const chatCalls = intercept.calls.filter((c) => c.url === '/admin/api/ai/chat/site')
+    const chatCalls = intercept.calls.filter((c) => c.url === '/admin/api/ai/chat')
     expect(defaultsCalls).toHaveLength(1)
     expect(conversationCalls).toHaveLength(1)
     expect(chatCalls).toHaveLength(1)
@@ -612,7 +611,7 @@ describe('sendAgentMessage — request lifecycle', () => {
           else signal?.addEventListener('abort', rejectAbort, { once: true })
         })
       },
-      '/admin/api/ai/chat/site': () => ndjsonResponse([{ type: 'done' }]),
+      '/admin/api/ai/chat': () => ndjsonResponse([{ type: 'done' }]),
     })
 
     try {
@@ -625,7 +624,7 @@ describe('sendAgentMessage — request lifecycle', () => {
       expect(useEditorStore.getState().isAgentStreaming).toBe(false)
       expect(useEditorStore.getState().agentConversationId).toBeNull()
       expect(useEditorStore.getState().agentMessages).toEqual([])
-      expect(intercept.calls.some((call) => call.url === '/admin/api/ai/chat/site')).toBe(false)
+      expect(intercept.calls.some((call) => call.url === '/admin/api/ai/chat')).toBe(false)
     } finally {
       intercept.restore()
     }
@@ -643,7 +642,7 @@ describe('sendAgentMessage — request lifecycle', () => {
     const intercept = captureFetchByRoute({
       '/admin/api/ai/defaults': defaultsResponse,
       '/admin/api/ai/conversations': () => conversationCreateResponse('conv-image'),
-      '/admin/api/ai/chat/site': () => ndjsonResponse([
+      '/admin/api/ai/chat': () => ndjsonResponse([
         { type: 'bridgeReady', bridgeId: 'b-image' },
         { type: 'done' },
       ]),
@@ -657,7 +656,7 @@ describe('sendAgentMessage — request lifecycle', () => {
     }
 
     expect(result).toEqual({ accepted: true })
-    const chat = intercept.calls.find((call) => call.url === '/admin/api/ai/chat/site')
+    const chat = intercept.calls.find((call) => call.url === '/admin/api/ai/chat')
     expect(chat).toBeDefined()
     expect(JSON.parse(chat!.body)).toMatchObject({
       conversationId: 'conv-image',
@@ -682,7 +681,7 @@ describe('sendAgentMessage — request lifecycle', () => {
     const intercept = captureFetchByRoute({
       '/admin/api/ai/defaults': defaultsResponse,
       '/admin/api/ai/conversations': () => conversationCreateResponse('conv-99'),
-      '/admin/api/ai/chat/site': () => ndjsonResponse([
+      '/admin/api/ai/chat': () => ndjsonResponse([
         { type: 'bridgeReady', bridgeId: 'b-1' },
         { type: 'done' },
       ]),
@@ -700,7 +699,7 @@ describe('sendAgentMessage — request lifecycle', () => {
     // Defaults fetched ONCE — second send already has a conversation.
     expect(intercept.calls.filter((c) => c.url === '/admin/api/ai/defaults')).toHaveLength(1)
     // Chat hit twice.
-    const chatCalls = intercept.calls.filter((c) => c.url === '/admin/api/ai/chat/site')
+    const chatCalls = intercept.calls.filter((c) => c.url === '/admin/api/ai/chat')
     expect(chatCalls).toHaveLength(2)
     for (const call of chatCalls) {
       const body = JSON.parse(call.body) as { conversationId: string }
@@ -715,7 +714,7 @@ describe('sendAgentMessage — request lifecycle', () => {
     const intercept = captureFetchByRoute({
       '/admin/api/ai/defaults': defaultsResponse,
       '/admin/api/ai/conversations': () => conversationCreateResponse('conv-7'),
-      '/admin/api/ai/chat/site': () => ndjsonResponse([
+      '/admin/api/ai/chat': () => ndjsonResponse([
         { type: 'bridgeReady', bridgeId: 'b-3' },
         {
           type: 'toolRequest',
@@ -759,7 +758,7 @@ describe('sendAgentMessage — request lifecycle', () => {
     const intercept = captureFetchByRoute({
       '/admin/api/ai/defaults': defaultsResponse,
       '/admin/api/ai/conversations': () => conversationCreateResponse('conv-tool-result-failure'),
-      '/admin/api/ai/chat/site': () => ndjsonResponse([
+      '/admin/api/ai/chat': () => ndjsonResponse([
         { type: 'bridgeReady', bridgeId: 'bridge-tool-result-failure' },
         {
           type: 'toolCall',
@@ -817,7 +816,7 @@ describe('sendAgentMessage — request lifecycle', () => {
     const intercept = captureFetchByRoute({
       '/admin/api/ai/defaults': defaultsResponse,
       '/admin/api/ai/conversations': () => conversationCreateResponse('conv-active-abort'),
-      '/admin/api/ai/chat/site': () => ndjsonResponse([
+      '/admin/api/ai/chat': () => ndjsonResponse([
         { type: 'bridgeReady', bridgeId: 'bridge-active-abort' },
         {
           type: 'toolRequest',
@@ -856,9 +855,9 @@ describe('sendAgentMessage — request lifecycle', () => {
     useEditorStore.setState({ isAgentStreaming: false, agentMessages: [] })
 
     const intercept = captureFetchByRoute({
-      // Empty defaults — no site default configured.
+      // Empty defaults — no default configured.
       '/admin/api/ai/defaults': () => new Response(
-        JSON.stringify({ defaults: {} }),
+        JSON.stringify({ default: null }),
         { status: 200, headers: { 'Content-Type': 'application/json' } },
       ),
     })
@@ -871,7 +870,7 @@ describe('sendAgentMessage — request lifecycle', () => {
 
     expect(useEditorStore.getState().agentError).toContain('No AI provider configured')
     // Should NOT have reached the chat endpoint.
-    expect(intercept.calls.some((c) => c.url === '/admin/api/ai/chat/site')).toBe(false)
+    expect(intercept.calls.some((c) => c.url === '/admin/api/ai/chat')).toBe(false)
   })
 })
 
@@ -922,7 +921,7 @@ describe('loadAgentConversation — rehydration', () => {
         loadStarted.resolve()
         return loadResponse.promise
       },
-      '/admin/api/ai/chat/site': () => ndjsonResponse([{ type: 'done' }]),
+      '/admin/api/ai/chat': () => ndjsonResponse([{ type: 'done' }]),
     })
 
     try {
@@ -931,7 +930,7 @@ describe('loadAgentConversation — rehydration', () => {
       expect(useEditorStore.getState().isAgentConversationPending).toBe(true)
       expect(await useEditorStore.getState().sendAgentMessage(textContent('Wait')))
         .toEqual({ accepted: false })
-      expect(intercept.calls.some((call) => call.url === '/admin/api/ai/chat/site')).toBe(false)
+      expect(intercept.calls.some((call) => call.url === '/admin/api/ai/chat')).toBe(false)
 
       loadResponse.resolve(conversationDetailResponse('conv-new', [
         { kind: 'text', text: 'Loaded' },
@@ -1111,7 +1110,7 @@ describe('sendAgentMessage — streaming + error surfacing', () => {
     const intercept = captureFetchByRoute({
       '/admin/api/ai/defaults': defaultsResponse,
       '/admin/api/ai/conversations': () => conversationCreateResponse('conv-truncated'),
-      '/admin/api/ai/chat/site': () => ndjsonResponse([
+      '/admin/api/ai/chat': () => ndjsonResponse([
         { type: 'bridgeReady', bridgeId: 'b-truncated' },
         {
           type: 'toolCall',
@@ -1147,7 +1146,7 @@ describe('sendAgentMessage — streaming + error surfacing', () => {
     const intercept = captureFetchByRoute({
       '/admin/api/ai/defaults': defaultsResponse,
       '/admin/api/ai/conversations': () => conversationCreateResponse('conv-mid'),
-      '/admin/api/ai/chat/site': () => ndjsonResponse([
+      '/admin/api/ai/chat': () => ndjsonResponse([
         { type: 'bridgeReady', bridgeId: 'b-1' },
         { type: 'text', text: 'Working…' },
         { type: 'error', message: 'Provider rate limit exceeded.' },
@@ -1177,7 +1176,7 @@ describe('sendAgentMessage — streaming + error surfacing', () => {
     const intercept = captureFetchByRoute({
       '/admin/api/ai/defaults': defaultsResponse,
       '/admin/api/ai/conversations': () => conversationCreateResponse('conv-err'),
-      '/admin/api/ai/chat/site': () => new Response('boom', { status: 500 }),
+      '/admin/api/ai/chat': () => new Response('boom', { status: 500 }),
     })
 
     let result: { accepted: boolean } | undefined
@@ -1193,7 +1192,7 @@ describe('sendAgentMessage — streaming + error surfacing', () => {
     expect(useEditorStore.getState().isAgentStreaming).toBe(false)
   })
 
-  it('reuses the loadScopeDefault-staged credential on send without re-fetching defaults', async () => {
+  it('reuses the loadStudioDefault-staged credential on send without re-fetching defaults', async () => {
     freshAgentState()
     useEditorStore.setState({
       isAgentStreaming: false,
@@ -1206,7 +1205,7 @@ describe('sendAgentMessage — streaming + error surfacing', () => {
     const intercept = captureFetchByRoute({
       '/admin/api/ai/defaults': defaultsResponse,
       '/admin/api/ai/conversations': () => conversationCreateResponse('conv-staged'),
-      '/admin/api/ai/chat/site': () => ndjsonResponse([
+      '/admin/api/ai/chat': () => ndjsonResponse([
         { type: 'bridgeReady', bridgeId: 'b-1' },
         { type: 'done' },
       ]),
@@ -1214,7 +1213,7 @@ describe('sendAgentMessage — streaming + error surfacing', () => {
 
     try {
       // Panel-open path stages the default…
-      await useEditorStore.getState().loadScopeDefault()
+      await useEditorStore.getState().loadStudioDefault()
       // …first send must reuse it, NOT fetch the default a second time.
       await useEditorStore.getState().sendAgentMessage(textContent('Hi'))
     } finally {
@@ -1231,11 +1230,11 @@ describe('sendAgentMessage — streaming + error surfacing', () => {
 })
 
 // ---------------------------------------------------------------------------
-// loadScopeDefault — preload the configured default into the picker
+// loadStudioDefault — preload the configured default into the picker
 // ---------------------------------------------------------------------------
 
-describe('loadScopeDefault', () => {
-  it('stages the scope default as the active selection and clears any error', async () => {
+describe('loadStudioDefault', () => {
+  it('stages the default as the active selection and clears any error', async () => {
     freshAgentState()
     useEditorStore.setState({
       isAgentStreaming: false,
@@ -1250,7 +1249,7 @@ describe('loadScopeDefault', () => {
     })
 
     try {
-      await useEditorStore.getState().loadScopeDefault()
+      await useEditorStore.getState().loadStudioDefault()
     } finally {
       intercept.restore()
     }
@@ -1275,7 +1274,7 @@ describe('loadScopeDefault', () => {
     })
 
     try {
-      await useEditorStore.getState().loadScopeDefault()
+      await useEditorStore.getState().loadStudioDefault()
     } finally {
       intercept.restore()
     }
@@ -1297,13 +1296,13 @@ describe('loadScopeDefault', () => {
 
     const intercept = captureFetchByRoute({
       '/admin/api/ai/defaults': () => new Response(
-        JSON.stringify({ defaults: {} }),
+        JSON.stringify({ default: null }),
         { status: 200, headers: { 'Content-Type': 'application/json' } },
       ),
     })
 
     try {
-      await useEditorStore.getState().loadScopeDefault()
+      await useEditorStore.getState().loadStudioDefault()
     } finally {
       intercept.restore()
     }
@@ -1330,7 +1329,7 @@ describe('loadScopeDefault', () => {
     })
 
     try {
-      const loading = useEditorStore.getState().loadScopeDefault()
+      const loading = useEditorStore.getState().loadStudioDefault()
       await requestStarted.promise
       await useEditorStore.getState().setAgentProvider('cred-picked', 'model-picked')
       response.resolve(defaultsResponse())
@@ -1384,7 +1383,7 @@ describe('setAgentProvider', () => {
         updateStarted.resolve()
         return updateResponse.promise
       },
-      '/admin/api/ai/chat/site': () => ndjsonResponse([{ type: 'done' }]),
+      '/admin/api/ai/chat': () => ndjsonResponse([{ type: 'done' }]),
     })
 
     try {
@@ -1393,12 +1392,11 @@ describe('setAgentProvider', () => {
       expect(useEditorStore.getState().isAgentProviderPending).toBe(true)
       expect(await useEditorStore.getState().sendAgentMessage(textContent('Use the new model')))
         .toEqual({ accepted: false })
-      expect(intercept.calls.some((call) => call.url === '/admin/api/ai/chat/site')).toBe(false)
+      expect(intercept.calls.some((call) => call.url === '/admin/api/ai/chat')).toBe(false)
 
       updateResponse.resolve(new Response(JSON.stringify({
         conversation: {
           id: 'conv-switch',
-          scope: 'site',
           title: 'Conversation',
           credentialId: 'cred-new',
           modelId: 'model-new',
@@ -1419,7 +1417,7 @@ describe('setAgentProvider', () => {
         .toEqual({ accepted: true })
       expect(intercept.calls.map((call) => call.url)).toEqual([
         '/admin/api/ai/conversations/conv-switch',
-        '/admin/api/ai/chat/site',
+        '/admin/api/ai/chat',
       ])
     } finally {
       intercept.restore()
@@ -1449,7 +1447,7 @@ describe('setAgentProvider', () => {
         updateStarted.resolve()
         return updateResponse.promise
       },
-      '/admin/api/ai/chat/site': () => ndjsonResponse([{ type: 'done' }]),
+      '/admin/api/ai/chat': () => ndjsonResponse([{ type: 'done' }]),
     })
 
     try {
@@ -1463,7 +1461,7 @@ describe('setAgentProvider', () => {
 
       const [, result] = await Promise.all([changingModel, sending])
       expect(result).toEqual({ accepted: false })
-      expect(intercept.calls.some((call) => call.url === '/admin/api/ai/chat/site')).toBe(false)
+      expect(intercept.calls.some((call) => call.url === '/admin/api/ai/chat')).toBe(false)
       expect(useEditorStore.getState().agentActiveCredentialId).toBe('cred-old')
       expect(useEditorStore.getState().agentActiveModelId).toBe('model-old')
     } finally {
@@ -1490,7 +1488,7 @@ describe('setAgentProvider', () => {
         }
         return Promise.reject(new TypeError('Connection reset after commit'))
       },
-      '/admin/api/ai/chat/site': () => ndjsonResponse([{ type: 'done' }]),
+      '/admin/api/ai/chat': () => ndjsonResponse([{ type: 'done' }]),
     })
 
     try {
@@ -1529,7 +1527,7 @@ describe('setAgentProvider', () => {
           headers: { 'content-type': 'application/json' },
         })
       },
-      '/admin/api/ai/chat/site': () => ndjsonResponse([{ type: 'done' }]),
+      '/admin/api/ai/chat': () => ndjsonResponse([{ type: 'done' }]),
     })
 
     try {
@@ -1543,7 +1541,7 @@ describe('setAgentProvider', () => {
       expect(state.agentError).toContain('server state could not be confirmed')
       expect(await state.sendAgentMessage(textContent('Never route against stale state')))
         .toEqual({ accepted: false })
-      expect(intercept.calls.some((call) => call.url === '/admin/api/ai/chat/site')).toBe(false)
+      expect(intercept.calls.some((call) => call.url === '/admin/api/ai/chat')).toBe(false)
     } finally {
       intercept.restore()
     }

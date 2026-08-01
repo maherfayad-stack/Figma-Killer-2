@@ -2,8 +2,8 @@
  * Conversations + messages repository — CRUD over `ai_conversations` and
  * `ai_messages`.
  *
- * Per-user, per-scope. Every query carries `user_id` as a cross-user guard
- * (defence in depth on top of handler-level capability gating).
+ * Per-user. Every query carries `user_id` as a cross-user guard (defence in
+ * depth on top of handler-level capability gating).
  *
  * Soft-delete via `deleted_at`; the nightly purge job (`purge.ts`)
  * hard-deletes rows older than 30 days.
@@ -14,7 +14,8 @@ import { Type, safeParseValue } from '@core/utils/typeboxHelpers'
 import { AiContentBlockSchema, type AiContentViewBlock } from '@core/ai'
 import type { DbClient } from '../../db/client'
 import { isoDateOrNull } from '@core/utils/isoDate'
-import type { AiContentBlock, ToolScope } from '../runtime/types'
+import type { AiContentBlock } from '../runtime/types'
+import { LEGACY_SCOPE_COLUMN } from '../legacyScope'
 import type {
   AppendMessageInput,
   ConversationDetailView,
@@ -34,7 +35,6 @@ import type {
 interface ConversationRow {
   id: string
   user_id: string
-  scope: string
   title: string
   credential_id: string | null
   model_id: string
@@ -75,7 +75,6 @@ function conversationRowToRecord(row: ConversationRow): ConversationRecord {
   return {
     id: row.id,
     userId: row.user_id,
-    scope: row.scope as ToolScope,
     title: row.title,
     credentialId: row.credential_id,
     modelId: row.model_id,
@@ -132,7 +131,6 @@ function messageRowToRecord(row: MessageRow): MessageRecord {
 export function toConversationView(record: ConversationRecord): ConversationView {
   return {
     id: record.id,
-    scope: record.scope,
     title: record.title,
     credentialId: record.credentialId,
     modelId: record.modelId,
@@ -190,22 +188,23 @@ export function toConversationDetailView(
 // ---------------------------------------------------------------------------
 
 /**
- * List non-deleted conversations for one user + scope, newest activity
- * first. Served by the `ai_conv_user_scope_idx` partial index.
+ * List non-deleted conversations for one user, newest activity first.
+ * Served by the `ai_conv_user_scope_idx` index (still keyed on the
+ * vestigial `scope` column — see `LEGACY_SCOPE_COLUMN` — but a single-value
+ * leading-column index still serves a `user_id` + `order by updated_at`
+ * query well at self-hosted scale).
  */
-export async function listConversationsForUserScope(
+export async function listConversationsForUser(
   db: DbClient,
   userId: string,
-  scope: ToolScope,
 ): Promise<ConversationRecord[]> {
   const { rows } = await db<ConversationRow>`
-    select id, user_id, scope, title, credential_id, model_id,
+    select id, user_id, title, credential_id, model_id,
            prompt_tokens_total, completion_tokens_total,
            cost_usd_total, cache_read_tokens_total, cache_creation_tokens_total,
            context_tokens, created_at, updated_at, deleted_at
     from ai_conversations
     where user_id = ${userId}
-      and scope = ${scope}
       and deleted_at is null
     order by updated_at desc
   `
@@ -222,7 +221,7 @@ export async function readConversationForUser(
   conversationId: string,
 ): Promise<ConversationRecord | null> {
   const { rows } = await db<ConversationRow>`
-    select id, user_id, scope, title, credential_id, model_id,
+    select id, user_id, title, credential_id, model_id,
            prompt_tokens_total, completion_tokens_total,
            cost_usd_total, cache_read_tokens_total, cache_creation_tokens_total,
            context_tokens, created_at, updated_at, deleted_at
@@ -315,10 +314,10 @@ export async function createConversationForUser(
       id, user_id, scope, title, credential_id, model_id
     )
     values (
-      ${id}, ${userId}, ${input.scope}, ${title},
+      ${id}, ${userId}, ${LEGACY_SCOPE_COLUMN}, ${title},
       ${input.credentialId}, ${input.modelId}
     )
-    returning id, user_id, scope, title, credential_id, model_id,
+    returning id, user_id, title, credential_id, model_id,
               prompt_tokens_total, completion_tokens_total,
               cost_usd_total, cache_read_tokens_total, cache_creation_tokens_total,
            context_tokens, created_at, updated_at, deleted_at
@@ -351,7 +350,7 @@ export async function updateConversationForUser(
         model_id = ${nextModelId},
         updated_at = current_timestamp
     where id = ${conversationId} and user_id = ${userId}
-    returning id, user_id, scope, title, credential_id, model_id,
+    returning id, user_id, title, credential_id, model_id,
               prompt_tokens_total, completion_tokens_total,
               cost_usd_total, cache_read_tokens_total, cache_creation_tokens_total,
            context_tokens, created_at, updated_at, deleted_at

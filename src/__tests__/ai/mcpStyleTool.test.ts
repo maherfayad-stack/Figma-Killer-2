@@ -27,7 +27,6 @@ function ctxFor(harness: CapabilityTestHarness): ToolContext {
     db: harness.db,
     userId: 'u1',
     capabilities: ['site.read'],
-    scope: 'site',
     conversationId: 'test',
     snapshot: null, // headless — no browser snapshot, unlike the old list_tokens
     signal: new AbortController().signal,

@@ -1,11 +1,11 @@
 /**
  * Audit tab — site-wide AI usage rollups.
  *
- * Three rollups stitched into one view:
- *   • Totals strip            — tokens in/out, USD cost, distinct chats.
- *   • Top users               — table sorted by cost.
- *   • Per-surface breakdown   — table with one row per chat scope.
- *   • Daily bars              — sparkline-style cost-per-day bar list.
+ * Rollups stitched into one view:
+ *   • Totals strip   — tokens in/out, USD cost, distinct chats.
+ *   • By model        — table sorted by cost.
+ *   • Top users        — table sorted by cost.
+ *   • Daily bars        — sparkline-style cost-per-day bar list.
  *
  * Sourced from `GET /admin/api/ai/audit?since=ISO`. Time window driven by
  * the same `RangeTabs` primitive the dashboard uses (Today / 7d / 30d /
@@ -20,7 +20,6 @@ import {
   type AiAuditResponse,
   type AiUsageByDayRow,
   type AiUsageByModelRow,
-  type AiUsageByScopeRow,
   type AiUsageByUserRow,
 } from '../../../ai/api'
 import { UsageTablePanel } from './UsageTablePanel'
@@ -78,7 +77,7 @@ export function AuditTab() {
       <div className={styles.sectionHeader}>
         <div>
           <h2>Usage audit</h2>
-          <p>Per-user and per-surface AI usage with token + cost rollups.</p>
+          <p>Per-user and per-model AI usage with token + cost rollups.</p>
         </div>
         <div className={styles.auditHeaderActions}>
           <RangeTabs<Range>
@@ -100,10 +99,7 @@ export function AuditTab() {
         <>
           <TotalsRow data={data} />
           <ModelsPanel rows={data.byModel} />
-          <div className={styles.auditPanels}>
-            <UsersPanel rows={data.byUser} />
-            <ScopesPanel rows={data.byScope} />
-          </div>
+          <UsersPanel rows={data.byUser} />
           <DaysPanel rows={data.byDay} />
         </>
       )}
@@ -205,28 +201,6 @@ function UsersPanel({ rows }: { rows: AiUsageByUserRow[] }) {
         { header: 'Chats', numeric: true, cell: (row) => formatNumber(row.chatCount) },
         { header: 'Input', numeric: true, cell: (row) => formatNumber(row.promptTokens) },
         { header: 'Output', numeric: true, cell: (row) => formatNumber(row.completionTokens) },
-        { header: 'Spend', numeric: true, cell: (row) => formatCost(row.costUsd) },
-      ]}
-    />
-  )
-}
-
-function ScopesPanel({ rows }: { rows: AiUsageByScopeRow[] }) {
-  return (
-    <UsageTablePanel<AiUsageByScopeRow>
-      title="By surface"
-      hint={`${rows.length} scopes`}
-      rows={rows}
-      rowKey={(row) => row.scope}
-      emptyLabel="No surface activity yet."
-      columns={[
-        { header: 'Scope', cellClassName: styles.auditScopeLabel, cell: (row) => row.scope },
-        { header: 'Chats', numeric: true, cell: (row) => formatNumber(row.chatCount) },
-        {
-          header: 'Tokens',
-          numeric: true,
-          cell: (row) => formatNumber(row.promptTokens + row.completionTokens),
-        },
         { header: 'Spend', numeric: true, cell: (row) => formatCost(row.costUsd) },
       ]}
     />

@@ -2,7 +2,7 @@
  * Agent HTTP layer — the network plumbing behind the agent slice.
  *
  * Responsibilities:
- *   1. Conversation bootstrap: discover the per-scope default credential,
+ *   1. Conversation bootstrap: discover Studio's default credential,
  *      create the conversation row lazily on first send, and rehydrate
  *      persisted message records back into the in-memory `AgentMessage` shape.
  *
@@ -22,7 +22,6 @@ import type { ConversationDetail } from '@admin/ai/api'
 import type {
   AgentMessage,
   AgentToolCall,
-  AgentToolScope,
 } from './types'
 
 // ---------------------------------------------------------------------------
@@ -136,32 +135,31 @@ export function rehydrateMessages(
   return out
 }
 
-const ScopeDefaultEntrySchema = Type.Object({
+const StudioDefaultEntrySchema = Type.Object({
   credentialId: Type.String(),
   modelId: Type.String(),
 })
-type ScopeDefaultEntry = Static<typeof ScopeDefaultEntrySchema>
+type StudioDefaultEntry = Static<typeof StudioDefaultEntrySchema>
 
-const ScopeDefaultsResponseSchema = Type.Object(
-  { defaults: Type.Optional(Type.Record(Type.String(), ScopeDefaultEntrySchema)) },
+const StudioDefaultResponseSchema = Type.Object(
+  { default: Type.Optional(Type.Union([StudioDefaultEntrySchema, Type.Null()])) },
   { additionalProperties: true },
 )
 
-export async function fetchScopeDefault(
-  scope: AgentToolScope,
+export async function fetchStudioDefault(
   signal?: AbortSignal,
-): Promise<ScopeDefaultEntry | null> {
+): Promise<StudioDefaultEntry | null> {
   // Soft fetch: any failure (no default set, network, bad shape) just means
   // "no preselected credential/model" — the caller falls back to the picker.
   try {
     const body = await apiRequest(AI_DEFAULTS_PATH, {
-      schema: ScopeDefaultsResponseSchema,
+      schema: StudioDefaultResponseSchema,
       signal,
     })
-    return body.defaults?.[scope] ?? null
+    return body.default ?? null
   } catch (err) {
     if (signal?.aborted || isAbortError(err)) throw err
-    console.error(`[AgentSlice] Failed to fetch ${scope} default:`, err)
+    console.error('[AgentSlice] Failed to fetch the default model:', err)
     return null
   }
 }
@@ -172,15 +170,14 @@ const CreatedConversationEnvelopeSchema = Type.Object(
 )
 type CreatedConversation = Static<typeof CreatedConversationEnvelopeSchema>['conversation']
 
-export async function createConversationForScope(
-  scope: AgentToolScope,
+export async function createConversation(
   credentialId: string,
   modelId: string,
   signal?: AbortSignal,
 ): Promise<CreatedConversation> {
   const body = await apiRequest(AI_CONVERSATIONS_PATH, {
     method: 'POST',
-    body: { scope, credentialId, modelId },
+    body: { credentialId, modelId },
     schema: CreatedConversationEnvelopeSchema,
     fallbackMessage: 'Conversation create failed',
     signal,

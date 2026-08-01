@@ -7,7 +7,7 @@
  * Zustand conversation state across open/close cycles.
  *
  * Runtime model:
- * - Agent calls stream through `/admin/api/ai/chat/site`.
+ * - Agent calls stream through `/admin/api/ai/chat`.
  * - The Bun server selects the configured provider credential and model.
  * - Drivers call provider REST/SSE endpoints directly; no provider SDK runs.
  *
@@ -80,7 +80,7 @@ export function AgentPanel({ variant = 'floating' }: { variant?: PanelVariant })
   const agentError = useAgentStore((s) => s.agentError)
   const closeAgent = useAgentStore((s) => s.closeAgent)
   const startNewAgentConversation = useAgentStore((s) => s.startNewAgentConversation)
-  const loadScopeDefault = useAgentStore((s) => s.loadScopeDefault)
+  const loadStudioDefault = useAgentStore((s) => s.loadStudioDefault)
   const composerEpoch = useAgentStore((s) => s.agentComposerEpoch)
   const activeCredentialId = useAgentStore((s) => s.agentActiveCredentialId)
   const activeModelId = useAgentStore((s) => s.agentActiveModelId)
@@ -96,14 +96,14 @@ export function AgentPanel({ variant = 'floating' }: { variant?: PanelVariant })
   const noCredentials = credentialsLoaded && credentials.length === 0
   const noProviderError = agentError?.startsWith('No AI provider configured') ?? false
   // The composer can't run a turn without an active (credential, model) — one
-  // is either preloaded from the scope default or picked in the model picker.
+  // is either preloaded from Studio's default or picked in the model picker.
   // Locking off `hasActiveProvider` (not a sticky error string) is what keeps
   // the composer usable the instant the user picks a model.
   const hasActiveProvider = Boolean(activeCredentialId && activeModelId)
   const composerLocked = !hasActiveProvider
   // Why the composer is locked, used for the empty-state + placeholder copy:
   //   'setup'       → no credentials exist at all → add one in AI settings.
-  //   'chooseModel' → credentials exist but no scope default / pick yet →
+  //   'chooseModel' → credentials exist but no default / pick yet →
   //                   choose a model below, or set a default in AI settings.
   // While credentials are still loading we keep messaging neutral (null) so
   // the panel doesn't flash a setup prompt before the default preload lands.
@@ -135,13 +135,13 @@ export function AgentPanel({ variant = 'floating' }: { variant?: PanelVariant })
     if (el) el.scrollTop = el.scrollHeight
   }, [messages])
 
-  // Preload the per-scope default credential + model when the panel opens, so
-  // the picker shows the configured default immediately and the first send
-  // uses it. The action no-ops if a conversation or explicit pick already
-  // exists, so re-opens are cheap.
+  // Preload Studio's default credential + model when the panel opens, so the
+  // picker shows the configured default immediately and the first send uses
+  // it. The action no-ops if a conversation or explicit pick already exists,
+  // so re-opens are cheap.
   useEffect(() => {
-    if (isOpen) void loadScopeDefault()
-  }, [isOpen, loadScopeDefault])
+    if (isOpen) void loadStudioDefault()
+  }, [isOpen, loadStudioDefault])
 
   useEffect(() => agentStore.subscribe((state, previous) => {
     if (

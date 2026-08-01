@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test'
 import { classKindSelector, type Page, type StyleRule, type SiteShell } from '@core/page-tree'
 import { pageFromRow } from '@core/data/pageFromRow'
 import type { DataRow } from '@core/data/schemas'
-import { selectToolsForScope } from '../../../server/ai/tools'
+import { selectStudioTools } from '../../../server/ai/tools'
 import {
   createCapabilityTestHarness,
   expectForbidden,
@@ -640,23 +640,23 @@ describe('capability route matrix', () => {
         cookie: auditReader.cookie,
       })).status).toBe(200)
 
-      await expectForbidden(await harness.ai('/admin/api/ai/conversations?scope=site', {
+      await expectForbidden(await harness.ai('/admin/api/ai/conversations', {
         method: 'GET',
         cookie: dashboardOnly.cookie,
       }))
-      expect((await harness.ai('/admin/api/ai/conversations?scope=site', {
+      expect((await harness.ai('/admin/api/ai/conversations', {
         method: 'GET',
         cookie: chatUser.cookie,
       })).status).toBe(200)
-      const invalidChat = await harness.ai('/admin/api/ai/chat/site', {
+      const invalidChat = await harness.ai('/admin/api/ai/chat', {
         method: 'POST',
         cookie: chatUser.cookie,
         json: {},
       })
       expectPastAuth(invalidChat)
 
-      const readOnlyTools = selectToolsForScope('site', ['ai.chat', 'site.read'])
-      const writeTools = selectToolsForScope('site', [
+      const readOnlyTools = selectStudioTools(['ai.chat', 'site.read'])
+      const writeTools = selectStudioTools([
         'ai.chat',
         'ai.tools.write',
         'site.structure.edit',

@@ -77,7 +77,8 @@ const routes: readonly RouteHandler[] = [
   tryServeMcp,
   // AI runtime — `/admin/api/ai/*`. The legacy `/admin/api/agent` and
   // `/admin/api/agent/tool-result` were deleted in Phase 3 of the AI
-  // runtime rewrite. The site editor now POSTs `/admin/api/ai/chat/site`.
+  // runtime rewrite. The site editor now POSTs `/admin/api/ai/chat` — one
+  // route, since Studio has exactly one agent (WS-12 §8.1 D3).
   tryServeAi,
   tryServeCmsApi,
   tryServeLoopRuntimeAsset,

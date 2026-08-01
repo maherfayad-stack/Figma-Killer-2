@@ -37,7 +37,6 @@ describe('tool-result persist → buildMessageHistory round-trip', () => {
 
   it('preserves ok and error through a full DB round-trip', async () => {
     const conv = await createConversationForUser(testDb.db, 'user_1', {
-      scope: 'site',
       credentialId: 'cred_1',
       modelId: 'model_1',
     })

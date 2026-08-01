@@ -2,19 +2,17 @@
  * Site-editor agent-slice config — supplied to `createAgentSlice` when the
  * site editor's store is composed.
  *
- * Splits the scope-specific bits out of agentSlice.ts so the slice itself
- * stays generic across surfaces (Phase 4 introduced the content workspace
- * which uses the same factory with its own config). The site config:
+ * Studio has exactly one agent, so this is the only `AgentSliceConfig` in
+ * the app. It:
  *
- *   - declares `scope: 'site'` for URL/JSON wiring,
  *   - posts the raw live page tree (active page + site) via buildCurrentPageContext,
  *   - dispatches write tools through the existing executor.ts,
  *   - keeps the site-editor "no AI provider configured" copy so the panel can
- *     render its setup empty state with the right scope wording.
+ *     render its setup empty state.
  *
  * Lives in this folder (next to the site-editor agent code) so the site
- * editor's store has a stable import path; the scope-specific snapshot logic
- * doesn't escape into the generic `createAgentSlice` factory.
+ * editor's store has a stable import path; the snapshot logic doesn't escape
+ * into the generic `createAgentSlice` factory.
  */
 
 import type { AgentSliceConfig } from './agentSliceTypes'
@@ -24,7 +22,6 @@ import { getAgentStoreApi } from './storeRef'
 import type { EditorStore } from '@site/store/types'
 
 export const siteAgentSliceConfig: AgentSliceConfig = {
-  scope: 'site',
   buildSnapshot: () => buildCurrentPageContext(
     () => getAgentStoreApi<EditorStore>().getState(),
   ),
@@ -32,5 +29,5 @@ export const siteAgentSliceConfig: AgentSliceConfig = {
   // Keep the site-editor wording — the AgentPanel recognises this string
   // prefix and renders the setup CTA.
   noProviderMessage:
-    'No AI provider configured for the site editor. Open /admin/ai/providers to add a credential, then /admin/ai/defaults to pick one for the "site" scope.',
+    'No AI provider configured for the site editor. Open /admin/ai/providers to add a credential, then /admin/ai/defaults to pick one.',
 }

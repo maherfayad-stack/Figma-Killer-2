@@ -1,8 +1,8 @@
 /**
  * Conversation + message record shapes for the persistent chat history.
  *
- * Conversations are per (user, scope). Messages belong to one conversation
- * and have a monotonic `position` within it.
+ * Conversations are per user. Messages belong to one conversation and have
+ * a monotonic `position` within it.
  *
  * Wire shapes are separate from records:
  *   - `ConversationView` is what /admin/api/ai/conversations returns —
@@ -12,7 +12,7 @@
  */
 
 import type { AiContentViewBlock } from '@core/ai'
-import type { AiContentBlock, ToolScope } from '../runtime/types'
+import type { AiContentBlock } from '../runtime/types'
 
 // ---------------------------------------------------------------------------
 // Server-side records (DB row shape, normalised)
@@ -21,7 +21,6 @@ import type { AiContentBlock, ToolScope } from '../runtime/types'
 export interface ConversationRecord {
   readonly id: string
   readonly userId: string
-  readonly scope: ToolScope
   readonly title: string
   readonly credentialId: string | null
   readonly modelId: string
@@ -67,7 +66,6 @@ export interface MessageRecord {
 
 export interface ConversationView {
   readonly id: string
-  readonly scope: ToolScope
   readonly title: string
   readonly credentialId: string | null
   readonly modelId: string
@@ -101,7 +99,6 @@ export interface ConversationDetailView extends ConversationView {
 // ---------------------------------------------------------------------------
 
 export interface CreateConversationInput {
-  readonly scope: ToolScope
   readonly title?: string
   readonly credentialId: string
   readonly modelId: string

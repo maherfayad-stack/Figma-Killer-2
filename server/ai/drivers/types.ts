@@ -127,8 +127,8 @@ export interface AiStreamRequest {
   readonly bridge: AiBrowserBridge
   /**
    * Base for the per-call `ToolContext` the driver builds when invoking a
-   * server-side tool handler. Carries db + identity + scope + the per-turn
-   * snapshot; drivers add `signal` and pass the whole thing to the handler.
+   * server-side tool handler. Carries db + identity + the per-turn snapshot;
+   * drivers add `signal` and pass the whole thing to the handler.
    *
    * Threading this through the request avoids the module-level "active
    * snapshot" binding the early drivers used (concurrent chats would race
@@ -147,11 +147,10 @@ export interface ToolContextBase {
   readonly userId: string
   /** The caller's capability set — threaded into ToolContext for the re-check gate. */
   readonly capabilities: readonly CoreCapability[]
-  readonly scope: import('../runtime/types').ToolScope
   readonly conversationId: string
   /**
-   * The scope snapshot for read tools. Mutable across a turn: the browser
-   * bridge refreshes it after each mutating tool (via createBridge's
+   * The live editor snapshot for read tools. Mutable across a turn: the
+   * browser bridge refreshes it after each mutating tool (via createBridge's
    * onSnapshot) so later server read tools see post-mutation state.
    */
   snapshot: unknown

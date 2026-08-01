@@ -1,25 +1,26 @@
 /**
- * Per-scope AI defaults — CRUD over `ai_defaults`.
+ * Studio's AI default — CRUD over `ai_defaults`.
  *
- * One row per scope (`site`, `content`, `data`, `plugin`). Each row points
- * at a specific `credential_id` (FK with `on delete restrict` — deleting
- * the default credential is rejected at the DB layer; the UI nudges to
- * reassign first).
+ * Studio has exactly one agent (WS-12 §8.1 D3), so there is exactly one
+ * default row, keyed by the vestigial `LEGACY_SCOPE_COLUMN` constant (its
+ * column keeps a permitted CHECK value; nothing branches on it). It points
+ * at a specific `credential_id` (FK with `on delete restrict` — deleting the
+ * default credential is rejected at the DB layer; the UI nudges to reassign
+ * first).
  *
- * Defaults are site-wide (not per-user). Setting requires the
+ * The default is site-wide (not per-user). Setting requires the
  * `ai.providers.manage` capability; reading requires `ai.use`.
  */
 
 import type { DbClient } from '../../db/client'
 import { isoDateOrNull } from '@core/utils/isoDate'
-import type { ToolScope } from '../runtime/types'
+import { LEGACY_SCOPE_COLUMN } from '../legacyScope'
 
 // ---------------------------------------------------------------------------
 // Records + views
 // ---------------------------------------------------------------------------
 
-interface DefaultRecord {
-  readonly scope: ToolScope
+export interface DefaultRecord {
   readonly credentialId: string
   readonly modelId: string
   readonly updatedAt: string
@@ -27,7 +28,6 @@ interface DefaultRecord {
 }
 
 interface DefaultRow {
-  scope: string
   credential_id: string
   model_id: string
   updated_at: Date | string
@@ -36,7 +36,6 @@ interface DefaultRow {
 
 function rowToRecord(row: DefaultRow): DefaultRecord {
   return {
-    scope: row.scope as ToolScope,
     credentialId: row.credential_id,
     modelId: row.model_id,
     updatedAt: isoDateOrNull(row.updated_at)!,
@@ -48,44 +47,42 @@ function rowToRecord(row: DefaultRow): DefaultRecord {
 // Read
 // ---------------------------------------------------------------------------
 
-export async function listDefaults(db: DbClient): Promise<DefaultRecord[]> {
+export async function getDefault(db: DbClient): Promise<DefaultRecord | null> {
   const { rows } = await db<DefaultRow>`
-    select scope, credential_id, model_id, updated_at, updated_by
+    select credential_id, model_id, updated_at, updated_by
     from ai_defaults
+    where scope = ${LEGACY_SCOPE_COLUMN}
+    limit 1
   `
-  return rows.map(rowToRecord)
+  return rows[0] ? rowToRecord(rows[0]) : null
 }
 
 // ---------------------------------------------------------------------------
 // Write — upsert
 // ---------------------------------------------------------------------------
 
-export async function setDefaultForScope(
+export async function setDefault(
   db: DbClient,
-  scope: ToolScope,
   credentialId: string,
   modelId: string,
   updatedByUserId: string | null,
 ): Promise<DefaultRecord> {
   const { rows } = await db<DefaultRow>`
     insert into ai_defaults (scope, credential_id, model_id, updated_by)
-    values (${scope}, ${credentialId}, ${modelId}, ${updatedByUserId})
+    values (${LEGACY_SCOPE_COLUMN}, ${credentialId}, ${modelId}, ${updatedByUserId})
     on conflict (scope) do update
       set credential_id = excluded.credential_id,
           model_id = excluded.model_id,
           updated_by = excluded.updated_by,
           updated_at = current_timestamp
-    returning scope, credential_id, model_id, updated_at, updated_by
+    returning credential_id, model_id, updated_at, updated_by
   `
   return rowToRecord(rows[0]!)
 }
 
-export async function clearDefaultForScope(
-  db: DbClient,
-  scope: ToolScope,
-): Promise<void> {
+export async function clearDefault(db: DbClient): Promise<void> {
   await db`
     delete from ai_defaults
-    where scope = ${scope}
+    where scope = ${LEGACY_SCOPE_COLUMN}
   `
 }

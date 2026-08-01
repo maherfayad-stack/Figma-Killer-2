@@ -27,10 +27,7 @@ import { resolveDriver } from '../drivers'
 import { listProviderModels } from '../drivers/modelList'
 import type { AiProviderModel } from '../drivers/types'
 import type { CredentialRecord } from '../credentials/types'
-import { listDefaults, setDefaultForScope } from '../defaults/store'
-import type { ToolScope } from '../runtime/types'
-
-const ALL_SCOPES: ToolScope[] = ['site', 'data', 'plugin']
+import { getDefault, setDefault } from '../defaults/store'
 
 const ProviderId = Type.Union([
   Type.Literal('anthropic'),
@@ -149,9 +146,9 @@ async function handleCreate(req: Request, db: DbClient): Promise<Response> {
 // ---------------------------------------------------------------------------
 
 /**
- * After a credential is created, assign it as the default for every scope that
- * has no default yet. This is a "fill the blanks" convenience — a scope that
- * already points at some credential is left untouched.
+ * After a credential is created, assign it as Studio's default if nothing is
+ * set yet. This is a "fill the blank" convenience — an existing default is
+ * left untouched.
  *
  * The default model is the credential's top live model (the `smartest`-tier
  * entry, else the first). Best-effort: if the model list can't be resolved
@@ -163,10 +160,8 @@ async function seedEmptyDefaults(
   userId: string,
   signal?: AbortSignal,
 ): Promise<void> {
-  const existing = await listDefaults(db)
-  const filled = new Set(existing.map((d) => d.scope))
-  const emptyScopes = ALL_SCOPES.filter((scope) => !filled.has(scope))
-  if (emptyScopes.length === 0) return
+  const existing = await getDefault(db)
+  if (existing) return
 
   let topModelId: string | null
   let apiKeyForRedaction: string | null = null
@@ -192,16 +187,14 @@ async function seedEmptyDefaults(
     return
   }
 
-  for (const scope of emptyScopes) {
-    await setDefaultForScope(db, scope, record.id, topModelId, userId)
-    await createAuditEvent(db, {
-      actorUserId: userId,
-      action: 'ai.default.updated',
-      targetType: 'ai_default',
-      targetId: scope,
-      metadata: { scope, credentialId: record.id, modelId: topModelId, auto: true },
-    })
-  }
+  await setDefault(db, record.id, topModelId, userId)
+  await createAuditEvent(db, {
+    actorUserId: userId,
+    action: 'ai.default.updated',
+    targetType: 'ai_default',
+    targetId: 'default',
+    metadata: { credentialId: record.id, modelId: topModelId, auto: true },
+  })
 }
 
 // ---------------------------------------------------------------------------

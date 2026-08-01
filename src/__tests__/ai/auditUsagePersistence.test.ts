@@ -4,7 +4,6 @@ import type { AiStreamEvent } from '../../../server/ai/runtime/types'
 import { createConversationsPersister, runChat } from '../../../server/ai/runtime'
 import {
   getUsageByModel,
-  getUsageByScope,
   getUsageTotals,
 } from '../../../server/ai/audit/store'
 import {
@@ -85,7 +84,6 @@ describe('AI audit usage persistence', () => {
       method: 'POST',
       cookie,
       json: {
-        scope: 'site',
         title: 'Usage fixture',
         credentialId: credential.id,
         modelId: 'e2e-model',
@@ -125,7 +123,6 @@ describe('AI audit usage persistence', () => {
           db: harness.db,
           userId: 'unused',
           capabilities: [],
-          scope: 'site',
           conversationId: conversation.id,
           snapshot: null,
         },
@@ -153,14 +150,6 @@ describe('AI audit usage persistence', () => {
     expect(totals.promptTokens).toBe(123)
     expect(totals.completionTokens).toBe(45)
     expect(totals.chatCount).toBe(1)
-
-    const [scope] = await getUsageByScope(harness.db, since)
-    expect(scope).toMatchObject({
-      scope: 'site',
-      promptTokens: 123,
-      completionTokens: 45,
-      chatCount: 1,
-    })
 
     const [model] = await getUsageByModel(harness.db, since)
     expect(model).toMatchObject({

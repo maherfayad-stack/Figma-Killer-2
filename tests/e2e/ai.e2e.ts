@@ -278,7 +278,7 @@ test.describe('AI settings', () => {
     })
   })
 
-  test('sets and reloads a data-scope default model (AI-002)', async ({
+  test('sets and reloads the default model (AI-002)', async ({
     page,
   }) => {
     const suffix = Date.now().toString(36)
@@ -292,23 +292,19 @@ test.describe('AI settings', () => {
       await expect(page.getByText(label)).toBeVisible({ timeout: 20_000 })
     })
 
-    await test.step('choose and save a Data default model', async () => {
+    await test.step('choose and save the default model', async () => {
       await page.getByRole('tab', { name: 'Defaults' }).click()
-      await expect(page.getByRole('heading', { name: 'Per-scope defaults' })).toBeVisible()
+      await expect(page.getByRole('heading', { name: 'Default model' })).toBeVisible()
 
-      const dataModelButton = page.getByRole('button', { name: 'Model for data' })
-      await dataModelButton.click()
+      const modelButton = page.getByRole('button', { name: 'Default model' })
+      await modelButton.click()
       await expect(page.getByRole('menuitemradio', { name: 'Llama 4' })).toBeVisible({
         timeout: 20_000,
       })
       await page.getByRole('menuitemradio', { name: 'Llama 4' }).click()
 
-      await expect(dataModelButton).toContainText(`${label} · Llama 4`)
-      await page
-        .locator('div')
-        .filter({ hasText: /^dataUsed by the data workspace/ })
-        .getByRole('button', { name: 'Save' })
-        .click()
+      await expect(modelButton).toContainText(`${label} · Llama 4`)
+      await page.getByRole('button', { name: 'Save' }).click()
       await expect(page.getByRole('status').filter({ hasText: 'Saved.' })).toBeVisible()
     })
 
@@ -316,20 +312,16 @@ test.describe('AI settings', () => {
       await page.reload()
       await expect(page.getByRole('heading', { name: 'AI' })).toBeVisible()
       await page.getByRole('tab', { name: 'Defaults' }).click()
-      await expect(page.getByRole('button', { name: 'Model for data' })).toContainText(
+      await expect(page.getByRole('button', { name: 'Default model' })).toContainText(
         `${label} · Llama 4`,
         { timeout: 20_000 },
       )
     })
 
     await test.step('clear the default and delete the credential', async () => {
-      await page
-        .locator('div')
-        .filter({ hasText: /^dataUsed by the data workspace/ })
-        .getByRole('button', { name: 'Clear' })
-        .click()
+      await page.getByRole('button', { name: 'Clear' }).click()
       await expect(page.getByRole('status').filter({ hasText: 'Cleared.' })).toBeVisible()
-      await expect(page.getByRole('button', { name: 'Model for data' })).toContainText(
+      await expect(page.getByRole('button', { name: 'Default model' })).toContainText(
         'Choose a model',
       )
 
@@ -379,8 +371,6 @@ test.describe('AI settings', () => {
         await page.getByRole('tab', { name: 'Audit' }).click()
         await expect(page.getByRole('heading', { name: 'Usage audit' })).toBeVisible()
         await expect(page.getByText('e2e-model')).toBeVisible({ timeout: 20_000 })
-        await expect(page.getByRole('heading', { name: 'By surface' })).toBeVisible()
-        await expect(page.getByRole('cell', { name: 'site' })).toBeVisible()
         await expect(page.getByRole('cell', { name: '123' }).first()).toBeVisible()
         await expect(page.getByRole('cell', { name: '45' }).first()).toBeVisible()
         await expect(page.getByRole('heading', { name: 'Daily spend' })).toBeVisible()
@@ -388,9 +378,9 @@ test.describe('AI settings', () => {
 
       await test.step('clear seeded defaults and delete the credential', async () => {
         await page.evaluate(async () => {
-          const conversationsRes = await fetch('/admin/api/ai/conversations?scope=site')
+          const conversationsRes = await fetch('/admin/api/ai/conversations')
           if (!conversationsRes.ok) {
-            throw new Error(`Failed to list site conversations: ${conversationsRes.status}`)
+            throw new Error(`Failed to list conversations: ${conversationsRes.status}`)
           }
           const conversationsBody = await conversationsRes.json()
           if (!Array.isArray(conversationsBody.conversations)) {
@@ -405,10 +395,8 @@ test.describe('AI settings', () => {
             })
             if (!res.ok) throw new Error(`Failed to delete conversation ${conversation.id}: ${res.status}`)
           }
-          for (const scope of ['site', 'content', 'data', 'plugin']) {
-            const res = await fetch(`/admin/api/ai/defaults/${scope}`, { method: 'DELETE' })
-            if (!res.ok) throw new Error(`Failed to clear ${scope} default: ${res.status}`)
-          }
+          const defaultRes = await fetch('/admin/api/ai/defaults', { method: 'DELETE' })
+          if (!defaultRes.ok) throw new Error(`Failed to clear the default: ${defaultRes.status}`)
         })
         await page.getByRole('tab', { name: 'Providers' }).click()
         const credentialCard = page.locator('div').filter({ hasText: label }).first()
@@ -472,9 +460,9 @@ test.describe('AI settings', () => {
 
       await test.step('clear seeded conversations/defaults and delete the credential', async () => {
         await page.evaluate(async () => {
-          const conversationsRes = await fetch('/admin/api/ai/conversations?scope=site')
+          const conversationsRes = await fetch('/admin/api/ai/conversations')
           if (!conversationsRes.ok) {
-            throw new Error(`Failed to list site conversations: ${conversationsRes.status}`)
+            throw new Error(`Failed to list conversations: ${conversationsRes.status}`)
           }
           const conversationsBody = await conversationsRes.json()
           if (!Array.isArray(conversationsBody.conversations)) {
@@ -489,10 +477,8 @@ test.describe('AI settings', () => {
             })
             if (!res.ok) throw new Error(`Failed to delete conversation ${conversation.id}: ${res.status}`)
           }
-          for (const scope of ['site', 'content', 'data', 'plugin']) {
-            const res = await fetch(`/admin/api/ai/defaults/${scope}`, { method: 'DELETE' })
-            if (!res.ok) throw new Error(`Failed to clear ${scope} default: ${res.status}`)
-          }
+          const defaultRes = await fetch('/admin/api/ai/defaults', { method: 'DELETE' })
+          if (!defaultRes.ok) throw new Error(`Failed to clear the default: ${defaultRes.status}`)
         })
         await page.goto('/admin/ai')
         const credentialCard = page.locator('div').filter({ hasText: label }).first()
@@ -569,10 +555,8 @@ test.describe('AI settings', () => {
 
       await test.step('clear seeded defaults and delete the credential', async () => {
         await page.evaluate(async () => {
-          for (const scope of ['site', 'content', 'data', 'plugin']) {
-            const res = await fetch(`/admin/api/ai/defaults/${scope}`, { method: 'DELETE' })
-            if (!res.ok) throw new Error(`Failed to clear ${scope} default: ${res.status}`)
-          }
+          const res = await fetch('/admin/api/ai/defaults', { method: 'DELETE' })
+          if (!res.ok) throw new Error(`Failed to clear the default: ${res.status}`)
         })
         await page.goto('/admin/ai')
         const credentialCard = page.locator('div').filter({ hasText: label }).first()
@@ -673,22 +657,18 @@ test.describe.serial('AI write-tool capability filtering', () => {
         })
       } finally {
         if (credentialCreated) {
-          // Credential creation auto-seeds the site-wide defaults. Restore the
-          // temporary capability so the persona can remove the fixture it owns,
-          // then clear those defaults before deletion (the FK is restrictive).
+          // Credential creation auto-seeds the default. Restore the temporary
+          // capability so the persona can remove the fixture it owns, then
+          // clear that default before deletion (the FK is restrictive).
           await setRoleCapabilities(page, roleName, [
             'View site',
             'Use AI chat',
             'Manage AI providers',
           ])
           await personaPage.evaluate(async () => {
-            for (const scope of ['site', 'content', 'data', 'plugin']) {
-              const response = await fetch(`/admin/api/ai/defaults/${scope}`, {
-                method: 'DELETE',
-              })
-              if (!response.ok) {
-                throw new Error(`Failed to clear ${scope} default: ${response.status}`)
-              }
+            const response = await fetch('/admin/api/ai/defaults', { method: 'DELETE' })
+            if (!response.ok) {
+              throw new Error(`Failed to clear the default: ${response.status}`)
             }
           })
           await personaPage.goto('/admin/ai')

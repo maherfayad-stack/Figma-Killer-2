@@ -87,7 +87,6 @@ function makeRequest(bridge: AiBrowserBridge, serverCalls: unknown[]): AiStreamR
     toolContextBase: {
       db: {} as never,
       userId: 'u1',
-      scope: 'site',
       conversationId: 'c1',
       snapshot: {},
     },

@@ -6,7 +6,7 @@
  * Three layers under test:
  *   1. `toolAllowedForCapabilities` — the single gate helper (both axes:
  *      `mutates` ⇒ `ai.tools.write`, plus ANY-OF `requiredCapabilities`).
- *   2. `selectToolsForScope` — selection-time filtering (load-bearing gate:
+ *   2. `selectStudioTools` — selection-time filtering (load-bearing gate:
  *      the tool loop only executes offered tools).
  *   3. `executeAiTool` — pre-dispatch re-check (defence in depth).
  */
@@ -14,7 +14,7 @@
 import { describe, expect, it } from 'bun:test'
 import { Type } from '@sinclair/typebox'
 import { toolAllowedForCapabilities } from '../../../server/ai/tools/capabilityGate'
-import { selectToolsForScope } from '../../../server/ai/tools'
+import { selectStudioTools } from '../../../server/ai/tools'
 import { executeAiTool } from '../../../server/ai/drivers/http/execTool'
 import type { AiBrowserBridge, AiTool } from '../../../server/ai/runtime/types'
 import type { CoreCapability } from '@core/capabilities'
@@ -63,19 +63,19 @@ describe('toolAllowedForCapabilities', () => {
   })
 })
 
-describe('selectToolsForScope capability filtering', () => {
+describe('selectStudioTools capability filtering', () => {
   it('drops site_list_documents for a caller without site.read', () => {
-    const names = selectToolsForScope('site', ['ai.chat']).map((t) => t.name)
+    const names = selectStudioTools(['ai.chat']).map((t) => t.name)
     expect(names).not.toContain('site_list_documents')
   })
 
   it('keeps site_list_documents for a caller with site.read', () => {
-    const names = selectToolsForScope('site', ['ai.chat', 'site.read']).map((t) => t.name)
+    const names = selectStudioTools(['ai.chat', 'site.read']).map((t) => t.name)
     expect(names).toContain('site_list_documents')
   })
 
   it('drops structure-editing tools for a caller with only site.read', () => {
-    const names = selectToolsForScope('site', ['ai.chat', 'ai.tools.write', 'site.read']).map((t) => t.name)
+    const names = selectStudioTools(['ai.chat', 'ai.tools.write', 'site.read']).map((t) => t.name)
     expect(names).not.toContain('site_insert_html')
     expect(names).not.toContain('site_delete_node')
     // read tools stay — they only need site.read
@@ -83,7 +83,7 @@ describe('selectToolsForScope capability filtering', () => {
   })
 
   it('keeps structure-editing tools once site.structure.edit is granted', () => {
-    const names = selectToolsForScope('site', [
+    const names = selectStudioTools([
       'ai.chat', 'ai.tools.write', 'site.read', 'site.structure.edit',
     ]).map((t) => t.name)
     expect(names).toContain('site_insert_html')
@@ -91,9 +91,9 @@ describe('selectToolsForScope capability filtering', () => {
   })
 
   it('still filters write tools by ai.tools.write (existing behaviour preserved)', () => {
-    const withoutWrite = selectToolsForScope('site', ['ai.chat', 'site.read', 'site.structure.edit'])
+    const withoutWrite = selectStudioTools(['ai.chat', 'site.read', 'site.structure.edit'])
     expect(withoutWrite.every((t) => !t.mutates)).toBe(true)
-    const withWrite = selectToolsForScope('site', [
+    const withWrite = selectStudioTools([
       'ai.chat', 'ai.tools.write', 'site.read', 'site.structure.edit',
     ])
     expect(withWrite.some((t) => t.mutates)).toBe(true)
@@ -119,7 +119,6 @@ describe('executeAiTool re-check', () => {
       db: {} as never,
       userId: 'u1',
       capabilities: ['ai.chat'] as readonly CoreCapability[],
-      scope: 'site' as const,
       conversationId: 'c1',
       snapshot: undefined,
     }
@@ -142,7 +141,6 @@ describe('executeAiTool re-check', () => {
       db: {} as never,
       userId: 'u1',
       capabilities: ['ai.chat', 'users.manage'] as readonly CoreCapability[],
-      scope: 'site' as const,
       conversationId: 'c1',
       snapshot: undefined,
     }

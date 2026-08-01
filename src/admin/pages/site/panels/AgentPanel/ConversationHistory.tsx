@@ -1,7 +1,7 @@
 /**
  * ConversationHistory — popover triggered by the chat-history button in
- * the AgentPanel header. Lists this user's site-scope conversations and
- * exposes load, delete, and "+ New" actions.
+ * the AgentPanel header. Lists this user's conversations and exposes load,
+ * delete, and "+ New" actions.
  *
  * Built on the shared `ContextMenu` primitive so positioning, dismiss
  * handling, and styling match the rest of the admin.

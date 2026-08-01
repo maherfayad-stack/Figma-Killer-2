@@ -6,8 +6,7 @@
  *
  *   - `getUsageByUser(db, sinceIso)`     — one row per `user_id` with
  *                                          summed tokens + cost + chat count.
- *   - `getUsageByScope(db, sinceIso)`    — one row per chat surface
- *                                          ('site' | 'content' | …).
+ *   - `getUsageByModel(db, sinceIso)`    — one row per (provider, model).
  *   - `getUsageByDay(db, sinceIso)`      — one row per calendar day for the
  *                                          time-series chart in the widget.
  *
@@ -28,7 +27,7 @@
 
 import type { DbClient } from '../../db/client'
 import { localDayKeyFactory } from '../../time'
-import type { AiProviderId, ToolScope } from '../runtime/types'
+import type { AiProviderId } from '../runtime/types'
 
 interface UsageRow {
   promptTokens: number
@@ -43,10 +42,6 @@ interface UsageRow {
 interface UsageByUserRow extends UsageRow {
   userId: string
   userLabel: string
-}
-
-interface UsageByScopeRow extends UsageRow {
-  scope: ToolScope
 }
 
 interface UsageByDayRow extends UsageRow {
@@ -72,10 +67,6 @@ interface UserAggregateRow extends AggregateRow {
   user_id: string
   email: string | null
   display_name: string | null
-}
-
-interface ScopeAggregateRow extends AggregateRow {
-  scope: string
 }
 
 interface DayMessageRow {
@@ -162,35 +153,6 @@ export async function getUsageByUser(
   return rows.map((row) => ({
     userId: row.user_id,
     userLabel: userLabel(row.email, row.display_name, row.user_id),
-    promptTokens: toNumber(row.prompt_tokens),
-    completionTokens: toNumber(row.completion_tokens),
-    costUsd: toNumber(row.cost_usd),
-    chatCount: toNumber(row.chat_count),
-    cacheReadTokens: toNumber(row.cache_read_tokens),
-    cacheCreationTokens: toNumber(row.cache_creation_tokens),
-  }))
-}
-
-export async function getUsageByScope(
-  db: DbClient,
-  sinceIso: string,
-): Promise<UsageByScopeRow[]> {
-  const { rows } = await db<ScopeAggregateRow>`
-    select c.scope                                  as scope,
-           coalesce(sum(m.prompt_tokens), 0)        as prompt_tokens,
-           coalesce(sum(m.completion_tokens), 0)    as completion_tokens,
-           coalesce(sum(m.cost_usd), 0)             as cost_usd,
-           coalesce(sum(m.cache_read_tokens), 0)    as cache_read_tokens,
-           coalesce(sum(m.cache_creation_tokens), 0) as cache_creation_tokens,
-           count(distinct m.conversation_id)        as chat_count
-    from ai_messages m
-    join ai_conversations c on c.id = m.conversation_id
-    where m.created_at >= ${sinceIso}
-    group by c.scope
-    order by cost_usd desc
-  `
-  return rows.map((row) => ({
-    scope: row.scope as ToolScope,
     promptTokens: toNumber(row.prompt_tokens),
     completionTokens: toNumber(row.completion_tokens),
     costUsd: toNumber(row.cost_usd),

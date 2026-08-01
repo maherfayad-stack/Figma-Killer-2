@@ -3,11 +3,11 @@
  *
  * Two independent axes, both must pass:
  *   1. Mutation: a `mutates` tool requires `ai.tools.write`.
- *   2. Scope: a tool's `requiredCapabilities` (ANY-OF) must be held by the
- *      caller. Undefined / empty means "any `ai.chat` caller" (e.g. tools
+ *   2. Capability: a tool's `requiredCapabilities` (ANY-OF) must be held by
+ *      the caller. Undefined / empty means "any `ai.chat` caller" (e.g. tools
  *      that only read the browser-supplied snapshot).
  *
- * Used by `selectToolsForScope` (which tools to offer the model) and
+ * Used by `selectStudioTools` (which tools to offer the model) and
  * re-checked in `executeAiTool` (defence in depth before dispatch).
  */
 import type { CoreCapability } from '@core/capabilities'

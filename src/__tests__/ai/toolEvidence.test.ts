@@ -92,7 +92,7 @@ function makeRequest(
     credentials: { id: 'cr', providerId: 'anthropic', authMode: 'apiKey', apiKey: 'sk-test', baseUrl: null },
     signal: new AbortController().signal,
     bridge,
-    toolContextBase: { db: {} as never, userId: 'u1', scope: 'site', conversationId: 'c1', snapshot: {} },
+    toolContextBase: { db: {} as never, userId: 'u1', conversationId: 'c1', snapshot: {} },
     ...overrides,
   }
 }

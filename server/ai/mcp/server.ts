@@ -121,7 +121,6 @@ export function buildMcpServer(ctx: McpServerContext): Server {
         db: ctx.db,
         userId: ctx.userId,
         capabilities: ctx.capabilities,
-        scope: tool.scope === 'shared' ? 'site' : tool.scope,
         conversationId: `mcp:${ctx.connectorId}`,
         snapshot: null,
       })

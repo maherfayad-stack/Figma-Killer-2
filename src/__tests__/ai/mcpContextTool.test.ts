@@ -9,7 +9,6 @@ function ctxFor(harness: CapabilityTestHarness): ToolContext {
     db: harness.db,
     userId: 'no-editor-user',
     capabilities: ['site.read'],
-    scope: 'site',
     conversationId: 'test',
     snapshot: null,
     signal: new AbortController().signal,

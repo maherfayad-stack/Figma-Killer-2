@@ -1,10 +1,8 @@
 # AI Agent
 
-The AI Agent is a model-powered assistant integrated into the Site editor and Content workspace. The shared Agent Panel owns conversation state, provider selection, streaming, history, and the browser bridge; each workspace supplies its own snapshot builder and tool executor.
+The AI Agent is a model-powered assistant integrated into the Site editor — Studio's one and only agent surface (WS-12 §8.1 D3). The Agent Panel owns conversation state, provider selection, streaming, history, and the browser bridge.
 
-In the Site editor, the agent reads the current page snapshot, plans a sequence of edits, and executes them by calling tools. Structure is written as semantic HTML (`site_insert_html` / `site_replace_node_html`); styling is written as CSS — a `<style>` block and/or `class=` attributes inside the insert, or the dedicated `site_apply_css` tool for authoring/editing any CSS on its own. There is one CSS path and it accepts every selector; `site_assign_class` / `site_remove_class` attach existing classes to nodes.
-
-In the Content workspace, the agent works against content collections and entries. It reads collection schemas and document state server-side, then mutates the live content editor through a browser bridge so the open draft, Tiptap body editor, and sidebar selection stay authoritative.
+The agent reads the current page snapshot, plans a sequence of edits, and executes them by calling tools. Structure is written as semantic HTML (`site_insert_html` / `site_replace_node_html`); styling is written as CSS — a `<style>` block and/or `class=` attributes inside the insert, or the dedicated `site_apply_css` tool for authoring/editing any CSS on its own. There is one CSS path and it accepts every selector; `site_assign_class` / `site_remove_class` attach existing classes to nodes.
 
 The agent runs on a provider-agnostic AI runtime (`server/ai/`) that can drive any supported model (Anthropic Claude, OpenAI, OpenRouter, Ollama, or any OpenAI-compatible endpoint). Every driver talks directly to its provider's REST API over HTTP/SSE — no provider SDKs. All drivers share one multi-turn tool loop (`drivers/http/toolLoop.ts`); each supplies only a small `ProviderAdapter` of pure mapping functions. The plain `@anthropic-ai/sdk` (and any provider SDK) is banned repo-wide. Gated by `ai-driver-isolation.test.ts`.
 
@@ -14,9 +12,8 @@ The agent runs on a provider-agnostic AI runtime (`server/ai/`) that can drive a
 
 - **Structure via HTML.** `site_insert_html` and `site_replace_node_html` accept semantic HTML strings; the browser executor calls `importHtml` (the same pipeline as the paste-HTML UI) to convert them into first-class, editable `PageNode`s.
 - **Styling via CSS.** The agent emits CSS the same way a human pastes it: a `<style>` block and/or `class=` attributes inside the `site_insert_html`/`site_replace_node_html` payload, or the standalone `site_apply_css` tool. The importer (`cssToStyleRules`) classifies every selector — a bare `.foo {}` rule becomes a reusable Selectors-panel class bound to `class="foo"`; any other selector (`.hero a`, `a:hover`, `nav > li`) becomes an ambient rule; `style=` attributes land on the node's inline styles. There is no structured `classes` parameter — the agent never hand-builds classes node-by-node at insert time. `site_apply_css` is the single tool for CSS on its own, with explicit merge, replace, rule-delete, and property-removal operations; exact selector identity and `!important` priority survive the round trip.
-- **Site scope: 35 tools total.** 6 server-side catalog read tools (resolved server-side from the posted snapshot / DB) + 29 browser-bridged tools.
-- **Content scope: 15 tools total.** 7 server-side content/catalog/media/user read tools + 8 browser-bridged document mutation/navigation tools.
-- **Two-endpoint bridge.** `POST /admin/api/ai/chat/:scope` opens an NDJSON stream. When the model calls a browser-bridged tool, the server emits `toolRequest`; the browser executor reads or mutates the live workspace and POSTs the `AiToolOutput` result to `POST /admin/api/ai/tool-result`.
+- **One Studio agent, 35 tools total.** 6 server-side catalog read tools (resolved server-side from the posted snapshot / DB) + 29 browser-bridged tools. There is no per-surface scope split (WS-12 §8.1 D3).
+- **Two-endpoint bridge.** `POST /admin/api/ai/chat` opens an NDJSON stream. When the model calls a browser-bridged tool, the server emits `toolRequest`; the browser executor reads or mutates the live workspace and POSTs the `AiToolOutput` result to `POST /admin/api/ai/tool-result`.
 - **Provider-agnostic.** The runtime selects a driver (Anthropic, OpenAI, OpenRouter, Ollama, Custom Provider) from the conversation's configured credential.
 - **Site tool input schemas are a single source of truth** in `@core/ai` (`src/core/ai/toolSchemas.ts`). The server registry and browser executor import from that shared leaf. Most tools reuse the exact same schema object; `site_apply_css` deliberately advertises a flat provider object because Anthropic rejects root-level schema composition, then the executor validates the payload against the leaf's exact operation union. Gated by `ai-tool-input-object.test.ts`, `ai-tool-schema-ssot.test.ts`, and `ai-tools-typebox-only.test.ts`.
 - **Capabilities.** `ai.chat` required to stream; `ai.tools.write` required for write tools. Gated by `ai-handlers-capability-gated.test.ts`.
@@ -32,16 +29,17 @@ src/core/ai/
 └── index.ts                — barrel re-export (canonical @core/ai import path)
 
 server/ai/
+├── legacyScope.ts          — LEGACY_SCOPE_COLUMN: the one permitted `ai_defaults`/`ai_conversations.scope` value (vestigial, see "Server endpoints")
 ├── handlers/
-│   ├── chat.ts             — POST /admin/api/ai/chat/:scope  (NDJSON stream)
+│   ├── chat.ts             — POST /admin/api/ai/chat  (NDJSON stream)
 │   ├── toolResult.ts       — POST /admin/api/ai/tool-result  (bridge POST)
 │   ├── conversations.ts    — CRUD for ai_conversations rows
-│   ├── credentials.ts      — CRUD for ai_credentials rows (encrypted secrets + endpoint credentials); auto-seeds defaults on create
-│   ├── defaults.ts         — GET/PUT/DELETE /admin/api/ai/defaults (per-scope defaults)
+│   ├── credentials.ts      — CRUD for ai_credentials rows (encrypted secrets + endpoint credentials); auto-seeds the default on create
+│   ├── defaults.ts         — GET/PUT/DELETE /admin/api/ai/defaults (Studio's one default)
 │   ├── models.ts           — list available models per provider; enriches Anthropic/OpenAI with catalogue prices + context windows
 │   └── audit.ts            — GET /admin/api/ai/audit (usage rollups for the Audit tab; gated by ai.audit.read)
 ├── audit/
-│   └── store.ts            — getUsageTotals / getUsageByUser / getUsageByScope / getUsageByModel / getUsageByDay (four rollup queries; daily rollup bins into the viewer's local calendar day via localDayKeyFactory)
+│   └── store.ts            — getUsageTotals / getUsageByUser / getUsageByModel / getUsageByDay (rollup queries; daily rollup bins into the viewer's local calendar day via localDayKeyFactory)
 ├── conversations/
 │   ├── history.ts          — buildMessageHistory(): reconstruct AiMessage[] from persisted rows; heals interrupted tool calls (synthetic error results for unanswered tool_use blocks)
 │   ├── store.ts            — appendMessage / listMessagesForConversation / readConversationForUser
@@ -58,7 +56,7 @@ server/ai/
 │   │   ├── render.ts          — catalog derivations (`describeAgentModules`, `describeAgentTokens`, `filterTokenFamily`)
 │   │   ├── systemPrompt.ts    — HTML-native static prefix + buildDynamicSuffix
 │   │   └── snapshot.ts        — `SiteAgentSnapshotSchema` + `SiteAgentSnapshot` re-export + catalog output types (ModuleInfo, SnapshotTokens, …)
-│   └── content/            — content-workspace tools (separate scope)
+│   └── index.ts            — `studioTools` (= `siteTools`) + `selectStudioTools(capabilities)`
 ├── drivers/
 │   ├── http/
 │   │   ├── sse.ts             — parseSseStream(res): reassemble SSE frames across chunks
@@ -82,13 +80,13 @@ server/ai/
 src/admin/ai/
 ├── ndjsonStream.ts         — shared validated NDJSON reader
 ├── toolResultApi.ts        — shared browser-tool result POST
-└── useMcpWorkspaceBridge.ts— scope-aware external MCP stream + browser dispatcher
+└── useMcpWorkspaceBridge.ts— external MCP stream + browser dispatcher for the live Site editor bridge
 
 src/admin/pages/site/agent/
 ├── index.ts                — public barrel (all external imports go through here)
-├── agentSlice.ts           — scope-agnostic Zustand slice factory (createAgentSlice(config))
+├── agentSlice.ts           — Zustand slice factory (createAgentSlice(config)) — Studio has exactly one config, `siteAgentSliceConfig`
 ├── agentProviderUpdate.ts  — timed provider/model persistence and fail-closed reconciliation
-├── agentSliceConfig.site.ts— site-editor config: scope, snapshot builder, executor wiring
+├── agentSliceConfig.site.ts— site-editor config: snapshot builder, executor wiring
 ├── agentConfig.ts          — conversation/default API path constants
 ├── agentApi.ts             — conversation bootstrap and message rehydration
 ├── streamEvents.ts         — NDJSON schema (ServerStreamEventSchema) + processStreamEvent reducer
@@ -101,13 +99,6 @@ src/admin/pages/site/agent/
 ├── renderEvidence.ts       — captureAgentRenderSnapshot (site_render_snapshot tool)
 ├── storeRef.ts             — setAgentStoreApi / getAgentStoreApi (avoids store ↔ executor cycle)
 └── types.ts                — ServerStreamEvent, AgentMessage, AgentRequestBody, …
-
-src/admin/pages/content/agent/
-├── agentSliceConfig.content.ts — content-workspace config: scope, snapshot builder, executor wiring
-├── contentAgentStore.ts        — standalone per-mount Zustand store (AgentSlice only)
-├── contentBridge.ts            — content workspace write-tool executor
-├── contentBridgeHandle.ts      — live ContentPage operation handle
-└── useContentToolBridge.ts     — always-mounted handle + content-scope MCP relay
 
 src/admin/pages/site/panels/AgentPanel/
 ├── AgentPanel.tsx          — panel shell, persisted message thread, and image-gallery orchestration
@@ -133,8 +124,8 @@ src/admin/pages/ai/
 ├── AiPage.module.css
 └── tabs/
     ├── ProvidersTab.tsx    — CRUD for ai_credentials rows (provider-derived API key or endpoint credential shape)
-    ├── DefaultsTab.tsx     — per-scope model defaults editor
-    ├── AuditTab.tsx        — usage audit view: totals strip, by-model/user/scope tables, daily bar chart
+    ├── DefaultsTab.tsx     — Studio's default-model editor (single row — one agent, one default)
+    ├── AuditTab.tsx        — usage audit view: totals strip, by-model/user tables, daily bar chart
     └── UsageTablePanel.tsx — shared table scaffolding (title + hint header, numeric-aligned columns, empty row)
 ```
 
@@ -146,12 +137,12 @@ The Agent Panel owns the credential list load for its header, lock-state empty s
 The composer has two distinct lock states, expressed as `lockReason: 'setup' | 'chooseModel' | null`:
 
 - `'setup'` — no credentials exist at all. The message area shows a "Connect an AI provider" empty state with a CTA to `/admin/ai`. The model picker is hidden. The textarea placeholder reads "Add AI credentials to start chatting" and the send button tooltip reads "Add AI credentials first".
-- `'chooseModel'` — credentials are loaded but no scope default or explicit pick is active yet (`activeCredentialId` or `activeModelId` is null). The message area shows "Choose a model to get started" with a link to set a default in AI settings. The model picker remains visible so the user can pick inline. The textarea placeholder reads "Choose a model below to start" and the send button tooltip reads "Choose a model first".
+- `'chooseModel'` — credentials are loaded but no default or explicit pick is active yet (`activeCredentialId` or `activeModelId` is null). The message area shows "Choose a model to get started" with a link to set a default in AI settings. The model picker remains visible so the user can pick inline. The textarea placeholder reads "Choose a model below to start" and the send button tooltip reads "Choose a model first".
 - `null` — `Boolean(activeCredentialId && activeModelId)` is true; the composer is fully usable.
 
-While credentials are still loading, `lockReason` stays `null` so the panel does not flash a setup prompt before `loadScopeDefault()` resolves.
+While credentials are still loading, `lockReason` stays `null` so the panel does not flash a setup prompt before `loadStudioDefault()` resolves.
 
-When the panel opens, `AgentPanel` calls `loadScopeDefault()` so the model picker immediately shows the configured scope default — no "Default" placeholder, no send-time no-provider surprise. `composerLocked` is gated by `hasActiveProvider` (`Boolean(activeCredentialId && activeModelId)`), meaning a stale "No AI provider configured" error string never locks out the UI once a credential + model is staged; picking a model via `setAgentProvider` clears `agentError` immediately, re-enabling the composer.
+When the panel opens, `AgentPanel` calls `loadStudioDefault()` so the model picker immediately shows the configured default — no "Default" placeholder, no send-time no-provider surprise. `composerLocked` is gated by `hasActiveProvider` (`Boolean(activeCredentialId && activeModelId)`), meaning a stale "No AI provider configured" error string never locks out the UI once a credential + model is staged; picking a model via `setAgentProvider` clears `agentError` immediately, re-enabling the composer.
 
 The composer action row includes a compact five-segment `<ContextMeter>` immediately before Attach images and Send. `AgentComposer` resolves the full active-model descriptor from `GET /admin/api/ai/providers/:id/models?credentialId=…` (the same catalogue-enriched response the picker uses), then uses its `contextWindow`, pricing, `capabilities.visionInput`, and `capabilities.toolCalling`. A model known not to support tools is blocked with an inline "choose an agent-capable model" message; the server repeats that gate authoritatively. The meter appears as soon as a model with a known window is selected. It represents **context remaining**: a fresh conversation is five green segments and the battery drains toward amber/red as context is consumed. Hover or keyboard focus opens a wide graphical tooltip with exact context used/available, cumulative conversation input/output/cache tokens, authoritative USD spend, and current-model list rates. A context snapshot belongs to the credential/model selection that measured it, so switching models renders the meter indeterminate until the next provider response rather than comparing stale usage to a new window. The meter stays hidden when no context window is known (Ollama, uncatalogued models).
 
@@ -171,7 +162,7 @@ The provider-neutral v1 policy is defined once in `src/core/ai/userImage.ts` and
 - at most eight images per message; there is no per-conversation image-count quota;
 - browser output: metadata-stripped `image/jpeg`, transparent pixels composited over white;
 - maximum output: 1,500,000 bytes, 1568 px on either edge, and 1,500,000 total pixels;
-- complete chat-request envelope: eight maximum base64 images plus a further 16 MiB reserve for JSON framing and the scope snapshot (about 32.8 MB total).
+- complete chat-request envelope: eight maximum base64 images plus a further 16 MiB reserve for JSON framing and the live editor snapshot (about 32.8 MB total).
 
 `agentImageAttachment.ts` fits both the edge and pixel budgets, tries progressively lower JPEG qualities, then reduces dimensions when necessary. The server never trusts that browser work: `server/ai/inputImages.ts` checks canonical base64, decoded byte length, JPEG magic bytes and dimensions, then fully decodes and re-encodes the JPEG through Sharp before appending the message. That second canonicalisation rejects truncated pixel data and strips EXIF/XMP/ICC metadata even when a direct authenticated client bypasses the browser. Unsupported, malformed, or oversized content is rejected before it can enter conversation history. The conversation single-writer lease is acquired before Sharp work, and the request signal is checked around every sequential decode: a competing request returns 409 without decoding, while a disconnected request finishes only its active Sharp pipeline and never starts the remaining images.
 
@@ -203,9 +194,9 @@ User types text and/or pastes images → Agent Panel
     ▼
 agentSlice.sendAgentMessage(contentBlocks)
     │
-    ├─→ buildSnapshot()  →  SiteAgentSnapshot or ContentSnapshot
-    ├─→ ensure conversation row  (lazily created from AI defaults on first call)
-    ├─→ POST /admin/api/ai/chat/<scope>  { conversationId, content, snapshot }
+    ├─→ buildSnapshot()  →  SiteAgentSnapshot
+    ├─→ ensure conversation row  (lazily created from the AI default on first call)
+    ├─→ POST /admin/api/ai/chat  { conversationId, content, snapshot }
     │
     ▼
 Server: chat.ts
@@ -218,9 +209,9 @@ Server: chat.ts
     ├─→ acquire the conversation's single-writer stream lease
     ├─→ fully decode/canonicalise images sequentially (request-cancellable)
     ├─→ project persisted images for the selected model
-    ├─→ selectToolsForScope(scope, capabilities)
+    ├─→ selectStudioTools(capabilities)
     │     — write tools excluded unless caller has ai.tools.write
-    ├─→ build scope system prompt  →  [staticPrefix, BOUNDARY, dynamicSuffix]
+    ├─→ build the Studio system prompt  →  [staticPrefix, BOUNDARY, dynamicSuffix]
     ├─→ createBridge(emit)  →  { bridgeId, bridge, destroy }
     ├─→ emit { type: 'bridgeReady', bridgeId }
     └─→ runChat({ driver, request, persister, emit })  — streaming begins
@@ -229,7 +220,7 @@ Server: chat.ts
           │  Direct HTTP drivers have no server-side session — every turn
           │  replays the whole log, mapped into the provider's message array.
           │
-          ├─→ catalog read tool (e.g. site_list_documents / content_list_documents)
+          ├─→ catalog read tool (e.g. site_list_documents)
           │     → resolved server-side from snapshot; result returned to model
           │
           ├─→ browser-backed read/open tool (e.g. site_read_document / site_open_document)
@@ -237,7 +228,7 @@ Server: chat.ts
           │     → browser reads or opens the target page/template/visual component
           │     → result returned to model
           │
-          └─→ browser-bridged mutating tool (e.g. site_insert_html / content_set_document_fields)
+          └─→ browser-bridged mutating tool (e.g. site_insert_html)
                 → bridge.callBrowser(toolName, input)
                 → emit { type: 'toolRequest', requestId, toolName, input }
                 → driver loop pauses; awaits tool-result POST
@@ -293,14 +284,20 @@ Only the active page carries full `nodes`. Non-active pages keep metadata (`id`,
 
 ## Server endpoints
 
-### `POST /admin/api/ai/chat/:scope`
+### `POST /admin/api/ai/chat`
+
+Studio has exactly one agent (WS-12 §8.1 D3) — there is no `:scope` route
+segment. `ai_conversations.scope` still exists as a column (an inline `CHECK`
+from migration `007_ai_runtime` pins it, and SQLite cannot alter a `CHECK`),
+but it is vestigial: the single write site pins it to a permitted constant
+(`LEGACY_SCOPE_COLUMN` in `server/ai/legacyScope.ts`) and nothing reads it back.
 
 ```ts
 // Request body
 {
   conversationId: string   // ai_conversations row id
   prompt:         string
-  snapshot:       unknown   // scope-specific: SiteAgentSnapshot or ContentSnapshot
+  snapshot:       unknown   // SiteAgentSnapshot
 }
 
 // Response: NDJSON stream of ServerStreamEvent (one JSON line + '\n' each)
@@ -310,17 +307,15 @@ The handler (`server/ai/handlers/chat.ts`):
 1. CSRF-checks and requires `ai.chat`.
 2. Loads the conversation row (credentialId, modelId) and the full persisted message history (`listMessagesForConversation` → `buildMessageHistory` → `AiMessage[]`).
 3. Decrypts the credential and resolves the driver.
-4. Calls `selectToolsForScope(scope, capabilities)` — write tools excluded without `ai.tools.write`.
-5. Builds the scope system prompt (`buildSiteSystemPrompt(snapshot)` or `buildContentSystemPrompt(snapshot)`).
+4. Calls `selectStudioTools(capabilities)` — write tools excluded without `ai.tools.write`.
+5. Builds the Studio system prompt (`buildSiteSystemPrompt(snapshot)`, re-exported as `buildStudioSystemPrompt`).
 6. Creates a bridge (`createBridge(emit, req.signal)`), emits `bridgeReady`.
 7. Calls `runChat(...)` with the full history as `req.messages`. Direct HTTP drivers have no server-side session, so each driver maps the whole `AiMessage[]` log into the provider's native message array every turn (the Anthropic driver pairs assistant `tool_use` blocks with their following `tool_result` turns). The runner pipes all stream events to the HTTP response. Before recording a terminal usage event, the runner flushes any pending assistant text so text-only replies have an assistant message row for per-turn usage and audit rollups. The multi-turn agentic loop lives in `drivers/http/toolLoop.ts`, not in a provider SDK.
 8. Emits a terminal `ai.chat.completed` / `ai.chat.failed` audit event.
 
-Valid scopes are `site`, `content`, `data`, and `plugin`; only `site` and `content` currently register tools and prompts. The handler rejects a request when the URL scope does not match the `ai_conversations.scope` row.
-
 ### `GET /admin/api/ai/audit?since=ISO&tz=IANA`
 
-Returns four rollups consumed by the `/admin/ai` Audit tab and the dashboard "AI usage this month" widget. Gated by `ai.audit.read`.
+Returns the rollups consumed by the `/admin/ai` Audit tab and the dashboard "AI usage this month" widget. Gated by `ai.audit.read`. There is no per-scope breakdown — Studio has exactly one agent, so a "by surface" rollup would always be a single row identical to `totals`.
 
 ```ts
 // Query params
@@ -332,7 +327,6 @@ tz?:    string   // IANA timezone (e.g. "Europe/Bratislava"); defaults to UTC
   since:   string           // resolved ISO start instant
   totals:  UsageRow         // aggregate totals across the window
   byUser:  UsageByUserRow[] // one row per user_id, sorted by cost desc
-  byScope: UsageByScopeRow[]// one row per chat scope ('site' | 'content' | …)
   byModel: UsageByModelRow[]// one row per (provider, model) pair
   byDay:   UsageByDayRow[]  // one row per calendar day in the viewer's timezone
 }
@@ -340,7 +334,7 @@ tz?:    string   // IANA timezone (e.g. "Europe/Bratislava"); defaults to UTC
 
 `byDay` is the time-series chart data — each `day` field is `YYYY-MM-DD` in the viewer's local timezone (not UTC). The daily rollup pulls raw message rows and bins them in JS via `localDayKeyFactory(timeZone)` (`server/time.ts`) rather than SQL date-truncation, because the day boundary depends on the viewer's timezone which the database doesn't know. The client (see `AuditTab.tsx` → `listAiAudit`) reads `Intl.DateTimeFormat().resolvedOptions().timeZone` and passes it as `?tz=`.
 
-The Audit tab (`src/admin/pages/ai/tabs/AuditTab.tsx`) consumes this endpoint. The daily rollup there also aligns its "Today" range window to local midnight (`setHours(0, 0, 0, 0)`) so the day boundary is consistent both in the filter and in the bar chart. The by-model, by-user, and by-scope rollups all render through `UsageTablePanel` (`tabs/UsageTablePanel.tsx`) — a shared table component that takes a `columns` config and handles the empty-state row. Number and cost formatting (`formatNumber`, `formatCost`) live in `src/admin/ai/usageFormat.ts`, a plain shared leaf used by both Audit and the composer context tooltip.
+The Audit tab (`src/admin/pages/ai/tabs/AuditTab.tsx`) consumes this endpoint. The daily rollup there also aligns its "Today" range window to local midnight (`setHours(0, 0, 0, 0)`) so the day boundary is consistent both in the filter and in the bar chart. The by-model and by-user rollups render through `UsageTablePanel` (`tabs/UsageTablePanel.tsx`) — a shared table component that takes a `columns` config and handles the empty-state row. Number and cost formatting (`formatNumber`, `formatCost`) live in `src/admin/ai/usageFormat.ts`, a plain shared leaf used by both Audit and the composer context tooltip.
 
 ### `POST /admin/api/ai/tool-result`
 
@@ -350,7 +344,7 @@ The Audit tab (`src/admin/pages/ai/tabs/AuditTab.tsx`) consumes this endpoint. T
   bridgeId:  string
   requestId: string
   result:    AiToolOutput   // { ok: boolean; data?: unknown; error?: string; images?: { mimeType, data }[] } — from src/core/ai/
-  snapshot?: unknown        // optional post-mutation scope snapshot (see "Mid-turn refresh")
+  snapshot?: unknown        // optional post-mutation live editor snapshot (see "Mid-turn refresh")
 }
 ```
 
@@ -514,41 +508,6 @@ When a node-targeting write tool (`site_insert_html`, `site_get_node_html`, `sit
 
 `site_render_snapshot`, catalog tools (`site_list_documents`, etc.), and token tools have no node target — they are excluded from auto-navigation.
 
-### Content workspace tools — 15 total
-
-Content-scope tools are registered under `server/ai/tools/content/`. They use the same `POST /admin/api/ai/chat/content` stream and `POST /admin/api/ai/tool-result` bridge as the Site editor, but the snapshot and browser executor are content-specific:
-
-- `ContentAgentMount` builds a `ContentSnapshot` from the live Content workspace: visible `postType` collections, active collection id, active document fields/schema, and current user identity.
-- `contentAgentStore.ts` mounts a standalone `AgentSlice` instance per `ContentPage` mount. The Content workspace is hook-based rather than a global Zustand store, so the bridge is exposed through `contentBridgeHandle.ts`.
-- Server read tools hit the data, media, and user repositories through `ctx.db`; write tools are browser-bridged so unsaved draft state in `useContentEntryDraft` and the Tiptap body editor stay authoritative.
-
-**Server-side content reads — 7**
-
-| Tool | What it returns |
-|---|---|
-| `content_list_collections` | Visible content collections (`postType` and `page` tables only) with id, slug, label, kind, row count, and primary field id |
-| `content_get_collection_schema` | One collection's field schema, including per-field type metadata and select/media/relation extras |
-| `content_list_documents` | Light document rows in a collection, filterable by status/author and paginated by limit/offset |
-| `content_get_document` | One document's full state: field values, status, author, slug, timestamps |
-| `content_search_documents` | Free-text lookup across document slugs, projected to light document summaries |
-| `content_list_users` | Active users available as authors; gated by `users.manage` |
-| `content_list_media` | Existing media assets for media fields; gated by `media.read`; upload remains a user/media-workspace action |
-
-**Browser-bridged content writes/navigation — 8**
-
-| Tool | What it does |
-|---|---|
-| `content_create_document` | Creates a draft in a collection, optionally with initial fields/status, then switches the UI to the new document |
-| `content_delete_document` | Soft-deletes a document; restore remains available through the Trash UI |
-| `content_set_document_status` | Changes status (`draft`, `unpublished`, `published`, `scheduled`); scheduled status requires `scheduledAt` |
-| `content_set_document_field` | Writes one field; body values are markdown and are converted by the browser bridge |
-| `content_set_document_fields` | Batch-writes multiple fields in one save |
-| `content_set_document_author` | Reassigns author; gated by the same author-management capability path as the HTTP UI |
-| `content_set_active_document` | Loads a document by id across post-type collections and commits the live editor focus before subsequent writes |
-| `content_set_active_collection` | Switches the sidebar focus to a collection |
-
-The content system prompt is markdown-native: it tells the model to exchange body content as standard markdown, to read schemas before writing unfamiliar fields, and to prefer `content_set_document_fields` for whole-post generation. The prompt is built with the same `[staticPrefix, SYSTEM_PROMPT_DYNAMIC_BOUNDARY, dynamicSuffix]` shape as the Site prompt so provider prompt caching works the same way.
-
 ### Heavy evidence — image channel + vision gating + elision
 
 `site_render_snapshot` (and `site_read_document` / `site_get_node_html`) return large payloads. Five rules keep them from exploding context (a screenshot inlined as base64 JSON text once pushed a single turn past 1M tokens):
@@ -571,7 +530,7 @@ Every request uses `AgentSnapshotFrame`, an offscreen one-shot `IframeFrameSurfa
 ```ts
 [staticPrefix, SYSTEM_PROMPT_DYNAMIC_BOUNDARY, dynamicSuffix]
 ```
-Drivers that support explicit prompt-cache controls (Anthropic) apply `cache_control` to the static prefix automatically. OpenAI concatenates the prompt parts and sends a stable `prompt_cache_key` derived from the scope + toolset so repeated prefixes route more consistently. Other drivers concatenate the three strings. Content is intentionally static across providers — every observable behaviour comes from the tool definitions, not prompt knobs.
+Drivers that support explicit prompt-cache controls (Anthropic) apply `cache_control` to the static prefix automatically. OpenAI concatenates the prompt parts and sends a stable `prompt_cache_key` derived from the toolset so repeated prefixes route more consistently. Other drivers concatenate the three strings. Content is intentionally static across providers — every observable behaviour comes from the tool definitions, not prompt knobs.
 
 `SYSTEM_PROMPT_DYNAMIC_BOUNDARY` is the literal `'__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__'`, declared **once** in `server/ai/runtime/types.ts` and imported everywhere — prompt builders and every driver. A duplicate definition would silently break prompt caching on whichever driver drifted. Gated by `ai-driver-shared-helpers.test.ts`.
 
@@ -617,12 +576,11 @@ The same importer that powers the Agent's `site_insert_html` tool also powers th
 
 ## Client store (`agentSlice`)
 
-`createAgentSlice(config)` (`src/admin/pages/site/agent/agentSlice.ts`) is a scope-agnostic Zustand slice factory. Scope-specific wiring is kept out of the factory — each surface supplies its own `AgentSliceConfig`. The site editor uses `siteAgentSliceConfig` from `agentSliceConfig.site.ts`:
+`createAgentSlice(config)` (`src/admin/pages/site/agent/agentSlice.ts`) is a Zustand slice factory. The site editor is Studio's only agent surface, so there is exactly one `AgentSliceConfig` in the app — `siteAgentSliceConfig` from `agentSliceConfig.site.ts`:
 
 ```ts
 // agentSliceConfig.site.ts — wired in store.ts via createAgentSlice(siteAgentSliceConfig)
 export const siteAgentSliceConfig: AgentSliceConfig = {
-  scope: 'site',
   buildSnapshot: () => buildCurrentPageContext(
     () => getAgentStoreApi<EditorStore>().getState(),
   ),
@@ -632,8 +590,6 @@ export const siteAgentSliceConfig: AgentSliceConfig = {
 ```
 
 `getAgentStoreApi` reads the live store via `storeRef.ts`, wired in `store.ts` after store creation (`setAgentStoreApi(useEditorStore)`). This avoids a static import cycle: executor → store → agentSlice → executor.
-
-The content workspace uses the same factory with `contentAgentSliceConfig` mounted in a standalone per-page store (`contentAgentStore.ts`).
 
 `agentProviderUpdate.ts` owns the existing-conversation provider/model PUT and its failure reconciliation. A definite 4xx can roll the picker back to the re-read row; a timeout, network failure, or 5xx stays fail-closed unless the re-read already proves that the requested selection committed. `agentSlice.ts` keeps the ordering queue and Send lock because those coordinate store actions rather than HTTP persistence.
 
@@ -684,8 +640,8 @@ interface AgentSlice {
   deleteAgentConversation(id: string):                 Promise<void>
   /** Change which credential + model is active. Updates the conversation row if one exists; stages the values for the next create if not. Also clears `agentError` so a sticky "no provider" error doesn't keep the composer disabled after the user picks a model. */
   setAgentProvider(credentialId: string, modelId: string): Promise<void>
-  /** Preload the per-scope default (credentialId, modelId) from GET /admin/api/ai/defaults. No-op when a conversation or explicit pick is already active. Called by AgentPanel on open. */
-  loadScopeDefault():                                  Promise<void>
+  /** Preload the default (credentialId, modelId) from GET /admin/api/ai/defaults. No-op when a conversation or explicit pick is already active. Called by AgentPanel on open. */
+  loadStudioDefault():                                  Promise<void>
 }
 ```
 
@@ -755,12 +711,12 @@ The browser de-duplicates concurrent requests for the same credential, applies a
 
 The `getModelCatalogue(db)` export (used by the models handler for picker enrichment) and `resolveCostUsd(db, providerId, modelId, usage)` (used by the persister) share the same in-memory cache. Two callers, one memo.
 
-### Auto-defaults on credential creation
+### Auto-default on credential creation
 
-When `POST /admin/api/ai/credentials` creates a new credential, `seedEmptyDefaults` auto-assigns it as the default for every scope (`site`, `content`, `data`, `plugin`) that has no default yet. The default model is the `tier === 'smartest'` live-catalogue entry from `driver.listModels()`, or the first live model if no smartest tier is found. If the model list can't be resolved (offline, bad key), seeding is skipped silently — it never fails the credential creation. Driver fallback models can still help the picker explain common local options, but they are not trusted for automatic defaults. Scopes that already point at a credential are left untouched.
+When `POST /admin/api/ai/credentials` creates a new credential, `seedEmptyDefaults` auto-assigns it as Studio's default if none is set yet. The default model is the `tier === 'smartest'` live-catalogue entry from `driver.listModels()`, or the first live model if no smartest tier is found. If the model list can't be resolved (offline, bad key), seeding is skipped silently — it never fails the credential creation. Driver fallback models can still help the picker explain common local options, but they are not trusted for automatic defaults. An already-set default is left untouched.
 
-Defaults can also be cleared per scope from the Defaults tab. The UI calls
-`DELETE /admin/api/ai/defaults/:scope`, removes the row from `ai_defaults`, and
+The default can also be cleared from the Defaults tab. The UI calls
+`DELETE /admin/api/ai/defaults`, removes the row from `ai_defaults`, and
 unblocks deletion of the credential that had been protected by the default FK.
 
 ---
@@ -786,7 +742,7 @@ unblocks deletion of the credential that had been protected by the default FK.
 | Importing `zod` anywhere | Banned repo-wide — TypeBox schemas pass directly as JSON Schema to every provider. Gated by `ai-driver-isolation.test.ts`. |
 | Writing a private `parseToolArguments` / `parseJsonOrEmpty` copy inside a driver | Import `parseToolArguments` from `./http/toolArgs`. Private copies diverge silently — the same malformed model output produces different outcomes per provider. Gated by `ai-driver-shared-helpers.test.ts`. |
 | Redefining `SYSTEM_PROMPT_DYNAMIC_BOUNDARY` in a driver or prompt builder | Import it from `server/ai/runtime/types.ts`. One source — if a driver or builder drifts the literal, prompt caching silently breaks for that driver. Gated by `ai-driver-shared-helpers.test.ts`. |
-| Routing a write tool as a server-side read (resolving from snapshot) | Write tools are `execution: 'browser'` — they must go through the bridge. The Site editor store or Content workspace bridge is the write authority. |
+| Routing a write tool as a server-side read (resolving from snapshot) | Write tools are `execution: 'browser'` — they must go through the bridge. The Site editor store is the write authority. |
 | Using invented breakpoint ids in `breakpointStyles` (`"mobile"`, `"desktop"`, etc.) | Use verbatim ids from the dynamic suffix. Invalid ids are rejected by the executor. |
 
 ---
@@ -797,7 +753,6 @@ unblocks deletion of the credential that had been protected by the default FK.
 - `docs/editor.md` — agent slice composition inside the editor store
 - `docs/server.md` — handler routing; `/admin/api/ai/` is matched before `/admin/api/cms/`
 - `docs/features/auth-and-access.md` — capability model (`ai.chat`, `ai.tools.write`)
-- `docs/features/content-workspace.md` — content workspace UI and content-scope Agent Panel mount
 - Source-of-truth files:
   - `src/core/ai/toolOutput.ts` — `AiToolOutput` type, `AiToolOutputSchema`, `aiToolOk`, `aiToolError` (canonical bridge result)
   - `src/core/ai/chatRequest.ts` — canonical browser-to-server chat envelope and computed multi-image request ceiling
@@ -812,17 +767,15 @@ unblocks deletion of the credential that had been protected by the default FK.
   - `server/ai/tools/site/render.ts` — `describeAgentModules`, `describeAgentTokens`, `filterTokenFamily`
   - `server/ai/tools/site/systemPrompt.ts` — HTML-native system prompt
   - `server/ai/tools/site/snapshot.ts` — `SiteAgentSnapshotSchema` + `SiteAgentSnapshot` re-export + catalog output types (`ModuleInfo`, `SnapshotTokens`, …)
-  - `server/ai/tools/content/readTools.ts` — 7 server-side content read tool definitions
-  - `server/ai/tools/content/writeTools.ts` — 8 browser-bridged content write/navigation tool definitions
+  - `server/ai/tools/index.ts` — `studioTools` + `selectStudioTools(capabilities)`
+  - `server/ai/legacyScope.ts` — `LEGACY_SCOPE_COLUMN`, the one permitted `ai_defaults`/`ai_conversations.scope` value
   - `server/ai/inputImages.ts` — server-side base64, JPEG, byte, and dimension validation before persistence
   - `server/ai/drivers/modelCapabilities.ts` — cached, timed, authoritative/fail-closed selected-model capability resolution on every turn
   - `server/ai/drivers/modelList.ts` — bounded provider catalogue lookup with caller cancellation
   - `server/ai/drivers/http/toolLoop.ts` — provider loop, heavy tool-result elision, and one provider-triggered historical-image fallback
   - `server/ai/conversations/history.ts` — interrupted-tool healing plus outbound user-image replay projection
-  - `server/ai/tools/content/systemPrompt.ts` — markdown-native content system prompt
-  - `server/ai/tools/content/snapshot.ts` — `ContentSnapshot` shape consumed by the content prompt and tool context
   - `src/admin/pages/site/agent/siteAgentSnapshot.ts` — `SiteAgentSnapshotSchema` (TypeBox source of truth) + `SiteAgentSnapshot` (derived type) + `buildSiteAgentSnapshot`
-  - `server/ai/handlers/chat.ts` — `POST /admin/api/ai/chat/:scope` endpoint
+  - `server/ai/handlers/chat.ts` — `POST /admin/api/ai/chat` endpoint
   - `server/ai/handlers/conversations.ts` — conversation CRUD plus the ownership-guarded lazy image endpoint
   - `server/ai/handlers/toolResult.ts` — `POST /admin/api/ai/tool-result` endpoint
   - `src/core/ai/toolOutput.ts` — canonical `AiToolOutput` envelope + shared `INTERRUPTED_TOOL_RESULT_ERROR`
@@ -838,16 +791,16 @@ unblocks deletion of the credential that had been protected by the default FK.
   - `src/admin/ai/toolResultApi.ts` — browser tool-result delivery; active failures terminate the stale chat turn
   - `src/admin/pages/site/agent/agentApi.ts` — conversation bootstrap + terminal historical tool-call rehydration
   - `src/admin/pages/site/agent/toolCallLifecycle.ts` — live-stream pending-call finalization
-  - `server/ai/audit/store.ts` — `getUsageTotals`, `getUsageByUser`, `getUsageByScope`, `getUsageByModel`, `getUsageByDay` (usage rollup queries)
+  - `server/ai/audit/store.ts` — `getUsageTotals`, `getUsageByUser`, `getUsageByModel`, `getUsageByDay` (usage rollup queries)
   - `server/ai/handlers/audit.ts` — `GET /admin/api/ai/audit` handler
   - `server/time.ts` — `resolveTimeZone` + `localDayKeyFactory` (shared timezone day-bucketing utilities)
   - `src/admin/pages/ai/AiPage.tsx` — `/admin/ai` workspace (Providers / Defaults / Audit tabs)
   - `src/admin/pages/ai/tabs/AuditTab.tsx` — usage audit view (totals strip, tables, daily bar chart)
   - `src/admin/pages/ai/tabs/UsageTablePanel.tsx` — shared table scaffolding for audit rollups
   - `src/admin/ai/usageFormat.ts` — shared `formatNumber` / `formatCost` helpers
-  - `src/admin/pages/site/agent/agentSlice.ts` — scope-agnostic slice factory (`createAgentSlice`)
+  - `src/admin/pages/site/agent/agentSlice.ts` — slice factory (`createAgentSlice`)
   - `src/admin/pages/site/agent/agentProviderUpdate.ts` — timed provider/model update and ambiguous-commit reconciliation
-  - `src/admin/pages/site/agent/agentSliceConfig.site.ts` — site-editor scope config
+  - `src/admin/pages/site/agent/agentSliceConfig.site.ts` — site-editor config
   - `src/admin/pages/site/agent/agentApi.ts` — conversation bootstrap and message rehydration
   - `src/admin/pages/site/agent/streamEvents.ts` — `ServerStreamEventSchema` + `processStreamEvent`
   - `src/admin/pages/site/panels/AgentPanel/AgentImageGallery.tsx` — shared compact gallery for persisted and session-only images
@@ -862,10 +815,6 @@ unblocks deletion of the credential that had been protected by the default FK.
   - `src/admin/pages/site/agent/renderEvidence.ts` — `captureAgentRenderSnapshot`
   - `src/admin/pages/site/agent/types.ts` — `ServerStreamEvent`, `AgentMessage`, `AgentRequestBody`, …
   - `src/admin/pages/site/agent/index.ts` — public barrel
-  - `src/admin/pages/content/agent/ContentAgentMount.tsx` — content workspace AgentPanel mount + live bridge handle registration
-  - `src/admin/pages/content/agent/contentAgentStore.ts` — standalone content-workspace agent store
-  - `src/admin/pages/content/agent/contentBridge.ts` — content write-tool browser dispatcher
-  - `src/admin/pages/content/agent/contentBridgeHandle.ts` — imperative bridge handle registered by ContentPage
   - `src/admin/pages/site/panels/AgentPanel/AgentComposer.tsx` — resolves model window/pricing/capabilities and places the meter in the action row
   - `src/admin/pages/site/panels/AgentPanel/ContextMeter.tsx` — five-segment context status and rich usage tooltip
   - `src/admin/pages/site/panels/AgentPanel/contextMeterMetrics.ts` — exact five-band fill/tone calculation

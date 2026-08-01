@@ -44,7 +44,6 @@ describe('conversation detail round-trip', () => {
 
   it('produces a wire-valid detail view after create + append', async () => {
     const conv = await createConversationForUser(testDb.db, 'user_1', {
-      scope: 'site',
       credentialId: 'cred_1',
       modelId: 'model_1',
     })
@@ -70,7 +69,6 @@ describe('conversation detail round-trip', () => {
 
   it('preserves mixed and image-only user content through SQLite and the wire schema', async () => {
     const conv = await createConversationForUser(testDb.db, 'user_1', {
-      scope: 'site',
       credentialId: 'cred_1',
       modelId: 'model_1',
     })
@@ -127,7 +125,6 @@ describe('conversation detail round-trip', () => {
 
   it('does not let an automatic first-turn title overwrite a user rename', async () => {
     const conv = await createConversationForUser(testDb.db, 'user_1', {
-      scope: 'site',
       credentialId: 'cred_1',
       modelId: 'model_1',
     })

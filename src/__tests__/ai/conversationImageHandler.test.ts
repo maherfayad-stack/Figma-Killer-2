@@ -30,7 +30,6 @@ describe('conversation image delivery', () => {
       ) values ('cred-image-view', ${ownerId}, 'ollama', 'baseUrl', 'Images', 'http://local')
     `
     const conversation = await createConversationForUser(harness.db, ownerId, {
-      scope: 'site',
       credentialId: 'cred-image-view',
       modelId: 'vision-model',
     })

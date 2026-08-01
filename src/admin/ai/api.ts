@@ -42,13 +42,6 @@ const AuthMode = Type.Union([
   Type.Literal('baseUrl'),
 ])
 
-const ToolScope = Type.Union([
-  Type.Literal('site'),
-  Type.Literal('content'),
-  Type.Literal('data'),
-  Type.Literal('plugin'),
-])
-
 const CredentialViewSchema = Type.Object({
   id: Type.String(),
   providerId: ProviderId,
@@ -107,14 +100,13 @@ const DefaultEntrySchema = Type.Object({
   credentialId: Type.String(),
   modelId: Type.String(),
 })
-const DefaultsResponseSchema = Type.Object({
-  defaults: Type.Record(Type.String(), DefaultEntrySchema),
+const DefaultResponseSchema = Type.Object({
+  default: Type.Union([DefaultEntrySchema, Type.Null()]),
 })
-export type AiDefaults = Static<typeof DefaultsResponseSchema>['defaults']
+export type AiDefault = Static<typeof DefaultResponseSchema>['default']
 
 const ConversationViewSchema = Type.Object({
   id: Type.String(),
-  scope: ToolScope,
   title: Type.String(),
   credentialId: Type.Union([Type.String(), Type.Null()]),
   modelId: Type.String(),
@@ -285,29 +277,27 @@ export async function listModels(
 // Endpoints — defaults
 // ---------------------------------------------------------------------------
 
-export async function listDefaults(): Promise<AiDefaults> {
-  const body = await apiRequest('/admin/api/ai/defaults', { schema: DefaultsResponseSchema })
-  return body.defaults
+export async function listDefaults(): Promise<AiDefault> {
+  const body = await apiRequest('/admin/api/ai/defaults', { schema: DefaultResponseSchema })
+  return body.default
 }
 
 export async function setDefault(
-  scope: 'site' | 'data' | 'plugin',
   body: { credentialId: string; modelId: string },
 ): Promise<void> {
-  await apiRequest(`/admin/api/ai/defaults/${scope}`, { method: 'PUT', body })
+  await apiRequest('/admin/api/ai/defaults', { method: 'PUT', body })
 }
 
-export async function clearDefault(scope: 'site' | 'data' | 'plugin'): Promise<void> {
-  await apiRequest(`/admin/api/ai/defaults/${scope}`, { method: 'DELETE' })
+export async function clearDefault(): Promise<void> {
+  await apiRequest('/admin/api/ai/defaults', { method: 'DELETE' })
 }
 
 // ---------------------------------------------------------------------------
 // Endpoints — conversations
 // ---------------------------------------------------------------------------
 
-export async function listConversations(scope: 'site' | 'data' | 'plugin'): Promise<ConversationView[]> {
+export async function listConversations(): Promise<ConversationView[]> {
   const body = await apiRequest('/admin/api/ai/conversations', {
-    query: { scope },
     schema: ConversationListResponseSchema,
   })
   return body.conversations
@@ -364,13 +354,6 @@ const UsageByUserRowSchema = Type.Composite([
   }),
 ])
 
-const UsageByScopeRowSchema = Type.Composite([
-  UsageRowSchema,
-  Type.Object({
-    scope: ToolScope,
-  }),
-])
-
 const UsageByDayRowSchema = Type.Composite([
   UsageRowSchema,
   Type.Object({
@@ -392,13 +375,11 @@ const AuditResponseSchema = Type.Object({
   since: Type.String(),
   totals: UsageRowSchema,
   byUser: Type.Array(UsageByUserRowSchema),
-  byScope: Type.Array(UsageByScopeRowSchema),
   byModel: Type.Array(UsageByModelRowSchema),
   byDay: Type.Array(UsageByDayRowSchema),
 })
 
 export type AiUsageByUserRow = Static<typeof UsageByUserRowSchema>
-export type AiUsageByScopeRow = Static<typeof UsageByScopeRowSchema>
 export type AiUsageByDayRow = Static<typeof UsageByDayRowSchema>
 export type AiUsageByModelRow = Static<typeof UsageByModelRowSchema>
 export type AiAuditResponse = Static<typeof AuditResponseSchema>

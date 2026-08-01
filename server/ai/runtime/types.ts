@@ -35,8 +35,14 @@ export type AiProviderId = 'anthropic' | 'openai' | 'ollama' | 'openrouter' | 'o
  */
 export type AiAuthMode = 'apiKey' | 'baseUrl'
 
-// One AI surface in the admin. Each scope has its own toolset + system prompt.
-export type ToolScope = 'site' | 'data' | 'plugin'
+/**
+ * Tool bridge-routing scope. NOT the chat "scope" concept removed by WS-12
+ * §8.1 D3 (Studio has exactly one agent, one toolset, one system prompt) —
+ * this says where a *browser*-executed tool's live bridge lives: `'site'`
+ * routes through the connector owner's open Site editor; `'shared'` is
+ * server-resolved or has no live-bridge dependency.
+ */
+export type AiToolBridgeScope = 'site' | 'shared'
 
 /**
  * Separator marking the split between the cacheable static system-prompt prefix
@@ -94,7 +100,7 @@ type ToolExecution = 'server' | 'browser'
 export interface AiTool {
   readonly name: string
   readonly description: string
-  readonly scope: ToolScope | 'shared'
+  readonly scope: AiToolBridgeScope
   readonly execution: ToolExecution
   readonly inputSchema: TSchema
   /**
@@ -106,7 +112,7 @@ export interface AiTool {
    * with `ai.chat` but no `ai.tools.write` only sees `mutates !== true`
    * tools registered with the driver, so the model has no way to issue
    * a write call. Default is `false` (read-only) to keep existing tool
-   * definitions valid without per-tool edits — `selectToolsForScope`
+   * definitions valid without per-tool edits — `selectStudioTools`
    * stamps `mutates: true` onto the write subset at assembly time.
    */
   readonly mutates?: boolean
@@ -129,8 +135,8 @@ export interface AiTool {
  * Context passed to server-side tool handlers. Carries the per-request
  * snapshot (page tree, posts list, table schemas, …) the tool reads from,
  * plus the active credential for tools that may want to call the model
- * recursively. Per-scope tools cast `snapshot` to their own narrow type at
- * the top of their handler — the runtime is scope-agnostic.
+ * recursively. Every tool reads the same live Site editor snapshot shape —
+ * there is exactly one Studio agent, so this carries no scope discriminator.
  */
 export interface ToolContext {
   /** Database client — server-side tool handlers query through this. */
@@ -138,7 +144,6 @@ export interface ToolContext {
   readonly userId: string
   /** The caller's capability set — handlers and the re-check gate read this. */
   readonly capabilities: readonly CoreCapability[]
-  readonly scope: ToolScope
   readonly conversationId: string
   readonly snapshot: unknown
   readonly signal: AbortSignal

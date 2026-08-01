@@ -1,9 +1,9 @@
 /**
  * AI usage widget — "this month" rollup from `/admin/api/ai/audit`.
  *
- * Headline number: total USD cost. Caption: chat count + top scope. A
- * Sparkline below tracks daily cost for the current month so the operator
- * can spot a runaway day at a glance.
+ * Headline number: total USD cost. Caption: chat count. A Sparkline below
+ * tracks daily cost for the current month so the operator can spot a
+ * runaway day at a glance.
  *
  * The widget calls the same audit endpoint the `/admin/ai` Audit tab uses;
  * it just narrows `since` to the start of the calendar month. If the user
@@ -34,11 +34,6 @@ function formatCost(usd: number): string {
   if (usd < 0.01) return '< $0.01'
   if (usd < 1) return `$${usd.toFixed(2)}`
   return `$${usd.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
-}
-
-function topScope(data: AiAuditResponse): string | null {
-  const sorted = [...data.byScope].sort((a, b) => b.costUsd - a.costUsd)
-  return sorted[0]?.scope ?? null
 }
 
 interface UsageState {
@@ -99,12 +94,7 @@ export function AiUsageWidget({ span, editing }: DashboardWidgetRendererProps) {
         <>
           <StatValue
             value={formatCost(data.totals.costUsd)}
-            sub={
-              <span>
-                {data.totals.chatCount} chats this month
-                {topScope(data) ? ` · top: ${topScope(data)}` : ''}
-              </span>
-            }
+            sub={<span>{data.totals.chatCount} chats this month</span>}
           />
           {data.byDay.length >= 2 && (
             <Sparkline

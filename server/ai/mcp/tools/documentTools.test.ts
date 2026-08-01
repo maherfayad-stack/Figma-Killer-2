@@ -35,7 +35,6 @@ function headlessCtx(db: DbClient): ToolContext {
     db,
     userId: 'u1',
     capabilities: ['site.read'],
-    scope: 'site',
     conversationId: 'mcp:test',
     snapshot: null, // MCP has no browser-posted snapshot — this is the crash case.
     signal: new AbortController().signal,

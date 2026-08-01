@@ -183,7 +183,7 @@ function createAgentStore(overrides: Partial<AgentSlice> = {}) {
     setAgentProvider: async (credentialId, modelId) => {
       set({ agentActiveCredentialId: credentialId, agentActiveModelId: modelId, agentError: null })
     },
-    loadScopeDefault: async () => {},
+    loadStudioDefault: async () => {},
     ...overrides,
   }))
 }
@@ -328,7 +328,7 @@ describe('AgentPanel', () => {
       throw new Error(`Unexpected fetch: ${url}`)
     }) as typeof fetch
 
-    // Active credential + model stands in for a preloaded scope default.
+    // Active credential + model stands in for a preloaded default.
     renderAgentPanel({ agentActiveCredentialId: 'cred_1', agentActiveModelId: 'gpt-4o' })
 
     await waitFor(() => {
@@ -479,7 +479,7 @@ describe('AgentPanel', () => {
     expect(screen.getByRole('button', { name: 'Set a default in AI settings' })).toBeTruthy()
   })
 
-  it('preloads the scope default on open', async () => {
+  it('preloads the default on open', async () => {
     globalThis.fetch = mock(async (input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input.toString()
       if (url.endsWith('/admin/api/ai/credentials')) {
@@ -489,7 +489,7 @@ describe('AgentPanel', () => {
     }) as typeof fetch
 
     let called = 0
-    renderAgentPanel({ loadScopeDefault: async () => { called += 1 } })
+    renderAgentPanel({ loadStudioDefault: async () => { called += 1 } })
 
     await waitFor(() => expect(called).toBeGreaterThan(0))
   })

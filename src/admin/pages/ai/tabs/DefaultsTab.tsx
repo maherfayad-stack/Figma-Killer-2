@@ -1,9 +1,9 @@
 /**
- * Defaults tab — per-scope default `(credentialId, modelId)` selection.
+ * Defaults tab — Studio's default `(credentialId, modelId)` selection.
  *
- * One row per `ToolScope`. Each row uses the shared {@link ModelPicker} — the
- * same combined credential+model picker as the chat composer — and a Save
- * button. Saving a row PUTs to /admin/api/ai/defaults/:scope.
+ * Studio has exactly one agent, so this is a single row using the shared
+ * {@link ModelPicker} — the same combined credential+model picker as the
+ * chat composer — and a Save button. Saving PUTs to /admin/api/ai/defaults.
  */
 
 import { useState } from 'react'
@@ -13,7 +13,7 @@ import { ModelPicker, type ModelChoice } from '@admin/ai/ModelPicker'
 import { CloseIcon } from 'pixel-art-icons/icons/close'
 import { SaveSolidIcon } from 'pixel-art-icons/icons/save-solid'
 import {
-  type AiDefaults,
+  type AiDefault,
   type CredentialView,
   clearDefault,
   listCredentials,
@@ -23,131 +23,17 @@ import {
 import { ApiError } from '@core/http'
 import styles from '../AiPage.module.css'
 
-type ToolScope = 'site' | 'data' | 'plugin'
-const SCOPES: ToolScope[] = ['site', 'data', 'plugin']
-const SCOPE_DESCRIPTIONS: Record<ToolScope, string> = {
-  site: 'Used by the visual site editor chat.',
-  data: 'Used by the data workspace (Phase 4).',
-  plugin: 'Used by api.ai.* calls from plugin code (Phase 5).',
-}
-
-async function saveScope(
-  scope: ToolScope,
-  credentialId: string,
-  modelId: string,
-  refresh: () => void,
-  setSavingScope: (value: ToolScope | null) => void,
-  setStatusByScope: (updater: (prev: Record<string, string>) => Record<string, string>) => void,
-): Promise<void> {
-  setSavingScope(scope)
-  setStatusByScope((prev) => ({ ...prev, [scope]: '' }))
-  try {
-    await setDefault(scope, { credentialId, modelId })
-    setStatusByScope((prev) => ({ ...prev, [scope]: 'Saved.' }))
-    refresh()
-  } catch (err) {
-    const message = err instanceof ApiError
-      ? err.message
-      : err instanceof Error
-        ? err.message
-        : 'Failed to save.'
-    setStatusByScope((prev) => ({ ...prev, [scope]: message }))
-  } finally {
-    setSavingScope(null)
-  }
-}
-
-async function clearScope(
-  scope: ToolScope,
-  refresh: () => void,
-  setSavingScope: (value: ToolScope | null) => void,
-  setStatusByScope: (updater: (prev: Record<string, string>) => Record<string, string>) => void,
-): Promise<boolean> {
-  setSavingScope(scope)
-  setStatusByScope((prev) => ({ ...prev, [scope]: '' }))
-  try {
-    await clearDefault(scope)
-    setStatusByScope((prev) => ({ ...prev, [scope]: 'Cleared.' }))
-    refresh()
-    return true
-  } catch (err) {
-    const message = err instanceof ApiError
-      ? err.message
-      : err instanceof Error
-        ? err.message
-        : 'Failed to clear.'
-    setStatusByScope((prev) => ({ ...prev, [scope]: message }))
-    return false
-  } finally {
-    setSavingScope(null)
-  }
-}
-
 export function DefaultsTab() {
   const { data, loading, error, refresh } = useAsyncResource(
-    () => Promise.all([listCredentials(), listDefaults()]).then(([creds, defs]) => ({ creds, defs })),
+    () => Promise.all([listCredentials(), listDefaults()]).then(([creds, current]) => ({ creds, current })),
     [],
     { fallbackError: 'Failed to load defaults.' },
   )
   const credentials: CredentialView[] = data?.creds ?? []
-  const defaults: AiDefaults = data?.defs ?? {}
-  const [savingScope, setSavingScope] = useState<ToolScope | null>(null)
-  const [statusByScope, setStatusByScope] = useState<Record<string, string>>({})
+  const current: AiDefault = data?.current ?? null
+  const [busy, setBusy] = useState(false)
+  const [status, setStatus] = useState('')
 
-  return (
-    <section className={styles.section}>
-      <div className={styles.sectionHeader}>
-        <div>
-          <h2>Per-scope defaults</h2>
-          <p>Pick which credential + model each AI surface uses by default. Users can override in the chat picker.</p>
-        </div>
-      </div>
-
-      {error && <p role="alert" className={styles.errorAlert}>{error}</p>}
-
-      {loading ? (
-        <div className={styles.emptyState}>Loading…</div>
-      ) : credentials.length === 0 ? (
-        <div className={styles.emptyState}>
-          Add a credential on the Providers tab before setting defaults.
-        </div>
-      ) : (
-        <div className={styles.defaultsGrid}>
-          {SCOPES.map((scope) => (
-            <ScopeRow
-              key={scope}
-              scope={scope}
-              credentials={credentials}
-              current={defaults[scope]}
-              busy={savingScope === scope}
-              status={statusByScope[scope]}
-              onSave={(credentialId, modelId) => saveScope(scope, credentialId, modelId, refresh, setSavingScope, setStatusByScope)}
-              onClear={() => clearScope(scope, refresh, setSavingScope, setStatusByScope)}
-            />
-          ))}
-        </div>
-      )}
-    </section>
-  )
-}
-
-function ScopeRow({
-  scope,
-  credentials,
-  current,
-  busy,
-  status,
-  onSave,
-  onClear,
-}: {
-  scope: ToolScope
-  credentials: CredentialView[]
-  current: { credentialId: string; modelId: string } | undefined
-  busy: boolean
-  status: string | undefined
-  onSave: (credentialId: string, modelId: string) => Promise<void>
-  onClear: () => Promise<boolean>
-}) {
   // Track ONLY the user's pick. The displayed value falls back to the saved
   // default when it still resolves to a credential this user can access.
   //
@@ -172,62 +58,116 @@ function ScopeRow({
   const canSave = !busy && value != null && dirty
   const canClear = !busy && current != null
 
+  async function handleSave() {
+    if (!value) return
+    setBusy(true)
+    setStatus('')
+    try {
+      await setDefault({ credentialId: value.credentialId, modelId: value.modelId })
+      setStatus('Saved.')
+      refresh()
+    } catch (err) {
+      const message = err instanceof ApiError
+        ? err.message
+        : err instanceof Error
+          ? err.message
+          : 'Failed to save.'
+      setStatus(message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleClear() {
+    setBusy(true)
+    setStatus('')
+    try {
+      await clearDefault()
+      setStatus('Cleared.')
+      setOverride(null)
+      refresh()
+    } catch (err) {
+      const message = err instanceof ApiError
+        ? err.message
+        : err instanceof Error
+          ? err.message
+          : 'Failed to clear.'
+      setStatus(message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
-    <div className={styles.defaultRow}>
-      <div>
-        <div className={styles.defaultScopeLabel}>{scope}</div>
-        <p className={styles.secondaryText}>{SCOPE_DESCRIPTIONS[scope]}</p>
-        {stale && (
-          <p role="status" className={`${styles.testResult} ${styles.danger}`}>
-            Previously saved credential is no longer available. Pick another and Save.
-          </p>
-        )}
+    <section className={styles.section}>
+      <div className={styles.sectionHeader}>
+        <div>
+          <h2>Default model</h2>
+          <p>Pick which credential + model the Studio agent uses by default. You can override in the chat picker.</p>
+        </div>
       </div>
-      <ModelPicker
-        variant="field"
-        ariaLabel={`Model for ${scope}`}
-        placeholder="Choose a model"
-        credentials={credentials}
-        credentialsLoaded
-        value={value}
-        onChange={setOverride}
-      />
-      <div className={styles.defaultActions}>
-        <Button
-          type="button"
-          variant="primary"
-          size="sm"
-          disabled={!canSave}
-          onClick={() => value && void onSave(value.credentialId, value.modelId)}
-        >
-          <SaveSolidIcon size={14} aria-hidden="true" />
-          <span>Save</span>
-        </Button>
-        {current && (
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            disabled={!canClear}
-            onClick={() => {
-              void onClear().then((cleared) => {
-                if (cleared) setOverride(null)
-              })
-            }}
-          >
-            <CloseIcon size={14} aria-hidden="true" />
-            <span>Clear</span>
-          </Button>
-        )}
-        {status && (
-          <p
-            role="status"
-            className={`${styles.testResult} ${status === 'Saved.' || status === 'Cleared.' ? styles.success : styles.danger}`}
-          >
-            {status}
-          </p>
-        )}
-      </div>
-    </div>
+
+      {error && <p role="alert" className={styles.errorAlert}>{error}</p>}
+
+      {loading ? (
+        <div className={styles.emptyState}>Loading…</div>
+      ) : credentials.length === 0 ? (
+        <div className={styles.emptyState}>
+          Add a credential on the Providers tab before setting a default.
+        </div>
+      ) : (
+        <div className={styles.defaultRow}>
+          <div>
+            <div className={styles.defaultTitle}>Studio agent</div>
+            {stale && (
+              <p role="status" className={`${styles.testResult} ${styles.danger}`}>
+                Previously saved credential is no longer available. Pick another and Save.
+              </p>
+            )}
+          </div>
+          <ModelPicker
+            variant="field"
+            ariaLabel="Default model"
+            placeholder="Choose a model"
+            credentials={credentials}
+            credentialsLoaded
+            value={value}
+            onChange={setOverride}
+          />
+          <div className={styles.defaultActions}>
+            <Button
+              type="button"
+              variant="primary"
+              size="sm"
+              disabled={!canSave}
+              onClick={() => void handleSave()}
+            >
+              <SaveSolidIcon size={14} aria-hidden="true" />
+              <span>Save</span>
+            </Button>
+            {current && (
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                disabled={!canClear}
+                onClick={() => void handleClear()}
+              >
+                <CloseIcon size={14} aria-hidden="true" />
+                <span>Clear</span>
+              </Button>
+            )}
+            {status && (
+              <p
+                role="status"
+                className={`${styles.testResult} ${status === 'Saved.' || status === 'Cleared.' ? styles.success : styles.danger}`}
+              >
+                {status}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+    </section>
   )
 }

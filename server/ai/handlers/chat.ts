@@ -1,11 +1,11 @@
 /**
- * POST /admin/api/ai/chat/:scope
+ * POST /admin/api/ai/chat
  *
  * Opens an NDJSON stream against a chat. Body:
  *   {
  *     conversationId: string,
  *     content:        Array<{ kind: 'text' | 'image', ... }>,
- *     snapshot?:      unknown   // scope-specific per-request context
+ *     snapshot?:      unknown   // live Site editor snapshot for this turn
  *   }
  *
  * The conversation row already carries `(credentialId, modelId)` from when
@@ -60,7 +60,7 @@ import {
   canonicaliseAiUserContent,
   preflightAiUserContent,
 } from '../inputImages'
-import { selectToolsForScope } from '../tools'
+import { selectStudioTools } from '../tools'
 import {
   buildSiteSystemPrompt,
   SiteAgentSnapshotSchema,
@@ -73,34 +73,27 @@ import {
   runChat,
 } from '../runtime'
 import { normalizeContextTokens } from '../contextTokens'
-import type {
-  AiStreamEvent,
-  ToolScope,
-} from '../runtime/types'
+import type { AiStreamEvent } from '../runtime/types'
 import type { AiStreamRequest } from '../drivers/types'
 
-const VALID_SCOPES: ToolScope[] = ['site', 'data', 'plugin']
 const activeChatConversations = new Set<string>()
 const REQUEST_ABORTED = Symbol('request-aborted')
 
 /**
- * Match `/admin/api/ai/chat/:scope`. Returns `null` if path doesn't match.
+ * Match `/admin/api/ai/chat`. Returns `null` if path doesn't match.
  */
 export function tryHandleAiChat(
   req: Request,
   db: DbClient,
   pathname: string,
 ): Promise<Response> | null {
-  if (!pathname.startsWith('/admin/api/ai/chat/')) return null
-  const scope = pathname.slice('/admin/api/ai/chat/'.length)
-  if (!VALID_SCOPES.includes(scope as ToolScope)) return null
-  return handleAiChat(req, db, scope as ToolScope)
+  if (pathname !== '/admin/api/ai/chat') return null
+  return handleAiChat(req, db)
 }
 
 async function handleAiChat(
   req: Request,
   db: DbClient,
-  scope: ToolScope,
 ): Promise<Response> {
   if (req.method !== 'POST') {
     return jsonResponse({ error: 'Method not allowed' }, { status: 405 })
@@ -132,12 +125,6 @@ async function handleAiChat(
   const conversation = await readConversationForUser(db, user.id, conversationId)
   if (!conversation) {
     return jsonResponse({ error: 'Conversation not found' }, { status: 404 })
-  }
-  if (conversation.scope !== scope) {
-    return jsonResponse(
-      { error: `Conversation scope is "${conversation.scope}", not "${scope}".` },
-      { status: 400 },
-    )
   }
   if (!conversation.credentialId) {
     return jsonResponse(
@@ -181,7 +168,7 @@ async function handleAiChat(
     req.signal,
   )
   if (modelCapabilities === REQUEST_ABORTED) return clientClosedRequest()
-  const tools = selectToolsForScope(scope, user.capabilities)
+  const tools = selectStudioTools(user.capabilities)
   if (requestedImage && !modelCapabilities.visionInput) {
     return jsonResponse(
       { error: 'The selected model does not support image input. Choose a vision-capable model.' },
@@ -286,7 +273,7 @@ async function handleAiChat(
         buildMessageHistory([...existingRecords, appendedMessage]),
         modelCapabilities.visionInput,
       )
-      const systemPrompt = buildSystemPromptForScope(scope, snapshot)
+      const systemPrompt = buildStudioSystemPrompt(snapshot)
 
       // Capture totals reported by the persister so the audit row can hold
       // them when the stream completes (we read them off the conversation row
@@ -303,7 +290,6 @@ async function handleAiChat(
         targetType: 'ai_conversation',
         targetId: conversation.id,
         metadata: {
-          scope,
           providerId: credential.providerId,
           modelId: conversation.modelId,
         },
@@ -364,7 +350,6 @@ async function handleAiChat(
           db,
           userId: user.id,
           capabilities: user.capabilities,
-          scope,
           conversationId: conversation.id,
           snapshot,
         }
@@ -420,7 +405,6 @@ async function handleAiChat(
             targetType: 'ai_conversation',
             targetId: conversation.id,
             metadata: {
-              scope,
               providerId: credential.providerId,
               modelId: conversation.modelId,
               promptTokens: promptDelta,
@@ -485,30 +469,19 @@ function waitForRequest<T>(promise: Promise<T>, signal: AbortSignal): Promise<T 
   })
 }
 
-export function buildSystemPromptForScope(
-  scope: ToolScope,
-  snapshot: unknown,
-): string[] {
-  if (scope === 'site') {
-    if (snapshot === undefined || snapshot === null) {
-      return buildSiteSystemPrompt(emptySiteAgentSnapshot())
-    }
-    // The snapshot comes straight off the untyped HTTP body — validate it
-    // before handing it to the prompt builder, and fall back to an empty
-    // snapshot (rather than crashing the stream) when it's malformed.
-    const result = safeParseValue(SiteAgentSnapshotSchema, snapshot)
-    if (!result.ok) {
-      console.error('[ai/chat] invalid site snapshot, using empty fallback:', result.errors)
-      return buildSiteSystemPrompt(emptySiteAgentSnapshot())
-    }
-    return buildSiteSystemPrompt(result.value)
+export function buildStudioSystemPrompt(snapshot: unknown): string[] {
+  if (snapshot === undefined || snapshot === null) {
+    return buildSiteSystemPrompt(emptySiteAgentSnapshot())
   }
-  // Other scopes don't have system prompts yet. The driver gets a minimal
-  // prompt so the conversation isn't completely contextless.
-  return [
-    `You are an AI assistant embedded in the "${scope}" workspace of a CMS. ` +
-    `No scope-specific tools are wired up yet — respond conversationally only.`,
-  ]
+  // The snapshot comes straight off the untyped HTTP body — validate it
+  // before handing it to the prompt builder, and fall back to an empty
+  // snapshot (rather than crashing the stream) when it's malformed.
+  const result = safeParseValue(SiteAgentSnapshotSchema, snapshot)
+  if (!result.ok) {
+    console.error('[ai/chat] invalid site snapshot, using empty fallback:', result.errors)
+    return buildSiteSystemPrompt(emptySiteAgentSnapshot())
+  }
+  return buildSiteSystemPrompt(result.value)
 }
 
 function emptySiteAgentSnapshot(): SiteAgentSnapshot {

@@ -9,7 +9,7 @@
  * Capability: `ai.tools.write` — this endpoint exists *only* to carry
  * the result of a write tool that mutated the editor store. A user with
  * `ai.chat` but no `ai.tools.write` never gets a write tool registered
- * by `selectToolsForScope`, so the bridge is never invoked. Gating here
+ * by `selectStudioTools`, so the bridge is never invoked. Gating here
  * is defense-in-depth.
  */
 

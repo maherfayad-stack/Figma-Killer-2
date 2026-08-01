@@ -54,7 +54,7 @@ const openaiAdapter = createResponsesAdapter({
   },
   promptCacheKey(req) {
     const toolNames = req.tools.map((t) => t.name).sort().join(',')
-    return `studio:${req.toolContextBase.scope}:${stableHash(toolNames)}`
+    return `studio:${stableHash(toolNames)}`
   },
 })
 

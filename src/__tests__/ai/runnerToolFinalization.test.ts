@@ -35,7 +35,6 @@ function request(signal: AbortSignal): AiStreamRequest {
       db: {} as never,
       userId: 'user-1',
       capabilities: [],
-      scope: 'site',
       conversationId: 'conversation-1',
       snapshot: null,
     },

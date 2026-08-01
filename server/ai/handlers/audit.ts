@@ -1,10 +1,10 @@
 /**
  * AI usage audit handler — `GET /admin/api/ai/audit?since=ISO&tz=IANA`.
  *
- * Returns the four rollups consumed by the `/admin/ai` Audit tab + the
+ * Returns the rollups consumed by the `/admin/ai` Audit tab + the
  * dashboard "AI usage this month" widget:
  *
- *   { totals, byUser, byScope, byDay }
+ *   { totals, byUser, byModel, byDay }
  *
  * Gated by the `ai.audit.read` capability. `since` defaults to 30 days ago
  * when not provided. Wider lookbacks are accepted — the rollups scan the
@@ -18,7 +18,6 @@ import type { DbClient } from '../../db/client'
 import {
   getUsageByDay,
   getUsageByModel,
-  getUsageByScope,
   getUsageByUser,
   getUsageTotals,
 } from '../audit/store'
@@ -47,10 +46,9 @@ async function handleAuditList(
   const sinceIso = resolveSince(url.searchParams.get('since'))
   const timeZone = resolveTimeZone(url.searchParams.get('tz'))
 
-  const [totals, byUser, byScope, byModel, byDay] = await Promise.all([
+  const [totals, byUser, byModel, byDay] = await Promise.all([
     getUsageTotals(db, sinceIso),
     getUsageByUser(db, sinceIso),
-    getUsageByScope(db, sinceIso),
     getUsageByModel(db, sinceIso),
     getUsageByDay(db, sinceIso, timeZone),
   ])
@@ -59,7 +57,6 @@ async function handleAuditList(
     since: sinceIso,
     totals,
     byUser,
-    byScope,
     byModel,
     byDay,
   })

@@ -1,45 +1,29 @@
 /**
- * Tool registry root — selects the right toolset for a chat scope.
+ * Tool registry root — Studio's one and only toolset.
  *
- * `site` has tools registered. `data` and `plugin` are reserved scopes with
- * no toolset yet.
+ * Studio has exactly one agent (WS-12 §8.1 D3): there is no scope
+ * discriminator here anymore, just the full set of tools the Studio agent
+ * can call, filtered per-caller by capability.
  *
- * Adding a new scope:
- *   1. Create `server/ai/tools/<scope>/` with its tool files + index.ts.
- *   2. Import its barrel here.
- *   3. Add a switch arm in `scopeToolset`.
- *   4. The `ai-tools-typebox-only.test.ts` gate ensures every file under
- *      `server/ai/tools/**` uses TypeBox (not Zod) — covered automatically.
- *
- * Capability filtering: `selectToolsForScope` takes the caller's capability
+ * Capability filtering: `selectStudioTools` takes the caller's capability
  * set and filters through `toolAllowedForCapabilities` — write tools need
  * `ai.tools.write`, and any tool declaring `requiredCapabilities` (ANY-OF,
  * mirroring its HTTP-route equivalent) is only offered to callers holding
- * one. A `ai.chat`-only user (e.g. a Client persona granted chat) cannot
+ * one. An `ai.chat`-only user (e.g. a Client persona granted chat) cannot
  * have the model issue a call the user couldn't make over HTTP — gated
  * tools are never registered with the driver in the first place.
  */
 
 import type { CoreCapability } from '../../auth/capabilities'
 import { toolAllowedForCapabilities } from './capabilityGate'
-import type { AiTool, ToolScope } from './types'
+import type { AiTool } from './types'
 import { siteTools } from './site'
 
-function scopeToolset(scope: ToolScope): AiTool[] {
-  switch (scope) {
-    case 'site':
-      return siteTools
-    case 'data':
-      // Reserved: no data-scope toolset yet.
-      return []
-    case 'plugin':
-      // Reserved: no plugin-scope toolset yet.
-      return []
-  }
-}
+/** The full Studio toolset — the same 35 tools regardless of caller. */
+export const studioTools: AiTool[] = siteTools
 
 /**
- * Returns the tools available for one chat scope, filtered against the
+ * Returns the tools available to the Studio agent, filtered against the
  * caller's capability set. The runtime hands this array to the driver
  * verbatim; drivers translate each `AiTool.inputSchema` (TypeBox) into
  * the provider-native tool format.
@@ -52,9 +36,8 @@ function scopeToolset(scope: ToolScope): AiTool[] {
  *     caller's capabilities by construction instead of `ai.chat` acting
  *     as a blanket read grant.
  */
-export function selectToolsForScope(
-  scope: ToolScope,
+export function selectStudioTools(
   capabilities: readonly CoreCapability[],
 ): AiTool[] {
-  return scopeToolset(scope).filter((t) => toolAllowedForCapabilities(t, capabilities))
+  return studioTools.filter((t) => toolAllowedForCapabilities(t, capabilities))
 }
