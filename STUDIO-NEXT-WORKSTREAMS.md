@@ -775,14 +775,39 @@ directory. Consequences:
   var. The CLI writes and reads its own credentials inside it. `CredentialView`
   is untouched, `ai_provider_credentials` is untouched, and there is nothing new
   to encrypt or rotate.
-- **The login flow is surfaced, not hidden.** Studio spawns the CLI's login in
-  that environment, captures the authorization URL it prints, and shows it to
-  the user as a link that opens in a new tab plus a field for the code the flow
-  returns. The user completes it against their own Claude account; the CLI
-  persists the result in their directory.
 - **Login state is per user.** The availability probe runs in the requesting
   user's config dir, so the picker shows *that user* logged in or logged out,
   with the reason.
+
+#### The login flow — corrected by probe (P3)
+
+The draft above assumed Studio could spawn the CLI's login, capture the URL it
+prints, and take the code back. **It cannot.** `claude setup-token` and
+`claude auth login` are Ink TUIs: with piped or `/dev/null` stdin they die
+immediately with `Raw mode is not supported on the current process.stdin`,
+before printing any URL. `setup-token` takes no flags at all — there is no
+`--no-browser`, no headless mode. Driving them would need a real PTY, which Bun
+has no built-in for and which would mean a native dependency.
+
+So Studio offers **two login paths, both landing in the same per-user
+environment**, and is honest about which applies where:
+
+| | Path | Studio holds a secret? | Works when the server is remote? |
+|---|---|---|---|
+| **L1** | **Terminal login.** Studio shows a prefilled one-liner — `CLAUDE_CONFIG_DIR=<dir> claude auth login` — the user runs it in their own shell and completes OAuth in their browser. The CLI writes credentials into their directory. | **No.** | Only if the user has shell access to the host. |
+| **L2** | **Token paste.** The user runs `claude setup-token` anywhere (their own laptop is fine), gets a one-year token, and pastes it into Studio. Studio encrypts it per user and passes it as `CLAUDE_CODE_OAUTH_TOKEN` when spawning. | Yes — encrypted, per user. | **Yes.** |
+
+L2 is what makes "login on the server" work at all, and it is what the request
+called *"single sign on code"*. `setup-token` exists precisely for
+"environments where interactive browser login isn't available", so this is the
+sanctioned use, not a workaround. Confirmed by probe: `CLAUDE_CODE_OAUTH_TOKEN`
+is a first-class auth source in the binary, resolved as
+`{ accessToken, refreshToken: null, expiresAt: null, scopes: ['user:inference'] }`.
+
+Two properties of an L2 token to surface in the UI rather than discover later:
+it is **inference-only** (it cannot drive Remote Control) and it **does not
+refresh** — a one-year expiry that Studio must show and prompt to renew, because
+nothing will renew it automatically.
 - **No gating is required**, because the surprise the gating existed to prevent
   — spending someone else's subscription — cannot happen.
 
@@ -797,7 +822,44 @@ Two things this does not fix, both of which stay in §5:
    the same disabled-with-a-reason rule as every other probe. Do not silently
    fall back to a shared login.
 
-## 3. The blocker you need to know about first
+## 3. Storage — and why this ships with no migration at all
+
+**Resolved: WS-11 needs zero schema changes.** The draft below correctly
+identified the `auth_mode` CHECK as unwidenable and proposed a new
+`ai_local_provider_defaults` table to route around it. Two probe findings make
+that table unnecessary:
+
+**P1 — an L2 token fits the existing credential table unchanged.** The CHECK is
+`auth_mode in ('apiKey','baseUrl')`, and `ai_creds_apikey_shape_check` requires
+`ciphertext` and `iv` non-null with `base_url` null. A `setup-token` OAuth token
+is exactly that: an opaque secret string Studio encrypts. It stores as
+`auth_mode = 'apiKey'` with `provider_id = 'claudeCli'` — and **`provider_id`
+has no DB constraint at all**, because the schema's own comment says it is
+validated at the TypeBox boundary so a new provider never forces a migration.
+That comment was written for this exact case. Per-user isolation comes free:
+`ai_provider_credentials` is already keyed by `user_id`.
+
+`auth_mode = 'apiKey'` is honest here, not a reuse dodge. The column records
+*the shape of the thing stored* — an encrypted secret string — not which OAuth
+grant minted it. `provider_id` is what says this is the CLI.
+
+**P2 — L1 needs no row, and no default either.** A terminal login leaves
+nothing for Studio to store; the credential lives in the user's config dir. The
+old design invented a table because `ai_defaults.credential_id` is
+`not null references ai_provider_credentials(id)`, so a credential-less provider
+had nowhere to record its model. But WS-12 §5 already puts the agent session's
+model, effort, and mode in **`.studio/meta.json`** — per project, next to the
+board it belongs to. That is the right home regardless, and it removes the only
+reason the table existed.
+
+So: **`ai_local_provider_defaults` is cut.** No new table, no `ADD COLUMN`, no
+migration in either dialect. Combined with WS-12 §8.1's scope collapse — also
+migration-free — the entire agent programme ships without touching the schema.
+
+<details>
+<summary>Original blocker analysis, kept for the reasoning (superseded by P1/P2)</summary>
+
+#### The blocker
 
 `ai_provider_credentials` has an **inline CHECK constraint** in both dialects:
 
@@ -857,6 +919,8 @@ and logged in*.
 - `AiAuthMode` stays `'apiKey' | 'baseUrl'`. The local provider is selected on a
   **different axis** from credentials, so it does not widen that union at all.
 
+</details>
+
 ## 4. The driver
 
 New `server/ai/drivers/claudeCli.ts`, implementing the same `AiProvider`
@@ -871,11 +935,70 @@ interface as every other driver.
   translates those events → `AiStreamEvent`, sitting where the SSE translator
   sits for the HTTP drivers. `toolLoop.ts`'s `ProviderAdapter` shape is the
   contract to hit.
-- **Availability probe:** `claude --version` + a login check. Not installed, or
-  installed and logged out → the provider appears in the picker **disabled with
-  the reason shown**, never silently absent. (Same rule as WS-10's probes.)
+- **Availability probe:** `claude auth status --json` (see §4.0). Not installed,
+  or installed and logged out → the provider appears in the picker **disabled
+  with the reason shown**, never silently absent. (Same rule as WS-10's probes.)
 - **Model list:** from the CLI, not from `/v1/models` — there is no API key to
   call that endpoint with.
+
+### 4.0 The verified CLI contract
+
+Every claim here was observed against the installed binary (v2.1.114), not read
+from documentation. Implement against these, and do not re-derive them.
+
+**Spawn shape.** There is **no `--cwd` flag** — set the child process's working
+directory. It determines `.claude/agents` discovery, `CLAUDE.md` discovery, and
+the session-transcript folder, and it is echoed back as `init.cwd`.
+
+```
+env:  CLAUDE_CONFIG_DIR=<per-user dir>   [+ CLAUDE_CODE_OAUTH_TOKEN for L2]
+cwd:  <resolved workspace root>
+argv: -p --output-format stream-json --verbose --input-format stream-json
+      --model <id> --effort <low|medium|high|xhigh|max>
+      --permission-mode <default|acceptEdits|plan|bypassPermissions>
+      --mcp-config <json> --strict-mcp-config
+      --session-id <uuid> | --resume <id>
+```
+
+**`--permission-mode` accepts exactly the four modes WS-12 §5.2 needs** (plus
+`auto` and `dontAsk`), so the mode control maps 1:1 with no translation layer.
+`--effort` takes the five levels verbatim. Both confirmed in `--help`.
+
+**The login probe is `claude auth status --json`:** exit 0 with
+`{"loggedIn":true,"authMethod":"claude.ai","subscriptionType":"pro",…}`, exit 1
+with `{"loggedIn":false,"authMethod":"none"}`. No model call, no cost, no session
+file. Use this, and nothing else.
+
+**Four traps, each of which would produce a plausible-looking wrong
+implementation:**
+
+1. **`apiKeySource` is `"none"` even when fully logged in.** It reports the *API
+   key* source, not auth state. It reads identically in the logged-in and
+   logged-out runs. Never probe with it.
+2. **`result.subtype` is `"success"` even when the turn failed.** Key off
+   `result.is_error`, never off `subtype`.
+3. **stderr is empty on every non-crash path.** Authentication failures and MCP
+   config errors all arrive on **stdout**. A driver that waits on stderr for
+   errors waits forever.
+4. **`--strict-mcp-config` is mandatory.** Without it the CLI merges the user's
+   own `~/.claude.json` and the project's `.mcp.json` servers and connects to
+   them. Studio must ship exactly the toolset it intends and no more.
+
+**Unauthenticated runs still emit `system/init`** before failing, which is what
+makes a zero-cost capability probe possible. Failure then arrives as an
+`assistant` event carrying top-level `"error":"authentication_failed"` with
+`message.model === "<synthetic>"`, then a `result` with `is_error: true`.
+
+**Cost warning.** A single trivial prompt in this repo cost **$0.168**, because
+it cache-created ~27k tokens of `CLAUDE.md` and context. Any probe or health
+check must use `--bare` or an empty `cwd`. `modelUsage` also bills models you
+never requested (an internal Haiku classifier call), so account against the whole
+map, not just `--model`.
+
+**Schema note for the translator:** within one `result` event, `usage.*` is
+snake_case while `modelUsage.<model>.*` is camelCase. Parse by key name, never by
+position — the authenticated and synthetic `assistant` messages differ in key
+order and in which optional keys are present.
 
 ### 4.1 Tools — route them through the MCP server Studio already has
 
@@ -924,8 +1047,9 @@ be documented, not papered over.
 |---|---|
 | `server/ai/drivers/claudeCli.ts` | **new** — the provider: spawn, stream-json → `AiStreamEvent`, availability probe |
 | `server/ai/drivers/index.ts` | register it |
-| `server/db/migrations-pg.ts` + `migrations-sqlite.ts` | **new additive** `ai_local_provider_defaults`, same id both dialects |
-| `server/ai/defaults/` | resolution: local-provider default takes precedence over `ai_defaults` for a scope |
+| ~~`server/db/migrations-*.ts`~~ | **cut — no migration (§3, P1/P2)** |
+| `server/ai/credentials/` | accept a `claudeCli` provider whose secret is an L2 OAuth token, `auth_mode='apiKey'`; surface its one-year expiry |
+| `server/handlers/studio/claudeCliEnv.ts` | **new** — resolve + create the per-user `CLAUDE_CONFIG_DIR` (0700, containment-checked `userId`), and the L1 one-liner shown in the UI |
 | `server/ai/mcp/` | mint a scoped connector token for a chat session (§4.1) |
 | `src/admin/ai/ModelPicker/ModelPicker.tsx` | show the local provider + its disabled-with-reason state |
 | `src/admin/pages/site/panels/AgentPanel/` | no structural change — it consumes whatever provider is selected |
@@ -1370,6 +1494,16 @@ insert/delete/move.
 ---
 
 ## 7. Subagents
+
+**Confirmed by probe:** under `-p`, the CLI auto-discovers `.claude/agents/*.md`
+from its working directory, and `--agents '<json>'` **merges with** that set
+rather than replacing it. So D4's decision — generated agents live in
+`<project>/.claude/`, committed — works with no extra wiring: set `cwd` to the
+workspace root and the roster is simply there. `claude agents` lists what
+resolved, which is the cheapest way to gate that generation actually worked.
+
+The JSON form accepts `{ description, prompt, tools[], model }` per agent. Both
+forms were verified to register.
 
 Under **H2 these are markdown files** in a Studio-managed `.claude/agents/`
 directory generated into the workspace beside the MCP config. Under H1 each is a
