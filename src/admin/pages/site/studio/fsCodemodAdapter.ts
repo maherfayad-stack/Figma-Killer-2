@@ -66,6 +66,12 @@ import {
   commitBaseline as commitStyleRuleBaseline,
   setStudioStyleRuleSources,
 } from './styleRuleWriteback'
+import {
+  collectLocalizedTextEdits,
+  commitLocalizedTextBaseline,
+  resetLocalizedTextBaseline,
+  watchLocalizedPagesForBaseline,
+} from './localizedPageWriteback'
 
 
 /**
@@ -368,6 +374,15 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
     loadedValues = snapshotNodeValues(pages)
     // `panel-02` (WS-6.3) — the CSS write-back map + its diff baseline.
     setStudioStyleRuleSources(loadedStyleRuleSources, styleRules)
+    // WS-10 §4.4 (Phase 4) — a fresh project load (or a `requestCmsSiteReload()`
+    // re-load) must not carry a locale-variant page, or its writeback
+    // baseline, over from whatever project was open before: `pageId` is only
+    // unique WITHIN one project, so a stale entry could silently suppress or
+    // misdirect a real diff in the new one. `watchLocalizedPagesForBaseline`
+    // is idempotent — safe to call on every load, only subscribes once.
+    useEditorStore.getState().resetLocalizedPages()
+    resetLocalizedTextBaseline()
+    watchLocalizedPagesForBaseline()
     // Distinct from `site.name` (the "Studio" product wordmark, unchanged per
     // project) — this is the per-project display name shown under the brand
     // in the toolbar (see Toolbar.tsx's StudioProjectLabel).
@@ -565,6 +580,16 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
       })
     }
 
+    // WS-10 §4.4 (Phase 4) — a locale-variant board frame's text edits.
+    // `localizedPages` lives OUTSIDE `site` (a parallel map, not part of
+    // `SiteDocument` — see `localizedPageSlice.ts`'s module doc), so it is
+    // read directly from the store here rather than arriving via `site`
+    // the way every edit above does. Owns its own `(pageId, locale,
+    // nodeId)`-keyed baseline — see `localizedPageWriteback.ts` for why it
+    // cannot share `loadedValues` with the default tree above.
+    const localizedEdits = collectLocalizedTextEdits(useEditorStore.getState().localizedPages)
+    edits.push(...localizedEdits)
+
     if (edits.length > 0) {
       const result = await apiRequest('/admin/api/studio/save', {
         method: 'POST',
@@ -628,6 +653,16 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
       if (result.written > 0 && (result.shifted || result.sharedComponents)) {
         requestCmsSiteReload()
       }
+    }
+
+    // WS-10 §4.4 (Phase 4) — advance the locale-variant text baseline to
+    // what was just sent, for the same reason the CSS baseline below does:
+    // without it, every later autosave tick re-sends an already-applied
+    // literal edit (harmless — `setJsxText` is idempotent — but wasteful,
+    // and it would keep the "pending" edit alive across reloads it
+    // shouldn't be). See `localizedPageWriteback.ts`'s "Baseline discipline".
+    if (localizedEdits.length > 0) {
+      commitLocalizedTextBaseline(useEditorStore.getState().localizedPages)
     }
 
     // `panel-02` — advance the CSS diff baseline to what was just sent, so one

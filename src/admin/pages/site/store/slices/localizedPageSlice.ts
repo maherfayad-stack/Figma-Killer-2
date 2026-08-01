@@ -46,7 +46,15 @@
  * below is the mutation this slice exposes for `inlineEditSlice.ts` to call
  * INSTEAD of `updateNodeProps` when a text-edit session belongs to a
  * locale-variant frame — a plain, undo-EXEMPT mutation (see its own doc for
- * why that's an explicit, documented scope boundary, not an oversight).
+ * why that's an explicit, documented scope boundary, not an oversight). The
+ * actual DISK persistence of that mutation is `src/admin/pages/site/studio/
+ * localizedPageWriteback.ts`'s job (a `(pageId, locale, nodeId)`-keyed
+ * baseline `fsCodemodAdapter.ts`'s `saveSite` diffs against — see that
+ * module's own doc for why it cannot share `loadedValues`) — this slice
+ * stays a pure state container with no persistence-layer import, matching
+ * `boardSlice.ts`'s own "the store never calls the endpoint itself"
+ * precedent; the persistence layer watches THIS slice's state instead of
+ * this slice reaching into it.
  *
  * **Out of scope, explicitly:** non-text prop/style edits (Properties panel)
  * are NOT locale-variant-aware — selecting a node for the panel still
@@ -94,6 +102,17 @@ interface LocalizedPageSlice {
    * doesn't exist (session outlived the fetch, or the page changed under it).
    */
   updateLocalizedNodeText: (pageId: string, locale: string, nodeId: string, prop: string, value: string) => void
+  /**
+   * Clears every fetched locale-variant page — called from `fsCodemodAdapter.ts`'s
+   * `loadSite()` on every fresh project load (including a `requestCmsSiteReload()`
+   * re-load), the same "per-project fields reset on load" treatment
+   * `componentSources`/`vendorCss` already get. Without this, switching
+   * projects (or a board-global locale re-parse) would leave a STALE
+   * `(pageId, locale)` entry from the PREVIOUS project keyed under a
+   * `pageId` the new project might reuse for something unrelated — `pageId`
+   * is only unique within one project, never guaranteed unique across two.
+   */
+  resetLocalizedPages: () => void
 }
 
 declare module '@site/store/types' {
@@ -139,4 +158,6 @@ export const createLocalizedPageSlice: EditorStoreSliceCreator<LocalizedPageSlic
       node.props[prop] = value
     })
   },
+
+  resetLocalizedPages: () => set({ localizedPages: {}, localizedPageStatus: {} }),
 })

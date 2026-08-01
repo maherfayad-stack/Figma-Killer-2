@@ -275,24 +275,55 @@ The node id grammar itself does NOT change — trap #2 holds precisely the
 same way it does for the render-time axes; only the RENDER SOURCE per frame,
 and (for text) the WRITE target, are new.
 
+**Locale-variant text edits are now SAVED to disk.**
+`src/admin/pages/site/studio/localizedPageWriteback.ts` is the save-path
+module (mirroring `styleRuleWriteback.ts`'s "one module per edit kind"
+precedent): a baseline keyed `(pageId, locale, nodeId)` — NOT folded into
+`fsCodemodAdapter.ts`'s own `loadedValues` (keyed by bare `nodeId`, which a
+locale-variant node SHARES with the default tree's node — trap #2 again;
+sharing a baseline would let one locale's diff silently win over the
+other's). `watchLocalizedPagesForBaseline()` (called once from `loadSite()`,
+idempotent) subscribes to the store and seeds a `(pageId, locale)` key's
+baseline the INSTANT it is first fetched — before a user could possibly
+have edited it, since the canvas can't render a node to double-click until
+the fetch that supplies it has already landed. `fsCodemodAdapter.ts`'s
+`saveSite` calls `collectLocalizedTextEdits`/`commitLocalizedTextBaseline`
+alongside the existing CSS write-back call, emitting `kind: 'literal'`
+edits aimed at each node's OWN `textOrigin` — the same edit shape and the
+same server-side codemod (`applyStudioEdit`) the default tree's
+`textOrigin`-backed edits already use, so no server change was needed.
+Proven end to end (real `fsCodemodAdapter.saveSite()`, not just the
+isolated collector) in
+`src/admin/pages/site/studio/__tests__/localizedPageWriteback.test.ts`:
+editing the SAME node id in the `en` default tree and the `ar` variant tree
+in one session produces TWO `kind: 'literal'` edits with TWO DIFFERENT
+`nodeId` strings (each `${rel}:${line}:${col}`), never one write colliding
+with the other.
+
+`undo()` does NOT cover a locale-variant text edit — `inlineEditSlice.ts`'s
+locale-variant session path never calls `updateNodeProps`/`mutateActiveTree`,
+so Mutative's patch history never sees it (same "not in the undo stack"
+precedent `boardSlice.ts`'s frame drags already set). Stated explicitly
+rather than half-wired — see `localizedPageWriteback.ts`'s own doc.
+
 **Known, deliberate scope boundaries (not gaps by accident):**
-- Non-text prop/style edits (Properties panel) are NOT locale-variant-aware —
-  selecting a node for the panel still resolves through the board-default
-  tree regardless of which frame you clicked in (`selectSelectedNode` /
-  `selectActiveCanvasPage`, unchanged). Colour/spacing aren't "which
-  locale's branch" concepts the way text is.
-- **The actual file save for a locale-variant text edit is NOT wired.**
-  `updateLocalizedNodeText` updates the in-memory store (visible on screen,
-  correct `textOrigin` structurally present) but `fsCodemodAdapter.ts`'s
-  `saveSite` only walks `site.pages` — a locale-variant edit is never
-  collected into the `StudioEditPayload[]` POSTed to disk. The proof this
-  phase delivered is that the mechanism WOULD write to the right branch (see
-  above); actually persisting it needs `saveSite` to also walk
-  `localizedPages` with its OWN baseline (can't reuse `loadedValues`, keyed
-  by bare `nodeId` — a locale variant shares that id with the default tree's
-  node, so a shared baseline map would collide). Deliberately not attempted
-  this phase — touches `fsCodemodAdapter.ts`'s already-delicate save loop,
-  which is a real, separate piece of work, not a code-review gap.
+- **Non-text prop/style edits (Properties panel) are NOT locale-variant-aware
+  — a real, named silent-wrong-target RISK, not just an omission.** Selecting
+  a node for the panel resolves through the board-DEFAULT tree regardless of
+  which frame you clicked in (`selectSelectedNode`/`selectActiveCanvasPage`,
+  unchanged) — a user who selects a node inside the Arabic frame and edits
+  its colour in the panel is silently editing the ENGLISH frame's copy of
+  that node (both frames share `classIds`, so the change is visible in
+  BOTH frames, not just the one the user thought they were editing). NOT
+  mitigated in the UI this task — a live "you're editing the default frame's
+  copy" badge in the panel needs `selectedNodeFrameId` (`selectionSlice.ts`,
+  already tracked) threaded into `PropertiesPanelBody.tsx`, which is a real
+  UI change, not a doc fix, and was judged not cheap enough to add
+  opportunistically alongside the save-path work. Disclosed instead in
+  `docs/features/studio-import.md`'s limitations table — the user-facing
+  doc, not only this internal one. Flagged as the follow-up worth doing
+  before this feature ships to real users, not merely a note for the next
+  agent.
 - A `.map()` array whose LENGTH differs by locale (not just its items' text)
   would give the locale variant a different expanded-node count than the
   default tree for that subtree — not observed on the real eSIM corpus,

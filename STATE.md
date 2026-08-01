@@ -290,6 +290,152 @@ are the remaining WS-2 items, not yet dispatched. See
 
 ## Recently landed
 
+### server-11 — Bypass mode implemented (conflict resolved by the coordinator), the parity matrix gate, effort persistence, image attachments
+- **Agent:** server-engineer
+- **Stage:** done, EXCEPT file attachments (non-image) and the §5.4 reasoning
+  block — both still explicitly not built, see "Deliberately not done"
+- **Updated:** 2026-08-01
+- **The `bypassPermissions` conflict `server-10` flagged is resolved — by the
+  coordinator, explicitly, not by me picking a side.** Their own hard rule
+  meant "Studio must never inject a bypassing flag on its own", not "refuse a
+  mode the user deliberately selects" — a user choosing Bypass IS the
+  consent. Implemented: `claudeCli.ts`'s `resolvePermissionMode` now accepts
+  all four modes; `--dangerously-skip-permissions`/`--allow-dangerously-skip-permissions`
+  remain permanently forbidden (a different, blunter flag, never constructed
+  anywhere in this driver's argv, checked or not).
+- **The three D5 §11.5 rails — how each is enforced, how each is tested:**
+  1. **Non-persisting.** Enforced in TWO independent places: `agentSlice.ts`
+     initializes `agentPermissionMode: 'default'` at store creation (covers
+     reload — nothing to restore, so nothing to accidentally restore as
+     Bypass); `AgentSessionControls.tsx` resets it to `'default'` via a
+     `useAdminUi` project-dir-change effect (covers a live project switch
+     without a remount). A THIRD, structural guarantee: `.studio/meta.json`'s
+     new `agentSession` schema (`studioMeta.ts`) has no field for permission
+     mode at all — `studioAgentSession.test.ts` asserts this at the type
+     level (`@ts-expect-error` on an attempt to add one). Belt-and-braces at
+     the point of consequence: `assertBypassOnlyFromExplicitRequest`
+     (`claudeCli.ts`) throws if the resolved mode is `bypassPermissions` but
+     the ORIGINAL request didn't itself carry that value — the only way the
+     flag reaches argv is a value that came from `req.permissionMode`
+     directly, never a default. Tested: `claudeCli.test.ts`'s "never appears
+     in argv when the request is empty" (asserts `default`, not bypass, when
+     nothing is selected).
+  2. **Visibly indicated while active.** `AgentSessionControls.tsx` renders a
+     persistent, FILLED banner (`--danger` background, not just colored
+     text) for as long as `agentPermissionMode === 'bypassPermissions'`,
+     positioned directly above the composer — never inside the scrollable
+     message thread, so it cannot scroll out of view. Static gate only (UI,
+     human dogfoods it) — no automated render test, per this round's own
+     constraint.
+  3. **Still trust-tier-bound.** `studio_install_deps` (`projectTools.ts`)
+     gained an explicit trust check in `server-10` (it had NONE before that —
+     confirmed by reading the handler) that reads ONLY `.studio/meta.json`'s
+     `trust` field; the tool call itself has no permission-mode parameter to
+     read. Tested explicitly, exactly as asked: a tool call carrying
+     `permissionMode: 'bypassPermissions'` in its OWN input is refused at
+     Tier 0 identically to one that doesn't (`projectTools.test.ts`, "the
+     trust-tier gate has no notion of a permission mode to bypass").
+- **The canvas parity matrix (§6.1/§9) — what it turned up:** `server/ai/tools/studio/parityMatrix.ts`
+  + `parityMatrix.test.ts` (6 tests: completeness, every `tool` row names a
+  real registered tool, every non-tool row carries a real reason, every
+  registered MUTATING tool is referenced by at least one row — the inverse
+  check, catching an orphaned tool nobody documented). Verified against the
+  ACTUAL current code, not copied from WS-12's own (now-stale) table. **Three
+  confirmed gaps, listed as findings rather than quietly marked withheld:**
+  1. Uploading a NEW image asset — `POST /admin/api/studio/asset-upload`
+     (`assetUpload.ts`) is real and does the actual write (sniffed
+     magic-number validation, containment-checked target, collision-safe
+     naming); no tool wraps it. An agent today can only repoint an EXISTING
+     import, never land a brand-new file.
+  2. Setting a board frame's preview axes — `EditorStore.setFrameAxes`
+     (`boardSlice.ts`) is real and live; no tool reaches it.
+  3. Duplicating a frame as a variant — `EditorStore.duplicateFrameAsVariant`
+     (same file) is real and live; no tool reaches it.
+  None of these three were built this round — the ask was explicitly to
+  "list them... rather than quietly marking them withheld", read literally
+  as the deliverable, not an invitation to also build three more tools at
+  the end of an already very large task.
+- **Effort persistence** — `.studio/meta.json` gained `agentSession: {
+  effort? }` (additive schema field, `studioMeta.ts`). New
+  `GET/POST /admin/api/ai/studio-session` (`server/ai/handlers/studioAgentSession.ts`)
+  — lives under `server/ai/handlers/` specifically so it needs no change to
+  `server/handlers/studio.ts`'s sub-router array (owned by the parallel
+  session this round). `mode` is deliberately never accepted by this route's
+  request schema — the persistence-layer half of rail 1 above.
+- **Image attachments (§5.3, half of it) — `claudeCliAttachments.ts`.**
+  `claudeCliCapabilities().visionInput` flipped to `true`; an attached
+  image is staged to a fresh, turn-scoped temp file (never inside
+  `studio-workspace/`) and its absolute path appended to the `-p` prompt —
+  the CLI's own built-in Read tool does the actual reading (the top-level
+  session, unlike the generated subagents, is never `--tools`-restricted).
+  Staging directory torn down unconditionally in the driver's own `finally`
+  block. Verified with a real 1×1 PNG fixture, real file I/O, no mocks
+  (`claudeCliAttachments.test.ts`, 6 tests) plus 3 integration tests in
+  `claudeCli.test.ts` (staged file exists AT SPAWN TIME — checked inside
+  `onSpawn`, since the driver's own cleanup deletes it before `collect()`
+  resolves; gone after the turn ends; a text-only turn stages nothing).
+- **Deliberately not done, honestly, not rushed:**
+  - **File attachments (non-image)** — the panel has no file-picker UI at
+    all today; routing a file through needs a NEW `AiContentBlock` kind, a
+    shared schema change touching every driver/persistence consumer, not
+    something to bolt on at the end of an already large task.
+    `claudeCliAttachments.ts`'s staging mechanism is already generic enough
+    (write bytes, reference by path) to extend once that kind exists.
+  - **§5.4 reasoning block** — `claudeCliEvents.ts` has no verified
+    stream-json event shape for CLI-emitted reasoning/thinking content (the
+    same category of gap WS-11 already documented for
+    `--input-format stream-json`'s stdin shape); confirming it needs either
+    real documentation this task didn't have or a real paid turn, which test
+    discipline forbids. Not fabricated.
+- **Scope:**
+  - `server/ai/drivers/claudeCli.ts` — `resolvePermissionMode` now accepts
+    all four modes; new `assertBypassOnlyFromExplicitRequest`;
+    `visionInput: true`; attachment staging wired into the prompt-assembly
+    + `finally` cleanup path.
+  - New `server/ai/drivers/claudeCliAttachments.{ts,test.ts}`.
+  - `server/ai/mcp/tools/studio/projectTools.ts` — unchanged this round
+    (trust-tier gate already landed in `server-10`); its test file gained no
+    new cases here either — the existing bypass-input test already covers
+    the "explicit test" ask.
+  - New `server/ai/tools/studio/parityMatrix.{ts,test.ts}`.
+  - New `server/ai/handlers/studioAgentSession.{ts,test.ts}`, wired into
+    `server/ai/handlers/index.ts`.
+  - `server/handlers/studio/studioMeta.ts` — additive `agentSession` field
+    (safe to edit this round — NOT in this round's forbidden list, unlike
+    `server-08`/`09`'s rounds; confirmed via `git status` it wasn't
+    concurrently modified before touching it).
+  - `src/admin/pages/site/agent/{agentApi.ts,index.ts}` —
+    `fetchStudioAgentEffort`/`persistStudioAgentEffort`, barrel-exported.
+  - `src/admin/pages/site/panels/AgentPanel/AgentSessionControls.{tsx,module.css}` —
+    Bypass now real (not refused), the persistent banner, effort fetch/persist
+    wired to project open/change.
+  - `src/core/ai/chatRequest.ts`, `server/ai/drivers/types.ts` — doc-comment
+    corrections (bypass is real, not refused).
+- **Verification:**
+  - `bunx tsc` (both projects) — clean. One transient error appeared mid-task
+    in `src/admin/pages/site/studio/localizedPageWriteback.ts` (untracked,
+    parallel session's own new file, confirmed via `git status` never touched
+    by me) — gone by the next check, the parallel session fixed its own
+    issue; not attributed to me at any point, and not present in the final
+    verification pass.
+  - `bun run build` / `bun run lint` — clean.
+  - `bun test server/ai src/__tests__/agent src/__tests__/panels/agentPanel.test.tsx
+    src/__tests__/ui/modelPicker.test.tsx src/__tests__/architecture` —
+    **1008 pass / 4 fail**, the SAME 4 pre-existing failures every prior
+    handoff this thread has documented (CodeMirror lazy-load, publish
+    dispatcher, a Windows-path `error-boundary-coverage` bug,
+    `keybindings-registry` on canvas files) — confirmed via `git status`
+    none are in this task's diff.
+  - New tests: `claudeCliAttachments.test.ts` (6), `parityMatrix.test.ts` (6),
+    `studioAgentSession.test.ts` (4), `claudeCli.test.ts` (+6: 3 bypass-now-
+    real, 3 attachments).
+- **Next step:** file attachments (needs a new `AiContentBlock` kind — a
+  shared schema decision, not this task's to make alone), the reasoning
+  block (needs the real event shape verified, possibly via a deliberate,
+  approved paid dogfood turn), building the 3 parity-matrix gaps into real
+  tools if the coordinator wants them closed rather than just tracked.
+- **Human action needed:** none blocking.
+
 ### server-10 — WS-12 steps 3+4: StudioAgentSnapshot, the staleness rule, and session controls — with one flagged, unresolved conflict
 - **Agent:** server-engineer
 - **Stage:** done, EXCEPT §5.3 (attachment file-staging) and §5.4 (reasoning
@@ -2253,6 +2399,215 @@ are the remaining WS-2 items, not yet dispatched. See
   silently wrong (no error, no "unsaved changes" false-negative claim) —
   and it is exactly the boundary the next work order on this phase should
   close.
+
+### canvas-11 — WS-10 Phase 4, finished: the locale-variant SAVE path — editing Arabic text now lands in `translations.js`'s `ar` branch
+- **Agent:** canvas-engineer
+- **Stage:** done — the gap `canvas-10` named ("reads and edits but does not persist") is closed
+- **Updated:** 2026-08-01
+- **Goal:** close the ONE remaining piece of WS-10 §4.4 the coordinator named
+  as "the single most valuable behaviour in this entire workstream": a text
+  edit on the Arabic frame must reach `translations.js`'s `ar` branch on
+  disk, not just the in-memory canvas. `canvas-10` proved the mechanism
+  WOULD write correctly (unit-level `textOrigin` proof); this entry wires it
+  all the way to `POST /admin/api/studio/save`.
+- **The baseline key shape, as asked:** `(pageId, locale, nodeId)` — exactly
+  as scoped in `canvas-10`'s own handoff. Concretely, a NEW module,
+  `src/admin/pages/site/studio/localizedPageWriteback.ts`, owns a
+  `Map<string, string>` keyed `${pageId}::${locale}::${nodeId}` (built on
+  `localizedPageSlice.ts`'s own `localizedPageKey(pageId, locale)` two-part
+  key, extended with `::${nodeId}`), kept STRICTLY SEPARATE from
+  `fsCodemodAdapter.ts`'s existing `loadedValues` (keyed by bare `nodeId`).
+  This is not a stylistic choice — a locale-variant node shares its id with
+  the default tree's node (trap #2), so a shared baseline would let
+  whichever tree's snapshot ran last silently become "the" baseline for
+  BOTH, corrupting one locale's diff against the other's original text.
+- **Scope:**
+  - New `src/admin/pages/site/studio/localizedPageWriteback.ts` — mirrors
+    `styleRuleWriteback.ts`'s established "one module per edit kind"
+    pattern (its own doc comment names this precedent explicitly) so
+    `fsCodemodAdapter.ts`'s main loop stays untouched, not restructured:
+    - `watchLocalizedPagesForBaseline()` — idempotent, subscribes to
+      `useEditorStore`'s `localizedPages` and seeds a `(pageId, locale)`
+      key's baseline the INSTANT it is first observed (i.e. the moment
+      `ensureLocalizedPage`'s fetch resolves) — before a user could
+      possibly have edited it, since the canvas cannot render a node to
+      double-click until the fetch that supplies it has already landed in
+      the store. Does NOT re-seed an already-seen key — an EDIT also
+      changes `localizedPages` (same field), and re-seeding on every edit
+      would erase the very diff this baseline exists to detect.
+    - `collectLocalizedTextEdits(localizedPages)` — diffs every fetched
+      page's text-bearing (`textOrigin`-backed) nodes against the baseline,
+      emitting one `kind: 'literal'` edit per changed node, aimed at THAT
+      node's own `textOrigin` — the exact same edit shape and the exact
+      same server-side codemod (`applyStudioEdit`) the default tree's
+      `textOrigin`-backed edits already use. **No server-side change was
+      needed for this write path** — the codemod is origin-agnostic, it
+      just needs a `{rel, line, col}` + new text.
+    - `commitLocalizedTextBaseline(localizedPages)` — advances the baseline
+      to current, in bulk, for every tracked key — safe only because it
+      runs strictly AFTER a diff+send pass, mirroring
+      `styleRuleWriteback.ts`'s own `commitBaseline`.
+    - `resetLocalizedTextBaseline()` — clears the baseline + the
+      seeded-keys set. Called from `loadSite()` on every fresh project
+      load, paired with `localizedPageSlice.ts`'s new `resetLocalizedPages()`
+      store action — `pageId` is only unique WITHIN one project, so a stale
+      entry from a previous project could otherwise silently suppress or
+      misdirect a real diff in a new one.
+  - **`fsCodemodAdapter.ts`:** `loadSite()` now calls
+    `resetLocalizedTextBaseline()` + `useEditorStore.getState().resetLocalizedPages()`
+    + `watchLocalizedPagesForBaseline()` (idempotent — safe on a
+    `requestCmsSiteReload()` re-load too). `saveSite()` calls
+    `collectLocalizedTextEdits(useEditorStore.getState().localizedPages)`
+    right after the existing CSS write-back block, pushes the results into
+    the SAME `edits` array the default tree's edits already populate (one
+    POST, not two), and calls `commitLocalizedTextBaseline(...)` after the
+    save resolves, gated on `localizedEdits.length > 0` (matching the CSS
+    baseline's own conditional-commit pattern). The pre-existing
+    default-tree loop is **completely unchanged** — this is a pure
+    addition, not a restructuring, so the "tell me first if this needs
+    fsCodemodAdapter.ts restructured more than the baseline key" trigger
+    never fired.
+  - **`localizedPageSlice.ts`:** new `resetLocalizedPages()` action. The
+    slice still imports nothing from the persistence layer — the
+    DIRECTION of the dependency stays "persistence watches the store,"
+    matching `boardSlice.ts`'s own "the store never calls the endpoint
+    itself" precedent (stated explicitly in both modules' doc comments
+    now).
+  - New test: `src/admin/pages/site/studio/__tests__/localizedPageWriteback.test.ts`
+    — see below.
+- **The test that proves an `ar` edit and an `en` edit on the same node id
+  produce two distinct writes:** `localizedPageWriteback.test.ts`'s first
+  case. It exercises the REAL `fsCodemodAdapter.saveSite()` (the actual
+  autosave code path), not just the isolated collector functions — matching
+  `fsCodemodAdapter.test.ts`'s own integration style. Setup: a default `en`
+  tree with node `headline` edited to `'Hi Muhammad'` (origin
+  `i18n/translations.js:2:7`), and a locale-variant `ar` page (simulating
+  what `ensureLocalizedPage` would have fetched) with the SAME node id
+  `headline`, then edited via the REAL store action
+  (`updateLocalizedNodeText('home', 'ar', 'headline', 'text', 'مرحبا جدًا')`
+  — exactly what `inlineEditSlice.ts`'s locale-variant session path calls)
+  to `'مرحبا جدًا'` (origin `i18n/translations.js:2:25` — same line,
+  different column, the exact real-eSIM-corpus shape `canvas-10`'s
+  server-side proof used). One `saveSite()` call. Assertion: the single
+  POST's `edits` array contains exactly TWO `kind: 'literal'` entries, with
+  TWO DIFFERENT `nodeId` strings (`i18n/translations.js:2:7` vs
+  `i18n/translations.js:2:25`) — the write-target invariant, proven by
+  construction (two distinct origins), not asserted by fiat. Two more
+  tests in the same file: a second `saveSite()` tick re-sends nothing once
+  both baselines have advanced (baseline discipline), and fetching a
+  locale-variant page with NO edit yet contributes zero edits (a mere fetch
+  is not a change).
+- **`undo()` — made explicit, not half-wired, exactly as asked:** a
+  locale-variant text session (`inlineEditSlice.ts`) never calls
+  `updateNodeProps`/`mutateActiveTree`, so Mutative's patch-based history
+  never records it — `Cmd+Z` cannot revert a locale-variant text edit. This
+  was already true as of `canvas-10`; this entry did not change it, and
+  states it in THREE places now so it can't be missed: this STATE.md entry,
+  `localizedPageWriteback.ts`'s own module doc, and
+  `docs/agent-refs/canvas-internals.md`'s Locale section. Matches
+  `boardSlice.ts`'s own "frame drags aren't in the undo stack either"
+  precedent — a deliberate category, not an oversight.
+- **The Properties-panel silent-wrong-target risk — assessed, not built:**
+  the coordinator asked whether it's cheap to make non-text edits on a
+  locale-variant frame visibly not-editable, or clearly labelled. It is
+  NOT cheap: it needs `selectedNodeFrameId` (already tracked,
+  `selectionSlice.ts`) threaded into `PropertiesPanelBody.tsx`, a board
+  frame lookup, a locale comparison, and a new notice component/badge —
+  a real UI change with its own test, not a quick addition alongside a
+  save-path fix. Did not build it. Instead: documented in
+  `docs/features/studio-import.md`'s limitations table (the user-facing
+  doc, not only this internal one, per the explicit instruction) AND in
+  `docs/agent-refs/canvas-internals.md`, both flagging it as a real,
+  named risk worth a dedicated follow-up, not merely a note buried here.
+- **Decisions:**
+  - Seeding happens via a STORE SUBSCRIPTION
+    (`watchLocalizedPagesForBaseline`), not a direct call from
+    `localizedPageSlice.ts`'s `ensureLocalizedPage` — preserves the
+    existing "the store is a pure state container, persistence watches
+    it" boundary (`boardSlice.ts`'s own module doc states this rule
+    already); the slice never imports anything from `studio/`.
+  - `collectLocalizedTextEdits` skips (does not write) a node with no
+    baseline entry at all, rather than treating the miss as "changed from
+    nothing." A genuine miss would mean `watchLocalizedPagesForBaseline`'s
+    wiring broke — silently writing an already-correct value would hide
+    that bug rather than surface it.
+- **Landmines:**
+  - `watchLocalizedPagesForBaseline()`'s subscription is set up ONCE
+    (module-level `watching` boolean) and is NEVER torn down for the
+    lifetime of the page — same posture every other external-store
+    subscription in `fsCodemodAdapter.ts`'s orbit already has
+    (`getStudioVendorCss`, `setStudioTrustTier`). It survives a project
+    switch; only `resetLocalizedTextBaseline()`'s baseline/seeded-keys
+    clearing (called from `loadSite()`) actually resets state per project
+    — the subscription itself stays alive and correct across that, by
+    design.
+  - If a FUTURE change makes Properties-panel edits locale-variant-aware
+    (closing the risk named above), it will need its OWN save-path
+    integration — `localizedPageWriteback.ts` is deliberately TEXT-ONLY,
+    matching `inlineEditSlice.ts`'s current scope. Extend THIS module,
+    not `fsCodemodAdapter.ts`'s main default-tree loop (same "one module
+    per edit kind" reasoning `styleRuleWriteback.ts` already established).
+  - A `requestCmsSiteReload()` triggered by a `shifted`/`sharedComponents`
+    result from a DEFAULT-tree edit calls `loadSite()` again, which resets
+    `localizedPages` entirely (`resetLocalizedPages()`) — any FETCHED
+    (but not yet re-fetched) locale-variant frame goes back to "not yet
+    loaded" and needs `ensureLocalizedPage` to run again. This is the
+    SAME pre-existing behavior every reload already has for other client
+    state; not a new regression, just worth knowing if a locale-variant
+    frame appears to "flash" back to its default content after an
+    unrelated default-tree edit shifts line numbers elsewhere on the page.
+- **Verification:**
+  - New tests, all green and reliable (re-run 2× each):
+    `src/admin/pages/site/studio/__tests__/localizedPageWriteback.test.ts`
+    (3/3), full `src/admin/pages/site/studio/__tests__/` directory (20/20,
+    0 regressions in the pre-existing `fsCodemodAdapter`/write-loop-safety
+    suite).
+  - Re-ran every `canvas-10` test to confirm no regression from this
+    change: `server/handlers/__tests__/localizedPage.test.ts` (3/3),
+    `src/__tests__/canvas/localizedFrameRendering.test.tsx` (2/2),
+    `src/__tests__/editor-store/inlineEditSlice.test.ts` (23/23),
+    `src/core/studio-board/__tests__/boardsModel.test.ts` (77/77),
+    `src/__tests__/canvas/boardFrameVariantSelection.test.tsx` (4/4).
+    `module-size-budgets.test.ts` — 5/5, both touched files
+    (`fsCodemodAdapter.ts` 690 lines, `localizedPageWriteback.ts` 185
+    lines) comfortably under the ceiling.
+  - Full `bun test`: **8092 pass / 23 fail** (1 skip). 20 of the 23 match
+    `standing-01`'s exact named set. The other 3 —
+    `selectionSlice.selectNode — modes` (`multiSelect.test.ts`) — are
+    **not mine**: `selectionSlice.ts` has zero diff from me (`git diff`
+    confirms, same finding as `canvas-10`'s handoff), the suite passes
+    cleanly in isolation (12/12) AND paired directly with this task's own
+    new test file (15/15), and `git status` at the moment this ran showed
+    the SAME concurrent second session still extensively active
+    (`server/ai/drivers/claudeCliAttachments.ts`,
+    `server/ai/handlers/studioAgentSession.ts`, `server/ai/tools/studio/
+    parityMatrix.ts` — all new files that didn't exist at `canvas-10`'s
+    own verification, confirming continuous, ongoing concurrent writes to
+    the shared tree throughout this task too). The `Module size budgets`
+    failure `canvas-10` saw transiently is ABSENT from this run — further
+    evidence that one was a moment-in-time artifact of the same concurrent
+    activity, not a real, stable failure.
+  - `bun run build` — exit 0 (full `tsc -b && vite build`; caught and fixed
+    one unused-import TS error from my own edit before this point, `tsc -b`
+    doing exactly the job it's for).
+  - `bun run lint` — exit 0, 0 warnings.
+  - No tree-mutating git command was used at any point. **Stage nothing,
+    commit nothing per instruction — confirmed via `git status`: nothing
+    of mine is staged** (every `M `/`A ` first-column entry belongs to the
+    concurrent second session; every file this task touched shows in the
+    unstaged/`??` columns only).
+- **Human action needed:** dogfood on `studio-workspace/maherfayad-stack-eSIM`
+  at `/admin/site?studio`. Repeat `canvas-10`'s dogfood steps (duplicate a
+  frame as AR, edit Arabic text live) — but this time, after editing,
+  **wait ~2 seconds for autosave, then actually reload the project** (or
+  navigate away and back). The edited Arabic text should now be there —
+  confirm by opening `journey-screens/src/i18n/translations.js` on disk (or
+  via `git diff`) and checking the `ar` branch changed, NOT the `en`
+  branch. Then, separately, confirm the named risk: select a node inside
+  the Arabic frame, open the Properties panel, and change a style value —
+  confirm it also changes in the ENGLISH frame (the current, documented,
+  not-yet-fixed behavior) rather than being surprised by it landing there
+  silently with no visual sign anything unexpected happened.
 
 ### parser-10 — WS-13 step 4: canonical scaffolding, auto-placed on the board
 - **Agent:** parser-surgeon

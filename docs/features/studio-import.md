@@ -811,7 +811,7 @@ here once it is genuinely detectable.
 | `—` | CSS-in-JS (`styled-components`/`emotion`/`stitches`) is detected, never compiled. |
 | `—` | Linked package dependencies (a `?raw` import from a symlinked `file:../pkg`) do not resolve. |
 | `—` | A JSX-valued prop that is not an icon is dropped rather than flattened. |
-| `—` | A locale-variant board frame's TEXT edits update the canvas and structurally carry the right `textOrigin`, but are not yet persisted to disk — `fsCodemodAdapter.ts`'s `saveSite` only walks `site.pages`, not `localizedPageSlice.ts`'s per-`(pageId, locale)` map (WS-10 §4.4/Phase 4). Non-text prop/style edits (Properties panel) on a locale-variant frame are not locale-aware at all — they edit the board-default tree. |
+| `—` | Editing TEXT in a locale-variant board frame (e.g. the Arabic copy of a "duplicate as variant" pair) now saves to that locale's own dictionary branch (WS-10 §4.4/Phase 4). Editing a PROP or STYLE on that same frame in the Properties panel does NOT — the panel always edits the board-DEFAULT frame's copy of the node, regardless of which frame you clicked in, and that change is visible in both frames (they share `classIds`). No in-app warning yet when this happens — if you're working in a duplicated-locale frame, use the panel only on the default-locale copy. |
 | `—` | One attribute of an inline `<svg>` that depends on a prop/state is omitted (the graphic still serialises). |
 | `—` | `{children}` splicing depth (does not occur in practice). |
 | `—` | Renaming a component reference — `studio_codemod`'s `rename-tag` renames HTML elements only. |
@@ -841,14 +841,19 @@ here once it is genuinely detectable.
   (`localizedPageSlice.ts`/`loadStudioPageInLocale`) fetched on demand and
   read through a per-frame "which tree do I render" dimension
   (`selectCanvasPageFor`'s `frameId` param) layered on top of Phase 2's
-  `(frameId, nodeId)` selection/hover re-keying. **What is NOT yet wired:**
-  editing text in a locale-variant frame updates the canvas and carries the
-  correct `textOrigin` structurally, but is not yet SAVED to disk —
-  `fsCodemodAdapter.ts`'s `saveSite` doesn't walk `localizedPages` yet. See
-  `STATE.md`'s handoff for the full reasoning. Direction and dark mode remain
-  the simpler case: both render-time (a `dir`/`data-studio-scheme` attribute
-  on the frame document, no re-parse) and both side-by-side-capable per frame
-  since WS-10 Phase 2 (`BoardFrame.axes`, "duplicate as variant").
+  `(frameId, nodeId)` selection/hover re-keying. **Editing text in a
+  locale-variant frame now saves to disk**, at that locale's own dictionary
+  literal — `fsCodemodAdapter.ts`'s `saveSite` diffs `localizedPages` against
+  a `(pageId, locale, nodeId)`-keyed baseline
+  (`localizedPageWriteback.ts`) kept separate from the default tree's own
+  baseline, because a locale-variant node shares its id with the default
+  tree's node. **What is still NOT locale-variant-aware: the Properties
+  panel.** Selecting a node inside a locale-variant frame and editing a
+  PROP or STYLE there edits the board-DEFAULT frame's copy of that node,
+  not the locale-variant one — no in-app warning today. Direction and dark
+  mode remain the simpler case: both render-time (a `dir`/`data-studio-scheme`
+  attribute on the frame document, no re-parse) and both side-by-side-capable
+  per frame since WS-10 Phase 2 (`BoardFrame.axes`, "duplicate as variant").
 - **One attribute of an inline `<svg>` that depends on a prop or state.** The graphic serialises; the unresolvable attribute is omitted ([above](#an-svg-written-as-jsx-elements-is-serialised)). A ring drawn from `strokeDashoffset={f(props.percent)}` shows its track without its progress arc.
 - **An image behind hook state.** `SLIDE_IMAGES[index]` where `index` is `useState(0)` does not resolve. Not a Tier D ban (parser-07 established that reading a `useState(<literal>)`'s own initial value is a Tier A source read, not execution) — a deliberate SCOPING decision: that read is wired only into `evaluateCondition` (JSX branch selection), never into `resolveIdentifier`/`buildComponentLocals`, the chain element/property access shares with Tier B.4's dynamic-dictionary-key pick. Wiring it in generally would silently override the `previewLocale` option for the common `useState('en')` language-switcher shape — see [One `return` renders](#one-return-renders--the-parser-selects-a-branch-parser-06)'s `&&` section. The two carousel slides on the eSIM corpus are the only instances of the array-index case.
 - **A ternary/`&&` branch the heuristic guesses wrong.** `selectJsxBranch` (parser-06) prefers the CONSEQUENT unless the condition is statically decidable, so `{addOn.image ? <img …/> : <Icon …/>}` renders `<img>` even for the items that actually carry an `icon` at runtime — the untaken `<Icon …/>` is recorded as a `branchAlternatives` entry (label + location), not rendered. Was previously "every branch renders", which showed BOTH; this is now a single, sometimes-wrong guess instead of an always-honest stack. Extract the condition to a module-scope const to get the real answer instead of the guess.
