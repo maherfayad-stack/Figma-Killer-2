@@ -395,8 +395,9 @@ export async function* streamClaudeCli(
 
   const argv = [
     'claude',
+    // `-p` with NO positional prompt: the prompt is piped on stdin instead.
+    // Mandatory on Windows — see `ClaudeCliSpawnOptions.stdin`.
     '-p',
-    prompt,
     '--output-format',
     'stream-json',
     '--verbose',
@@ -433,6 +434,7 @@ export async function* streamClaudeCli(
       argv,
       cwd,
       env,
+      stdin: new TextEncoder().encode(prompt),
       signal: req.signal,
       spawn: options.spawn,
     })) {

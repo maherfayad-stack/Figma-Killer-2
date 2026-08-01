@@ -73,9 +73,21 @@ export interface SpawnedProcessLike {
   kill(): void
 }
 
+/**
+ * `stdin` is `'ignore'` for every caller that has nothing to send, and a byte
+ * payload for the one that does: `claudeCli.ts` writes the user's prompt here
+ * rather than passing it as an argv positional. That is a correctness
+ * requirement on Windows, not a preference — see `spawnClaudeCliNdjson`.
+ */
 export type SubprocessSpawnFn = (
   argv: string[],
-  options: { cwd: string; env: Record<string, string>; stdout: 'pipe'; stderr: 'pipe'; stdin: 'ignore' },
+  options: {
+    cwd: string
+    env: Record<string, string>
+    stdout: 'pipe'
+    stderr: 'pipe'
+    stdin: 'ignore' | Uint8Array
+  },
 ) => SpawnedProcessLike
 
 const defaultSpawn: SubprocessSpawnFn = (argv, options) =>

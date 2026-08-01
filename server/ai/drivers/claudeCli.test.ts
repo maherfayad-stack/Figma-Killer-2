@@ -44,12 +44,15 @@ interface FakeCliOptions {
   stdoutLines: object[]
   stderr?: string
   exitCode?: number
-  onSpawn?: (argv: string[], env: Record<string, string>, cwd: string) => void
+  onSpawn?: (argv: string[], env: Record<string, string>, cwd: string, stdin: string) => void
 }
 
 function fakeCliSpawn(opts: FakeCliOptions): SubprocessSpawnFn {
   return (argv, options) => {
-    opts.onSpawn?.(argv, options.env, options.cwd)
+    // The prompt is piped, never an argv positional — decode it so tests can
+    // assert on it the same way they used to assert on argv[2].
+    const stdin = options.stdin === 'ignore' ? '' : new TextDecoder().decode(options.stdin)
+    opts.onSpawn?.(argv, options.env, options.cwd, stdin)
     const stdout = opts.stdoutLines.map((line) => JSON.stringify(line)).join('\n') + '\n'
     const proc: SpawnedProcessLike = {
       stdout: streamFromString(stdout),
@@ -193,7 +196,7 @@ describe('streamClaudeCli — happy path', () => {
     // Spawn shape — WS-11 §4.0 widened per steps 2+3 (effort, mcp-config,
     // strict-mcp-config, session continuity).
     expect(capturedArgv).toEqual([
-      'claude', '-p', 'Hello, Claude.',
+      'claude', '-p',
       '--output-format', 'stream-json',
       '--verbose',
       '--include-partial-messages',
@@ -566,36 +569,36 @@ describe('streamClaudeCli — prompt assembly', () => {
   })
 
   it('uses the LATEST user message when history has several', async () => {
-    let capturedArgv: string[] = []
+    let capturedStdin = ''
     const spawn = fakeCliSpawn({
       stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
-      onSpawn: (argv) => { capturedArgv = argv },
+      onSpawn: (_argv, _env, _cwd, stdin) => { capturedStdin = stdin },
     })
     await collect(baseRequest({
       messages: [userMessage('first'), userMessage('second'), userMessage('third')],
     }), testOptions({ spawn }))
-    expect(capturedArgv[2]).toBe('third')
+    expect(capturedStdin).toBe('third')
   })
 })
 
 describe('streamClaudeCli — attachments (WS-12 §5.3)', () => {
   it('stages an attached image to a real file and appends its path to the prompt', async () => {
-    let capturedArgv: string[] = []
+    let capturedStdin = ''
     // Existence is checked INSIDE onSpawn — the driver's own `finally` block
     // deletes the staged file once `collect()` resolves, so checking after
     // the fact would always see it already cleaned up.
     let existedAtSpawnTime = false
     const spawn = fakeCliSpawn({
       stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
-      onSpawn: (argv) => {
-        capturedArgv = argv
-        const match = argv[2]?.match(/Attached image file\(s\).*?: (.+attachment-1\.png)/)
+      onSpawn: (_argv, _env, _cwd, stdin) => {
+        capturedStdin = stdin
+        const match = stdin.match(/Attached image file\(s\).*?: (.+attachment-1\.png)/)
         existedAtSpawnTime = Boolean(match?.[1] && existsSync(match[1]))
       },
     })
     await collect(baseRequest({ messages: [userMessageWithImage('describe this')] }), testOptions({ spawn }))
-    expect(capturedArgv[2]).toContain('describe this')
-    expect(capturedArgv[2]).toContain('Attached image file(s)')
+    expect(capturedStdin).toContain('describe this')
+    expect(capturedStdin).toContain('Attached image file(s)')
     expect(existedAtSpawnTime).toBe(true)
   })
 
@@ -603,8 +606,8 @@ describe('streamClaudeCli — attachments (WS-12 §5.3)', () => {
     let stagedDir: string | undefined
     const spawn = fakeCliSpawn({
       stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
-      onSpawn: (argv) => {
-        const match = argv[2]?.match(/: (.+)attachment-1\.png/)
+      onSpawn: (_argv, _env, _cwd, stdin) => {
+        const match = stdin.match(/: (.+)attachment-1\.png/)
         stagedDir = match?.[1]
       },
     })
@@ -614,13 +617,35 @@ describe('streamClaudeCli — attachments (WS-12 §5.3)', () => {
   })
 
   it('a text-only turn stages nothing and does not touch the prompt', async () => {
-    let capturedArgv: string[] = []
+    let capturedStdin = ''
     const spawn = fakeCliSpawn({
       stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
-      onSpawn: (argv) => { capturedArgv = argv },
+      onSpawn: (_argv, _env, _cwd, stdin) => { capturedStdin = stdin },
     })
     await collect(baseRequest({ messages: [userMessage('just text')] }), testOptions({ spawn }))
-    expect(capturedArgv[2]).toBe('just text')
+    expect(capturedStdin).toBe('just text')
+  })
+
+  // The bug this whole mechanism exists for: `Bun.spawn(['claude', ...])`
+  // executes npm's `claude.cmd` shim through cmd.exe, which re-parses the
+  // command line, so a newline in an argv positional silently drops every
+  // flag after it — `--output-format stream-json` included. The CLI then
+  // answers in plain text and this driver sees a clean exit with nothing to
+  // read. Attachments append a blank line, so every attached turn hit it.
+  it('never puts the prompt on the command line, so a newline cannot truncate it', async () => {
+    let capturedArgv: string[] = []
+    let capturedStdin = ''
+    const spawn = fakeCliSpawn({
+      stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
+      onSpawn: (argv, _env, _cwd, stdin) => { capturedArgv = argv; capturedStdin = stdin },
+    })
+    const multiline = ['Build the page.', '', 'Use the design system.'].join('\n')
+    await collect(baseRequest({ messages: [userMessage(multiline)] }), testOptions({ spawn }))
+    expect(capturedStdin).toBe(multiline)
+    expect(capturedArgv.some((arg) => arg.includes('\n'))).toBe(false)
+    expect(capturedArgv).not.toContain(multiline)
+    // `-p` is immediately followed by a flag, never by prompt text.
+    expect(capturedArgv[capturedArgv.indexOf('-p') + 1]).toBe('--output-format')
   })
 })
 

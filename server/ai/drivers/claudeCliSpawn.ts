@@ -28,6 +28,29 @@ export interface ClaudeCliSpawnOptions {
   readonly argv: string[]
   readonly cwd: string
   readonly env: Record<string, string>
+  /**
+   * The `-p` prompt, written to the child's stdin instead of passed as an
+   * argv positional.
+   *
+   * This is a Windows correctness requirement, confirmed empirically. `claude`
+   * on PATH resolves to npm's `claude.cmd` shim, and `Bun.spawn` executes it
+   * through `cmd.exe`, which RE-PARSES the command line. A newline anywhere in
+   * an argument terminates that line, so every flag after the prompt is
+   * silently dropped: `--output-format stream-json` never arrives, the CLI
+   * falls back to plain-text output, and this driver — which only understands
+   * NDJSON — sees a clean `exit 0` with nothing it can read. It then reports
+   * "exited (0) without a result", blaming auth for a quoting bug.
+   *
+   * Measured, same binary, same flags:
+   *   prompt "Reply with exactly: OK"        → exit 0, stream-json: YES
+   *   prompt "Reply with exactly: OK\n\n…"   → exit 0, stream-json: NO ("OK")
+   *
+   * That made every multi-line prompt fail, and every prompt with an
+   * attachment, since `describeAttachmentsForPrompt` appends "\n\n…".
+   * Piping the prompt keeps user text off the command line entirely, which
+   * also removes the ~32 KB Windows command-line ceiling as a failure mode.
+   */
+  readonly stdin: Uint8Array
   readonly signal: AbortSignal
   /** Test seam — defaults to `Bun.spawn`. */
   readonly spawn?: SubprocessSpawnFn
@@ -79,7 +102,7 @@ export async function* spawnClaudeCliNdjson(
       env: options.env,
       stdout: 'pipe',
       stderr: 'pipe',
-      stdin: 'ignore',
+      stdin: options.stdin,
     })
   } catch (err) {
     throw new ClaudeCliSpawnError(
