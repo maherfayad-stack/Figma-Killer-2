@@ -811,7 +811,7 @@ here once it is genuinely detectable.
 | `—` | CSS-in-JS (`styled-components`/`emotion`/`stitches`) is detected, never compiled. |
 | `—` | Linked package dependencies (a `?raw` import from a symlinked `file:../pkg`) do not resolve. |
 | `—` | A JSX-valued prop that is not an icon is dropped rather than flattened. |
-| `—` | Only ONE locale renders per frame — a project's other locale is not shown SIDE BY SIDE on the same board (WS-10 §4.4/Phase 4, still not implemented — locale is parse-time, unlike direction/dark-mode). Switching the board's own locale (toolbar, probe-driven) DOES work and re-parses the whole project (WS-10 §4.2/Phase 3). |
+| `—` | A locale-variant board frame's TEXT edits update the canvas and structurally carry the right `textOrigin`, but are not yet persisted to disk — `fsCodemodAdapter.ts`'s `saveSite` only walks `site.pages`, not `localizedPageSlice.ts`'s per-`(pageId, locale)` map (WS-10 §4.4/Phase 4). Non-text prop/style edits (Properties panel) on a locale-variant frame are not locale-aware at all — they edit the board-default tree. |
 | `—` | One attribute of an inline `<svg>` that depends on a prop/state is omitted (the graphic still serialises). |
 | `—` | `{children}` splicing depth (does not occur in practice). |
 | `—` | Renaming a component reference — `studio_codemod`'s `rename-tag` renames HTML elements only. |
@@ -825,7 +825,30 @@ here once it is genuinely detectable.
 - **CSS-in-JS is detected, never compiled.** `ProjectProfile.styleToolchain.cssInJs` names `styled-components`/`emotion`/`stitches` when present; `styleCompile.ts` does nothing with it. A component styled this way renders structurally correct and unstyled.
 - **Linked package dependencies.** A `?raw` import from a symlinked `file:../pkg` (or a pnpm store) does not resolve — containment is checked on the real path ([why](#installed-package-specifiers)). Install the package instead.
 - **A JSX-valued prop that is not an icon.** `iconPropFromJsx` recovers inline SVG markup one level deep; a prop holding a nested layout is dropped rather than flattened.
-- **Only ONE locale renders per frame — side-by-side locale variants are not implemented yet.** The board's locale IS switchable (WS-10 §4.2/Phase 3, shipped): a toolbar `Select`, populated by `localeProbe.ts`'s detection (a `translations[lang]`-style dictionary, an i18next/react-intl `resources` map, or a `locales/*.json` directory — never a hand-typed JSON string any more), persisted per project in `.studio/meta.json`'s `previewAxes.locale`. Because `preferredKey` selects a dictionary BRANCH during evaluation (`staticEvalCore.ts:440`'s `evaluateElementAccess`), switching it is genuinely PARSE-TIME — a real project re-parse, not a frame attribute toggle — so `PreviewAxesControls.tsx` persists the new locale then calls `requestCmsSiteReload()`, and the whole board re-parses and re-renders in that locale. What is NOT implemented: two frames of the SAME page showing two DIFFERENT locales AT ONCE (WS-10 §4.4/Phase 4, "duplicate this frame as Arabic") — that needs a second, per-`(pageId, locale)` parsed tree kept alongside the board's default, plus a per-frame "which tree do I render" dimension the existing per-frame `(frameId, nodeId)` selection/hover re-keying (WS-10 Phase 2) does not by itself provide; see `STATE.md`'s handoff for the architecture finding. Direction and dark mode are the OPPOSITE case, both render-time (a `dir`/`data-studio-scheme` attribute on the frame document, applied without a re-parse) and both already side-by-side-capable per frame since WS-10 Phase 2 (`BoardFrame.axes`, "duplicate as variant").
+- **Locale is switchable board-wide AND per frame, side by side.** The board's
+  locale is switchable (WS-10 §4.2/Phase 3): a toolbar `Select`, populated by
+  `localeProbe.ts`'s detection (a `translations[lang]`-style dictionary, an
+  i18next/react-intl `resources` map, or a `locales/*.json` directory — never
+  a hand-typed JSON string any more), persisted per project in
+  `.studio/meta.json`'s `previewAxes.locale`. Because `preferredKey` selects
+  a dictionary BRANCH during evaluation (`staticEvalCore.ts:440`'s
+  `evaluateElementAccess`), switching it is genuinely PARSE-TIME — a real
+  project re-parse — so `PreviewAxesControls.tsx` persists the new locale
+  then calls `requestCmsSiteReload()`. A board frame can ALSO carry its own
+  `axes.locale` override (WS-10 §4.4/Phase 4, "duplicate as Arabic") — two
+  frames of the SAME page showing two DIFFERENT locales AT ONCE, via a
+  second, per-`(pageId, locale)` parsed tree
+  (`localizedPageSlice.ts`/`loadStudioPageInLocale`) fetched on demand and
+  read through a per-frame "which tree do I render" dimension
+  (`selectCanvasPageFor`'s `frameId` param) layered on top of Phase 2's
+  `(frameId, nodeId)` selection/hover re-keying. **What is NOT yet wired:**
+  editing text in a locale-variant frame updates the canvas and carries the
+  correct `textOrigin` structurally, but is not yet SAVED to disk —
+  `fsCodemodAdapter.ts`'s `saveSite` doesn't walk `localizedPages` yet. See
+  `STATE.md`'s handoff for the full reasoning. Direction and dark mode remain
+  the simpler case: both render-time (a `dir`/`data-studio-scheme` attribute
+  on the frame document, no re-parse) and both side-by-side-capable per frame
+  since WS-10 Phase 2 (`BoardFrame.axes`, "duplicate as variant").
 - **One attribute of an inline `<svg>` that depends on a prop or state.** The graphic serialises; the unresolvable attribute is omitted ([above](#an-svg-written-as-jsx-elements-is-serialised)). A ring drawn from `strokeDashoffset={f(props.percent)}` shows its track without its progress arc.
 - **An image behind hook state.** `SLIDE_IMAGES[index]` where `index` is `useState(0)` does not resolve. Not a Tier D ban (parser-07 established that reading a `useState(<literal>)`'s own initial value is a Tier A source read, not execution) — a deliberate SCOPING decision: that read is wired only into `evaluateCondition` (JSX branch selection), never into `resolveIdentifier`/`buildComponentLocals`, the chain element/property access shares with Tier B.4's dynamic-dictionary-key pick. Wiring it in generally would silently override the `previewLocale` option for the common `useState('en')` language-switcher shape — see [One `return` renders](#one-return-renders--the-parser-selects-a-branch-parser-06)'s `&&` section. The two carousel slides on the eSIM corpus are the only instances of the array-index case.
 - **A ternary/`&&` branch the heuristic guesses wrong.** `selectJsxBranch` (parser-06) prefers the CONSEQUENT unless the condition is statically decidable, so `{addOn.image ? <img …/> : <Icon …/>}` renders `<img>` even for the items that actually carry an `icon` at runtime — the untaken `<Icon …/>` is recorded as a `branchAlternatives` entry (label + location), not rendered. Was previously "every branch renders", which showed BOTH; this is now a single, sometimes-wrong guess instead of an always-honest stack. Extract the condition to a module-scope const to get the real answer instead of the guess.

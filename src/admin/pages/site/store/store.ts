@@ -18,7 +18,8 @@ import { createClipboardSlice } from './slices/clipboardSlice'
 import { createInlineEditSlice } from './slices/inlineEditSlice'
 import { createLayoutsSlice } from './slices/layoutsSlice'
 import { createSaveTrackingSlice } from './slices/saveTrackingSlice'
-import { createBoardSlice } from './slices/boardSlice'
+import { createBoardSlice, selectActiveBoard } from './slices/boardSlice'
+import { createLocalizedPageSlice, localizedPageKey } from './slices/localizedPageSlice'
 import { bindPluginRuntimeStoreApi } from '@core/plugins/runtime'
 import { useAdminUi } from '@admin/state/adminUi'
 import { readWorkspaceLayout, workspaceFromPathname } from '@admin/state/workspaceLayoutStorage'
@@ -80,6 +81,7 @@ export const useEditorStore = create<EditorStore>()(
         ...createLayoutsSlice(...args),
         ...createSaveTrackingSlice(...args),
         ...createBoardSlice(...args),
+        ...createLocalizedPageSlice(...args),
       }),
       { enableAutoFreeze: true },
     )
@@ -276,9 +278,34 @@ export const selectActiveCanvasPage = (s: EditorStore): Page | null => {
  * `CanvasPageContext`) rather than the single active document. Passing
  * `pageId === null` reproduces the pre-board single-document behavior exactly,
  * which is what every CMS/VC frame does (no `CanvasPageContext` provider).
+ *
+ * WS-10 §4.4 (Phase 4) — `frameId`, when given, is this function's ONE new
+ * responsibility: "which TREE does this frame render." Phase 2's
+ * `(frameId, nodeId)` selection/hover re-keying never needed this (every
+ * frame always read the SAME `site.pages` entry) — locale is the first axis
+ * where a frame can legitimately need a DIFFERENT tree for the SAME
+ * `pageId`, because two locale parses of one file produce different TEXT
+ * (and `textOrigin`) while keeping the SAME node ids (trap #2 — a node id is
+ * a source POSITION, never locale-dependent, see `parsePageFile.ts`).
+ *
+ * When `frameId` names a board frame whose OWN `axes.locale` differs from
+ * the board's current `previewAxes.locale`, this reads
+ * `localizedPageSlice.ts`'s `localizedPages` map instead of `site.pages` —
+ * falling back to the DEFAULT tree when that locale-variant hasn't
+ * finished fetching yet (or failed), so a frame never renders blank while
+ * `useEnsureLocalizedPage` is in flight. `site.pages` itself, and every
+ * OTHER frame's render, are completely untouched by this — see
+ * `localizedPageSlice.ts`'s module doc for the full mechanism.
  */
-export const selectCanvasPageFor = (s: EditorStore, pageId: string | null): Page | null => {
+export const selectCanvasPageFor = (s: EditorStore, pageId: string | null, frameId?: string | null): Page | null => {
   if (!pageId) return selectActiveCanvasPage(s)
+  if (frameId) {
+    const locale = selectActiveBoard(s)?.frames.find((f) => f.id === frameId)?.axes?.locale
+    if (locale && locale !== s.previewAxes.locale) {
+      const localized = s.localizedPages[localizedPageKey(pageId, locale)]
+      if (localized) return localized
+    }
+  }
   return s.site?.pages.find((p) => p.id === pageId) ?? null
 }
 

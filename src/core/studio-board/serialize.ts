@@ -4,17 +4,18 @@ import type { PreviewAxes } from './previewAxes'
 const NOTE_COLORS: NoteColor[] = ['yellow', 'green', 'blue', 'pink', 'gray']
 
 /**
- * WS-10 Phase 2 — `BoardFrame.axes`, a Partial<PreviewAxes>. `locale` is
- * deliberately never read here (Phase 4 territory, a different mechanism —
- * see `previewAxes.ts`'s module doc); a raw file that somehow carries one
- * (hand-edited, or written by a future version) just has it ignored, not
- * rejected — same tolerant-partial posture `studioMeta.ts` uses server-side.
+ * WS-10 Phase 2/4 — `BoardFrame.axes`, a Partial<PreviewAxes>. `locale`
+ * (Phase 4, `@site/store/slices/localizedPageSlice.ts`'s
+ * `(pageId, locale)` rendering) is a plain non-empty string, same
+ * tolerant-partial posture `studioMeta.ts` uses server-side for a
+ * hand-edited or older-version file.
  */
 function coerceAxesOverride(raw: unknown): Partial<PreviewAxes> | undefined {
   if (!isPlainObject(raw)) return undefined
   const override: Partial<PreviewAxes> = {}
   if (raw.direction === 'ltr' || raw.direction === 'rtl') override.direction = raw.direction
   if (raw.colorScheme === 'light' || raw.colorScheme === 'dark') override.colorScheme = raw.colorScheme
+  if (typeof raw.locale === 'string' && raw.locale.length > 0) override.locale = raw.locale
   return Object.keys(override).length > 0 ? override : undefined
 }
 

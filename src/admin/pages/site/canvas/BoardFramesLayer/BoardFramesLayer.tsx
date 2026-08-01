@@ -104,6 +104,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react'
 import { createPortal } from 'react-dom'
+import { useAdminUi } from '@admin/state/adminUi'
 import { useEditorStore } from '@site/store/store'
 import { selectActiveBoard } from '@site/store/slices/boardSlice'
 import type { Breakpoint, Page } from '@core/page-tree'
@@ -127,7 +128,12 @@ import { useMarqueeSelection } from './useMarqueeSelection'
 import { useFramePosterCapture } from './useFramePosterCapture'
 import { getFramePoster } from './frameSnapshotCache'
 import { FramePosterPlaceholder } from './FramePosterPlaceholder'
-import { getColorSchemeCapability, subscribeColorSchemeCapability } from '@site/studio/previewAxesCapability'
+import {
+  getColorSchemeCapability,
+  getLocalesCapability,
+  subscribeColorSchemeCapability,
+  subscribeLocalesCapability,
+} from '@site/studio/previewAxesCapability'
 import styles from './BoardFramesLayer.module.css'
 
 /**
@@ -398,6 +404,28 @@ function BoardFrameView({
     getColorSchemeCapability,
   )
   const schemeVariantApplies = colorSchemeCapability !== null && colorSchemeCapability.mechanism !== 'none'
+  // WS-10 §4.4 (Phase 4) — locale duplicate variant, same probe-honesty gate
+  // (§7.4) the scheme variant above uses: omitted (not disabled) when the
+  // probe found no locale dictionary at all, or found only one locale (a
+  // duplicate would look identical to its source).
+  const localesCapability = useSyncExternalStore(subscribeLocalesCapability, getLocalesCapability, getLocalesCapability)
+  const currentLocale = effectiveAxes.locale ?? localesCapability?.defaultKey ?? localesCapability?.keys[0]
+  const otherLocale = localesCapability?.keys.find((k) => k !== currentLocale)
+  const localeVariantApplies = Boolean(otherLocale)
+
+  // WS-10 §4.4 (Phase 4) — the fetch trigger: a frame whose OWN locale
+  // differs from the board default needs its `(pageId, locale)` tree from
+  // `localizedPageSlice.ts` before it can render correctly.
+  // `ensureLocalizedPage` no-ops once fetched (or already loading), so this
+  // effect firing on every render of every frame costs nothing once
+  // steady-state. A frame whose locale did NOT change never enters this
+  // branch at all — no fetch, no re-render source, nothing to remount.
+  const projectDir = useAdminUi((s) => s.studioProject?.dir ?? null)
+  const ensureLocalizedPage = useEditorStore((s) => s.ensureLocalizedPage)
+  useEffect(() => {
+    if (!projectDir || !frame.axes?.locale || frame.axes.locale === boardAxes.locale) return
+    void ensureLocalizedPage(projectDir, frame.pageId, frame.axes.locale)
+  }, [projectDir, frame.pageId, frame.axes?.locale, boardAxes.locale, ensureLocalizedPage])
   // WS-5.3 — frozen poster for this frame's offscreen placeholder. Capture
   // reads the live iframe straight out of `frameBodyRef` while on screen; see
   // `useFramePosterCapture.ts`'s own doc comment for why it doesn't mount a
@@ -579,6 +607,17 @@ function BoardFrameView({
             >
               <span aria-hidden="true"><CopyPlusSolidIcon size={13} /></span>
               Duplicate as {effectiveAxes.colorScheme === 'dark' ? 'Light' : 'Dark'}
+            </ContextMenuItem>
+          )}
+          {localeVariantApplies && (
+            <ContextMenuItem
+              onClick={() => {
+                setContextMenu(null)
+                onDuplicateAsVariant({ locale: otherLocale })
+              }}
+            >
+              <span aria-hidden="true"><CopyPlusSolidIcon size={13} /></span>
+              Duplicate as {otherLocale?.toUpperCase()}
             </ContextMenuItem>
           )}
           <ContextMenuItem

@@ -217,6 +217,7 @@ import { tryServeStudioTokens } from './studio/tokenExtract'
 import { tryServeStudioTrustTier } from './studio/trustTier'
 import { tryServeStudioExtractComponent } from './studio/extractComponent'
 import { tryServeStudioPreviewAxes } from './studio/previewAxes'
+import { tryServeStudioLocalizedPage } from './studio/localizedPage'
 import { createScaffoldedPage } from './studio/pageScaffold'
 
 /**
@@ -240,6 +241,7 @@ const STUDIO_SUB_ROUTERS = [
   tryServeStudioTokens,
   tryServeStudioExtractComponent,
   tryServeStudioPreviewAxes,
+  tryServeStudioLocalizedPage,
 ] as const
 
 /** Body of POST /admin/api/studio/save — a batch of typed source writebacks. */

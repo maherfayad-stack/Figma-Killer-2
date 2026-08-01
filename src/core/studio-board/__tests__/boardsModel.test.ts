@@ -769,7 +769,11 @@ describe('parseBoardsFile — frame id/axes (WS-10 Phase 2)', () => {
     expect('axes' in result.boards[0].frames[1]).toBe(false)
   })
 
-  test('a locale field on axes (Phase 4 territory) is silently ignored, not rejected', () => {
+  // WS-10 §4.4 (Phase 4) — a per-frame `axes.locale` override now round-trips
+  // like `direction`/`colorScheme`. (Was: "silently ignored, not rejected" —
+  // that was Phase 2/3's honest placeholder for a mechanism that didn't
+  // exist yet; Phase 4 built it, so ignoring it here would now be a bug.)
+  test('a locale field on axes is kept, alongside direction/colorScheme', () => {
     const raw = {
       version: 1,
       boards: [
@@ -783,7 +787,24 @@ describe('parseBoardsFile — frame id/axes (WS-10 Phase 2)', () => {
       ],
     }
     const result = parseBoardsFile(raw)
-    expect(result.boards[0].frames[0].axes).toEqual({ direction: 'rtl' })
+    expect(result.boards[0].frames[0].axes).toEqual({ direction: 'rtl', locale: 'ar' })
+  })
+
+  test('an empty-string locale on axes is dropped, same as an invalid direction/colorScheme', () => {
+    const raw = {
+      version: 1,
+      boards: [
+        {
+          id: 'b1',
+          name: 'Board 1',
+          frames: [{ id: 'f1', pageId: 'home', x: 0, y: 0, axes: { locale: '' } }],
+          notes: [],
+          docs: [],
+        },
+      ],
+    }
+    const result = parseBoardsFile(raw)
+    expect('axes' in result.boards[0].frames[0]).toBe(false)
   })
 
   test('serialize round-trip preserves a per-frame axes override', () => {

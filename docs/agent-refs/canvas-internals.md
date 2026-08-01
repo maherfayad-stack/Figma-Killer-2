@@ -198,26 +198,31 @@ dimension, not by touching the id grammar:
   that same `data-node-id` exists here too.
 
 This is the general mechanism, not a direction/scheme special case — Phase 4
-(locale) is meant to extend it, not replace it. See `STATE.md`'s `canvas-08`
-handoff for the "does selection leak between variants" proof
+(locale) extends it rather than replacing it (see below). See `STATE.md`'s
+`canvas-08` handoff for the "does selection leak between variants" proof
 (`boardFrameVariantSelection.test.tsx`) and the full file list.
 
-**Known gap:** inline text-edit sessions (`activeInlineEdit`) are still keyed
-by `(nodeId, breakpointId)`, NOT `frameId` — not extended in Phase 2, not
-proven broken either, just not yet re-keyed.
+**Closed in Phase 4:** inline text-edit sessions (`activeInlineEdit`) are now
+ALSO keyed by `frameId`, not just `(nodeId, breakpointId)` — every board
+frame shares one synthetic breakpoint id (`'studio'`), so without this a
+"duplicate as variant" sibling would show the SAME contentEditable session
+live in both frames. `inlineEditSlice.ts`'s `ActiveInlineEdit.frameId` is the
+fix; see the Locale section below for why this session also needed a SECOND,
+new field (`localeOverride`) once a session can belong to a frame reading a
+different tree entirely.
 
-### Locale (WS-10 §4.2/Phase 3 shipped; §4.4/Phase 4 per-frame NOT shipped)
+### Locale (WS-10 §4.2/Phase 3 + §4.4/Phase 4 — both shipped)
 
 `locale` selects `preferredKey`, which Tier B.4 uses to pick a dictionary
 BRANCH during evaluation (`staticEvalCore.ts:440`'s `evaluateElementAccess`)
 — a different PARSE, producing different nodes and different `textOrigin`s.
 This is why it cannot be an attribute effect like the other two axes.
 
-**Phase 3 (board-global, shipped):** `server/handlers/studio/localeProbe.ts`
-detects a project's own locale dictionary (purely syntactic — see that
-module's doc for the three detection rules); `PreviewAxesControls.tsx`'s
-locale `Select` is populated from it (no more hand-typed JSON key). Choosing
-one calls `savePreviewAxes(dir, { locale })` (persists to `.studio/meta.json`'s
+**Phase 3 (board-global):** `server/handlers/studio/localeProbe.ts` detects a
+project's own locale dictionary (purely syntactic — see that module's doc
+for the three detection rules); `PreviewAxesControls.tsx`'s locale `Select`
+is populated from it (no more hand-typed JSON key). Choosing one calls
+`savePreviewAxes(dir, { locale })` (persists to `.studio/meta.json`'s
 `previewAxes.locale`) then `requestCmsSiteReload()` — a REAL re-parse of the
 whole project. `studioPageLoad.ts`'s `configHash` already includes
 `preferredKey`, so this correctly busts the on-disk parse cache, and
@@ -225,30 +230,73 @@ switching back to a previously-used locale is cache-free. The `Select`
 disables itself for the duration (`isReparsing`) so a second click can't
 queue a second reload mid-flight.
 
-**Phase 4 (per-frame locale variants, side-by-side — NOT shipped):** unlike
-`direction`/`colorScheme`, giving one frame its own `locale` is not just a
-render-time attribute — it needs a DIFFERENT parsed tree for that frame,
-because a locale change produces different nodes. The Phase 2 `(frameId,
-nodeId)` re-keying above is necessary but **not sufficient** on its own: it
-answers "which frame does this selection/hover belong to" for a SHARED tree;
-it does not answer "which tree does this frame render," which today is
-always `site.pages` (one `Page`/one parsed tree per `pageId`, full stop —
-`src/core/page-tree/siteDocument.ts`). Making a frame's `axes.locale`
-actually render requires, at minimum: (1) a second, additive parse path that
-builds per-`(pageId, locale)` entries for the union of locales actually in
-use on the board (not every probed locale — §4.5), cached alongside the
-default the same way `configHash` already caches by `preferredKey`; (2) a
-new per-frame "which tree do I render" selection at mount time
-(`BreakpointFrame.tsx`/`IframeFrameSurface.tsx`), choosing the locale-variant
-tree instead of `site.pages` when `frame.axes.locale` is set; (3) extending
-"duplicate as variant"'s UI (and `coerceAxesOverride` in
-`src/core/studio-board/serialize.ts`, which deliberately drops `locale` from
-a persisted `BoardFrame.axes` today) once (1) and (2) exist — do NOT add a
-"Duplicate as Arabic" menu item before the render path can actually honor it
-(WS-10 §7.4 "probe honesty" — an affordance that silently does nothing is
-exactly the failure mode that rule exists to prevent). The node id grammar
-itself does NOT change for this — trap #2 holds precisely the same way it
-does for the render-time axes; only the RENDER SOURCE per frame is new.
+**Phase 4 (per-frame locale variants, side-by-side):** unlike
+`direction`/`colorScheme`, a frame's own `locale` needs a DIFFERENT parsed
+tree, not just an attribute. The Phase 2 `(frameId, nodeId)` re-keying
+answers "which frame does this selection/hover belong to" for a SHARED
+tree — it does NOT answer "which tree does this frame render." `site.pages`
+(`src/core/page-tree/siteDocument.ts`) is untouched — still `Page[]`, one
+entry per `pageId`, load-bearing for the publisher and the CMS half of this
+fork. The Phase 4 answer is a PARALLEL map, not a reshape:
+
+- `server/handlers/studioPageLoad.ts`'s `loadStudioPageInLocale(dir, pageId,
+  locale)` — parses ONE route under an explicit `preferredKey` override
+  (reusing `parseStandardRouteEntry`/`parseAppRouterRouteEntry`, the same
+  logic every route already runs), never the whole project. New route:
+  `GET /admin/api/studio/localized-page` (`server/handlers/studio/
+  localizedPage.ts`).
+- `src/admin/pages/site/store/slices/localizedPageSlice.ts` — the client-side
+  half of the map: `localizedPages: Record<'${pageId}::${locale}', Page>`,
+  fetched on demand (`ensureLocalizedPage`, called from `BoardFramesLayer.tsx`
+  when a frame's `axes.locale` differs from the board default), never for a
+  frame whose locale didn't change.
+- `selectCanvasPageFor(s, pageId, frameId)` (`store.ts`) — the ONE function
+  every node-data read in `NodeRenderer` already goes through. Its `frameId`
+  param (added for this) looks up the frame's `axes.locale`; when it differs
+  from the board default, reads `localizedPages` instead of `site.pages`,
+  falling back to the default tree while the fetch is in flight (never
+  blank). This is the WHOLE render-side mechanism — no other call site
+  changed, and a frame whose locale didn't change never re-renders from this
+  at all (no fetch, same iframe, no remount).
+- `inlineEditSlice.ts`'s `ActiveInlineEdit` gained `localeOverride:
+  {pageId, locale} | null`, resolved once at `startInlineEdit` time. A
+  session with a `localeOverride` mutates `localizedPageSlice.ts`'s tree via
+  `updateLocalizedNodeText` — a genuinely separate, undo-EXEMPT mutation
+  (never `updateNodeProps`/`mutateActiveTree`, which would silently edit the
+  WRONG tree since both share the node id — trap #2). This is what makes
+  editing text in the Arabic frame write to the `ar` branch's own
+  `textOrigin`, not the `en` one's — proven at the unit level in
+  `server/handlers/__tests__/localizedPage.test.ts` (two locale parses of one
+  page: SAME node id, DIFFERENT `textOrigin`) and
+  `src/__tests__/editor-store/inlineEditSlice.test.ts` (the session routes to
+  `localizedPages`, never `site.pages`).
+
+The node id grammar itself does NOT change — trap #2 holds precisely the
+same way it does for the render-time axes; only the RENDER SOURCE per frame,
+and (for text) the WRITE target, are new.
+
+**Known, deliberate scope boundaries (not gaps by accident):**
+- Non-text prop/style edits (Properties panel) are NOT locale-variant-aware —
+  selecting a node for the panel still resolves through the board-default
+  tree regardless of which frame you clicked in (`selectSelectedNode` /
+  `selectActiveCanvasPage`, unchanged). Colour/spacing aren't "which
+  locale's branch" concepts the way text is.
+- **The actual file save for a locale-variant text edit is NOT wired.**
+  `updateLocalizedNodeText` updates the in-memory store (visible on screen,
+  correct `textOrigin` structurally present) but `fsCodemodAdapter.ts`'s
+  `saveSite` only walks `site.pages` — a locale-variant edit is never
+  collected into the `StudioEditPayload[]` POSTed to disk. The proof this
+  phase delivered is that the mechanism WOULD write to the right branch (see
+  above); actually persisting it needs `saveSite` to also walk
+  `localizedPages` with its OWN baseline (can't reuse `loadedValues`, keyed
+  by bare `nodeId` — a locale variant shares that id with the default tree's
+  node, so a shared baseline map would collide). Deliberately not attempted
+  this phase — touches `fsCodemodAdapter.ts`'s already-delicate save loop,
+  which is a real, separate piece of work, not a code-review gap.
+- A `.map()` array whose LENGTH differs by locale (not just its items' text)
+  would give the locale variant a different expanded-node count than the
+  default tree for that subtree — not observed on the real eSIM corpus,
+  flagged rather than assumed away (see `loadStudioPageInLocale`'s own doc).
 
 ## Height, and the feedback loop
 

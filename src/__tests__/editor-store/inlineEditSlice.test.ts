@@ -6,6 +6,8 @@
  */
 import { describe, it, expect, beforeEach, spyOn } from 'bun:test'
 import { useEditorStore } from '@site/store/store'
+import { createBoard, type BoardsFile } from '@core/studio-board'
+import { makeNode, makePage } from '../fixtures'
 // Side-effect imports: register the modules under test into the global registry.
 import '@modules/base/text'
 import '@modules/base/button'
@@ -55,6 +57,11 @@ describe('startInlineEdit', () => {
       nodeId,
       prop: 'text',
       breakpointId: 'bp-desktop',
+      // WS-10 §4.4 (Phase 4) — no board frame in this fixture, so both stay
+      // `null`: the default (undo-tracked) `updateNodeProps` path, exactly
+      // as before this phase existed.
+      frameId: null,
+      localeOverride: null,
       multiline: true,
       initialValue: 'Hello',
       committed: false,
@@ -248,5 +255,82 @@ describe('force-close', () => {
     useEditorStore.getState().startInlineEdit(nodeId, 'bp')
     useEditorStore.getState().setActiveDocument({ kind: 'visualComponent', vcId: 'vc-x' })
     expect(useEditorStore.getState().activeInlineEdit).toBeNull()
+  })
+})
+
+// WS-10 §4.4 (Phase 4) — the proof the coordinator asked for at the store
+// level: a session started in a board frame whose OWN `axes.locale` differs
+// from the board default mutates `localizedPageSlice.ts`'s tree, NEVER
+// `site.pages`/`mutateActiveTree` — which is what makes a text edit in the
+// Arabic frame land in `translations.js`'s `ar` branch and not `en`'s (the
+// PARSE side of that proof — that a locale variant's `textOrigin` actually
+// points at the right literal — is `server/handlers/__tests__/
+// localizedPage.test.ts`; this file proves the STORE routes the edit to the
+// right TREE in the first place).
+describe('locale-variant frame sessions (WS-10 §4.4)', () => {
+  const LOCALE_KEY = 'home::ar'
+
+  function setupLocalizedFrame(): { nodeId: string } {
+    const arText = makeNode({ id: 'headline', moduleId: 'base.text', props: { text: 'مرحبا' } })
+    const arRoot = makeNode({ id: 'page-root', moduleId: 'base.body', children: [arText.id] })
+    const arPage = makePage({ id: 'home', rootNodeId: arRoot.id, nodes: { [arRoot.id]: arRoot, [arText.id]: arText } })
+
+    const board = createBoard('board-1', 'Board 1')
+    board.frames = [{ id: 'frame-ar', pageId: 'home', x: 0, y: 0, axes: { locale: 'ar' } }]
+    const file: BoardsFile = { version: 1, boards: [board] }
+
+    useEditorStore.setState({
+      previewAxes: { direction: 'ltr', colorScheme: 'light' },
+      localizedPages: { [LOCALE_KEY]: arPage },
+      localizedPageStatus: { [LOCALE_KEY]: 'ready' },
+    } as Parameters<typeof useEditorStore.setState>[0])
+    useEditorStore.getState().loadBoards(file)
+    useEditorStore.setState({ activeBoardId: board.id })
+
+    return { nodeId: arText.id }
+  }
+
+  it('resolves the session against the localized tree, not the (nonexistent) active tree', () => {
+    const { nodeId } = setupLocalizedFrame()
+    useEditorStore.getState().startInlineEdit(nodeId, 'studio', 'frame-ar')
+    const session = useEditorStore.getState().activeInlineEdit
+    expect(session).not.toBeNull()
+    expect(session?.frameId).toBe('frame-ar')
+    expect(session?.localeOverride).toEqual({ pageId: 'home', locale: 'ar' })
+    expect(session?.initialValue).toBe('مرحبا')
+  })
+
+  it('applyInlineEditValue mutates ONLY localizedPages, and records no undo entry', () => {
+    const { nodeId } = setupLocalizedFrame()
+    useEditorStore.getState().startInlineEdit(nodeId, 'studio', 'frame-ar')
+    useEditorStore.getState().applyInlineEditValue('مرحبا جدا')
+    expect(useEditorStore.getState().localizedPages[LOCALE_KEY]?.nodes[nodeId]?.props.text).toBe('مرحبا جدا')
+    // Deliberately undo-EXEMPT (see inlineEditSlice.ts's module doc) —
+    // `boardSlice.ts`'s frame drags are the same "real edit, no undo entry"
+    // precedent.
+    expect(useEditorStore.getState()._historyPast.length).toBe(0)
+  })
+
+  it('cancelInlineEdit reverts the localized node directly, with no undo() call', () => {
+    const { nodeId } = setupLocalizedFrame()
+    useEditorStore.getState().startInlineEdit(nodeId, 'studio', 'frame-ar')
+    useEditorStore.getState().applyInlineEditValue('مرحبا جدا')
+    useEditorStore.getState().cancelInlineEdit()
+    expect(useEditorStore.getState().localizedPages[LOCALE_KEY]?.nodes[nodeId]?.props.text).toBe('مرحبا')
+    expect(useEditorStore.getState().activeInlineEdit).toBeNull()
+    expect(useEditorStore.getState()._historyPast.length).toBe(0)
+  })
+
+  it('a frame with NO locale override on the same board resolves localeOverride to null — the ordinary site path', () => {
+    setupLocalizedFrame()
+    const board = useEditorStore.getState().boards.boards[0]!
+    board.frames = [...board.frames, { id: 'frame-default', pageId: 'home', x: 900, y: 0 }]
+    useEditorStore.setState({ boards: { version: 1, boards: [board] } })
+
+    const { nodeId } = setupSiteWithTextNode()
+    useEditorStore.getState().startInlineEdit(nodeId, 'studio', 'frame-default')
+    const session = useEditorStore.getState().activeInlineEdit
+    expect(session?.frameId).toBe('frame-default')
+    expect(session?.localeOverride).toBeNull()
   })
 })

@@ -58,12 +58,16 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
   // "the active canvas document" — every CMS/VC frame. Board frames provide a
   // page id so this NodeRenderer resolves against that frame's own page.
   const contextPageId = use(CanvasPageContext)
-  // Per-node subscription — editing this node's props only re-renders THIS
-  // component. selectCanvasPageFor covers VC canvas mode (pageId null) too.
-  const node = useEditorStore((s) => selectCanvasPageFor(s, contextPageId)?.nodes[nodeId] ?? null)
   const breakpointId = use(CanvasBreakpointContext)
-  // WS-10 Phase 2 — owning BoardFrame id (`null` outside board context). NOT `breakpointId` — see `CanvasFrameContext`'s doc.
+  // WS-10 Phase 2 — owning BoardFrame id (`null` outside board context). NOT
+  // `breakpointId` — see `CanvasFrameContext`'s doc. Declared before `node`
+  // below (its selector closure reads it — TDZ).
   const frameId = use(CanvasFrameContext)
+  // Per-node subscription — editing this node's props only re-renders THIS
+  // component. `frameId` (§4.4/Phase 4) lets a locale-variant frame read
+  // `localizedPageSlice.ts`'s tree instead of `site.pages` — see
+  // `selectCanvasPageFor`'s own doc.
+  const node = useEditorStore((s) => selectCanvasPageFor(s, contextPageId, frameId)?.nodes[nodeId] ?? null)
   const templateContext = use(CanvasTemplateContext)
 
   // Per-node selection/hover subscriptions (Perf fix — Contribution #495).
@@ -89,25 +93,33 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
       (!s.hoveredBreakpointId || s.hoveredBreakpointId === breakpointId) &&
       (!s.hoveredFrameId || s.hoveredFrameId === frameId),
   )
-  // Inline text edit session — true only in the SESSION'S frame. This frame's
-  // node becomes the contentEditable surface; every OTHER breakpoint frame
-  // keeps previewing the live-updating text normally.
+  // Inline text edit session — true only in the SESSION'S frame. Gated on
+  // `frameId` too, not just `breakpointId` (every board frame shares ONE
+  // synthetic breakpoint id, `'studio'`) — without it, a "duplicate as
+  // variant" sibling sharing this node id (trap #2) would ALSO show the
+  // contentEditable surface. Closes `canvas-08`'s "Known gap" note — Phase 4
+  // needs this correct, not just untested.
   const isInlineEditing = useEditorStore(
     (s) =>
       s.activeInlineEdit !== null &&
       s.activeInlineEdit.nodeId === nodeId &&
-      s.activeInlineEdit.breakpointId === breakpointId,
+      s.activeInlineEdit.breakpointId === breakpointId &&
+      s.activeInlineEdit.frameId === frameId,
   )
   // Session values, read as primitives so per-node memoization stays clean.
   // Both are constant for the whole session (initialValue seeds the frozen
   // content; multiline decides Enter's behaviour).
   const inlineEditInitialValue = useEditorStore((s) =>
-    s.activeInlineEdit?.nodeId === nodeId && s.activeInlineEdit.breakpointId === breakpointId
+    s.activeInlineEdit?.nodeId === nodeId &&
+    s.activeInlineEdit.breakpointId === breakpointId &&
+    s.activeInlineEdit.frameId === frameId
       ? s.activeInlineEdit.initialValue
       : null,
   )
   const inlineEditMultiline = useEditorStore((s) =>
-    s.activeInlineEdit?.nodeId === nodeId && s.activeInlineEdit.breakpointId === breakpointId
+    s.activeInlineEdit?.nodeId === nodeId &&
+    s.activeInlineEdit.breakpointId === breakpointId &&
+    s.activeInlineEdit.frameId === frameId
       ? s.activeInlineEdit.multiline
       : false,
   )
@@ -121,7 +133,7 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
   const editorFormPreviewState = useEditorStore((s) => resolveEditorFormPreviewState(s, nodeId))
   const editorFormPreviewSuccessMessage = useEditorStore((s) => resolveEditorFormPreviewSuccessMessage(s, nodeId))
   const mcClassName = useEditorStore((s) => {
-    const canvasNode = selectCanvasPageFor(s, contextPageId)?.nodes[nodeId]
+    const canvasNode = selectCanvasPageFor(s, contextPageId, frameId)?.nodes[nodeId]
     const preview = s.previewClassAssignment?.nodeId === nodeId ? s.previewClassAssignment : null
     return getCanvasNodeClassName(canvasNode?.classIds, preview, nodeId, s.site?.styleRules)
   })
@@ -130,14 +142,12 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
   const handleNodeClick = (clickedNodeId: string, e: React.MouseEvent) => {
     // Imperative store access is correct here (event handler, not render path).
     const state = useEditorStore.getState()
-    const page = selectCanvasPageFor(state, contextPageId)
+    const page = selectCanvasPageFor(state, contextPageId, frameId)
 
-    // instance-ui-01 — Figma's nesting model for `studio.instance` (WS-4.2):
-    // a click anywhere inside a not-yet-entered instance's subtree selects
-    // the INSTANCE, not the specific descendant. Checked before the VC
-    // lock-down below — the two mechanisms are independent (real tree nodes
-    // vs. an in-memory `_owningRefId` annotation) and a click resolves to at
-    // most one of them in practice.
+    // instance-ui-01 — Figma's nesting model for `studio.instance` (WS-4.2): a
+    // click anywhere inside a not-yet-entered instance's subtree selects the
+    // INSTANCE, not the descendant. Checked before the VC lock-down below —
+    // independent mechanisms, a click resolves to at most one in practice.
     if (page) {
       const enclosingInstance = findEnclosingInstance(page, clickedNodeId, state.enteredInstanceIds)
       if (enclosingInstance !== null) {
@@ -148,10 +158,7 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
 
     // B3 — VC lock-down: redirect clicks inside inlined VC bodies to the ref node.
     if (state.activeDocument?.kind !== 'visualComponent' && page) {
-      const enclosing = findEnclosingComponentRef(
-        page.nodes as Record<string, AnnotatedPageNode>,
-        clickedNodeId,
-      )
+      const enclosing = findEnclosingComponentRef(page.nodes as Record<string, AnnotatedPageNode>, clickedNodeId)
       if (enclosing !== null && !enclosing.isInsideSlotContent) {
         // Clicked inside a VC body (not slot content) — route to the ref.
         onNodeClick(enclosing.refId, e, breakpointId, frameId)
@@ -165,20 +172,15 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
     onNodeContextMenu(clickedNodeId, e, breakpointId, frameId)
   }
 
-  /**
-   * instance-ui-01 — Figma's "Enter / double-click enters it and selects the
-   * inner node under the cursor". A double-click on a node inside a
-   * not-yet-entered instance enters that instance (pushes it onto
-   * `enteredInstanceIds`) and selects the EXACT descendant that was
-   * double-clicked directly (bypassing `handleNodeClick`'s own redirect,
-   * which would otherwise just reselect the instance we're entering) —
-   * instead of the module's ordinary double-click behaviour (inline text
-   * edit). A double-click on a node inside an ALREADY-entered instance falls
-   * through to that ordinary behaviour unchanged.
-   */
+  // instance-ui-01 — Figma's "Enter / double-click enters it and selects the
+  // inner node under the cursor": a double-click inside a not-yet-entered
+  // instance enters it (pushes `enteredInstanceIds`) and selects the EXACT
+  // descendant, bypassing `handleNodeClick`'s redirect and the module's
+  // ordinary double-click (inline edit). Already-entered instance: falls
+  // through to ordinary behaviour unchanged.
   const handleNodeDoubleClick = (clickedNodeId: string, e: React.MouseEvent) => {
     const state = useEditorStore.getState()
-    const page = selectCanvasPageFor(state, contextPageId)
+    const page = selectCanvasPageFor(state, contextPageId, frameId)
     if (page) {
       const enclosingInstance = findEnclosingInstance(page, clickedNodeId, state.enteredInstanceIds)
       if (enclosingInstance !== null) {
@@ -193,7 +195,7 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
   const handleNodeHover = (hoveredNodeId: string | null) => {
     if (hoveredNodeId !== null) {
       const state = useEditorStore.getState()
-      const page = selectCanvasPageFor(state, contextPageId)
+      const page = selectCanvasPageFor(state, contextPageId, frameId)
 
       // instance-ui-01 — clamp the hover ring to the enclosing not-yet-
       // entered instance, same redirect as click above.
@@ -429,9 +431,7 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
       if (e.key === 'Enter') {
         const state = useEditorStore.getState()
         const selectedId = state.selectedNodeId
-        const selected = selectedId
-          ? selectCanvasPageFor(state, contextPageId)?.nodes[selectedId]
-          : null
+        const selected = selectedId ? selectCanvasPageFor(state, contextPageId, frameId)?.nodes[selectedId] : null
         if (selected?.moduleId === 'studio.instance') return
       }
       if (e.key === 'Enter' || e.key === ' ') {

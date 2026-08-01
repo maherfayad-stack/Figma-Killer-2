@@ -332,10 +332,14 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
    * mode on double-click stays removed — VC entry works from the Site panel
    * and Spotlight (see `docs/features/canvas-iframe-per-frame.md`).
    */
-  const onNodeDoubleClick = (nodeId: string, e: React.MouseEvent, breakpointId?: string) => {
+  const onNodeDoubleClick = (nodeId: string, e: React.MouseEvent, breakpointId?: string, frameId?: string | null) => {
     e.stopPropagation()
     if (isLive || !editable || !permissions.canEditContent) return
-    startInlineEdit(nodeId, breakpointId ?? activeBreakpointId)
+    // WS-10 §4.4 (Phase 4) — `frameId` lets the session resolve/mutate the
+    // RIGHT tree when it belongs to a locale-variant board frame (a
+    // "duplicate as variant" sibling shares this node id — trap #2). See
+    // `inlineEditSlice.ts`'s `startInlineEdit` doc.
+    startInlineEdit(nodeId, breakpointId ?? activeBreakpointId, frameId ?? null)
   }
 
   // Context carries only stable callbacks — selectedNodeId/hoveredNodeId are

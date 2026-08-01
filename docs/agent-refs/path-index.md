@@ -12,7 +12,8 @@ Legend: 🟢 Studio (active work) · 🟡 shared infrastructure Studio depends o
 | Path | What it owns |
 |---|---|
 | 🟢 `server/handlers/studio.ts` | **HTTP routing only** for every `/admin/api/studio/*` endpoint. Its module doc lists all routes — read it first. |
-| 🟢 `server/handlers/studioPageLoad.ts` | The parse → inline → CSS → convert pipeline. `resolveModuleId` (element → module) lives here. |
+| 🟢 `server/handlers/studioPageLoad.ts` | The parse → inline → CSS → convert pipeline. `resolveModuleId` (element → module) lives here. WS-10 §4.2/§4.4 (Phase 4) — also exports `loadStudioPageInLocale(dir, pageId, locale)`, parsing ONE route under an explicit `preferredKey` override (reuses `parseStandardRouteEntry`/`parseAppRouterRouteEntry`, extracted from the whole-site builders for this). |
+| 🟢 `server/handlers/studio/localizedPage.ts` | WS-10 §4.4 (Phase 4) — `GET /admin/api/studio/localized-page`, the `(pageId, locale) → Page \| null` route `localizedPageSlice.ts` fetches on demand. |
 | 🟢 `server/handlers/studioProjects.ts` | Project discovery, `.studio/meta.json`, `discoverPageFiles`, `projectPagesDir`. |
 | 🟢 `server/handlers/studioWriteback.ts` | `StudioEdit` shapes, `studioEditLocation`, dedupe, path containment, `applyStudioEdit`. |
 | 🟠 `server/handlers/studioStructuralWriteback.ts` | The `move`/`delete`/`insert` edit kinds — schemas + dispatch into the structural codemods. Sibling of `studioCssWriteback.ts`; `studioWriteback.ts` imports it, never the reverse. |
@@ -108,7 +109,7 @@ Legend: 🟢 Studio (active work) · 🟡 shared infrastructure Studio depends o
 | 🟡 `src/admin/pages/site/canvas/canvasSelectionOverlayPositioning.ts` | Overlay geometry + write-phase no-op cache. |
 | 🟡 `src/admin/pages/site/canvas/canvasDomGeometry.ts` | Cross-iframe measurement, `nodeVisualRect`, `panToCenterBreakpointFrame`. |
 | 🟢 `src/admin/pages/site/canvas/InPlaceInspector/` | Floating prop editor for a selected component. |
-| 🟡 `src/admin/pages/site/canvas/NodeRenderer.tsx` | Node → React element. Inline-edit binding. |
+| 🟡 `src/admin/pages/site/canvas/NodeRenderer.tsx` | Node → React element. Inline-edit binding. `frameId` (via `CanvasFrameContext`) is read BEFORE `selectCanvasPageFor` (TDZ) so a locale-variant frame resolves its node data from `localizedPageSlice.ts` instead of `site.pages` (WS-10 §4.4/Phase 4) — same mechanism the `(frameId, nodeId)` selection/hover scoping already used (WS-10 Phase 2). |
 | 🟡 `src/admin/pages/site/canvas/EditorChromeInjector.tsx` | Unlayered editor chrome CSS into each iframe. |
 | 🟡 `src/admin/pages/site/canvas/ClassStyleInjector.tsx` | Class registry CSS (`@layer user-authored`). |
 | 🟡 `src/admin/pages/site/canvas/UserStylesheetInjector.tsx` | User stylesheets. Pipes the collected CSS through `darkSchemeCssTransform.ts` before injection (WS-10 Phase 1). |
@@ -126,9 +127,10 @@ Legend: 🟢 Studio (active work) · 🟡 shared infrastructure Studio depends o
 | 🟡 `src/admin/pages/site/store/slices/siteSlice.ts` | Site document, `loadSite`, `saveSite`, tree mutations. |
 | 🟡 `src/admin/pages/site/store/slices/site/helpers.ts` | `resolveActiveTreeTarget`, `mutateActiveTree` — **the only place that knows which tree is active**. |
 | 🟢 `src/admin/pages/site/store/slices/boardSlice.ts` | Boards, frames, positions, sizes. |
+| 🟢 `src/admin/pages/site/store/slices/localizedPageSlice.ts` | WS-10 §4.4 (Phase 4) — `localizedPages: Record<'${pageId}::${locale}', Page>`, a PARALLEL map (not a reshape of `site.pages`). `ensureLocalizedPage` fetches on demand from `GET /admin/api/studio/localized-page`; `updateLocalizedNodeText` is the locale-variant text-edit mutation `inlineEditSlice.ts` calls instead of `updateNodeProps`. |
 | 🟡 `src/admin/pages/site/store/slices/selectionSlice.ts` | Node selection, multi-select. |
 | 🟡 `src/admin/pages/site/store/slices/canvasSlice.ts` | `canvasView` (design/live), zoom/pan, `runScripts`, `activeBreakpointId`, `previewAxes`/`setPreviewAxes` (WS-10 Phase 1, board-global). |
-| 🟡 `src/admin/pages/site/store/slices/inlineEditSlice.ts` | In-place contentEditable sessions. |
+| 🟡 `src/admin/pages/site/store/slices/inlineEditSlice.ts` | In-place contentEditable sessions. WS-10 §4.4 (Phase 4) — `ActiveInlineEdit` gained `frameId`/`localeOverride`; a session belonging to a locale-variant board frame mutates `localizedPageSlice.ts`'s tree (undo-exempt), never `site.pages`. |
 | 🟡 `src/admin/pages/site/store/slices/styleRuleSlice.ts` | Class registry mutations. |
 | 🟡 `src/core/page-tree/mutations.ts` | **All tree mutations**, tree-agnostic. |
 | 🟡 `src/core/page-tree/treeOperations.ts` | `applyTreeOperation` — the plugin/agent dispatcher over those mutations, plus the structural source gate. |
