@@ -17,6 +17,10 @@ dist-ssr
 .claude/
 .tmp/
 .tmp-lint/
+# Per-user Claude CLI config roots (`resolveClaudeCliDataRoot`, default
+# `.data/claude-cli/<userId>/`). After an L1 terminal login this holds the
+# CLI's own `.credentials.json` — a live OAuth token. Never committable.
+.data/
 .coverage/
 coverage/
 .matrix/

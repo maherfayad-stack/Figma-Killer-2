@@ -107,6 +107,15 @@ const ClaudeCliLineSchema = Type.Object(
     // `result` event fields.
     is_error: Type.Optional(Type.Boolean()),
     result: Type.Optional(Type.String()),
+    /**
+     * HTTP status of the upstream API failure, when the turn failed against
+     * Anthropic rather than locally. `null` on every healthy turn (the CLI
+     * emits the key either way). `401` is the one value worth branching on —
+     * it means the credential itself was rejected, which
+     * `verifyClaudeCliCredential` turns into a specific, actionable message
+     * instead of echoing a raw API error at the user.
+     */
+    api_error_status: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
     usage: Type.Optional(ClaudeCliUsageSchema),
     modelUsage: Type.Optional(Type.Record(Type.String(), ClaudeCliModelUsageEntrySchema)),
     total_cost_usd: Type.Optional(Type.Number()),

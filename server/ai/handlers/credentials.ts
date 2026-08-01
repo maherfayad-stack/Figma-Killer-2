@@ -25,7 +25,8 @@ import {
 } from '../credentials/store'
 import { resolveDriver } from '../drivers'
 import { listProviderModels } from '../drivers/modelList'
-import type { AiProviderModel } from '../drivers/types'
+import type { AiProvider, AiProviderModel, AiResolvedCredential } from '../drivers/types'
+import type { AiProviderId } from '../runtime/types'
 import type { CredentialRecord } from '../credentials/types'
 import { getDefault, setDefault } from '../defaults/store'
 
@@ -107,6 +108,9 @@ async function handleCreate(req: Request, db: DbClient): Promise<Response> {
 
   const body = await readValidatedBody(req, CreateBodySchema)
   if (!body) return badRequest('Invalid request body.')
+
+  const shapeError = secretShapeError(body.providerId, body.apiKey)
+  if (shapeError) return badRequest(shapeError)
 
   try {
     const record = await createCredentialForUser(db, userOrResponse.id, body)
@@ -215,6 +219,12 @@ async function handleUpdate(req: Request, db: DbClient, id: string): Promise<Res
   const body = await readValidatedBody(req, UpdateBodySchema)
   if (!body) return badRequest('Invalid request body.')
 
+  // The provider isn't in the update body — it's whatever the stored row says.
+  const existing = await readCredentialForUser(db, userOrResponse.id, id)
+  if (!existing) return jsonResponse({ error: 'Credential not found' }, { status: 404 })
+  const shapeError = secretShapeError(existing.providerId, body.apiKey)
+  if (shapeError) return badRequest(shapeError)
+
   try {
     const record = await updateCredentialForUser(db, userOrResponse.id, id, body)
     if (!record) return jsonResponse({ error: 'Credential not found' }, { status: 404 })
@@ -292,18 +302,12 @@ async function dispatchTest(req: Request, db: DbClient, id: string): Promise<Res
   if (!record) return jsonResponse({ error: 'Credential not found' }, { status: 404 })
 
   let apiKeyForRedaction: string | null = null
+  let modelCount: number | undefined
   try {
     const resolved = await resolveCredentialForDriver(record)
     apiKeyForRedaction = resolved.apiKey
     const driver = resolveDriver(record.providerId)
-    const models = await listProviderModels(driver, resolved, req.signal)
-    const modelCount = liveModelCount(models)
-    if (modelCount === 0) {
-      throw new CredentialError(
-        `No live models were returned for ${driver.label}. Check the credential and provider endpoint.`,
-        400,
-      )
-    }
+    modelCount = await verifyCredentialOrCountModels(driver, resolved, req.signal)
     await createAuditEvent(db, {
       actorUserId: userOrResponse.id,
       action: 'ai.credential.tested',
@@ -313,7 +317,7 @@ async function dispatchTest(req: Request, db: DbClient, id: string): Promise<Res
         providerId: record.providerId,
         displayLabel: record.displayLabel,
         ok: true,
-        modelCount,
+        modelCount: modelCount ?? null,
       },
     })
     return jsonResponse({ ok: true, modelCount })
@@ -335,6 +339,61 @@ async function dispatchTest(req: Request, db: DbClient, id: string): Promise<Res
     })
     return jsonResponse({ ok: false, error: message }, { status: 200 })
   }
+}
+
+/**
+ * Ask the driver whether a secret is even the right KIND of string, before it
+ * is encrypted and stored. Returns the rejection message, or `null` to accept
+ * (including when the provider has no opinion, or no secret was supplied).
+ *
+ * Free and synchronous by contract — see `AiProvider.validateSecretShape`.
+ * This is NOT a claim that the credential works; that is the `/test` endpoint's
+ * job, and only it pays the round trip to find out.
+ */
+export function secretShapeError(providerId: AiProviderId, secret: string | undefined): string | null {
+  if (!secret) return null
+  const driver = resolveDriver(providerId)
+  if (!driver.validateSecretShape) return null
+  try {
+    driver.validateSecretShape(secret)
+    return null
+  } catch (err) {
+    return getErrorMessage(err, 'That credential value was rejected by the provider.')
+  }
+}
+
+/**
+ * Prove a credential works: prefer the driver's own `verifyCredential` when
+ * it has one (see `AiProvider.verifyCredential`'s doc comment — a
+ * fallback-only catalogue, e.g. `claudeCli`'s, is not proof of failure);
+ * otherwise fall back to counting live catalogue entries. Returns the model
+ * count when that fallback path ran, `undefined` when a driver's own check
+ * did (there is no catalogue count to report in that case — the client
+ * schema already treats `modelCount` as optional). Throws `CredentialError`
+ * on failure either way.
+ *
+ * Factored out of `dispatchTest` so this DISPATCH decision is unit-testable
+ * against a fake `AiProvider` (`credentials.test.ts`), without ever needing
+ * a real `claudeCli` subprocess.
+ */
+export async function verifyCredentialOrCountModels(
+  driver: AiProvider,
+  resolved: AiResolvedCredential,
+  signal: AbortSignal | undefined,
+): Promise<number | undefined> {
+  if (driver.verifyCredential) {
+    await driver.verifyCredential(resolved, signal)
+    return undefined
+  }
+  const models = await listProviderModels(driver, resolved, signal)
+  const modelCount = liveModelCount(models)
+  if (modelCount === 0) {
+    throw new CredentialError(
+      `No live models were returned for ${driver.label}. Check the credential and provider endpoint.`,
+      400,
+    )
+  }
+  return modelCount
 }
 
 function liveModelCount(models: readonly AiProviderModel[]): number {

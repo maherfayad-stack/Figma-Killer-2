@@ -59,8 +59,9 @@
  */
 
 import type { AiAuthMode, AiContentBlock, AiProviderId, AiStreamEvent } from '../runtime/types'
-import type { AiProvider, AiProviderCapabilities, AiProviderModel, AiStreamRequest } from './types'
+import type { AiProvider, AiProviderCapabilities, AiProviderModel, AiResolvedCredential, AiStreamRequest } from './types'
 import { minimalSubprocessEnv, type SubprocessSpawnFn } from '../../handlers/studio/subprocessRunner'
+import { assertLooksLikeSetupToken, verifyClaudeCliCredential } from './claudeCliVerify'
 import {
   claudeCliPlatformSupport,
   ensureClaudeCliConfigDir,
@@ -122,9 +123,12 @@ const DEFAULT_PERMISSION_MODE = 'default'
  *      'default'` at store creation (covers reload) and nothing anywhere
  *      reads it from storage; `AgentSessionControls.tsx` also resets it on
  *      a live project switch (no remount needed).
- *   2. Visibly indicated — `AgentSessionControls.tsx` renders a persistent,
- *      non-dismissible banner the entire time `agentPermissionMode ===
- *      'bypassPermissions'`, not just a one-time toast.
+ *   2. Visibly indicated — `AgentSessionControls.tsx`'s composer trigger
+ *      switches to `tone="danger"` with a warning icon, and stays that way
+ *      the entire time `agentPermissionMode === 'bypassPermissions'`. The
+ *      indication is permanent and non-dismissible, not a one-time toast;
+ *      it lives on the control that sets the mode rather than in a separate
+ *      banner, so it cannot drift out of sync with the actual state.
  *   3. Still trust-tier-bound — Bypass has NO effect on tool-level
  *      authorization at all. `studio_install_deps`'s trust check
  *      (`projectTools.ts`) reads only `.studio/meta.json`'s own `trust`
@@ -239,6 +243,23 @@ export const claudeCliDriver: AiProvider = {
 
   async listModels() {
     return FALLBACK_MODELS
+  },
+
+  /**
+   * The catalogue above is entirely `'fallback'` by design, so the default
+   * live-model test can never pass here (see `verifyCredential`'s doc on the
+   * `AiProvider` interface). The honest check is the smallest possible real
+   * turn — see `verifyClaudeCliCredential` below for why `claude auth status`
+   * is NOT that check, despite being the free one. Factored out for the same
+   * reason `stream()` is a thin wrapper over `streamClaudeCli` — the
+   * `AiProvider` interface itself has no room for a `spawn` test seam.
+   */
+  verifyCredential(credentials: AiResolvedCredential): Promise<void> {
+    return verifyClaudeCliCredential(credentials)
+  },
+
+  validateSecretShape(secret: string): void {
+    assertLooksLikeSetupToken(secret)
   },
 
   stream(req: AiStreamRequest): AsyncIterable<AiStreamEvent> {

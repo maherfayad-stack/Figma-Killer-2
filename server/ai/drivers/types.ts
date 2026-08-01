@@ -213,6 +213,46 @@ export interface AiProvider {
   ): Promise<AiProviderModel[]>
 
   /**
+   * Prove this credential actually works, for drivers whose model catalogue
+   * cannot serve as that proof. Resolve when the credential is good; throw
+   * with a caller-safe message when it is not.
+   *
+   * The default test (`handlers/credentials.ts`) counts models whose
+   * `catalogueSource` is not `'fallback'`, which assumes a provider that can
+   * enumerate its catalogue over HTTP. `claudeCli` deliberately cannot — it
+   * has no API key to call `/v1/models` with, so its entire list is
+   * `'fallback'` by design (WS-11 §4). Without this hook the default test
+   * reports "no live models … check the credential and provider endpoint"
+   * for a perfectly valid credential, naming an endpoint that driver does
+   * not have. Implement it wherever liveness has a cheaper, truer signal
+   * than a catalogue.
+   */
+  verifyCredential?(
+    credentials: AiResolvedCredential,
+    signal?: AbortSignal,
+  ): Promise<void>
+
+  /**
+   * Reject a secret this provider can already tell is the wrong KIND of
+   * string, before it is ever encrypted and stored. Free, synchronous, no
+   * network — the deliberate counterpart to `verifyCredential`, which costs a
+   * round trip (and, for `claudeCli`, ~$0.001) and therefore only runs when
+   * the user asks for it.
+   *
+   * Implement only where a wrong paste is both likely and locally
+   * recognisable. `claudeCli` is the motivating case: its login flow shows the
+   * user two copyable strings, and the wrong one — the browser's one-time
+   * authorization code — looks enough like a credential to sail through every
+   * generic check and fail as a bare `401` inside a chat turn hours later.
+   * A one-line prefix test catches it at the moment of the mistake, when the
+   * fix is still obvious.
+   *
+   * Throw with a caller-safe message to reject; return to accept. Silence is
+   * NOT a claim that the secret works — only `verifyCredential` can say that.
+   */
+  validateSecretShape?(secret: string): void
+
+  /**
    * Run one agent turn. Yields canonical AiStreamEvents as the model
    * produces them. When a write tool is required, yields a `toolRequest`
    * and awaits the bridge promise — same mechanic the current

@@ -12,6 +12,7 @@ import type { AiMessage } from '../runtime/types'
 import type { AiResolvedCredential, AiStreamRequest } from './types'
 import type { SpawnedProcessLike, SubprocessSpawnFn } from '../../handlers/studio/subprocessRunner'
 import { claudeCliDriver, streamClaudeCli } from './claudeCli'
+import { verifyClaudeCliCredential } from './claudeCliVerify'
 import { claudeCliSessionId } from './claudeCliSession'
 import type { ClaudeCliSessionConnector } from '../mcp/sessionConnector'
 
@@ -634,5 +635,107 @@ describe('claudeCliDriver — AiProvider shape', () => {
     const models = await claudeCliDriver.listModels(credentials('x'))
     expect(models.length).toBeGreaterThan(0)
     expect(models.every((m) => m.catalogueSource === 'fallback')).toBe(true)
+  })
+})
+
+// `verifyClaudeCliCredential` is what makes the "Test" action in the
+// Providers tab meaningful for claudeCli at all — without it, every credential
+// fails the default live-model-count test because `listModels` above is
+// entirely `catalogueSource: 'fallback'` by design (see `credentials.test.ts`
+// for the generic dispatch-level regression covering that).
+describe('verifyClaudeCliCredential', () => {
+  it('resolves when a real turn with the stored token succeeds', async () => {
+    let capturedEnv: Record<string, string> = {}
+    const spawn = fakeCliSpawn({
+      stdoutLines: [{ type: 'result', subtype: 'success', is_error: false, api_error_status: null, result: 'OK' }],
+      exitCode: 0,
+      onSpawn: (_argv, env) => { capturedEnv = env },
+    })
+    await expect(
+      verifyClaudeCliCredential(credentials('sk-ant-oat01-real-token'), { spawn }),
+    ).resolves.toBeUndefined()
+    expect(capturedEnv.CLAUDE_CODE_OAUTH_TOKEN).toBe('sk-ant-oat01-real-token')
+    // Never the per-user config dir — a throwaway scratch dir every time, so
+    // a pass can't be borrowed from an unrelated host login.
+    expect(capturedEnv.CLAUDE_CONFIG_DIR).toBeTruthy()
+  })
+
+  // The whole reason this function spawns a turn instead of reading
+  // `claude auth status`: that probe answers "is a token present?", so it
+  // returns loggedIn:true for an invented string. Only the API can say no.
+  it('rejects with an actionable message when Anthropic answers 401', async () => {
+    const spawn = fakeCliSpawn({
+      stdoutLines: [{
+        type: 'result',
+        subtype: 'success',
+        is_error: true,
+        api_error_status: 401,
+        result: 'Failed to authenticate. API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"Invalid bearer token"}}',
+      }],
+      exitCode: 1,
+    })
+    await expect(
+      verifyClaudeCliCredential(credentials('sk-ant-oat01-revoked'), { spawn }),
+    ).rejects.toThrow('Anthropic rejected this token')
+  })
+
+  it('surfaces a non-auth turn failure verbatim rather than blaming the token', async () => {
+    const spawn = fakeCliSpawn({
+      stdoutLines: [{ type: 'result', subtype: 'success', is_error: true, api_error_status: 529, result: 'API is overloaded' }],
+      exitCode: 1,
+    })
+    await expect(
+      verifyClaudeCliCredential(credentials('sk-ant-oat01-token'), { spawn }),
+    ).rejects.toThrow('API is overloaded')
+  })
+
+  // Cheapest possible catch for the most likely paste error — no subprocess,
+  // no token spend, and it can name the exact thing the user should copy.
+  it('rejects a browser authorization code on shape alone, without spawning', async () => {
+    let spawnCalled = false
+    const spawn: SubprocessSpawnFn = (argv, options) => {
+      spawnCalled = true
+      return fakeCliSpawn({ stdoutLines: [{ type: 'result', is_error: false }] })(argv, options)
+    }
+    await expect(
+      verifyClaudeCliCredential(credentials('S5HyAbCdEf-gHiJkLmNoP#QrStUvWxYz'), { spawn }),
+    ).rejects.toThrow('not a Claude setup-token')
+    expect(spawnCalled).toBe(false)
+  })
+
+  it('rejects without spawning when the credential has no stored token at all', async () => {
+    let spawnCalled = false
+    const spawn: SubprocessSpawnFn = (argv, options) => {
+      spawnCalled = true
+      return fakeCliSpawn({ stdoutLines: [{ type: 'result', is_error: false }] })(argv, options)
+    }
+    await expect(verifyClaudeCliCredential(credentials(null), { spawn })).rejects.toThrow(
+      'no setup-token stored',
+    )
+    expect(spawnCalled).toBe(false)
+  })
+
+  it('rejects with an install-missing message when the CLI is not on this host', async () => {
+    const spawn: SubprocessSpawnFn = () => {
+      throw new Error('Failed to spawn process "claude": ENOENT')
+    }
+    await expect(
+      verifyClaudeCliCredential(credentials('sk-ant-oat01-token'), { spawn }),
+    ).rejects.toThrow('not installed')
+  })
+
+  it('spends as little as possible: no tools, a replaced system prompt, and no session left behind', async () => {
+    let capturedArgv: string[] = []
+    const spawn = fakeCliSpawn({
+      stdoutLines: [{ type: 'result', is_error: false }],
+      onSpawn: (argv) => { capturedArgv = argv },
+    })
+    await verifyClaudeCliCredential(credentials('sk-ant-oat01-token'), { spawn })
+    expect(capturedArgv).toContain('--tools')
+    expect(capturedArgv[capturedArgv.indexOf('--tools') + 1]).toBe('')
+    expect(capturedArgv).toContain('--system-prompt')
+    expect(capturedArgv).toContain('--no-session-persistence')
+    expect(capturedArgv).toContain('--strict-mcp-config')
+    expect(capturedArgv[capturedArgv.indexOf('--model') + 1]).toBe('haiku')
   })
 })

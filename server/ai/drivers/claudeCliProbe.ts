@@ -15,6 +15,23 @@
  * context") is about `-p` prompts specifically, but there is no reason to
  * risk it: a probe that never spends a token should never even sit in a
  * directory that could tempt one.
+ *
+ * ## What this probe does NOT prove
+ *
+ * `auth status` answers "is there a credential here?", NOT "does that
+ * credential work?" — it never contacts Anthropic. Confirmed empirically: with
+ * `CLAUDE_CODE_OAUTH_TOKEN` set to the invented string
+ * `sk-ant-oat01-totally-made-up-…`, it exits 0 with
+ * `{"loggedIn":true,"authMethod":"oauth_token"}`, while a real turn with that
+ * same token dies on `401 Invalid bearer token`.
+ *
+ * So this is the right probe for the disabled-with-reason state behind the
+ * model picker (a config dir with nothing in it genuinely cannot chat), and
+ * the WRONG probe for verifying a stored credential — that needs a real turn,
+ * which is why `verifyClaudeCliCredential` (`claudeCli.ts`) spawns one instead
+ * of calling in here. An earlier version of this module accepted an
+ * `oauthToken` option for exactly that misuse; it shipped a "Test" button that
+ * passed a token Anthropic rejects. Do not add it back.
  */
 
 import { tmpdir } from 'node:os'

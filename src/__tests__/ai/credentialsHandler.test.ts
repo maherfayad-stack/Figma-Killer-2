@@ -288,6 +288,27 @@ describe('AI credential handler', () => {
     expect(expires.toISOString()).toBe(oneYearLater.toISOString())
   })
 
+  it('rejects an empty apiKey for every apiKey-mode provider, claudeCli included — L1 stores no row at all (WS-11 §3 P2)', async () => {
+    const cookie = await harness.setupOwner()
+    for (const providerId of ['anthropic', 'claudeCli'] as const) {
+      const res = await harness.ai('/admin/api/ai/credentials', {
+        method: 'POST',
+        cookie,
+        json: {
+          providerId,
+          authMode: 'apiKey',
+          displayLabel: `${providerId} empty key`,
+          apiKey: '',
+        },
+      })
+
+      // Rejected at the TypeBox boundary (`apiKey: Type.String({ minLength: 1
+      // })`) before ever reaching `createCredentialForUser` — `claudeCli` gets
+      // no schema exception, unlike a stored credential row for it.
+      expect(res.status).toBe(400)
+    }
+  })
+
   it('reports expiresAt: null for every non-claudeCli credential', async () => {
     const cookie = await harness.setupOwner()
     console.warn = () => {}
