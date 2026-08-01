@@ -404,7 +404,13 @@ function bodySecrets(body: { apiKey?: string }): string[] {
   return body.apiKey ? [body.apiKey] : []
 }
 
-function safeCredentialErrorMessage(
+/**
+ * Turn any thrown value into a message safe to hand back over HTTP: the real
+ * message, with credential material scrubbed. Exported for its own tests —
+ * the scrub has to redact real keys AND leave our own guidance readable, and
+ * those two properties pull against each other.
+ */
+export function safeCredentialErrorMessage(
   err: unknown,
   secrets: readonly (string | null | undefined)[] = [],
   fallback = 'Unknown error',
@@ -423,5 +429,23 @@ function redactCredentialSecrets(
   }
   return redacted
     .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [redacted]')
-    .replace(/\bsk-[A-Za-z0-9._-]{6,}\b/g, '[redacted]')
+    .replace(SECRET_LOOKING_TOKEN, '[redacted]')
 }
+
+/**
+ * Backstop scrub for a key that reached an error message without passing
+ * through the explicit `secrets` list above (a provider echoing it back, a
+ * nested cause). The list is the primary mechanism; this catches the rest.
+ *
+ * The 24-character floor is the whole point. At the previous `{6,}` this
+ * pattern also matched the PREFIXES our own guidance has to name — telling a
+ * user to "paste the `sk-ant-oat…` value" came out as "paste the
+ * `[redacted]…` value", which is worse than not scrubbing at all: it turns
+ * working instructions into a puzzle. Every real credential is far longer
+ * (`sk-ant-api03-…` and `sk-ant-oat01-…` both run past 100 characters), and
+ * every prefix worth writing in a sentence is under a dozen, so the two
+ * populations don't overlap. A short custom key on an `openai-compatible`
+ * endpoint is the one case this floor lets through — and that key is already
+ * covered by the explicit `secrets` pass on every path that handles it.
+ */
+const SECRET_LOOKING_TOKEN = /\bsk-[A-Za-z0-9._-]{24,}\b/g

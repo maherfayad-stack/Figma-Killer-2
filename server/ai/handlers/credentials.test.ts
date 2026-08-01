@@ -13,7 +13,7 @@
  * credential, valid or not, and blamed a "provider endpoint" it doesn't have.
  */
 import { describe, expect, it } from 'bun:test'
-import { secretShapeError, verifyCredentialOrCountModels } from './credentials'
+import { safeCredentialErrorMessage, secretShapeError, verifyCredentialOrCountModels } from './credentials'
 import { CredentialError } from '../credentials/store'
 import type { AiProvider, AiProviderModel, AiResolvedCredential } from '../drivers/types'
 
@@ -124,5 +124,32 @@ describe('secretShapeError', () => {
 
   it('accepts an absent secret — "no key supplied" is not a shape failure', () => {
     expect(secretShapeError('claudeCli', undefined)).toBeNull()
+  })
+})
+
+// The scrub has two jobs that pull against each other: never leak a key, and
+// never mangle the sentence telling a user which value to paste. A regression
+// on the second shipped a message reading "paste the `[redacted]...` value".
+describe('safeCredentialErrorMessage', () => {
+  it('redacts a full-length key that was never passed in the secrets list', () => {
+    const leaked = `models request failed for sk-ant-api03-${'A1b2c3D4e5'.repeat(9)}`
+    expect(safeCredentialErrorMessage(new Error(leaked))).not.toContain('A1b2c3D4e5')
+    expect(safeCredentialErrorMessage(new Error(leaked))).toContain('[redacted]')
+  })
+
+  it('redacts the exact stored secret even when it looks nothing like a key', () => {
+    const secret = 'uFc7Qbap9tEjVdoVn7Bb3GFpnMc4RDcXpOfBVrWU#kZypRMCTUZlbFBgZBkB'
+    const message = safeCredentialErrorMessage(new Error(`rejected ${secret}`), [secret])
+    expect(message).not.toContain('uFc7Qbap')
+    expect(message).toContain('[redacted]')
+  })
+
+  it('leaves the short prefixes our own guidance names intact', () => {
+    const guidance = 'Run `claude setup-token` and paste the `sk-ant-oat` value — not an `sk-ant-api` console key.'
+    expect(safeCredentialErrorMessage(new Error(guidance))).toBe(guidance)
+  })
+
+  it('still scrubs a bearer header echoed back by a provider', () => {
+    expect(safeCredentialErrorMessage(new Error('sent Bearer abc123def456'))).toBe('sent Bearer [redacted]')
   })
 })

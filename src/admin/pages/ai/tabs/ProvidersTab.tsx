@@ -557,6 +557,13 @@ function AddCredentialDialog({
             {loginFlow === 'waiting' && (
               <p role="status" className={styles.claudeCliStatusText}>
                 Waiting for you to finish signing in in the terminal window that just opened…
+                {' '}
+                {/* The browser hands the user a code at precisely the moment a
+                    paste field is sitting open on this dialog. Saying where it
+                    goes is the difference between a 30-second login and a
+                    credential that stores fine, tests fine, and 401s in chat. */}
+                <strong>If the browser shows you a code, paste it into that terminal window</strong>
+                {' '}— not into this dialog. It is a one-time login code, not a credential.
               </p>
             )}
             {loginFlow === 'timed-out' && (
@@ -579,6 +586,12 @@ function AddCredentialDialog({
                   Run <code>claude setup-token</code> anywhere the CLI is installed — your own
                   machine, or the machine Studio itself runs on — and paste the result below. This
                   is the only option when Studio is running on a remote server.
+                </p>
+                <p className={styles.claudeCliStatusText}>
+                  It prints one long value starting <code>sk-ant-oat</code>. That is the only thing
+                  this field accepts: not the code the login browser shows you, and not an
+                  <code>sk-ant-api</code> console key — that one belongs under the Anthropic
+                  provider instead.
                 </p>
                 {claudeCliStatus.loginCommand && (
                   <p className={styles.claudeCliStatusText}>
