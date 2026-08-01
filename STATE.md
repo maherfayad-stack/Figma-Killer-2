@@ -8,6 +8,21 @@ Entry ids are `<area>-<nn>`. Areas in use: `parser`, `canvas`, `store`, `panel`,
 
 ---
 
+### mcp-07 — `.studio/framework.json` (97 KB) made readable, and a third-party MCP bug on Windows
+- **Agent:** coordinator (direct)
+- **Stage:** done.
+- **Updated:** 2026-08-02
+
+**`studio_list_tokens`** (`frameworkTokenTools.ts`) — `.studio/framework.json` is 97 KB / ~36,200 tokens, past the CLI `Read` cap, and agents kept failing on it in the parent turn AND again in each subagent. The size is not waste: 226 colour tokens at ~420 B each, every one carrying its full editor config (`id`, `createdAt`, `generateShades`, `generateTints`, `order`). All of it matters to the framework engine; **none of it matters to an agent picking a colour.** So the tool projects to `name` + `value` (+ `dark` only when genuinely distinct): measured **36,169 → 3,344 tokens** for the whole palette, 938 B for a filtered query. Degrades to an empty result on a malformed store rather than failing a turn — the framework engine owns that file's shape and will change it.
+
+**Send button during streaming.** The queue shipped in mcp-06 was unreachable by mouse: the composer swapped Send OUT for Stop while streaming, so only Enter could queue and nothing said so. Send now stays rendered (queues mid-turn, `aria-label` becomes "Queue message"), with Stop appearing alongside it.
+
+**Third-party bug, not ours:** `@alm-design/design-system`'s own MCP server has `get_tokens` broken on Windows — `Only URLs with a scheme in: file, data, and node are supported... Received protocol 'c:'`. It dynamic-`import()`s an absolute Windows path instead of a `file://` URL (needs `pathToFileURL`). **Only `get_tokens` is affected** — `list_components` works and returns 39 components. Worth reporting upstream. `studio_list_tokens` covers the gap anyway, because Studio's own store already holds the imported design-system palette.
+
+**Verification:** `bunx tsc -b`, `bun run lint`, `bun run build` clean. `bun test` → 20 failures, identical to baseline. 8 new token-tool tests.
+
+---
+
 ### mcp-06 — Mid-turn message queue, and making 100 KB design docs actually readable
 - **Agent:** coordinator (direct)
 - **Stage:** done.

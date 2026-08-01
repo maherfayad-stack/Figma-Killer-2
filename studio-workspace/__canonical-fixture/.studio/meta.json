@@ -6,7 +6,8 @@
   },
   "previewAxes": {
     "direction": "ltr",
-    "colorScheme": "light"
+    "colorScheme": "dark",
+    "locale": "en"
   },
   "approvedMcpServers": [
     "design-system"

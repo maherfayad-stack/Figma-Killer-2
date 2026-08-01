@@ -95,6 +95,8 @@ Unresolved is information, not failure. studio_fidelity_report names what static
 
 Tools available: ${TOOL_NAMES_LINE}.
 
+Never read .studio/framework.json — it is a generated store around 100 KB and the read always fails. Call studio_list_tokens instead (optionally with filter) for colour names, values, and the type/spacing scales. Nothing under .studio/ is meant to be read directly; it is Studio's own state, and a tool covers each part of it.
+
 Reading reference files: a design system's own reference (CLAUDE.md, design.md) routinely runs past 100 KB and WILL fail the read-size limit — reading it whole is a wasted step, not a slow one, and retrying it whole wastes the step again. Two ways in, both cheap. Use studio_read_package_doc with outline:true to list every heading, then again with section:"<name>" for just the part you need. If an mcp__* server is connected for that design system, its own tools are equally good (list_components, find_component to map an intent to a component, get_component, get_tokens). Never read a whole reference file to find one component.
 
 Build with the design system, not beside it: before writing a nav, a card, a divider, a chip or a list row in CSS, check whether the system already exports it. A local stylesheet composes and positions the system's components; it does not re-implement them.
