@@ -27,17 +27,24 @@ import { ApiError } from '@core/http'
 import styles from '../AiPage.module.css'
 import { getErrorMessage } from '@core/utils/errorMessage'
 
-type ProviderId = 'anthropic' | 'openai' | 'ollama' | 'openrouter' | 'openai-compatible'
+type ProviderId = 'anthropic' | 'openai' | 'ollama' | 'openrouter' | 'openai-compatible' | 'claudeCli'
 type AuthMode = 'apiKey' | 'baseUrl'
 
 // Each provider has exactly one credential shape; the UI derives it instead
 // of asking the user to choose an auth mode that cannot vary.
+//
+// `claudeCli` is WS-11's local-subprocess provider. The credential stored
+// here is the L2 path only (a `claude setup-token` value, pasted anywhere
+// interactive login isn't available) — the L1 path (running
+// `CLAUDE_CONFIG_DIR=<dir> claude auth login` in your own shell) stores no
+// credential row at all, so it has no row to show here.
 const PROVIDERS: Array<{ id: ProviderId; label: string; authMode: AuthMode }> = [
   { id: 'anthropic', label: 'Anthropic (Claude)', authMode: 'apiKey' },
   { id: 'openai', label: 'OpenAI', authMode: 'apiKey' },
   { id: 'openrouter', label: 'OpenRouter', authMode: 'apiKey' },
   { id: 'ollama', label: 'Ollama (local)', authMode: 'baseUrl' },
   { id: 'openai-compatible', label: 'Custom Provider', authMode: 'baseUrl' },
+  { id: 'claudeCli', label: 'Claude Code (subscription)', authMode: 'apiKey' },
 ]
 
 const AUTH_MODE_LABEL: Record<AuthMode, string> = {
@@ -51,6 +58,7 @@ const PROVIDER_LABEL: Record<ProviderId, string> = {
   openrouter: 'OpenRouter',
   ollama: 'Ollama',
   'openai-compatible': 'Custom Provider',
+  claudeCli: 'Claude Code',
 }
 
 // Hint text for the API-key field, per provider key prefix.
@@ -58,6 +66,7 @@ const API_KEY_PLACEHOLDER: Partial<Record<ProviderId, string>> = {
   anthropic: 'sk-ant-...',
   openrouter: 'sk-or-...',
   'openai-compatible': 'sk-... (optional)',
+  claudeCli: 'paste the output of `claude setup-token`',
 }
 
 async function deleteCredentialAction(
@@ -172,6 +181,15 @@ export function ProvidersTab() {
                       <>
                         <span>·</span>
                         <span>Last used {new Date(cred.lastUsedAt).toLocaleString()}</span>
+                      </>
+                    )}
+                    {cred.expiresAt && (
+                      <>
+                        <span>·</span>
+                        <span>
+                          Expires {new Date(cred.expiresAt).toLocaleDateString()} — this token
+                          does not refresh; run `claude setup-token` again and replace it before then.
+                        </span>
                       </>
                     )}
                   </div>

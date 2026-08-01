@@ -24,11 +24,16 @@ export type { AiContentBlock, AiToolImage, AiToolOutput } from '@core/ai'
 // Provider identity + auth modes
 // ---------------------------------------------------------------------------
 
-export type AiProviderId = 'anthropic' | 'openai' | 'ollama' | 'openrouter' | 'openai-compatible'
+export type AiProviderId = 'anthropic' | 'openai' | 'ollama' | 'openrouter' | 'openai-compatible' | 'claudeCli'
 /**
  * Credential auth modes.
  *
  *   - `apiKey`   — encrypted user-supplied key (Anthropic, OpenAI, OpenRouter).
+ *                  Also carries `claudeCli`'s L2 `claude setup-token` value
+ *                  (WS-11 §3, P1) — the column records the SHAPE of what's
+ *                  stored (an opaque encrypted secret), not which grant minted
+ *                  it. `claudeCli`'s L1 path (terminal login) stores no
+ *                  credential row at all.
  *   - `baseUrl`  — OpenAI-compatible endpoint (Ollama, or any openai-compatible
  *                  provider such as Groq, DeepSeek, Mistral, vLLM…). Optional
  *                  bearer token may be stored alongside the URL.

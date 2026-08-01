@@ -43,14 +43,25 @@ const BASE_SUBPROCESS_ENV_KEYS = [
  * resolution; `styleCompile.ts`'s worker needs nothing beyond the base set,
  * because Sass/PostCSS do no OS-level work beyond reading the files this
  * hands them.
+ *
+ * `overrides` merges in explicit key/value pairs the caller computed itself
+ * (NOT read from this process's own env) — e.g. `server/ai/drivers/claudeCli.ts`
+ * sets `CLAUDE_CONFIG_DIR` to a per-user directory it resolved, and optionally
+ * `CLAUDE_CODE_OAUTH_TOKEN` to a decrypted per-user credential. Those values
+ * don't exist in Studio's own `process.env`, so `extraKeys` (a pass-through
+ * allowlist) can't carry them — `overrides` is the deliberate second
+ * mechanism, applied last so it always wins over anything in the base set.
  */
-export function minimalSubprocessEnv(extraKeys: readonly string[] = []): Record<string, string> {
+export function minimalSubprocessEnv(
+  extraKeys: readonly string[] = [],
+  overrides: Record<string, string> = {},
+): Record<string, string> {
   const env: Record<string, string> = {}
   for (const key of [...BASE_SUBPROCESS_ENV_KEYS, ...extraKeys]) {
     const value = process.env[key]
     if (value !== undefined) env[key] = value
   }
-  return env
+  return { ...env, ...overrides }
 }
 
 /** The minimal shape `captureSubprocess`/`runCappedSubprocess` need from a spawned child — real `Bun.spawn` output already satisfies it. `pid` is optional and purely informational (e.g. `installDeps.ts` records it for forensic display in an `'interrupted'` job's warning text) — nothing here ever probes OS process liveness by it. */
@@ -88,13 +99,21 @@ interface CaptureOptions {
   clearTimeoutImpl?: typeof clearTimeout
 }
 
-interface CappedText {
+export interface CappedText {
   text: string
   truncated: boolean
 }
 
-/** Reads a stream to completion, keeping only the first `maxBytes` — draining the rest so a chatty child never blocks on a full pipe buffer, but discarding anything past the cap. */
-async function pumpCapped(stream: ReadableStream<Uint8Array> | null, maxBytes: number): Promise<CappedText> {
+/**
+ * Reads a stream to completion, keeping only the first `maxBytes` — draining
+ * the rest so a chatty child never blocks on a full pipe buffer, but
+ * discarding anything past the cap. Exported so callers that need their own
+ * read loop over stdout (e.g. `claudeCliSpawn.ts`'s incremental NDJSON line
+ * reader, which can't wait for process exit like `captureSubprocess` does)
+ * can still cap-and-drain stderr with this exact, tested primitive instead of
+ * duplicating it.
+ */
+export async function pumpCapped(stream: ReadableStream<Uint8Array> | null, maxBytes: number): Promise<CappedText> {
   if (!stream) return { text: '', truncated: false }
   const reader = stream.getReader()
   const decoder = new TextDecoder()

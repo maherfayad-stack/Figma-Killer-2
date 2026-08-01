@@ -256,4 +256,55 @@ describe('AI credential handler', () => {
     expect(body.modelCount).toBeUndefined()
     expect(body.error).toContain('No live models were returned')
   })
+
+  it('accepts a claudeCli credential (the L2 setup-token path, WS-11 §3 P1) with no schema change', async () => {
+    const cookie = await harness.setupOwner()
+    console.warn = () => {}
+    const res = await harness.ai('/admin/api/ai/credentials', {
+      method: 'POST',
+      cookie,
+      json: {
+        providerId: 'claudeCli',
+        authMode: 'apiKey',
+        displayLabel: 'My Claude subscription',
+        apiKey: 'sk-ant-oat01-test-setup-token',
+      },
+    })
+    console.warn = originalWarn
+
+    expect(res.status).toBe(201)
+    const body = await readJson<{ credential: { providerId: string; authMode: string; expiresAt: string | null; createdAt: string } }>(res)
+    expect(body.credential.providerId).toBe('claudeCli')
+    expect(body.credential.authMode).toBe('apiKey')
+
+    // WS-11 §2.1: a `claude setup-token` value is inference-only and does not
+    // refresh — Studio must surface its one-year expiry rather than discover
+    // it later. Computed from createdAt, no new DB column.
+    expect(body.credential.expiresAt).not.toBeNull()
+    const created = new Date(body.credential.createdAt)
+    const expires = new Date(body.credential.expiresAt!)
+    const oneYearLater = new Date(created)
+    oneYearLater.setUTCFullYear(oneYearLater.getUTCFullYear() + 1)
+    expect(expires.toISOString()).toBe(oneYearLater.toISOString())
+  })
+
+  it('reports expiresAt: null for every non-claudeCli credential', async () => {
+    const cookie = await harness.setupOwner()
+    console.warn = () => {}
+    const res = await harness.ai('/admin/api/ai/credentials', {
+      method: 'POST',
+      cookie,
+      json: {
+        providerId: 'anthropic',
+        authMode: 'apiKey',
+        displayLabel: 'Anthropic',
+        apiKey: 'sk-ant-test',
+      },
+    })
+    console.warn = originalWarn
+
+    expect(res.status).toBe(201)
+    const body = await readJson<{ credential: { expiresAt: string | null } }>(res)
+    expect(body.credential.expiresAt).toBeNull()
+  })
 })

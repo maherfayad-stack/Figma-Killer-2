@@ -161,4 +161,20 @@ describe('minimalSubprocessEnv', () => {
       else process.env.SOME_RANDOM_TEST_VAR = original
     }
   })
+
+  it('merges explicit overrides that are not read from this process\'s own env (claudeCli.ts\'s use case)', () => {
+    const env = minimalSubprocessEnv([], { CLAUDE_CONFIG_DIR: '/data/claude-cli/user-1', CLAUDE_CODE_OAUTH_TOKEN: 'token-abc' })
+    expect(env.CLAUDE_CONFIG_DIR).toBe('/data/claude-cli/user-1')
+    expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe('token-abc')
+  })
+
+  it('overrides win over the base allowlist when both set the same key', () => {
+    const original = process.env.PATH
+    try {
+      const env = minimalSubprocessEnv([], { PATH: '/only/this/path' })
+      expect(env.PATH).toBe('/only/this/path')
+    } finally {
+      if (original !== undefined) process.env.PATH = original
+    }
+  })
 })

@@ -99,7 +99,23 @@ export async function toCredentialView(
         : record.keyFingerprint === currentFingerprint,
     createdAt: record.createdAt,
     lastUsedAt: record.lastUsedAt,
+    expiresAt: claudeCliTokenExpiry(record),
   }
+}
+
+/**
+ * A `claude setup-token` value (WS-11 §2.1) is inference-only and does not
+ * refresh — it expires exactly one year after it was minted, which for
+ * Studio's purposes is exactly one year after the credential row was
+ * created. `null` for every provider/auth combination except `claudeCli` +
+ * `apiKey`.
+ */
+function claudeCliTokenExpiry(record: CredentialRecord): string | null {
+  if (record.providerId !== 'claudeCli' || record.authMode !== 'apiKey') return null
+  const created = new Date(record.createdAt)
+  const expires = new Date(created)
+  expires.setUTCFullYear(expires.getUTCFullYear() + 1)
+  return expires.toISOString()
 }
 
 // ---------------------------------------------------------------------------

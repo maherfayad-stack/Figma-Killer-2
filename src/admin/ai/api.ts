@@ -35,6 +35,7 @@ const ProviderId = Type.Union([
   Type.Literal('ollama'),
   Type.Literal('openrouter'),
   Type.Literal('openai-compatible'),
+  Type.Literal('claudeCli'),
 ])
 
 const AuthMode = Type.Union([
@@ -51,6 +52,8 @@ const CredentialViewSchema = Type.Object({
   keyFingerprintCurrent: Type.Boolean(),
   createdAt: Type.String(),
   lastUsedAt: Type.Union([Type.String(), Type.Null()]),
+  /** Set only for `claudeCli` L2 (setup-token) credentials — see server's `CredentialView`. */
+  expiresAt: Type.Union([Type.String(), Type.Null()]),
 })
 
 export type CredentialView = Static<typeof CredentialViewSchema>
@@ -170,13 +173,13 @@ export async function listCredentials(signal?: AbortSignal): Promise<CredentialV
 
 export type CreateCredentialBody =
   | {
-      providerId: 'anthropic' | 'openai' | 'ollama' | 'openrouter' | 'openai-compatible'
+      providerId: 'anthropic' | 'openai' | 'ollama' | 'openrouter' | 'openai-compatible' | 'claudeCli'
       authMode: 'apiKey'
       displayLabel: string
       apiKey: string
     }
   | {
-      providerId: 'anthropic' | 'openai' | 'ollama' | 'openrouter' | 'openai-compatible'
+      providerId: 'anthropic' | 'openai' | 'ollama' | 'openrouter' | 'openai-compatible' | 'claudeCli'
       authMode: 'baseUrl'
       displayLabel: string
       baseUrl: string
@@ -241,7 +244,7 @@ export function clearModelListCache(credentialId?: string): void {
 }
 
 export async function listModels(
-  providerId: 'anthropic' | 'openai' | 'ollama' | 'openrouter' | 'openai-compatible',
+  providerId: 'anthropic' | 'openai' | 'ollama' | 'openrouter' | 'openai-compatible' | 'claudeCli',
   credentialId?: string,
 ): Promise<AiModel[]> {
   const key = `${providerId}\0${credentialId ?? ''}`

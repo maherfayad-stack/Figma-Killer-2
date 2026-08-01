@@ -50,6 +50,14 @@ export interface CredentialView {
   readonly keyFingerprintCurrent: boolean
   readonly createdAt: string
   readonly lastUsedAt: string | null
+  /**
+   * Set only for `claudeCli` credentials (the L2 `claude setup-token` path,
+   * WS-11 §2.1) — that token is inference-only and does NOT refresh, expiring
+   * exactly one year after creation. Computed from `createdAt`, not a stored
+   * column — there's no schema change for this provider (WS-11 §3). `null`
+   * for every other provider/auth combination.
+   */
+  readonly expiresAt: string | null
 }
 
 // ---------------------------------------------------------------------------

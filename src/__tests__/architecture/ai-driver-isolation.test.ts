@@ -1,11 +1,18 @@
 /**
  * Architecture gate — AI driver SDK isolation.
  *
- * The drivers talk DIRECTLY to each provider's REST API over HTTP/SSE — there
- * are no provider SDKs left in the tree. This gate is therefore inverted from
- * its original form: it asserts that NO provider SDK and NO `zod` is imported
- * ANYWHERE under `src/` or `server/` (a strictly stronger boundary than the
- * old "only the driver file may import it" exemption).
+ * The rule (WS-11 §6.1): **no provider SDK may be imported; a driver may
+ * reach its provider over HTTP/SSE or via a local user-installed binary.**
+ * Every HTTP driver talks DIRECTLY to its provider's REST API — there are no
+ * provider SDKs left in the tree for those. `claudeCli`
+ * (`server/ai/drivers/claudeCli.ts`) is the one exception to "HTTP/SSE": it
+ * spawns the `claude` binary the user installed themselves, the same way the
+ * Claude Code VS Code extension does — that is still not an SDK import (no
+ * new dependency, nothing added to `bun.lock`), so it doesn't relax what this
+ * gate actually checks below, only the doc comment's original (narrower)
+ * phrasing of the rule. This gate asserts that NO provider SDK and NO `zod`
+ * is imported ANYWHERE under `src/` or `server/` (a strictly stronger
+ * boundary than the old "only the driver file may import it" exemption).
  *
  * This replaces the legacy `no-anthropic-sdk.test.ts` gate, which only
  * scanned `src/` and predates the `server/ai/` module. The legacy gate
