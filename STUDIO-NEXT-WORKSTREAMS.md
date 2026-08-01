@@ -1,7 +1,48 @@
 # STUDIO — next workstreams
 
-**Status:** proposed, not started.
+**Status:** in progress (2026-08-01).
 **Companion:** `STUDIO-IMPORT-V2-PLAN.md` — these are new workstreams beyond it.
+
+### Decisions taken (2026-08-01)
+
+Every open-decision list below is now closed. Where a decision changed the
+design, the section itself has been rewritten — this table is the log, not the
+spec.
+
+| # | Decision | Effect |
+|---|---|---|
+| **D1** | All four workstreams land as sequential commits on `feat/alm-figma-killer-studio-shell`, one commit per coherent step. Nothing is pushed. | `main` is 21+ commits behind; it is not the trunk here. |
+| **D2** | **WS-11 authenticates per user, not per machine.** Each user gets an isolated CLI environment (`CLAUDE_CONFIG_DIR`) and logs in with their own Claude account through a Studio-surfaced OAuth flow. | Replaces the multi-user *gating* in §5.1/§7.2 outright. The machine-owner problem does not get fenced off — it stops existing. See WS-11 §2.1. |
+| **D3** | **One agent scope: Studio.** The CMS scopes come out of the application entirely. | Rewrites WS-12 §8.1. No new column — see below. |
+| **D4** | Generated subagents live in `<project>/.claude/`, committed. | The agents travel with the user's repo, like any hand-written Claude Code setup. |
+| **D5** | Validator reports, never blocks (WS-13 §7.1). `.tsx` is the scaffold default (§7.2). Dark-mode tokens stay single-valued (WS-10 §8.2). Axes persist **per project** (WS-10 §8.3). Agent may *ask* for trust promotion, never perform it (WS-12 §11.2). `studio_create_page` auto-places the frame (§11.3). Bypass mode stays non-persisting, indicated, trust-bound (§11.5). | Taken at the recommended default; recorded here rather than restated per section. |
+
+### Two research findings that changed the plan
+
+**F1 — the scope collapse is nearly free, and needs no migration.**
+Recon found `ToolScope` is already `'site' | 'data' | 'plugin'`
+(`server/ai/runtime/types.ts:39`) — `'content'` was removed from the code long
+ago and survives only as a DB CHECK literal. `'data'` and `'plugin'` return an
+**empty tool array** (`server/ai/tools/index.ts:32-37`) and a placeholder system
+prompt (`chat.ts:506-511`). There is exactly one live scope, one toolset, one
+panel; `src/admin/pages/content/` and `.../data/` do not exist on disk.
+
+So D3 does not collapse four subsystems into one — it deletes two empty reserved
+branches and a dead literal, roughly 150–250 lines concentrated in
+`DefaultsTab.tsx`'s per-scope grid. **And with a single scope, `scope` stops
+being a discriminator at all:** it is removed from the application, from the
+route paths, and from the request schemas. The DB column becomes vestigial,
+holding a permitted constant to satisfy migration `007_ai_runtime`'s CHECK.
+That is strictly better than the plan's original option (a) — adding a column to
+store a value that can only ever have one value is waste. **No migration is
+needed for this at all.**
+
+**F2 — `CLAUDE_CONFIG_DIR` relocates credentials, not just settings.**
+Confirmed in the CLI's own authentication docs: on Linux and Windows,
+`.credentials.json` lives under `CLAUDE_CONFIG_DIR` when it is set. That is the
+whole mechanism behind D2 — a per-user config directory *is* the "small
+environment" per user. macOS is the exception (OS keychain, not relocatable by
+env var) and is handled as a documented limitation, not silently.
 
 | | Workstream | Ships as |
 |---|---|---|
@@ -226,12 +267,13 @@ and `studio_create_page` implements it. Writing the spec settles both.
 
 ## 7. Open decisions
 
-1. **Does the validator ever block a write,** or only report? I recommend
-   **report only** — a user hand-editing a Studio-authored screen into
-   non-canonical React is making a legitimate choice, and the tool should tell
-   them what they lose, not refuse.
-2. **`.jsx` or `.tsx` for scaffolded screens?** Match the project's existing
-   convention when there is one; needs a default for an empty project.
+Closed (D5).
+
+1. ~~Does the validator block a write?~~ **Report only.** A user hand-editing a
+   Studio-authored screen into non-canonical React is making a legitimate
+   choice; the tool tells them what they lose, it does not refuse.
+2. ~~`.jsx` or `.tsx`?~~ **Match the project's existing convention; `.tsx` when
+   there is none.**
 
 ---
 
@@ -649,11 +691,11 @@ land.
 1. ~~Per-frame locale — defer?~~ **Decided: no, it is required (§4.3).** Variants
    of one page sit side by side on the board. The id grammar does **not** change;
    editor state re-keys on `(frameId, nodeId)`.
-2. **Dark-mode token extraction (§3.3)** — leave `.studio/framework.json`
-   single-valued for now, confirmed?
-3. **Axis scope** — do the axes persist per project (`.studio/meta.json`, shared
-   with anyone who opens it) or per user (localStorage, like `studioMode`)?
-   This plan assumes **per project**.
+2. ~~Dark-mode token extraction (§3.3)?~~ **Confirmed: `.studio/framework.json`
+   stays single-valued.** A second value set is a framework-panel change, not a
+   preview-axis change, and belongs to its own workstream.
+3. ~~Axis scope?~~ **Per project** — `.studio/meta.json`, so the board a
+   colleague opens is the board you left.
 
 ---
 ---
@@ -709,6 +751,51 @@ application with them sits outside what the subscription grants — it risks the
 account rather than anything technical. Spawning the CLI gets the identical
 outcome with none of that, which is precisely why the VS Code extension is built
 this way too.
+
+### 2.1 Per-user login — the "small environment" (D2)
+
+The original draft treated CLI auth as *machine-level* and proposed gating the
+feature to loopback or admins. **That is no longer the design.** Each user gets
+their own isolated CLI environment and logs in with their own Claude account, so
+each user spends their own subscription and acts as themselves.
+
+The mechanism is `CLAUDE_CONFIG_DIR` (F2). One directory per user, created and
+owned by the server:
+
+```
+<dataDir>/claude-cli/<userId>/        mode 0700, never inside the user's project
+  .credentials.json                   written by the CLI, never read by Studio
+  settings.json
+```
+
+Every spawn — probe, login, and chat — sets `CLAUDE_CONFIG_DIR` to that user's
+directory. Consequences:
+
+- **Studio still never reads a token.** It creates a directory and sets an env
+  var. The CLI writes and reads its own credentials inside it. `CredentialView`
+  is untouched, `ai_provider_credentials` is untouched, and there is nothing new
+  to encrypt or rotate.
+- **The login flow is surfaced, not hidden.** Studio spawns the CLI's login in
+  that environment, captures the authorization URL it prints, and shows it to
+  the user as a link that opens in a new tab plus a field for the code the flow
+  returns. The user completes it against their own Claude account; the CLI
+  persists the result in their directory.
+- **Login state is per user.** The availability probe runs in the requesting
+  user's config dir, so the picker shows *that user* logged in or logged out,
+  with the reason.
+- **No gating is required**, because the surprise the gating existed to prevent
+  — spending someone else's subscription — cannot happen.
+
+Two things this does not fix, both of which stay in §5:
+
+1. The subprocess still runs **on the server**, with the server's filesystem
+   access. Per-user auth changes who pays, not what the process can reach.
+   Containment (§5.2) is unchanged and still mandatory.
+2. **macOS stores credentials in the OS keychain**, which `CLAUDE_CONFIG_DIR`
+   does not relocate. On a macOS host, all users of one OS account share one
+   login. Detect the platform and disable the provider with that reason shown —
+   the same disabled-with-a-reason rule as every other probe. Do not silently
+   fall back to a shared login.
 
 ## 3. The blocker you need to know about first
 
@@ -818,13 +905,13 @@ be documented, not papered over.
 
 ## 5. Security — three things that are not optional
 
-1. **This is machine-level auth, not user-level.** On a self-hosted install with
-   more than one user, *any* user selecting this provider spends the **host
-   machine owner's** Claude subscription and acts with their permissions.
-   `ai_provider_credentials` is per-`user_id`; a CLI login is not.
-   **Gate it: single-user or loopback-only installs, or admin-only.** Decide
-   explicitly (§7.2) — this is the one way this feature could genuinely surprise
-   someone.
+1. **The per-user config directory is a credential store Studio owns the
+   lifecycle of.** It holds another user's session. Create it `0700`, never
+   inside a project directory, never inside `uploads/`, never served over HTTP.
+   The path is derived from `userId` through the same containment guard as any
+   other user-supplied path segment — a `userId` is not a filename until it has
+   been validated as one. Delete the directory when the user is deleted, and on
+   an explicit "log out of Claude" action.
 2. **A subprocess that can edit files.** `cwd` pinned to the resolved workspace
    root with the same containment guard `appRoot.ts` applies; minimal env; never
    pass a permission-bypassing flag. `security-guard` reviews this before merge.
@@ -860,15 +947,17 @@ its provider over HTTP/SSE or via a local user-installed binary.**
 
 ## 7. Open decisions for the user
 
+All closed.
+
 1. ~~Approach (A) or (B)?~~ **Decided: (A), the VS Code extension model** — spawn
-   the CLI, inherit its subscription login, never handle a token (§2).
-2. **Multi-user gating (§5.1).** Restrict this provider to loopback/single-user
-   installs, restrict it to admins, or leave it open? I recommend **loopback or
-   admin-only**.
-3. **Tools via MCP (§4.1), or a plain no-tool completion backend?** MCP gives the
-   canvas-editing chat you actually want; the plain backend is ~a third of the
-   work and can only talk. **WS-12 assumes MCP** — a chat that cannot touch the
-   canvas cannot create screens.
+   the CLI, never handle a token (§2).
+2. ~~Multi-user gating?~~ **Decided: no gating — per-user login instead (D2, §2.1).**
+   Each user authenticates their own account in their own `CLAUDE_CONFIG_DIR`.
+   The one platform that cannot honour this is macOS, which is disabled with a
+   reason rather than silently shared.
+3. ~~Tools via MCP, or a no-tool backend?~~ **Decided: MCP (§4.1).** A chat that
+   cannot touch the canvas cannot create screens, which is the entire point of
+   WS-12.
 
 ## 8. Sequencing
 
@@ -1375,7 +1464,52 @@ inherits the error at once.
 | `docs/features/agent.md` | the new scope, prompt, controls, subagents |
 | `server/db/migrations-*.ts` | see §8.1 — **verified blocker**, decide before starting |
 
-### 8.1 `scope` is CHECK-constrained — verified
+### 8.1 One scope: Studio (D3) — no migration needed
+
+**Superseded.** The analysis below was written assuming Studio needed to *add* a
+`'studio'` value alongside four existing scopes. Recon (F1) showed there are not
+four scopes — there is one live scope and two empty reserved branches. The
+decision is therefore to **remove the scope concept from the application
+entirely**, not to extend it.
+
+What that means concretely:
+
+| | Change |
+|---|---|
+| `server/ai/runtime/types.ts` | delete `ToolScope`, and the re-export in `tools/types.ts` |
+| `server/ai/tools/index.ts` | `scopeToolset(scope)` → `studioTools`, a constant. The empty `'data'`/`'plugin'` arms go. |
+| `server/ai/handlers/chat.ts` | `POST /admin/api/ai/chat/:scope` → `POST /admin/api/ai/chat`. `VALID_SCOPES` and `buildSystemPromptForScope`'s placeholder branch go; the prompt is the Studio prompt (§4). |
+| `server/ai/handlers/defaults.ts` | `PUT/DELETE /admin/api/ai/defaults/:scope` → unsuffixed. One default, not a map. |
+| `server/ai/handlers/conversations.ts` | drop the `?scope=` filter |
+| `src/admin/ai/api.ts:45` | delete the stale 4-literal `ToolScope` schema (the last place `'content'` appears in code) |
+| `src/admin/pages/ai/tabs/DefaultsTab.tsx` | the per-scope grid collapses to a single form |
+| `src/admin/pages/site/agent/types.ts`, `.../ai/tabs/DefaultsTab.tsx` | delete the two redundant local copies of the union |
+
+**The database is not migrated.** `ai_defaults.scope` (primary key) and
+`ai_conversations.scope` keep their CHECK constraints from `007_ai_runtime`
+untouched, and the single write site pins them to a permitted constant:
+
+```ts
+/**
+ * Vestigial. Migration 007 pinned `scope` with an inline CHECK, and SQLite
+ * cannot alter one. Studio now has exactly one agent, so this column
+ * discriminates nothing — it holds a permitted constant so the constraint is
+ * satisfied. Nothing reads it. Drop it when the row set is next rebuilt.
+ */
+const LEGACY_SCOPE_COLUMN = 'site'
+```
+
+This is honest in a way the rejected option (c) was not. (c) would have labelled
+a Studio conversation `'content'` *while other scopes still existed*, misleading
+every future reader. Here there is only one kind of conversation, the column
+distinguishes nothing, and the comment says so at the only place it is written.
+Adding an `agent_scope` column to store a single constant value would be pure
+ceremony.
+
+<details>
+<summary>Original analysis, kept for the reasoning (superseded by D3)</summary>
+
+#### `scope` is CHECK-constrained — verified
 
 Both dialects pin it, inline, in `CREATE TABLE`:
 
@@ -1410,6 +1544,8 @@ schema's own comment already says it belongs. The residual wart — a legacy
 migration comment so the eventual cleanup is obvious.
 
 **This is decision §11.4 and it gates step 1.**
+
+</details>
 
 ## 9. Tests
 
@@ -1448,18 +1584,18 @@ rather than a demo, but none of them matter if step 2 is not real.
 
 ## 11. Open decisions
 
-1. **H1 or H2 (§2)?** WS-11's decision implies **H2**, which makes §5 nearly
-   free. Confirm, because it is the largest scope determinant here.
-2. **Does the agent get `studio_install_deps` / trust promotion?** I recommend
-   **it may ask, never act** — promotion is a consent action.
-3. **Does `studio_create_page` place the frame on the board automatically,** or
-   scaffold the file and let the user drop it? Auto-placing is friendlier;
-   letting the user place it keeps board layout under human control.
-4. **The `scope` CHECK constraint (§8.1)** — take option (a), the additive
-   `agent_scope` column? **This gates step 1** and is the only item here that
-   cannot be deferred.
-5. **Bypass mode's guard rails (§5.2)** — I've specced it as non-persisting,
-   visibly indicated, and still trust-tier-bound. Confirm, or loosen?
+All closed (D3, D4, D5).
+
+1. ~~H1 or H2?~~ **H2** — WS-11 spawns the CLI, so the CLI owns the loop and §5
+   is nearly free.
+2. ~~Trust promotion?~~ **Ask, never act.** Promotion is a consent action; the
+   agent surfaces the need and the user clicks.
+3. ~~Auto-place the frame?~~ **Yes.** A scaffolded screen the user cannot see is
+   not a screen. It lands on the board at the next free slot.
+4. ~~The `scope` CHECK constraint?~~ **Dissolved, not solved (§8.1).** One scope
+   means no discriminator, no new column, and no migration. Step 1 is unblocked.
+5. ~~Bypass guard rails?~~ **Confirmed as specced** — non-persisting, visibly
+   indicated, still trust-tier-bound.
 6. **Reference files in the workspace.** The generated `.claude/` directory lands
    inside the user's project, so it shows up in their git status. Commit it (the
    agents become part of the repo, shared with their team) or `.gitignore` it
