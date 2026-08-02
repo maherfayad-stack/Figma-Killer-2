@@ -627,7 +627,11 @@ function textOf(blocks: AiContentBlock[]): string | null {
 }
 
 function claudeCliExitErrorMessage(exitCode: number | null, stderr: string, timedOut: boolean): string {
-  if (timedOut) return 'Claude CLI timed out before producing a reply.'
+  // Reached only after the CLI has gone completely silent for the whole idle
+  // window (see `idleTimeoutMs` in claudeCliSpawn.ts) — NOT because the turn
+  // took a long time. Say which, so the next person reading it in a toast
+  // doesn't go looking for a length limit that doesn't exist.
+  if (timedOut) return 'Claude CLI stopped responding — no output for 10 minutes. The turn was ended.'
   const trimmedStderr = stderr.trim()
   // WS-11 §4.0: stderr is empty on every non-crash path, so anything present
   // here is a genuine crash — surface it verbatim (bounded by

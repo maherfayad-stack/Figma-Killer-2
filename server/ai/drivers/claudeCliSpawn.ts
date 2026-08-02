@@ -58,8 +58,20 @@ export interface ClaudeCliSpawnOptions {
    * Backstop only — the primary cancellation path is `signal`. Guards against
    * a wedged process that never produces output and whose caller never
    * aborts (e.g. a genuinely hung `claude` binary).
+   *
+   * This is an IDLE window, not a total-turn cap: it measures silence on the
+   * child's stdout, and every chunk the child writes re-arms it. A turn that
+   * keeps streaming — a long tool-using agent run, an hour of `Bash` calls —
+   * is by definition not wedged and must never be killed for taking a while.
+   * (It used to be a total cap, which killed productive turns at five minutes
+   * and reported them to the user as "timed out before producing a reply"
+   * even though the reply was actively arriving.)
+   *
+   * Time the CONSUMER spends between yields doesn't count either — the window
+   * re-arms when the consumer hands control back, so a slow reader can't kill
+   * a healthy child.
    */
-  readonly timeoutMs?: number
+  readonly idleTimeoutMs?: number
   readonly maxStderrBytes?: number
 }
 
@@ -68,7 +80,16 @@ export type ClaudeCliRawEvent =
   /** Terminal — always the last event yielded, exactly once. */
   | { readonly kind: 'exit'; readonly exitCode: number | null; readonly stderr: string; readonly timedOut: boolean }
 
-const DEFAULT_TIMEOUT_MS = 5 * 60_000
+/**
+ * Ten minutes of TOTAL SILENCE. Sized for the longest legitimate gap between
+ * two stdout writes, which is a single slow tool call: the CLI emits the
+ * `tool_use` line, then says nothing until the tool returns — and an agent in
+ * this repo can plausibly run `bun test` or a full `vite build` in there.
+ * Anything past that is a binary that has genuinely stopped.
+ *
+ * Kept in sync with the user-facing message in `claudeCliExitErrorMessage`.
+ */
+const DEFAULT_IDLE_TIMEOUT_MS = 10 * 60_000
 const DEFAULT_MAX_STDERR_BYTES = 64 * 1024
 
 const defaultSpawn: SubprocessSpawnFn = (argv, options) =>
@@ -92,7 +113,7 @@ export async function* spawnClaudeCliNdjson(
   options: ClaudeCliSpawnOptions,
 ): AsyncGenerator<ClaudeCliRawEvent, void, void> {
   const spawn = options.spawn ?? defaultSpawn
-  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
+  const idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS
   const maxStderrBytes = options.maxStderrBytes ?? DEFAULT_MAX_STDERR_BYTES
 
   let proc: SpawnedProcessLike
@@ -128,10 +149,23 @@ export async function* spawnClaudeCliNdjson(
   options.signal.addEventListener('abort', onAbort, { once: true })
   if (options.signal.aborted) kill()
 
-  const timer = setTimeout(() => {
-    timedOut = true
-    kill()
-  }, timeoutMs)
+  // Armed once here, then re-armed on every sign of life (see `armIdleTimer`
+  // call sites below). `timer` is reassigned, so the `finally` clears whichever
+  // one is currently in flight.
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const pauseIdleTimer = (): void => {
+    clearTimeout(timer)
+    timer = undefined
+  }
+  const armIdleTimer = (): void => {
+    pauseIdleTimer()
+    if (killed) return
+    timer = setTimeout(() => {
+      timedOut = true
+      kill()
+    }, idleTimeoutMs)
+  }
+  armIdleTimer()
 
   // Drain stderr concurrently and independently of stdout — a full stderr
   // pipe buffer must never block the child from writing more stdout (the
@@ -141,7 +175,16 @@ export async function* spawnClaudeCliNdjson(
 
   let drainedStdout = false
   try {
-    yield* readLines(proc.stdout)
+    // The clock runs only while we are WAITING ON THE CHILD:
+    //   - `readLines` re-arms it on every stdout chunk — bytes from the child
+    //     are proof of life even when they don't complete a parseable line;
+    //   - it is paused across the `yield` and resumed when the consumer hands
+    //     control back, so a slow reader can never look like a wedged child.
+    for await (const event of readLines(proc.stdout, armIdleTimer)) {
+      pauseIdleTimer()
+      yield event
+      armIdleTimer()
+    }
     drainedStdout = true
   } finally {
     clearTimeout(timer)
@@ -199,6 +242,8 @@ function killDescendants(proc: SpawnedProcessLike): void {
 
 async function* readLines(
   stream: ReadableStream<Uint8Array> | null,
+  /** Called on every chunk read off the pipe — the idle-timer re-arm hook. */
+  onChunk: () => void = () => {},
 ): AsyncGenerator<ClaudeCliRawEvent, void, void> {
   if (!stream) return
   const reader = stream.getReader()
@@ -209,6 +254,7 @@ async function* readLines(
       const { done, value } = await reader.read()
       if (done) break
       if (!value) continue
+      onChunk()
       buffer += decoder.decode(value, { stream: true })
       let newlineIndex: number
       while ((newlineIndex = buffer.indexOf('\n')) !== -1) {
