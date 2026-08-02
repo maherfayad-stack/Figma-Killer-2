@@ -40,6 +40,46 @@
           "pageId": "page2",
           "x": 1104,
           "y": 1760
+        },
+        {
+          "id": "180c404b-2d94-4206-8519-4cd191812ad9",
+          "pageId": "home",
+          "x": 0,
+          "y": 2640,
+          "width": 393,
+          "height": 852
+        },
+        {
+          "id": "0d8f7a95-c2fc-4621-98e0-1b17ee1215aa",
+          "pageId": "sms",
+          "x": 1104,
+          "y": 2640,
+          "width": 393,
+          "height": 852
+        },
+        {
+          "id": "47fae1b9-8c0b-4410-b001-ab169d1829e8",
+          "pageId": "smsemail",
+          "x": 426.49686532253577,
+          "y": 3312.2577311622326,
+          "width": 393,
+          "height": 852
+        },
+        {
+          "id": "75f157d5-2566-4c98-996b-3f3ef25133b5",
+          "pageId": "sign-in",
+          "x": 1104,
+          "y": 3520,
+          "width": 393,
+          "height": 852
+        },
+        {
+          "id": "861c10fe-5994-492e-acbe-3dc173cda54e",
+          "pageId": "sign-up",
+          "x": 0,
+          "y": 4400,
+          "width": 393,
+          "height": 852
         }
       ],
       "notes": [],

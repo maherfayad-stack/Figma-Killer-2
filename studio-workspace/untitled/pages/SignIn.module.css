@@ -1,0 +1,330 @@
+@import "../styles/imported/alm-design-design-system-1-1-3/src/tokens/index.css";
+
+.page {
+  box-sizing: border-box;
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  min-height: 100vh;
+  background: var(--background-base-subtle);
+  font-family: var(--font-body);
+  color: var(--text-base-default);
+}
+
+.frame {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 393px;
+  min-height: 100vh;
+  background: var(--background-base-default);
+}
+
+.statusBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 44px;
+  padding: 0 24px;
+  color: var(--text-base-default);
+  font-size: 15px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.statusTime { font-variant-numeric: tabular-nums; }
+.statusIsland { width: 122px; height: 32px; background: #000; border-radius: var(--rounded-full); }
+.statusLevels { display: inline-flex; align-items: center; gap: 6px; }
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  height: 56px;
+  padding: 0 var(--space);
+  flex-shrink: 0;
+}
+
+.backBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border: none;
+  border-radius: var(--rounded-full);
+  background: var(--overlay-surface);
+  color: var(--text-base-default);
+  cursor: pointer;
+  padding: 0;
+}
+.backBtn:hover { background: var(--background-base-hover); }
+
+.body {
+  display: flex;
+  flex-direction: column;
+  padding: 0 var(--space) var(--space);
+  gap: var(--space);
+  flex: 1;
+}
+
+/* ── hero card with two nested phone mockups (pure CSS) ── */
+.hero {
+  position: relative;
+  width: 100%;
+  height: 168px;
+  border-radius: var(--rounded-lg);
+  background: #E9F6F8;
+  overflow: hidden;
+  margin-bottom: var(--space-sm);
+}
+
+.heroMockA,
+.heroMockB {
+  position: absolute;
+  box-sizing: border-box;
+  background: #FFFFFF;
+  border: 4px solid #1C1C1C;
+  border-radius: 22px;
+  padding: 14px 12px 0;
+  font-family: var(--font-body);
+  color: var(--text-base-default);
+  overflow: hidden;
+}
+
+.heroMockA {
+  top: 30px;
+  left: 24px;
+  width: 190px;
+  height: 260px;
+  z-index: 2;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+.heroMockB {
+  top: 40px;
+  right: 12px;
+  width: 170px;
+  height: 240px;
+  z-index: 1;
+  padding: 14px 10px 0;
+}
+
+.heroMockNotch {
+  position: absolute;
+  top: 4px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 60px;
+  height: 14px;
+  background: #1C1C1C;
+  border-radius: 8px;
+}
+
+.heroMockClose {
+  color: var(--text-link-default);
+  font-size: 10px;
+  font-weight: 400;
+  margin: 16px 0 8px;
+}
+
+.heroMockTitle {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-base-default);
+  margin-bottom: 8px;
+  line-height: 1.15;
+}
+
+.heroMockFields {
+  display: grid;
+  grid-template-columns: 44px 1fr;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.heroMockCode,
+.heroMockMobile {
+  box-sizing: border-box;
+  height: 30px;
+  border: 1px solid var(--border-base-default);
+  border-radius: 4px;
+  padding: 3px 6px;
+  font-size: 8px;
+  color: var(--text-base-default);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.heroMockCodeLabel {
+  font-size: 6px;
+  color: var(--text-base-subtext);
+  line-height: 1;
+}
+
+.heroMockCodeValue {
+  font-size: 9px;
+  color: var(--text-base-default);
+  line-height: 1;
+}
+
+.heroMockMobile {
+  color: var(--text-base-subtext);
+  font-size: 8px;
+}
+
+.heroMockCta {
+  height: 22px;
+  border-radius: 100px;
+  background: var(--background-warning-default);
+  color: var(--text-base-inverted-static);
+  font-size: 9px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.heroMockTitleB {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-base-default);
+  margin: 16px 0 6px;
+}
+
+.heroMockBodyB {
+  font-size: 8px;
+  color: var(--text-base-subtext);
+}
+
+.heroMockPhoneB {
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--text-base-default);
+  margin-top: 2px;
+}
+
+/* ── content ── */
+.heading {
+  margin: 0;
+  font-family: var(--type-headline-family);
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 28px;
+  color: var(--text-base-default);
+}
+
+.subheading {
+  margin: 0;
+  font-family: var(--type-body-regular-family);
+  font-size: var(--type-body-regular-size);
+  font-weight: var(--type-body-regular-weight);
+  line-height: var(--type-body-regular-lh);
+  color: var(--text-base-default);
+}
+
+.benefits {
+  list-style: none;
+  padding: 0;
+  margin: var(--space-xs) 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space);
+}
+
+.benefitRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  font-family: var(--type-body-regular-family);
+  font-size: var(--type-body-regular-size);
+  line-height: var(--type-body-regular-lh);
+  color: var(--text-base-default);
+}
+
+.benefitIcon {
+  color: var(--icon-base-default);
+  flex-shrink: 0;
+}
+
+.phoneRow {
+  display: grid;
+  grid-template-columns: 101px 1fr;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+}
+
+.codeField,
+.mobileField {
+  box-sizing: border-box;
+  height: 56px;
+  border-radius: var(--rounded-sm);
+  border: 1px solid var(--border-base-default);
+  background: var(--background-base-default);
+  padding: 8px var(--space-md);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+}
+
+.codeLabel {
+  font-family: var(--type-caption-regular-family);
+  font-size: var(--type-caption-regular-size);
+  line-height: var(--type-caption-regular-lh);
+  color: var(--text-base-subtext);
+}
+
+.codeValueRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-xs);
+}
+
+.codeValue {
+  font-family: var(--type-subtitle-family);
+  font-size: var(--type-subtitle-size);
+  font-weight: 400;
+  line-height: var(--type-subtitle-lh);
+  color: var(--text-base-default);
+}
+
+.codeChevron { color: var(--text-link-default); flex-shrink: 0; }
+
+.mobileField { justify-content: center; }
+
+.mobilePlaceholder {
+  font-family: var(--type-subtitle-family);
+  font-size: var(--type-subtitle-size);
+  font-weight: 400;
+  line-height: var(--type-subtitle-lh);
+  color: var(--text-base-subtext);
+}
+
+.required { color: var(--text-link-default); }
+
+.primaryBtn {
+  height: 48px;
+  border: none;
+  border-radius: var(--rounded-full);
+  background: var(--background-primary-default);
+  color: var(--text-base-inverted-static);
+  font-family: var(--type-subtitle-family);
+  font-size: var(--type-subtitle-size);
+  font-weight: 700;
+  line-height: var(--type-subtitle-lh);
+  cursor: pointer;
+  padding: 0 var(--space);
+}
+.primaryBtn:hover { filter: brightness(0.95); }
+.primaryBtn:active { filter: brightness(0.9); }
+
+.footNote {
+  margin: 0;
+  text-align: center;
+  font-family: var(--type-meta-regular-family);
+  font-size: var(--type-meta-regular-size);
+  line-height: var(--type-meta-regular-lh);
+  color: var(--text-base-subtext);
+}
