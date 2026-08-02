@@ -268,4 +268,50 @@ describe('buildTokenCandidates', () => {
     expect(result.spacing.map((c) => c.name)).toEqual(['space-md'])
     expect(result.typography.map((c) => c.name)).toEqual(['fontLg'])
   })
+
+  // Root cause this suite guards against: `buildCssCandidates` used to
+  // destructure only `{ light }` off `collectRootScopeMaps`, throwing away
+  // the `dark` half entirely — every GitHub/npm import landed with no dark
+  // value at all, regardless of what the source declared.
+  describe('dark mode', () => {
+    it('carries the resolved dark value when a recognized dark-root selector overrides the token', () => {
+      const css = `:root{--brand:#fff}\n:root[data-theme=dark]{--brand:#111}`
+      const result = buildTokenCandidates([{ relPath: 'a.css', contents: css }])
+      expect(result.colors).toHaveLength(1)
+      expect(result.colors[0]).toMatchObject({ name: 'brand', value: '#fff', dark: '#111' })
+    })
+
+    it('omits `dark` entirely for a token declared only in :root (not an empty string masquerading as one)', () => {
+      const css = `:root{--brand:#fff}`
+      const result = buildTokenCandidates([{ relPath: 'a.css', contents: css }])
+      expect(result.colors).toHaveLength(1)
+      expect(result.colors[0]).not.toHaveProperty('dark')
+    })
+
+    it('omits `dark` when the dark declaration resolves to the same value as light', () => {
+      const css = `:root{--brand:#fff}\n:root[data-theme=dark]{--brand:#fff}`
+      const result = buildTokenCandidates([{ relPath: 'a.css', contents: css }])
+      expect(result.colors).toHaveLength(1)
+      expect(result.colors[0]).not.toHaveProperty('dark')
+    })
+
+    it('resolves a dark value that is a var() reference through the merged light+dark map', () => {
+      // `--surface` is only declared in :root (light); the dark override for
+      // `--brand` references it via var() and must still resolve, which only
+      // works if resolution runs against light+dark merged, not dark alone.
+      const css = `:root{--brand:#fff;--surface:#000}\n:root[data-theme=dark]{--brand:var(--surface)}`
+      const result = buildTokenCandidates([{ relPath: 'a.css', contents: css }])
+      const brand = result.colors.find((c) => c.name === 'brand')
+      expect(brand).toMatchObject({ value: '#fff', dark: '#000' })
+    })
+
+    it('does not attach a dark value to a candidate whose winning value came from a later JSON/JS token file, not CSS', () => {
+      const cssFiles = [{ relPath: 'a.css', contents: `:root{--brand:#fff}\n:root[data-theme=dark]{--brand:#111}` }]
+      const tokenFiles = [{ relPath: 'tokens.json', contents: JSON.stringify({ brand: '#abc' }) }]
+      const result = buildTokenCandidates(cssFiles, tokenFiles)
+      const brand = result.colors.find((c) => c.name === 'brand')
+      expect(brand).toMatchObject({ value: '#abc' })
+      expect(brand).not.toHaveProperty('dark')
+    })
+  })
 })

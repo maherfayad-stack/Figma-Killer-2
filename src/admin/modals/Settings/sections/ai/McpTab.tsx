@@ -31,9 +31,9 @@ import {
   listMcpConnectors,
   createMcpConnector,
   revokeMcpConnector,
-} from '../../../ai/api'
-import dialogStyles from '../../../shared/dialogs/SiteCreateDialog/SiteCreateDialog.module.css'
-import styles from '../AiPage.module.css'
+} from '../../../../ai/api'
+import dialogStyles from '../../../../shared/dialogs/SiteCreateDialog/SiteCreateDialog.module.css'
+import styles from './ai.module.css'
 import mcpStyles from './McpTab.module.css'
 
 // MCP-relevant capabilities, grouped read vs. write — the surface an external

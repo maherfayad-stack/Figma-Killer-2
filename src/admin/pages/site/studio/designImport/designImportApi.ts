@@ -31,6 +31,8 @@ const ColorCandidateSchema = Type.Object({
   id: Type.String(),
   name: Type.String(),
   value: Type.String(),
+  /** Resolved dark-mode value, present only when the source declares one that genuinely differs from `value` — see `parseCssTokens.ts`'s `ColorTokenCandidate.dark`. */
+  dark: Type.Optional(Type.String()),
   file: Type.String(),
 })
 export type ColorCandidate = Static<typeof ColorCandidateSchema>

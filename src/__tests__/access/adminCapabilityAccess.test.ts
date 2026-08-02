@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test'
 import type { CoreCapability } from '@core/capabilities'
 import type { CmsCurrentUser } from '@core/persistence'
 import {
+  canAccessAiWorkspace,
   canAccessPluginsWorkspace,
   canAccessUsersWorkspace,
   canAccessWorkspace,
@@ -62,11 +63,11 @@ describe('admin capability access helpers', () => {
     expect(canAccessWorkspace(operator, 'site')).toBe(true)
     expect(canAccessPluginsWorkspace(operator)).toBe(false)
     expect(canAccessUsersWorkspace(operator)).toBe(false)
-    expect(canAccessWorkspace(operator, 'ai')).toBe(false)
+    expect(canAccessAiWorkspace(operator)).toBe(false)
     expect(canAccessWorkspace(operator, 'account')).toBe(true)
     expect(firstAccessibleWorkspace(operator)).toBe('dashboard')
 
-    // Plugins/Users are Settings-modal panels, not routable workspaces —
+    // Plugins/Users/AI are Settings-modal panels, not routable workspaces —
     // a role that only holds their capabilities falls through to the
     // universal 'account' fallback (every authenticated user can reach it).
     const userManager = user('user-manager', ['users.manage'])
@@ -79,8 +80,8 @@ describe('admin capability access helpers', () => {
     expect(firstAccessibleWorkspace(pluginOperator)).toBe('account')
 
     const aiAuditor = user('ai-auditor', ['ai.audit.read'])
-    expect(canAccessWorkspace(aiAuditor, 'ai')).toBe(true)
-    expect(firstAccessibleWorkspace(aiAuditor)).toBe('ai')
+    expect(canAccessAiWorkspace(aiAuditor)).toBe(true)
+    expect(firstAccessibleWorkspace(aiAuditor)).toBe('account')
 
     expect(canAccessWorkspace(null, 'account')).toBe(false)
     expect(firstAccessibleWorkspace(null)).toBeNull()

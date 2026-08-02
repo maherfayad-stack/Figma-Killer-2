@@ -23,7 +23,7 @@ import type {
   ImportFontToken,
   ImportScript,
   ImportStylesheet,
-} from './types'
+} from './cssImportTypes'
 import type { ConditionDef } from '@core/page-tree'
 import type { ImportFragment } from '@core/htmlImport'
 import type { FontEntry } from '@core/fonts'

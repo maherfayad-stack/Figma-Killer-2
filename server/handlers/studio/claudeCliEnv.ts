@@ -165,15 +165,48 @@ const MACOS_UNSUPPORTED_REASON =
   'one Claude login, so this provider is disabled here rather than silently sharing it.'
 
 /**
+ * Single-user local-development escape hatch for the macOS block below.
+ *
+ * The block exists because ONE Mac serving SEVERAL Studio users would silently
+ * share one Keychain login between them. On a developer's own laptop, where
+ * the only Studio user is the person already logged into the CLI, there is no
+ * second user to leak a login to and the block only prevents them using the
+ * subscription they are paying for.
+ *
+ * Deliberately an environment variable and not a setting: a setting lives in
+ * the database, which means it can be flipped by anyone who reaches the admin
+ * UI — including on a real multi-user host, which is the exact situation the
+ * block protects. An env var has to be set by whoever starts the process, so
+ * the decision stays with the operator of the machine.
+ *
+ * Off unless explicitly set to `1` or `true`. Any other value (including
+ * `0`, `false`, or an empty string) leaves the block in force — an unset or
+ * typo'd variable must never read as consent.
+ */
+const MACOS_OVERRIDE_ENV_VAR = 'STUDIO_ALLOW_MACOS_CLAUDE_CLI'
+
+function macosOverrideEnabled(env: NodeJS.ProcessEnv): boolean {
+  const raw = env[MACOS_OVERRIDE_ENV_VAR]?.trim().toLowerCase()
+  return raw === '1' || raw === 'true'
+}
+
+/**
  * Whether this host can host per-user Claude CLI logins at all. macOS is the
  * one platform `CLAUDE_CONFIG_DIR` cannot isolate (credentials live in the OS
  * keychain, not a relocatable file) — WS-11 §2.1 requires disabling the
  * provider there with the reason shown, never falling back to a shared login.
+ *
+ * `STUDIO_ALLOW_MACOS_CLAUDE_CLI` overrides that for single-user local
+ * development — see `MACOS_OVERRIDE_ENV_VAR` above for why the isolation
+ * argument does not apply there, and why this is an env var rather than a
+ * setting. The multi-user hazard is unchanged; the override asserts there are
+ * no other users, it does not fix the Keychain.
  */
 export function claudeCliPlatformSupport(
   platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
 ): ClaudeCliPlatformSupport {
-  if (platform === 'darwin') {
+  if (platform === 'darwin' && !macosOverrideEnabled(env)) {
     return { supported: false, reason: MACOS_UNSUPPORTED_REASON }
   }
   return { supported: true }

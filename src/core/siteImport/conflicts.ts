@@ -17,6 +17,7 @@
  *   items by passing a partial array of resolutions.
  */
 
+import type { NewStyleRule, ImportColorToken, ImportFontToken } from './cssImportTypes'
 import type {
   ImportPlan,
   PageConflict,
@@ -25,10 +26,7 @@ import type {
   CrossSheetClassConflict,
   ConflictResolution,
   PagePlan,
-  NewStyleRule,
-  ImportColorToken,
-  ImportFontToken,
-} from './types'
+} from './importPlanTypes'
 import type { SiteDocument, PageNode } from '@core/page-tree'
 import type { ImportFragment } from '@core/htmlImport'
 import { normalizeFrameworkColorSlug } from '@core/framework'

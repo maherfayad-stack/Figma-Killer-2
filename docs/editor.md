@@ -90,7 +90,6 @@ The route table (`src/admin/router.tsx`):
 | `/admin/media`                          | `<AdminEntry section="media" />` |
 | `/admin/plugins`                        | `<AdminEntry section="plugins" />` |
 | `/admin/users`                          | `<AdminEntry section="users" />` |
-| `/admin/ai`                             | `<AdminEntry section="ai" />` (AI credentials, models, defaults) |
 | `/admin/account`                        | `<AdminEntry section="account" />` |
 | `/admin/plugins/:pluginId/:pageId`      | `<AdminEntry section="pluginPage" />` |
 

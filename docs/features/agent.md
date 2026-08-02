@@ -119,24 +119,25 @@ src/admin/pages/site/panels/AgentPanel/
 ├── AgentPanel.module.css
 └── index.ts                — barrel export
 
-src/admin/pages/ai/
-├── AiPage.tsx              — /admin/ai workspace; three tabs gated by ai.providers.manage + ai.audit.read
-├── AiPage.module.css
-└── tabs/
+src/admin/modals/Settings/sections/
+├── AiSection.tsx           — Settings modal "AI" panel; four tabs gated by ai.providers.manage + ai.audit.read
+└── ai/
+    ├── ai.module.css
     ├── ProvidersTab.tsx    — CRUD for ai_credentials rows (provider-derived API key or endpoint credential shape)
     ├── DefaultsTab.tsx     — Studio's default-model editor (single row — one agent, one default)
+    ├── McpTab.tsx          — create/list/revoke MCP connectors
     ├── AuditTab.tsx        — usage audit view: totals strip, by-model/user tables, daily bar chart
     └── UsageTablePanel.tsx — shared table scaffolding (title + hint header, numeric-aligned columns, empty row)
 ```
 
 Shared AI number and spend formatting lives in `src/admin/ai/usageFormat.ts`, so
-the Audit workspace and compact composer usage detail use identical labels.
+the Audit tab and compact composer usage detail use identical labels.
 
-The Agent Panel owns the credential list load for its header, lock-state empty states, and model picker. The header always contains a `ConversationHistory` popover (browse and restore past threads), a "New chat" button (`startNewAgentConversation`), a conditional "Clear conversation" button (visible when `agentMessages.length > 0`), a streaming badge, and an "AI settings" shortcut that routes to `/admin/ai`. The AI settings button is always visible in the header, independent of credential state.
+The Agent Panel owns the credential list load for its header, lock-state empty states, and model picker. The header always contains a `ConversationHistory` popover (browse and restore past threads), a "New chat" button (`startNewAgentConversation`), a conditional "Clear conversation" button (visible when `agentMessages.length > 0`), a streaming badge, and an "AI settings" shortcut that opens the Settings modal's AI section (`useAdminUi.getState().openSettings('ai')` — AI credentials/defaults/MCP are no longer a standalone route). The AI settings button is always visible in the header, independent of credential state.
 
 The composer has two distinct lock states, expressed as `lockReason: 'setup' | 'chooseModel' | null`:
 
-- `'setup'` — no credentials exist at all. The message area shows a "Connect an AI provider" empty state with a CTA to `/admin/ai`. The model picker is hidden. The textarea placeholder reads "Add AI credentials to start chatting" and the send button tooltip reads "Add AI credentials first".
+- `'setup'` — no credentials exist at all. The message area shows a "Connect an AI provider" empty state with a CTA that opens Settings → AI. The model picker is hidden. The textarea placeholder reads "Add AI credentials to start chatting" and the send button tooltip reads "Add AI credentials first".
 - `'chooseModel'` — credentials are loaded but no default or explicit pick is active yet (`activeCredentialId` or `activeModelId` is null). The message area shows "Choose a model to get started" with a link to set a default in AI settings. The model picker remains visible so the user can pick inline. The textarea placeholder reads "Choose a model below to start" and the send button tooltip reads "Choose a model first".
 - `null` — `Boolean(activeCredentialId && activeModelId)` is true; the composer is fully usable.
 
@@ -291,7 +292,7 @@ The dynamic suffix is server-only (project profile + trust tier) — it does **n
 
 `generateStudioAgentRoster(dir)` is called from `claudeCli.ts`'s `streamClaudeCli`, right before every real turn spawns (`workspaceDir` validated non-null) — "written beside the MCP config", alongside `buildMcpConfigJson`. Best-effort: a probe failure logs and degrades the turn to "no subagents", never blocks the chat (`claudeCli.test.ts`'s "a roster-generation failure degrades the turn, never aborts it").
 
-**The nine-agent roster:**
+**The ten-agent roster:**
 
 | Agent | Tools | Owns |
 |---|---|---|
@@ -300,6 +301,7 @@ The dynamic suffix is server-only (project profile + trust tier) — it does **n
 | `style-surgeon` | apply-edits + read tools | Styling only, through the project's existing mechanism — never a second one. |
 | `fidelity-auditor` | 4 verify tools | Verification, run last — the one that can say "it didn't work". |
 | `design-critic` | export/render | Visual judgement on a RENDERED frame — hierarchy, spacing, contrast, state coverage. |
+| `arabic-ux-writer` | list/find/get-source/read + apply-edits | Writes and reviews Arabic UX microcopy (فصحى مبسطة) — locates a node's exact source location and rewrites TEXT-kind edits only; flags عرنجي, verbosity, and reports RTL layout breakage as a finding (`RTL_PHYSICAL_PROPERTY`) rather than editing around it. |
 | `almosafer-ds-expert` | project-profile/find/read | ALM 2.0 authority — see "The ALM design-system expert" below. |
 | `synthesizer` | 3 read tools | Turns scattered findings into one ordered plan with open questions named — edits nothing. |
 | `agent-creator` | **none** | Drafts new subagent definitions as text — never writes a file itself. |
@@ -340,6 +342,8 @@ Every agent's `tools:` frontmatter is **explicit and non-empty-or-omitted** — 
      statusline-setup · sonnet
    ```
    All nine generated agents resolved by name, additively alongside the CLI's own five built-ins — confirming both "the roster generates correctly" and "generation merges rather than replaces", against a real `claude agents` run, zero cost.
+
+   This transcript predates `arabic-ux-writer` (added after this manual run) and has not been re-captured — the roster now generates ten agents (`14 active agents` above would read `15`), but that count has only been verified through `agentRoster.test.ts`, not re-run against the real binary. Re-capture this transcript the next time a manual `claude agents` pass is done.
 
 ### Session controls — model, effort, mode, attachments (WS-12 §5)
 
@@ -533,7 +537,7 @@ The handler (`server/ai/handlers/chat.ts`):
 
 ### `GET /admin/api/ai/audit?since=ISO&tz=IANA`
 
-Returns the rollups consumed by the `/admin/ai` Audit tab and the dashboard "AI usage this month" widget. Gated by `ai.audit.read`. There is no per-scope breakdown — Studio has exactly one agent, so a "by surface" rollup would always be a single row identical to `totals`.
+Returns the rollups consumed by the Settings → AI Audit tab and the dashboard "AI usage this month" widget. Gated by `ai.audit.read`. There is no per-scope breakdown — Studio has exactly one agent, so a "by surface" rollup would always be a single row identical to `totals`.
 
 ```ts
 // Query params
@@ -552,7 +556,7 @@ tz?:    string   // IANA timezone (e.g. "Europe/Bratislava"); defaults to UTC
 
 `byDay` is the time-series chart data — each `day` field is `YYYY-MM-DD` in the viewer's local timezone (not UTC). The daily rollup pulls raw message rows and bins them in JS via `localDayKeyFactory(timeZone)` (`server/time.ts`) rather than SQL date-truncation, because the day boundary depends on the viewer's timezone which the database doesn't know. The client (see `AuditTab.tsx` → `listAiAudit`) reads `Intl.DateTimeFormat().resolvedOptions().timeZone` and passes it as `?tz=`.
 
-The Audit tab (`src/admin/pages/ai/tabs/AuditTab.tsx`) consumes this endpoint. The daily rollup there also aligns its "Today" range window to local midnight (`setHours(0, 0, 0, 0)`) so the day boundary is consistent both in the filter and in the bar chart. The by-model and by-user rollups render through `UsageTablePanel` (`tabs/UsageTablePanel.tsx`) — a shared table component that takes a `columns` config and handles the empty-state row. Number and cost formatting (`formatNumber`, `formatCost`) live in `src/admin/ai/usageFormat.ts`, a plain shared leaf used by both Audit and the composer context tooltip.
+The Audit tab (`src/admin/modals/Settings/sections/ai/AuditTab.tsx`) consumes this endpoint. The daily rollup there also aligns its "Today" range window to local midnight (`setHours(0, 0, 0, 0)`) so the day boundary is consistent both in the filter and in the bar chart. The by-model and by-user rollups render through `UsageTablePanel` (`sections/ai/UsageTablePanel.tsx`) — a shared table component that takes a `columns` config and handles the empty-state row. Number and cost formatting (`formatNumber`, `formatCost`) live in `src/admin/ai/usageFormat.ts`, a plain shared leaf used by both Audit and the composer context tooltip.
 
 ### `POST /admin/api/ai/tool-result`
 
@@ -1012,9 +1016,9 @@ unblocks deletion of the credential that had been protected by the default FK.
   - `server/ai/audit/store.ts` — `getUsageTotals`, `getUsageByUser`, `getUsageByModel`, `getUsageByDay` (usage rollup queries)
   - `server/ai/handlers/audit.ts` — `GET /admin/api/ai/audit` handler
   - `server/time.ts` — `resolveTimeZone` + `localDayKeyFactory` (shared timezone day-bucketing utilities)
-  - `src/admin/pages/ai/AiPage.tsx` — `/admin/ai` workspace (Providers / Defaults / Audit tabs)
-  - `src/admin/pages/ai/tabs/AuditTab.tsx` — usage audit view (totals strip, tables, daily bar chart)
-  - `src/admin/pages/ai/tabs/UsageTablePanel.tsx` — shared table scaffolding for audit rollups
+  - `src/admin/modals/Settings/sections/AiSection.tsx` — Settings modal AI panel (Providers / Defaults / MCP / Audit tabs)
+  - `src/admin/modals/Settings/sections/ai/AuditTab.tsx` — usage audit view (totals strip, tables, daily bar chart)
+  - `src/admin/modals/Settings/sections/ai/UsageTablePanel.tsx` — shared table scaffolding for audit rollups
   - `src/admin/ai/usageFormat.ts` — shared `formatNumber` / `formatCost` helpers
   - `src/admin/pages/site/agent/agentSlice.ts` — slice factory (`createAgentSlice`)
   - `src/admin/pages/site/agent/agentProviderUpdate.ts` — timed provider/model update and ambiguous-commit reconciliation

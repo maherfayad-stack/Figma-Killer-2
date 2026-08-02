@@ -5,7 +5,7 @@
  * tracks daily cost for the current month so the operator can spot a
  * runaway day at a glance.
  *
- * The widget calls the same audit endpoint the `/admin/ai` Audit tab uses;
+ * The widget calls the same audit endpoint the Settings → AI → Audit tab uses;
  * it just narrows `since` to the start of the calendar month. If the user
  * lacks `ai.audit.read` (e.g. a Client-role admin who can edit content
  * but not see site-wide AI spend) the endpoint returns 403 and the widget

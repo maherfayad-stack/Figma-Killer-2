@@ -54,7 +54,7 @@ export const openaiCompatibleDriver: AiProvider = {
       yield {
         type: 'error',
         message:
-          'This provider requires a base URL. Add a base-URL credential in /admin/ai/providers and pick it for the site default.',
+          'This provider requires a base URL. Add a base-URL credential in Settings → AI → Providers and pick it for the site default.',
       }
       return
     }

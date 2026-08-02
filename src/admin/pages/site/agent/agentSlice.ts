@@ -585,7 +585,7 @@ export function createAgentSlice(
         )
         if (!conversationId) {
           const message = config.noProviderMessage
-            ?? 'No AI provider configured. Open /admin/ai/providers to add a credential, then /admin/ai/defaults to pick one.'
+            ?? 'No AI provider configured. Open Settings → AI → Providers to add a credential, then Settings → AI → Defaults to pick one.'
           set({ agentError: message })
           pushToast({ kind: 'error', title: "Couldn't send message", body: message })
           return { accepted: false }

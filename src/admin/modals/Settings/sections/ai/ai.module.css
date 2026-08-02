@@ -1,6 +1,6 @@
-/* AI workspace page — Providers / Defaults / Audit tabs.
-   Same visual conventions as UsersPage: stacked sections, 28px gutters,
-   `--text-bright` for headings, `--text-subtle` for descriptions. */
+/* AI panel — Providers / Defaults / MCP / Audit tabs, inside the Settings
+   modal. Same visual conventions as UsersSection: stacked sections, 28px
+   gutters, `--text-bright` for headings, `--text-subtle` for descriptions. */
 
 .body {
     display: grid;

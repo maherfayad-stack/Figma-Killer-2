@@ -20,7 +20,8 @@
 
 import type { PageNode } from '@core/page-tree'
 import type { ImportFragment } from '@core/htmlImport'
-import type { ImportPlan, ImportStylesheet, NewStyleRule, ImportFontFamily } from './types'
+import type { ImportStylesheet, NewStyleRule, ImportFontFamily } from './cssImportTypes'
+import type { ImportPlan } from './importPlanTypes'
 
 // ---------------------------------------------------------------------------
 // Props that may carry normalised FileMap keys in page nodes

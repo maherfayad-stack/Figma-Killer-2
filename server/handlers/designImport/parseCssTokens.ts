@@ -75,6 +75,18 @@ export interface ColorTokenCandidate {
   id: string
   name: string
   value: string
+  /**
+   * The resolved value from a recognized dark-mode selector block (see
+   * `tokenExtractCssScan.ts`'s `isDarkSelector`), when the source
+   * declares one AND it genuinely differs from `value` (the light value).
+   * Absent — not an empty string — when the source declares no dark
+   * override at all, or when the dark declaration resolves to the exact
+   * same value as light (nothing to import; marking that "dark-enabled"
+   * would just be noise the user has to clean up by hand). Only ever set
+   * for CSS-sourced candidates: JSON/JS token files have no dark-selector
+   * concept.
+   */
+  dark?: string
   file: string
 }
 
@@ -253,6 +265,20 @@ function nextCandidateId(): string {
 }
 
 /**
+ * `buildCssCandidates`'s result: the light-resolved vars (as before), plus a
+ * side table of resolved DARK values keyed by the same bare name used in
+ * `ExtractedCssVar.name` — kept separate rather than folded into
+ * `ExtractedCssVar` because only a `color`-classified candidate ever surfaces
+ * a `dark` field (see `ColorTokenCandidate.dark`'s doc); typography/spacing
+ * candidates have no dark-mode concept.
+ */
+interface CssCandidateResult {
+  vars: ExtractedCssVar[]
+  /** Bare name -> resolved dark value, present ONLY when it genuinely differs from the light value (see `ColorTokenCandidate.dark`). */
+  darkByName: Map<string, string>
+}
+
+/**
  * CSS files are concatenated (in order) into ONE text before scanning — a
  * design-token repo commonly splits `colors.css`/`spacing.css` referencing a
  * shared `variables.css`, and `var()` resolution needs to see all of it at
@@ -261,11 +287,17 @@ function nextCandidateId(): string {
  * ORIGINAL files a given name came from, for the preview) is tracked
  * separately, per-file, with the same "later file wins" cascade order the
  * combined map already resolves duplicates by.
+ *
+ * Dark values are resolved through the MERGED light+dark map (mirrors
+ * `tokenExtractCssScan.ts`'s `classifyCssText`) — a dark block typically
+ * overrides only some tokens, and a `var()` chain inside it commonly falls
+ * back to a light-only definition for the rest.
  */
-function buildCssCandidates(cssFiles: ReadonlyArray<{ relPath: string; contents: string }>): ExtractedCssVar[] {
-  if (cssFiles.length === 0) return []
+function buildCssCandidates(cssFiles: ReadonlyArray<{ relPath: string; contents: string }>): CssCandidateResult {
+  if (cssFiles.length === 0) return { vars: [], darkByName: new Map() }
   const combined = cssFiles.map((f) => f.contents).join('\n')
-  const { light } = collectRootScopeMaps(combined)
+  const { light, dark } = collectRootScopeMaps(combined)
+  const darkMerged = dark.size > 0 ? new Map([...light, ...dark]) : undefined
 
   const nameToFile = new Map<string, string>()
   for (const file of cssFiles) {
@@ -274,17 +306,25 @@ function buildCssCandidates(cssFiles: ReadonlyArray<{ relPath: string; contents:
     }
   }
 
-  // `light` and `nameToFile` are both keyed by the RAW `--name` (that is what
-  // `var()` resolution has to match); the `--` is dropped only on the way out.
-  const out: ExtractedCssVar[] = []
+  // `light`/`dark`/`nameToFile` are all keyed by the RAW `--name` (that is
+  // what `var()` resolution has to match); the `--` is dropped only on the
+  // way out.
+  const vars: ExtractedCssVar[] = []
+  const darkByName = new Map<string, string>()
   for (const [name, raw] of light) {
-    out.push({
+    const resolvedLight = resolveVarValue(raw, light)
+    vars.push({
       name: bareTokenName(name),
-      value: resolveVarValue(raw, light),
+      value: resolvedLight,
       file: nameToFile.get(name) ?? cssFiles[0]!.relPath,
     })
+    const darkRaw = dark.get(name)
+    if (darkRaw !== undefined) {
+      const resolvedDark = resolveVarValue(darkRaw, darkMerged!)
+      if (resolvedDark !== resolvedLight) darkByName.set(bareTokenName(name), resolvedDark)
+    }
   }
-  return out
+  return { vars, darkByName }
 }
 
 /**
@@ -304,7 +344,16 @@ export function buildTokenCandidates(
   tokenFiles: ReadonlyArray<{ relPath: string; contents: string }> = [],
 ): TokenCandidates {
   const byName = new Map<string, ExtractedCssVar>()
-  for (const v of buildCssCandidates(cssFiles)) byName.set(v.name, v)
+  const { vars: cssVars, darkByName } = buildCssCandidates(cssFiles)
+  // Tracks which names' CURRENT winner in `byName` is still the CSS-sourced
+  // entry — a JSON/JS token file overriding a same-named CSS var (cascade
+  // "later file wins") invalidates that CSS var's dark counterpart too, since
+  // the light value it was resolved against no longer applies.
+  const wonByCss = new Set<string>()
+  for (const v of cssVars) {
+    byName.set(v.name, v)
+    wonByCss.add(v.name)
+  }
   for (const file of tokenFiles) {
     const isJson = file.relPath.toLowerCase().endsWith('.json')
     let vars: ExtractedCssVar[]
@@ -319,7 +368,10 @@ export function buildTokenCandidates(
     } else {
       vars = extractJsTokens(file.contents, file.relPath)
     }
-    for (const v of vars) byName.set(v.name, v)
+    for (const v of vars) {
+      byName.set(v.name, v)
+      wonByCss.delete(v.name)
+    }
   }
 
   const colors: ColorTokenCandidate[] = []
@@ -330,7 +382,14 @@ export function buildTokenCandidates(
   for (const v of byName.values()) {
     const category = classifyToken(v.name, v.value)
     if (category === 'color') {
-      colors.push({ id: nextCandidateId(), name: v.name, value: v.value, file: v.file })
+      const dark = wonByCss.has(v.name) ? darkByName.get(v.name) : undefined
+      colors.push({
+        id: nextCandidateId(),
+        name: v.name,
+        value: v.value,
+        ...(dark !== undefined ? { dark } : {}),
+        file: v.file,
+      })
     } else if (category === 'typography') {
       const px = toPx(v.value)
       if (px !== null) typography.push({ id: nextCandidateId(), name: v.name, value: v.value, px, file: v.file })

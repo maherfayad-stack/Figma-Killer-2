@@ -52,10 +52,17 @@ function applyColors(store: Store, colors: readonly ColorCandidate[]): number {
     const norm = normalizeFrameworkColorSlug(c.name)
     const existing = store.site?.settings.framework?.colors.tokens ?? []
     const match = existing.find((e) => normalizeFrameworkColorSlug(e.slug) === norm)
+    // `c.dark` is only ever present when the source declared a genuinely
+    // different dark value (see `ColorTokenCandidate.dark`'s doc) — so its
+    // mere presence is the correct `darkModeEnabled` signal. When absent,
+    // the dark fields are left out of the patch entirely rather than reset,
+    // so re-applying an import never clobbers dark settings a user already
+    // configured by hand for an existing token.
+    const darkPatch = c.dark !== undefined ? { darkValue: c.dark, darkModeEnabled: true } : {}
     if (match) {
-      store.updateFrameworkColorToken(match.id, { lightValue: c.value })
+      store.updateFrameworkColorToken(match.id, { lightValue: c.value, ...darkPatch })
     } else {
-      store.createFrameworkColorToken({ slug: c.name, lightValue: c.value })
+      store.createFrameworkColorToken({ slug: c.name, lightValue: c.value, ...darkPatch })
     }
   }
   return colors.length

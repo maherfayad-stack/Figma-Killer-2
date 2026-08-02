@@ -13,13 +13,8 @@
 import { expandLinkedCssImports } from './cssImports'
 import { stripGoogleFontImportRules } from './fontImports'
 import type { RawStylesheetSource } from './assetPlan'
-import type {
-  FileMap,
-  ImportWarning,
-  LinkedStylesheet,
-  PagePlan,
-  StylesheetImportMode,
-} from './types'
+import type { ImportWarning, LinkedStylesheet, StylesheetImportMode } from './cssImportTypes'
+import type { FileMap, PagePlan } from './importPlanTypes'
 
 interface StylesheetPartition {
   /** Every top-level linked sheet with its import mode, in discovery order. */

@@ -48,7 +48,7 @@ export function classifyHttpFailure(
   if (status === 401 || status === 403) {
     return {
       kind: 'generic',
-      message: `${providerLabel} authentication failed. Check your API key in /admin/ai/providers.`,
+      message: `${providerLabel} authentication failed. Check your API key in Settings → AI → Providers.`,
     }
   }
   if (status === 402 || status === 429) {

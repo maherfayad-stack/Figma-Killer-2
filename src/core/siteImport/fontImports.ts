@@ -1,6 +1,6 @@
 import { compareVariants, findGoogleFont, parseVariant } from '@core/fonts'
 import type { GoogleFontFamily } from '@core/fonts'
-import type { ImportGoogleFont } from './types'
+import type { ImportGoogleFont } from './cssImportTypes'
 
 const GOOGLE_FONT_STYLESHEET_HOST = 'fonts.googleapis.com'
 const CSS2_PATH = '/css2'

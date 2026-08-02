@@ -26,9 +26,9 @@ import {
   launchClaudeCliLoginTerminal,
   listCredentials,
   testCredential,
-} from '../../../ai/api'
+} from '../../../../ai/api'
 import { ApiError, isAbortError } from '@core/http'
-import styles from '../AiPage.module.css'
+import styles from './ai.module.css'
 import { getErrorMessage } from '@core/utils/errorMessage'
 
 type ProviderId = 'anthropic' | 'openai' | 'ollama' | 'openrouter' | 'openai-compatible' | 'claudeCli'

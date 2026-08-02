@@ -143,7 +143,7 @@ export function ContextMenu({
   width = minWidth,
   maxWidth,
   maxHeight,
-  zIndex = 1000,
+  zIndex,
   menuClassName,
   triggerRef,
   x: pointX,
@@ -225,7 +225,10 @@ export function ContextMenu({
     '--context-menu-max-width': maxWidth != null
       ? `${Math.max(maxWidth, minWidth)}px`
       : 'calc(100vw - 16px)',
-    '--context-menu-z-index': zIndex,
+    // Only set when a caller genuinely overrides it. The default lives in the
+    // CSS rule (`--menu-z-index`), not here — a JS literal default silently
+    // rendered every menu opened from inside a modal shell UNDERNEATH it.
+    ...(zIndex != null ? { '--context-menu-z-index': zIndex } : null),
     ...(maxHeight != null ? { '--context-menu-max-height': `${maxHeight}px` } : null),
     ...(measuring ? { visibility: 'hidden' as const } : null),
   } as CSSProperties

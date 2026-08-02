@@ -5,7 +5,7 @@
  *   - SpotlightRoot (Cmd+K palette) + its keybinding listener
  *   - AdminSessionProvider (session context for authenticated children)
  *   - StepUpProvider (auth re-verification for sensitive actions)
- *   - The 5 workspace page components (DashboardPage, SitePage, …)
+ *   - The 4 workspace page components (DashboardPage, SitePage, …)
  *   - installPluginRuntime() (populates globalThis.__studio for plugins)
  *
  * Splitting this out from `AdminEntry` keeps the cold-load JS execution
@@ -24,12 +24,12 @@
  *      'dashboard') loads first. React renders it; `prewarmedLazy`'s
  *      cold-path triggers `.preload()` and suspends to the nearest
  *      Suspense boundary until the import lands. The DASHBOARD chunk
- *      gets vite's CPU / the HTTP connection slot to itself — no 4
+ *      gets vite's CPU / the HTTP connection slot to itself — no 3
  *      sibling compilations competing for resources.
  *
  *   2. After the active page paints (i.e., the user actually sees the
  *      dashboard), an effect fires `requestIdleCallback` to schedule
- *      `.preload()` calls for the OTHER 4 workspace pages. They load
+ *      `.preload()` calls for the OTHER 3 workspace pages. They load
  *      in the background while the user is reading the dashboard.
  *
  *   3. When the user clicks any nav link, the target page's cached
@@ -61,7 +61,7 @@ import { prewarmedLazy } from './lib/prewarmedLazy'
 import { useAdminUi } from './state/adminUi'
 import styles from './AdminEntry.module.css'
 
-// The 5 workspace pages — pre-warmed AND synchronously-renderable once
+// The 4 workspace pages — pre-warmed AND synchronously-renderable once
 // loaded. See file header for the rationale.
 const DashboardPage = prewarmedLazy(
   () => import('./pages/dashboard/DashboardPage').then((m) => ({ default: m.DashboardPage })),
@@ -74,10 +74,6 @@ const SitePage = prewarmedLazy(
 const PluginPage = prewarmedLazy(
   () => import('./pages/plugins/PluginPage').then((m) => ({ default: m.PluginPage })),
   { displayName: 'PluginPage' },
-)
-const AiPage = prewarmedLazy(
-  () => import('./pages/ai/AiPage').then((m) => ({ default: m.AiPage })),
-  { displayName: 'AiPage' },
 )
 const AccountPage = prewarmedLazy(
   () => import('./pages/account/AccountPage').then((m) => ({ default: m.AccountPage })),
@@ -129,7 +125,6 @@ if (typeof window !== 'undefined') {
   const activePage =
     pathname.startsWith('/admin/site') ? SitePage :
     pathname.startsWith('/admin/plugins/') ? PluginPage :
-    pathname.startsWith('/admin/ai') ? AiPage :
     pathname.startsWith('/admin/account') ? AccountPage :
     DashboardPage
   void activePage.preload().catch(() => {
@@ -151,7 +146,6 @@ interface AuthenticatedAdminProps {
 const ALL_WORKSPACE_PAGES = [
   SitePage,
   DashboardPage,
-  AiPage,
   AccountPage,
   PluginPage,
 ]
@@ -159,7 +153,6 @@ const ALL_WORKSPACE_PAGES = [
 function pageForSection(section: AdminWorkspace) {
   return (
     section === 'site' ? SitePage :
-    section === 'ai' ? AiPage :
     section === 'pluginPage' ? PluginPage :
     section === 'account' ? AccountPage :
     DashboardPage
@@ -273,7 +266,6 @@ export default function AuthenticatedAdmin({ section, currentUser }: Authenticat
           <Suspense fallback={<AppLoadingScreen />}>
             {section === 'dashboard' ? <DashboardPage /> :
               section === 'site' ? <SitePage /> :
-              section === 'ai' ? <AiPage /> :
               section === 'pluginPage' ? <PluginPage /> :
               section === 'account' ? <AccountPage /> :
               <DashboardPage />}

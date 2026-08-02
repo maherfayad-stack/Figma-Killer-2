@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, mock } from 'bun:test'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 
-mock.module('../../../ai/api', () => ({
+mock.module('../../../../ai/api', () => ({
   listMcpConnectors: async () => [],
   createMcpConnector: async () => ({
     connector: {

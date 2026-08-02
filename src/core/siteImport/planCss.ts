@@ -18,7 +18,7 @@ import { extractRootColorTokens } from './colorTokens'
 import { extractRootFontTokens } from './fontTokens'
 import { stripGoogleFontImportRules } from './fontImports'
 import type { CssFileResult } from './assetPlan'
-import type { ImportColorToken, ImportFontToken, ImportWarning } from './types'
+import type { ImportColorToken, ImportFontToken, ImportWarning } from './cssImportTypes'
 
 /**
  * Accumulators threaded through every `parseCssSourceIntoPlan` call of one

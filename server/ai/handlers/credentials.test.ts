@@ -118,8 +118,29 @@ describe('secretShapeError', () => {
     expect(secretShapeError('claudeCli', 'sk-ant-oat01-abc123')).toBeNull()
   })
 
-  it('has no opinion on providers that declare no shape', () => {
+  // The mirror of the two claudeCli cases above. Before this guard existed the
+  // pair was one-directional: a console key in the subscription row got a
+  // message naming where it belonged, while a setup-token in the API row was
+  // silently encrypted and stored, then surfaced as a bare
+  // `[ai/anthropic] models request failed: 401 Unauthorized`.
+  it('points a Claude Code setup-token at the provider it actually works under', () => {
+    const message = secretShapeError('anthropic', 'sk-ant-oat01-abc123')
+    expect(message).toContain('setup-token')
+    expect(message).toContain('"Claude Code (subscription)" provider')
+  })
+
+  it('accepts a real Anthropic API key', () => {
     expect(secretShapeError('anthropic', 'sk-ant-api03-whatever')).toBeNull()
+  })
+
+  // Deliberately not a positive `sk-ant-api…` test: only the one known-wrong
+  // secret is named, so a future console-key prefix is not rejected on a guess.
+  it('accepts an unrecognised Anthropic secret rather than guessing', () => {
+    expect(secretShapeError('anthropic', 'sk-ant-somethingnew-123')).toBeNull()
+  })
+
+  it('has no opinion on providers that declare no shape', () => {
+    expect(secretShapeError('openai', 'sk-proj-whatever')).toBeNull()
   })
 
   it('accepts an absent secret — "no key supplied" is not a shape failure', () => {

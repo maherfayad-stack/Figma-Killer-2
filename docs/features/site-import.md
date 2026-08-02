@@ -27,7 +27,9 @@ The static-site pipeline has two parts: a pure analysis function (`buildImportPl
 ```text
 src/core/siteImport/
 ├── index.ts             — public barrel
-├── types.ts             — all shared types: FileMap, ImportPlan, ImportResult, ImportWarning, error classes
+├── cssImportTypes.ts    — Phase 1 CSS→StyleRule types: NewStyleRule, ImportWarning, BreakpointHint, AssetRef, font/colour token types
+├── importPlanTypes.ts   — Phase 2 pipeline types: FileMap, FileRole, PagePlan, conflict types, ImportPlan, ImportResult
+├── importErrors.ts      — typed error classes: EmptyImportError, OversizeImportError, ZipBombError, TooManyFilesError, PathTraversalError
 ├── ingestInput.ts       — normalize input(s) → FileMap (loose files / folder / .zip)
 ├── classifyFiles.ts     — extension/MIME → FileRole: html | css | js | image | font | binary | meta
 ├── htmlPagePlan.ts      — per-HTML-file plan: parse body via importHtml, derive title + slug, resolve <link> refs, and preserve executable scripts
@@ -354,7 +356,9 @@ On success the same step switches to its **complete** state — a success mark, 
 - [docs/reference/page-tree.md](../reference/page-tree.md) — `NodeTree<PageNode>`, `ImportFragment` shape
 - [docs/reference/typebox-patterns.md](../reference/typebox-patterns.md) — boundary validation
 - Source-of-truth files:
-  - `src/core/siteImport/types.ts` — `ImportPlan`, `ImportResult`, `ImportWarning`, `ImportFontToken`, `ImportColorToken`, error classes
+  - `src/core/siteImport/cssImportTypes.ts` — `ImportWarning`, `ImportFontToken`, `ImportColorToken`
+  - `src/core/siteImport/importPlanTypes.ts` — `ImportPlan`, `ImportResult`
+  - `src/core/siteImport/importErrors.ts` — error classes
   - `src/core/siteImport/buildPlan.ts` — `buildImportPlan`; `src/core/siteImport/commitPlan.ts` — `commitImportPlan`
   - `src/core/siteImport/adapter.ts` — `SiteImportAdapter`, `SiteImportTransaction` interfaces
   - `src/core/siteImport/colorTokens.ts` — `extractRootColorTokens`

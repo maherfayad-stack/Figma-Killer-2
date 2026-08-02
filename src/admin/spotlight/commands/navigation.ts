@@ -26,6 +26,12 @@ const PLUGINS_ACCESS_CAPABILITIES = [
   'plugins.lifecycle',
 ] as const
 
+/** Mirrors `canAccessAiWorkspace` in access.ts. */
+const AI_ACCESS_CAPABILITIES = [
+  'ai.providers.manage',
+  'ai.audit.read',
+] as const
+
 export function getNavigationCommands(): Command[] {
   return [
     {
@@ -68,6 +74,20 @@ export function getNavigationCommands(): Command[] {
       run: (ctx) => {
         ctx.closeSpotlight()
         useAdminUi.getState().openSettings('users')
+      },
+    },
+    {
+      id: 'navigation.goToAi',
+      title: 'Open Settings → AI',
+      subtitle: 'Manage AI provider credentials, defaults, and MCP connectors',
+      group: 'navigation',
+      iconName: 'ai-settings-solid',
+      keywords: ['ai', 'providers', 'credentials', 'defaults', 'mcp', 'audit', 'settings'],
+      workspaces: ['any'],
+      capability: AI_ACCESS_CAPABILITIES,
+      run: (ctx) => {
+        ctx.closeSpotlight()
+        useAdminUi.getState().openSettings('ai')
       },
     },
     {

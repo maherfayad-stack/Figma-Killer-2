@@ -15,7 +15,7 @@
  *   binary→ everything else (uploaded as raw media assets)
  */
 
-import type { FileMap, FileRole, ClassifiedFile } from './types'
+import type { FileMap, FileRole, ClassifiedFile } from './importPlanTypes'
 
 // ---------------------------------------------------------------------------
 // Extension / MIME → role mapping

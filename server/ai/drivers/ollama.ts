@@ -93,7 +93,7 @@ export const ollamaDriver: AiProvider = {
       yield {
         type: 'error',
         message:
-          'Ollama requires a base URL. Add a base-URL credential in /admin/ai/providers and pick it for the site default.',
+          'Ollama requires a base URL. Add a base-URL credential in Settings → AI → Providers and pick it for the site default.',
       }
       return
     }

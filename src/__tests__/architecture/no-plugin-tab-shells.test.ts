@@ -21,8 +21,8 @@
  *   §T.3  src/admin/pages/site/canvas/CanvasModeToggle.tsx — design/preview
  *         segmented-control with icon-only tab buttons; predates the Tabs
  *         primitive and uses its own compact CSS layout.
- *   §T.4  src/admin/pages/ai/AiPage.tsx — capability-gated Button row pattern
- *         mirroring §T.1.
+ *   §T.4  src/admin/modals/Settings/sections/AiSection.tsx — capability-gated
+ *         Button row pattern mirroring §T.1 (formerly AiPage.tsx).
  *
  * Any new file outside the allowlist that introduces role="tablist" fails this
  * test. Fix: use <Tabs> / <TabList> from @studio/host-ui instead of a
@@ -80,8 +80,9 @@ const EXACT_ALLOWLIST = new Set<string>([
   // §T.3 — icon-only design/preview toggle; compact fixed layout incompatible
   // with the full-width underline-indicator Tabs style.
   join(PROJECT_ROOT, 'src/admin/pages/site/canvas/CanvasModeToggle.tsx'),
-  // §T.4 — AiPage uses the same capability-gated Button row pattern as UsersPage.
-  join(PROJECT_ROOT, 'src/admin/pages/ai/AiPage.tsx'),
+  // §T.4 — AiSection uses the same capability-gated Button row pattern as
+  // UsersSection (formerly AiPage.tsx).
+  join(PROJECT_ROOT, 'src/admin/modals/Settings/sections/AiSection.tsx'),
 ])
 
 function isAllowlisted(file: string): boolean {
@@ -175,7 +176,7 @@ describe('No-plugin-tab-shells — role="tablist" must come from the Tabs primit
         `  src/admin/modals/Settings/sections/UsersSection.tsx   (§T.1)\n` +
         `  src/admin/pages/account/AccountPage.tsx   (§T.2)\n` +
         `  src/admin/pages/site/canvas/CanvasModeToggle.tsx   (§T.3)\n` +
-        `  src/admin/pages/ai/AiPage.tsx   (§T.4)`,
+        `  src/admin/modals/Settings/sections/AiSection.tsx   (§T.4)`,
     )
   })
 })

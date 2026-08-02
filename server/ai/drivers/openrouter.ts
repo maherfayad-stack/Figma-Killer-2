@@ -86,7 +86,7 @@ export const openrouterDriver: AiProvider = {
       yield {
         type: 'error',
         message:
-          'OpenRouter requires an API key. Add an API-key credential in /admin/ai/providers and pick it for the site default.',
+          'OpenRouter requires an API key. Add an API-key credential in Settings → AI → Providers and pick it for the site default.',
       }
       return
     }

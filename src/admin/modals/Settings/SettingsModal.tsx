@@ -21,7 +21,7 @@ import { cn } from '@ui/cn'
 import { useEditorStore } from '@site/store/store'
 import { useAdminUi } from '@admin/state/adminUi'
 import { useCurrentAdminUser } from '@admin/sessionContext'
-import { canAccessPluginsWorkspace, canAccessUsersWorkspace } from '@admin/access'
+import { canAccessAiWorkspace, canAccessPluginsWorkspace, canAccessUsersWorkspace } from '@admin/access'
 import { Button } from '@ui/components/Button'
 import { Kbd } from '@ui/components/Kbd'
 import { SettingsCogSolidIcon } from 'pixel-art-icons/icons/settings-cog-solid'
@@ -30,12 +30,14 @@ import { UploadIcon } from 'pixel-art-icons/icons/upload'
 import { SlidersHorizontalIcon } from 'pixel-art-icons/icons/sliders-horizontal'
 import { PackageSolidIcon } from 'pixel-art-icons/icons/package-solid'
 import { UsersSolidIcon } from 'pixel-art-icons/icons/users-solid'
+import { AiSettingsSolidIcon } from 'pixel-art-icons/icons/ai-settings-solid'
 import { GeneralSection } from './sections/GeneralSection'
 import { PublishingSection } from './sections/PublishingSection'
 import { ShortcutsSection } from './sections/ShortcutsSection'
 import { PreferencesSection } from './sections/PreferencesSection'
 import { PluginsSection } from './sections/PluginsSection'
 import { UsersSection } from './sections/UsersSection'
+import { AiSection } from './sections/AiSection'
 import s from './SettingsModal.module.css'
 
 // ─── Nav items ────────────────────────────────────────────────────────────────
@@ -56,8 +58,9 @@ const NAV_ITEMS = [
 // was already on. Rendered exactly like NAV_ITEMS below the "Manage" divider,
 // gated by the same capability checks the old standalone routes used.
 const MANAGE_ITEMS = [
-  { id: 'plugins', label: 'Plugins', icon: PackageSolidIcon, accent: 'sky' },
-  { id: 'users',   label: 'Users',   icon: UsersSolidIcon,   accent: 'mint' },
+  { id: 'plugins', label: 'Plugins', icon: PackageSolidIcon,      accent: 'sky'   },
+  { id: 'users',   label: 'Users',   icon: UsersSolidIcon,        accent: 'mint'  },
+  { id: 'ai',      label: 'AI',      icon: AiSettingsSolidIcon,   accent: 'peach' },
 ] as const
 
 const ALL_ITEMS = [...NAV_ITEMS, ...MANAGE_ITEMS]
@@ -85,8 +88,9 @@ export function SettingsModal() {
   const currentUser = useCurrentAdminUser()
   const canSeePlugins = !currentUser || canAccessPluginsWorkspace(currentUser)
   const canSeeUsers = !currentUser || canAccessUsersWorkspace(currentUser)
+  const canSeeAi = !currentUser || canAccessAiWorkspace(currentUser)
   const manageItems = MANAGE_ITEMS.filter((item) =>
-    item.id === 'plugins' ? canSeePlugins : canSeeUsers,
+    item.id === 'plugins' ? canSeePlugins : item.id === 'users' ? canSeeUsers : canSeeAi,
   )
 
   const activeSection = normalizeSection(adminUiSection)
@@ -252,6 +256,7 @@ export function SettingsModal() {
               {activeSection === 'preferences' && <PreferencesSection />}
               {activeSection === 'plugins'     && <PluginsSection />}
               {activeSection === 'users'       && <UsersSection />}
+              {activeSection === 'ai'          && <AiSection />}
             </div>
           </div>
         </div>

@@ -7,7 +7,7 @@
  */
 import { afterEach, describe, expect, it } from 'bun:test'
 import { cleanup, render, screen } from '@testing-library/react'
-import { UsageTablePanel, type UsageTableColumn } from '@admin/pages/ai/tabs/UsageTablePanel'
+import { UsageTablePanel, type UsageTableColumn } from '@admin/modals/Settings/sections/ai/UsageTablePanel'
 import { formatCost, formatNumber } from '@admin/ai/usageFormat'
 
 type Row = { id: string; label: string; chatCount: number; costUsd: number }

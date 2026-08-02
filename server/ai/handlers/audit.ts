@@ -1,7 +1,7 @@
 /**
  * AI usage audit handler — `GET /admin/api/ai/audit?since=ISO&tz=IANA`.
  *
- * Returns the rollups consumed by the `/admin/ai` Audit tab + the
+ * Returns the rollups consumed by the Settings → AI → Audit tab + the
  * dashboard "AI usage this month" widget:
  *
  *   { totals, byUser, byModel, byDay }

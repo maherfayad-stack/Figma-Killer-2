@@ -27,16 +27,15 @@ import type { PageNode } from '@core/page-tree'
 import type { ImportFragment } from '@core/htmlImport'
 import type { FontFileFormat } from '@core/fonts'
 import type {
-  FileMap,
   ImportWarning,
-  PagePlan,
   AssetRef,
   NewStyleRule,
   ParsedFontFace,
   ImportFontFamily,
   ImportFontFile,
   ImportStylesheet,
-} from './types'
+} from './cssImportTypes'
+import type { FileMap, PagePlan } from './importPlanTypes'
 import { guessMimeType, isImportUploadableMimeType } from './mimeTypes'
 
 // ---------------------------------------------------------------------------

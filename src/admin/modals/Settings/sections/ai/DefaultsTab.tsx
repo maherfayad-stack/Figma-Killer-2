@@ -19,9 +19,9 @@ import {
   listCredentials,
   listDefaults,
   setDefault,
-} from '../../../ai/api'
+} from '../../../../ai/api'
 import { ApiError } from '@core/http'
-import styles from '../AiPage.module.css'
+import styles from './ai.module.css'
 
 export function DefaultsTab() {
   const { data, loading, error, refresh } = useAsyncResource(

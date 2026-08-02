@@ -347,26 +347,39 @@ function CandidateGroup({
     <div className={styles.group}>
       <h4 className={styles.groupTitle}>{title} <span className={styles.groupCount}>{candidates.length}</span></h4>
       <ul className={styles.groupList}>
-        {candidates.map((c) => (
-          <li key={c.id} className={styles.candidateRow}>
-            <label className={styles.candidateLabel}>
-              <Checkbox
-                checked={selectedIds.has(c.id)}
-                onCheckedChange={(checked) => onToggle(c.id, checked)}
-                boxSize="sm"
-              />
-              {kind === 'color' && (
-                <span
-                  className={styles.swatch}
-                  style={{ '--swatch-color': (c as ColorCandidate).value } as CSSProperties}
-                  aria-hidden="true"
+        {candidates.map((c) => {
+          const dark = kind === 'color' ? (c as ColorCandidate).dark : undefined
+          return (
+            <li key={c.id} className={styles.candidateRow}>
+              <label className={styles.candidateLabel}>
+                <Checkbox
+                  checked={selectedIds.has(c.id)}
+                  onCheckedChange={(checked) => onToggle(c.id, checked)}
+                  boxSize="sm"
                 />
-              )}
-              <span className={styles.candidateName}>--{c.name}</span>
-              <span className={styles.candidateValue}>{c.value}</span>
-            </label>
-          </li>
-        ))}
+                {kind === 'color' && (
+                  <span className={styles.swatchPair} aria-hidden="true">
+                    <span className={styles.swatch} style={{ '--swatch-color': c.value } as CSSProperties} />
+                    {dark !== undefined && (
+                      <span
+                        className={`${styles.swatch} ${styles.swatchDark}`}
+                        style={{ '--swatch-color': dark } as CSSProperties}
+                      />
+                    )}
+                  </span>
+                )}
+                <span className={styles.candidateName}>--{c.name}</span>
+                {dark !== undefined ? (
+                  <span className={styles.candidateValue}>
+                    {c.value} <span className={styles.darkValueLabel}>dark {dark}</span>
+                  </span>
+                ) : (
+                  <span className={styles.candidateValue}>{c.value}</span>
+                )}
+              </label>
+            </li>
+          )
+        })}
       </ul>
     </div>
   )

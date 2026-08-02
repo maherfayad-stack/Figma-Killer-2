@@ -17,6 +17,7 @@ const AGENT_NAMES = [
   'style-surgeon',
   'fidelity-auditor',
   'design-critic',
+  'arabic-ux-writer',
   'almosafer-ds-expert',
   'synthesizer',
   'agent-creator',
@@ -60,7 +61,7 @@ describe('generateStudioAgentRoster', () => {
     rmSync(dir, { recursive: true, force: true })
   })
 
-  it('writes exactly the nine-agent roster, once per name', () => {
+  it('writes exactly the ten-agent roster, once per name', () => {
     const result = generateStudioAgentRoster(dir)
     for (const name of AGENT_NAMES) {
       expect(result.written).toContain(join('.claude', 'agents', `${name}.md`))
@@ -139,6 +140,32 @@ describe('generateStudioAgentRoster', () => {
     expect(content).toContain('docs/reference/canonical-jsx.md')
     // A pointer file stays short — nowhere near the length of the real doc.
     expect(content.length).toBeLessThan(3000)
+  })
+
+  // ── arabic-ux-writer (WS-12 §7.2 peer) ───────────────────────────────────
+  it('arabic-ux-writer holds an explicit text-editing + node-location allowlist, no structural or write-adjacent tool', () => {
+    generateStudioAgentRoster(dir)
+    const md = readFileSync(join(dir, '.claude', 'agents', 'arabic-ux-writer.md'), 'utf8')
+    expect(parseFrontmatterTools(md)).toEqual([
+      'studio_list_pages',
+      'studio_find_nodes',
+      'studio_get_node_source',
+      'studio_read_file',
+      'studio_apply_edits',
+    ])
+    // No orientation/structural/toolchain tool leaked in — this agent locates
+    // and rewrites text, it never scaffolds, installs, or verifies renders.
+    for (const forbidden of ['studio_create_page', 'studio_codemod', 'studio_set_frames', 'studio_install_deps', 'studio_install_status']) {
+      expect(md).not.toContain(forbidden)
+    }
+  })
+
+  it('arabic-ux-writer names its two dominant failure modes and points at the RTL fidelity finding rather than editing layout', () => {
+    generateStudioAgentRoster(dir)
+    const md = readFileSync(join(dir, '.claude', 'agents', 'arabic-ux-writer.md'), 'utf8')
+    expect(md).toContain('عرنجي')
+    expect(md).toContain('RTL_PHYSICAL_PROPERTY')
+    expect(md).toContain('فصحى مبسطة')
   })
 
   it('almosafer-ds-expert degrades honestly when the package is not installed', () => {

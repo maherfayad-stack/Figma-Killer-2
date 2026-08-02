@@ -3,8 +3,9 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { createStore } from 'zustand/vanilla'
 import { AgentStoreProvider } from '@admin/ai/AgentStoreContext'
 import { clearModelListCache, type CredentialView } from '@admin/ai/api'
-import { MemoryRouter, useLocation } from '@admin/lib/routing'
+import { MemoryRouter } from '@admin/lib/routing'
 import { AdminSessionProvider } from '@admin/session'
+import { useAdminUi } from '@admin/state/adminUi'
 import type { AgentSlice } from '@site/agent'
 import type { AiUserContentBlock } from '@core/ai'
 import type { CmsCurrentUser } from '@core/persistence'
@@ -199,7 +200,6 @@ function renderAgentPanel(
       <MemoryRouter initialEntries={['/admin/site']}>
         <AgentStoreProvider store={store}>
           <AgentPanel variant="docked" />
-          <RouteProbe />
         </AgentStoreProvider>
       </MemoryRouter>
     </AdminSessionProvider>,
@@ -239,11 +239,6 @@ function testUser(capabilities: CmsCurrentUser['capabilities'] = ['ai.chat']): C
   }
 }
 
-function RouteProbe() {
-  const location = useLocation()
-  return <output aria-label="current route">{location.pathname}</output>
-}
-
 function pasteImage(fileName = 'clipboard.png'): void {
   pasteImages([fileName])
 }
@@ -276,6 +271,7 @@ describe('AgentPanel', () => {
     localStorage.clear()
     globalThis.fetch = originalFetch
     clearModelListCache()
+    useAdminUi.setState({ settingsOpen: false, settingsSection: 'general' })
   })
 
   it('surfaces a large setup empty state and header shortcut when no credentials exist', async () => {
@@ -299,8 +295,9 @@ describe('AgentPanel', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Open AI settings' }))
     await waitFor(() => {
-      expect(screen.getByLabelText('current route').textContent).toBe('/admin/ai')
+      expect(useAdminUi.getState().settingsOpen).toBe(true)
     })
+    expect(useAdminUi.getState().settingsSection).toBe('ai')
 
     expect(screen.getByText('No credentials yet')).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Model' })).toBeNull()

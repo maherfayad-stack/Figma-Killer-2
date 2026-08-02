@@ -1,6 +1,6 @@
 import { extractRuntimeImportSpecifiers } from '@core/site-runtime'
 import { isSafePackageName } from '@core/site-dependencies/packageNames'
-import type { ImportScriptDependency } from './types'
+import type { ImportScriptDependency } from './cssImportTypes'
 
 interface ScriptDependencyRewrite {
   content: string

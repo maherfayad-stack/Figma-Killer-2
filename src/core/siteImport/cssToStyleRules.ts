@@ -56,7 +56,7 @@ import type {
   AssetRef,
   NewStyleRule,
   ParsedFontFace,
-} from './types'
+} from './cssImportTypes'
 
 // ---------------------------------------------------------------------------
 // Public interface

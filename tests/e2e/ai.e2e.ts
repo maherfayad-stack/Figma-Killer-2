@@ -204,6 +204,28 @@ async function openReadableSiteEditor(page: Page): Promise<void> {
   await expect(page.getByTestId('canvas-root')).toBeVisible({ timeout: 20_000 })
 }
 
+/**
+ * Opens the global Settings modal (mounted by every admin layout, editor
+ * included — see `toolbar-settings-btn`) and switches to the AI section,
+ * which replaced the standalone `/admin/ai` page. Optionally switches to one
+ * of the AI section's own tabs (Providers / Defaults / MCP / Audit — the tab
+ * strip is unchanged from the old page). Returns the dialog locator.
+ */
+async function openAiSettings(
+  page: Page,
+  options: { tab?: 'Providers' | 'Defaults' | 'MCP' | 'Audit' } = {},
+): Promise<Locator> {
+  await page.getByTestId('toolbar-settings-btn').click()
+  const dialog = page.getByRole('dialog', { name: 'Settings' })
+  await expect(dialog).toBeVisible({ timeout: 20_000 })
+  await dialog.getByRole('button', { name: 'AI' }).click()
+  await expect(dialog.getByRole('region', { name: 'AI' })).toBeVisible()
+  if (options.tab) {
+    await page.getByRole('tab', { name: options.tab }).click()
+  }
+  return dialog
+}
+
 async function setCapabilityChecked(
   dialog: Locator,
   label: string,
@@ -254,8 +276,8 @@ test.describe('AI settings', () => {
     const suffix = Date.now().toString(36)
     const label = `E2E Ollama ${suffix}`
 
-    await page.goto('/admin/ai')
-    await expect(page.getByRole('heading', { name: 'AI' })).toBeVisible()
+    await page.goto('/admin/dashboard')
+    await openAiSettings(page)
     await expect(page.getByRole('tab', { name: 'Providers' })).toHaveAttribute(
       'aria-selected',
       'true',
@@ -284,8 +306,8 @@ test.describe('AI settings', () => {
     const suffix = Date.now().toString(36)
     const label = `E2E Defaults Ollama ${suffix}`
 
-    await page.goto('/admin/ai')
-    await expect(page.getByRole('heading', { name: 'AI' })).toBeVisible()
+    await page.goto('/admin/dashboard')
+    await openAiSettings(page)
 
     await test.step('create a credential for the defaults picker', async () => {
       await addOfflineOllamaCredential(page, label)
@@ -310,8 +332,8 @@ test.describe('AI settings', () => {
 
     await test.step('reload and verify the saved default resolves', async () => {
       await page.reload()
-      await expect(page.getByRole('heading', { name: 'AI' })).toBeVisible()
-      await page.getByRole('tab', { name: 'Defaults' }).click()
+      await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible()
+      await openAiSettings(page, { tab: 'Defaults' })
       await expect(page.getByRole('button', { name: 'Default model' })).toContainText(
         `${label} · Llama 4`,
         { timeout: 20_000 },
@@ -342,8 +364,8 @@ test.describe('AI settings', () => {
 
     try {
       await test.step('create a live local credential for chat', async () => {
-        await page.goto('/admin/ai')
-        await expect(page.getByRole('heading', { name: 'AI' })).toBeVisible()
+        await page.goto('/admin/dashboard')
+        await openAiSettings(page)
         await addOllamaCredential(page, label, fakeOllama.baseUrl)
         await expect(page.getByText(label)).toBeVisible({ timeout: 20_000 })
         await expect.poll(() => fakeOllama.requests.tags).toBeGreaterThan(0)
@@ -367,8 +389,7 @@ test.describe('AI settings', () => {
       })
 
       await test.step('verify the Audit tab shows the persisted usage', async () => {
-        await page.goto('/admin/ai')
-        await page.getByRole('tab', { name: 'Audit' }).click()
+        await openAiSettings(page, { tab: 'Audit' })
         await expect(page.getByRole('heading', { name: 'Usage audit' })).toBeVisible()
         await expect(page.getByText('e2e-model')).toBeVisible({ timeout: 20_000 })
         await expect(page.getByRole('cell', { name: '123' }).first()).toBeVisible()
@@ -422,8 +443,8 @@ test.describe('AI settings', () => {
 
     try {
       await test.step('create a live local credential for the tool loop', async () => {
-        await page.goto('/admin/ai')
-        await expect(page.getByRole('heading', { name: 'AI' })).toBeVisible()
+        await page.goto('/admin/dashboard')
+        await openAiSettings(page)
         await addOllamaCredential(page, label, fakeOllama.baseUrl)
         await expect(page.getByText(label)).toBeVisible({ timeout: 20_000 })
         await expect.poll(() => fakeOllama.requests.tags).toBeGreaterThan(0)
@@ -480,7 +501,7 @@ test.describe('AI settings', () => {
           const defaultRes = await fetch('/admin/api/ai/defaults', { method: 'DELETE' })
           if (!defaultRes.ok) throw new Error(`Failed to clear the default: ${defaultRes.status}`)
         })
-        await page.goto('/admin/ai')
+        await openAiSettings(page)
         const credentialCard = page.locator('div').filter({ hasText: label }).first()
         await expect(credentialCard).toBeVisible()
         await credentialCard.getByRole('button', { name: 'Delete' }).click()
@@ -501,8 +522,8 @@ test.describe('AI settings', () => {
 
     try {
       await test.step('create a live local credential for the conversation', async () => {
-        await page.goto('/admin/ai')
-        await expect(page.getByRole('heading', { name: 'AI' })).toBeVisible()
+        await page.goto('/admin/dashboard')
+        await openAiSettings(page)
         await addOllamaCredential(page, label, fakeOllama.baseUrl)
         await expect(page.getByText(label)).toBeVisible({ timeout: 20_000 })
         await expect.poll(() => fakeOllama.requests.tags).toBeGreaterThan(0)
@@ -558,7 +579,7 @@ test.describe('AI settings', () => {
           const res = await fetch('/admin/api/ai/defaults', { method: 'DELETE' })
           if (!res.ok) throw new Error(`Failed to clear the default: ${res.status}`)
         })
-        await page.goto('/admin/ai')
+        await openAiSettings(page)
         const credentialCard = page.locator('div').filter({ hasText: label }).first()
         await expect(credentialCard).toBeVisible()
         await credentialCard.getByRole('button', { name: 'Delete' }).click()
@@ -611,8 +632,7 @@ test.describe.serial('AI write-tool capability filtering', () => {
       try {
         await test.step('persona creates its own disposable fake-provider credential', async () => {
           await loginAs(personaPage, email, password)
-          await personaPage.goto('/admin/ai')
-          await expect(personaPage.getByRole('heading', { name: 'AI' })).toBeVisible()
+          await openAiSettings(personaPage)
           await addOllamaCredential(personaPage, label, fakeOllama.baseUrl)
           credentialCreated = true
           await expect(personaPage.getByText(label)).toBeVisible({ timeout: 20_000 })
@@ -671,7 +691,12 @@ test.describe.serial('AI write-tool capability filtering', () => {
               throw new Error(`Failed to clear the default: ${response.status}`)
             }
           })
-          await personaPage.goto('/admin/ai')
+          // Full navigation (not just re-opening the modal) — the persona's
+          // client-side session snapshot is seeded once at mount, so a fresh
+          // load is required to pick up the "Manage AI providers" capability
+          // the owner just restored via a different browser context.
+          await personaPage.goto('/admin/dashboard')
+          await openAiSettings(personaPage)
           const credentialCard = personaPage.locator('div').filter({ hasText: label }).first()
           await expect(credentialCard).toBeVisible()
           await credentialCard.getByRole('button', { name: 'Delete' }).click()

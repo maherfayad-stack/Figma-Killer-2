@@ -23,14 +23,14 @@
  */
 
 import { unzipSync } from 'fflate'
-import type { FileMap } from './types'
+import type { FileMap } from './importPlanTypes'
 import {
   EmptyImportError,
   OversizeImportError,
   ZipBombError,
   TooManyFilesError,
   PathTraversalError,
-} from './types'
+} from './importErrors'
 
 // ---------------------------------------------------------------------------
 // Default limits

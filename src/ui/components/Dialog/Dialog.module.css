@@ -1,7 +1,10 @@
+/* Above the modal-shell layer: a Dialog is regularly opened from inside one
+ * (Settings folds the Plugins/Users/AI surfaces in as sections, each with its
+ * own Dialog). See --dialog-z-index in globals.css for the full layer order. */
 .backdrop {
     position: fixed;
     inset: 0;
-    z-index: 95;
+    z-index: var(--dialog-z-index);
     display: grid;
     place-items: center;
     padding: var(--space-5xl);

@@ -39,5 +39,5 @@ export const siteAgentSliceConfig: AgentSliceConfig = {
   // Keep the site-editor wording — the AgentPanel recognises this string
   // prefix and renders the setup CTA.
   noProviderMessage:
-    'No AI provider configured for the site editor. Open /admin/ai/providers to add a credential, then /admin/ai/defaults to pick one.',
+    'No AI provider configured for the site editor. Open Settings → AI → Providers to add a credential, then Settings → AI → Defaults to pick one.',
 }

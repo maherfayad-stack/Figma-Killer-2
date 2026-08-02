@@ -157,7 +157,8 @@ export function canAccessUsersWorkspace(user: CmsCurrentUser | null): boolean {
   return hasAnyCapability(user, ['users.manage', 'roles.manage', 'audit.read'])
 }
 
-function canAccessAiWorkspace(user: CmsCurrentUser | null): boolean {
+/** Caller can see the AI panel in Settings. */
+export function canAccessAiWorkspace(user: CmsCurrentUser | null): boolean {
   return hasAnyCapability(user, ['ai.providers.manage', 'ai.audit.read'])
 }
 
@@ -184,8 +185,6 @@ export function canAccessWorkspace(user: CmsCurrentUser | null, workspace: Admin
       return hasCapability(user, 'site.read')
     case 'pluginPage':
       return canAccessPluginsWorkspace(user)
-    case 'ai':
-      return canAccessAiWorkspace(user)
     case 'account':
       // Self-targeted page — every authenticated user can manage their own
       // profile + devices. Anonymous visitors fall through to false.
@@ -199,8 +198,8 @@ export function firstAccessibleWorkspace(user: CmsCurrentUser | null): AdminWork
   // `dashboard.read` (rare; only happens with hand-edited custom roles).
   // 'account' is last: every authenticated user can reach it (no capability
   // gate), so it's the universal fallback for a role that only holds
-  // Settings-panel capabilities (Plugins/Users) with no routable workspace.
-  const order: AdminWorkspace[] = ['dashboard', 'site', 'ai', 'account']
+  // Settings-panel capabilities (Plugins/Users/AI) with no routable workspace.
+  const order: AdminWorkspace[] = ['dashboard', 'site', 'account']
   return order.find((workspace) => canAccessWorkspace(user, workspace)) ?? null
 }
 
@@ -210,8 +209,6 @@ export function workspacePath(workspace: AdminWorkspace): string {
       return '/admin/dashboard'
     case 'site':
       return '/admin/site'
-    case 'ai':
-      return '/admin/ai'
     case 'pluginPage':
       return '/admin/plugins'
     case 'account':

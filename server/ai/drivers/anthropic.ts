@@ -47,6 +47,40 @@ const ANTHROPIC_VERSION = '2023-06-01'
 // work continues across loop iterations, not within one response.
 const MAX_OUTPUT_TOKENS = 8192
 
+/**
+ * The prefix `claude setup-token` emits. It is NOT an API key: it authorises
+ * the local `claude` CLI against a Pro/Max subscription, and this endpoint
+ * rejects it as `x-api-key` with a bare `401 Unauthorized` from
+ * `fetchAnthropicModels` — a message that names neither what is wrong nor
+ * where the token actually belongs.
+ *
+ * `claudeCliVerify.ts` already guards the opposite direction (an
+ * `sk-ant-api…` console key pasted into the subscription row, which it
+ * redirects HERE). This is that check's mirror, so the pair is symmetric:
+ * whichever row a user picks first, the wrong secret is caught at save time
+ * with a message pointing at the right one, rather than at the next models
+ * request.
+ */
+const SETUP_TOKEN_PREFIX = 'sk-ant-oat'
+
+/**
+ * Rejects a Claude Code setup-token; accepts everything else. Deliberately
+ * NOT a positive `sk-ant-api…` test — per `AiProvider.validateSecretShape`'s
+ * contract, silence is not a claim that the secret works, and a shape gate
+ * that guesses at the full space of valid console keys would reject
+ * legitimate ones the moment Anthropic issues a new prefix. Only the one
+ * known-wrong secret is named.
+ */
+export function assertNotASetupToken(secret: string): void {
+  if (!secret.startsWith(SETUP_TOKEN_PREFIX)) return
+  throw new Error(
+    'That looks like a Claude Code setup-token, not an Anthropic API key. It belongs under the '
+    + '"Claude Code (subscription)" provider, which runs the local `claude` CLI on your Pro/Max '
+    + 'plan. An Anthropic API key starts `sk-ant-api…`, comes from console.anthropic.com, and is '
+    + 'billed per token separately from a subscription.',
+  )
+}
+
 export const anthropicDriver: AiProvider = {
   id: 'anthropic' as AiProviderId,
   label: 'Anthropic',
@@ -70,6 +104,10 @@ export const anthropicDriver: AiProvider = {
     return fetchAnthropicModels(creds, signal)
   },
 
+  validateSecretShape(secret: string): void {
+    assertNotASetupToken(secret)
+  },
+
   async *stream(req: AiStreamRequest): AsyncIterable<AiStreamEvent> {
     if (req.credentials.authMode !== 'apiKey' || !req.credentials.apiKey) {
       // Defensive: a non-apiKey credential reaching the driver implies a
@@ -78,7 +116,7 @@ export const anthropicDriver: AiProvider = {
       yield {
         type: 'error',
         message:
-          'Anthropic requires an API key. Add an API-key credential in /admin/ai/providers and pick it for the site default.',
+          'Anthropic requires an API key. Add an API-key credential in Settings → AI → Providers and pick it for the site default.',
       }
       return
     }
@@ -558,7 +596,7 @@ export class AnthropicTurnTranslator implements TurnTranslator<AnthropicMessage>
           type: 'error',
           message: detail
             ? `Anthropic error: ${detail}`
-            : 'Anthropic stream failed. Check your credentials in /admin/ai/providers.',
+            : 'Anthropic stream failed. Check your credentials in Settings → AI → Providers.',
         }]
       }
 

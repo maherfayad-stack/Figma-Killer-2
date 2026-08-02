@@ -106,8 +106,9 @@ async function handleCreate(req: Request, db: DbClient): Promise<Response> {
   const userOrResponse = await requireCapability(req, db, 'ai.providers.manage')
   if (userOrResponse instanceof Response) return userOrResponse
 
-  const body = await readValidatedBody(req, CreateBodySchema)
-  if (!body) return badRequest('Invalid request body.')
+  const rawBody = await readValidatedBody(req, CreateBodySchema)
+  if (!rawBody) return badRequest('Invalid request body.')
+  const body = withSanitizedSecret(rawBody)
 
   const shapeError = secretShapeError(body.providerId, body.apiKey)
   if (shapeError) return badRequest(shapeError)
@@ -216,8 +217,9 @@ async function handleUpdate(req: Request, db: DbClient, id: string): Promise<Res
   const userOrResponse = await requireCapability(req, db, 'ai.providers.manage')
   if (userOrResponse instanceof Response) return userOrResponse
 
-  const body = await readValidatedBody(req, UpdateBodySchema)
-  if (!body) return badRequest('Invalid request body.')
+  const rawBody = await readValidatedBody(req, UpdateBodySchema)
+  if (!rawBody) return badRequest('Invalid request body.')
+  const body = withSanitizedSecret(rawBody)
 
   // The provider isn't in the update body — it's whatever the stored row says.
   const existing = await readCredentialForUser(db, userOrResponse.id, id)
@@ -350,6 +352,39 @@ async function dispatchTest(req: Request, db: DbClient, id: string): Promise<Res
  * This is NOT a claim that the credential works; that is the `/test` endpoint's
  * job, and only it pays the round trip to find out.
  */
+/**
+ * Removes EVERY whitespace character from a submitted secret — not just the
+ * surrounding ones — before anything else sees it: shape check, encryption,
+ * storage.
+ *
+ * No provider secret contains whitespace, and interior whitespace is the case
+ * that actually bites. A terminal wraps `claude setup-token`'s 108-character
+ * output across two lines; selecting it copies the line break; pasting into a
+ * single-line `<input>` does not drop that break — the browser substitutes a
+ * SPACE. The result is a 109-character secret that is wrong in the middle.
+ *
+ * That value survives every check on the way in. `minLength: 1` passes.
+ * `validateSecretShape` tests a PREFIX, so the leading `sk-ant-oat…` still
+ * looks perfect. It is stored, and then fails at the far end as
+ * `401 — "OAuth access token is invalid"`, which reads as "your token is
+ * revoked" and sends the user off to regenerate a token that was never the
+ * problem. Diagnosed against a real credential: stored plaintext measured 109
+ * chars against a known-good 108, and reproducing the interior space returned
+ * that exact 401 while the same token minus the space returned `OK`.
+ *
+ * A trailing-newline trim alone does NOT catch this, which is why this strips
+ * all whitespace rather than calling `.trim()`.
+ *
+ * Done here, at the trust boundary every client crosses (the Providers
+ * dialog, an MCP caller, a script), rather than in the dialog — one fix
+ * covers all of them instead of one fix per caller.
+ */
+function withSanitizedSecret<T extends { apiKey?: string }>(body: T): T {
+  if (body.apiKey === undefined) return body
+  const sanitized = body.apiKey.replace(/\s+/g, '')
+  return sanitized === body.apiKey ? body : { ...body, apiKey: sanitized }
+}
+
 export function secretShapeError(providerId: AiProviderId, secret: string | undefined): string | null {
   if (!secret) return null
   const driver = resolveDriver(providerId)

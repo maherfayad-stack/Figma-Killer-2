@@ -70,6 +70,18 @@ export { commitImportPlan } from './commitPlan'
 export type {
   // Phase 1
   NewStyleRule,
+  StylesheetImportMode,
+  ImportStylesheet,
+  // @font-face import
+  ImportFontFamily,
+  // colour tokens + scripts
+  ImportColorToken,
+  ImportFontToken,
+  ImportScriptDependency,
+  ImportScript,
+} from './cssImportTypes'
+
+export type {
   // Phase 2
   FileMap,
   FileRole,
@@ -81,16 +93,7 @@ export type {
   CrossSheetClassConflict,
   ImportPlan,
   ImportResult,
-  StylesheetImportMode,
-  ImportStylesheet,
-  // @font-face import
-  ImportFontFamily,
-  // colour tokens + scripts
-  ImportColorToken,
-  ImportFontToken,
-  ImportScriptDependency,
-  ImportScript,
-} from './types'
+} from './importPlanTypes'
 
 // ── Error classes (callers need instanceof checks) ────────────────────────────
 
@@ -100,4 +103,4 @@ export {
   ZipBombError,
   TooManyFilesError,
   PathTraversalError,
-} from './types'
+} from './importErrors'

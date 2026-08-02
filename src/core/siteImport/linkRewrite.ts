@@ -19,7 +19,7 @@
 
 import { makePageRef } from '@core/page-tree'
 import type { PageNode } from '@core/page-tree'
-import type { PagePlan } from './types'
+import type { PagePlan } from './importPlanTypes'
 import { resolveHref } from './htmlPagePlan'
 
 /**

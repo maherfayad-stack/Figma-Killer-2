@@ -199,7 +199,7 @@ export async function resolveCredentialForDriver(
   if (record.keyFingerprint && record.keyFingerprint !== currentFingerprint) {
     throw new CredentialError(
       `Credential ${record.id} was encrypted with a different master key. ` +
-      `Re-enter the API key in /admin/ai/providers.`,
+      `Re-enter the API key in Settings → AI → Providers.`,
       409,
     )
   }
@@ -216,7 +216,7 @@ export async function resolveCredentialForDriver(
   if (record.authMode === 'apiKey' && !apiKey) {
     throw new CredentialError(
       `Credential ${record.id} is marked auth_mode='apiKey' but has no ` +
-      `stored key — data corruption. Re-enter the key in /admin/ai/providers.`,
+      `stored key — data corruption. Re-enter the key in Settings → AI → Providers.`,
       500,
     )
   }
@@ -224,7 +224,7 @@ export async function resolveCredentialForDriver(
   if (record.authMode === 'baseUrl' && !record.baseUrl) {
     throw new CredentialError(
       `Credential ${record.id} is marked auth_mode='baseUrl' but has no ` +
-      `stored URL — data corruption. Re-enter the URL in /admin/ai/providers.`,
+      `stored URL — data corruption. Re-enter the URL in Settings → AI → Providers.`,
       500,
     )
   }
@@ -412,7 +412,7 @@ export async function deleteCredentialForUser(
   } catch (err) {
     if (isFkViolation(err)) {
       throw new CredentialError(
-        'This credential is currently set as a default — change the default in /admin/ai/defaults before deleting.',
+        'This credential is currently set as a default — change the default in Settings → AI → Defaults before deleting.',
         409,
       )
     }

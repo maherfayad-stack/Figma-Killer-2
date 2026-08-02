@@ -58,7 +58,6 @@ Don't import from `react-router-dom`. It's removed from `package.json`.
   <Route path="/admin/media"                     element={<AdminEntry section="media" />} />
   <Route path="/admin/plugins"                   element={<AdminEntry section="plugins" />} />
   <Route path="/admin/users"                     element={<AdminEntry section="users" />} />
-  <Route path="/admin/ai"                        element={<AdminEntry section="ai" />} />
   <Route path="/admin/account"                   element={<AdminEntry section="account" />} />
   <Route path="/admin/plugins/:pluginId/:pageId" element={<AdminEntry section="pluginPage" />} />
   <Route path="/admin/*"                         element={<Navigate to="/admin/dashboard" replace />} />
@@ -186,7 +185,7 @@ Used by `AuthenticatedAdmin` to render a non-redirect fallback when access is de
 ```ts
 const navigate = useAdminNavigate()
 navigate('/admin/site')
-navigate('/admin/ai')
+navigate('/admin/account')
 navigate('/admin/plugins/acme.x/dashboard')
 ```
 

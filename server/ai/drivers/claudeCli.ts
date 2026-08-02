@@ -314,7 +314,7 @@ export async function* streamClaudeCli(
     // all) — only the auth MODE is asserted here.
     yield {
       type: 'error',
-      message: 'Claude CLI credentials must be apiKey-shaped. Re-create the credential in /admin/ai/providers.',
+      message: 'Claude CLI credentials must be apiKey-shaped. Re-create the credential in Settings → AI → Providers.',
     }
     return
   }

@@ -283,7 +283,7 @@ export class ResponsesTurnTranslator implements TurnTranslator<ResponsesTurn> {
           {
             type: 'error',
             message:
-              'Provider response failed. Check your credentials and model in /admin/ai/providers.',
+              'Provider response failed. Check your credentials and model in Settings → AI → Providers.',
           },
         ]
 

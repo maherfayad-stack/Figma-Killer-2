@@ -294,6 +294,26 @@
      * and below tooltips, which stay the topmost layer. */
     --toast-z-index: 10000;
 
+    /* The shared `Dialog` primitive's backdrop. A Dialog is a BLOCKING layer
+     * that is routinely opened *from inside* a modal shell — the Settings
+     * modal folds the Plugins, Users, and AI admin surfaces in as sections
+     * (`modals/Settings/sections/`), and each of those opens its own Dialog
+     * (role editor, plugin settings, AI credential form). Those shells sit at
+     * --spotlight-z-index (9000), so a Dialog MUST sit above that or it opens
+     * underneath the surface that launched it and is unreachable.
+     *
+     * Below --toast-z-index: a toast reporting the outcome of a dialog action
+     * must stay visible over the dialog that triggered it. */
+    --dialog-z-index: 9500;
+
+    /* Menus (`ContextMenu`, and the pickers built on it) are portaled to
+     * <body> and can be opened from ANY layer below — a panel, a modal shell,
+     * or a Dialog on top of one (Settings → AI → Defaults opens the model
+     * picker from inside both). A menu is always the most recent, most
+     * specific thing the user asked for, so it out-ranks every surface that
+     * can launch it, and sits below only toasts and tooltips. */
+    --menu-z-index: 9800;
+
     /* Spotlight */
     --backdrop-blur: 8px;
     --spotlight-z-index: 9000;

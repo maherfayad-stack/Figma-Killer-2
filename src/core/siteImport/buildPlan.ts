@@ -23,16 +23,8 @@ import { detectCrossSheetClassConflicts, isSharedUtilityClassName } from './clas
 import { detectConflicts } from './conflicts'
 import { createCssPlanState, parseCssSourceIntoPlan } from './planCss'
 import { rewriteNpmCdnModuleImports } from './scriptDependencies'
-import type {
-  ClassifiedFile,
-  FileMap,
-  ImportPlan,
-  ImportWarning,
-  ImportGoogleFont,
-  ImportScript,
-  PagePlan,
-  StylesheetImportMode,
-} from './types'
+import type { ImportWarning, ImportGoogleFont, ImportScript, StylesheetImportMode } from './cssImportTypes'
+import type { ClassifiedFile, FileMap, ImportPlan, PagePlan } from './importPlanTypes'
 
 interface BuildImportPlanInput {
   fileMap: FileMap

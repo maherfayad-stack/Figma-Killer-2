@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, mock } from 'bun:test'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { ProvidersTab } from '@admin/pages/ai/tabs/ProvidersTab'
+import { ProvidersTab } from '@admin/modals/Settings/sections/ai/ProvidersTab'
 
 const originalFetch = globalThis.fetch
 

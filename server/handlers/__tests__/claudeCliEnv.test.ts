@@ -184,16 +184,48 @@ describe('resolveClaudeCliWorkspaceCwd (WS-11 step 2 fix)', () => {
 })
 
 describe('claudeCliPlatformSupport', () => {
+  // Every case passes an EXPLICIT env. Reading the ambient `process.env` here
+  // would make the darwin cases fail on a developer's own machine the moment
+  // they set the override to use the provider locally — a test that breaks
+  // because of a legitimate local setting teaches people to ignore it.
+  const NO_ENV: NodeJS.ProcessEnv = {}
+
   it('disables the provider on darwin with a reason, never silently', () => {
-    const result = claudeCliPlatformSupport('darwin')
+    const result = claudeCliPlatformSupport('darwin', NO_ENV)
     expect(result.supported).toBe(false)
     expect(result.reason).toBeTruthy()
     expect(result.reason).toContain('Keychain')
   })
 
   it.each(['linux', 'win32'] as const)('supports %s', (platform) => {
-    const result = claudeCliPlatformSupport(platform)
+    const result = claudeCliPlatformSupport(platform, NO_ENV)
     expect(result.supported).toBe(true)
     expect(result.reason).toBeUndefined()
+  })
+
+  it.each(['1', 'true', 'TRUE', ' true '])(
+    'the local-dev override (%p) enables darwin',
+    (value) => {
+      const result = claudeCliPlatformSupport('darwin', { STUDIO_ALLOW_MACOS_CLAUDE_CLI: value })
+      expect(result.supported).toBe(true)
+      expect(result.reason).toBeUndefined()
+    },
+  )
+
+  // An unset, empty, or typo'd variable must never read as consent — the
+  // block it lifts exists to stop several users silently sharing one Keychain
+  // login, so "not explicitly yes" has to mean no.
+  it.each(['0', 'false', '', 'yes', 'on', 'ture'])(
+    'anything other than 1/true leaves darwin blocked (%p)',
+    (value) => {
+      const result = claudeCliPlatformSupport('darwin', { STUDIO_ALLOW_MACOS_CLAUDE_CLI: value })
+      expect(result.supported).toBe(false)
+      expect(result.reason).toContain('Keychain')
+    },
+  )
+
+  it('does not affect non-darwin platforms either way', () => {
+    const result = claudeCliPlatformSupport('linux', { STUDIO_ALLOW_MACOS_CLAUDE_CLI: '0' })
+    expect(result.supported).toBe(true)
   })
 })

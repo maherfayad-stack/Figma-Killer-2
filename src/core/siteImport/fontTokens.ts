@@ -8,7 +8,7 @@ import {
   normalizeFontTokenVariable,
   sanitizeFontFallbackStack,
 } from '@core/fonts'
-import type { NewStyleRule, ImportFontToken } from './types'
+import type { NewStyleRule, ImportFontToken } from './cssImportTypes'
 import { isRootScopeSelector } from './rootScope'
 
 const GENERIC_FAMILIES = new Set([

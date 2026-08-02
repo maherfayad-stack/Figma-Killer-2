@@ -2,6 +2,11 @@
     position: fixed;
     left: var(--context-menu-x);
     top: var(--context-menu-y);
+    /* Default lives here, not in the component's props — a menu is portaled to
+     * <body> and is routinely opened from inside a modal shell or a Dialog, so
+     * it has to out-rank both. A caller may still override the custom property
+     * inline. See --menu-z-index in globals.css for the layer order. */
+    --context-menu-z-index: var(--menu-z-index);
     z-index: var(--context-menu-z-index);
     width: min(var(--context-menu-width), var(--context-menu-max-width), calc(100vw - 16px));
     min-width: var(--context-menu-min-width);

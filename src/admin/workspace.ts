@@ -13,14 +13,14 @@
  * activity). Self-targeted — no capability gate; every authenticated user
  * can access their own. The avatar dropdown in the toolbar is the primary
  * entry point.
- */
-/**
- * `'ai'` is the AI provider settings + defaults workspace. Gated by
+ *
+ * AI provider credentials, defaults, MCP connectors, and usage audit are not
+ * a routable workspace — they live in the Settings modal's AI section
+ * (`src/admin/modals/Settings/sections/AiSection.tsx`), gated by
  * `ai.providers.manage` (or `ai.audit.read` for the read-only audit tab).
  */
 export type AdminWorkspace =
   | 'dashboard'
   | 'site'
-  | 'ai'
   | 'pluginPage'
   | 'account'

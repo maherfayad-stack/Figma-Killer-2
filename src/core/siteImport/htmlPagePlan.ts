@@ -17,7 +17,8 @@
 import { dirname, joinPaths } from './paths'
 import { importHtml } from '@core/htmlImport'
 import { normalizePageSlug } from '@core/page-tree'
-import type { FileMap, ImportWarning, PagePlan, PageScript } from './types'
+import type { ImportWarning, PageScript } from './cssImportTypes'
+import type { FileMap, PagePlan } from './importPlanTypes'
 import type { SiteScriptFormat } from '@core/site-runtime'
 
 // ---------------------------------------------------------------------------

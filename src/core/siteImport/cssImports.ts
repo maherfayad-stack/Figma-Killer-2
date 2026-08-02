@@ -1,5 +1,6 @@
 import { resolveHref } from './htmlPagePlan'
-import type { FileMap, ImportWarning } from './types'
+import type { ImportWarning } from './cssImportTypes'
+import type { FileMap } from './importPlanTypes'
 
 interface ExpandedCssSource {
   cssPath: string

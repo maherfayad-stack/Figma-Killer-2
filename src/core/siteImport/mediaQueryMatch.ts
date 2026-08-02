@@ -1,5 +1,5 @@
 import { breakpointMediaQuery } from '@core/page-tree'
-import type { BreakpointHint } from './types'
+import type { BreakpointHint } from './cssImportTypes'
 
 function normalizeConditionText(conditionText: string): string {
   return conditionText.trim().replace(/\s+/g, ' ').toLowerCase()

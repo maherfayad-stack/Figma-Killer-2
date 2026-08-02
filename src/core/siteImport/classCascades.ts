@@ -29,12 +29,8 @@
  * contract. They stay global.
  */
 
-import type {
-  CrossSheetClassConflict,
-  ImportPlan,
-  NewStyleRule,
-  PagePlan,
-} from './types'
+import type { NewStyleRule } from './cssImportTypes'
+import type { CrossSheetClassConflict, ImportPlan, PagePlan } from './importPlanTypes'
 import type { CssFileResult } from './assetPlan'
 import {
   createCascadedStyleRuleLayers,

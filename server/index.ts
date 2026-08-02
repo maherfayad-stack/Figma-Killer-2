@@ -27,7 +27,7 @@ await syncSystemRoles(db)
 mediaStorageRegistry.configureLocalDisk({ uploadsDir: config.uploadsDir })
 await activateInstalledServerPlugins(db, config.uploadsDir)
 // AI runtime: start the nightly conversation-purge tick. Operators add
-// their own provider credentials via /admin/ai/providers on first install.
+// their own provider credentials via Settings → AI → Providers on first install.
 startConversationPurgeTick(db)
 
 /**

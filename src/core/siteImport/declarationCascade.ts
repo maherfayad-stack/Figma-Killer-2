@@ -1,5 +1,5 @@
 import type { CSSDeclarationPriorityBag } from '@core/page-tree'
-import type { NewStyleRule } from './types'
+import type { NewStyleRule } from './cssImportTypes'
 
 export interface DeclarationLayer {
   styles: Record<string, unknown>

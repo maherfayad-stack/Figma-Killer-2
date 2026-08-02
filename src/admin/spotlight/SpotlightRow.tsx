@@ -43,6 +43,7 @@ import { ContainerSolidIcon } from 'pixel-art-icons/icons/container-solid'
 import { BoxSolidIcon } from 'pixel-art-icons/icons/box-solid'
 import { BoxStackSolidIcon } from 'pixel-art-icons/icons/box-stack-solid'
 import { AiBoxSolidIcon } from 'pixel-art-icons/icons/ai-box-solid'
+import { AiSettingsSolidIcon } from 'pixel-art-icons/icons/ai-settings-solid'
 import { SparklesSolidIcon } from 'pixel-art-icons/icons/sparkles-solid'
 import { LaptopSolidIcon } from 'pixel-art-icons/icons/laptop-solid'
 import { MonitorSolidIcon } from 'pixel-art-icons/icons/monitor-solid'
@@ -105,6 +106,7 @@ const ICON_MAP: Record<string, IconComponent> = {
   'box-solid': BoxSolidIcon,
   'box-stack-solid': BoxStackSolidIcon,
   'ai-box-solid': AiBoxSolidIcon,
+  'ai-settings-solid': AiSettingsSolidIcon,
   'sparkles-solid': SparklesSolidIcon,
   'laptop-solid': LaptopSolidIcon,
   'monitor-solid': MonitorSolidIcon,

@@ -24,7 +24,7 @@
 import { useRef, useEffect, useState } from 'react'
 import { useAgentStore, useAgentStoreApi } from '@admin/ai/useAgentStore'
 import { useAsyncResource } from '@admin/lib/useAsyncResource'
-import { useAdminNavigate } from '@admin/lib/useAdminNavigate'
+import { useAdminUi } from '@admin/state/adminUi'
 import { getClaudeCliStatus, listCredentials, type ClaudeCliStatus } from '@admin/ai/api'
 import { AiBoxSolidIcon } from 'pixel-art-icons/icons/ai-box-solid'
 import { AiSettingsSolidIcon } from 'pixel-art-icons/icons/ai-settings-solid'
@@ -48,7 +48,6 @@ import styles from './AgentPanel.module.css'
 
 const PANEL_WIDTH = 320
 const PANEL_HEIGHT = 480
-const AI_SETTINGS_ROUTE = '/admin/ai'
 type PanelVariant = 'floating' | 'docked'
 
 // ---------------------------------------------------------------------------
@@ -257,7 +256,7 @@ export function AgentPanel({ variant = 'floating' }: { variant?: PanelVariant })
         >
           <EditSolidIcon size={14} />
         </Button>
-        {/* "AI settings" — always available; routes to /admin/ai. */}
+        {/* "AI settings" — always available; opens Settings → AI. */}
         <AgentSettingsButton
           variant="header"
           label="AI settings"
@@ -422,10 +421,8 @@ function AgentSettingsButton({
   label: string
   'data-testid'?: string
 }) {
-  const navigate = useAdminNavigate()
-
   function openAiSettings() {
-    navigate(AI_SETTINGS_ROUTE)
+    useAdminUi.getState().openSettings('ai')
   }
 
   if (variant === 'header') {

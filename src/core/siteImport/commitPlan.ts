@@ -24,16 +24,14 @@ import { nanoid } from 'nanoid'
 import type { FontEntry } from '@core/fonts'
 import { applyAssetRewrites } from './applyAssetRewrites'
 import { rewriteInternalLinks } from './linkRewrite'
+import type { ImportColorToken, ImportFontToken, ImportWarning } from './cssImportTypes'
 import type {
-  ImportColorToken,
-  ImportFontToken,
   ImportPlan,
   ImportResult,
-  ImportWarning,
   PageConflict,
   RuleConflict,
   TokenConflict,
-} from './types'
+} from './importPlanTypes'
 import type { SiteImportAdapter, SiteImportTransaction } from './adapter'
 
 export async function commitImportPlan(

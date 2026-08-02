@@ -17,7 +17,7 @@
  * rule) and drops the rule entirely when nothing else remains.
  */
 
-import type { NewStyleRule, ImportColorToken } from './types'
+import type { NewStyleRule, ImportColorToken } from './cssImportTypes'
 import { isRootScopeSelector } from './rootScope'
 
 // ---------------------------------------------------------------------------

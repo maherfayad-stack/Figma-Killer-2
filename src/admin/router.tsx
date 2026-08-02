@@ -60,10 +60,9 @@ export function AdminRoutes() {
           model still powers the site editor (loops, data pickers, publish),
           but there is no standalone workspace UI for it anymore: any
           /admin/content|data|media URL falls through to the catch-all below
-          and redirects to the Overview. Plugins and Users management moved
-          into the Settings modal (in-modal panels) instead of separate
-          routes — /admin/plugins|users fall through the same way. */}
-      <Route path="/admin/ai" element={withRouteBoundary(<AdminEntry section="ai" />)} />
+          and redirects to the Overview. Plugins, Users, and AI management
+          moved into the Settings modal (in-modal panels) instead of separate
+          routes — /admin/plugins|users|ai fall through the same way. */}
       <Route path="/admin/account" element={withRouteBoundary(<AdminEntry section="account" />)} />
       <Route
         path="/admin/plugins/:pluginId/:pageId"

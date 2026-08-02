@@ -24,18 +24,22 @@ export function addImportedColorTokens(
   let maxOrder = tokens.reduce((m, t) => Math.max(m, t.order ?? 0), -1)
   const committed: { slug: string; value: string }[] = []
 
-  for (const { slug: rawSlug, value } of colors) {
+  for (const { slug: rawSlug, value, dark } of colors) {
     const slug = normalizeFrameworkColorSlug(rawSlug)
     if (existingSlugs.has(slug)) continue
     existingSlugs.add(slug)
     const now = Date.now()
+    // A dark value identical to light isn't a real dark override — nothing
+    // to import, and marking it enabled would just be noise the user has to
+    // clean up by hand (see `ImportColorToken.dark`'s doc).
+    const hasDark = dark !== undefined && dark !== value
     const token: FrameworkColorToken = {
       id: nanoid(),
       category: '',
       slug,
       lightValue: value,
-      darkValue: '',
-      darkModeEnabled: false,
+      darkValue: hasDark ? dark : '',
+      darkModeEnabled: hasDark,
       generateUtilities: { text: false, background: false, border: false, fill: false },
       generateTransparent: false,
       generateShades: { enabled: false, count: 0 },
