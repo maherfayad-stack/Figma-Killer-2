@@ -8,6 +8,35 @@ Entry ids are `<area>-<nn>`. Areas in use: `parser`, `canvas`, `store`, `panel`,
 
 ---
 
+### agent-01 — the agent re-read the whole design system from raw CSS on every single turn, because every mechanism for handing it that knowledge was keyed on `node_modules`
+- **Agent:** worker (design-system indexing), handoff written by the coordinator — the worker stalled twice without finalising, so this entry and the measurement below are the coordinator's own verification, not the worker's report.
+- **Stage:** done, verified by the coordinator. NOT dogfooded in a browser.
+- **Updated:** 2026-08-02
+
+**Symptom:** every chat turn began with the agent `ls`-ing the styles directory and then reading `index.css`, `colors.css`, `semantic.css`, `typography.css`, `spacing.css`, `rounded.css`, `elevation.css`, then component CSS (`Button.css`, `Navbar.css`, `TextInput.css`, `Cell.css`, …). For `studio-workspace/untitled/` that set is **46 files / 171,523 B** — roughly 25–45k tokens burned before any work started, repeated every turn because each turn is a fresh CLI process.
+
+**Root cause — the agent's behaviour was RATIONAL, not a prompt failure.** `studio-workspace/untitled/` has **no `package.json` at all**; its ALM design system was copied in by the import wizard to `styles/imported/alm-design-design-system-1-1-3/`. Every existing mechanism is keyed on `node_modules`:
+- `profile.componentPackages` was empty, so `almosafer-ds-expert` hit its "package not installed" branch and told the agent it had nothing authoritative to consult.
+- `studio_read_package_doc` resolves through `node_modules` and could not see it.
+- `studio_list_tokens` reads `.studio/framework.json`, whose `FrameworkSettings` shape carries **only colors, typography, spacing** — `rounded.css` and `elevation.css` have no home in it, and component class names have no home anywhere.
+
+The agent had no alternative. **Do not "fix" a future instance of this by telling the agent to stop reading — give it something better first.**
+
+**Fix, three parts:** `designSystemDetect.ts` (new) recognises an imported design-system folder under `styles/imported/<pkg>/` and reports it on `ProjectProfile.designSystems` with `{name, source: 'imported', root}`, so detection no longer depends on `node_modules`. `designSystemDigest.ts` (new) generates a `design-system.md` reference file into `<project>/.claude/` alongside the six existing generated references, built with the EXISTING `tokenExtractCssScan` engine (no new CSS parser), cached as `.studio/cache/design-system-<hash>.md` on a content hash of the source file set — the same convention `styleCompile.ts` already uses.
+
+**Measured by the coordinator, not claimed by the worker** (`probeProject` + `getOrBuildDesignSystemDigest` against the real `untitled` project):
+- Detection resolves `{"name":"alm-design-design-system-1-1-3","source":"imported","root":"styles/imported/alm-design-design-system-1-1-3"}`.
+- Digest is **9,106 B (~2,277 tokens)** against **171,523 B (~42,900 tokens)** of source CSS — ~19× smaller.
+- Covers all five families **including radius (6 tokens) and elevation (4)**, which are exactly what `FrameworkSettings` structurally cannot express, plus **56 components** with variants and the exact file to open.
+
+**The digest is deliberately honest about being a map, not a substitute** — it states "19 other custom properties were found but did not fit any family above — open the token files directly", and counts typography detail tokens rather than listing values. Keep that property. A digest that silently drops a variant is worse than the brute-force reading it replaces.
+
+**`projectProbe.ts` went 692 → 708 lines and broke the 700-line module-size gate**; the detection logic was split out into `designSystemDetect.ts`, bringing it to 622. No `GRANDFATHERED` entry was added and none should be.
+
+**Not done:** nobody has driven this in a browser. The check that matters is opening a Studio chat turn on `untitled` and confirming the agent reads `design-system.md` instead of walking the CSS tree.
+
+---
+
 ### server-15 — server-14's Windows fix didn't reach POSIX: a killed `claude` CLI's subagents could wedge a conversation's stream lock forever
 - **Agent:** coordinator (direct)
 - **Stage:** done — includes a second pass after audit (findings 1 and 2 below).
