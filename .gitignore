@@ -90,16 +90,21 @@ docs/superpowers/
 .gstack/
 .playwright-mcp/
 .turbo/
-.studio/daemon.json
-.studio/vite/
+# Per-project Studio sidecars. `**/` is load-bearing: every real `.studio/`
+# lives at `studio-workspace/<project>/.studio/`, and a pattern containing a
+# slash is anchored to THIS file's directory — so the bare `.studio/…` forms
+# these replace matched only a root-level dir that never exists, silently
+# leaving every one of these files tracked.
+**/.studio/daemon.json
+**/.studio/vite/
 # Install-job durability sidecar: per-machine operational state (absolute app-root
 # path + pid of the process that spawned the install), rewritten on every install.
 # Same class as daemon.json above — it must survive a server restart, not a clone.
-.studio/install-job.json
+**/.studio/install-job.json
 # Compiled-style cache: `styles-<hash>.{css,json}`, keyed on a content hash of
 # the inputs (server/handlers/studio/styleCompile.ts). Pure derived output —
 # regenerated on demand, and committing it only produces churn in every diff.
-.studio/cache/
+**/.studio/cache/
 
 # Playwright/E2E run output — generated, not source
 test-results/
