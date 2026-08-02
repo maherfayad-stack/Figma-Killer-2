@@ -43,6 +43,7 @@ import { resolveAppRoot } from './appRoot'
 import { resolveProjectProfile } from './projectProbe'
 import type { ProjectProfile } from './projectProfileSchema'
 import { readTextCapped } from './cappedFileRead'
+import { getOrBuildDesignSystemDigest } from './designSystemDigest'
 import { studioAgentTools } from '../../ai/tools/studio'
 
 const AGENTS_DIR = join('.claude', 'agents')
@@ -256,6 +257,7 @@ function almosafarDsExpert(dir: string, profile: ProjectProfile): StudioAgentDef
   const pkgDir = join(appRoot, 'node_modules', '@alm-design', 'design-system')
   const claudeMd = installed ? readTextCapped(join(pkgDir, 'CLAUDE.md'), DS_FILE_MAX_BYTES) : undefined
   const designMd = installed ? readTextCapped(join(pkgDir, 'design.md'), DS_FILE_MAX_BYTES) : undefined
+  const hasDesignSystemDigest = (profile.designSystems?.length ?? 0) > 0
 
   const body = claudeMd !== undefined && designMd !== undefined
     ? [
@@ -271,11 +273,19 @@ function almosafarDsExpert(dir: string, profile: ProjectProfile): StudioAgentDef
         '--- design.md ---',
         designMd,
       ].join('\n')
-    : [
-        'You are almosafer-ds-expert. This project does NOT currently depend on @alm-design/design-system (or its reference files are missing/too large to embed), so you have nothing authoritative to consult.',
-        '',
-        'Say so plainly rather than reasoning about ALM components from memory — a wrong guess here is worse than admitting you cannot help until the package is installed.',
-      ].join('\n')
+    : hasDesignSystemDigest
+      ? [
+          'You are almosafer-ds-expert, the authority on this project\'s design system.',
+          '',
+          'This project\'s design system has no package docs reachable here (no @alm-design/design-system install, or a project imported as a plain CSS copy under styles/imported/ — that path never carries a CLAUDE.md/design.md). Read design-system.md (in this same .claude/ directory) instead: it is generated straight from this project\'s OWN CSS — every color/typography/spacing/radius/elevation token family, plus a one-line-per-component index of class name + available variants + the exact file to open for the full rule. Regenerated every turn from a content hash, so it never goes stale.',
+          '',
+          'Reach for an existing component\'s class + variant FIRST, then a design token, and only then hand-rolled CSS — the same order the real ALM docs teach, just sourced from this project\'s own stylesheets instead of a package README.',
+        ].join('\n')
+      : [
+          'You are almosafer-ds-expert. This project does NOT currently depend on @alm-design/design-system (or its reference files are missing/too large to embed), so you have nothing authoritative to consult.',
+          '',
+          'Say so plainly rather than reasoning about ALM components from memory — a wrong guess here is worse than admitting you cannot help until the package is installed.',
+        ].join('\n')
 
   return assertKnownTools({
     name: 'almosafer-ds-expert',
@@ -442,6 +452,7 @@ function projectConventionsReference(dir: string, profile: ProjectProfile): stri
 }
 
 function buildReferenceFiles(dir: string, profile: ProjectProfile): ReferenceFile[] {
+  const designSystemDigest = getOrBuildDesignSystemDigest(dir, profile.designSystems ?? [])
   return [
     { relPath: 'canonical-jsx.md', content: canonicalJsxReference() },
     { relPath: 'studio-invariants.md', content: studioInvariantsReference() },
@@ -449,6 +460,7 @@ function buildReferenceFiles(dir: string, profile: ProjectProfile): ReferenceFil
     { relPath: 'studio-tools.md', content: studioToolsReference() },
     { relPath: 'studio-design-principles.md', content: designPrinciplesReference() },
     { relPath: 'project-conventions.md', content: projectConventionsReference(dir, profile) },
+    ...(designSystemDigest !== undefined ? [{ relPath: 'design-system.md', content: designSystemDigest }] : []),
   ]
 }
 

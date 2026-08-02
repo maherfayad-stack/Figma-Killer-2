@@ -2,9 +2,27 @@
  * claudeCliSpawn.ts — incremental NDJSON line reader over a fake process.
  * Never spawns the real CLI — every `SpawnedProcessLike` here is synthetic.
  */
-import { describe, expect, it } from 'bun:test'
+import { describe, expect, it, spyOn } from 'bun:test'
 import type { SpawnedProcessLike, SubprocessSpawnFn } from '../../handlers/studio/subprocessRunner'
 import { ClaudeCliSpawnError, spawnClaudeCliNdjson, type ClaudeCliRawEvent } from './claudeCliSpawn'
+
+/**
+ * Temporarily overrides `process.platform` for the duration of an async
+ * `run`, restoring it only once `run`'s promise settles (not synchronously
+ * after starting it — `killDescendants` reads `process.platform` deep inside
+ * the async generator's execution, well after this function's own call frame
+ * has returned). Never actually changes the platform this process runs on —
+ * `process.platform` is just a reported string other code branches on.
+ */
+async function withPlatform<T>(platform: NodeJS.Platform, run: () => Promise<T>): Promise<T> {
+  const original = process.platform
+  Object.defineProperty(process, 'platform', { value: platform, configurable: true })
+  try {
+    return await run()
+  } finally {
+    Object.defineProperty(process, 'platform', { value: original, configurable: true })
+  }
+}
 
 function streamFromChunks(chunks: string[]): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder()
@@ -365,5 +383,267 @@ describe('spawnClaudeCliNdjson — the timeout is an idle window, not a total ca
     expect(events.filter((e) => e.kind === 'line')).toHaveLength(3)
     expect(events.at(-1)).toMatchObject({ kind: 'exit', timedOut: false })
     expect(killable.wasKilled()).toBe(false)
+  })
+})
+
+/** A fake process that reports a `pid`, so `killDescendants` doesn't early-return. Every assertion against `process.kill`/`Bun.spawn` below goes through a mock — this never signals or spawns anything real. */
+function fakeSpawnWithPid(pid: number): SubprocessSpawnFn {
+  return () => {
+    const proc: SpawnedProcessLike = {
+      stdout: streamFromChunks([]),
+      stderr: streamFromChunks([]),
+      exited: Promise.resolve(0),
+      pid,
+      kill: () => {},
+    }
+    return proc
+  }
+}
+
+describe('spawnClaudeCliNdjson — POSIX process-group kill (server-14 follow-up)', () => {
+  /**
+   * The bug this pins: `proc.kill()` signals only the direct `claude`
+   * process. On POSIX its subagent grandchildren survive holding the
+   * inherited `stderr` pipe open, `pumpCapped` never sees EOF, and the
+   * conversation's stream lock (chat.ts) was never released — a 409 on every
+   * later message until the server restarted. `killDescendants` must reach
+   * the whole process group, not just the child `proc.kill()` already hit.
+   */
+  it('signals the whole process group with a NEGATIVE pid on POSIX, not just the direct child', async () => {
+    await withPlatform('darwin', async () => {
+      const killSpy = spyOn(process, 'kill').mockImplementation(() => true)
+      try {
+        const controller = new AbortController()
+        controller.abort()
+        await collect(spawnClaudeCliNdjson({
+          argv: ['claude'],
+          cwd: '/tmp',
+          env: {},
+          signal: controller.signal,
+          spawn: fakeSpawnWithPid(424_242),
+        }))
+        // The immediate signal is SIGTERM, not SIGKILL — see the escalation
+        // tests below for why (the CLI's own session-transcript flush).
+        expect(killSpy).toHaveBeenCalledWith(-424_242, 'SIGTERM')
+      } finally {
+        killSpy.mockRestore()
+      }
+    })
+  })
+
+  /**
+   * The finding this pins: going straight to SIGKILL never gives `claude` a
+   * chance to flush its own `--resume` session transcript, which a terminal
+   * Ctrl+C's SIGINT would. A transcript truncated mid-write leaves the NEXT
+   * turn resuming against a corrupt session — permanently broken, just
+   * relocated from the stream lock (the bug this whole file exists to fix)
+   * to the CLI's own session file.
+   */
+  it('escalates SIGTERM → SIGKILL, in that order, only once the group is still alive after the grace period', async () => {
+    await withPlatform('darwin', async () => {
+      // Every call succeeds (no throw) — including the `signal: 0` liveness
+      // probe, simulating a group that ignored SIGTERM and is still there.
+      const killSpy = spyOn(process, 'kill').mockImplementation(() => true)
+      try {
+        const controller = new AbortController()
+        controller.abort()
+        await collect(spawnClaudeCliNdjson({
+          argv: ['claude'],
+          cwd: '/tmp',
+          env: {},
+          signal: controller.signal,
+          posixKillGraceMs: 15,
+          spawn: fakeSpawnWithPid(424_242),
+        }))
+        // The escalation timer is intentionally NOT awaited by the generator
+        // (it must not become another unbounded wait) — give it a moment to
+        // fire before asserting.
+        await Bun.sleep(60)
+
+        expect(killSpy.mock.calls).toEqual([
+          [-424_242, 'SIGTERM'],
+          [-424_242, 0], // the liveness probe
+          [-424_242, 'SIGKILL'],
+        ])
+      } finally {
+        killSpy.mockRestore()
+      }
+    })
+  })
+
+  it('does NOT escalate to SIGKILL when the group already exited during the grace period', async () => {
+    await withPlatform('darwin', async () => {
+      const killSpy = spyOn(process, 'kill').mockImplementation((_pid, signal) => {
+        // The liveness probe (`signal: 0`) is the one call that reports the
+        // group is gone — SIGTERM succeeded on its own.
+        if (signal === 0) throw new Error('ESRCH — no such process')
+        return true
+      })
+      try {
+        const controller = new AbortController()
+        controller.abort()
+        await collect(spawnClaudeCliNdjson({
+          argv: ['claude'],
+          cwd: '/tmp',
+          env: {},
+          signal: controller.signal,
+          posixKillGraceMs: 15,
+          spawn: fakeSpawnWithPid(424_242),
+        }))
+        await Bun.sleep(60)
+
+        expect(killSpy.mock.calls).toEqual([
+          [-424_242, 'SIGTERM'],
+          [-424_242, 0],
+        ])
+        expect(killSpy.mock.calls.some(([, signal]) => signal === 'SIGKILL')).toBe(false)
+      } finally {
+        killSpy.mockRestore()
+      }
+    })
+  })
+
+  it('never touches process.kill when pid is undefined — the injected-fake case in tests must never signal anything real', async () => {
+    await withPlatform('darwin', async () => {
+      const killSpy = spyOn(process, 'kill').mockImplementation(() => true)
+      try {
+        const controller = new AbortController()
+        controller.abort()
+        await collect(spawnClaudeCliNdjson({
+          argv: ['claude'],
+          cwd: '/tmp',
+          env: {},
+          signal: controller.signal,
+          spawn: fakeSpawn({ stdoutChunks: [], exitCode: 0 }),
+        }))
+        expect(killSpy).not.toHaveBeenCalled()
+      } finally {
+        killSpy.mockRestore()
+      }
+    })
+  })
+
+  it('still reaps the tree via taskkill /T /F on Windows, and never takes the POSIX branch there', async () => {
+    await withPlatform('win32', async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test-only stand-in for a SpawnedProcessLike from Bun.spawn's much wider real return type
+      const spawnSpy = spyOn(Bun, 'spawn').mockImplementation(() => ({ pid: 1 }) as any)
+      const killSpy = spyOn(process, 'kill').mockImplementation(() => true)
+      try {
+        const controller = new AbortController()
+        controller.abort()
+        await collect(spawnClaudeCliNdjson({
+          argv: ['claude'],
+          cwd: '/tmp',
+          env: {},
+          signal: controller.signal,
+          spawn: fakeSpawnWithPid(555),
+        }))
+        expect(spawnSpy).toHaveBeenCalledWith(
+          ['taskkill', '/pid', '555', '/T', '/F'],
+          expect.objectContaining({ stdout: 'ignore', stderr: 'ignore', stdin: 'ignore' }),
+        )
+        // The POSIX negative-pid branch must never fire on Windows.
+        expect(killSpy).not.toHaveBeenCalled()
+      } finally {
+        spawnSpy.mockRestore()
+        killSpy.mockRestore()
+      }
+    })
+  })
+})
+
+/**
+ * A fake `stderr` stream that either never closes, or emits some bytes and
+ * THEN never closes — simulating a grandchild process still holding the
+ * write end of the pipe open after the direct child has already exited.
+ * `proc.exited` and `stdout` are configurable per test so both the "only
+ * stderr is stuck" and "everything is stuck" shapes are covered.
+ */
+function stuckDrainSpawn(opts: {
+  stdoutChunks?: string[]
+  stderrText?: string
+  exitCode?: number
+  exitedNeverResolves?: boolean
+}): SubprocessSpawnFn {
+  return () => {
+    const encoder = new TextEncoder()
+    const proc: SpawnedProcessLike = {
+      stdout: streamFromChunks(opts.stdoutChunks ?? []),
+      stderr: new ReadableStream<Uint8Array>({
+        start(controller) {
+          if (opts.stderrText) controller.enqueue(encoder.encode(opts.stderrText))
+          // Deliberately never closes — no `controller.close()` call — so
+          // `pumpCapped`'s read loop never sees `done: true`.
+        },
+      }),
+      // A promise that intentionally never settles, simulating a process the OS never confirms has exited.
+      exited: opts.exitedNeverResolves ? new Promise<number>(() => {}) : Promise.resolve(opts.exitCode ?? 0),
+      kill: () => {},
+    }
+    return proc
+  }
+}
+
+describe('spawnClaudeCliNdjson — bounded final drain (never hang on a stuck pipe)', () => {
+  /**
+   * The bug this pins, one level up from the process-group fix: even a
+   * CORRECT kill can't guarantee the pipe closes (a process outside the
+   * killed group could still hold a duplicated fd). `await Promise.all([
+   * stderrPromise, proc.exited])` used to be unbounded — this generator, and
+   * the chat handler's `finally` awaiting it, would hang forever. `drainGraceMs`
+   * bounds it; the terminal `exit` event must always still arrive.
+   */
+  it('degrades to a completed turn when stderr never reports EOF, but reports the real exit code the process DID give us', async () => {
+    const events = await collect(spawnClaudeCliNdjson({
+      argv: ['claude'],
+      cwd: '/tmp',
+      env: {},
+      signal: new AbortController().signal,
+      drainGraceMs: 30,
+      spawn: stuckDrainSpawn({ stdoutChunks: ['{"a":1}\n'], exitCode: 7 }),
+    }))
+    expect(events).toEqual([
+      { kind: 'line', value: { a: 1 } },
+      { kind: 'exit', exitCode: 7, stderr: '', timedOut: false },
+    ])
+  })
+
+  it('preserves partial stderr captured before the grace period expires, even though the pipe never closes', async () => {
+    const events = await collect(spawnClaudeCliNdjson({
+      argv: ['claude'],
+      cwd: '/tmp',
+      env: {},
+      signal: new AbortController().signal,
+      drainGraceMs: 30,
+      spawn: stuckDrainSpawn({ stderrText: 'segmentation fault', exitCode: 134 }),
+    }))
+    expect(events).toEqual([{ kind: 'exit', exitCode: 134, stderr: 'segmentation fault', timedOut: false }])
+  })
+
+  it('reports exitCode null (never fabricated) when even proc.exited never settles — the generator still terminates', async () => {
+    const events = await collect(spawnClaudeCliNdjson({
+      argv: ['claude'],
+      cwd: '/tmp',
+      env: {},
+      signal: new AbortController().signal,
+      drainGraceMs: 30,
+      spawn: stuckDrainSpawn({ exitedNeverResolves: true }),
+    }))
+    expect(events).toEqual([{ kind: 'exit', exitCode: null, stderr: '', timedOut: false }])
+  })
+
+  it('does not truncate a normal, promptly-draining turn — the grace period never engages when nothing is stuck', async () => {
+    const events = await collect(spawnClaudeCliNdjson({
+      argv: ['claude'],
+      cwd: '/tmp',
+      env: {},
+      signal: new AbortController().signal,
+      drainGraceMs: 30,
+      spawn: fakeSpawn({ stdoutChunks: ['{"a":1}\n'], stderr: '', exitCode: 0 }),
+    }))
+    expect(events).toEqual([
+      { kind: 'line', value: { a: 1 } },
+      { kind: 'exit', exitCode: 0, stderr: '', timedOut: false },
+    ])
   })
 })

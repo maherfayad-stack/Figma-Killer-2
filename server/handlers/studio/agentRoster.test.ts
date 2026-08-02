@@ -168,10 +168,33 @@ describe('generateStudioAgentRoster', () => {
     expect(md).toContain('فصحى مبسطة')
   })
 
-  it('almosafer-ds-expert degrades honestly when the package is not installed', () => {
+  it('almosafer-ds-expert degrades honestly when there is no design system at all', () => {
     generateStudioAgentRoster(dir)
     const md = readFileSync(join(dir, '.claude', 'agents', 'almosafer-ds-expert.md'), 'utf8')
     expect(md).toContain('does NOT currently depend on @alm-design/design-system')
+  })
+
+  // ── design-system.md — the seventh reference file (decoupled from node_modules) ──
+  it('does not write design-system.md when the project has no design system at all', () => {
+    const result = generateStudioAgentRoster(dir)
+    expect(result.written).not.toContain('design-system.md')
+    expect(existsSync(join(dir, 'design-system.md'))).toBe(false)
+  })
+
+  it('writes design-system.md from a styles/imported/<slug>/ CSS copy — no package.json, no node_modules, no CLAUDE.md anywhere', () => {
+    write(dir, 'styles/imported/alm-design-design-system-1-1-3/src/tokens/rounded.css', ':root { --rounded-sm: 8px; }')
+    write(dir, 'styles/imported/alm-design-design-system-1-1-3/src/components/Button.css', '.btn { display: flex; } .btn--primary { color: red; }')
+
+    const result = generateStudioAgentRoster(dir)
+    expect(result.written).toContain('design-system.md')
+    const digest = readFileSync(join(dir, 'design-system.md'), 'utf8')
+    expect(digest).toContain('## Radius (1 tokens)')
+    expect(digest).toContain('.btn — variants: --primary')
+
+    // almosafer-ds-expert points at it instead of saying "nothing to consult".
+    const md = readFileSync(join(dir, '.claude', 'agents', 'almosafer-ds-expert.md'), 'utf8')
+    expect(md).toContain('design-system.md')
+    expect(md).not.toContain('does NOT currently depend on @alm-design/design-system')
   })
 
   it('almosafer-ds-expert embeds the package\'s own CLAUDE.md/design.md when present', () => {

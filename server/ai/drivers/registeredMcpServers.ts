@@ -177,7 +177,7 @@ export function revokeRegisteredMcpServer(dir: string, name: string): void {
 
 /**
  * The approved subset, fully resolved with secret values decrypted and
- * injected — shaped for merging straight into `buildMcpConfigJson`, exactly
+ * injected — shaped for merging straight into `buildMcpConfig`, exactly
  * like `projectMcpServers.ts`'s `approvedProjectMcpServers`. A server whose
  * declared secret field cannot be resolved (never set, or a master-key
  * rotation mismatch) is DROPPED from the result with a logged reason rather

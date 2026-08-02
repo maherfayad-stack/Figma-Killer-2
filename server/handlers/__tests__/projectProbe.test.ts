@@ -395,6 +395,37 @@ describe('probeProject — component packages', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Design systems — decoupled from node_modules (a `styles/imported/<slug>/`
+// CSS copy is discovered even when the project has NO package.json at all)
+// ---------------------------------------------------------------------------
+
+describe('probeProject — design systems', () => {
+  it('reports a node_modules component package as a design system, app-root-prefixed', () => {
+    writePackageJson({ 'acme-ui': '^1.0.0' })
+    write('node_modules/acme-ui/package.json', JSON.stringify({ name: 'acme-ui', version: '1.0.0', types: 'index.d.ts' }))
+    write('node_modules/acme-ui/index.d.ts', 'export declare const Button: React.FC<{ label: string }>;\n')
+
+    const { designSystems } = probeProject(tmpDir)
+    expect(designSystems).toEqual([{ name: 'acme-ui', source: 'node-modules', root: 'node_modules/acme-ui' }])
+  })
+
+  it('reports a styles/imported/<slug>/ CSS copy as a design system even with NO package.json at all', () => {
+    write('styles/imported/alm-design-design-system-1-1-3/src/tokens/colors.css', ':root { --color-x: #fff; }')
+
+    const { designSystems, componentPackages } = probeProject(tmpDir)
+    expect(componentPackages).toEqual([])
+    expect(designSystems).toEqual([
+      { name: 'alm-design-design-system-1-1-3', source: 'imported', root: 'styles/imported/alm-design-design-system-1-1-3' },
+    ])
+  })
+
+  it('is an empty array, never undefined, when the project has neither', () => {
+    const { designSystems } = probeProject(tmpDir)
+    expect(designSystems).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Locale capability (WS-10 §4.1)
 //
 // The `translations[lang]`-style fixture below is deliberately shaped exactly

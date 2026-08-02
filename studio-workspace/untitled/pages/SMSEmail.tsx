@@ -42,8 +42,8 @@ export default function SMSEmail() {
             <div className={styles.instructionLead}>Enter the 6-digit code sent via:</div>
             <div className={styles.channelRow}>
               <svg className={styles.channelIcon} width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <rect x="3" y="5" width="18" height="14" rx="2" stroke="currentColor" strokeWidth="1.6" fill="none" />
-                <path d="M4 6.5L12 13L20 6.5" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" fill="none" />
+                <rect x="3" y="5.5" width="18" height="13" rx="2" stroke="currentColor" strokeWidth="1.6" fill="none" />
+                <path d="M4 7L12 13L20 7" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" fill="none" />
               </svg>
               <span className={styles.channelStrong}>Email</span>
               <span className={styles.channelJoiner}>at</span>

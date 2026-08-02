@@ -1,17 +1,20 @@
 @import "../styles/imported/alm-design-design-system-1-1-3/src/tokens/index.css";
 
+/* ── screen frame — an iPhone-sized presented-sheet preview ── */
 .page {
   box-sizing: border-box;
   display: flex;
   justify-content: center;
   width: 100%;
   min-height: 100vh;
+  /* subtle grey backdrop behind the sheet, matching the iOS "presented over another screen" chrome */
   background: var(--background-base-subtle);
   font-family: var(--font-body);
   color: var(--text-base-default);
 }
 
 .frame {
+  position: relative;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
@@ -19,40 +22,47 @@
   max-width: 393px;
   min-height: 100vh;
   background: var(--background-base-default);
+  /* fullscreen bottom sheet has 34px rounded top corners on iOS */
+  border-radius: var(--rounded-popover) var(--rounded-popover) 0 0;
+  overflow: hidden;
 }
 
+/* ── iPhone status bar (9:41, dynamic island, signal/wifi/battery) ── */
 .statusBar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 44px;
-  padding: 0 24px;
+  height: 54px;
+  padding-inline: var(--space-lg);
   color: var(--text-base-default);
-  font-size: 15px;
+  font-size: 17px;
   font-weight: 600;
   flex-shrink: 0;
 }
 
-.statusTime { font-variant-numeric: tabular-nums; }
+.statusTime { font-variant-numeric: tabular-nums; min-width: 50px; }
 
 .statusIsland {
   width: 122px;
   height: 32px;
-  background: #000;
+  background: var(--color-metal-static);
   border-radius: var(--rounded-full);
 }
 
 .statusLevels {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-xs);
+  min-width: 50px;
+  justify-content: flex-end;
 }
 
+/* ── toolbar with circular back button ── */
 .toolbar {
   display: flex;
   align-items: center;
-  height: 56px;
-  padding: 0 var(--space);
+  padding-block: var(--space);
+  padding-inline: var(--space);
   flex-shrink: 0;
 }
 
@@ -60,8 +70,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 44px;
-  height: 44px;
+  width: 40px;
+  height: 40px;
   border: none;
   border-radius: var(--rounded-full);
   background: var(--overlay-surface);
@@ -72,11 +82,16 @@
 .backBtn:hover { background: var(--background-base-hover); }
 .backBtn:active { background: var(--background-base-pressed); }
 
+/* flip the chevron in RTL */
+[dir="rtl"] .backBtn svg { transform: scaleX(-1); }
+
+/* ── body ── */
 .body {
   display: flex;
   flex-direction: column;
   gap: var(--space-lg);
-  padding: var(--space) var(--space);
+  padding-inline: var(--space);
+  padding-block-end: var(--space);
   flex: 1;
 }
 
@@ -93,25 +108,25 @@
 .instruction {
   display: flex;
   flex-direction: column;
-  gap: var(--space-xs);
+  gap: var(--space-sm);
 }
 
 .instructionLead {
   font-family: var(--type-body-regular-family);
-  font-size: var(--type-body-regular-size);
+  font-size: var(--type-body-size);
   font-weight: var(--type-body-regular-weight);
-  line-height: var(--type-body-regular-lh);
+  line-height: var(--type-body-lh);
   color: var(--text-base-default);
 }
 
 .channelRow {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-xs);
+  gap: var(--space-sm);
   flex-wrap: wrap;
   font-family: var(--type-body-regular-family);
-  font-size: var(--type-body-regular-size);
-  line-height: var(--type-body-regular-lh);
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-lh);
   color: var(--text-base-default);
 }
 
@@ -120,15 +135,10 @@
   color: var(--icon-base-default);
 }
 
-.channelStrong {
-  font-weight: 700;
-}
+.channelStrong { font-weight: var(--type-body-bold-weight); }
+.channelJoiner { font-weight: var(--type-body-regular-weight); color: var(--text-base-subtext); }
 
-.channelJoiner {
-  font-weight: 400;
-  color: var(--text-base-subtext);
-}
-
+/* ── OTP row — 6 rounded square inputs ── */
 .otpRow {
   display: grid;
   grid-template-columns: repeat(6, 1fr);
@@ -159,9 +169,9 @@
 
 .resend {
   font-family: var(--type-caption-regular-family);
-  font-size: var(--type-caption-regular-size);
-  line-height: var(--type-caption-regular-lh);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-lh);
   color: var(--text-base-default);
 }
 
-.resendStrong { font-weight: 700; }
+.resendStrong { font-weight: var(--type-caption-semibold-weight); }

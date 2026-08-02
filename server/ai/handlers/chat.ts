@@ -96,6 +96,20 @@ const activeChatConversations = new Set<string>()
 const REQUEST_ABORTED = Symbol('request-aborted')
 
 /**
+ * Defence in depth for the per-conversation stream lock, on top of the
+ * `finally` in `handleAiChat`'s stream `start()` that normally releases it.
+ * That `finally` only runs once the driver's own promise settles — a driver
+ * is not obligated to ever settle (a wedged subprocess pipe, bounded on the
+ * Claude CLI side by `drainGraceMs` in `claudeCliSpawn.ts`, but any future
+ * driver could hang the same way), and until it does, `acquireConversationStream`
+ * never frees the id and every later message for that conversation 409s until
+ * the server restarts. 15s gives the normal abort-and-unwind path (bounded to
+ * ~5s by the CLI driver's own drain) generous headroom while still bounding
+ * the worst case for every driver, not just this one.
+ */
+const ABORT_RELEASE_GRACE_MS = 15_000
+
+/**
  * Match `/admin/api/ai/chat`. Returns `null` if path doesn't match.
  */
 export function tryHandleAiChat(
@@ -334,6 +348,20 @@ async function handleAiChat(
   const streamAbort = new AbortController()
   const turnSignal = AbortSignal.any([req.signal, streamAbort.signal])
 
+  // Aborts ONLY when the guard below actually force-releases the lock — see
+  // `abandonTurn` and `runChat`'s `abandonedSignal` doc. Threaded into
+  // `runChat` so an abandoned turn can never interleave writes with whatever
+  // NEW turn now legitimately holds this conversation.
+  const turnDeath = new AbortController()
+
+  // See `armAbortedReleaseGuard`'s doc comment: the lock this releases must
+  // not depend on the driver's own promise ever settling.
+  const disposeAbortedReleaseGuard = armAbortedReleaseGuard(
+    turnSignal,
+    () => abandonTurn(turnDeath, releaseConversation),
+    ABORT_RELEASE_GRACE_MS,
+  )
+
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       let streamClosed = false
@@ -409,7 +437,7 @@ async function handleAiChat(
           providerId: credential.providerId,
           modelId: conversation.modelId,
         })
-        await runChat({ driver, request, persister, emit })
+        await runChat({ driver, request, persister, emit, abandonedSignal: turnDeath.signal })
 
         // Best-effort: record that this credential was used.
         await touchCredentialLastUsed(db, credential.id).catch(() => { /* noop */ })
@@ -447,6 +475,7 @@ async function handleAiChat(
           // request already finished by the time we hit this branch.
           console.error('[ai/chat] audit emit failed:', auditErr)
         } finally {
+          disposeAbortedReleaseGuard()
           releaseConversation()
           closeStream()
         }
@@ -493,6 +522,67 @@ function acquireConversationStream(conversationId: string): (() => void) | null 
     released = true
     activeChatConversations.delete(conversationId)
   }
+}
+
+/**
+ * Arms a bounded, independent guarantee that `release` runs once `signal`
+ * aborts — even if whatever ALSO calls `release` on the "natural" path (the
+ * stream handler's own `finally`) never gets there because the driver it's
+ * awaiting never settles. `release` is generic — this call site passes
+ * `abandonTurn`, which marks the turn dead BEFORE calling
+ * `acquireConversationStream`'s returned releaser (see that function's doc).
+ * That releaser is already idempotent (a second call is a no-op), so it is
+ * always safe to call from both this guard and the natural path — whichever
+ * fires first wins, and the other becomes a no-op.
+ *
+ * Returns `dispose()`, which the natural path calls once it DOES settle so
+ * the timer never fires after a normal completion (or a normal, promptly
+ * unwound abort). Exported for its own focused unit test — standing up the
+ * full HTTP handler just to prove a timer fires is unnecessary weight.
+ */
+export function armAbortedReleaseGuard(
+  signal: AbortSignal,
+  release: () => void,
+  graceMs: number,
+): () => void {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const forceRelease = (): void => {
+    timer = undefined
+    release()
+  }
+  const arm = (): void => {
+    if (timer !== undefined) return
+    timer = setTimeout(forceRelease, graceMs)
+  }
+  signal.addEventListener('abort', arm, { once: true })
+  if (signal.aborted) arm()
+  return () => {
+    signal.removeEventListener('abort', arm)
+    if (timer !== undefined) {
+      clearTimeout(timer)
+      timer = undefined
+    }
+  }
+}
+
+/**
+ * The action performed once `armAbortedReleaseGuard`'s grace period expires:
+ * mark the turn dead, THEN release the lock — in that exact order. Order is
+ * the whole point: `runChat` (`server/ai/runtime/runner.ts`) checks
+ * `turnDeath.signal` before every remaining persister write, so a new turn
+ * must never be able to acquire the conversation lock (via `release`) before
+ * this one has already been marked unable to write. Releasing first, even by
+ * one microtask, would reopen exactly the interleaved-writes hazard
+ * `acquireConversationStream` exists to prevent — a new turn writing while
+ * this one might still be mid-write, "sound by construction" would just be
+ * "usually fine."
+ *
+ * Exported for its own unit test — proving the ordering doesn't require
+ * standing up the full HTTP handler.
+ */
+export function abandonTurn(turnDeath: AbortController, release: () => void): void {
+  turnDeath.abort()
+  release()
 }
 
 function clientClosedRequest(): Response {

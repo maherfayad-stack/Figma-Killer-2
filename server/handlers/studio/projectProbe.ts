@@ -66,28 +66,23 @@ import { existsSync, readdirSync } from 'node:fs'
 import { join, relative, resolve, sep } from 'node:path'
 import { EXCLUDED_WORKSPACE_DIR_NAMES, listWorkspaceFiles } from '@core/page-parser'
 import { findEntryFile } from '@core/studio-sync/collectPageStylesheets'
-import { Type, type Static } from '@core/utils/typeboxHelpers'
+import { Type } from '@core/utils/typeboxHelpers'
 import { compiledCheck } from '@core/utils/typeboxCompiler'
 import { badRequest, jsonResponse, readValidatedBody } from '../../http'
 import { resolveProjectDir } from '../studioProjects'
-import { readJsonFileSafe, readTextCapped } from './cappedFileRead'
+import { readTextCapped } from './cappedFileRead'
 import { DEPENDENCIES_NOT_INSTALLED, detectComponentPackages } from './componentPackageDetect'
+import { detectDesignSystems } from './designSystemDetect'
+import { findConfigFile, hasDependency, readPackageJson, type PackageJsonShape } from './packageJsonRead'
+import { detectStyleToolchain } from './styleToolchainDetect'
 import { mergeStudioMeta, readStudioMeta } from './studioMeta'
 import { detectColorScheme } from './colorSchemeDetect'
 import { detectLocales } from './localeProbe'
 import type { ProbeWarning, ProjectProfile } from './projectProfileSchema'
 
 // ---------------------------------------------------------------------------
-// package.json / tsconfig.json — narrow schemas, real files trusted no further
+// tsconfig.json — narrow schema, real files trusted no further
 // ---------------------------------------------------------------------------
-
-const PackageJsonSchema = Type.Object({
-  dependencies: Type.Optional(Type.Record(Type.String(), Type.String())),
-  devDependencies: Type.Optional(Type.Record(Type.String(), Type.String())),
-})
-type PackageJsonShape = Static<typeof PackageJsonSchema>
-
-const VersionOnlySchema = Type.Object({ version: Type.Optional(Type.String()) })
 
 const TsconfigSchema = Type.Object({
   compilerOptions: Type.Optional(
@@ -103,8 +98,6 @@ const TsconfigSchema = Type.Object({
 
 const NEXT_CONFIG_NAMES = ['next.config.js', 'next.config.mjs', 'next.config.ts', 'next.config.cjs'] as const
 const VITE_CONFIG_NAMES = ['vite.config.ts', 'vite.config.js', 'vite.config.mts', 'vite.config.mjs', 'vite.config.cjs'] as const
-const POSTCSS_CONFIG_NAMES = ['postcss.config.js', 'postcss.config.cjs', 'postcss.config.mjs', 'postcss.config.ts'] as const
-const TAILWIND_CONFIG_NAMES = ['tailwind.config.js', 'tailwind.config.cjs', 'tailwind.config.mjs', 'tailwind.config.ts'] as const
 const CRA_ENTRY_CANDIDATES = ['src/index.tsx', 'src/index.jsx', 'src/index.ts', 'src/index.js'] as const
 /** Directory segments the pages-dir heuristic and the file scans below never consider a "screens" directory. */
 const NON_PAGES_DIR_SEGMENTS = new Set(['public', '__tests__', '__mocks__'])
@@ -128,21 +121,9 @@ function parseJsonLoose(text: string): unknown {
   }
 }
 
-function findConfigFile(root: string, names: readonly string[]): string | undefined {
-  return names.find((name) => existsSync(join(root, name)))
-}
-
 /** `path.relative` normalized to POSIX separators — Windows' `path.relative` returns `\`-joined paths, and `ProjectProfile`'s paths are contractually POSIX. */
 function toPosixRel(root: string, absPath: string): string {
   return relative(root, absPath).split(sep).join('/')
-}
-
-function readPackageJson(root: string): PackageJsonShape | undefined {
-  return readJsonFileSafe(join(root, 'package.json'), PackageJsonSchema, 2_000_000)
-}
-
-function hasDependency(pkg: PackageJsonShape, name: string): boolean {
-  return Boolean(pkg.dependencies?.[name] ?? pkg.devDependencies?.[name])
 }
 
 // ---------------------------------------------------------------------------
@@ -391,69 +372,6 @@ function detectAppRoot(root: string): AppRootDetection {
 }
 
 // ---------------------------------------------------------------------------
-// Style toolchain
-// ---------------------------------------------------------------------------
-
-function resolveInstalledVersion(root: string, pkgName: string): string | undefined {
-  return readJsonFileSafe(join(root, 'node_modules', ...pkgName.split('/'), 'package.json'), VersionOnlySchema, 200_000)?.version
-}
-
-function cleanSemverSpec(spec: string | undefined): string {
-  if (!spec) return 'unknown'
-  return spec.replace(/^[~^>=<\s]+/, '') || 'unknown'
-}
-
-function findTailwindV4Import(root: string): string | undefined {
-  for (const relFile of listWorkspaceFiles(root)) {
-    if (!/\.css$/i.test(relFile)) continue
-    const text = readTextCapped(join(root, ...relFile.split('/')), 50_000)
-    if (text && /@import\s+["']tailwindcss["']/.test(text)) return relFile
-  }
-  return undefined
-}
-
-/** v3 is detected by a config file; v4 by `@import "tailwindcss"` in a stylesheet — the two ship genuinely different config surfaces, so config-file presence alone would misdetect a v4 project. */
-function detectTailwind(
-  root: string,
-  pkg: PackageJsonShape | undefined,
-  warnings: ProbeWarning[],
-): { version: string; configPath: string } | null {
-  if (!pkg || !hasDependency(pkg, 'tailwindcss')) return null
-  const declaredSpec = pkg.dependencies?.tailwindcss ?? pkg.devDependencies?.tailwindcss
-  const version = () => resolveInstalledVersion(root, 'tailwindcss') ?? cleanSemverSpec(declaredSpec)
-
-  const v3Config = findConfigFile(root, TAILWIND_CONFIG_NAMES)
-  if (v3Config) return { version: version(), configPath: v3Config }
-
-  const v4Import = findTailwindV4Import(root)
-  if (v4Import) return { version: version(), configPath: v4Import }
-
-  warnings.push({
-    code: 'tailwind-config-not-found',
-    message: 'tailwindcss is a dependency but neither a v3 config file nor a v4 `@import "tailwindcss"` was found in any stylesheet.',
-    fix: 'Add a tailwind.config.{js,ts} (v3) or an `@import "tailwindcss";` line to your entry CSS (v4).',
-  })
-  return null
-}
-
-function hasCssModules(root: string): boolean {
-  return listWorkspaceFiles(root).some((f) => /\.module\.(css|scss|sass|less)$/i.test(f))
-}
-
-function hasSass(root: string, pkg: PackageJsonShape | undefined): boolean {
-  if (pkg && (hasDependency(pkg, 'sass') || hasDependency(pkg, 'node-sass'))) return true
-  return listWorkspaceFiles(root).some((f) => /\.(scss|sass)$/i.test(f))
-}
-
-function detectCssInJs(pkg: PackageJsonShape | undefined): 'styled-components' | 'emotion' | 'stitches' | null {
-  if (!pkg) return null
-  if (hasDependency(pkg, 'styled-components')) return 'styled-components'
-  if (hasDependency(pkg, '@emotion/react') || hasDependency(pkg, '@emotion/styled')) return 'emotion'
-  if (hasDependency(pkg, '@stitches/react')) return 'stitches'
-  return null
-}
-
-// ---------------------------------------------------------------------------
 // Aliases — tsconfig `paths` merged UNDER vite `resolve.alias` (vite wins)
 // ---------------------------------------------------------------------------
 
@@ -547,9 +465,9 @@ export function probeProject(dir: string): ProjectProfile {
     }
   }
 
-  const tailwind = detectTailwind(appRootAbs, pkg, warnings)
-  const postcssConfigPath = findConfigFile(appRootAbs, POSTCSS_CONFIG_NAMES)
+  const styleToolchainRaw = detectStyleToolchain(appRootAbs, pkg, warnings)
   const locales = detectLocales(appRootAbs)
+  const componentPackages = detectComponentPackages(appRootAbs, pkg, warnings)
 
   return {
     framework: shape.framework,
@@ -559,13 +477,12 @@ export function probeProject(dir: string): ProjectProfile {
     entryFiles: shape.entryFiles.map(prefixAppRoot),
     packageManager,
     styleToolchain: {
-      tailwind: tailwind ? { ...tailwind, configPath: prefixAppRoot(tailwind.configPath) } : null,
-      cssModules: hasCssModules(appRootAbs),
-      sass: hasSass(appRootAbs, pkg),
-      postcssConfigPath: postcssConfigPath ? prefixAppRoot(postcssConfigPath) : null,
-      cssInJs: detectCssInJs(pkg),
+      ...styleToolchainRaw,
+      tailwind: styleToolchainRaw.tailwind ? { ...styleToolchainRaw.tailwind, configPath: prefixAppRoot(styleToolchainRaw.tailwind.configPath) } : null,
+      postcssConfigPath: styleToolchainRaw.postcssConfigPath ? prefixAppRoot(styleToolchainRaw.postcssConfigPath) : null,
     },
-    componentPackages: detectComponentPackages(appRootAbs, pkg, warnings),
+    componentPackages,
+    designSystems: detectDesignSystems(root, componentPackages, prefixAppRoot),
     colorScheme: detectColorScheme(appRootAbs),
     aliases: { ...extractTsconfigAliases(appRootAbs), ...extractViteAliases(appRootAbs) },
     warnings,
@@ -589,6 +506,19 @@ export function probeProject(dir: string): ProjectProfile {
  * install-dependent field (`componentPackages` above all, plus a Tailwind
  * version resolved from `node_modules`) was therefore frozen at its
  * pre-install value forever, for every project ever imported.
+ *
+ * `designSystems` is optional for the SAME reason `colorScheme`/`locales` are
+ * (see `ProjectProfileSchema`'s doc) and deliberately does NOT get its own
+ * staleness check here: a profile cached before that field existed simply
+ * reads as "not yet known", the same posture every other optional-field
+ * addition to this schema has taken — consumers (`buildReferenceFiles`)
+ * already treat `undefined` as `[]`. Forcing a re-probe on absence would
+ * silently discard the "GET serves the cache verbatim" contract this
+ * function exists to protect for every OTHER field on the same cached
+ * profile; the explicit `POST /probe` re-probe (or the next
+ * `dependencies-not-installed` heal) is what picks a newly-added field up
+ * for an already-cached project, same as `colorScheme` and `locales` before
+ * it.
  *
  * The check is cheap on the fast path: the warning-code scan short-circuits
  * for any profile that was computed WITH dependencies installed (the steady

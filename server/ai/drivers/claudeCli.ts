@@ -29,6 +29,15 @@
  * `.mcp.json` and connects to whatever it finds there. Studio ships exactly
  * the toolset it intends and no more.
  *
+ * `--mcp-config`'s argument is a PATH, not inline JSON — the config
+ * (connector token, plus any resolved project/registered server secrets) is
+ * written to a private 0600 temp file by `writeMcpConfigFile`
+ * (`claudeCliMcpConfigFile.ts`) and cleaned up in this function's own
+ * `finally` block. Process command lines are world-readable
+ * (`ps -eo command`), so passing that same JSON inline would print every
+ * secret it carries to any local process — see that file's doc comment for
+ * the full reasoning.
+ *
  * ## The workspace `cwd` (WS-11 step 2 fix)
  *
  * A REAL chat turn spawns in the resolved, containment-checked project
@@ -97,6 +106,7 @@ import { resolvedApprovedRegisteredMcpServers } from './registeredMcpServers'
 import { readServerConfig } from '../../config'
 import { generateStudioAgentRoster } from '../../handlers/studio/agentRoster'
 import { stageAttachments, cleanupAttachments, describeAttachmentsForPrompt } from './claudeCliAttachments'
+import { writeMcpConfigFile, cleanupMcpConfigFile, type McpConfigFile } from './claudeCliMcpConfigFile'
 
 const SUPPORTED_AUTH_MODES: AiAuthMode[] = ['apiKey']
 
@@ -441,6 +451,31 @@ export async function* streamClaudeCli(
     }
   }
 
+  // The whole config (Studio's own entry, carrying this turn's connector
+  // bearer token, plus any approved project/registered servers, which may
+  // carry a decrypted secret header/env value) is written to a private,
+  // 0600 temp file rather than handed to the CLI as inline `--mcp-config`
+  // JSON — see `claudeCliMcpConfigFile.ts`'s doc comment for why: argv is
+  // world-readable (`ps -eo command`), so an inline secret there defeats the
+  // encrypted-at-rest secret store entirely. A write failure degrades this
+  // turn to "no MCP tools", the same fail-soft posture a connector-mint
+  // failure already gets, rather than aborting the whole turn.
+  let mcpConfigFile: McpConfigFile | null = null
+  if (connector) {
+    try {
+      mcpConfigFile = writeMcpConfigFile(
+        buildMcpConfig(
+          connector,
+          options.serverPort,
+          workspaceCwd ? approvedProjectMcpServers(workspaceCwd) : {},
+          registeredServers,
+        ),
+      )
+    } catch (err) {
+      console.error('[ai/claudeCli] failed to write the MCP config file — continuing without tools:', err)
+    }
+  }
+
   const argv = [
     'claude',
     // `-p` with NO positional prompt: the prompt is piped on stdin instead.
@@ -479,21 +514,17 @@ export async function* streamClaudeCli(
     // `--strict-mcp-config`. Empty unless explicitly approved; see
     // `projectMcpServers.ts` for why consent is required. Studio-registered
     // servers (added directly in Studio, never in the project's own
-    // `.mcp.json`) are merged in too, resolved above.
-    ...(connector
-      ? ['--mcp-config', buildMcpConfigJson(
-          connector,
-          options.serverPort,
-          workspaceCwd ? approvedProjectMcpServers(workspaceCwd) : {},
-          registeredServers,
-        )]
-      : []),
+    // `.mcp.json`) are merged in too, resolved above. The value is a PATH to
+    // a private 0600 temp file (`mcpConfigFile`, written above), never inline
+    // JSON — see `claudeCliMcpConfigFile.ts` for why.
+    ...(mcpConfigFile ? ['--mcp-config', mcpConfigFile.path] : []),
     // Turns a headless dead end into a question. Without it the CLI has no TTY
     // to prompt, so any tool needing permission is simply refused and the user
     // is told to grant something with no way to grant it. With it, the request
     // is relayed to the open chat as an Allow / Deny card. Only meaningful
-    // alongside a connector — the tool lives on Studio's own MCP server.
-    ...(connector ? ['--permission-prompt-tool', `mcp__studio__${PERMISSION_REQUEST_TOOL_NAME}`] : []),
+    // alongside a written config file — the tool lives on Studio's own MCP
+    // server, which is only reachable through that file.
+    ...(mcpConfigFile ? ['--permission-prompt-tool', `mcp__studio__${PERMISSION_REQUEST_TOOL_NAME}`] : []),
     // Mandatory whether or not a connector was minted (WS-11 §4.0 trap #4) —
     // without it the CLI merges the user's own ~/.claude.json and the
     // project's .mcp.json and connects to whatever it finds there. Studio
@@ -546,6 +577,16 @@ export async function* streamClaudeCli(
     if (connector) {
       await revoke(req.toolContextBase.db, connector.connectorId, req.toolContextBase.userId)
     }
+    // The plaintext config file (session connector token, plus any resolved
+    // MCP server secrets) is turn-scoped working data, same as the staged
+    // attachments below — never left behind regardless of how the turn ended
+    // (success, error, or the subprocess killed on abort). A leaked secret
+    // file on disk is a worse outcome than the inline-argv bug this replaced,
+    // so this runs unconditionally, in the same `finally` that already
+    // guarantees attachment/connector cleanup across every exit path.
+    if (mcpConfigFile) {
+      cleanupMcpConfigFile(mcpConfigFile.dir)
+    }
     // WS-12 §5.3 — staged attachments are turn-scoped working data, never
     // left behind regardless of how the turn ended (success, error, abort).
     if (attachmentStaging) {
@@ -561,19 +602,28 @@ export async function* streamClaudeCli(
 /**
  * Verified config shape (confirmed both from `--help`'s `claude mcp add
  * --transport http ... --header "Authorization: Bearer ..."` example and the
- * coordinator's own probe): an inline JSON string naming one HTTP MCP server,
- * pointed at Studio's own endpoint on this same running process, carrying the
- * turn-scoped connector's bearer token. `127.0.0.1` (not a public hostname) —
- * this is a subprocess of THIS server talking back to itself.
+ * coordinator's own probe): one HTTP MCP server, pointed at Studio's own
+ * endpoint on this same running process, carrying the turn-scoped
+ * connector's bearer token. `127.0.0.1` (not a public hostname) — this is a
+ * subprocess of THIS server talking back to itself.
+ *
+ * Returns the plain object, NOT a JSON string — the caller
+ * (`writeMcpConfigFile`, `claudeCliMcpConfigFile.ts`) serialises it straight
+ * to a private 0600 temp file. This function used to `JSON.stringify` its
+ * own return value for passing as inline `--mcp-config` argv, which put
+ * every secret it carries (this token, plus any resolved project/registered
+ * server secret) into the world-readable process command line — fixed by
+ * moving the secret off argv entirely, never by changing what this function
+ * assembles.
  */
-function buildMcpConfigJson(
+function buildMcpConfig(
   connector: ClaudeCliSessionConnector,
   serverPort?: number,
   projectServers: Record<string, unknown> = {},
   registeredServers: Record<string, unknown> = {},
-): string {
+): unknown {
   const port = serverPort ?? readServerConfig().port
-  return JSON.stringify({
+  return {
     mcpServers: {
       // Project-declared (`.mcp.json`) servers first, then Studio-registered
       // ones, then Studio's own entry LAST so it always wins a name
@@ -590,7 +640,7 @@ function buildMcpConfigJson(
         headers: { Authorization: `Bearer ${connector.token}` },
       },
     },
-  })
+  }
 }
 
 // ---------------------------------------------------------------------------

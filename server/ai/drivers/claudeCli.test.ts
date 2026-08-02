@@ -5,7 +5,7 @@
  * database). Fixtures use the exact CLI event shapes WS-11 §4.0 verified.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AiMessage } from '../runtime/types'
@@ -167,6 +167,11 @@ describe('streamClaudeCli — happy path', () => {
     let capturedArgv: string[] = []
     let capturedEnv: Record<string, string> = {}
     let capturedCwd = ''
+    // Read the config file's content INSIDE onSpawn, not after `collect()`
+    // resolves — the driver's own `finally` deletes it the instant the turn
+    // ends, so reading it afterward would always see it already gone (see
+    // the "MCP config file" describe block's own cleanup tests below).
+    let mcpConfigFileContent: unknown
     const spawn = fakeCliSpawn({
       stdoutLines: [
         { type: 'system', subtype: 'init', cwd: '/x', session_id: 's1', model: 'claude-sonnet-4-6' },
@@ -184,6 +189,8 @@ describe('streamClaudeCli — happy path', () => {
         capturedArgv = argv
         capturedEnv = env
         capturedCwd = cwd
+        const path = argv[argv.indexOf('--mcp-config') + 1]!
+        mcpConfigFileContent = JSON.parse(readFileSync(path, 'utf8'))
       },
     })
 
@@ -201,8 +208,15 @@ describe('streamClaudeCli — happy path', () => {
     ])
 
     // Spawn shape — WS-11 §4.0 widened per steps 2+3 (effort, mcp-config,
-    // strict-mcp-config, session continuity).
-    expect(capturedArgv).toEqual([
+    // strict-mcp-config, session continuity). `--mcp-config`'s value is now a
+    // PATH to a private temp file, never inline JSON — see the "MCP config
+    // file" describe block below for the file-content and permission
+    // assertions this shape change requires.
+    const mcpConfigIndex = capturedArgv.indexOf('--mcp-config')
+    const mcpConfigPath = capturedArgv[mcpConfigIndex + 1]!
+    const argvWithoutMcpConfigValue = [...capturedArgv]
+    argvWithoutMcpConfigValue[mcpConfigIndex + 1] = '<mcp-config-path>'
+    expect(argvWithoutMcpConfigValue).toEqual([
       'claude', '-p',
       '--output-format', 'stream-json',
       '--verbose',
@@ -210,15 +224,7 @@ describe('streamClaudeCli — happy path', () => {
       '--model', 'sonnet',
       '--effort', 'medium',
       '--permission-mode', 'default',
-      '--mcp-config', JSON.stringify({
-        mcpServers: {
-          studio: {
-            type: 'http',
-            url: 'http://127.0.0.1:3001/_studio/mcp',
-            headers: { Authorization: 'Bearer fake-session-token' },
-          },
-        },
-      }),
+      '--mcp-config', '<mcp-config-path>',
       // Headless, the CLI has no TTY to prompt in; this routes a permission
       // request to the open chat instead of it being silently refused.
       '--permission-prompt-tool', 'mcp__studio__permission_request',
@@ -226,6 +232,23 @@ describe('streamClaudeCli — happy path', () => {
       // First turn (exactly one message) → establish, not resume.
       '--session-id', expectedSessionId,
     ])
+    // Never inline JSON on the command line — a temp file path instead. The
+    // whole reason for this test: `ps -eo command` prints argv verbatim, so
+    // an inline `--mcp-config {"headers":{"Authorization":"Bearer …"}}`
+    // would leak the connector token to any local process.
+    expect(mcpConfigPath).not.toContain('Bearer')
+    expect(mcpConfigPath).not.toContain('fake-session-token')
+    expect(mcpConfigFileContent).toEqual({
+      mcpServers: {
+        studio: {
+          type: 'http',
+          url: 'http://127.0.0.1:3001/_studio/mcp',
+          headers: { Authorization: 'Bearer fake-session-token' },
+        },
+      },
+    })
+    // The file is gone by the time the turn has fully ended.
+    expect(existsSync(mcpConfigPath)).toBe(false)
     expect(capturedEnv.CLAUDE_CONFIG_DIR).toBe(join(dataRoot, 'user-1'))
     expect(capturedEnv.CLAUDE_CODE_OAUTH_TOKEN).toBe('token-abc')
     // A real chat turn spawns in the resolved WORKSPACE, not the config dir.
@@ -554,6 +577,143 @@ describe('streamClaudeCli — MCP tool routing (WS-11 step 3)', () => {
     })
     await collect(baseRequest(), testOptions({ spawn }))
     expect(capturedArgv).toContain('--strict-mcp-config')
+  })
+})
+
+// The secret-exposure fix this whole file exists for: `--mcp-config` used to
+// carry the connector token (and, once a project/registered server is
+// approved, a real third-party secret like a Figma PAT) as an inline JSON
+// argv value. Process command lines are world-readable — `ps -eo command`
+// prints them in full to any local process, no privilege required — so that
+// inline value defeated `../credentials/mcpServerSecretStore.ts` encrypting
+// the exact same value at rest. `--mcp-config` now takes a PATH to a private
+// temp file instead; this block pins the file's permissions, its location,
+// and that it is always deleted, on every exit path.
+describe('streamClaudeCli — MCP config file (secret-exposure fix)', () => {
+  it('writes the MCP config to a 0600 file — never inline JSON on the command line', async () => {
+    let capturedArgv: string[] = []
+    let modeAtSpawnTime: number | undefined
+    let dirModeAtSpawnTime: number | undefined
+    const spawn = fakeCliSpawn({
+      stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
+      onSpawn: (argv) => {
+        capturedArgv = argv
+        const path = argv[argv.indexOf('--mcp-config') + 1]!
+        // Checked INSIDE onSpawn — the driver's own `finally` deletes the
+        // file once the turn ends, so checking afterward would always see
+        // it already gone.
+        modeAtSpawnTime = statSync(path).mode & 0o777
+        dirModeAtSpawnTime = statSync(join(path, '..')).mode & 0o777
+      },
+    })
+    await collect(baseRequest(), testOptions({ spawn }))
+
+    // No occurrence of `--mcp-config` followed by a JSON-shaped value.
+    const mcpConfigValue = capturedArgv[capturedArgv.indexOf('--mcp-config') + 1]!
+    expect(mcpConfigValue.startsWith('{')).toBe(false)
+    expect(mcpConfigValue).toContain('studio-claude-cli-mcp-config-')
+    expect(modeAtSpawnTime).toBe(0o600)
+    expect(dirModeAtSpawnTime).toBe(0o700)
+  })
+
+  it('writes the config file to os.tmpdir(), never inside studio-workspace/ (every path there is git-tracked)', async () => {
+    let capturedArgv: string[] = []
+    const spawn = fakeCliSpawn({
+      stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
+      onSpawn: (argv) => { capturedArgv = argv },
+    })
+    await collect(baseRequest({ workspaceDir: projectDir }), testOptions({ spawn }))
+    const path = capturedArgv[capturedArgv.indexOf('--mcp-config') + 1]!
+    expect(path.startsWith(tmpdir())).toBe(true)
+    expect(path.startsWith(projectsRoot)).toBe(false)
+    expect(path.startsWith(projectDir)).toBe(false)
+  })
+
+  it('deletes the MCP config file after a turn that completes normally', async () => {
+    let capturedArgv: string[] = []
+    const spawn = fakeCliSpawn({
+      stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
+      onSpawn: (argv) => { capturedArgv = argv },
+    })
+    await collect(baseRequest(), testOptions({ spawn }))
+    const path = capturedArgv[capturedArgv.indexOf('--mcp-config') + 1]!
+    expect(existsSync(path)).toBe(false)
+    // The whole containing temp directory goes with it — nothing orphaned.
+    expect(existsSync(join(path, '..'))).toBe(false)
+  })
+
+  it('deletes the MCP config file even when the turn ends in a crash (no result event)', async () => {
+    let capturedArgv: string[] = []
+    const spawn = fakeCliSpawn({
+      stdoutLines: [{ type: 'system', subtype: 'init' }],
+      stderr: 'Segmentation fault (core dumped)',
+      exitCode: 139,
+      onSpawn: (argv) => { capturedArgv = argv },
+    })
+    const events = await collect(baseRequest(), testOptions({ spawn }))
+    expect(events.some((e) => e.type === 'error')).toBe(true)
+    const path = capturedArgv[capturedArgv.indexOf('--mcp-config') + 1]!
+    expect(existsSync(path)).toBe(false)
+  })
+
+  /**
+   * The abort/Stop path. A real abort kills the `claude` subprocess mid-turn
+   * — before it ever emits a terminal `result` line — which reaches this
+   * driver as the CONSUMER of `streamClaudeCli` abandoning the generator
+   * early (`.return()`/`break`), not as a distinguishable "aborted" event.
+   * This is the exact same mechanism `claudeCliSpawn.test.ts`'s "kills the
+   * child when the consumer breaks out of the loop early" test pins one
+   * layer down — mirrored here to prove the OUTER generator's `finally`
+   * (which deletes the MCP config file) still runs when the inner spawn is
+   * abandoned mid-stream, not just when it exits cleanly.
+   *
+   * The fake process never actually exits (`exited` never resolves,
+   * `kill()` only flips a flag) precisely because a fake stdout stream can't
+   * organically "die" the way a real killed process's pipe does — so this
+   * test proves cleanup through generator abandonment, the one signal every
+   * abort path (request-side AbortController, response-stream disconnect,
+   * or a genuinely killed process) ultimately funnels through.
+   */
+  it('deletes the MCP config file when the turn is abandoned mid-stream (abort/Stop)', async () => {
+    let capturedArgv: string[] = []
+    let killed = false
+    const encoder = new TextEncoder()
+    let sentFirstLine = false
+    const neverEndingStdout = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (sentFirstLine) return // never closes, never sends a result line
+        sentFirstLine = true
+        controller.enqueue(encoder.encode(JSON.stringify({
+          type: 'assistant',
+          message: { model: 'claude-sonnet-4-6', content: [{ type: 'text', text: 'partial' }] },
+        }) + '\n'))
+      },
+    })
+    const spawn: SubprocessSpawnFn = (argv) => {
+      capturedArgv = argv
+      const proc: SpawnedProcessLike = {
+        stdout: neverEndingStdout,
+        stderr: streamFromString(''),
+        exited: new Promise(() => {}), // a real killed process's stdout pipe closes instead; see doc comment above
+        kill: () => { killed = true },
+      }
+      return proc
+    }
+
+    const gen = streamClaudeCli(baseRequest(), testOptions({ spawn }))
+    const first = await gen.next()
+    expect(first.done).toBe(false)
+    expect(first.value).toEqual({ type: 'text', text: 'partial' })
+
+    const path = capturedArgv[capturedArgv.indexOf('--mcp-config') + 1]!
+    expect(existsSync(path)).toBe(true)
+
+    // The turn never produced a result/done event — this IS the abort case,
+    // not a natural completion.
+    await gen.return(undefined)
+
+    expect(killed).toBe(true)
+    expect(existsSync(path)).toBe(false)
   })
 })
 
@@ -896,7 +1056,7 @@ describe('streamClaudeCli — in-chat permission prompts', () => {
 
     await collect(baseRequest(), testOptions({ spawn }))
 
-    // The `mcp__<server>__<tool>` name must match `buildMcpConfigJson`'s server
+    // The `mcp__<server>__<tool>` name must match `buildMcpConfig`'s server
     // key and `permissionGateToolDefinition().name`; the CLI resolves it
     // against tools/list at startup and aborts when it does not exist.
     expect(capturedArgv[capturedArgv.indexOf('--permission-prompt-tool') + 1])
@@ -985,14 +1145,20 @@ describe('streamClaudeCli — project-declared MCP servers', () => {
   }
 
   async function capturedMcpConfig(): Promise<Record<string, unknown>> {
-    let capturedArgv: string[] = []
+    // Read INSIDE onSpawn, not after `collect()` resolves — the driver's own
+    // `finally` block deletes the config file the instant the turn ends, so
+    // reading it afterward would always see it already gone (see the
+    // "MCP config file" describe block's own cleanup tests).
+    let servers: Record<string, unknown> = {}
     const spawn = fakeCliSpawn({
       stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
-      onSpawn: (argv) => { capturedArgv = argv },
+      onSpawn: (argv) => {
+        const path = argv[argv.indexOf('--mcp-config') + 1]!
+        servers = JSON.parse(readFileSync(path, 'utf8')).mcpServers
+      },
     })
     await collect(baseRequest({ workspaceDir: projectDir }), testOptions({ spawn }))
-    const raw = capturedArgv[capturedArgv.indexOf('--mcp-config') + 1]
-    return JSON.parse(raw).mcpServers
+    return servers
   }
 
   it('does NOT merge a declared-but-unapproved server — cloning a repo is not consent', async () => {
@@ -1055,17 +1221,21 @@ describe('streamClaudeCli — Studio-registered MCP servers', () => {
   })
 
   async function capturedMcpConfig(): Promise<Record<string, unknown>> {
-    let capturedArgv: string[] = []
+    // Read INSIDE onSpawn — see the sibling helper above for why (the config
+    // file is deleted the instant the turn ends, before `collect()` returns).
+    let servers: Record<string, unknown> = {}
     const spawn = fakeCliSpawn({
       stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
-      onSpawn: (argv) => { capturedArgv = argv },
+      onSpawn: (argv) => {
+        const path = argv[argv.indexOf('--mcp-config') + 1]!
+        servers = JSON.parse(readFileSync(path, 'utf8')).mcpServers
+      },
     })
     await collect(
       baseRequest({ workspaceDir: projectDir }),
       testOptions({ spawn, mcpServerSecretsDataRoot: secretsRoot }),
     )
-    const raw = capturedArgv[capturedArgv.indexOf('--mcp-config') + 1]
-    return JSON.parse(raw).mcpServers
+    return servers
   }
 
   it('does NOT merge a registered-but-unapproved server — registering it is not consent', async () => {

@@ -124,8 +124,19 @@ export interface CappedText {
  * reader, which can't wait for process exit like `captureSubprocess` does)
  * can still cap-and-drain stderr with this exact, tested primitive instead of
  * duplicating it.
+ *
+ * `onProgress`, when given, is called with the accumulated text after every
+ * chunk — a live snapshot a caller can read back from if it decides to stop
+ * waiting on the returned promise (e.g. `claudeCliSpawn.ts` racing this
+ * against a bounded grace period: a pipe an unrelated surviving process still
+ * holds open never yields `done`, so the promise itself may never settle, but
+ * whatever was captured before the caller gave up is still worth reporting).
  */
-export async function pumpCapped(stream: ReadableStream<Uint8Array> | null, maxBytes: number): Promise<CappedText> {
+export async function pumpCapped(
+  stream: ReadableStream<Uint8Array> | null,
+  maxBytes: number,
+  onProgress?: (snapshot: CappedText) => void,
+): Promise<CappedText> {
   if (!stream) return { text: '', truncated: false }
   const reader = stream.getReader()
   const decoder = new TextDecoder()
@@ -141,12 +152,13 @@ export async function pumpCapped(stream: ReadableStream<Uint8Array> | null, maxB
       const incomingBytes = Buffer.byteLength(chunk, 'utf8')
       if (currentBytes + incomingBytes <= maxBytes) {
         text += chunk
-        continue
+      } else {
+        const remaining = Math.max(0, maxBytes - currentBytes)
+        if (remaining > 0) text += Buffer.from(chunk, 'utf8').subarray(0, remaining).toString('utf8')
+        text += '\n…[output truncated — exceeded the cap]'
+        truncated = true
       }
-      const remaining = Math.max(0, maxBytes - currentBytes)
-      if (remaining > 0) text += Buffer.from(chunk, 'utf8').subarray(0, remaining).toString('utf8')
-      text += '\n…[output truncated — exceeded the cap]'
-      truncated = true
+      onProgress?.({ text, truncated })
     }
   } finally {
     reader.releaseLock()

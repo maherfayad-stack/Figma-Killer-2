@@ -20,6 +20,7 @@
 
 import {
   pumpCapped,
+  type CappedText,
   type SpawnedProcessLike,
   type SubprocessSpawnFn,
 } from '../../handlers/studio/subprocessRunner'
@@ -73,6 +74,28 @@ export interface ClaudeCliSpawnOptions {
    */
   readonly idleTimeoutMs?: number
   readonly maxStderrBytes?: number
+  /**
+   * Bounds the final drain — `stderr` + `proc.exited` — that runs once the
+   * stdout loop has already ended (naturally or via `kill()`). That drain is
+   * otherwise unbounded: `proc.kill()`/the POSIX process-group kill (see
+   * `killDescendants`) are best-effort, and a grandchild that somehow escapes
+   * the group still holds the write end of the `stderr` pipe open, so
+   * `pumpCapped` never sees EOF and its promise never settles. This grace
+   * period is what turns that into a completed turn instead of a generator
+   * that never returns — the exact defect that permanently wedged a
+   * conversation's stream lock (server chat handler never reaches its
+   * `finally`) once the CLI's own subagent processes outlived it on macOS.
+   * Test seam — production default is `DEFAULT_DRAIN_GRACE_MS`.
+   */
+  readonly drainGraceMs?: number
+  /**
+   * POSIX only — how long `killDescendants` waits after SIGTERM before
+   * escalating to SIGKILL on the process group. See that function's doc
+   * comment for why SIGTERM must go first (the CLI's own `--resume` session
+   * transcript needs a chance to flush). Test seam — production default is
+   * `DEFAULT_POSIX_KILL_GRACE_MS`.
+   */
+  readonly posixKillGraceMs?: number
 }
 
 export type ClaudeCliRawEvent =
@@ -92,8 +115,45 @@ export type ClaudeCliRawEvent =
 const DEFAULT_IDLE_TIMEOUT_MS = 10 * 60_000
 const DEFAULT_MAX_STDERR_BYTES = 64 * 1024
 
+/**
+ * Five seconds. The final drain races `stderr` + `proc.exited` against this
+ * once the stdout loop has already ended — by that point the process is
+ * either exiting on its own (should settle near-instantly) or already killed
+ * (see `drainGraceMs` doc on `ClaudeCliSpawnOptions`). Five seconds is ample
+ * for a normal OS-level exit/pipe-close and still small next to the 10-minute
+ * idle window, so it can never mask a turn that is genuinely still working.
+ */
+const DEFAULT_DRAIN_GRACE_MS = 5_000
+
+/**
+ * One second. `killDescendants` SIGTERMs the POSIX process group, then waits
+ * this long before checking whether it's still alive and escalating to
+ * SIGKILL only if so. A terminal Ctrl+C sends SIGINT, not SIGKILL, and
+ * `claude` is written to handle a graceful stop by flushing its own
+ * `--resume` session transcript before exiting — SIGKILL gives it none of
+ * that chance, and a transcript truncated mid-write leaves the NEXT turn
+ * resuming against a corrupt session (`shouldEstablishClaudeCliSession`
+ * finds a file that exists but is broken) — the same class of
+ * permanently-broken-conversation bug this whole change exists to fix, just
+ * relocated from the stream lock to the CLI's own session file. One second
+ * is ample for an fs write + exit, and stays comfortably inside
+ * `DEFAULT_DRAIN_GRACE_MS` so the escalation can never make the overall
+ * final drain (b) the effective ceiling.
+ */
+const DEFAULT_POSIX_KILL_GRACE_MS = 1_000
+
 const defaultSpawn: SubprocessSpawnFn = (argv, options) =>
-  Bun.spawn(argv, options) as unknown as SpawnedProcessLike
+  Bun.spawn(argv, {
+    ...options,
+    // Detached so the child leads its own process group (POSIX `setsid()`) —
+    // `killDescendants` signals the whole group with a negative pid, which is
+    // the only reliable way to reach the CLI's own subagent grandchildren.
+    // Meaningless on Windows (`taskkill /T` walks the process tree there
+    // instead, by parent/child records, not process groups) and Bun's
+    // Windows `detached` semantics are unrelated (`UV_PROCESS_DETACHED`), so
+    // it's scoped to non-Windows only.
+    ...(process.platform === 'win32' ? {} : { detached: true }),
+  }) as unknown as SpawnedProcessLike
 
 export class ClaudeCliSpawnError extends Error {
   constructor(message: string, options?: { cause?: unknown }) {
@@ -115,6 +175,7 @@ export async function* spawnClaudeCliNdjson(
   const spawn = options.spawn ?? defaultSpawn
   const idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS
   const maxStderrBytes = options.maxStderrBytes ?? DEFAULT_MAX_STDERR_BYTES
+  const posixKillGraceMs = options.posixKillGraceMs ?? DEFAULT_POSIX_KILL_GRACE_MS
 
   let proc: SpawnedProcessLike
   try {
@@ -142,7 +203,7 @@ export async function* spawnClaudeCliNdjson(
     } catch {
       // already exited — nothing to kill
     }
-    killDescendants(proc)
+    killDescendants(proc, posixKillGraceMs)
   }
 
   const onAbort = (): void => kill()
@@ -171,7 +232,12 @@ export async function* spawnClaudeCliNdjson(
   // pipe buffer must never block the child from writing more stdout (the
   // same "drain both streams concurrently" discipline `captureSubprocess`
   // uses, just without waiting for exit before doing anything with stdout).
-  const stderrPromise = pumpCapped(proc.stderr, maxStderrBytes)
+  // `stderrSnapshot` tracks the running capture so the bounded final drain
+  // below can report "whatever was captured" even if `stderrPromise` itself
+  // never settles (a surviving grandchild holding the pipe open never yields
+  // EOF, so `pumpCapped`'s own returned promise would otherwise hang forever).
+  let stderrSnapshot: CappedText = { text: '', truncated: false }
+  const stderrPromise = pumpCapped(proc.stderr, maxStderrBytes, (snapshot) => { stderrSnapshot = snapshot })
 
   let drainedStdout = false
   try {
@@ -200,44 +266,111 @@ export async function* spawnClaudeCliNdjson(
     if (!drainedStdout) kill()
   }
 
-  const [stderrResult, exitCode] = await Promise.all([stderrPromise, proc.exited])
+  // Bounded so a `stderr` pipe (or, in principle, `exited`) that never settles
+  // — an unrelated process still holding a duplicated file descriptor open —
+  // degrades to a completed turn instead of hanging this generator (and, one
+  // level up, the chat handler's `finally` that releases the conversation's
+  // stream lock) forever. Each half races the SAME deadline independently:
+  // if only one is stuck, the other's real value is still reported rather
+  // than throwing away information the process actually gave us.
+  const graceMs = options.drainGraceMs ?? DEFAULT_DRAIN_GRACE_MS
+  let graceTimer: ReturnType<typeof setTimeout> | undefined
+  const graceExpired = new Promise<typeof DRAIN_TIMED_OUT>((resolve) => {
+    graceTimer = setTimeout(() => resolve(DRAIN_TIMED_OUT), graceMs)
+  })
+  let stderrResult: CappedText
+  let exitCode: number | null
+  try {
+    ;[stderrResult, exitCode] = await Promise.all([
+      Promise.race([stderrPromise, graceExpired]).then((r) => (r === DRAIN_TIMED_OUT ? stderrSnapshot : r)),
+      Promise.race([proc.exited, graceExpired]).then((r) => (r === DRAIN_TIMED_OUT ? null : r)),
+    ])
+  } finally {
+    clearTimeout(graceTimer)
+  }
   yield { kind: 'exit', exitCode, stderr: stderrResult.text, timedOut }
 }
+
+/** Sentinel resolved by the final drain's bounded grace period — never a value a real drain result could equal. */
+const DRAIN_TIMED_OUT = Symbol('claude-cli-drain-timed-out')
 
 /**
  * Kill the child's own descendants.
  *
  * `proc.kill()` signals ONLY the direct child, and the `claude` CLI spawns its
  * own subagent processes — so killing the parent used to strand them. They then
- * hold every handle they inherited, including this server's listening socket.
+ * hold every handle they inherited, including this server's listening socket
+ * on Windows, and the `stderr` pipe everywhere — which is what wedged a whole
+ * conversation's stream lock on macOS (server-14's Windows fix didn't reach
+ * POSIX; the ceiling of this generator's final drain is `drainGraceMs`/(b),
+ * not this function).
  *
  * Best-effort and deliberately silent: the process may already be gone, and a
  * failure to reap a descendant must never turn into a turn-level error. Skipped
  * entirely when `pid` is absent, which is exactly the injected-fake case in
- * tests — no test ever shells out to a real process killer.
+ * tests — no test ever shells out to a real process killer or signals a real
+ * pid.
  *
- * **Windows only, and knowingly so.** This was diagnosed on Windows, where the
- * damage is worst: children inherit the server's listening socket, so one
- * stranded process keeps the port bound and blocks every restart. The POSIX
- * equivalent wants a process group (`detached` + `kill(-pgid)`) rather than a
- * `taskkill` translation, which is a different change to the spawn call itself
- * — not done here rather than half-done and untested on a platform this bug has
- * not been observed on.
+ * Cross-platform, by two different mechanisms:
+ * - **Windows:** `taskkill /pid <pid> /T /F` — walks the OS's own parent/child
+ *   process-tree records. There is no process-group concept to lean on here,
+ *   and no graceful-first step: `taskkill` has no "SIGTERM the tree" mode,
+ *   only `/F`. Unchanged from server-14.
+ * - **POSIX:** `defaultSpawn` starts the child `detached`, so it calls
+ *   `setsid()` and becomes its own process-group leader — its pgid equals its
+ *   own pid. Signalling the NEGATIVE pid reaches the whole group in one
+ *   syscall, including every subagent grandchild, not just the direct child
+ *   `proc.kill()` (called by the caller just before this) already signalled.
+ *   ESCALATES rather than going straight to SIGKILL: SIGTERM the group
+ *   first — the same signal family a terminal Ctrl+C (SIGINT) delivers, which
+ *   `claude` is written to handle gracefully, flushing its own `--resume`
+ *   session transcript before exiting. Only if the group is STILL ALIVE
+ *   after `posixKillGraceMs` (probed with signal `0`, which delivers nothing
+ *   and only reports whether the pid/group still exists) does SIGKILL
+ *   follow. A transcript truncated mid-write by a graceless SIGKILL would
+ *   leave the NEXT turn resuming against a corrupt session — the same class
+ *   of permanently-broken-conversation bug this whole change exists to fix,
+ *   just relocated.
  */
-function killDescendants(proc: SpawnedProcessLike): void {
+function killDescendants(proc: SpawnedProcessLike, posixKillGraceMs: number): void {
   const pid = proc.pid
   if (pid === undefined) return
-  if (process.platform !== 'win32') return
-  try {
-    // /T = tree (the process and its descendants), /F = force.
-    Bun.spawn(['taskkill', '/pid', String(pid), '/T', '/F'], {
-      stdout: 'ignore',
-      stderr: 'ignore',
-      stdin: 'ignore',
-    })
-  } catch {
-    // Nothing to reap, or taskkill unavailable — the direct kill above stands.
+  if (process.platform === 'win32') {
+    try {
+      // /T = tree (the process and its descendants), /F = force.
+      Bun.spawn(['taskkill', '/pid', String(pid), '/T', '/F'], {
+        stdout: 'ignore',
+        stderr: 'ignore',
+        stdin: 'ignore',
+      })
+    } catch {
+      // Nothing to reap, or taskkill unavailable — the direct kill above stands.
+    }
+    return
   }
+  try {
+    process.kill(-pid, 'SIGTERM')
+  } catch {
+    // Group already gone (process exited before we got here), or this
+    // process lacks permission to signal it — best-effort and silent, same
+    // as the Windows branch above. Nothing to escalate to.
+    return
+  }
+  setTimeout(() => {
+    try {
+      // Signal 0 delivers nothing — it's the POSIX-standard "does this
+      // pid/group still exist" probe, throwing (ESRCH) once it's gone.
+      process.kill(-pid, 0)
+    } catch {
+      return // SIGTERM was enough — nothing left to escalate against.
+    }
+    try {
+      process.kill(-pid, 'SIGKILL')
+    } catch {
+      // Exited between the probe and here, or a permission error — same
+      // best-effort posture as every other branch in this function.
+    }
+  }, posixKillGraceMs)
 }
 
 async function* readLines(
