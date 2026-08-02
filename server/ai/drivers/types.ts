@@ -144,6 +144,15 @@ export interface AiStreamRequest {
   readonly effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max'
   readonly permissionMode?: 'default' | 'acceptEdits' | 'plan' | 'bypassPermissions'
   /**
+   * `ai_conversations.session_epoch` — `claudeCli` only, every other driver
+   * ignores it. Folded into the derived CLI `--session-id` UUID
+   * (`claudeCliSessionId`) so the "Restart agent session" control can force a
+   * genuinely new CLI session (picking up newly-approved MCP servers and
+   * other per-spawn config) without losing this conversation's transcript.
+   * Defaults to `0` (the pre-epoch behaviour) when the chat handler omits it.
+   */
+  readonly sessionEpoch?: number
+  /**
    * Base for the per-call `ToolContext` the driver builds when invoking a
    * server-side tool handler. Carries db + identity + the per-turn snapshot;
    * drivers add `signal` and pass the whole thing to the handler.

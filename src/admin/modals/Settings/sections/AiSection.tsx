@@ -21,15 +21,30 @@ import { ProvidersTab } from './ai/ProvidersTab'
 import { DefaultsTab } from './ai/DefaultsTab'
 import { McpTab } from './ai/McpTab'
 import { AuditTab } from './ai/AuditTab'
+import { McpServersSection } from './McpServersSection'
 import styles from './ai/ai.module.css'
 import s from '../SettingsModal.module.css'
 
-type Tab = 'providers' | 'defaults' | 'mcp' | 'audit'
+type Tab = 'providers' | 'defaults' | 'mcpServers' | 'mcpClients' | 'audit'
 
+/**
+ * Two of these tabs are both "MCP" and point in OPPOSITE directions, so
+ * neither is labelled "MCP":
+ *
+ *   - `mcpServers` — OUTBOUND. Servers Studio connects TO (Figma, a design
+ *     system), so the agent gains their tools. `McpServersSection`.
+ *   - `mcpClients` — INBOUND. Bearer tokens letting an external client
+ *     (Claude Code, Codex) connect INTO Studio and drive it. `McpTab`.
+ *
+ * Labelling either one "MCP" made it impossible to tell at a glance which
+ * way the arrow pointed — the direction IS the distinction, so it goes in
+ * the label rather than in documentation nobody reads at the moment of use.
+ */
 const TAB_LABELS: Record<Tab, string> = {
   providers: 'Providers',
   defaults: 'Defaults',
-  mcp: 'MCP',
+  mcpServers: 'Connect servers',
+  mcpClients: 'Allow clients',
   audit: 'Audit',
 }
 
@@ -40,7 +55,7 @@ export function AiSection() {
   const canReadAudit = unrestricted || hasCapability(currentUser, 'ai.audit.read')
 
   const availableTabs: Tab[] = []
-  if (canManage) availableTabs.push('providers', 'defaults', 'mcp')
+  if (canManage) availableTabs.push('providers', 'defaults', 'mcpServers', 'mcpClients')
   if (canReadAudit) availableTabs.push('audit')
 
   const [tab, setTab] = useState<Tab>('providers')
@@ -71,7 +86,8 @@ export function AiSection() {
 
       {activeTab === 'providers' && <ProvidersTab />}
       {activeTab === 'defaults' && <DefaultsTab />}
-      {activeTab === 'mcp' && <McpTab />}
+      {activeTab === 'mcpServers' && <McpServersSection />}
+      {activeTab === 'mcpClients' && <McpTab />}
       {activeTab === 'audit' && <AuditTab />}
     </div>
   )

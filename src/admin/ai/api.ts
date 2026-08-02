@@ -17,9 +17,15 @@ import {
   AiContentViewBlockSchema,
   McpConnectorListSchema,
   CreateMcpConnectorResultSchema,
+  ListProjectMcpServersResultSchema,
+  McpServerAuthProbeResultSchema,
   type McpConnectorView,
   type CreateMcpConnectorBody,
   type CreateMcpConnectorResult,
+  type ProjectMcpServerView,
+  type RegisteredMcpServerDefinition,
+  type McpServerSource,
+  type McpServerAuthProbeResultWire,
 } from '@core/ai'
 
 // ---------------------------------------------------------------------------
@@ -400,6 +406,24 @@ export async function updateConversationProvider(
   return body.conversation
 }
 
+const RestartSessionResponseSchema = Type.Object({ ok: Type.Boolean() })
+
+/**
+ * "Restart agent session" — bumps the conversation's `session_epoch`
+ * server-side (migration 021) so the next turn's `claudeCli` session id
+ * derives to a brand-new UUID, forcing a genuinely fresh CLI session that
+ * re-reads newly-approved MCP servers and other per-spawn config. The
+ * conversation row, its messages, and this transcript are all untouched —
+ * only the CLI's OWN session state resets. A no-op for every other provider.
+ */
+export async function restartAgentSession(id: string): Promise<void> {
+  await apiRequest(`/admin/api/ai/conversations/${encodeURIComponent(id)}/restart-session`, {
+    method: 'POST',
+    schema: RestartSessionResponseSchema,
+    fallbackMessage: 'Could not restart the agent session.',
+  })
+}
+
 // ---------------------------------------------------------------------------
 // Endpoints — audit
 // ---------------------------------------------------------------------------
@@ -491,4 +515,62 @@ export async function createMcpConnector(body: CreateMcpConnectorBody): Promise<
 
 export async function revokeMcpConnector(id: string): Promise<void> {
   await apiRequest(`${MCP_CONNECTORS_BASE}/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
+// ---------------------------------------------------------------------------
+// Project MCP servers — `/admin/api/ai/mcp/project-servers`. The OTHER
+// direction from the connectors above: these point Studio's OWN agent OUT at
+// a project's MCP servers (declared in `.mcp.json`, or registered directly in
+// Studio for a server that needs a secret `.mcp.json` cannot safely hold).
+// Server: `server/ai/mcp/handlers/registeredServers.ts`.
+// ---------------------------------------------------------------------------
+
+const PROJECT_MCP_SERVERS_BASE = '/admin/api/ai/mcp/project-servers'
+
+export async function listProjectMcpServers(dir: string, signal?: AbortSignal): Promise<ProjectMcpServerView[]> {
+  const body = await apiRequest(PROJECT_MCP_SERVERS_BASE, {
+    query: { dir },
+    schema: ListProjectMcpServersResultSchema,
+    signal,
+  })
+  return body.servers
+}
+
+/** Register (or redefine) a Studio-owned MCP server. `secrets`, when present, is encrypted server-side and never echoed back — see `mcpServerSecretStore.ts`. */
+export async function addRegisteredMcpServer(input: {
+  dir: string
+  name: string
+  definition: RegisteredMcpServerDefinition
+  secrets?: Record<string, string>
+}): Promise<void> {
+  await apiRequest(PROJECT_MCP_SERVERS_BASE, { method: 'POST', body: input })
+}
+
+export async function removeRegisteredMcpServer(dir: string, name: string): Promise<void> {
+  await apiRequest(`${PROJECT_MCP_SERVERS_BASE}/${encodeURIComponent(name)}`, {
+    method: 'DELETE',
+    query: { dir },
+  })
+}
+
+/** Grant/revoke consent for one server, by name. `source` picks which list (`.mcp.json`-declared vs. Studio-registered) so a shared name can never be approved on the wrong one. */
+export async function setMcpServerApproval(
+  dir: string,
+  name: string,
+  source: McpServerSource,
+  approve: boolean,
+): Promise<void> {
+  await apiRequest(`${PROJECT_MCP_SERVERS_BASE}/${encodeURIComponent(name)}/${approve ? 'approve' : 'revoke'}`, {
+    method: 'POST',
+    body: { dir, source },
+  })
+}
+
+/** Best-effort OAuth-discovery probe for an http/sse server URL — see `authProbe.ts`'s doc comment for exactly what this does and does not do. */
+export async function checkMcpServerAuth(url: string): Promise<McpServerAuthProbeResultWire> {
+  return apiRequest(`${PROJECT_MCP_SERVERS_BASE}/check-auth`, {
+    method: 'POST',
+    body: { url },
+    schema: McpServerAuthProbeResultSchema,
+  })
 }

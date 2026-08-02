@@ -36,6 +36,15 @@ export interface ConversationRecord {
    * running total). Feeds the composer context meter on reload.
    */
   readonly contextTokens: number
+  /**
+   * Bumped by `bumpSessionEpochForUser` (migration 021) whenever the user
+   * explicitly restarts the agent session. `claudeCli` folds this into the
+   * derived `--session-id` UUID (`claudeCliSessionId`) so a restart gets a
+   * genuinely new CLI session — picking up newly-approved MCP servers and
+   * other per-spawn config — without losing this conversation's transcript.
+   * Every other driver ignores it.
+   */
+  readonly sessionEpoch: number
   readonly createdAt: string
   readonly updatedAt: string
   readonly deletedAt: string | null

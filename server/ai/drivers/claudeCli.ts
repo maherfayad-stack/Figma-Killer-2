@@ -51,11 +51,21 @@
  * would mean sending a real paid turn, which this driver's tests must never
  * do. So this driver uses the CONFIRMED alternative instead:
  * `--session-id`/`--resume`, keyed by a UUID deterministically derived from
- * the Studio conversation id (`claudeCliSession.ts`) — no new DB column,
- * because the same id always hashes to the same UUID. `req.messages` is
- * still only consulted for the LATEST user message text (the `-p` prompt);
- * the CLI's own session file is what remembers the rest, not a replayed
- * `AiMessage[]` log the way every HTTP driver in this directory does it.
+ * the Studio conversation id AND its `session_epoch` (`claudeCliSession.ts`)
+ * — the same `(id, epoch)` pair always hashes to the same UUID, so there is
+ * no separately-stored UUID, only the epoch counter itself (migration 021).
+ * `req.messages` is still only consulted for the LATEST user message text
+ * (the `-p` prompt); the CLI's own session file is what remembers the rest,
+ * not a replayed `AiMessage[]` log the way every HTTP driver in this
+ * directory does it.
+ *
+ * Whether THIS turn establishes or resumes is decided by
+ * `shouldEstablishClaudeCliSession`: does the CLI already have a transcript
+ * file for the derived uuid at this `cwd`? Not a message-count heuristic —
+ * see that function's own doc comment for why a bumped `session_epoch`
+ * (the "Restart agent session" control) makes a pure message-count check
+ * wrong, and why a direct filesystem probe is the honest question to ask
+ * instead.
  */
 
 import type { AiAuthMode, AiContentBlock, AiProviderId, AiStreamEvent } from '../runtime/types'
@@ -71,7 +81,7 @@ import {
 } from '../../handlers/studio/claudeCliEnv'
 import { spawnClaudeCliNdjson, ClaudeCliSpawnError } from './claudeCliSpawn'
 import { createClaudeCliTurnState, parseClaudeCliLineValue, translateClaudeCliLine } from './claudeCliEvents'
-import { claudeCliSessionId, isFirstClaudeCliTurn } from './claudeCliSession'
+import { claudeCliSessionId, shouldEstablishClaudeCliSession } from './claudeCliSession'
 import {
   mintClaudeCliSessionConnector,
   revokeClaudeCliSessionConnector,
@@ -82,7 +92,8 @@ import {
 // `@modelcontextprotocol/sdk` into this driver's module graph transitively.
 import { MCP_ENDPOINT_PATH } from '../mcp/endpointPath'
 import { PERMISSION_REQUEST_TOOL_NAME, registerPermissionGate } from '../mcp/permissionGate'
-import { approvedProjectMcpServers } from './projectMcpServers'
+import { approvedProjectMcpServers, type ProjectMcpServerDefinition } from './projectMcpServers'
+import { resolvedApprovedRegisteredMcpServers } from './registeredMcpServers'
 import { readServerConfig } from '../../config'
 import { generateStudioAgentRoster } from '../../handlers/studio/agentRoster'
 import { stageAttachments, cleanupAttachments, describeAttachmentsForPrompt } from './claudeCliAttachments'
@@ -295,6 +306,8 @@ export interface StreamClaudeCliOptions {
   readonly revokeConnector?: typeof revokeClaudeCliSessionConnector
   /** Test seam — defaults to `generateStudioAgentRoster` (WS-12 §7). */
   readonly generateRoster?: typeof generateStudioAgentRoster
+  /** Test seam — defaults to `resolveMcpServerSecretsRoot()` (env-derived); where registered-server secret values are decrypted from. */
+  readonly mcpServerSecretsDataRoot?: string
 }
 
 export async function* streamClaudeCli(
@@ -399,8 +412,34 @@ export async function* streamClaudeCli(
     ? registerPermissionGate(connector.connectorId, req.bridge)
     : null
 
-  const sessionId = await claudeCliSessionId(req.toolContextBase.conversationId)
-  const sessionFlag = isFirstClaudeCliTurn(req.messages.length) ? '--session-id' : '--resume'
+  const sessionId = await claudeCliSessionId(req.toolContextBase.conversationId, req.sessionEpoch ?? 0)
+  // Whether the CLI already has a transcript for THIS uuid at THIS cwd — see
+  // `shouldEstablishClaudeCliSession`'s own doc comment for why this replaced
+  // the earlier message-count heuristic (it silently self-heals a bumped
+  // `session_epoch`, a cleared config dir, and a server redeploy, none of
+  // which a message count could ever detect).
+  const sessionFlag = shouldEstablishClaudeCliSession(configDir, cwd, sessionId) ? '--session-id' : '--resume'
+
+  // Studio-registered project MCP servers (§ "the gap" in
+  // `registeredMcpServers.ts`'s doc comment) — approved-by-name exactly like
+  // project-declared `.mcp.json` servers, with any declared secret field
+  // decrypted here, right before the spawn, and never written to disk in
+  // resolved form. Best-effort: a secret-store hiccup degrades this turn to
+  // "no registered servers" rather than blocking the chat, same posture the
+  // connector mint above uses.
+  let registeredServers: Record<string, ProjectMcpServerDefinition> = {}
+  if (workspaceCwd) {
+    try {
+      registeredServers = await resolvedApprovedRegisteredMcpServers(
+        req.toolContextBase.userId,
+        workspaceCwd,
+        options.mcpServerSecretsDataRoot,
+        options.projectsRoot,
+      )
+    } catch (err) {
+      console.error('[ai/claudeCli] failed to resolve registered MCP servers — continuing without them:', err)
+    }
+  }
 
   const argv = [
     'claude',
@@ -438,12 +477,15 @@ export async function* streamClaudeCli(
     // Project-declared MCP servers the user approved by name — how a project's
     // own design-system or Figma server reaches the agent without dropping
     // `--strict-mcp-config`. Empty unless explicitly approved; see
-    // `projectMcpServers.ts` for why consent is required.
+    // `projectMcpServers.ts` for why consent is required. Studio-registered
+    // servers (added directly in Studio, never in the project's own
+    // `.mcp.json`) are merged in too, resolved above.
     ...(connector
       ? ['--mcp-config', buildMcpConfigJson(
           connector,
           options.serverPort,
           workspaceCwd ? approvedProjectMcpServers(workspaceCwd) : {},
+          registeredServers,
         )]
       : []),
     // Turns a headless dead end into a question. Without it the CLI has no TTY
@@ -528,15 +570,20 @@ function buildMcpConfigJson(
   connector: ClaudeCliSessionConnector,
   serverPort?: number,
   projectServers: Record<string, unknown> = {},
+  registeredServers: Record<string, unknown> = {},
 ): string {
   const port = serverPort ?? readServerConfig().port
   return JSON.stringify({
     mcpServers: {
-      // Project servers first, so Studio's own entry always wins a name
-      // collision. `listProjectMcpServers` already drops an entry named
-      // `studio`; this ordering means even a future gap there cannot let a
-      // project redirect Studio's own tool calls.
+      // Project-declared (`.mcp.json`) servers first, then Studio-registered
+      // ones, then Studio's own entry LAST so it always wins a name
+      // collision against either source. `listProjectMcpServers` and
+      // `addRegisteredMcpServer` both already refuse an entry literally named
+      // `studio` (`RESERVED_SERVER_NAME`); this ordering means even a future
+      // gap in either guard still cannot let a project or a registered server
+      // redirect Studio's own tool calls.
       ...projectServers,
+      ...registeredServers,
       studio: {
         type: 'http',
         url: `http://127.0.0.1:${port}${MCP_ENDPOINT_PATH}`,

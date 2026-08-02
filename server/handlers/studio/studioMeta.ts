@@ -41,6 +41,7 @@ import { dirname, isAbsolute, join } from 'node:path'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { parseJsonWithFallback } from '@core/utils/jsonValidate'
 import { ProjectProfileSchema } from './projectProfileSchema'
+import { RegisteredMcpServerSchema } from '@core/ai'
 
 /** The three trust tiers §0 of the V2 plan declares per project. Default: `'static'` (Tier 0 — nothing runs) for every fresh import. */
 const TrustTierSchema = Type.Union([
@@ -145,6 +146,24 @@ export const StudioMetaSchema = Type.Object({
    * See `projectMcpServers.ts`.
    */
   approvedMcpServers: Type.Optional(Type.Array(Type.String())),
+  /**
+   * MCP servers the user has registered directly in Studio for this project —
+   * NOT declared in the project's own `.mcp.json`. Definitions only, never
+   * secret values (see `@core/ai`'s `projectMcpServerSchemas.ts` doc comment
+   * for why secret VALUES live in a separate, non-git-tracked store).
+   * See `../../ai/drivers/registeredMcpServers.ts`.
+   */
+  registeredMcpServers: Type.Optional(Type.Array(RegisteredMcpServerSchema)),
+  /**
+   * Names of entries in `registeredMcpServers` the user has approved to
+   * merge into a chat turn — the SAME consent model `approvedMcpServers`
+   * uses for project-declared servers (opt-in, per name, stored here rather
+   * than anywhere the project itself could influence). Kept as its own list
+   * rather than sharing `approvedMcpServers`'s namespace so a project-declared
+   * server and a Studio-registered server can never collide on approval by
+   * sharing a name.
+   */
+  approvedRegisteredMcpServers: Type.Optional(Type.Array(Type.String())),
 })
 export type StudioMeta = Static<typeof StudioMetaSchema>
 

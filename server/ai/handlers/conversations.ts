@@ -21,6 +21,7 @@ import { jsonResponse, readValidatedBody, badRequest } from '../../http'
 import { requireCapability } from '../../auth/authz'
 import type { DbClient } from '../../db/client'
 import {
+  bumpSessionEpochForUser,
   createConversationForUser,
   listConversationsForUser,
   listMessagesForConversation,
@@ -31,6 +32,7 @@ import {
   toConversationView,
   updateConversationForUser,
 } from '../conversations/store'
+import { isConversationStreaming } from './chat'
 
 const CreateBodySchema = Type.Object({
   title: Type.Optional(Type.String()),
@@ -64,6 +66,10 @@ export function tryHandleAiConversations(
       imageMatch[2]!,
       Number(imageMatch[3]),
     )
+  }
+  const restartMatch = pathname.match(/^\/admin\/api\/ai\/conversations\/([^/]+)\/restart-session$/)
+  if (restartMatch) {
+    return handleRestartSession(req, db, restartMatch[1]!)
   }
   const match = pathname.match(/^\/admin\/api\/ai\/conversations\/([^/]+)$/)
   if (match) {
@@ -209,6 +215,42 @@ async function handleDelete(req: Request, db: DbClient, id: string): Promise<Res
   if (userOrResponse instanceof Response) return userOrResponse
 
   const ok = await softDeleteConversationForUser(db, userOrResponse.id, id)
+  if (!ok) return jsonResponse({ error: 'Conversation not found' }, { status: 404 })
+  return jsonResponse({ ok: true })
+}
+
+// ---------------------------------------------------------------------------
+// Restart session — POST /admin/api/ai/conversations/:id/restart-session
+//
+// Bumps `session_epoch` (migration 021) so the next turn's `claudeCli`
+// session id derives to a brand-new UUID (`claudeCliSessionId`), forcing a
+// genuinely fresh CLI session — one that re-reads newly-approved MCP servers
+// and other per-spawn config — WITHOUT touching this conversation's rows.
+// Every other provider driver ignores `session_epoch`, so this is a no-op
+// for them (the endpoint still succeeds; there is simply nothing for a
+// non-claudeCli turn to pick up differently next time).
+// ---------------------------------------------------------------------------
+
+async function handleRestartSession(req: Request, db: DbClient, id: string): Promise<Response> {
+  if (req.method !== 'POST') {
+    return jsonResponse({ error: 'Method not allowed' }, { status: 405 })
+  }
+  const userOrResponse = await requireCapability(req, db, 'ai.chat')
+  if (userOrResponse instanceof Response) return userOrResponse
+
+  // Defense in depth: the AgentPanel control is already disabled while
+  // streaming, but a restart mid-turn would race the running `claude`
+  // subprocess (which already resolved ITS session id for this turn before
+  // this request could land) — refuse server-side too, same 409 shape
+  // `chat.ts`'s own admission check uses for "already generating a response".
+  if (isConversationStreaming(id)) {
+    return jsonResponse(
+      { error: 'Wait for the current response to finish before restarting the session.' },
+      { status: 409 },
+    )
+  }
+
+  const ok = await bumpSessionEpochForUser(db, userOrResponse.id, id)
   if (!ok) return jsonResponse({ error: 'Conversation not found' }, { status: 404 })
   return jsonResponse({ ok: true })
 }

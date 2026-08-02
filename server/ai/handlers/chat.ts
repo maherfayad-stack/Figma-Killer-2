@@ -402,6 +402,7 @@ async function handleAiChat(
           workspaceDir,
           effort,
           permissionMode,
+          sessionEpoch: latestConversation.sessionEpoch,
         }
 
         const persister = createConversationsPersister(db, conversation.id, {
@@ -472,6 +473,16 @@ async function handleAiChat(
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Whether a chat stream is currently in flight for this conversation. Read by
+ * the "Restart agent session" endpoint (`conversations.ts`'s `handleRestartSession`)
+ * so a restart can't race a live turn server-side — defense in depth on top
+ * of the AgentPanel's own disabled-while-streaming control.
+ */
+export function isConversationStreaming(conversationId: string): boolean {
+  return activeChatConversations.has(conversationId)
+}
 
 function acquireConversationStream(conversationId: string): (() => void) | null {
   if (activeChatConversations.has(conversationId)) return null

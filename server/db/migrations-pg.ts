@@ -1071,4 +1071,20 @@ export const pgMigrations: Migration[] = [
       insert into site_sync_state (id, seq) values (1, 0);
     `,
   },
+  {
+    // "Restart agent session" (POST /admin/api/ai/conversations/:id/restart-
+    // session) bumps this so the user can force a fresh `claude` CLI session
+    // — picking up newly-approved MCP servers and other per-spawn config —
+    // WITHOUT losing the Studio-side conversation transcript.
+    // `claudeCliSessionId(conversationId, epoch)` (server/ai/drivers/
+    // claudeCliSession.ts) folds this into the derived `--session-id` UUID.
+    // epoch 0 reproduces the EXACT UUID the pre-epoch pure function already
+    // derived (pinned by a test), so this migration never orphans a live
+    // installation's already-running CLI sessions — only a bumped epoch
+    // changes the derived id. Every other driver ignores this column.
+    id: '021_ai_conversation_session_epoch',
+    sql: `
+      alter table ai_conversations add column session_epoch integer not null default 0;
+    `,
+  },
 ]

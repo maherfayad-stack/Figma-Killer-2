@@ -1,3 +1,22 @@
 {
-  "displayName": "Untitled"
+  "displayName": "Untitled",
+  "previewAxes": {
+    "direction": "ltr",
+    "colorScheme": "light"
+  },
+  "registeredMcpServers": [
+    {
+      "name": "figma",
+      "definition": {
+        "transport": "http",
+        "url": "https://mcp.figma.com/mcp",
+        "secretHeaderNames": [
+          "FIGMA_TOKEN"
+        ]
+      }
+    }
+  ],
+  "approvedRegisteredMcpServers": [
+    "figma"
+  ]
 }

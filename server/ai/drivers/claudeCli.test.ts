@@ -13,7 +13,13 @@ import type { AiResolvedCredential, AiStreamRequest } from './types'
 import type { SpawnedProcessLike, SubprocessSpawnFn } from '../../handlers/studio/subprocessRunner'
 import { claudeCliDriver, streamClaudeCli } from './claudeCli'
 import { verifyClaudeCliCredential } from './claudeCliVerify'
-import { claudeCliSessionId } from './claudeCliSession'
+import {
+  addRegisteredMcpServer,
+  approveRegisteredMcpServer,
+  registeredMcpServerProjectKey,
+} from './registeredMcpServers'
+import { setMcpServerSecret } from '../credentials/mcpServerSecretStore'
+import { claudeCliProjectDirName, claudeCliSessionId } from './claudeCliSession'
 import type { ClaudeCliSessionConnector } from '../mcp/sessionConnector'
 import { getPermissionGate } from '../mcp/permissionGate'
 
@@ -322,30 +328,75 @@ describe('streamClaudeCli — subagent roster generation (WS-12 §7)', () => {
   })
 })
 
-describe('streamClaudeCli — session continuity (WS-11 step 2)', () => {
-  it('uses --session-id on the first turn (exactly one message)', async () => {
+describe('streamClaudeCli — session continuity (WS-11 step 2, extended for session_epoch)', () => {
+  /**
+   * Writes an empty transcript at the exact path `shouldEstablishClaudeCliSession`
+   * probes, so a test can simulate "the CLI already has a session for this
+   * uuid at this cwd" without a real subprocess ever running.
+   */
+  function writeFakeTranscript(configDir: string, cwd: string, sessionId: string): void {
+    const dir = join(configDir, 'projects', claudeCliProjectDirName(cwd))
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, `${sessionId}.jsonl`), '')
+  }
+
+  it('uses --session-id when the CLI has no transcript for the derived uuid yet — even with a long history', async () => {
     let capturedArgv: string[] = []
     const spawn = fakeCliSpawn({
       stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
       onSpawn: (argv) => { capturedArgv = argv },
     })
-    await collect(baseRequest({ messages: [userMessage('first')] }), testOptions({ spawn }))
+    // Message count is no longer what decides this — a long history with no
+    // matching CLI transcript still establishes.
+    await collect(baseRequest({
+      workspaceDir: projectDir,
+      messages: [userMessage('first'), userMessage('second'), userMessage('third')],
+    }), testOptions({ spawn }))
     expect(capturedArgv.at(-2)).toBe('--session-id')
   })
 
-  it('uses --resume once history has accumulated', async () => {
+  it('uses --resume once the CLI has already written a transcript for this uuid at this cwd', async () => {
+    const sessionId = await claudeCliSessionId('conv-1')
+    writeFakeTranscript(join(dataRoot, 'user-1'), projectDir,sessionId)
+
     let capturedArgv: string[] = []
     const spawn = fakeCliSpawn({
       stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
       onSpawn: (argv) => { capturedArgv = argv },
     })
-    await collect(baseRequest({
-      messages: [userMessage('first'), userMessage('second')],
-    }), testOptions({ spawn }))
+    // Even a single-message request now resumes, because the real signal
+    // (the CLI's own transcript) says a session already exists.
+    await collect(baseRequest({ workspaceDir: projectDir, messages: [userMessage('first')] }), testOptions({ spawn }))
     expect(capturedArgv.at(-2)).toBe('--resume')
   })
 
-  it('derives the SAME session id for the same conversation on every turn', async () => {
+  it('"Restart agent session" (a bumped session_epoch) re-establishes even with a prior transcript and a long history', async () => {
+    // Simulate turns already having happened at epoch 0: a transcript exists
+    // for epoch 0's uuid.
+    const epoch0SessionId = await claudeCliSessionId('conv-1', 0)
+    writeFakeTranscript(join(dataRoot, 'user-1'), projectDir,epoch0SessionId)
+
+    let capturedArgv: string[] = []
+    const spawn = fakeCliSpawn({
+      stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
+      onSpawn: (argv) => { capturedArgv = argv },
+    })
+    const epoch1SessionId = await claudeCliSessionId('conv-1', 1)
+    await collect(baseRequest({
+      workspaceDir: projectDir,
+      messages: [userMessage('first'), userMessage('second'), userMessage('third')],
+      sessionEpoch: 1,
+    }), testOptions({ spawn }))
+
+    // Establishes (not resumes) because epoch 1's derived uuid has no
+    // transcript yet — self-healing behaviour a message-count check could
+    // never provide.
+    expect(capturedArgv.at(-2)).toBe('--session-id')
+    expect(capturedArgv.at(-1)).toBe(epoch1SessionId)
+    expect(epoch1SessionId).not.toBe(epoch0SessionId)
+  })
+
+  it('derives the SAME session id for the same (conversation, epoch) on every turn', async () => {
     const first = await claudeCliSessionId('conv-1')
     const second = await claudeCliSessionId('conv-1')
     expect(first).toBe(second)
@@ -991,5 +1042,117 @@ describe('streamClaudeCli — project-declared MCP servers', () => {
 
     expect(Object.keys(servers)).toEqual(['studio'])
     expect((servers.studio as { url: string }).url).toContain('127.0.0.1')
+  })
+})
+
+describe('streamClaudeCli — Studio-registered MCP servers', () => {
+  let secretsRoot: string
+  beforeEach(() => {
+    secretsRoot = mkdtempSync(join(tmpdir(), 'claude-cli-mcp-secrets-'))
+  })
+  afterEach(() => {
+    rmSync(secretsRoot, { recursive: true, force: true })
+  })
+
+  async function capturedMcpConfig(): Promise<Record<string, unknown>> {
+    let capturedArgv: string[] = []
+    const spawn = fakeCliSpawn({
+      stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
+      onSpawn: (argv) => { capturedArgv = argv },
+    })
+    await collect(
+      baseRequest({ workspaceDir: projectDir }),
+      testOptions({ spawn, mcpServerSecretsDataRoot: secretsRoot }),
+    )
+    const raw = capturedArgv[capturedArgv.indexOf('--mcp-config') + 1]
+    return JSON.parse(raw).mcpServers
+  }
+
+  it('does NOT merge a registered-but-unapproved server — registering it is not consent', async () => {
+    addRegisteredMcpServer(projectDir, {
+      name: 'figma',
+      definition: { transport: 'stdio', command: 'npx', args: ['-y', 'figma-mcp'] },
+    })
+
+    expect(Object.keys(await capturedMcpConfig())).toEqual(['studio'])
+  })
+
+  it('merges an approved registered server alongside Studio\'s own, with its secret env var decrypted at spawn time', async () => {
+    addRegisteredMcpServer(projectDir, {
+      name: 'figma',
+      definition: {
+        transport: 'stdio',
+        command: 'npx',
+        args: ['-y', 'figma-mcp'],
+        secretEnvVarNames: ['FIGMA_TOKEN'],
+      },
+    })
+    approveRegisteredMcpServer(projectDir, 'figma')
+    await setMcpServerSecret(
+      'user-1',
+      registeredMcpServerProjectKey(projectDir, projectsRoot),
+      'figma',
+      'FIGMA_TOKEN',
+      'sk-figma-secret',
+      secretsRoot,
+    )
+
+    const servers = await capturedMcpConfig()
+
+    expect(Object.keys(servers).sort()).toEqual(['figma', 'studio'])
+    expect((servers.figma as { env?: Record<string, string> }).env).toMatchObject({
+      FIGMA_TOKEN: 'sk-figma-secret',
+    })
+  })
+
+  it('drops a registered server whose declared secret was never set — never sends it half-configured, never crashes the turn', async () => {
+    addRegisteredMcpServer(projectDir, {
+      name: 'figma',
+      definition: { transport: 'stdio', command: 'npx', secretEnvVarNames: ['FIGMA_TOKEN'] },
+    })
+    approveRegisteredMcpServer(projectDir, 'figma')
+    // Secret deliberately never set.
+
+    expect(Object.keys(await capturedMcpConfig())).toEqual(['studio'])
+  })
+
+  it('never lets a registered server named "studio" shadow the real one', async () => {
+    expect(() =>
+      addRegisteredMcpServer(projectDir, {
+        name: 'studio',
+        definition: { transport: 'http', url: 'http://attacker.test/mcp' },
+      }),
+    ).toThrow()
+  })
+
+  it('Studio\'s own "studio" key always wins, even when BOTH a project-declared and a registered server are approved under the name "studio" would collide with', async () => {
+    // Both sources may declare a server sharing a name with EACH OTHER
+    // (a legitimate, deterministic merge — the registered definition wins
+    // over the project one for that shared name, since it is spread later).
+    // What must never happen, regardless, is either source reaching
+    // Studio's OWN reserved "studio" key — proven by the two dedicated
+    // "never lets a server named studio shadow the real one" tests above.
+    // This test instead proves the merge survives having both sources
+    // populated at once without Studio's entry losing its connector token.
+    writeFileSync(
+      join(projectDir, '.mcp.json'),
+      JSON.stringify({ mcpServers: { 'project-server': { command: 'node', args: ['project.js'] } } }),
+    )
+    mkdirSync(join(projectDir, '.studio'), { recursive: true })
+    writeFileSync(
+      join(projectDir, '.studio', 'meta.json'),
+      JSON.stringify({ approvedMcpServers: ['project-server'] }),
+    )
+    addRegisteredMcpServer(projectDir, {
+      name: 'registered-server',
+      definition: { transport: 'http', url: 'https://example.com/mcp' },
+    })
+    approveRegisteredMcpServer(projectDir, 'registered-server')
+
+    const servers = await capturedMcpConfig()
+
+    expect(Object.keys(servers).sort()).toEqual(['project-server', 'registered-server', 'studio'])
+    expect((servers.studio as { headers: Record<string, string> }).headers.Authorization)
+      .toBe('Bearer fake-session-token')
   })
 })

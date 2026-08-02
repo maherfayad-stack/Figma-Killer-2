@@ -33,6 +33,7 @@ import { documentMcpTools } from './tools/documentTools'
 import { createPublishMcpTool, type McpPublishRuntime } from './tools/publishTool'
 import { studioImportMcpTools } from './tools/studioImportTool'
 import { studioMcpTools } from './tools/studio'
+import { mcpServerMcpTools } from './tools/mcpServerTool'
 
 // Server-resolved site read tools whose handlers read the browser-posted
 // `ctx.snapshot`, which is null over MCP — they'd return nothing or throw.
@@ -55,6 +56,7 @@ function allMcpTools(runtime?: McpPublishRuntime): AiTool[] {
     ...documentMcpTools,
     ...studioImportMcpTools,
     ...studioMcpTools,
+    ...mcpServerMcpTools,
     createPublishMcpTool(runtime),
     ...siteTools,
   ]

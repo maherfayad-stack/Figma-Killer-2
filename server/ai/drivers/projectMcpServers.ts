@@ -39,7 +39,7 @@ import { join } from 'node:path'
 import { readFileSync, existsSync } from 'node:fs'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { parseJsonWithFallback } from '@core/utils/jsonValidate'
-import { readStudioMeta } from '../../handlers/studio/studioMeta'
+import { mergeStudioMeta, readStudioMeta } from '../../handlers/studio/studioMeta'
 
 /**
  * The two transports the CLI understands. Deliberately permissive about extra
@@ -76,8 +76,14 @@ export interface ProjectMcpServer {
   readonly summary: string
 }
 
-/** Studio's own server key in the generated config; a project may not shadow it. */
-const RESERVED_SERVER_NAME = 'studio'
+/**
+ * Studio's own server key in the generated config; a project may not shadow
+ * it. Exported so `registeredMcpServers.ts` can apply the identical guard to
+ * Studio-registered servers — the reservation is about the generated
+ * `--mcp-config`'s `studio` key, not about which source (project-declared vs
+ * Studio-registered) a server came from.
+ */
+export const RESERVED_SERVER_NAME = 'studio'
 
 function projectMcpConfigPath(dir: string): string {
   return join(dir, '.mcp.json')
@@ -141,4 +147,24 @@ function describeServer(definition: ProjectMcpServerDefinition): string {
   if ('url' in definition) return `${definition.type.toUpperCase()} ${definition.url}`
   const args = definition.args?.length ? ` ${definition.args.join(' ')}` : ''
   return `runs: ${definition.command}${args}`
+}
+
+/**
+ * Grant/revoke consent for one project-declared `.mcp.json` server, by name.
+ * This is the write side of the approval UI `listProjectMcpServers`'s doc
+ * comment names as "in future" — that future is now. Both are idempotent
+ * (approving an already-approved name, or revoking one never approved, is a
+ * no-op) and both persist through `mergeStudioMeta` so no sibling
+ * `.studio/meta.json` field is disturbed.
+ */
+export function approveProjectMcpServer(dir: string, name: string): void {
+  const current = new Set(readStudioMeta(dir).approvedMcpServers ?? [])
+  current.add(name)
+  mergeStudioMeta(dir, { approvedMcpServers: [...current] })
+}
+
+export function revokeProjectMcpServer(dir: string, name: string): void {
+  const current = new Set(readStudioMeta(dir).approvedMcpServers ?? [])
+  current.delete(name)
+  mergeStudioMeta(dir, { approvedMcpServers: [...current] })
 }

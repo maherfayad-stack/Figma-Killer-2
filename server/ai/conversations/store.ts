@@ -44,6 +44,7 @@ interface ConversationRow {
   cache_read_tokens_total: number | string
   cache_creation_tokens_total: number | string
   context_tokens: number | string
+  session_epoch: number | string
   created_at: Date | string
   updated_at: Date | string
   deleted_at: Date | string | null
@@ -84,6 +85,7 @@ function conversationRowToRecord(row: ConversationRow): ConversationRecord {
     cacheReadTokensTotal: toNumber(row.cache_read_tokens_total),
     cacheCreationTokensTotal: toNumber(row.cache_creation_tokens_total),
     contextTokens: toNumber(row.context_tokens),
+    sessionEpoch: toNumber(row.session_epoch),
     createdAt: isoDateOrNull(row.created_at)!,
     updatedAt: isoDateOrNull(row.updated_at)!,
     deletedAt: isoDateOrNull(row.deleted_at),
@@ -202,7 +204,7 @@ export async function listConversationsForUser(
     select id, user_id, title, credential_id, model_id,
            prompt_tokens_total, completion_tokens_total,
            cost_usd_total, cache_read_tokens_total, cache_creation_tokens_total,
-           context_tokens, created_at, updated_at, deleted_at
+           context_tokens, session_epoch, created_at, updated_at, deleted_at
     from ai_conversations
     where user_id = ${userId}
       and deleted_at is null
@@ -224,7 +226,7 @@ export async function readConversationForUser(
     select id, user_id, title, credential_id, model_id,
            prompt_tokens_total, completion_tokens_total,
            cost_usd_total, cache_read_tokens_total, cache_creation_tokens_total,
-           context_tokens, created_at, updated_at, deleted_at
+           context_tokens, session_epoch, created_at, updated_at, deleted_at
     from ai_conversations
     where id = ${conversationId}
       and user_id = ${userId}
@@ -320,7 +322,7 @@ export async function createConversationForUser(
     returning id, user_id, title, credential_id, model_id,
               prompt_tokens_total, completion_tokens_total,
               cost_usd_total, cache_read_tokens_total, cache_creation_tokens_total,
-           context_tokens, created_at, updated_at, deleted_at
+           context_tokens, session_epoch, created_at, updated_at, deleted_at
   `
   return conversationRowToRecord(rows[0]!)
 }
@@ -353,7 +355,7 @@ export async function updateConversationForUser(
     returning id, user_id, title, credential_id, model_id,
               prompt_tokens_total, completion_tokens_total,
               cost_usd_total, cache_read_tokens_total, cache_creation_tokens_total,
-           context_tokens, created_at, updated_at, deleted_at
+           context_tokens, session_epoch, created_at, updated_at, deleted_at
   `
   return rows[0] ? conversationRowToRecord(rows[0]) : null
 }
@@ -398,6 +400,33 @@ export async function softDeleteConversationForUser(
     set deleted_at = current_timestamp,
         updated_at = current_timestamp
     where id = ${conversationId} and user_id = ${userId}
+  `
+  return result.rowCount > 0
+}
+
+/**
+ * Bump a conversation's `session_epoch` — the "Restart agent session"
+ * control's write. `claudeCli` folds the new epoch into the derived
+ * `--session-id` UUID (`claudeCliSessionId`), so the next turn establishes a
+ * genuinely fresh CLI session (picking up newly-approved MCP servers and
+ * other per-spawn config) while this row, its messages, and its title are
+ * untouched. Every other provider driver ignores `session_epoch` entirely —
+ * this is a no-op for them.
+ *
+ * Returns true when a row was matched (owned by this user, not soft-deleted).
+ */
+export async function bumpSessionEpochForUser(
+  db: DbClient,
+  userId: string,
+  conversationId: string,
+): Promise<boolean> {
+  const result = await db`
+    update ai_conversations
+    set session_epoch = session_epoch + 1,
+        updated_at = current_timestamp
+    where id = ${conversationId}
+      and user_id = ${userId}
+      and deleted_at is null
   `
   return result.rowCount > 0
 }

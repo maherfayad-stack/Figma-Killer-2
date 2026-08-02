@@ -31,14 +31,29 @@
  *      (`studio_install_deps`'s trust check in `projectTools.ts`, which has
  *      no permission-mode parameter to read in the first place); nothing in
  *      this component or in Bypass mode itself can touch it.
+ *
+ * Also renders `RestartSessionButton` — a second, unrelated composer-row
+ * control that happens to share this file because it is likewise a
+ * `claudeCli`-only session knob with no other natural home. It lets the user
+ * force a brand-new `claude` CLI session (so a newly-approved MCP server or
+ * other per-spawn config takes effect) WITHOUT discarding the Studio-side
+ * conversation transcript — the only prior escape hatch was "New chat"
+ * (`ConversationHistory.tsx`), which throws the transcript away too. See
+ * `restartAgentSession` (`@admin/ai/api`) and migration 021's
+ * `session_epoch` column for the server side of this.
  */
 import { useEffect, useRef, useState } from 'react'
 import { useAdminUi } from '@admin/state/adminUi'
 import { useAgentStore } from '@admin/ai/useAgentStore'
 import type { AgentSlice } from '@site/agent'
+import { restartAgentSession } from '@admin/ai/api'
+import { ApiError, isAbortError } from '@core/http'
+import { getErrorMessage } from '@core/utils/errorMessage'
 import { Button } from '@ui/components/Button'
 import { ContextMenu, ContextMenuItem } from '@ui/components/ContextMenu'
+import { pushToast } from '@ui/components/Toast'
 import { ChevronDownIcon } from 'pixel-art-icons/icons/chevron-down'
+import { ReloadIcon } from 'pixel-art-icons/icons/reload'
 import { WarningDiamondSolidIcon } from 'pixel-art-icons/icons/warning-diamond-solid'
 import styles from './AgentSessionControls.module.css'
 
@@ -138,6 +153,62 @@ export function AgentSessionControls({ hasCredentials }: AgentSessionControlsPro
           ))}
         </ContextMenu>
       )}
+      <RestartSessionButton />
     </div>
+  )
+}
+
+/**
+ * "Restart agent session" — a `claudeCli`-only control (a no-op server-side
+ * for every other provider, but shown regardless: same posture the
+ * permission-mode trigger above takes). Renders nothing until a conversation
+ * actually exists (`agentConversationId`) — there is no session to restart
+ * before the first message creates the row.
+ */
+function RestartSessionButton() {
+  const conversationId = useAgentStore((s) => s.agentConversationId)
+  const isStreaming = useAgentStore((s) => s.isAgentStreaming)
+  const [restarting, setRestarting] = useState(false)
+
+  if (!conversationId) return null
+
+  async function handleClick(): Promise<void> {
+    if (!conversationId || restarting) return
+    setRestarting(true)
+    try {
+      await restartAgentSession(conversationId)
+      pushToast({
+        kind: 'success',
+        title: 'Agent session restarted',
+        body: 'The next message starts a fresh Claude CLI session — this chat and its history are unchanged.',
+      })
+    } catch (err) {
+      if (isAbortError(err)) return
+      const status = err instanceof ApiError ? err.status : undefined
+      pushToast({
+        kind: 'error',
+        title: 'Could not restart the agent session',
+        body: status === 409
+          ? 'Wait for the current response to finish, then try again.'
+          : getErrorMessage(err, 'Unknown error restarting the agent session'),
+      })
+    } finally {
+      setRestarting(false)
+    }
+  }
+
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="xs"
+      iconOnly
+      disabled={isStreaming || restarting}
+      onClick={() => { void handleClick() }}
+      tooltip="Restart agent session — starts a fresh Claude CLI session (re-reads MCP servers and config); keeps this chat and its history"
+      aria-label="Restart agent session"
+    >
+      <ReloadIcon size={12} aria-hidden="true" />
+    </Button>
   )
 }

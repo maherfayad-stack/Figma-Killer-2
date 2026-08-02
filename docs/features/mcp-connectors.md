@@ -261,8 +261,29 @@ An admin cannot grant a capability they do not hold (enforced in `handlers/conne
 
 ---
 
+## Project MCP servers (the OTHER outward-pointing direction)
+
+`server/ai/drivers/projectMcpServers.ts` already lets a project's own `.mcp.json` reach the agent, approved by name. That covers a server the REPO declares. It does not cover a server that needs a SECRET (a Figma/GitHub token, a bearer header) — a `.mcp.json` entry is passed through verbatim, so the secret would have to live in the git-tracked file itself, which Studio must never push a user toward.
+
+`server/ai/drivers/registeredMcpServers.ts` closes that gap: a user can register an MCP server directly in Studio, for a project, without touching `.mcp.json` at all.
+
+- **Definition, no secret** — name/transport/command·args·url/non-secret env·headers, plus the NAMES of any secret field — lives in `.studio/meta.json`'s `registeredMcpServers`, the same "Studio's state, not the project's" home `approvedMcpServers` already uses.
+- **Secret VALUES** live encrypted (AES-256-GCM, the same master key `ai_provider_credentials`/`plugin_secrets` use) as JSON files under `.data/mcp-server-secrets/<userId>/<projectKey>/<serverName>.json` (`server/ai/credentials/mcpServerSecretStore.ts`) — outside `studio-workspace/**` entirely, and `.data/` is git-ignored. A dedicated DB table would be the more conventional home for a reversible secret, but this repo's own architecture note is explicit that *Studio* state belongs on disk, not the database, and a new table needs a migration this feature didn't ship with; the disk-based store reuses the exact same encryption primitives, so nothing about "how a secret is protected" differs from the DB-backed credential stores.
+- **Consent is a SEPARATE opt-in list**, `approvedRegisteredMcpServers` in `.studio/meta.json`, so a project-declared and a Studio-registered server can never share approval by sharing a name. Redefining an already-approved registered server's definition revokes its approval automatically — a changed command/URL is a new consent surface, not an update to trust already granted.
+- **Merge order in `buildMcpConfigJson`** (`claudeCli.ts`): project-declared servers, then registered servers, then Studio's own `studio` key LAST — so Studio's entry always wins any name collision from either source. Both `listProjectMcpServers` and `addRegisteredMcpServer` independently refuse the literal name `studio`.
+- **Settings → AI → MCP Servers** (`src/admin/modals/Settings/sections/McpServersSection.tsx`) lists both sources with transport, command line/URL, approval state, and an Approve/Revoke control that spells out the consequence ("Studio will run this command") before granting it. It also exposes a "Check for sign-in link" action for http/sse servers — `server/ai/mcp/authProbe.ts` makes ONE unauthenticated discovery request (RFC 9728 `WWW-Authenticate` → RFC 8414 authorization-server metadata) and surfaces whatever authorization URL the server itself returns, as a plain clickable link. Studio never attempts the OAuth flow itself and never fabricates a link the server didn't provide.
+- **Agent-facing tools** (`server/ai/mcp/tools/mcpServerTool.ts`, exposed like every other MCP tool via `registry.ts`): `mcp_list_project_servers` (read-only) and `mcp_propose_server`, which can register an unapproved definition and NOTHING ELSE — it cannot approve/enable a server or supply a secret value (there is no such parameter, and the module never imports the approve/revoke/secret-setting functions at all). Approval and secrets stay a human action in the Settings UI; an agent that could approve its own servers would defeat the entire consent model above.
+
+---
+
 ## Tests
 
+- `server/ai/credentials/mcpServerSecretStore.test.ts` — encryption round trip, path-safety, master-key rotation detection.
+- `server/ai/drivers/registeredMcpServers.test.ts` — registry CRUD, approval semantics, secret resolution/merge shaping.
+- `server/ai/mcp/tools/mcpServerTool.test.ts` — the propose-only consent boundary, behaviourally and structurally.
+- `server/ai/mcp/authProbe.test.ts` — the OAuth-discovery probe's RFC 9728/8414 chain and its fail-closed defaults.
+- `server/ai/mcp/handlers/registeredServers.test.ts` — HTTP routing + the `ai.providers.manage` gate on every route.
+- `server/ai/drivers/claudeCli.test.ts` (`describe('streamClaudeCli — Studio-registered MCP servers')`) — end-to-end merge, secret decryption at spawn time, and the collision-with-`studio` guarantee.
 - `server/ai/mcp/connectors/{token,store}.test.ts` — token hashing, expiry, and store CRUD.
 - `server/ai/mcp/{registry,auth,server,transports/http}.test.ts` and `server/ai/mcp/tools/documentTools.test.ts` — capability filtering, headless document listing, bearer auth + 401, scoped workspace relay, full MCP round-trip, HTTP handshake.
 - `server/ai/mcp/publishTool.test.ts` — explicit MCP publish rebuilds and swaps the real static CSS/HTML slot and records connector audit metadata.

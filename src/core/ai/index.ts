@@ -1,4 +1,5 @@
 export * from './mcpConnectorSchemas'
+export * from './projectMcpServerSchemas'
 export {
   AiToolOutputSchema,
   INTERRUPTED_TOOL_RESULT_ERROR,
