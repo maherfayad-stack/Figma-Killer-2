@@ -79,6 +79,7 @@ import {
   registry,
   packageModuleId,
   sanitizePackageName,
+  PALETTE_HIDDEN_NAME_RE,
   type ModuleDefinition,
   type ModuleComponentProps,
 } from '@core/module-engine'
@@ -152,9 +153,6 @@ const ComponentBundleResponseSchema = Type.Union([
 // Palette hiding — name heuristic + `.studio/meta.json` override (union, see
 // `paletteHiddenModuleIds`'s doc in `studioMeta.ts`).
 // ---------------------------------------------------------------------------
-
-/** Mirrors `register.tsx`'s `PALETTE_HIDDEN_COMPONENTS` list — overlay/portal components confusing to place by hand. */
-const PALETTE_HIDDEN_NAME_RE = /Dialog|Sheet|Modal|Toast|Snackbar|Tooltip|Popover/
 
 /**
  * Module ids the insert palette hides, across every registered package —

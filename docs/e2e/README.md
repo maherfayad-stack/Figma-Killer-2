@@ -9,6 +9,12 @@ This folder defines the agent-run browser testing workflow for Studio.
 - `capabilities.md` expands the capability/access-control E2E rows.
 - `run-log-template.md` is copied into `runs/` for each audit.
 - `runs/` stores completed run logs.
+- `agent-upgrade-dogfood.md` is the human test plan for the 2026-08-03
+  five-workstream agent upgrade (live canvas reload, component awareness, turn
+  latency, visual measurement, Figma MCP). Everything in it passed unit,
+  integration, and static gates but was **never driven through a browser** — the
+  file names exactly what still needs a human, and which failures are known
+  no-ops rather than bugs.
 
 ## Common Requests
 

@@ -25,6 +25,8 @@ function resetBoardState() {
     activeBoardId: null,
     boardsLoaded: false,
     boardsDirty: false,
+    boardsLoadFailed: false,
+    boardsPendingExplicitRemoval: false,
     boardSnapGuides: [],
     // WS-7.1/7.2 — reset alongside the rest; `useEditorStore` is the
     // process-wide singleton every test file in this run shares (see the
@@ -77,6 +79,53 @@ describe('loadBoards', () => {
     expect(s.boardsDirty).toBe(false)
     expect(s.activeBoardId).toBe('board-a')
     expect(s.boards.boards).toEqual([boardA, boardB])
+  })
+
+  it('clears boardsLoadFailed on a real load, even a legitimately-empty one', () => {
+    state().markBoardsLoadFailed()
+    expect(state().boardsLoadFailed).toBe(true)
+
+    state().loadBoards(createBoardsFile())
+    expect(state().boardsLoadFailed).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// markBoardsLoadFailed — boards-fetch-race-01 regression
+// ---------------------------------------------------------------------------
+
+describe('markBoardsLoadFailed', () => {
+  it('renders a placeholder board WITHOUT marking it dirty, unlike loadBoards(createBoardsFile())', () => {
+    // The bug: a failed fetch used to call `loadBoards(createBoardsFile())`,
+    // which is indistinguishable from a legitimately-empty new project — it
+    // marks the synthesized board dirty, making it eligible for the
+    // auto-save effect to persist over the REAL (never-actually-read)
+    // boards.json. `markBoardsLoadFailed` renders the same kind of
+    // placeholder (so the canvas still has a board to show) but leaves it
+    // clean and flags it, so nothing downstream mistakes it for real data.
+    state().markBoardsLoadFailed()
+
+    const s = state()
+    expect(s.boardsLoaded).toBe(true)
+    expect(s.boardsLoadFailed).toBe(true)
+    expect(s.boardsDirty).toBe(false)
+    expect(s.boards.boards).toHaveLength(1)
+    expect(s.boards.boards[0].frames).toEqual([])
+    expect(s.activeBoardId).toBe(s.boards.boards[0].id)
+  })
+
+  it('a subsequent successful loadBoards recovers cleanly, replacing the placeholder', () => {
+    state().markBoardsLoadFailed()
+    const placeholderBoardId = state().boards.boards[0].id
+
+    const realBoard = createBoard('real-board', 'Board 1')
+    state().loadBoards({ version: 1, boards: [realBoard] })
+
+    const s = state()
+    expect(s.boardsLoadFailed).toBe(false)
+    expect(s.boardsDirty).toBe(false)
+    expect(s.activeBoardId).toBe('real-board')
+    expect(s.activeBoardId).not.toBe(placeholderBoardId)
   })
 })
 
@@ -161,6 +210,7 @@ describe('removeBoard', () => {
     expect(s.boards.boards.map((b) => b.id)).toEqual([firstId])
     expect(s.activeBoardId).toBe(firstId)
     expect(s.boardsDirty).toBe(true)
+    expect(s.boardsPendingExplicitRemoval).toBe(true)
   })
 
   it('leaves the active board untouched when removing a non-active board', () => {
@@ -485,6 +535,33 @@ describe('removeFrame', () => {
     expect(selectActiveBoard(state())).toBeNull()
     expect(state().boardsDirty).toBe(false)
   })
+
+  // Regression coverage for `store-02`'s landmine: a real, confirmed removal
+  // must flip `boardsPendingExplicitRemoval` so `boardsSaveGuard.ts` lets the
+  // resulting (smaller) frame set through, but an unknown pageId — which
+  // still flips `boardsDirty` (see `store-03`'s "inherited inconsistency",
+  // deliberately not tightened here) — must NOT falsely claim a removal
+  // happened.
+  it('marks boardsPendingExplicitRemoval when a frame is actually removed', () => {
+    state().loadBoards(createBoardsFile())
+    state().addFrame('home')
+    state().markBoardsClean()
+
+    state().removeFrame('home')
+
+    expect(state().boardsPendingExplicitRemoval).toBe(true)
+  })
+
+  it('does NOT mark boardsPendingExplicitRemoval for an unknown pageId, even though boardsDirty still flips', () => {
+    state().loadBoards(createBoardsFile())
+    state().addFrame('home')
+    state().markBoardsClean()
+
+    state().removeFrame('does-not-exist')
+
+    expect(state().boardsDirty).toBe(true)
+    expect(state().boardsPendingExplicitRemoval).toBe(false)
+  })
 })
 
 describe('removeFrameById', () => {
@@ -501,6 +578,17 @@ describe('removeFrameById', () => {
     expect(frames).toHaveLength(1)
     expect(frames?.[0]?.id).toBe(sourceId)
     expect(state().boardsDirty).toBe(true)
+    expect(state().boardsPendingExplicitRemoval).toBe(true)
+  })
+
+  it('does NOT mark boardsPendingExplicitRemoval for an unknown frame id', () => {
+    state().loadBoards(createBoardsFile())
+    state().addFrame('home')
+    state().markBoardsClean()
+
+    state().removeFrameById('does-not-exist')
+
+    expect(state().boardsPendingExplicitRemoval).toBe(false)
   })
 })
 
@@ -601,6 +689,18 @@ describe('markBoardsClean', () => {
     state().markBoardsClean()
 
     expect(state().boardsDirty).toBe(false)
+  })
+
+  it('clears boardsPendingExplicitRemoval alongside boardsDirty — same lifecycle', () => {
+    state().loadBoards(createBoardsFile())
+    state().addFrame('home')
+    state().markBoardsClean()
+    state().removeFrame('home')
+    expect(state().boardsPendingExplicitRemoval).toBe(true)
+
+    state().markBoardsClean()
+
+    expect(state().boardsPendingExplicitRemoval).toBe(false)
   })
 })
 

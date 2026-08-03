@@ -110,9 +110,32 @@ the SAME engine `POST /admin/api/studio/save` runs, extracted into
 `server/handlers/studioWriteback.ts` so there is exactly one ordering/dedup/
 shift-detection implementation), `studio_set_frames` (bulk `.studio/boards.json`
 geometry), `studio_codemod` (dispatches `rename-tag`/`set-import-specifier` to
-the shipped `@core/ast-codemods`; `detach`/`swap`/`extract-component` are WS-4,
-not built yet, and return `{ ok:false, code:'not-yet-available', message }`
-rather than a silent no-op).
+the shipped `@core/ast-codemods`, plus the WS-4 instance-model verbs
+`detach`/`swap`/`extract-component`). `studio_create_page` (9.1, above) rounds
+out the write surface with the one operation none of these three cover:
+scaffolding a brand-new page file.
+
+**The live-reload bridge** (mcp-tooling) — the piece that makes these four
+writes actually visible on an open canvas without a manual reload.
+`studio_apply_edits`/`studio_codemod` map every file they touched back to a
+page id (`server/ai/mcp/tools/studio/touchedPageIds.ts`, reusing
+`assignPageIds`/`pageIdFromRelPath` from `studioPageLoad.ts` — never a second
+id-derivation); `studio_create_page` already knows its own new page id;
+`studio_set_frames` touches no page content, only `.studio/boards.json`. All
+four report the result in their own JSON payload (`pageIds`) AND, best-effort,
+push a `studio_live_reload` request down the caller's own open Site workspace
+bridge (`liveReloadPush.ts` → the SAME `toolRequest`/`toolResult` transport
+every browser tool rides, but never registered/discoverable as a real tool).
+The browser handler (`src/admin/pages/site/agent/studioLiveReload.ts`) fetches
+ONLY the named pages via the `?pageIds=` filtered `GET /admin/api/studio/load`
+(server-16) and patches them into the store via `patchPages` (store-04) —
+which never marks the store dirty, so this cannot re-enter as an autosave —
+or, for `studio_set_frames`, re-fetches `.studio/boards.json` while preserving
+the user's current board. No open workspace (the common case for a headless
+connector) makes this a pure no-op: the disk write already succeeded either
+way, and a stale canvas is the honest, expected outcome until the next reload.
+
+**Asset tools, headless:** `studio_fetch_remote_asset({ dir?, url, targetDir? })` — `execution: 'server'`, requires `studio.write`. Fetches an `http(s)` URL server-side and lands the response as a new image file, the way an asset an external MCP tool already returned as a URL (a connected Figma MCP server's export/download tool, most concretely — see `docs/features/agent.md`'s "Figma asset workflow") reaches the repo WITHOUT its bytes ever transiting the calling model, unlike the browser-relayed `studio_upload_asset` (§ below), whose `imageBase64` input requires the caller to already hold the bytes. Untrusted-URL-safe by construction: `http:`/`https:` scheme only, no redirect ever followed, the response capped at 25 MB by streamed byte count, and the result written through the same magic-number-sniffed, SVG-sanitized, containment-checked pipeline (`server/handlers/studio/assetLanding.ts`) `studio_upload_asset` uses — one write path, two callers.
 
 **9.4 — `studio_fidelity_report(dir, pageId?)`** — the flagship tool. Per page:
 a `score` (`nodes`/`resolved`/`locked`/`codeValued`) and `findings[]`, each
@@ -177,7 +200,33 @@ visually by exporting them as images and comparing them to the live one"):
   each intersected against caller-supplied `nodeRects` (the exact shape
   `studio_export_frames` already returns per frame) to report the node ids a
   differing region overlaps — "the hero section is 78% different, nodes X and
-  Y," not "the images look different."
+  Y," not "the images look different." `studio_diff_frames` also accepts a
+  `referenceId` instead of a second base64 PNG — see "Design references"
+  below — in which case a dimension mismatch is RECONCILED (dpr-matched or
+  labelled-resampled) rather than refused; the plain two-PNG `reference` path
+  keeps its original strict behavior unchanged.
+
+**Design references** — a durable, per-project, addressable-by-id store
+(`server/handlers/studio/designReferenceStore.ts`) for a ground-truth design
+comp (typically a Figma export) an agent measures a Studio frame against,
+closing the gap where a design pasted into chat was only ever a transient,
+re-encoded attachment with no handle a tool could address on a later turn.
+Stored under `.studio/references/` — deliberately NOT `.studio/cache/`
+(disposable, regenerable build output; a design reference is user-supplied
+intent that cannot be regenerated) and not `src/assets` (never an `<img>`
+import target). `.gitignore` excludes the directory anyway: a multi-megabyte
+PNG is a real, ongoing cost to keep in a git-tracked project, so durability
+here means "survives across chat turns/restarts on the running server's
+disk," not "survives a git clone." The store is addressable by id and a
+project may hold many references (one per page, scoped by `pageId`); `POST
+/admin/api/studio/reference-upload` (the chat panel's own attachment
+control) is a thin HTTP projection over the SAME store for the simpler
+"currently attached reference" model a human uses — one write path, two
+callers.
+
+- `studio_register_design_reference({ dir?, url?, imageBase64?, pageId?, label?, source? })` — `execution:'server'`, requires `studio.write`. Exactly one of `url` (fetched server-side via `fetchRemoteBytes`, the same SSRF-hardened primitive `studio_fetch_remote_asset` uses — bytes never transit the caller) or `imageBase64`. Stores the ORIGINAL bytes verbatim — re-encoding a measurement baseline would defeat the point of keeping one. Raster only (PNG/JPEG/GIF/WEBP/AVIF); SVG is refused (no fixed intrinsic pixel size to diff against).
+- `studio_list_design_references({ dir?, pageId?, limit? })` / `studio_read_design_reference({ dir?, referenceId, includeImage? })` / `studio_delete_design_reference({ dir?, referenceId })` — headless reads plus an idempotent delete (removing an unknown id is `{ ok:true, removed:false }`, never an error). `includeImage:true` returns the original bytes as an MCP image block; omitted, only metadata (id, dimensions, content hash, `pageId`/`label`/`source`) comes back.
+- `studio_recommend_export_dpr({ dir?, pageId, referenceId })` — computes the `studio_export_frames` `dpr` that lands its capture on the reference's own pixel WIDTH, using the frame's AUTHORED width from `.studio/boards.json` (before any capture happens). This is the primary path: resampling a registered reference to match a capture is the WORSE option (interpolation artifacts show up as diff noise in exactly the regions being measured, and it degrades a baseline kept lossless on purpose) — matching the export resolution to the reference up front makes an exact, non-resampled `studio_diff_frames` comparison the common case. Height is content-driven (scroll-unroll can make the real capture taller than the frame's nominal height) and is not predicted by this tool.
 
 **Browser-relayed (via the live workspace bridge) — require the Site workspace to be open:**
 - Structure editing — `site_insert_html`, `site_replace_node_html`, `site_delete_node`, `site_move_node`, `site_duplicate_node`, `site_rename_node`, `site_update_node_props`.
@@ -273,6 +322,7 @@ An admin cannot grant a capability they do not hold (enforced in `handlers/conne
 - **Merge order in `buildMcpConfig`** (`claudeCli.ts`): project-declared servers, then registered servers, then Studio's own `studio` key LAST — so Studio's entry always wins any name collision from either source. Both `listProjectMcpServers` and `addRegisteredMcpServer` independently refuse the literal name `studio`. The merged config (including every resolved secret) is written to a private 0600 temp file by `writeMcpConfigFile` (`claudeCliMcpConfigFile.ts`) and passed as `--mcp-config <path>` — never as inline JSON on the command line, which `ps -eo command` would print in full to any local process.
 - **Settings → AI → MCP Servers** (`src/admin/modals/Settings/sections/McpServersSection.tsx`) lists both sources with transport, command line/URL, approval state, and an Approve/Revoke control that spells out the consequence ("Studio will run this command") before granting it. It also exposes a "Check for sign-in link" action for http/sse servers — `server/ai/mcp/authProbe.ts` makes ONE unauthenticated discovery request (RFC 9728 `WWW-Authenticate` → RFC 8414 authorization-server metadata) and surfaces whatever authorization URL the server itself returns, as a plain clickable link. Studio never attempts the OAuth flow itself and never fabricates a link the server didn't provide.
 - **Agent-facing tools** (`server/ai/mcp/tools/mcpServerTool.ts`, exposed like every other MCP tool via `registry.ts`): `mcp_list_project_servers` (read-only) and `mcp_propose_server`, which can register an unapproved definition and NOTHING ELSE — it cannot approve/enable a server or supply a secret value (there is no such parameter, and the module never imports the approve/revoke/secret-setting functions at all). Approval and secrets stay a human action in the Settings UI; an agent that could approve its own servers would defeat the entire consent model above.
+- **Once approved, a project's generated subagent roster can now name one of its tools too.** Before mcp-tooling's fix, `agentRoster.ts` (`server/handlers/studio/agentRoster.ts`) only recognised Studio's own native tool names — naming ANY approved external server's tool in a subagent definition threw and silently degraded a whole chat turn to zero subagents. `agentRosterMcpTools.ts`'s `assertKnownAgentTools` fixes this: a name is vetted when it is either a real native tool, or shaped `mcp__<server>__<tool>` for a server THIS project has actually approved (reading exactly the two lists above) — never a broader `mcp__*` guess. This is what makes `figma-asset-scout` (`docs/features/agent.md`'s "Figma asset workflow") possible: a subagent that holds two tools from an approved Figma MCP server, and nothing from any server the project hasn't consented to.
 
 ---
 
@@ -290,5 +340,9 @@ An admin cannot grant a capability they do not hold (enforced in `handlers/conne
 - `server/ai/mcp/tools/studioImportTool.test.ts` — capability gating, the `dir`-stripping input schema, the imported-pages summary helper, and an end-to-end handler run against a stubbed global `fetch` (no real network calls); `server/handlers/__tests__/studioGithubImport.test.ts` covers the underlying import engine itself.
 - `server/ai/mcp/tools/studio/{projectTools,editTools,fidelityReport}.test.ts` — orientation/edit/fidelity tool handlers against temp fixture projects; `fidelityCodes.test.ts` — doc ⇄ code parity gate against `docs/features/studio-import.md`'s table.
 - `server/ai/mcp/resources.test.ts` — `studio://guidelines` resource listing/read.
+- `server/handlers/studio/designReferenceStore.test.ts` — register/list/get/read/remove against real sharp-encoded PNG/JPEG bytes, containment, idempotent delete, and graceful degradation when a registered file is missing from disk.
+- `server/handlers/studio/referenceUpload.test.ts` — the chat panel's `POST/GET/DELETE /admin/api/studio/reference-upload` HTTP contract end to end.
+- `server/ai/mcp/tools/studio/designReferenceTools.test.ts` — the five design-reference MCP tools' shapes and handlers, including the dpr-recommendation math.
+- `server/ai/mcp/tools/studio/diffFrames.test.ts` — the pre-existing generic two-PNG contract plus the new `referenceId` path's exact/resampled/aspect-ratio-refusal cases, against real registered references.
 - `src/__tests__/ai/mcpConnectorsHandler.test.ts` — CRUD, step-up, privilege floor, capability gating.
 - `src/__tests__/architecture/ai-mcp-connectors-never-leak.test.ts` — token never serialized.

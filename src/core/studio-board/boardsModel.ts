@@ -22,6 +22,23 @@ export function removeBoard(file: BoardsFile, boardId: string): BoardsFile {
   return { ...file, boards: file.boards.filter((b) => b.id !== boardId) }
 }
 
+/**
+ * The board `activeBoardId` names, or `null` when nothing is active or the id
+ * no longer resolves (a board removed while it was active). The read
+ * counterpart to `upsertBoard`/`removeBoard`.
+ *
+ * Lives here rather than in the editor's `boardSlice.ts` — where it started —
+ * because it is a pure selector over `BoardsFile` with no store dependency,
+ * and keeping it in the slice forced every sibling action module to import
+ * back from the slice. That produced a real `boardSlice -> boardAnnotation/
+ * FrameSelectionActions -> boardSlice` cycle, caught by
+ * `no-circular-dependencies.test.ts`.
+ */
+export function getActiveBoard(file: BoardsFile, activeBoardId: string | null): Board | null {
+  if (!activeBoardId) return null
+  return file.boards.find((b) => b.id === activeBoardId) ?? null
+}
+
 export function renameBoard(board: Board, name: string): Board {
   return { ...board, name }
 }

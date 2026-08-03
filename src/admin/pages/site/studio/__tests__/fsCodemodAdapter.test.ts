@@ -18,10 +18,20 @@
  * sites — manual save-then-reload and plugin install, both explicit
  * user-triggered actions). So a save completing cannot, by construction,
  * cause a reload that re-arms the autosave loop.
+ *
+ * mcp-tooling's live-reload bridge (`fetchStudioPagesById` in
+ * `../studioLiveReloadFetch.ts`) is a deliberate exception to "a save never
+ * reloads" above, and a different trigger entirely from the write-loop this
+ * file guards against: it fires only in response to an EXPLICIT, externally
+ * triggered server write (an MCP tool call), never as a reaction to this
+ * client's own save completing, and it never calls saveSite itself — the
+ * "targeted reload" block below proves exactly that.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { fsCodemodAdapter, getStudioVendorCss, subscribeStudioVendorCss } from '../fsCodemodAdapter'
+import { fetchStudioPagesById } from '../studioLiveReloadFetch'
 import { CMS_SITE_RELOAD_EVENT } from '@admin/state/adminEvents'
+import { useEditorStore } from '@site/store/store'
 import { makeNode, makePage, makeSite } from '../../../../../__tests__/fixtures'
 
 describe('fsCodemodAdapter — write-loop safety + framework sync', () => {
@@ -328,6 +338,106 @@ describe('fsCodemodAdapter — write-loop safety + framework sync', () => {
       const reloads = await countReloads(() => fsCodemodAdapter.saveSite(editedSite()))
 
       expect(reloads).toBe(0)
+    })
+  })
+
+  // ─── mcp-tooling — the live-reload bridge (targeted reload + baseline resync) ──
+  describe('fetchStudioPagesById (mcp-tooling live-reload bridge) — targeted reload + baseline resync', () => {
+    function loadResponse(pages: unknown[], extra: Record<string, unknown> = {}) {
+      return {
+        dir: '/tmp/studio-test', projectName: 'studio-test', pages,
+        componentSources: {}, styleRules: {}, conditions: [], vendorCss: '',
+        trust: 'static', paletteHiddenModuleIds: [], ...extra,
+      }
+    }
+
+    function homePage(text: string) {
+      return makePage({
+        id: 'home',
+        slug: 'index',
+        title: 'Home',
+        rootNodeId: 'root',
+        nodes: { root: makeNode({ id: 'pages/Home.tsx:3:1', moduleId: 'base.text', props: { text } }) },
+      })
+    }
+
+    it('requests only the given pageIds via ?pageIds= and patches just that page into the store', async () => {
+      stubFetch({ '/admin/api/studio/load': loadResponse([homePage('Original')]) })
+      const site = await fsCodemodAdapter.loadSite()
+      useEditorStore.getState().loadSite(site!)
+      calls = []
+
+      stubFetch({ '/admin/api/studio/load': loadResponse([homePage('Edited by agent')]) })
+      const { pages, missingPageIds } = await fetchStudioPagesById(['home'])
+      useEditorStore.getState().patchPages({ pages, removedPageIds: missingPageIds })
+
+      expect(calls).toHaveLength(1)
+      expect(calls[0]!.url).toContain('/admin/api/studio/load')
+      expect(calls[0]!.url).toContain('pageIds=home')
+      const patched = useEditorStore.getState().site!.pages[0]!
+      expect(Object.values(patched.nodes)[0]!.props!.text).toBe('Edited by agent')
+    })
+
+    it('maps meta.missingPageIds to removedPageIds — a requested page deleted by the very edit that triggered the reload', async () => {
+      stubFetch({
+        '/admin/api/studio/load': loadResponse([
+          homePage('Original'),
+          makePage({ id: 'about', slug: 'about', title: 'About' }),
+        ]),
+      })
+      const site = await fsCodemodAdapter.loadSite()
+      useEditorStore.getState().loadSite(site!)
+
+      stubFetch({ '/admin/api/studio/load': loadResponse([], { missingPageIds: ['about'] }) })
+      const { pages, missingPageIds } = await fetchStudioPagesById(['about'])
+      useEditorStore.getState().patchPages({ pages, removedPageIds: missingPageIds })
+
+      expect(useEditorStore.getState().site!.pages.map((p) => p.id)).toEqual(['home'])
+    })
+
+    it('CRITICAL — resyncs the save-diff baseline: the very next save does not re-send the value the reload just applied', async () => {
+      stubFetch({ '/admin/api/studio/load': loadResponse([homePage('Original')]) })
+      const initialSite = await fsCodemodAdapter.loadSite()
+      calls = []
+
+      // Simulates the agent having already written "Edited by agent" straight
+      // to the .tsx via studio_apply_edits — the filtered reload reads it back.
+      stubFetch({ '/admin/api/studio/load': loadResponse([homePage('Edited by agent')]) })
+      const { pages } = await fetchStudioPagesById(['home'])
+      calls = []
+
+      // Re-using `initialSite`'s own `settings.framework` object (not a fresh
+      // `makeSite(...)` default) so this save's ONLY variable is the reloaded
+      // page content — a framework-shape mismatch would add an unrelated
+      // `/framework` POST and falsely fail the "zero calls" assertion below.
+      await fsCodemodAdapter.saveSite({ ...initialSite!, pages })
+
+      // If the baseline had NOT been resynced, this would diff "Edited by
+      // agent" (now on screen) against the STALE "Original" baseline and ship
+      // a redundant `prop` edit — exactly the regression this test guards.
+      expect(calls).toHaveLength(0)
+    })
+
+    it('GATE — a targeted reload never calls /save and never dispatches the full-reload event (no write-loop cascade)', async () => {
+      stubFetch({ '/admin/api/studio/load': loadResponse([homePage('Original')]) })
+      const site = await fsCodemodAdapter.loadSite()
+      useEditorStore.getState().loadSite(site!)
+      calls = []
+
+      stubFetch({ '/admin/api/studio/load': loadResponse([homePage('Edited by agent')]) })
+      let reloadEvents = 0
+      const onReload = () => { reloadEvents += 1 }
+      window.addEventListener(CMS_SITE_RELOAD_EVENT, onReload)
+      try {
+        const { pages, missingPageIds } = await fetchStudioPagesById(['home'])
+        useEditorStore.getState().patchPages({ pages, removedPageIds: missingPageIds })
+      } finally {
+        window.removeEventListener(CMS_SITE_RELOAD_EVENT, onReload)
+      }
+
+      expect(calls.some((c) => c.url.startsWith('/admin/api/studio/save'))).toBe(false)
+      expect(reloadEvents).toBe(0)
+      expect(useEditorStore.getState().hasUnsavedChanges).toBe(false)
     })
   })
 

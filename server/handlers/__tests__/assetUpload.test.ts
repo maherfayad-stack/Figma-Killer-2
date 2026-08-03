@@ -90,6 +90,20 @@ describe('tryServeStudioAssetUpload — happy path', () => {
     expect(fs.existsSync(path.join(tmpDir, 'src/assets/logo-2.png'))).toBe(true)
   })
 
+  it('sanitizes an uploaded SVG before writing it — landAssetBytes closes the same gap studio_fetch_remote_asset needs closed', async () => {
+    const svgWithScript = new TextEncoder().encode(
+      '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script><circle r="5"/></svg>',
+    )
+    const req = uploadRequest({ dir: tmpDir }, { name: 'icon.svg', bytes: svgWithScript })
+    const res = await tryServeStudioAssetUpload(req, new URL(req.url), '/admin/api/studio/asset-upload')
+    expect(res!.status).toBe(200)
+    const body = (await res!.json()) as { relPath: string }
+    const written = fs.readFileSync(path.join(tmpDir, body.relPath), 'utf8')
+    expect(written).not.toContain('<script')
+    expect(written).not.toContain('alert(1)')
+    expect(written).toContain('<circle')
+  })
+
   it('sanitizes a filename carrying traversal-looking characters into a safe base name', async () => {
     const req = uploadRequest({ dir: tmpDir }, { name: '../../evil name!!.png', bytes: PNG_BYTES })
     const res = await tryServeStudioAssetUpload(req, new URL(req.url), '/admin/api/studio/asset-upload')

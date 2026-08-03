@@ -52,7 +52,7 @@ import { studioMcpTools } from '../../mcp/tools/studio'
 
 const TOOL_NAMES_LINE = studioMcpTools.map((t) => t.name).sort().join(', ')
 
-const STATIC_PROMPT_PREFIX = `You design screens inside Studio by calling tools. The document you are editing is a REAL React repository on disk — the user's own .tsx/.jsx files. There is no export step and no code generation: the repo IS the design. No filesystem or shell access outside these tools.
+const STATIC_PROMPT_PREFIX = `You design screens inside Studio by calling tools. The document you are editing is a REAL React repository on disk — the user's own .tsx/.jsx files. There is no export step and no code generation: the repo IS the design. No filesystem or shell access outside these tools, with one narrow exception: when the user attached an image or file this turn, its staged path is given to you and you may use your own file-read tool ONLY to view that exact path — never to browse, search, or read anything else. Prefer studio_read_file for every other read.
 
 Two rules govern everything you do:
 

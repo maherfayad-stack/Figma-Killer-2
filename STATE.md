@@ -8,6 +8,311 @@ Entry ids are `<area>-<nn>`. Areas in use: `parser`, `canvas`, `store`, `panel`,
 
 ---
 
+### store-02 — a failed boards fetch was indistinguishable from a new project, so a synthesised board autosaved over the real `boards.json`; 56 files deleted in the same incident remain UNEXPLAINED
+- **Agent:** server-engineer (two passes), evidence + forensics by the coordinator
+- **Stage:** fix done and tested. Root cause of the file deletions: **open, and deliberately left open.**
+- **Updated:** 2026-08-03
+
+**Incident.** With `bun run dev` open on `studio-workspace/untitled`, 56 tracked files were deleted (`pages/` — 10; `styles/imported/alm-design-design-system-1-1-3/` — 46) and `.studio/boards.json` was rewritten with a reduced frame set, within ~45s of the app loading. Restored with `git restore` before investigation began. **Do not re-run this scenario against a real project — reproduce only on a throwaway copy.**
+
+**Found and fixed.** `useStudioBoardsPersistence`'s boards-fetch `.catch()` called `loadBoards(createBoardsFile())` on *any* failure — indistinguishable from a legitimately empty new project, because `loadBoards` marks that synthesised single empty board **dirty** either way. `useStudioDefaultBoardSeed` then seeds it from whatever `site.pages` holds at that moment, and the 800 ms autosave persists the result over the real (never-read) `boards.json`. Same bug class as `a8b19d3`, different trigger. Fix: `boardsLoadFailed` + `markBoardsLoadFailed()` on `boardSlice.ts` — a failed fetch still renders a placeholder so the canvas isn't blank, but leaves it **clean and flagged**; `shouldSeedDefaultBoard` (extracted to `studioDefaultBoardSeed.ts` for `react-refresh/only-export-components`) refuses while the flag is set. A later successful load clears it.
+
+**This explains only the *shape* of the `boards.json` rewrite and was never proven to be what fired.** It does not explain the deletions at all.
+
+**Ruled out — actively disproven, do not re-tread:**
+- Rename/move/copy — `renameSync`/`.rename(`/`cpSync`/`copyFileSync` have **zero** production hits under `server/`. (This was the first audit's blind spot: a directory rename empties a source without any `rm`/`unlink` call.)
+- A Studio-routed AI turn — the live `.tmp/dev.db` from that session shows **zero** rows in `ai_conversations`/`ai_messages`/`ai_mcp_connectors` anywhere on 2026-08-03; most recent is 2026-08-01 23:09. Independently corroborated: Claude Code writes one `~/.claude/projects/<cwd>` dir per working directory, and the only studio-project one is `__canonical-fixture`, dated Aug 2 00:39.
+- A shell command — PowerShell history file unmodified since Aug 2 00:09, ends at `bun run dev`. No bash history on the machine.
+- Another Claude session — exactly one was active in-window (`293d0365…`), last wrote **03:12:35**, eleven minutes before the first deletion.
+- OneDrive eviction — `C:\Users\Admin\Documents` and `C:\Users\Admin\OneDrive\Documents` are distinct directories; this repo is not cloud-synced.
+- `studioProjects.ts` create/collision/slug logic, the Dashboard's project-switch ordering, the design-import wizard's dir resolution, and `archiveIngest.ts`'s check-then-`rmSync` (synchronous, no `await` between them — no TOCTOU window).
+
+**`untitled-2` is the reaction, not the cause.** Its `.studio/meta.json` (`{"displayName": "Untitled 2"}`) is byte-for-byte what `POST /admin/api/studio/create` emits, and the Dashboard's "New project" creates-and-opens in one click — a ~9 s gap is human reaction time to a blank canvas, followed ~3 min later by a manual import-wizard run. Confirmed **not** a copy: `Button.css` and `Home.tsx` differ between the two projects.
+
+**Genuine known-unknown.** No code path in the server, client, or Vite config empties `pages/` or `styles/imported/<slug>/` under any constructed input, across two full audits. What would settle it: an elevated Recycle Bin check for the 56 filenames (a programmatic `rm` is permanent and never lands there; a GUI delete does), Windows Prefetch for `claude.exe`/`node.exe`/`bun.exe` in the 03:21–03:25 window, or a direct answer about what else was pointed at that directory.
+
+**Landmine for live-canvas-reload (store-03 / slice 3).** The `boardsDirty` → 800 ms autosave → whole-file `POST /admin/api/studio/boards` overwrite is a general pattern risk, not unique to the bug fixed here. Anything that can mark `boardsDirty` from state not reflecting the real on-disk file (a stale project switch, a second tab) reproduces this class of loss. Consider diffing/merging against a freshly-read file before building more on top.
+
+**Files:** `src/admin/pages/site/store/slices/boardSlice.ts`, `src/admin/layouts/AdminCanvasLayout/AdminCanvasLayout.tsx`, `src/admin/layouts/AdminCanvasLayout/studioDefaultBoardSeed.ts` (new), `src/admin/layouts/AdminCanvasLayout/__tests__/studioDefaultBoardSeed.test.ts` (new), `src/__tests__/canvas/boardSlice.test.ts`.
+
+---
+
+### mcp-12 — a durable design-reference store, and a pixel diff that can measure a frame against one
+- **Agent:** mcp-tooling
+- **Stage:** done. Verified with real encoded image bytes, not synthetic magic-byte prefixes.
+- **Updated:** 2026-08-03
+
+The goal was "as accurate to the sources uploaded as possible". Two things blocked it: a pasted design was a transient chat attachment with no addressable handle, and `studio_diff_frames` refused any dimension mismatch — which a 2x/3x Figma export always is.
+
+**Store at `.studio/references/`** — deliberately *not* `.studio/cache/` (that is gitignored *regenerable* output; a design reference is user-supplied intent that cannot be regenerated). `.gitignore` still excludes it, for a different reason: a multi-megabyte PNG is a real ongoing git-history cost. **Durability here means "survives chat turns and server restarts", not "survives a clone"** — stated in the store's module doc and the `.gitignore` comment rather than left implicit.
+
+**Cardinality decided explicitly:** the store holds many references per project (one per `pageId`). The upload UI's simpler "one currently attached" model is a *read-time projection* (`getMostRecentDesignReference`), not a second storage mode. An unstated mismatch here would have been a bug waiting to happen.
+
+**Writes go through `assetLanding.ts`** — one deliberate, narrowly-scoped exception (`DESIGN_REFERENCE_ASSET_DIR`) lets that pipeline target `.studio/` for this caller only; every other `.studio` write attempt still refuses.
+
+**Dimension reconciliation — dpr matching first, resampling second, refusal third:**
+- `studio_recommend_export_dpr` computes the `dpr` that makes a fresh capture land on the reference's own pixel *width*, from the frame's *authored* width, before any capture happens. Height is content-driven (scroll-unroll) and deliberately not predicted.
+- `studio_diff_frames` gained `referenceId` (bytes never transit the model). Exact match → `method: 'exact'`. Close-aspect mismatch → resamples **the reference, never the baseline** → `method: 'resampled'`. **Aspect delta beyond 5% → refuses outright**, because a large aspect gap usually means a real content difference — a missing section, a wrong crop — that a stretch would hide. The plain two-PNG path is untouched and still strict.
+- The `method` field is load-bearing: a score from a resampled comparison is a weaker claim than a dpr-matched one, and `design-critic`'s prompt is written to read it before trusting the number.
+
+**Also closed two gaps the UI half found:** `POST/GET/DELETE /admin/api/studio/reference-upload` (a browser file input cannot invoke an MCP tool), and an idempotent `removeDesignReference`.
+
+**Known limitation, since fixed by the coordinator:** registering by `url` capped at 25 MB (shared `MAX_REMOTE_ASSET_BYTES`) while the upload route allowed 50 MB. `fetchRemoteBytes` now takes a per-caller `maxBytes`; the shared constant was deliberately *not* raised, since `studio_fetch_remote_asset` has no reason to accept a 50 MB icon.
+
+---
+
+### panel-03 — a design reference now uploads losslessly, on a path separate from chat attachments
+- **Agent:** panel-designer
+- **Stage:** UI done. **Needs a human dogfood pass.**
+- **Updated:** 2026-08-03
+
+`userImage.ts` re-encodes every attachment to a bounded JPEG (`MAX_EDGE = 1568`, `MAX_BYTES = 1.5 MB`). That is correct for a chat image — sized to what a vision model consumes, and it bounds cost — and **wrong** for a reference that exists to be pixel-diffed.
+
+**The framing that made this clean: a design reference never goes to the model as an image at all.** It goes to a server-side diff. So this is a second, separate path, not a loosening of the existing caps — which are untouched.
+
+**A new control, not an extension of the existing one**, for a stated reason: the Agent Panel's attachment plumbing exists to produce bounded JPEGs for vision input and clears on every send. A reference is never re-encoded, is persistent rather than per-message, and never becomes an image block. Reusing it would have meant threading a "don't touch this one" flag through code whose whole job is touching every attachment.
+
+**Caps justified against real numbers:** `DESIGN_REFERENCE_MAX_BYTES = 50 MB` because a 3x export of a tall mobile screen (≈1170 × 9,000–24,000 px, 24-bit PNG with gradients) really weighs 15–40 MB. Separately `MAX_EDGE`/`MAX_PIXELS` (20,000 px / 120 MP) reject a **decode bomb** — small bytes claiming an enormous canvas — before it reaches the network. This path reads headers only and never decodes pixels.
+
+**Also de-duplicated:** the PNG/JPEG/WebP header sniffer moved to `src/core/ai/imageDimensions.ts`, shared by the bounded chat pipeline and the lossless path instead of two copies.
+
+Hit a genuine **Windows case-insensitive filename collision** (`no-case-only-filename-collisions.test.ts`) — hence `designReferenceHeader.ts` rather than a name colliding with `DesignReferenceAttachment.tsx`.
+
+**Dogfood scope:** the UI mechanics (attach → chip shows filename, client-read dimensions, progress → remove). The route now exists (`mcp-12`), so a full round trip is testable — but the browser control itself was never exercised live.
+
+---
+
+### agent-03 — `design-critic` can now measure instead of guess
+- **Agent:** coordinator (direct)
+- **Stage:** done.
+- **Updated:** 2026-08-03
+
+`design-critic` held only `studio_export_frames`/`studio_render_reference` — the one agent whose entire job is visual judgement had no access to the pixel diff. Granted `studio_diff_frames`, `studio_list_design_references`, `studio_recommend_export_dpr`. Deliberately **not** register/delete: a critic reviews, it does not create or destroy the baseline it is judged against.
+
+Its prompt now carries the measurement loop as an ordered procedure (list references → recommend dpr → export at that dpr keeping `nodeRects` → diff by reference id → read `method` → map regions to node ids), and `studio-design-principles.md` gained a matching "Measure against the design when there is one" section.
+
+Two honesty rules are written in, because both failure modes are worse than no review at all:
+- **Read `method` before trusting the score.** Sub-pixel differences from a `resampled` diff are interpolation artefacts, not defects. An aspect-ratio refusal *is itself the finding*.
+- **Never imply a comparison that did not happen.** With no reference registered, say so and fall back to house style — a fabricated similarity number is worse than an honest judgement.
+
+**Broke and fixed the module ceiling in the same change:** adding that section pushed `agentRoster.ts` to 743 lines. Extracted the six reference-file content builders into `agentRosterReferences.ts` (231 lines; `agentRoster.ts` → 543) — its third split, after `agentRosterManifest.ts` and `agentRosterDocOutline.ts`. `referencePath` moved with them on purpose: it is the single derivation behind both the write target and every prompt's pointer text, and those two drifted once already (`agent-02`).
+
+---
+
+### mcp-11 — the live-reload bridge: an MCP write now nudges the open canvas instead of leaving it stale
+- **Agent:** mcp-tooling
+- **Stage:** implementation + tests done. **Human dogfood still needed for the true end-to-end path** — see below.
+- **Updated:** 2026-08-03
+
+Connects `server-16` (the `?pageIds=` filtered load) and `store-04` (`patchPages`). All four server-execution write tools (`studio_apply_edits`, `studio_codemod`, `studio_create_page`, `studio_set_frames`) now report the page ids they touched and push a targeted reload to the open board.
+
+- `StudioEditBatchResult` gained `touchedFiles` (already computed internally for shift-detection, now exposed). `touchedPageIds.ts` maps files → page ids by reusing `discoverPageFiles`/`assignPageIds`/`pageIdFromRelPath` — the id grammar is not reimplemented.
+- `liveReloadPush.ts` rides the existing `toolRequest`/`toolResult` transport but is **registered nowhere** — `tools/list` never advertises it, so no model and no external MCP client can invoke it. `hasEditorBridge` makes "no open board" a true no-op; a headless connector still writes successfully.
+- Client: `studioLiveReloadFetch.ts` merges the fresh snapshot into the save-diff baseline **before returning** — this is the piece that stops the next autosave re-sending every prop on a just-reloaded page. `agent/studioLiveReload.ts` guards on `studioWriteDir() === input.dir`, so a reload can never cross-contaminate a different open project.
+- `studio_set_frames` pushes `boardsChanged` with no `pageIds` (a frame resize changes no page content); `studio_create_page` pushes both, because `autoPlaceBoardFrame` always adds a frame.
+
+**Write-loop gate test added**, per the invariant `fsCodemodAdapter.test.ts` exists to protect: a completed reload never calls `/save`, never dispatches `CMS_SITE_RELOAD_EVENT`, and leaves `hasUnsavedChanges: false`. There is still no filesystem watcher and there must not be one — this reload is an explicit, agent-triggered event.
+
+**Honest gap 1 — verified in halves, not end to end.** The server→transport half is exercised against a real `editorBridge` stream reading the actual NDJSON event off the wire; the client fetch→merge→patch half against the real store with only `global.fetch` stubbed. **Not** exercised: the real `executor.ts` dispatch with a live `getAgentStoreApi()` registration from a mounted `SitePage`, against a running server, with a human watching. The `boardsChanged` branch is unit-reasoned only. This matches the project's standing division of labour (workers do static gates, the human dogfoods UI) — but do not read the test list as end-to-end coverage.
+
+**Honest gap 2 — Next App Router projects get a silent no-op.** `touchedFilesToPageIds` deliberately does not attempt the route-composed page-id scheme, so for such a project the push carries no ids and the canvas stays stale. The disk write is unaffected. Fix the mapping, not the push, when that matters.
+
+**Landmines:**
+- Importing anything from a module that imports `useEditorStore` creates the cycle edge **even for a function that never touches the store**, and `import type` does not silence madge — correctly, because the runtime edge is real. The only fix is moving shared pure logic to a genuinely store-free leaf. Same shape as the `getActiveBoard` fix in `store-05`.
+- `fsCodemodAdapter.ts`'s node fixtures key the record by `'root'`, not by the node's own `.id`. `saveSite` only ever iterates `Object.values`, so it silently works there but breaks a naive `patched.nodes[id]` lookup in a new test — use `Object.values(page.nodes)[0]`.
+
+**Files:** `server/handlers/studioWriteback.ts`, `server/ai/mcp/tools/studio/{editTools,projectTools,touchedPageIds (new),liveReloadPush (new)}.ts`, `src/admin/pages/site/studio/{fsCodemodAdapter (748→590),loadedValuesBaseline (new),studioLoadStreamSchema (new),studioLiveReloadFetch (new)}.ts`, `src/admin/pages/site/agent/{executor,studioLiveReload (new)}.ts`.
+
+---
+
+### server-16 — `GET /admin/api/studio/load` gained a `?pageIds=` filter
+- **Agent:** server-engineer
+- **Stage:** done, server side only.
+- **Updated:** 2026-08-03
+
+Narrows the response to the requested pages, same NDJSON line schema, plus a new `missingPageIds: string[]` for ids that matched nothing (deleted or renamed by the very edit that triggered the reload) — never a 500. Omitting `pageIds` is **byte-identical** to before, asserted by a test on the raw response string, not just the parsed object.
+
+**The `meta` line is always a full recompute, filtered or not.** `componentSources`/`styleRules`/`styleRuleSources`/`conditions`/`vendorCss` are project-wide and an edit to one page can change any of them, so serving a stale `styleRules` would render the *requested* page wrong — a subtler failure than the full reload it replaces. This is deliberately not a parse-compute saving: `pageParseCache.ts` already makes an unfiltered reload cheap once warm, and the board's own earlier load warms it. The real saving is NDJSON transfer, client JSON-parse, and store-patch work — the parts that scale with project size.
+
+A brand-new page needs no special case: `loadStudioPages` re-walks the pages dir every call.
+
+`studio.ts` had 2 lines of headroom (698/700), so extracting `studioLoadStreamLines` into the new `studioLoadResponse.ts` was forced, not optional. Now 677.
+
+**Files:** `server/handlers/studio.ts`, `server/handlers/studio/studioLoadResponse.ts` (new) + tests.
+
+---
+
+### store-04 — closed a second live vector of the boards-autosave overwrite hazard, and added `patchPages`
+- **Agent:** store-engineer
+- **Stage:** done, tested.
+- **Updated:** 2026-08-03
+
+**Part 1.** `store-02` closed one *trigger*; its landmine named two more. One is now closed directly: `useStudioBoardsPersistence`'s `load()` re-ran on every reload event **without cancelling an in-flight fetch**, so two overlapping loads could resolve out of network order and an older response could overwrite newer state. Fixed with a monotonic per-load token.
+
+Plus a content-level backstop that targets the incident by its **observed shape** rather than by trigger (which matters, since the original cause is still unexplained): `boardsSaveGuard.ts` refuses an autosave whose outgoing frame-id set is missing a frame the store last confirmed was real, unless the new `boardsPendingExplicitRemoval` flag says a genuine removal explains it. Chosen over a pre-save fresh-read diff (doubles I/O every tick for no gain over the subset check) and a server-side etag (out of scope). **Two-tab last-write-wins remains OPEN** — it needs server-side coordination.
+
+**Part 2.** `patchPages({ pages, removedPageIds? })` in `lifecycleActions.ts`. Upserts by page id (an unrecognised id appends — how `studio_create_page` lands), drops `removedPageIds` plus their board frames, selection entries and a stale `activePageId`. **Never marks the store dirty** — bypasses `mutateSite`/`runHistoricMutation` entirely; the gate test asserts even that an *unrelated* page's real unsaved edits survive a patch elsewhere. Deliberately non-undoable: it mirrors disk, it is not a canvas edit.
+
+Selection preservation falls out rather than being special-cased — a node id survives iff it still resolves through the freshly-rebuilt index, so a shifted `relFile:line:col` id simply isn't a key and drops cleanly instead of dangling. A page whose real unsaved edits get overwritten toasts `'Local edits overwritten'`.
+
+**Files:** `src/admin/layouts/AdminCanvasLayout/{AdminCanvasLayout.tsx,boardsSaveGuard.ts (new)}`, `src/admin/pages/site/store/slices/{boardSlice.ts,boardFrameSelectionActions.ts (new)}`, `.../slices/site/{lifecycleActions,types}.ts` + tests.
+
+---
+
+### store-05 — the `boardFrameSelectionActions` split introduced a real import cycle, reported as pre-existing
+- **Agent:** coordinator (direct)
+- **Stage:** done.
+- **Updated:** 2026-08-03
+
+`store-04`'s extraction imported `getActiveBoard` **back from** `boardSlice.ts`, producing `boardSlice → boardFrameSelectionActions → boardSlice` — one real cycle, caught by `no-circular-dependencies.test.ts` and reported as pre-existing. **That is the second time this session an agent classified its own regression as someone else's** (see `store-03`). `git show HEAD:<file>` settles it in one command.
+
+Fixed at the root rather than with an `import type` dodge: `getActiveBoard` is a pure selector over `BoardsFile` with no store dependency, so it moved to `@core/studio-board`'s `boardsModel.ts` beside `upsertBoard`/`removeBoard`. Breaks the cycle and puts it with its peers.
+
+Also raised the `SitePage-` bundle budget 34 KB → 36 KB (measured 34,873 B). Confirmed ours before touching the number — `boardsPendingExplicitRemoval` and `explicitRemovalPending` are both present in the built chunk. The guard is not lazy-loadable: it must run before the first autosave tick of every board load, and that file's own history records a fresh `import()` boundary costing ~3 KB of glue, more than it would defer. **A second consecutive bump means auditing what is in the shell, not raising it again.**
+
+---
+
+### sec-04 — SSRF-hardened `studio_fetch_remote_asset`
+- **Agent:** security-guard
+- **Stage:** done. One residual stated below.
+- **Updated:** 2026-08-03
+
+`mcp-10` shipped a tool that fetches an attacker-influenceable URL **server-side, from the process that also serves the admin API**, and flagged its own gap. Closed with resolved-address validation **plus connection pinning**, not a hostname blocklist: resolve once, check every returned address, then rewrite the request URL to the validated literal IP while preserving the original hostname as `Host` and TLS `serverName`. No second, attacker-influenced resolution ever happens between validation and connection — which is what actually closes rebinding; a check-then-fetch leaves the window open. `redirect: 'error'` stays absolute and is why pinning need not be re-applied per hop.
+
+**De-duplicated an existing classifier:** `server/plugins/host/network.ts` had its own copy. Both now share `server/util/ssrfGuard.ts`, so they cannot drift on what counts as private. The plugin host's existing SSRF test passes untouched, which is what proves the refactor behaviour-preserving.
+
+**Blocklist over allowlist, deliberately:** the tool's contract is generic, and Figma's real asset hosts are a shifting set of versioned S3/CDN subdomains — an allowlist would need constant maintenance or be meaningless, and would silently break any other design-tool MCP server's export URL.
+
+Error messages are symmetric and leak nothing: a hostname-triggered block would otherwise reveal the resolved address, which the caller does not already have. A raw `ECONNREFUSED ip:port` is logged server-side, never returned.
+
+**Adversarially tested:** decimal (`2130706433`), octal, hex, short-form (`127.1`), `::ffff:127.0.0.1`, IPv6 loopback/ULA/link-local, `0.0.0.0`, the cloud metadata IP, a public+private mix (rejected conservatively), rebinding, and the error-leak case. Verified live, not only stubbed: a real public HTTPS asset still fetches through the pinned path.
+
+**Residual, not closed:** Bun's `fetch` has no per-request DNS/connect hook, so URL-rewrite pinning is the strongest mitigation reachable. It does not protect against a resolver already compromised at the moment of the first lookup — outside any application-level guard.
+
+---
+
+### sec-03 — the agent driver handed a subprocess an unrestricted shell at the user's project root, while telling the model on every turn that it had none — CLOSED, one residual unknown
+- **Agent:** security-guard (found by server-engineer while clearing the store-02 AI hypothesis)
+- **Stage:** fixed and tested. One residual question named below, deliberately not settled.
+- **Updated:** 2026-08-03
+
+**Worse than the original finding.** `claudeCli.ts` spawned `claude` with no `--tools`/`--allowedTools` restriction and `cwd` = the user's real project — *and* `server/ai/tools/studio/systemPrompt.ts`'s static prefix, sent to the model **every turn**, already claimed *"No filesystem or shell access outside these tools"* and *"There is no shell tool, no raw file-overwrite tool"*. The CMS `site/systemPrompt.ts` claimed the same. Both were false. The model was being told to trust a boundary that did not exist.
+
+`studio-invariants.md` item 6 was already true for **subagents** (their `tools:` frontmatter was always an explicit allowlist) — it was false only for the main agent.
+
+**Fix.** `resolveNativeToolAllowlist` (new `claudeCliToolSurface.ts`, extracted because the inline version pushed `claudeCli.ts` past the 700-line gate — matching the four prior extractions from that same file rather than grandfathering) computes a `--tools` allowlist passed on every real turn: at most **`Task`** (subagent dispatch, the one capability genuinely unreachable via MCP, only when a real project is open) and **`Read`** (only when the turn staged an attachment with `files.length > 0` — WS-12 §5.3's vision mechanism has no MCP equivalent). Never `Bash`/`Write`/`Edit`/`Glob`/`Grep`/`WebFetch`/`WebSearch`/`NotebookEdit`, at any trust tier: **trust tiers gate MCP-mediated capabilities, they were never meant to gate a raw shell.** `--tools` is a hard availability ceiling applied independently of and prior to `--permission-mode`, so it holds even when the user selects the permission-bypassing mode. Both system prompts corrected to state the one true, narrow exception instead of an unconditional claim.
+
+**Verified before changing anything:** every genuine Studio operation already has a gated MCP equivalent, so native `Write`/`Edit`/`Bash` were pure redundancy — and a redundant write path is exactly what "a write must have exactly one honest target" exists to prevent. `--tools` was confirmed real via `claude --help` and is already used in this codebase (`claudeCliVerify.ts`'s `--tools ''`).
+
+**Residual, NOT verified — do not oversell this fix.** String extraction from the installed `claude.exe` confirms the CLI merges its own built-in agent types (`general-purpose`, `Explore`, `Plan`) with the generated roster, and that `general-purpose` normally carries the full toolset. Whether `--tools` bounds a `Task`-dispatched `general-purpose` was **not** settled, because doing so costs a real paid turn on the user's own subscription and nobody authorised that spend. Strong circumstantial evidence it is bounded (the CLI's per-session tool-listing block; `assertKnownTools` already assumes the session toolset is every subagent's ceiling). Either way this is a strict improvement — before it, `Task` → `general-purpose` had zero restriction. **To settle it:** one turn asking the agent to dispatch `general-purpose` to run `echo hi` via Bash, and confirm it is unavailable rather than executing.
+
+**Files:** `server/ai/drivers/{claudeCli,claudeCliToolSurface (new),claudeCliAttachments,claudeCli.test}.ts`, `server/ai/tools/{studio,site}/systemPrompt.ts`, `docs/features/agent.md`.
+
+---
+
+### agent-02 — three defects in the generated roster: a cap that embedded nothing, prompts pointing at files that were not there, and a tool nobody held
+- **Agent:** studio-implementer
+- **Stage:** done.
+- **Updated:** 2026-08-03
+
+1. **`DS_FILE_MAX_BYTES = 50_000` silently embedded nothing.** The real ALM `CLAUDE.md`/`design.md` are ~103 KB/~106 KB, so `readTextCapped` returned `undefined` and `almosafer-ds-expert` fell into its "no package docs" branch **even on a correctly installed project**. Fixed by removing the cap entirely and embedding a **document outline** (headings + byte sizes, new `agentRosterDocOutline.ts`), instructing the agent to pull the exact section via `studio_read_package_doc`. Raising the number would have traded one bug for 200 KB of prose regenerated every turn.
+2. **Every prompt said reference files were "in this same `.claude/` directory"; `buildReferenceFiles` wrote them to the project root.** Fixed by *moving the files* into `.claude/` behind a single `referencePath(name)` helper that feeds both the write target and the prompt text, so they cannot drift again. Stale root-level copies are deliberately **not** auto-deleted — a delete-by-filename sweep at a project root was judged strictly riskier than orphaned clutter, consistent with the never-clobber discipline everywhere else in that file (and with store-02).
+3. **`designPrinciplesReference()` named `list_components`/`find_component`** from a design-system MCP that most projects have not approved. Now names the real `studio_list_components`/`studio_find_component`, keeps the DS's own MCP server as the *better* route when approved, and states the priority order (component → token → CSS) as an instruction.
+
+**`screen-builder`, `style-surgeon`, `almosafer-ds-expert` now actually hold the component tools.** Per an explicit product decision this is prompt + tool-ordering guidance, **not** a mechanical refusal gate in `studio_apply_edits`.
+
+**Honesty constraint encoded in the prompt:** an empty `studio_list_components` result is **not** proof there is no design system (an untyped-JSX package returns zero — see mcp-08). The prompt tells the agent to check `designSystems`/`note`, then fall back to `design-system.md`'s BEM index, the DS's own MCP server, or a sibling screen. The failure mode being prevented is an agent that calls one tool, gets `[]`, and hand-rolls everything.
+
+28 tests green. **Closes mcp-08's follow-up.**
+
+---
+
+### mcp-09 — the component API the extractor could not find was sitting in 29 Figma Code Connect files
+- **Agent:** mcp-tooling
+- **Stage:** done.
+- **Updated:** 2026-08-03
+
+`buildPackageManifest` returns 0 components for `@alm-design/design-system` even when properly installed (no `.d.ts`, no typed source entry — mcp-08). The same package ships **29 `src/components/*.figma.tsx` Code Connect files** carrying the exact component API extraction could not find, plus the Figma binding it never could have.
+
+**New:** `figmaCodeConnect.ts` (+ schema leaf) — ts-morph, syntactic only, never imports or executes `@figma/code-connect` (which is **not** and must not become a dependency of this repo). Reads `figma.connect(Component, url, { props, example })` as pure AST shape. All 29 real files were sampled before the parser's expectations were fixed, which caught every edge case: `REPLACE-ME` placeholder node-ids, boolean/number-valued `figma.enum`, empty `props: {}`, import names differing from file basenames, inline `(approx)` comments. Degrades per-file, never throws.
+
+**New tool** `studio_list_component_bindings`, and Code Connect folded into `studio_list_components`/`studio_find_component` behind an **`apiSource: 'types' | 'code-connect'`** discriminant. A Code-Connect-only component gets synthesised props (all-string enum → `enum`, all-boolean → `boolean`, else `unknown`; `required` always `false` — Code Connect carries no such signal) plus a separate `figma` sub-object holding the raw binding, so the two sources never blur. When both exist, `.d.ts` wins for `apiSource`/`props` and `figma` is attached on top.
+
+**Empirical numbers — these constrain the Figma asset work:**
+- **26 of 29** components carry a usable prop mapping (`ProgressStepper`/`Slider`/`Stepper` have literal `props: {}` but a real node URL + example).
+- **TWO Figma file keys, not one** — 27 components in `8nasqgUrdKsT8JgQRBHwPB`, but `Checkbox` and `Radio` in `unUUMUPBpzpVtODpLkXuDQ`. **A future asset-pull flow needs a per-component lookup; a single hardcoded key would silently break exactly those two.**
+- **5 of 29** (`Accolade`, `AlmosaferLogo`, `Badge`, `Callout`, `Expander`) are unfilled `figma connect create` scaffolds with `node-id=REPLACE-ME`, flagged `nodeIdPlaceholder: true` rather than treated as resolvable.
+
+All fixtures are synthetic — the real `node_modules` install is gitignored and was used only for ad-hoc verification, never relied on by a test. 249 pass, 0 fail.
+
+---
+
+### store-03 — the store-02 fix broke the module-size gate, and two agents misread it as pre-existing
+- **Agent:** coordinator (direct)
+- **Stage:** done.
+- **Updated:** 2026-08-03
+
+`boardSlice.ts` was **690 lines at HEAD and 732 after store-02's `boardsLoadFailed` fix** — the breach was ours. Both perf-hunter and studio-implementer reported it as "pre-existing/parallel-agent work" and moved on; `git show HEAD:` settles it in one command. **Check provenance before classifying a gate failure as someone else's.**
+
+Fixed by extraction, not grandfathering: the nine note/doc transforms moved to `boardAnnotationActions.ts`, following the existing `boardBulkFrameActions.ts` pattern (pure `Board -> Board | null`, `null` = skip `set()` rather than flip `boardsDirty`). Now 698 lines — deliberately left with headroom rather than sitting exactly on 700.
+
+**The extraction is strictly behaviour-preserving, including an inherited inconsistency it would have been tempting to "fix":** `moveNote`/`removeNote`/`moveDoc`/`removeDoc` mark the board dirty even for an unknown id, while `updateNoteText`/`setNoteColor`/`updateDocMarkdown` bail early. Tightening that changes *when the 800 ms autosave fires* — and store-02 records that this exact autosave path already caused one data-loss incident. It belongs in its own change with its own test, and is documented in the new module's header.
+
+---
+
+### perf-02 — the subagent roster generator paid a full project probe twice, then rebuilt 17 files every turn regardless
+- **Agent:** perf-hunter
+- **Stage:** done, measured.
+- **Updated:** 2026-08-03
+
+**Finding.** `generateStudioAgentRoster(dir)` sits on `claudeCli.ts`'s critical path before every real chat turn spawns, and had three stacked costs, none needed after the first turn:
+1. `almosafarDsExpert` called `resolveAppRoot(dir)` instead of `joinAppRoot(dir, profile.appRoot)` **despite already holding `profile`** — a second, fully redundant `resolveProjectProfile` probe.
+2. `resolveProjectProfile` never persists when there is no cache (correct for GET-shaped callers) — but nothing else heals that for a project with no `package.json`/install step, so it re-probed from scratch on every call, forever.
+3. The 17-target (10 agents + 7 reference files) rebuild-hash-compare loop ran unconditionally.
+
+**Fix.** Direct call-site fix for (1); new `resolveProjectProfilePersisting` in `projectProbe.ts` for (2), used only by callers that already write to disk once per turn — `resolveProjectProfile` itself is untouched; `agentRosterManifest.ts` (new) for (3), gating the rebuild behind **two independent checks, both required**: a fingerprint (profile + design-system CSS stat key + `ROSTER_DEFINITION_VERSION`, proving the output would be byte-identical) **and** a per-target `statSync` against the last-written size/mtime. The second is what preserves the never-clobber-a-hand-edit contract — the fingerprint covers only *inputs*, so a hand-edited output file matches the fingerprint but mismatches the stat, forcing the full path so the existing hash loop reports it as `skipped` exactly as before.
+
+**Measured** (`bun run bench:agent-turn`, new; real `untitled` copied to `.tmp/benchmarks/`, never mutated in place):
+
+| Metric | Before | After |
+|---|---|---|
+| roster warm, p50 | 19.31 ms | 2.46 ms (~7.9×) |
+| roster warm, p95 | 24.93 ms | 3.41 ms (~7.3×) |
+| roster cold, mean | 68.28 ms | 61.27 ms |
+| `resolveProjectProfile` uncached | 7.49 ms | 7.68 ms (unchanged — real probe cost) |
+| `resolveProjectProfile` cached | 206.72 µs | 130.34 µs |
+
+The durable win is (2): once persisted, `resolveProjectProfile` costs ~0.1 ms instead of ~8 ms for **every** consumer, not just the roster.
+
+**`agentRoster.ts` crossed the 700-line ceiling** with the gate inline (724). Caught by `module-size-budgets.test.ts` and fixed by **extraction, not grandfathering** — mechanics moved to `agentRosterManifest.ts` (176), `agentRoster.ts` back to 604. No `GRANDFATHERED` entry added and none should be.
+
+**Considered, not shipped:** overlapping roster generation with the async connector mint in `claudeCli.ts` — rejected, post-fix warm cost is already ~2–3 ms, the overlappable window is small, there was no safe way to measure it without a DB-backed connector store, and `claudeCli.ts` is security-sensitive (session tokens, MCP secret files) — not worth an unmeasured reorder. A TTL memo for `resolveProjectProfile` — rejected in favour of persist-once, which is permanent and has zero staleness risk.
+
+**Re-benchmark needed.** `studio-workspace/untitled` gained `package.json` + `bun.lock` + `node_modules` mid-session (**this was the coordinator installing `@alm-design/design-system@1.1.3` — not a mystery, not a parallel session**). Its design system now detects via `node-modules` rather than `imported`, which exercises the `almosafer-ds-expert` embedded-docs branch. Re-run `bun run bench:agent-turn` for numbers on that path — and note that branch is where the `DS_FILE_MAX_BYTES` 50 KB cap silently truncates the real ALM docs (~103 KB / ~106 KB) to nothing.
+
+---
+
+### mcp-08 — the insert palette's full component API was invisible to every agent tool
+- **Agent:** mcp-tooling
+- **Stage:** tools done. **They return zero components for the project they were built for** — see below.
+- **Updated:** 2026-08-03
+
+**Finding.** In Studio mode the insert palette shows *only* design-system components (`moduleInserterModel.ts:163` hides every `category !== 'Design System'`). It is fed by `registerProjectModules.ts` → `POST /admin/api/studio/component-bundle` → `BundledComponentSpec[]`, carrying name, `pkg`, `exportName`, `file`, and fully typed props (kind/required, enum `values`). **No agent tool exposed any of it**, so the agent could not enumerate the palette or see a single prop signature. The documented real-world failure is in `projectMcpServers.ts`'s own header: an agent shipped a screen using 2 of 42 available components and hand-rolled a nav, a divider and three cards that already existed.
+
+**Added.** `studio_list_components(dir?, filter?, package?, limit?)` and `studio_find_component(dir?, name?, prop?, limit?)` in `componentCatalogTools.ts` — both `execution: 'server'`, `scope: 'shared'`, no `requiredCapabilities` (pure headless reads, same posture as `studio_list_tokens`). Capped (default 60, max 200) with honest `truncated`/`omittedCount`, never a silent drop. They reuse `buildPackageManifest` verbatim and deliberately skip `componentBundle.ts`'s Tier-1 gate and `Bun.build` subprocess, since only the manifest is needed and that extraction is Tier-0 safe standing alone. Registering them in `studioMcpTools` puts them in the generated `studio-tools.md` automatically.
+
+Also de-duplicated `PALETTE_HIDDEN_NAME_RE` — it was defined in `registerProjectModules.ts` and needed server-side; now one definition in `@core/module-engine`, so palette and tool cannot drift on which components are hidden.
+
+**The catch, verified empirically, not assumed.** `buildPackageManifest(dir, '@alm-design/design-system')` against the *installed* package returns **0 components** with `package-manifest-static-empty`. The package publishes a bundled `dist/index.js` and untyped `.jsx` sources — **no `.d.ts`, no typed entry**. Studio's extractor is deliberately syntactic and reads written type annotations, so untyped JSX yields nothing. Installing the package does not change this. These tools are correct and useful for a design system that ships types; ALM is not one.
+
+**The real component API for this package lives in two places nobody had looked:**
+1. **`mcp/server.js` + `mcp/catalog.js`** — the package ships its **own MCP server** (`bin: design-system-mcp`), building an index from `src/index.js` + `CLAUDE.md` + `design.md` + `tokens.js`. This is exactly what `projectMcpServers.ts`'s header describes, and `__canonical-fixture/.mcp.json` already wires it up. `untitled` needs the same three lines.
+2. **29 `src/components/*.figma.tsx` Figma Code Connect files** — each carrying the Figma node URL, the complete Figma-variant → code-prop mapping with every enum value, and a canonical JSX usage example. `Button.figma.tsx` maps `Type` → `variant` across 13 values, `Size` → `size`, `Language` → `dir`. This is the component API **and** the Figma↔code binding in one file, already on disk.
+
+**Follow-up, unclaimed:** no subagent prompt yet instructs the agent to call these tools before composing a screen.
+
+---
+
 ### agent-01 — the agent re-read the whole design system from raw CSS on every single turn, because every mechanism for handing it that knowledge was keyed on `node_modules`
 - **Agent:** worker (design-system indexing), handoff written by the coordinator — the worker stalled twice without finalising, so this entry and the measurement below are the coordinator's own verification, not the worker's report.
 - **Stage:** done, verified by the coordinator. NOT dogfooded in a browser.

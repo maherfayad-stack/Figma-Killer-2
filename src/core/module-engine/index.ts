@@ -49,7 +49,7 @@ export {
 
 export { registry } from './registry'
 
-export { sanitizePackageName, packageModuleId } from './packageModuleId'
+export { sanitizePackageName, packageModuleId, PALETTE_HIDDEN_NAME_RE } from './packageModuleId'
 
 export { validateNodeProps } from './validateNodeProps'
 

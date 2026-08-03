@@ -58,12 +58,20 @@ export const STUDIO_CANVAS_PARITY_MATRIX: readonly ParityRow[] = [
     status: { kind: 'tool', toolNames: ['studio_upload_asset'] },
   },
   {
+    action: 'Land a remote (e.g. Figma-exported) asset URL into the project without routing its bytes through the model',
+    status: { kind: 'tool', toolNames: ['studio_fetch_remote_asset'] },
+  },
+  {
     action: 'Set a board frame\'s preview axes (direction/locale/color-scheme override)',
     status: { kind: 'tool', toolNames: ['studio_set_frame_axes'] },
   },
   {
     action: 'Duplicate a board frame as a variant (different axes, same page)',
     status: { kind: 'tool', toolNames: ['studio_duplicate_frame_as_variant'] },
+  },
+  {
+    action: 'Register / remove a durable design reference for later measurement against a frame',
+    status: { kind: 'tool', toolNames: ['studio_register_design_reference', 'studio_delete_design_reference'] },
   },
 
   // ── Deliberately withheld — by design, not by oversight.

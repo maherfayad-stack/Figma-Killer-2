@@ -52,6 +52,7 @@
     "bench:plugin": "bun run scripts/bench/index.ts --only=plugin",
     "bench:footprint": "bun run scripts/bench/index.ts --only=footprint",
     "bench:health": "bun run scripts/bench/index.ts --only=health",
+    "bench:agent-turn": "bun run scripts/bench/index.ts --only=agent-turn",
     "bench:browser": "bun run scripts/bench/index.ts --only=browser",
     "bench:studio-board": "bun run scripts/bench/index.ts --only=studio-board",
     "bench:browser:install": "bunx playwright install chromium",

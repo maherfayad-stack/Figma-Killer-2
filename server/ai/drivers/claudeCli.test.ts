@@ -224,6 +224,9 @@ describe('streamClaudeCli — happy path', () => {
       '--model', 'sonnet',
       '--effort', 'medium',
       '--permission-mode', 'default',
+      // sec-XX — a real project is open, no attachment on this turn: Task
+      // (subagent dispatch) only, never Read/Bash/Write/Edit.
+      '--tools', 'Task',
       '--mcp-config', '<mcp-config-path>',
       // Headless, the CLI has no TTY to prompt in; this routes a permission
       // request to the open chat instead of it being silently refused.
@@ -516,6 +519,133 @@ describe('streamClaudeCli — session controls (WS-12 §5)', () => {
       expect(capturedArgv).not.toContain('--dangerously-skip-permissions')
       expect(capturedArgv).not.toContain('--allow-dangerously-skip-permissions')
     })
+  })
+})
+
+// sec-XX — the top-level `claude` process used to carry NO --tools/
+// --allowedTools restriction at all, so it could reach its native
+// Bash/Write/Edit/Read/Glob/Grep/WebFetch tools directly, bypassing every
+// containment check, trust-tier gate, and .studio/ exclusion the MCP tools
+// enforce — see claudeCli.ts's "Native tool surface" doc comment. `--tools`
+// must now be present on EVERY real turn, holding at most Task (subagent
+// dispatch, only with a real project open) and Read (only when this turn
+// staged an attachment) — never Bash/Write/Edit/Glob/Grep/WebFetch, on any
+// turn, at any trust tier.
+describe('streamClaudeCli — native tool surface (sec-XX)', () => {
+  function imageMessage(mimeType: string, data = 'ZmFrZQ=='): AiMessage {
+    return { role: 'user', content: [{ kind: 'text', text: 'look at this' }, { kind: 'image', mimeType, data }] }
+  }
+
+  it('grants only Task when a real project is open and this turn has no attachment', async () => {
+    let capturedArgv: string[] = []
+    const spawn = fakeCliSpawn({
+      stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
+      onSpawn: (argv) => { capturedArgv = argv },
+    })
+    await collect(baseRequest({ workspaceDir: projectDir }), testOptions({ spawn }))
+    expect(capturedArgv[capturedArgv.indexOf('--tools') + 1]).toBe('Task')
+  })
+
+  it('grants NOTHING (empty --tools) when no real project is open and this turn has no attachment — never Task, nothing for it to dispatch to', async () => {
+    let capturedArgv: string[] = []
+    const spawn = fakeCliSpawn({
+      stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
+      onSpawn: (argv) => { capturedArgv = argv },
+    })
+    await collect(baseRequest(), testOptions({ spawn }))
+    expect(capturedArgv[capturedArgv.indexOf('--tools') + 1]).toBe('')
+  })
+
+  it('falls back to empty --tools when workspaceDir fails containment — never trusts the client into a wider tool surface either', async () => {
+    let capturedArgv: string[] = []
+    const spawn = fakeCliSpawn({
+      stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
+      onSpawn: (argv) => { capturedArgv = argv },
+    })
+    const escapeDir = mkdtempSync(join(tmpdir(), 'claude-cli-tools-escape-'))
+    try {
+      await collect(baseRequest({ workspaceDir: escapeDir }), testOptions({ spawn }))
+      expect(capturedArgv[capturedArgv.indexOf('--tools') + 1]).toBe('')
+    } finally {
+      rmSync(escapeDir, { recursive: true, force: true })
+    }
+  })
+
+  it('adds Read when this turn staged an image attachment, even with no workspace open', async () => {
+    let capturedArgv: string[] = []
+    const spawn = fakeCliSpawn({
+      stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
+      onSpawn: (argv) => { capturedArgv = argv },
+    })
+    await collect(baseRequest({ messages: [imageMessage('image/png')] }), testOptions({ spawn }))
+    expect(capturedArgv[capturedArgv.indexOf('--tools') + 1]).toBe('Read')
+  })
+
+  it('grants both Task and Read when a real project is open AND this turn staged an attachment', async () => {
+    let capturedArgv: string[] = []
+    const spawn = fakeCliSpawn({
+      stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
+      onSpawn: (argv) => { capturedArgv = argv },
+    })
+    await collect(
+      baseRequest({ workspaceDir: projectDir, messages: [imageMessage('image/png')] }),
+      testOptions({ spawn }),
+    )
+    expect(capturedArgv[capturedArgv.indexOf('--tools') + 1]).toBe('Task,Read')
+  })
+
+  it('does NOT grant Read when every attachment on this turn was refused (nothing staged to read)', async () => {
+    let capturedArgv: string[] = []
+    const spawn = fakeCliSpawn({
+      stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
+      onSpawn: (argv) => { capturedArgv = argv },
+    })
+    // An unsupported mime type — not an image, not in the text-file
+    // allow-list — is refused by stageAttachments before anything is
+    // written to disk, so `files` stays empty even though the result is
+    // non-null (see claudeCliAttachments.ts's own doc comment).
+    await collect(
+      baseRequest({ workspaceDir: projectDir, messages: [imageMessage('application/x-not-supported')] }),
+      testOptions({ spawn }),
+    )
+    expect(capturedArgv[capturedArgv.indexOf('--tools') + 1]).toBe('Task')
+  })
+
+  it('--tools is a hard availability ceiling, honoured even under an explicit bypassPermissions request', async () => {
+    let capturedArgv: string[] = []
+    const spawn = fakeCliSpawn({
+      stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
+      onSpawn: (argv) => { capturedArgv = argv },
+    })
+    await collect(baseRequest({ permissionMode: 'bypassPermissions' }), testOptions({ spawn }))
+    expect(capturedArgv[capturedArgv.indexOf('--permission-mode') + 1]).toBe('bypassPermissions')
+    // Still no real project and no attachment on this turn — bypassing the
+    // PERMISSION prompt never widens which tools exist in the first place.
+    expect(capturedArgv[capturedArgv.indexOf('--tools') + 1]).toBe('')
+  })
+
+  it('never contains a native Bash/Write/Edit/Glob/Grep/WebFetch tool name on any turn shape exercised in this suite', async () => {
+    const dangerous = ['Bash', 'Write', 'Edit', 'Glob', 'Grep', 'WebFetch', 'WebSearch', 'NotebookEdit']
+    const scenarios: Array<Partial<AiStreamRequest>> = [
+      {},
+      { workspaceDir: projectDir },
+      { messages: [imageMessage('image/png')] },
+      { workspaceDir: projectDir, messages: [imageMessage('image/png')] },
+      { permissionMode: 'bypassPermissions' },
+    ]
+    for (const overrides of scenarios) {
+      let capturedArgv: string[] = []
+      const spawn = fakeCliSpawn({
+        stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
+        onSpawn: (argv) => { capturedArgv = argv },
+      })
+      await collect(baseRequest(overrides), testOptions({ spawn }))
+      const toolsValue = capturedArgv[capturedArgv.indexOf('--tools') + 1]!
+      const granted = toolsValue.split(',').filter(Boolean)
+      for (const forbidden of dangerous) {
+        expect(granted).not.toContain(forbidden)
+      }
+    }
   })
 })
 

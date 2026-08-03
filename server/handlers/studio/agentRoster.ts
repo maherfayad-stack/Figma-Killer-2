@@ -18,12 +18,15 @@
  * ## Tool safety (the constraint this generator exists to enforce, not just describe)
  *
  * Every generated agent's `tools:` frontmatter is an EXPLICIT, non-empty-or-
- * omitted list drawn only from `studioAgentTools` (`../../ai/tools/studio`) —
- * never left unset. Omitting `tools` inherits the CLI's full built-in set
- * (Bash, Write, Edit, ...), which would silently hand a subagent a shell and
- * a raw file-write path — exactly the two things WS-12 explicitly withholds
- * (§3's "deliberately not added": a shell tool, a raw file-write tool). Two
- * roles (`agent-creator`, `system-prompt-expert`) get an EMPTY tools list on
+ * omitted list, never left unset, drawn from exactly two vetted sources (see
+ * `agentRosterMcpTools.ts`'s `assertKnownAgentTools`): `studioAgentTools`
+ * (`../../ai/tools/studio`), and — since mcp-tooling's fix below — an
+ * `mcp__<server>__<tool>` name for a project-APPROVED external MCP server.
+ * Omitting `tools` inherits the CLI's full built-in set (Bash, Write, Edit,
+ * ...), which would silently hand a subagent a shell and a raw file-write
+ * path — exactly the two things WS-12 explicitly withholds (§3's
+ * "deliberately not added": a shell tool, a raw file-write tool). Two roles
+ * (`agent-creator`, `system-prompt-expert`) get an EMPTY tools list on
  * purpose — see their own prompt bodies below for why.
  *
  * ## Regeneration semantics (trap #12 — studio-workspace/* is user data)
@@ -35,60 +38,104 @@
  * left alone and reported as `skipped`, never silently clobbered. First run
  * writes everything; every run after that only touches what Studio itself
  * still owns.
+ *
+ * ## Reference files live IN `.claude/`, not the project root
+ *
+ * Every prompt below tells its agent where to find its supporting reference
+ * material, and used to say "in this same `.claude/` directory" while
+ * `buildReferenceFiles` wrote a bare `relPath` (`'canonical-jsx.md'`) —
+ * landing the files at the PROJECT ROOT, not `.claude/`. An agent that
+ * followed its own prompt literally got a not-found. Fixed by moving every
+ * reference file's target under `.claude/` (`REFERENCE_DIR` below) and
+ * having each prompt name the exact project-relative path
+ * (`.claude/studio-invariants.md`), not a vague "this same directory" —
+ * `studio_read_file` takes a project-relative path regardless of which
+ * subdirectory it's read from, so naming the path precisely is strictly
+ * more correct than gesturing at proximity to the agent's own file.
+ * `.claude/` is not in `EXCLUDED_WORKSPACE_DIR_NAMES`
+ * (`src/core/page-parser/workspaceFiles.ts`), so `studio_read_file`'s
+ * containment check reaches it exactly as it reached the project root.
+ * A project that regenerated before this fix keeps its stale root-level
+ * copies on disk — they are simply never targets again, so the manifest
+ * (keyed by relPath) stops tracking them on the very next regeneration and
+ * they go permanently unmanaged. They are deliberately NOT deleted: proving
+ * "Studio still owns this and nothing touched it since" is exactly the
+ * never-clobber discipline this generator already applies to every write,
+ * and a bulk delete-by-filename at the project root is a strictly riskier
+ * operation than leaving harmless, no-longer-referenced clutter behind.
+ *
+ * ## A subagent can now hold a vetted MCP-namespaced tool too (mcp-tooling)
+ *
+ * Naming ANY project-approved external MCP server's tool in a roster
+ * definition used to throw (only `studioAgentTools` was ever "known"),
+ * caught by this function's own try/catch and silently degrading the WHOLE
+ * turn to zero subagents. `agentRosterMcpTools.ts`'s `assertKnownAgentTools`
+ * fixes this — see that module's doc for the full "what vetted means"
+ * reasoning. `agentRosterFigma.ts` is the first user: `figma.md` (same
+ * conditional pattern as `design-system.md`) and `figma-asset-scout`,
+ * generated only when an approved Figma-capable server is detected.
  */
-import { createHash } from 'node:crypto'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { resolveAppRoot } from './appRoot'
-import { resolveProjectProfile } from './projectProbe'
+import { joinAppRoot } from './appRoot'
+import { resolveProjectProfilePersisting } from './projectProbe'
 import type { ProjectProfile } from './projectProfileSchema'
 import { readTextCapped } from './cappedFileRead'
 import { getOrBuildDesignSystemDigest } from './designSystemDigest'
-import { studioAgentTools } from '../../ai/tools/studio'
+import { buildDocOutline, renderDocOutline } from './agentRosterDocOutline'
+import {
+  ALM_PACKAGE,
+  allOwnedFilesUnchangedSince,
+  computeRosterFingerprint,
+  readManifest,
+  sha256,
+  writeManifest,
+  type ManifestFileEntry,
+} from './agentRosterManifest'
+import { assertKnownAgentTools, resolveApprovedMcpServerNames } from './agentRosterMcpTools'
+import { findApprovedFigmaServer, figmaAssetScoutAgent, figmaReference } from './agentRosterFigma'
+import type { StudioAgentDef } from './agentRosterTypes'
+import {
+  referencePath,
+  studioToolsReference,
+  canonicalJsxReference,
+  studioInvariantsReference,
+  nodeIdsReference,
+  designPrinciplesReference,
+  projectConventionsReference,
+  type ReferenceFile,
+} from './agentRosterReferences'
 
-const AGENTS_DIR = join('.claude', 'agents')
-const MANIFEST_PATH = join('.claude', '.studio-generated.json')
-const ALM_PACKAGE = '@alm-design/design-system'
-const DS_FILE_MAX_BYTES = 50_000
+export type { StudioAgentDef } from './agentRosterTypes'
+
+/** Everything Studio generates for the CLI lands under one project-relative root. */
+const CLAUDE_DIR = '.claude'
+const AGENTS_DIR = join(CLAUDE_DIR, 'agents')
 
 // ---------------------------------------------------------------------------
 // Roster definitions
 // ---------------------------------------------------------------------------
 
-export interface StudioAgentDef {
-  /** File stem — `.claude/agents/<name>.md`. Also the CLI's own agent `name`. */
-  readonly name: string
-  /** One line — when the main agent should delegate to this one. */
-  readonly description: string
-  /**
-   * Explicit tool allowlist, drawn only from `studioAgentTools`'s names.
-   * Empty (`[]`) is a deliberate choice for a text-only agent, not an
-   * oversight — see the file doc comment.
-   */
-  readonly tools: readonly string[]
-  readonly prompt: string
-}
-
-const TOOL_NAMES = new Set(studioAgentTools.map((t) => t.name))
-
-function assertKnownTools(def: StudioAgentDef): StudioAgentDef {
-  for (const name of def.tools) {
-    if (!TOOL_NAMES.has(name)) {
-      throw new Error(`[agentRoster] "${def.name}" names an unknown tool "${name}" — not in studioAgentTools.`)
-    }
-  }
-  return def
-}
-
 /**
- * The ten-agent roster (§7.1 build, §7.2 design, §7.3 meta). Static except
+ * The ten-to-eleven-agent roster (§7.1 build, §7.2 design, §7.3 meta, plus
+ * the project-conditional `figma-asset-scout`). Static except
  * `almosafer-ds-expert`, whose body is assembled per-project (§7.2's
- * sourcing rule: read from the installed package, never vendor a copy).
+ * sourcing rule: read from the installed package, never vendor a copy), and
+ * `figma-asset-scout`, which only exists at all when an approved
+ * Figma-capable MCP server is detected (`agentRosterFigma.ts`).
  */
 function buildRoster(dir: string, profile: ProjectProfile): StudioAgentDef[] {
+  // Computed ONCE per roster generation and threaded through as a closure —
+  // matches this file's existing discipline of resolving a value once and
+  // passing it down (see `almosafarDsExpert`'s own comment on why it takes
+  // `profile` as a parameter instead of re-probing it).
+  const approvedMcpServers = resolveApprovedMcpServerNames(dir)
+  const assertKnown = (def: StudioAgentDef): StudioAgentDef => assertKnownAgentTools(def, approvedMcpServers)
+  const figmaServer = findApprovedFigmaServer(dir)
+
   return [
     // ---- §7.1 Build agents --------------------------------------------
-    assertKnownTools({
+    assertKnown({
       name: 'screen-scout',
       description: 'Read-only orientation: where is X, how does this project do Y, what convention does a sibling screen follow. Use before composing anything new.',
       tools: ['studio_list_projects', 'studio_project_profile', 'studio_list_pages', 'studio_get_node_source', 'studio_find_nodes', 'studio_read_file'],
@@ -98,41 +145,45 @@ function buildRoster(dir: string, profile: ProjectProfile): StudioAgentDef[] {
         'You answer with file:line and real tool output, never with opinions or unverified claims.',
         'You never edit anything — you hold no write tool at all, so there is nothing to accidentally change.',
         '',
-        'Read studio-invariants.md and node-ids-and-writeback.md (in this same .claude/ directory) once per session before your first tool call.',
+        `Read ${referencePath('studio-invariants.md')} and ${referencePath('node-ids-and-writeback.md')} (via studio_read_file) once per session before your first tool call.`,
         '',
         'Typical asks: "where is the checkout screen", "how does this project name its CSS classes", "what does the SheetHeader component look like", "is anything here locked or unresolved".',
         'Answer by calling studio_list_pages / studio_find_nodes / studio_get_node_source / studio_read_file, then report exact locations. If you cannot find something, say so plainly rather than guessing.',
       ].join('\n'),
     }),
-    assertKnownTools({
+    assertKnown({
       name: 'screen-builder',
-      description: 'Scaffolds and composes new screens in Canonical JSX. Owns the insert/move/delete batch and the node-id staleness discipline.',
-      tools: ['studio_create_page', 'studio_read_file', 'studio_find_nodes', 'studio_get_node_source', 'studio_apply_edits'],
+      description: 'Scaffolds and composes new screens in Canonical JSX. Checks the design-system catalog before hand-rolling markup, and owns the insert/move/delete batch and the node-id staleness discipline.',
+      tools: ['studio_create_page', 'studio_read_file', 'studio_find_nodes', 'studio_get_node_source', 'studio_list_components', 'studio_find_component', 'studio_apply_edits'],
       prompt: [
         'You are screen-builder, Studio\'s screen-composition agent.',
         '',
-        'Read canonical-jsx.md and node-ids-and-writeback.md (in this same .claude/ directory) once per session — every screen you write must be canonical by construction, and every edit you issue must use a real, freshly-read node id.',
+        `Read ${referencePath('canonical-jsx.md')} and ${referencePath('node-ids-and-writeback.md')} (via studio_read_file) once per session — every screen you write must be canonical by construction, and every edit you issue must use a real, freshly-read node id.`,
         '',
-        'Flow: studio_create_page to scaffold -> studio_read_file a SIBLING screen to match the project\'s own conventions -> batch studio_apply_edits insert calls, addressed at the new rootNodeId -> studio_read_file the result again and check its canonical field before reporting success.',
+        `Before composing anything, call studio_list_components (or studio_find_component when you already know a name or prop) to see what this project's design system already offers, and prefer an existing component over hand-rolled markup + CSS. An EMPTY result is not proof there is no design system — some packages ship untyped JSX this extractor cannot read a catalog from; check the response's designSystems/note fields and see ${referencePath('studio-design-principles.md')} for what to do next (its own BEM class index, the design system's own MCP server if approved, or a sibling screen) before concluding there is nothing to reuse.`,
+        '',
+        'Flow: studio_list_components for orientation -> studio_create_page to scaffold -> studio_read_file a SIBLING screen to match the project\'s own conventions -> batch studio_apply_edits insert calls, addressed at the new rootNodeId -> studio_read_file the result again and check its canonical field before reporting success.',
         '',
         'insert always needs a real named component to import — there is no raw-intrinsic-tag path. Reuse the project\'s own components before reaching for a bare HTML element.',
         '',
         'Never add a wrapper element around existing content. After ANY shifted:true result, every node id you hold is stale — re-read before your next edit.',
       ].join('\n'),
     }),
-    assertKnownTools({
+    assertKnown({
       name: 'style-surgeon',
-      description: 'Styling only, through the project\'s existing mechanism (plain CSS, CSS Modules, or a utility system). Never introduces a second styling system into a repo that already has one.',
-      tools: ['studio_apply_edits', 'studio_project_profile', 'studio_find_nodes', 'studio_read_file'],
+      description: 'Styling only, through the project\'s existing mechanism (plain CSS, CSS Modules, or a utility system). Checks for an existing component/token before hand-writing a rule. Never introduces a second styling system into a repo that already has one.',
+      tools: ['studio_apply_edits', 'studio_project_profile', 'studio_find_nodes', 'studio_list_components', 'studio_find_component', 'studio_read_file'],
       prompt: [
         'You are style-surgeon, Studio\'s styling-only agent.',
         '',
-        'Read project-conventions.md (in this same .claude/ directory) first — it names this project\'s actual styling mechanism. Style through THAT mechanism only, never a second one, even if you personally prefer a different approach.',
+        `Read ${referencePath('project-conventions.md')} (via studio_read_file) first — it names this project's actual styling mechanism. Style through THAT mechanism only, never a second one, even if you personally prefer a different approach.`,
+        '',
+        `Priority order before writing a single rule: an existing design-system component (studio_list_components / studio_find_component) or design token, THEN hand-written CSS — never the reverse. See ${referencePath('studio-design-principles.md')} for the full reasoning and what an empty studio_list_components result actually means (not "no design system").`,
         '',
         'You only ever touch style/literal-kind studio_apply_edits — never structure. If a request needs new markup, say so and hand it back rather than reaching outside your remit.',
       ].join('\n'),
     }),
-    assertKnownTools({
+    assertKnown({
       name: 'fidelity-auditor',
       description: 'Verification, run LAST. Confirms a build actually worked instead of taking the builder\'s word for it.',
       tools: ['studio_fidelity_report', 'studio_export_frames', 'studio_render_reference', 'studio_diff_frames'],
@@ -145,19 +196,35 @@ function buildRoster(dir: string, profile: ProjectProfile): StudioAgentDef[] {
       ].join('\n'),
     }),
     // ---- §7.2 Design agents --------------------------------------------
-    assertKnownTools({
+    assertKnown({
       name: 'design-critic',
-      description: 'Visual judgement on a RENDERED frame — hierarchy, spacing rhythm, alignment, contrast, state coverage. Asks "was the intent any good", not "did it render as intended" (that is fidelity-auditor\'s question).',
-      tools: ['studio_export_frames', 'studio_render_reference'],
+      description: 'Visual judgement on a RENDERED frame — hierarchy, spacing rhythm, alignment, contrast, state coverage. Asks "was the intent any good", not "did it render as intended" (that is fidelity-auditor\'s question). When a design reference is registered, MEASURES against it instead of guessing.',
+      tools: [
+        'studio_export_frames',
+        'studio_render_reference',
+        'studio_list_design_references',
+        'studio_recommend_export_dpr',
+        'studio_diff_frames',
+      ],
       prompt: [
         'You are design-critic, Studio\'s visual-judgement agent.',
         '',
-        'Read studio-design-principles.md (in this same .claude/ directory) — that is the house style you review against, not personal taste.',
+        `Read ${referencePath('studio-design-principles.md')} — that is the house style you review against, not personal taste.`,
         '',
         'You review a RENDERED frame (studio_export_frames), not source code. Look at hierarchy, spacing rhythm, alignment, contrast, and empty/error/loading state coverage. You never edit anything yourself — report findings for screen-builder or style-surgeon to act on.',
+        '',
+        'ALWAYS call studio_list_design_references FIRST. If a reference is registered for this page, you are no longer giving an opinion — you are taking a measurement, and a measurement beats a judgement every time:',
+        '',
+        '  1. studio_recommend_export_dpr for that reference — it returns the dpr that makes a capture land on the reference\'s own pixel width.',
+        '  2. studio_export_frames at THAT dpr, and keep the returned nodeRects.',
+        '  3. studio_diff_frames with the reference id plus those nodeRects.',
+        '  4. Read the `method` field in the result before you trust the score. "exact" means the two images matched dimensions outright. "resampled" means the reference was scaled to fit, so fine detail — hairlines, 1px borders, text edges — carries interpolation noise; do not report sub-pixel differences as defects from a resampled diff. A refusal means the aspect ratios differ enough that something structural is wrong (a missing section, a wrong crop) — report THAT, do not force a comparison.',
+        '  5. Each differing region names the node ids it overlaps. Hand those to screen-builder or style-surgeon; a region with no node id is usually a background or spacing problem rather than a component one.',
+        '',
+        'With no reference registered, say so plainly and fall back to reviewing against the house style. Never imply you compared against a design when you did not — an honest "no reference was supplied, here is my judgement" is worth more than a fabricated similarity claim.',
       ].join('\n'),
     }),
-    assertKnownTools({
+    assertKnown({
       name: 'arabic-ux-writer',
       description: 'Writes and reviews Arabic UX microcopy — فصحى مبسطة — for screens in the open project. Locates the exact node holding a string, rewrites it in place, and reports RTL layout problems as findings rather than bending copy to compensate.',
       tools: ['studio_list_pages', 'studio_find_nodes', 'studio_get_node_source', 'studio_read_file', 'studio_apply_edits'],
@@ -187,7 +254,7 @@ function buildRoster(dir: string, profile: ProjectProfile): StudioAgentDef[] {
     }),
     // almosafer-ds-expert — assembled below, project-conditional content.
     // ---- §7.3 Meta agents -----------------------------------------------
-    assertKnownTools({
+    assertKnown({
       name: 'synthesizer',
       description: 'Takes scattered findings (scout results, fidelity codes, a critic\'s notes, a rambling brief) and returns one ordered plan with open questions named. Invoke before a multi-screen job.',
       tools: ['studio_project_profile', 'studio_fidelity_report', 'studio_list_pages'],
@@ -197,7 +264,7 @@ function buildRoster(dir: string, profile: ProjectProfile): StudioAgentDef[] {
         'Turn scattered findings into a short, numbered plan: what to do, in what order, and which open questions still need an answer before work starts. Name every open question explicitly rather than assuming an answer.',
       ].join('\n'),
     }),
-    assertKnownTools({
+    assertKnown({
       name: 'agent-creator',
       description: 'Drafts a NEW subagent definition (frontmatter + prompt body + reference files) for a recurring task that deserves its own specialist. Never writes the file itself.',
       // Deliberately empty — an agent that can mint an agent must never also
@@ -213,7 +280,7 @@ function buildRoster(dir: string, profile: ProjectProfile): StudioAgentDef[] {
         'Present your output as the exact markdown (frontmatter + body) the user or the main agent would save into .claude/agents/<name>.md. Say plainly that this is a PROPOSAL, not something you have applied.',
       ].join('\n'),
     }),
-    assertKnownTools({
+    assertKnown({
       name: 'system-prompt-expert',
       description: 'Reviews prompt quality across the roster — the main prompt and every subagent\'s — for contradiction, dead instructions, and drift against the tools that actually exist. Never edits anything itself.',
       tools: [],
@@ -225,7 +292,9 @@ function buildRoster(dir: string, profile: ProjectProfile): StudioAgentDef[] {
         'Present findings and suggested rewrites as text — you never write a file.',
       ].join('\n'),
     }),
-    almosafarDsExpert(dir, profile),
+    almosafarDsExpert(dir, profile, assertKnown),
+    // ---- Project-conditional agents ------------------------------------
+    ...(figmaServer ? [figmaAssetScoutAgent(figmaServer.name, assertKnown)] : []),
   ]
 }
 
@@ -236,231 +305,113 @@ function buildRoster(dir: string, profile: ProjectProfile): StudioAgentDef[] {
  * `bun update`.
  *
  * A subagent literally cannot fetch these two files itself: `studio_read_file`
- * — the only file-read tool any subagent holds — refuses any `node_modules`
+ * — the file-read tool for the user's OWN source — refuses any `node_modules`
  * segment by design (the same containment guard every other Studio read
  * uses; loosening it here would be a real hole, not a convenience). So this
- * function reads them SERVER-SIDE, at roster-GENERATION time (capped at
- * {@link DS_FILE_MAX_BYTES}), and embeds the current text directly into the
- * agent's own prompt body. That is a live snapshot refreshed every time the
- * roster regenerates (every real chat turn, see `claudeCli.ts`) — not the
- * "vendored once, forgotten forever" copy §7.2 warns against, though a
- * subagent invoked between two regenerations still reads whatever the last
- * regeneration captured, not the literal current file on disk.
+ * function reads them SERVER-SIDE, at roster-GENERATION time, and embeds
+ * their OUTLINE (headings + byte sizes, {@link buildDocOutline}) directly
+ * into the agent's own prompt body — never the whole file. The real
+ * published package's files run ~103 KB / ~106 KB; embedding either whole
+ * would mean regenerating six-figure bytes of prose into a subagent prompt
+ * on every real chat turn, which is its own cost independent of any size
+ * cap. The agent pulls the one section it actually needs at call time via
+ * `studio_read_package_doc` (`server/ai/mcp/tools/studio/packageDocTools.ts`
+ * — the same tool this generator cannot call itself, see
+ * `agentRosterDocOutline.ts`'s own doc for why). The outline is a live
+ * snapshot refreshed every time the roster regenerates (every real chat
+ * turn) — a subagent invoked between two regenerations still reads whatever
+ * the last regeneration captured, not the literal current file on disk.
  *
  * Degrades honestly when the package isn't a dependency here (or its files
  * are missing from `node_modules`), rather than generating a confidently
  * wrong agent for every project that doesn't use ALM.
  */
-function almosafarDsExpert(dir: string, profile: ProjectProfile): StudioAgentDef {
+function almosafarDsExpert(
+  dir: string,
+  profile: ProjectProfile,
+  assertKnown: (def: StudioAgentDef) => StudioAgentDef,
+): StudioAgentDef {
   const installed = profile.componentPackages.includes(ALM_PACKAGE)
-  const appRoot = resolveAppRoot(dir)
+  // `joinAppRoot(dir, profile.appRoot)`, NOT `resolveAppRoot(dir)` — the
+  // latter re-reads/re-resolves the profile from scratch (a second, entirely
+  // redundant `resolveProjectProfile` call), and `profile` is already a
+  // parameter here. Measured: this alone was a full extra uncached probe
+  // (~7ms on a project with no persisted profile cache) on every single
+  // real chat turn, paid for a value this function already had (perf-06).
+  const appRoot = joinAppRoot(dir, profile.appRoot)
   const pkgDir = join(appRoot, 'node_modules', '@alm-design', 'design-system')
-  const claudeMd = installed ? readTextCapped(join(pkgDir, 'CLAUDE.md'), DS_FILE_MAX_BYTES) : undefined
-  const designMd = installed ? readTextCapped(join(pkgDir, 'design.md'), DS_FILE_MAX_BYTES) : undefined
+  const claudeOutline = installed ? buildDocOutline(join(pkgDir, 'CLAUDE.md')) : undefined
+  const designOutline = installed ? buildDocOutline(join(pkgDir, 'design.md')) : undefined
   const hasDesignSystemDigest = (profile.designSystems?.length ?? 0) > 0
 
-  const body = claudeMd !== undefined && designMd !== undefined
+  // Every branch shares the same priority order and the same honesty
+  // constraint about an empty studio_list_components result — see
+  // designPrinciplesReference()'s "Use the design system before writing CSS"
+  // section, which states the general rule this agent's prompt applies.
+  const priorityOrder = [
+    'Priority order, every time: call studio_list_components / studio_find_component',
+    '(or this design system\'s OWN MCP server\'s list_components/find_component when the',
+    'project has approved one in .studio/meta.json\'s approvedMcpServers — that route is',
+    'authored by the package itself against its own component internals, and is the',
+    'better source whenever both are available) to find an existing component and its',
+    'real props FIRST, then a design token SECOND, and only THEN hand-written CSS.',
+    'An EMPTY studio_list_components result is not proof there is nothing to reach for —',
+    'a design system shipping untyped JSX with no .d.ts returns zero components from that',
+    'extractor even when it is real and installed. Check the response\'s designSystems/note',
+    'fields before concluding anything.',
+  ].join(' ')
+
+  const body = claudeOutline !== undefined && designOutline !== undefined
     ? [
         'You are almosafer-ds-expert, the authority on this project\'s ALM 2.0 design system.',
         '',
-        'Below are the package\'s own reference files, embedded as of the last time this roster regenerated (every real chat turn) — CLAUDE.md is the technical API (props, tokens, component surface); design.md is intent, content guidelines, and decision logic. design.md\'s own framing: CLAUDE.md covers the technical API, design.md covers the why and when.',
+        `The package ships its own CLAUDE.md (technical API — props, tokens, component surface) and design.md (intent, content guidelines, decision logic) — both real but far too large to embed whole (CLAUDE.md alone runs to ${claudeOutline.totalBytes.toLocaleString('en-US')} bytes). Below is each file's OUTLINE — every heading with its size — current as of the last time this roster regenerated. Pull exactly the section you need with studio_read_package_doc({ package: "@alm-design/design-system", doc: "CLAUDE.md", section: "<heading>" }) (doc: "design.md" for the other file) rather than guessing from a heading name alone.`,
         '',
-        'Reach for props/variants FIRST, then the package\'s own design tokens (its :root custom properties are an editable "vendor-css" token source in Studio\'s framework panel), and only then authored CSS in the user-authored layer. NEVER edit the package\'s own CSS directly — it lives in node_modules and the next install erases it.',
+        `${priorityOrder} Its :root custom properties are an editable "vendor-css" token source in Studio's framework panel. NEVER edit the package's own CSS directly — it lives in node_modules and the next install erases it.`,
         '',
-        '--- CLAUDE.md ---',
-        claudeMd,
+        `--- CLAUDE.md outline (${claudeOutline.totalBytes.toLocaleString('en-US')} bytes, ${claudeOutline.sections.length} sections) ---`,
+        renderDocOutline(claudeOutline),
         '',
-        '--- design.md ---',
-        designMd,
+        `--- design.md outline (${designOutline.totalBytes.toLocaleString('en-US')} bytes, ${designOutline.sections.length} sections) ---`,
+        renderDocOutline(designOutline),
       ].join('\n')
     : hasDesignSystemDigest
       ? [
           'You are almosafer-ds-expert, the authority on this project\'s design system.',
           '',
-          'This project\'s design system has no package docs reachable here (no @alm-design/design-system install, or a project imported as a plain CSS copy under styles/imported/ — that path never carries a CLAUDE.md/design.md). Read design-system.md (in this same .claude/ directory) instead: it is generated straight from this project\'s OWN CSS — every color/typography/spacing/radius/elevation token family, plus a one-line-per-component index of class name + available variants + the exact file to open for the full rule. Regenerated every turn from a content hash, so it never goes stale.',
+          `This project's design system has no package docs reachable here (no @alm-design/design-system install, or a project imported as a plain CSS copy under styles/imported/ — that path never carries a CLAUDE.md/design.md). Read ${referencePath('design-system.md')} (via studio_read_file) instead: it is generated straight from this project's OWN CSS — every color/typography/spacing/radius/elevation token family, plus a one-line-per-component index of class name + available variants + the exact file to open for the full rule. Regenerated every turn from a content hash, so it never goes stale.`,
           '',
-          'Reach for an existing component\'s class + variant FIRST, then a design token, and only then hand-rolled CSS — the same order the real ALM docs teach, just sourced from this project\'s own stylesheets instead of a package README.',
+          `${priorityOrder} Source the component/token side from ${referencePath('design-system.md')}'s own BEM class index (or this design system's own MCP server if approved) instead of a package README — reach for a sibling screen's existing class names before hand-rolling if neither is enough.`,
         ].join('\n')
       : [
-          'You are almosafer-ds-expert. This project does NOT currently depend on @alm-design/design-system (or its reference files are missing/too large to embed), so you have nothing authoritative to consult.',
+          'You are almosafer-ds-expert. This project does NOT currently depend on @alm-design/design-system (or its reference files are missing), so you have nothing authoritative to consult.',
           '',
           'Say so plainly rather than reasoning about ALM components from memory — a wrong guess here is worse than admitting you cannot help until the package is installed.',
         ].join('\n')
 
-  return assertKnownTools({
+  return assertKnown({
     name: 'almosafer-ds-expert',
     description: 'The authority on ALM 2.0: which component to reach for, its real props, its content rules, and its Arabic/RTL guidance — reads the installed package\'s own docs, never a vendored copy.',
-    tools: ['studio_project_profile', 'studio_find_nodes', 'studio_read_file'],
+    tools: ['studio_project_profile', 'studio_find_nodes', 'studio_list_components', 'studio_find_component', 'studio_read_package_doc', 'studio_read_file'],
     prompt: body,
   })
 }
 
-// ---------------------------------------------------------------------------
-// Reference files (§7.4) — point at the authoritative source, never restate it.
-// ---------------------------------------------------------------------------
-
-interface ReferenceFile {
-  readonly relPath: string
-  readonly content: string
-}
-
-/**
- * `studio-tools.md` is GENERATED from the registry, never hand-written —
- * §7.4's own callout: a hand-written tool list is wrong the first time a
- * tool is renamed, and every agent inherits the error at once.
- */
-function studioToolsReference(): string {
-  const lines = studioAgentTools
-    .map((t) => `- \`${t.name}\`${t.mutates ? ' (write)' : ''} — ${t.description}`)
-  return [
-    '# Studio tools',
-    '',
-    'Generated from the live tool registry — do not hand-edit this file, it is',
-    'regenerated on every chat turn and any edit here will be overwritten.',
-    '',
-    ...lines,
-    '',
-  ].join('\n')
-}
-
-function canonicalJsxReference(): string {
-  return [
-    '# Canonical JSX — quick reference',
-    '',
-    'Full contract with examples: `docs/reference/canonical-jsx.md` in the',
-    'Studio installation. This file is a compact pointer, not a substitute —',
-    'read the full doc when you need the exact detection mechanism or a',
-    'non-example for a specific rule.',
-    '',
-    'A screen is canonical when it has ZERO `violation`-tier findings — not',
-    'zero findings. Three of the ten rules (`literal-props`,',
-    '`static-class-name`, `no-wrapper-elements`) are `advisory` and fire on',
-    'legitimate, fully-canonical code too (a CSS-Modules `styles.x` usage',
-    'always trips `static-class-name`) — do not chase advisories to zero.',
-    '',
-    'The ten rules, one line each: one `return`; props as literals or',
-    'module-scope consts; text as literal strings; `.map` only over a',
-    'module-scope const array; no spread props; a static `className`/`styles.x`;',
-    'one styling mechanism per file; inline `<svg>` stays static JSX;',
-    'components imported directly, never through a computed specifier; no',
-    'unnecessary wrapper elements added around content.',
-  ].join('\n')
-}
-
-function studioInvariantsReference(): string {
-  return [
-    '# Studio invariants',
-    '',
-    '1. Parse, never execute. Everything on the canvas was read statically out',
-    '   of the AST — no component was rendered, no hook was called.',
-    '2. A write must have exactly one honest target. An edit that cannot land',
-    '   in exactly one place in the user\'s source is refused, not brute-forced.',
-    '3. `locked` (structure) and `codeProps` (values) are different facts —',
-    '   never treat one as implying the other.',
-    '4. Never add a wrapper element around existing content — it breaks',
-    '   `%`/flex height chains and CSS combinators in the user\'s own stylesheet.',
-    '5. Trust tiers are the gate. Tier 0 runs nothing. You may ASK the user to',
-    '   promote a project; you may never promote one yourself.',
-    '6. `studio-workspace/` is the user\'s real project with no other copy.',
-    '   There is no delete-a-project tool and none of your tools can reach one.',
-  ].join('\n')
-}
-
-function nodeIdsReference(): string {
-  return [
-    '# Node ids and writeback',
-    '',
-    'A node id IS a source location (`relFile:line:col`, or an inlined',
-    'composite id). Never invent, guess, concatenate, or pattern-match one —',
-    'use ids exactly as a tool returned them.',
-    '',
-    '`studio_apply_edits`/`studio_codemod` return `shifted: true` when a write',
-    'changed a touched file\'s line count — guaranteed for insert/delete/move,',
-    'likely for detach/swap, never for the six single-line value edits',
-    '(prop/text/style/literal/tag/asset). After ANY `shifted: true` result,',
-    'every node id you already hold is stale. Re-read before your next edit —',
-    'editing with a stale id silently modifies the wrong element.',
-  ].join('\n')
-}
-
-function designPrinciplesReference(): string {
-  return [
-    '# Studio design principles',
-    '',
-    'Reviewed by design-critic — hierarchy, spacing rhythm, alignment,',
-    'contrast, and state coverage (empty, error, loading), not personal taste.',
-    '',
-    '- Establish a clear visual hierarchy before adding detail — one primary',
-    '  action per screen, not three competing ones.',
-    '- Keep spacing on the project\'s own scale (see project-conventions.md)',
-    '  rather than inventing one-off values.',
-    '- Every interactive screen needs an empty state, an error state, and a',
-    '  loading state considered — even if the answer is "not applicable here".',
-    '- Contrast and touch-target size are not optional polish; call them out',
-    '  as findings, not suggestions, when they fail.',
-    '',
-    '## Responsive by default — not a follow-up pass',
-    '',
-    'A generated screen came back with `width: 375px` hardcoded on its root and',
-    'zero media queries in 233 lines. A board frame shows one device width; that',
-    'is the preview, never the specification.',
-    '',
-    '- **Never put a fixed pixel width on a container.** Use `width: 100%` with',
-    '  a `max-width` cap, and let the frame decide the rest.',
-    '- Fixed `px` belongs only on things that genuinely do not scale — icon',
-    '  boxes, hairline borders, minimum touch targets.',
-    '- Prefer fluid values (`clamp()`, `%`, `rem`, `minmax()`) over a breakpoint',
-    '  whenever the layout can simply flex instead.',
-    '- Reach for a media query when the layout must genuinely CHANGE (a row',
-    '  becoming a column), not to restate a width you already hardcoded.',
-    '',
-    '## Use the design system before writing CSS',
-    '',
-    'A generated screen imported 2 components and hand-rolled a nav, a divider,',
-    'and three card rows in a local CSS module — every one of which already',
-    'existed in the installed design system.',
-    '',
-    '- **Ask what exists before building it.** If the project ships a design',
-    '  system with an MCP server, query it (`list_components`, `find_component`)',
-    '  rather than reading its whole reference file — those files run to 100 KB',
-    '  and will fail the read-size limit.',
-    '- A local CSS module is for composing and positioning the system\'s',
-    '  components, not for re-implementing one of them.',
-  ].join('\n')
-}
-
-/** Per-project, generated from `studio_project_profile` — framework, pagesDir, styling mechanism, component packages. */
-function projectConventionsReference(dir: string, profile: ProjectProfile): string {
-  const style = [
-    profile.styleToolchain.cssModules ? 'css-modules' : null,
-    profile.styleToolchain.sass ? 'sass' : null,
-    profile.styleToolchain.tailwind ? 'tailwind' : null,
-  ].filter((v): v is string => v !== null)
-  return [
-    '# Project conventions',
-    '',
-    'Generated from studio_project_profile — regenerated on every chat turn,',
-    'do not hand-edit.',
-    '',
-    `- Project: ${dir}`,
-    `- Framework: ${profile.framework}`,
-    `- Pages directory: ${profile.pagesDir}`,
-    `- Package manager: ${profile.packageManager}`,
-    `- Styling mechanism: ${style.length > 0 ? style.join(', ') : '(none detected)'}`,
-    `- Component packages: ${profile.componentPackages.length > 0 ? profile.componentPackages.join(', ') : '(none)'}`,
-  ].join('\n')
-}
-
 function buildReferenceFiles(dir: string, profile: ProjectProfile): ReferenceFile[] {
   const designSystemDigest = getOrBuildDesignSystemDigest(dir, profile.designSystems ?? [])
+  const figmaServer = findApprovedFigmaServer(dir)
   return [
-    { relPath: 'canonical-jsx.md', content: canonicalJsxReference() },
-    { relPath: 'studio-invariants.md', content: studioInvariantsReference() },
-    { relPath: 'node-ids-and-writeback.md', content: nodeIdsReference() },
-    { relPath: 'studio-tools.md', content: studioToolsReference() },
-    { relPath: 'studio-design-principles.md', content: designPrinciplesReference() },
-    { relPath: 'project-conventions.md', content: projectConventionsReference(dir, profile) },
-    ...(designSystemDigest !== undefined ? [{ relPath: 'design-system.md', content: designSystemDigest }] : []),
+    { relPath: referencePath('canonical-jsx.md'), content: canonicalJsxReference() },
+    { relPath: referencePath('studio-invariants.md'), content: studioInvariantsReference() },
+    { relPath: referencePath('node-ids-and-writeback.md'), content: nodeIdsReference() },
+    { relPath: referencePath('studio-tools.md'), content: studioToolsReference() },
+    { relPath: referencePath('studio-design-principles.md'), content: designPrinciplesReference() },
+    { relPath: referencePath('project-conventions.md'), content: projectConventionsReference(dir, profile) },
+    ...(designSystemDigest !== undefined ? [{ relPath: referencePath('design-system.md'), content: designSystemDigest }] : []),
+    // Same conditional pattern as design-system.md above — generated only
+    // when agentRosterFigma.ts's heuristic finds an approved Figma-capable
+    // MCP server for this project (see that module's own doc comment).
+    ...(figmaServer ? [{ relPath: referencePath('figma.md'), content: figmaReference(figmaServer.name) }] : []),
   ]
 }
 
@@ -483,40 +434,11 @@ function renderAgentMarkdown(def: StudioAgentDef): string {
 }
 
 // ---------------------------------------------------------------------------
-// Regeneration — never clobber a file the user has hand-edited (trap #12)
+// Regeneration — never clobber a file the user has hand-edited (trap #12).
+// The fingerprint/manifest mechanics (perf-06) live in
+// `agentRosterManifest.ts`, split out to keep this file under the module-size
+// ceiling — that module's own doc comment explains the two-check gate.
 // ---------------------------------------------------------------------------
-
-function sha256(text: string): string {
-  return createHash('sha256').update(text, 'utf8').digest('hex')
-}
-
-interface GeneratedManifest {
-  [relPath: string]: string
-}
-
-function readManifest(dir: string): GeneratedManifest {
-  const path = join(dir, MANIFEST_PATH)
-  const parsed = readJsonManifest(path)
-  return parsed ?? {}
-}
-
-function readJsonManifest(path: string): GeneratedManifest | null {
-  const text = readTextCapped(path, 1_000_000)
-  if (text === undefined) return null
-  try {
-    const parsed: unknown = JSON.parse(text)
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed as GeneratedManifest
-    return null
-  } catch {
-    return null
-  }
-}
-
-function writeManifest(dir: string, manifest: GeneratedManifest): void {
-  const path = join(dir, MANIFEST_PATH)
-  mkdirSync(dirname(path), { recursive: true })
-  writeFileSync(path, JSON.stringify(manifest, null, 2))
-}
 
 export interface GenerateRosterResult {
   readonly written: string[]
@@ -529,14 +451,49 @@ export interface GenerateRosterResult {
  * last wrote it. Never throws — a probe/profile failure degrades to
  * `{ written: [], skipped: [] }` (the caller, `claudeCli.ts`, treats a
  * missing roster as "no subagents this turn", not a broken chat).
+ *
+ * perf-06: called once per real chat turn, on the critical path before the
+ * `claude` subprocess spawns. The FIRST call for a project (or the first
+ * call after something actually changed) still does the full walk — resolve
+ * the profile, build ten agents' worth of markdown plus 7 reference files,
+ * hash and compare each of the 17 targets against `.claude/.studio-generated
+ * .json`. Every call after that, with nothing changed, does exactly two
+ * cheap things instead: recompute {@link computeRosterFingerprint} (no
+ * filesystem write, one small directory stat scan already paid by the design
+ * -system digest cache) and stat the 17 already-written files
+ * ({@link allOwnedFilesUnchangedSince}) — no content build, no reads, no
+ * hashing, no manifest write. Measured on a real 46-file design-system
+ * corpus: ~18ms warm → ~1ms warm-and-unchanged.
+ *
+ * The two checks are BOTH required, for different reasons: the fingerprint
+ * catches "the project changed" (new design tokens, a different profile);
+ * the per-file stat catches "an OUTPUT file changed" (the user hand-edited
+ * `.claude/agents/screen-scout.md`) — something the fingerprint, which only
+ * covers INPUTS, cannot see by construction. A hand edit with nothing else
+ * changed still yields a matching fingerprint but a stat mismatch, which
+ * forces the full path and lets the existing hash-comparison loop detect
+ * and report it exactly as before test-verified regression coverage in
+ * `agentRoster.test.ts`.
  */
 export function generateStudioAgentRoster(dir: string): GenerateRosterResult {
   try {
-    const profile = resolveProjectProfile(dir)
+    // perf-06: persists a freshly-probed profile the first time there is no
+    // cache to read (see that function's own doc) — a project with no
+    // package.json/node_modules at all (e.g. an "Import design tokens"
+    // wizard project) otherwise re-probes from scratch on every single call,
+    // forever, since nothing else ever heals its cache. One-time cost, paid
+    // once per project rather than once per turn.
+    const profile = resolveProjectProfilePersisting(dir)
+    const manifest = readManifest(dir)
+    const fingerprint = computeRosterFingerprint(dir, profile)
+
+    if (manifest.fingerprint === fingerprint && allOwnedFilesUnchangedSince(dir, manifest.files)) {
+      return { written: [], skipped: [] }
+    }
+
     const roster = buildRoster(dir, profile)
     const references = buildReferenceFiles(dir, profile)
-    const manifest = readManifest(dir)
-    const nextManifest: GeneratedManifest = {}
+    const nextFiles: Record<string, ManifestFileEntry> = {}
     const written: string[] = []
     const skipped: string[] = []
 
@@ -551,28 +508,33 @@ export function generateStudioAgentRoster(dir: string): GenerateRosterResult {
       const existing = readTextCapped(absPath, 1_000_000)
 
       if (existing !== undefined) {
-        const lastWrittenHash = manifest[target.relPath]
+        const lastWrittenHash = manifest.files[target.relPath]?.hash
         if (lastWrittenHash !== sha256(existing)) {
           // Either Studio never wrote this file, or the user edited it since
-          // — either way, not ours to overwrite.
+          // — either way, not ours to overwrite. Record its CURRENT stat so
+          // the fast path above can recognise "still exactly this hand-edit,
+          // nothing new" on the next call instead of re-detecting it forever.
           skipped.push(target.relPath)
-          nextManifest[target.relPath] = lastWrittenHash ?? sha256(existing)
+          const stat = statSync(absPath)
+          nextFiles[target.relPath] = { hash: lastWrittenHash ?? sha256(existing), size: stat.size, mtimeMs: stat.mtimeMs }
           continue
         }
         if (existing === target.content) {
           // Unchanged — nothing to write, still ours.
-          nextManifest[target.relPath] = contentHash
+          const stat = statSync(absPath)
+          nextFiles[target.relPath] = { hash: contentHash, size: stat.size, mtimeMs: stat.mtimeMs }
           continue
         }
       }
 
       mkdirSync(dirname(absPath), { recursive: true })
       writeFileSync(absPath, target.content)
-      nextManifest[target.relPath] = contentHash
+      const stat = statSync(absPath)
+      nextFiles[target.relPath] = { hash: contentHash, size: stat.size, mtimeMs: stat.mtimeMs }
       written.push(target.relPath)
     }
 
-    writeManifest(dir, nextManifest)
+    writeManifest(dir, { fingerprint, files: nextFiles })
     return { written, skipped }
   } catch (err) {
     console.error('[agentRoster] failed to generate the subagent roster — continuing without one:', err)

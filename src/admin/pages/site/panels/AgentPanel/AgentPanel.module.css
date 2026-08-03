@@ -201,6 +201,91 @@
   color: var(--warning-text);
 }
 
+/* ── Design reference — one lossless project artifact for pixel-diffing,
+   distinct from the per-message chat images above. Never cleared on send. */
+.referenceAttachButton {
+  color: var(--text-muted);
+  align-self: flex-start;
+}
+
+.referenceChip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-2xs);
+  border-radius: var(--radius-sm);
+  background: var(--overlay-5);
+}
+
+.referenceThumb {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface-2);
+  color: var(--text-muted);
+  box-shadow: inset 0 0 0 1px var(--overlay-10);
+}
+
+.referenceThumbImage {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top;
+}
+
+.referenceInfo {
+  display: grid;
+  gap: var(--space-4xs);
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.referenceFilename {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-xs);
+  color: var(--text);
+}
+
+.referenceMeta {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--text-muted);
+}
+
+.referenceProgressTrack {
+  position: relative;
+  height: 3px;
+  border-radius: var(--radius-sm);
+  background: var(--overlay-10);
+  overflow: hidden;
+}
+
+.referenceProgressFill {
+  position: absolute;
+  inset: 0;
+  width: var(--reference-progress);
+  background: var(--text-muted);
+}
+
+.referenceError {
+  font-size: var(--text-2xs);
+  color: var(--danger-light);
+}
+
+.referenceRemove {
+  flex: 0 0 auto;
+  align-self: flex-start;
+  color: var(--text-subtle);
+}
+
 /* Controls row under the textarea — Claude Code composer pattern: permission
    mode on the left, model + effort + the rest of the action cluster on the
    right. Keeps everything on one line so the input bar stays compact. */

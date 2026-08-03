@@ -33,7 +33,7 @@ import { readFileSync } from 'node:fs'
 import { Type } from '@core/utils/typeboxHelpers'
 import { decodeSourceNodeId } from '@core/page-tree'
 import { EXCLUDED_WORKSPACE_DIR_NAMES, checkCanonicalJsx, parsePageFile, summarizeCanonicalFindings } from '@core/page-parser'
-import type { AiTool } from '../../../runtime/types'
+import type { AiTool, ToolContext } from '../../../runtime/types'
 import {
   listStudioProjects,
   projectDisplayName,
@@ -47,6 +47,7 @@ import { loadStudioPages } from '../../../../handlers/studioPageLoad'
 import { createScaffoldedPage } from '../../../../handlers/studio/pageScaffold'
 import { readTextCapped } from '../../../../handlers/studio/cappedFileRead'
 import { isRealpathContained } from '../../../../handlers/studio/workspacePackageResolve'
+import { pushStudioLiveReload } from './liveReloadPush'
 
 const DirInputSchema = Type.Object(
   {
@@ -389,13 +390,17 @@ const createPageTool: AiTool = {
   mutates: true,
   requiredCapabilities: ['studio.write'],
   description:
-    'Scaffold a new page/screen: writes a canonical-by-construction .tsx (or .jsx, matching the project\'s own convention) file, auto-places its board frame at the next free grid slot so it is immediately visible, and returns { relPath, pageId, title, rootNodeId }. This is the ONLY way to create a screen — there is no other tool and no raw-file-write path. rootNodeId is read back by actually parsing the file just written (never invented) — pass it to studio_apply_edits\' insert edits as the container to compose structure into. Returns { ok:false, conflict } instead of overwriting when the name is already taken. Requires studio.write.',
+    'Scaffold a new page/screen: writes a canonical-by-construction .tsx (or .jsx, matching the project\'s own convention) file, auto-places its board frame at the next free grid slot so it is immediately visible, and returns { relPath, pageId, title, rootNodeId }. This is the ONLY way to create a screen — there is no other tool and no raw-file-write path. rootNodeId is read back by actually parsing the file just written (never invented) — pass it to studio_apply_edits\' insert edits as the container to compose structure into. Returns { ok:false, conflict } instead of overwriting when the name is already taken. If the caller has the project open in a browser tab, its canvas is nudged to pick up the new page and its board frame (best-effort — nothing to do if no browser is open). Requires studio.write.',
   inputSchema: CreatePageInputSchema,
-  handler: async (input) => {
+  handler: async (input, ctx: ToolContext) => {
     const { dir: dirInput, name } = input as { dir?: string; name?: string }
     const dir = resolveProjectDir(dirInput)
     const result = createScaffoldedPage(dir, name ?? '')
     if (!result.ok) return { ok: false, error: result.conflict }
+    // A scaffolded page always writes BOTH a new page file AND a new board
+    // frame (`autoPlaceBoardFrame`, `pageScaffold.ts`'s own doc) — never one
+    // without the other — so the live-reload push always carries both.
+    pushStudioLiveReload(ctx.userId, { dir, pageIds: [result.pageId], boardsChanged: true })
     return {
       ok: true,
       dir,

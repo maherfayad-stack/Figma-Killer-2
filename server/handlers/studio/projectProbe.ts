@@ -561,6 +561,43 @@ export function resolveProjectProfile(dir: string): ProjectProfile {
 }
 
 /**
+ * Same three-way cache/stale/fresh logic as {@link resolveProjectProfile},
+ * except the "no cache at all" branch PERSISTS the freshly-probed profile
+ * (via {@link reprobeProjectProfile}) instead of returning it un-persisted.
+ *
+ * perf-06: a project with no `package.json`/`node_modules` at all — e.g. one
+ * whose design system arrived through the "Import design tokens" wizard as a
+ * plain CSS copy, never through `npm install` — never gets a cached profile
+ * written by anything else (there is no install step to trigger the
+ * `installDeps.ts` heal, and nobody has run the explicit `POST /probe`
+ * action). Every GET-shaped caller of `resolveProjectProfile` for that
+ * project therefore re-probes from scratch, forever — measured at ~7ms
+ * against a real 46-file design-system corpus, entirely from
+ * `rankPagesDirCandidates`' recursive scan, not from anything this function
+ * itself does.
+ *
+ * Used by callers that already run once per real turn and write other files
+ * to disk anyway (`agentRoster.ts`'s subagent-roster generator) — for THOSE
+ * callers, persisting is not the "a GET must not write" case
+ * `resolveProjectProfile`'s own doc warns about; it is the same "heal a cache
+ * we can prove is missing" precedent `isProfileStale`/`reprobeProjectProfile`
+ * already established for the "wrong" case, extended to the "absent" case.
+ * A plain read-only caller (the `GET /probe` route, an MCP read tool) must
+ * keep using {@link resolveProjectProfile} — this function is opt-in per
+ * caller, not a replacement.
+ *
+ * Once persisted, EVERY consumer of `resolveProjectProfile` for this
+ * project — not just the caller that triggered the persist — hits the fast
+ * cached branch from then on (measured ~0.1ms vs ~7ms uncached).
+ */
+export function resolveProjectProfilePersisting(dir: string): ProjectProfile {
+  const cached = readStudioMeta(dir).profile
+  if (!cached) return reprobeProjectProfile(dir)
+  if (!isProfileStale(dir, cached)) return cached
+  return reprobeProjectProfile(dir)
+}
+
+/**
  * Unconditionally re-probe and persist. Used by the probe route's `POST`
  * (the explicit user action) and by `installDeps.ts` the moment an install
  * job succeeds — the exact point at which `componentPackages` and the rest of

@@ -1,0 +1,94 @@
+/**
+ * studioLiveReload — the browser-side handler for the server's internal
+ * live-reload push (`server/ai/mcp/tools/studio/liveReloadPush.ts`).
+ *
+ * After a headless MCP Studio write tool (`studio_apply_edits`/
+ * `studio_codemod`/`studio_create_page`/`studio_set_frames`) lands a write on
+ * disk, the server relays a `studio_live_reload` request down this user's
+ * live editor bridge — the SAME `toolRequest`/`toolResult` transport every
+ * browser-executed `AiTool` uses (`editorBridge.ts`), which is why
+ * `executor.ts` dispatches it here exactly like any other browser tool.
+ *
+ * NOT a registered `AiTool`: no model ever calls this by name, no MCP client
+ * can invoke it directly (`server/ai/mcp/server.ts`'s `tools/list` only ever
+ * advertises the real registry) — it only ever originates from
+ * `liveReloadPush.ts`, right after a capability-gated server tool already
+ * succeeded and wrote to disk.
+ *
+ * Fail-soft throughout, per this feature's own constraint: a stale canvas
+ * after a failed/declined push is an expected, acceptable outcome (no open
+ * board is the common case for a headless MCP connector) — this never
+ * throws, always resolves `aiToolOk`, and never corrupts store state.
+ */
+import { aiToolOk, type AiToolOutput } from '@core/ai'
+import { Type, type Static } from '@core/utils/typeboxHelpers'
+import type { EditorStore } from '@site/store/types'
+import { fetchBoards } from '../studio/boardsApi'
+import { studioWriteDir } from '../studio/studioSaveRequests'
+import { fetchStudioPagesById } from '../studio/studioLiveReloadFetch'
+import { getAgentStoreApi } from './storeRef'
+
+const getStoreState = (): EditorStore => getAgentStoreApi<EditorStore>().getState()
+
+/**
+ * `studio_live_reload` is not a registered `AiTool` (see this module's own
+ * doc) — its request never travels through a provider's tool-call JSON, only
+ * through the server's own internal push, so it has no matching entry in
+ * `@core/ai`'s shared schema module. This is its one definition; `executor.ts`
+ * imports it rather than redefining a parallel shape.
+ */
+export const StudioLiveReloadInputSchema = Type.Object({
+  dir: Type.String(),
+  pageIds: Type.Array(Type.String()),
+  boardsChanged: Type.Boolean(),
+})
+export type StudioLiveReloadInput = Static<typeof StudioLiveReloadInputSchema>
+
+/**
+ * Re-fetch `.studio/boards.json` and apply it, preserving whichever board the
+ * user is currently looking at. `loadBoards` (an existing, unmodified
+ * `boardSlice.ts` action) always jumps `activeBoardId` to `boards[0]` —
+ * correct for a genuine fresh project load, wrong here: yanking the user off
+ * their current board because an agent resized a frame on a DIFFERENT board
+ * would be a worse regression than the stale geometry this reload fixes.
+ * `setActiveBoard` (also pre-existing) restores it afterward when it still
+ * exists in the freshly-fetched file.
+ */
+async function reloadStudioBoards(dir: string): Promise<void> {
+  const previousActiveBoardId = getStoreState().activeBoardId
+  const file = await fetchBoards(dir)
+  getStoreState().loadBoards(file)
+  if (previousActiveBoardId && file.boards.some((b) => b.id === previousActiveBoardId)) {
+    getStoreState().setActiveBoard(previousActiveBoardId)
+  }
+}
+
+export async function runStudioLiveReload(input: StudioLiveReloadInput): Promise<AiToolOutput> {
+  // A different project is open than the one the write landed in — applying
+  // THAT project's pages/boards to THIS board would silently cross-
+  // contaminate two unrelated projects. Not an error: the write already
+  // succeeded on disk; this board simply has nothing to refresh.
+  if (studioWriteDir() !== input.dir) {
+    return aiToolOk({ applied: false, reason: 'different-project-open' })
+  }
+
+  const failed: string[] = []
+  if (input.pageIds.length > 0) {
+    try {
+      const { pages, missingPageIds } = await fetchStudioPagesById(input.pageIds)
+      getStoreState().patchPages({ pages, removedPageIds: missingPageIds })
+    } catch (err) {
+      console.error('[studioLiveReload] page reload failed — canvas may be stale for the touched page(s):', err)
+      failed.push('pages')
+    }
+  }
+  if (input.boardsChanged) {
+    try {
+      await reloadStudioBoards(input.dir)
+    } catch (err) {
+      console.error('[studioLiveReload] board reload failed — frame geometry may be stale:', err)
+      failed.push('boards')
+    }
+  }
+  return aiToolOk({ applied: true, failed })
+}

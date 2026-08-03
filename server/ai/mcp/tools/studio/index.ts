@@ -8,9 +8,13 @@ import { studioFidelityReportTool } from './fidelityReport'
 import { studioExportMcpTools } from './exportFrames'
 import { studioReferenceMcpTools } from './referenceRender'
 import { studioDiffMcpTools } from './diffFrames'
+import { studioDesignReferenceMcpTools } from './designReferenceTools'
 import { studioBrowserBridgeMcpTools } from './browserBridgeTools'
 import { studioPackageDocMcpTools } from './packageDocTools'
 import { studioFrameworkTokenMcpTools } from './frameworkTokenTools'
+import { studioComponentCatalogMcpTools } from './componentCatalogTools'
+import { studioFigmaBindingMcpTools } from './figmaBindingTools'
+import { studioRemoteAssetMcpTools } from './remoteAssetTools'
 
 export const studioMcpTools: AiTool[] = [
   ...studioProjectMcpTools,
@@ -19,7 +23,11 @@ export const studioMcpTools: AiTool[] = [
   ...studioExportMcpTools,
   ...studioReferenceMcpTools,
   ...studioDiffMcpTools,
+  ...studioDesignReferenceMcpTools,
   ...studioBrowserBridgeMcpTools,
   ...studioPackageDocMcpTools,
   ...studioFrameworkTokenMcpTools,
+  ...studioComponentCatalogMcpTools,
+  ...studioFigmaBindingMcpTools,
+  ...studioRemoteAssetMcpTools,
 ]

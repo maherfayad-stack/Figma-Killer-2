@@ -75,6 +75,10 @@
  * (the "Restart agent session" control) makes a pure message-count check
  * wrong, and why a direct filesystem probe is the honest question to ask
  * instead.
+ *
+ * ## Native tool surface (sec-XX)
+ *
+ * `--tools` below is a hard ceiling on native built-ins — at most `Task`/`Read`, never `Bash`/`Write`/`Edit`/`Glob`/`Grep`/`WebFetch`. Reasoning: `resolveNativeToolAllowlist`'s own doc comment (`claudeCliToolSurface.ts`).
  */
 
 import type { AiAuthMode, AiContentBlock, AiProviderId, AiStreamEvent } from '../runtime/types'
@@ -89,6 +93,7 @@ import {
   type ClaudeCliPlatformSupport,
 } from '../../handlers/studio/claudeCliEnv'
 import { spawnClaudeCliNdjson, ClaudeCliSpawnError } from './claudeCliSpawn'
+import { resolveNativeToolAllowlist } from './claudeCliToolSurface'
 import { createClaudeCliTurnState, parseClaudeCliLineValue, translateClaudeCliLine } from './claudeCliEvents'
 import { claudeCliSessionId, shouldEstablishClaudeCliSession } from './claudeCliSession'
 import {
@@ -499,6 +504,9 @@ export async function* streamClaudeCli(
     // Belt-and-braces at the point of maximum consequence — see
     // `assertBypassOnlyFromExplicitRequest`'s own doc comment.
     assertBypassOnlyFromExplicitRequest(resolvedMode.mode, req.permissionMode),
+    // sec-XX (see "Native tool surface" above) — `files.length`, since a refusal-only staging result stages nothing on disk.
+    '--tools',
+    resolveNativeToolAllowlist(workspaceCwd, (attachmentStaging?.files.length ?? 0) > 0),
     // Attachments are staged to an os.tmpdir() directory OUTSIDE the workspace
     // cwd, so the CLI's own path-based permission check would otherwise stop to
     // ask before reading them — "Claude requested permissions to read from

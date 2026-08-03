@@ -13,8 +13,11 @@
  *     tree (active page + site) via `buildCurrentPageContext`, unchanged.
  *
  *   - dispatches write tools through the existing executor.ts (CMS `site_*`
- *     tools only — Studio's tools are `execution: 'server'` and need no
- *     browser bridge at all, see `runtime/types.ts`'s `ToolExecution` doc),
+ *     tools only — Studio's own tools are `execution: 'server'` and need no
+ *     browser bridge to run at all, see `runtime/types.ts`'s `ToolExecution`
+ *     doc; the one exception is `studio_live_reload`, an internal, unlisted
+ *     push a Studio server tool sends AFTER it has already run, purely to
+ *     nudge the canvas — see `studioLiveReload.ts`),
  *   - keeps the site-editor "no AI provider configured" copy so the panel can
  *     render its setup empty state.
  *

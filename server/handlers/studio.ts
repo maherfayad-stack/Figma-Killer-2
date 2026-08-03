@@ -22,6 +22,8 @@
  *       `server/handlers/studioPageLoad.ts`'s module doc for the full
  *       walkthrough. This route is just dir resolution + error mapping.
  *       (Under /admin/api so the Vite dev proxy forwards it to the :3001 server.)
+ *       `?pageIds=<comma-separated ids>` narrows `pages` to that subset (meta
+ *       stays full); unmatched ids report via `missingPageIds` — see `studio/studioLoadResponse.ts`.
  *
  *   GET  /admin/api/studio/asset?dir=<abs>&path=<workspace-rel>
  *       Serves one workspace-relative asset file (an imported page's local
@@ -146,6 +148,14 @@
  *       symlinks, walking to the nearest existing ancestor for a target
  *       directory that does not exist yet.
  *
+ *   POST/GET/DELETE /admin/api/studio/reference-upload → `studio/referenceUpload.ts`
+ *       The durable design-reference store's browser HTTP surface — lands a
+ *       lossless design comp (typically a Figma export) into
+ *       `.studio/references/`, the same store `studio_register_design_
+ *       reference`/`studio_list_design_references`/`studio_diff_frames`'s
+ *       `referenceId` input read over MCP. GET/DELETE address "the project's
+ *       most recently registered reference" and "remove by id" respectively.
+ *
  *   GET/POST /admin/api/studio/trust-tier      → `studio/trustTier.ts`
  *       WS-3.3 — reads/writes `.studio/meta.json`'s `trust` field. The action
  *       behind the canvas's "promote this project" placeholder for an
@@ -206,12 +216,14 @@ import { readStudioFrameworkFile, writeStudioFrameworkFile } from './studioFrame
 import { buildStudioDownloadResponse } from './studioDownload'
 import { resolveStudioAssetResponse } from './studioAsset'
 import { loadStudioPages } from './studioPageLoad'
+import { filterStudioLoadPages, parseStudioLoadPageIdsParam, studioLoadStreamLines } from './studio/studioLoadResponse'
 import { applyStudioEditBatch, StudioEditSchema } from './studioWriteback'
 import { probeProject, tryServeStudioProbe } from './studio/projectProbe'
 import { mergeStudioMeta } from './studio/studioMeta'
 import { tryServeStudioInstall } from './studio/installDeps'
 import { tryServeStudioIngest } from './studio/importUpload'
 import { tryServeStudioAssetUpload } from './studio/assetUpload'
+import { tryServeStudioReferenceUpload } from './studio/referenceUpload'
 import { tryServeStudioComponentBundle } from './studio/componentBundle'
 import { tryServeStudioTokens } from './studio/tokenExtract'
 import { tryServeStudioTrustTier } from './studio/trustTier'
@@ -236,6 +248,7 @@ const STUDIO_SUB_ROUTERS = [
   tryServeStudioInstall,
   tryServeStudioIngest,
   tryServeStudioAssetUpload,
+  tryServeStudioReferenceUpload,
   tryServeStudioComponentBundle,
   tryServeStudioTrustTier,
   tryServeStudioTokens,
@@ -335,35 +348,6 @@ const GithubImportBodySchema = Type.Object({
   pagesDir: Type.Optional(Type.String()),
 })
 
-/**
- * WS-5.5 — the `?stream=1` NDJSON body for `GET /admin/api/studio/load`:
- * one `{ kind: 'meta', ... }` line (everything except `pages`), then one
- * `{ kind: 'page', page }` line per page, in the same order `pages` was in.
- * `@core/http`'s `ndjsonRequest` (client) validates each line against a
- * matching discriminated-union TypeBox schema — see `fsCodemodAdapter.ts`'s
- * `StudioLoadStreamLineSchema`, which MUST stay in sync with this shape.
- */
-async function* studioLoadStreamLines(
-  result: Awaited<ReturnType<typeof loadStudioPages>> & {
-    dir: string
-    projectName: string
-    trust: unknown
-    paletteHiddenModuleIds: string[]
-  },
-): AsyncGenerator<Record<string, unknown>> {
-  const { pages, ...meta } = result
-  yield { kind: 'meta', ...meta, pageCount: pages.length }
-  for (const page of pages) {
-    // Yield control back to the event loop between pages so Bun actually
-    // flushes each chunk to the socket instead of enqueueing every line
-    // inside one synchronous burst (server-side compute for ALL pages is
-    // already done by the time this generator starts — see the route's own
-    // comment for exactly what this streaming does and does not buy).
-    await new Promise((resolve) => setImmediate(resolve))
-    yield { kind: 'page', page }
-  }
-}
-
 export async function tryServeStudio(
   req: Request,
   _runtime: unknown,
@@ -379,7 +363,11 @@ export async function tryServeStudio(
     try {
       const dir = resolveProjectDir(url.searchParams.get('dir'))
       const projectName = projectDisplayName(dir)
-      const { pages, componentSources, styleRules, styleRuleSources, conditions, vendorCss } = await loadStudioPages(dir)
+      const pageIdsParam = parseStudioLoadPageIdsParam(url.searchParams.get('pageIds')) // see studioLoadResponse.ts
+      if (pageIdsParam === null) return badRequest('invalid pageIds query param')
+      const loaded = await loadStudioPages(dir) // always full — meta is project-wide, filtered below
+      const { componentSources, styleRules, styleRuleSources, conditions, vendorCss } = loaded
+      const { pages, missingPageIds } = filterStudioLoadPages(loaded.pages, pageIdsParam)
       // WS-3.3 — the client needs the CURRENT trust tier to decide whether an
       // unregistered `pkg.*` node should fetch a component bundle (Tier ≥ 1)
       // or render the "promote to render" placeholder (Tier 0, the default
@@ -404,7 +392,7 @@ export async function tryServeStudio(
       // does not attempt.
       if (url.searchParams.get('stream') === '1') {
         return ndjsonResponse(studioLoadStreamLines({
-          dir, projectName, componentSources, styleRules, styleRuleSources, conditions, vendorCss, trust, paletteHiddenModuleIds, pages,
+          dir, projectName, componentSources, styleRules, styleRuleSources, conditions, vendorCss, trust, paletteHiddenModuleIds, pages, missingPageIds,
         }))
       }
 
@@ -419,6 +407,7 @@ export async function tryServeStudio(
         vendorCss,
         trust,
         paletteHiddenModuleIds,
+        missingPageIds,
       })
     } catch (err) {
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })

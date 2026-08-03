@@ -38,9 +38,6 @@ import type { IPersistenceAdapter, SaveSiteOptions } from '@core/persistence/typ
 import {
   type Page,
   type SiteDocument,
-  ConditionDefSchema,
-  PageSchema,
-  StyleRuleSchema,
   hasWritableSourceLocation,
   isPropWritableToSource,
   isStyleWritableToSource,
@@ -58,10 +55,11 @@ import { useAdminUi } from '@admin/state/adminUi'
 import { pushToast } from '@ui/components/Toast'
 import { getStudioWorkspaceDir } from './studioWorkspaceDir'
 import { fetchExtractedTokens, type TokenExtractionStatus } from './studioTokenStatus'
-import { setStudioTrustTier, TrustTierSchema } from './studioProjectTrust'
+import { setStudioTrustTier } from './studioProjectTrust'
 import { StudioSaveResponseSchema, setStudioLoadedDir, studioWriteDir } from './studioSaveRequests'
+import { StudioLoadStreamLineSchema, type ComponentSource } from './studioLoadStreamSchema'
+import { getLoadedNodeValues, literalInlineStyles, resetLoadedValues } from './loadedValuesBaseline'
 import {
-  StyleRuleSourceSchema,
   collectStyleRuleEdits,
   commitBaseline as commitStyleRuleBaseline,
   setStudioStyleRuleSources,
@@ -73,53 +71,7 @@ import {
   watchLocalizedPagesForBaseline,
 } from './localizedPageWriteback'
 
-
-/**
- * One `kind: 'component'` node's classification (Phase 7A — multi-file
- * workspace backend): **local** components resolve to a real file inside the
- * workspace (recorded as a workspace-relative path); **package** components
- * come from a bare specifier (an npm dependency, e.g.
- * `@alm-design/design-system`) and stay a read-only prop surface this slice.
- * Mirrors `ComponentSource` in `@core/page-parser` (server-only ts-morph
- * module) — this file runs in the browser, so it only needs to agree on the
- * JSON wire shape, not import the server-side type.
- */
-const ComponentSourceSchema = Type.Union([
-  Type.Object({ kind: Type.Literal('local'), file: Type.String() }),
-  Type.Object({ kind: Type.Literal('package'), specifier: Type.String() }),
-])
-
-export type ComponentSource = Static<typeof ComponentSourceSchema>
-
-/**
- * GET /admin/api/studio/load?stream=1 — every source-derived page in the
- * workspace, as an NDJSON stream (WS-5.5): the meta line (everything except
- * `pages`, `kind: 'meta'`) first, then one `kind: 'page'` line per page. The
- * non-streamed, single-JSON-envelope shape of this same endpoint (used by
- * tests and any HTTP tooling that just wants one response) is documented
- * server-side by `StudioLoadResult`/`studio.ts`'s load route — this schema
- * only needs to describe the wire shape THIS client actually consumes.
- * MUST stay in sync with `studioLoadStreamLines` in `server/handlers/studio.ts`.
- */
-const StudioLoadStreamLineSchema = Type.Union([
-  Type.Object({
-    kind: Type.Literal('meta'),
-    dir: Type.String(),
-    projectName: Type.String(),
-    componentSources: Type.Record(Type.String(), ComponentSourceSchema),
-    styleRules: Type.Record(Type.String(), StyleRuleSchema),
-    styleRuleSources: Type.Record(Type.String(), StyleRuleSourceSchema),
-    conditions: Type.Array(ConditionDefSchema),
-    vendorCss: Type.String(),
-    trust: TrustTierSchema,
-    paletteHiddenModuleIds: Type.Array(Type.String()),
-    pageCount: Type.Number(),
-  }),
-  Type.Object({
-    kind: Type.Literal('page'),
-    page: PageSchema,
-  }),
-])
+export type { ComponentSource } from './studioLoadStreamSchema'
 
 /** GET /admin/api/studio/framework response — `null` when nothing is persisted yet. */
 const StudioFrameworkLoadResponseSchema = Type.Object({
@@ -163,54 +115,11 @@ let paletteHiddenModuleIds: readonly string[] = []
 
 /**
  * Every source-backed node's values AS LOADED, keyed by node id, so `saveSite`
- * can write only what the user actually changed.
- *
- * A full idempotent rewrite is not safe on an imported page. A prop whose
- * source is an expression — `svg={checkSvg}`, `label={t.common.needHelp}` —
- * arrives in the document as the value §7 resolved it to, and `setJsxProp`
- * will happily replace the expression with that baked literal, destroying the
- * binding. Diffing against this baseline means an untouched prop is never
- * written at all.
- *
- * Inline styles are folded in under a `style:` key prefix so one flat map
- * covers both prop and style diffing.
+ * can write only what the user actually changed. Owned by `loadedValuesBaseline.ts`
+ * (a store-agnostic leaf — see that module's own doc for why); this file only
+ * ever reads it (`getLoadedNodeValues`) or replaces it wholesale on a fresh
+ * `loadSite()` (`resetLoadedValues`).
  */
-let loadedValues = new Map<string, Record<string, string | number | boolean>>()
-
-/** Snapshot for `loadedValues` — see its doc comment. */
-function snapshotNodeValues(pages: readonly Page[]): Map<string, Record<string, string | number | boolean>> {
-  const snapshot = new Map<string, Record<string, string | number | boolean>>()
-  for (const page of pages) {
-    for (const node of Object.values(page.nodes)) {
-      const values: Record<string, string | number | boolean> = {}
-      for (const [prop, value] of Object.entries(node.props ?? {})) {
-        if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
-          values[prop] = value
-        }
-      }
-      // instance-ui-01 — a `studio.instance`'s call-site props live NESTED
-      // (`props.callSiteProps`, deliberately not a flat spread — see
-      // `parser-05`'s STATE.md entry), so the loop above's `typeof value ===
-      // 'object'` skip never sees them. Snapshot each key under the same
-      // `callSiteProps:<name>` convention the codeProps/writeback side
-      // already uses, so the diff loop below can tell an edited call-site
-      // prop apart from an untouched one exactly like every other prop.
-      if (node.moduleId === 'studio.instance') {
-        const callSiteProps = (node.props as { callSiteProps?: Record<string, unknown> })?.callSiteProps ?? {}
-        for (const [name, value] of Object.entries(callSiteProps)) {
-          if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
-            values[`callSiteProps:${name}`] = value
-          }
-        }
-      }
-      for (const [key, value] of Object.entries(literalInlineStyles(node.inlineStyles))) {
-        values[styleValueKey(key)] = value
-      }
-      snapshot.set(node.id, values)
-    }
-  }
-  return snapshot
-}
 
 /** The current workspace's local-vs-package classification for every component node, from the last load. */
 export function getStudioComponentSources(): Record<string, ComponentSource> {
@@ -319,15 +228,6 @@ function effectiveTag(props: Record<string, unknown> | undefined): string | unde
   return typeof custom === 'string' && custom.length > 0 ? custom : undefined
 }
 
-/** Narrows a node's `inlineStyles` bag down to the string/number values `setJsxStyle` can write. */
-function literalInlineStyles(inlineStyles: Record<string, unknown> | undefined): Record<string, string | number> {
-  const style: Record<string, string | number> = {}
-  for (const [key, value] of Object.entries(inlineStyles ?? {})) {
-    if (typeof value === 'string' || typeof value === 'number') style[key] = value
-  }
-  return style
-}
-
 export const fsCodemodAdapter: IPersistenceAdapter = {
   async loadSite(): Promise<SiteDocument | undefined> {
     // The active project is a subfolder of studio-workspace/ (hand-authored or
@@ -370,8 +270,8 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
     paletteHiddenModuleIds = loadedPaletteHiddenModuleIds
     setStudioVendorCss(loadedVendorCss)
     setStudioTrustTier(trust)
-    // Baseline for the save-time diff — see `loadedValues`.
-    loadedValues = snapshotNodeValues(pages)
+    // Baseline for the save-time diff — see `loadedValuesBaseline.ts`.
+    resetLoadedValues(pages)
     // `panel-02` (WS-6.3) — the CSS write-back map + its diff baseline.
     setStudioStyleRuleSources(loadedStyleRuleSources, styleRules)
     // WS-10 §4.4 (Phase 4) — a fresh project load (or a `requestCmsSiteReload()`
@@ -447,7 +347,7 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
         // an attribute would corrupt the source (e.g. `label="Click me"` on a
         // <Button> whose label is really its text child).
         const textProp = registry.get(node.moduleId)?.inlineTextEdit?.prop
-        const baseline = loadedValues.get(node.id)
+        const baseline = getLoadedNodeValues(node.id)
 
         // A resolved text's ORIGIN is a literal in some other file, so this
         // branch does not care whether the node's own id is a writable JSX

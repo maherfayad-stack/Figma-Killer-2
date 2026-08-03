@@ -10,9 +10,12 @@
  * continuity" doc comment). There is no confirmed `-p` flag for inline image
  * bytes either (checked against `--help`). Staging to a file and pointing at
  * it by absolute path is the one mechanism this driver can use with
- * confidence: the CLI's own built-in tools (Read, at minimum — the
- * top-level session is never `--tools`-restricted, unlike the generated
- * subagents) read the file themselves.
+ * confidence: the CLI's own built-in `Read` tool reads the file itself.
+ * `Read` is the one native built-in `claudeCli.ts` grants — via `--tools`,
+ * and only on a turn that actually staged something here — precisely
+ * because this is its load-bearing use; see that file's doc comment
+ * ("Native tool surface", sec-XX) for the full reasoning and why every
+ * other native tool stays withheld.
  *
  * **Files reuse the existing `kind: 'image'` content block, deliberately —
  * no new `AiContentBlock` kind.** That was an explicit decision, not this

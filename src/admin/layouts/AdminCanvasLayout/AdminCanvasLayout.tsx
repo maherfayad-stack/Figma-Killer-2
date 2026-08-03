@@ -48,8 +48,9 @@ import { cmsAdapter } from '@core/persistence/cms'
 import { fsCodemodAdapter, STUDIO_AUTOSAVE_DELAY_MS } from '@site/studio/fsCodemodAdapter'
 import { syncStudioModeFromUrl } from '@site/studio/studioMode'
 import { getStudioWorkspaceDir } from '@site/studio/studioWorkspaceDir'
-import { createBoardsFile } from '@core/studio-board'
 import { selectActiveBoard } from '@site/store/slices/boardSlice'
+import { shouldSeedDefaultBoard } from './studioDefaultBoardSeed'
+import { collectFrameIds, shouldRefuseBoardsSave } from './boardsSaveGuard'
 import { pushToast } from '@ui/components/Toast'
 import { getErrorMessage } from '@core/utils/errorMessage'
 import { useAdminUi } from '@admin/state/adminUi'
@@ -330,28 +331,62 @@ const BOARDS_AUTOSAVE_DEBOUNCE_MS = 800
  */
 function useStudioBoardsPersistence(studioMode: boolean): void {
   const savingRef = useRef(false)
+  // The known-good frame-id set as of the last load or save that we KNOW
+  // reflects the real on-disk file — the baseline `boardsSaveGuard.ts`
+  // compares an outgoing save against. `null` until the first one lands.
+  const lastKnownGoodFrameIdsRef = useRef<Set<string> | null>(null)
+  // Suppresses toast spam while a refusal keeps recurring — reset the moment
+  // a save actually goes through (or a fresh load re-establishes the
+  // baseline), so a NEW episode still gets its own toast.
+  const warnedAboutRefusalRef = useRef(false)
 
   useEffect(() => {
     if (!studioMode) return undefined
 
     let cancelled = false
+    // Store-02's landmine names "a stale project switch" as a way the
+    // in-memory `boards` can end up NOT reflecting the real on-disk file: two
+    // `load()` calls can be in flight at once (this effect's `load` is
+    // invoked again on every `CMS_SITE_RELOAD_EVENT`, e.g. a project switch,
+    // without cancelling whatever fetch is already in flight), and network
+    // resolution order is not call order. A token guard makes only the MOST
+    // RECENTLY STARTED `load()` allowed to write into the store — an older,
+    // slower response arriving late is simply dropped instead of overwriting
+    // newer, correct state (or worse, a different project's boards).
+    let loadToken = 0
 
     function load() {
+      const thisLoadToken = ++loadToken
+      const isStale = () => cancelled || thisLoadToken !== loadToken
+
       // Dynamic import: `boardsApi` is only relevant in Studio mode (this
       // whole effect early-returns above when it's off), so keep its client
       // out of the eager SitePage route chunk for the default CMS editor.
       import('@site/studio/boardsApi')
         .then(({ fetchBoards }) => fetchBoards(getStudioWorkspaceDir()))
         .then((file) => {
-          if (!cancelled) useEditorStore.getState().loadBoards(file)
+          if (isStale()) return
+          useEditorStore.getState().loadBoards(file)
+          // A real load — reflects the on-disk file at this instant. New
+          // baseline for the save guard; a fresh episode may warn again.
+          lastKnownGoodFrameIdsRef.current = collectFrameIds(file)
+          warnedAboutRefusalRef.current = false
         })
         .catch((err) => {
-          if (cancelled) return
+          if (isStale()) return
           // A boards-load failure must NOT silently fall the canvas back to the
           // single-page breakpoint frames — in studio the board is the canvas.
-          // Seed an empty boards file (loadBoards creates a default board), so
-          // the multi-frame board still renders; surface the failure as a toast.
-          useEditorStore.getState().loadBoards(createBoardsFile())
+          // Render a placeholder empty board so the multi-frame board still
+          // renders; surface the failure as a toast. Deliberately NOT
+          // `loadBoards(createBoardsFile())` — that marks the synthesized
+          // board dirty and indistinguishable from a legitimately-empty new
+          // project, which let `useStudioDefaultBoardSeed` seed it from
+          // whatever `site.pages` held at that moment and the 800ms
+          // autosave then overwrite the REAL (never actually read)
+          // boards.json with that reduced set. `markBoardsLoadFailed` keeps
+          // this placeholder out of both the seed effect and the autosave
+          // until a real load succeeds.
+          useEditorStore.getState().markBoardsLoadFailed()
           pushToast({
             kind: 'error',
             title: 'Failed to load boards',
@@ -367,7 +402,7 @@ function useStudioBoardsPersistence(studioMode: boolean): void {
       import('@site/studio/frameDefaultsApi')
         .then(({ fetchFrameDefaults }) => fetchFrameDefaults(getStudioWorkspaceDir()))
         .then((defaults) => {
-          if (!cancelled) useEditorStore.getState().setFrameDefaults(defaults)
+          if (!isStale()) useEditorStore.getState().setFrameDefaults(defaults)
         })
         .catch((err) => {
           console.error('[AdminCanvasLayout] frame-defaults load failed:', err)
@@ -395,6 +430,39 @@ function useStudioBoardsPersistence(studioMode: boolean): void {
       // `boards` with a new reference (the pure @core/studio-board transforms are
       // immutable), so identity tells us whether an edit landed mid-flight.
       const snapshot = useEditorStore.getState().boards
+
+      // Last-line-of-defense content check (see `boardsSaveGuard.ts`): refuse
+      // to write a frame set that is missing something the store last
+      // confirmed was real, unless a real removal explains the shrink. This
+      // NEVER runs a network request when it refuses — a corrupted in-memory
+      // state must never reach disk, but it also must not be mistaken for "no
+      // pending work", so `boardsDirty` is deliberately left set and the tick
+      // rescheduled (cheap — an in-memory comparison, no I/O) rather than
+      // silently going quiet for the rest of the session.
+      if (
+        shouldRefuseBoardsSave({
+          baselineFrameIds: lastKnownGoodFrameIdsRef.current,
+          nextFrameIds: collectFrameIds(snapshot),
+          explicitRemovalPending: useEditorStore.getState().boardsPendingExplicitRemoval,
+        })
+      ) {
+        savingRef.current = false
+        if (!warnedAboutRefusalRef.current) {
+          warnedAboutRefusalRef.current = true
+          console.error(
+            '[AdminCanvasLayout] refused to save boards.json: outgoing frame set is missing frames the store last confirmed were real, with no explicit removal to explain it.',
+          )
+          pushToast({
+            kind: 'warning',
+            title: 'Boards not saved',
+            body: 'The in-memory board layout looks like it lost frames unexpectedly, so the save was skipped to avoid overwriting your boards.json. Reload the project to resync.',
+          })
+        }
+        clearTimeout(timer)
+        timer = setTimeout(runSave, BOARDS_AUTOSAVE_DEBOUNCE_MS)
+        return
+      }
+
       import('@site/studio/boardsApi')
         .then(({ saveBoards }) => saveBoards(snapshot, getStudioWorkspaceDir()))
         .then(() => {
@@ -402,9 +470,15 @@ function useStudioBoardsPersistence(studioMode: boolean): void {
           if (st.boards === snapshot) {
             // Nothing changed during the save — safe to clear the dirty flag.
             st.markBoardsClean()
+            // This save's payload is now confirmed on disk — new baseline.
+            lastKnownGoodFrameIdsRef.current = collectFrameIds(snapshot)
+            warnedAboutRefusalRef.current = false
           } else {
             // Edits arrived while this save was in flight; keep `boardsDirty`
-            // set and reschedule so the newer state persists too.
+            // set and reschedule so the newer state persists too. The JUST-
+            // SAVED snapshot is still real on disk — advance the baseline to
+            // it (not to the newer in-memory state, which hasn't saved yet).
+            lastKnownGoodFrameIdsRef.current = collectFrameIds(snapshot)
             clearTimeout(timer)
             timer = setTimeout(runSave, BOARDS_AUTOSAVE_DEBOUNCE_MS)
           }
@@ -460,26 +534,27 @@ function useStudioBoardsPersistence(studioMode: boolean): void {
  * board's `frames.length` is no longer 0, so the condition is false on every
  * subsequent run of this effect for the rest of the session (and boards.json
  * persists it, so it never re-triggers on reload either).
+ *
+ * Refuses while `boardsLoadFailed` is true — see `shouldSeedDefaultBoard`'s
+ * doc (`studioDefaultBoardSeed.ts`) for the `boards-fetch-race-01` regression
+ * this guards against.
  */
 function useStudioDefaultBoardSeed(studioMode: boolean): void {
   const boardsLoaded = useEditorStore((s) => s.boardsLoaded)
+  const boardsLoadFailed = useEditorStore((s) => s.boardsLoadFailed)
   const boardCount = useEditorStore((s) => s.boards.boards.length)
   const activeBoard = useEditorStore(selectActiveBoard)
   const activeBoardFrameCount = activeBoard?.frames.length ?? null
   const pageCount = useEditorStore((s) => s.site?.pages.length ?? 0)
 
   useEffect(() => {
-    if (!studioMode) return
-    if (!boardsLoaded) return
-    if (boardCount !== 1) return
-    if (activeBoardFrameCount !== 0) return
-    if (pageCount === 0) return
+    if (!shouldSeedDefaultBoard({ studioMode, boardsLoaded, boardsLoadFailed, boardCount, activeBoardFrameCount, pageCount })) return
 
     const sitePages = useEditorStore.getState().site?.pages
     const pageIds = sitePages ? sitePages.map((p) => p.id) : []
     if (pageIds.length === 0) return
     useEditorStore.getState().seedFramesForActiveBoard(pageIds)
-  }, [studioMode, boardsLoaded, boardCount, activeBoardFrameCount, pageCount])
+  }, [studioMode, boardsLoaded, boardsLoadFailed, boardCount, activeBoardFrameCount, pageCount])
 }
 
 function usePostPaintEditorBodyGate(): boolean {

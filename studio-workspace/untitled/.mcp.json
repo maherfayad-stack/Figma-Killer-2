@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "design-system": {
+      "command": "node",
+      "args": ["node_modules/@alm-design/design-system/mcp/server.js"]
+    }
+  }
+}

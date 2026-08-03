@@ -494,3 +494,137 @@ export const StudioUploadAssetInputSchema = Type.Object({
   ),
   targetDir: Type.Optional(Type.String({ description: 'Workspace-relative directory to write into. Defaults to src/assets. Pass the directory an existing import already points at when replacing that import\'s target.' })),
 })
+
+// ---------------------------------------------------------------------------
+// studio_list_components / studio_find_component — the design-system
+// COMPONENT catalog, headless. Unlike every schema above, both tools are
+// `execution: 'server'` with no live-store dependency at all (see
+// `server/ai/mcp/tools/studio/componentCatalogTools.ts`), so there is no
+// browser-executor half for these two to stay in sync with. Declared here
+// anyway, grouped with this leaf's other `Studio*InputSchema` definitions,
+// so every Studio MCP tool's input shape has one home regardless of which
+// execution class it turns out to need.
+// ---------------------------------------------------------------------------
+
+const DIR_INPUT_DESCRIPTION = 'Absolute project directory. Defaults to the first project under studio-workspace/.'
+
+export const StudioListComponentsInputSchema = Type.Object({
+  dir: Type.Optional(Type.String({ description: DIR_INPUT_DESCRIPTION })),
+  filter: Type.Optional(
+    Type.String({ description: 'Case-insensitive substring match on the component name, e.g. "button" or "card".' }),
+  ),
+  package: Type.Optional(
+    Type.String({ description: 'Restrict to one installed package by exact name (from the response\'s own "packages" list), when the project depends on more than one component package.' }),
+  ),
+  limit: Type.Optional(
+    Type.Integer({ minimum: 1, maximum: 200, description: 'Cap on returned components. Default 60.' }),
+  ),
+})
+
+export const StudioFindComponentInputSchema = Type.Object({
+  dir: Type.Optional(Type.String({ description: DIR_INPUT_DESCRIPTION })),
+  name: Type.Optional(
+    Type.String({ description: 'Case-insensitive substring match on the component name.' }),
+  ),
+  prop: Type.Optional(
+    Type.String({ description: 'Case-insensitive substring match against any prop NAME a component declares, e.g. "variant" or "icon" — finds every component that has one, so their options can be compared before picking one.' }),
+  ),
+  limit: Type.Optional(
+    Type.Integer({ minimum: 1, maximum: 200, description: 'Cap on returned components. Default 40.' }),
+  ),
+})
+
+// ---------------------------------------------------------------------------
+// studio_list_component_bindings — the raw Figma Code Connect binding for a
+// project's design-system component(s): the deep-dive sibling of
+// studio_list_components'/studio_find_component's own `figma` summary field.
+// `execution: 'server'`, headless, no live-store dependency — grouped here
+// for the same reason as the two schemas immediately above.
+// ---------------------------------------------------------------------------
+
+export const StudioListComponentBindingsInputSchema = Type.Object({
+  dir: Type.Optional(Type.String({ description: DIR_INPUT_DESCRIPTION })),
+  filter: Type.Optional(
+    Type.String({ description: 'Case-insensitive substring match on the component name, e.g. "button" or "card".' }),
+  ),
+  package: Type.Optional(
+    Type.String({ description: 'Restrict to one installed package by exact name, when the project depends on more than one.' }),
+  ),
+  limit: Type.Optional(
+    Type.Integer({ minimum: 1, maximum: 200, description: 'Cap on returned bindings. Default 40.' }),
+  ),
+})
+
+// ---------------------------------------------------------------------------
+// studio_fetch_remote_asset — the bytes-never-transit-the-model path for
+// landing an externally-hosted asset (a Figma export URL, most concretely)
+// into the project. `execution: 'server'`, headless — the fetch and the
+// write both happen server-side; see `server/handlers/studio/
+// remoteAssetFetch.ts` for the URL-safety reasoning (scheme restriction, no
+// redirect ever followed, streamed size cap) and `assetLanding.ts` for the
+// write pipeline it shares with `studio_upload_asset`.
+// ---------------------------------------------------------------------------
+
+export const StudioFetchRemoteAssetInputSchema = Type.Object({
+  dir: Type.Optional(Type.String({ description: DIR_INPUT_DESCRIPTION })),
+  url: Type.String({
+    minLength: 1,
+    description:
+      'An http:// or https:// URL that returns image bytes (e.g. a Figma export/download URL another tool already returned) to fetch SERVER-SIDE and land as a new file in the project. Never a data: URL, never a local/internal path. Use this INSTEAD of studio_upload_asset when you already have a URL rather than bytes in hand — it avoids round-tripping the asset\'s bytes through your own context. No redirect is ever followed; the actual response bytes are sniffed against real image magic numbers, and SVG content is sanitized, before anything is written.',
+  }),
+  targetDir: Type.Optional(
+    Type.String({ description: 'Workspace-relative directory to write into. Defaults to src/assets. Pass the directory an existing import already points at when replacing that import\'s target.' }),
+  ),
+})
+
+// ---------------------------------------------------------------------------
+// studio_register_design_reference / studio_list_design_references /
+// studio_read_design_reference / studio_recommend_export_dpr — a durable,
+// per-project, addressable-by-id store for a ground-truth design comp
+// (typically a Figma export) an agent measures a Studio frame against,
+// instead of eyeballing it. All `execution: 'server'`, headless — see
+// `server/handlers/studio/designReferenceStore.ts` for where/why it's
+// stored, and `server/ai/mcp/tools/studio/diffFrames.ts` for how
+// studio_diff_frames' `referenceId` input consumes it.
+// ---------------------------------------------------------------------------
+
+export const StudioRegisterDesignReferenceInputSchema = Type.Object({
+  dir: Type.Optional(Type.String({ description: DIR_INPUT_DESCRIPTION })),
+  url: Type.Optional(Type.String({
+    minLength: 1,
+    description:
+      'An http:// or https:// URL that returns the reference\'s image bytes (e.g. a Figma export/download URL another tool already returned) — fetched SERVER-SIDE, never transiting you, the same studio_fetch_remote_asset pattern. Provide exactly one of url or imageBase64.',
+  })),
+  imageBase64: Type.Optional(Type.String({
+    minLength: 1,
+    description: 'Base64-encoded original image bytes, when you already hold them rather than a URL (e.g. an attachment). Provide exactly one of url or imageBase64. Prefer url when available — it avoids round-tripping the bytes through your own context.',
+  })),
+  pageId: Type.Optional(Type.String({ description: 'The Studio page id (from studio_list_pages) this is a design reference FOR. Optional, but required for studio_recommend_export_dpr and for filtering studio_list_design_references by page.' })),
+  label: Type.Optional(Type.String({ description: 'A short human-readable name, e.g. "Homepage hero — Figma export".' })),
+  source: Type.Optional(Type.String({ description: 'Free-form provenance, e.g. a Figma file/node URL, so a later reader knows where this came from.' })),
+})
+
+export const StudioListDesignReferencesInputSchema = Type.Object({
+  dir: Type.Optional(Type.String({ description: DIR_INPUT_DESCRIPTION })),
+  pageId: Type.Optional(Type.String({ description: 'Restrict to references registered for one Studio page id.' })),
+  limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 200, description: 'Cap on returned references. Default 50.' })),
+})
+
+export const StudioReadDesignReferenceInputSchema = Type.Object({
+  dir: Type.Optional(Type.String({ description: DIR_INPUT_DESCRIPTION })),
+  referenceId: Type.String({ minLength: 1, description: 'A studio_register_design_reference id (from its own result or studio_list_design_references).' }),
+  includeImage: Type.Optional(Type.Boolean({
+    description: 'When true, also returns the ORIGINAL image bytes as an MCP image block, so you can actually look at the reference (not only its metadata). Costs real context for a large reference — omit (default false) when only the metadata (dimensions, label, pageId) is needed, e.g. before calling studio_recommend_export_dpr or studio_diff_frames.',
+  })),
+})
+
+export const StudioRecommendExportDprInputSchema = Type.Object({
+  dir: Type.Optional(Type.String({ description: DIR_INPUT_DESCRIPTION })),
+  pageId: Type.String({ minLength: 1, description: 'The Studio page id whose board frame you intend to export with studio_export_frames.' }),
+  referenceId: Type.String({ minLength: 1, description: 'A studio_register_design_reference id to match the export resolution to.' }),
+})
+
+export const StudioDeleteDesignReferenceInputSchema = Type.Object({
+  dir: Type.Optional(Type.String({ description: DIR_INPUT_DESCRIPTION })),
+  referenceId: Type.String({ minLength: 1, description: 'A studio_register_design_reference id to remove. Removing an unknown or already-removed id is not an error.' }),
+})

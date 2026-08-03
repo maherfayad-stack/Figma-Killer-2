@@ -26,6 +26,7 @@ bun run bench:db            # SQLite performance
 bun run bench:plugin        # QuickJS sandbox boot / hostCall / dispose
 bun run bench:footprint     # repo / node_modules / SLOC stats
 bun run bench:health        # fallow + jscpd + madge snapshot
+bun run bench:agent-turn    # subagent roster generation cold/warm + resolveProjectProfile
 bun run bench:browser       # real Chromium via Playwright — opt-in
 bun run bench:browser:install   # one-time Chromium download (~92 MiB)
 ```
@@ -131,6 +132,14 @@ Aggregates external static-analysis tools:
 - `madge --circular` — circular dependency count
 
 Each tool runs in its own subprocess with a generous timeout. If a tool is missing, the row notes "unavailable" rather than crashing the suite.
+
+### agent-turn
+Measures the server-side cost paid before every real Studio chat turn's `claude` subprocess even spawns — `server/ai/drivers/claudeCli.ts` calls `generateStudioAgentRoster(dir)` synchronously, on the critical path, before every real turn against an open project. No subprocess, no HTTP, no database. Scenarios:
+- **`generateStudioAgentRoster` cold vs. warm** — cold is the first-ever call for a project (no `.claude/` roster, no design-system digest cache, no persisted `ProjectProfile`); warm is every call after that with nothing changed — the case every turn after the first pays.
+- **`resolveProjectProfile` uncached vs. cached** — uncached is a project with no persisted profile in `.studio/meta.json` (common for anything imported without a `package.json`, e.g. the design-token wizard); cached is after something has persisted one.
+- **`getOrBuildDesignSystemDigest` warm** — the stat-based cache-key scan (readdir + stat per CSS file) plus a cache-file read, with the digest cache already built.
+
+Fixture: a fresh copy of `studio-workspace/untitled` (falls back to `studio-workspace/__canonical-fixture`) into `.tmp/benchmarks/` — **never** mutates the real fixture under `studio-workspace/`. Self-skips with an `unavailable` row if neither exists.
 
 ### browser (opt-in)
 Boots the production server, spawns Chromium via Playwright (uses Playwright's pinned chromium-headless-shell — install once with `bun run bench:browser:install`), then runs a battery of cold-load and interactive scenarios. Authenticated admin scenarios run only when `STUDIO_BENCH_ADMIN_EMAIL` and `STUDIO_BENCH_ADMIN_PASSWORD` are set; without them the bench records the login-screen load and unauthenticated idle frame stability.

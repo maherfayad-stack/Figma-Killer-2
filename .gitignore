@@ -114,6 +114,18 @@ docs/superpowers/
 # the inputs (server/handlers/studio/styleCompile.ts). Pure derived output —
 # regenerated on demand, and committing it only produces churn in every diff.
 **/.studio/cache/
+# Design references (server/handlers/studio/designReferenceStore.ts) —
+# durable, addressable-by-id copies of a design comp (typically a Figma
+# export) an agent measures a Studio frame against. Unlike every OTHER entry
+# in this section, these are NOT disposable/regenerable output — losing one
+# means the user has to re-supply the exact file. They are excluded anyway,
+# for a different reason: a multi-megabyte PNG is a real, ongoing cost to
+# carry in a git history, and this repo's own studio-workspace/* dev fixtures
+# would otherwise accumulate them on every session that exercises this
+# feature. Durability here means "survives across chat turns/restarts on the
+# running server's disk", not "survives a git clone" — see the store's own
+# module doc for the full reasoning.
+**/.studio/references/
 # Per-project agent rosters that Studio writes into a user's workspace project
 # (marked by `.claude/.studio-generated.json`). Generated output, not source —
 # distinct from THIS repo's own `.claude/` harness, which is tracked above.

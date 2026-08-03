@@ -51,11 +51,14 @@ describe('studio_apply_edits', () => {
         edits: [{ kind: 'prop', nodeId: 'pages/Home.tsx:2:11', prop: 'label', value: 'New' }],
       },
       {} as never,
-    )) as { ok: boolean; written: number; skipped: number }
+    )) as { ok: boolean; written: number; skipped: number; pageIds: string[] }
 
     expect(result.ok).toBe(true)
     expect(result.written).toBe(1)
     expect(result.skipped).toBe(0)
+    // mcp-tooling — the touched-file-to-pageId mapping the live-reload push
+    // reports alongside the batch result.
+    expect(result.pageIds).toEqual(['home'])
     expect(fs.readFileSync(path.join(tmpDir, 'pages', 'Home.tsx'), 'utf8')).toContain('label="New"')
   })
 
@@ -92,10 +95,11 @@ describe('studio_set_frames', () => {
     const result = (await tool('studio_set_frames').handler!(
       { dir: tmpDir, pageIds: ['home'], width: 600, height: 900 },
       {} as never,
-    )) as { ok: boolean; resized: number; missing: string[] }
+    )) as { ok: boolean; resized: number; missing: string[]; pageIds: string[] }
     expect(result.ok).toBe(true)
     expect(result.resized).toBe(1)
     expect(result.missing).toEqual([])
+    expect(result.pageIds).toEqual(['home'])
 
     const written = JSON.parse(fs.readFileSync(path.join(tmpDir, '.studio', 'boards.json'), 'utf8'))
     expect(written.boards[0].frames[0].width).toBe(600)
@@ -128,8 +132,9 @@ describe('studio_codemod', () => {
     const result = (await tool('studio_codemod').handler!(
       { dir: tmpDir, verb: 'rename-tag', nodeId: 'pages/Home.tsx:2:11', tag: 'section' },
       {} as never,
-    )) as { ok: boolean }
+    )) as { ok: boolean; pageIds: string[] }
     expect(result.ok).toBe(true)
+    expect(result.pageIds).toEqual(['home'])
     expect(fs.readFileSync(path.join(tmpDir, 'pages', 'Home.tsx'), 'utf8')).toContain('<section>Hi</section>')
   })
 

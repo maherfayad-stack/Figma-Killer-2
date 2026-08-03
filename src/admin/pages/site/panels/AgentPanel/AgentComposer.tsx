@@ -27,6 +27,7 @@ import {
 } from './agentImageTypes'
 import { PendingImageAttachmentGrid } from './PendingImageAttachmentGrid'
 import { usePendingImageAttachments } from './usePendingImageAttachments'
+import { DesignReferenceAttachment } from './DesignReferenceAttachment'
 import styles from './AgentPanel.module.css'
 
 export type ComposerLockReason = 'setup' | 'chooseModel'
@@ -205,6 +206,7 @@ export function AgentComposer({
 
   return (
     <div className={styles.inputBar}>
+      <DesignReferenceAttachment disabled={composerLocked || conversationPending || providerPending || submitting} />
       {hasAttachments && (
         <PendingImageAttachmentGrid
           entries={attachments.pending}

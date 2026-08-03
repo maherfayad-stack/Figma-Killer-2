@@ -369,8 +369,14 @@ function cacheFilePath(dir: string, cacheKey: string): string {
  * regenerates structurally rather than on a TTL guess. Cheap to run on every
  * chat turn: a `readdirSync` walk plus a `statSync` per file, no file content
  * read.
+ *
+ * Exported so `agentRoster.ts`'s own regeneration fingerprint (perf-06) can
+ * fold "did the design system's CSS change" into ONE cheap check without
+ * also paying for `getOrBuildDesignSystemDigest`'s cache-file read — the
+ * roster generator only needs to know whether it changed, not (yet) the
+ * digest content itself.
  */
-function computeDesignSystemCacheKey(dir: string, designSystems: readonly DesignSystemRef[]): string {
+export function computeDesignSystemCacheKey(dir: string, designSystems: readonly DesignSystemRef[]): string {
   const hash = createHash('sha1')
   for (const ds of [...designSystems].sort((a, b) => a.root.localeCompare(b.root))) {
     const absRoot = join(dir, ...ds.root.split('/'))

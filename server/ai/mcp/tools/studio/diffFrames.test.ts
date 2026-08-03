@@ -1,6 +1,11 @@
-import { describe, expect, it } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import * as fs from 'node:fs'
+import * as os from 'node:os'
+import * as path from 'node:path'
 import { PNG } from 'pngjs'
+import sharp from 'sharp'
 import { diffFramesTool } from './diffFrames'
+import { registerDesignReference } from '../../../../handlers/studio/designReferenceStore'
 
 function makePng(width: number, height: number, colorAt: (x: number, y: number) => [number, number, number, number]): string {
   const png = new PNG({ width, height })
@@ -21,6 +26,8 @@ const WHITE: [number, number, number, number] = [255, 255, 255, 255]
 const RED: [number, number, number, number] = [255, 0, 0, 255]
 
 interface DiffFramesData {
+  width: number
+  height: number
   diffPixelCount: number
   similarityScore: number
   regions: Array<{ x: number; y: number; width: number; height: number; diffPercent: number; nodeIds: string[] }>
@@ -93,5 +100,86 @@ describe('studio_diff_frames', () => {
     expect(result.images!.length).toBe(1)
     expect(result.images![0]!.mimeType).toBe('image/png')
     expect(result.images![0]!.data.length).toBeGreaterThan(0)
+  })
+
+  it('refuses when both or neither of reference/referenceId are provided', async () => {
+    const a = makePng(8, 8, () => WHITE)
+    const neither = (await diffFramesTool.handler!({ baseline: a }, {} as never)) as ToolResult
+    expect(neither.ok).toBe(false)
+
+    const both = (await diffFramesTool.handler!({ baseline: a, reference: a, referenceId: 'x' }, {} as never)) as ToolResult
+    expect(both.ok).toBe(false)
+  })
+})
+
+interface ReconciledToolResult extends ToolResult {
+  data?: DiffFramesData & {
+    dimensionReconciliation?: { method: 'exact' | 'resampled'; referenceId: string; referenceOriginal: { width: number; height: number } }
+  }
+}
+
+describe('studio_diff_frames — referenceId (registered design reference)', () => {
+  let dir: string
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-diff-frames-reference-'))
+  })
+
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  async function registerReferencePng(width: number, height: number, color: { r: number; g: number; b: number }): Promise<string> {
+    const bytes = new Uint8Array(
+      await sharp({ create: { width, height, channels: 4, background: { ...color, alpha: 1 } } }).png().toBuffer(),
+    )
+    const result = await registerDesignReference(dir, bytes, {})
+    if (!result.ok) throw new Error(result.error)
+    return result.reference.id
+  }
+
+  it('reports ok:false with a clear reason for an unknown referenceId', async () => {
+    const baseline = makePng(10, 10, () => WHITE)
+    const result = (await diffFramesTool.handler!({ dir, baseline, referenceId: 'nope' }, {} as never)) as ToolResult
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain('nope')
+  })
+
+  it('method:"exact" when the registered reference already matches the baseline\'s pixel dimensions', async () => {
+    const referenceId = await registerReferencePng(16, 16, { r: 255, g: 255, b: 255 })
+    const baseline = makePng(16, 16, (x, y) => (x < 4 && y < 4 ? RED : WHITE))
+
+    const result = (await diffFramesTool.handler!({ dir, baseline, referenceId }, {} as never)) as ReconciledToolResult
+    expect(result.ok).toBe(true)
+    expect(result.data!.dimensionReconciliation).toEqual({
+      method: 'exact',
+      referenceId,
+      referenceOriginal: { width: 16, height: 16 },
+    })
+    expect(result.data!.diffPixelCount).toBeGreaterThan(0)
+  })
+
+  it('method:"resampled" when dimensions differ but the aspect ratio is close (a dpr/rounding-shaped mismatch)', async () => {
+    // 32x32 reference vs a 30x30 baseline — same aspect ratio, different pixel size.
+    const referenceId = await registerReferencePng(32, 32, { r: 10, g: 20, b: 30 })
+    const baseline = makePng(30, 30, () => WHITE)
+
+    const result = (await diffFramesTool.handler!({ dir, baseline, referenceId }, {} as never)) as ReconciledToolResult
+    expect(result.ok).toBe(true)
+    expect(result.data!.dimensionReconciliation!.method).toBe('resampled')
+    expect(result.data!.dimensionReconciliation!.referenceOriginal).toEqual({ width: 32, height: 32 })
+    expect(result.data!.width).toBe(30)
+    expect(result.data!.height).toBe(30)
+  })
+
+  it('refuses (does not silently stretch) when the aspect ratios diverge beyond tolerance', async () => {
+    // Reference is a wide banner (200x50, aspect 4.0); baseline is near-square
+    // (60x50, aspect 1.2) — too different to be a resolution mismatch.
+    const referenceId = await registerReferencePng(200, 50, { r: 1, g: 1, b: 1 })
+    const baseline = makePng(60, 50, () => WHITE)
+
+    const result = (await diffFramesTool.handler!({ dir, baseline, referenceId }, {} as never)) as ToolResult
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain('aspect ratio')
   })
 })

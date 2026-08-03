@@ -23,9 +23,9 @@ Zustand + Mutative, composed from slices. Source:
 
 | Slice | Owns |
 |---|---|
-| `siteSlice.ts` | The site document, `loadSite`, `saveSite`, the 11 named tree actions |
+| `siteSlice.ts` | The site document, `loadSite`, `saveSite`, `patchPages`, the 11 named tree actions |
 | `site/helpers.ts` | `resolveActiveTreeTarget`, `mutateActiveTree` — **the only place that knows which tree is active** |
-| `boardSlice.ts` | Boards, frames, `addFrame`, `setFramePosition`, `setFrameSize`, `seedFramesForActiveBoard`, `selectedFrameIds` (WS-7.1 frame multi-select), `frameDefaults` + bulk frame actions (WS-7.2) |
+| `boardSlice.ts` | Boards, frames, `addFrame`, `setFramePosition`, `setFrameSize`, `seedFramesForActiveBoard`, `selectedFrameIds` (WS-7.1 frame multi-select, implementation in `boardFrameSelectionActions.ts`), `frameDefaults` + bulk frame actions (WS-7.2), `boardsPendingExplicitRemoval` (autosave hazard guard, see below) |
 | `selectionSlice.ts` | `selectedNodeId`, `selectedNodeIds`, multi-select, focus target — WS-7.3: on a studio board, a multi-selection may span any of the board's own curated frames, not just the active page (`resolveSelectableNode`) |
 | `canvasSlice.ts` | `canvasView` ('design' \| 'live'), zoom/pan, `activeBreakpointId`, `runScripts` |
 | `inlineEditSlice.ts` | `activeInlineEdit` — one session globally |
@@ -92,6 +92,26 @@ double-clicked real copy and nothing happened.
 contains its id. Resetting to home is right when opening a different project and
 wrong when re-syncing the open one.
 
+**`patchPages(input)`** merges a freshly-re-parsed SUBSET of pages into
+`site.pages` — the agent-write live-reload path (a `execution: 'server'` tool
+wrote `.tsx` to disk; only the touched files get re-parsed and patched here,
+`loadSite`'s full-reload is for a whole-workspace re-parse). `input.pages`
+upserts by id (appends an unrecognised id — how `studio_create_page` lands);
+`input.removedPageIds` drops a page confirmed gone, its board frame(s), and
+any dangling `selectedFrameIds`/selection entry. **Deliberately bypasses
+`mutateSite`/`runHistoricMutation`**: it never flips `hasUnsavedChanges` and
+never pushes undo history, because this content came FROM disk — recording it
+as a "change" would queue an autosave that writes what was just read straight
+back out (the write → reload → re-dirty → autosave → write loop
+`fsCodemodAdapter.test.ts`'s header names). A selected/edited node id survives
+the patch iff it still resolves through `_nodeIdToPageIds` afterward — an
+insert/delete shifts every `relFile:line:col` id below it (see
+`server/ai/tools/studio/staleness.ts`'s "shifted" contract), so a shifted id
+simply isn't a key in the fresh page anymore and the selection drops cleanly.
+A page that had local (unsaved) edits and also got overwritten toasts
+`'Local edits overwritten'` — the "merge: reload only touched pages" policy's
+one explicit data-loss case.
+
 **`saveSite`** collects dirty nodes into a `StudioEdit[]` batch:
 - `tag`/`customTag` collapse into one `effectiveTag`, diffed against the load
   baseline, emitted as `kind: 'tag'`;
@@ -114,6 +134,31 @@ burst never folds into a Properties-panel burst for the same prop.
 
 If you add a mutation, decide its coalesce key deliberately. Wrong key = either
 one undo wipes unrelated work, or every keystroke is its own entry.
+
+---
+
+## Boards autosave — the overwrite hazard, and its guard
+
+`boardsDirty` → an 800ms debounce → a whole-file `POST /admin/api/studio/boards`
+overwrite is a standing pattern risk: anything that marks `boardsDirty` from
+in-memory state that does not reflect the real on-disk file reproduces
+`STATE.md` → `store-02`'s incident (`.studio/boards.json` rewritten with a
+reduced frame set). Two hardenings live in `AdminCanvasLayout.tsx` /
+`boardsSaveGuard.ts` / `boardSlice.ts`:
+
+- **A stale-load race guard.** `useStudioBoardsPersistence`'s `load()` can run
+  again (project switch) while a previous fetch is still in flight; a
+  monotonic token discards a late-resolving, now-superseded response instead
+  of letting it overwrite newer (or a different project's) state.
+- **A content-level save refusal (`boardsSaveGuard.ts`).** Before every
+  autosave, the outgoing frame-id set is compared against the last
+  known-good (load- or save-confirmed) baseline. Missing a baseline id
+  refuses the write UNLESS `boardSlice.boardsPendingExplicitRemoval` is true
+  — set by `removeFrame`/`removeFrameById`/`removeBoard` (only when something
+  was actually removed) and by `patchPages`'s own frame cleanup for a
+  confirmed-deleted page, cleared by `markBoardsClean`. A refusal never
+  writes, toasts once, and keeps retrying on the debounce tick rather than
+  going permanently quiet.
 
 ---
 

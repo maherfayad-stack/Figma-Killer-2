@@ -90,6 +90,7 @@ import {
 import { runRenderSnapshotAtBreakpoint } from './renderSnapshotAtBreakpoint'
 import { runStudioExportFrames } from './studioExportFrames'
 import { runSetFrameAxes, runDuplicateFrameAsVariant, runUploadAsset } from './studioBrowserBridgeTools'
+import { runStudioLiveReload, StudioLiveReloadInputSchema } from './studioLiveReload'
 import { parseImportedStyleCss, runApplyCss } from './cssTools'
 import {
   activeDocumentNodes,
@@ -666,6 +667,8 @@ export async function executeAgentTool(
         return runDuplicateFrameAsVariant(rawInput)
       case 'studio_upload_asset':
         return await runUploadAsset(rawInput)
+      case 'studio_live_reload':
+        return await runStudioLiveReload(parseValue(StudioLiveReloadInputSchema, rawInput))
       default:
         return aiToolError(`Unknown studio tool: ${toolName}`)
     }

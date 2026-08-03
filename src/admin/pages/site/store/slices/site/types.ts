@@ -37,6 +37,14 @@ import type { EditorStore } from '@site/store/types'
 // the EditorStore.
 // ---------------------------------------------------------------------------
 
+/** Input to `SiteSlice.patchPages` — see that method's doc for the full contract. */
+export interface PatchPagesInput {
+  /** Freshly re-parsed pages that still exist — upserted by id, appended if new. */
+  pages: Page[]
+  /** Ids that were part of the touched set but no longer resolve to a page. */
+  removedPageIds?: string[]
+}
+
 export type ColorVariantOptions = { enabled: boolean; count: number }
 
 export interface CreateFrameworkColorTokenInput {
@@ -127,6 +135,30 @@ export interface SiteSlice {
   loadSite: (site: SiteDocument) => void
   clearSite: () => void
   updateSiteName: (name: string) => void
+  /**
+   * Merge a freshly-re-parsed subset of pages into `site.pages`, WITHOUT
+   * marking the store dirty and WITHOUT touching undo history — the
+   * agent-write live-reload path (a `execution: 'server'` tool wrote `.tsx`
+   * to disk; only the files it touched get re-parsed and patched in here).
+   * Untouched pages keep the user's own unsaved edits and undo history
+   * completely alone.
+   *
+   * `input.pages` — existing ids are upserted in place (preserving position);
+   * an id not currently in `site.pages` is appended (how `studio_create_page`
+   * reaches the open canvas). `input.removedPageIds` — ids that were part of
+   * the touched set but no longer resolve to a page (deleted on disk); each
+   * is dropped from `site.pages`, any board frame referencing it, and
+   * `selectedFrameIds`/`selectedNodeIds` if they pointed at it.
+   *
+   * If a page being upserted had local (unsaved) edits, those edits are
+   * discarded by the incoming disk content — surfaced via a toast, per
+   * policy ("merge: reload only touched pages" — the agent's write wins for
+   * a page it also touched).
+   *
+   * See `docs/agent-refs/editor-store.md` for the full contract this
+   * implements.
+   */
+  patchPages: (input: PatchPagesInput) => void
 
   // Page mutations
   addPage: (title: string, slug?: string) => Page

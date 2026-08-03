@@ -3,7 +3,8 @@
  */
 
 import { findHomePage, reconcileSiteExplorerInPlace, reindexNodeParents } from '@core/page-tree'
-import type { SiteDocument } from '@core/page-tree'
+import type { Page, SiteDocument } from '@core/page-tree'
+import { removeFramesForPage } from '@core/studio-board'
 import { renderCache } from '@site/canvas/renderCache'
 import {
   clonePackageJson,
@@ -13,16 +14,17 @@ import {
   cloneSiteRuntimeConfig,
   DEFAULT_SITE_RUNTIME,
 } from '@core/site-runtime'
+import { pushToast } from '@ui/components/Toast'
 import { clearCanvasSelectionDraft } from '../selectionSlice'
 import { createDefaultSiteDocument } from './defaults'
-import { emptyDirtyMarks } from './dirtyTracking'
+import { emptyDirtyMarks, type DirtyMarks } from './dirtyTracking'
 import { reconcileFrameworkClasses } from './framework/reconcile'
-import { clearNodeIndexes, rebuildNodeIndexes } from './nodeIndex'
+import { applyNodeIndexPatch, clearNodeIndexes, rebuildNodeIndexes } from './nodeIndex'
 import type { SiteSlice, SiteSliceHelpers } from './types'
 
 type LifecycleActions = Pick<
   SiteSlice,
-  'createSite' | 'loadSite' | 'clearSite' | 'updateSiteName'
+  'createSite' | 'loadSite' | 'clearSite' | 'updateSiteName' | 'patchPages'
 >
 
 /**
@@ -40,6 +42,7 @@ function reindexSiteTreeParents(site: SiteDocument): void {
 
 export function createLifecycleActions({
   set,
+  get,
   mutateSite,
 }: SiteSliceHelpers): LifecycleActions {
   return {
@@ -165,6 +168,169 @@ export function createLifecycleActions({
         p.name = name
         return true
       })
+    },
+
+    // ── Agent-write live reload (WS-12-adjacent) ────────────────────────────
+    //
+    // Deliberately bypasses `mutateSite`/`runHistoricMutation`: these pages
+    // were just re-read FROM disk, not edited on the canvas. Recording undo
+    // history or flipping `hasUnsavedChanges` here would queue an autosave
+    // that writes the content just read straight back out — the exact
+    // write -> reload -> re-dirty -> autosave -> write loop this codebase has
+    // structurally avoided by having no filesystem watcher (see
+    // `fsCodemodAdapter.test.ts`'s header, "write-loop safety"). Untouched
+    // pages' own history/dirty state are also left completely alone — this
+    // is a targeted patch, not a reload.
+    patchPages: ({ pages, removedPageIds = [] }) => {
+      const { site } = get()
+      if (!site) return
+      if (pages.length === 0 && removedPageIds.length === 0) return
+
+      for (const page of pages) reindexNodeParents(page.nodes)
+
+      const removedIdSet = new Set(removedPageIds)
+      const freshById = new Map(pages.map((p) => [p.id, p]))
+      const upsertedIds = new Set<string>()
+      const actuallyRemovedIds = new Set<string>()
+      // A page about to be overwritten that still carried the user's own
+      // unsaved edits — surfaced as a toast ("merge: reload only touched
+      // pages" policy — the agent's on-disk write wins for a page it also
+      // touched).
+      const overwrittenDirtyTitles: string[] = []
+      const dirty = get()._dirtySave
+
+      const nextPages: Page[] = []
+      for (const page of site.pages) {
+        if (removedIdSet.has(page.id)) {
+          actuallyRemovedIds.add(page.id)
+          continue
+        }
+        const fresh = freshById.get(page.id)
+        if (!fresh) {
+          nextPages.push(page)
+          continue
+        }
+        freshById.delete(page.id)
+        upsertedIds.add(page.id)
+        if (dirty.all || dirty.pageIds.has(page.id)) overwrittenDirtyTitles.push(page.title)
+        nextPages.push(fresh)
+      }
+      // Whatever's left in `freshById` didn't match an existing page — a
+      // brand-new page (e.g. `studio_create_page`), appended rather than merged.
+      for (const fresh of freshById.values()) {
+        nextPages.push(fresh)
+        upsertedIds.add(fresh.id)
+      }
+
+      if (upsertedIds.size === 0 && actuallyRemovedIds.size === 0) return
+
+      const nextSite: SiteDocument = { ...site, pages: nextPages }
+      reconcileSiteExplorerInPlace(nextSite)
+
+      // Board-frame cleanup for a genuinely removed page — computed against
+      // FROZEN (pre-`set()`) state, matching every other board mutation in
+      // this codebase (`boardSlice.ts` never runs a pure `Board -> Board`
+      // transform against a live draft), then assigned wholesale below.
+      let nextBoardsFile = get().boards
+      let boardsChanged = false
+      if (actuallyRemovedIds.size > 0) {
+        const mappedBoards = nextBoardsFile.boards.map((board) => {
+          let next = board
+          for (const pageId of actuallyRemovedIds) {
+            if (!next.frames.some((f) => f.pageId === pageId)) continue
+            next = removeFramesForPage(next, pageId)
+            boardsChanged = true
+          }
+          return next
+        })
+        if (boardsChanged) nextBoardsFile = { ...nextBoardsFile, boards: mappedBoards }
+      }
+
+      set((state) => {
+        const marks: DirtyMarks = emptyDirtyMarks()
+        for (const id of upsertedIds) marks.pageIds.add(id)
+        for (const id of actuallyRemovedIds) marks.deletedPageIds.add(id)
+
+        state.site = nextSite
+        applyNodeIndexPatch(
+          {
+            nodeIdToPageIds: state._nodeIdToPageIds,
+            textOriginKeyToCount: state._textOriginKeyToCount,
+            inlineTailToCount: state._inlineTailToCount,
+          },
+          site,
+          nextSite,
+          marks,
+        )
+
+        // A page whose local edits were just discarded is no longer
+        // meaningfully "unsaved" — drop the stale mark so a later save never
+        // tries to persist content the store no longer holds. A genuinely
+        // removed page's marks are dropped for the same reason.
+        for (const id of upsertedIds) state._dirtySave.pageIds.delete(id)
+        for (const id of actuallyRemovedIds) {
+          state._dirtySave.pageIds.delete(id)
+          state._dirtySave.deletedPageIds.delete(id)
+        }
+
+        // Keep the open page/document valid.
+        if (state.activePageId && actuallyRemovedIds.has(state.activePageId)) {
+          state.activePageId = nextSite.pages[0]?.id ?? null
+        }
+        if (state.activeDocument?.kind === 'page' && actuallyRemovedIds.has(state.activeDocument.pageId)) {
+          state.activeDocument = null
+        }
+
+        // A selected/edited node id survives iff it still resolves to at
+        // least one page in the freshly-updated index — an insert/delete
+        // shifts every `relFile:line:col` id below it (see
+        // `server/ai/tools/studio/staleness.ts`'s "shifted" contract), so a
+        // shifted id simply won't be a key in the fresh page's node map
+        // and drops out of `_nodeIdToPageIds` on its own.
+        const survivingSelection = state.selectedNodeIds.filter((id) => state._nodeIdToPageIds.has(id))
+        if (survivingSelection.length !== state.selectedNodeIds.length) {
+          state.selectedNodeIds = survivingSelection
+          state.selectedNodeId = survivingSelection.length > 0 ? survivingSelection[survivingSelection.length - 1]! : null
+          if (survivingSelection.length === 0) {
+            state.selectedNodeFrameId = null
+            state.hoveredNodeId = null
+            state.hoveredBreakpointId = null
+            state.hoveredFrameId = null
+            state.activeClassId = null
+          }
+        }
+        if (state.activeInlineEdit && !state._nodeIdToPageIds.has(state.activeInlineEdit.nodeId)) {
+          state.activeInlineEdit = null
+        }
+        const survivingEntered = state.enteredInstanceIds.filter((id) => state._nodeIdToPageIds.has(id))
+        if (survivingEntered.length !== state.enteredInstanceIds.length) {
+          state.enteredInstanceIds = survivingEntered
+        }
+
+        // A removed page must not leave a ghost board frame or a dangling
+        // page-id-keyed frame selection (WS-7.1). A REAL, confirmed removal
+        // (this page is genuinely gone from disk) is exactly the case
+        // `boardsPendingExplicitRemoval` exists to let through the
+        // `boardsSaveGuard.ts` autosave check — see `store-02`'s landmine.
+        if (boardsChanged) {
+          state.boards = nextBoardsFile
+          state.boardsDirty = true
+          state.boardsPendingExplicitRemoval = true
+        }
+        if (actuallyRemovedIds.size > 0 && state.selectedFrameIds.some((id) => actuallyRemovedIds.has(id))) {
+          state.selectedFrameIds = state.selectedFrameIds.filter((id) => !actuallyRemovedIds.has(id))
+        }
+      })
+
+      if (overwrittenDirtyTitles.length > 0) {
+        pushToast({
+          kind: 'warning',
+          title: 'Local edits overwritten',
+          body:
+            `${overwrittenDirtyTitles.join(', ')} had unsaved canvas edits that were replaced by ` +
+            `a change an agent just wrote to the same file${overwrittenDirtyTitles.length === 1 ? '' : 's'}.`,
+        })
+      }
     },
   }
 }

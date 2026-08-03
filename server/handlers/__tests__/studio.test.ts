@@ -880,6 +880,180 @@ describe('GET /admin/api/studio/load — Phase 7A multi-file workspace', () => {
   })
 })
 
+/**
+ * GET /admin/api/studio/load?pageIds= — the targeted live-reload filter
+ * (server-engineer, this change). Reuses the same fixture shape as the
+ * describe block above; kept separate so the byte-identity assertions can
+ * diff a filtered call against a genuinely unfiltered one from the same run.
+ */
+describe('GET /admin/api/studio/load — ?pageIds= filter', () => {
+  let tmpDir: string
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-load-filter-'))
+  })
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  function write(relPath: string, contents: string): void {
+    const full = path.join(tmpDir, ...relPath.split('/'))
+    fs.mkdirSync(path.dirname(full), { recursive: true })
+    fs.writeFileSync(full, contents, 'utf8')
+  }
+
+  function loadUrl(query: string): URL {
+    return new URL(`http://localhost/admin/api/studio/load?dir=${encodeURIComponent(tmpDir)}${query}`)
+  }
+
+  it('omitting pageIds is byte-identical to the response before this filter existed — no missingPageIds key present', async () => {
+    write('pages/Home.tsx', 'export default function Home() { return <p>Hello</p> }')
+    write('pages/About.tsx', 'export default function About() { return <p>About us</p> }')
+
+    const url = loadUrl('')
+    const res = await tryServeStudio(new Request(url), undefined, url, url.pathname)
+    const raw = await res!.text()
+    // JSON.stringify drops an undefined-valued key entirely — assert the key
+    // is genuinely ABSENT from the wire bytes, not merely `undefined` once
+    // parsed (which every object would satisfy trivially).
+    expect(raw.includes('missingPageIds')).toBe(false)
+
+    const body = JSON.parse(raw) as { pages: Array<{ id: string }> }
+    expect(body.pages.map((p) => p.id).sort()).toEqual(['about', 'home'])
+  })
+
+  it('returns only the requested page in the buffered JSON response', async () => {
+    write('pages/Home.tsx', 'export default function Home() { return <p>Hello</p> }')
+    write('pages/About.tsx', 'export default function About() { return <p>About us</p> }')
+
+    const url = loadUrl('&pageIds=about')
+    const res = await tryServeStudio(new Request(url), undefined, url, url.pathname)
+    const body = (await res!.json()) as { pages: Array<{ id: string }>; missingPageIds: string[] }
+
+    expect(body.pages.map((p) => p.id)).toEqual(['about'])
+    expect(body.missingPageIds).toEqual([])
+  })
+
+  it('accepts multiple comma-separated ids', async () => {
+    write('pages/Home.tsx', 'export default function Home() { return <p>Hello</p> }')
+    write('pages/About.tsx', 'export default function About() { return <p>About us</p> }')
+    write('pages/Contact.tsx', 'export default function Contact() { return <p>Contact us</p> }')
+
+    const url = loadUrl('&pageIds=home,contact')
+    const res = await tryServeStudio(new Request(url), undefined, url, url.pathname)
+    const body = (await res!.json()) as { pages: Array<{ id: string }> }
+
+    expect(body.pages.map((p) => p.id).sort()).toEqual(['contact', 'home'])
+  })
+
+  it('a stale/deleted id is reported via missingPageIds instead of failing the request', async () => {
+    write('pages/Home.tsx', 'export default function Home() { return <p>Hello</p> }')
+
+    const url = loadUrl('&pageIds=home,deleted-page')
+    const res = await tryServeStudio(new Request(url), undefined, url, url.pathname)
+    expect(res!.status).toBe(200)
+    const body = (await res!.json()) as { pages: Array<{ id: string }>; missingPageIds: string[] }
+
+    expect(body.pages.map((p) => p.id)).toEqual(['home'])
+    expect(body.missingPageIds).toEqual(['deleted-page'])
+  })
+
+  it('every requested id stale still returns 200 with an empty pages array, not an error', async () => {
+    write('pages/Home.tsx', 'export default function Home() { return <p>Hello</p> }')
+
+    const url = loadUrl('&pageIds=ghost-1,ghost-2')
+    const res = await tryServeStudio(new Request(url), undefined, url, url.pathname)
+    expect(res!.status).toBe(200)
+    const body = (await res!.json()) as { pages: unknown[]; missingPageIds: string[] }
+
+    expect(body.pages).toEqual([])
+    expect(body.missingPageIds).toEqual(['ghost-1', 'ghost-2'])
+  })
+
+  it('a brand-new page (studio_create_page) is reachable in a filtered load with no prior unfiltered load', async () => {
+    write('pages/Home.tsx', 'export default function Home() { return <p>Hello</p> }')
+    // Simulates the file `studio_create_page` writes AFTER the client's last
+    // load — nothing has parsed this project since it landed on disk.
+    write('pages/Pricing.tsx', 'export default function Pricing() { return <p>Pricing</p> }')
+
+    const url = loadUrl('&pageIds=pricing')
+    const res = await tryServeStudio(new Request(url), undefined, url, url.pathname)
+    const body = (await res!.json()) as { pages: Array<{ id: string }>; missingPageIds: string[] }
+
+    expect(body.pages.map((p) => p.id)).toEqual(['pricing'])
+    expect(body.missingPageIds).toEqual([])
+  })
+
+  it('meta stays project-wide even when filtered: componentSources for the UNREQUESTED page is still present', async () => {
+    write('pages/Home.tsx', 'export default function Home() { return <p>Hello</p> }')
+    write(
+      'pages/About.tsx',
+      [
+        "import { Button } from '@alm-design/design-system'",
+        'export default function About() {',
+        '  return <Button label="Go" />',
+        '}',
+        '',
+      ].join('\n'),
+    )
+
+    const url = loadUrl('&pageIds=home')
+    const res = await tryServeStudio(new Request(url), undefined, url, url.pathname)
+    const body = (await res!.json()) as {
+      pages: Array<{ id: string }>
+      componentSources: Record<string, { kind: string; specifier?: string }>
+    }
+
+    // Only "home" was requested and streamed back...
+    expect(body.pages.map((p) => p.id)).toEqual(['home'])
+    // ...but the About page's package-component classification still shows
+    // up in the meta line, because componentSources is genuinely
+    // project-wide and a filtered load never skips recomputing it.
+    const values = Object.values(body.componentSources)
+    expect(values.some((s) => s.kind === 'package' && s.specifier === '@alm-design/design-system')).toBe(true)
+  })
+
+  it('an empty pageIds value is a 400, not "no filter"', async () => {
+    write('pages/Home.tsx', 'export default function Home() { return <p>Hello</p> }')
+
+    const url = loadUrl('&pageIds=')
+    const res = await tryServeStudio(new Request(url), undefined, url, url.pathname)
+    expect(res!.status).toBe(400)
+  })
+
+  it('a whitespace/empty-segments-only pageIds value is a 400', async () => {
+    write('pages/Home.tsx', 'export default function Home() { return <p>Hello</p> }')
+
+    const url = loadUrl(`&pageIds=${encodeURIComponent(' , , ')}`)
+    const res = await tryServeStudio(new Request(url), undefined, url, url.pathname)
+    expect(res!.status).toBe(400)
+  })
+
+  it('?stream=1&pageIds= streams only the requested page, with a meta line carrying missingPageIds', async () => {
+    write('pages/Home.tsx', 'export default function Home() { return <p>Hello</p> }')
+    write('pages/About.tsx', 'export default function About() { return <p>About us</p> }')
+
+    const url = loadUrl('&pageIds=home,ghost&stream=1')
+    const res = await tryServeStudio(new Request(url), undefined, url, url.pathname)
+    expect(res!.headers.get('content-type')).toBe('application/x-ndjson')
+    const lines = (await res!.text())
+      .split('\n')
+      .filter((l) => l.length > 0)
+      .map((l) => JSON.parse(l) as { kind: string; [k: string]: unknown })
+
+    const metaLine = lines.find((l) => l.kind === 'meta') as
+      | { kind: 'meta'; pageCount: number; missingPageIds: string[] }
+      | undefined
+    expect(metaLine).toBeDefined()
+    expect(metaLine!.pageCount).toBe(1)
+    expect(metaLine!.missingPageIds).toEqual(['ghost'])
+
+    const pageLines = lines.filter((l) => l.kind === 'page') as Array<{ kind: 'page'; page: { id: string } }>
+    expect(pageLines.map((l) => l.page.id)).toEqual(['home'])
+  })
+})
+
 describe('GET /admin/api/studio/load — Next.js App Router (WS-1.3)', () => {
   let tmpDir: string
 

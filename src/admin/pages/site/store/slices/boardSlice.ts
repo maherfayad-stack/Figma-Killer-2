@@ -44,6 +44,18 @@
  * rather than hand-mutating `Board` / `BoardsFile` objects, so this slice
  * stays a thin translation from store actions to the pure board model.
  *
+ * Three groups of those transforms/actions live in sibling modules, purely to
+ * stay under the 700-line ceiling: `boardBulkFrameActions.ts` (WS-7.2 bulk
+ * frame actions) and `boardAnnotationActions.ts` (note/doc transforms, split
+ * out when `store-02`'s `boardsLoadFailed` fix pushed this file to 732) are
+ * pure `Board -> Board | null`, where `null` means "nothing to do" so this
+ * slice skips `set()` rather than flipping `boardsDirty` for a no-op.
+ * `boardFrameSelectionActions.ts` (WS-7.1 frame multi-select, split out when
+ * this store-02-follow-up change added `boardsPendingExplicitRemoval`) is the
+ * one exception carrying its own `set`/`get` wiring rather than a pure
+ * transform — the four actions it holds mutate `selectedFrameIds` directly
+ * and have no `Board`-shaped return value to hand back.
+ *
  * Snap guides (Phase 6B): `boardSnapGuides` is a TRANSIENT UI field — the
  * alignment guide lines `BoardGuidesLayer` draws while a frame/note/doc is
  * mid-drag. It intentionally lives as its own top-level store field, NOT
@@ -79,7 +91,7 @@
  * container with no direct HTTP calls.
  */
 import type { EditorStoreSliceCreator, EditorStore } from '@site/store/types'
-import type { Board, BoardsFile, DocBlock, NoteColor, PreviewAxes, StickyNote } from '@core/studio-board'
+import type { Board, BoardsFile, NoteColor, PreviewAxes } from '@core/studio-board'
 import type { SnapGuide } from '@site/canvas/boardSnapping'
 import {
   createBoard,
@@ -87,12 +99,6 @@ import {
   upsertBoard,
   removeBoard as removeBoardFromFile,
   renameBoard as renameBoardOnBoard,
-  upsertNote,
-  moveNote as moveNoteOnBoard,
-  removeNote as removeNoteFromBoard,
-  upsertDoc,
-  moveDoc as moveDocOnBoard,
-  removeDoc as removeDocFromBoard,
   upsertFrame,
   moveFrame,
   resizeFrame,
@@ -101,18 +107,16 @@ import {
   setFrameAxes as setFrameAxesOnBoard,
   duplicateFrame,
   defaultFramePosition,
+  getActiveBoard,
   FRAME_WIDTH,
 } from '@core/studio-board'
 import type { FrameAlignEdge } from '@site/canvas/BoardFramesLayer/frameAlign'
 import * as bulk from './boardBulkFrameActions'
+import * as annotations from './boardAnnotationActions'
+import { createFrameSelectionActions } from './boardFrameSelectionActions'
 
 export type { FrameAlignEdge }
 
-const DEFAULT_NOTE_COLOR: NoteColor = 'yellow'
-const DEFAULT_NOTE_WIDTH = 180
-const DEFAULT_NOTE_HEIGHT = 120
-const DEFAULT_DOC_WIDTH = 320
-const DEFAULT_DOC_HEIGHT = 200
 /** WS-10 Phase 2 — horizontal gap between a source frame and its "duplicate as variant" sibling. */
 const VARIANT_GAP = 48
 
@@ -132,6 +136,28 @@ interface BoardSlice {
   /** True when `boards` has unsaved changes the auto-save effect must flush. */
   boardsDirty: boolean
   /**
+   * True when the CURRENT `boards` state is a synthetic placeholder created
+   * because the `.studio/boards.json` FETCH itself failed (network/HTTP
+   * error) — as opposed to a legitimate "no boards.json exists yet" empty
+   * response, which `loadBoards` also renders as a fresh default board but
+   * is real, save-worthy state. Set by `markBoardsLoadFailed`, cleared by
+   * the next successful `loadBoards`. `useStudioDefaultBoardSeed`
+   * (`AdminCanvasLayout.tsx`) refuses to seed frames while this is true —
+   * seeding a placeholder from whatever `site.pages` happens to hold at
+   * that moment, then auto-saving it 800ms later, would silently overwrite
+   * the REAL boards.json (which was never actually read) with a synthesized
+   * subset. See the `boards-fetch-race-01` STATE.md entry.
+   */
+  boardsLoadFailed: boolean
+  /**
+   * True when a real removal (`removeFrame`/`removeFrameById`/`removeBoard`,
+   * or `patchPages`'s cleanup for a page confirmed gone) happened since the
+   * last successful save. Consumed by `AdminCanvasLayout.tsx`'s
+   * `boardsSaveGuard.ts` — see that module's doc for why. Reset by
+   * `markBoardsClean`, same lifecycle as `boardsDirty`.
+   */
+  boardsPendingExplicitRemoval: boolean
+  /**
    * Transient alignment guide lines for the furniture piece currently being
    * dragged (Phase 6B). Empty outside of an active drag. NOT persisted — see
    * the module doc's "Snap guides" note.
@@ -141,9 +167,21 @@ interface BoardSlice {
   /**
    * Hydrate from a freshly-fetched `BoardsFile`. An empty file gets a default
    * "Board 1" created and marked dirty so the newly-created board persists
-   * on the next auto-save.
+   * on the next auto-save. Always clears `boardsLoadFailed` — a load that
+   * reaches here has real (or legitimately-empty) server data, not a
+   * fetch-failure placeholder.
    */
   loadBoards: (file: BoardsFile) => void
+  /**
+   * Render a placeholder empty board because the boards.json FETCH failed
+   * (network/HTTP error), WITHOUT marking it dirty and WITHOUT letting
+   * `useStudioDefaultBoardSeed` treat it as a real empty project — see
+   * `boardsLoadFailed`'s doc. The canvas still gets a board to render (the
+   * multi-frame board is the whole canvas in studio mode, so it must never
+   * silently fall back to single-page breakpoint frames), but nothing here
+   * is eligible for auto-seed or auto-save until a real load succeeds.
+   */
+  markBoardsLoadFailed: () => void
   /**
    * Create a new board (empty frames/notes), make it active, and return its
    * id. `name` defaults to the next unique "Board N".
@@ -287,11 +325,7 @@ declare module '@site/store/types' {
   interface EditorStore extends BoardSlice {}
 }
 
-/** Find the active board, or `null` when there is none (not loaded / no boards). */
-function getActiveBoard(boards: BoardsFile, activeBoardId: string | null): Board | null {
-  if (!activeBoardId) return null
-  return boards.boards.find((b) => b.id === activeBoardId) ?? null
-}
+/** Find the active board, or `null` when there is none (not loaded / no boards). Exported for `boardFrameSelectionActions.ts`'s `selectAllFrames`. */
 
 /** Next unused "Board N" name — skips numbers already taken by another board. */
 function nextDefaultBoardName(boards: Board[]): string {
@@ -306,6 +340,8 @@ export const createBoardSlice: EditorStoreSliceCreator<BoardSlice> = (set, get) 
   activeBoardId: null,
   boardsLoaded: false,
   boardsDirty: false,
+  boardsLoadFailed: false,
+  boardsPendingExplicitRemoval: false,
   boardSnapGuides: [],
   selectedFrameIds: [],
   frameDefaults: {},
@@ -316,6 +352,7 @@ export const createBoardSlice: EditorStoreSliceCreator<BoardSlice> = (set, get) 
         boards: file,
         boardsLoaded: true,
         boardsDirty: false,
+        boardsLoadFailed: false,
         activeBoardId: file.boards[0].id,
       })
       return
@@ -327,6 +364,20 @@ export const createBoardSlice: EditorStoreSliceCreator<BoardSlice> = (set, get) 
       boardsLoaded: true,
       // A fresh default board was created locally — it needs to persist.
       boardsDirty: true,
+      boardsLoadFailed: false,
+      activeBoardId: board.id,
+    })
+  },
+
+  markBoardsLoadFailed: () => {
+    const board = createBoard(crypto.randomUUID(), 'Board 1')
+    set({
+      boards: upsertBoard(createBoardsFile(), board),
+      boardsLoaded: true,
+      // Deliberately NOT dirty — this placeholder must never reach the
+      // auto-save effect. See `boardsLoadFailed`'s doc comment.
+      boardsDirty: false,
+      boardsLoadFailed: true,
       activeBoardId: board.id,
     })
   },
@@ -358,7 +409,14 @@ export const createBoardSlice: EditorStoreSliceCreator<BoardSlice> = (set, get) 
     const nextBoards = removeBoardFromFile(boards, boardId)
     const nextActiveBoardId =
       activeBoardId === boardId ? nextBoards.boards[0]?.id ?? null : activeBoardId
-    set({ boards: nextBoards, activeBoardId: nextActiveBoardId, boardsDirty: true })
+    // A real, confirmed removal — safe for `boardsSaveGuard.ts` to let through
+    // even though it shrinks the aggregate frame set.
+    set({
+      boards: nextBoards,
+      activeBoardId: nextActiveBoardId,
+      boardsDirty: true,
+      boardsPendingExplicitRemoval: true,
+    })
   },
 
   setActiveBoard: (boardId) => {
@@ -371,97 +429,66 @@ export const createBoardSlice: EditorStoreSliceCreator<BoardSlice> = (set, get) 
     const { boards, activeBoardId } = get()
     const board = getActiveBoard(boards, activeBoardId)
     if (!board) return
-
-    const note: StickyNote = {
-      id: crypto.randomUUID(),
-      x,
-      y,
-      w: DEFAULT_NOTE_WIDTH,
-      h: DEFAULT_NOTE_HEIGHT,
-      text: '',
-      color: DEFAULT_NOTE_COLOR,
-    }
-    set({ boards: upsertBoard(boards, upsertNote(board, note)), boardsDirty: true })
+    set({ boards: upsertBoard(boards, annotations.addNote(board, x, y)), boardsDirty: true })
   },
 
   moveNote: (noteId, x, y) => {
     const { boards, activeBoardId } = get()
     const board = getActiveBoard(boards, activeBoardId)
     if (!board) return
-    set({ boards: upsertBoard(boards, moveNoteOnBoard(board, noteId, x, y)), boardsDirty: true })
+    set({ boards: upsertBoard(boards, annotations.moveNote(board, noteId, x, y)), boardsDirty: true })
   },
 
   updateNoteText: (noteId, text) => {
     const { boards, activeBoardId } = get()
     const board = getActiveBoard(boards, activeBoardId)
-    if (!board) return
-    const existing = board.notes.find((n) => n.id === noteId)
-    if (!existing) return
-    set({
-      boards: upsertBoard(boards, upsertNote(board, { ...existing, text })),
-      boardsDirty: true,
-    })
+    const nextBoard = board && annotations.updateNoteText(board, noteId, text)
+    if (!nextBoard) return
+    set({ boards: upsertBoard(boards, nextBoard), boardsDirty: true })
   },
 
   setNoteColor: (noteId, color) => {
     const { boards, activeBoardId } = get()
     const board = getActiveBoard(boards, activeBoardId)
-    if (!board) return
-    const existing = board.notes.find((n) => n.id === noteId)
-    if (!existing) return
-    set({
-      boards: upsertBoard(boards, upsertNote(board, { ...existing, color })),
-      boardsDirty: true,
-    })
+    const nextBoard = board && annotations.setNoteColor(board, noteId, color)
+    if (!nextBoard) return
+    set({ boards: upsertBoard(boards, nextBoard), boardsDirty: true })
   },
 
   removeNote: (noteId) => {
     const { boards, activeBoardId } = get()
     const board = getActiveBoard(boards, activeBoardId)
     if (!board) return
-    set({ boards: upsertBoard(boards, removeNoteFromBoard(board, noteId)), boardsDirty: true })
+    set({ boards: upsertBoard(boards, annotations.removeNote(board, noteId)), boardsDirty: true })
   },
 
   addDoc: (x, y) => {
     const { boards, activeBoardId } = get()
     const board = getActiveBoard(boards, activeBoardId)
     if (!board) return
-
-    const doc: DocBlock = {
-      id: crypto.randomUUID(),
-      x,
-      y,
-      w: DEFAULT_DOC_WIDTH,
-      h: DEFAULT_DOC_HEIGHT,
-      markdown: '',
-    }
-    set({ boards: upsertBoard(boards, upsertDoc(board, doc)), boardsDirty: true })
+    set({ boards: upsertBoard(boards, annotations.addDoc(board, x, y)), boardsDirty: true })
   },
 
   moveDoc: (docId, x, y) => {
     const { boards, activeBoardId } = get()
     const board = getActiveBoard(boards, activeBoardId)
     if (!board) return
-    set({ boards: upsertBoard(boards, moveDocOnBoard(board, docId, x, y)), boardsDirty: true })
+    set({ boards: upsertBoard(boards, annotations.moveDoc(board, docId, x, y)), boardsDirty: true })
   },
 
   updateDocMarkdown: (docId, markdown) => {
     const { boards, activeBoardId } = get()
     const board = getActiveBoard(boards, activeBoardId)
-    if (!board) return
-    const existing = board.docs.find((d) => d.id === docId)
-    if (!existing) return
-    set({
-      boards: upsertBoard(boards, upsertDoc(board, { ...existing, markdown })),
-      boardsDirty: true,
-    })
+    const nextBoard = board && annotations.updateDocMarkdown(board, docId, markdown)
+    if (!nextBoard) return
+    set({ boards: upsertBoard(boards, nextBoard), boardsDirty: true })
   },
 
   removeDoc: (docId) => {
     const { boards, activeBoardId } = get()
     const board = getActiveBoard(boards, activeBoardId)
     if (!board) return
-    set({ boards: upsertBoard(boards, removeDocFromBoard(board, docId)), boardsDirty: true })
+    set({ boards: upsertBoard(boards, annotations.removeDoc(board, docId)), boardsDirty: true })
   },
 
   setFramePosition: (frameId, x, y) => {
@@ -482,14 +509,26 @@ export const createBoardSlice: EditorStoreSliceCreator<BoardSlice> = (set, get) 
     const { boards, activeBoardId } = get()
     const board = getActiveBoard(boards, activeBoardId)
     if (!board) return
-    set({ boards: upsertBoard(boards, removeFramesForPage(board, pageId)), boardsDirty: true })
+    const nextBoard = removeFramesForPage(board, pageId)
+    const removedSomething = nextBoard.frames.length !== board.frames.length
+    set({
+      boards: upsertBoard(boards, nextBoard),
+      boardsDirty: true,
+      ...(removedSomething ? { boardsPendingExplicitRemoval: true } : {}),
+    })
   },
 
   removeFrameById: (frameId) => {
     const { boards, activeBoardId } = get()
     const board = getActiveBoard(boards, activeBoardId)
     if (!board) return
-    set({ boards: upsertBoard(boards, removeFrameById(board, frameId)), boardsDirty: true })
+    const nextBoard = removeFrameById(board, frameId)
+    const removedSomething = nextBoard.frames.length !== board.frames.length
+    set({
+      boards: upsertBoard(boards, nextBoard),
+      boardsDirty: true,
+      ...(removedSomething ? { boardsPendingExplicitRemoval: true } : {}),
+    })
   },
 
   addFrame: (pageId) => {
@@ -564,67 +603,15 @@ export const createBoardSlice: EditorStoreSliceCreator<BoardSlice> = (set, get) 
     set({ boards: upsertBoard(boards, setFrameAxesOnBoard(board, frameId, axes)), boardsDirty: true })
   },
 
-  markBoardsClean: () => set({ boardsDirty: false }),
+  markBoardsClean: () => set({ boardsDirty: false, boardsPendingExplicitRemoval: false }),
 
   setBoardSnapGuides: (guides) => set({ boardSnapGuides: guides }),
 
-  // ── Frame multi-selection (WS-7.1) ───────────────────────────────────────
-
-  selectFrame: (pageId, mode = 'replace') => {
-    const { selectedFrameIds } = get()
-    const nextIds =
-      mode === 'toggle'
-        ? selectedFrameIds.includes(pageId)
-          ? selectedFrameIds.filter((id) => id !== pageId)
-          : [...selectedFrameIds, pageId]
-        : [pageId]
-    set((state) => {
-      state.selectedFrameIds = nextIds
-      // Mutual exclusivity (module doc) — a frame selection replaces any
-      // node selection so the Properties panel shows exactly one inspector.
-      if (nextIds.length > 0 && state.selectedNodeIds.length > 0) {
-        state.selectedNodeIds = []
-        state.selectedNodeId = null
-      }
-    })
-  },
-
-  setSelectedFrameIds: (pageIds) => {
-    const { selectedFrameIds } = get()
-    if (selectedFrameIds.length === 0 && pageIds.length === 0) return
-    if (
-      selectedFrameIds.length === pageIds.length &&
-      selectedFrameIds.every((id, i) => id === pageIds[i])
-    ) {
-      return
-    }
-    set((state) => {
-      state.selectedFrameIds = pageIds
-      if (pageIds.length > 0 && state.selectedNodeIds.length > 0) {
-        state.selectedNodeIds = []
-        state.selectedNodeId = null
-      }
-    })
-  },
-
-  selectAllFrames: () => {
-    const { boards, activeBoardId } = get()
-    const board = getActiveBoard(boards, activeBoardId)
-    if (!board || board.frames.length === 0) return
-    const ids = board.frames.map((f) => f.pageId)
-    set((state) => {
-      state.selectedFrameIds = ids
-      if (state.selectedNodeIds.length > 0) {
-        state.selectedNodeIds = []
-        state.selectedNodeId = null
-      }
-    })
-  },
-
-  clearFrameSelection: () => {
-    if (get().selectedFrameIds.length === 0) return
-    set({ selectedFrameIds: [] })
-  },
+  // ── Frame multi-selection (WS-7.1) — implementation split out to
+  // `boardFrameSelectionActions.ts` purely to stay under the module-size
+  // ceiling (same reasoning as `boardBulkFrameActions.ts`/
+  // `boardAnnotationActions.ts`) — see that module's doc.
+  ...createFrameSelectionActions(set, get),
 
   // ── Per-project frame size default (WS-7.2) ─────────────────────────────
 

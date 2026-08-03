@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "boards": [
+    {
+      "id": "033e0bf0-393e-49d9-866b-ec2e3d85c353",
+      "name": "Board 1",
+      "frames": [
+        {
+          "id": "5d75d71b-53f9-4214-97f2-06ec22db75c2",
+          "pageId": "home",
+          "x": 0,
+          "y": 0
+        },
+        {
+          "id": "16ed72e2-e466-4f4e-8362-97c59dc4bddc",
+          "pageId": "sms",
+          "x": 1104,
+          "y": 0
+        },
+        {
+          "id": "e8947344-9e5a-4439-b424-fd63b694ec38",
+          "pageId": "smsemail",
+          "x": 0,
+          "y": 880
+        },
+        {
+          "id": "ab11c503-e0b6-49c5-bcb0-6e328459a383",
+          "pageId": "sign-in",
+          "x": 1104,
+          "y": 880
+        },
+        {
+          "id": "9d78e6de-f993-43a3-a560-6ad01367c68d",
+          "pageId": "sign-up",
+          "x": 0,
+          "y": 1760
+        }
+      ],
+      "notes": [],
+      "docs": []
+    }
+  ]
+}

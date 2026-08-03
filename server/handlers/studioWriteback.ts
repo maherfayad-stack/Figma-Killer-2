@@ -604,6 +604,16 @@ export interface StudioEditBatchResult {
   refusals: StudioEditRefusal[]
   /** WS-4.5 — every `swap` edit that SUCCEEDED, with what changed on the call site. Empty array when none did. */
   swapDetails: (StudioEditSwapDetail & { nodeId: string })[]
+  /**
+   * mcp-tooling (WS-9's live-reload bridge) — every ABSOLUTE file path any
+   * edit in the batch decoded a location in, whether or not that edit
+   * ultimately wrote (a `css` edit's synthetic nodeId never decodes here —
+   * see `studioEditFile` — so a stylesheet-only batch reports none). Not
+   * "written" in the applied-count sense: `studio_apply_edits`'s caller maps
+   * this to page ids for a best-effort live-reload push, and re-reading a
+   * page whose edit happened to refuse is a harmless no-op, not a bug.
+   */
+  touchedFiles: string[]
 }
 
 /**
@@ -665,5 +675,5 @@ export function applyStudioEditBatch(dir: string, edits: readonly StudioEdit[]):
     }
   }
 
-  return { written, skipped, shifted, sharedComponents, refusals, swapDetails }
+  return { written, skipped, shifted, sharedComponents, refusals, swapDetails, touchedFiles: [...touchedFiles] }
 }

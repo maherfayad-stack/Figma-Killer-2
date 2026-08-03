@@ -129,9 +129,20 @@ const BUDGETS: ChunkBudget[] = [
     // `__vite__mapDeps` preload table plus rolldown glue back into this chunk, so
     // ~3 KB of the reduction is spent on the boundaries themselves. The trade is
     // still correct — the deferred code no longer blocks the route's first paint.
-    maxBytes: 34_000,
+    //
+    // Raised 34 KB -> 36 KB for `store-04`'s boards-autosave data-loss guard
+    // (`boardsSaveGuard.ts`, `boardsPendingExplicitRemoval`, the monotonic
+    // load token in `AdminCanvasLayout`) plus the `patchPages` live-reload
+    // path. Measured 34,873 B at the time of the raise. This code is NOT
+    // lazy-loadable: the guard has to run before the first autosave tick of
+    // every board load, and per the note above a fresh `import()` boundary
+    // would add more glue to this chunk than the deferred code removes.
+    // If a later change pushes past 36 KB, audit what is actually in the
+    // shell rather than raising this again — two consecutive bumps is the
+    // signal that something belongs in `AdminCanvasEditorBody` instead.
+    maxBytes: 36_000,
     rationale:
-      'site route shell (current ~33 KB raw / ~12 KB gzipped). Must not ' +
+      'site route shell (current ~34 KB raw / ~12 KB gzipped). Must not ' +
       'pull the visual editor body, DnD, canvas, first-party modules, or ' +
       'PropertiesPanel back into the active route chunk.',
   },

@@ -43,6 +43,24 @@ export type {
   AiUserImageSourceMimeType,
 } from './userImage'
 export {
+  readImageDimensions,
+} from './imageDimensions'
+export type {
+  ImageDimensions,
+} from './imageDimensions'
+export {
+  DESIGN_REFERENCE_ACCEPTED_MIME_TYPES,
+  DESIGN_REFERENCE_MAX_BYTES,
+  DESIGN_REFERENCE_MAX_EDGE,
+  DESIGN_REFERENCE_MAX_PIXELS,
+  DesignReferenceMetaSchema,
+  validateDesignReferenceDimensions,
+  validateDesignReferenceFile,
+} from './designReferenceImage'
+export type {
+  DesignReferenceMeta,
+} from './designReferenceImage'
+export {
   InsertHtmlInputSchema,
   GetNodeHtmlInputSchema,
   AgentDocumentRefSchema,
@@ -78,6 +96,15 @@ export {
   StudioSetFrameAxesInputSchema,
   StudioDuplicateFrameAsVariantInputSchema,
   StudioUploadAssetInputSchema,
+  StudioListComponentsInputSchema,
+  StudioFindComponentInputSchema,
+  StudioListComponentBindingsInputSchema,
+  StudioFetchRemoteAssetInputSchema,
+  StudioRegisterDesignReferenceInputSchema,
+  StudioListDesignReferencesInputSchema,
+  StudioReadDesignReferenceInputSchema,
+  StudioRecommendExportDprInputSchema,
+  StudioDeleteDesignReferenceInputSchema,
 } from './toolSchemas'
 export type {
   InsertHtmlInput,
