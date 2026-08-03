@@ -343,7 +343,28 @@ What survives is what the filesystem cannot do: see the canvas (`studio_screensh
 2. **Wait for the canvas to re-read** — `awaitStudioLiveReload` (`liveReloadPush.ts`), awaited rather than fire-and-forget, because capturing first photographs the previous version of the file.
 3. **Capture** — relay to the browser-side `studio_export_frames` handler over the live editor bridge and return its PNGs as MCP image blocks.
 
-Pages are selected **by name**, not by page id: `"Checkout"`, `"Checkout.tsx"`, `"pages/Checkout.tsx"` and the raw id all resolve to the same frame (`pageKey` applies the same kebab derivation `pageIdFromRelPath` uses to both sides, so multi-word names like `AddMobile` → `add-mobile` match). Omitting `pages` captures the whole project. `studio_export_frames` still exists and still does step 3 alone, for external clients that manage their own board.
+Pages are selected **by name**, not by page id: `"Checkout"`, `"Checkout.tsx"`, `"pages/Checkout.tsx"` and the raw id all resolve to the same frame (`pageKey` in `pageNameMatch.ts` applies the same kebab derivation `pageIdFromRelPath` uses to both sides, so multi-word names like `AddMobile` → `add-mobile` match). Omitting `pages` captures the whole project. `studio_export_frames` still exists and still does step 3 alone, for external clients that manage their own board.
+
+### `studio_compare` — the agent's ruler
+
+`server/ai/mcp/tools/studio/compare.ts`. Sight alone turned out not to be enough: a screen whose subtitle overlapped its heading and whose icons rendered as specks was screenshotted, looked at, and reported as done. "Does this match the design" stayed an opinion, and an agent grading its own homework gives itself a pass.
+
+**The measurement path was unreachable, not merely skipped.** `studio_register_design_reference` + `studio_recommend_export_dpr` + `studio_export_frames` + `studio_diff_frames` existed on paper, but `studio_diff_frames` takes its `baseline` as a base64 **string** while a capture arrives as an MCP **image block**. A model can look at an image block; it cannot transcribe one back into base64 text. No sequence of calls got the agent from "I captured the screen" to "I measured the screen", so no amount of prompt wording about measuring could have worked.
+
+`studio_compare` collapses the five steps into one call keyed by screen name, and captures **server-side** — neither the baseline nor the reference ever transits the model. It resolves the reference automatically from the ones registered for that page, picks the capture dpr that lands on the reference's own pixel width (so the comparison is exact rather than resampled), captures through the live bridge, and scores in-process. It returns `{ pass, verdict, similarityScore, regions[] }` plus three image blocks: your screen, the reference, and the diff.
+
+**`pass` is deliberately not pixel-identity.** A browser rasterises text with different hinting and antialiasing than a design tool, so two *correct* renderings of the same screen still differ by an irreducible margin of edge pixels; a tool demanding 100% would report every screen as broken forever and teach the agent to ignore it. `pass` is two conditions, and the second is the one that matters:
+
+- overall similarity ≥ `passScore` (default 98%), **and**
+- no single differing **region** covering more than `maxRegionCoverage` (default 1.5%) of the frame.
+
+A structural defect — wrong spacing, a missing element, the wrong button fill, text overlapping a heading — always forms one contiguous region above that floor. Antialiasing does not: it spreads thinly across every glyph edge and never coalesces. That separation is what distinguishes "this is a different design" from "this is the same design on a different rasteriser", and a single global percentage cannot do it. `frameDiffEngine.test.ts` gates it directly.
+
+The generated `CLAUDE.md` and the system prompt both state a passing compare as the **definition of done** for any screen with a registered reference, not as a suggestion.
+
+**Withheld from the agent as a consequence:** `studio_diff_frames` and `studio_recommend_export_dpr`. Offering a tool the agent can only ever fail to call buys wasted turns and teaches it that measurement does not work. Both remain in the MCP registry for external clients, which hold their own bytes and can genuinely use them.
+
+**Shared, not duplicated:** the pixel + region core lives in `frameDiffEngine.ts` and backs both `studio_compare` and `studio_diff_frames`.
 
 ### Session controls — model, effort, mode, attachments (WS-12 §5)
 

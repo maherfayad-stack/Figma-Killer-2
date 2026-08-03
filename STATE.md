@@ -110,6 +110,31 @@ Hit a genuine **Windows case-insensitive filename collision** (`no-case-only-fil
 
 ---
 
+### agent-05 — the fidelity loop was unreachable, not merely skipped: `studio_compare`
+- **Agent:** coordinator (direct)
+- **Stage:** done. Build and lint clean; full suite byte-identical to baseline (27 pre-existing, 0 introduced).
+- **Updated:** 2026-08-04
+
+**The finding.** The in-canvas agent could not measure a screen against a design at all, and nothing said so. `studio_diff_frames` takes its `baseline` as a base64 **string**; a capture arrives from `studio_screenshot` as an MCP **image block**. A model can look at that image — it cannot transcribe the bytes back into base64 text. There was no sequence of tool calls that got the agent from "I captured the screen" to "I measured the screen". Every prompt instruction telling it to measure was therefore unfollowable, and it fell back to judging its own work by eye: it passed a screen whose subtitle overlapped its heading and whose icons rendered as specks.
+
+Same failure shape as `agent-04`'s icon bug, one layer up — **an instruction with no mechanism behind it**. Worth naming as a class, because it has now been found twice. `screenshot.ts`'s own module doc had already predicted it for the three-step capture ritual ("an agent that has to remember a three-step ritual before every look will skip it"); the five-step measurement ritual was never held to the same standard.
+
+**`studio_compare`** (`server/ai/mcp/tools/studio/compare.ts`) collapses register → resolve → dpr → capture → diff into one call keyed by screen NAME. It captures server-side and diffs in-process, so neither image transits the model. Returns `{ pass, verdict, regions[] }` plus three image blocks (your screen, the reference, the diff).
+
+**`pass` is deliberately not pixel-identity** — a browser rasterises text differently from Figma, so demanding 100% would fail every screen forever and teach the agent to ignore the number. Two conditions: overall similarity ≥ 98% AND no single differing region covering > 1.5% of the frame. **The region test is the load-bearing one**: a structural defect always forms one contiguous block above that floor; antialiasing spreads thinly across glyph edges and never does. `frameDiffEngine.test.ts` gates exactly that separation — if it stops holding, the verdict becomes a coin flip and the loop is theatre.
+
+**Removed from the agent surface:** `studio_diff_frames` and `studio_recommend_export_dpr`. Offering a tool that can only ever fail buys wasted turns and teaches the agent that measurement does not work. Both stay in the MCP registry for external clients, which hold their own bytes.
+
+**Extracted, not duplicated:** `frameDiffEngine.ts` (the pixel + region core, now shared by both tools) and `pageNameMatch.ts` (the kebab-derivation `pageKey`, shared by `screenshot.ts` and `compare.ts` so the two cannot drift on what `"AddMobile"` means).
+
+**Second half of the same complaint — invented assets.** The agent hand-wrote SVG path data and shaped phone mockups out of CSS gradients. Same missing-mechanism root cause: this project has **no registered or approved Figma MCP server** (`.studio/meta.json` carries no `approvedRegisteredMcpServers`, there is no `.mcp.json`, and `src/assets` was never created), so it had no way to fetch one real asset from the design it was told to reproduce. Prompt and generated guide now require it to name the gap and leave a neutral placeholder rather than fake it. **The real fix is user-side** and cannot be done from here: register + approve a Figma MCP server in Studio Settings.
+
+`GUIDE_DEFINITION_VERSION` → 6, so every existing project regenerates its `CLAUDE.md`.
+
+**Not addressed, still open** (both from the same side-by-side review): `Button variant="destructive"` chosen by colour-name association where the design shows a solid fill, and a hand-rolled country-code + phone field where ALM's `TextInput` has a `dropdown` prop. A passing `studio_compare` would now catch both as regions, but the generated guide does not yet carry variant→appearance mapping, so the agent would be fixing them blind.
+
+---
+
 ### agent-03 — `design-critic` can now measure instead of guess
 - **Agent:** coordinator (direct)
 - **Stage:** done.
