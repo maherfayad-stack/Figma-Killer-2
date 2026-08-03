@@ -160,3 +160,69 @@ describe('the synthetic studio breakpoint id stays in sync with the board', () =
     ).toBe(true)
   })
 })
+
+/**
+ * Framework-generated utilities must never reach the diff.
+ *
+ * These are derived from `.studio/framework.json`'s token settings and
+ * regenerated from them, so they have no hand-authored `.css` file and no
+ * `styleRuleSources` entry. Importing a design system adds colour tokens, the
+ * framework generates a class per token, and those classes land in
+ * `site.styleRules` after the last `commitBaseline` — so every property reads
+ * as changed against an empty baseline and a screen's worth of untouched
+ * generated classes was reported as "Style not saved to source".
+ */
+describe('framework-generated utility classes', () => {
+  function generatedRule(id: string, name: string): StyleRule {
+    return {
+      id,
+      kind: 'class',
+      name,
+      selector: `.${name}`,
+      styles: { color: 'var(--color-metal)' },
+      contextStyles: {},
+      order: 0,
+      createdAt: 0,
+      updatedAt: 0,
+      generated: {
+        origin: 'framework',
+        family: 'color',
+        sourceId: 'metal',
+        utility: 'text',
+        tokenName: 'metal',
+        locked: true,
+      },
+    } as unknown as StyleRule
+  }
+
+  beforeEach(() => {
+    setStudioStyleRuleSources({}, {})
+  })
+
+  it('does not report a generated class as unmapped, even with no baseline', () => {
+    const rules = {
+      'sc-a': generatedRule('sc-a', 'text-color-metal'),
+      'sc-b': generatedRule('sc-b', 'bg-color-metal-5'),
+    }
+
+    const plan = collectStyleRuleEdits(rules)
+
+    expect(plan.unmapped).toEqual([])
+    expect(plan.edits).toEqual([])
+  })
+
+  it('never emits an edit for a generated class even when a source is mapped', () => {
+    // Belt and braces: skipping happens before the diff, so a stray source
+    // entry cannot make one writable either.
+    setStudioStyleRuleSources({ 'sc-a': { file: 'styles/app.css', selector: '.text-color-metal' } }, {})
+
+    expect(collectStyleRuleEdits({ 'sc-a': generatedRule('sc-a', 'text-color-metal') }).edits).toEqual([])
+  })
+
+  it('still reports a genuinely unmapped HAND-AUTHORED class', () => {
+    // The refusal path must survive — this is the case the toast exists for.
+    const plan = collectStyleRuleEdits({ [RULE_ID]: rule() })
+
+    expect(plan.unmapped).toEqual(['.hero-title'])
+  })
+})

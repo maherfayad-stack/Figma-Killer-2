@@ -1,16 +1,12 @@
 {
-  "displayName": "Untitled",
-  "previewAxes": {
-    "direction": "ltr",
-    "colorScheme": "light"
-  },
+  "displayName": "Test",
   "profile": {
     "framework": "unknown",
     "appRoot": "",
     "pagesDir": "pages",
     "routeStyle": "flat",
     "entryFiles": [],
-    "packageManager": "bun",
+    "packageManager": "npm",
     "styleToolchain": {
       "tailwind": null,
       "cssModules": true,
@@ -18,8 +14,15 @@
       "postcssConfigPath": null,
       "cssInJs": null
     },
-    "componentPackages": [],
+    "componentPackages": [
+      "@alm-design/design-system"
+    ],
     "designSystems": [
+      {
+        "name": "@alm-design/design-system",
+        "source": "node-modules",
+        "root": "node_modules/@alm-design/design-system"
+      },
       {
         "name": "alm-design-design-system-1-1-3",
         "source": "imported",
@@ -36,11 +39,6 @@
         "code": "pages-dir-heuristic",
         "message": "No routing framework convention matched; guessed the pages directory \"pages\" by ranking directories on the fraction of files with a JSX-returning default export.",
         "fix": "Confirm the pages directory in the import dialog, or set \"pagesDir\" explicitly in .studio/meta.json."
-      },
-      {
-        "code": "dependencies-not-installed",
-        "message": "package.json lists dependencies but node_modules is missing, so package-component detection was skipped.",
-        "fix": "Run dependency install (WS-1.4), then re-run the project probe."
       }
     ],
     "pagesDirCandidates": [

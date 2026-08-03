@@ -524,3 +524,199 @@ export default function Page() {
     expect(fs.readFileSync(file, 'utf8')).toContain(`import { Chip, Button } from '${DS}'`)
   })
 })
+
+/**
+ * Nested subtrees — one insert, one splice, no intermediate node ids.
+ *
+ * This is the path that replaced ~30 sequential round trips per screen, so the
+ * assertions are whole-file: indentation of every level, one import pass for
+ * the whole tree, and an all-or-nothing refusal when any descendant is invalid.
+ */
+describe('insertJsxElement — nested subtrees', () => {
+  it('writes a multi-level tree in one call, indented from the placement', () => {
+    const file = writeFixture(PAGE)
+    const at = locateTag(PAGE, 'section')
+
+    expect(
+      insertJsxElement({
+        file,
+        ...at,
+        name: 'div',
+        props: { className: 'card' },
+        children: [
+          { name: 'h2', children: 'Sign in' },
+          {
+            name: 'div',
+            props: { className: 'row' },
+            children: [
+              { name: 'span', children: 'or' },
+              { name: 'Button', importSpecifier: DS, props: { label: 'Go' } },
+            ],
+          },
+        ],
+      }),
+    ).toEqual({ ok: true })
+
+    expect(fs.readFileSync(file, 'utf8')).toBe(
+      `import { Chip, Button } from '@alm-design/design-system'
+
+export default function Page() {
+  return (
+    <section className="list">
+      {/* keep me exactly where I am */}
+      <Chip label="First" />
+
+      <Chip label="Second" />
+      <div className="card">
+        <h2>Sign in</h2>
+        <div className="row">
+          <span>or</span>
+          <Button label="Go" />
+        </div>
+      </div>
+    </section>
+  )
+}
+`,
+    )
+  })
+
+  it('writes one import line per new specifier, for components anywhere in the tree', () => {
+    const source = `export default function Page() {
+  return (
+    <main>
+      <b />
+    </main>
+  )
+}
+`
+    const file = writeFixture(source)
+    const at = locateTag(source, 'main')
+
+    expect(
+      insertJsxElement({
+        file,
+        ...at,
+        name: 'div',
+        children: [
+          { name: 'Button', importSpecifier: DS },
+          { name: 'Card', importSpecifier: DS },
+          { name: 'Icon', importSpecifier: './icons' },
+        ],
+      }),
+    ).toEqual({ ok: true })
+
+    const written = fs.readFileSync(file, 'utf8')
+    // Both DS components collapse onto ONE declaration, not two.
+    expect(written).toContain(`import { Button, Card } from '${DS}'`)
+    expect(written).toContain("import { Icon } from './icons'")
+    expect(written.match(/^import /gm)).toHaveLength(2)
+  })
+
+  it('copies the file\'s own indent unit into the nested levels', () => {
+    const source = [
+      'export default function Page() {',
+      '    return (',
+      '        <main>',
+      '            <b />',
+      '        </main>',
+      '    )',
+      '}',
+      '',
+    ].join('\n')
+    const file = writeFixture(source)
+    const at = locateTag(source, 'main')
+
+    expect(
+      insertJsxElement({ file, ...at, name: 'div', children: [{ name: 'span', children: 'x' }] }),
+    ).toEqual({ ok: true })
+
+    // Four-space file: the new div sits at 12, its child at 16.
+    expect(fs.readFileSync(file, 'utf8')).toContain('            <div>\n                <span>x</span>\n            </div>')
+  })
+
+  it('refuses on an invalid DESCENDANT without writing anything', () => {
+    const file = writeFixture(PAGE)
+    const at = locateTag(PAGE, 'section')
+
+    const result = insertJsxElement({
+      file,
+      ...at,
+      name: 'div',
+      children: [
+        { name: 'span', children: 'fine' },
+        { name: 'div', children: [{ name: 'script' }] },
+      ],
+    })
+
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error('unreachable')
+    expect(result.refusal.reason).toBe('unsafe-tag')
+    // All-or-nothing: the valid siblings must not have landed either.
+    expect(fs.readFileSync(file, 'utf8')).toBe(PAGE)
+  })
+
+  it('refuses a nested capitalised name with no importSpecifier', () => {
+    const file = writeFixture(PAGE)
+    const at = locateTag(PAGE, 'section')
+
+    const result = insertJsxElement({ file, ...at, name: 'div', children: [{ name: 'Mystery' }] })
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error('unreachable')
+    expect(result.refusal.reason).toBe('unsafe-tag')
+    expect(result.refusal.message).toContain('importSpecifier')
+    expect(fs.readFileSync(file, 'utf8')).toBe(PAGE)
+  })
+
+  it('treats an empty children array as a childless element', () => {
+    const file = writeFixture(PAGE)
+    const at = locateTag(PAGE, 'section')
+
+    expect(insertJsxElement({ file, ...at, name: 'div', children: [] })).toEqual({ ok: true })
+    expect(fs.readFileSync(file, 'utf8')).toContain('<div />')
+  })
+
+  it('refuses a void element given nested children', () => {
+    const file = writeFixture(PAGE)
+    const at = locateTag(PAGE, 'section')
+
+    const result = insertJsxElement({ file, ...at, name: 'img', children: [{ name: 'span' }] })
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error('unreachable')
+    expect(result.refusal.reason).toBe('void-element-children')
+    expect(fs.readFileSync(file, 'utf8')).toBe(PAGE)
+  })
+
+  it('escapes text inside nested levels too', () => {
+    const file = writeFixture(PAGE)
+    const at = locateTag(PAGE, 'section')
+
+    expect(
+      insertJsxElement({ file, ...at, name: 'div', children: [{ name: 'p', children: 'a {b} <c>' }] }),
+    ).toEqual({ ok: true })
+    expect(fs.readFileSync(file, 'utf8')).toContain('<p>a &#123;b&#125; &lt;c&gt;</p>')
+  })
+
+  it('builds a deep subtree into an EMPTY parent', () => {
+    const source = `export default function Page() {
+  return <main></main>
+}
+`
+    const file = writeFixture(source)
+    const at = locateTag(source, 'main')
+
+    expect(
+      insertJsxElement({
+        file,
+        ...at,
+        name: 'div',
+        children: [{ name: 'div', children: [{ name: 'div', children: [{ name: 'span', children: 'deep' }] }] }],
+      }),
+    ).toEqual({ ok: true })
+
+    const written = fs.readFileSync(file, 'utf8')
+    expect(written).toContain('<span>deep</span>')
+    // Four nesting levels, each one unit deeper than the last.
+    expect(written.match(/^\s+<div>$/gm)).toHaveLength(3)
+  })
+})

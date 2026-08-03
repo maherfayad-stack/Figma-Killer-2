@@ -212,6 +212,7 @@ import {
   type StudioProjectSummary,
 } from './studioProjects'
 import { readStudioMeta, DEFAULT_TRUST_TIER } from './studio/studioMeta'
+import { applyProjectSeed } from './studio/projectSeed'
 import { readStudioFrameworkFile, writeStudioFrameworkFile } from './studioFramework'
 import { buildStudioDownloadResponse } from './studioDownload'
 import { resolveStudioAssetResponse } from './studioAsset'
@@ -621,6 +622,11 @@ export async function tryServeStudio(
       writeFileSync(join(pagesDir, 'Home.tsx'), home.component)
       writeFileSync(join(pagesDir, home.stylesFileName), home.styles)
       writeProjectMeta(dir, { displayName })
+      // Design system + its declared dependency, copied from the local seed —
+      // AFTER the scaffolder's own files, which the seed never overwrites.
+      // Best-effort: a project without a seed is exactly what it used to be.
+      // See `projectSeed.ts` for why this copies rather than installs.
+      applyProjectSeed(dir)
       const project: StudioProjectSummary = { dir, name: displayName, pageCount: 1 }
       return jsonResponse({ project })
     } catch (err) {

@@ -1,228 +1,28 @@
-@import "../styles/imported/alm-design-design-system-1-1-3/src/tokens/index.css";
-
+/* Fluid by default: fills the frame it is placed in and caps for
+   readability on wide viewports. Never a fixed width — a screen pinned to one
+   device size stops being a design and becomes a screenshot. */
 .page {
   box-sizing: border-box;
   display: flex;
-  justify-content: center;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.5rem;
   width: 100%;
-  min-height: 100vh;
-  background: var(--background-base-subtle);
-  font-family: var(--font-body);
-  color: var(--text-base-default);
+  max-width: 60rem;
+  margin-inline: auto;
+  padding: clamp(1.5rem, 5vw, 4rem);
 }
 
-.frame {
-  box-sizing: border-box;
-  display: flex;
-  flex-direction: column;
-  width: 100%;
-  max-width: 393px;
-  min-height: 100vh;
-  background: var(--background-base-default);
-}
-
-.statusBar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  height: 44px;
-  padding: 0 24px;
-  color: var(--text-base-default);
-  font-size: 15px;
-  font-weight: 600;
-  flex-shrink: 0;
-}
-
-.statusTime { font-variant-numeric: tabular-nums; }
-
-.statusLevels { display: inline-flex; align-items: center; gap: 6px; }
-
-.body {
-  display: flex;
-  flex-direction: column;
-  padding: var(--space-lg) var(--space) var(--space);
-  gap: var(--space-lg);
-  flex: 1;
-}
-
-/* ── lock-screen preview (phone mock) ── */
-.lockPreview {
-  position: relative;
-  align-self: center;
-  box-sizing: border-box;
-  width: 220px;
-  height: 240px;
-  border-radius: 28px;
-  background:
-    linear-gradient(180deg, #F0F0F0 0%, #E5E5E5 60%, #DADADA 100%);
-  border: 4px solid #1C1C1C;
-  padding: 24px 12px 0;
-  overflow: hidden;
-  color: var(--text-base-default);
-}
-
-.lockDate {
-  text-align: center;
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--text-base-default);
-  margin-top: 6px;
-}
-
-.lockTime {
-  text-align: center;
-  font-family: var(--font-display);
-  font-size: 44px;
-  font-weight: 300;
-  line-height: 1;
-  color: var(--text-base-default);
-  margin-top: 2px;
-  letter-spacing: -1px;
-}
-
-.notificationCard {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  margin-top: 20px;
-  padding: 8px 8px 8px 8px;
-  background: rgba(255, 255, 255, 0.72);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border-radius: 14px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
-}
-
-.notificationAppIcon {
-  width: 22px;
-  height: 22px;
-  border-radius: 6px;
-  background: var(--background-primary-default);
-  color: var(--text-base-inverted-static);
-  font-size: 12px;
-  font-weight: 700;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
-.notificationBody {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.notificationHeader {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-}
-
-.notificationAppName {
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--text-base-default);
-}
-
-.notificationTime {
-  font-size: 9px;
-  color: var(--text-base-subtext);
-}
-
-.notificationText {
+.title {
   margin: 0;
-  font-size: 9px;
-  line-height: 1.35;
-  color: var(--text-base-default);
-}
-
-/* ── content ── */
-.heading {
-  margin: 0;
-  font-family: var(--type-display-family);
-  font-size: 28px;
+  font-size: clamp(1.5rem, 4vw, 2rem);
   font-weight: 700;
-  line-height: 34px;
-  letter-spacing: -0.4px;
-  color: var(--text-base-default);
 }
 
-.benefits {
-  list-style: none;
-  padding: 0;
+/* currentColor rather than a literal: inherits whatever the project already
+   uses, so the starter never introduces an off-palette hex. */
+.subtitle {
   margin: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space);
+  color: currentColor;
+  opacity: 0.65;
 }
-
-.benefitRow {
-  display: flex;
-  align-items: center;
-  gap: var(--space-md);
-  font-family: var(--type-body-regular-family);
-  font-size: var(--type-body-regular-size);
-  line-height: var(--type-body-regular-lh);
-  color: var(--text-base-default);
-}
-
-.benefitIcon {
-  color: var(--icon-base-default);
-  flex-shrink: 0;
-}
-
-.actionGroup {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-sm);
-  margin-top: var(--space-sm);
-}
-
-.primaryBtn {
-  height: 48px;
-  border: none;
-  border-radius: var(--rounded-full);
-  background: var(--background-primary-default);
-  color: var(--text-base-inverted-static);
-  font-family: var(--type-subtitle-family);
-  font-size: var(--type-subtitle-size);
-  font-weight: 700;
-  line-height: var(--type-subtitle-lh);
-  cursor: pointer;
-  padding: 0 var(--space);
-}
-.primaryBtn:hover { filter: brightness(0.95); }
-.primaryBtn:active { filter: brightness(0.9); }
-
-.secondaryBtn {
-  height: 48px;
-  border: 1px solid var(--border-secondary-default);
-  border-radius: var(--rounded-full);
-  background: var(--background-base-default);
-  color: var(--text-link-default);
-  font-family: var(--type-subtitle-family);
-  font-size: var(--type-subtitle-size);
-  font-weight: 700;
-  line-height: var(--type-subtitle-lh);
-  cursor: pointer;
-  padding: 0 var(--space);
-}
-.secondaryBtn:hover { background: var(--background-primary-subtle); }
-
-.legal {
-  margin: 0;
-  text-align: center;
-  font-family: var(--type-caption-regular-family);
-  font-size: var(--type-caption-regular-size);
-  line-height: var(--type-caption-regular-lh);
-  color: var(--text-base-subtext);
-}
-
-.legalLink {
-  color: var(--text-link-default);
-  text-decoration: underline;
-}
-.legalLink:hover { color: var(--text-link-hover); }

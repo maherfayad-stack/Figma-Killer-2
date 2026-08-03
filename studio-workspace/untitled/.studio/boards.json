@@ -2,114 +2,44 @@
   "version": 1,
   "boards": [
     {
-      "id": "ba58162f-0c41-4315-a458-15bdd5ecbf51",
+      "id": "eb1b1c5c-998d-4b45-b2cb-e9ec564547c9",
       "name": "Board 1",
       "frames": [
         {
-          "id": "a28d6f38-6b07-45d7-8800-a080c85106fa",
-          "pageId": "canonical-screen",
+          "id": "39e9214e-2a8f-4c06-bbc2-c30197cbe80c",
+          "pageId": "add-mobile",
           "x": 0,
           "y": 0
         },
         {
-          "id": "4f099d34-fb1a-4915-825d-d4b504822aca",
-          "pageId": "esim-activation",
-          "x": 1104,
-          "y": 0
-        },
-        {
-          "id": "7c830dea-6e0f-4ea7-9fd0-9e3fdec828d2",
-          "pageId": "esim-activation-ar",
-          "x": 0,
-          "y": 880
-        },
-        {
-          "id": "1d1ffe1e-8fad-482a-bc23-c9f31a6a6ca1",
-          "pageId": "non-canonical-screen",
-          "x": 1104,
-          "y": 880
-        },
-        {
-          "id": "25848942-4fe1-4d91-9fd4-ca7100af8bb4",
-          "pageId": "page",
-          "x": 0,
-          "y": 1760
-        },
-        {
-          "id": "f4d41b8e-4627-44d0-9eda-cc84c98ec8f5",
-          "pageId": "page2",
-          "x": 1104,
-          "y": 1760
-        },
-        {
-          "id": "180c404b-2d94-4206-8519-4cd191812ad9",
+          "id": "fc554272-3a1f-4c1f-827b-e87b9f0c8906",
           "pageId": "home",
+          "x": 1104,
+          "y": 0
+        },
+        {
+          "id": "f38f23a1-e470-4c0a-8ad5-3f7a4c242b9d",
+          "pageId": "onboarding",
           "x": 0,
-          "y": 2640,
-          "width": 393,
-          "height": 852
+          "y": 880
         },
         {
-          "id": "0d8f7a95-c2fc-4621-98e0-1b17ee1215aa",
-          "pageId": "sms",
-          "x": 1104,
-          "y": 2640,
-          "width": 393,
-          "height": 852
-        },
-        {
-          "id": "47fae1b9-8c0b-4410-b001-ab169d1829e8",
-          "pageId": "smsemail",
-          "x": 426.49686532253577,
-          "y": 3312.2577311622326,
-          "width": 393,
-          "height": 852
-        },
-        {
-          "id": "75f157d5-2566-4c98-996b-3f3ef25133b5",
-          "pageId": "sign-in",
-          "x": 1104,
-          "y": 3520,
-          "width": 393,
-          "height": 1035.213260312357
-        },
-        {
-          "id": "861c10fe-5994-492e-acbe-3dc173cda54e",
+          "id": "f92145ca-8d45-43ad-b717-ab0ab616c18d",
           "pageId": "sign-up",
-          "x": 0,
-          "y": 4400,
-          "width": 393,
-          "height": 852
-        },
-        {
-          "id": "18634b24-7753-4d8b-95aa-809c5536d042",
-          "pageId": "sign-up-alm",
-          "x": 1805.2290034847292,
-          "y": 4400
-        },
-        {
-          "id": "c31c8a52-4ea1-4f62-a2ad-b4bdc3d3cad9",
-          "pageId": "sms-phone-alm",
-          "x": 0,
-          "y": 5280
-        },
-        {
-          "id": "907f06ba-fed0-4019-97f3-09e5b327f0e5",
-          "pageId": "sms-email-alm",
           "x": 1104,
-          "y": 5280
+          "y": 880
         },
         {
-          "id": "7f7a1d6e-fdcb-4af0-a97a-820fa341c9f2",
-          "pageId": "sign-in-hero-alm",
+          "id": "5289950e-c3e8-4220-bf75-810ab0e84805",
+          "pageId": "sms-email",
           "x": 0,
-          "y": 6160
+          "y": 1760
         },
         {
-          "id": "c5f8bfb8-7078-4557-9495-b6b41b8c7769",
-          "pageId": "onboarding-alm",
+          "id": "8cfeb34c-9f3a-4afe-ba40-8efb310dfb38",
+          "pageId": "sms-phone",
           "x": 1104,
-          "y": 6160
+          "y": 1760
         }
       ],
       "notes": [],

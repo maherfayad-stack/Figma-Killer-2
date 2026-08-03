@@ -79,6 +79,30 @@ const DeleteEditSchema = Type.Object({
  * "COMPONENTS AND INTRINSIC TAGS" — an agent composing a screen needs the
  * layout elements, not only the design-system components that sit inside them.
  */
+const InsertPropsSchema = Type.Record(
+  Type.String(),
+  Type.Union([Type.String(), Type.Number(), Type.Boolean()]),
+)
+
+/**
+ * One element in an insert's subtree. Recursive through `children`, which is
+ * EITHER literal text or a list of nested elements — see `insertJsxElement`'s
+ * `InsertJsxChildren` for why mixed content is excluded.
+ *
+ * `Type.Recursive` is what makes the nesting expressible as a real schema
+ * rather than an `unknown` the handler would have to re-validate by hand; the
+ * MCP tool advertises this verbatim as JSON Schema, so the model sees the
+ * actual shape it may send.
+ */
+const InsertNodeSchema = Type.Recursive((Self) =>
+  Type.Object({
+    name: Type.String(),
+    importSpecifier: Type.Optional(Type.String()),
+    props: Type.Optional(InsertPropsSchema),
+    children: Type.Optional(Type.Union([Type.String(), Type.Array(Self)])),
+  }),
+)
+
 const InsertEditSchema = Type.Object({
   kind: Type.Literal('insert'),
   nodeId: Type.String(),
@@ -86,10 +110,8 @@ const InsertEditSchema = Type.Object({
   position: Type.Optional(Type.Union([Type.Literal('before'), Type.Literal('after')])),
   name: Type.String(),
   importSpecifier: Type.Optional(Type.String()),
-  children: Type.Optional(Type.String()),
-  props: Type.Optional(
-    Type.Record(Type.String(), Type.Union([Type.String(), Type.Number(), Type.Boolean()])),
-  ),
+  children: Type.Optional(Type.Union([Type.String(), Type.Array(InsertNodeSchema)])),
+  props: Type.Optional(InsertPropsSchema),
 })
 
 /** The three structural edit kinds, folded into `StudioEditSchema` by `studioWriteback.ts`. */

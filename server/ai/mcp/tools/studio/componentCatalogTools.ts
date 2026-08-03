@@ -232,12 +232,37 @@ function collectCatalog(dir: string): Catalog {
   return { packages: [...profile.componentPackages].sort(), designSystems, components, warnings }
 }
 
-/** The honest explanation for an empty (or package-less) catalog when a CSS-only imported design system is the reason — see module doc. `undefined` when there is genuinely nothing to explain. */
-function importedOnlyNote(designSystems: readonly DesignSystemRef[]): string | undefined {
+/**
+ * The honest explanation for an empty catalog — see module doc. `undefined`
+ * when there is genuinely nothing to explain.
+ *
+ * There are TWO different reasons a catalog comes back empty, and they call for
+ * opposite next steps, so conflating them is worse than saying nothing:
+ *
+ *   - **No package installed**, only a CSS copy from the "Import design tokens"
+ *     wizard. There is no component to import; build with intrinsic tags
+ *     carrying the system's own classes.
+ *   - **A package IS installed but ships no type declarations.** Real,
+ *     importable components exist (`@alm-design/design-system` exports ~60 of
+ *     them from a minified bundle) — the extractor reads `.d.ts`/`.tsx` and
+ *     that package has none, so it finds zero. Telling the caller "no installed
+ *     component package" here is simply false, and it pushes an agent straight
+ *     back to hand-rolling CSS for components that were importable all along.
+ */
+function emptyCatalogNote(
+  designSystems: readonly DesignSystemRef[],
+  installedPackages: readonly string[],
+): string | undefined {
   const imported = designSystems.filter((d) => d.source === 'imported')
+  const importedNames = imported.map((d) => `"${d.name}" (${d.root})`).join(', ')
+
+  if (installedPackages.length > 0) {
+    const names = installedPackages.map((p) => `"${p}"`).join(', ')
+    return `${names} IS installed, but ships no .d.ts/.tsx type declarations, so no component/prop list can be extracted from it — an empty catalog here does NOT mean the components are missing. Its exports are real and importable: write them as an ordinary import (e.g. import { Button } from "${installedPackages[0]}") in a studio_apply_edits insert. To learn the available names and props, read the package's own docs with studio_read_package_doc (outline:true first), use its own MCP server if the project has approved one, or read .claude/design-system.md for the class/token index.${imported.length > 0 ? ` This project also carries a CSS copy: ${importedNames}.` : ''}`
+  }
+
   if (imported.length === 0) return undefined
-  const names = imported.map((d) => `"${d.name}" (${d.root})`).join(', ')
-  return `This project has no installed component package to read a component API from, but it does have a CSS-only imported design system: ${names}. That copy is plain CSS — no .d.ts/.tsx, so no component/prop list can be extracted from it. Its stylesheets (one .css file per component name under its root) and design tokens are still real and readable — use studio_read_file to read them directly.`
+  return `This project has no installed component package to read a component API from, but it does have a CSS-only imported design system: ${importedNames}. That copy is plain CSS — no .d.ts/.tsx, so no component/prop list can be extracted from it. Its stylesheets (one .css file per component name under its root) and design tokens are still real and readable — use studio_read_file to read them directly. Build with intrinsic HTML tags carrying these classes; do NOT write an import for a package this project does not have.`
 }
 
 // ---------------------------------------------------------------------------
@@ -274,7 +299,7 @@ const listComponentsTool: AiTool = {
     const omittedCount = matched.length - shown.length
     const note = omittedCount > 0
       ? `${omittedCount} more component(s) matched but were not returned — narrow with filter/package, or raise limit (max 200).`
-      : importedOnlyNote(designSystems)
+      : emptyCatalogNote(designSystems, packages)
 
     return {
       ok: true,
@@ -332,7 +357,7 @@ const findComponentTool: AiTool = {
     const omittedCount = matched.length - shown.length
     const note = omittedCount > 0
       ? `${omittedCount} more component(s) matched but were not returned — raise limit (max 200) or narrow name/prop.`
-      : importedOnlyNote(designSystems)
+      : emptyCatalogNote(designSystems, packages)
 
     return {
       ok: true,

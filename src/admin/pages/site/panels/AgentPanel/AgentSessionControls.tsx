@@ -14,11 +14,12 @@
  * that rule forbids. D5 §11.5's three guard rails on Bypass, each owned by
  * exactly one piece of code:
  *
- *   1. **Non-persisting** — `agentSlice.ts` initializes
- *      `agentPermissionMode: 'default'` at store creation (covers reload);
- *      this component resets it to `'default'` on every live Studio-project
- *      switch (covers switching without a remount). Nothing anywhere reads
- *      it from or writes it to storage.
+ *   1. **Non-persisting** — `agentSessionControls.ts` initializes
+ *      `agentPermissionMode` to `'acceptEdits'` at store creation (covers
+ *      reload); this component resets it to that same mode on every live
+ *      Studio-project switch (covers switching without a remount). Nothing
+ *      anywhere reads it from or writes it to storage. The rail is "the initial
+ *      value is never Bypass", which holds for any non-Bypass default.
  *   2. **Visibly indicated while active** — the trigger itself switches to
  *      the `danger` tone (foreground text/icon, never a filled block — the
  *      earlier banner design was rejected for reading like a settings form
@@ -90,8 +91,12 @@ export function AgentSessionControls({ hasCredentials }: AgentSessionControlsPro
   useEffect(() => {
     if (lastProjectDirRef.current !== studioProjectDir) {
       lastProjectDirRef.current = studioProjectDir
-      // D5 §11.5, rail 1 — Bypass never survives a project switch.
-      setAgentPermissionMode('default')
+      // D5 §11.5, rail 1 — Bypass never survives a project switch. Resets to
+      // the same 'acceptEdits' the store initializes with (see
+      // `agentSessionControlsInitialState`), so switching projects lands in the
+      // ordinary working mode rather than silently tightening to per-edit
+      // prompts; what the rail requires is only that Bypass does not carry over.
+      setAgentPermissionMode('acceptEdits')
     }
   }, [studioProjectDir, setAgentPermissionMode])
 

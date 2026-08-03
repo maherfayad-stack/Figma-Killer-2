@@ -67,7 +67,7 @@
  * change) and, far worse, re-toast an already-reported refusal on a 2-second
  * timer for as long as the session lasts.
  */
-import type { StyleRule } from '@core/page-tree'
+import { isGeneratedClass, type StyleRule } from '@core/page-tree'
 import { camelToKebabCssProperty } from '@core/css-codemods'
 import { Type } from '@core/utils/typeboxHelpers'
 
@@ -203,6 +203,27 @@ export function collectStyleRuleEdits(styleRules: Record<string, StyleRule>): St
   const unwritableContexts: string[] = []
 
   for (const [ruleId, rule] of Object.entries(styleRules)) {
+    // A framework-generated utility (`.text-color-metal`, `.bg-color-metal-5`,
+    // the typography/spacing steps) is DERIVED from the token settings in
+    // `.studio/framework.json` and regenerated from them — there is no
+    // hand-authored `.css` file behind it, and there never will be. It has no
+    // `styleRuleSources` entry for exactly that reason, so it used to fall
+    // through to `unmapped` and be reported as "Style not saved to source".
+    //
+    // That report was wrong twice over. Nothing was lost — the class is
+    // regenerated from its token, which IS persisted — and the classes are
+    // `locked: true`, so the user could not have edited them in the first
+    // place. What actually produced the toast was a baseline gap: importing a
+    // design system adds colour tokens, the framework generates a utility
+    // class per token, and those classes appear in `site.styleRules` AFTER
+    // `commitBaseline` last ran. Every property then reads as "changed"
+    // against an empty baseline, and a whole screen's worth of untouched
+    // generated classes gets listed as failed writes on the next save.
+    //
+    // Skipped before the diff rather than filtered out of `unmapped` after it,
+    // so they cannot produce a spurious edit either.
+    if (isGeneratedClass(rule)) continue
+
     const before = baseline.get(ruleId) ?? {}
     const current = effectiveStudioStyles(rule)
     const label = rule.selector || rule.name

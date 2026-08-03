@@ -1,7 +1,7 @@
 {
-  "name": "untitled",
+  "name": "studio-project",
   "private": true,
-  "version": "0.0.0",
+  "type": "module",
   "dependencies": {
     "@alm-design/design-system": "^1.1.2"
   }

@@ -67,6 +67,31 @@ import {
 /** A prop written onto the new element. Only these three shapes have an unambiguous JSX spelling. */
 export type InsertableJsxPropValue = string | number | boolean
 
+/**
+ * One element in a subtree an insert writes. Identical in shape to the insert
+ * itself minus the placement fields, and recursive through `children`.
+ */
+export interface InsertJsxNode {
+  /** A component (`Button`) with an `importSpecifier`, an intrinsic tag (`div`) without one. */
+  name: string
+  props?: Record<string, InsertableJsxPropValue | undefined>
+  importSpecifier?: string
+  children?: InsertJsxChildren
+}
+
+/**
+ * An element's content: literal text, or a list of nested elements.
+ *
+ * Text and elements are deliberately EXCLUSIVE rather than an interleaved
+ * list. A leaf carries a label; a container carries elements. Mixed content
+ * (`<p>Hello <b>you</b></p>`) is the one JSX shape whose text nodes have no
+ * stable identity for the parser to hand back an editable node id for — the
+ * same reason `setJsxText` refuses a mixed-content target
+ * (`JsxTextTargetError`). Allowing it here would let an insert manufacture
+ * source this pipeline cannot then edit.
+ */
+export type InsertJsxChildren = string | InsertJsxNode[]
+
 export interface InsertJsxElementParams {
   file: string
   /** 1-based line/col of the PARENT element the child is added to (its tag-name start). */
@@ -87,15 +112,25 @@ export interface InsertJsxElementParams {
    */
   importSpecifier?: string
   /**
-   * Literal text written as the element's only child — `<span>Sign in</span>`
-   * rather than `<span />`. Omit for an empty element.
+   * The new element's content — literal text (`<span>Sign in</span>`), or a
+   * nested subtree written in the SAME call. Omit for an empty element.
    *
-   * Text only, deliberately: an expression child (`{count}`) would need a
-   * scope this codemod cannot verify, and a nested element is another insert
-   * against the node this one returns. Refused on a void element, which cannot
-   * hold children at all.
+   * ## Why a whole subtree, and not one element per call
+   *
+   * An insert changes the file's line count, which invalidates every node id
+   * decoded before it. Composing a screen one element per call therefore costs
+   * a re-parse per element, and a ~30-node mobile screen becomes ~30 sequential
+   * round trips — measured at over twenty minutes for a single screen, which is
+   * what made "build five screens" not merely slow but impractical.
+   *
+   * Rendering the whole subtree into one splice removes the dependency
+   * entirely: no intermediate node needs an id, because nothing reads one
+   * between the levels. One call, one write, one re-parse.
+   *
+   * An expression child (`{count}`) is still not expressible — it would need a
+   * scope this codemod cannot verify — and text is refused on a void element.
    */
-  children?: string
+  children?: InsertJsxChildren
   /** Optional pre-existing project to reuse. */
   project?: Project
 }
@@ -121,24 +156,10 @@ export function insertJsxElement(params: InsertJsxElementParams): InsertJsxEleme
   const project = params.project ?? createProject()
   const sourceFile = loadSourceFile(project, file)
 
-  // An intrinsic tag is the no-import case, so its name gets no validation
-  // from an import resolving or failing to resolve — it has to be checked
-  // here or not at all. See this module's "COMPONENTS AND INTRINSIC TAGS".
-  if (importSpecifier === undefined && !isSafeIntrinsicTagName(name)) {
-    return refuse(
-      'unsafe-tag',
-      /^[A-Z]/.test(name)
-        ? `"${name}" starts with a capital letter, so JSX reads it as a component, not an HTML tag — pass importSpecifier to say where it is imported from.`
-        : `"${name}" is not a tag Studio will write: it must be a well-formed HTML element name and must not be one that executes script or loads external resources.`,
-    )
-  }
-
-  if (children !== undefined && VOID_HTML_ELEMENTS.has(name.toLowerCase())) {
-    return refuse(
-      'void-element-children',
-      `<${name}> is a void element and cannot hold children, so there is nowhere to write this text.`,
-    )
-  }
+  // Validated for the WHOLE subtree before a single byte is written — a
+  // refusal three levels down must leave the file untouched, not half-built.
+  const invalid = validateSubtree({ name, props: params.props, importSpecifier, children })
+  if (invalid) return invalid
 
   const parentOpening = findJsxElementAtLocation(sourceFile, line, col)
   if (!parentOpening) {
@@ -150,13 +171,15 @@ export function insertJsxElement(params: InsertJsxElementParams): InsertJsxEleme
 
   // Only a component name can collide: an intrinsic tag is a string to JSX,
   // never a reference to a binding, so a local `const div = …` is irrelevant
-  // to `<div />` and refusing on it would be a false positive.
-  if (importSpecifier !== undefined) {
-    const binding = conflictingBinding(sourceFile, name, importSpecifier)
+  // to `<div />` and refusing on it would be a false positive. Checked for
+  // every component in the subtree, not just the root.
+  const imports = collectSubtreeImports({ name, props: params.props, importSpecifier, children })
+  for (const [componentName, specifier] of imports) {
+    const binding = conflictingBinding(sourceFile, componentName, specifier)
     if (binding) {
       return refuse(
         'binding-conflict',
-        `This file already uses the name "${name}" for something else (${binding}), so adding the component here would shadow it. Rename one of them in the file first.`,
+        `This file already uses the name "${componentName}" for something else (${binding}), so adding the component here would shadow it. Rename one of them in the file first.`,
       )
     }
   }
@@ -169,18 +192,18 @@ export function insertJsxElement(params: InsertJsxElementParams): InsertJsxEleme
     )
   }
 
-  const jsx = renderJsxElement(name, params.props ?? {}, children)
-  const placement = resolvePlacement(sourceFile, verbatim, parentOpening, params, jsx)
+  const placement = resolvePlacement(sourceFile, verbatim, parentOpening, params, (indent, unit) =>
+    indentBlock(renderJsxNode({ name, props: params.props, importSpecifier, children }, unit), indent),
+  )
   if (!placement.ok) return placement
 
-  const importEdit =
-    importSpecifier === undefined ? null : resolveImportEdit(sourceFile, verbatim, name, importSpecifier)
+  const importEdits = resolveImportEdits(sourceFile, verbatim, imports)
 
-  // Both splices are computed against the ORIGINAL text, so the later one is
-  // applied first — otherwise the earlier insert shifts the offset the later
-  // one was measured at. Imports live at the top of a file and the JSX below
-  // them, but the codemod does not rely on that: it sorts.
-  const edits = [placement.edit, ...(importEdit ? [importEdit] : [])].sort((a, b) => b.start - a.start)
+  // Every splice is computed against the ORIGINAL text, so the later ones are
+  // applied first — otherwise an earlier insert shifts the offset a later one
+  // was measured at. Imports live at the top of a file and the JSX below them,
+  // but the codemod does not rely on that: it sorts.
+  const edits = [placement.edit, ...importEdits].sort((a, b) => b.start - a.start)
   let text = verbatim
   for (const edit of edits) text = text.slice(0, edit.start) + edit.text + text.slice(edit.end)
 
@@ -223,9 +246,10 @@ function resolvePlacement(
   text: string,
   parentOpening: ReturnType<typeof findJsxElementAtLocation> & object,
   params: InsertJsxElementParams,
-  jsx: string,
+  render: RenderJsx,
 ): PlacementResult {
   const parentIndent = lineIndentAt(text, parentOpening.getStart())
+  const unit = indentUnit(text)
 
   if (Node.isJsxSelfClosingElement(parentOpening)) {
     // `<Foo />` has no children region at all. Reopening it into `<Foo>…</Foo>`
@@ -239,13 +263,13 @@ function resolvePlacement(
     }
     // Drop the whitespace the user had before `/>` — `<Foo />` closes as `<Foo>`.
     const beforeSlash = trimTrailingBlankBack(text, selfCloseStart)
-    const childIndent = parentIndent + indentUnit(text)
+    const childIndent = parentIndent + unit
     return {
       ok: true,
       edit: {
         start: beforeSlash,
         end,
-        text: `>\n${childIndent}${jsx}\n${parentIndent}</${tagName}>`,
+        text: `>\n${childIndent}${render(childIndent, unit)}\n${parentIndent}</${tagName}>`,
       },
     }
   }
@@ -255,21 +279,22 @@ function resolvePlacement(
     return refuse('not-a-container', 'Studio could not resolve this element to something that can hold children.')
   }
 
-  const anchorEdit = resolveAnchorPlacement(sourceFile, parentElement, params, jsx)
+  const anchorEdit = resolveAnchorPlacement(sourceFile, parentElement, params, render, unit)
   if (anchorEdit) return anchorEdit
 
   const children = elementChildren(parentElement)
   const last = children[children.length - 1]
   if (last) {
     const range = resolveJsxChildRange(sourceFile, ...tagLocation(sourceFile, last))
-    if (range.ok) return { ok: true, edit: insertBeside(range.range, 'after', jsx, text) }
+    if (range.ok) return { ok: true, edit: insertBeside(range.range, 'after', render, unit, text) }
   }
 
   // Empty parent: replace the whitespace-only run between the tags.
   const innerStart = parentOpening.getEnd()
   const innerEnd = parentElement.getClosingElement().getStart()
-  const childIndent = parentIndent + indentUnit(text)
+  const childIndent = parentIndent + unit
   const inner = text.slice(innerStart, innerEnd)
+  const jsx = render(childIndent, unit)
   if (inner.trim() !== '') {
     // Children exist but none of them resolved to a plain element (an
     // expression child, a bare text node). Append after them without touching
@@ -287,7 +312,8 @@ function resolveAnchorPlacement(
   sourceFile: SourceFile,
   parentElement: JsxElement,
   params: InsertJsxElementParams,
-  jsx: string,
+  render: RenderJsx,
+  unit: string,
 ): PlacementResult | null {
   const { anchorLine, anchorCol } = params
   if (anchorLine === undefined || anchorCol === undefined) return null
@@ -302,15 +328,16 @@ function resolveAnchorPlacement(
   }
   return {
     ok: true,
-    edit: insertBeside(anchor.range, params.position ?? 'after', jsx, sourceFile.getFullText()),
+    edit: insertBeside(anchor.range, params.position ?? 'after', render, unit, sourceFile.getFullText()),
   }
 }
 
-/** The zero-length edit that puts `jsx` immediately before or after an existing child's owned range. */
+/** The zero-length edit that puts the rendered subtree immediately before or after an existing child's owned range. */
 function insertBeside(
   range: { start: number; end: number; wholeLine: boolean },
   position: 'before' | 'after',
-  jsx: string,
+  render: RenderJsx,
+  unit: string,
   text: string,
 ): TextEdit {
   if (range.wholeLine) {
@@ -319,9 +346,13 @@ function insertBeside(
     // exactly where a hand-written sibling would.
     const indent = lineIndentAt(text, range.start + countLeadingWhitespace(text, range.start))
     const at = position === 'before' ? range.start : range.end
-    return { start: at, end: at, text: `${indent}${jsx}\n` }
+    return { start: at, end: at, text: `${indent}${render(indent, unit)}\n` }
   }
+  // Inline sibling (`<div><a/><b/></div>`). A multi-line subtree would break
+  // the line the user chose to keep on one line, so it is rendered with no
+  // base indent and simply joins the row.
   const at = position === 'before' ? range.start : range.end
+  const jsx = render('', unit)
   return { start: at, end: at, text: position === 'before' ? `${jsx} ` : ` ${jsx}` }
 }
 
@@ -342,16 +373,31 @@ function tagLocation(sourceFile: SourceFile, element: JsxElement | JsxSelfClosin
 }
 
 /**
- * `<Name a="1" b={2} c />` — the JSX spelling of a tag plus its literal props,
- * or `<Name …>text</Name>` when `children` is given.
+ * Renders the subtree at a known base indentation. `indent` is the whitespace
+ * the FIRST line will sit at (the caller writes that prefix itself, so the
+ * returned string's first line is bare); `unit` is one indentation step, copied
+ * from the file.
  */
-function renderJsxElement(
-  name: string,
-  props: Record<string, InsertableJsxPropValue | undefined>,
-  children?: string,
-): string {
+type RenderJsx = (indent: string, unit: string) => string
+
+/** Prefix every line after the first with `indent`, aligning a rendered block under its placement. */
+function indentBlock(block: string, indent: string): string {
+  return indent.length === 0 ? block : block.split('\n').join(`\n${indent}`)
+}
+
+/**
+ * `<Name a="1" b={2} c />` — a tag plus its literal props; `<Name>text</Name>`
+ * for a text child; and a multi-line block for a nested subtree.
+ *
+ * Relative indentation only: nested lines are indented by `unit` per level
+ * from column zero, and `indentBlock` shifts the whole block to wherever
+ * `resolvePlacement` decided it goes. That split is what lets placement and
+ * rendering stay independent — the renderer never needs to know the parent's
+ * column, and placement never needs to know the subtree's shape.
+ */
+function renderJsxNode(node: InsertJsxNode, unit: string): string {
   const parts: string[] = []
-  for (const [key, value] of Object.entries(props)) {
+  for (const [key, value] of Object.entries(node.props ?? {})) {
     if (value === undefined) continue
     if (typeof value === 'boolean') {
       // `<Button disabled />` for true; a false prop is simply not written,
@@ -362,8 +408,68 @@ function renderJsxElement(
     parts.push(typeof value === 'number' ? `${key}={${value}}` : `${key}=${JSON.stringify(value)}`)
   }
   const attrs = parts.length > 0 ? ` ${parts.join(' ')}` : ''
+  const { name, children } = node
+
   if (children === undefined) return `<${name}${attrs} />`
-  return `<${name}${attrs}>${escapeJsxText(children)}</${name}>`
+  if (typeof children === 'string') return `<${name}${attrs}>${escapeJsxText(children)}</${name}>`
+  // An empty array is an explicitly childless element — same output as no
+  // `children` at all, rather than an empty paired tag nothing needs.
+  if (children.length === 0) return `<${name}${attrs} />`
+
+  const inner = children.map((child) => `${unit}${indentBlock(renderJsxNode(child, unit), unit)}`)
+  return [`<${name}${attrs}>`, ...inner, `</${name}>`].join('\n')
+}
+
+/** Depth-first walk of a subtree, root included. */
+function* walkSubtree(node: InsertJsxNode): Generator<InsertJsxNode> {
+  yield node
+  const { children } = node
+  if (children === undefined || typeof children === 'string') return
+  for (const child of children) yield* walkSubtree(child)
+}
+
+/**
+ * Every `(componentName, importSpecifier)` the subtree needs in scope,
+ * deduplicated. Intrinsic tags contribute nothing.
+ */
+function collectSubtreeImports(root: InsertJsxNode): Map<string, string> {
+  const required = new Map<string, string>()
+  for (const node of walkSubtree(root)) {
+    if (node.importSpecifier !== undefined) required.set(node.name, node.importSpecifier)
+  }
+  return required
+}
+
+/**
+ * The first refusal anywhere in the subtree, or `undefined` when all of it is
+ * writable. Runs before any byte is written so a bad grandchild cannot leave a
+ * half-built element behind.
+ */
+function validateSubtree(root: InsertJsxNode): { ok: false; refusal: InsertJsxRefusal } | undefined {
+  for (const node of walkSubtree(root)) {
+    const { name, importSpecifier, children } = node
+
+    // An intrinsic tag is the no-import case, so its name gets no validation
+    // from an import resolving or failing to resolve — it has to be checked
+    // here or not at all. See this module's "COMPONENTS AND INTRINSIC TAGS".
+    if (importSpecifier === undefined && !isSafeIntrinsicTagName(name)) {
+      return refuse(
+        'unsafe-tag',
+        /^[A-Z]/.test(name)
+          ? `"${name}" starts with a capital letter, so JSX reads it as a component, not an HTML tag — pass importSpecifier to say where it is imported from.`
+          : `"${name}" is not a tag Studio will write: it must be a well-formed HTML element name and must not be one that executes script or loads external resources.`,
+      )
+    }
+
+    const hasContent = children !== undefined && (typeof children === 'string' || children.length > 0)
+    if (hasContent && VOID_HTML_ELEMENTS.has(name.toLowerCase())) {
+      return refuse(
+        'void-element-children',
+        `<${name}> is a void element and cannot hold children, so there is nowhere to write this content.`,
+      )
+    }
+  }
+  return undefined
 }
 
 /**
@@ -387,51 +493,77 @@ function escapeJsxText(text: string): string {
 }
 
 /**
- * The edit that puts `name` in scope from `specifier`, or `null` when it
- * already is.
+ * The edits that put every `(name → specifier)` in `required` in scope.
  *
- * Three cases, cheapest first: the import declaration exists and already names
- * the binding (nothing to do); it exists and gains one more named import; it
- * does not exist and a whole line is added after the last import. The quote
- * character is copied from an existing import so a file written with double
- * quotes does not acquire a single-quoted line.
+ * Per specifier, three cases, cheapest first: the import declaration exists and
+ * already names the binding (nothing to do); it exists and gains one more named
+ * import; it does not exist and a whole line is added after the last import.
+ * The quote character is copied from an existing import so a file written with
+ * double quotes does not acquire a single-quoted line.
+ *
+ * Every returned edit is measured against the ORIGINAL text and the caller
+ * applies them in descending-offset order. That is why all the brand-new
+ * declarations are emitted as ONE edit at a single offset rather than one edit
+ * each: several edits sharing an identical `start` would be applied in an
+ * unspecified relative order, and — being zero-length inserts at the same point
+ * — could interleave. Grouping them keeps the written order deterministic
+ * (specifier insertion order, which is the subtree's own depth-first order).
  */
-function resolveImportEdit(
+function resolveImportEdits(
   sourceFile: SourceFile,
   text: string,
-  name: string,
-  specifier: string,
-): TextEdit | null {
-  const declarations = sourceFile.getImportDeclarations()
-  const existing = declarations.find((d) => d.getModuleSpecifierValue() === specifier)
+  required: ReadonlyMap<string, string>,
+): TextEdit[] {
+  if (required.size === 0) return []
 
-  if (existing) {
-    const named = existing.getNamedImports()
-    if (named.some((n) => (n.getAliasNode() ?? n.getNameNode()).getText() === name)) return null
-    const lastNamed = named[named.length - 1]
-    if (lastNamed) {
-      const at = lastNamed.getEnd()
-      return { start: at, end: at, text: `, ${name}` }
+  const declarations = sourceFile.getImportDeclarations()
+  const quote = importQuoteChar(declarations)
+  const edits: TextEdit[] = []
+  /** Specifier → the names it must newly declare, in first-seen order. */
+  const newDeclarations = new Map<string, string[]>()
+
+  for (const [name, specifier] of required) {
+    const existing = declarations.find((d) => d.getModuleSpecifierValue() === specifier)
+    if (existing) {
+      const named = existing.getNamedImports()
+      if (named.some((n) => (n.getAliasNode() ?? n.getNameNode()).getText() === name)) continue
+      const lastNamed = named[named.length - 1]
+      if (lastNamed) {
+        const at = lastNamed.getEnd()
+        edits.push({ start: at, end: at, text: `, ${name}` })
+        continue
+      }
+      // A default- or namespace-only import: `import DS from 'x'` gains `, { name }`.
+      const defaultImport = existing.getDefaultImport() ?? existing.getNamespaceImport()
+      if (defaultImport) {
+        const at = defaultImport.getEnd()
+        edits.push({ start: at, end: at, text: `, { ${name} }` })
+        continue
+      }
+      // A bare side-effect import (`import 'x'`) — leave it alone and add a
+      // second, explicit declaration below rather than rewriting the user's line.
     }
-    // A default- or namespace-only import: `import DS from 'x'` gains `, { name }`.
-    const defaultImport = existing.getDefaultImport() ?? existing.getNamespaceImport()
-    if (defaultImport) {
-      const at = defaultImport.getEnd()
-      return { start: at, end: at, text: `, { ${name} }` }
-    }
-    // A bare side-effect import (`import 'x'`) — leave it alone and add a
-    // second, explicit declaration below rather than rewriting the user's line.
+    const names = newDeclarations.get(specifier)
+    if (names) names.push(name)
+    else newDeclarations.set(specifier, [name])
   }
 
-  const quote = importQuoteChar(declarations)
-  const line = `import { ${name} } from ${quote}${specifier}${quote}\n`
-  const lastDeclaration = declarations[declarations.length - 1]
-  if (!lastDeclaration) return { start: 0, end: 0, text: line }
+  if (newDeclarations.size > 0) {
+    const lines = [...newDeclarations]
+      .map(([specifier, names]) => `import { ${names.join(', ')} } from ${quote}${specifier}${quote}\n`)
+      .join('')
+    const lastDeclaration = declarations[declarations.length - 1]
+    if (!lastDeclaration) {
+      edits.push({ start: 0, end: 0, text: lines })
+    } else {
+      // Start of the line after the last import, so the new lines join the block.
+      const newlineAfter = text.indexOf('\n', lastDeclaration.getEnd())
+      const at = newlineAfter === -1 ? text.length : newlineAfter + 1
+      edits.push({ start: at, end: at, text: lines })
+    }
+  }
 
-  // Start of the line after the last import, so the new line joins the block.
-  const newlineAfter = text.indexOf('\n', lastDeclaration.getEnd())
-  const at = newlineAfter === -1 ? text.length : newlineAfter + 1
-  return { start: at, end: at, text: line }
+  return edits
 }
 
 /** The quote character the file's existing imports use — `'` when there are none to copy. */

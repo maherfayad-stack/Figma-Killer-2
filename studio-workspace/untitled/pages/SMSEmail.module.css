@@ -1,167 +1,28 @@
-@import "../styles/imported/alm-design-design-system-1-1-3/src/tokens/index.css";
-
-/* SMSEmail mirrors SMS 1:1 (same OTP layout) — only the channel row differs (email icon + address). */
-
+/* Fluid by default: fills the frame it is placed in and caps for
+   readability on wide viewports. Never a fixed width — a screen pinned to one
+   device size stops being a design and becomes a screenshot. */
 .page {
   box-sizing: border-box;
   display: flex;
-  justify-content: center;
-  width: 100%;
-  min-height: 100vh;
-  background: var(--background-base-subtle);
-  font-family: var(--font-body);
-  color: var(--text-base-default);
-}
-
-.frame {
-  position: relative;
-  box-sizing: border-box;
-  display: flex;
   flex-direction: column;
+  align-items: center;
+  gap: 1.5rem;
   width: 100%;
-  max-width: 393px;
-  min-height: 100vh;
-  background: var(--background-base-default);
-  border-radius: var(--rounded-popover) var(--rounded-popover) 0 0;
-  overflow: hidden;
+  max-width: 60rem;
+  margin-inline: auto;
+  padding: clamp(1.5rem, 5vw, 4rem);
 }
 
-.statusBar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  height: 54px;
-  padding-inline: var(--space-lg);
-  color: var(--text-base-default);
-  font-size: 17px;
-  font-weight: 600;
-  flex-shrink: 0;
-}
-
-.statusTime { font-variant-numeric: tabular-nums; min-width: 50px; }
-
-.statusIsland {
-  width: 122px;
-  height: 32px;
-  background: var(--color-metal-static);
-  border-radius: var(--rounded-full);
-}
-
-.statusLevels {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-xs);
-  min-width: 50px;
-  justify-content: flex-end;
-}
-
-.toolbar {
-  display: flex;
-  align-items: center;
-  padding-block: var(--space);
-  padding-inline: var(--space);
-  flex-shrink: 0;
-}
-
-.backBtn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 40px;
-  height: 40px;
-  border: none;
-  border-radius: var(--rounded-full);
-  background: var(--overlay-surface);
-  color: var(--text-base-default);
-  cursor: pointer;
-  padding: 0;
-}
-.backBtn:hover { background: var(--background-base-hover); }
-.backBtn:active { background: var(--background-base-pressed); }
-
-[dir="rtl"] .backBtn svg { transform: scaleX(-1); }
-
-.body {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-lg);
-  padding-inline: var(--space);
-  padding-block-end: var(--space);
-  flex: 1;
-}
-
-.heading {
+.title {
   margin: 0;
-  font-family: var(--type-headline-family);
-  font-size: var(--type-headline-size);
-  font-weight: var(--type-headline-weight);
-  line-height: var(--type-headline-lh);
-  letter-spacing: var(--type-headline-ls);
-  color: var(--text-base-default);
+  font-size: clamp(1.5rem, 4vw, 2rem);
+  font-weight: 700;
 }
 
-.instruction {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-sm);
+/* currentColor rather than a literal: inherits whatever the project already
+   uses, so the starter never introduces an off-palette hex. */
+.subtitle {
+  margin: 0;
+  color: currentColor;
+  opacity: 0.65;
 }
-
-.instructionLead {
-  font-family: var(--type-body-regular-family);
-  font-size: var(--type-body-size);
-  font-weight: var(--type-body-regular-weight);
-  line-height: var(--type-body-lh);
-  color: var(--text-base-default);
-}
-
-.channelRow {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-sm);
-  flex-wrap: wrap;
-  font-family: var(--type-body-regular-family);
-  font-size: var(--type-body-size);
-  line-height: var(--type-body-lh);
-  color: var(--text-base-default);
-}
-
-.channelIcon { flex-shrink: 0; color: var(--icon-base-default); }
-.channelStrong { font-weight: var(--type-body-bold-weight); }
-.channelJoiner { font-weight: var(--type-body-regular-weight); color: var(--text-base-subtext); }
-
-.otpRow {
-  display: grid;
-  grid-template-columns: repeat(6, 1fr);
-  gap: var(--space-sm);
-}
-
-.otpBox {
-  box-sizing: border-box;
-  width: 100%;
-  aspect-ratio: 1 / 1;
-  border-radius: var(--rounded-sm);
-  border: 1px solid var(--border-base-default);
-  background: var(--background-base-default);
-  font-family: var(--type-title-family);
-  font-size: var(--type-title-size);
-  font-weight: var(--type-title-weight);
-  line-height: 1;
-  text-align: center;
-  color: var(--text-base-default);
-  outline: none;
-  padding: 0;
-}
-
-.otpBox:focus {
-  border-color: var(--border-base-focused);
-  box-shadow: 0 0 0 2px var(--border-secondary-default);
-}
-
-.resend {
-  font-family: var(--type-caption-regular-family);
-  font-size: var(--type-caption-size);
-  line-height: var(--type-caption-lh);
-  color: var(--text-base-default);
-}
-
-.resendStrong { font-weight: var(--type-caption-semibold-weight); }
