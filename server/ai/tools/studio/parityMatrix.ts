@@ -65,7 +65,7 @@ export const STUDIO_CANVAS_PARITY_MATRIX: readonly ParityRow[] = [
   { action: 'List pages / board frames', status: { kind: 'tool', toolNames: ['studio_list_pages'] } },
   { action: 'See what a screen actually looks like', status: { kind: 'tool', toolNames: ['studio_screenshot'] } },
   { action: 'Render a reference screenshot', status: { kind: 'tool', toolNames: ['studio_render_reference'] } },
-  { action: 'Diff a frame against a reference', status: { kind: 'tool', toolNames: ['studio_diff_frames'] } },
+  { action: 'Measure a screen against the design it must match', status: { kind: 'tool', toolNames: ['studio_compare'] } },
   {
     action: 'Upload a new asset (image) into the project',
     status: { kind: 'tool', toolNames: ['studio_upload_asset'] },

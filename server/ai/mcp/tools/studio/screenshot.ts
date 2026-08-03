@@ -44,6 +44,7 @@ import { loadStudioPages } from '../../../../handlers/studioPageLoad'
 import { getEditorBridgeForUser } from '../../editorBridge'
 import { awaitStudioLiveReload } from './liveReloadPush'
 import { resolveToolProjectDir } from './resolveToolProjectDir'
+import { resolveRequestedPages } from './pageNameMatch'
 
 /** The browser capture path's own batch ceiling (`StudioExportFramesInputSchema`). */
 const MAX_FRAMES = 20
@@ -83,50 +84,6 @@ const ScreenshotInputSchema = Type.Object(
   { additionalProperties: false },
 )
 
-/**
- * Reduce a caller-supplied name to the form a page id already has.
- *
- * A page id is the KEBAB-cased file stem (`pageIdFromRelPath`: `AddMobile.tsx`
- * -> `add-mobile`), so a naive lowercase would match `Checkout` and silently
- * fail on every multi-word screen — precisely the names an agent is most
- * likely to have just written. Applying the same derivation to both sides
- * makes `"AddMobile"`, `"AddMobile.tsx"`, `"pages/AddMobile.tsx"` and the raw
- * id `add-mobile` all reduce to `add-mobile`.
- *
- * An exact page-id match short-circuits ahead of this in the caller: an id
- * read out of a previous tool result should never be re-interpreted as a name.
- */
-function pageKey(value: string): string {
-  const stem = (value.split(/[\\/]/).pop() ?? value).replace(/\.[a-z]+$/i, '')
-  return stem
-    .replace(/([a-z0-9])([A-Z])/g, '$1-$2')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-}
-
-interface PageRef {
-  readonly id: string
-  readonly title: string
-}
-
-function resolveRequestedPages(pages: readonly PageRef[], requested: readonly string[] | undefined): { ids: string[]; unmatched: string[] } {
-  if (!requested || requested.length === 0) return { ids: pages.slice(0, MAX_FRAMES).map((p) => p.id), unmatched: [] }
-  const ids: string[] = []
-  const unmatched: string[] = []
-  for (const name of requested) {
-    const exact = pages.find((p) => p.id === name)
-    const key = pageKey(name)
-    const match = exact ?? pages.find((p) => pageKey(p.id) === key || pageKey(p.title) === key)
-    if (match) {
-      if (!ids.includes(match.id)) ids.push(match.id)
-    } else {
-      unmatched.push(name)
-    }
-  }
-  return { ids, unmatched }
-}
-
 export const studioScreenshotTool: AiTool = {
   name: 'studio_screenshot',
   scope: 'shared',
@@ -157,7 +114,7 @@ export const studioScreenshotTool: AiTool = {
     const placed = syncBoardFramesFromDisk(dir)
 
     const { pages } = await loadStudioPages(dir)
-    const { ids, unmatched } = resolveRequestedPages(pages, requested)
+    const { ids, unmatched } = resolveRequestedPages(pages, requested, MAX_FRAMES)
     if (ids.length === 0) {
       const known = pages.map((p) => p.title).join(', ') || '(no pages found)'
       return {

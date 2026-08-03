@@ -16,9 +16,11 @@ import { studioComponentCatalogMcpTools } from './componentCatalogTools'
 import { studioFigmaBindingMcpTools } from './figmaBindingTools'
 import { studioRemoteAssetMcpTools } from './remoteAssetTools'
 import { studioScreenshotTool } from './screenshot'
+import { studioCompareMcpTools } from './compare'
 
 export const studioMcpTools: AiTool[] = [
   studioScreenshotTool,
+  ...studioCompareMcpTools,
   ...studioProjectMcpTools,
   ...studioEditMcpTools,
   studioFidelityReportTool,

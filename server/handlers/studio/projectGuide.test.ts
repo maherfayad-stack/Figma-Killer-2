@@ -46,9 +46,25 @@ describe('generateStudioProjectGuide', () => {
     const guide = read(dir, 'CLAUDE.md')
     expect(guide).toContain('pages/')
     expect(guide).toContain('.tsx')
-    // The three behaviours the guide exists to change.
+    // The behaviours the guide exists to change.
     expect(guide).toContain('studio_screenshot')
     expect(guide).toContain('Do not ask before building')
+  })
+
+  it('makes a measured pass the definition of done when a design must be matched', () => {
+    // Looking is not enough: a screen with overlapping text and speck-sized
+    // icons was screenshotted, looked at, and reported as done.
+    generateStudioProjectGuide(dir)
+    const guide = read(dir, 'CLAUDE.md')
+    expect(guide).toContain('studio_compare')
+    expect(guide).toContain('`pass: true`')
+  })
+
+  it('tells the agent to name an asset it cannot obtain rather than draw one', () => {
+    generateStudioProjectGuide(dir)
+    const guide = read(dir, 'CLAUDE.md')
+    expect(guide).toContain('cannot invent an icon')
+    expect(guide).toContain('placeholder')
   })
 
   it('generates no subagent definitions — the roster is gone, not renamed', () => {

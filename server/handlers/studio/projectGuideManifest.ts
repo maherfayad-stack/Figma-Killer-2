@@ -81,7 +81,7 @@ export function sha256(text: string): string {
  * no export and no path — an instruction that cannot be followed, so it
  * hand-drew SVG path data for icons the package already exports by name.
  */
-export const GUIDE_DEFINITION_VERSION = 5
+export const GUIDE_DEFINITION_VERSION = 6
 
 export interface ManifestFileEntry {
   /** Content hash of what Studio itself last wrote (or last observed) here. */

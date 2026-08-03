@@ -14,23 +14,33 @@
  * other would make the list's own initialisation order depend on a module
  * cycle.
  *
- * What is deliberately absent: everything that existed only because the agent
- * had no filesystem. `studio_read_file`, `studio_list_files`,
- * `studio_create_page`, `studio_apply_edits`, `studio_codemod`,
- * `studio_find_nodes`, `studio_get_node_source` are all strictly slower than
- * the native `Read`/`Write`/`Edit`/`Glob`/`Grep` the driver now grants
- * (`claudeCliToolSurface.ts`). They remain in the MCP registry for external
- * clients that genuinely cannot touch the filesystem.
+ * What is deliberately absent, in two groups.
+ *
+ * Everything that existed only because the agent had no filesystem:
+ * `studio_read_file`, `studio_list_files`, `studio_create_page`,
+ * `studio_apply_edits`, `studio_codemod`, `studio_find_nodes`,
+ * `studio_get_node_source` are all strictly slower than the native
+ * `Read`/`Write`/`Edit`/`Glob`/`Grep` the driver now grants
+ * (`claudeCliToolSurface.ts`).
+ *
+ * And the two measurement tools `studio_compare` replaced.
+ * `studio_diff_frames` takes its baseline as a base64 STRING; a capture
+ * reaches this agent as an MCP image block, which it cannot transcribe back
+ * into base64 — offering it a tool it can never successfully call just buys
+ * failed turns. `studio_recommend_export_dpr` only ever existed to feed that
+ * workflow, and `studio_compare` does the same computation internally.
+ *
+ * Both groups remain in the MCP registry for external clients, which hold
+ * their own bytes and can genuinely use them.
  */
 export const STUDIO_AGENT_TOOL_NAMES: readonly string[] = [
-  // See the canvas.
+  // See the canvas, and measure it.
   'studio_screenshot',
-  'studio_diff_frames',
+  'studio_compare',
   'studio_render_reference',
   'studio_register_design_reference',
   'studio_list_design_references',
   'studio_read_design_reference',
-  'studio_recommend_export_dpr',
   // Board geometry and per-frame axes — state that lives in `.studio/`, not
   // in the source files the agent can write.
   'studio_set_frames',
