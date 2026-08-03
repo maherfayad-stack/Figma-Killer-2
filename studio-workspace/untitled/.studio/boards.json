@@ -40,6 +40,12 @@
           "pageId": "sms-phone",
           "x": 1104,
           "y": 1760
+        },
+        {
+          "id": "6d898444-760c-4f51-944f-0e56be66f2be",
+          "pageId": "icons",
+          "x": 0,
+          "y": 2640
         }
       ],
       "notes": [],

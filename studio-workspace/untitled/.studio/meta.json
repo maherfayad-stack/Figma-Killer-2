@@ -47,5 +47,9 @@
         "score": 1
       }
     ]
+  },
+  "previewAxes": {
+    "direction": "ltr",
+    "colorScheme": "light"
   }
 }
