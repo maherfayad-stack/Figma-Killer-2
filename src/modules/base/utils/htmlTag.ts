@@ -13,13 +13,14 @@
  * preview component share the same resolver so the canvas matches the
  * published HTML exactly.
  *
- * The custom name pattern matches the HTML5 element-name spec but is
- * intentionally narrowed to a safe subset: starts with an ASCII letter,
- * followed by letters, digits, or hyphens — that covers every standard tag
- * plus custom elements (`x-foo`, `my-widget`) without permitting characters
- * that could break out of the attribute / tag context.
+ * The tag FACTS this resolver enforces — the well-formed-name pattern and the
+ * never-safe-to-emit set — live in `@core/utils/htmlTags`, because Studio's
+ * `insertJsxElement` codemod has to enforce exactly the same two rules when it
+ * writes an element into a user's source. See that module's doc for why the
+ * shared leaf sits in core rather than here.
  */
 
+import { HTML_TAG_NAME_PATTERN, UNSAFE_HTML_TAGS } from '@core/utils/htmlTags'
 import type { PropertyControl } from '@core/module-engine'
 
 const BUILTIN_HTML_TAGS = [
@@ -38,41 +39,7 @@ const BUILTIN_HTML_TAGS = [
 /** Sentinel select-value indicating "use the user-typed `customTag` instead". */
 export const CUSTOM_HTML_TAG_VALUE = 'custom'
 
-/**
- * The complete set of HTML void elements (lowercase) — they have no closing
- * tag and no children. Shared by:
- *   - the publisher render path (`base.container`), where emitting
- *     `<br></br>` is a bug: the parser reinterprets the end tag as a second
- *     start tag, doubling the element.
- *   - the editor preview (`ContainerEditor`), where React throws if a void
- *     element is given children (or the empty-container placeholder).
- *
- * One list so canvas and published HTML can never disagree about which tags
- * are self-closing.
- */
-export const VOID_HTML_ELEMENTS: ReadonlySet<string> = new Set([
-  'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input',
-  'link', 'meta', 'param', 'source', 'track', 'wbr',
-])
-
 const BUILTIN_HTML_TAG_SET: ReadonlySet<string> = new Set(BUILTIN_HTML_TAGS)
-
-/** HTML element names: ASCII letter, then letters/digits/hyphens. 1–32 chars. */
-const CUSTOM_TAG_PATTERN = /^[a-z][a-z0-9-]{0,31}$/i
-
-/**
- * Elements that must never be produced from the free-form custom-tag escape
- * hatch — they execute script, load external/plugin resources, or hijack the
- * document's base URL, and would run in the published page AND the admin editor
- * canvas (which renders these trusted modules directly, same-origin as
- * `/admin`). `base.video` emits its own trusted `<iframe>` via its module
- * `htmlTag`, not this resolver, so blocking `iframe` here does not affect video
- * embeds — it only stops a container/loop/outlet author typing a dangerous tag.
- */
-const FORBIDDEN_CUSTOM_HTML_TAGS: ReadonlySet<string> = new Set([
-  'script', 'iframe', 'frame', 'frameset', 'object', 'embed',
-  'applet', 'base', 'link', 'meta', 'style',
-])
 
 /**
  * Resolve the tag a module should render given its `tag` + `customTag` props.
@@ -87,9 +54,9 @@ export function resolveHtmlTag(tag: unknown, customTag: unknown): string {
   if (tag === CUSTOM_HTML_TAG_VALUE) {
     if (typeof customTag !== 'string') return 'div'
     const trimmed = customTag.trim()
-    if (!CUSTOM_TAG_PATTERN.test(trimmed)) return 'div'
+    if (!HTML_TAG_NAME_PATTERN.test(trimmed)) return 'div'
     const lower = trimmed.toLowerCase()
-    if (FORBIDDEN_CUSTOM_HTML_TAGS.has(lower)) return 'div'
+    if (UNSAFE_HTML_TAGS.has(lower)) return 'div'
     return lower
   }
   if (BUILTIN_HTML_TAG_SET.has(tag)) return tag.toLowerCase()

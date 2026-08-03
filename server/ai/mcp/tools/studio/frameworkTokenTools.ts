@@ -23,8 +23,8 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { Type } from '@core/utils/typeboxHelpers'
 import { parseJsonWithFallback } from '@core/utils/jsonValidate'
-import type { AiTool } from '../../../runtime/types'
-import { resolveProjectDir } from '../../../../handlers/studioProjects'
+import type { AiTool, ToolContext } from '../../../runtime/types'
+import { resolveToolProjectDir } from './resolveToolProjectDir'
 
 /** Bounded so a pathological project cannot blow the turn; well above any real palette. */
 const MAX_RETURNED = 400
@@ -63,7 +63,7 @@ const FrameworkSchema = Type.Object({
 const TokensInputSchema = Type.Object(
   {
     dir: Type.Optional(
-      Type.String({ description: 'Absolute project directory. Defaults to the first project under studio-workspace/.' }),
+      Type.String({ description: 'Absolute project directory. Defaults to the project currently open in Studio — omit it unless you deliberately mean a DIFFERENT project than the one this conversation is about.' }),
     ),
     filter: Type.Optional(
       Type.String({ description: 'Case-insensitive substring match on the token name, e.g. "brand" or "text".' }),
@@ -79,9 +79,9 @@ const tokensTool: AiTool = {
   description:
     'List this project\'s design tokens — colour names with their light/dark values, plus the typography and spacing scales. USE THIS INSTEAD OF READING .studio/framework.json, which is a generated store around 100 KB and always fails the read-size limit. Pass filter to narrow by name ("brand", "text", "surface"). Returns names and values only, never the editor configuration around them.',
   inputSchema: TokensInputSchema,
-  handler: async (input) => {
+  handler: async (input, ctx: ToolContext) => {
     const { dir: dirInput, filter } = input as { dir?: string; filter?: string }
-    const dir = resolveProjectDir(dirInput)
+    const dir = resolveToolProjectDir(dirInput, ctx)
     const file = join(dir, '.studio', 'framework.json')
     if (!existsSync(file)) {
       return { ok: true, dir, colors: [], typography: [], spacing: [], note: 'This project has no design tokens configured yet.' }

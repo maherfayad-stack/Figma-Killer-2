@@ -53,4 +53,44 @@ describe('normaliseToolOutput', () => {
     expect(normaliseToolOutput(null)).toEqual({ ok: true, data: null })
     expect(normaliseToolOutput(undefined)).toEqual({ ok: true, data: undefined })
   })
+
+  /**
+   * The regression this pins. `AiToolOutputSchema` is an OPEN TypeBox object,
+   * so a raw payload that happens to carry its own `ok` — the shape most
+   * Studio tools return — validated as a well-formed envelope and passed
+   * through with `data` left undefined.
+   *
+   * Invisible on the chat path, which forwards the whole object to the
+   * provider. Fatal on the MCP path, which reads `output.data` and falls back
+   * to `{ ok: true }`: `studio_read_file`, `studio_list_tokens`,
+   * `studio_list_components` and `studio_read_package_doc` all answered an
+   * external MCP client with a bare `{"ok":true}` carrying no payload at all,
+   * and no error to explain the emptiness.
+   */
+  it('wraps a raw payload that happens to carry its own ok field, so MCP does not lose it', () => {
+    const raw = { ok: true, dir: '/w/proj', path: '.claude/design-system.md', content: '# tokens' }
+    const out = normaliseToolOutput(raw)
+
+    expect(out.data).toEqual(raw)
+    // What the MCP layer actually sends: previously `{ ok: true }` and nothing else.
+    expect(out.data).not.toBeUndefined()
+  })
+
+  it('treats a pure envelope as an envelope — no double wrapping', () => {
+    expect(normaliseToolOutput({ ok: true, data: { a: 1 } })).toEqual({ ok: true, data: { a: 1 } })
+    expect(normaliseToolOutput({ ok: true })).toEqual({ ok: true })
+    expect(normaliseToolOutput({ ok: false, error: 'nope' })).toEqual({ ok: false, error: 'nope' })
+  })
+
+  it('NEVER re-wraps a failure carrying an extra field — that would turn an error into a success', () => {
+    // The hazard the `ok === false` clause exists for: wrapping this would
+    // produce `{ ok: true, data: { ok: false, … } }`, and every caller that
+    // checks `output.ok` would read a failed tool call as having succeeded —
+    // strictly worse than the dropped payload being fixed here.
+    const out = normaliseToolOutput({ ok: false, error: 'refused', hint: 'try again' })
+
+    expect(out.ok).toBe(false)
+    expect(out.error).toBe('refused')
+  })
 })
+

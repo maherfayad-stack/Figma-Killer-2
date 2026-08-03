@@ -15,6 +15,14 @@ let dir: string
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'studio-roster-figma-'))
+  // Studio ships a loopback `figma` built-in into EVERY project, approved
+  // without a human action (`BUILT_IN_MCP_SERVERS`). Almost every test below
+  // is about DECLARED or USER-REGISTERED servers and what approval means for
+  // them, so they opt out of the default first — otherwise "no Figma server
+  // is approved" is a state that can no longer be reached, and each of these
+  // would silently be asserting against the built-in instead of its own
+  // fixture. The default's own behaviour is covered by its dedicated test.
+  writeMeta({})
 })
 
 afterEach(() => {
@@ -25,13 +33,26 @@ function writeMcpJson(entries: Record<string, unknown>): void {
   writeFileSync(join(dir, '.mcp.json'), JSON.stringify({ mcpServers: entries }))
 }
 
+/** Writes `.studio/meta.json`, always opting out of the built-in unless a test explicitly re-enables it. */
 function writeMeta(meta: Record<string, unknown>): void {
   mkdirSync(join(dir, '.studio'), { recursive: true })
-  writeFileSync(join(dir, '.studio', 'meta.json'), JSON.stringify(meta))
+  writeFileSync(
+    join(dir, '.studio', 'meta.json'),
+    JSON.stringify({ disabledBuiltInMcpServers: ['figma'], ...meta }),
+  )
 }
 
 describe('findApprovedFigmaServer', () => {
-  it('finds nothing when there is no MCP config at all', () => {
+  it('finds Studio\'s built-in loopback Figma server with no project config at all', () => {
+    // The default: every project can reach the Figma desktop app's Dev Mode
+    // server without registering or approving anything. Written against a
+    // pristine dir rather than the opted-out fixture above.
+    const pristine = mkdtempSync(join(tmpdir(), 'studio-roster-figma-default-'))
+    expect(findApprovedFigmaServer(pristine)).toEqual({ name: 'figma' })
+    rmSync(pristine, { recursive: true, force: true })
+  })
+
+  it('finds nothing when there is no MCP config at all and the built-in is switched off', () => {
     expect(findApprovedFigmaServer(dir)).toBeUndefined()
   })
 

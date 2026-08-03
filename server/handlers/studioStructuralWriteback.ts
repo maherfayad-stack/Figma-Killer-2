@@ -71,6 +71,13 @@ const DeleteEditSchema = Type.Object({
  * `props` carries only the three value shapes with an unambiguous JSX spelling.
  * Anything richer (a handler, a node slot, an object) is dropped by the client
  * before it gets here rather than guessed at.
+ *
+ * `importSpecifier` is OPTIONAL, and its presence is what picks between the
+ * two things this edit can write: with it, `name` is a component and the
+ * import is written alongside; without it, `name` is an intrinsic HTML tag
+ * (`div`, `span`, `button`) that needs no import. See `insertJsxElement`'s
+ * "COMPONENTS AND INTRINSIC TAGS" — an agent composing a screen needs the
+ * layout elements, not only the design-system components that sit inside them.
  */
 const InsertEditSchema = Type.Object({
   kind: Type.Literal('insert'),
@@ -78,7 +85,8 @@ const InsertEditSchema = Type.Object({
   anchorNodeId: Type.Optional(Type.String()),
   position: Type.Optional(Type.Union([Type.Literal('before'), Type.Literal('after')])),
   name: Type.String(),
-  importSpecifier: Type.String(),
+  importSpecifier: Type.Optional(Type.String()),
+  children: Type.Optional(Type.String()),
   props: Type.Optional(
     Type.Record(Type.String(), Type.Union([Type.String(), Type.Number(), Type.Boolean()])),
   ),
@@ -148,12 +156,18 @@ export function applyStructuralEdit(
       return result.ok ? { ok: true } : { ok: false, ...result.refusal }
     }
     case 'insert': {
+      // `importSpecifier`/`children` are spread conditionally rather than
+      // passed as `undefined`: the codemod reads `importSpecifier === undefined`
+      // as "write an intrinsic tag" and `children === undefined` as "write an
+      // empty element", so an explicitly-undefined key must mean the same
+      // thing as an absent one.
       const result = insertJsxElement({
         ...loc,
         ...(anchor ? { anchorLine: anchor.line, anchorCol: anchor.col, position: edit.position } : {}),
         name: edit.name,
         props: edit.props,
-        importSpecifier: edit.importSpecifier,
+        ...(edit.importSpecifier === undefined ? {} : { importSpecifier: edit.importSpecifier }),
+        ...(edit.children === undefined ? {} : { children: edit.children }),
       })
       return result.ok ? { ok: true } : { ok: false, ...result.refusal }
     }

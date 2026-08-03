@@ -241,12 +241,22 @@ describe('streamClaudeCli — happy path', () => {
     // would leak the connector token to any local process.
     expect(mcpConfigPath).not.toContain('Bearer')
     expect(mcpConfigPath).not.toContain('fake-session-token')
+    // A default project gets TWO entries: Studio's own, and the loopback
+    // `figma` built-in Studio now ships everywhere (`BUILT_IN_MCP_SERVERS`).
+    // Asserted here rather than opted out of, because "what a plain turn
+    // actually sends" is exactly what this happy-path test is for — and the
+    // built-in carrying no headers is the property that lets it be a default
+    // at all.
     expect(mcpConfigFileContent).toEqual({
       mcpServers: {
         studio: {
           type: 'http',
           url: 'http://127.0.0.1:3001/_studio/mcp',
           headers: { Authorization: 'Bearer fake-session-token' },
+        },
+        figma: {
+          type: 'http',
+          url: 'http://127.0.0.1:3845/mcp',
         },
       },
     })
@@ -1266,12 +1276,21 @@ describe('streamClaudeCli — in-chat permission prompts', () => {
 })
 
 describe('streamClaudeCli — project-declared MCP servers', () => {
+  // Always writes meta, even with nothing approved: Studio ships an
+  // auto-approved loopback `figma` built-in into every project, and these
+  // tests are about whether a PROJECT-DECLARED server earns consent. Without
+  // the opt-out, `figma` rides along in every assertion and "only studio is
+  // merged" becomes unreachable.
   function writeProjectMcp(config: unknown, approved?: string[]): void {
     writeFileSync(join(projectDir, '.mcp.json'), JSON.stringify(config))
-    if (approved) {
-      mkdirSync(join(projectDir, '.studio'), { recursive: true })
-      writeFileSync(join(projectDir, '.studio', 'meta.json'), JSON.stringify({ approvedMcpServers: approved }))
-    }
+    mkdirSync(join(projectDir, '.studio'), { recursive: true })
+    writeFileSync(
+      join(projectDir, '.studio', 'meta.json'),
+      JSON.stringify({
+        disabledBuiltInMcpServers: ['figma'],
+        ...(approved ? { approvedMcpServers: approved } : {}),
+      }),
+    )
   }
 
   async function capturedMcpConfig(): Promise<Record<string, unknown>> {
@@ -1441,7 +1460,7 @@ describe('streamClaudeCli — Studio-registered MCP servers', () => {
     mkdirSync(join(projectDir, '.studio'), { recursive: true })
     writeFileSync(
       join(projectDir, '.studio', 'meta.json'),
-      JSON.stringify({ approvedMcpServers: ['project-server'] }),
+      JSON.stringify({ disabledBuiltInMcpServers: ['figma'], approvedMcpServers: ['project-server'] }),
     )
     addRegisteredMcpServer(projectDir, {
       name: 'registered-server',

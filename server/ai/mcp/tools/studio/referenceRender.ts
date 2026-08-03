@@ -41,8 +41,8 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { Type } from '@core/utils/typeboxHelpers'
 import { aiToolError, aiToolOk } from '@core/ai'
-import type { AiTool } from '../../../runtime/types'
-import { resolveProjectDir } from '../../../../handlers/studioProjects'
+import type { AiTool, ToolContext } from '../../../runtime/types'
+import { resolveToolProjectDir } from './resolveToolProjectDir'
 import { resolveAppRoot } from '../../../../handlers/studio/appRoot'
 import { detectPackageManager, type PackageManager } from '../../../../handlers/studio/installDeps'
 import { minimalSubprocessEnv, type SpawnedProcessLike } from '../../../../handlers/studio/subprocessRunner'
@@ -260,7 +260,7 @@ async function getOrStartDevServer(
 const InputSchema = Type.Object(
   {
     dir: Type.Optional(
-      Type.String({ description: 'Absolute project directory. Defaults to the first project under studio-workspace/.' }),
+      Type.String({ description: 'Absolute project directory. Defaults to the project currently open in Studio — omit it unless you deliberately mean a DIFFERENT project than the one this conversation is about.' }),
     ),
     route: Type.String({
       minLength: 1,
@@ -287,7 +287,7 @@ export function createReferenceRenderTool(overrides: ReferenceRenderOverrides = 
     description:
       'Tier 2: boots the OPEN PROJECT\'s own dev server (its "dev" or "start" script, via the detected package manager) and screenshots `route` through a real headless browser at the given viewport — the ground truth to compare a studio_export_frames capture against. Requires studio.run.project (never granted by default, never implicit) because this EXECUTES the project\'s own code, unlike every other Studio tool. `route` must be a path this project\'s OWN dev server actually serves (its router or URL-state, not necessarily the Studio page slug) — not every parsed Studio page has one; screens reached only via in-app interaction (a tap, a picked option) are not reachable this way. The dev server is reused across calls for the same project and torn down after `idleTimeoutMs` of inactivity. If the dev server fails to boot, returns ok:false with the captured stdout/stderr tail — never a synthetic result.',
     inputSchema: InputSchema,
-    handler: async (input) => {
+    handler: async (input, ctx: ToolContext) => {
       const {
         dir: dirInput,
         route,
@@ -304,7 +304,7 @@ export function createReferenceRenderTool(overrides: ReferenceRenderOverrides = 
         idleTimeoutMs?: number
       }
 
-      const dir = resolveProjectDir(dirInput)
+      const dir = resolveToolProjectDir(dirInput, ctx)
       const appRoot = resolveAppRoot(dir)
 
       const server = await getOrStartDevServer(appRoot, overrides)

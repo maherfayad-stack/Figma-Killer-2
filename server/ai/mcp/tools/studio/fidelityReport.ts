@@ -13,8 +13,8 @@
  */
 import { Type } from '@core/utils/typeboxHelpers'
 import { decodeSourceNodeId } from '@core/page-tree'
-import type { AiTool } from '../../../runtime/types'
-import { resolveProjectDir } from '../../../../handlers/studioProjects'
+import type { AiTool, ToolContext } from '../../../runtime/types'
+import { resolveToolProjectDir } from './resolveToolProjectDir'
 import { resolveProjectProfile } from '../../../../handlers/studio/projectProbe'
 import { loadStudioPages } from '../../../../handlers/studioPageLoad'
 import { PARSER_FIDELITY_CODES, probeWarningToFinding } from './fidelityCodes'
@@ -70,7 +70,7 @@ function codeDefFor(code: string) {
 const DirInputSchema = Type.Object(
   {
     dir: Type.Optional(
-      Type.String({ description: 'Absolute project directory. Defaults to the first project under studio-workspace/.' }),
+      Type.String({ description: 'Absolute project directory. Defaults to the project currently open in Studio — omit it unless you deliberately mean a DIFFERENT project than the one this conversation is about.' }),
     ),
     pageId: Type.Optional(Type.String({ description: 'Restrict the report to one page id (from studio_list_pages). Omit for every page.' })),
     maxFindingsPerPage: Type.Optional(
@@ -87,13 +87,13 @@ export const studioFidelityReportTool: AiTool = {
   description:
     'The machine-readable "what will not import faithfully" report. Per page: a score (nodes/resolved/locked/codeValued) and a findings[] list, each { code, nodeId, file, line, message, fix, impact } — every documented studio-import limitation as a stable, actionable code (see docs/features/studio-import.md "What still does not import"). Also returns projectFindings from the project probe (missing Tailwind config, dependencies not installed, guessed pages dir, …) using the SAME codes studio_project_profile exposes. Call this before doing a visual audit — it tells you WHY a screen looks wrong and what source change would fix it, which a pixel diff alone cannot.',
   inputSchema: DirInputSchema,
-  handler: async (input) => {
+  handler: async (input, ctx: ToolContext) => {
     const { dir: dirInput, pageId, maxFindingsPerPage } = input as {
       dir?: string
       pageId?: string
       maxFindingsPerPage?: number
     }
-    const dir = resolveProjectDir(dirInput)
+    const dir = resolveToolProjectDir(dirInput, ctx)
     const cap = maxFindingsPerPage ?? MAX_FINDINGS_PER_PAGE
 
     const profile = resolveProjectProfile(dir)

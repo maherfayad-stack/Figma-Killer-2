@@ -18,6 +18,7 @@ let dir: string
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'studio-roster-mcp-'))
+  writeMeta({})
 })
 
 afterEach(() => {
@@ -28,9 +29,13 @@ function writeMcpJson(entries: Record<string, unknown>): void {
   writeFileSync(join(dir, '.mcp.json'), JSON.stringify({ mcpServers: entries }))
 }
 
+/** Writes `.studio/meta.json`, always opting out of Studio's auto-approved loopback `figma` built-in — these tests assert on project-declared servers, not on the default. */
 function writeMeta(meta: Record<string, unknown>): void {
   mkdirSync(join(dir, '.studio'), { recursive: true })
-  writeFileSync(join(dir, '.studio', 'meta.json'), JSON.stringify(meta))
+  writeFileSync(
+    join(dir, '.studio', 'meta.json'),
+    JSON.stringify({ disabledBuiltInMcpServers: ['figma'], ...meta }),
+  )
 }
 
 function agentDef(tools: string[]): StudioAgentDef {

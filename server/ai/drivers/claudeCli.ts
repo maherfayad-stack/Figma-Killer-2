@@ -105,7 +105,8 @@ import {
 // the `../mcp` barrel, which also re-exports `handleMcpHttp` and would pull
 // `@modelcontextprotocol/sdk` into this driver's module graph transitively.
 import { MCP_ENDPOINT_PATH } from '../mcp/endpointPath'
-import { PERMISSION_REQUEST_TOOL_NAME, registerPermissionGate } from '../mcp/permissionGate'
+import { PERMISSION_REQUEST_TOOL_NAME } from '../mcp/permissionGate'
+import { openTurnConnector } from './claudeCliTurnConnector'
 import { approvedProjectMcpServers, type ProjectMcpServerDefinition } from './projectMcpServers'
 import { resolvedApprovedRegisteredMcpServers } from './registeredMcpServers'
 import { readServerConfig } from '../../config'
@@ -403,29 +404,21 @@ export async function* streamClaudeCli(
     ...(req.credentials.apiKey ? { CLAUDE_CODE_OAUTH_TOKEN: req.credentials.apiKey } : {}),
   })
 
-  const mint = options.mintConnector ?? mintClaudeCliSessionConnector
-  const revoke = options.revokeConnector ?? revokeClaudeCliSessionConnector
-  let connector: ClaudeCliSessionConnector | null = null
-  try {
-    connector = await mint(
-      req.toolContextBase.db,
-      req.toolContextBase.userId,
-      req.toolContextBase.capabilities,
-      req.toolContextBase.conversationId,
-    )
-  } catch (err) {
-    // Fail soft: a turn without tools is degraded, not broken. Blocking the
-    // entire chat over a transient connector-store hiccup would be worse
-    // than a turn that can only talk, same as step 1 shipped with by design.
-    console.error('[ai/claudeCli] failed to mint a session MCP connector — continuing without tools:', err)
-  }
-
-  // Bound to the connector the CLI will authenticate with, BEFORE the spawn:
-  // the CLI resolves `--permission-prompt-tool` against `tools/list` during
-  // startup, and the tool is only advertised while this gate is live.
-  const releasePermissionGate = connector
-    ? registerPermissionGate(connector.connectorId, req.bridge)
-    : null
+  // Mints the turn's MCP token and binds both connector-id registries (the
+  // permission gate and the workspace this turn is about) — all three are
+  // acquired together and released together by `turn.close()` in the `finally`
+  // below. See `claudeCliTurnConnector.ts` for why they travel as one unit.
+  const turn = await openTurnConnector({
+    db: req.toolContextBase.db,
+    userId: req.toolContextBase.userId,
+    capabilities: req.toolContextBase.capabilities,
+    conversationId: req.toolContextBase.conversationId,
+    bridge: req.bridge,
+    workspaceDir: workspaceCwd ?? undefined,
+    ...(options.mintConnector ? { mintConnector: options.mintConnector } : {}),
+    ...(options.revokeConnector ? { revokeConnector: options.revokeConnector } : {}),
+  })
+  const connector = turn.connector
 
   const sessionId = await claudeCliSessionId(req.toolContextBase.conversationId, req.sessionEpoch ?? 0)
   // Whether the CLI already has a transcript for THIS uuid at THIS cwd — see
@@ -577,14 +570,10 @@ export async function* streamClaudeCli(
     }
     throw err
   } finally {
-    // Released before the connector is revoked, so no prompt can be relayed
-    // down a bridge whose turn has already ended.
-    releasePermissionGate?.()
-    // The token is scoped to THIS turn — expire it with the turn, not the
-    // 1-day TTL floor. Never reuse a long-lived connector token.
-    if (connector) {
-      await revoke(req.toolContextBase.db, connector.connectorId, req.toolContextBase.userId)
-    }
+    // Releases the permission gate and the workspace binding first, then
+    // revokes the token — so no prompt can be relayed down a bridge whose turn
+    // has already ended.
+    await turn.close()
     // The plaintext config file (session connector token, plus any resolved
     // MCP server secrets) is turn-scoped working data, same as the staged
     // attachments below — never left behind regardless of how the turn ended

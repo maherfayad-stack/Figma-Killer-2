@@ -98,18 +98,113 @@ function describeRegisteredServer(definition: RegisteredMcpServerDefinition): st
   return `${definition.transport.toUpperCase()} ${definition.url}`
 }
 
+/**
+ * Servers Studio itself ships, present in every project without anyone
+ * registering them.
+ *
+ * Only ONE thing qualifies a definition for this list, and it is checked in
+ * code rather than trusted here — see {@link isSelfApprovingBuiltIn}: the
+ * server must be reachable ONLY on the loopback interface and must carry no
+ * secret of any kind. A loopback URL is not a network service Studio is
+ * choosing to trust on the user's behalf; it is a process already running as
+ * that same user on that same machine, which they started themselves. There
+ * is no credential to leak, no remote party, and nothing a project or a
+ * prompt can point somewhere else.
+ *
+ * `figma` is the Figma desktop app's Dev Mode MCP server. It needs no token
+ * at all, which is exactly why it can be a default when the cloud endpoint
+ * (`https://mcp.figma.com/mcp`, personal access token in an `X-Figma-Token`
+ * header) could not: that one carries a live credential and stays a
+ * deliberate, per-project human decision.
+ *
+ * Reachability is NOT checked here. When the desktop app is closed the URL
+ * simply refuses connections, the CLI drops that server for the turn, and
+ * everything else proceeds — the same fail-soft posture the rest of this
+ * module already takes. Probing on every turn would add latency to buy a
+ * guess that is stale the moment it is made.
+ */
+const BUILT_IN_MCP_SERVERS: readonly RegisteredMcpServerEntry[] = [
+  {
+    name: 'figma',
+    definition: { transport: 'http', url: 'http://127.0.0.1:3845/mcp' },
+  },
+]
+
+/** Hosts that mean "this machine", and nothing else. IPv4 loopback, IPv6 loopback, and the name that resolves to them. */
+const LOOPBACK_HOSTNAMES = new Set(['127.0.0.1', 'localhost', '::1', '[::1]'])
+
+/**
+ * Whether a built-in may skip the approval prompt.
+ *
+ * This is the ONE place approval is granted without a human action, so it is
+ * written to be impossible to widen by accident:
+ *
+ *   - `stdio` is rejected outright — a command line is arbitrary code
+ *     execution, which is the entire reason approval exists.
+ *   - the URL must parse, and its hostname must be loopback. A DNS name that
+ *     merely looks local (`localhost.evil.com`) fails, because the check is
+ *     set membership on the parsed hostname, not a prefix or suffix test.
+ *   - the definition must declare NO secret fields and NO headers. A built-in
+ *     that needed a credential would be a built-in that could leak one.
+ *
+ * User- and agent-registered servers never reach this function; it is applied
+ * only to {@link BUILT_IN_MCP_SERVERS}. The invariant in this module's doc
+ * comment — that nothing here, and nothing the agent tool calls, can approve
+ * a server a human did not — is therefore intact: the agent cannot add to
+ * that list, and a definition that would need trusting cannot pass this test.
+ */
+function isSelfApprovingBuiltIn(definition: RegisteredMcpServerDefinition): boolean {
+  if (definition.transport === 'stdio') return false
+  if ((definition.secretHeaderNames?.length ?? 0) > 0) return false
+  if (Object.keys(definition.headers ?? {}).length > 0) return false
+  let hostname: string
+  try {
+    hostname = new URL(definition.url).hostname
+  } catch {
+    return false
+  }
+  return LOOPBACK_HOSTNAMES.has(hostname)
+}
+
 /** Every server the project has registered in Studio, each flagged with whether it is approved. Never throws — a malformed `.studio/meta.json` degrades to `[]` via `readStudioMeta`'s own fallback. */
 export function listRegisteredMcpServers(dir: string): RegisteredMcpServer[] {
   const meta = readStudioMeta(dir)
   const entries = meta.registeredMcpServers ?? []
   const approvedNames = new Set(meta.approvedRegisteredMcpServers ?? [])
-  return entries.map((entry) => ({
-    name: entry.name,
-    definition: entry.definition,
-    approved: approvedNames.has(entry.name),
-    summary: describeRegisteredServer(entry.definition),
-    secretFieldNames: secretFieldNamesOf(entry.definition),
-  }))
+  const disabledBuiltIns = new Set(meta.disabledBuiltInMcpServers ?? [])
+  const registeredNames = new Set(entries.map((e) => e.name))
+
+  // Two precedence rules, both deliberately favouring the human:
+  //   - a project's OWN entry of the same name wins over the built-in, and
+  //     then follows the ordinary consent rules. Registering `figma` yourself
+  //     (say, the cloud endpoint with a token) must not silently inherit the
+  //     built-in's self-approval, so it is filtered out BEFORE approval is
+  //     decided, not merged with it.
+  //   - an explicit opt-out wins over everything.
+  const builtIns = BUILT_IN_MCP_SERVERS.filter(
+    (b) => !registeredNames.has(b.name) && !disabledBuiltIns.has(b.name),
+  )
+
+  return [
+    ...builtIns.map((entry) => ({
+      name: entry.name,
+      definition: entry.definition,
+      // Self-approving only when the definition genuinely cannot carry a
+      // credential and cannot leave this machine — never merely because it
+      // is built in. An entry that failed the test would still be listed, so
+      // the user can see it and approve it themselves.
+      approved: isSelfApprovingBuiltIn(entry.definition) || approvedNames.has(entry.name),
+      summary: describeRegisteredServer(entry.definition),
+      secretFieldNames: secretFieldNamesOf(entry.definition),
+    })),
+    ...entries.map((entry) => ({
+      name: entry.name,
+      definition: entry.definition,
+      approved: approvedNames.has(entry.name),
+      summary: describeRegisteredServer(entry.definition),
+      secretFieldNames: secretFieldNamesOf(entry.definition),
+    })),
+  ]
 }
 
 /**

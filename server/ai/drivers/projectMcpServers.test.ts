@@ -8,6 +8,13 @@ let dir: string
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'project-mcp-test-'))
+  // Studio ships an auto-approved loopback `figma` built-in into every
+  // project. These tests are about DECLARED / USER-REGISTERED servers and
+  // what consent means for them, so they opt out of the default — otherwise
+  // "nothing is approved here" is unreachable and each assertion would be
+  // measuring the built-in instead of its own fixture.
+  mkdirSync(join(dir, '.studio'), { recursive: true })
+  writeFileSync(join(dir, '.studio', 'meta.json'), JSON.stringify({ disabledBuiltInMcpServers: ['figma'] }))
   mkdirSync(join(dir, '.studio'), { recursive: true })
 })
 afterEach(() => {
@@ -18,7 +25,7 @@ function writeMcpConfig(config: unknown): void {
   writeFileSync(join(dir, '.mcp.json'), JSON.stringify(config))
 }
 function approve(...names: string[]): void {
-  writeFileSync(join(dir, '.studio', 'meta.json'), JSON.stringify({ approvedMcpServers: names }))
+  writeFileSync(join(dir, '.studio', 'meta.json'), JSON.stringify({ disabledBuiltInMcpServers: ['figma'], approvedMcpServers: names }))
 }
 
 const DESIGN_SYSTEM = { command: 'node', args: ['./node_modules/ds/mcp/server.js'] }

@@ -124,7 +124,7 @@ const AGENTS_DIR = join(CLAUDE_DIR, 'agents')
  * `figma-asset-scout`, which only exists at all when an approved
  * Figma-capable MCP server is detected (`agentRosterFigma.ts`).
  */
-function buildRoster(dir: string, profile: ProjectProfile): StudioAgentDef[] {
+function buildRoster(dir: string, profile: ProjectProfile, hasDesignSystemDigest: boolean): StudioAgentDef[] {
   // Computed ONCE per roster generation and threaded through as a closure —
   // matches this file's existing discipline of resolving a value once and
   // passing it down (see `almosafarDsExpert`'s own comment on why it takes
@@ -292,7 +292,7 @@ function buildRoster(dir: string, profile: ProjectProfile): StudioAgentDef[] {
         'Present findings and suggested rewrites as text — you never write a file.',
       ].join('\n'),
     }),
-    almosafarDsExpert(dir, profile, assertKnown),
+    almosafarDsExpert(dir, profile, assertKnown, hasDesignSystemDigest),
     // ---- Project-conditional agents ------------------------------------
     ...(figmaServer ? [figmaAssetScoutAgent(figmaServer.name, assertKnown)] : []),
   ]
@@ -330,6 +330,16 @@ function almosafarDsExpert(
   dir: string,
   profile: ProjectProfile,
   assertKnown: (def: StudioAgentDef) => StudioAgentDef,
+  /**
+   * Whether `design-system.md` was ACTUALLY generated this turn — passed in,
+   * never re-derived. This used to be recomputed here as
+   * `profile.designSystems.length > 0`, a DIFFERENT predicate from the one
+   * `buildReferenceFiles` uses to decide whether to write the file
+   * (`digest !== undefined`). Whenever the two disagreed, this prompt told
+   * the agent to read a reference file that did not exist — a dead
+   * instruction, and the agent has no way to tell that from a real failure.
+   */
+  hasDesignSystemDigest: boolean,
 ): StudioAgentDef {
   const installed = profile.componentPackages.includes(ALM_PACKAGE)
   // `joinAppRoot(dir, profile.appRoot)`, NOT `resolveAppRoot(dir)` — the
@@ -342,7 +352,6 @@ function almosafarDsExpert(
   const pkgDir = join(appRoot, 'node_modules', '@alm-design', 'design-system')
   const claudeOutline = installed ? buildDocOutline(join(pkgDir, 'CLAUDE.md')) : undefined
   const designOutline = installed ? buildDocOutline(join(pkgDir, 'design.md')) : undefined
-  const hasDesignSystemDigest = (profile.designSystems?.length ?? 0) > 0
 
   // Every branch shares the same priority order and the same honesty
   // constraint about an empty studio_list_components result — see
@@ -397,8 +406,11 @@ function almosafarDsExpert(
   })
 }
 
-function buildReferenceFiles(dir: string, profile: ProjectProfile): ReferenceFile[] {
-  const designSystemDigest = getOrBuildDesignSystemDigest(dir, profile.designSystems ?? [])
+function buildReferenceFiles(
+  dir: string,
+  profile: ProjectProfile,
+  designSystemDigest: string | undefined,
+): ReferenceFile[] {
   const figmaServer = findApprovedFigmaServer(dir)
   return [
     { relPath: referencePath('canonical-jsx.md'), content: canonicalJsxReference() },
@@ -491,8 +503,11 @@ export function generateStudioAgentRoster(dir: string): GenerateRosterResult {
       return { written: [], skipped: [] }
     }
 
-    const roster = buildRoster(dir, profile)
-    const references = buildReferenceFiles(dir, profile)
+    // Computed ONCE and shared: the roster's prompt and the reference-file
+    // write must agree on whether `design-system.md` exists this turn.
+    const designSystemDigest = getOrBuildDesignSystemDigest(dir, profile.designSystems ?? [])
+    const roster = buildRoster(dir, profile, designSystemDigest !== undefined)
+    const references = buildReferenceFiles(dir, profile, designSystemDigest)
     const nextFiles: Record<string, ManifestFileEntry> = {}
     const written: string[] = []
     const skipped: string[] = []

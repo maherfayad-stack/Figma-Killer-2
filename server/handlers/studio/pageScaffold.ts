@@ -47,7 +47,7 @@ import {
   projectPagesDir,
   starterPage,
 } from '../studioProjects'
-import { pageIdFromRelPath } from '../studioPageLoad'
+import { pageIdFromRelPath } from '../studioPageIds'
 import { readStudioMeta } from './studioMeta'
 
 /**

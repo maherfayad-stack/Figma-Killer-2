@@ -67,8 +67,8 @@
 import { join } from 'node:path'
 import { StudioListComponentsInputSchema, StudioFindComponentInputSchema } from '@core/ai'
 import { packageModuleId, PALETTE_HIDDEN_NAME_RE } from '@core/module-engine'
-import type { AiTool } from '../../../runtime/types'
-import { resolveProjectDir } from '../../../../handlers/studioProjects'
+import type { AiTool, ToolContext } from '../../../runtime/types'
+import { resolveToolProjectDir } from './resolveToolProjectDir'
 import { resolveProjectProfile } from '../../../../handlers/studio/projectProbe'
 import { resolveAppRoot } from '../../../../handlers/studio/appRoot'
 import { readStudioMeta } from '../../../../handlers/studio/studioMeta'
@@ -251,14 +251,14 @@ const listComponentsTool: AiTool = {
   description:
     'List this project\'s design-system components — the EXACT catalog the Studio insert palette draws from, read headlessly instead of through a live editor, PLUS every component this project only knows about through a Figma Code Connect binding (see apiSource below). Each entry is { name, pkg, exportName, isDefaultExport, file, hiddenFromPalette, apiSource, props, figma? }: pkg is the import specifier to write (`import { name } from pkg` for a named export; `import name from pkg` when isDefaultExport is true); props is [{ name, kind, required }] where kind is one of string/number/boolean/enum(+values)/color/image/node/handler/unknown — the SAME classification the Properties panel uses to choose a control (enum -> dropdown, color -> color picker, node -> slot). apiSource is "types" when props came from a real .d.ts/.tsx type (required is trustworthy), or "code-connect" when this project has NO typed entry for the package at all and every prop was instead reduced from a Figma Code Connect *.figma.tsx mapping file (required is always false there — Code Connect maps values a variant can take, not whether a prop is mandatory; do not trust it for that). When present, figma carries the raw Figma binding for that component regardless of apiSource: { url, fileKey, nodeId, nodeIdPlaceholder, verifiedNote, example, props }; nodeIdPlaceholder true means the URL\'s node-id is an un-filled-in "REPLACE-ME" template, not a real Figma reference — call studio_list_component_bindings for the full per-value Figma label mapping and verification prose this summary trims. hiddenFromPalette marks an overlay/portal component (Dialog/Sheet/Modal/Toast/Snackbar/Tooltip/Popover by name, or an explicit .studio/meta.json override) that is real and importable but excluded from the canvas picker as confusing to hand-place — still usable, just compose its JSX + import directly rather than through the palette. Pass filter to narrow by component name (case-insensitive substring) and package to restrict to one installed package when the project depends on more than one. Response is capped (default 60, max 200) and always reports matchedComponents/returnedComponents, with an honest omittedCount — never a silent drop. LIMITATION: a design system copied in via the "Import design tokens" wizard (styles/imported/<slug>/, plain CSS, no package.json, no Code Connect files either) has NO extractable component API from either source and returns zero components — check the response\'s designSystems field (source:"imported") and note to tell that case apart from "this project has no design system at all". Use studio_find_component when you already know a name or prop to search for instead of browsing the whole catalog.',
   inputSchema: StudioListComponentsInputSchema,
-  handler: async (input) => {
+  handler: async (input, ctx: ToolContext) => {
     const { dir: dirInput, filter, package: packageFilter, limit } = input as {
       dir?: string
       filter?: string
       package?: string
       limit?: number
     }
-    const dir = resolveProjectDir(dirInput)
+    const dir = resolveToolProjectDir(dirInput, ctx)
     const { packages, designSystems, components, warnings } = collectCatalog(dir)
 
     const needle = filter?.trim().toLowerCase() ?? ''
@@ -303,7 +303,7 @@ const findComponentTool: AiTool = {
   description:
     'Search this project\'s design-system component catalog (see studio_list_components, including its Figma-Code-Connect-only components) by component name and/or a prop it declares — the narrow lookup for a large system where listing everything wastes context. Pass name to substring-match the component name, prop to substring-match a PROP NAME any matched component declares (e.g. prop:"variant" finds every component with a variant prop, so their enum values can be compared before picking one), or both together to narrow further. At least one of name/prop is required — for browsing without a starting point, call studio_list_components instead. Returns the same per-component shape as studio_list_components ({ name, pkg, exportName, isDefaultExport, file, hiddenFromPalette, apiSource, props, figma? }), capped (default 40, max 200) with an honest truncated/omittedCount when more matched than were returned. Same LIMITATION as studio_list_components: a CSS-only imported design system (styles/imported/<slug>/, no package.json, no Code Connect files) has no extractable component API from either source and will never appear in results — check the response\'s designSystems field and note to tell "nothing matched" from "there is nothing here to search".',
   inputSchema: StudioFindComponentInputSchema,
-  handler: async (input) => {
+  handler: async (input, ctx: ToolContext) => {
     const { dir: dirInput, name, prop, limit } = input as {
       dir?: string
       name?: string
@@ -316,7 +316,7 @@ const findComponentTool: AiTool = {
         error: 'Pass at least one of "name" or "prop" to search by. Use studio_list_components to browse the whole catalog instead.',
       }
     }
-    const dir = resolveProjectDir(dirInput)
+    const dir = resolveToolProjectDir(dirInput, ctx)
     const { packages, designSystems, components, warnings } = collectCatalog(dir)
 
     const nameNeedle = name?.trim().toLowerCase()

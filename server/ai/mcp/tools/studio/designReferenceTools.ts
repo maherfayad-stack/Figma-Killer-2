@@ -46,8 +46,8 @@ import {
   aiToolError,
   aiToolOk,
 } from '@core/ai'
-import type { AiTool } from '../../../runtime/types'
-import { resolveProjectDir } from '../../../../handlers/studioProjects'
+import type { AiTool, ToolContext } from '../../../runtime/types'
+import { resolveToolProjectDir } from './resolveToolProjectDir'
 import { authoredFrameWidth } from '../../../../handlers/studio/boardGeometry'
 import { fetchRemoteBytes } from '../../../../handlers/studio/remoteAssetFetch'
 import {
@@ -71,7 +71,7 @@ const registerDesignReferenceTool: AiTool = {
   description:
     'Durably register a design reference (typically a Figma export) for later measurement — the fix for "a design pasted into chat is a transient, lossy attachment with no handle a tool can address later". Stores the ORIGINAL bytes verbatim (never re-encoded, never downsampled) under .studio/references/ and returns { reference } with a durable id, intrinsic width/height, a content hash, and its byte size. Provide EXACTLY ONE of url (fetched SERVER-SIDE, never transiting you — prefer this when another tool already returned a download URL, e.g. a connected Figma MCP server\'s export tool) or imageBase64 (when you already hold the bytes). Raster only — PNG/JPEG/GIF/WEBP/AVIF; an SVG is refused outright (no fixed intrinsic pixel size to diff against). Pass pageId to scope this reference to one Studio page (recommended — studio_list_design_references and studio_recommend_export_dpr both filter/require it), plus an optional label and source (e.g. a Figma file/node URL) for anyone reading this back later. Once registered, pair it with studio_recommend_export_dpr and studio_diff_frames\' referenceId input instead of base64-encoding it again on every diff call.',
   inputSchema: StudioRegisterDesignReferenceInputSchema,
-  handler: async (input) => {
+  handler: async (input, ctx: ToolContext) => {
     const { dir: dirInput, url, imageBase64, pageId, label, source } = input as {
       dir?: string
       url?: string
@@ -85,7 +85,7 @@ const registerDesignReferenceTool: AiTool = {
       return { ok: false, error: 'Provide exactly one of url or imageBase64.' }
     }
 
-    const dir = resolveProjectDir(dirInput)
+    const dir = resolveToolProjectDir(dirInput, ctx)
 
     let bytes: Uint8Array
     if (url !== undefined) {
@@ -119,9 +119,9 @@ const listDesignReferencesTool: AiTool = {
   description:
     'List design references registered for this project (studio_register_design_reference). Pass pageId to restrict to references scoped to one Studio page. Capped (default 50, max 200) with an honest truncated/omittedCount — never a silent drop. Each entry is the full metadata (id, ext, mimeType, width, height, sizeBytes, contentHash, pageId?, label?, source?, createdAt) with no image bytes — call studio_read_design_reference with includeImage:true to actually see one.',
   inputSchema: StudioListDesignReferencesInputSchema,
-  handler: async (input) => {
+  handler: async (input, ctx: ToolContext) => {
     const { dir: dirInput, pageId, limit } = input as { dir?: string; pageId?: string; limit?: number }
-    const dir = resolveProjectDir(dirInput)
+    const dir = resolveToolProjectDir(dirInput, ctx)
     const result = listDesignReferences(dir, pageId, limit)
     return {
       ok: true,
@@ -146,9 +146,9 @@ const readDesignReferenceTool: AiTool = {
   description:
     'Read one registered design reference\'s metadata by id, optionally with its actual image bytes. includeImage:false (default) returns only the metadata — cheap, use this before studio_recommend_export_dpr or studio_diff_frames\' referenceId input, which both only need the metadata. includeImage:true also returns the ORIGINAL bytes as an MCP image block, so you can actually look at it — costs real context for a large reference. Returns ok:false with a clear reason for an unknown id, or for a registered id whose file is missing from disk (e.g. pruned outside Studio).',
   inputSchema: StudioReadDesignReferenceInputSchema,
-  handler: async (input) => {
+  handler: async (input, ctx: ToolContext) => {
     const { dir: dirInput, referenceId, includeImage } = input as { dir?: string; referenceId: string; includeImage?: boolean }
-    const dir = resolveProjectDir(dirInput)
+    const dir = resolveToolProjectDir(dirInput, ctx)
     const reference = getDesignReference(dir, referenceId)
     if (!reference) {
       return aiToolError(`No design reference "${referenceId}" found for this project — call studio_list_design_references to see what is registered.`)
@@ -180,9 +180,9 @@ const deleteDesignReferenceTool: AiTool = {
   description:
     'Remove a registered design reference by id, deleting both its manifest entry and its on-disk bytes. Idempotent — removing an unknown or already-removed id still returns { ok: true, removed: false }, never an error. Requires studio.write.',
   inputSchema: StudioDeleteDesignReferenceInputSchema,
-  handler: async (input) => {
+  handler: async (input, ctx: ToolContext) => {
     const { dir: dirInput, referenceId } = input as { dir?: string; referenceId: string }
-    const dir = resolveProjectDir(dirInput)
+    const dir = resolveToolProjectDir(dirInput, ctx)
     const result = removeDesignReference(dir, referenceId)
     return { ok: true, dir, removed: result.removed }
   },
@@ -202,9 +202,9 @@ const recommendExportDprTool: AiTool = {
   description:
     'Compute the studio_export_frames `dpr` that makes its capture of `pageId`\'s board frame land on `referenceId`\'s registered pixel WIDTH — the dpr-matching alternative to letting studio_diff_frames resample the reference (a resampled score is a weaker claim than a dpr-matched one; see studio_diff_frames\' own description). Uses the frame\'s AUTHORED width from .studio/boards.json (before any dpr scaling), not a live capture — height is content-driven (scroll-unroll can make the real capture taller than the frame\'s nominal height) and cannot be predicted from this alone, so only WIDTH is guaranteed exact when you export at the recommended dpr; verify the actual result via studio_export_frames\' own reported width/height afterward. `dprClamped` is true when the ideal ratio falls outside the tool\'s 0.5–3 range; `exactWidthMatchExpected` is false when either that clamp OR the shared vision-safe edge cap will keep the capture narrower than the reference — in either case, expect studio_diff_frames\' referenceId path to resample rather than get an exact dimension match.',
   inputSchema: StudioRecommendExportDprInputSchema,
-  handler: async (input) => {
+  handler: async (input, ctx: ToolContext) => {
     const { dir: dirInput, pageId, referenceId } = input as { dir?: string; pageId: string; referenceId: string }
-    const dir = resolveProjectDir(dirInput)
+    const dir = resolveToolProjectDir(dirInput, ctx)
 
     const frameWidth = authoredFrameWidth(dir, pageId)
     if (frameWidth === null) {

@@ -39,7 +39,7 @@ import {
   swapComponentInstance,
 } from '@core/ast-codemods'
 import type { AiTool, ToolContext } from '../../../runtime/types'
-import { resolveProjectDir } from '../../../../handlers/studioProjects'
+import { resolveToolProjectDir } from './resolveToolProjectDir'
 import {
   applyStudioEditBatch,
   StudioEditSchema,
@@ -51,7 +51,7 @@ import { touchedFilesToPageIds } from './touchedPageIds'
 import { readBoardsFileOrEmpty } from '../../../../handlers/studio/boardGeometry'
 
 const DirField = Type.Optional(
-  Type.String({ description: 'Absolute project directory. Defaults to the first project under studio-workspace/.' }),
+  Type.String({ description: 'Absolute project directory. Defaults to the project currently open in Studio — omit it unless you deliberately mean a DIFFERENT project than the one this conversation is about.' }),
 )
 
 // ---------------------------------------------------------------------------
@@ -76,11 +76,11 @@ const applyEditsTool: AiTool = {
   mutates: true,
   requiredCapabilities: ['studio.write'],
   description:
-    'Apply a batch of typed source edits to a project\'s .tsx/.jsx files in one call — the same engine POST /admin/api/studio/save runs (ordering bottom-to-top so a line-shifting codemod can\'t invalidate a pending edit\'s location, dedup, per-edit try/catch, shared-component detection). Six VALUE kinds rewrite a single existing span in place, normally preserving line count: prop, text, style, literal, tag, asset. detach and swap also rewrite an existing element, but by inlining or retargeting a WHOLE component body — typically many lines, so treat them as line-count-changing too. Three STRUCTURAL kinds change WHERE markup is and always change the file\'s line count: insert (add a new element — nodeId is the CONTAINER\'s location, not the new element\'s; name + importSpecifier name a real component to import, e.g. a design-system component — optional anchorNodeId/position places it beside an existing sibling, default appends as the last child; there is no raw-intrinsic-tag path, always import a named component), delete (remove an element), move (reorder — nodeId is the element being moved, anchorNodeId + position name where it goes). One more kind, css, edits a stylesheet rule directly (file + selector + property + value) rather than a JSX node. This is the "make big changes at once" tool — for a single detach/swap, studio_codemod\'s richer per-call result is usually more convenient. Returns { written, skipped, shifted, sharedComponents, refusals, pageIds } — `shifted: true` means a write changed a touched file\'s line count, so any node id you decoded BEFORE this call is now stale (re-call studio_list_pages/studio_find_nodes) — this is GUARANTEED for insert/delete/move and LIKELY for detach/swap, never for the six single-line value kinds; `sharedComponents: true` means an edit landed on an inlined component instance, route chrome, or a detach/swap; `refusals` lists WHY any detach/swap/delete/insert/move/css edit specifically didn\'t write, with a named reason rather than a generic skip; `pageIds` names the pages this batch touched — if the caller has the project open in a browser tab, its canvas is nudged to re-read exactly those pages (best-effort; nothing to do if no browser is open). Requires studio.write.',
+    'Apply a batch of typed source edits to a project\'s .tsx/.jsx files in one call — the same engine POST /admin/api/studio/save runs (ordering bottom-to-top so a line-shifting codemod can\'t invalidate a pending edit\'s location, dedup, per-edit try/catch, shared-component detection). Six VALUE kinds rewrite a single existing span in place, normally preserving line count: prop, text, style, literal, tag, asset. detach and swap also rewrite an existing element, but by inlining or retargeting a WHOLE component body — typically many lines, so treat them as line-count-changing too. Three STRUCTURAL kinds change WHERE markup is and always change the file\'s line count: insert (add a new element — nodeId is the CONTAINER\'s location, not the new element\'s; optional anchorNodeId/position places it beside an existing sibling, default appends as the last child. WITH importSpecifier, name is a component to import, e.g. "Button" from "@alm-design/design-system"; WITHOUT importSpecifier, name is a plain intrinsic HTML tag — "div", "span", "button", "img" — which needs no import, and is how you build the layout structure a screen is made of. Optional children writes literal text as the element\'s only child, so <span>Sign in</span> is one call rather than an insert plus a text edit), delete (remove an element), move (reorder — nodeId is the element being moved, anchorNodeId + position name where it goes). One more kind, css, writes a declaration into a stylesheet directly (file + selector + property + value) rather than a JSX node — the rule is CREATED at the end of the file when the selector is not there yet, so this both edits existing styles and authors new ones (e.g. filling in the .module.css studio_create_page scaffolds next to each page). The file must already exist and be hand-authored CSS: a compiled/generated stylesheet is refused by name. This is the "make big changes at once" tool — for a single detach/swap, studio_codemod\'s richer per-call result is usually more convenient. Returns { written, skipped, shifted, sharedComponents, refusals, pageIds } — `shifted: true` means a write changed a touched file\'s line count, so any node id you decoded BEFORE this call is now stale (re-call studio_list_pages/studio_find_nodes) — this is GUARANTEED for insert/delete/move and LIKELY for detach/swap, never for the six single-line value kinds; `sharedComponents: true` means an edit landed on an inlined component instance, route chrome, or a detach/swap; `refusals` lists WHY any detach/swap/delete/insert/move/css edit specifically didn\'t write, with a named reason rather than a generic skip; `pageIds` names the pages this batch touched — if the caller has the project open in a browser tab, its canvas is nudged to re-read exactly those pages (best-effort; nothing to do if no browser is open). Requires studio.write.',
   inputSchema: ApplyEditsInputSchema,
   handler: async (input, ctx: ToolContext) => {
     const { dir: dirInput, edits } = input as { dir?: string; edits: StudioEdit[] }
-    const dir = resolveProjectDir(dirInput)
+    const dir = resolveToolProjectDir(dirInput, ctx)
     const { touchedFiles, ...result } = applyStudioEditBatch(dir, edits)
     const pageIds = touchedFilesToPageIds(dir, touchedFiles)
     // Best-effort — a failed/absent bridge never affects this tool's own result.
@@ -127,7 +127,7 @@ const setFramesTool: AiTool = {
       width: number
       height: number
     }
-    const dir = resolveProjectDir(dirInput)
+    const dir = resolveToolProjectDir(dirInput, ctx)
     const boardsFile = readBoardsFileOrEmpty(dir)
     const targetSet = pageIds ? new Set(pageIds) : null
 
@@ -211,7 +211,7 @@ const codemodTool: AiTool = {
       newComponentSource?: 'local' | 'package'
       newComponentFile?: string
     }
-    const dir = resolveProjectDir(dirInput)
+    const dir = resolveToolProjectDir(dirInput, ctx)
 
     const loc = studioEditLocation(nodeId)
     if (!loc) {

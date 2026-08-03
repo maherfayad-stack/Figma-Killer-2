@@ -40,8 +40,8 @@
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join, resolve, sep } from 'node:path'
 import { Type } from '@core/utils/typeboxHelpers'
-import type { AiTool } from '../../../runtime/types'
-import { resolveProjectDir } from '../../../../handlers/studioProjects'
+import type { AiTool, ToolContext } from '../../../runtime/types'
+import { resolveToolProjectDir } from './resolveToolProjectDir'
 
 /** Markdown only. A dependency's docs are the use case; its source is not. */
 const ALLOWED_DOC_PATTERN = /^[A-Za-z0-9._-]+\.md$/
@@ -56,7 +56,7 @@ const MAX_PARENT_HOPS = 8
 const PackageDocInputSchema = Type.Object(
   {
     dir: Type.Optional(
-      Type.String({ description: 'Absolute project directory. Defaults to the first project under studio-workspace/.' }),
+      Type.String({ description: 'Absolute project directory. Defaults to the project currently open in Studio — omit it unless you deliberately mean a DIFFERENT project than the one this conversation is about.' }),
     ),
     package: Type.String({
       description: 'Installed package name, e.g. "@alm-design/design-system".',
@@ -160,7 +160,7 @@ const packageDocTool: AiTool = {
   description:
     'Read an installed dependency\'s own markdown documentation (CLAUDE.md, design.md, README.md) BY SECTION. These files routinely exceed the plain-Read size limit — a design system\'s reference can be 100 KB+, so reading it whole always fails; this is how to actually get at it. Call with outline:true first to see every heading and its size, then call again with section:"<heading>" for just the part you need. Resolves the package from the project upward, so a hoisted node_modules works. Markdown files in the package root only; the whole file is never returned. Returns { ok:false, error } when the package or doc is not installed.',
   inputSchema: PackageDocInputSchema,
-  handler: async (input) => {
+  handler: async (input, ctx: ToolContext) => {
     const { dir: dirInput, package: packageName, doc: docInput, outline, section } = input as {
       dir?: string
       package: string
@@ -168,7 +168,7 @@ const packageDocTool: AiTool = {
       outline?: boolean
       section?: string
     }
-    const dir = resolveProjectDir(dirInput)
+    const dir = resolveToolProjectDir(dirInput, ctx)
     const doc = docInput ?? 'CLAUDE.md'
 
     const file = resolvePackageDoc(dir, packageName, doc)

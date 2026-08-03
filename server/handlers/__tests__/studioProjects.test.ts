@@ -20,7 +20,7 @@ import {
   routeFromAppPageRelPath,
   writeProjectMeta,
 } from '../studioProjects'
-import { pageIdFromRelPath } from '../studioPageLoad'
+import { pageIdFromRelPath } from '../studioPageIds'
 
 describe('projectPagesDir', () => {
   let tmpDir: string

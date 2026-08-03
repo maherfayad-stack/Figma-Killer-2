@@ -55,6 +55,9 @@ describe('generateStudioAgentRoster', () => {
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'studio-roster-'))
+    // See agentRosterFigma.test.ts: opt out of the auto-approved loopback
+    // `figma` built-in so these assert on the fixture, not on the default.
+    write(dir, '.studio/meta.json', JSON.stringify({ disabledBuiltInMcpServers: ['figma'] }))
     write(dir, 'package.json', JSON.stringify({ name: 'fixture', dependencies: { react: '^18.0.0' } }))
     write(dir, 'src/pages/Home.tsx', 'export default function Home() { return <div>Hi</div> }\n')
   })
@@ -210,7 +213,7 @@ describe('generateStudioAgentRoster', () => {
   describe('figma-asset-scout and figma.md — generated only for an approved Figma-capable MCP server', () => {
     function approveFigmaServer(): void {
       write(dir, '.mcp.json', JSON.stringify({ mcpServers: { figma: { command: 'npx', args: ['figma-mcp'] } } }))
-      write(dir, '.studio/meta.json', JSON.stringify({ approvedMcpServers: ['figma'] }))
+      write(dir, '.studio/meta.json', JSON.stringify({ disabledBuiltInMcpServers: ['figma'], approvedMcpServers: ['figma'] }))
     }
 
     it('generates neither figma-asset-scout nor figma.md when no MCP server is approved', () => {
@@ -277,7 +280,7 @@ describe('generateStudioAgentRoster', () => {
 
     it('never lets an approved but non-Figma server (e.g. the design-system MCP) spawn figma-asset-scout', () => {
       write(dir, '.mcp.json', JSON.stringify({ mcpServers: { 'design-system': { command: 'design-system-mcp' } } }))
-      write(dir, '.studio/meta.json', JSON.stringify({ approvedMcpServers: ['design-system'] }))
+      write(dir, '.studio/meta.json', JSON.stringify({ disabledBuiltInMcpServers: ['figma'], approvedMcpServers: ['design-system'] }))
       generateStudioAgentRoster(dir)
       expect(existsSync(join(dir, '.claude', 'agents', 'figma-asset-scout.md'))).toBe(false)
     })

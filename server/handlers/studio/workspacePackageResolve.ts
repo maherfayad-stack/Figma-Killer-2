@@ -19,7 +19,7 @@
  * containment check.
  */
 import { existsSync, readFileSync, realpathSync } from 'node:fs'
-import { join, sep } from 'node:path'
+import { dirname, join, sep } from 'node:path'
 
 function safeRealpath(path: string): string | undefined {
   try {
@@ -35,6 +35,47 @@ export function isRealpathContained(target: string, dir: string): boolean {
   const realTarget = safeRealpath(target)
   if (!realDir || !realTarget) return false
   return realTarget === realDir || realTarget.startsWith(realDir + sep)
+}
+
+/**
+ * Containment for a path that may not exist yet.
+ *
+ * {@link isRealpathContained} answers "is this real path inside `dir`", and a
+ * path that does not exist has no real path, so it answers `false` — which is
+ * correct for its callers but WRONG as a gate in front of a read, because it
+ * collapses two different answers into one. A caller that reports "not a
+ * readable path inside this project" then blames containment for a file that
+ * is simply absent, and whoever reads that message goes looking for a
+ * permissions bug that isn't there. (Observed exactly that way: an agent told
+ * to read `.claude/design-system.md` in a project where the roster had not
+ * regenerated yet.)
+ *
+ * So this walks up to the deepest ancestor that DOES exist and containment-
+ * checks that. Security is unchanged, because the thing symlink checks defend
+ * against is a planted link redirecting the path outside `dir`, and any such
+ * link must exist to have any effect:
+ *   - target exists  → identical to `isRealpathContained`.
+ *   - target missing → every existing ancestor is verified inside `dir`, so
+ *     no symlinked parent can carry the eventual path out, and the
+ *     non-existent tail cannot itself be a link.
+ * Returns false if the walk leaves `dir` entirely, so `..` (already rejected
+ * syntactically upstream) has no second route in.
+ */
+export function isRealpathContainedAllowingMissing(target: string, dir: string): boolean {
+  const realDir = safeRealpath(dir)
+  if (!realDir) return false
+  let current = target
+  // Bounded by construction: `dirname` strictly shortens until it reaches the
+  // filesystem root, where it becomes a fixed point and the loop exits.
+  for (;;) {
+    const real = safeRealpath(current)
+    if (real !== undefined) {
+      return real === realDir || real.startsWith(realDir + sep)
+    }
+    const parent = dirname(current)
+    if (parent === current) return false
+    current = parent
+  }
 }
 
 /** `<dir>/node_modules/<pkg>`'s real entry file (from its `package.json#main`, default `index.js`), symlink-containment-checked against `dir`, or `undefined` when not installed / not resolvable / escaping `dir`. */

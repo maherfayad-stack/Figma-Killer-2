@@ -150,6 +150,12 @@ export interface ToolContext {
   /** The caller's capability set — handlers and the re-check gate read this. */
   readonly capabilities: readonly CoreCapability[]
   readonly conversationId: string
+  /**
+   * The Studio project this turn is about — the default a Studio tool's
+   * optional `dir` falls back to, via `resolveToolProjectDir`. Mirrors
+   * `ToolContextBase.workspaceDir`, which is where it is set.
+   */
+  readonly workspaceDir?: string
   readonly snapshot: unknown
   readonly signal: AbortSignal
 }

@@ -62,8 +62,17 @@ export function sha256(text: string): string {
  * `2` — mcp-tooling's fix added the project-conditional `figma-asset-scout`
  * agent and `figma.md` reference file, and a subagent can now hold a vetted
  * `mcp__<server>__<tool>` name (`agentRosterMcpTools.ts`).
+ *
+ * `3` — `agent-01` added the project-conditional `design-system.md` reference
+ * file and rewrote `almosafer-ds-expert`'s prompt to point at it. Missing this
+ * bump is exactly the failure this constant exists to prevent, and it bit:
+ * every project carrying a v2 manifest kept taking the fast path, so
+ * `design-system.md` was never written, while the regenerated prompt told the
+ * agent to read it. The agent then burned turns on a file that could not
+ * appear — `studio_read_file` correctly reporting "does not exist" over and
+ * over. **Adding or removing a generated file means bumping this.**
  */
-export const ROSTER_DEFINITION_VERSION = 2
+export const ROSTER_DEFINITION_VERSION = 3
 
 export interface ManifestFileEntry {
   /** Content hash of what Studio itself last wrote (or last observed) here. */

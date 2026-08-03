@@ -30,8 +30,8 @@
  */
 import { join } from 'node:path'
 import { StudioListComponentBindingsInputSchema } from '@core/ai'
-import type { AiTool } from '../../../runtime/types'
-import { resolveProjectDir } from '../../../../handlers/studioProjects'
+import type { AiTool, ToolContext } from '../../../runtime/types'
+import { resolveToolProjectDir } from './resolveToolProjectDir'
 import { resolveProjectProfile } from '../../../../handlers/studio/projectProbe'
 import { resolveAppRoot } from '../../../../handlers/studio/appRoot'
 import { collectFigmaCodeConnectComponents } from '../../../../handlers/studio/figmaCodeConnect'
@@ -68,14 +68,14 @@ const listComponentBindingsTool: AiTool = {
   description:
     'List this project\'s Figma Code Connect bindings — the raw *.figma.tsx mapping data an installed design-system package ships (https://www.figma.com/code-connect), read headlessly. This is the deep-dive sibling of studio_list_components\'/studio_find_component\'s own per-component `figma` summary field: call THIS tool when you need the FULL per-value Figma label mapping (not just the reduced code-side prop kind), the verification/caveat prose, or the exact Figma URL/node id to act on. Each entry is { pkg, component, file, figmaUrl, figmaFileKey, figmaNodeId, nodeIdPlaceholder, verifiedNote, props, example }: figmaFileKey/figmaNodeId are parsed straight from figmaUrl; nodeIdPlaceholder true means the URL still carries an un-filled-in "REPLACE-ME" template from `figma connect create` — NOT a resolvable Figma reference, do not try to fetch it. props is [{ name, figmaProperty, kind, mapping?, note? }] — figmaProperty is the FIGMA-side variant/property name being mapped (e.g. "Type"), mapping (enum props only) is every { figmaValue, codeValue, note? } pair in source order (codeValue can be a string, boolean, or number — figma.enum(\'Switch\', { on: true, off: false }) maps to booleans, not strings), and note carries an inline "(approx)"-style caveat comment when the source file has one. example is the component\'s canonical usage as real JSX source text. The response also reports `fileKeys` — every DISTINCT Figma file key referenced across the returned bindings, which tells you in one call whether this project\'s design system lives in a single Figma file or several (a future "pull this component\'s assets from Figma" step needs the RIGHT key per component, never a single hardcoded one — confirmed against a real corpus that uses two). Pass filter to narrow by component name and package to restrict to one installed package. Response is capped (default 40, max 200) with an honest truncated/omittedCount. Returns an empty bindings list (not an error) for the ordinary case of a package that ships no Code Connect files at all.',
   inputSchema: StudioListComponentBindingsInputSchema,
-  handler: async (input) => {
+  handler: async (input, ctx: ToolContext) => {
     const { dir: dirInput, filter, package: packageFilter, limit } = input as {
       dir?: string
       filter?: string
       package?: string
       limit?: number
     }
-    const dir = resolveProjectDir(dirInput)
+    const dir = resolveToolProjectDir(dirInput, ctx)
     const { packages, bindings, warnings } = collectBindings(dir)
 
     const needle = filter?.trim().toLowerCase() ?? ''

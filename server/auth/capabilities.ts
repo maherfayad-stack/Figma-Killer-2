@@ -78,6 +78,19 @@ const adminCapabilities: CoreCapability[] = [
   'ai.tools.write',
   'ai.providers.manage',
   'ai.audit.read',
+  // Studio is the product, so an Admin who cannot create or edit a screen is
+  // a broken role, not a safe one. `studio.write` was added to
+  // CORE_CAPABILITIES — which Owner receives wholesale via
+  // `[...CORE_CAPABILITIES]` — but never added here, so every Studio write
+  // tool (`studio_create_page`, `studio_apply_edits`, `studio_codemod`,
+  // `studio_set_frames`) was filtered out of an Admin's agent toolset by
+  // `selectStudioTools`. The agent did not refuse to build; it was handed no
+  // tool that could. It looked like caution and was missing permission.
+  //
+  // `studio.run.project` is deliberately NOT granted: that is Tier 2 —
+  // executing the open project's own code (dev server + Playwright) — and
+  // stays opt-in per its note in `src/core/capabilities.ts`.
+  'studio.write',
 ]
 
 const clientCapabilities: CoreCapability[] = [

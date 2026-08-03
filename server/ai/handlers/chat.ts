@@ -95,19 +95,6 @@ import type { AiStreamRequest } from '../drivers/types'
 const activeChatConversations = new Set<string>()
 const REQUEST_ABORTED = Symbol('request-aborted')
 
-/**
- * Defence in depth for the per-conversation stream lock, on top of the
- * `finally` in `handleAiChat`'s stream `start()` that normally releases it.
- * That `finally` only runs once the driver's own promise settles — a driver
- * is not obligated to ever settle (a wedged subprocess pipe, bounded on the
- * Claude CLI side by `drainGraceMs` in `claudeCliSpawn.ts`, but any future
- * driver could hang the same way), and until it does, `acquireConversationStream`
- * never frees the id and every later message for that conversation 409s until
- * the server restarts. 15s gives the normal abort-and-unwind path (bounded to
- * ~5s by the CLI driver's own drain) generous headroom while still bounding
- * the worst case for every driver, not just this one.
- */
-const ABORT_RELEASE_GRACE_MS = 15_000
 
 /**
  * Match `/admin/api/ai/chat`. Returns `null` if path doesn't match.
@@ -359,7 +346,6 @@ async function handleAiChat(
   const disposeAbortedReleaseGuard = armAbortedReleaseGuard(
     turnSignal,
     () => abandonTurn(turnDeath, releaseConversation),
-    ABORT_RELEASE_GRACE_MS,
   )
 
   const stream = new ReadableStream<Uint8Array>({
@@ -404,6 +390,10 @@ async function handleAiChat(
           userId: user.id,
           capabilities: user.capabilities,
           conversationId: conversation.id,
+          // The default target for every Studio tool's optional `dir`. Without
+          // it they fall back to "first project alphabetically", which silently
+          // pointed the agent at a project the user was not looking at.
+          workspaceDir: validatedWorkspaceDir ?? undefined,
           snapshot,
         }
         const { bridgeId, bridge, destroy } = createBridge(
@@ -525,43 +515,45 @@ function acquireConversationStream(conversationId: string): (() => void) | null 
 }
 
 /**
- * Arms a bounded, independent guarantee that `release` runs once `signal`
- * aborts — even if whatever ALSO calls `release` on the "natural" path (the
- * stream handler's own `finally`) never gets there because the driver it's
- * awaiting never settles. `release` is generic — this call site passes
- * `abandonTurn`, which marks the turn dead BEFORE calling
- * `acquireConversationStream`'s returned releaser (see that function's doc).
- * That releaser is already idempotent (a second call is a no-op), so it is
- * always safe to call from both this guard and the natural path — whichever
- * fires first wins, and the other becomes a no-op.
+ * Guarantees that `release` runs the moment `signal` aborts, independently of
+ * whatever ALSO calls `release` on the "natural" path (the stream handler's
+ * own `finally`), which may be blocked awaiting a driver that never settles.
  *
- * Returns `dispose()`, which the natural path calls once it DOES settle so
- * the timer never fires after a normal completion (or a normal, promptly
- * unwound abort). Exported for its own focused unit test — standing up the
- * full HTTP handler just to prove a timer fires is unnecessary weight.
+ * **Immediate, deliberately — there is no grace period.** This originally
+ * waited 15s, on the reasoning that releasing the lock while the old turn
+ * might still write would permit exactly the interleaved assistant/tool rows
+ * `acquireConversationStream` exists to prevent. That reasoning was correct
+ * at the time and is now obsolete: `release` here is `abandonTurn`, which
+ * aborts `turnDeath` BEFORE releasing, and `runChat` checks that signal
+ * before every remaining write. Releasing is therefore safe by construction
+ * rather than by hope, and once it is safe, delay buys nothing and costs the
+ * user everything.
+ *
+ * What the delay cost: pressing Stop and immediately sending another message
+ * returned 409 "This conversation is already generating a response" for up to
+ * 15 seconds — plus the driver's own teardown (a bounded stderr drain and the
+ * SIGTERM→SIGKILL escalation, several more seconds). Stop means stopped. A
+ * user who has just stopped a turn is telling us the turn is over; making
+ * them wait to be believed is the bug, not the safety.
+ *
+ * The subprocess teardown still proceeds in the background on its own
+ * schedule — it simply no longer holds the conversation hostage while it
+ * finishes.
+ *
+ * Returns `dispose()`, which the natural path calls once it settles, so the
+ * listener is not left attached to a long-lived signal. Exported for its own
+ * focused unit test — standing up the full HTTP handler to prove this is
+ * unnecessary weight.
  */
 export function armAbortedReleaseGuard(
   signal: AbortSignal,
   release: () => void,
-  graceMs: number,
 ): () => void {
-  let timer: ReturnType<typeof setTimeout> | undefined
-  const forceRelease = (): void => {
-    timer = undefined
-    release()
-  }
-  const arm = (): void => {
-    if (timer !== undefined) return
-    timer = setTimeout(forceRelease, graceMs)
-  }
-  signal.addEventListener('abort', arm, { once: true })
-  if (signal.aborted) arm()
+  const onAbort = (): void => release()
+  signal.addEventListener('abort', onAbort, { once: true })
+  if (signal.aborted) onAbort()
   return () => {
-    signal.removeEventListener('abort', arm)
-    if (timer !== undefined) {
-      clearTimeout(timer)
-      timer = undefined
-    }
+    signal.removeEventListener('abort', onAbort)
   }
 }
 

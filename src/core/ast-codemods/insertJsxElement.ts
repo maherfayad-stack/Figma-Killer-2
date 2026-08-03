@@ -25,6 +25,29 @@
  * something that is not this import, it refuses (`binding-conflict`) rather
  * than shadowing the user's own symbol.
  *
+ * COMPONENTS AND INTRINSIC TAGS
+ * -----------------------------
+ * `importSpecifier` is what distinguishes the two things this codemod can
+ * write, and the distinction is JSX's own: React reads `<div>` as the string
+ * `"div"` and `<Button>` as the in-scope identifier `Button`.
+ *
+ *   - **With** an `importSpecifier`, `name` is a COMPONENT — the import above
+ *     is written, and the binding-conflict check applies.
+ *   - **Without** one, `name` is an INTRINSIC tag (`div`, `span`, `button`).
+ *     There is nothing to import and no binding to conflict with, so both of
+ *     those steps are skipped.
+ *
+ * The intrinsic path is not a convenience: without it there was no way to
+ * write a layout element at all, so an agent composing a screen could add
+ * design-system components but not the `<div>`s that arrange them — it could
+ * create a page and then not build anything in it. The name is validated
+ * (`isSafeIntrinsicTagName`) rather than trusted, because "no import" would
+ * otherwise make a MISSPELLED component name (`<Buton />`) look like a
+ * perfectly legal unknown element instead of the error it is, and because a
+ * tag written into source runs the moment the user starts their dev server —
+ * Studio's "parse, never execute" invariant protects the canvas from what it
+ * READS, not the user's project from what Studio WRITES.
+ *
  * BYTE-EXACTNESS, same standard as `moveJsxElement`/`deleteJsxElement`. The
  * AST only LOCATES; the write is a splice into the original bytes
  * (`jsxChildRange.ts`). Indentation is COPIED from a sibling wherever one
@@ -32,6 +55,7 @@
  * keeps its own style and no unrelated line is reformatted.
  */
 import { Node, Project, type JsxElement, type JsxSelfClosingElement, type SourceFile } from 'ts-morph'
+import { isSafeIntrinsicTagName, VOID_HTML_ELEMENTS } from '@core/utils/htmlTags'
 import { createProject, findJsxElementAtLocation, loadSourceFile } from './locateJsxElement'
 import {
   resolveJsxChildRange,
@@ -53,12 +77,25 @@ export interface InsertJsxElementParams {
   anchorCol?: number
   /** Which side of the anchor the new element lands on. Ignored without an anchor. */
   position?: 'before' | 'after'
-  /** Tag name of the new element, e.g. `Button`. */
+  /** Tag name of the new element — a component (`Button`) with an `importSpecifier`, an intrinsic tag (`div`) without one. */
   name: string
   /** Props written onto the new element. Entries whose value is `undefined` are skipped. */
   props?: Record<string, InsertableJsxPropValue | undefined>
-  /** Module the tag name is imported from, e.g. `@alm-design/design-system`. */
-  importSpecifier: string
+  /**
+   * Module the tag name is imported from, e.g. `@alm-design/design-system`.
+   * Omit to write an intrinsic HTML tag, which needs no import.
+   */
+  importSpecifier?: string
+  /**
+   * Literal text written as the element's only child — `<span>Sign in</span>`
+   * rather than `<span />`. Omit for an empty element.
+   *
+   * Text only, deliberately: an expression child (`{count}`) would need a
+   * scope this codemod cannot verify, and a nested element is another insert
+   * against the node this one returns. Refused on a void element, which cannot
+   * hold children at all.
+   */
+  children?: string
   /** Optional pre-existing project to reuse. */
   project?: Project
 }
@@ -68,6 +105,8 @@ export type InsertJsxRefusalReason =
   | 'not-a-container'
   | 'not-siblings'
   | 'binding-conflict'
+  | 'unsafe-tag'
+  | 'void-element-children'
 
 export interface InsertJsxRefusal {
   reason: InsertJsxRefusalReason
@@ -78,9 +117,28 @@ export interface InsertJsxRefusal {
 export type InsertJsxElementResult = { ok: true } | { ok: false; refusal: InsertJsxRefusal }
 
 export function insertJsxElement(params: InsertJsxElementParams): InsertJsxElementResult {
-  const { file, line, col, name, importSpecifier } = params
+  const { file, line, col, name, importSpecifier, children } = params
   const project = params.project ?? createProject()
   const sourceFile = loadSourceFile(project, file)
+
+  // An intrinsic tag is the no-import case, so its name gets no validation
+  // from an import resolving or failing to resolve — it has to be checked
+  // here or not at all. See this module's "COMPONENTS AND INTRINSIC TAGS".
+  if (importSpecifier === undefined && !isSafeIntrinsicTagName(name)) {
+    return refuse(
+      'unsafe-tag',
+      /^[A-Z]/.test(name)
+        ? `"${name}" starts with a capital letter, so JSX reads it as a component, not an HTML tag — pass importSpecifier to say where it is imported from.`
+        : `"${name}" is not a tag Studio will write: it must be a well-formed HTML element name and must not be one that executes script or loads external resources.`,
+    )
+  }
+
+  if (children !== undefined && VOID_HTML_ELEMENTS.has(name.toLowerCase())) {
+    return refuse(
+      'void-element-children',
+      `<${name}> is a void element and cannot hold children, so there is nowhere to write this text.`,
+    )
+  }
 
   const parentOpening = findJsxElementAtLocation(sourceFile, line, col)
   if (!parentOpening) {
@@ -90,12 +148,17 @@ export function insertJsxElement(params: InsertJsxElementParams): InsertJsxEleme
     )
   }
 
-  const binding = conflictingBinding(sourceFile, name, importSpecifier)
-  if (binding) {
-    return refuse(
-      'binding-conflict',
-      `This file already uses the name "${name}" for something else (${binding}), so adding the component here would shadow it. Rename one of them in the file first.`,
-    )
+  // Only a component name can collide: an intrinsic tag is a string to JSX,
+  // never a reference to a binding, so a local `const div = …` is irrelevant
+  // to `<div />` and refusing on it would be a false positive.
+  if (importSpecifier !== undefined) {
+    const binding = conflictingBinding(sourceFile, name, importSpecifier)
+    if (binding) {
+      return refuse(
+        'binding-conflict',
+        `This file already uses the name "${name}" for something else (${binding}), so adding the component here would shadow it. Rename one of them in the file first.`,
+      )
+    }
   }
 
   const verbatim = verbatimSourceText(sourceFile, file)
@@ -106,11 +169,12 @@ export function insertJsxElement(params: InsertJsxElementParams): InsertJsxEleme
     )
   }
 
-  const jsx = renderJsxElement(name, params.props ?? {})
+  const jsx = renderJsxElement(name, params.props ?? {}, children)
   const placement = resolvePlacement(sourceFile, verbatim, parentOpening, params, jsx)
   if (!placement.ok) return placement
 
-  const importEdit = resolveImportEdit(sourceFile, verbatim, name, importSpecifier)
+  const importEdit =
+    importSpecifier === undefined ? null : resolveImportEdit(sourceFile, verbatim, name, importSpecifier)
 
   // Both splices are computed against the ORIGINAL text, so the later one is
   // applied first — otherwise the earlier insert shifts the offset the later
@@ -277,8 +341,15 @@ function tagLocation(sourceFile: SourceFile, element: JsxElement | JsxSelfClosin
   return [line, column]
 }
 
-/** `<Name a="1" b={2} c />` — the JSX spelling of a tag plus its literal props. */
-function renderJsxElement(name: string, props: Record<string, InsertableJsxPropValue | undefined>): string {
+/**
+ * `<Name a="1" b={2} c />` — the JSX spelling of a tag plus its literal props,
+ * or `<Name …>text</Name>` when `children` is given.
+ */
+function renderJsxElement(
+  name: string,
+  props: Record<string, InsertableJsxPropValue | undefined>,
+  children?: string,
+): string {
   const parts: string[] = []
   for (const [key, value] of Object.entries(props)) {
     if (value === undefined) continue
@@ -290,7 +361,29 @@ function renderJsxElement(name: string, props: Record<string, InsertableJsxPropV
     }
     parts.push(typeof value === 'number' ? `${key}={${value}}` : `${key}=${JSON.stringify(value)}`)
   }
-  return parts.length > 0 ? `<${name} ${parts.join(' ')} />` : `<${name} />`
+  const attrs = parts.length > 0 ? ` ${parts.join(' ')}` : ''
+  if (children === undefined) return `<${name}${attrs} />`
+  return `<${name}${attrs}>${escapeJsxText(children)}</${name}>`
+}
+
+/**
+ * Make `text` safe to sit between two JSX tags.
+ *
+ * Only four characters can leave JSX text mode, and each is escaped as the
+ * HTML entity React renders back to the original character, so the element's
+ * rendered text is exactly what the caller asked for:
+ *   - `<` would open a tag, `>` is invalid in JSX text
+ *   - `{` `}` would open an expression container
+ * A newline is not escaped but IS rejected upstream of nothing — it would
+ * merely reflow, which JSX collapses to a single space, so it is left alone.
+ */
+function escapeJsxText(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\{/g, '&#123;')
+    .replace(/\}/g, '&#125;')
 }
 
 /**

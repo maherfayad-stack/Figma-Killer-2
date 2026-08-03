@@ -134,6 +134,93 @@ export function classIdsForClassName(className: string, classIdsByName: Record<s
 /** `*.module.css`/`.scss`/`.sass`/`.less` — already compiled and rewritten by `styleCompile.ts`, contributed via `extraCss` instead. See this module's "WS-2.1 — compiled styles" doc. */
 const COMPILED_ELSEWHERE_RE = /\.module\.(css|scss|sass|less)$/i
 
+/** One generated CSS-Modules class, pointed back at the source it was renamed from. */
+interface ModuleClassOrigin {
+  /** Workspace-relative POSIX path of the `*.module.css` file. */
+  file: string
+  /** The local class name as WRITTEN there, e.g. `row`. */
+  local: string
+}
+
+/**
+ * Invert `CompiledStyles.moduleClassMaps` — `{ file: { local: generated } }` —
+ * into `generated -> { file, local }`.
+ *
+ * A generated name is `<fileBase>_<local>__<hash>` (`styleCompile.ts`'s
+ * `renamePrelude`), so it is unique across files by construction and this
+ * inversion cannot collide. Only `*.module.css` is compiled today; the
+ * `.scss`/`.sass`/`.less` module variants are reported as a warning rather
+ * than renamed, so they never appear here and correctly stay unmapped.
+ */
+function invertModuleClassMaps(
+  maps: Record<string, Record<string, string>> | undefined,
+): Map<string, ModuleClassOrigin> {
+  const inverted = new Map<string, ModuleClassOrigin>()
+  if (!maps) return inverted
+  for (const [file, classMap] of Object.entries(maps)) {
+    if (!/\.module\.css$/i.test(file)) continue // only a syntax `setDeclaration` can parse
+    for (const [local, generated] of Object.entries(classMap)) {
+      inverted.set(generated, { file, local })
+    }
+  }
+  return inverted
+}
+
+/** Class tokens in a selector — `.foo`, `.foo:hover`, `.a .b`, `.a.b`. */
+const SELECTOR_CLASS_RE = /\.(-?[_a-zA-Z][\w-]*)/g
+
+/**
+ * The hand-authored `(file, selector)` a COMPILED CSS-Modules rule came from,
+ * or `undefined` when there isn't exactly one honest answer.
+ *
+ * ## Why this exists
+ *
+ * `*.module.css` files are excluded from per-file discovery above and reach
+ * the registry through `extraCss` under their RENAMED selectors, which had no
+ * `sources` entry — so every CSS-Modules rule was unmapped by construction.
+ * Two visible consequences: the CSS Classes panel reported "Style not saved to
+ * source" for any edit to one, and a `kind: 'css'` write-back had no file to
+ * target. Both looked like policy ("generated styles aren't editable") and
+ * were really just a missing inverse of a map `styleCompile.ts` already
+ * computes.
+ *
+ * ## The one-honest-target rule, applied to a selector
+ *
+ * Every generated class token is substituted back to its local name, so
+ * `.SmsPhone_row__a1b2:hover .SmsPhone_icon__c3d4` becomes `.row:hover .icon`
+ * — which is literally what the source file contains, making it a valid
+ * `setDeclaration` target rather than a guess.
+ *
+ * Two cases deliberately return `undefined` instead:
+ *   - **No token is a generated name** — this is ordinary Tailwind/Sass output
+ *     from `extraCss`, which genuinely has no hand-authored rule to point at.
+ *   - **Tokens resolve to DIFFERENT module files** — possible via `composes`
+ *     or a selector written across two modules. There is no single file to
+ *     write to, so refusing is the honest outcome, exactly as the write-back
+ *     engine refuses a node with more than one source location.
+ *
+ * A token that matches nothing is left as written: a global class in a module
+ * file (`:global(.foo)`) is not renamed, so passing it through reproduces the
+ * source faithfully.
+ */
+function cssModuleSource(
+  selector: string,
+  byGeneratedClass: Map<string, ModuleClassOrigin>,
+): StyleRuleSource | undefined {
+  if (byGeneratedClass.size === 0) return undefined
+
+  const files = new Set<string>()
+  const rebuilt = selector.replace(SELECTOR_CLASS_RE, (whole, className: string) => {
+    const origin = byGeneratedClass.get(className)
+    if (!origin) return whole
+    files.add(origin.file)
+    return `.${origin.local}`
+  })
+
+  if (files.size !== 1) return undefined
+  return { file: [...files][0]!, selector: rebuilt }
+}
+
 /**
  * Reads and parses every stylesheet the given parsed pages import, merging
  * them into one registry in cascade order. Never throws — an unreadable or
@@ -151,6 +238,7 @@ export async function loadStudioStyles(
   project: Project,
   workspaceRoot: string,
   extraCss?: string,
+  moduleClassMaps?: Record<string, Record<string, string>>,
 ): Promise<StudioStyles> {
   const sheets = new Map<string, PageStylesheet>()
   // Global stylesheets FIRST — resets and design tokens must precede the
@@ -172,6 +260,7 @@ export async function loadStudioStyles(
   const conditionsById = new Map<string, ConditionDef>()
   const classIdsByName: Record<string, string> = {}
   const sources: Record<string, StyleRuleSource> = {}
+  const moduleSourceByGeneratedClass = invertModuleClassMaps(moduleClassMaps)
   let order = 0
 
   /**
@@ -195,7 +284,10 @@ export async function loadStudioStyles(
       if (rule.kind === 'class') classIdsByName[rule.name] = id
       // A later redefinition's mapping (or lack of one) replaces the earlier
       // rule's, same "later wins" rule as `styleRules` itself above.
-      if (mappable) sources[id] = { file: sourceFile!, selector: rule.selector }
+      const source = mappable
+        ? { file: sourceFile!, selector: rule.selector }
+        : cssModuleSource(rule.selector, moduleSourceByGeneratedClass)
+      if (source) sources[id] = source
       else delete sources[id]
     }
   }

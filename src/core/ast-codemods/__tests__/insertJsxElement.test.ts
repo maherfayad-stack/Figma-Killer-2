@@ -401,3 +401,126 @@ export default function Page() {
     )
   })
 })
+
+/**
+ * Intrinsic tags — the no-import path. Same whole-file bar as everything
+ * above: an intrinsic insert must add exactly one element and NO import line,
+ * and a refused one must leave the file byte-identical.
+ */
+describe('insertJsxElement — intrinsic tags', () => {
+  it('writes a plain tag with no import when importSpecifier is omitted', () => {
+    const file = writeFixture(PAGE)
+    const at = locateTag(PAGE, 'section')
+
+    expect(insertJsxElement({ file, ...at, name: 'div' })).toEqual({ ok: true })
+    expect(fs.readFileSync(file, 'utf8')).toBe(
+      `import { Chip } from '@alm-design/design-system'
+
+export default function Page() {
+  return (
+    <section className="list">
+      {/* keep me exactly where I am */}
+      <Chip label="First" />
+
+      <Chip label="Second" />
+      <div />
+    </section>
+  )
+}
+`,
+    )
+  })
+
+  it('writes literal text as the only child', () => {
+    const file = writeFixture(PAGE)
+    const at = locateTag(PAGE, 'section')
+
+    expect(
+      insertJsxElement({ file, ...at, name: 'span', props: { className: 'cta' }, children: 'Sign in' }),
+    ).toEqual({ ok: true })
+    expect(fs.readFileSync(file, 'utf8')).toContain('<span className="cta">Sign in</span>')
+  })
+
+  it('escapes text that would otherwise leave JSX text mode', () => {
+    const file = writeFixture(PAGE)
+    const at = locateTag(PAGE, 'section')
+
+    expect(insertJsxElement({ file, ...at, name: 'p', children: 'a {b} <c> & d' })).toEqual({ ok: true })
+    expect(fs.readFileSync(file, 'utf8')).toContain('<p>a &#123;b&#125; &lt;c&gt; &amp; d</p>')
+  })
+
+  it('does not treat a same-named local binding as a conflict', () => {
+    // `<div />` is the string "div" to JSX, never a reference to this const,
+    // so the binding-conflict check must not fire on the intrinsic path.
+    const source = `export default function Page() {
+  const div = 1
+  return (
+    <section>
+      <b />
+    </section>
+  )
+}
+`
+    const file = writeFixture(source)
+    const at = locateTag(source, 'section')
+
+    expect(insertJsxElement({ file, ...at, name: 'div' })).toEqual({ ok: true })
+    expect(fs.readFileSync(file, 'utf8')).toContain('<div />')
+    expect(fs.readFileSync(file, 'utf8')).not.toContain('import')
+  })
+
+  it('refuses a capitalised name with no importSpecifier, and says why', () => {
+    const file = writeFixture(PAGE)
+    const at = locateTag(PAGE, 'section')
+
+    const result = insertJsxElement({ file, ...at, name: 'Buton' })
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error('unreachable')
+    expect(result.refusal.reason).toBe('unsafe-tag')
+    expect(result.refusal.message).toContain('importSpecifier')
+    expect(fs.readFileSync(file, 'utf8')).toBe(PAGE)
+  })
+
+  it('refuses a tag that executes script or loads external resources', () => {
+    for (const name of ['script', 'iframe', 'object']) {
+      const file = writeFixture(PAGE)
+      const at = locateTag(PAGE, 'section')
+
+      const result = insertJsxElement({ file, ...at, name })
+      expect(result.ok).toBe(false)
+      if (result.ok) throw new Error('unreachable')
+      expect(result.refusal.reason).toBe('unsafe-tag')
+      expect(fs.readFileSync(file, 'utf8')).toBe(PAGE)
+    }
+  })
+
+  it('refuses a malformed tag name rather than writing broken JSX', () => {
+    const file = writeFixture(PAGE)
+    const at = locateTag(PAGE, 'section')
+
+    const result = insertJsxElement({ file, ...at, name: 'div onload="x"' })
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error('unreachable')
+    expect(result.refusal.reason).toBe('unsafe-tag')
+    expect(fs.readFileSync(file, 'utf8')).toBe(PAGE)
+  })
+
+  it('refuses children on a void element', () => {
+    const file = writeFixture(PAGE)
+    const at = locateTag(PAGE, 'section')
+
+    const result = insertJsxElement({ file, ...at, name: 'img', children: 'nope' })
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error('unreachable')
+    expect(result.refusal.reason).toBe('void-element-children')
+    expect(fs.readFileSync(file, 'utf8')).toBe(PAGE)
+  })
+
+  it('still writes the import when a component name IS given a specifier', () => {
+    const file = writeFixture(PAGE)
+    const at = locateTag(PAGE, 'section')
+
+    expect(insertJsxElement({ file, ...at, name: 'Button', importSpecifier: DS })).toEqual({ ok: true })
+    expect(fs.readFileSync(file, 'utf8')).toContain(`import { Chip, Button } from '${DS}'`)
+  })
+})

@@ -471,7 +471,12 @@ describe('applyStudioEdit — the css kind (WS-6.3)', () => {
     expect(read('src/screens/Home.css')).toBe('.hero {\n  color: red;\n  padding: 4px;\n}\n')
   })
 
-  it('refuses a .module.css target with the classifier’s specific reason, via applyStudioEditBatch', () => {
+  it('WRITES a .module.css target — the selector arrives pre-hash, so the file is a real target', () => {
+    // `studioCss.ts` maps a compiled CSS-Modules rule back to its file and its
+    // local selector, so `.hero` here is literally what the file contains.
+    // This used to refuse as 'compiled-stylesheet', which made the
+    // `.module.css` that `studio_create_page` scaffolds unwritable by the same
+    // agent that had just been told to style the page.
     write('src/screens/Home.module.css', '.hero {\n  color: red;\n}\n')
 
     const result = applyStudioEditBatch(tmpDir, [{
@@ -483,13 +488,25 @@ describe('applyStudioEdit — the css kind (WS-6.3)', () => {
       value: 'blue',
     }])
 
-    expect(result.written).toBe(0)
-    expect(result.skipped).toBe(1)
-    expect(result.refusals).toHaveLength(1)
-    expect(result.refusals[0]).toMatchObject({ kind: 'css', reason: 'compiled-stylesheet' })
-    expect(result.refusals[0]!.message).toContain('CSS Modules')
-    // Refused BEFORE any read/write — the file is untouched.
-    expect(read('src/screens/Home.module.css')).toBe('.hero {\n  color: red;\n}\n')
+    expect(result.written).toBe(1)
+    expect(result.refusals).toHaveLength(0)
+    expect(read('src/screens/Home.module.css')).toBe('.hero {\n  color: blue;\n}\n')
+  })
+
+  it('creates a missing rule in a .module.css rather than refusing', () => {
+    write('src/screens/Home.module.css', '.hero {\n  color: red;\n}\n')
+
+    const result = applyStudioEditBatch(tmpDir, [{
+      kind: 'css',
+      nodeId: 'css:src/screens/Home.module.css#.row#display',
+      file: 'src/screens/Home.module.css',
+      selector: '.row',
+      property: 'display',
+      value: 'flex',
+    }])
+
+    expect(result.written).toBe(1)
+    expect(read('src/screens/Home.module.css')).toContain('.row {')
   })
 
   it('refuses a minified build artefact the same way', () => {

@@ -10,7 +10,11 @@ import { describe, expect, it } from 'bun:test'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { isRealpathContained, resolveWorkspacePackageEntry } from '../studio/workspacePackageResolve'
+import {
+  isRealpathContained,
+  isRealpathContainedAllowingMissing,
+  resolveWorkspacePackageEntry,
+} from '../studio/workspacePackageResolve'
 
 function write(dir: string, relPath: string, contents: string): string {
   const full = path.join(dir, ...relPath.split('/'))
@@ -142,5 +146,107 @@ describe('isRealpathContained', () => {
     } finally {
       teardown()
     }
+  })
+})
+
+/**
+ * The bug this pins: `studio_read_file` gated on `isRealpathContained`, which
+ * answers `false` for a path that has no real path — i.e. for any file that
+ * simply isn't there. The tool therefore reported `"<path>" is not a readable
+ * path inside this project` for a MISSING file, blaming containment and making
+ * its own accurate "does not exist" message unreachable. Seen in the wild with
+ * an agent told to read `.claude/design-system.md` in a project whose roster
+ * had not regenerated yet: it read as a permissions problem when the real
+ * answer was "that file has not been written".
+ *
+ * The security property has to survive the relaxation, so the escape cases are
+ * tested directly — including the one the relaxation could plausibly have
+ * opened, where the tail does NOT exist and the walk climbs to a symlinked
+ * parent.
+ */
+describe('isRealpathContainedAllowingMissing', () => {
+  let tmpDir: string
+  let outsideDir: string
+
+  function setup(): void {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wpr-missing-'))
+    outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wpr-missing-outside-'))
+  }
+
+  function teardown(): void {
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+    fs.rmSync(outsideDir, { recursive: true, force: true })
+  }
+
+  it('accepts a file that does not exist yet, exactly where the strict check refuses it', () => {
+    setup()
+    try {
+      const missing = path.join(tmpDir, '.claude', 'design-system.md')
+      // The precise divergence that produced the misleading error.
+      expect(isRealpathContained(missing, tmpDir)).toBe(false)
+      expect(isRealpathContainedAllowingMissing(missing, tmpDir)).toBe(true)
+    } finally {
+      teardown()
+    }
+  })
+
+  it('agrees with the strict check for a file that does exist', () => {
+    setup()
+    try {
+      const present = write(tmpDir, '.claude/design-system.md', '# tokens\n')
+      expect(isRealpathContained(present, tmpDir)).toBe(true)
+      expect(isRealpathContainedAllowingMissing(present, tmpDir)).toBe(true)
+    } finally {
+      teardown()
+    }
+  })
+
+  it('still refuses a MISSING file under a symlinked directory that escapes dir', () => {
+    setup()
+    try {
+      const linkPath = path.join(tmpDir, 'link')
+      try {
+        fs.symlinkSync(outsideDir, linkPath, 'dir')
+      } catch {
+        return
+      }
+      expect(
+        isRealpathContainedAllowingMissing(path.join(linkPath, 'not-created-yet.md'), tmpDir),
+      ).toBe(false)
+    } finally {
+      teardown()
+    }
+  })
+
+  it('still refuses an EXISTING file reached through a symlinked directory that escapes dir', () => {
+    setup()
+    try {
+      write(outsideDir, 'secret.txt', 'shh\n')
+      const linkPath = path.join(tmpDir, 'link')
+      try {
+        fs.symlinkSync(outsideDir, linkPath, 'dir')
+      } catch {
+        return
+      }
+      expect(isRealpathContainedAllowingMissing(path.join(linkPath, 'secret.txt'), tmpDir)).toBe(false)
+    } finally {
+      teardown()
+    }
+  })
+
+  it('refuses a path outside dir even when nothing along it exists', () => {
+    setup()
+    try {
+      expect(
+        isRealpathContainedAllowingMissing(path.join(outsideDir, 'deep', 'nope.md'), tmpDir),
+      ).toBe(false)
+    } finally {
+      teardown()
+    }
+  })
+
+  it('refuses everything when dir itself does not exist', () => {
+    const gone = path.join(os.tmpdir(), 'wpr-never-created-xyz')
+    expect(isRealpathContainedAllowingMissing(path.join(gone, 'a.md'), gone)).toBe(false)
   })
 })

@@ -7,13 +7,17 @@
  * settle — a wedged subprocess pipe on one platform, a future driver bug on
  * another — and until it does, the conversation 409s every later message with
  * "already generating a response" until the server restarts. This guard frees
- * the lock on a bounded timer once the turn aborts, independent of whatever
- * the driver's promise is doing.
+ * the lock the instant the turn aborts, independent of what the driver is doing.
  *
- * Tested as a pure unit against a real `AbortController` and fake timers —
- * no HTTP handler, no database, no driver — because the guard's entire
- * contract is "given a signal and a release function, do the right thing on
- * a schedule," which doesn't need any of that machinery to prove.
+ * These tests originally pinned a 15s GRACE PERIOD before that release. The
+ * grace is gone: `abandonTurn` marks the turn unable to write BEFORE
+ * releasing, so release is safe by construction, and the only thing the delay
+ * still bought was a user who pressed Stop being told for another 15 seconds
+ * that the conversation was still generating. Stop means stopped.
+ *
+ * Tested as a pure unit against a real `AbortController` — no HTTP handler,
+ * no database, no driver — because the guard's entire contract is "given a
+ * signal and a release function, release on abort."
  */
 import { describe, expect, it, mock } from 'bun:test'
 import { abandonTurn, armAbortedReleaseGuard } from './chat'
@@ -26,7 +30,7 @@ describe('armAbortedReleaseGuard', () => {
   it('never calls release when the signal never aborts', async () => {
     const release = mock(() => {})
     const controller = new AbortController()
-    const dispose = armAbortedReleaseGuard(controller.signal, release, 5)
+    const dispose = armAbortedReleaseGuard(controller.signal, release)
 
     await flushMicrotasks()
     dispose()
@@ -34,54 +38,54 @@ describe('armAbortedReleaseGuard', () => {
     expect(release).not.toHaveBeenCalled()
   })
 
-  it('does not force-release if the natural path disposes before the grace period elapses', async () => {
+  it('releases SYNCHRONOUSLY on abort — a user who pressed Stop can send the next message immediately', () => {
+    // The regression this pins, and the reason the grace period was removed:
+    // pressing Stop and immediately sending another message used to return
+    // 409 "already generating a response" for up to 15 seconds. No await
+    // here on purpose — the release must have happened by the time abort()
+    // returns, not a tick or a timer later.
     const release = mock(() => {})
     const controller = new AbortController()
-    const dispose = armAbortedReleaseGuard(controller.signal, release, 50)
+    armAbortedReleaseGuard(controller.signal, release)
 
     controller.abort()
-    dispose() // the "natural" finally settled first — clears the pending timer
-
-    await new Promise((resolve) => setTimeout(resolve, 80))
-
-    expect(release).not.toHaveBeenCalled()
-  })
-
-  it('force-releases once the grace period elapses after an abort the natural path never unwinds from', async () => {
-    const release = mock(() => {})
-    const controller = new AbortController()
-    armAbortedReleaseGuard(controller.signal, release, 20)
-
-    controller.abort()
-    // Deliberately never call dispose() — this is the hung-driver case: the
-    // handler's own `finally` never runs, so nothing else frees the lock.
-    await new Promise((resolve) => setTimeout(resolve, 60))
 
     expect(release).toHaveBeenCalledTimes(1)
   })
 
-  it('arms immediately when the signal is already aborted before the guard is created', async () => {
+  it('releases even when the natural path never unwinds — the hung-driver case', async () => {
     const release = mock(() => {})
     const controller = new AbortController()
-    controller.abort()
+    armAbortedReleaseGuard(controller.signal, release)
 
-    armAbortedReleaseGuard(controller.signal, release, 15)
-    await new Promise((resolve) => setTimeout(resolve, 40))
+    controller.abort()
+    // Deliberately never call dispose() — the handler's own `finally` never
+    // runs, so nothing else would ever free the lock.
+    await new Promise((resolve) => setTimeout(resolve, 20))
 
     expect(release).toHaveBeenCalledTimes(1)
   })
 
-  it('dispose() after the timer already fired is a harmless no-op', async () => {
+  it('releases immediately when the signal is already aborted before the guard is created', () => {
     const release = mock(() => {})
     const controller = new AbortController()
-    const dispose = armAbortedReleaseGuard(controller.signal, release, 10)
+    controller.abort()
+
+    armAbortedReleaseGuard(controller.signal, release)
+
+    expect(release).toHaveBeenCalledTimes(1)
+  })
+
+  it('dispose() after the release already fired is a harmless no-op', () => {
+    const release = mock(() => {})
+    const controller = new AbortController()
+    const dispose = armAbortedReleaseGuard(controller.signal, release)
 
     controller.abort()
-    await new Promise((resolve) => setTimeout(resolve, 40))
     expect(release).toHaveBeenCalledTimes(1)
 
     expect(() => dispose()).not.toThrow()
-    // Still exactly once — dispose() after expiry must not somehow re-trigger it.
+    // Still exactly once — dispose() afterwards must not somehow re-trigger it.
     expect(release).toHaveBeenCalledTimes(1)
   })
 
@@ -94,11 +98,10 @@ describe('armAbortedReleaseGuard', () => {
     // abort listeners on the same signal.
     const release = mock(() => {})
     const controller = new AbortController()
-    const disposeA = armAbortedReleaseGuard(controller.signal, release, 10)
-    const disposeB = armAbortedReleaseGuard(controller.signal, release, 10)
+    const disposeA = armAbortedReleaseGuard(controller.signal, release)
+    const disposeB = armAbortedReleaseGuard(controller.signal, release)
 
     controller.abort()
-    await new Promise((resolve) => setTimeout(resolve, 40))
 
     expect(release).toHaveBeenCalledTimes(2) // once per independent guard — expected, not a bug
     expect(() => { disposeA(); disposeB() }).not.toThrow()

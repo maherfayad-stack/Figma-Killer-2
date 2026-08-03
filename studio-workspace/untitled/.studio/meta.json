@@ -4,19 +4,50 @@
     "direction": "ltr",
     "colorScheme": "light"
   },
-  "registeredMcpServers": [
-    {
-      "name": "figma",
-      "definition": {
-        "transport": "http",
-        "url": "https://mcp.figma.com/mcp",
-        "secretHeaderNames": [
-          "FIGMA_TOKEN"
-        ]
+  "profile": {
+    "framework": "unknown",
+    "appRoot": "",
+    "pagesDir": "pages",
+    "routeStyle": "flat",
+    "entryFiles": [],
+    "packageManager": "bun",
+    "styleToolchain": {
+      "tailwind": null,
+      "cssModules": true,
+      "sass": false,
+      "postcssConfigPath": null,
+      "cssInJs": null
+    },
+    "componentPackages": [],
+    "designSystems": [
+      {
+        "name": "alm-design-design-system-1-1-3",
+        "source": "imported",
+        "root": "styles/imported/alm-design-design-system-1-1-3"
       }
-    }
-  ],
-  "approvedRegisteredMcpServers": [
-    "figma"
-  ]
+    ],
+    "colorScheme": {
+      "mechanism": "class",
+      "selector": "[data-theme='dark']"
+    },
+    "aliases": {},
+    "warnings": [
+      {
+        "code": "pages-dir-heuristic",
+        "message": "No routing framework convention matched; guessed the pages directory \"pages\" by ranking directories on the fraction of files with a JSX-returning default export.",
+        "fix": "Confirm the pages directory in the import dialog, or set \"pagesDir\" explicitly in .studio/meta.json."
+      },
+      {
+        "code": "dependencies-not-installed",
+        "message": "package.json lists dependencies but node_modules is missing, so package-component detection was skipped.",
+        "fix": "Run dependency install (WS-1.4), then re-run the project probe."
+      }
+    ],
+    "pagesDirCandidates": [
+      {
+        "dir": "pages",
+        "score": 1
+      }
+    ]
+  }
 }

@@ -33,7 +33,8 @@
  */
 import React from 'react'
 import type { ModuleComponentProps } from '@core/module-engine'
-import { resolveHtmlTag, VOID_HTML_ELEMENTS } from '@modules/base/utils/htmlTag'
+import { resolveHtmlTag } from '@modules/base/utils/htmlTag'
+import { VOID_HTML_ELEMENTS } from '@core/utils/htmlTags'
 import { htmlAttributesForReact } from '@modules/base/shared/htmlAttributes'
 import { CanvasModulePlaceholder } from '@ui/components/CanvasModulePlaceholder'
 import { ContainerSolidIcon } from 'pixel-art-icons/icons/container-solid'

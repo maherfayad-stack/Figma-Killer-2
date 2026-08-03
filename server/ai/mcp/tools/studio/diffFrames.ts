@@ -59,8 +59,8 @@ import pixelmatch from 'pixelmatch'
 import sharp from 'sharp'
 import { Type } from '@core/utils/typeboxHelpers'
 import { aiToolError, aiToolOk } from '@core/ai'
-import type { AiTool } from '../../../runtime/types'
-import { resolveProjectDir } from '../../../../handlers/studioProjects'
+import type { AiTool, ToolContext } from '../../../runtime/types'
+import { resolveToolProjectDir } from './resolveToolProjectDir'
 import { getDesignReference, readDesignReferenceBytes } from '../../../../handlers/studio/designReferenceStore'
 
 const DEFAULT_TOP_N = 5
@@ -298,7 +298,7 @@ export const diffFramesTool: AiTool = {
   description:
     'Server-side pixel + region diff between `baseline` (base64, typically a studio_export_frames capture) and EITHER `reference` (base64) OR `referenceId` (a studio_register_design_reference id — its bytes are read here, never transiting you). Returns an overall similarity score, a diff PNG (as an image block), and the top differing rectangles ranked by differing-pixel count — each with a diffPercent and, when `nodeRects` was supplied, the node ids whose rect intersects it. This is the "the hero section is 78% different, nodes X and Y" tool, not a bare screenshot comparator: pair it with studio_export_frames\' `nodeRects` output and studio_get_node_source to go straight from a visual defect to the exact source location. With `reference`, both images must be the exact same pixel dimensions or this returns ok:false naming the mismatch. With `referenceId`, a dimension mismatch is instead RECONCILED — call studio_recommend_export_dpr first and export at the recommended dpr for an exact match; failing that, this tool resamples the reference to fit (labelled `dimensionReconciliation.method: "resampled"` in the result — a resampled score is not the same claim as a dpr-matched one) unless the two images\' aspect ratios diverge too far to attribute to a resolution mismatch, in which case it refuses rather than silently stretch the image.',
   inputSchema: InputSchema,
-  handler: async (input) => {
+  handler: async (input, ctx: ToolContext) => {
     const { dir: dirInput, baseline, reference, referenceId, nodeRects, topN, threshold } = input as {
       dir?: string
       baseline: string
@@ -324,7 +324,7 @@ export const diffFramesTool: AiTool = {
     let dimensionReconciliation: { method: 'exact' | 'resampled'; referenceId: string; referenceOriginal: { width: number; height: number } } | undefined
 
     if (referenceId !== undefined) {
-      const dir = resolveProjectDir(dirInput)
+      const dir = resolveToolProjectDir(dirInput, ctx)
       const designRef = getDesignReference(dir, referenceId)
       if (!designRef) {
         return aiToolError(`No design reference "${referenceId}" found for this project — call studio_list_design_references to see what is registered.`)

@@ -164,6 +164,16 @@ export const StudioMetaSchema = Type.Object({
    * sharing a name.
    */
   approvedRegisteredMcpServers: Type.Optional(Type.Array(Type.String())),
+  /**
+   * Names of Studio's OWN built-in servers this project has switched off
+   * (`BUILT_IN_MCP_SERVERS` in `../../ai/drivers/registeredMcpServers.ts`).
+   *
+   * Built-ins are present in every project without being registered, so
+   * "delete the entry" is not available as the way to turn one off — this
+   * list is. Opting out is per project, and an entry here always wins over
+   * the built-in, so a user is never stuck with a server Studio ships.
+   */
+  disabledBuiltInMcpServers: Type.Optional(Type.Array(Type.String())),
 })
 export type StudioMeta = Static<typeof StudioMetaSchema>
 

@@ -20,7 +20,7 @@ import { zipSync, strToU8 } from 'fflate'
 import { INLINE_ID_SEPARATOR, checkCanonicalJsx, parsePageFile } from '@core/page-parser'
 import { tryServeStudio } from '../studio'
 import { applyStudioEdit, dedupeStudioEdits, orderStudioEditsForApply } from '../studioWriteback'
-import { assignPageIds, pageIdFromRelPath } from '../studioPageLoad'
+import { assignPageIds, pageIdFromRelPath } from '../studioPageIds'
 import { discoverPageFiles, listStudioProjects, pageComponentNameFromInput } from '../studioProjects'
 import { collectWorkspaceFiles } from '../studioDownload'
 import { probeProject } from '../studio/projectProbe'
@@ -349,6 +349,31 @@ describe('applyStudioEdit', () => {
     ])
 
     expect(deduped).toHaveLength(2)
+  })
+
+  it('keeps every insert against one container, in order', () => {
+    // An insert's nodeId is the CONTAINER, and the edit ADDS a child rather
+    // than overwriting a span, so N inserts on one container are N wanted
+    // elements. Collapsing them dropped all but the last with nothing
+    // reporting the loss — see `dedupeStudioEdits`' "Why `insert` is exempt".
+    const nodeId = 'Home.tsx:5:6'
+    const deduped = dedupeStudioEdits([
+      { kind: 'insert', nodeId, name: 'header' },
+      { kind: 'insert', nodeId, name: 'main' },
+      { kind: 'insert', nodeId, name: 'footer' },
+    ])
+
+    expect(deduped.map((e) => (e as { name: string }).name)).toEqual(['header', 'main', 'footer'])
+  })
+
+  it('still collapses a repeated non-insert structural edit on one location', () => {
+    const nodeId = 'Home.tsx:5:6'
+    const deduped = dedupeStudioEdits([
+      { kind: 'delete', nodeId },
+      { kind: 'delete', nodeId },
+    ])
+
+    expect(deduped).toHaveLength(1)
   })
 
   it('propagates JsxTextTargetError for a mixed-content text target, leaving the file untouched', () => {

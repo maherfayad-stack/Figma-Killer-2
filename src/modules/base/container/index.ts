@@ -15,8 +15,8 @@ import {
   customHtmlTagControl,
   htmlTagControl,
   resolveHtmlTag,
-  VOID_HTML_ELEMENTS,
 } from '@modules/base/utils/htmlTag'
+import { VOID_HTML_ELEMENTS } from '@core/utils/htmlTags'
 import {
   htmlAttributesAttr,
   htmlAttributesControl,

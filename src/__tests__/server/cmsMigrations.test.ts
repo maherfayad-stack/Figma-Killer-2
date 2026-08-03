@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import { pgMigrations } from '../../../server/db/migrations-pg'
 import { sqliteMigrations } from '../../../server/db/migrations-sqlite'
-import { SYSTEM_ROLES } from '../../../server/auth/capabilities'
+import { FORCE_SYNC_ROLE_IDS, SYSTEM_ROLES } from '../../../server/auth/capabilities'
 
 describe('CMS migrations', () => {
   it('creates the required CMS tables', () => {
@@ -58,16 +58,46 @@ describe('CMS migrations', () => {
     expect(sql).not.toContain('site_singleton')
   })
 
-  it('seeds the expected system roles in both dialects', () => {
+  /**
+   * The seed creates the four roles; it does NOT promise to list every
+   * capability they will ever hold.
+   *
+   * This assertion used to walk `role.capabilities` and require each string to
+   * appear in the migration SQL. That contradicts two rules this repo holds
+   * simultaneously: a committed migration is never edited (CLAUDE.md, "never
+   * rewrite a committed migration"), and Owner + Admin are force-resynced from
+   * code on every boot (`FORCE_SYNC_ROLE_IDS`, `syncSystemRoles`) precisely so
+   * a new capability propagates WITHOUT one. Under both, the old assertion
+   * could only ever be satisfied by breaking the first rule, and it duly went
+   * red the moment `studio.write` was added — pointing not at a migration bug
+   * but at an invariant that was never true.
+   *
+   * What is actually load-bearing is checked instead: every system role is
+   * seeded, and the two roles whose capabilities are NOT maintained by the
+   * boot sync (Client, Member — seeded once, then user-editable) do have their
+   * capabilities present in the seed, because for them the seed is the only
+   * source they will ever get.
+   */
+  it('seeds every system role, with full capabilities for the non-force-synced ones', () => {
     const pgSql = pgMigrations.map((m) => m.sql).join('\n')
     const sqliteSql = sqliteMigrations.map((m) => m.sql).join('\n')
+
     for (const role of SYSTEM_ROLES) {
       expect(pgSql).toContain(`'${role.slug}'`)
       expect(sqliteSql).toContain(`'${role.slug}'`)
+
+      if (FORCE_SYNC_ROLE_IDS.includes(role.id)) continue
       for (const capability of role.capabilities) {
         expect(pgSql).toContain(capability)
         expect(sqliteSql).toContain(capability)
       }
     }
+  })
+
+  it('force-syncs exactly the roles whose seeded capabilities are allowed to go stale', () => {
+    // The escape hatch above is only sound while these two are boot-synced.
+    // If a role ever leaves FORCE_SYNC_ROLE_IDS, its capabilities must go back
+    // to being fully seeded — this pins the pair together.
+    expect([...FORCE_SYNC_ROLE_IDS].sort()).toEqual(['admin', 'owner'])
   })
 })

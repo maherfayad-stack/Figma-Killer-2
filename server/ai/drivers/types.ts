@@ -176,6 +176,16 @@ export interface ToolContextBase {
   readonly capabilities: readonly CoreCapability[]
   readonly conversationId: string
   /**
+   * The Studio project this turn is operating on — the DEFAULT for every
+   * Studio tool's optional `dir`, applied by `resolveToolProjectDir`.
+   *
+   * `undefined` when the turn carries no open workspace, which falls back to
+   * the historical "first project alphabetically". That fallback is what made
+   * an agent silently work on `untitled` while the user was looking at
+   * `untitled-2`; see `server/ai/mcp/connectorWorkspace.ts` for the account.
+   */
+  readonly workspaceDir?: string
+  /**
    * The live editor snapshot for read tools. Mutable across a turn: the
    * browser bridge refreshes it after each mutating tool (via createBridge's
    * onSnapshot) so later server read tools see post-mutation state.

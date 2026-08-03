@@ -33,6 +33,7 @@ import {
   permissionGateToolDefinition,
   runPermissionRequest,
 } from './permissionGate'
+import { getConnectorWorkspace } from './connectorWorkspace'
 
 export interface McpServerContext {
   db: DbClient
@@ -149,6 +150,13 @@ export function buildMcpServer(ctx: McpServerContext): Server {
         userId: ctx.userId,
         capabilities: ctx.capabilities,
         conversationId: `mcp:${ctx.connectorId}`,
+        // The Studio project this connector's turn is about, when one is bound
+        // (`connectorWorkspace.ts`). This is the path the Studio agent's own
+        // tool calls take — it is a `claude` subprocess reaching back in
+        // through /_studio/mcp, so `chat.ts`'s per-turn workspaceDir never
+        // reaches it and the tools would otherwise default to the wrong
+        // project entirely.
+        workspaceDir: getConnectorWorkspace(ctx.connectorId),
         snapshot: null,
       })
     } catch (err) {

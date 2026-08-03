@@ -163,7 +163,7 @@ describe('studioCss — styleRuleSources (WS-6.3 write-back mapping)', () => {
     expect(styleRuleSources[badgeId]).toEqual({ file: 'components/Badge.css', selector: '.badge' })
   })
 
-  it('leaves a .module.css-sourced class unmapped — no honest hand-editable selector at this layer', async () => {
+  it('maps a .module.css class back to its file and its PRE-HASH local selector', async () => {
     write('pages/Home.module.css', '.title { color: red }\n')
     write(
       'pages/Home.tsx',
@@ -178,8 +178,13 @@ describe('studioCss — styleRuleSources (WS-6.3 write-back mapping)', () => {
 
     const { styleRuleSources } = await loadStudioPages(tmpDir)
 
-    // Every entry in the map (if any) must NOT point at the .module.css file.
-    expect(Object.values(styleRuleSources).some((s) => s.file.endsWith('.module.css'))).toBe(false)
+    // The registry holds the rule under its COMPILED name (`Home_title__…`),
+    // because that is what the canvas renders. Its source must nonetheless be
+    // the hand-authored file and the selector as written there — `.title`,
+    // never the hash. Without this inverse mapping the rule is unmapped, which
+    // is what surfaced as "Style not saved to source".
+    const moduleSources = Object.values(styleRuleSources).filter((s) => s.file.endsWith('.module.css'))
+    expect(moduleSources).toEqual([{ file: 'pages/Home.module.css', selector: '.title' }])
   })
 
   it('a later stylesheet redefining the same class name wins the mapping too, matching styleRules itself', async () => {

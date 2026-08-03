@@ -29,30 +29,36 @@
  * node's few lines of context; this reads a whole file by path).
  */
 import { join, sep } from 'node:path'
-import { readFileSync } from 'node:fs'
+import { readFileSync, statSync } from 'node:fs'
 import { Type } from '@core/utils/typeboxHelpers'
 import { decodeSourceNodeId } from '@core/page-tree'
-import { EXCLUDED_WORKSPACE_DIR_NAMES, checkCanonicalJsx, parsePageFile, summarizeCanonicalFindings } from '@core/page-parser'
+import {
+  EXCLUDED_WORKSPACE_DIR_NAMES,
+  checkCanonicalJsx,
+  listWorkspaceFiles,
+  parsePageFile,
+  summarizeCanonicalFindings,
+} from '@core/page-parser'
 import type { AiTool, ToolContext } from '../../../runtime/types'
 import {
   listStudioProjects,
   projectDisplayName,
   projectsRootDir,
-  resolveProjectDir,
 } from '../../../../handlers/studioProjects'
+import { resolveToolProjectDir } from './resolveToolProjectDir'
 import { readStudioMeta } from '../../../../handlers/studio/studioMeta'
 import { resolveProjectProfile } from '../../../../handlers/studio/projectProbe'
 import { startInstallJob, getInstallJob, probeInstallStatus } from '../../../../handlers/studio/installDeps'
 import { loadStudioPages } from '../../../../handlers/studioPageLoad'
 import { createScaffoldedPage } from '../../../../handlers/studio/pageScaffold'
 import { readTextCapped } from '../../../../handlers/studio/cappedFileRead'
-import { isRealpathContained } from '../../../../handlers/studio/workspacePackageResolve'
+import { isRealpathContainedAllowingMissing } from '../../../../handlers/studio/workspacePackageResolve'
 import { pushStudioLiveReload } from './liveReloadPush'
 
 const DirInputSchema = Type.Object(
   {
     dir: Type.Optional(
-      Type.String({ description: 'Absolute project directory. Defaults to the first project under studio-workspace/.' }),
+      Type.String({ description: 'Absolute project directory. Defaults to the project currently open in Studio — omit it unless you deliberately mean a DIFFERENT project than the one this conversation is about.' }),
     ),
   },
   { additionalProperties: false },
@@ -108,9 +114,9 @@ const projectProfileTool: AiTool = {
   description:
     'Return the full ProjectProfile for a studio project: detected framework, route style, pages directory, style toolchain (Tailwind/Sass/CSS Modules/CSS-in-JS), component packages, path aliases, and the probe\'s own warnings (each a { code, message, fix } — the same codes studio_fidelity_report surfaces). Uses the cached probe from .studio/meta.json when present, else probes fresh (never writes the cache itself). Call this before touching a project you have not seen before — "what am I working with" in one call.',
   inputSchema: DirInputSchema,
-  handler: async (input) => {
+  handler: async (input, ctx: ToolContext) => {
     const { dir: dirInput } = input as { dir?: string }
-    const dir = resolveProjectDir(dirInput)
+    const dir = resolveToolProjectDir(dirInput, ctx)
     const meta = readStudioMeta(dir)
     const profile = resolveProjectProfile(dir)
     return { dir, name: projectDisplayName(dir), trust: meta.trust ?? 'static', profile }
@@ -130,9 +136,9 @@ const installDepsTool: AiTool = {
   description:
     'Start a "bun install --ignore-scripts" (or the detected package manager) job for a project as a background job — returns a jobId immediately, never blocks on the install itself (30s-3min). Poll status with studio_install_status. Refuses outright at Tier 0 (static) trust — the agent may ASK the user to promote the project first, never promote it itself. Postinstall scripts never run even once promoted (arbitrary code execution is refused separately); packages that need one are reported as a warning in the job log instead. Requires studio.write.',
   inputSchema: DirInputSchema,
-  handler: async (input) => {
+  handler: async (input, ctx: ToolContext) => {
     const { dir: dirInput } = input as { dir?: string }
-    const dir = resolveProjectDir(dirInput)
+    const dir = resolveToolProjectDir(dirInput, ctx)
     // WS-12 §2.3 — Tier 0 = read + AST edits only. Installing dependencies
     // is a real toolchain action; it must refuse here, at the tool's own
     // authorization boundary, not rely on a caller-supplied mode (this
@@ -188,9 +194,9 @@ const listPagesTool: AiTool = {
   description:
     'List every page (board frame) discovered in a project: id, title, slug/route, and node count. Parses the whole project once (same pipeline the Studio UI uses to load the board) — for a large project prefer this over re-parsing yourself. Use the returned pageId with studio_find_nodes / studio_fidelity_report / studio_set_frames.',
   inputSchema: DirInputSchema,
-  handler: async (input) => {
+  handler: async (input, ctx: ToolContext) => {
     const { dir: dirInput } = input as { dir?: string }
-    const dir = resolveProjectDir(dirInput)
+    const dir = resolveToolProjectDir(dirInput, ctx)
     const { pages } = await loadStudioPages(dir)
     return {
       dir,
@@ -211,7 +217,7 @@ const listPagesTool: AiTool = {
 const GetNodeSourceInputSchema = Type.Object(
   {
     dir: Type.Optional(
-      Type.String({ description: 'Absolute project directory. Defaults to the first project under studio-workspace/.' }),
+      Type.String({ description: 'Absolute project directory. Defaults to the project currently open in Studio — omit it unless you deliberately mean a DIFFERENT project than the one this conversation is about.' }),
     ),
     nodeId: Type.String({
       description:
@@ -231,9 +237,9 @@ const getNodeSourceTool: AiTool = {
   description:
     'Decode a studio node id to its exact source location: { file, line, col, snippet }. This is the bridge from "the hero section is wrong" to "here is the code" — every visual finding should be paired with this. Returns ok:false with a reason for a synthetic node (no source location) or a `.map`-iteration node id (one piece of source produces N nodes; there is no single line for row 2).',
   inputSchema: GetNodeSourceInputSchema,
-  handler: async (input) => {
+  handler: async (input, ctx: ToolContext) => {
     const { dir: dirInput, nodeId, contextLines } = input as { dir?: string; nodeId: string; contextLines?: number }
-    const dir = resolveProjectDir(dirInput)
+    const dir = resolveToolProjectDir(dirInput, ctx)
     const loc = decodeSourceNodeId(nodeId)
     if (!loc) {
       return {
@@ -265,7 +271,7 @@ const DEFAULT_FIND_LIMIT = 100
 const FindNodesInputSchema = Type.Object(
   {
     dir: Type.Optional(
-      Type.String({ description: 'Absolute project directory. Defaults to the first project under studio-workspace/.' }),
+      Type.String({ description: 'Absolute project directory. Defaults to the project currently open in Studio — omit it unless you deliberately mean a DIFFERENT project than the one this conversation is about.' }),
     ),
     pageId: Type.Optional(Type.String({ description: 'Restrict the search to one page id (from studio_list_pages).' })),
     moduleId: Type.Optional(
@@ -296,7 +302,7 @@ const findNodesTool: AiTool = {
   description:
     'Query nodes across a project\'s pages by moduleId, tag, class name, text, lock state, or codeProps presence. The agent\'s "show me everything that failed to resolve" — pass lockedOnly:true to find every dynamic/unresolved node, or codeValuedOnly:true to find every per-prop value with nowhere writable to land. Results are capped (default 100) and always include enough to call studio_get_node_source next.',
   inputSchema: FindNodesInputSchema,
-  handler: async (input) => {
+  handler: async (input, ctx: ToolContext) => {
     const {
       dir: dirInput,
       pageId,
@@ -318,7 +324,7 @@ const findNodesTool: AiTool = {
       codeValuedOnly?: boolean
       limit?: number
     }
-    const dir = resolveProjectDir(dirInput)
+    const dir = resolveToolProjectDir(dirInput, ctx)
     const { pages, styleRules } = await loadStudioPages(dir)
     const cap = limit ?? DEFAULT_FIND_LIMIT
 
@@ -371,7 +377,7 @@ const findNodesTool: AiTool = {
 const CreatePageInputSchema = Type.Object(
   {
     dir: Type.Optional(
-      Type.String({ description: 'Absolute project directory. Defaults to the first project under studio-workspace/.' }),
+      Type.String({ description: 'Absolute project directory. Defaults to the project currently open in Studio — omit it unless you deliberately mean a DIFFERENT project than the one this conversation is about.' }),
     ),
     name: Type.Optional(
       Type.String({
@@ -394,7 +400,7 @@ const createPageTool: AiTool = {
   inputSchema: CreatePageInputSchema,
   handler: async (input, ctx: ToolContext) => {
     const { dir: dirInput, name } = input as { dir?: string; name?: string }
-    const dir = resolveProjectDir(dirInput)
+    const dir = resolveToolProjectDir(dirInput, ctx)
     const result = createScaffoldedPage(dir, name ?? '')
     if (!result.ok) return { ok: false, error: result.conflict }
     // A scaffolded page always writes BOTH a new page file AND a new board
@@ -422,7 +428,7 @@ const READ_FILE_MAX_BYTES = 200_000
 const ReadFileInputSchema = Type.Object(
   {
     dir: Type.Optional(
-      Type.String({ description: 'Absolute project directory. Defaults to the first project under studio-workspace/.' }),
+      Type.String({ description: 'Absolute project directory. Defaults to the project currently open in Studio — omit it unless you deliberately mean a DIFFERENT project than the one this conversation is about.' }),
     ),
     path: Type.String({
       description:
@@ -439,8 +445,14 @@ const ReadFileInputSchema = Type.Object(
  * reject absolute/UNC/drive-letter forms, reject any `..` segment split on
  * BOTH separators, reject any segment named in `EXCLUDED_WORKSPACE_DIR_NAMES`
  * (`node_modules`, `.git`, …), then re-check containment on the REAL path
- * (`isRealpathContained`) so a symlink planted inside `dir` — a GitHub import
- * can contain one — can't point the read outside it.
+ * (`isRealpathContainedAllowingMissing`) so a symlink planted inside `dir` — a
+ * GitHub import can contain one — can't point the read outside it.
+ *
+ * Containment deliberately tolerates a path that does not exist. The plain
+ * `isRealpathContained` answers `false` for a missing file, which made this
+ * function return `null` and the caller report "not a readable path inside
+ * this project" — blaming containment for a file that was merely absent, and
+ * making its own accurate "does not exist" message unreachable.
  */
 function resolveSafeWorkspaceFile(dir: string, rawPath: string): string | null {
   if (/^[a-zA-Z]:/.test(rawPath)) return null // Windows drive path
@@ -453,7 +465,7 @@ function resolveSafeWorkspaceFile(dir: string, rawPath: string): string | null {
   const root = join(dir)
   const resolved = join(dir, ...segments)
   if (resolved !== root && !resolved.startsWith(root + sep)) return null
-  if (!isRealpathContained(resolved, dir)) return null
+  if (!isRealpathContainedAllowingMissing(resolved, dir)) return null
   return resolved
 }
 
@@ -488,17 +500,107 @@ const readFileTool: AiTool = {
   description:
     `Read a workspace file by project-relative path, up to ${READ_FILE_MAX_BYTES.toLocaleString('en-US')} bytes. studio_get_node_source reads the few lines around ONE already-known node; this reads a whole file — use it to read a SIBLING screen or a component's own source before composing a new screen, so the result matches the project's existing conventions (imports, component vocabulary, class naming, file layout) instead of guessing. For a .tsx/.jsx path, also returns canonical: { isCanonical, violations, advisories } — the WS-13 canonical-JSX check (isCanonical is violations===0; advisories are informational, never disqualifying) — use this to confirm a screen you just composed is still fully editable. Returns { ok:false, error } for a missing file, a directory, an oversized file, or a path that fails containment (absolute, "..", or a symlink escaping the project) — never a partial read.`,
   inputSchema: ReadFileInputSchema,
-  handler: async (input) => {
+  handler: async (input, ctx: ToolContext) => {
     const { dir: dirInput, path: rawPath } = input as { dir?: string; path: string }
-    const dir = resolveProjectDir(dirInput)
+    const dir = resolveToolProjectDir(dirInput, ctx)
     const resolved = resolveSafeWorkspaceFile(dir, rawPath)
     if (!resolved) return { ok: false, error: `"${rawPath}" is not a readable path inside this project.` }
+    // Name the three cases apart. They were collapsed into one message, and a
+    // caller with no directory-listing tool could not tell "wrong path" from
+    // "this is a folder" — so it guessed again, and again. `studio_list_files`
+    // is the answer to the folder case, so the error says so.
+    if (statSafe(resolved)?.isDirectory()) {
+      return {
+        ok: false,
+        error: `"${rawPath}" is a directory, not a file. Call studio_list_files with path="${rawPath}" to see what is inside it.`,
+      }
+    }
     const content = readTextCapped(resolved, READ_FILE_MAX_BYTES)
     if (content === undefined) {
-      return { ok: false, error: `"${rawPath}" does not exist, is not a regular file, or exceeds ${READ_FILE_MAX_BYTES.toLocaleString('en-US')} bytes.` }
+      return { ok: false, error: `"${rawPath}" does not exist, is not a regular file, or exceeds ${READ_FILE_MAX_BYTES.toLocaleString('en-US')} bytes. Call studio_list_files to see what paths actually exist rather than guessing another one.` }
     }
     const canonical = canonicalSummaryFor(resolved, dir, rawPath)
     return { ok: true, dir, path: rawPath, content, ...(canonical ? { canonical } : {}) }
+  },
+}
+
+
+/** Bounded so a pathological project cannot blow a turn; far above any real project's page/style tree. */
+const LIST_FILES_MAX = 500
+
+/** `statSync` that answers `undefined` instead of throwing for a path that isn't there. */
+function statSafe(path: string): ReturnType<typeof statSync> | undefined {
+  try {
+    return statSync(path)
+  } catch {
+    return undefined
+  }
+}
+
+const ListFilesInputSchema = Type.Object(
+  {
+    dir: Type.Optional(
+      Type.String({ description: 'Absolute project directory. Defaults to the project currently open in Studio — omit it unless you deliberately mean a DIFFERENT project than the one this conversation is about.' }),
+    ),
+    path: Type.Optional(
+      Type.String({ description: 'Project-relative folder to list, e.g. "pages" or "styles/imported". Omit for the whole project.' }),
+    ),
+    limit: Type.Optional(
+      Type.Integer({ minimum: 1, maximum: LIST_FILES_MAX, description: `Maximum paths to return (default ${LIST_FILES_MAX}).` }),
+    ),
+  },
+  { additionalProperties: false },
+)
+
+/**
+ * The tool whose absence made agents guess.
+ *
+ * Every other listing tool here is domain-shaped — pages, components, tokens,
+ * nodes — and none answers "what files are actually in this project". An agent
+ * with no shell and no directory listing could only probe `studio_read_file`
+ * with invented paths (`pages/sign-in.tsx`, `pages/sign-in/index.tsx`,
+ * `README.md`, `CLAUDE.md`, the design-system folder), read the same generic
+ * "does not exist" for all of them, and try another guess. Observed doing
+ * exactly that for a dozen consecutive calls.
+ *
+ * Walks through `listWorkspaceFiles`, so the exclusions (`node_modules`,
+ * `.git`, `.studio`, `dist`, `.next`, `.turbo`) and the file-count cap are the
+ * SAME ones every other workspace walk uses — one list, not a second policy
+ * that could drift from it.
+ */
+const listFilesTool: AiTool = {
+  name: 'studio_list_files',
+  scope: 'shared',
+  execution: 'server',
+  description:
+    'List the files in this project, as project-relative POSIX paths. Use this BEFORE studio_read_file whenever you are unsure a path exists — it is the only way to see the real file tree, and guessing paths one studio_read_file at a time is never the answer. Pass path to list one folder ("pages", "styles/imported"), omit it for the whole project. Generated/dependency folders (node_modules, .git, .studio, dist) are never listed. Returns { files, total, truncated }.',
+  inputSchema: ListFilesInputSchema,
+  handler: async (input, ctx: ToolContext) => {
+    const { dir: dirInput, path: rawPath, limit } = input as { dir?: string; path?: string; limit?: number }
+    const dir = resolveToolProjectDir(dirInput, ctx)
+
+    let all: string[]
+    try {
+      all = listWorkspaceFiles(dir)
+    } catch (err) {
+      return { ok: false, error: `Could not list this project's files: ${err instanceof Error ? err.message : String(err)}` }
+    }
+
+    const prefix = (rawPath ?? '').replace(/^[./]+/, '').replace(/\/+$/, '')
+    const matched = prefix.length === 0
+      ? all
+      : all.filter((f) => f === prefix || f.startsWith(`${prefix}/`))
+
+    if (prefix.length > 0 && matched.length === 0) {
+      return {
+        ok: false,
+        error: `"${rawPath}" matches no files in this project. Call studio_list_files with no path to see the whole tree.`,
+      }
+    }
+
+    const cap = limit ?? LIST_FILES_MAX
+    const files = matched.slice(0, cap)
+    return { ok: true, dir, path: prefix.length > 0 ? prefix : undefined, files, total: matched.length, truncated: matched.length > files.length }
   },
 }
 
@@ -512,4 +614,5 @@ export const studioProjectMcpTools: AiTool[] = [
   findNodesTool,
   createPageTool,
   readFileTool,
+  listFilesTool,
 ]

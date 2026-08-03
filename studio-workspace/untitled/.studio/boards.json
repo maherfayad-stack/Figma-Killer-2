@@ -80,6 +80,36 @@
           "y": 4400,
           "width": 393,
           "height": 852
+        },
+        {
+          "id": "18634b24-7753-4d8b-95aa-809c5536d042",
+          "pageId": "sign-up-alm",
+          "x": 1805.2290034847292,
+          "y": 4400
+        },
+        {
+          "id": "c31c8a52-4ea1-4f62-a2ad-b4bdc3d3cad9",
+          "pageId": "sms-phone-alm",
+          "x": 0,
+          "y": 5280
+        },
+        {
+          "id": "907f06ba-fed0-4019-97f3-09e5b327f0e5",
+          "pageId": "sms-email-alm",
+          "x": 1104,
+          "y": 5280
+        },
+        {
+          "id": "7f7a1d6e-fdcb-4af0-a97a-820fa341c9f2",
+          "pageId": "sign-in-hero-alm",
+          "x": 0,
+          "y": 6160
+        },
+        {
+          "id": "c5f8bfb8-7078-4557-9495-b6b41b8c7769",
+          "pageId": "onboarding-alm",
+          "x": 1104,
+          "y": 6160
         }
       ],
       "notes": [],

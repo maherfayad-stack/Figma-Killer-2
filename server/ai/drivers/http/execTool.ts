@@ -73,10 +73,37 @@ export async function executeAiTool(
   return await bridge.callBrowser(aiTool.name, validated)
 }
 
+/** The only properties the canonical envelope carries. Anything else marks a raw payload. */
+const ENVELOPE_KEYS: ReadonlySet<string> = new Set(['ok', 'data', 'error', 'images'])
+
 /**
  * Server-side handlers return their own raw payload. Wrap it in the canonical
  * `AiToolOutput` envelope so the model always sees a consistent `{ ok, data }`
  * shape, whether the tool ran server-side or in the browser.
+ *
+ * ## Why the key check, and not `safeParseValue` alone
+ *
+ * `AiToolOutputSchema` is an open TypeBox object — it does not set
+ * `additionalProperties: false`. So a raw PAYLOAD that happens to carry its
+ * own `ok` field, which most Studio tools return
+ * (`{ ok: true, dir, path, content }` from `studio_read_file`, and the same
+ * shape from `studio_list_tokens`, `studio_list_components`,
+ * `studio_read_package_doc`, …), validated as a well-formed ENVELOPE and was
+ * passed straight through with `data` left `undefined`.
+ *
+ * Nothing looked wrong on the chat path, which forwards the whole object to
+ * the provider, extras and all. The MCP path reads `output.data` and falls
+ * back to `{ ok: true }` when it is absent — so every one of those tools
+ * answered an external MCP client with a bare `{"ok":true}` and no payload.
+ * An agent asked to read `design-system.md` got a successful-looking result
+ * containing nothing, repeatedly, with no error to explain it.
+ *
+ * A result is therefore only an envelope when EVERY key is an envelope key.
+ * The `ok === false` clause is load-bearing and deliberate: a failure carrying
+ * an extra diagnostic field must stay a failure. Without it, re-wrapping would
+ * turn `{ ok: false, error, hint }` into `{ ok: true, data: { ok: false, … } }`
+ * — silently converting an error into a success, which is far worse than the
+ * dropped payload this function is fixing.
  */
 export function normaliseToolOutput(result: unknown): AiToolOutput {
   // The handler's return is untyped (`unknown`). Validate against the canonical
@@ -84,7 +111,9 @@ export function normaliseToolOutput(result: unknown): AiToolOutput {
   // would pass the duck-type and then read as truthy-but-not-boolean downstream.
   const parsed = safeParseValue(AiToolOutputSchema, result)
   if (parsed.ok) {
-    return parsed.value
+    const keys = Object.keys(result as Record<string, unknown>)
+    if (keys.every((key) => ENVELOPE_KEYS.has(key))) return parsed.value
+    if (parsed.value.ok === false) return parsed.value
   }
   return { ok: true, data: result }
 }

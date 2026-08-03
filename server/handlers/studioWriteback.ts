@@ -328,13 +328,24 @@ export function orderStudioEditsForApply<T extends { nodeId: string }>(edits: re
  * Without this, editing two instances in a single batch would apply both writes
  * to the same position — the second reading a file the first already changed,
  * for a silent last-write-wins with a stale intermediate.
+ *
+ * ## Why `insert` is exempt
+ *
+ * Every other kind OVERWRITES the span its nodeId points at, so two of them on
+ * one location are the same write twice and last-one-wins is the honest
+ * reading. `insert` does not overwrite anything: its nodeId names the
+ * CONTAINER, and the edit ADDS a child to it. Two inserts against one container
+ * are therefore two different, both-wanted elements, not a duplicate — and
+ * collapsing them silently dropped all but the last, so composing a screen one
+ * batch at a time quietly produced a single child no matter how many were
+ * asked for, with `written` reporting the truth and nothing reporting the loss.
  */
 export function dedupeStudioEdits<T extends { nodeId: string; kind: string }>(edits: readonly T[]): T[] {
   const byTarget = new Map<string, T>()
   const passthrough: T[] = []
   for (const edit of edits) {
     const loc = studioEditLocation(edit.nodeId)
-    if (!loc) {
+    if (!loc || edit.kind === 'insert') {
       passthrough.push(edit)
       continue
     }

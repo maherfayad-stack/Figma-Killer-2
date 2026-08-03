@@ -6,11 +6,28 @@
  *   - `'plain-css'`  — a real, hand-authored `.css` file. `setDeclaration`
  *                      is the right tool.
  *   - `'compiled'`   — a build output with no meaningful source at this
- *                      layer (`dist/style.css`, any `.min.css`, or a
- *                      `.module.css` — the class name on the canvas is the
- *                      COMPILED hash, not what's written in the source
- *                      `.module.css` file, so writing to the module file by
- *                      selector would target the wrong, pre-hash name).
+ *                      layer (`dist/style.css`, any `.min.css`).
+ *
+ * ## `.module.css` is NOT compiled — it is the most hand-authored file there is
+ *
+ * This classifier used to answer `'compiled'` for every `*.module.css`, on the
+ * reasoning that "the class name on the canvas is the hash, not what is in the
+ * file." The observation is true; the conclusion was a modelling error. What is
+ * compiled is the class NAME the canvas observes, not the FILE — and the fix
+ * for a name is to map it, not to declare its source unwritable.
+ *
+ * That mapping now exists: `styleCompile.ts` already computes
+ * `moduleClassMaps` (`{ file: { local: generated } }`) to do the renaming, and
+ * `studioCss.ts`'s `cssModuleSource` inverts it, so a rule arriving here
+ * carries the selector as WRITTEN in the module file. Every caller reaches this
+ * function through a `StyleRuleSource` produced by that path, so by the time a
+ * `.module.css` gets here the pre-hash-name hazard cannot occur.
+ *
+ * The cost of the old answer was not theoretical: `studio_create_page`
+ * scaffolds a `.module.css` beside every page it creates, and this branch made
+ * that file unwritable by the same agent that had just been told to style the
+ * page — while the CSS Classes panel reported "Style not saved to source" for
+ * any edit to one.
  *
  * The plan's third tier — **Tailwind: "edit the element's utility classes
  * instead of a CSS declaration"** — deliberately has NO representation
@@ -48,13 +65,6 @@ function normalizePath(filePath: string): string {
 /** Classify a stylesheet file path. */
 export function classifyStylesheetEditability(filePath: string): StylesheetEditability {
   const normalized = normalizePath(filePath).toLowerCase()
-
-  if (normalized.endsWith('.module.css')) {
-    return {
-      kind: 'compiled',
-      reason: "CSS Modules compile the class name to a hashed identifier — the selector on the canvas is not what's written in this file.",
-    }
-  }
 
   if (normalized.endsWith('.min.css')) {
     return { kind: 'compiled', reason: 'This is a minified build artefact, not hand-authored source.' }

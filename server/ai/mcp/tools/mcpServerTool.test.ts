@@ -5,7 +5,7 @@
  * `mcpServerTool.ts`'s own doc comment for why this boundary exists.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { readFileSync, mkdtempSync, rmSync } from 'node:fs'
+import { readFileSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { mcpServerMcpTools } from './mcpServerTool'
@@ -26,6 +26,11 @@ describe('mcp_propose_server — hard consent boundary', () => {
 
   beforeEach(() => {
     projectDir = mkdtempSync(join(tmpdir(), 'mcp-propose-tool-'))
+    // Opt out of Studio's auto-approved loopback `figma` built-in: these
+    // tests are about the consent boundary for USER/AGENT-proposed servers,
+    // and the built-in would otherwise appear in every listing.
+    mkdirSync(join(projectDir, '.studio'), { recursive: true })
+    writeFileSync(join(projectDir, '.studio', 'meta.json'), JSON.stringify({ disabledBuiltInMcpServers: ['figma'] }))
   })
 
   afterEach(() => {
@@ -131,6 +136,11 @@ describe('mcp_list_project_servers', () => {
 
   beforeEach(() => {
     projectDir = mkdtempSync(join(tmpdir(), 'mcp-list-tool-'))
+    // Opt out of Studio's auto-approved loopback `figma` built-in: these
+    // tests are about the consent boundary for USER/AGENT-proposed servers,
+    // and the built-in would otherwise appear in every listing.
+    mkdirSync(join(projectDir, '.studio'), { recursive: true })
+    writeFileSync(join(projectDir, '.studio', 'meta.json'), JSON.stringify({ disabledBuiltInMcpServers: ['figma'] }))
   })
 
   afterEach(() => {

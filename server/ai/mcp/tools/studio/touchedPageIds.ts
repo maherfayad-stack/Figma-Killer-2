@@ -23,7 +23,7 @@
  */
 import { relative, sep } from 'node:path'
 import { discoverPageFiles, projectPagesDir } from '../../../../handlers/studioProjects'
-import { assignPageIds } from '../../../../handlers/studioPageLoad'
+import { assignPageIds } from '../../../../handlers/studioPageIds'
 
 export function touchedFilesToPageIds(dir: string, touchedFiles: readonly string[]): string[] {
   if (touchedFiles.length === 0) return []
