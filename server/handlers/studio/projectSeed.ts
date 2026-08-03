@@ -51,10 +51,16 @@
  * the project exactly as it would have been before this existed. Creating a
  * project must not fail because an optional convenience is missing.
  */
-import { cpSync, existsSync, readdirSync, statSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
 
-/** Where the seed lives. `.data/` is already the private, git-ignored home for local runtime state (the Claude CLI config dir sits beside it). */
+/**
+ * Where a PREPARED seed lives, when one exists. `.data/` is already the
+ * private, git-ignored home for local runtime state (the Claude CLI config dir
+ * sits beside it). When this directory is absent — the normal case, since
+ * nothing populates it automatically — {@link applyProjectSeed} falls back to
+ * copying the design system out of Studio's own `node_modules`.
+ */
 export function resolveProjectSeedDir(env: Record<string, string | undefined> = process.env): string {
   const configured = env.STUDIO_PROJECT_SEED_DIR
   return configured ? resolve(configured) : resolve(process.cwd(), '.data', 'studio-seed')
@@ -80,7 +86,9 @@ export function applyProjectSeed(
   seedDir: string = resolveProjectSeedDir(),
 ): ProjectSeedResult {
   const result: ProjectSeedResult = { copied: [], skipped: [] }
-  if (!existsSync(seedDir) || !statSync(seedDir).isDirectory()) return result
+  if (!existsSync(seedDir) || !statSync(seedDir).isDirectory()) {
+    return seedFromAppInstall(projectDir, result)
+  }
 
   for (const entry of readdirSync(seedDir)) {
     const target = join(projectDir, entry)
@@ -99,4 +107,81 @@ export function applyProjectSeed(
   }
 
   return result
+}
+
+/** The design system every Studio project is expected to build with. */
+const SEED_PACKAGE = '@alm-design/design-system'
+
+/**
+ * The fallback when no seed directory has been prepared: copy the design
+ * system straight out of **Studio's own `node_modules`**.
+ *
+ * `.data/studio-seed` is opt-in and, in practice, nobody populates it — so
+ * every "New project" came out with no `package.json` and no design system at
+ * all, which is the exact failure this module's own doc comment describes.
+ * Studio itself depends on `@alm-design/design-system`, so a correct copy is
+ * already sitting on disk on any machine that can run the server. Using it
+ * needs no setup step, no registry, and no install — the same copied-bytes,
+ * Tier-0-safe property the configured seed has.
+ *
+ * A prepared seed directory still wins when one exists: it is the way to seed
+ * something *other* than Studio's own dependency set.
+ *
+ * The `package.json` is written to match — declaring the dependency at the
+ * version actually copied — because `componentPackages` (and therefore the
+ * whole design-system half of the generated project guide) is read from the
+ * manifest, not from what happens to be in `node_modules`. Copying the
+ * package without declaring it would produce a project whose design system is
+ * present but invisible to every detector.
+ */
+function seedFromAppInstall(projectDir: string, result: ProjectSeedResult): ProjectSeedResult {
+  const source = join(process.cwd(), 'node_modules', ...SEED_PACKAGE.split('/'))
+  if (!existsSync(source)) return result
+
+  try {
+    const target = join(projectDir, 'node_modules', ...SEED_PACKAGE.split('/'))
+    if (existsSync(target)) {
+      result.skipped.push('node_modules')
+    } else {
+      mkdirSync(dirname(target), { recursive: true })
+      cpSync(source, target, { recursive: true, dereference: true })
+      result.copied.push('node_modules')
+    }
+
+    const manifestPath = join(projectDir, 'package.json')
+    if (existsSync(manifestPath)) {
+      result.skipped.push('package.json')
+    } else {
+      writeFileSync(manifestPath, `${JSON.stringify(seedManifest(source), null, 2)}\n`)
+      result.copied.push('package.json')
+    }
+  } catch (err) {
+    // Same posture as the configured-seed path: a project that could not be
+    // seeded is exactly the project it would have been before this existed.
+    console.error('[studio/projectSeed] failed to seed from Studio\'s own install:', err)
+  }
+
+  return result
+}
+
+/** A minimal project manifest declaring the copied package at the version actually on disk. */
+function seedManifest(packageDir: string): Record<string, unknown> {
+  return {
+    name: 'studio-project',
+    private: true,
+    type: 'module',
+    dependencies: { [SEED_PACKAGE]: `^${readPackageVersion(packageDir) ?? '1.0.0'}` },
+  }
+}
+
+/** The copied package's own `version`, or `undefined` if its manifest is missing or unreadable — never a guessed one. */
+function readPackageVersion(packageDir: string): string | undefined {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(join(packageDir, 'package.json'), 'utf8'))
+    if (!parsed || typeof parsed !== 'object') return undefined
+    const version = (parsed as { version?: unknown }).version
+    return typeof version === 'string' ? version : undefined
+  } catch {
+    return undefined
+  }
 }

@@ -153,6 +153,47 @@ export function autoPlaceBoardFrame(dir: string, pageId: string): void {
 }
 
 /**
+ * Place a board frame for every page file on disk that does not have one yet,
+ * and return the page ids newly placed.
+ *
+ * `studio_create_page` used to be the only way a page could exist, so frame
+ * placement could live inside it. The agent now authors screens by writing
+ * `.tsx` files directly (`claudeCliToolSurface.ts`), and nothing watches the
+ * filesystem — so a freshly written screen is real, parseable, and completely
+ * invisible until something reconciles the board with the directory. That
+ * reconciliation is this function, called by `studio_screenshot` right before
+ * it captures: "show me what I just wrote" is exactly the moment the board
+ * must agree with disk.
+ *
+ * Idempotent and additive, leaning entirely on {@link autoPlaceBoardFrame}'s
+ * own per-`pageId` idempotence: a page already placed keeps its existing
+ * frame, position and size untouched, and a frame whose page file was DELETED
+ * is deliberately left alone — removing frames is a destructive board edit
+ * that belongs to the user, not to a screenshot call.
+ */
+export function syncBoardFramesFromDisk(dir: string): string[] {
+  const pagesDir = projectPagesDir(dir)
+  if (!existsSync(pagesDir)) return []
+  const placed: string[] = []
+  for (const relPath of discoverPageFiles(pagesDir)) {
+    const pageId = pageIdFromRelPath(relPath)
+    if (boardHasFrameForPage(dir, pageId)) continue
+    autoPlaceBoardFrame(dir, pageId)
+    placed.push(pageId)
+  }
+  return placed
+}
+
+/** Whether `.studio/boards.json` already carries a frame for `pageId` on any board. */
+function boardHasFrameForPage(dir: string, pageId: string): boolean {
+  const file = boardsFilePath(dir)
+  if (!existsSync(file)) return false
+  return parseBoardsFile(readFileSync(file, 'utf8')).boards.some((board) =>
+    board.frames.some((frame) => frame.pageId === pageId),
+  )
+}
+
+/**
  * The scaffolded file's own root node id — its one returned JSX root, read
  * by actually parsing `file` with the SAME parser every other node id in
  * Studio comes from. `undefined` on anything unexpected: `parsePageFile`

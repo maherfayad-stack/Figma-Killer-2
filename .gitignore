@@ -126,10 +126,14 @@ docs/superpowers/
 # running server's disk", not "survives a git clone" — see the store's own
 # module doc for the full reasoning.
 **/.studio/references/
-# Per-project agent rosters that Studio writes into a user's workspace project
-# (marked by `.claude/.studio-generated.json`). Generated output, not source —
-# distinct from THIS repo's own `.claude/` harness, which is tracked above.
+# The per-project guide Studio writes into a workspace project on every chat
+# turn (`server/handlers/studio/projectGuide.ts`, tracked by
+# `.claude/.studio-generated.json`). Generated output, not source — distinct
+# from THIS repo's own `.claude/` harness and root `CLAUDE.md`, both tracked
+# above. In a user's OWN project these files are theirs to commit; here they
+# are regenerated dev-fixture noise.
 studio-workspace/*/.claude/
+studio-workspace/*/CLAUDE.md
 
 # Playwright/E2E run output — generated, not source
 test-results/

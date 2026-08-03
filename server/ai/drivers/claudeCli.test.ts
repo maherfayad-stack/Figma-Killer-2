@@ -114,7 +114,7 @@ async function fakeRevokeConnector(_db: unknown, connectorId: string, userId: st
  * one shared process without resetting module state between files, so a
  * `let` at this scope is never truly private to this file's own run.
  */
-function fakeGenerateRoster() {
+function fakeGenerateGuide() {
   return { written: [], skipped: [] }
 }
 
@@ -153,7 +153,7 @@ function testOptions(overrides: Partial<Parameters<typeof streamClaudeCli>[1]> =
     serverPort: 3001,
     mintConnector: fakeMintConnector,
     revokeConnector: fakeRevokeConnector,
-    generateRoster: fakeGenerateRoster,
+    generateGuide: fakeGenerateGuide,
     ...overrides,
   }
 }
@@ -223,10 +223,10 @@ describe('streamClaudeCli — happy path', () => {
       '--include-partial-messages',
       '--model', 'sonnet',
       '--effort', 'medium',
-      '--permission-mode', 'default',
-      // sec-XX — a real project is open, no attachment on this turn: Task
+      '--permission-mode', 'acceptEdits',
+      // A real project is open, no attachment on this turn: the file tools
       // (subagent dispatch) only, never Read/Bash/Write/Edit.
-      '--tools', 'Task',
+      '--tools', 'Read,Write,Edit,Glob,Grep',
       '--mcp-config', '<mcp-config-path>',
       // Headless, the CLI has no TTY to prompt in; this routes a permission
       // request to the open chat instead of it being silently refused.
@@ -320,9 +320,9 @@ describe('streamClaudeCli — workspace cwd (WS-11 step 2 fix)', () => {
   })
 })
 
-describe('streamClaudeCli — subagent roster generation (WS-12 §7)', () => {
-  it('generates the roster into the resolved workspace root when a real project is open', async () => {
-    // Captured locally, not via shared module state — see `fakeGenerateRoster`'s
+describe('streamClaudeCli — project guide generation', () => {
+  it('generates the project guide into the resolved workspace root when a real project is open', async () => {
+    // Captured locally, not via shared module state — see `fakeGenerateGuide`'s
     // own doc comment for why a module-level array here previously caused
     // test-ordering pollution across the full suite.
     const calls: string[] = []
@@ -331,7 +331,7 @@ describe('streamClaudeCli — subagent roster generation (WS-12 §7)', () => {
     })
     await collect(
       baseRequest({ workspaceDir: projectDir }),
-      testOptions({ spawn, generateRoster: (dir: string) => { calls.push(dir); return { written: [], skipped: [] } } }),
+      testOptions({ spawn, generateGuide: (dir: string) => { calls.push(dir); return { written: [], skipped: [] } } }),
     )
     expect(calls).toEqual([projectDir])
   })
@@ -343,7 +343,7 @@ describe('streamClaudeCli — subagent roster generation (WS-12 §7)', () => {
     })
     await collect(
       baseRequest(),
-      testOptions({ spawn, generateRoster: (dir: string) => { calls.push(dir); return { written: [], skipped: [] } } }),
+      testOptions({ spawn, generateGuide: (dir: string) => { calls.push(dir); return { written: [], skipped: [] } } }),
     )
     expect(calls).toEqual([])
   })
@@ -352,12 +352,12 @@ describe('streamClaudeCli — subagent roster generation (WS-12 §7)', () => {
     const spawn = fakeCliSpawn({
       stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
     })
-    const throwingRoster = () => {
+    const throwingGuide = () => {
       throw new Error('boom')
     }
     const events = await collect(
       baseRequest({ workspaceDir: projectDir }),
-      testOptions({ spawn, generateRoster: throwingRoster as never }),
+      testOptions({ spawn, generateGuide: throwingGuide as never }),
     )
     expect(events.some((e) => e.type === 'error')).toBe(false)
     expect(events.some((e) => e.type === 'done')).toBe(true)
@@ -447,7 +447,7 @@ describe('streamClaudeCli — session continuity (WS-11 step 2, extended for ses
 })
 
 describe('streamClaudeCli — session controls (WS-12 §5)', () => {
-  it('defaults to --effort medium and --permission-mode default when the request names neither', async () => {
+  it('defaults to --effort medium and, with a project open, --permission-mode acceptEdits when the request names neither', async () => {
     let capturedArgv: string[] = []
     const spawn = fakeCliSpawn({
       stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
@@ -532,31 +532,30 @@ describe('streamClaudeCli — session controls (WS-12 §5)', () => {
   })
 })
 
-// sec-XX — the top-level `claude` process used to carry NO --tools/
-// --allowedTools restriction at all, so it could reach its native
-// Bash/Write/Edit/Read/Glob/Grep/WebFetch tools directly, bypassing every
-// containment check, trust-tier gate, and .studio/ exclusion the MCP tools
-// enforce — see claudeCli.ts's "Native tool surface" doc comment. `--tools`
-// must now be present on EVERY real turn, holding at most Task (subagent
-// dispatch, only with a real project open) and Read (only when this turn
-// staged an attachment) — never Bash/Write/Edit/Glob/Grep/WebFetch, on any
-// turn, at any trust tier.
-describe('streamClaudeCli — native tool surface (sec-XX)', () => {
+// The `--tools` allowlist is a hard availability ceiling on the CLI's own
+// native built-ins, present on EVERY real turn (see `claudeCliToolSurface.ts`).
+// With a real project open the agent authors files directly, so it holds
+// Read/Write/Edit/Glob/Grep — bounded by the subprocess cwd, which is the
+// containment-checked project directory. `Bash` and `Task` are never granted
+// on any turn, at any trust tier, in any permission mode.
+describe('streamClaudeCli — native tool surface', () => {
+  const WORKSPACE_TOOLS = 'Read,Write,Edit,Glob,Grep'
+
   function imageMessage(mimeType: string, data = 'ZmFrZQ=='): AiMessage {
     return { role: 'user', content: [{ kind: 'text', text: 'look at this' }, { kind: 'image', mimeType, data }] }
   }
 
-  it('grants only Task when a real project is open and this turn has no attachment', async () => {
+  it('grants the file tools when a real project is open', async () => {
     let capturedArgv: string[] = []
     const spawn = fakeCliSpawn({
       stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
       onSpawn: (argv) => { capturedArgv = argv },
     })
     await collect(baseRequest({ workspaceDir: projectDir }), testOptions({ spawn }))
-    expect(capturedArgv[capturedArgv.indexOf('--tools') + 1]).toBe('Task')
+    expect(capturedArgv[capturedArgv.indexOf('--tools') + 1]).toBe(WORKSPACE_TOOLS)
   })
 
-  it('grants NOTHING (empty --tools) when no real project is open and this turn has no attachment — never Task, nothing for it to dispatch to', async () => {
+  it('grants NOTHING (empty --tools) when no real project is open and this turn has no attachment — there is no directory to scope a write to', async () => {
     let capturedArgv: string[] = []
     const spawn = fakeCliSpawn({
       stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
@@ -591,7 +590,7 @@ describe('streamClaudeCli — native tool surface (sec-XX)', () => {
     expect(capturedArgv[capturedArgv.indexOf('--tools') + 1]).toBe('Read')
   })
 
-  it('grants both Task and Read when a real project is open AND this turn staged an attachment', async () => {
+  it('does not double up Read when a project is open AND this turn staged an attachment', async () => {
     let capturedArgv: string[] = []
     const spawn = fakeCliSpawn({
       stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
@@ -601,24 +600,7 @@ describe('streamClaudeCli — native tool surface (sec-XX)', () => {
       baseRequest({ workspaceDir: projectDir, messages: [imageMessage('image/png')] }),
       testOptions({ spawn }),
     )
-    expect(capturedArgv[capturedArgv.indexOf('--tools') + 1]).toBe('Task,Read')
-  })
-
-  it('does NOT grant Read when every attachment on this turn was refused (nothing staged to read)', async () => {
-    let capturedArgv: string[] = []
-    const spawn = fakeCliSpawn({
-      stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
-      onSpawn: (argv) => { capturedArgv = argv },
-    })
-    // An unsupported mime type — not an image, not in the text-file
-    // allow-list — is refused by stageAttachments before anything is
-    // written to disk, so `files` stays empty even though the result is
-    // non-null (see claudeCliAttachments.ts's own doc comment).
-    await collect(
-      baseRequest({ workspaceDir: projectDir, messages: [imageMessage('application/x-not-supported')] }),
-      testOptions({ spawn }),
-    )
-    expect(capturedArgv[capturedArgv.indexOf('--tools') + 1]).toBe('Task')
+    expect(capturedArgv[capturedArgv.indexOf('--tools') + 1]).toBe(WORKSPACE_TOOLS)
   })
 
   it('--tools is a hard availability ceiling, honoured even under an explicit bypassPermissions request', async () => {
@@ -634,8 +616,12 @@ describe('streamClaudeCli — native tool surface (sec-XX)', () => {
     expect(capturedArgv[capturedArgv.indexOf('--tools') + 1]).toBe('')
   })
 
-  it('never contains a native Bash/Write/Edit/Glob/Grep/WebFetch tool name on any turn shape exercised in this suite', async () => {
-    const dangerous = ['Bash', 'Write', 'Edit', 'Glob', 'Grep', 'WebFetch', 'WebSearch', 'NotebookEdit']
+  it('never grants Bash or Task on any turn shape exercised in this suite', async () => {
+    // Bash is the one tool whose blast radius is not bounded by cwd. Task is
+    // withheld because the CLI silently substitutes its own general-purpose
+    // agent for an unknown subagent_type and reports success it cannot back
+    // up — see `claudeCliToolSurface.ts`.
+    const forbidden = ['Bash', 'Task', 'WebFetch', 'WebSearch', 'NotebookEdit']
     const scenarios: Array<Partial<AiStreamRequest>> = [
       {},
       { workspaceDir: projectDir },
@@ -650,12 +636,41 @@ describe('streamClaudeCli — native tool surface (sec-XX)', () => {
         onSpawn: (argv) => { capturedArgv = argv },
       })
       await collect(baseRequest(overrides), testOptions({ spawn }))
-      const toolsValue = capturedArgv[capturedArgv.indexOf('--tools') + 1]!
-      const granted = toolsValue.split(',').filter(Boolean)
-      for (const forbidden of dangerous) {
-        expect(granted).not.toContain(forbidden)
+      const granted = capturedArgv[capturedArgv.indexOf('--tools') + 1]!.split(',').filter(Boolean)
+      for (const name of forbidden) {
+        expect(granted).not.toContain(name)
       }
     }
+  })
+
+  it('a write-capable turn defaults to --permission-mode acceptEdits, so authoring a screen is not a dozen Allow prompts', async () => {
+    let capturedArgv: string[] = []
+    const spawn = fakeCliSpawn({
+      stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
+      onSpawn: (argv) => { capturedArgv = argv },
+    })
+    await collect(baseRequest({ workspaceDir: projectDir }), testOptions({ spawn }))
+    expect(capturedArgv[capturedArgv.indexOf('--permission-mode') + 1]).toBe('acceptEdits')
+  })
+
+  it('keeps the conservative default when no project is open — nothing scoped to accept edits into', async () => {
+    let capturedArgv: string[] = []
+    const spawn = fakeCliSpawn({
+      stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
+      onSpawn: (argv) => { capturedArgv = argv },
+    })
+    await collect(baseRequest(), testOptions({ spawn }))
+    expect(capturedArgv[capturedArgv.indexOf('--permission-mode') + 1]).toBe('default')
+  })
+
+  it('an explicitly requested mode always wins over the project default', async () => {
+    let capturedArgv: string[] = []
+    const spawn = fakeCliSpawn({
+      stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
+      onSpawn: (argv) => { capturedArgv = argv },
+    })
+    await collect(baseRequest({ workspaceDir: projectDir, permissionMode: 'plan' }), testOptions({ spawn }))
+    expect(capturedArgv[capturedArgv.indexOf('--permission-mode') + 1]).toBe('plan')
   })
 })
 

@@ -8,6 +8,34 @@ Entry ids are `<area>-<nn>`. Areas in use: `parser`, `canvas`, `store`, `panel`,
 
 ---
 
+### agent-04 — the Studio agent now writes files: 24-minute screens, invented subagents, and emoji-for-icons all had one root cause
+- **Agent:** claude (single pass)
+- **Stage:** done. Types, targeted tests, and the full suite triaged; NOT dogfooded against a real chat turn.
+- **Updated:** 2026-08-03
+
+**The report.** One mobile screen took 24 minutes and came out broken; it looked nothing like the supplied reference even when told it need not follow the design system; it delegated to subagent names that do not exist (`studio-import`, `canvas-engineer`); it did not know when to use a design-system component; and it asked questions whose answers were already in front of it.
+
+**One root cause under most of it.** The agent had no filesystem. It composed screens through `studio_apply_edits`' AST insert engine, where every insert reparses the file and shifts every node id — so it re-read the world between elements, and the shape the edit API rewarded was one enormous inline `style={{…}}` rather than a real stylesheet. The subagent roster existed only to work around the same gap (`screen-builder` batched inserts; `screen-scout` substituted for `Grep`), and the CLI does not error on an unknown `subagent_type` — it silently substitutes `general-purpose` and returns as if the work happened.
+
+**What changed.**
+- `resolveNativeToolAllowlist` grants `Read,Write,Edit,Glob,Grep` when a project is open. Bounded by the subprocess `cwd` (the containment-checked project dir), not by the tool list. `Bash` and `Task` are never granted, at any tier, in any mode.
+- `--permission-mode` defaults to `acceptEdits` with a project open — under `default` the CLI asks before every write, which is a dozen Allow cards to author one screen.
+- `studio_screenshot` (new): reconcile board frames with disk → await the canvas re-read → capture. One call, because a partial ritual returns a stale image that reads as evidence. Pages are addressed by NAME.
+- `studioAgentTools` is now an explicit 19-name subset (`agentToolNames.ts`), and a workspace-BOUND MCP connector is served only that (`mcpToolsForStudioWorkspace`) — the agent used to see ~35 Studio tools plus the entire CMS `site_*` set.
+- The subagent roster is replaced by `projectGuide.ts`: the project's own generated `CLAUDE.md` (which the CLI loads from cwd for free) plus `.claude/design-system-components.md`, extracted from the installed design system's own docs.
+
+**The design-system finding worth keeping.** `studio_list_components` returns ZERO for `@alm-design/design-system` — it reads `.d.ts` declarations and that package ships bundled untyped JS. So the agent genuinely could not discover that `GlassButton`, `ListItem`, `Cell`, `VisualCard` and a full line-icon set existed, and reached for `‹` and `✈ 🗓 🏷 ⚡` instead. The package's own `design.md` carries a **Component Decision Map** ("I want to… → use X") that answers this directly; it is now inlined into the generated `CLAUDE.md`.
+
+**Trap, found the hard way twice.** The ALM package's own `CLAUDE.md` documents `import { Button } from 'design-system'` — the name it uses in its own monorepo, not the name it publishes under (`@alm-design/design-system`). Copying that section verbatim would teach the agent an import that resolves to nothing. The import block is now GENERATED from the installed package name plus its `exports` map. Separately: page ids are kebab-cased (`AddMobile.tsx` → `add-mobile`), so any name→page matching must apply the same derivation to both sides or it silently fails on every multi-word screen.
+
+**Not verified.** No real chat turn was run — whether the CLI honours `--permission-mode acceptEdits` for writes inside `cwd` exactly as documented, and how the real end-to-end timing lands, are both unmeasured. The next agent to touch this should dogfood one screen against `studio-workspace/untitled` and record the wall-clock.
+
+**Pre-existing failures, not from this change** (confirmed by stashing): `resolveToolProjectDir` (4), `resolveProjectSeedDir`, `mcpServerSecretStore`, the `0600` mode assertion in `claudeCli.test.ts` (Windows chmod), plus the plugin-runtime, CodeMirror, keybindings, Zustand-selector, and error-boundary gates.
+
+**Files:** `server/ai/drivers/{claudeCli,claudeCliToolSurface,claudeCliPermissionMode}.ts`, `server/ai/mcp/{registry,server}.ts`, `server/ai/mcp/tools/studio/{screenshot,liveReloadPush,index}.ts`, `server/ai/tools/studio/{index,agentToolNames,systemPrompt,parityMatrix}.ts`, `server/handlers/studio/{projectGuide,designSystemGuide,projectGuideManifest,projectMcpApprovals,pageScaffold}.ts`, deleted `agentRoster*.ts`, `docs/features/agent.md`, `docs/agent-refs/path-index.md`.
+
+---
+
 ### store-02 — a failed boards fetch was indistinguishable from a new project, so a synthesised board autosaved over the real `boards.json`; 56 files deleted in the same incident remain UNEXPLAINED
 - **Agent:** server-engineer (two passes), evidence + forensics by the coordinator
 - **Stage:** fix done and tested. Root cause of the file deletions: **open, and deliberately left open.**

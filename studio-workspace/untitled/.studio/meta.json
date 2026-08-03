@@ -1,5 +1,5 @@
 {
-  "displayName": "Test",
+  "displayName": "Untitled",
   "profile": {
     "framework": "unknown",
     "appRoot": "",
@@ -49,7 +49,6 @@
     ]
   },
   "previewAxes": {
-    "direction": "ltr",
     "colorScheme": "light"
   }
 }

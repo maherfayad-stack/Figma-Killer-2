@@ -1,32 +1,213 @@
-/* Fluid by default: fills the frame it is placed in and caps for
-   readability on wide viewports. Never a fixed width — a screen pinned to one
-   device size stops being a design and becomes a screenshot. */
-.page {
-  box-sizing: border-box;
+.screen {
+  min-height: 100%;
+  background: #F3F4F5;
   display: flex;
   flex-direction: column;
+}
+
+.sheet {
+  flex: 1;
+  background: #FFFFFF;
+  padding: 0 16px 24px;
+  display: flex;
+  flex-direction: column;
+}
+
+.backBtn {
+  width: 40px;
+  height: 40px;
+  border: none;
+  background: transparent;
+  display: inline-flex;
   align-items: center;
-  gap: 1.5rem;
-  width: 100%;
-  max-width: 60rem;
-  margin-inline: auto;
-  padding: clamp(1.5rem, 5vw, 4rem);
-  background: #ff0000;
+  justify-content: flex-start;
+  padding: 0;
+  color: #1C1C1C;
+  cursor: pointer;
+  margin-bottom: 4px;
 }
 
 .title {
-  margin: 0;
-  font-size: clamp(1.5rem, 4vw, 2rem);
-  font-weight: 700;
+  font-family: 'ALM Sans Geist', 'Open Sans', system-ui, sans-serif;
+  font-size: 26px;
+  line-height: 32px;
+  font-weight: 600;
+  color: #1C1C1C;
+  margin: 8px 0 20px;
+  letter-spacing: -0.5px;
 }
 
-/* currentColor rather than a literal: inherits whatever the project already
-   uses, so the starter never introduces an off-palette hex. */
-.subtitle {
-  margin: 0;
-  color: currentColor;
-  opacity: 0.65;
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
-.newTest {
-  color: blue;
+
+.phoneField {
+  display: grid;
+  grid-template-columns: 88px 1fr;
+  gap: 8px;
+  height: 56px;
+}
+
+.codeSlot,
+.numberSlot {
+  border: 1px solid #D8DCDE;
+  border-radius: 8px;
+  background: #FFFFFF;
+  padding: 8px 12px;
+  position: relative;
+  text-align: start;
+}
+
+.codeSlot {
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.codeSlotLabel {
+  font-size: 12px;
+  color: #66797F;
+  line-height: 14px;
+  margin-bottom: 2px;
+}
+
+.codeSlotValue {
+  font-size: 16px;
+  color: #1C1C1C;
+  font-weight: 400;
+  line-height: 20px;
+}
+
+.codeSlotChevron {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  color: #66797F;
+  display: inline-flex;
+}
+
+.numberSlot {
+  display: flex;
+  align-items: center;
+}
+
+.numberInput {
+  width: 100%;
+  border: none;
+  outline: none;
+  background: transparent;
+  font: inherit;
+  font-size: 16px;
+  color: #1C1C1C;
+  padding: 0;
+}
+
+.numberInput::placeholder {
+  color: #66797F;
+}
+
+.primaryCta {
+  height: 48px;
+  border-radius: 100px;
+  border: none;
+  background: #EF4550;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 24px;
+}
+
+.primaryCtaLabel {
+  color: #FFFFFF;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 24px;
+}
+
+.registerLink {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  padding: 8px 0;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.registerLinkLabel {
+  color: #0C9AB0;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
+}
+
+.orRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 24px 0 16px;
+}
+
+.orLine {
+  flex: 1;
+  height: 1px;
+  background: #D8DCDE;
+}
+
+.orLabel {
+  color: #66797F;
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0.5px;
+}
+
+.socialStack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.outlineBtnAqua,
+.outlineBtnDark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 48px;
+  border-radius: 100px;
+  background: #FFFFFF;
+  cursor: pointer;
+  padding: 0 16px;
+}
+
+.outlineBtnAqua {
+  border: 1.5px solid #0C9AB0;
+}
+
+.outlineBtnDark {
+  border: 1.5px solid #1C1C1C;
+}
+
+.outlineLabelAqua {
+  color: #0C9AB0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.outlineLabelDark {
+  color: #1C1C1C;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.outlineIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #1C1C1C;
 }

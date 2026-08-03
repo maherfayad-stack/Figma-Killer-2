@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { autoPlaceBoardFrame, detectPageFileExtension, scaffoldedPageRootNodeId } from '../pageScaffold'
+import { autoPlaceBoardFrame, detectPageFileExtension, scaffoldedPageRootNodeId, syncBoardFramesFromDisk } from '../pageScaffold'
 import { starterPage } from '../../studioProjects'
 import { writeStudioMeta } from '../studioMeta'
 
@@ -150,5 +150,46 @@ describe('scaffoldedPageRootNodeId', () => {
     fs.writeFileSync(file, 'export default function Empty() { return null }\n')
     expect(() => scaffoldedPageRootNodeId(tmpDir, file)).not.toThrow()
     expect(scaffoldedPageRootNodeId(tmpDir, file)).toBeUndefined()
+  })
+})
+
+describe('syncBoardFramesFromDisk', () => {
+  function writePage(name: string): void {
+    const pagesDir = path.join(tmpDir, 'pages')
+    fs.mkdirSync(pagesDir, { recursive: true })
+    fs.writeFileSync(path.join(pagesDir, name), `export default function X() { return <div /> }\n`)
+  }
+
+  it('places a frame for a page file written directly to disk', () => {
+    // The agent authors screens with `Write`, and nothing watches the
+    // filesystem — without this reconciliation a real, parseable screen is
+    // invisible on the board forever.
+    writePage('Checkout.tsx')
+    expect(syncBoardFramesFromDisk(tmpDir)).toEqual(['checkout'])
+    const boards = JSON.parse(fs.readFileSync(path.join(tmpDir, '.studio', 'boards.json'), 'utf8'))
+    expect(boards.boards[0].frames.map((f: { pageId: string }) => f.pageId)).toEqual(['checkout'])
+  })
+
+  it('is idempotent — a second call places nothing and moves nothing', () => {
+    writePage('Checkout.tsx')
+    syncBoardFramesFromDisk(tmpDir)
+    const before = fs.readFileSync(path.join(tmpDir, '.studio', 'boards.json'), 'utf8')
+
+    expect(syncBoardFramesFromDisk(tmpDir)).toEqual([])
+    expect(fs.readFileSync(path.join(tmpDir, '.studio', 'boards.json'), 'utf8')).toBe(before)
+  })
+
+  it('leaves a frame whose page file was deleted alone — removing frames is the user\'s call, not a screenshot\'s', () => {
+    writePage('Checkout.tsx')
+    syncBoardFramesFromDisk(tmpDir)
+    fs.rmSync(path.join(tmpDir, 'pages', 'Checkout.tsx'))
+
+    expect(syncBoardFramesFromDisk(tmpDir)).toEqual([])
+    const boards = JSON.parse(fs.readFileSync(path.join(tmpDir, '.studio', 'boards.json'), 'utf8'))
+    expect(boards.boards[0].frames).toHaveLength(1)
+  })
+
+  it('returns nothing for a project with no pages directory at all', () => {
+    expect(syncBoardFramesFromDisk(tmpDir)).toEqual([])
   })
 })

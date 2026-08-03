@@ -54,8 +54,8 @@ describe('buildStudioProjectSystemPrompt', () => {
     expect(prompt.join(' ')).not.toContain('site_insert_html')
     expect(prompt.join(' ')).not.toContain('studio-outlet')
     // The Studio prompt's own tool vocabulary must be present.
-    expect(prompt[0]).toContain('studio_create_page')
-    expect(prompt[0]).toContain('studio_apply_edits')
+    expect(prompt[0]).toContain('studio_screenshot')
+    expect(prompt[0]).toContain('Read, Write, Edit, Glob and Grep')
   })
 
   it('the dynamic suffix carries the real dir, never a placeholder', async () => {

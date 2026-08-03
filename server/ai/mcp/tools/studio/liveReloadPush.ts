@@ -42,6 +42,30 @@ export interface StudioReloadPush {
   boardsChanged?: boolean
 }
 
+/**
+ * The AWAITED variant, for the one caller that must not race it:
+ * `studio_screenshot` reconciles the board with disk, then captures the live
+ * DOM. Capturing before the canvas has re-read the files it is about to
+ * photograph would return the previous frame — a stale screenshot is worse
+ * than no screenshot, because it looks like evidence.
+ *
+ * Same fail-soft contract as {@link pushStudioLiveReload} otherwise: no open
+ * board resolves immediately, and a bridge rejection is logged and swallowed
+ * rather than failing the caller's own tool.
+ */
+export async function awaitStudioLiveReload(userId: string, push: StudioReloadPush): Promise<void> {
+  const pageIds = push.pageIds ?? []
+  const boardsChanged = push.boardsChanged ?? false
+  if (pageIds.length === 0 && !boardsChanged) return
+  const bridge = hasEditorBridge(userId, 'site') ? getEditorBridgeForUser(userId, 'site') : null
+  if (!bridge) return
+  try {
+    await bridge.callBrowser(STUDIO_LIVE_RELOAD_TOOL_NAME, { dir: push.dir, pageIds: [...pageIds], boardsChanged })
+  } catch (err) {
+    console.error('[studio:mcp] live-reload push failed — the capture may show stale content:', err)
+  }
+}
+
 export function pushStudioLiveReload(userId: string, push: StudioReloadPush): void {
   const pageIds = push.pageIds ?? []
   const boardsChanged = push.boardsChanged ?? false

@@ -15,8 +15,10 @@ import { studioFrameworkTokenMcpTools } from './frameworkTokenTools'
 import { studioComponentCatalogMcpTools } from './componentCatalogTools'
 import { studioFigmaBindingMcpTools } from './figmaBindingTools'
 import { studioRemoteAssetMcpTools } from './remoteAssetTools'
+import { studioScreenshotTool } from './screenshot'
 
 export const studioMcpTools: AiTool[] = [
+  studioScreenshotTool,
   ...studioProjectMcpTools,
   ...studioEditMcpTools,
   studioFidelityReportTool,

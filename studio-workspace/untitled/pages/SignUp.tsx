@@ -1,26 +1,67 @@
+import '@alm-design/design-system/dist/index.css'
 import styles from './SignUp.module.css'
-import { Button, TextInput } from '@alm-design/design-system'
+import { SheetHandle } from './components/SheetHandle'
+import { ChevronLeft, ChevronDown, AppleGlyph, GoogleGlyph } from './components/icons'
 
 export default function SignUp() {
   return (
-    <main className="" style={{ display: "flex", flexDirection: "column", gap: "var(--space)", width: "100%", maxWidth: "393px", marginInline: "auto", padding: "var(--space)", background: "var(--background-base-default)", minHeight: "800px", boxSizing: "border-box", fontFamily: "Open Sans, system-ui, sans-serif" }}>
-      <button type="button" aria-label="Back" style={{ width: "40px", height: "40px", border: "none", background: "transparent", color: "var(--icon-secondary-default)", fontSize: "24px", cursor: "pointer", padding: "0", alignSelf: "flex-start" }}>‹</button>
-      <h1 style={{ fontSize: "var(--type-headline-size)", fontWeight: "var(--type-headline-weight)", lineHeight: "var(--type-headline-lh)", letterSpacing: "var(--type-headline-ls)", color: "var(--text-base-default)", margin: "0" }}>Sign in or create account</h1>
-      <div style={{ display: "flex", gap: "var(--space-sm)" }}>
-        <TextInput label="Code" dropdown />
-        <TextInput label="Mobile number" required />
+    <div className={styles.screen}>
+      <SheetHandle />
+
+      <div className={styles.sheet}>
+        <button className={styles.backBtn} aria-label="Back" type="button">
+          <ChevronLeft />
+        </button>
+
+        <h1 className={styles.title}>Sign in or create account</h1>
+
+        <div className={styles.form}>
+          <div className={styles.phoneField}>
+            <button className={styles.codeSlot} type="button">
+              <span className={styles.codeSlotLabel}>Code</span>
+              <span className={styles.codeSlotValue}>+966</span>
+              <span className={styles.codeSlotChevron}><ChevronDown /></span>
+            </button>
+            <div className={styles.numberSlot}>
+              <input
+                className={styles.numberInput}
+                type="tel"
+                inputMode="tel"
+                placeholder="Mobile number *"
+                aria-label="Mobile number"
+              />
+            </div>
+          </div>
+
+          <button className={styles.primaryCta} type="button">
+            <span className={styles.primaryCtaLabel}>Continue</span>
+          </button>
+
+          <button className={styles.registerLink} type="button">
+            <span className={styles.registerLinkLabel}>Register as a Business</span>
+          </button>
+        </div>
+
+        <div className={styles.orRow}>
+          <span className={styles.orLine} />
+          <span className={styles.orLabel}>OR</span>
+          <span className={styles.orLine} />
+        </div>
+
+        <div className={styles.socialStack}>
+          <button className={styles.outlineBtnAqua} type="button">
+            <span className={styles.outlineLabelAqua}>Continue with email</span>
+          </button>
+          <button className={styles.outlineBtnDark} type="button">
+            <span className={styles.outlineIcon}><AppleGlyph /></span>
+            <span className={styles.outlineLabelDark}>Continue with Apple</span>
+          </button>
+          <button className={styles.outlineBtnAqua} type="button">
+            <span className={styles.outlineIcon}><GoogleGlyph /></span>
+            <span className={styles.outlineLabelAqua}>Continue with Google</span>
+          </button>
+        </div>
       </div>
-      <Button variant="primary" label="Continue">
-      </Button>
-      <a href="#" style={{ color: "var(--text-link-default)", textDecoration: "none", fontWeight: "600", textAlign: "center", fontSize: "14px" }}>Register as a Business</a>
-      <div style={{ display: "flex", alignItems: "center", gap: "var(--space)", marginBlock: "var(--space-lg)" }}>
-        <hr style={{ flex: "1", border: "none", borderTop: "1px solid var(--border-base-default)", height: "0" }} />
-        <span style={{ color: "var(--text-base-subtext)", fontSize: "var(--type-caption-size)" }}>OR</span>
-        <hr style={{ flex: "1", border: "none", borderTop: "1px solid var(--border-base-default)", height: "0" }} />
-      </div>
-      <Button variant="primary-inverted" label="Continue with email" />
-      <Button variant="primary-inverted" label="Continue with Apple" />
-      <Button variant="primary-inverted" label="Continue with Google" />
-    </main>
+    </div>
   )
 }

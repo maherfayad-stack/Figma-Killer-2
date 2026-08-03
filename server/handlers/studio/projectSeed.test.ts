@@ -1,9 +1,12 @@
 /**
  * `applyProjectSeed` — the copy that gives every new project a design system.
  *
- * The two behaviours worth pinning are both about NOT doing damage: the seed
- * must never overwrite what the project scaffolder already wrote, and a
- * missing/broken seed must never turn project creation into a failure.
+ * Three behaviours worth pinning: the seed must never overwrite what the
+ * project scaffolder already wrote; a missing or broken PREPARED seed must
+ * fall back to Studio's own install rather than leaving the project empty
+ * (nobody populates `.data/studio-seed`, so that fallback is the path almost
+ * every real project takes); and nothing here may ever turn project creation
+ * into a failure.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -51,19 +54,49 @@ describe('applyProjectSeed', () => {
     expect(readFileSync(join(projectDir, 'pages', 'Home.tsx'), 'utf8')).toBe('SCAFFOLD')
   })
 
-  it('is a no-op when no seed is installed, rather than throwing', () => {
-    // Project creation must not fail because an optional convenience is absent.
+  it('falls back to Studio\'s own install when no seed directory was prepared', () => {
+    // `.data/studio-seed` is opt-in and nothing populates it, so this is the
+    // path a real "New project" actually takes. It used to be a no-op, which
+    // is why every new project came out with no design system at all.
     const result = applyProjectSeed(projectDir, join(root, 'does-not-exist'))
 
-    expect(result).toEqual({ copied: [], skipped: [] })
-    expect(existsSync(join(projectDir, 'node_modules'))).toBe(false)
+    expect(result.copied).toContain('node_modules')
+    expect(result.copied).toContain('package.json')
+    expect(existsSync(join(projectDir, 'node_modules', '@alm-design', 'design-system'))).toBe(true)
   })
 
-  it('is a no-op when the seed path is a file, not a directory', () => {
+  it('declares the copied package in package.json at the version actually on disk', () => {
+    // Copying the package without declaring it produces a project whose design
+    // system is present but invisible: `componentPackages` is read from the
+    // manifest, so every detector downstream would report none.
+    applyProjectSeed(projectDir, join(root, 'does-not-exist'))
+    const manifest = JSON.parse(readFileSync(join(projectDir, 'package.json'), 'utf8')) as {
+      dependencies?: Record<string, string>
+    }
+    const declared = manifest.dependencies?.['@alm-design/design-system']
+    expect(declared).toBeDefined()
+
+    const installed = JSON.parse(
+      readFileSync(join(projectDir, 'node_modules', '@alm-design', 'design-system', 'package.json'), 'utf8'),
+    ) as { version?: string }
+    expect(declared).toBe(`^${installed.version}`)
+  })
+
+  it('falls back the same way when the seed path is a file, not a directory', () => {
     const notADir = join(root, 'seed.txt')
     writeFileSync(notADir, 'nope')
 
-    expect(applyProjectSeed(projectDir, notADir)).toEqual({ copied: [], skipped: [] })
+    expect(applyProjectSeed(projectDir, notADir).copied).toContain('node_modules')
+  })
+
+  it('never overwrites a package.json the project already has', () => {
+    const mine = '{"name":"mine"}'
+    writeFileSync(join(projectDir, 'package.json'), mine)
+
+    const result = applyProjectSeed(projectDir, join(root, 'does-not-exist'))
+
+    expect(result.skipped).toContain('package.json')
+    expect(readFileSync(join(projectDir, 'package.json'), 'utf8')).toBe(mine)
   })
 })
 

@@ -75,8 +75,13 @@ export function sha256(text: string): string {
  * Eleven agent definitions and six reference files stopped being targets and
  * two new ones started; without this bump every existing project would keep
  * serving a roster describing tools the agent no longer holds.
+ *
+ * `5` — added `.claude/design-system-icons.md`. The guide previously told
+ * the agent "the package ships a real icon set; import from it" while naming
+ * no export and no path — an instruction that cannot be followed, so it
+ * hand-drew SVG path data for icons the package already exports by name.
  */
-export const GUIDE_DEFINITION_VERSION = 4
+export const GUIDE_DEFINITION_VERSION = 5
 
 export interface ManifestFileEntry {
   /** Content hash of what Studio itself last wrote (or last observed) here. */

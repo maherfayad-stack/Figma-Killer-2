@@ -2,50 +2,72 @@
   "version": 1,
   "boards": [
     {
-      "id": "eb1b1c5c-998d-4b45-b2cb-e9ec564547c9",
+      "id": "5ca976d4-f432-4e9a-ac24-c7ff9890927f",
       "name": "Board 1",
       "frames": [
         {
-          "id": "39e9214e-2a8f-4c06-bbc2-c30197cbe80c",
+          "id": "11af4f92-5790-4e54-8377-8b883148aa12",
           "pageId": "add-mobile",
-          "x": 0,
-          "y": 0
+          "x": -428.5384845655792,
+          "y": 1760,
+          "width": 393,
+          "height": 1217.289184570312
         },
         {
-          "id": "fc554272-3a1f-4c1f-827b-e87b9f0c8906",
-          "pageId": "home",
-          "x": 1104,
-          "y": 0
-        },
-        {
-          "id": "f38f23a1-e470-4c0a-8ad5-3f7a4c242b9d",
+          "id": "155facbc-7ead-4759-81b9-c64f44de7dcc",
           "pageId": "onboarding",
-          "x": 0,
-          "y": 880
+          "x": 1246.9750222306836,
+          "y": 1788,
+          "width": 393,
+          "height": 852
         },
         {
-          "id": "f92145ca-8d45-43ad-b717-ab0ab616c18d",
+          "id": "5dcd5a95-d4f8-471d-af4e-0229401e5259",
           "pageId": "sign-up",
-          "x": 1104,
-          "y": 880
+          "x": 827.5,
+          "y": 1769.829471589658,
+          "width": 393,
+          "height": 852
         },
         {
-          "id": "5289950e-c3e8-4220-bf75-810ab0e84805",
-          "pageId": "sms-email",
+          "id": "ed95e162-32af-451b-902a-e123a36665d9",
+          "pageId": "verify-email",
           "x": 0,
-          "y": 1760
+          "y": 1760,
+          "width": 393,
+          "height": 852
         },
         {
-          "id": "8cfeb34c-9f3a-4afe-ba40-8efb310dfb38",
-          "pageId": "sms-phone",
-          "x": 1104,
-          "y": 1760
+          "id": "fd4ec457-c189-42da-ae73-14ec42214d81",
+          "pageId": "verify-sms",
+          "x": 422.0071851404608,
+          "y": 1760,
+          "width": 393,
+          "height": 852
         },
         {
-          "id": "6d898444-760c-4f51-944f-0e56be66f2be",
-          "pageId": "icons",
+          "id": "582a45df-e19d-4c60-be59-78a126ee441a",
+          "pageId": "home",
+          "x": 1975.2910784003261,
+          "y": 1795.8294715896584
+        },
+        {
+          "id": "ae174048-1d0a-4eda-97ce-0b8c3c6324e1",
+          "pageId": "components-otp-input",
+          "x": -1115.0443640594797,
+          "y": 3384.227508870046
+        },
+        {
+          "id": "8f412fe8-e372-4582-9d6d-366e430b0cd9",
+          "pageId": "components-sheet-handle",
+          "x": 1096.2205196169036,
+          "y": 2927.8371355027284
+        },
+        {
+          "id": "f757d921-734f-4281-9b61-f12e63abc1ee",
+          "pageId": "components-icons",
           "x": 0,
-          "y": 2640
+          "y": 3520
         }
       ],
       "notes": [],

@@ -111,30 +111,51 @@ describe('selectStudioTools capability filtering', () => {
   it('returns the real Studio tools when studioProjectOpen is true', () => {
     const names = selectStudioTools(['ai.chat'], { studioProjectOpen: true }).map((t) => t.name)
     expect(names).toContain('studio_list_pages')
-    expect(names).toContain('studio_get_node_source')
+    expect(names).toContain('studio_project_profile')
     expect(names.some((n) => n.startsWith('site_'))).toBe(false)
   })
 
-  it('gates studio_create_page/studio_apply_edits behind ai.tools.write + studio.write, same posture as every other Studio write tool', () => {
+  it('offers only what the filesystem cannot do — the file-shaped tools are not part of the agent surface', () => {
+    // The agent authors files with native Read/Write/Edit/Glob/Grep inside the
+    // project cwd (`claudeCliToolSurface.ts`), so every tool that existed only
+    // to work around not having a filesystem is strictly slower than the
+    // native equivalent. They stay in the MCP registry for external clients
+    // that genuinely cannot reach the project's files.
+    const names = selectStudioTools(
+      ['ai.chat', 'ai.tools.write', 'studio.write'],
+      { studioProjectOpen: true },
+    ).map((t) => t.name)
+    for (const superseded of [
+      'studio_read_file',
+      'studio_list_files',
+      'studio_create_page',
+      'studio_apply_edits',
+      'studio_codemod',
+      'studio_find_nodes',
+      'studio_get_node_source',
+    ]) {
+      expect(names).not.toContain(superseded)
+    }
+  })
+
+  it('gates studio_screenshot behind ai.tools.write + studio.write, same posture as every other Studio write tool', () => {
     const withoutWrite = selectStudioTools(['ai.chat'], { studioProjectOpen: true })
-    expect(withoutWrite.some((t) => t.name === 'studio_create_page')).toBe(false)
-    expect(withoutWrite.some((t) => t.name === 'studio_apply_edits')).toBe(false)
+    expect(withoutWrite.some((t) => t.name === 'studio_screenshot')).toBe(false)
 
     // ai.tools.write alone is not enough — every Studio write tool also
     // declares requiredCapabilities: ['studio.write'] (ANY-OF), a SEPARATE
     // axis from the mutates flag.
     const withOnlyToolsWrite = selectStudioTools(['ai.chat', 'ai.tools.write'], { studioProjectOpen: true })
-    expect(withOnlyToolsWrite.some((t) => t.name === 'studio_create_page')).toBe(false)
+    expect(withOnlyToolsWrite.some((t) => t.name === 'studio_screenshot')).toBe(false)
 
     const withBoth = selectStudioTools(['ai.chat', 'ai.tools.write', 'studio.write'], { studioProjectOpen: true })
-    expect(withBoth.some((t) => t.name === 'studio_create_page')).toBe(true)
-    expect(withBoth.some((t) => t.name === 'studio_apply_edits')).toBe(true)
+    expect(withBoth.some((t) => t.name === 'studio_screenshot')).toBe(true)
   })
 
-  it('offers studio_read_file/studio_find_nodes to a read-only caller (no requiredCapabilities)', () => {
+  it('offers the read-only orientation tools to a read-only caller (no requiredCapabilities)', () => {
     const names = selectStudioTools(['ai.chat'], { studioProjectOpen: true }).map((t) => t.name)
-    expect(names).toContain('studio_read_file')
-    expect(names).toContain('studio_find_nodes')
+    expect(names).toContain('studio_list_pages')
+    expect(names).toContain('studio_list_components')
   })
 })
 

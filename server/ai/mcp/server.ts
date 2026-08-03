@@ -21,7 +21,7 @@ import type { CoreCapability } from '@core/capabilities'
 import { getErrorMessage } from '@core/utils/errorMessage'
 import type { AiBrowserBridge, AiTool, AiToolOutput } from '../runtime/types'
 import { executeAiTool } from '../drivers/http/execTool'
-import { mcpToolsForCapabilities } from './registry'
+import { mcpToolsForCapabilities, mcpToolsForStudioWorkspace } from './registry'
 import { MCP_RESOURCES, findMcpResource } from './resources'
 import {
   getEditorBridgeForUser,
@@ -74,12 +74,18 @@ export function buildMcpServer(ctx: McpServerContext): Server {
     }
   })
 
-  const tools = mcpToolsForCapabilities(
-    ctx.capabilities,
-    ctx.uploadsDir
-      ? { connectorId: ctx.connectorId, uploadsDir: ctx.uploadsDir }
-      : undefined,
-  )
+  // A connector bound to a Studio project is the in-canvas agent, which holds
+  // native file tools and needs only what the filesystem cannot do; an unbound
+  // one is an external MCP client with no filesystem access and gets the full
+  // registry. See `mcpToolsForStudioWorkspace`'s own doc for the reasoning.
+  const tools = getConnectorWorkspace(ctx.connectorId)
+    ? mcpToolsForStudioWorkspace(ctx.capabilities)
+    : mcpToolsForCapabilities(
+        ctx.capabilities,
+        ctx.uploadsDir
+          ? { connectorId: ctx.connectorId, uploadsDir: ctx.uploadsDir }
+          : undefined,
+      )
   const byName = new Map<string, AiTool>(tools.map((t) => [t.name, t]))
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({

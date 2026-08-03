@@ -213,6 +213,7 @@ import {
 } from './studioProjects'
 import { readStudioMeta, DEFAULT_TRUST_TIER } from './studio/studioMeta'
 import { applyProjectSeed } from './studio/projectSeed'
+import { generateStudioProjectGuide } from './studio/projectGuide'
 import { readStudioFrameworkFile, writeStudioFrameworkFile } from './studioFramework'
 import { buildStudioDownloadResponse } from './studioDownload'
 import { resolveStudioAssetResponse } from './studioAsset'
@@ -627,6 +628,11 @@ export async function tryServeStudio(
       // Best-effort: a project without a seed is exactly what it used to be.
       // See `projectSeed.ts` for why this copies rather than installs.
       applyProjectSeed(dir)
+      // `CLAUDE.md` + the design-system references, written now rather than on
+      // the first chat turn — a project is never briefly one where the design
+      // system is on disk but nothing tells the agent what is in it. AFTER the
+      // seed: everything it generates is derived from what the seed just wrote.
+      generateStudioProjectGuide(dir)
       const project: StudioProjectSummary = { dir, name: displayName, pageCount: 1 }
       return jsonResponse({ project })
     } catch (err) {

@@ -1,0 +1,391 @@
+/**
+ * projectGuide — what Studio writes into a user's project so the agent knows
+ * how to work in it before it makes its first move.
+ *
+ * Three files, regenerated on every real chat turn:
+ *
+ *   - **`CLAUDE.md`** at the project root. The CLI loads this for free from
+ *     its cwd (`claudeCli.ts` spawns in the validated project directory), so
+ *     everything in it is context the agent has BEFORE its first tool call —
+ *     zero round trips, and cached across turns.
+ *   - **`.claude/design-system-components.md`** — the installed design
+ *     system's real component API, extracted from the package's own docs
+ *     (`designSystemGuide.ts`).
+ *   - **`.claude/design-system.md`** — the token/BEM-class digest generated
+ *     from the project's own CSS (`designSystemDigest.ts`), for projects
+ *     whose design system arrived as plain CSS with no package docs.
+ *
+ * ## What this replaced, and why
+ *
+ * Studio used to generate eleven subagent definitions into `.claude/agents/`
+ * plus six reference files, and the main prompt spent a long paragraph
+ * warning the model not to invent a subagent name. That whole apparatus was
+ * load-bearing only because the agent had no filesystem: a "screen-builder"
+ * existed to batch `studio_apply_edits` calls, a "screen-scout" to work
+ * around not having `Grep`. Both are now native tools.
+ *
+ * It also actively misfired. The CLI does not error on an unknown
+ * `subagent_type` — it silently falls back to its own `general-purpose` agent
+ * and returns as if the work had happened, so a delegation to an invented
+ * name produced a confident report of ten files written, none of which
+ * existed. `Task` is gone from the tool surface entirely
+ * (`claudeCliToolSurface.ts`), which makes that failure unreachable rather
+ * than merely discouraged, and the knowledge those prompts carried moved here
+ * — into a file the agent cannot fail to read.
+ *
+ * ## Never clobber (trap #12 — studio-workspace/* is user data)
+ *
+ * Unchanged from the roster generator, and the reason this module keeps its
+ * manifest: a generated file is only overwritten while its on-disk content
+ * still matches the hash Studio itself last wrote (recorded in
+ * `.claude/.studio-generated.json`). A file the user has hand-edited — very
+ * much including `CLAUDE.md`, which a user has every reason to make their own
+ * — is left alone and reported as `skipped`, never silently rewritten. Files
+ * the old roster wrote are simply no longer targets; they stop being tracked
+ * on the next regeneration and are deliberately not deleted, since proving
+ * "Studio still owns this" is exactly the discipline that would have to be
+ * satisfied first.
+ */
+import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { joinAppRoot } from './appRoot'
+import { reprobeProjectProfile, resolveProjectProfilePersisting } from './projectProbe'
+import type { ProjectProfile } from './projectProfileSchema'
+import { readTextCapped } from './cappedFileRead'
+import { getOrBuildDesignSystemDigest } from './designSystemDigest'
+import { buildDesignSystemGuide, renderComponentReference, renderIconReference, type DesignSystemGuide } from './designSystemGuide'
+import { detectPageFileExtension } from './pageScaffold'
+import { applyProjectSeed } from './projectSeed'
+import { projectPagesDir } from '../studioProjects'
+import {
+  ALM_PACKAGE,
+  allOwnedFilesUnchangedSince,
+  computeProjectGuideFingerprint,
+  readManifest,
+  sha256,
+  writeManifest,
+  type ManifestFileEntry,
+} from './projectGuideManifest'
+
+const CLAUDE_DIR = '.claude'
+const GUIDE_PATH = 'CLAUDE.md'
+const COMPONENTS_PATH = `${CLAUDE_DIR}/design-system-components.md`
+const ICONS_PATH = `${CLAUDE_DIR}/design-system-icons.md`
+const TOKENS_PATH = `${CLAUDE_DIR}/design-system.md`
+
+interface GuideFile {
+  readonly relPath: string
+  readonly content: string
+}
+
+// ---------------------------------------------------------------------------
+// CLAUDE.md
+// ---------------------------------------------------------------------------
+
+/** The project's own styling mechanism, named the way the agent must match it. */
+function styleMechanism(profile: ProjectProfile): string {
+  if (profile.styleToolchain.tailwind !== null) return 'Tailwind utility classes'
+  if (profile.styleToolchain.cssModules) return 'CSS Modules (`Screen.module.css` next to `Screen.tsx`, imported as `styles`)'
+  if (profile.styleToolchain.sass) return 'Sass'
+  return 'plain CSS'
+}
+
+function buildGuide(dir: string, profile: ProjectProfile, ds: DesignSystemGuide | undefined, hasTokenDigest: boolean): string {
+  // The same detector `studio_create_page` used, so the guide names the
+  // extension the project actually writes rather than guessing from a profile
+  // field that is empty on a project nothing has scanned yet.
+  const ext = detectPageFileExtension(projectPagesDir(dir))
+  const lines: string[] = [
+    '# Working in this project',
+    '',
+    'Generated by Studio on every chat turn — hand-edit it and Studio stops',
+    'overwriting it, so your changes are safe but no longer refreshed.',
+    '',
+    'This is a real React repository. You edit it with ordinary file tools:',
+    '`Read`, `Write`, `Edit`, `Glob`, `Grep`. There is no build step to run and',
+    'no code-generation layer — the files on disk ARE the design. A screen is a',
+    'component file plus its stylesheet, written the way you would write them by',
+    'hand.',
+    '',
+    '## Facts about this project',
+    '',
+    `- Screens live in \`${profile.pagesDir}/\` — one component file per screen, default-exported.`,
+    `- New screens are \`${ext}\` files, named in PascalCase (\`Checkout${ext}\`).`,
+    `- Styling: ${styleMechanism(profile)}. Use it. Never introduce a second styling system.`,
+    `- Framework: ${profile.framework} · package manager: ${profile.packageManager}`,
+    `- Component packages: ${profile.componentPackages.length > 0 ? profile.componentPackages.map((p) => `\`${p}\``).join(', ') : '(none installed)'}`,
+    '',
+    '## Building a screen',
+    '',
+    '1. `Read` one existing screen first. Match what it does — its imports, its',
+    '   class naming, its file layout. You are joining a codebase, not starting one.',
+    `2. \`Write\` the component file and its stylesheet. One \`Write\` each — a screen`,
+    '   is one file, not twenty edits.',
+    '3. `studio_screenshot` it and LOOK at the result. Fix what you see. Repeat',
+    '   until it is right. This is the only step that tells you the truth.',
+    '',
+    '**Do not ask before building.** A request for a screen is a request for a',
+    'screen. Pick sensible defaults for anything unstated, build it, show it, and',
+    'say what you assumed. A question is worth asking only when the answer would',
+    'change the work and you genuinely cannot infer it — never as a preamble, and',
+    'never for something a reference image or a sibling screen already answers.',
+    '',
+    '## Writing the component',
+    '',
+    '- **Real styling goes in the stylesheet, not in `style={{…}}`.** An inline',
+    '  style object is for one dynamic value, not for a layout. A screen whose',
+    '  every element carries a fifteen-property inline object is not a screen',
+    '  anyone can edit afterward — including you, on the next turn.',
+    '- **Never hardcode a colour, radius, font size, or spacing value** that a',
+    '  design token already covers. Use `var(--token)`. A raw `#0C9AB0` is',
+    '  re-implementing the design system by hand, and is wrong even when it looks',
+    '  identical.',
+    '- **Never put a fixed pixel width on a container.** A board frame shows one',
+    '  device width — that is a preview, not the specification. `width: 100%`',
+    '  with a `max-width`, and fluid values (`clamp`/`%`/`rem`) over breakpoints.',
+    '- Keep the screen a static composition. State and data belong in components',
+    '  the screen imports, or in the app around it.',
+    '',
+  ]
+
+  if (ds) {
+    lines.push(
+      `## Use \`${ds.packageName}\` — always`,
+      '',
+      `Every screen in this project imports its components from \`${ds.packageName}\`.`,
+      'This is not a preference to weigh against hand-rolling; it is what this',
+      'project is built from.',
+      '',
+      '**The rule:** if the design system has a component for it, import that',
+      'component. If it does not, write the smallest possible plain element and',
+      'style it with the system\'s own tokens. There is no third option — in',
+      'particular:',
+      '',
+      '- **Never draw an icon yourself.** Not as an emoji or text glyph (`✈`, `‹`,',
+      '  `🗓`), and not as hand-written `<svg>` path data. Every icon you need',
+      '  already exists in this package.',
+      '- Never hand-roll a nav, a card, a list row, a divider, a chip, a badge, a',
+      '  dialog, or a bottom sheet in CSS. Every one of those already exists.',
+      '- Never write an import for a package that is not in the list above — it',
+      '  resolves to nothing and breaks the build.',
+      '',
+      `Full props for every component: read \`${COMPONENTS_PATH}\`.`,
+      '',
+    )
+    if (ds.icons) {
+      const named = ds.icons.components
+      const catalogTotal = ds.icons.catalogs.reduce((sum, c) => sum + c.names.length, 0)
+      lines.push(
+        '### Icons',
+        '',
+        ...(named.length > 0
+          ? [
+              `${named.length} icon components import by name straight from the package:`,
+              '',
+              '```jsx',
+              `import { ${named.slice(0, 4).join(', ')} } from '${ds.packageName}'`,
+              '```',
+              '',
+              named.map((n) => `\`${n}\``).join(' · '),
+              '',
+            ]
+          : []),
+        ...(catalogTotal > 0
+          ? [`Another ${catalogTotal} SVGs ship as files under \`${ds.packageName}/src/icons/\`.`, '']
+          : []),
+        `Every one of them, with its exact import, is listed in \`${ICONS_PATH}\` — read it before you render any icon.`,
+        '',
+      )
+    }
+    if (ds.importContract) {
+      lines.push('### How to import it', '', ds.importContract, '')
+    }
+    if (ds.decisionMap) {
+      lines.push('### Which component', '', ds.decisionMap, '')
+    } else if (ds.components.length > 0) {
+      lines.push(
+        '### What exists',
+        '',
+        ds.components.map((c) => `\`${c.name}\``).join(' · '),
+        '',
+      )
+    }
+  } else if (hasTokenDigest) {
+    lines.push(
+      '## Use this project\'s design system',
+      '',
+      `This project's design system arrived as CSS, with no package docs. Read`,
+      `\`${TOKENS_PATH}\` — it indexes every design token and every component class`,
+      'with its variants, generated from the project\'s own stylesheets.',
+      '',
+      'Design-system classes are GLOBAL: write them as plain strings,',
+      '`className="btn btn--primary"`. A class from this screen\'s own',
+      '`.module.css` is SCOPED and only works through the imported binding,',
+      '`className={styles.row}` — a plain string naming a local module class',
+      'silently does nothing at all.',
+      '',
+    )
+  }
+
+  if (hasTokenDigest && ds) {
+    lines.push(
+      '## Design tokens',
+      '',
+      `\`${TOKENS_PATH}\` lists every colour, type, spacing, radius and elevation`,
+      'token this project has, generated from its own CSS. Read it before',
+      'inventing a value.',
+      '',
+    )
+  }
+
+  lines.push(
+    '## Verifying',
+    '',
+    '`studio_screenshot` is how you see your own work. Call it after writing,',
+    'look at the image, and fix what is actually wrong rather than what you',
+    'assume is. It places a board frame for any new screen automatically, so a',
+    'file you just wrote is visible on the first call.',
+    '',
+    'Never report a screen as done without having looked at it.',
+    '',
+    '## What you cannot do here',
+    '',
+    '- **No shell.** There is no `Bash` tool. Dependencies install through',
+    '  `studio_install_deps`, which is gated by this project\'s trust tier — if a',
+    '  task genuinely needs a tier promotion, say so and let the user do it. You',
+    '  may never promote a project yourself.',
+    '- **No files outside this project.** Everything you write lands under this',
+    '  directory, which is the user\'s real project with no other copy.',
+    '',
+    'Reply in one or two sentences after acting. Never paste source, JSON, or',
+    'diffs into the reply — the user can see the files and the canvas.',
+    '',
+  )
+  return lines.join('\n')
+}
+
+// ---------------------------------------------------------------------------
+// Assembly
+// ---------------------------------------------------------------------------
+
+/** The installed design system's own docs, when this project has one whose package ships them. */
+function resolveDesignSystemGuide(dir: string, profile: ProjectProfile): DesignSystemGuide | undefined {
+  if (!profile.componentPackages.includes(ALM_PACKAGE)) return undefined
+  const appRoot = joinAppRoot(dir, profile.appRoot)
+  return buildDesignSystemGuide(join(appRoot, 'node_modules', '@alm-design', 'design-system'), ALM_PACKAGE)
+}
+
+function buildGuideFiles(dir: string, profile: ProjectProfile): GuideFile[] {
+  const ds = resolveDesignSystemGuide(dir, profile)
+  const tokenDigest = getOrBuildDesignSystemDigest(dir, profile.designSystems ?? [])
+  const iconReference = ds ? renderIconReference(ds) : undefined
+  return [
+    { relPath: GUIDE_PATH, content: buildGuide(dir, profile, ds, tokenDigest !== undefined) },
+    ...(ds ? [{ relPath: COMPONENTS_PATH, content: renderComponentReference(ds) }] : []),
+    ...(iconReference !== undefined ? [{ relPath: ICONS_PATH, content: iconReference }] : []),
+    ...(tokenDigest !== undefined ? [{ relPath: TOKENS_PATH, content: tokenDigest }] : []),
+  ]
+}
+
+export interface GenerateGuideResult {
+  readonly written: string[]
+  readonly skipped: string[]
+}
+
+/**
+ * Give a project with NO manifest at all the design system, before describing
+ * a project that does not have one.
+ *
+ * `POST /admin/api/studio/create` seeds at creation, but that only ever helps
+ * projects created after the seed existed. Every project made before it — and
+ * any project whose contents were cleared — stays permanently empty:
+ * `componentPackages` is `[]`, so `design-system-components.md` never
+ * generates, and the agent is told to read a reference file that cannot
+ * appear. Observed exactly that way, twice.
+ *
+ * The gate is deliberately "no `package.json` whatsoever", not "no design
+ * system". A project carrying its OWN manifest is the user's, and copying a
+ * package into it that its manifest does not declare would be Studio deciding
+ * a dependency on their behalf. A Studio-scaffolded project with no manifest
+ * at all has made no such statement, so completing it is a repair rather than
+ * an opinion.
+ *
+ * A successful heal re-probes immediately: {@link isProfileStale} only
+ * reconsiders a cached profile that carries a dependencies-not-installed
+ * warning, which a project that never had a manifest does not, so the cache
+ * would otherwise keep reporting the pre-seed emptiness.
+ */
+function healMissingDesignSystem(dir: string): void {
+  if (existsSync(join(dir, 'package.json'))) return
+  const seeded = applyProjectSeed(dir)
+  if (seeded.copied.length > 0) reprobeProjectProfile(dir)
+}
+
+/**
+ * Write the project's generated guide files, skipping (never overwriting)
+ * anything the user has changed since Studio last wrote it. Never throws — a
+ * probe failure degrades to `{ written: [], skipped: [] }`, and the caller
+ * (`claudeCli.ts`) treats a missing guide as "no guide this turn", not a
+ * broken chat.
+ *
+ * Called once per real chat turn, on the critical path before the `claude`
+ * subprocess spawns, so the warm-and-unchanged path must be nearly free: it
+ * recomputes {@link computeProjectGuideFingerprint} and stats the already-written
+ * files, and does nothing else. Only a changed input (a new design token, a
+ * different profile, an upgraded Studio) or a changed OUTPUT file (the user
+ * hand-edited `CLAUDE.md`) forces the full build — the two checks catch
+ * different things and both are required.
+ */
+export function generateStudioProjectGuide(dir: string): GenerateGuideResult {
+  try {
+    healMissingDesignSystem(dir)
+    const profile = resolveProjectProfilePersisting(dir)
+    const manifest = readManifest(dir)
+    const fingerprint = computeProjectGuideFingerprint(dir, profile)
+
+    if (manifest.fingerprint === fingerprint && allOwnedFilesUnchangedSince(dir, manifest.files)) {
+      return { written: [], skipped: [] }
+    }
+
+    const nextFiles: Record<string, ManifestFileEntry> = {}
+    const written: string[] = []
+    const skipped: string[] = []
+
+    for (const target of buildGuideFiles(dir, profile)) {
+      const absPath = join(dir, target.relPath)
+      const contentHash = sha256(target.content)
+      const existing = readTextCapped(absPath, 1_000_000)
+
+      if (existing !== undefined) {
+        const lastWrittenHash = manifest.files[target.relPath]?.hash
+        if (lastWrittenHash !== sha256(existing)) {
+          // Either Studio never wrote this file, or the user edited it since
+          // — either way, not ours to overwrite. Record its CURRENT stat so
+          // the fast path above recognises "still exactly this hand-edit,
+          // nothing new" next turn instead of re-detecting it forever.
+          skipped.push(target.relPath)
+          const stat = statSync(absPath)
+          nextFiles[target.relPath] = { hash: lastWrittenHash ?? sha256(existing), size: stat.size, mtimeMs: stat.mtimeMs }
+          continue
+        }
+        if (existing === target.content) {
+          const stat = statSync(absPath)
+          nextFiles[target.relPath] = { hash: contentHash, size: stat.size, mtimeMs: stat.mtimeMs }
+          continue
+        }
+      }
+
+      mkdirSync(dirname(absPath), { recursive: true })
+      writeFileSync(absPath, target.content)
+      const stat = statSync(absPath)
+      nextFiles[target.relPath] = { hash: contentHash, size: stat.size, mtimeMs: stat.mtimeMs }
+      written.push(target.relPath)
+    }
+
+    writeManifest(dir, { fingerprint, files: nextFiles })
+    return { written, skipped }
+  } catch (err) {
+    console.error('[projectGuide] failed to generate the project guide — continuing without one:', err)
+    return { written: [], skipped: [] }
+  }
+}

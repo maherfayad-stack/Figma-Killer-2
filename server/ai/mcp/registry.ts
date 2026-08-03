@@ -33,6 +33,7 @@ import { documentMcpTools } from './tools/documentTools'
 import { createPublishMcpTool, type McpPublishRuntime } from './tools/publishTool'
 import { studioImportMcpTools } from './tools/studioImportTool'
 import { studioMcpTools } from './tools/studio'
+import { studioAgentTools } from '../tools/studio'
 import { mcpServerMcpTools } from './tools/mcpServerTool'
 
 // Server-resolved site read tools whose handlers read the browser-posted
@@ -73,4 +74,26 @@ export function mcpToolsForCapabilities(
   runtime?: McpPublishRuntime,
 ): AiTool[] {
   return allMcpTools(runtime).filter((t) => toolAllowedForCapabilities(t, capabilities))
+}
+
+/**
+ * The toolset for a connector BOUND to a Studio project
+ * (`connectorWorkspace.ts`) — in practice, the per-turn connector the
+ * `claudeCli` driver mints for the in-canvas agent.
+ *
+ * A bound connector is editing a React repository on disk, with native file
+ * tools in hand. It has no use for the CMS `site_*`/`data.rows`/publish
+ * toolset, which describes a different product half entirely
+ * (`CLAUDE.md`'s "the dormant CMS half"), and offering it is not neutral: the
+ * definitions are re-sent every turn, and a model choosing among ~60 tools
+ * explores instead of acting. It gets `studioAgentTools` and nothing else —
+ * the deliberate subset, composed in `../tools/studio/index.ts`.
+ *
+ * An UNBOUND connector (a plain external MCP client — Claude Code in a
+ * terminal, a remote agent) still sees the full registry above, including the
+ * AST edit tools it genuinely needs because it has no filesystem access to the
+ * project. Same tool objects, two compositions.
+ */
+export function mcpToolsForStudioWorkspace(capabilities: readonly CoreCapability[]): AiTool[] {
+  return studioAgentTools.filter((t) => toolAllowedForCapabilities(t, capabilities))
 }
