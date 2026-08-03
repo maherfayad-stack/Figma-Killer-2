@@ -14,7 +14,16 @@ dist
 dist-ssr
 .worktrees/
 .superpowers/
-.claude/
+# Claude Code harness. The agent roster, skills, slash commands, hooks, and the
+# shared project settings are source — they define how agents work on this repo
+# and must travel with it. Everything else under `.claude/` is per-user local
+# state (`settings.local.json`, caches, transcripts) and stays ignored.
+.claude/*
+!.claude/agents/
+!.claude/skills/
+!.claude/commands/
+!.claude/hooks/
+!.claude/settings.json
 .tmp/
 .tmp-lint/
 # Per-user Claude CLI config roots (`resolveClaudeCliDataRoot`, default
@@ -105,6 +114,10 @@ docs/superpowers/
 # the inputs (server/handlers/studio/styleCompile.ts). Pure derived output —
 # regenerated on demand, and committing it only produces churn in every diff.
 **/.studio/cache/
+# Per-project agent rosters that Studio writes into a user's workspace project
+# (marked by `.claude/.studio-generated.json`). Generated output, not source —
+# distinct from THIS repo's own `.claude/` harness, which is tracked above.
+studio-workspace/*/.claude/
 
 # Playwright/E2E run output — generated, not source
 test-results/
