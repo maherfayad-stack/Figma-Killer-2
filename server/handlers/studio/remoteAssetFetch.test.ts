@@ -203,8 +203,13 @@ describe('fetchRemoteAsset — SSRF: loopback, cloud metadata, RFC1918, encoding
     throw new Error('fetchImpl must never be called for a blocked address')
   }
 
+  // `allowLoopback: false` is pinned, not inherited: Bun autoloads `.env`, so
+  // a developer running a local Figma Dev Mode server with
+  // STUDIO_ALLOW_LOOPBACK_ASSET_FETCH=1 would otherwise flip the default under
+  // this whole describe block and every loopback assertion below would pass a
+  // blocked address straight into `fetchImpl`.
   async function expectBlocked(rawUrl: string, deps: FetchRemoteAssetDeps = {}) {
-    const result = await fetchRemoteAsset(dir, rawUrl, undefined, { fetchImpl: NEVER_CALLED, ...deps })
+    const result = await fetchRemoteAsset(dir, rawUrl, undefined, { fetchImpl: NEVER_CALLED, allowLoopback: false, ...deps })
     expect(result.ok).toBe(false)
     if (result.ok) return
     // Never echoes a resolved/internal IP or connection detail back to the caller.
@@ -261,6 +266,39 @@ describe('fetchRemoteAsset — SSRF: loopback, cloud metadata, RFC1918, encoding
 
   it('blocks a decimal-encoded IPv4 loopback literal (2130706433 === 127.0.0.1)', async () => {
     await expectBlocked('http://2130706433/')
+  })
+
+  // The operator opt-in (STUDIO_ALLOW_LOOPBACK_ASSET_FETCH) exists for the
+  // Figma Dev Mode server, which serves every design asset from loopback.
+  describe('with allowLoopback opted in', () => {
+    it('reaches a loopback host', async () => {
+      let requested: string | null = null
+      const result = await fetchRemoteAsset(dir, 'http://localhost:3845/assets/icon.svg', undefined, {
+        allowLoopback: true,
+        resolveHostAddresses: async () => ['127.0.0.1'],
+        fetchImpl: (async (input: string | URL) => {
+          requested = String(input)
+          return new Response(new Uint8Array([0x3c, 0x73, 0x76, 0x67, 0x3e]), {
+            status: 200,
+            headers: { 'content-type': 'image/svg+xml' },
+          })
+        }) as unknown as typeof fetch,
+      })
+      expect(result.ok).toBe(true)
+      expect(requested).toContain('127.0.0.1')
+    })
+
+    // The opt-in is loopback and nothing else — cloud metadata is the address
+    // an SSRF hole is worth the most, so it is asserted by name.
+    it('still blocks cloud metadata and RFC1918', async () => {
+      for (const url of ['http://169.254.169.254/latest/meta-data/', 'http://10.0.0.1/', 'http://192.168.1.1/']) {
+        const result = await fetchRemoteAsset(dir, url, undefined, {
+          allowLoopback: true,
+          fetchImpl: NEVER_CALLED,
+        })
+        expect(result.ok).toBe(false)
+      }
+    })
   })
 
   it('blocks an octal-encoded IPv4 loopback literal (017700000001 === 127.0.0.1)', async () => {

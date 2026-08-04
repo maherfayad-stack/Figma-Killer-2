@@ -122,7 +122,11 @@ ARMING THE RULER IS YOUR JOB. "No reference was registered" is not an exemption 
 
 1. USE WHAT YOU ALREADY HAVE. The project's CLAUDE.md, the design-system reference files, the live board and selection state, and the registered design references are all in front of you. Do not re-derive them with tool calls.
 
-2. MEASURE THE DESIGN, IF THERE IS ONE. Before writing any stylesheet, call studio_measure_reference on the heading, the body copy and the primary control. It returns the real colours as hex with the matching project token, the real type size in CSS px, and the real line-height. This step is what separates reproducing a design from approximating one.
+2. GET THE DESIGN'S REAL VALUES. Never infer a colour or a type size from a picture.
+
+   If a Figma connector is available, its VARIABLE-DEFINITIONS tool is the best source that exists: it returns the design's own tokens by name with exact values — "coral/100: #EF4550", "Heading 1/EN: Open Sans SemiBold 26px, lineHeight 36, letterSpacing -0.5". Exact, not estimated. Call it on the screen's node before you write a stylesheet, and again on a node whose styling surprises you.
+
+   studio_measure_reference is the fallback, for a registered image with no live connector behind it. It reads pixels, so a type size comes back as a RANGE and its nearest-token guess can land a step high — trust the variable definitions over it whenever both exist. It remains the right tool for colours and spacing in a flat comp, and for checking what you actually built.
 
 3. BUILD. Compose the whole screen and write it in ONE Write, not twenty edits. Read one sibling screen first to match the project's conventions. Do not survey the repository, do not re-read what you just wrote, and do not narrate a plan before executing it.
 
@@ -159,9 +163,9 @@ Screens are responsive. Never put a fixed pixel width on a container — a board
 You cannot invent an asset you do not have. If the design contains an icon, a photo, a logo or an illustration, get the real file, in this order of preference:
 
 1. The design system's own icon set, imported with ?raw and inlined — the form that renders on the canvas and inherits currentColor.
-2. A real source. A connected Figma connector has a dedicated ASSET-DOWNLOAD tool, separate from the one that shows you a picture, and it returns short-lived https URLs for three things at once: an export of the whole node, the raw source photos behind every image fill, and an SVG per vector layer. That is where the icon the package does not ship, the brand logo, and the hero photograph all come from. Hand each URL straight to studio_fetch_remote_asset (or studio_register_design_reference for the reference itself) — the server fetches it, so the bytes never transit you. Otherwise studio_upload_asset for bytes you already hold.
+2. A real source. A connected Figma connector's DESIGN-CONTEXT tool returns, alongside its reference code, a set of asset URLs — one per vector layer and one per image fill in the node. That is where the icon the package does not ship, the brand logo and the hero photograph all come from. Hand each URL straight to studio_fetch_remote_asset (or studio_register_design_reference for the reference image itself); the server fetches it, so the bytes never transit you. Otherwise studio_upload_asset for bytes you already hold.
 
-  A screenshot tool is NOT the asset tool. It gives you one flattened picture to look at; it cannot give you the layers. If you catch yourself concluding "this icon is not available", you have almost certainly not called the asset-download tool yet.
+  The screenshot tool is NOT that tool. It gives you one flattened picture to look at and cannot give you the layers. If you catch yourself concluding "this icon is not available", check whether you have called the design-context tool on the node that CONTAINS it — asset URLs come from the subtree, so calling it on a leaf you already gave up on is not the same as calling it on the row or card the leaf sits in.
 3. studio_extract_reference_asset — cut it out of the registered design reference. This is the ordinary case for a design pasted into chat, when every other path is closed.
 4. Only if all of those fail: a plain neutral placeholder box, and SAY SO in your reply.
 
@@ -194,7 +198,7 @@ GIVING UP ON A REFERENCE BECAUSE THE IMAGE IS ONLY INLINE. An image a Figma tool
 
 TRUSTING A DESIGN-SYSTEM VARIANT INSTEAD OF MEASURING IT. A component named for the ROLE does not promise the design's APPEARANCE. On this project the primary call-to-action measures #ef4550 (coral) in the design, while the system's own variant="primary" renders teal — so every rebuilt screen shipped the wrong CTA colour and was reported clean. The same screen's Apple button is white with a black mark in the design and was built black-filled with white text: inverted, not approximated. Measure the control in the reference, then pick the variant whose measured value matches, and if none does, say so and set the value explicitly.
   WRONG:   <Button variant="primary" />        /* "it's the primary action" */
-  RIGHT:   /* studio_measure_reference: CTA background #ef4550 -> --color-coral-200 */
+  RIGHT:   /* the design's own variables say coral/100 #EF4550 for this CTA */
            <Button variant="primary" className={styles.coralCta} />   /* + a one-line note that the variant's own fill did not match */
 
 BUILDING A NODE THE DESIGNER TURNED OFF. A Figma layer marked hidden is not part of the design. The structure is full of alternate copies — a WhatsApp variant beside the SMS one, an unused title, a logo that is switched off — and building them produces a screen with content the design does not have. Read the visibility flag before you build a node, and never report a hidden layer as a missing asset you could not source.

@@ -52,11 +52,46 @@ function isBlockedIpv6(raw: string): boolean {
 }
 
 /**
+ * True for a loopback address specifically — 127.0.0.0/8, ::1, and the
+ * IPv4-mapped spellings of both. A strict SUBSET of {@link isBlockedAddress};
+ * RFC1918, CGNAT, link-local (including the 169.254.169.254 cloud-metadata
+ * address) and unique-local are deliberately NOT loopback and stay blocked
+ * even when a caller opts into loopback.
+ */
+export function isLoopbackAddress(ip: string): boolean {
+  const family = isIP(ip)
+  if (family === 4) return ip.startsWith('127.')
+  if (family !== 6) return false
+  const addr = (ip.split('%')[0] ?? '').toLowerCase()
+  if (addr === '::1' || addr === '0:0:0:0:0:0:0:1') return true
+  const dotted = /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/.exec(addr)
+  if (dotted?.[1]) return dotted[1].startsWith('127.')
+  const hex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(addr)
+  if (hex?.[1] && hex[2]) {
+    const hi = parseInt(hex[1], 16)
+    return (hi >> 8) === 127
+  }
+  return false
+}
+
+export interface BlockedAddressOptions {
+  /**
+   * Treat loopback as reachable. OFF everywhere by default, and deliberately
+   * a per-CALLER opt-in rather than a global switch: this module is also the
+   * QuickJS plugin sandbox's `network.outbound` gate, where loopback access
+   * would let untrusted plugin code reach every service on the host. Only the
+   * Studio asset fetcher passes it, and only when its own env var is set.
+   */
+  readonly allowLoopback?: boolean
+}
+
+/**
  * True for any address in a loopback / private / link-local / CGNAT /
  * unique-local / unspecified range — the SSRF blocklist. Non-IP strings
  * return `false` (the caller resolves hostnames to addresses first).
  */
-export function isBlockedAddress(ip: string): boolean {
+export function isBlockedAddress(ip: string, options: BlockedAddressOptions = {}): boolean {
+  if (options.allowLoopback && isLoopbackAddress(ip)) return false
   const family = isIP(ip)
   if (family === 4) return isBlockedIpv4(ip)
   if (family === 6) return isBlockedIpv6(ip)

@@ -1,36 +1,59 @@
-import { Button } from '@alm-design/design-system'
-import '@alm-design/design-system/dist/index.css'
-import '../components/screen.css'
-import planeSvg from '@alm-design/design-system/src/icons/line-icons/planeLine.svg?raw'
+import { Button, TextInput, ChevronDownIcon } from '@alm-design/design-system'
+import airplaneSvg from '@alm-design/design-system/src/icons/line-icons/airplaneTilt.svg?raw'
 import calendarSvg from '@alm-design/design-system/src/icons/line-icons/calendar.svg?raw'
 import discountSvg from '@alm-design/design-system/src/icons/line-icons/discount.svg?raw'
 import lightningSvg from '@alm-design/design-system/src/icons/line-icons/lightning.svg?raw'
-import { StatusBar, BackRow, MobileNumberInput, PerkRow } from '../components/screen'
+import { Screen } from '../components/Screen'
 import styles from './AddMobile.module.css'
+
+const features = [
+  { svg: airplaneSvg, label: 'Live flight updates' },
+  { svg: calendarSvg, label: 'Boarding pass & activity reminders' },
+  { svg: discountSvg, label: 'Flash sales' },
+  { svg: lightningSvg, label: 'One-tap sign-in next time' },
+]
 
 export default function AddMobile() {
   return (
-    <div className={styles.screen} dir="ltr">
-      <StatusBar />
-      <div className={styles.body}>
-        <BackRow />
-        <div className={styles.hero} aria-label="hero image gap" />
-        <h2 className={styles.title}>Add your mobile number</h2>
-        <p className={styles.copy}>
-          Sign in faster next time, and get Notifed the moment something changes
+    <Screen>
+      <div className={styles.hero} aria-hidden />
+
+      <div className={styles.heading}>
+        <h1 className={styles.title}>Add your mobile number</h1>
+        <p className={styles.subtitle}>
+          Sign in faster next time, and get Notified the moment something changes
         </p>
-        <div className={styles.perkList}>
-          <PerkRow svg={planeSvg} label="Live flight updates" />
-          <PerkRow svg={calendarSvg} label="Boarding pass & activity reminders" />
-          <PerkRow svg={discountSvg} label="Flash sales" />
-          <PerkRow svg={lightningSvg} label="One-tap sign-in next time" />
-        </div>
-        <div className={styles.bottom}>
-          <MobileNumberInput />
-          <Button variant="primary" size="default" label="Verify Number" />
-          <p className={styles.finePrint}>Updates by SMS or WhatsApp. No marketing spam.</p>
-        </div>
       </div>
-    </div>
+
+      <ul className={styles.features}>
+        {features.map((f) => (
+          <li key={f.label} className={styles.feature}>
+            <span className={styles.featureIcon} dangerouslySetInnerHTML={{ __html: f.svg }} />
+            <span>{f.label}</span>
+          </li>
+        ))}
+      </ul>
+
+      <div className={styles.formSection}>
+        <div className={styles.phoneRow}>
+          <button type="button" className={styles.codeField}>
+            <span className={styles.codeLabel}>Code</span>
+            <span className={styles.codeValue}>+966</span>
+            <ChevronDownIcon className={styles.chev} />
+          </button>
+          <div className={styles.numberField}>
+            <TextInput label="Mobile number" required value="" onChange={() => {}} />
+          </div>
+        </div>
+
+        <div className={styles.verifyBtn}>
+          <Button variant="primary" label="Verify Number" />
+        </div>
+
+        <p className={styles.footnote}>
+          Updates by SMS or WhatsApp. No marketing spam.
+        </p>
+      </div>
+    </Screen>
   )
 }

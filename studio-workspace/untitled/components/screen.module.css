@@ -1,135 +1,85 @@
-/* iOS-style status bar */
-.statusBar {
-  height: 44px;
-  padding: 0 20px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  background: var(--background-base-subtle);
-  flex-shrink: 0;
-}
-.time {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--text-base-default);
-}
-.notch {
-  width: 120px;
-  height: 32px;
-  background: #000;
-  border-radius: 100px;
-  display: inline-block;
-  flex-shrink: 0;
-}
-.right {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  color: var(--text-base-default);
-}
-
-.backRow {
-  padding: 4px 0;
-}
-
-/* Mobile-number split input */
-.mobileInput {
-  display: flex;
-  gap: 8px;
-  height: 56px;
-}
-.mobileInputCode {
-  width: 100px;
-  border: 1px solid var(--border-base-default);
-  border-radius: 12px;
-  padding: 8px 12px;
+.screen {
   display: flex;
   flex-direction: column;
-  justify-content: center;
-  gap: 2px;
-  box-sizing: border-box;
+  width: 100%;
+  min-height: 100vh;
+  background: var(--background-base-default);
+  color: var(--text-base-default);
+  font-family: 'Open Sans', system-ui, sans-serif;
 }
-.mobileInputCodeRow {
+
+.statusBar {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  color: var(--text-base-default);
-}
-.chev {
-  display: inline-flex;
-  width: 16px;
-  height: 16px;
+  padding: 14px 24px 6px;
+  height: 44px;
   flex-shrink: 0;
-  color: var(--text-base-subtext);
-}
-.chev svg {
-  width: 16px;
-  height: 16px;
-  display: block;
-}
-.mobileInputNumber {
-  flex: 1;
-  border: 1px solid var(--border-base-default);
-  border-radius: 12px;
-  padding: 8px 12px;
-  display: flex;
-  align-items: center;
-  box-sizing: border-box;
-}
-.mobileLabel {
-  font-size: 12px;
-  line-height: 16px;
-  color: var(--text-base-subtext);
-}
-.mobileValue {
-  font-size: 16px;
-  line-height: 20px;
-  color: var(--text-base-default);
-  font-weight: 500;
-}
-.required {
-  color: var(--text-link-default);
 }
 
-/* Perk row */
-.perkRow {
+.time {
+  font-family: 'SF Pro', system-ui, sans-serif;
+  font-weight: 600;
+  font-size: 17px;
+  line-height: 22px;
+  color: var(--text-base-default);
+  min-width: 56px;
+}
+
+.island {
+  position: absolute;
+  left: 50%;
+  top: 12px;
+  transform: translateX(-50%);
+  width: 125px;
+  height: 37px;
+  background: #000;
+  border-radius: 100px;
+}
+
+.indicators {
   display: flex;
   align-items: center;
-  gap: 12px;
-}
-.perkLabel {
+  gap: 5px;
+  min-width: 56px;
+  justify-content: flex-end;
+  color: var(--text-base-default);
   font-size: 14px;
-  line-height: 20px;
-  color: var(--text-base-default);
 }
 
-/* Line-icon wrapper */
-.icon {
+.dots,
+.wifi {
+  font-size: 12px;
+  letter-spacing: 1px;
+}
+
+.battery {
+  display: inline-block;
   width: 24px;
-  height: 24px;
-  display: inline-flex;
+  height: 12px;
+  border-radius: 3px;
+  background: var(--text-base-default);
+}
+
+.toolbar {
+  position: relative;
+  height: 44px;
+  padding: 0 12px;
+  display: flex;
   align-items: center;
-  justify-content: center;
-  color: var(--text-base-default);
   flex-shrink: 0;
 }
-.icon svg {
-  width: 24px;
-  height: 24px;
-  display: block;
+
+.back {
+  display: inline-flex;
 }
 
-/* OTP */
-.otpRow {
-  display: flex;
-  gap: 8px;
-  margin-top: 8px;
-}
-.otpCell {
+.content {
   flex: 1;
-  height: 50px;
-  border: 1px solid var(--border-base-default);
-  border-radius: 8px;
-  background: var(--background-base-default);
-  color: transparent;
+  display: flex;
+  flex-direction: column;
+  padding: 8px 16px 24px;
+  gap: 24px;
+  min-height: 0;
 }

@@ -113,6 +113,18 @@ export interface FetchRemoteAssetDeps {
    * icon — hence a per-caller cap rather than one number for both.
    */
   maxBytes?: number
+  /**
+   * Whether loopback counts as reachable. Defaults to
+   * {@link loopbackAssetFetchEnabled}, i.e. the operator's env var.
+   *
+   * Explicit here so the SSRF tests are HERMETIC. Bun autoloads `.env`, so a
+   * developer who legitimately enabled loopback for their own Figma Dev Mode
+   * server silently flipped the default under the test suite and five
+   * "blocks loopback" assertions began passing a blocked address straight to
+   * `fetchImpl`. A guard test that reads the developer's environment is not
+   * testing the guard.
+   */
+  allowLoopback?: boolean
   /** Test seam — defaults to the global `fetch`. */
   fetchImpl?: typeof fetch
   /**
@@ -161,7 +173,7 @@ export type FetchRemoteBytesResult =
   | { ok: false; error: string }
 
 type SafeAddressResolution =
-  | { ok: true; address: string }
+  | { ok: true; addresses: readonly string[] }
   | { ok: false; reason: 'unresolved' | 'blocked' }
 
 /**
@@ -174,14 +186,55 @@ type SafeAddressResolution =
 async function resolveSafeConnectAddress(
   hostname: string,
   resolveHostAddresses: (host: string) => Promise<string[]>,
+  allowLoopback: boolean,
 ): Promise<SafeAddressResolution> {
   const host = stripHostnameBrackets(hostname)
   const addresses = isIP(host) !== 0 ? [host] : await resolveHostAddresses(host)
   if (addresses.length === 0) return { ok: false, reason: 'unresolved' }
   for (const address of addresses) {
-    if (isBlockedAddress(address)) return { ok: false, reason: 'blocked' }
+    if (isBlockedAddress(address, { allowLoopback })) return { ok: false, reason: 'blocked' }
   }
-  return { ok: true, address: addresses[0] as string }
+  // EVERY address is returned, not just the first. All of them cleared the
+  // blocklist, so connecting to any is equally safe — and pinning blindly to
+  // addresses[0] made a host that merely LISTS an address unreachable when
+  // nothing is listening on it. Concretely: `localhost` resolves to ::1 first
+  // on macOS while the Figma Dev Mode server binds IPv4 only, so every asset
+  // fetch failed with ConnectionRefused against an address the server never
+  // claimed to serve.
+  return { ok: true, addresses }
+}
+
+/**
+ * Single-machine escape hatch for fetching assets served on loopback.
+ *
+ * The concrete case is the Figma Dev Mode MCP server: it is the ONLY Figma
+ * server a Studio agent gets (`BUILT_IN_MCP_SERVERS`, `127.0.0.1:3845`), and
+ * every asset it exposes — the icons, logos and photographs a design is built
+ * from, surfaced as download URLs by `get_design_context` — is served from
+ * `http://localhost:3845/assets/...`. The SSRF guard blocked that origin, so
+ * "the agent cannot download images or SVGs" was a true statement about the
+ * product, not a model failure.
+ *
+ * The trade this makes is real and is the operator's to make: with this on,
+ * any URL the agent supplies can reach any service on the host, INCLUDING
+ * Studio's own API. On a single-user development machine the agent already
+ * acts with that user's authority, so it grants nothing new. On a host serving
+ * several people it is a genuine SSRF hole.
+ *
+ * An env var and not a setting, for the reason `STUDIO_ALLOW_MACOS_CLAUDE_CLI`
+ * gives: a setting lives in the database and can be flipped by anyone who
+ * reaches the admin UI, while an env var has to be set by whoever starts the
+ * process. Off unless explicitly `1` or `true`; anything else — including a
+ * typo, `0`, or an empty string — leaves the guard fully closed.
+ *
+ * Loopback ONLY. RFC1918, CGNAT and link-local (so the 169.254.169.254
+ * cloud-metadata address) stay blocked regardless — see `isLoopbackAddress`.
+ */
+const LOOPBACK_ASSET_FETCH_ENV_VAR = 'STUDIO_ALLOW_LOOPBACK_ASSET_FETCH'
+
+export function loopbackAssetFetchEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const raw = env[LOOPBACK_ASSET_FETCH_ENV_VAR]?.trim().toLowerCase()
+  return raw === '1' || raw === 'true'
 }
 
 /**
@@ -219,7 +272,11 @@ export async function fetchRemoteBytes(
   if (!url) return { ok: false, error: `"${rawUrl}" is not a valid http:// or https:// URL.` }
 
   const resolveHostAddresses = deps.resolveHostAddresses ?? defaultResolveHostAddresses
-  const resolution = await resolveSafeConnectAddress(url.hostname, resolveHostAddresses)
+  const resolution = await resolveSafeConnectAddress(
+    url.hostname,
+    resolveHostAddresses,
+    deps.allowLoopback ?? loopbackAssetFetchEnabled(),
+  )
   if (!resolution.ok) {
     // Deliberately does NOT echo `rawUrl` here (unlike the other error
     // branches below): for a literal-IP URL the caller already knows what
@@ -236,19 +293,29 @@ export async function fetchRemoteBytes(
     }
   }
 
-  const pinnedUrl = pinUrlToAddress(url, resolution.address)
   const sniHost = stripHostnameBrackets(url.hostname)
-
   const fetchImpl = deps.fetchImpl ?? fetch
-  let res: Response
-  try {
-    res = await fetchImpl(pinnedUrl, {
-      redirect: 'error',
-      headers: { 'user-agent': 'studio-asset-fetch', host: url.host },
-      ...(url.protocol === 'https:' ? { tls: { serverName: sniHost } } : {}),
-    })
-  } catch (err) {
-    console.error('[remoteAssetFetch] fetch failed', err)
+
+  // Try each validated address until one CONNECTS. Only a transport failure
+  // moves on to the next candidate — an HTTP response, of any status, is the
+  // host answering and ends the loop, so a 404 is never retried against a
+  // second address.
+  let res: Response | null = null
+  let lastError: unknown
+  for (const address of resolution.addresses) {
+    try {
+      res = await fetchImpl(pinUrlToAddress(url, address), {
+        redirect: 'error',
+        headers: { 'user-agent': 'studio-asset-fetch', host: url.host },
+        ...(url.protocol === 'https:' ? { tls: { serverName: sniHost } } : {}),
+      })
+      break
+    } catch (err) {
+      lastError = err
+    }
+  }
+  if (!res) {
+    console.error('[remoteAssetFetch] fetch failed', lastError)
     return {
       ok: false,
       error: `Could not fetch ${rawUrl} (a redirect response is refused outright and never followed).`,

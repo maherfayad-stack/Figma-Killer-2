@@ -1,77 +1,130 @@
-.screen {
-  min-height: 100vh;
-  background: var(--background-base-default);
-  display: flex;
-  flex-direction: column;
-}
-.body {
-  padding: 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  flex: 1;
-}
 .title {
-  margin: 0;
-  font-size: 28px;
+  font-family: 'Open Sans', system-ui, sans-serif;
+  font-weight: 600;
+  font-size: 26px;
   line-height: 36px;
-  font-weight: 700;
+  letter-spacing: -0.5px;
   color: var(--text-base-default);
+  margin: 0;
 }
-.registerLink {
-  text-align: center;
-  color: var(--text-link-default);
-  display: block;
+
+.phoneRow {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  width: 100%;
+}
+
+.codeField {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  width: 101px;
+  padding: 8px 12px;
+  background: var(--background-base-default);
+  border: 1px solid var(--border-base-default);
+  border-radius: 8px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.codeLabel {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-base-subtext);
+  text-align: left;
+}
+
+.codeValue {
+  font-size: 16px;
+  line-height: 24px;
+  color: var(--text-base-default);
+  text-align: left;
+}
+
+.chev {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 20px;
+  height: 20px;
+  color: var(--icon-base-default);
+}
+
+.numberField {
+  flex: 1;
+  min-width: 0;
+}
+
+.continueBtn {
+  width: 100%;
+  --button-primary-default: var(--color-coral-100);
+  --button-primary-hover: var(--color-coral-100);
+  --button-primary-pressed: var(--color-coral-100);
+}
+
+.continueBtn :global(.btn) {
+  width: 100%;
+}
+
+.link {
+  align-self: center;
+  font-weight: 600;
   font-size: 14px;
   line-height: 20px;
-  font-weight: 600;
-  cursor: pointer;
+  color: var(--text-link-default);
+  text-decoration: none;
 }
-.orRow {
-  padding: 8px 0;
+
+.spacer {
+  flex: 1;
+  min-height: 24px;
 }
-.socialButtons {
+
+.socialStack {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  width: 100%;
 }
+
+.socialStack :global(.btn) {
+  width: 100%;
+}
+
 .socialBtn {
-  height: 48px;
-  border-radius: 100px;
-  border: 1px solid var(--border-base-default);
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
+  width: 100%;
+  height: 48px;
+  padding: 0 24px;
+  border-radius: 100px;
+  font-family: inherit;
+  font-weight: 600;
   font-size: 16px;
   line-height: 20px;
-  font-weight: 600;
   cursor: pointer;
-  background: var(--background-base-default);
-  color: var(--text-base-default);
-  padding: 0 16px;
 }
-.appleBtn {
+
+.socialIcon {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.apple {
   background: var(--background-brand-apple);
-  color: var(--text-base-inverted);
-  border-color: var(--background-brand-apple);
+  color: var(--text-base-inverted-static);
+  border: none;
 }
-.appleGlyph {
-  width: 14px;
-  height: 18px;
-  display: inline-block;
-  background: currentColor;
-  mask: radial-gradient(circle at 50% 40%, currentColor 55%, transparent 56%) no-repeat;
-}
-.googleGlyph {
-  width: 18px;
-  height: 18px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 100px;
-  background: conic-gradient(from -45deg, #ea4335 25%, #fbbc05 25% 50%, #34a853 50% 75%, #4285f4 75%);
-  color: white;
-  font-weight: 700;
-  font-size: 12px;
+
+.google {
+  background: var(--background-base-default);
+  color: var(--text-link-default);
+  border: 1px solid var(--border-secondary-default);
 }
