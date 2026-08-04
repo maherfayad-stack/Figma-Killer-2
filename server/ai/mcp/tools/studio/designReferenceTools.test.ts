@@ -70,6 +70,102 @@ describe('studio_register_design_reference', () => {
       {} as never,
     ) as { ok: boolean; error?: string }
     expect(both.ok).toBe(false)
+
+    // `path` joins the same exactly-one rule rather than getting its own.
+    const twoOfThree = await tool('studio_register_design_reference').handler!(
+      { dir, path: 'a.png', imageBase64: 'AAAA' },
+      {} as never,
+    ) as { ok: boolean; error?: string }
+    expect(twoOfThree.ok).toBe(false)
+  })
+
+  // The `path` input is a filesystem READ sink driven by agent-supplied text,
+  // so containment is the load-bearing property, not the happy path.
+  describe('path input', () => {
+    async function writePng(rel: string, width: number, height: number): Promise<string> {
+      const abs = path.join(dir, rel)
+      fs.mkdirSync(path.dirname(abs), { recursive: true })
+      await sharp({ create: { width, height, channels: 4, background: { r: 9, g: 9, b: 9, alpha: 1 } } })
+        .png()
+        .toFile(abs)
+      return abs
+    }
+
+    it('registers a PNG already on disk, by project-relative path', async () => {
+      await writePng('.studio/figma/hero.png', 24, 18)
+      const result = await tool('studio_register_design_reference').handler!(
+        { dir, path: '.studio/figma/hero.png', pageId: 'pages/Home.tsx' },
+        {} as never,
+      ) as { ok: boolean; reference: { width: number; height: number } }
+      expect(result.ok).toBe(true)
+      expect(result.reference.width).toBe(24)
+      expect(result.reference.height).toBe(18)
+    })
+
+    it('accepts an absolute path inside the project', async () => {
+      const abs = await writePng('exports/comp.png', 12, 10)
+      const result = await tool('studio_register_design_reference').handler!(
+        { dir, path: abs },
+        {} as never,
+      ) as { ok: boolean; reference: { width: number } }
+      expect(result.ok).toBe(true)
+      expect(result.reference.width).toBe(12)
+    })
+
+    it('refuses a traversal escape', async () => {
+      const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-outside-'))
+      try {
+        await sharp({ create: { width: 8, height: 8, channels: 4, background: { r: 1, g: 1, b: 1, alpha: 1 } } })
+          .png()
+          .toFile(path.join(outside, 'secret.png'))
+        const result = await tool('studio_register_design_reference').handler!(
+          { dir, path: path.join('..', path.basename(outside), 'secret.png') },
+          {} as never,
+        ) as { ok: boolean; error?: string }
+        expect(result.ok).toBe(false)
+      } finally {
+        fs.rmSync(outside, { recursive: true, force: true })
+      }
+    })
+
+    // Lexical containment passes here and real containment does not — the
+    // reason the check runs on realpath() output rather than the joined path.
+    it('refuses a symlink pointing outside the project', async () => {
+      const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-outside-'))
+      try {
+        await sharp({ create: { width: 8, height: 8, channels: 4, background: { r: 1, g: 1, b: 1, alpha: 1 } } })
+          .png()
+          .toFile(path.join(outside, 'secret.png'))
+        fs.symlinkSync(path.join(outside, 'secret.png'), path.join(dir, 'link.png'))
+        const result = await tool('studio_register_design_reference').handler!(
+          { dir, path: 'link.png' },
+          {} as never,
+        ) as { ok: boolean; error?: string }
+        expect(result.ok).toBe(false)
+        expect(result.error).toContain('outside this project')
+      } finally {
+        fs.rmSync(outside, { recursive: true, force: true })
+      }
+    })
+
+    it('reports a missing file as a recoverable error, not a throw', async () => {
+      const result = await tool('studio_register_design_reference').handler!(
+        { dir, path: '.studio/figma/never-downloaded.png' },
+        {} as never,
+      ) as { ok: boolean; error?: string }
+      expect(result.ok).toBe(false)
+      expect(result.error).toContain('No file at')
+    })
+
+    it('refuses a directory', async () => {
+      fs.mkdirSync(path.join(dir, 'exports'), { recursive: true })
+      const result = await tool('studio_register_design_reference').handler!(
+        { dir, path: 'exports' },
+        {} as never,
+      ) as { ok: boolean; error?: string }
+      expect(result.ok).toBe(false)
+      expect(result.error).toContain('not a file')
+    })
   })
 })
 

@@ -1,32 +1,23 @@
 import '@alm-design/design-system/dist/index.css'
-import styles from './Verify.module.css'
-import { SheetHandle } from './components/SheetHandle'
-import { OtpInput } from './components/OtpInput'
-import { ChevronLeft, IconEnvelope } from './components/icons'
+import '../components/screen.css'
+import envelopeSvg from '@alm-design/design-system/src/icons/line-icons/envelope.svg?raw'
+import { StatusBar, BackRow, Icon, OtpRow } from '../components/screen'
+import styles from './VerifyEmail.module.css'
 
 export default function VerifyEmail() {
   return (
-    <div className={styles.screen}>
-      <SheetHandle />
-      <div className={styles.sheet}>
-        <button className={styles.backBtn} aria-label="Back" type="button">
-          <ChevronLeft />
-        </button>
+    <div className={styles.screen} dir="ltr">
+      <StatusBar />
+      <div className={styles.body}>
+        <BackRow />
         <h1 className={styles.title}>Enter Verification Code</h1>
-        <p className={styles.intro}>Enter the 6-digit code sent via:</p>
+        <p className={styles.subtitle}>Enter the 6-digit code sent via:</p>
         <div className={styles.channel}>
-          <span className={styles.channelIcon}><IconEnvelope /></span>
-          <span className={styles.channelBold}>Email</span>
-          <span className={styles.channelPrefix}> at </span>
-          <span className={styles.channelBold}>emal@domain.com</span>
+          <Icon svg={envelopeSvg} />
+          <span className={styles.channelText}>Email at emal@domain.com</span>
         </div>
-        <div className={styles.otp}>
-          <OtpInput />
-        </div>
-        <p className={styles.resend}>
-          <span className={styles.resendPrefix}>Resend in </span>
-          <span className={styles.resendBold}>29 seconds</span>
-        </p>
+        <OtpRow />
+        <p className={styles.resend}>Resend in 29 seconds</p>
       </div>
     </div>
   )

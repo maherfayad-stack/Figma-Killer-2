@@ -1,213 +1,77 @@
 .screen {
-  min-height: 100%;
-  background: #F3F4F5;
+  min-height: 100vh;
+  background: var(--background-base-default);
   display: flex;
   flex-direction: column;
 }
-
-.sheet {
+.body {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
   flex: 1;
-  background: #FFFFFF;
-  padding: 0 16px 24px;
-  display: flex;
-  flex-direction: column;
 }
-
-.backBtn {
-  width: 40px;
-  height: 40px;
-  border: none;
-  background: transparent;
-  display: inline-flex;
-  align-items: center;
-  justify-content: flex-start;
-  padding: 0;
-  color: #1C1C1C;
-  cursor: pointer;
-  margin-bottom: 4px;
-}
-
 .title {
-  font-family: 'ALM Sans Geist', 'Open Sans', system-ui, sans-serif;
-  font-size: 26px;
-  line-height: 32px;
-  font-weight: 600;
-  color: #1C1C1C;
-  margin: 8px 0 20px;
-  letter-spacing: -0.5px;
+  margin: 0;
+  font-size: 28px;
+  line-height: 36px;
+  font-weight: 700;
+  color: var(--text-base-default);
 }
-
-.form {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.phoneField {
-  display: grid;
-  grid-template-columns: 88px 1fr;
-  gap: 8px;
-  height: 56px;
-}
-
-.codeSlot,
-.numberSlot {
-  border: 1px solid #D8DCDE;
-  border-radius: 8px;
-  background: #FFFFFF;
-  padding: 8px 12px;
-  position: relative;
-  text-align: start;
-}
-
-.codeSlot {
-  cursor: pointer;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-}
-
-.codeSlotLabel {
-  font-size: 12px;
-  color: #66797F;
-  line-height: 14px;
-  margin-bottom: 2px;
-}
-
-.codeSlotValue {
-  font-size: 16px;
-  color: #1C1C1C;
-  font-weight: 400;
-  line-height: 20px;
-}
-
-.codeSlotChevron {
-  position: absolute;
-  top: 8px;
-  right: 10px;
-  color: #66797F;
-  display: inline-flex;
-}
-
-.numberSlot {
-  display: flex;
-  align-items: center;
-}
-
-.numberInput {
-  width: 100%;
-  border: none;
-  outline: none;
-  background: transparent;
-  font: inherit;
-  font-size: 16px;
-  color: #1C1C1C;
-  padding: 0;
-}
-
-.numberInput::placeholder {
-  color: #66797F;
-}
-
-.primaryCta {
-  height: 48px;
-  border-radius: 100px;
-  border: none;
-  background: #EF4550;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 24px;
-}
-
-.primaryCtaLabel {
-  color: #FFFFFF;
-  font-size: 16px;
-  font-weight: 600;
-  line-height: 24px;
-}
-
 .registerLink {
-  border: none;
-  background: transparent;
-  cursor: pointer;
-  padding: 8px 0;
-  align-self: center;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.registerLinkLabel {
-  color: #0C9AB0;
+  text-align: center;
+  color: var(--text-link-default);
+  display: block;
   font-size: 14px;
-  font-weight: 600;
   line-height: 20px;
+  font-weight: 600;
+  cursor: pointer;
 }
-
 .orRow {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 24px 0 16px;
+  padding: 8px 0;
 }
-
-.orLine {
-  flex: 1;
-  height: 1px;
-  background: #D8DCDE;
-}
-
-.orLabel {
-  color: #66797F;
-  font-size: 12px;
-  font-weight: 400;
-  letter-spacing: 0.5px;
-}
-
-.socialStack {
+.socialButtons {
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
-
-.outlineBtnAqua,
-.outlineBtnDark {
-  display: inline-flex;
+.socialBtn {
+  height: 48px;
+  border-radius: 100px;
+  border: 1px solid var(--border-base-default);
+  display: flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  height: 48px;
-  border-radius: 100px;
-  background: #FFFFFF;
+  font-size: 16px;
+  line-height: 20px;
+  font-weight: 600;
   cursor: pointer;
+  background: var(--background-base-default);
+  color: var(--text-base-default);
   padding: 0 16px;
 }
-
-.outlineBtnAqua {
-  border: 1.5px solid #0C9AB0;
+.appleBtn {
+  background: var(--background-brand-apple);
+  color: var(--text-base-inverted);
+  border-color: var(--background-brand-apple);
 }
-
-.outlineBtnDark {
-  border: 1.5px solid #1C1C1C;
+.appleGlyph {
+  width: 14px;
+  height: 18px;
+  display: inline-block;
+  background: currentColor;
+  mask: radial-gradient(circle at 50% 40%, currentColor 55%, transparent 56%) no-repeat;
 }
-
-.outlineLabelAqua {
-  color: #0C9AB0;
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.outlineLabelDark {
-  color: #1C1C1C;
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.outlineIcon {
+.googleGlyph {
+  width: 18px;
+  height: 18px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: #1C1C1C;
+  border-radius: 100px;
+  background: conic-gradient(from -45deg, #ea4335 25%, #fbbc05 25% 50%, #34a853 50% 75%, #4285f4 75%);
+  color: white;
+  font-weight: 700;
+  font-size: 12px;
 }

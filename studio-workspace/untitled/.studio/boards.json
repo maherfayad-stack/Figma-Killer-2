@@ -11,7 +11,11 @@
           "x": -428.5384845655792,
           "y": 1760,
           "width": 393,
-          "height": 1217.289184570312
+          "height": 993.327977323974,
+          "axes": {
+            "direction": "ltr",
+            "colorScheme": "light"
+          }
         },
         {
           "id": "155facbc-7ead-4759-81b9-c64f44de7dcc",
@@ -19,7 +23,11 @@
           "x": 1246.9750222306836,
           "y": 1788,
           "width": 393,
-          "height": 852
+          "height": 1003.1516995880004,
+          "axes": {
+            "direction": "ltr",
+            "colorScheme": "light"
+          }
         },
         {
           "id": "5dcd5a95-d4f8-471d-af4e-0229401e5259",
@@ -27,7 +35,11 @@
           "x": 827.5,
           "y": 1769.829471589658,
           "width": 393,
-          "height": 852
+          "height": 1004.5971525584073,
+          "axes": {
+            "direction": "ltr",
+            "colorScheme": "light"
+          }
         },
         {
           "id": "ed95e162-32af-451b-902a-e123a36665d9",
@@ -35,7 +47,11 @@
           "x": 0,
           "y": 1760,
           "width": 393,
-          "height": 852
+          "height": 852,
+          "axes": {
+            "direction": "ltr",
+            "colorScheme": "light"
+          }
         },
         {
           "id": "fd4ec457-c189-42da-ae73-14ec42214d81",
@@ -43,7 +59,11 @@
           "x": 422.0071851404608,
           "y": 1760,
           "width": 393,
-          "height": 852
+          "height": 852,
+          "axes": {
+            "direction": "ltr",
+            "colorScheme": "light"
+          }
         },
         {
           "id": "582a45df-e19d-4c60-be59-78a126ee441a",
@@ -68,6 +88,26 @@
           "pageId": "components-icons",
           "x": 0,
           "y": 3520
+        },
+        {
+          "id": "db95562c-e19c-4da7-9263-691a6320e0c6",
+          "pageId": "page",
+          "x": 1104,
+          "y": 3520
+        },
+        {
+          "id": "c95b0e8c-dc90-4f24-ae1e-4817273861b1",
+          "pageId": "section9",
+          "x": -882.8601208068455,
+          "y": 4400,
+          "width": 1906.8601208068458,
+          "height": 1065.7322943192212
+        },
+        {
+          "id": "79a25353-e5c6-4ae1-9832-67c418c08b43",
+          "pageId": "components-screen",
+          "x": 1104,
+          "y": 4400
         }
       ],
       "notes": [],

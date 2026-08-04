@@ -46,7 +46,10 @@ import {
   aiToolError,
   aiToolOk,
 } from '@core/ai'
+import { readFile, realpath, stat } from 'node:fs/promises'
+import { isAbsolute, resolve as resolvePath } from 'node:path'
 import type { AiTool, ToolContext } from '../../../runtime/types'
+import { assertPathWithin } from '../../../../util/pathWithin'
 import { resolveToolProjectDir } from './resolveToolProjectDir'
 import { authoredFrameWidth } from '../../../../handlers/studio/boardGeometry'
 import { fetchRemoteBytes } from '../../../../handlers/studio/remoteAssetFetch'
@@ -62,6 +65,58 @@ import {
 // studio_register_design_reference
 // ---------------------------------------------------------------------------
 
+/**
+ * Read an image the agent already downloaded into the project.
+ *
+ * This is the route that actually closes the Figma loop. The in-canvas agent
+ * runs as a Claude CLI subprocess whose MCP servers include the user's own
+ * Figma connector, and an image that connector renders INLINE is a picture the
+ * model can see but cannot re-emit as bytes — there is no path from it into
+ * `imageBase64`. Its asset-DOWNLOAD tool writes real files to disk instead,
+ * and the subprocess's cwd is the project, so the file is already somewhere
+ * this function can reach. Without this input the agent's only remaining
+ * option was to ask the user to attach the PNG by hand.
+ *
+ * Containment is asserted on the REAL paths, after `realpath`, not on the
+ * lexical join: a project can legitimately contain symlinks (`node_modules`
+ * most obviously), so a lexically-contained path can still resolve outside the
+ * project. An absolute input is accepted rather than rejected — the CLI's cwd
+ * is the project root, so its tools naturally hand back absolute paths — but
+ * it is subject to exactly the same containment check.
+ */
+async function readProjectImageBytes(
+  dir: string,
+  filePath: string,
+): Promise<{ ok: true; bytes: Uint8Array } | { ok: false; error: string }> {
+  const candidate = isAbsolute(filePath) ? filePath : resolvePath(dir, filePath)
+
+  let realRoot: string
+  let realTarget: string
+  try {
+    realRoot = await realpath(dir)
+    realTarget = await realpath(candidate)
+  } catch {
+    return { ok: false, error: `No file at "${filePath}" inside this project. Download the export first, then pass the path it was written to.` }
+  }
+
+  try {
+    assertPathWithin(realRoot, realTarget)
+  } catch {
+    return { ok: false, error: `"${filePath}" resolves outside this project. A design reference must be read from a file inside the project directory.` }
+  }
+
+  const info = await stat(realTarget)
+  if (!info.isFile()) return { ok: false, error: `"${filePath}" is not a file.` }
+  if (info.size > DESIGN_REFERENCE_MAX_BYTES) {
+    return {
+      ok: false,
+      error: `"${filePath}" is ${info.size} bytes, over the ${DESIGN_REFERENCE_MAX_BYTES}-byte design-reference limit.`,
+    }
+  }
+
+  return { ok: true, bytes: new Uint8Array(await readFile(realTarget)) }
+}
+
 const registerDesignReferenceTool: AiTool = {
   name: 'studio_register_design_reference',
   scope: 'shared',
@@ -69,20 +124,22 @@ const registerDesignReferenceTool: AiTool = {
   mutates: true,
   requiredCapabilities: ['studio.write'],
   description:
-    'Durably register a design reference (typically a Figma export) for later measurement — the fix for "a design pasted into chat is a transient, lossy attachment with no handle a tool can address later". Stores the ORIGINAL bytes verbatim (never re-encoded, never downsampled) under .studio/references/ and returns { reference } with a durable id, intrinsic width/height, a content hash, and its byte size. Provide EXACTLY ONE of url (fetched SERVER-SIDE, never transiting you — prefer this when another tool already returned a download URL, e.g. a connected Figma MCP server\'s export tool) or imageBase64 (when you already hold the bytes). Raster only — PNG/JPEG/GIF/WEBP/AVIF; an SVG is refused outright (no fixed intrinsic pixel size to diff against). Pass pageId to scope this reference to one Studio page (recommended — studio_list_design_references and studio_recommend_export_dpr both filter/require it), plus an optional label and source (e.g. a Figma file/node URL) for anyone reading this back later. Once registered, pair it with studio_recommend_export_dpr and studio_diff_frames\' referenceId input instead of base64-encoding it again on every diff call.',
+    'Durably register a design reference (typically a Figma export) for later measurement — the fix for "a design pasted into chat is a transient, lossy attachment with no handle a tool can address later". Stores the ORIGINAL bytes verbatim (never re-encoded, never downsampled) under .studio/references/ and returns { reference } with a durable id, intrinsic width/height, a content hash, and its byte size. Provide EXACTLY ONE of path (a file already on disk inside this project — USE THIS after a Figma MCP asset-download tool, or anything else that writes an export to disk; it is the reliable route when a connector renders an image inline that you can see but cannot re-emit), url (fetched SERVER-SIDE — when a tool returned a publicly fetchable download URL; note a Figma REST api.figma.com URL is NOT fetchable, it needs a token Studio does not have), or imageBase64 (only when you genuinely hold the bytes). Raster only — PNG/JPEG/GIF/WEBP/AVIF; an SVG is refused outright (no fixed intrinsic pixel size to diff against). Pass pageId to scope this reference to one Studio page (recommended — studio_list_design_references and studio_recommend_export_dpr both filter/require it), plus an optional label and source (e.g. a Figma file/node URL) for anyone reading this back later. Once registered, pair it with studio_recommend_export_dpr and studio_diff_frames\' referenceId input instead of base64-encoding it again on every diff call.',
   inputSchema: StudioRegisterDesignReferenceInputSchema,
   handler: async (input, ctx: ToolContext) => {
-    const { dir: dirInput, url, imageBase64, pageId, label, source } = input as {
+    const { dir: dirInput, url, path: filePath, imageBase64, pageId, label, source } = input as {
       dir?: string
       url?: string
+      path?: string
       imageBase64?: string
       pageId?: string
       label?: string
       source?: string
     }
 
-    if ((url !== undefined) === (imageBase64 !== undefined)) {
-      return { ok: false, error: 'Provide exactly one of url or imageBase64.' }
+    const supplied = [url, filePath, imageBase64].filter((v) => v !== undefined).length
+    if (supplied !== 1) {
+      return { ok: false, error: 'Provide exactly one of url, path or imageBase64.' }
     }
 
     const dir = resolveToolProjectDir(dirInput, ctx)
@@ -98,6 +155,10 @@ const registerDesignReferenceTool: AiTool = {
       const fetched = await fetchRemoteBytes(url, { maxBytes: DESIGN_REFERENCE_MAX_BYTES })
       if (!fetched.ok) return { ok: false, error: fetched.error }
       bytes = fetched.bytes
+    } else if (filePath !== undefined) {
+      const read = await readProjectImageBytes(dir, filePath)
+      if (!read.ok) return { ok: false, error: read.error }
+      bytes = read.bytes
     } else {
       bytes = new Uint8Array(Buffer.from(imageBase64 as string, 'base64'))
     }

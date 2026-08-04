@@ -261,6 +261,43 @@ export function resolveImageAssetImport(
 }
 
 /**
+ * Why an image imported FROM AN INSTALLED PACKAGE resolves to nothing —
+ * phrased as the fix, for the evaluator's `unresolved` channel.
+ *
+ * `resolveImageAssetImport` refuses these on purpose (`allowBare: false`,
+ * see its own doc): the asset endpoint will not serve out of `node_modules`,
+ * so the sentinel path would name a URL that 404s. But refusing SILENTLY was
+ * its own failure. The value simply vanished, `<img src={packagedIcon}/>`
+ * reached the canvas as a `base.image` with no `src`, and drew the generic
+ * "No image selected" placeholder — indistinguishable from an `<img>` whose
+ * source genuinely has no `src` yet. An agent looking at that box learns
+ * "Studio cannot show packaged icons", which is false, and hand-draws SVG
+ * path data instead of adding six characters to the specifier.
+ *
+ * So the refusal now says which import it refused and what to write instead.
+ * `undefined` when this is not that case at all, leaving every other
+ * unresolved import on its existing generic message.
+ */
+export function packagedImageImportRefusal(sourceFile: SourceFile, localName: string): string | undefined {
+  for (const decl of sourceFile.getImportDeclarations()) {
+    if (decl.getDefaultImport()?.getText() !== localName) continue
+    const specifier = decl.getModuleSpecifierValue()
+    if (!isBareSpecifier(specifier) || !IMAGE_SPECIFIER_RE.test(specifier)) return undefined
+
+    const preamble =
+      `"${localName}" imports "${specifier}" from an installed package. Studio's asset endpoint does not ` +
+      'serve files out of node_modules, so that URL never resolves and the image renders empty.'
+    // An SVG has a strictly better form available — inline it as text, which
+    // also lets it inherit `currentColor`. Any other format has to become a
+    // real file inside the project first.
+    return /\.svg$/i.test(specifier)
+      ? `${preamble} Import it as text instead: add "?raw" to the specifier and inline the markup with dangerouslySetInnerHTML.`
+      : `${preamble} Copy the file into the project (studio_upload_asset or studio_fetch_remote_asset) and import it by relative path.`
+  }
+  return undefined
+}
+
+/**
  * `import styles from './Card.module.css'` -> `{ card: 'Card_card__a1b2', … }`.
  *
  * WS-2.2: teaches the evaluator that a CSS Modules import has a static value —

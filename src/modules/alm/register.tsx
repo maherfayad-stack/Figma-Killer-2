@@ -268,6 +268,58 @@ for (const spec of manifest.components) {
   registered += 1
 }
 
+/**
+ * The package's ICON components, discovered from its own runtime exports
+ * rather than from `manifest.generated.json`.
+ *
+ * The manifest is built from the package's own `mcp/catalog.js`
+ * (`buildDesignSystemManifest`), which lists the 39 documented components and
+ * says nothing about the icon set. So every `<ChevronDownIcon/>` in a user's
+ * source resolved to `alm.ChevronDownIcon`, matched no registered module, and
+ * drew an "Unknown module" box on the canvas — while
+ * `.claude/design-system-icons.md` was simultaneously telling the agent to
+ * import exactly those names. The guide and the canvas contradicted each
+ * other, and the agent believed the canvas: it went back to hand-drawing SVG
+ * path data.
+ *
+ * Discovered BY SHAPE rather than from a hardcoded list — any `*Icon`-suffixed
+ * function the package actually exports — so a new icon in a future version
+ * registers itself instead of silently regressing to an Unknown-module box.
+ * Filtered against the manifest names so a documented component that happens
+ * to end in `Icon` is never registered twice with an empty prop schema.
+ *
+ * They carry no editable props: these render a fixed glyph and inherit size
+ * and colour from the parent rule, which is exactly what the generated icon
+ * reference tells the agent to do.
+ */
+const manifestNames = new Set(manifest.components.map((c) => c.name))
+const iconExportNames = Object.keys(DS as Record<string, unknown>)
+  .filter((name) => name.endsWith('Icon') && !manifestNames.has(name))
+  .filter((name) => typeof (DS as Record<string, unknown>)[name] === 'function')
+  .sort()
+
+for (const name of iconExportNames) {
+  const iconMod = {
+    id: `alm.${name}`,
+    name,
+    description: `${name} — @alm-design/design-system icon`,
+    category: 'Design System',
+    version: '1.0.0',
+    icon: CursorClickSolidIcon,
+    trusted: true,
+    canHaveChildren: false,
+    schema: buildSchema([]),
+    propsSchema: buildPropsSchema([]),
+    defaults: {},
+    sourceImport: { specifier: ALM_PACKAGE_SPECIFIER, name },
+    component: makeComponent(name),
+    render: () => ({ html: '' }),
+  } as unknown as ModuleDefinition<Record<string, unknown>>
+
+  registry.registerOrReplace(iconMod)
+  registered += 1
+}
+
 if (typeof console !== 'undefined') {
-  console.info(`[alm] registered ${registered} design-system modules`)
+  console.info(`[alm] registered ${registered} design-system modules (${iconExportNames.length} icons)`)
 }

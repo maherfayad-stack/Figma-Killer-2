@@ -19,6 +19,7 @@
 import { decodeSourceNodeId, type Page } from '@core/page-tree'
 import { loadStudioPages } from '../../../handlers/studioPageLoad'
 import { probeInstallStatus } from '../../../handlers/studio/installDeps'
+import { listDesignReferences } from '../../../handlers/studio/designReferenceStore'
 import { join } from 'node:path'
 import { studioSnapshotStaleness, STALE_NODE_IDS_WARNING, type StalenessTracker } from './staleness'
 import type { StudioAgentSnapshot } from './snapshot'
@@ -30,6 +31,29 @@ export interface StudioLiveDigest {
   readonly fidelity: { readonly locked: number; readonly codeValued: number } | null
   readonly install: { readonly hasPackageJson: boolean; readonly hasNodeModules: boolean; readonly dependencyCount: number }
   readonly axes: StudioAgentSnapshot['axes']
+  /**
+   * The design references registered for this project — what `studio_compare`
+   * can measure against RIGHT NOW.
+   *
+   * Reported because the prompt states a passing `studio_compare` as the
+   * definition of done, and the agent otherwise had no way to know whether
+   * that was even reachable: with nothing registered, the tool answers "there
+   * is no design reference registered for this project" and an agent that
+   * has already written the screen reads that as permission to judge by eye.
+   * Naming the armed references makes the difference between "measure it" and
+   * "there is nothing to measure against" a fact in the prompt rather than a
+   * discovery one failed tool call later.
+   *
+   * Empty when none are registered, which is itself the honest signal: no
+   * design was supplied, so "does it match" genuinely has no answer.
+   */
+  readonly designReferences: ReadonlyArray<{
+    readonly id: string
+    readonly width: number
+    readonly height: number
+    readonly pageId?: string
+    readonly label?: string
+  }>
   /** Set when the active page's source file changed since this conversation's last turn — see `staleness.ts`. */
   readonly staleWarning: string | null
 }
@@ -116,6 +140,13 @@ export async function buildStudioLiveDigest(
       dependencyCount: install.dependencyCount,
     },
     axes: snapshot.axes,
+    designReferences: listDesignReferences(dir, undefined, undefined).references.map((r) => ({
+      id: r.id,
+      width: r.width,
+      height: r.height,
+      ...(r.pageId ? { pageId: r.pageId } : {}),
+      ...(r.label ? { label: r.label } : {}),
+    })),
     staleWarning,
   }
 }

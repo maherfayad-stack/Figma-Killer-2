@@ -41,7 +41,7 @@ import { Type } from '@core/utils/typeboxHelpers'
 import type { AiTool, ToolContext } from '../../../runtime/types'
 import { syncBoardFramesFromDisk } from '../../../../handlers/studio/pageScaffold'
 import { loadStudioPages } from '../../../../handlers/studioPageLoad'
-import { getEditorBridgeForUser } from '../../editorBridge'
+import { awaitEditorBridgeForUser } from '../../editorBridge'
 import { awaitStudioLiveReload } from './liveReloadPush'
 import { resolveToolProjectDir } from './resolveToolProjectDir'
 import { resolveRequestedPages } from './pageNameMatch'
@@ -102,11 +102,11 @@ export const studioScreenshotTool: AiTool = {
     }
     const dir = resolveToolProjectDir(dirInput, ctx)
 
-    const bridge = getEditorBridgeForUser(ctx.userId, 'site')
+    const bridge = await awaitEditorBridgeForUser(ctx.userId, 'site', ctx.signal)
     if (!bridge) {
       return {
         ok: false,
-        error: 'No Studio board is open in a browser. A screenshot is a capture of the live canvas — open the project in Studio and try again.',
+        error: 'No Studio board is connected. A screenshot is a capture of the live canvas, so it needs the project open in a Studio browser tab. If it IS open, the tab reconnects on its own within a few seconds — just call this again once.',
       }
     }
 

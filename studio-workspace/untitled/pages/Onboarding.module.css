@@ -1,278 +1,58 @@
 .screen {
-  min-height: 100%;
-  background: #FFFFFF;
+  min-height: 100vh;
+  background: var(--background-base-default);
   display: flex;
   flex-direction: column;
 }
-
-.statusBar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 14px 24px 8px;
-  color: #1C1C1C;
-  font-size: 15px;
-  font-weight: 600;
-}
-
-.time {
-  min-width: 44px;
-}
-
-.statusIcons {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-}
-
 .body {
-  padding: 0 16px 24px;
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-}
-
-.hero {
-  position: relative;
-  height: 280px;
-  border-radius: 16px;
-  overflow: hidden;
-  margin-bottom: 20px;
-  background: linear-gradient(180deg, #0B1220 0%, #0F1A2E 100%);
-}
-
-.phoneFrame {
-  position: absolute;
-  top: 20px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 180px;
-  height: 300px;
-  border-radius: 26px;
-  background: #06080F;
-  border: 6px solid #1C1C1C;
-  color: #FFFFFF;
-  text-align: center;
-  padding-top: 40px;
-  overflow: hidden;
-}
-
-.phoneIsland {
-  position: absolute;
-  top: 10px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 74px;
-  height: 20px;
-  background: #000;
-  border-radius: 100px;
-}
-
-.phoneDate {
-  margin-top: 24px;
-  text-align: center;
-}
-
-.phoneDateText {
-  font-size: 13px;
-  font-weight: 600;
-  color: #FFFFFF;
-  opacity: 0.92;
-}
-
-.phoneTime {
-  margin-top: 2px;
-  text-align: center;
-}
-
-.phoneTimeText {
-  font-size: 60px;
-  font-weight: 300;
-  line-height: 1;
-  color: #FFFFFF;
-  letter-spacing: -2px;
-}
-
-.notif {
-  position: absolute;
-  left: 16px;
-  right: 16px;
-  bottom: 20px;
-  background: rgba(255, 255, 255, 0.94);
-  border-radius: 14px;
-  padding: 10px 12px;
-  display: flex;
-  gap: 10px;
-  align-items: flex-start;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
-}
-
-.notifIcon {
-  position: relative;
-  flex: 0 0 32px;
-  width: 32px;
-  height: 32px;
-  border-radius: 6px;
-  background: #FFFFFF;
-  overflow: hidden;
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.08);
-}
-
-.notifIconBase {
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(135deg, #EF4550 0%, #EF4550 55%, #FFFFFF 55%, #FFFFFF 100%);
-}
-
-.notifIconChat {
-  position: absolute;
-  right: -2px;
-  bottom: -2px;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: #25D366;
-  box-shadow: 0 0 0 2px #FFFFFF;
-}
-
-.notifContent {
-  flex: 1;
-  min-width: 0;
-}
-
-.notifHead {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.notifApp {
-  font-weight: 600;
-  font-size: 14px;
-  color: #1C1C1C;
-}
-
-.notifTime {
-  font-size: 12px;
-  color: #66797F;
-}
-
-.notifText {
-  margin-top: 2px;
-}
-
-.notifTextInner {
-  font-size: 12px;
-  line-height: 16px;
-  color: #1C1C1C;
-}
-
-.title {
-  font-family: 'ALM Sans Geist', 'Open Sans', system-ui, sans-serif;
-  font-size: 30px;
-  line-height: 38px;
-  font-weight: 700;
-  color: #1C1C1C;
-  margin: 0 0 16px;
-  letter-spacing: -0.8px;
-  display: flex;
-  flex-direction: column;
-}
-
-.titleLine {
-  display: block;
-}
-
-.bullets {
-  list-style: none;
-  padding: 0;
-  margin: 0 0 24px;
+  padding: 16px;
   display: flex;
   flex-direction: column;
   gap: 16px;
+  flex: 1;
 }
-
-.bullet {
-  display: flex;
-  align-items: center;
-  gap: 12px;
+.hero {
+  height: 280px;
+  background: var(--background-base-subtle);
+  border: 1px dashed var(--border-base-default);
+  border-radius: 12px;
 }
-
-.bulletIcon {
-  color: #1C1C1C;
-  display: inline-flex;
-  flex: 0 0 24px;
-  width: 24px;
-  height: 24px;
+.title {
+  margin: 0;
+  font-size: 24px;
+  line-height: 32px;
+  font-weight: 700;
+  color: var(--text-base-default);
 }
-
-.bulletText {
-  color: #1C1C1C;
-  font-size: 14px;
-  line-height: 20px;
-}
-
-.actions {
+.perkList {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 20px;
+}
+.cta {
   margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: stretch;
 }
-
-.primaryCta {
-  height: 48px;
-  border-radius: 100px;
-  border: none;
-  background: #0C9AB0;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 24px;
-}
-
-.primaryCtaLabel {
-  color: #FFFFFF;
-  font-size: 16px;
-  font-weight: 600;
-  line-height: 24px;
-}
-
-.maybeLater {
-  border: none;
-  background: transparent;
-  cursor: pointer;
-  padding: 12px 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.maybeLaterLabel {
-  color: #0C9AB0;
-  font-size: 16px;
-  font-weight: 600;
-  line-height: 24px;
-}
-
-.legal {
-  margin: 12px 0 0;
-  font-size: 12px;
-  color: #66797F;
-  line-height: 16px;
+.link {
   text-align: center;
+  color: var(--text-link-default);
+  display: block;
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 600;
+  padding: 12px 0;
+  cursor: pointer;
 }
-
-.legalText {
-  color: #66797F;
+.legal {
+  color: var(--text-base-subtext);
+  text-align: center;
+  margin: 0;
+  font-size: 11px;
+  line-height: 14px;
 }
-
-.legalLink {
-  text-decoration: none;
-}
-
-.legalLinkText {
-  color: #0C9AB0;
-  font-weight: 500;
+.legal a {
+  color: var(--text-link-default);
 }

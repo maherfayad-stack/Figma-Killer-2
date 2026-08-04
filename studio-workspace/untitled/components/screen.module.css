@@ -1,0 +1,135 @@
+/* iOS-style status bar */
+.statusBar {
+  height: 44px;
+  padding: 0 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--background-base-subtle);
+  flex-shrink: 0;
+}
+.time {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-base-default);
+}
+.notch {
+  width: 120px;
+  height: 32px;
+  background: #000;
+  border-radius: 100px;
+  display: inline-block;
+  flex-shrink: 0;
+}
+.right {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-base-default);
+}
+
+.backRow {
+  padding: 4px 0;
+}
+
+/* Mobile-number split input */
+.mobileInput {
+  display: flex;
+  gap: 8px;
+  height: 56px;
+}
+.mobileInputCode {
+  width: 100px;
+  border: 1px solid var(--border-base-default);
+  border-radius: 12px;
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  box-sizing: border-box;
+}
+.mobileInputCodeRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--text-base-default);
+}
+.chev {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: var(--text-base-subtext);
+}
+.chev svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+.mobileInputNumber {
+  flex: 1;
+  border: 1px solid var(--border-base-default);
+  border-radius: 12px;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+}
+.mobileLabel {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-base-subtext);
+}
+.mobileValue {
+  font-size: 16px;
+  line-height: 20px;
+  color: var(--text-base-default);
+  font-weight: 500;
+}
+.required {
+  color: var(--text-link-default);
+}
+
+/* Perk row */
+.perkRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.perkLabel {
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--text-base-default);
+}
+
+/* Line-icon wrapper */
+.icon {
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-base-default);
+  flex-shrink: 0;
+}
+.icon svg {
+  width: 24px;
+  height: 24px;
+  display: block;
+}
+
+/* OTP */
+.otpRow {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.otpCell {
+  flex: 1;
+  height: 50px;
+  border: 1px solid var(--border-base-default);
+  border-radius: 8px;
+  background: var(--background-base-default);
+  color: transparent;
+}

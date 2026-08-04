@@ -67,12 +67,24 @@ export const STUDIO_CANVAS_PARITY_MATRIX: readonly ParityRow[] = [
   { action: 'Render a reference screenshot', status: { kind: 'tool', toolNames: ['studio_render_reference'] } },
   { action: 'Measure a screen against the design it must match', status: { kind: 'tool', toolNames: ['studio_compare'] } },
   {
+    // `studio_compare` scores the OUTPUT; this reads the INPUT. Separate rows
+    // because they answer different questions — "which rectangle is wrong"
+    // versus "what does the design actually say" — and having only the first
+    // is what left colours and type sizes to be guessed off a picture.
+    action: "Read the design's own colours and type sizes (with the matching project token)",
+    status: { kind: 'tool', toolNames: ['studio_measure_reference'] },
+  },
+  {
     action: 'Upload a new asset (image) into the project',
     status: { kind: 'tool', toolNames: ['studio_upload_asset'] },
   },
   {
     action: 'Land a remote (e.g. Figma-exported) asset URL into the project without routing its bytes through the model',
     status: { kind: 'tool', toolNames: ['studio_fetch_remote_asset'] },
+  },
+  {
+    action: 'Extract artwork that exists only inside the supplied design (hero image, logo, badge) into a real project file',
+    status: { kind: 'tool', toolNames: ['studio_extract_reference_asset'] },
   },
   {
     action: 'Set a board frame\'s preview axes (direction/locale/color-scheme override)',

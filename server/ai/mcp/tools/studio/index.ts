@@ -17,10 +17,14 @@ import { studioFigmaBindingMcpTools } from './figmaBindingTools'
 import { studioRemoteAssetMcpTools } from './remoteAssetTools'
 import { studioScreenshotTool } from './screenshot'
 import { studioCompareMcpTools } from './compare'
+import { studioMeasureReferenceMcpTools } from './measureReference'
+import { studioExtractReferenceAssetMcpTools } from './extractReferenceAsset'
 
 export const studioMcpTools: AiTool[] = [
   studioScreenshotTool,
   ...studioCompareMcpTools,
+  ...studioMeasureReferenceMcpTools,
+  ...studioExtractReferenceAssetMcpTools,
   ...studioProjectMcpTools,
   ...studioEditMcpTools,
   studioFidelityReportTool,

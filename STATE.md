@@ -8,6 +8,64 @@ Entry ids are `<area>-<nn>`. Areas in use: `parser`, `canvas`, `store`, `panel`,
 
 ---
 
+### agent-05 — the harness taught the agent the ONE icon import that cannot render, and nothing ever armed the ruler
+- **Agent:** claude (single pass)
+- **Stage:** done. Build + lint green, full suite triaged against a clean-HEAD baseline. **NOT dogfooded against a real chat turn.**
+- **Updated:** 2026-08-04
+
+**The report.** Five screens rebuilt from a pasted Figma comp came out with every icon an empty box, colours close-but-wrong, fonts consistently too large, and the agent reporting them as done. The user's own hypothesis was that Studio inflates fonts.
+
+**Studio does not inflate fonts — measured, not assumed.** I rebuilt the real render (design-system CSS + the actual compiled module CSS + the markup) at 393px in headless Chromium: authored `26px` computes to `26px`, `--type-*` tokens resolve, the content box is the expected 361px, and the heading fits on one line at 258px. No `text-size-adjust`, no viewport meta, no autosizing anywhere in the repo. **Do not re-investigate this.** The real cause is token selection, below.
+
+**Four independent gaps, each verified against the real project before fixing.**
+
+1. **The generated icon guide taught the one form that cannot render.** Probing all three documented forms through `loadStudioPages`: `import u from '<pkg>/…/x.svg'` + `<img src={u}/>` → `base.image` with **no `src`** ("No image selected"); `import { ChevronDownIcon }` → `alm.ChevronDownIcon`, **not among the 39 registered** ("Unknown module"); `?raw` + `dangerouslySetInnerHTML` → `base.svg` with real markup, **works** — and was mentioned nowhere. `resolveImageAssetImport` passes `allowBare: false` on purpose (the asset endpoint won't serve out of `node_modules`); `resolveRawTextImport` passes `allowBare: true`. So the guide printed the broken snippet for all 376 packaged SVGs, the agent watched them all come out empty, and hand-drew paths into `pages/icons.tsx`. **It was obeying the evidence, not disobeying the prompt.**
+2. **Nothing armed the ruler.** `.studio/references/` did not exist on the project at all. The composer's design-reference control registers durably; an ordinary chat image attachment did not — and that is what people actually do. So `studio_compare` would have answered "there is no design reference registered", and "DONE means compare passes" was unreachable prose.
+3. **Nothing measured the DESIGN.** `studio_compare` scores the output only. Colours were read by eye and type sizes picked **by role** — `--type-headline-size` (26px) for a title the design drew at ~21px. That bias runs one direction: the grand-sounding token wins, so screens come out too big, every time, for the same reason.
+4. **Raster assets were unobtainable.** Hero image, logos, mockup existed only as pixels inside the comp; every asset tool needs a URL, held bytes, or an authenticated Figma MCP. Placeholder box was the ceiling.
+
+**What changed.**
+- `renderIconReference` emits `?raw` + `dangerouslySetInnerHTML` and explicitly warns off `<img src={…}>`. Gated by two `projectGuide.test.ts` cases.
+- `register.tsx` registers the package's `*Icon` exports, discovered **by shape from the runtime namespace** (they are absent from the package's own `mcp/catalog.js`, which is why the manifest never had them).
+- `packagedImageImportRefusal` (`assetImports.ts`) + a `Resolution` note in `jsxAttributeReaders.ts`: an empty image box now explains itself and names the fix, instead of being indistinguishable from an `<img>` with no source.
+- `turnDesignReferences.ts` arms every chat-attached image as a design reference before the prompt is built — idempotent by content hash, never fatal. `StudioLiveDigest.designReferences` + a prompt line report what is armed.
+- **`studio_measure_reference`** (new): rectangles in → measured colours with matching token, font-size **range**, measured line-height. Everything in **CSS px**, scaled by frame-width/reference-width.
+- **`studio_extract_reference_asset`** (new): crops the comp into a real project PNG.
+
+**Three decisions worth keeping.**
+- **Everything the measurer returns is CSS px, never reference px.** A 2x comp holds a 21 CSS px heading as 42px of ink; returning 42 would replace an eyeballed error with a *measured* one twice the size. A page with no board frame is refused, not guessed.
+- **A font size is a RANGE.** A raster cannot say whether measured ink is cap-height (~0.72em) or ascender-to-descender (~0.95em) — a third apart. Line-height, from line pitch, needs no assumption and is exact.
+- **Colours bucket for RANKING but report the modal EXACT value.** `#0c9ab0` bucketed to `#1098b0`; reporting the centre would be an error introduced by the instrument meant to remove it. Caught by a test, not by review.
+
+**Traps found.** `server/ai/handlers/**` is gated by `ai-handlers-capability-gated.test.ts` — every file there must call `requireCapability`, so a non-handler helper does not belong in it (moved to `server/handlers/studio/`). Any new **mutating** MCP tool needs a `parityMatrix.ts` row or `parityMatrix.test.ts` fails.
+
+**Verification.** `bun run build` green, `bun run lint` clean. Full suite compared against a clean-HEAD worktree run of the same command:
+
+| | pass | fail | errors | tests |
+|---|---|---|---|---|
+| clean `HEAD` | 8685 | 84 | 18 | 8770 |
+| this change | **8737** | **83** | 18 | 8820 |
+
++52 passing, one *fewer* failure, identical error count. The claudeCli driver failures (~40) are pre-existing and untouched. **The `remoteAssetFetch` failure only reproduces when its directory is run with others — it passes in isolation. Cross-file pollution, pre-existing on clean HEAD; don't chase it.** All 547 tests across the new modules + every architecture gate pass.
+
+**Two more found by reading the agent's own error feed afterwards.**
+
+5. **Studio's `.gitignore` was governing searches inside the USER'S project.** A user project lives at `studio-workspace/<project>/`, inside this repo, so the root `.gitignore`'s `node_modules` applied to it. ripgrep backs the agent's Search tool and honours it, and an ignored path is reported as **"Path does not exist"** — for a real 121 KB file. The agent could not search the installed design system at all: not its stylesheet, not its 376 icon SVGs. Fixed with `studio-workspace/.ignore` (`!node_modules/`), which ripgrep reads at higher precedence than `.gitignore` while git keeps ignoring the tree. **Verified both halves:** `rg` sees the files, `git status` still shows nothing. Cost, measured and accepted: a repo-wide `rg` from the root now walks user dependencies (+584 files / +16% with one small project). There is no way to split it — the agent's search and a repo-wide search are the same filesystem walk.
+
+6. **~40 KB of instructions from a deleted subsystem were still in the agent's context every turn.** `.studio-generated.json` said Studio owned 4 files; **12 more** sat in `.claude/`, orphaned when `agent-04` replaced the subagent roster. That entry's own words: *"Files the old roster wrote simply stop being targets; they are deliberately not deleted."* But **the CLI loads every file under `.claude/` from cwd**, so they never stopped being read. `figma.md` opens "An approved Figma-capable MCP server is connected for this project", walks a six-step node-id workflow — this is what sent the agent to `get_design_context` for node ids it could not resolve — and hands off to `screen-builder`, one of eleven subagents deleted a version ago. Fixed with `LEGACY_GUIDE_ARTEFACTS` + `pruneLegacyGuideArtefacts`, swept **once per path per project** (recorded in `prunedLegacyArtefacts`) so a file the user later writes themselves is theirs, and run **before the fast path** because every existing project is already warm.
+
+**Two bugs the tests caught in that sweep, both worth remembering.**
+- **`readManifest` returned a single shared `EMPTY_MANIFEST` constant, and the prune mutates what it returns.** The first project swept in a server process wrote "already swept" into the value every later project received — so project #2 onward would silently never be swept, with nothing on disk explaining why. Now `emptyManifest()`, a factory. Found by running three sequential generations against three fresh temp dirs; a single-project test would never have shown it.
+- **`GUIDE_DEFINITION_VERSION` had to go 6 → 7 for a CONTENT-only change.** The icon reference gained no file and lost none, which is exactly the case that looks like it needs no bump — and without it every existing project keeps taking the fast path and keeps serving the broken `<img>` snippet. The constant's own doc records this biting once before (`3`).
+
+**The static prefix was restructured (8.7 KB → 10.4 KB), on request, against Lovable's app-builder prompt and Cursor's coding-agent prompt as references.** It was fifteen dense paragraphs of equal weight — all true, none findable, so the rule that fired was whichever was most salient. Now sectioned: `# Role` (including what the user SEES — a canvas of live frames, which the prompt never said), `# Your one non-negotiable rule` (never claim a match you did not measure, stated alone above everything), `# Required workflow` (numbered 1-6 in execution order, with measure-before-build as step 2 rather than a sentence in the middle), `# Tool use` (adds batching, previously unmentioned and the largest avoidable per-turn cost), `# Building screens`, `# Assets` (a 4-step preference order), `# Common failures to avoid` (WRONG/RIGHT pairs for the packaged-icon URL, the type-token-by-name, and the module-class-as-plain-string traps — every entry something that actually happened here, no invented hazards), `# Canvas invariants`, `# Environment limits`, `# Response format`. The prefix is cached, so the size increase is paid once per cache window, not per turn. `systemPrompt.test.ts`'s registry-parity gate still passes, which is what proves no section names a tool the agent does not hold.
+
+**Not verified — the next agent should do this first.** No real chat turn was run. Whether the agent actually calls `studio_measure_reference` before writing a stylesheet, and whether the `?raw` icons render on the live canvas, are both unmeasured. Dogfood one screen against `studio-workspace/untitled` and record what it picks.
+
+**Files:** `server/handlers/studio/{designSystemGuide,designReferenceStore,turnDesignReferences,colorMath,projectTokenIndex,referenceMeasure,projectGuide,projectGuideManifest}.ts`, `server/ai/mcp/tools/studio/{measureReference,extractReferenceAsset,referenceResolve,compare,index}.ts`, `server/ai/tools/studio/{agentToolNames,parityMatrix,systemPrompt,liveDigest}.ts`, `server/ai/handlers/chat.ts`, `src/core/page-parser/{assetImports,jsxAttributeReaders}.ts`, `src/modules/alm/register.tsx`, `studio-workspace/.ignore`, `docs/features/agent.md`, `docs/agent-refs/path-index.md`.
+
+---
+
 ### agent-04 — the Studio agent now writes files: 24-minute screens, invented subagents, and emoji-for-icons all had one root cause
 - **Agent:** claude (single pass)
 - **Stage:** done. Types, targeted tests, and the full suite triaged; NOT dogfooded against a real chat turn.

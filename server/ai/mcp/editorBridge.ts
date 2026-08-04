@@ -44,6 +44,47 @@ export function hasEditorBridge(userId: string, scope: EditorBridgeScope): boole
 }
 
 /**
+ * How long a tool that NEEDS the live board waits for it before giving up.
+ *
+ * The registry is in-memory, so every server restart drops every registration
+ * while the user's tab stays open and healthy. The browser reconnects on its
+ * own (`useMcpWorkspaceBridge` retries every 3s, 15s after an auth blip), so
+ * the gap is short and self-healing — but a tool that checked once and failed
+ * immediately turned that few-second gap into a dead turn and a "no Studio
+ * board is open" message telling the user to open a tab that was open the
+ * whole time. Waiting slightly longer than one reconnect interval converts the
+ * common case from a hard failure into a pause nobody notices.
+ *
+ * Deliberately NOT longer: when a board genuinely is closed, the agent should
+ * hear so quickly rather than stall the turn.
+ */
+const BRIDGE_WAIT_MS = 4_000
+const BRIDGE_POLL_MS = 250
+
+/**
+ * The live workspace bridge, waiting up to `BRIDGE_WAIT_MS` for a reconnecting
+ * browser before answering null. Use this from any tool whose failure message
+ * would otherwise tell the user to open a tab they already have open.
+ */
+export async function awaitEditorBridgeForUser(
+  userId: string,
+  scope: EditorBridgeScope,
+  signal?: AbortSignal,
+): Promise<AiBrowserBridge | null> {
+  const immediate = getEditorBridgeForUser(userId, scope)
+  if (immediate) return immediate
+
+  const deadline = Date.now() + BRIDGE_WAIT_MS
+  while (Date.now() < deadline) {
+    if (signal?.aborted) return null
+    await new Promise((resolve) => setTimeout(resolve, BRIDGE_POLL_MS))
+    const bridge = getEditorBridgeForUser(userId, scope)
+    if (bridge) return bridge
+  }
+  return null
+}
+
+/**
  * Open the long-lived stream the editor consumes. The server pushes
  * `toolRequest` events down it whenever an MCP browser tool is invoked for this
  * user; the editor runs the tool and POSTs the result to `/tool-result`.

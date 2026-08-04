@@ -61,6 +61,7 @@ import {
   ALM_PACKAGE,
   allOwnedFilesUnchangedSince,
   computeProjectGuideFingerprint,
+  pruneLegacyGuideArtefacts,
   readManifest,
   sha256,
   writeManifest,
@@ -325,6 +326,8 @@ function buildGuideFiles(dir: string, profile: ProjectProfile): GuideFile[] {
 export interface GenerateGuideResult {
   readonly written: string[]
   readonly skipped: string[]
+  /** Legacy artefacts deleted by this call — see {@link LEGACY_GUIDE_ARTEFACTS}. Non-empty at most once per project. */
+  readonly pruned: string[]
 }
 
 /**
@@ -378,8 +381,17 @@ export function generateStudioProjectGuide(dir: string): GenerateGuideResult {
     const manifest = readManifest(dir)
     const fingerprint = computeProjectGuideFingerprint(dir, profile)
 
+    // Sweep what a PREVIOUS generator version wrote and this one does not.
+    // Deliberately BEFORE the fast path: an already-warm project would
+    // otherwise never be swept, which is exactly the state every existing
+    // project is in. Once-per-path-per-project, so afterwards this is a set
+    // lookup per entry and no filesystem work at all.
+    const pruned = pruneLegacyGuideArtefacts(dir, manifest)
+
     if (manifest.fingerprint === fingerprint && allOwnedFilesUnchangedSince(dir, manifest.files)) {
-      return { written: [], skipped: [] }
+      // The sweep still has to be recorded, or it repeats every warm turn.
+      if (pruned.manifestChanged) writeManifest(dir, manifest)
+      return { written: [], skipped: [], pruned: pruned.removed }
     }
 
     const nextFiles: Record<string, ManifestFileEntry> = {}
@@ -417,10 +429,16 @@ export function generateStudioProjectGuide(dir: string): GenerateGuideResult {
       written.push(target.relPath)
     }
 
-    writeManifest(dir, { fingerprint, files: nextFiles })
-    return { written, skipped }
+    writeManifest(dir, {
+      fingerprint,
+      files: nextFiles,
+      // Carried through, not recomputed — dropping it here would re-arm the
+      // sweep on the next full regeneration.
+      ...(manifest.prunedLegacyArtefacts ? { prunedLegacyArtefacts: manifest.prunedLegacyArtefacts } : {}),
+    })
+    return { written, skipped, pruned: pruned.removed }
   } catch (err) {
     console.error('[projectGuide] failed to generate the project guide — continuing without one:', err)
-    return { written: [], skipped: [] }
+    return { written: [], skipped: [], pruned: [] }
   }
 }

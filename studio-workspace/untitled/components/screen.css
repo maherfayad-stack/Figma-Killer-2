@@ -1,0 +1,130 @@
+/* Shared primitives for phone screens. Global classnames, prefixed s-. */
+
+.s-status-bar {
+  height: 44px;
+  padding: 0 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--background-base-subtle);
+  flex-shrink: 0;
+  box-sizing: border-box;
+}
+.s-status-time {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-base-default);
+}
+.s-status-notch {
+  width: 120px;
+  height: 32px;
+  background: #000;
+  border-radius: 100px;
+  display: inline-block;
+  flex-shrink: 0;
+}
+.s-status-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-base-default);
+}
+.s-status-right svg { flex-shrink: 0; }
+
+.s-back-row { padding: 4px 0; }
+
+/* Mobile-number split input */
+.s-mobile-input {
+  display: flex;
+  gap: 8px;
+  height: 56px;
+  width: 100%;
+  box-sizing: border-box;
+}
+.s-mobile-input-code {
+  width: 100px;
+  border: 1px solid var(--border-base-default);
+  border-radius: 12px;
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+.s-mobile-input-code-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--text-base-default);
+}
+.s-mobile-chev {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: var(--text-base-subtext);
+}
+.s-mobile-chev svg { width: 16px; height: 16px; display: block; }
+.s-mobile-input-number {
+  flex: 1;
+  border: 1px solid var(--border-base-default);
+  border-radius: 12px;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+  min-width: 0;
+}
+.s-mobile-label {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-base-subtext);
+}
+.s-mobile-value {
+  font-size: 16px;
+  line-height: 20px;
+  color: var(--text-base-default);
+  font-weight: 500;
+}
+.s-mobile-required { color: var(--text-link-default); }
+
+/* Perk row */
+.s-perk-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.s-perk-label {
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--text-base-default);
+}
+
+/* Line-icon wrapper */
+.s-icon {
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-base-default);
+  flex-shrink: 0;
+}
+.s-icon svg { width: 24px; height: 24px; display: block; }
+
+/* OTP */
+.s-otp-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.s-otp-cell {
+  flex: 1;
+  height: 50px;
+  border: 1px solid var(--border-base-default);
+  border-radius: 8px;
+  background: var(--background-base-default);
+  color: transparent;
+}

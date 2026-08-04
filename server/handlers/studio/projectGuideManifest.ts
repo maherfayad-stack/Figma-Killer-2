@@ -34,7 +34,7 @@
  * Measured warm-path result: ~19ms → ~2-3ms (`bun run bench:agent-turn`).
  */
 import { createHash } from 'node:crypto'
-import { mkdirSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { joinAppRoot } from './appRoot'
 import { readTextCapped } from './cappedFileRead'
@@ -80,8 +80,17 @@ export function sha256(text: string): string {
  * the agent "the package ships a real icon set; import from it" while naming
  * no export and no path — an instruction that cannot be followed, so it
  * hand-drew SVG path data for icons the package already exports by name.
+ *
+ * `7` — `.claude/design-system-icons.md`'s CONTENT changed: it emitted the
+ * packaged-URL import (`<img src={u}/>`), which resolves to nothing in Studio
+ * and drew an empty box for all 376 of the ALM package's SVGs, and now emits
+ * the `?raw` form that actually renders. This is a content-only change with
+ * no file added or removed, which is precisely the case that looks like it
+ * does not need a bump and does: without it every existing project keeps
+ * taking the fast path and keeps serving the broken snippet. Same bump also
+ * covers the one-time legacy sweep ({@link LEGACY_GUIDE_ARTEFACTS}).
  */
-export const GUIDE_DEFINITION_VERSION = 6
+export const GUIDE_DEFINITION_VERSION = 7
 
 export interface ManifestFileEntry {
   /** Content hash of what Studio itself last wrote (or last observed) here. */
@@ -96,25 +105,148 @@ export interface GeneratedManifest {
   /** {@link computeProjectGuideFingerprint} at the last FULL regeneration, or `undefined` for a pre-perf-06 manifest (treated as "always stale" — one full regen, then this is populated). */
   fingerprint?: string
   files: Record<string, ManifestFileEntry>
+  /**
+   * Legacy artefacts already swept from this project — see
+   * {@link LEGACY_GUIDE_ARTEFACTS}. Recorded so the sweep runs EXACTLY ONCE
+   * per path per project: a user who later writes their own
+   * `.claude/figma.md` must keep it, and a delete-by-name that ran every
+   * turn would silently eat it forever.
+   */
+  prunedLegacyArtefacts?: string[]
 }
 
-const EMPTY_MANIFEST: GeneratedManifest = { files: {} }
+/**
+ * A FRESH empty manifest per call, never one shared constant.
+ *
+ * `readManifest` returns this for a project with no manifest yet, and callers
+ * MUTATE what it returns (`pruneLegacyGuideArtefacts` records its sweep on
+ * it). A single shared object meant the first project handled in a server
+ * process wrote its state into the value every later project received — so
+ * project #2 onward would read "already swept" and never be swept at all,
+ * with nothing on disk to explain why. Caught by three sequential
+ * generations against three fresh temp dirs.
+ */
+function emptyManifest(): GeneratedManifest {
+  return { files: {} }
+}
+
+/**
+ * Files a PREVIOUS version of the guide generator wrote and this one does
+ * not — deleted once per project, then never touched again.
+ *
+ * `agent-04` replaced the subagent roster with the generated `CLAUDE.md` +
+ * design-system references, and recorded the decision this fixes: "Files the
+ * old roster wrote simply stop being targets; they are deliberately not
+ * deleted." Not deleting them left them on disk — and **the CLI loads every
+ * file under `.claude/` from its cwd**, so they never stopped being read.
+ *
+ * Measured on a real project: 12 orphans, ~40 KB, describing a subsystem that
+ * no longer exists. `figma.md` opens "An approved Figma-capable MCP server
+ * ('figma') is connected for this project" and walks through a six-step
+ * node-id workflow — which is what sent the agent to `get_design_context`
+ * for node ids it could not resolve — and closes by handing the result to
+ * `screen-builder`, one of eleven subagents in `.claude/agents/` that were
+ * deleted a version ago. Stale instructions do not go quiet; they compete
+ * with the current ones and they win whenever they are more specific.
+ *
+ * Deleted by NAME, because the manifest records only what the CURRENT
+ * generator owns — the hash records for these were dropped when they stopped
+ * being targets, so there is nothing left to hash-verify against. That is
+ * the trade this list makes explicit: a hand-edited copy of a file
+ * describing a removed subsystem is still describing a removed subsystem, so
+ * keeping it is not the safe option. The once-per-project record above is
+ * what keeps the sweep from becoming a recurring delete.
+ */
+export const LEGACY_GUIDE_ARTEFACTS: readonly string[] = [
+  join('.claude', 'figma.md'),
+  join('.claude', 'studio-tools.md'),
+  join('.claude', 'studio-design-principles.md'),
+  join('.claude', 'studio-invariants.md'),
+  join('.claude', 'canonical-jsx.md'),
+  join('.claude', 'node-ids-and-writeback.md'),
+  join('.claude', 'project-conventions.md'),
+  join('.claude', 'agents', 'agent-creator.md'),
+  join('.claude', 'agents', 'almosafer-ds-expert.md'),
+  join('.claude', 'agents', 'arabic-ux-writer.md'),
+  join('.claude', 'agents', 'design-critic.md'),
+  join('.claude', 'agents', 'fidelity-auditor.md'),
+  join('.claude', 'agents', 'figma-asset-scout.md'),
+  join('.claude', 'agents', 'screen-builder.md'),
+  join('.claude', 'agents', 'screen-scout.md'),
+  join('.claude', 'agents', 'style-surgeon.md'),
+  join('.claude', 'agents', 'synthesizer.md'),
+  join('.claude', 'agents', 'system-prompt-expert.md'),
+]
+
+export interface PruneLegacyArtefactsResult {
+  /** Paths deleted by this call. */
+  readonly removed: string[]
+  /** True when the manifest needs writing back — i.e. this call swept anything it had not swept before. */
+  readonly manifestChanged: boolean
+}
+
+/**
+ * Delete any {@link LEGACY_GUIDE_ARTEFACTS} not yet swept from this project,
+ * and mark every one of them swept.
+ *
+ * Marks paths swept whether or not a file was actually there, so a project
+ * that never had them costs one manifest write and then nothing. Mutates
+ * `manifest.prunedLegacyArtefacts` in place; the caller owns persisting it.
+ *
+ * Never throws — a guide sweep must not be able to fail a chat turn.
+ */
+export function pruneLegacyGuideArtefacts(dir: string, manifest: GeneratedManifest): PruneLegacyArtefactsResult {
+  const alreadyPruned = new Set(manifest.prunedLegacyArtefacts ?? [])
+  const outstanding = LEGACY_GUIDE_ARTEFACTS.filter((rel) => !alreadyPruned.has(rel))
+  if (outstanding.length === 0) return { removed: [], manifestChanged: false }
+
+  const removed: string[] = []
+  for (const rel of outstanding) {
+    const abs = join(dir, rel)
+    try {
+      // Existence is checked BEFORE the delete because `force: true` does not
+      // throw for a missing path — without this, every project would report
+      // all 18 artefacts "removed" on its first sweep, including the ones it
+      // never had.
+      if (existsSync(abs)) {
+        rmSync(abs, { force: true })
+        removed.push(rel)
+      }
+    } catch (err) {
+      console.error('[projectGuideManifest] could not prune legacy artefact', rel, err)
+    }
+    alreadyPruned.add(rel)
+  }
+
+  manifest.prunedLegacyArtefacts = [...alreadyPruned].sort()
+  return { removed, manifestChanged: true }
+}
 
 export function readManifest(dir: string): GeneratedManifest {
   const path = join(dir, MANIFEST_PATH)
   const text = readTextCapped(path, 1_000_000)
-  if (text === undefined) return EMPTY_MANIFEST
+  if (text === undefined) return emptyManifest()
   try {
     const parsed: unknown = JSON.parse(text)
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return EMPTY_MANIFEST
-    const { fingerprint, files } = parsed as { fingerprint?: unknown; files?: unknown }
-    if (!files || typeof files !== 'object' || Array.isArray(files)) return EMPTY_MANIFEST
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return emptyManifest()
+    const { fingerprint, files, prunedLegacyArtefacts } = parsed as {
+      fingerprint?: unknown
+      files?: unknown
+      prunedLegacyArtefacts?: unknown
+    }
+    if (!files || typeof files !== 'object' || Array.isArray(files)) return emptyManifest()
     return {
       ...(typeof fingerprint === 'string' ? { fingerprint } : {}),
       files: files as Record<string, ManifestFileEntry>,
+      // Dropping this on read would re-run the sweep every turn, which is
+      // exactly the recurring delete the once-per-project record exists to
+      // prevent.
+      ...(Array.isArray(prunedLegacyArtefacts)
+        ? { prunedLegacyArtefacts: prunedLegacyArtefacts.filter((v): v is string => typeof v === 'string') }
+        : {}),
     }
   } catch {
-    return EMPTY_MANIFEST
+    return emptyManifest()
   }
 }
 

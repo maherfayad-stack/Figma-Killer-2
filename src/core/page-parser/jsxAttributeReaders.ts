@@ -23,7 +23,7 @@ import { LOOP_ID_SEPARATOR } from '@core/page-tree'
 import type { ParsedNode, ParsedPropValue } from './types'
 import { tryResolveExpression, tryResolvePropValue, type PageEvalContext, type Resolution } from './nodeResolution'
 import type { ValueOrigin } from './staticEvalTypes'
-import { STUDIO_ASSET_SENTINEL } from './assetImports'
+import { packagedImageImportRefusal, STUDIO_ASSET_SENTINEL } from './assetImports'
 import { decodeJsxTextEntities } from './jsxTextEntities'
 
 /**
@@ -327,6 +327,28 @@ export function extractProps(
           assetOrigin = resolved.origin
         }
         continue
+      }
+      // An image imported from an INSTALLED PACKAGE is refused on purpose
+      // (`resolveImageAssetImport` passes `allowBare: false`), and until now it
+      // was refused silently: the prop simply vanished, so `<img
+      // src={packagedIcon}/>` reached the canvas as a `base.image` with no
+      // `src` and drew the same "No image selected" placeholder an `<img>` with
+      // no source at all draws. Those two are not the same fact, and conflating
+      // them taught the agent that Studio could not render the design system's
+      // icon set — so it hand-drew SVG path data instead of adding `?raw` to
+      // the specifier.
+      //
+      // Recorded as a `Resolution` note (which `SourceConstraintNotice` shows)
+      // plus a `codeProps` entry, keeping `withResolution`'s invariant that
+      // every resolution recorded here has a matching code-valued prop: the
+      // value does come from code, and no scalar may be written over it.
+      if (Node.isIdentifier(expression)) {
+        const refusal = packagedImageImportRefusal(expression.getSourceFile(), expression.getText())
+        if (refusal !== undefined) {
+          resolutions.push({ source: expression.getText(), note: refusal })
+          codeProps.push(name)
+          continue
+        }
       }
       // A component's prop may also be an array/object. No `Resolution` is
       // recorded for it — see `tryResolvePropValue` for why a structured value

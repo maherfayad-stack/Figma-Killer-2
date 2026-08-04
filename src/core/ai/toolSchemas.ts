@@ -597,7 +597,12 @@ export const StudioRegisterDesignReferenceInputSchema = Type.Object({
   })),
   imageBase64: Type.Optional(Type.String({
     minLength: 1,
-    description: 'Base64-encoded original image bytes, when you already hold them rather than a URL (e.g. an attachment). Provide exactly one of url or imageBase64. Prefer url when available — it avoids round-tripping the bytes through your own context.',
+    description: 'Base64-encoded original image bytes, when you already hold them rather than a URL (e.g. an attachment). Provide exactly one of url, path or imageBase64. Prefer path or url when available — both avoid round-tripping the bytes through your own context.',
+  })),
+  path: Type.Optional(Type.String({
+    minLength: 1,
+    description:
+      'Path to an image file ALREADY ON DISK inside this project, relative to the project root (e.g. ".studio/figma/hero.png"). This is the route to use after any tool that DOWNLOADS an export to disk — a Figma MCP server\'s asset-download tool, a shell fetch, anything. Read server-side; the bytes never transit you. Must resolve inside the project directory. Provide exactly one of url, path or imageBase64.',
   })),
   pageId: Type.Optional(Type.String({ description: 'The Studio page id (from studio_list_pages) this is a design reference FOR. Optional, but required for studio_recommend_export_dpr and for filtering studio_list_design_references by page.' })),
   label: Type.Optional(Type.String({ description: 'A short human-readable name, e.g. "Homepage hero — Figma export".' })),

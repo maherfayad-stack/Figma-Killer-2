@@ -67,13 +67,9 @@ import type { AiTool, ToolContext } from '../../../runtime/types'
 import { syncBoardFramesFromDisk } from '../../../../handlers/studio/pageScaffold'
 import { loadStudioPages } from '../../../../handlers/studioPageLoad'
 import { authoredFrameWidth } from '../../../../handlers/studio/boardGeometry'
-import {
-  getDesignReference,
-  listDesignReferences,
-  readDesignReferenceBytes,
-} from '../../../../handlers/studio/designReferenceStore'
-import type { DesignReference } from '../../../../handlers/studio/designReferenceSchema'
-import { getEditorBridgeForUser } from '../../editorBridge'
+import { readDesignReferenceBytes } from '../../../../handlers/studio/designReferenceStore'
+import { resolveDesignReference } from './referenceResolve'
+import { awaitEditorBridgeForUser } from '../../editorBridge'
 import { awaitStudioLiveReload } from './liveReloadPush'
 import { resolveToolProjectDir } from './resolveToolProjectDir'
 import { resolvePageByName } from './pageNameMatch'
@@ -119,35 +115,6 @@ const InputSchema = Type.Object(
   { additionalProperties: false },
 )
 
-/** The reference to measure against: an explicit id, else this page's own, else the most recent one registered for the project. */
-function resolveReference(
-  dir: string,
-  pageId: string,
-  referenceId: string | undefined,
-): { ok: true; reference: DesignReference; implicit: boolean } | { ok: false; error: string } {
-  if (referenceId !== undefined) {
-    const explicit = getDesignReference(dir, referenceId)
-    if (!explicit) {
-      return { ok: false, error: `No design reference "${referenceId}" is registered for this project — call studio_list_design_references to see what is.` }
-    }
-    return { ok: true, reference: explicit, implicit: false }
-  }
-
-  const scoped = listDesignReferences(dir, pageId, undefined)
-  const forPage = scoped.references[scoped.references.length - 1]
-  if (forPage) return { ok: true, reference: forPage, implicit: true }
-
-  const all = listDesignReferences(dir, undefined, undefined)
-  const mostRecent = all.references[all.references.length - 1]
-  if (mostRecent) return { ok: true, reference: mostRecent, implicit: true }
-
-  return {
-    ok: false,
-    error:
-      `There is no design reference registered for this project, so there is nothing to measure "${pageId}" against. If the user gave you a design — a Figma export, an attached image, a URL — register it with studio_register_design_reference (pass pageId:"${pageId}") and call this again. If they did not, say so rather than guessing at a score: without a reference, "does it match" has no answer.`,
-  }
-}
-
 /** The capture dpr that lands the frame on the reference's own pixel width, so the comparison is exact rather than resampled. */
 function captureDprFor(dir: string, pageId: string, referenceWidth: number): number | null {
   const frameWidth = authoredFrameWidth(dir, pageId)
@@ -186,9 +153,9 @@ export const studioCompareTool: AiTool = {
     }
     const dir = resolveToolProjectDir(dirInput, ctx)
 
-    const bridge = getEditorBridgeForUser(ctx.userId, 'site')
+    const bridge = await awaitEditorBridgeForUser(ctx.userId, 'site', ctx.signal)
     if (!bridge) {
-      return aiToolError('No Studio board is open in a browser. Measuring means capturing the live canvas — open the project in Studio and try again.')
+      return aiToolError('No Studio board is connected. Measuring captures the live canvas, so it needs the project open in a Studio browser tab. If it IS open, the tab reconnects on its own within a few seconds — just call this again once.')
     }
 
     // 1 + 2. Reconcile the board with disk, then resolve the screen by name.
@@ -200,7 +167,7 @@ export const studioCompareTool: AiTool = {
       return aiToolError(`No screen matched "${page}". This project has: ${known}.`)
     }
 
-    const resolved = resolveReference(dir, match.id, referenceId)
+    const resolved = resolveDesignReference(dir, match.id, referenceId)
     if (!resolved.ok) return aiToolError(resolved.error)
     const { reference } = resolved
 

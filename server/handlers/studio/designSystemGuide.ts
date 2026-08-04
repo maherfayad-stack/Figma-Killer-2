@@ -322,6 +322,28 @@ function resolveCssExport(pkgDir: string): string | undefined {
  * props does Button take"), and because the raw catalogs are long: listing
  * hundreds of SVG names inside the component reference would bury the props
  * the agent opened that file for.
+ *
+ * ## Why the catalog snippet is `?raw`, and not the obvious `<img src={…}>`
+ *
+ * The obvious form does not render. A packaged SVG imported as a URL
+ * (`import u from '<pkg>/src/icons/line-icons/x.svg'` → `<img src={u}/>`)
+ * resolves to NOTHING in Studio: `resolveImageAssetImport`
+ * (`src/core/page-parser/assetImports.ts`) deliberately passes
+ * `allowBare: false`, because the asset endpoint refuses to serve out of
+ * `node_modules` — so the node reaches the canvas as a `base.image` with no
+ * `src` at all and draws the "No image selected" placeholder.
+ *
+ * This generator used to print exactly that snippet, for all 376 of the ALM
+ * package's SVGs. The agent followed it, watched every icon come out an empty
+ * grey box, concluded it could not use the icon set at all, and hand-drew SVG
+ * path data into a local `icons.tsx` — the precise failure the file's own
+ * opening paragraph forbids, caused by the file itself.
+ *
+ * `?raw` is the form that works, and `resolveRawTextImport` passes
+ * `allowBare: true` for it. The markup is inlined statically, promoted to
+ * `base.svg` by `studioPageLoad.ts`'s `resolveModuleId`, and renders. It is
+ * also the better form on its own merits: an inline `<svg>` inherits
+ * `currentColor`, which an `<img>` can never do.
  */
 export function renderIconReference(guide: DesignSystemGuide): string | undefined {
   const icons = guide.icons
@@ -358,10 +380,18 @@ export function renderIconReference(guide: DesignSystemGuide): string | undefine
     lines.push(
       `## ${catalog.path} (${catalog.names.length} SVGs)`,
       '',
+      'Import with Vite\'s `?raw` suffix and inline the markup. This is the only',
+      'form that renders on the canvas, and it is the one that inherits',
+      '`currentColor` — size and colour it from the parent rule.',
+      '',
       '```jsx',
-      `import iconUrl from '${guide.packageName}/${catalog.path}/${catalog.names[0]}.svg'`,
-      '// …then render it: <img src={iconUrl} alt="" />',
+      `import ${RAW_IMPORT_EXAMPLE_BINDING} from '${guide.packageName}/${catalog.path}/${catalog.names[0]}.svg?raw'`,
+      `// …then render it: <span className={styles.icon} dangerouslySetInnerHTML={{ __html: ${RAW_IMPORT_EXAMPLE_BINDING} }} />`,
       '```',
+      '',
+      'Do NOT drop the `?raw` and render `<img src={…}>`: a packaged asset URL',
+      'does not resolve in Studio, and the icon comes out as an empty',
+      '"No image selected" box.',
       '',
       catalog.names.join(', '),
       '',
@@ -369,6 +399,9 @@ export function renderIconReference(guide: DesignSystemGuide): string | undefine
   }
   return lines.join('\n')
 }
+
+/** Binding name used in the generated `?raw` import example. A constant so the import line and the render line cannot drift apart. */
+const RAW_IMPORT_EXAMPLE_BINDING = 'iconSvg'
 
 /** The `.claude/design-system-components.md` body — the props index the guide's `CLAUDE.md` points at. */
 export function renderComponentReference(guide: DesignSystemGuide): string {

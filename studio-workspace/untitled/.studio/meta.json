@@ -49,6 +49,7 @@
     ]
   },
   "previewAxes": {
-    "colorScheme": "light"
+    "colorScheme": "light",
+    "direction": "rtl"
   }
 }

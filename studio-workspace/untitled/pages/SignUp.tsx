@@ -1,64 +1,31 @@
+import { Button, Separator } from '@alm-design/design-system'
 import '@alm-design/design-system/dist/index.css'
+import '../components/screen.css'
+import { StatusBar, BackRow, MobileNumberInput } from '../components/screen'
 import styles from './SignUp.module.css'
-import { SheetHandle } from './components/SheetHandle'
-import { ChevronLeft, ChevronDown, AppleGlyph, GoogleGlyph } from './components/icons'
 
 export default function SignUp() {
   return (
-    <div className={styles.screen}>
-      <SheetHandle />
-
-      <div className={styles.sheet}>
-        <button className={styles.backBtn} aria-label="Back" type="button">
-          <ChevronLeft />
-        </button>
-
+    <div className={styles.screen} dir="ltr">
+      <StatusBar />
+      <div className={styles.body}>
+        <BackRow />
         <h1 className={styles.title}>Sign in or create account</h1>
-
-        <div className={styles.form}>
-          <div className={styles.phoneField}>
-            <button className={styles.codeSlot} type="button">
-              <span className={styles.codeSlotLabel}>Code</span>
-              <span className={styles.codeSlotValue}>+966</span>
-              <span className={styles.codeSlotChevron}><ChevronDown /></span>
-            </button>
-            <div className={styles.numberSlot}>
-              <input
-                className={styles.numberInput}
-                type="tel"
-                inputMode="tel"
-                placeholder="Mobile number *"
-                aria-label="Mobile number"
-              />
-            </div>
-          </div>
-
-          <button className={styles.primaryCta} type="button">
-            <span className={styles.primaryCtaLabel}>Continue</span>
-          </button>
-
-          <button className={styles.registerLink} type="button">
-            <span className={styles.registerLinkLabel}>Register as a Business</span>
-          </button>
-        </div>
-
+        <MobileNumberInput />
+        <Button variant="secondary" size="default" label="Continue" />
+        <a className={styles.registerLink}>Register as a Business</a>
         <div className={styles.orRow}>
-          <span className={styles.orLine} />
-          <span className={styles.orLabel}>OR</span>
-          <span className={styles.orLine} />
+          <Separator variant="or" />
         </div>
-
-        <div className={styles.socialStack}>
-          <button className={styles.outlineBtnAqua} type="button">
-            <span className={styles.outlineLabelAqua}>Continue with email</span>
+        <div className={styles.socialButtons}>
+          <Button variant="secondary" size="default" label="Continue with email" />
+          <button type="button" className={`${styles.socialBtn} ${styles.appleBtn}`}>
+            <span className={styles.appleGlyph}></span>
+            <span>Continue with Apple</span>
           </button>
-          <button className={styles.outlineBtnDark} type="button">
-            <span className={styles.outlineIcon}><AppleGlyph /></span>
-            <span className={styles.outlineLabelDark}>Continue with Apple</span>
-          </button>
-          <button className={styles.outlineBtnAqua} type="button">
-            <span className={styles.outlineIcon}><GoogleGlyph /></span>
-            <span className={styles.outlineLabelAqua}>Continue with Google</span>
+          <button type="button" className={styles.socialBtn}>
+            <span className={styles.googleGlyph}>G</span>
+            <span>Continue with Google</span>
           </button>
         </div>
       </div>

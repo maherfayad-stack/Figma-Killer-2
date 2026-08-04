@@ -86,6 +86,7 @@ import {
 } from '../runtime'
 import { normalizeContextTokens } from '../contextTokens'
 import { resolveValidatedWorkspaceDir } from '../../handlers/studio/workspaceDir'
+import { registerTurnDesignReferences } from '../../handlers/studio/turnDesignReferences'
 import { resolveProjectProfile } from '../../handlers/studio/projectProbe'
 import { readStudioMeta } from '../../handlers/studio/studioMeta'
 import { projectDisplayName } from '../../handlers/studioProjects'
@@ -297,6 +298,15 @@ async function handleAiChat(
         buildMessageHistory([...existingRecords, appendedMessage]),
         modelCapabilities.visionInput,
       )
+      // An image attached to a turn with a Studio project open IS the design
+      // to match — arm it as a durable reference BEFORE the prompt is built,
+      // so the live digest below reports what `studio_compare` can measure
+      // against this turn. Idempotent by content hash and never fatal; see
+      // `registerTurnDesignReferences`.
+      if (validatedWorkspaceDir && preflight.imageBytes.length > 0) {
+        await registerTurnDesignReferences(validatedWorkspaceDir, preflight.imageBytes)
+      }
+
       const systemPrompt = validatedWorkspaceDir
         ? await buildStudioProjectSystemPrompt(validatedWorkspaceDir, snapshot, conversation.id)
         : buildCmsSiteSystemPrompt(snapshot)

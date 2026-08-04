@@ -1,0 +1,31 @@
+# ripgrep-only ignore rules for user project data. Git never reads this file.
+#
+# `studio-workspace/<project>/` is a USER'S OWN REPOSITORY, checked out inside
+# this one. The root `.gitignore` exists to keep THIS repo's build output and
+# dependencies untracked — and it was silently governing searches inside the
+# user's project too, because ripgrep (which backs the agent's Search tool)
+# honours `.gitignore`, and an ignored path is reported as "does not exist".
+#
+# The observed failure: an agent asked to search
+# `<project>/node_modules/@alm-design/design-system/dist/index.css` — a real
+# 121 KB file — was told the path did not exist. It could not search the
+# installed design system at all: not its stylesheet, not its 376 icon SVGs.
+# Studio's own decision to ignore ITS `node_modules` had leaked into the
+# user's project and made the user's own dependencies invisible to them.
+#
+# ripgrep reads `.ignore` at HIGHER precedence than `.gitignore`, so this
+# re-includes the tree for SEARCH while `.gitignore` keeps git from tracking
+# it. Scoped to this directory, so the repo's own `node_modules` is unaffected
+# and a repo-wide search does not start traversing it.
+#
+# THE COST, stated plainly: a repo-wide `rg` from the root now also walks the
+# user projects' dependencies (+584 files / +16% with one small project
+# installed, and it scales with what the user installs). There is no way to
+# split this — the agent's search and a repo-wide search are the same
+# filesystem walk, so a rule that hides it from one hides it from both. Hiding
+# real user data by default was the worse of the two, and it was silent.
+#
+# Verify with:
+#   rg --files studio-workspace/<project>/node_modules/@alm-design/design-system/dist
+#   git status --short   # must still show nothing from node_modules
+!node_modules/

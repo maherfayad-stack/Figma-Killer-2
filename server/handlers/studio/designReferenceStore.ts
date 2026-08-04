@@ -211,6 +211,25 @@ export function getDesignReference(dir: string, referenceId: string): DesignRefe
 }
 
 /**
+ * The already-registered reference whose bytes hash to `contentHash`, or
+ * `null`. The store's own idempotency primitive.
+ *
+ * Registration itself deliberately does NOT dedupe: two callers can have
+ * genuinely different reasons to hold the same bytes under different
+ * `pageId`/`label` metadata, and silently returning someone else's entry
+ * would hand back the wrong scope. Callers that DO want "arm this once" —
+ * `registerTurnDesignReferences`, which re-reads every image on every turn
+ * of a conversation — ask here first.
+ *
+ * Reads the full manifest rather than going through `listDesignReferences`,
+ * whose result is capped: a dedupe check that silently stopped looking after
+ * 50 entries would re-register the oldest references forever.
+ */
+export function findDesignReferenceByContentHash(dir: string, contentHash: string): DesignReference | null {
+  return readManifest(dir).references.find((r) => r.contentHash === contentHash) ?? null
+}
+
+/**
  * The most recently REGISTERED reference, or `null` if none exist —
  * `POST /admin/api/studio/reference-upload`'s GET projects this as "the
  * project's currently attached reference" for the chat panel's simpler

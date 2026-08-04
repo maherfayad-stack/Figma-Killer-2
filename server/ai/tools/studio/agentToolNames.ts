@@ -37,6 +37,11 @@ export const STUDIO_AGENT_TOOL_NAMES: readonly string[] = [
   // See the canvas, and measure it.
   'studio_screenshot',
   'studio_compare',
+  // Measure the DESIGN, not just the output. `studio_compare` says which
+  // rectangle is wrong; it never says what right was. Without this the agent
+  // reads colours off a picture by eye and picks type tokens by NAME, which
+  // skews consistently large — see `measureReference.ts`.
+  'studio_measure_reference',
   'studio_render_reference',
   'studio_register_design_reference',
   'studio_list_design_references',
@@ -55,6 +60,10 @@ export const STUDIO_AGENT_TOOL_NAMES: readonly string[] = [
   // Assets and dependencies.
   'studio_upload_asset',
   'studio_fetch_remote_asset',
+  // The only reachable source for artwork that exists solely inside a design
+  // pasted into chat — the case where every other asset path is closed and
+  // the alternative was a placeholder box or a CSS-gradient fake.
+  'studio_extract_reference_asset',
   'studio_install_deps',
   'studio_install_status',
 ]
