@@ -340,10 +340,13 @@ describe('SiteExplorerPanel', () => {
       new URL('../../admin/layouts/AdminCanvasLayout/AdminCanvasEditorBody.tsx', import.meta.url),
       'utf-8',
     )
+    // Normalize CRLF -> LF so the `\n`-based regex below stays line-ending
+    // agnostic — this repo's checkout materializes CRLF on Windows, and a
+    // literal `\n` in the pattern never matches `,\r\n` (STATE.md parity-01).
     const treeDropCss = readFileSync(
       new URL('../../admin/pages/site/ui/Tree/TreeDrop.module.css', import.meta.url),
       'utf-8',
-    )
+    ).replace(/\r\n/g, '\n')
     const css = readFileSync(
       new URL('../../admin/pages/site/panels/SiteExplorerPanel/SiteExplorerPanel.module.css', import.meta.url),
       'utf-8',

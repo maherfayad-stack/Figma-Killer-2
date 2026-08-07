@@ -93,7 +93,7 @@ describe('setNodeInlineStyles', () => {
     expect(useEditorStore.getState()._historyPast.length).toBe(historyBefore)
   })
 
-  it('setInlineStyleEditing(true) clears the active class (mutually exclusive)', () => {
+  it('Track F1 / S6 — setInlineStyleEditing(true) no longer clears the active class; both stay editable together', () => {
     const site = useEditorStore.getState().createSite('S')
     const rootId = site.pages[0].rootNodeId
     const id = useEditorStore.getState().insertNode('base.container', {}, rootId)
@@ -102,12 +102,22 @@ describe('setNodeInlineStyles', () => {
     useEditorStore.getState().setActiveClass(cls.id)
     expect(useEditorStore.getState().activeClassId).toBe(cls.id)
 
+    // The invariant this used to enforce ("inline editing clears the active
+    // class") was the S6 audit finding stated in reverse: a user had to
+    // delete a class to even SEE their inline styles. `StyleSurface` now
+    // shows both the Element and Class blocks whenever both are reachable,
+    // so the store no longer couples the two flags.
     useEditorStore.getState().setInlineStyleEditing(true)
     expect(useEditorStore.getState().inlineStyleEditing).toBe(true)
-    expect(useEditorStore.getState().activeClassId).toBeNull()
+    expect(useEditorStore.getState().activeClassId).toBe(cls.id)
 
-    // Selecting a class switches back off inline editing.
+    // Nor does re-selecting the SAME class clear inline editing anymore.
     useEditorStore.getState().setActiveClass(cls.id)
+    expect(useEditorStore.getState().inlineStyleEditing).toBe(true)
+    expect(useEditorStore.getState().activeClassId).toBe(cls.id)
+
+    // Each flag is independently toggleable off without touching the other.
+    useEditorStore.getState().setInlineStyleEditing(false)
     expect(useEditorStore.getState().inlineStyleEditing).toBe(false)
     expect(useEditorStore.getState().activeClassId).toBe(cls.id)
   })

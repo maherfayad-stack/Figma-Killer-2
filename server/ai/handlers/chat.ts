@@ -70,13 +70,6 @@ import {
   preflightAiUserContent,
 } from '../inputImages'
 import { selectStudioTools } from '../tools'
-import {
-  buildSiteSystemPrompt,
-  SiteAgentSnapshotSchema,
-  type SiteAgentSnapshot,
-} from '../tools/site'
-import { buildStudioAgentSystemPrompt, studioPromptContextFromProfile } from '../tools/studio'
-import { buildStudioLiveDigest } from '../tools/studio/liveDigest'
 import { StudioAgentSnapshotSchema } from '../tools/studio/snapshot'
 import {
   createBridge,
@@ -87,9 +80,7 @@ import {
 import { normalizeContextTokens } from '../contextTokens'
 import { resolveValidatedWorkspaceDir } from '../../handlers/studio/workspaceDir'
 import { registerTurnDesignReferences } from '../../handlers/studio/turnDesignReferences'
-import { resolveProjectProfile } from '../../handlers/studio/projectProbe'
-import { readStudioMeta } from '../../handlers/studio/studioMeta'
-import { projectDisplayName } from '../../handlers/studioProjects'
+import { buildCmsSiteSystemPrompt, buildStudioProjectSystemPrompt } from '../chatSystemPrompt'
 import type { AiStreamEvent } from '../runtime/types'
 import type { AiStreamRequest } from '../drivers/types'
 
@@ -303,12 +294,27 @@ async function handleAiChat(
       // so the live digest below reports what `studio_compare` can measure
       // against this turn. Idempotent by content hash and never fatal; see
       // `registerTurnDesignReferences`.
+      //
+      // Scoped to the page the user was looking at: `activePageId` comes
+      // straight off the SAME `StudioAgentSnapshot` the live digest below is
+      // built from (`buildStudioProjectSystemPrompt` parses it again for the
+      // rest of the digest) — never re-derived by a second path. Parsed here,
+      // silently, because an invalid/absent snapshot degrading to "register
+      // unscoped" is not itself an error worth logging twice; the later parse
+      // in `buildStudioProjectSystemPrompt` still logs if the snapshot is
+      // malformed. Unscoped means the pasted reference can only ever be found
+      // again by explicit id or as "most recent project-wide" — the same
+      // fallback that existed before this fix, not a new failure mode.
       if (validatedWorkspaceDir && preflight.imageBytes.length > 0) {
-        await registerTurnDesignReferences(validatedWorkspaceDir, preflight.imageBytes)
+        const parsedSnapshotForReferenceScope = safeParseValue(StudioAgentSnapshotSchema, snapshot)
+        const activePageId = parsedSnapshotForReferenceScope.ok
+          ? (parsedSnapshotForReferenceScope.value.activePageId ?? undefined)
+          : undefined
+        await registerTurnDesignReferences(validatedWorkspaceDir, preflight.imageBytes, activePageId)
       }
 
       const systemPrompt = validatedWorkspaceDir
-        ? await buildStudioProjectSystemPrompt(validatedWorkspaceDir, snapshot, conversation.id)
+        ? await buildStudioProjectSystemPrompt(validatedWorkspaceDir, snapshot, conversation.id, tools)
         : buildCmsSiteSystemPrompt(snapshot)
 
       // Capture totals reported by the persister so the audit row can hold
@@ -600,99 +606,11 @@ function waitForRequest<T>(promise: Promise<T>, signal: AbortSignal): Promise<T 
   })
 }
 
-/**
- * The CMS Site editor's prompt — used whenever no Studio project is open
- * (`validatedWorkspaceDir === null`). Named for what it builds, not for
- * "the Studio agent" (WS-12 §8.1 D3 collapsed that concept to "the one
- * agent"; it does not mean every prompt is the Studio-project one).
- */
-export function buildCmsSiteSystemPrompt(snapshot: unknown): string[] {
-  if (snapshot === undefined || snapshot === null) {
-    return buildSiteSystemPrompt(emptySiteAgentSnapshot())
-  }
-  // The snapshot comes straight off the untyped HTTP body — validate it
-  // before handing it to the prompt builder, and fall back to an empty
-  // snapshot (rather than crashing the stream) when it's malformed.
-  const result = safeParseValue(SiteAgentSnapshotSchema, snapshot)
-  if (!result.ok) {
-    console.error('[ai/chat] invalid site snapshot, using empty fallback:', result.errors)
-    return buildSiteSystemPrompt(emptySiteAgentSnapshot())
-  }
-  return buildSiteSystemPrompt(result.value)
-}
-
-/**
- * The real Studio-project prompt (WS-12 §4). Project/profile/trust are
- * always built server-side from `dir` — the client never carries them (see
- * `studioAgentSnapshot.ts`'s own doc comment for why). `snapshot` is the
- * browser's lean `StudioAgentSnapshot` live-state (board/selection/axes ids);
- * when present and valid it drives `buildStudioLiveDigest` (WS-12 §2.1's
- * board/activePage/selection/fidelity/install lines, plus the §2.2 staleness
- * warning). Absent or malformed `snapshot` degrades to the profile-only
- * suffix — the static prefix's own tool-based instructions still work with
- * no live digest at all, so this is never a hard failure.
- *
- * Never throws: a profile-probe failure degrades to the "unavailable" suffix
- * rather than falling back to the CMS prompt, which would silently hand the
- * model the wrong tool vocabulary for an open Studio project.
- */
-export async function buildStudioProjectSystemPrompt(
-  dir: string,
-  snapshot: unknown,
-  conversationId: string,
-  /**
-   * Test seam — defaults to the shared production staleness tracker
-   * (`studioSnapshotStaleness`). Tests that exercise the §2.2 staleness rule
-   * pass their OWN `createStalenessTracker()` instance so their assertions
-   * never share state with another test file's run — the exact shape of
-   * cross-test pollution `claudeCli.test.ts`'s roster tests hit once already.
-   */
-  liveDigestOptions?: Parameters<typeof buildStudioLiveDigest>[3],
-): Promise<string[]> {
-  let ctx: ReturnType<typeof studioPromptContextFromProfile>
-  try {
-    const trust = readStudioMeta(dir).trust ?? 'static'
-    const profile = resolveProjectProfile(dir)
-    const name = projectDisplayName(dir)
-    ctx = studioPromptContextFromProfile(dir, name, trust, profile)
-  } catch (err) {
-    console.error('[ai/chat] failed to resolve the studio project profile, using the unavailable fallback:', err)
-    return buildStudioAgentSystemPrompt(null)
-  }
-
-  let live: Awaited<ReturnType<typeof buildStudioLiveDigest>> | null = null
-  const parsedSnapshot = safeParseValue(StudioAgentSnapshotSchema, snapshot)
-  if (parsedSnapshot.ok) {
-    try {
-      live = await buildStudioLiveDigest(dir, parsedSnapshot.value, conversationId, liveDigestOptions)
-    } catch (err) {
-      console.error('[ai/chat] failed to build the studio live digest, continuing without it:', err)
-    }
-  } else if (snapshot !== undefined && snapshot !== null) {
-    console.error('[ai/chat] invalid studio snapshot, continuing without the live digest:', parsedSnapshot.errors)
-  }
-
-  return buildStudioAgentSystemPrompt(ctx, live)
-}
-
-function emptySiteAgentSnapshot(): SiteAgentSnapshot {
-  return {
-    page: {
-      id: '',
-      title: 'Untitled',
-      slug: '',
-      rootNodeId: '',
-      nodes: {},
-    } as SiteAgentSnapshot['page'],
-    currentDocument: { type: 'page', id: 'empty' },
-    site: {
-      pages: [],
-      breakpoints: [],
-      styleRules: {},
-      visualComponents: [],
-      settings: { shortcuts: {} },
-    } as unknown as SiteAgentSnapshot['site'],
-    selectedNodeId: null,
-    activeBreakpointId: '',
-  }
-}
+// `buildCmsSiteSystemPrompt`/`buildStudioProjectSystemPrompt` moved to
+// `server/ai/chatSystemPrompt.ts` (module-size-budgets.test.ts; also kept OUT
+// of `server/ai/handlers/` because it never touches a `Request` and would
+// otherwise trip `ai-handlers-capability-gated.test.ts`) — re-exported here so
+// this stays their canonical import path (`server/ai/handlers/chat`), which
+// `src/__tests__/agent/studioProjectSystemPrompt.test.ts` and this file's own
+// callers above both use.
+export { buildCmsSiteSystemPrompt, buildStudioProjectSystemPrompt } from '../chatSystemPrompt'

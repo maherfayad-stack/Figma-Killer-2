@@ -71,39 +71,13 @@
  *       synthesized so `bun install && bun run dev` works in the unzipped
  *       copy. `node_modules` is never bundled either way.
  *
+ * Routes owned by `studio/projectRoutes.ts` (its own sub-router, documented
+ * there — see that module's doc for the full behavioural writeup):
+ *
  *   GET  /admin/api/studio/projects
- *       Lists every on-disk studio project the Overview launcher can open:
- *       one entry per immediate subfolder of `studio-workspace/`, whether
- *       hand-authored or GitHub-imported (they all live there now). Read-only
- *       — this endpoint never creates, clears, or writes a directory. The
- *       listing logic itself lives in `listStudioProjects`, a pure(ish)
- *       dir-in/project-list-out helper so it's unit-testable against a temp
- *       fixture tree, same pattern as `collectWorkspaceFiles`.
- *
- *   POST /admin/api/studio/create   body: { name }
- *       Scaffolds a new project: one slugified folder under `studio-workspace/`
- *       with a starter `pages/Home.tsx`. Returns the created `{ project }`.
- *
- *   POST /admin/api/studio/page   body: { dir?, name? }
- *       WS-13 step 4 — scaffolds a new page CANONICAL BY CONSTRUCTION: one
- *       starter file (`starterPage`, `studioProjects.ts` — literal props,
- *       literal text, no stylesheet at all, so it passes `checkCanonicalJsx`
- *       with zero violations regardless of the project's own styling
- *       mechanism, see `pageScaffold.test.ts`), auto-placed on the board's
- *       first board at the next free grid slot (D5 section 11.3 — a
- *       scaffolded screen the user cannot see is not a screen), written
- *       straight to `.studio/boards.json` rather than waiting on a browser
- *       round trip. The file's extension matches the project's own
- *       convention — `.tsx` unless every existing page is `.jsx` (D5).
- *       `name` is optional — omit it for the one-click "New page" action
- *       and the server auto-names it `Page`, `Page2`, …. Returns
- *       `{ ok, relPath, pageId, title, rootNodeId }`; `rootNodeId` is read by
- *       actually parsing the file just written (trap #2 — a node id is a
- *       source location, never constructed) and is what WS-12 section 3's
- *       `studio_create_page` needs to address the new screen at all. The
- *       client still reloads the workspace afterward to render it — this
- *       route's own write is enough for a headless/agent caller to compose
- *       into immediately, with no browser tab ever open.
+ *   POST /admin/api/studio/create   body: { name? }
+ *   POST /admin/api/studio/rename   body: { dir?, name }
+ *   POST /admin/api/studio/page     body: { dir?, name? }
  *
  *   GET  /admin/api/studio/framework?dir=<abs>
  *       Reads the project's `.studio/framework.json` sidecar (colors/
@@ -182,6 +156,22 @@
  *       field (direction, color scheme; per-project, per D5). The toolbar's
  *       RTL / dark-mode toggle.
  *
+ *   GET  /admin/api/studio/components          → `studio/components.ts`
+ *       Track E1 (`STUDIO-FIGMA-PARITY-PLAN.md` §8) — the project-wide
+ *       component catalog: every exported, PascalCase-named LOCAL component
+ *       in the workspace, with its props' `PropKind` where a type annotation
+ *       makes that readable. Read-only, off the same `createWorkspaceProject`
+ *       ts-morph `Project` the page-parse pipeline already builds.
+ *
+ *   POST /admin/api/studio/reload-scope        → `studio/reloadScope.ts`
+ *       Track C5 (`STUDIO-FIGMA-PARITY-PLAN.md` §6, reload surgery) — given
+ *       the workspace-relative files a batch of edits just wrote (the `/save`
+ *       response's `touchedFiles`), decides whether a targeted per-page
+ *       reload (the existing `GET /load?pageIds=` filter) is safe, or the
+ *       caller must fall back to a full, unfiltered reload. See that module's
+ *       doc for exactly when a single-file reload is sufficient and when it
+ *       widens.
+ *
  * This module is the HTTP routing layer only — request wiring, body
  * validation, and error-envelope mapping. The actual page-parser/ast-codemods
  * work (Node/ts-morph, never the browser) lives in sibling modules by
@@ -191,29 +181,18 @@
  * `studioGithubImport.ts`.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { dirname, join, relative, sep } from 'node:path'
 import { createBoardsFile, parseBoardsFile, serializeBoardsFile, type BoardsFile } from '@core/studio-board'
 import { Type } from '@core/utils/typeboxHelpers'
 import { badRequest, jsonResponse, ndjsonResponse, readValidatedBody } from '../http'
 import { GithubImportError, parseGithubRepoUrl, runGithubImport } from './studioGithubImport'
 import {
-  discoverPageFiles,
-  listStudioProjects,
-  nextProjectName,
   mergeProjectFrameDefaults,
   projectDisplayName,
-  projectPagesDir,
-  projectsRootDir,
-  renameProjectDisplayName,
   resolveProjectDir,
-  safeProjectFolderName,
-  starterPage,
   writeProjectMeta,
-  type StudioProjectSummary,
 } from './studioProjects'
 import { readStudioMeta, DEFAULT_TRUST_TIER } from './studio/studioMeta'
-import { applyProjectSeed } from './studio/projectSeed'
-import { generateStudioProjectGuide } from './studio/projectGuide'
 import { readStudioFrameworkFile, writeStudioFrameworkFile } from './studioFramework'
 import { buildStudioDownloadResponse } from './studioDownload'
 import { resolveStudioAssetResponse } from './studioAsset'
@@ -232,7 +211,9 @@ import { tryServeStudioTrustTier } from './studio/trustTier'
 import { tryServeStudioExtractComponent } from './studio/extractComponent'
 import { tryServeStudioPreviewAxes } from './studio/previewAxes'
 import { tryServeStudioLocalizedPage } from './studio/localizedPage'
-import { createScaffoldedPage } from './studio/pageScaffold'
+import { tryServeStudioComponents } from './studio/components'
+import { tryServeStudioProjectRoutes } from './studio/projectRoutes'
+import { tryServeStudioReloadScope } from './studio/reloadScope'
 
 /**
  * Sub-routers for the newer studio namespaces, each owning one concern and its
@@ -257,6 +238,9 @@ const STUDIO_SUB_ROUTERS = [
   tryServeStudioExtractComponent,
   tryServeStudioPreviewAxes,
   tryServeStudioLocalizedPage,
+  tryServeStudioComponents,
+  tryServeStudioProjectRoutes,
+  tryServeStudioReloadScope,
 ] as const
 
 /** Body of POST /admin/api/studio/save — a batch of typed source writebacks. */
@@ -287,21 +271,6 @@ const FrameworkPostBodySchema = Type.Object({
 })
 
 /**
- * Body of POST /admin/api/studio/create — scaffold a new project folder.
- * `name` is optional: the "New project" dashboard action omits it entirely
- * (no name-prompt UI) and the server auto-names it `Untitled`, `Untitled 2`, ….
- */
-const CreateProjectBodySchema = Type.Object({
-  name: Type.Optional(Type.String()),
-})
-
-/** Body of POST /admin/api/studio/rename — change a project's display name. */
-const RenameProjectBodySchema = Type.Object({
-  dir: Type.Optional(Type.String()),
-  name: Type.String(),
-})
-
-/**
  * Body of POST /admin/api/studio/frame-defaults (WS-7.2 — "apply to all
  * pages"). Both fields optional: a bulk width-only apply must be able to
  * merge without touching a previously-saved default height.
@@ -310,16 +279,6 @@ const FrameDefaultsBodySchema = Type.Object({
   dir: Type.Optional(Type.String()),
   width: Type.Optional(Type.Number({ minimum: 1 })),
   height: Type.Optional(Type.Number({ minimum: 1 })),
-})
-
-/**
- * Body of POST /admin/api/studio/page — scaffold a new page in a project.
- * `name` is optional: when omitted (the one-click "New page" action) the server
- * auto-names it `Page`, `Page2`, ….
- */
-const CreatePageBodySchema = Type.Object({
-  dir: Type.Optional(Type.String()),
-  name: Type.Optional(Type.String()),
 })
 
 /**
@@ -439,7 +398,8 @@ export async function tryServeStudio(
       // Ordering, dedup, per-edit try/catch, and shift/shared-component
       // detection all live in `applyStudioEditBatch` — the single engine both
       // this route and `studio_apply_edits` (MCP) run through.
-      const { written, skipped, shifted, sharedComponents, refusals, swapDetails } = applyStudioEditBatch(dir, edits)
+      const { written, skipped, shifted, sharedComponents, refusals, swapDetails, createdStylesheets, unexplainedSkips, touchedFiles } =
+        applyStudioEditBatch(dir, edits)
 
       if (skipped > 0) console.error(`[studio] save: ${written} written, ${skipped} skipped`)
       // WS-4.4/4.5 — `refusals` names WHY a `detach`/`swap` edit specifically
@@ -447,7 +407,29 @@ export async function tryServeStudio(
       // instead of a generic "skipped" toast — see `StudioEditRefusal`'s doc.
       // `swapDetails` — instance-ui-01 — is the mirror for a SUCCESSFUL swap:
       // which props were dropped / still need a value, per `StudioEditSwapDetail`.
-      return jsonResponse({ ok: true, written, skipped, shifted, sharedComponents, refusals, swapDetails })
+      // `createdStylesheets` — Track B1 — is the mirror for a SUCCESSFUL
+      // `css`/`create` edit: the stylesheet the server actually invented, so
+      // the client can show WHICH file was created (never silent) and record
+      // it writable for the next edit — see `StudioEditBatchResult`'s doc.
+      // `unexplainedSkips` — item 0.7 — names the node(s) behind every skip
+      // that ISN'T covered by `refusals`, so the client can point at them
+      // instead of only reporting a bare count.
+      // Track C5 — `touchedFiles`, workspace-ROOT-relative (never the raw
+      // absolute path — same posture as every other client-facing field here),
+      // so `commitStructural` can ask `/reload-scope` whether a targeted
+      // per-page reload is safe instead of always reparsing the whole project.
+      return jsonResponse({
+        ok: true,
+        written,
+        skipped,
+        shifted,
+        sharedComponents,
+        refusals,
+        swapDetails,
+        createdStylesheets,
+        unexplainedSkips,
+        touchedFiles: touchedFiles.map((file) => relative(dir, file).split(sep).join('/')),
+      })
     } catch (err) {
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
     }
@@ -583,101 +565,6 @@ export async function tryServeStudio(
       if (err instanceof GithubImportError) {
         return jsonResponse({ error: err.message }, { status: err.status })
       }
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
-    }
-  }
-
-  // List every on-disk studio project for the Overview launcher. Read-only:
-  // never creates, clears, or writes a directory.
-  if (pathname === '/admin/api/studio/projects' && req.method === 'GET') {
-    try {
-      const projects = listStudioProjects(projectsRootDir())
-      return jsonResponse({ projects })
-    } catch (err) {
-      console.error('[studio]', err)
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
-    }
-  }
-
-  // Scaffold a new project — one folder under studio-workspace/ with a starter
-  // page. An explicit name (if any) is slugified to a filesystem-safe folder
-  // (never `..`, never a separator) so it can't escape the projects root; when
-  // omitted, the folder is slugified from an auto-generated "Untitled" name
-  // instead. Either way, the DISPLAY name (which may differ from the folder
-  // once renamed later) is recorded in `.studio/meta.json`.
-  if (pathname === '/admin/api/studio/create' && req.method === 'POST') {
-    try {
-      const body = await readValidatedBody(req, CreateProjectBodySchema)
-      if (!body) return badRequest('invalid create body')
-      const requested = body.name?.trim()
-      const displayName = requested || nextProjectName(projectsRootDir())
-      const folder = safeProjectFolderName(displayName)
-      if (!folder) return badRequest('project name must contain at least one letter or digit')
-      const dir = join(projectsRootDir(), folder)
-      if (existsSync(dir)) {
-        return jsonResponse({ error: `A project named "${folder}" already exists.` }, { status: 409 })
-      }
-      const pagesDir = projectPagesDir(dir)
-      mkdirSync(pagesDir, { recursive: true })
-      const home = starterPage('Home')
-      writeFileSync(join(pagesDir, 'Home.tsx'), home.component)
-      writeFileSync(join(pagesDir, home.stylesFileName), home.styles)
-      writeProjectMeta(dir, { displayName })
-      // Design system + its declared dependency, copied from the local seed —
-      // AFTER the scaffolder's own files, which the seed never overwrites.
-      // Best-effort: a project without a seed is exactly what it used to be.
-      // See `projectSeed.ts` for why this copies rather than installs.
-      applyProjectSeed(dir)
-      // `CLAUDE.md` + the design-system references, written now rather than on
-      // the first chat turn — a project is never briefly one where the design
-      // system is on disk but nothing tells the agent what is in it. AFTER the
-      // seed: everything it generates is derived from what the seed just wrote.
-      generateStudioProjectGuide(dir)
-      const project: StudioProjectSummary = { dir, name: displayName, pageCount: 1 }
-      return jsonResponse({ project })
-    } catch (err) {
-      console.error('[studio]', err)
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
-    }
-  }
-
-  // Rename a project's DISPLAY name — never touches the folder (a stable
-  // identifier assigned once at creation; renaming it mid-session would
-  // invalidate any already-open `studioWorkspaceDir` pointer). Just rewrites
-  // `.studio/meta.json`.
-  if (pathname === '/admin/api/studio/rename' && req.method === 'POST') {
-    try {
-      const body = await readValidatedBody(req, RenameProjectBodySchema)
-      if (!body) return badRequest('invalid rename body')
-      const displayName = body.name.trim()
-      if (!displayName) return badRequest('project name must not be empty')
-      const dir = resolveProjectDir(body.dir)
-      if (!existsSync(dir)) return jsonResponse({ error: 'Project not found.' }, { status: 404 })
-      renameProjectDisplayName(dir, displayName)
-      const pagesDir = projectPagesDir(dir)
-      const pageCount = existsSync(pagesDir) ? discoverPageFiles(pagesDir).length : 0
-      const project: StudioProjectSummary = { dir, name: displayName, pageCount }
-      return jsonResponse({ project })
-    } catch (err) {
-      console.error('[studio]', err)
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
-    }
-  }
-
-  // Scaffold a new page in a project — WS-13 step 4: canonical by
-  // construction, auto-placed on the board, with a real `rootNodeId`. The
-  // name is turned into a PascalCase identifier (never `..`, never a
-  // separator) so it can't escape the project's pages/ dir. See this route's
-  // own module-doc entry above and `./studio/pageScaffold.ts`.
-  if (pathname === '/admin/api/studio/page' && req.method === 'POST') {
-    try {
-      const body = await readValidatedBody(req, CreatePageBodySchema)
-      if (!body) return badRequest('invalid page body')
-      const result = createScaffoldedPage(resolveProjectDir(body.dir), body.name ?? '')
-      if (!result.ok) return jsonResponse({ error: result.conflict }, { status: 409 })
-      return jsonResponse(result)
-    } catch (err) {
-      console.error('[studio]', err)
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
     }
   }

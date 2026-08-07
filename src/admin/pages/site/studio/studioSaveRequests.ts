@@ -17,12 +17,16 @@
  * all need the same three things, which is exactly what this module holds: the
  * response schema, the active workspace dir, and the reload-on-success rule.
  */
+import type { StyleRule } from '@core/page-tree'
 import { apiRequest } from '@core/http'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
-import { requestCmsSiteReload } from '@admin/state/adminEvents'
+import { dispatchCmsSitePagesPatch, requestCmsSiteReload } from '@admin/state/adminEvents'
 import { getErrorMessage } from '@core/utils/errorMessage'
 import { pushToast } from '@ui/components/Toast'
+import { flushEditorSave } from '@site/hooks/editorSaveRef'
 import { getStudioWorkspaceDir } from './studioWorkspaceDir'
+import { recordCreatedStylesheet, ruleIdFromCssCreateNodeId } from './styleRuleWriteback'
+import { fetchStudioPagesById } from './studioLiveReloadFetch'
 
 /**
  * POST /admin/api/studio/save response. `shifted` is true when a write changed
@@ -66,9 +70,79 @@ export const StudioSaveResponseSchema = Type.Object({
     removedProps: Type.Array(Type.String()),
     unfilledRequiredProps: Type.Array(Type.String()),
   }))),
+  /**
+   * `STUDIO-FIGMA-PARITY-PLAN.md` item 0.7 — every edit that skipped with no
+   * matching `refusals` entry (`StudioEditUnexplainedSkip` on the server —
+   * `server/handlers/studioWriteback.ts`), i.e. exactly the set the
+   * `unexplainedSkips` toast in `fsCodemodAdapter.ts` currently reports only
+   * as a bare count. `Type.Optional`, same tolerant-rollout reasoning as
+   * `refusals`/`swapDetails` above — an older server build simply omits it,
+   * and the client falls back to `result.skipped - refusals.length`.
+   */
+  unexplainedSkips: Type.Optional(Type.Array(Type.Object({
+    nodeId: Type.String(),
+    kind: Type.String(),
+  }))),
+  /**
+   * Track B1 — every `css`/`create` edit in the batch that SUCCEEDED, with
+   * the workspace-relative stylesheet path the server actually invented
+   * (mirrors `swapDetails` for the "new file" case). `Type.Optional`, same
+   * tolerant-rollout reasoning as `refusals`/`swapDetails` above. See
+   * `notifyCreatedStylesheets` for how a caller turns this into both the
+   * user-visible "which file was created" surfacing and the write-back map
+   * update that makes the rule editable on its next edit without a reload.
+   */
+  createdStylesheets: Type.Optional(Type.Array(Type.Object({
+    nodeId: Type.String(),
+    file: Type.String(),
+  }))),
+  /**
+   * Track C5 (reload surgery) — every workspace-ROOT-relative file this
+   * batch actually wrote to (`StudioEditBatchResult.touchedFiles`, server-
+   * side). `Type.Optional`, same tolerant-rollout reasoning as the fields
+   * above. `commitStructural` feeds this straight into `POST
+   * /admin/api/studio/reload-scope` to decide whether a targeted per-page
+   * reload is safe — see that route's own doc for the full contract. An
+   * absent/empty value simply means "nothing to narrow", never an error.
+   */
+  touchedFiles: Type.Optional(Type.Array(Type.String())),
 })
 
 export type StudioSaveResponse = Static<typeof StudioSaveResponseSchema>
+
+/**
+ * Track B1's create branch, the user-visible half: turns
+ * `StudioSaveResponse.createdStylesheets` into (1) a toast naming the
+ * specific file Studio just created and which class it belongs to — "a
+ * created file is a bigger surprise than a chosen one, so it must be
+ * visible and attributable" — and (2) the `styleRuleWriteback.ts` write-back
+ * map update that makes the SAME rule writable through the ordinary `set`
+ * path on its very next edit, with no reload. A no-op when the field is
+ * absent/empty (an older server build, or a save with no `create` edits).
+ *
+ * Called once per save response that may carry edits from
+ * `collectStyleRuleEdits`: `fsCodemodAdapter.ts`'s `saveSite` invokes it as
+ * `notifyCreatedStylesheets(result, site.styleRules)`, right alongside its
+ * existing `unexplainedSkips`/`shifted` handling.
+ */
+export function notifyCreatedStylesheets(
+  result: StudioSaveResponse,
+  styleRules: Record<string, StyleRule>,
+): void {
+  for (const created of result.createdStylesheets ?? []) {
+    const ruleId = ruleIdFromCssCreateNodeId(created.nodeId)
+    if (!ruleId) continue
+    const rule = styleRules[ruleId]
+    recordCreatedStylesheet(ruleId, created.file, rule?.selector ?? '')
+    pushToast({
+      kind: 'success',
+      title: 'Stylesheet created',
+      body: rule
+        ? `Studio created ${created.file} and wired it into your page for “${rule.name}”.`
+        : `Studio created ${created.file} and wired it into your page.`,
+    })
+  }
+}
 
 /**
  * Remembered from the last load so every save can tell the server which
@@ -146,6 +220,52 @@ function postEdits(edits: readonly Record<string, unknown>[]): Promise<StudioSav
     body: { dir: studioWriteDir(), edits },
     schema: StudioSaveResponseSchema,
   })
+}
+
+/** POST /admin/api/studio/reload-scope response — see `server/handlers/studio/reloadScope.ts`'s doc for the full contract. */
+const StudioReloadScopeResponseSchema = Type.Union([
+  Type.Object({ ok: Type.Literal(true), narrow: Type.Literal(true), pageIds: Type.Array(Type.String()) }),
+  Type.Object({ ok: Type.Literal(true), narrow: Type.Literal(false) }),
+])
+
+/**
+ * Track C5 — resync the board after a STRUCTURAL write (`commitStructural`,
+ * below) without a full-workspace reparse when it is safe to skip one.
+ *
+ * Asks `/reload-scope` whether `touchedFiles` is narrow-safe; when it is,
+ * fetches exactly those pages through the SAME `?pageIds=` filtered load the
+ * MCP live-reload bridge already uses (`fetchStudioPagesById` —
+ * store-agnostic, and it advances `loadedValuesBaseline.ts`'s save-diff
+ * baseline for the reloaded pages, same as that bridge needs) and dispatches
+ * them as a store patch. Falls back to the existing full `requestCmsSiteReload()`
+ * whenever the scope check says "not safe", or whenever ANY step here throws
+ * — a narrow reload is an optimization, never the only path to a correct
+ * board: any failure here must still leave the board honest.
+ */
+async function reloadStructuralScope(touchedFiles: readonly string[]): Promise<void> {
+  // Nothing to ask about — a batch that landed a write always decodes at
+  // least one location (see `applyStudioEditBatch`), so this is defensive,
+  // not a real path; skip the round trip rather than ask a question with no
+  // honest answer.
+  if (touchedFiles.length === 0) {
+    requestCmsSiteReload()
+    return
+  }
+  try {
+    const scope = await apiRequest('/admin/api/studio/reload-scope', {
+      method: 'POST',
+      body: { dir: studioWriteDir(), files: touchedFiles },
+      schema: StudioReloadScopeResponseSchema,
+    })
+    if (scope.narrow && scope.pageIds.length > 0) {
+      const { pages, missingPageIds } = await fetchStudioPagesById(scope.pageIds)
+      dispatchCmsSitePagesPatch({ pages, removedPageIds: missingPageIds })
+      return
+    }
+  } catch (err) {
+    console.error('[studioSaveRequests] reload-scope check failed, widening to a full reload:', err)
+  }
+  requestCmsSiteReload()
 }
 
 /**
@@ -229,19 +349,72 @@ export async function commitStudioInsert(insert: {
 }
 
 /**
- * Shared body of the structural commits: post, report what the source refused,
- * and re-sync the board with disk whatever happened.
+ * Shared body of the structural commits: flush any pending debounced save,
+ * post, report what the source refused, and re-sync the board with disk when
+ * (and only when) a write actually landed.
  *
  * `success` is passed only by commits with no optimistic canvas change to
  * stand in for the result — an insert shows nothing at all until the reload, so
  * silence would be indistinguishable from a no-op. A move or a delete has
  * already updated the tree, so it stays quiet on success.
+ *
+ * `STUDIO-FIGMA-PARITY-PLAN.md` 0.2 (audit E2) — two fixes, both applied here:
+ *
+ *   1. The reload used to fire unconditionally from a `finally` block, on
+ *      EVERY outcome including a pure refusal/skip where nothing reached
+ *      disk. `loadSite()` wipes the whole undo stack and clears
+ *      `hasUnsavedChanges` unconditionally — so a user who typed five
+ *      headings, then dragged one layer in the tree, lost Ctrl+Z for all
+ *      five headings, and any edit still inside its 2s autosave debounce at
+ *      that moment was silently discarded. Trap #5 ("reload only when a
+ *      write landed") already applies to `fsCodemodAdapter.saveSite`'s own
+ *      reload gate (`result.written > 0`) — this now matches it. (Since
+ *      `historyPreservation.ts` landed alongside this, most reloads no
+ *      longer wipe history at all when they DO fire — see `loadSite`'s own
+ *      doc — so this gate mainly matters for the "nothing to resync" case:
+ *      reloading when disk is unchanged would replace the user's optimistic
+ *      move/delete/insert with the pre-edit source, undoing it silently.
+ *      KNOWN LIMITATION, not fixed here: a REFUSED move/delete (the
+ *      "residue only the AST can answer" case — see `commitStudioMove`'s own
+ *      doc) already applied its optimistic tree mutation before the refusal
+ *      came back; with no reload to correct it, the board can show a
+ *      move/delete that never actually reached the source until some LATER,
+ *      unrelated reload happens to resync it. Building a targeted revert of
+ *      just that transaction (rather than either "reload everything" or
+ *      "leave it diverged") is `STUDIO-FIGMA-PARITY-PLAN.md`'s already-
+ *      identified follow-up (audit finding E3), deferred deliberately: doing
+ *      it here risks the exact same Ctrl+Z-vs-in-flight-POST race E3 already
+ *      catalogs as needing its own guard.
+ *   2. Before posting, flush any edit still inside the autosave debounce and
+ *      AWAIT it, so a prop/text/style edit made moments before this
+ *      structural gesture is durably written (and, per 0.1's fix, its own
+ *      save-diff baseline advanced) before a later reload's re-parse could
+ *      either discard it outright or — worse — target it at now-stale ids.
+ *      A flush failure must not block the structural edit the user actually
+ *      asked for; it's logged and the commit proceeds regardless (the
+ *      autosave loop's own error state already surfaces that failure via the
+ *      toolbar's save indicator).
+ *
+ * `STUDIO-FIGMA-PARITY-PLAN.md` Track C5 (reload surgery, Band 2, built on
+ * top of 0.2 above) — the ONE thing that changed since: "reload" on a landed
+ * write no longer means "reparse the whole workspace" by default. See
+ * `reloadStructuralScope`'s own doc for the full targeted-reload contract;
+ * every gate described in items 1/2 above (still gated on `written > 0`,
+ * still flushes first, still leaves a refused move/delete visually diverged
+ * until a later reload) is UNCHANGED — C5 only changes what a "reload" does
+ * once the gate says one should happen.
  */
 async function commitStructural(
   edits: readonly Record<string, unknown>[],
   refusalTitle: string,
   success?: { title: string; body: string },
 ): Promise<void> {
+  try {
+    await flushEditorSave()
+  } catch (err) {
+    console.error('[studioSaveRequests] pre-structural-edit save flush failed:', err)
+  }
+
   try {
     const result = await postEdits(edits)
     for (const refusal of result.refusals ?? []) {
@@ -254,25 +427,42 @@ async function commitStructural(
     // all — the id was stale against disk. Same remedy, but say so rather than
     // letting the change quietly reappear after the reload with no explanation.
     const unexplained = result.skipped - (result.refusals ?? []).length
+    const willReload = result.written > 0
     if (unexplained > 0) {
       pushToast({
         kind: 'error',
         title: refusalTitle,
-        body: 'The code no longer has an element at the position the canvas was showing. The board has been reloaded from the files on disk.',
+        body: willReload
+          ? 'The code no longer has an element at the position the canvas was showing. The board has been reloaded from the files on disk.'
+          : 'The code no longer has an element at the position the canvas was showing.',
       })
     }
+    // trap #5 — reload only when a write actually landed. Nothing reaching
+    // disk means there is nothing to resync FROM; reloading anyway would
+    // replace whatever the canvas is currently (optimistically) showing with
+    // the unchanged, pre-edit source.
+    //
+    // Track C5 (reload surgery) — `reloadStructuralScope` tries a targeted
+    // per-page resync first (see its own doc) and only falls back to the
+    // full `requestCmsSiteReload()` this used to call unconditionally when
+    // that isn't provably safe. Every OTHER behaviour on this line is
+    // unchanged: still gated on `willReload`, still the thing that (per
+    // (1) above) leaves a refused move/delete visually diverged until a
+    // later reload happens to resync it.
+    if (willReload) await reloadStructuralScope(result.touchedFiles ?? [])
   } catch (err) {
     // Fire-and-forget from the store's mutation guard, so this is the only
-    // place the failure can be reported — and the reload below is what puts
-    // the board back in step with the file it failed to change.
+    // place the failure can be reported. No response was ever obtained, so
+    // there is no `written` count to check — the safe assumption after a
+    // failed request is "disk is unchanged," which means no reload either
+    // (see this function's doc for why an unconditional reload here was the
+    // bug, not the fix).
     console.error('[studioSaveRequests] structural edit failed:', err)
     pushToast({
       kind: 'error',
       title: refusalTitle,
       body: getErrorMessage(err, 'The change could not be written to the project source.'),
     })
-  } finally {
-    requestCmsSiteReload()
   }
 }
 
@@ -357,6 +547,42 @@ export async function swapInstance(
   if (result.written > 0) requestCmsSiteReload()
   const swapDetail = (result.swapDetails ?? []).find((detail) => detail.nodeId === nodeId)
   return { ok: true, swapDetail }
+}
+
+/**
+ * E2.5 — the Properties panel's slot "Add"/"Add another" action:
+ * `insert-slot` (E2.4, `insertJsxIntoSlotProp`). `nodeId` is the CALL SITE's
+ * own (plain, un-prefixed) id — the slot being filled is one of ITS
+ * attributes, never the `studio.slot` container's own id (which is locked
+ * structurally and would wrongly refuse `code-placed` — see E2.4's own
+ * handoff, "wall #3"). `propName` is the raw slot name (`'header'`), never
+ * `callSiteProps:`-prefixed.
+ *
+ * Always reloads on a successful write (`shifted` is unconditionally `true`
+ * for this kind, same as `detach`/`swap`/`insert`) — the filled node has no
+ * honest id until the codemod has written it and the board re-parses.
+ */
+export async function commitStudioInsertSlot(fill: {
+  nodeId: string
+  propName: string
+  name: string
+  importSpecifier: string
+  props?: Record<string, string | number | boolean>
+}): Promise<InstanceCodemodResult> {
+  const result = await postOneEdit({
+    kind: 'insert-slot',
+    nodeId: fill.nodeId,
+    propName: fill.propName,
+    node: {
+      name: fill.name,
+      importSpecifier: fill.importSpecifier,
+      ...(fill.props ? { props: fill.props } : {}),
+    },
+  })
+  const refusal = (result.refusals ?? [])[0]
+  if (refusal) return { ok: false, reason: refusal.reason, message: refusal.message }
+  if (result.written > 0) requestCmsSiteReload()
+  return { ok: true }
 }
 
 /** POST /admin/api/studio/extract-component response — see that route's module doc. */

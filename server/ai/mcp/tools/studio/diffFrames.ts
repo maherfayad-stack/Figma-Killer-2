@@ -77,7 +77,7 @@ export const diffFramesTool: AiTool = {
   scope: 'shared',
   execution: 'server',
   description:
-    'Server-side pixel + region diff between `baseline` (base64 PNG bytes YOU already hold) and EITHER `reference` (base64) OR `referenceId` (a studio_register_design_reference id — its bytes are read here, never transiting you). Returns an overall similarity score, a diff PNG, and the top differing rectangles ranked by differing-pixel count — each with a diffPercent and, when `nodeRects` was supplied, the node ids whose rect intersects it. NOTE: if you are the agent working inside Studio, use studio_compare instead — it captures the screen and measures it in one call, because a capture reaches you as an image you cannot turn back into the base64 `baseline` needs. This tool is for a client that captured the frame in its own process. With `reference`, both images must be the exact same pixel dimensions or this returns ok:false. With `referenceId`, a dimension mismatch is instead RECONCILED by resampling the reference (labelled `dimensionReconciliation.method: "resampled"` — a weaker claim than an exact match) unless the aspect ratios diverge too far to attribute to resolution, in which case it refuses rather than silently stretch the image.',
+    'Server-side pixel + region diff between `baseline` (base64 PNG bytes YOU already hold) and EITHER `reference` (base64) OR `referenceId` (a studio_register_design_reference id — its bytes are read here, never transiting you). Returns an overall similarity score, a diff PNG, and the top differing rectangles ranked by differing-pixel count — each with a diffPercent and, when `nodeRects` was supplied, the node ids whose rect intersects it. NOTE: if you are the agent working inside Studio, use studio_compare instead — it captures the screen and measures it in one call, because a capture reaches you as an image you cannot turn back into the base64 `baseline` needs. This tool is for a client that captured the frame in its own process. With `reference`, both images must be the exact same pixel dimensions or this returns ok:false. With `referenceId`, a dimension mismatch is instead RECONCILED by resampling the reference (labelled `dimensionReconciliation.method: "resampled"` — a weaker claim than an exact match, with `dimensionReconciliation.note` naming which axis mismatched and calling out the ~1568px vision-safe capture cap when that looks like the cause) unless the aspect ratios diverge too far to attribute to resolution, in which case it refuses rather than silently stretch the image.',
   inputSchema: InputSchema,
   handler: async (input, ctx: ToolContext) => {
     const { dir: dirInput, baseline, reference, referenceId, nodeRects, topN, threshold } = input as {
@@ -102,7 +102,7 @@ export const diffFramesTool: AiTool = {
     }
 
     let b: DecodedImage
-    let dimensionReconciliation: { method: 'exact' | 'resampled'; referenceId: string; referenceOriginal: { width: number; height: number } } | undefined
+    let dimensionReconciliation: { method: 'exact' | 'resampled'; referenceId: string; referenceOriginal: { width: number; height: number }; note?: string } | undefined
 
     if (referenceId !== undefined) {
       const dir = resolveToolProjectDir(dirInput, ctx)
@@ -125,6 +125,7 @@ export const diffFramesTool: AiTool = {
         method: reconciled.result.method,
         referenceId,
         referenceOriginal: { width: designRef.width, height: designRef.height },
+        ...(reconciled.result.note ? { note: reconciled.result.note } : {}),
       }
     } else {
       try {

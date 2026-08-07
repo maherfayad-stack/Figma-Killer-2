@@ -1,5 +1,6 @@
 import { createContext, type MouseEvent, type RefObject } from 'react'
 import type { TemplateRenderDataContext } from '@core/templates/dynamicBindings'
+import type { CanvasTransform } from '@site/hooks/useCanvas'
 
 /**
  * WS-10 Phase 2 — `frameId` is a SEPARATE dimension from `breakpointId`, not
@@ -34,6 +35,15 @@ export const CanvasSelectionContext = createContext<CanvasSelectionContextValue>
 interface CanvasViewportActionsContextValue {
   canvasRootRef: RefObject<HTMLElement | null>
   panBy: (dx: number, dy: number) => void
+  /**
+   * D1 — the LIVE canvas transform ref from `useCanvas()`. Threaded through
+   * context (rather than a prop) so deep consumers that don't otherwise sit
+   * in `CanvasRoot`'s own JSX — `RulerGuidesLayer`, several `CanvasTransformLayer`
+   * levels down — can read live pan/zoom without a prop-drilled chain through
+   * every intermediate layer. See `CanvasTransform`'s doc in `useCanvas.ts`
+   * for why the store's `zoom`/`panX`/`panY` are the wrong thing to read here.
+   */
+  transformRef: RefObject<CanvasTransform>
 }
 
 export const CanvasViewportActionsContext =

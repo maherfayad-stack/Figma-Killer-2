@@ -9,7 +9,15 @@
  *       (`infra-01`), resolved honestly across a server restart — see that
  *       field's doc below.
  *   startDependencyInstall  → POST /admin/api/studio/install
- *       kicks the job, returns its id immediately.
+ *       kicks the job, returns its id immediately. Optionally carries a
+ *       single `add`/`remove` mutation (E3, `STUDIO-FIGMA-PARITY-PLAN.md`) —
+ *       DepsSection.tsx's "Add package"/"Remove" actions use this to run a
+ *       REAL `bun add`/`bun remove` (or the project's own detected package
+ *       manager) against the on-disk project, instead of only updating the
+ *       in-memory `packageJson` mirror the way they used to
+ *       (`// TODO(Phase G)`, now deleted). Omitting both keeps running the
+ *       original "install everything already in package.json" job
+ *       unchanged — `InstallDependenciesPrompt.tsx`'s own call.
  *   getDependencyInstallJob → GET  /admin/api/studio/install/:id?dir=<dir>
  *       one poll of a running/finished job's status + capped log. `dir` is
  *       optional but should always be passed — it's the durability fallback:
@@ -99,11 +107,27 @@ export async function probeDependencyInstall(dir?: string): Promise<InstallProbe
   })
 }
 
-/** Starts the install job; returns its id for polling via {@link getDependencyInstallJob}. */
-export async function startDependencyInstall(dir?: string): Promise<string> {
+/** E3 — a single dependency to add, or remove, riding the same install job. Mutually exclusive by construction: `startDependencyInstall`'s `mutation` param takes one branch at a time. */
+export interface AddDependencyMutation {
+  add: { name: string; version?: string; dev?: boolean }
+}
+export interface RemoveDependencyMutation {
+  remove: { name: string }
+}
+
+/**
+ * Starts the install job; returns its id for polling via
+ * {@link getDependencyInstallJob}. `mutation` (E3) runs `<packageManager>
+ * add`/`remove` for a single package instead of the bare "install everything
+ * in package.json" job — pass nothing for the original behaviour.
+ */
+export async function startDependencyInstall(
+  dir?: string,
+  mutation?: AddDependencyMutation | RemoveDependencyMutation,
+): Promise<string> {
   const { jobId } = await apiRequest('/admin/api/studio/install', {
     method: 'POST',
-    body: { dir },
+    body: { dir, ...mutation },
     schema: InstallStartResponseSchema,
   })
   return jobId

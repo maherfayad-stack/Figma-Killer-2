@@ -23,11 +23,22 @@
  * Studio reloads the whole site document on every `requestCmsSiteReload()` and
  * on a `shifted` save, so a random id per load would churn selection, undo
  * history, and every `node.classIds` entry. Ids are therefore derived from the
- * rule's own identity (`kind` + `name`) — same CSS in, same ids out, forever.
+ * rule's own identity (`kind` + `name` + its resolved source FILE) — same CSS
+ * in, same ids out, forever.
  *
- * Two files defining the same class name collapse onto one id, with the
- * later-parsed file winning. That matches CSS cascade order closely enough for
- * a read-only view and keeps `classIds` unambiguous.
+ * The file is part of the id (Track B1, fixing `docs/audits/2026-08-06/
+ * 10-classes-vs-inline-styles.md` §S3d): two REAL `.css` files each defining
+ * `.button` produce two DIFFERENT `StyleRule`s, each with its own honest
+ * `sources` entry, rather than collapsing onto one id that silently drops the
+ * earlier file's block. `classIdsByName` (below) still resolves one class
+ * NAME to exactly one id — the later-parsed file wins there, matching CSS
+ * cascade order closely enough for canvas rendering — so `node.classIds`
+ * stays unambiguous even though the registry itself no longer discards the
+ * earlier rule. A rule with no single hand-authored file to key by
+ * (`extraCss`'s Tailwind/Sass/PostCSS output, or a CSS-Modules selector with
+ * no resolvable origin) hashes on an empty file string, preserving today's
+ * "later wins" collapsing for that case — there is genuinely no file to
+ * distinguish them by.
  *
  * ## Write-back mapping (§6.3, `panel-02`)
  *
@@ -71,7 +82,7 @@ import { readFileSync } from 'node:fs'
 import type { Project } from 'ts-morph'
 import type { ParsedPage } from '@core/page-parser'
 import type { ConditionDef, StyleRule } from '@core/page-tree'
-import { cssToStyleRules } from '@core/siteImport'
+import { cssToStyleRules, type ImportWarning } from '@core/siteImport'
 import { collectEntryStylesheets, collectPageStylesheets, type PageStylesheet } from '@core/studio-sync/collectPageStylesheets'
 
 /** Guard against a pathological vendored bundle being pulled in as "the page's CSS". */
@@ -101,18 +112,48 @@ export interface StudioStyles {
   classIdsByName: Record<string, string>
   /** Rule id -> its source `.css` file + selector, for rules with one — see "Write-back mapping". */
   sources: Record<string, StyleRuleSource>
+  /**
+   * Track B1/B3 — every `cssToStyleRules` parse warning across every
+   * stylesheet this load merged, in merge order. Previously discarded
+   * entirely (`mergeParsedCss` called `cssToStyleRules` and only ever read
+   * `.rules`/`.conditions` off the result) — the ONLY signal that a
+   * stylesheet partially failed (an unparseable declaration, a dropped
+   * at-rule, a blocked property) had nowhere to go. Not yet surfaced to the
+   * client — `studioPageLoad.ts`/`studioLoadResponse.ts` own that wiring —
+   * but no longer silently thrown away at the source.
+   */
+  warnings: ImportWarning[]
 }
 
-const EMPTY_STYLES: StudioStyles = { styleRules: {}, conditions: [], classIdsByName: {}, sources: {} }
+const EMPTY_STYLES: StudioStyles = { styleRules: {}, conditions: [], classIdsByName: {}, sources: {}, warnings: [] }
 
 /**
  * Deterministic rule id. Derived from the rule's identity so the same CSS
  * always yields the same id across reloads — see this module's "Stable ids".
  * The `sc-` prefix keeps imported rules recognisable next to editor-authored
  * ones, which use `nanoid()`.
+ *
+ * `file` is part of the hash (Track B1's landmine fix, `docs/audits/
+ * 2026-08-06/10-classes-vs-inline-styles.md` §S3d). It used to be omitted —
+ * `styleRuleId(kind, name)` hashed identity alone — so two REAL `.css` files
+ * each defining `.button` collapsed onto ONE id: `styleRules[id]` kept only
+ * the later file's declarations, and `sources[id]` pointed only at the later
+ * file, so the earlier `.button` block was invisible in the registry AND had
+ * no honest write target of its own. Passing `''` for a rule with no single
+ * hand-authored file (an `extraCss`-contributed Tailwind/Sass/PostCSS
+ * utility, or a CSS-Modules rule `cssModuleSource` can't resolve to exactly
+ * one file) preserves today's collapsing behaviour for THAT case — there
+ * genuinely is no file to distinguish them by, and `mergeParsedCss`'s
+ * "later redefinition wins" comment already documents that as the accepted
+ * approximation for a read-only view.
+ *
+ * `classIdsByName` (below) still resolves one name to ONE id — the later
+ * file wins there too, matching cascade order for RENDER purposes — so this
+ * change does not ripple into `node.classIds`/canvas rendering: it only
+ * stops the earlier rule from being silently destroyed in the registry.
  */
-export function styleRuleId(kind: StyleRule['kind'], name: string): string {
-  return `sc-${createHash('sha1').update(`${kind}|${name}`).digest('hex').slice(0, 10)}`
+export function styleRuleId(kind: StyleRule['kind'], name: string, file: string): string {
+  return `sc-${createHash('sha1').update(`${kind}|${name}|${file}`).digest('hex').slice(0, 10)}`
 }
 
 /**
@@ -260,6 +301,7 @@ export async function loadStudioStyles(
   const conditionsById = new Map<string, ConditionDef>()
   const classIdsByName: Record<string, string> = {}
   const sources: Record<string, StyleRuleSource> = {}
+  const warnings: ImportWarning[] = []
   const moduleSourceByGeneratedClass = invertModuleClassMaps(moduleClassMaps)
   let order = 0
 
@@ -274,19 +316,32 @@ export async function loadStudioStyles(
   const mergeParsedCss = (cssText: string, sourceFile?: string): void => {
     const parsed = cssToStyleRules(cssText, { sheetConstructor: SheetCtor })
     for (const condition of parsed.conditions) conditionsById.set(condition.id, condition)
+    warnings.push(...parsed.warnings)
 
     const mappable = sourceFile !== undefined && /\.css$/i.test(sourceFile)
     for (const rule of parsed.rules) {
-      const id = styleRuleId(rule.kind, rule.name)
-      // A later stylesheet redefining the same name wins, matching cascade
-      // order — `order` still advances so relative sort position is preserved.
-      styleRules[id] = { ...rule, id, order: order++, createdAt: IMPORTED_RULE_TIMESTAMP, updatedAt: IMPORTED_RULE_TIMESTAMP }
-      if (rule.kind === 'class') classIdsByName[rule.name] = id
-      // A later redefinition's mapping (or lack of one) replaces the earlier
-      // rule's, same "later wins" rule as `styleRules` itself above.
+      // The source is resolved BEFORE the id, because the id now carries the
+      // file (Track B1's `styleRuleId` fix — see its doc comment): two REAL
+      // `.css` files each defining `.button` must produce two DIFFERENT ids,
+      // not collapse onto one that silently drops the earlier file's block.
+      // A rule with no single hand-authored file (`extraCss`, or a
+      // CSS-Modules selector `cssModuleSource` can't resolve to exactly one
+      // file) hashes on `''` instead, preserving today's "later wins"
+      // collapsing for that case — there is genuinely no file to key by.
       const source = mappable
         ? { file: sourceFile!, selector: rule.selector }
         : cssModuleSource(rule.selector, moduleSourceByGeneratedClass)
+      const id = styleRuleId(rule.kind, rule.name, source?.file ?? '')
+      // A later stylesheet redefining the same (kind, name, file) wins —
+      // this only fires for genuine same-file re-parses / `extraCss`
+      // duplicates now, since two DIFFERENT files no longer share an id.
+      // `order` still advances so relative sort position is preserved.
+      styleRules[id] = { ...rule, id, order: order++, createdAt: IMPORTED_RULE_TIMESTAMP, updatedAt: IMPORTED_RULE_TIMESTAMP }
+      // `classIdsByName` still resolves one NAME to exactly one id — the
+      // LATEST file wins, matching cascade order for canvas rendering
+      // purposes (same accepted approximation as before this change; see
+      // `styleRuleId`'s doc for why this does not need to change too).
+      if (rule.kind === 'class') classIdsByName[rule.name] = id
       if (source) sources[id] = source
       else delete sources[id]
     }
@@ -300,7 +355,16 @@ export async function loadStudioStyles(
     mergeParsedCss(cssText, sheet.relPath)
   }
 
-  return { styleRules, conditions: [...conditionsById.values()], classIdsByName, sources }
+  // Track B1/B3 — these used to vanish entirely (only `.rules`/`.conditions`
+  // were ever read off `cssToStyleRules`'s result). A dropped at-rule, an
+  // unknown/blocked property, or a duplicate class is the only signal that a
+  // stylesheet partially failed, so log it rather than stay silent even
+  // though nothing downstream reads `warnings` yet.
+  if (warnings.length > 0) {
+    console.warn(`[studioCss] ${warnings.length} CSS parse warning(s) across this project's stylesheets`)
+  }
+
+  return { styleRules, conditions: [...conditionsById.values()], classIdsByName, sources, warnings }
 }
 
 function readStylesheet(sheet: PageStylesheet): string | undefined {

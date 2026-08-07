@@ -145,11 +145,13 @@ export function measureCanvasDropCandidates(
         }
       : rectInsideScope
 
+    const { axis, reversed } = resolveCanvasInsertionAxis(target)
     candidates.push({
       nodeId,
       depth: depths.get(nodeId) ?? 0,
       rect: clientRectToViewportRect(viewport, editorRect),
-      axis: inferCanvasDropAxis(target),
+      axis,
+      reversed,
     })
   }
 
@@ -275,27 +277,119 @@ function getViewportScale(viewport: HTMLElement, viewportRect: DOMRect): number 
   return viewport.offsetWidth > 0 ? viewportRect.width / viewport.offsetWidth : 1
 }
 
-function inferCanvasDropAxis(target: HTMLElement): CanvasDropAxis {
-  if (typeof window === 'undefined' || typeof window.getComputedStyle !== 'function') {
-    return 'vertical'
+/**
+ * The live canvas zoom (1 = 100%), recovered from the viewport element's
+ * rendered size vs. its untransformed layout size — the same measurement
+ * `getViewportLocalPoint` / `clientRectToViewportRect` already use to convert
+ * between screen space and frame space. Exported so drop-zone hit-testing
+ * (`getCanvasDropZone` in `canvasDnd.ts`) can convert its screen-space edge
+ * bands into the frame-space units `CanvasDropCandidate.rect` is measured in
+ * — see `MIN_EDGE_HIT_ZONE_SCREEN_PX` there for why this matters.
+ */
+export function getViewportZoom(viewport: HTMLElement): number {
+  return getViewportScale(viewport, viewport.getBoundingClientRect())
+}
+
+/** The subset of `CSSStyleDeclaration` `resolveCanvasAxisFromStyle` reads — a structural type so it can be unit-tested with a plain object, no DOM. */
+export interface CanvasAxisStyleInput {
+  display: string
+  flexDirection: string
+  gridAutoFlow: string
+  direction: string
+}
+
+export interface CanvasAxisResolution {
+  axis: CanvasDropAxis
+  /** See `CanvasDropCandidate.reversed`'s doc (`canvasDnd.ts`). */
+  reversed: boolean
+}
+
+/**
+ * G9 — pure CSS→axis mapping, extracted so grid/`*-reverse`/RTL logic is
+ * directly unit-testable without a real browser layout. Only reads FOUR
+ * computed-style properties; `resolveCanvasInsertionAxis` below is the DOM
+ * wrapper that finds the layout parent and reads them off it.
+ *
+ * **Grid is a CSS-only heuristic, not the sibling-geometry-derived axis the
+ * fully correct fix would compute** (compare row/column overlap of actual
+ * sibling rects — see `STUDIO-FIGMA-PARITY-PLAN.md`'s G9 finding). That needs
+ * `measureCanvasDropCandidates` to thread sibling rects into this function,
+ * which is a larger plumbing change deferred out of this pass. What ships
+ * here: `gridAutoFlow: column` (dense-column placement, fills a column
+ * top-to-bottom before wrapping) resolves `vertical`; the default row
+ * autoflow (fills a row left-to-right before wrapping) resolves
+ * `horizontal`. Strictly better than the PRE-G9 behavior (`'vertical'`
+ * unconditionally, which drew horizontal insertion bars across a
+ * side-by-side card gallery) but still wrong for any grid whose visual flow
+ * doesn't match its `gridAutoFlow` keyword alone — e.g. an explicit
+ * `grid-template-columns` layout with items NOT auto-placed.
+ */
+export function resolveCanvasAxisFromStyle(style: CanvasAxisStyleInput): CanvasAxisResolution {
+  const rtl = style.direction === 'rtl'
+
+  if (style.display.includes('grid')) {
+    const columnFlow = style.gridAutoFlow.includes('column')
+    return columnFlow ? { axis: 'vertical', reversed: false } : { axis: 'horizontal', reversed: rtl }
   }
 
+  if (style.display.includes('flex')) {
+    const isRow = style.flexDirection.startsWith('row')
+    const isReverseFlexDirection = style.flexDirection.endsWith('reverse')
+    if (isRow) {
+      // Visual-left is the logical END of the axis under `direction: rtl`;
+      // `row-reverse` flips visual order again. Two flips cancel out — XOR,
+      // not OR — a `row-reverse` container that is ALSO `rtl` renders in DOM
+      // order again (not reversed).
+      return { axis: 'horizontal', reversed: isReverseFlexDirection !== rtl }
+    }
+    // `column` / `column-reverse` — RTL only mirrors the INLINE axis, never
+    // the BLOCK axis, so `direction` plays no part here.
+    return { axis: 'vertical', reversed: isReverseFlexDirection }
+  }
+
+  // Ordinary block flow (including `flex-wrap` and anything else): vertical,
+  // top-to-bottom, unaffected by `direction`.
+  return { axis: 'vertical', reversed: false }
+}
+
+/**
+ * DOM wrapper around `resolveCanvasAxisFromStyle`: finds `target`'s nearest
+ * boxed layout parent (skipping `display: contents` hosts, same as the
+ * geometry walk `nodeVisualRect` does) and reads its computed style.
+ *
+ * Uses `target`'s OWN document's `defaultView` — not the ambient `window` —
+ * because `target` lives inside a breakpoint iframe's document, a DIFFERENT
+ * realm from the parent editor window. Real browsers resolve
+ * `window.getComputedStyle(elementFromAnotherDocument)` correctly for a
+ * same-origin iframe today, but that is not a contract this function should
+ * lean on (`STUDIO-FIGMA-PARITY-PLAN.md`'s G9 finding) — reading from the
+ * element's own realm is correct by construction instead of by browser
+ * behavior nobody promised.
+ */
+export function resolveCanvasInsertionAxis(target: HTMLElement): CanvasAxisResolution {
   const parent = findLayoutParent(target)
-  if (!parent) return 'vertical'
+  if (!parent) return { axis: 'vertical', reversed: false }
 
-  const style = window.getComputedStyle(parent)
-  if (style.display.includes('flex') && style.flexDirection.startsWith('row')) {
-    return 'horizontal'
-  }
+  const view = parent.ownerDocument?.defaultView
+  if (!view || typeof view.getComputedStyle !== 'function') return { axis: 'vertical', reversed: false }
 
-  return 'vertical'
+  const style = view.getComputedStyle(parent)
+  return resolveCanvasAxisFromStyle({
+    display: style.display,
+    flexDirection: style.flexDirection,
+    gridAutoFlow: style.gridAutoFlow,
+    direction: style.direction,
+  })
 }
 
 function findLayoutParent(element: HTMLElement): HTMLElement | null {
   let parent = element.parentElement
   while (parent) {
-    const style = typeof window !== 'undefined' && typeof window.getComputedStyle === 'function'
-      ? window.getComputedStyle(parent)
+    // Same realm-correctness note as `resolveCanvasInsertionAxis`: read from
+    // the candidate parent's OWN document view, not the ambient `window`.
+    const view = parent.ownerDocument?.defaultView
+    const style = view && typeof view.getComputedStyle === 'function'
+      ? view.getComputedStyle(parent)
       : null
     if (style?.display !== 'contents') return parent
     parent = parent.parentElement

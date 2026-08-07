@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import type { FrameworkColorSettings } from '@core/framework-schema'
 import {
+  filterReemittableColorTokens,
   generateFrameworkColorUtilityClasses,
   generateFrameworkColorVariableSets,
   generateFrameworkRootCss,
@@ -118,13 +119,16 @@ describe('framework color generation', () => {
     expect(sets.light.some((variable) => variable.name === '--fancy-d-1')).toBe(false)
   })
 
-  it('emits theme scopes with theme-default and theme-alt class names', () => {
+  it('emits theme scopes gated on the html[data-studio-scheme] attribute Studio\'s canvas actually sets', () => {
+    // Not `:root.theme-alt`/`:root.theme-default` — a CMS class-swap
+    // convention nothing in this codebase ever sets on an element. See
+    // `colors.ts`'s `DARK_SCHEME_SELECTOR_ATTR` doc comment (0.13 / audit T5).
     const css = generateFrameworkRootCss({ colors: makeColorSettings() })
-    expect(css).toContain(':root.theme-alt')
-    expect(css).toContain(':root.theme-default .theme-inverted')
-    expect(css).toContain(':root.theme-alt .theme-inverted .theme-always-alt')
-    expect(css).not.toContain('theme-dark')
-    expect(css).not.toContain('theme-light')
+    expect(css).toContain("html[data-studio-scheme='dark']")
+    expect(css).toContain("html[data-studio-scheme='light'] .theme-inverted")
+    expect(css).toContain("html[data-studio-scheme='dark'] .theme-inverted .theme-always-alt")
+    expect(css).not.toContain('theme-alt')
+    expect(css).not.toContain('theme-default')
     expect(css).not.toContain('color-scheme: dark')
     expect(css).not.toContain('cf-theme')
     expect(css).toContain('--primary: hsla(238, 100%, 62%, 1);')
@@ -184,5 +188,51 @@ describe('framework color generation', () => {
     const classes = generateFrameworkColorUtilityClasses(settings)
     expect(classes['framework:color:tok-a:base:text'].name).toBe('text-primary-color')
     expect(classes['framework:color:tok-b:base:text'].name).toBe('text-primary-color-2')
+  })
+})
+
+describe('filterReemittableColorTokens (STUDIO-FIGMA-PARITY-PLAN.md T4)', () => {
+  const extracted = makeColorSettings().tokens[0]
+
+  it('drops a token EXTRACTED from the project\'s own CSS — its :root declaration already exists there', () => {
+    const settings: FrameworkColorSettings = {
+      tokens: [{ ...extracted, id: 'extracted-token', slug: 'aqua', origin: 'project-css' }],
+    }
+    const filtered = filterReemittableColorTokens(settings)
+    expect(filtered?.tokens).toEqual([])
+  })
+
+  it('keeps a STUDIO-AUTHORED token — nothing else declares its name', () => {
+    const settings: FrameworkColorSettings = {
+      tokens: [{ ...extracted, id: 'authored-token', slug: 'brand', origin: 'studio-authored' }],
+    }
+    const filtered = filterReemittableColorTokens(settings)
+    expect(filtered?.tokens.map((t) => t.id)).toEqual(['authored-token'])
+  })
+
+  it('keeps a token with no origin — legacy data predating this field, same behaviour as before it existed', () => {
+    const settings: FrameworkColorSettings = {
+      tokens: [{ ...extracted, id: 'legacy-token', slug: 'legacy' }],
+    }
+    expect(settings.tokens[0]!.origin).toBeUndefined()
+    const filtered = filterReemittableColorTokens(settings)
+    expect(filtered?.tokens.map((t) => t.id)).toEqual(['legacy-token'])
+  })
+
+  it('never re-declares an extracted token in the generated :root block, but still declares a studio-authored one — both directions, end to end', () => {
+    const settings: FrameworkColorSettings = {
+      tokens: [
+        { ...extracted, id: 'extracted', slug: 'aqua', lightValue: '#0c9ab0', darkModeEnabled: false, origin: 'project-css' },
+        { ...extracted, id: 'authored', slug: 'brand', lightValue: '#ff00aa', darkModeEnabled: false, origin: 'studio-authored' },
+      ],
+    }
+    const css = generateFrameworkRootCss({ colors: filterReemittableColorTokens(settings) })
+    expect(css).not.toContain('--aqua:')
+    expect(css).toContain('--brand:')
+  })
+
+  it('passes through null/undefined settings unchanged', () => {
+    expect(filterReemittableColorTokens(null)).toBeNull()
+    expect(filterReemittableColorTokens(undefined)).toBeUndefined()
   })
 })

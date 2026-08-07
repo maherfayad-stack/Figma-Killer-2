@@ -35,3 +35,26 @@
   font-size: var(--text-2xs);
   line-height: 1.4;
 }
+
+/* R8 — a `file:line` mention inside the notice's running prose, styled as an
+   inline link rather than a full button: no background, underline affordance,
+   inherits the surrounding paragraph's color and size instead of Button's own. */
+.jumpToSourceButton {
+  display: inline-flex;
+  height: auto;
+  min-height: 0;
+  padding: 0;
+  gap: var(--space-3xs);
+  background: transparent;
+  color: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  vertical-align: baseline;
+}
+
+.jumpToSourceButton:hover {
+  background: transparent;
+  color: inherit;
+}

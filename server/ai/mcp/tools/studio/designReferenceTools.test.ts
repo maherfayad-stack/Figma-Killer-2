@@ -276,6 +276,47 @@ describe('studio_recommend_export_dpr', () => {
     expect(result.note).toBeDefined()
   })
 
+  it('flags heightLikelyClamped when even the frame\'s nominal height would exceed the vision-safe cap at the recommended dpr', async () => {
+    // A2: renderEvidence.ts's vision-safe capture cap applies to BOTH width
+    // and height. studio_recommend_export_dpr used to warn only about the
+    // width side (the axis it was already computing a dpr for) — this pins
+    // the height-axis warning added alongside it.
+    writeBoardsFile([{ pageId: 'p1', width: 400, height: 1000 }])
+    const registered = await tool('studio_register_design_reference').handler!(
+      { dir, imageBase64: await pngBase64(800, 600), pageId: 'p1' },
+      {} as never,
+    ) as { reference: { id: string } }
+
+    const result = await tool('studio_recommend_export_dpr').handler!(
+      { dir, pageId: 'p1', referenceId: registered.reference.id },
+      {} as never,
+    ) as { ok: boolean; recommendedDpr: number; heightLikelyClamped: boolean; heightNote?: string }
+    expect(result.ok).toBe(true)
+    expect(result.recommendedDpr).toBe(2)
+    // frame height 1000 * dpr 2 = 2000px, above the ~1568px cap.
+    expect(result.heightLikelyClamped).toBe(true)
+    expect(result.heightNote).toBeDefined()
+    expect(result.heightNote).toContain('1000')
+  })
+
+  it('does not flag heightLikelyClamped when the frame height comfortably fits the vision-safe cap at the recommended dpr', async () => {
+    writeBoardsFile([{ pageId: 'p1', width: 400, height: 200 }])
+    const registered = await tool('studio_register_design_reference').handler!(
+      { dir, imageBase64: await pngBase64(800, 400), pageId: 'p1' },
+      {} as never,
+    ) as { reference: { id: string } }
+
+    const result = await tool('studio_recommend_export_dpr').handler!(
+      { dir, pageId: 'p1', referenceId: registered.reference.id },
+      {} as never,
+    ) as { ok: boolean; recommendedDpr: number; heightLikelyClamped: boolean; heightNote?: string }
+    expect(result.ok).toBe(true)
+    expect(result.recommendedDpr).toBe(2)
+    // frame height 200 * dpr 2 = 400px, comfortably under the ~1568px cap.
+    expect(result.heightLikelyClamped).toBe(false)
+    expect(result.heightNote).toBeUndefined()
+  })
+
   it('errors clearly when the page has no board frame', async () => {
     writeBoardsFile([])
     const registered = await tool('studio_register_design_reference').handler!(

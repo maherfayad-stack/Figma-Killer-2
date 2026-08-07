@@ -7,10 +7,11 @@ import { describe, it, expect } from 'bun:test'
 import {
   computeSnap,
   collectPeerRects,
+  guideSnapRects,
   SNAP_THRESHOLD_BOARD_UNITS,
   type SnapRect,
 } from '@site/canvas/boardSnapping'
-import { createBoard } from '@core/studio-board'
+import { createBoard, type BoardGuide } from '@core/studio-board'
 
 const THRESHOLD = 8
 
@@ -172,5 +173,46 @@ describe('collectPeerRects', () => {
     const rects = collectPeerRects(board, { kind: 'doc', id: 'd1' })
 
     expect(rects).toEqual([{ x: 400, y: 0, width: 320, height: 200 }])
+  })
+})
+
+describe('guideSnapRects (D1)', () => {
+  it('returns [] for no guides', () => {
+    expect(guideSnapRects([])).toEqual([])
+  })
+
+  it('represents an x-axis guide as a zero-size point at its own x, far off-axis on y', () => {
+    const guides: BoardGuide[] = [{ id: 'g1', axis: 'x', position: 320 }]
+    const rects = guideSnapRects(guides)
+    expect(rects).toHaveLength(1)
+    expect(rects[0].x).toBe(320)
+    expect(rects[0].width).toBe(0)
+    expect(rects[0].height).toBe(0)
+    expect(Math.abs(rects[0].y)).toBeGreaterThan(100_000)
+  })
+
+  it('represents a y-axis guide as a zero-size point at its own y, far off-axis on x', () => {
+    const guides: BoardGuide[] = [{ id: 'g1', axis: 'y', position: -80 }]
+    const rects = guideSnapRects(guides)
+    expect(rects[0].y).toBe(-80)
+    expect(Math.abs(rects[0].x)).toBeGreaterThan(100_000)
+  })
+
+  it('an x-axis guide is a real snap target on the x axis via computeSnap', () => {
+    const guides: BoardGuide[] = [{ id: 'g1', axis: 'x', position: 100 }]
+    const dragged: SnapRect = { x: 104, y: 300, width: 50, height: 50 }
+    const result = computeSnap(dragged, guideSnapRects(guides), THRESHOLD)
+    expect(result.x).toBe(100)
+    expect(result.y).toBe(300) // never spuriously matched on y
+  })
+
+  it('an x-axis guide never spuriously matches on the y axis', () => {
+    const guides: BoardGuide[] = [{ id: 'g1', axis: 'x', position: 100 }]
+    // Dragged rect's y happens to be huge too — still must not match, since
+    // the sentinel is an internal implementation detail, not a real board
+    // coordinate a user's drag could ever reach (MAX_PAN bounds pan/frames).
+    const dragged: SnapRect = { x: 104, y: 5, width: 50, height: 50 }
+    const result = computeSnap(dragged, guideSnapRects(guides), THRESHOLD)
+    expect(result.y).toBe(5)
   })
 })

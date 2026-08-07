@@ -27,6 +27,7 @@ import { cleanup, render } from '@testing-library/react'
 import { fileURLToPath } from 'node:url'
 import { ZoomControls } from '@site/toolbar/ZoomControls'
 import { useEditorStore } from '@site/store/store'
+import { getKeybindingForCommand } from '@admin/spotlight/keybindings'
 
 // ─── Guideline #224 constants ─────────────────────────────────────────────────
 
@@ -177,9 +178,12 @@ describe('UndoRedoButtons — WCAG aria-disabled pattern (Guideline #224)', () =
 
   it('handler supports both Cmd+Z (undo) and Cmd+Shift+Z / Cmd+Y (redo)', () => {
     // Post-spotlight refactor: the keydown handler delegates undo/redo matching
-    // to the keybindings registry via `kb.match(e)`. The Ctrl+Y Windows alias
-    // stays inline because the canonical Redo binding is ⌘⇧Z — Ctrl+Y is just
-    // a convenience escape hatch.
+    // ENTIRELY to the keybindings registry via `kb.match(e)` — no inline
+    // key-combo check of its own (`keybindings-registry-single-source.test.ts`
+    // gates that). The Ctrl+Y Windows/Linux redo alias is folded into the
+    // `editor.redo` binding's own `match` predicate instead of a second,
+    // hand-rolled check here — assert the BEHAVIOR (the registry recognizes
+    // both keystrokes as redo) rather than grepping for a literal that moved.
     const { readFileSync } = require('fs')
     const src = readFileSync(
       new URL('../../admin/pages/site/canvas/UndoRedoButtons.tsx', import.meta.url),
@@ -187,8 +191,13 @@ describe('UndoRedoButtons — WCAG aria-disabled pattern (Guideline #224)', () =
     )
     expect(src).toContain('kbUndo?.match(e)')
     expect(src).toContain('kbRedo?.match(e)')
-    // Also support Ctrl+Y (Windows redo) — handled inline as an alias.
-    expect(src).toContain("e.key === 'y'")
+    expect(src).not.toContain("e.key === 'y'")
+
+    const kbRedo = getKeybindingForCommand('editor.redo')
+    expect(kbRedo).toBeDefined()
+    const base = { metaKey: false, ctrlKey: false, shiftKey: false, altKey: false }
+    expect(kbRedo!.match({ ...base, ctrlKey: true, shiftKey: true, key: 'z' })).toBe(true)
+    expect(kbRedo!.match({ ...base, ctrlKey: true, key: 'y' })).toBe(true)
   })
 })
 

@@ -33,7 +33,7 @@ import { STUDIO_AGENT_TOOL_NAMES } from '../../../server/ai/tools/studio/agentTo
 import { studioAgentTools } from '../../../server/ai/tools/studio'
 import { buildStudioAgentSystemPrompt } from '../../../server/ai/tools/studio/systemPrompt'
 
-const staticPrefix = (): string => buildStudioAgentSystemPrompt(null)[0]!
+const staticPrefix = (): string => buildStudioAgentSystemPrompt(null, studioAgentTools)[0]!
 
 describe('the Studio agent can measure its own work', () => {
   it('is offered studio_compare', () => {

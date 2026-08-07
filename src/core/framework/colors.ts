@@ -146,6 +146,45 @@ export function generateFrameworkColorVariableSets(
 }
 
 /**
+ * Drop EXTRACTED color tokens (`origin` stamped by `tokenExtractBuild.ts`'s
+ * `buildColorTokens` — read out of the project's own CSS/Tailwind
+ * theme/Sass/JS-theme) before generating a `:root` block for the CANVAS
+ * document.
+ *
+ * An extracted token's real declaration already exists in the SAME
+ * document — the project's own stylesheet, loaded verbatim by
+ * `UserStylesheetInjector`/`ProjectCssInjector`. Re-declaring it a second
+ * time (HSLA-normalized — see `normalizeColorValue` above — a lossy
+ * transform for any value the engine can't parse, e.g. `oklch()`,
+ * `color-mix()`) creates two competing declarations of the same custom
+ * property in the same cascade layer, whose winner depends on injector
+ * mount order — the canvas would then be rendering a value the project's
+ * own stylesheet did not produce (STUDIO-FIGMA-PARITY-PLAN.md T4).
+ *
+ * `origin === undefined` (data persisted before this field existed, or a
+ * token created before the next re-extraction stamps a real value) still
+ * re-emits — same behaviour as today, no migration needed.
+ *
+ * Scoped to the CANVAS call site only (`canvasClassCss.ts`) — NOT applied
+ * to `generateFrameworkRootCss`/`buildFrameworkPlan` themselves, so the
+ * publisher's `framework.css` and the agent's `describeFrameworkTokens`
+ * output are unaffected. Utility classes
+ * (`generateFrameworkColorUtilityClasses`) are unaffected too: a locked
+ * `.text-<slug>` rule referencing `var(--<slug>)` still resolves correctly
+ * regardless of which document supplies the `:root` declaration.
+ */
+export function filterReemittableColorTokens(
+  settings: FrameworkColorSettings | null | undefined,
+): FrameworkColorSettings | null | undefined {
+  if (!settings) return settings
+  const tokens = settings.tokens.filter(
+    (token) => token.origin === undefined || token.origin === 'studio-authored',
+  )
+  if (tokens.length === settings.tokens.length) return settings
+  return { tokens }
+}
+
+/**
  * Derive both color outputs from a single ordered enumeration. Used by the
  * publisher's `buildFrameworkPlan` and the agent's `describeFrameworkTokens`,
  * which both need the variable sets and the utility classes paired up.
@@ -478,15 +517,28 @@ function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value))
 }
 
+// Dark-mode scope: gated on `html[data-studio-scheme='dark'|'light']`, the
+// SAME attribute `IframeFrameSurface.tsx` sets on the canvas frame and
+// `darkSchemeCssTransform.ts`'s `DARK_SCHEME_ATTR` rewrites a project's own
+// `@media (prefers-color-scheme)` blocks to target. This engine previously
+// scoped its dark values to `:root.theme-alt`/`:root.theme-default` — a CMS
+// theme-swap convention nothing in this codebase ever sets (grep for
+// `theme-alt` in `src/` before this change returned only this definition and
+// a doc comment), so every extracted `darkValue` was dead data: toggling
+// Studio's dark preview correctly re-scoped a project's OWN dark CSS but left
+// the framework's LIGHT values still winning inside the dark frame.
+// STUDIO-FIGMA-PARITY-PLAN.md 0.13 / audit T5.
+const DARK_SCHEME_SELECTOR_ATTR = 'data-studio-scheme'
+
 const DEFAULT_THEME_OVERRIDE_SELECTOR = [
-  ':root.theme-alt .theme-inverted',
-  ':root.theme-alt .theme-always-default',
-  ':root.theme-default .theme-inverted .theme-always-default',
+  `html[${DARK_SCHEME_SELECTOR_ATTR}='dark'] .theme-inverted`,
+  `html[${DARK_SCHEME_SELECTOR_ATTR}='dark'] .theme-always-default`,
+  `html[${DARK_SCHEME_SELECTOR_ATTR}='light'] .theme-inverted .theme-always-default`,
 ].join(',\n')
 
 const ALT_THEME_SELECTOR = [
-  ':root.theme-alt',
-  ':root.theme-default .theme-inverted',
-  ':root.theme-default .theme-always-alt',
-  ':root.theme-alt .theme-inverted .theme-always-alt',
+  `html[${DARK_SCHEME_SELECTOR_ATTR}='dark']`,
+  `html[${DARK_SCHEME_SELECTOR_ATTR}='light'] .theme-inverted`,
+  `html[${DARK_SCHEME_SELECTOR_ATTR}='light'] .theme-always-alt`,
+  `html[${DARK_SCHEME_SELECTOR_ATTR}='dark'] .theme-inverted .theme-always-alt`,
 ].join(',\n')

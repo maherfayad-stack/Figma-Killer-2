@@ -39,6 +39,7 @@ import { SelectorInspector } from './SelectorInspector'
 import { canComponentizeNode } from '@site/componentization'
 import { BranchChoiceNotice } from './BranchChoiceNotice'
 import { SharedComponentNotice } from './SharedComponentNotice'
+import { SlotFillNotice } from './SlotFillNotice'
 import { SourceConstraintNotice } from './SourceConstraintNotice'
 import { useEditorStore } from '@site/store/store'
 import { textOriginKey } from '@site/store/slices/site/nodeIndex'
@@ -59,6 +60,8 @@ interface PropertiesPanelBodyProps {
   activeVc: VisualComponent | null
   activeClass: StyleRule | null
   activeClassId: string | null
+  /** Track F1 — every class assigned to the node, for per-property provenance. */
+  assignedClassRules: StyleRule[]
   moduleTabContent: React.ReactNode
   classPickerRef: React.RefObject<ClassPickerHandle | null>
   onFocusClassPicker: () => void
@@ -82,6 +85,7 @@ export function PropertiesPanelBody(props: PropertiesPanelBodyProps): React.Reac
     activeVc,
     activeClass,
     activeClassId,
+    assignedClassRules,
     moduleTabContent,
     classPickerRef,
     onFocusClassPicker,
@@ -164,25 +168,26 @@ export function PropertiesPanelBody(props: PropertiesPanelBodyProps): React.Reac
       {selectedNode?.fromComponent && selectedNodeId ? (
         <SharedComponentNotice componentName={selectedNode.fromComponent} nodeId={selectedNodeId} />
       ) : null}
-      {/* Rendered for a structural lock OR for a node whose values alone came
-          from code — `lock-01`: the second is the majority case on a real
-          board, and it used to be given the first one's copy ("this element
-          can't be moved or deleted"), which is false for it. The component
-          picks the variant off `lockReason` and returns null when it has
-          nothing true to say. */}
+      {/* E2.5 — the selected node IS the content filling another component's
+          slot (a `header={<Icon/>}` fill, or a fragment-slot child). States
+          which slot/instance it belongs to; renders nothing for every other
+          node (the common case). */}
+      {selectedNodeId ? <SlotFillNotice nodeId={selectedNodeId} /> : null}
+      {/* Track F2 / R7 — the ONLY two whole-node facts left here: a
+          structural lock, and where a resolved text's own literal lives. Every
+          other per-field fact (`CodeValueControl`'s per-prop hint,
+          `propLockReason`'s per-prop source — R2) lives next to the control
+          it's about instead of repeating itself in a node-level paragraph. */}
       <SourceConstraintNotice
         lockReason={selectedNode.lockReason}
-        resolution={selectedNode.resolution}
         textOrigin={selectedNode.textOrigin}
         sharedWith={sharedTextOriginCount}
-        codeProps={selectedNode.codeProps}
         hasWritableLocation={hasWritableSourceLocation(selectedNode.id)}
       />
       {/* parser-06 — the chosen branch is NOT locked (the parser is certain of
           its structure), but the fact that OTHER branches exist and weren't
-          shown is still worth surfacing. Suppressed under a structural lock,
-          whose notice already carries this node's `resolution.note`. */}
-      {!selectedNode.lockReason && selectedNode.branchAlternatives?.length ? (
+          shown is still worth surfacing. */}
+      {selectedNode.branchAlternatives?.length ? (
         <BranchChoiceNotice alternatives={selectedNode.branchAlternatives} />
       ) : null}
       <nav className={styles.nodeViewSwitcher} aria-label="Element options">
@@ -232,6 +237,7 @@ export function PropertiesPanelBody(props: PropertiesPanelBodyProps): React.Reac
           definition={definition}
           activeClass={activeClass}
           activeClassId={activeClassId}
+          assignedClassRules={assignedClassRules}
           activeBreakpointId={activeBreakpointId}
           nodeId={selectedNodeId}
           inlineStyles={selectedNode.inlineStyles}
@@ -240,11 +246,15 @@ export function PropertiesPanelBody(props: PropertiesPanelBodyProps): React.Reac
           // write there would restyle all of them. A structurally locked element
           // with a real source location of its own (a ternary branch, a spread
           // bearer) takes ordinary inline styles — `setJsxStyle` merges into the
-          // literal object at that line. Per-property refusals are handled by
-          // `setNodeInlineStyles` against `codeProps`.
+          // literal object at that line. Per-property `codeProps` refusals (a
+          // single `style:<prop>` resolved from an expression) are handled
+          // inside `InlineStyleComposer` itself, per property — see its own
+          // doc comment; they do NOT gate this whole-node prop.
           sourceLockReason={
             hasWritableSourceLocation(selectedNode.id) ? undefined : selectedNode.lockReason
           }
+          nodeModuleId={selectedNode.moduleId}
+          codeProps={selectedNode.codeProps}
           moduleContent={moduleTabContent}
           onFocusClassPicker={onFocusClassPicker}
         />

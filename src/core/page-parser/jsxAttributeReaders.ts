@@ -19,9 +19,15 @@ import {
   type JsxSpreadAttribute,
   type SourceFile,
 } from 'ts-morph'
-import { LOOP_ID_SEPARATOR } from '@core/page-tree'
+import { LOOP_ID_SEPARATOR, styleValueKey } from '@core/page-tree'
 import type { ParsedNode, ParsedPropValue } from './types'
-import { tryResolveExpression, tryResolvePropValue, type PageEvalContext, type Resolution } from './nodeResolution'
+import {
+  tryResolveExpression,
+  tryResolvePropValue,
+  type PageEvalContext,
+  type Resolution,
+  type ResolutionMap,
+} from './nodeResolution'
 import type { ValueOrigin } from './staticEvalTypes'
 import { packagedImageImportRefusal, STUDIO_ASSET_SENTINEL } from './assetImports'
 import { decodeJsxTextEntities } from './jsxTextEntities'
@@ -249,9 +255,17 @@ export function extractProps(
   attributes: (JsxAttribute | JsxSpreadAttribute)[],
   ctx: ParseContext,
   kind: ParsedNode['kind'] = 'element',
-): { props: Record<string, ParsedPropValue>; resolutions: Resolution[]; codeProps: string[]; assetOrigin?: ValueOrigin } {
+): {
+  props: Record<string, ParsedPropValue>
+  resolutions: Resolution[]
+  /** R2 — same facts as `resolutions`, keyed by the prop NAME they explain. See `ParsedNode.resolvedProps`. */
+  resolutionsByKey: ResolutionMap
+  codeProps: string[]
+  assetOrigin?: ValueOrigin
+} {
   const result: Record<string, ParsedPropValue> = {}
   const resolutions: Resolution[] = []
+  const resolutionsByKey: ResolutionMap = {}
   /** Names whose value came from code, not a literal attribute — see `ParsedNode.codeProps`. */
   const codeProps: string[] = []
   // First resolved import-backed asset value wins — mirrors `textOrigin`'s
@@ -307,6 +321,7 @@ export function extractProps(
       if (resolved) {
         result[name] = resolved.value
         resolutions.push({ source: expression.getText(), note: resolved.note })
+        resolutionsByKey[name] = { source: expression.getText(), note: resolved.note }
         // The value shown is what the expression evaluates to; the source holds
         // the expression. Writing an edit here would replace the binding with a
         // baked literal, so this one prop is not a writeback target — UNLESS
@@ -346,6 +361,7 @@ export function extractProps(
         const refusal = packagedImageImportRefusal(expression.getSourceFile(), expression.getText())
         if (refusal !== undefined) {
           resolutions.push({ source: expression.getText(), note: refusal })
+          resolutionsByKey[name] = { source: expression.getText(), note: refusal }
           codeProps.push(name)
           continue
         }
@@ -371,7 +387,7 @@ export function extractProps(
     }
   }
 
-  return { props: result, resolutions, codeProps, ...(assetOrigin ? { assetOrigin } : {}) }
+  return { props: result, resolutions, resolutionsByKey, codeProps, ...(assetOrigin ? { assetOrigin } : {}) }
 }
 
 /**
@@ -391,25 +407,28 @@ export function extractInlineStyles(
 ): {
   styles: Record<string, string | number> | undefined
   resolutions: Resolution[]
+  /** R2 — same facts as `resolutions`, keyed by `style:<property>` (`styleValueKey`). See `ParsedNode.resolvedProps`. */
+  resolutionsByKey: ResolutionMap
   /** Style properties whose value came from code — `ParsedNode.codeProps` entries, minus the `style:` prefix the caller adds. */
   codeStyles: string[]
 } {
   const styleAttr = attributes.find(
     (a): a is JsxAttribute => Node.isJsxAttribute(a) && a.getNameNode().getText() === 'style',
   )
-  if (!styleAttr) return { styles: undefined, resolutions: [], codeStyles: [] }
+  if (!styleAttr) return { styles: undefined, resolutions: [], resolutionsByKey: {}, codeStyles: [] }
 
   const initializer = styleAttr.getInitializer()
   if (initializer === undefined || !Node.isJsxExpression(initializer)) {
-    return { styles: undefined, resolutions: [], codeStyles: [] }
+    return { styles: undefined, resolutions: [], resolutionsByKey: {}, codeStyles: [] }
   }
   const expression = initializer.getExpression()
   if (expression === undefined || !Node.isObjectLiteralExpression(expression)) {
-    return { styles: undefined, resolutions: [], codeStyles: [] }
+    return { styles: undefined, resolutions: [], resolutionsByKey: {}, codeStyles: [] }
   }
 
   const styles: Record<string, string | number> = {}
   const resolutions: Resolution[] = []
+  const resolutionsByKey: ResolutionMap = {}
   const codeStyles: string[] = []
   for (const property of expression.getProperties()) {
     if (!Node.isPropertyAssignment(property)) continue // skip shorthand / spread / methods
@@ -438,11 +457,12 @@ export function extractInlineStyles(
     if (resolved && typeof resolved.value !== 'boolean') {
       styles[key] = resolved.value
       resolutions.push({ source: valueNode.getText(), note: resolved.note })
+      resolutionsByKey[styleValueKey(key)] = { source: valueNode.getText(), note: resolved.note }
       codeStyles.push(key)
     }
   }
 
-  return { styles: Object.keys(styles).length > 0 ? styles : undefined, resolutions, codeStyles }
+  return { styles: Object.keys(styles).length > 0 ? styles : undefined, resolutions, resolutionsByKey, codeStyles }
 }
 
 /**

@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { mutative } from 'zustand-mutative'
 import { subscribeWithSelector } from 'zustand/middleware'
-import type { Page } from '@core/page-tree'
+import type { Page, SiteDocument } from '@core/page-tree'
 import { flattenVCToVirtualPage } from '@core/visualComponents'
 import type { EditorStore } from './types'
 import { createSiteSlice } from './slices/siteSlice'
@@ -270,6 +270,44 @@ export const selectActiveCanvasPage = (s: EditorStore): Page | null => {
 }
 
 /**
+ * Sweep-scoped `Map` memo for `selectCanvasPageFor`'s plain `pageId -> Page`
+ * lookup — `STUDIO-FIGMA-PARITY-PLAN.md` C1: the third O(pages) scan run on
+ * every call (`NodeRenderer.tsx` calls `selectCanvasPageFor` twice per node,
+ * and every board frame supplies its own `pageId`), on top of the two WS-5.2
+ * already fixed elsewhere.
+ *
+ * Unlike `_activePageCache` above (a true single-slot memo — that selector
+ * only ever has ONE `(site, activePageId)` pair per sweep), a single slot
+ * would thrash here: one store commit calls this with a DIFFERENT `pageId`
+ * per visible board frame, so the last-written slot would evict the
+ * previous frame's cached page before the next node's lookup could reuse it.
+ * A `Map` keyed by `pageId`, reset whenever `site`'s reference changes
+ * (Mutative mints a new `site` object on any mutation, the same
+ * invalidation signal `_activePageCache` relies on), gives every distinct
+ * `pageId` in the sweep its own cache slot: the first node on each frame
+ * pays the O(pages) scan once, every other node on that frame — and the
+ * `mcClassName` lookup right after it — hits the map.
+ *
+ * C2 reuses this SAME cache (not a fourth bespoke memo): `BoardFramesLayer`'s
+ * per-frame page selector calls `lookupCanvasPageById` directly, so a board
+ * frame's lookup and `NodeRenderer`'s lookups for nodes inside that same
+ * frame share one Map slot per `pageId` within the sweep.
+ */
+let _canvasPageForCache: { site: object; byPageId: Map<string, Page | null> } | null = null
+
+/** `site.pages.find(p => p.id === pageId)`, memoised per `(site, pageId)` — see `_canvasPageForCache`'s doc. */
+export function lookupCanvasPageById(site: SiteDocument, pageId: string): Page | null {
+  if (!_canvasPageForCache || _canvasPageForCache.site !== site) {
+    _canvasPageForCache = { site, byPageId: new Map() }
+  }
+  const cached = _canvasPageForCache.byPageId.get(pageId)
+  if (cached !== undefined) return cached
+  const page = site.pages.find((p) => p.id === pageId) ?? null
+  _canvasPageForCache.byPageId.set(pageId, page)
+  return page
+}
+
+/**
  * Resolve the canvas page for a specific `pageId`, or the active canvas
  * document when `pageId` is `null`.
  *
@@ -306,7 +344,8 @@ export const selectCanvasPageFor = (s: EditorStore, pageId: string | null, frame
       if (localized) return localized
     }
   }
-  return s.site?.pages.find((p) => p.id === pageId) ?? null
+  if (!s.site) return null
+  return lookupCanvasPageById(s.site, pageId)
 }
 
 /**

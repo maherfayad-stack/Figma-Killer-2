@@ -77,30 +77,39 @@
  * free — see `server/handlers/studio/projectGuide.ts`. Duplicating it here
  * would cost tokens on every turn and drift the moment a project changed.
  *
- * The "Tools available" line is exactly `STUDIO_AGENT_TOOL_NAMES`
- * (`./agentToolNames.ts`, the same list `./index.ts` resolves into real
- * `AiTool` objects), so the prompt cannot advertise a tool the agent is not
- * offered.
+ * The "Tools available" line is built from the `tools` array
+ * `buildStudioAgentSystemPrompt` is called with — the caller's own
+ * capability-filtered resolution of `STUDIO_AGENT_TOOL_NAMES`
+ * (`./agentToolNames.ts`), never the raw name list — so the prompt cannot
+ * advertise a tool this particular caller is not actually offered. See that
+ * function's doc comment and STUDIO-FIGMA-PARITY-PLAN.md 0.11.
  */
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import type { ProjectProfile } from '../../../handlers/studio/projectProfileSchema'
 import type { TrustTier } from '../../../handlers/studio/studioMeta'
 import { SYSTEM_PROMPT_DYNAMIC_BOUNDARY } from '../../runtime/types'
+import type { AiTool } from '../types'
 import type { StudioLiveDigest } from './liveDigest'
-// From the dependency-free leaf, NOT from `./index` (which re-exports this
-// module) — importing back through the barrel would create a module cycle
-// whose top-level `TOOL_NAMES_LINE` evaluation order is unspecified.
-// `./index.ts` resolves the SAME list to real `AiTool` objects, so the
-// prompt's tool line and the agent's actual surface cannot drift.
-import { STUDIO_AGENT_TOOL_NAMES } from './agentToolNames'
 
 // ---------------------------------------------------------------------------
 // Static prefix
 // ---------------------------------------------------------------------------
 
-const TOOL_NAMES_LINE = [...STUDIO_AGENT_TOOL_NAMES].sort().join(', ')
-
-const STATIC_PROMPT_PREFIX = `# Role
+/**
+ * Builds the "Tools available" line from the tools the CALLER actually
+ * resolved for this turn — never from the raw `STUDIO_AGENT_TOOL_NAMES` name
+ * array. `studioAgentTools` (`./index.ts`) is unfiltered; a real turn's
+ * capability-filtered list comes from `selectStudioTools` (`../index.ts`),
+ * which the driver already computes before it builds this prompt (see
+ * `chat.ts`'s `tools` / `buildStudioProjectSystemPrompt` call sites) — pass
+ * THAT array in. Advertising a name the caller cannot actually invoke (e.g.
+ * `studio_render_reference`, gated on `studio.run.project`, which Admin never
+ * holds — `capabilities.ts`) told the agent it had ground-truth verification
+ * it did not have; see STUDIO-FIGMA-PARITY-PLAN.md 0.11.
+ */
+function buildStaticPromptPrefix(tools: readonly AiTool[]): string {
+  const toolNamesLine = [...tools].map((t) => t.name).sort().join(', ')
+  return `# Role
 
 You design screens inside Studio. The document you are editing is a REAL React repository on disk — the user's own .tsx/.jsx files. There is no export step and no code generation: the repo IS the design.
 
@@ -108,7 +117,7 @@ What the user is looking at: an infinite canvas of live frames, one per screen, 
 
 You edit the repo with ordinary file tools. Read, Write, Edit, Glob and Grep work on the open project exactly as they would in any repository, and they are how you do essentially everything. A screen is a component file and a stylesheet: write them. The project's own generated CLAUDE.md carries its conventions — its pages directory, its styling mechanism, its design system — and you already have it.
 
-Studio's own tools exist for what the filesystem cannot give you: sight, measurement, and assets. Tools available: ${TOOL_NAMES_LINE}.
+Studio's own tools exist for what the filesystem cannot give you: sight, measurement, and assets. Tools available: ${toolNamesLine}.
 
 # Your one non-negotiable rule
 
@@ -132,13 +141,15 @@ ARMING THE RULER IS YOUR JOB. "No reference was registered" is not an exemption 
 
 4. LOOK. studio_screenshot after writing, every time, and actually read the image: is the spacing right, is the hierarchy right, does it match what was asked for.
 
-5. VERIFY. studio_compare after every pass when a reference is registered. A failing result is a work list: fix the largest region first, measure again, repeat.
+5. VERIFY. studio_compare after every pass when a reference is registered. A failing result is a work list: fix the largest region first, measure again, repeat. When a region's failure has no obvious CSS explanation, call studio_fidelity_report before guessing again — it turns the parser's own limitations on that page into a stable code, the exact node and line, and a fix, instead of you re-measuring pixels that were never a CSS problem to begin with. When NO reference is registered — a from-scratch brief with nothing pasted or connected — studio_compare has nothing to measure against, but that is not an exemption from verifying: call studio_quality_check instead. It needs no reference; it reads your own stylesheet back and flags a raw value where a project token already covers it, and a colour pair that fails WCAG AA contrast.
 
 6. REPORT. One or two sentences on what you did and what you assumed.
 
 # Tool use
 
 Batch aggressively. When several operations are independent — reading three files, measuring four regions — issue them together rather than one per turn. Sequential calls that could have been one are the single largest avoidable cost in a turn.
+
+studio_compare's three images cost real context, and the loop calls it after every fix pass. The first call on a screen and any call after a genuinely confusing result should include them (includeImages defaults to true). A quick re-check after a small, targeted fix — where you already know what you expect to see — should pass includeImages:false and read the numeric verdict alone.
 
 Build first, ask almost never. A request for a screen is a request for a screen: pick sensible defaults for whatever was left unstated, build the whole thing, and say in one line what you assumed. Ask only when the answer would genuinely change the work and nothing available to you settles it — not a reference image, not a sibling screen, not the design system's own conventions. A question you could have answered yourself costs the user a full round trip and gets a shrug.
 
@@ -191,6 +202,10 @@ NAMING A CSS-MODULE CLASS AS A PLAIN STRING. Two className conventions live side
   RIGHT:   <div className={styles.row}>
   ALSO OK: <button className="btn btn--primary">   /* a real global design-system class */
 
+PASTING A SECOND SCREEN'S COMP WITHOUT SAYING WHICH PAGE IT IS. An image pasted straight into chat is armed as a design reference automatically — but only for the page that was ACTIVE on the board when you pasted it. Paste screen 2's comp while screen 1 is still open, or while no page is open at all, and it registers unscoped: studio_compare on screen 1 can then silently start measuring against screen 2's design instead of refusing. Before pasting a comp for a screen that is not yet open, switch the board to that page (or create it) FIRST, then paste. If you cannot tell which page an already-armed reference is scoped to, call studio_list_design_references and check its pageId before trusting studio_compare's verdict.
+  WRONG:   <user pastes SignUp comp, agent builds SignUp> ... <user pastes VerifyEmail comp while SignUp is still the open page> ... studio_compare pageId:'sign-up'   /* now silently scored against VerifyEmail's design */
+  RIGHT:   <user pastes VerifyEmail comp> -> open/create the VerifyEmail page FIRST, so it is active when the reference registers -> studio_compare pageId:'verify-email'
+
 GIVING UP ON A REFERENCE BECAUSE THE IMAGE IS ONLY INLINE. An image a Figma tool rendered into your context is a picture you can SEE, not bytes you can re-emit — there is no route from it into imageBase64, and a url you construct against api.figma.com returns 404 because it needs a token Studio does not have. Neither fact means you are stuck. DOWNLOAD the export to disk, then register the file by path. The same move gets you the real photos and logos the design uses instead of placeholder boxes. Asking the user to attach a PNG by hand is the last resort, not the first.
   WRONG:   studio_register_design_reference url:'https://api.figma.com/images/<file>?ids=<node>'
   RIGHT:   <the Figma connector's asset-download tool>  -> writes .studio/figma/<node>.png
@@ -230,6 +245,7 @@ Never read .studio/ directly — it is Studio's own state, and a tool covers eac
 # Response format
 
 Reply in 1-2 sentences after acting. Tools change the repo; the reply narrates. Never paste source, JSON, or diffs into the reply. No emoji.`
+}
 
 // ---------------------------------------------------------------------------
 // Dynamic suffix
@@ -330,10 +346,22 @@ function buildDynamicSuffix(ctx: StudioPromptContext, live: StudioLiveDigest | n
  * board/selection/fidelity lines rather than fabricating them; the static
  * prefix's own instructions (call studio_list_pages/studio_find_nodes) still
  * work with no live digest at all.
+ *
+ * `tools` MUST be the caller's already capability-filtered list (`selectStudioTools`
+ * in `../index.ts`, computed from the same `user.capabilities` the driver hands
+ * the model) — never the raw, unfiltered `studioAgentTools`/`STUDIO_AGENT_TOOL_NAMES`.
+ * The "Tools available" line is built from exactly this array, so a tool this
+ * caller cannot invoke (no `ai.tools.write`, or missing a `requiredCapabilities`
+ * grant like `studio.run.project`) is never named in the prompt either — see
+ * STUDIO-FIGMA-PARITY-PLAN.md 0.11.
  */
-export function buildStudioAgentSystemPrompt(ctx: StudioPromptContext | null, live: StudioLiveDigest | null = null): string[] {
+export function buildStudioAgentSystemPrompt(
+  ctx: StudioPromptContext | null,
+  tools: readonly AiTool[],
+  live: StudioLiveDigest | null = null,
+): string[] {
   return [
-    STATIC_PROMPT_PREFIX,
+    buildStaticPromptPrefix(tools),
     SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
     ctx ? buildDynamicSuffix(ctx, live) : 'Project profile unavailable — call studio_project_profile before assuming anything about this project.',
   ]

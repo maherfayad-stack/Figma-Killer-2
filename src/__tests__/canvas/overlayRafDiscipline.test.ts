@@ -63,7 +63,11 @@ describe('BreakpointSelectionOverlay RAF loop', () => {
 
 describe('Board object drags stay off the overlay RAF loop', () => {
   const boardDragFiles = [
-    'canvas/BoardFramesLayer/BoardFramesLayer.tsx',
+    // The per-frame drag/resize pointer-capture handlers live in
+    // `BoardFrameView.tsx` (extracted out of `BoardFramesLayer.tsx` for
+    // `module-size-budgets` — Track C2) — that's the file this gate must
+    // track, not the board-level layer that only positions/virtualizes them.
+    'canvas/BoardFramesLayer/BoardFrameView.tsx',
     'canvas/BoardDocsLayer/DocBlockView.tsx',
     'canvas/BoardNotesLayer/StickyNoteView.tsx',
   ]

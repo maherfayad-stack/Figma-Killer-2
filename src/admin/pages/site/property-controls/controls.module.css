@@ -111,42 +111,33 @@
     min-width: 0;
 }
 
-.colorField .colorInlineSwatch {
+/* The swatch trigger opens the token menu (T8) — it is a plain `Button`
+   (`size="micro"`, `iconOnly`), positioned over the same slot the old native
+   colour input occupied. Its own ghost-variant hover/focus chrome comes from
+   `Button.module.css`; only placement is overridden here. */
+.colorSwatchTrigger {
     position: absolute;
     z-index: 1;
     top: 50%;
     left: 5px;
-    width: 18px;
-    height: 18px;
+    transform: translateY(-50%);
+    border-radius: 8px;
+}
+
+/* The native `<input type="color">` — reachable ONLY by `.click()`ing it
+   programmatically from "Custom colour…" (T8), never by direct interaction.
+   Visually hidden rather than `display:none`, which some browsers refuse to
+   open a colour picker on. */
+.hiddenColorInput {
+    position: absolute;
+    width: 1px;
+    height: 1px;
     padding: 0;
+    margin: calc(var(--space-px) * -1);
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
     border: 0;
-    border-radius: 8px;
-    background: transparent;
-    box-shadow: none;
-    transform: translateY(-50%);
-}
-
-.colorField .colorInlineSwatch:hover {
-    border-color: var(--overlay-50);
-    box-shadow: none;
-}
-
-.colorField .colorInlineSwatch:focus-within {
-    border-color: var(--overlay-50);
-    box-shadow: 0 0 0 2px
-        color-mix(in srgb, var(--overlay) 12%, transparent);
-}
-
-.colorField .colorInlineSwatch:active {
-    transform: translateY(-50%);
-}
-
-.colorField .colorInlineSwatch > span {
-    border-radius: 8px;
-    box-shadow:
-        inset 0 0 0 1px
-            color-mix(in srgb, var(--overlay) 16%, transparent),
-        inset 0 -5px 8px color-mix(in srgb, var(--bg-body) 16%, transparent);
 }
 
 .colorText {
@@ -159,7 +150,29 @@
     padding-left: var(--space-6xl);
 }
 
-.colorTokenMenu {
+/* WCAG contrast badge (T9) — only rendered when a caller supplies
+   `contrastAgainst`. Achromatic by default; colour is STATE here (pass/fail),
+   the one legitimate use per the two-layer colour model. */
+.colorContrastBadge {
+    flex-shrink: 0;
+    padding: 0 var(--space-3xs);
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    font-size: var(--text-2xs);
+    font-weight: 650;
+    white-space: nowrap;
+}
+
+.colorContrastBadge-AAA,
+.colorContrastBadge-AA {
+    color: var(--success);
+}
+
+.colorContrastBadge-fail {
+    color: var(--danger);
+}
+
+.colorTokenMenuWrap {
     position: absolute;
     z-index: 30;
     top: calc(100% + 4px);
@@ -167,9 +180,6 @@
     left: 0;
     display: grid;
     gap: var(--space-4xs);
-    max-height: 184px;
-    overflow: auto;
-    padding: var(--space-3xs);
     border: 1px solid var(--border-muted);
     border-radius: 8px;
     background: var(--bg-surface-2);
@@ -177,11 +187,19 @@
         color-mix(in srgb, var(--bg-body) 42%, transparent);
 }
 
+.colorTokenMenu {
+    display: grid;
+    gap: var(--space-4xs);
+    max-height: 184px;
+    overflow: auto;
+    padding: var(--space-3xs);
+}
+
 .colorTokenOption {
     display: grid;
     width: 100%;
     min-height: 28px;
-    grid-template-columns: 18px minmax(0, 1fr);
+    grid-template-columns: 18px minmax(0, 1fr) auto;
     align-items: center;
     gap: var(--space-s);
     border: 0;
@@ -192,6 +210,15 @@
     font: inherit;
     padding: var(--space-3xs) var(--space-xs);
     text-align: left;
+}
+
+/* Custom colour — the only route to a raw, un-tokenized value (T8). */
+.colorCustomAction {
+    margin: 0 var(--space-3xs) var(--space-3xs);
+    border-top: 1px solid var(--border-muted);
+    border-radius: 6px;
+    color: var(--text-muted);
+    font-size: var(--text-xs);
 }
 
 .colorTokenOption:hover,
@@ -397,10 +424,15 @@
 .codeValue {
     display: flex;
     align-items: center;
+    justify-content: space-between;
     gap: var(--space-4xs);
     min-height: 28px;
     font-size: var(--text-xs);
     color: var(--text-muted);
+    overflow: hidden;
+}
+
+.codeValueText {
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
@@ -408,4 +440,55 @@
 
 .codeValueHint {
     color: var(--text-subtle);
+}
+
+/* Track F2 — the per-field lock glyph (R1/R2's "per-field design"): the WHY
+   used to be a permanent inline string; now it's a small badge whose tooltip
+   carries the same fact, so the value itself keeps the row's width. */
+.codeValueGlyph {
+    flex-shrink: 0;
+    color: var(--text-subtle);
+}
+
+/* ── SlotControl (E2.5) — Edit contents / Add / Add another + inline picker ── */
+.slotControl {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2xs);
+    flex-wrap: wrap;
+}
+
+.slotPicker {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2xs);
+    margin-top: var(--space-2xs);
+    padding: var(--space-xs);
+    border-radius: var(--radius);
+    background: var(--bg-surface-2);
+}
+
+.slotPickerEmpty {
+    margin: var(--space-2xs) 0 0;
+    padding: var(--space-s);
+    font-size: var(--text-2xs);
+    color: var(--text-disabled);
+    text-align: center;
+    line-height: 1.5;
+}
+
+.slotPickerList {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4xs);
+    margin: var(--space-2xs) 0 0;
+    padding: 0;
+    list-style: none;
+    max-height: 160px;
+    overflow-y: auto;
+}
+
+.slotPickerCandidate {
+    width: 100%;
+    justify-content: flex-start;
 }

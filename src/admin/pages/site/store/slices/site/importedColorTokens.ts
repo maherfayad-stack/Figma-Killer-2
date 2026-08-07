@@ -47,6 +47,13 @@ export function addImportedColorTokens(
       order: (maxOrder += 1),
       createdAt: now,
       updatedAt: now,
+      // `origin` is left unset (undefined), not stamped 'project-css' or
+      // similar: this value came from a DIFFERENT site's import, never
+      // loaded into THIS project's own document. `filterReemittableColorTokens`
+      // (`@core/framework`'s colors.ts) treats undefined the same as
+      // 'studio-authored' — still re-emit — which is exactly right here:
+      // there is no other declaration of this name anywhere in the current
+      // project for the canvas to fall back on.
     }
     tokens.push(token)
     committed.push({ slug, value })
@@ -74,6 +81,14 @@ export function overwriteImportedColorTokens(
     if (!existing) continue
     existing.lightValue = value
     existing.updatedAt = Date.now()
+    // The overwrite is itself an import from a DIFFERENT site — if
+    // `existing` was previously an extracted token (`origin: 'project-css'`
+    // etc., stamped by `tokenExtractBuild.ts`), that origin is now stale:
+    // the value just written no longer matches what the currently open
+    // project's own CSS declares, so it must be re-emitted like any other
+    // studio-authored value or the canvas would silently keep showing the
+    // OLD, still-accurate-to-disk value instead of this overwrite.
+    existing.origin = undefined
     committed.push({ slug: existing.slug, value })
   }
 

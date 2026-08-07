@@ -17,7 +17,7 @@ The static-site pipeline has two parts: a pure analysis function (`buildImportPl
 - What imports: pages, linked CSS plus unconditional local CSS `@import` graphs, `kind:'class'` and `kind:'ambient'` style rules, stylesheets kept as page-scoped files, `@keyframes`, uploadable media/font files, root CSS color tokens, root CSS font tokens, `@font-face` families, known external font stylesheet imports, safe extra HTML attributes on base modules, body-level classes/attributes/style metadata, bare DOM text nodes in mixed content, and executable HTML scripts as page-scoped runtime scripts. Module-script imports from known npm CDNs are rewritten to bare package imports and added to the site dependency manifest.
 - CMS bundle import preserves selected exported tables, rows, optional site shell, media, folders, and redirects using the same merge strategies as site transfer (`replace`, `merge-add`, `merge-overwrite`).
 - HTML forms import through the shared HTML importer as first-class form primitives (`base.form`, controls, labels, submit buttons), not as custom containers.
-- What cannot be modeled: `@layer`, conditional local CSS `@import`, and arbitrary external `@import` — surfaced as warnings when the CSS engine exposes them, never silently dropped.
+- What cannot be modeled: conditional local CSS `@import` and arbitrary external `@import` — surfaced as warnings when the CSS engine exposes them, never silently dropped. `@layer` (statement, named block, anonymous block, nested, or combined with `@media`/`@supports`/`@container`) is flattened to source order by a pre-pass before parsing — this is what makes Tailwind v4 output (which wraps its entire stylesheet in `@layer theme, base, components, utilities { ... }`) importable at all. A stylesheet that declares an explicit `@layer a, b, c;` order and then writes the blocks in a different order gets a `layer-order-flattened` warning, since flattening to source order can't reproduce that cascade exactly.
 - Headless: `src/core/siteImport/` carries no admin, React, or server imports (gated by `siteImport-headless.test.ts`).
 
 ---
@@ -221,7 +221,8 @@ interface ImportScript {
 | Unconditional local `@import "file.css"` | Followed recursively from the linked stylesheet; the imported file keeps its own source path so relative `url(...)` assets resolve correctly |
 | Trusted Google CSS2 `@import` | Parsed into `ImportGoogleFont` install requests and committed as self-hosted installed font entries |
 | `@keyframes` | Stored as a supported ambient raw CSS rule and emitted globally by the publisher after its raw-keyframes safety gate |
-| Conditional local `@import`, arbitrary external `@import`, `@layer` | Dropped; source text added to `droppedAtRules`; a `dropped-at-rule` warning emitted when surfaced by the CSS engine |
+| Conditional local `@import`, arbitrary external `@import` | Dropped; source text added to `droppedAtRules`; a `dropped-at-rule` warning emitted when surfaced by the CSS engine |
+| `@layer` (any form, any nesting) | Flattened to source order before parsing (`unwrapCssLayers`), not dropped — its contents parse exactly as if the `@layer` wrapper weren't there. A `layer-order-flattened` warning fires only when a `@layer a, b, c;` statement's declared order disagrees with the order the named blocks appear in source |
 | `@font-face` | Captured as `ParsedFontFace`; resolved into `ImportFontFamily` by `buildAssetPlan` |
 
 ---
@@ -326,7 +327,8 @@ On success the same step switches to its **complete** state — a success mark, 
 
 | Kind | When emitted |
 |---|---|
-| `dropped-at-rule` | An unsupported at-rule such as `@layer`, conditional local `@import`, or arbitrary external `@import` was present but cannot be modelled |
+| `dropped-at-rule` | An unsupported at-rule such as conditional local `@import` or arbitrary external `@import` was present but cannot be modelled |
+| `layer-order-flattened` | A `@layer a, b, c;` statement's declared order disagrees with the order the named blocks appear in source; flattening `@layer` to source order can't reproduce that cascade exactly |
 | `unmatched-media-query` | Legacy warning kind retained for old import reports; current imports preserve unmatched `@media` blocks as reusable conditions |
 | `invalid-rule` | A CSS rule caused `replaceSync` to throw (sheet-level parse error) |
 | `blocked-property` | A CSS property name is on the security denylist (`behavior`, `-moz-binding`, …) — declaration dropped |

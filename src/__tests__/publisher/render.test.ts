@@ -885,10 +885,10 @@ describe('publishPage', () => {
 
     const { html } = publishPage(page, proj, registry)
 
-    expect(html).toContain(':root.theme-alt')
-    expect(html).toContain(':root.theme-default .theme-inverted')
-    expect(html).not.toContain('theme-dark')
-    expect(html).not.toContain('theme-light')
+    expect(html).toContain("html[data-studio-scheme='dark']")
+    expect(html).toContain("html[data-studio-scheme='light'] .theme-inverted")
+    expect(html).not.toContain('theme-alt')
+    expect(html).not.toContain('theme-default')
     expect(html).toContain('--primary: hsla(238, 100%, 62%, 1);')
     expect(html).toContain('--primary: hsla(238, 100%, 42%, 1);')
     expect(html).toContain('.text-primary')

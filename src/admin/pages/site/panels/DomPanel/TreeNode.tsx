@@ -124,7 +124,7 @@ export const TreeNode = memo(function TreeNode({ nodeId, depth, editable = true 
   const rowRef = useRef<HTMLDivElement>(null)
   const renameInputRef = useRef<HTMLInputElement>(null)
 
-  const { activeId, target, invalidOverId, registerRow } = useDomPanelDndContext()
+  const { activeId, target, invalidOverId, invalidReason, registerRow } = useDomPanelDndContext()
   const selectLayerNode = (mode?: 'replace' | 'toggle' | 'range') => {
     selectNode(nodeId, mode, {
       preservePropertiesPanelCollapse: isNarrowEditorChromeViewport(),
@@ -329,6 +329,13 @@ export const TreeNode = memo(function TreeNode({ nodeId, depth, editable = true 
           node.hidden ? 'hidden' : null,
         ].filter(Boolean).join(', ')}
         data-drop-position={dropPosition}
+        // G5 — a real title on the row: unlike the canvas overlay's
+        // `pointer-events: none` invalid box, this row is a normal
+        // interactive element, so a native title tooltip actually fires on
+        // hover here. Only set when THIS row is the refused drop target AND
+        // the refusal is a source-write one (not an ordinary structural
+        // rejection, which has no message to show).
+        title={invalidOverId === nodeId ? (invalidReason ?? undefined) : undefined}
         // Stable agent-addressable handles. `dom-tree-item` is keyed by the
         // node id (matches `data-studio-node-id` on the canvas) so a single id
         // round-trips between the canvas and the layers tree. `data-studio-tag`

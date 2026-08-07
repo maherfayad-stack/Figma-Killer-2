@@ -29,8 +29,13 @@ export interface ParsedPageToSitePageOptions {
    *  anything about that classification itself. `instanceOf` (WS-4.2) is
    *  included so the resolver can tell a call site inlining EXPANDED (an
    *  instance) apart from one it declined to expand, without re-deriving
-   *  that from `componentSources` alone. */
-  resolveModuleId: (node: Pick<ParsedNode, 'id' | 'kind' | 'name' | 'children' | 'text' | 'props' | 'instanceOf'>) => string
+   *  that from `componentSources` alone. `fragmentSlot` (E2.3) is included so
+   *  the resolver can route a fragment-valued slot container straight to
+   *  `studio.slot` without inspecting `name`/`kind` at all — see
+   *  `ParsedNode.fragmentSlot`'s doc comment. */
+  resolveModuleId: (
+    node: Pick<ParsedNode, 'id' | 'kind' | 'name' | 'children' | 'text' | 'props' | 'instanceOf' | 'fragmentSlot'>,
+  ) => string
   /**
    * Maps a resolved moduleId to the single prop key its module's
    * `inlineTextEdit` declares (`base.text` -> 'text', `base.button` -> 'label',
@@ -91,6 +96,7 @@ export function parsedPageToSitePage(parsed: ParsedPage, opts: ParsedPageToSiteP
       text: node.text,
       props: node.props,
       instanceOf: node.instanceOf,
+      fragmentSlot: node.fragmentSlot,
     })
     // WS-4.2 — a `studio.instance` node's own `props` bag is NOT the call
     // site's literal props (those live nested, at `props.callSiteProps`) —
@@ -132,6 +138,19 @@ export function parsedPageToSitePage(parsed: ParsedPage, opts: ParsedPageToSiteP
       ? (node.codeProps ?? []).map((name) => `callSiteProps:${name}`)
       : (node.codeProps ?? []).filter((name) => name !== 'className')
 
+    // R2 — `node.resolvedProps` remapped the exact same way `codeProps` just
+    // was, so a key here always lines up with a key in `codeProps`: an
+    // instance's keys move into the `callSiteProps:<name>` namespace,
+    // `className` (translated to `classIds`, never a real panel prop) is
+    // dropped. See `PageNode.resolvedProps`.
+    const resolvedProps: Record<string, { source: string; note?: string }> = {}
+    if (node.resolvedProps) {
+      for (const [key, value] of Object.entries(node.resolvedProps)) {
+        if (!node.instanceOf && key === 'className') continue
+        resolvedProps[node.instanceOf ? `callSiteProps:${key}` : key] = value
+      }
+    }
+
     // Map captured element text onto the module's declared text prop — but
     // an explicit attribute always wins (e.g. `<Button label="x">y</Button>`
     // is a real, if odd, source shape; the attribute is the author's intent).
@@ -146,6 +165,15 @@ export function parsedPageToSitePage(parsed: ParsedPage, opts: ParsedPageToSiteP
         // there is nowhere honest to write, so the text prop joins `codeProps`.
         if (node.textOrigin) originTextProp = textProp
         else if (node.codeText) codeProps.push(textProp)
+        // R2 — the parser records text's resolution under the key `'text'`
+        // (`callSiteProps:text` once remapped above); rekey it to the
+        // module's own text prop name, same as `codeProps.push` above.
+        const textResolutionKey = node.instanceOf ? 'callSiteProps:text' : 'text'
+        const textResolution = resolvedProps[textResolutionKey]
+        if (textResolution) {
+          delete resolvedProps[textResolutionKey]
+          resolvedProps[textProp] = textResolution
+        }
       }
     }
 
@@ -228,6 +256,9 @@ export function parsedPageToSitePage(parsed: ParsedPage, opts: ParsedPageToSiteP
       // show WHY a resolved node is locked and which branch/note it chose.
       // Follows the exact `locked`/`lockReason` pattern above.
       ...(node.resolution ? { resolution: node.resolution } : {}),
+      // R2 — the per-prop counterpart of `resolution` above: every code-valued
+      // prop's own source, not just the node's first. See `PageNode.resolvedProps`.
+      ...(Object.keys(resolvedProps).length > 0 ? { resolvedProps } : {}),
       // parser-06 — the branch(es) the parser did NOT select for this node,
       // straight copy (same shape on both sides). Does not affect `locked`;
       // see `PageNode.branchAlternatives`'s own doc comment.

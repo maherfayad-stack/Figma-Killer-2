@@ -25,25 +25,27 @@ type UiStateActions = Pick<
 
 export function createUiStateActions({ set, get }: SiteSliceHelpers): UiStateActions {
   return {
+    // Track F1 / S6 — `activeClassId` and `inlineStyleEditing` used to be
+    // mutually exclusive: picking a class force-cleared inline-edit mode and
+    // vice versa, so a user had to delete a class to even SEE their inline
+    // styles. That coupling was the feature request in reverse — Studio's
+    // panel shows BOTH targets simultaneously now (`StyleSurface`), each with
+    // its own honest write-back outcome, so the two flags are independent
+    // pieces of UI state: "which class is open for editing" and "is the
+    // inline-style section open", not one exclusive mode switch.
     setActiveClass(id) {
-      const { activeClassId, inlineStyleEditing } = get()
-      // Selecting a real class always switches away from inline editing.
-      const nextInline = id !== null ? false : inlineStyleEditing
-      // Guideline #242 no-op guard — bail only when nothing actually changes.
-      if (Object.is(activeClassId, id) && nextInline === inlineStyleEditing) return
+      const { activeClassId } = get()
+      // Guideline #242 no-op guard.
+      if (Object.is(activeClassId, id)) return
       set((s) => {
         s.activeClassId = id
-        s.inlineStyleEditing = nextInline
       })
     },
 
     setInlineStyleEditing(active) {
       if (get().inlineStyleEditing === active) return
-      // Enabling inline editing clears the active class so the two targets stay
-      // mutually exclusive; disabling leaves the active class untouched.
       set((s) => {
         s.inlineStyleEditing = active
-        if (active) s.activeClassId = null
       })
     },
 

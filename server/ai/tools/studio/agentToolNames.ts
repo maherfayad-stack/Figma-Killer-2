@@ -43,6 +43,22 @@ export const STUDIO_AGENT_TOOL_NAMES: readonly string[] = [
   // skews consistently large — see `measureReference.ts`.
   'studio_measure_reference',
   'studio_render_reference',
+  // A3 (STUDIO-FIGMA-PARITY-PLAN.md) — the reference-free counterpart to
+  // studio_compare/studio_measure_reference above: neither has anything to
+  // measure a from-scratch screen against, so without this the agent's only
+  // signal on a design-less brief was studio_screenshot plus its own
+  // subjective judgement of a picture. Statically scans the screen's own
+  // stylesheet for one-off values a project token already covers and for
+  // same-rule colour pairs that fail WCAG AA contrast.
+  'studio_quality_check',
+  // The machine-readable "what will not import faithfully" report: turns
+  // `PageNode.lockReason`/`resolution`/`codeProps` into stable finding codes
+  // with a node id, file:line, and a fix. Was absent here — every OTHER
+  // exclusion in this file is justified above; this one was WS-9.4 landing
+  // after WS-12's tool curation, not a deliberate cut (STUDIO-FIGMA-PARITY-PLAN.md
+  // 0.12). Without it, a `studio_compare` region with no obvious CSS
+  // explanation has no path to "why", only more pixel-guessing.
+  'studio_fidelity_report',
   'studio_register_design_reference',
   'studio_list_design_references',
   'studio_read_design_reference',

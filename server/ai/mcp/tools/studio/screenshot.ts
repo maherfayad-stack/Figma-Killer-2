@@ -37,10 +37,14 @@
  * bought with nothing. `"Checkout"`, `"Checkout.tsx"`, `"pages/Checkout.tsx"`
  * and the raw page id all resolve to the same frame.
  */
+import { join } from 'node:path'
 import { Type } from '@core/utils/typeboxHelpers'
+import { createWorkspaceProject } from '@core/page-parser'
 import type { AiTool, ToolContext } from '../../../runtime/types'
 import { syncBoardFramesFromDisk } from '../../../../handlers/studio/pageScaffold'
 import { loadStudioPages } from '../../../../handlers/studioPageLoad'
+import { canonicalSummaryForFile } from '../../../../handlers/studio/canonicalPageCheck'
+import { resolvePageSourceFile } from '../../../../handlers/studio/pageSourceFile'
 import { awaitEditorBridgeForUser } from '../../editorBridge'
 import { awaitStudioLiveReload } from './liveReloadPush'
 import { resolveToolProjectDir } from './resolveToolProjectDir'
@@ -91,7 +95,7 @@ export const studioScreenshotTool: AiTool = {
   mutates: true,
   requiredCapabilities: ['studio.write'],
   description:
-    'See what a screen actually looks like. Places a board frame for any page file that does not have one yet, waits for the canvas to re-read the files from disk, then captures each requested screen from the live DOM and returns it as a PNG image block. This is how you verify your own work: write the files, then look at them. Name screens the way you named the files ("Checkout"), or omit `pages` to capture the whole project. Each result carries the captured width/height, its index into the response images, and `nodeRects` (node id -> frame-local rect) for feeding studio_diff_frames. Requires the project open in a Studio browser tab.',
+    'See what a screen actually looks like. Places a board frame for any page file that does not have one yet, waits for the canvas to re-read the files from disk, then captures each requested screen from the live DOM and returns it as a PNG image block. This is how you verify your own work: write the files, then look at them. Name screens the way you named the files ("Checkout"), or omit `pages` to capture the whole project. Each result carries the captured width/height, its index into the response images, `nodeRects` (node id -> frame-local rect) for feeding studio_diff_frames, and — for a .tsx/.jsx screen — `canonical: { isCanonical, violations, advisories }`, the same WS-13 canonical-JSX self-check studio_read_file exposes, run against the file you just wrote so a non-literal prop/className, a spread prop, a Sass/CSS-in-JS import, an unresolvable dynamic map, or a likely unnecessary wrapper element shows up on the very call your own "write, then look" loop already makes, not only if you separately think to call studio_read_file. It does NOT catch a hardcoded colour, a fixed pixel width, or a literal inline style object — those are values the system prompt\'s own rules ban, not structural editability breaks; studio_measure_reference and careful reading remain how you catch those.',
   inputSchema: ScreenshotInputSchema,
   handler: async (input, ctx: ToolContext) => {
     const { dir: dirInput, pages: requested, dpr, axes } = input as {
@@ -136,10 +140,37 @@ export const studioScreenshotTool: AiTool = {
     })
     if (!captured.ok) return captured
 
+    // A6 (STUDIO-FIGMA-PARITY-PLAN.md): re-arm the WS-13 canonical-JSX
+    // self-check on the one path guaranteed to run right after a real write —
+    // the agent's own prescribed workflow calls this tool after every edit.
+    // `studio_read_file` (the check's only OTHER wiring) is withheld from the
+    // in-canvas agent in favour of native Read/Write/Edit, which are not
+    // server-mediated the way an MCP tool call is, so there is no per-call
+    // hook to attach this to instead — see `canonicalPageCheck.ts`'s doc.
+    // Bounded by the same `ids`/`MAX_FRAMES` cap the capture itself already
+    // enforces; never fails the call (`canonicalSummaryForFile` never throws).
+    const rawData = captured.data as { frames?: Array<Record<string, unknown>> } | null
+    const pageById = new Map(pages.map((p) => [p.id, p]))
+    // Built ONCE for the whole batch (up to MAX_FRAMES pages) and reused —
+    // see `canonicalPageCheck.ts`'s doc for why a workspace-aware project is
+    // required for an accurate result, and why re-scanning per page would be
+    // wasteful.
+    const canonicalProject = rawData?.frames?.some((f) => f.ok === true) ? createWorkspaceProject(dir) : undefined
+    const framesWithCanonical = rawData?.frames?.map((frame) => {
+      const pageId = typeof frame.pageId === 'string' ? frame.pageId : undefined
+      if (frame.ok !== true || !pageId || !canonicalProject) return frame
+      const page = pageById.get(pageId)
+      const relFile = page ? resolvePageSourceFile(page) : null
+      if (!relFile) return frame
+      const canonical = canonicalSummaryForFile(join(dir, ...relFile.split('/')), dir, relFile, canonicalProject)
+      return canonical ? { ...frame, canonical } : frame
+    })
+
     return {
       ok: true,
       data: {
-        ...(captured.data as Record<string, unknown> | null ?? {}),
+        ...(rawData ?? {}),
+        ...(framesWithCanonical ? { frames: framesWithCanonical } : {}),
         dir,
         ...(placed.length > 0 ? { newlyPlacedOnBoard: placed } : {}),
         ...(unmatched.length > 0 ? { unmatched } : {}),

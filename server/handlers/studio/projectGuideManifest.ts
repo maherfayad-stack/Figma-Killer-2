@@ -44,9 +44,6 @@ import type { ProjectProfile } from './projectProfileSchema'
 
 export const MANIFEST_PATH = join('.claude', '.studio-generated.json')
 
-/** The design-system package whose own docs the guide embeds — shared here so the fingerprint's stat witness and `projectGuide.ts`'s own `installed` check never drift apart. */
-export const ALM_PACKAGE = '@alm-design/design-system'
-
 export function sha256(text: string): string {
   return createHash('sha256').update(text, 'utf8').digest('hex')
 }
@@ -89,8 +86,17 @@ export function sha256(text: string): string {
  * does not need a bump and does: without it every existing project keeps
  * taking the fast path and keeps serving the broken snippet. Same bump also
  * covers the one-time legacy sweep ({@link LEGACY_GUIDE_ARTEFACTS}).
+ *
+ * `8` — Track A5: `resolveDesignSystemGuide` (`projectGuide.ts`) is no
+ * longer hardcoded to `@alm-design/design-system` — every declared
+ * `componentPackages` entry is now tried, and one with no agent docs but a
+ * readable `.d.ts`/`.tsx` now gets a real catalog-built guide instead of
+ * none at all. A non-ALM project that previously generated no "## Use X"
+ * section, no `design-system-components.md`, and no `studio_list_components`
+ * mention must regenerate once to pick any of that up — the exact class of
+ * bug `7`'s own note warns about, content-only and easy to miss.
  */
-export const GUIDE_DEFINITION_VERSION = 7
+export const GUIDE_DEFINITION_VERSION = 8
 
 export interface ManifestFileEntry {
   /** Content hash of what Studio itself last wrote (or last observed) here. */
@@ -257,26 +263,46 @@ export function writeManifest(dir: string, manifest: GeneratedManifest): void {
 }
 
 /**
- * Cheap stat-based witness for the two package doc files
- * `designSystemGuide.ts` reads to build the component reference —
- * their CONTENT is never hashed here (that would mean reading them just to
- * decide whether to skip reading them), only whether either file's
- * size/mtime moved since the last fingerprint. `'none'` when the package
- * isn't installed, matching `projectGuide.ts`'s own `installed` check.
+ * Cheap stat-based witness for every declared component package's own inputs
+ * to the design-system guide section — `projectGuide.ts`'s
+ * `resolveDesignSystemGuide` tries EVERY `componentPackages` entry in order
+ * now (Track A5, no longer just one hardcoded package name), so this witness
+ * has to cover the same set for the same reason: a change to a package this
+ * generator did not end up using to build `ds` (its docs/types are still
+ * unreadable, or an earlier sibling package won first) must stay irrelevant,
+ * but a change to any package that COULD affect which one wins, or what it
+ * produces, must not go silently stale behind the fast path.
+ *
+ * Per package: `package.json`'s own stat (any real `bun install`/upgrade
+ * rewrites the whole extracted package tree, so this alone catches "this
+ * package changed version" — the by far most common case) plus the two known
+ * doc filenames `buildDesignSystemGuide` reads. Deliberately does NOT stat
+ * every file in a package's `.d.ts`/`.tsx` export graph — the catalog
+ * fallback (`resolveCatalogDesignSystemGuide`) can walk barrels several files
+ * deep, and stat-walking a real design system's full declaration tree on
+ * every warm chat turn would cost real work the "nearly free" warm path this
+ * module exists to keep cheap cannot afford; `package.json`'s own stat is the
+ * same trade-off `almPackageDocsStatWitness` (this function's predecessor)
+ * already made for docs, generalized rather than widened. CONTENT is never
+ * hashed here for the same reason — only whether size/mtime moved.
  */
-function almPackageDocsStatWitness(dir: string, profile: ProjectProfile): string {
-  if (!profile.componentPackages.includes(ALM_PACKAGE)) return 'none'
+function componentPackageStatWitness(dir: string, profile: ProjectProfile): string {
+  if (profile.componentPackages.length === 0) return 'none'
   const appRoot = joinAppRoot(dir, profile.appRoot)
-  const pkgDir = join(appRoot, 'node_modules', '@alm-design', 'design-system')
-  const stat = (relFile: string): string => {
+  const stat = (absPath: string): string => {
     try {
-      const s = statSync(join(pkgDir, relFile))
+      const s = statSync(absPath)
       return `${s.size}:${s.mtimeMs}`
     } catch {
       return 'absent'
     }
   }
-  return `${stat('CLAUDE.md')}|${stat('design.md')}`
+  return profile.componentPackages
+    .map((pkg) => {
+      const pkgDir = join(appRoot, 'node_modules', ...pkg.split('/'))
+      return `${pkg}:${stat(join(pkgDir, 'package.json'))}|${stat(join(pkgDir, 'CLAUDE.md'))}|${stat(join(pkgDir, 'design.md'))}`
+    })
+    .join(',')
 }
 
 /**
@@ -309,7 +335,7 @@ export function computeProjectGuideFingerprint(dir: string, profile: ProjectProf
   hash.update(`v${GUIDE_DEFINITION_VERSION}`)
   hash.update(JSON.stringify(profile))
   hash.update(computeDesignSystemCacheKey(dir, profile.designSystems ?? []))
-  hash.update(almPackageDocsStatWitness(dir, profile))
+  hash.update(componentPackageStatWitness(dir, profile))
   hash.update(mcpServerFingerprintWitness(dir))
   return hash.digest('hex').slice(0, 16)
 }

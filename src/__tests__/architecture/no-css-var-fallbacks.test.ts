@@ -27,9 +27,12 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'fs'
 import { extname, join, relative } from 'path'
 
 const SRC_ROOT = join(import.meta.dir, '../..')
+// 'src/editor' never existed in this repo's tracked history (`git log --all
+// -- src/editor` is empty) — it contributed zero files here. 'admin' already
+// recursively covers the real site-editor surface (src/admin/pages/site/),
+// so dropping the dead entry changes no scanned file set.
 const SCAN_ROOTS = [
   join(SRC_ROOT, 'admin'),
-  join(SRC_ROOT, 'editor'),
   join(SRC_ROOT, 'ui'),
 ]
 const GLOBALS_CSS = join(SRC_ROOT, 'styles/globals.css')

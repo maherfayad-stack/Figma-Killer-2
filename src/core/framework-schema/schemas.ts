@@ -116,6 +116,35 @@ const FrameworkColorVariantOptionsSchema = withFallback(
   { enabled: true, count: 4 },
 )
 
+/**
+ * Where a color token's VALUE came from — was it read out of the project's
+ * own CSS/Tailwind-theme/Sass/JS-theme (an EXTRACTED token, per
+ * `tokenExtract.ts`'s `TokenExtractionSource`), or created directly in
+ * Studio's Colors panel (`studio-authored`, nothing else declares this
+ * name)?
+ *
+ * Consumed by the canvas's `filterReemittableColorTokens`
+ * (`@core/framework`'s `colors.ts`) to decide which tokens get a second
+ * `:root` declaration injected into the canvas document: an EXTRACTED
+ * token's real declaration already exists in the project's own stylesheet
+ * (loaded verbatim by `UserStylesheetInjector`/`ProjectCssInjector`), so
+ * re-declaring it — HSLA-normalized, a lossy transform for anything the
+ * engine can't parse (`oklch()`, `color-mix()`) — creates two competing
+ * declarations of the same custom property
+ * (STUDIO-FIGMA-PARITY-PLAN.md T4). `studio-authored` tokens have no other
+ * declaration anywhere, so they must still be emitted.
+ */
+const FrameworkColorTokenOriginSchema = Type.Union([
+  Type.Literal('project-css'),
+  Type.Literal('tailwind-theme'),
+  Type.Literal('vendor-css'),
+  Type.Literal('scss-vars'),
+  Type.Literal('js-theme'),
+  Type.Literal('studio-authored'),
+])
+
+export type FrameworkColorTokenOrigin = Static<typeof FrameworkColorTokenOriginSchema>
+
 const FrameworkColorTokenSchema = Type.Object({
   id: Type.String(),
   /**
@@ -139,6 +168,14 @@ const FrameworkColorTokenSchema = Type.Object({
   // live timestamp supply it in a parser helper.
   createdAt: withFallback(Type.Number(), 0),
   updatedAt: withFallback(Type.Number(), 0),
+  /**
+   * Optional and UNDEFAULTED — a token persisted before this field existed
+   * has no opinion, and `filterReemittableColorTokens` treats `undefined`
+   * the same as `studio-authored` (still re-emit) so existing projects don't
+   * silently lose their `:root` block until their next token re-extraction
+   * stamps a real origin. See the type doc above.
+   */
+  origin: Type.Optional(FrameworkColorTokenOriginSchema),
 })
 
 export type FrameworkColorToken = Static<typeof FrameworkColorTokenSchema>

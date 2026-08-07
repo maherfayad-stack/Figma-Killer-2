@@ -180,6 +180,11 @@ export function renderModuleTabContent(args: ModuleTabContentArgs): React.ReactN
             onChange={updateModuleProp}
             isOverride={overrideKeys.has(key)}
             sourceLockReason={propLockReason(selectedNode, key)}
+            // E2.5 — only `SlotControl` reads this: a package/design-system
+            // component's own `node`-kind prop is filled directly on ITS OWN
+            // element (unlike `studio.instance`, there's no separate call
+            // site), so the owner IS the selected node.
+            ownerNodeId={selectedNodeId ?? undefined}
             dynamicBinding={dynamicBindingsEnabled && selectedNodeId ? {
               binding: selectedNode.dynamicBindings?.[key],
               onSet: (binding) => onSetDynamicBinding(key, binding),

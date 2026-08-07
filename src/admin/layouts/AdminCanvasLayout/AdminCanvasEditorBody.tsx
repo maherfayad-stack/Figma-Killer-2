@@ -101,7 +101,6 @@ export function AdminCanvasEditorBody({
         <ConfirmDeleteProvider>
           <div className={styles.editorBody}>
             <LeftSidebar
-              workspace="site"
               editable={canEditDraftSite}
               canUseAiChat={canUseAiChat}
               railOnly={hasRightSidebar && narrowChrome}

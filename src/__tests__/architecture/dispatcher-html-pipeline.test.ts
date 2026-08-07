@@ -34,6 +34,7 @@
 import { describe, expect, it } from 'bun:test'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
+import { toPosixPath } from './pathHelpers'
 
 const ROOT = resolve(import.meta.dir, '../../..')
 
@@ -57,7 +58,7 @@ describe('dispatcher HTML pipeline', () => {
 
     const violations: string[] = []
     for (const file of walk(join(ROOT, 'server'))) {
-      const rel = file.slice(ROOT.length + 1)
+      const rel = toPosixPath(file.slice(ROOT.length + 1))
       if (allowedOwners.has(rel)) continue
       const src = readFileSync(file, 'utf-8')
       // `hookBus.emit('publish.before'`, `hookBus.emit('publish.after'`,

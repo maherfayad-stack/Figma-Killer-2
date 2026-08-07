@@ -38,6 +38,10 @@ const NOOP_DND_CONTEXT: DomPanelDndContextValue = {
   activeId: null,
   target: null,
   invalidOverId: null,
+  // D2's G5 work — the reason a drop is refused, surfaced while the pointer is
+  // still down. Nothing is draggable in this read-only subtree, so there is
+  // never a refusal to explain.
+  invalidReason: null,
   registerRow: () => {},
 }
 

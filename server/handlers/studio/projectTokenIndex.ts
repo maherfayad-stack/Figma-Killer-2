@@ -33,15 +33,31 @@
  * Deliberately NOT sourced from `.studio/framework.json`: that store holds
  * Studio's OWN generated framework scale (`--text-xs`…`--text-4xl`), which is
  * a different scale from the design system's, and offering both would answer
- * "which token is #0C9AB0" with two names from two systems. The CSS is what
- * actually cascades.
+ * "which token is #0C9AB0" with two names from two systems.
  *
- * Values are resolved one level through `var(--other)` aliases (the ALM
- * package writes `--type-headline-family: var(--font-display)`), then left
- * alone — a chain deeper than that is rare and guessing at it would be worse
- * than reporting the alias honestly.
+ * ## One scanner, not two (`STUDIO-FIGMA-PARITY-PLAN.md` §11, T12)
+ *
+ * This index used to carry its own `:root`-only regex scan, its own
+ * hex-only colour parser, and its own bare-`px`-only length parser — three
+ * ways this module could name a token `tokenExtractCssScan.ts`'s scan (the
+ * picker's own source) would disagree with: a `@layer`/colour-scheme-`@media`
+ * -nested declaration was invisible here, `hsl(...)`/`rgb(...)` tokens were
+ * invisible here, and `rem`/`em` tokens were refused outright here while the
+ * picker resolved them at a 16px root. The agent could measure a value and
+ * name a token the picker never offered, and vice versa.
+ *
+ * It now shares the SAME scan and resolution primitives —
+ * `collectRootScopeMaps` (at-rule descent, dark-selector recognition),
+ * `resolveVarValue` (bounded, cycle-safe, not one-level), `toPx`
+ * (`rem`/`em`/`pt`, not `px`-only) — and colour detection now goes through
+ * `cssColorToRgb` (hex + `rgb()`/`rgba()` + `hsl()`/`hsla()`, not hex-only).
+ * `nearestSizeToken`/`rgbToHex` stay here as the ranking helpers this
+ * module's own callers (`referenceMeasure.ts`) need; they are not scan logic.
  */
-import { parseHexColor, type Rgb } from './colorMath'
+import { cssColorToRgb, rgbToHex, type Rgb } from '@core/design-tokens'
+import { collectRootScopeMaps, detectRootFontSizePx, resolveVarValue, toPx } from './tokenExtractCssScan'
+
+export { rgbToHex }
 
 /** A custom property whose value is a colour. */
 export interface ColorTokenEntry {
@@ -66,12 +82,6 @@ export interface ProjectTokenIndex {
   readonly lengths: readonly SizeTokenEntry[]
 }
 
-/** `--name: value;` inside any rule. Values stop at `;` or the closing brace. */
-const CUSTOM_PROPERTY_RE = /(--[A-Za-z0-9_-]+)\s*:\s*([^;}]+)/g
-/** `var(--other)`, optionally with a fallback we ignore — resolved one level. */
-const VAR_ALIAS_RE = /^var\(\s*(--[A-Za-z0-9_-]+)\s*(?:,[^)]*)?\)$/
-/** A bare pixel length. Deliberately not `rem`/`em`: those depend on a root size this index does not know, and a wrong px equivalent is worse than none. */
-const PX_VALUE_RE = /^(-?\d+(?:\.\d+)?)px$/
 /** A name that reads as a font size rather than a spacing or radius. */
 const FONT_SIZE_NAME_RE = /(^--text-)|(-size$)|(font-size)/i
 /** Names whose `-size` suffix is NOT type — a radius or an icon box would otherwise be offered as a font size. */
@@ -88,40 +98,40 @@ const MAX_TOKENS_PER_KIND = 600
  * Last declaration wins, matching the cascade for two `:root` blocks that
  * declare the same property — the design system's own `dist/index.css` and a
  * project's `styles/imported/` copy of the same tokens routinely both appear.
+ * Only LIGHT values are indexed — a static design reference has no dark-mode
+ * concept to measure against, so there is nothing for a dark value to answer.
  */
 export function buildProjectTokenIndex(...cssSources: readonly string[]): ProjectTokenIndex {
-  const raw = new Map<string, string>()
+  const light = new Map<string, string>()
+  // First source with an explicit `html`/`:root { font-size }` wins — the
+  // same "first, then last-declaration-wins for names" precedent this
+  // function already applies; in practice at most one source declares this.
+  let rootFontSizePx: number | undefined
   for (const css of cssSources) {
     if (!css) continue
-    for (const match of css.matchAll(CUSTOM_PROPERTY_RE)) {
-      raw.set(match[1]!, match[2]!.trim())
+    for (const [name, raw] of collectRootScopeMaps(css).light) light.set(name, raw)
+    if (rootFontSizePx === undefined) {
+      const detected = detectRootFontSizePx(css)
+      if (detected !== 16) rootFontSizePx = detected
     }
-  }
-
-  const resolve = (value: string): string => {
-    const alias = VAR_ALIAS_RE.exec(value)
-    if (!alias) return value
-    return raw.get(alias[1]!)?.trim() ?? value
   }
 
   const colors: ColorTokenEntry[] = []
   const fontSizes: SizeTokenEntry[] = []
   const lengths: SizeTokenEntry[] = []
 
-  for (const [name, rawValue] of raw) {
-    const value = resolve(rawValue)
+  for (const [name, rawValue] of light) {
+    const value = resolveVarValue(rawValue, light)
 
-    const rgb = parseHexColor(value)
+    const rgb = cssColorToRgb(value)
     if (rgb) {
-      if (colors.length < MAX_TOKENS_PER_KIND) {
-        colors.push({ name, hex: rgbToHex(rgb), rgb })
-      }
+      if (colors.length < MAX_TOKENS_PER_KIND) colors.push({ name, hex: rgbToHex(rgb), rgb })
       continue
     }
 
-    const px = PX_VALUE_RE.exec(value)
-    if (px) {
-      const entry: SizeTokenEntry = { name, px: Number(px[1]) }
+    const px = toPx(value, rootFontSizePx ?? 16)
+    if (px !== null) {
+      const entry: SizeTokenEntry = { name, px }
       const isType = FONT_SIZE_NAME_RE.test(name) && !NON_TYPE_SIZE_NAME_RE.test(name)
       const bucket = isType ? fontSizes : lengths
       if (bucket.length < MAX_TOKENS_PER_KIND) bucket.push(entry)
@@ -131,11 +141,6 @@ export function buildProjectTokenIndex(...cssSources: readonly string[]): Projec
   fontSizes.sort((a, b) => a.px - b.px)
   lengths.sort((a, b) => a.px - b.px)
   return { colors, fontSizes, lengths }
-}
-
-/** Lowercase `#rrggbb`. */
-export function rgbToHex({ r, g, b }: Rgb): string {
-  return `#${[r, g, b].map((c) => Math.max(0, Math.min(255, Math.round(c))).toString(16).padStart(2, '0')).join('')}`
 }
 
 /**

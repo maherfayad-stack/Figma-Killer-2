@@ -47,6 +47,18 @@ export const PageNodeSchema = Type.Object({
    */
   resolution: Type.Optional(Type.Object({ source: Type.String(), note: Type.Optional(Type.String()) })),
   /**
+   * Track F2 (R2, `docs/audits/2026-08-06/09-refusal-states.md`) — the
+   * per-VALUE counterpart of `resolution` above. `resolution` keeps only the
+   * FIRST resolved value on a node, so a node with two code-valued props
+   * showed one real source and a generic "set in code" fallback for the
+   * other. Keyed exactly like `codeProps`: a prop name, a `style:<property>`
+   * inline-style entry, or `callSiteProps:<name>` on a `studio.instance`.
+   * Every key here has a matching `codeProps` entry — this map only ever
+   * EXPLAINS a refusal; `codeProps` still decides it. See
+   * `ParsedNode.resolvedProps` in `@core/page-parser`.
+   */
+  resolvedProps: Type.Optional(Type.Record(Type.String(), Type.Object({ source: Type.String(), note: Type.Optional(Type.String()) }))),
+  /**
    * Studio import (parser-06) — present on the node the parser SELECTED when
    * a component had more than one JSX-bearing `return`, or a JSX child was a
    * ternary/`&&`. Lists the branch(es) NOT shown, each just a label + source
@@ -132,6 +144,17 @@ function parseResolution(raw: unknown): { source: string; note?: string } | unde
   return typeof r.note === 'string' ? { source: r.source, note: r.note } : { source: r.source }
 }
 
+/** Parse a raw `resolvedProps` field — drops any entry whose value isn't a well-formed `{source, note?}`, same per-entry tolerance `parseBranchAlternatives` uses. */
+function parseResolvedProps(raw: unknown): Record<string, { source: string; note?: string }> | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const entries: Record<string, { source: string; note?: string }> = {}
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    const parsed = parseResolution(value)
+    if (parsed !== undefined) entries[key] = parsed
+  }
+  return Object.keys(entries).length > 0 ? entries : undefined
+}
+
 /** Parse a raw `branchAlternatives` field — drops any entry missing a string `label` or a well-formed `loc`, same per-entry tolerance the rest of this parser uses. */
 function parseBranchAlternatives(raw: unknown): { label: string; loc: { file: string; line: number; col: number } }[] | undefined {
   if (!Array.isArray(raw)) return undefined
@@ -193,6 +216,7 @@ export function parsePageNode(raw: unknown, nodePath: string): PageNode {
   // Page-only overlay: template data-binding map. Silently dropped if invalid.
   const dynamicBindings = parseDynamicBindings(r.dynamicBindings)
   const resolution = parseResolution(r.resolution)
+  const resolvedProps = parseResolvedProps(r.resolvedProps)
   const branchAlternatives = parseBranchAlternatives(r.branchAlternatives)
   // Studio provenance. Carried through the tolerant parser for the same reason
   // as `resolution`: dropping it silently would turn an editable resolved text
@@ -206,6 +230,7 @@ export function parsePageNode(raw: unknown, nodePath: string): PageNode {
     ...base,
     ...(dynamicBindings !== undefined ? { dynamicBindings } : {}),
     ...(resolution !== undefined ? { resolution } : {}),
+    ...(resolvedProps !== undefined ? { resolvedProps } : {}),
     ...(branchAlternatives !== undefined ? { branchAlternatives } : {}),
     ...(textOrigin !== undefined ? { textOrigin } : {}),
     ...(assetOrigin !== undefined ? { assetOrigin } : {}),

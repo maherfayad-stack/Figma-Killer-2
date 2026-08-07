@@ -81,7 +81,7 @@ describe('studioCss — imported CSS becomes style rules and classIds', () => {
     const { pages, styleRules } = await loadStudioPages(tmpDir)
     const nodes = Object.values(pages[0]!.nodes)
 
-    const hero = nodes.find((n) => n.classIds.includes(styleRuleId('class', 'hero')))
+    const hero = nodes.find((n) => n.classIds.includes(styleRuleId('class', 'hero', 'pages/Home.css')))
     expect(hero).toBeDefined()
     expect(styleRules[hero!.classIds[0]!]!.name).toBe('hero')
 
@@ -139,7 +139,7 @@ describe('studioCss — styleRuleSources (WS-6.3 write-back mapping)', () => {
     writeFixtureWorkspace()
 
     const { styleRules, styleRuleSources } = await loadStudioPages(tmpDir)
-    const heroId = styleRuleId('class', 'hero')
+    const heroId = styleRuleId('class', 'hero', 'pages/Home.css')
 
     expect(styleRules[heroId]).toBeDefined()
     expect(styleRuleSources[heroId]).toEqual({ file: 'pages/Home.css', selector: '.hero' })
@@ -149,7 +149,7 @@ describe('studioCss — styleRuleSources (WS-6.3 write-back mapping)', () => {
     writeFixtureWorkspace()
 
     const { styleRuleSources } = await loadStudioPages(tmpDir)
-    const h1Id = styleRuleId('ambient', 'h1')
+    const h1Id = styleRuleId('ambient', 'h1', 'pages/Home.css')
 
     expect(styleRuleSources[h1Id]).toEqual({ file: 'pages/Home.css', selector: 'h1' })
   })
@@ -158,7 +158,7 @@ describe('studioCss — styleRuleSources (WS-6.3 write-back mapping)', () => {
     writeFixtureWorkspace()
 
     const { styleRuleSources } = await loadStudioPages(tmpDir)
-    const badgeId = styleRuleId('class', 'badge')
+    const badgeId = styleRuleId('class', 'badge', 'components/Badge.css')
 
     expect(styleRuleSources[badgeId]).toEqual({ file: 'components/Badge.css', selector: '.badge' })
   })
@@ -187,7 +187,7 @@ describe('studioCss — styleRuleSources (WS-6.3 write-back mapping)', () => {
     expect(moduleSources).toEqual([{ file: 'pages/Home.module.css', selector: '.title' }])
   })
 
-  it('a later stylesheet redefining the same class name wins the mapping too, matching styleRules itself', async () => {
+  it('two REAL .css files defining the same class name each get their own id and source (Track B1 fix, S3d)', async () => {
     write('pages/Home.css', '.hero { color: red }\n')
     write('pages/Override.css', '.hero { color: blue }\n')
     write(
@@ -202,11 +202,24 @@ describe('studioCss — styleRuleSources (WS-6.3 write-back mapping)', () => {
       ].join('\n'),
     )
 
-    const { styleRules, styleRuleSources } = await loadStudioPages(tmpDir)
-    const heroId = styleRuleId('class', 'hero')
+    const { styleRules, styleRuleSources, pages } = await loadStudioPages(tmpDir)
+    const homeHeroId = styleRuleId('class', 'hero', 'pages/Home.css')
+    const overrideHeroId = styleRuleId('class', 'hero', 'pages/Override.css')
 
-    expect(styleRules[heroId]).toMatchObject({ styles: { color: 'blue' } })
-    expect(styleRuleSources[heroId]).toEqual({ file: 'pages/Override.css', selector: '.hero' })
+    // The EARLIER file's block is no longer silently destroyed — both rules
+    // exist in the registry, each with its own honest write-back source.
+    expect(styleRules[homeHeroId]).toMatchObject({ styles: { color: 'red' } })
+    expect(styleRules[overrideHeroId]).toMatchObject({ styles: { color: 'blue' } })
+    expect(styleRuleSources[homeHeroId]).toEqual({ file: 'pages/Home.css', selector: '.hero' })
+    expect(styleRuleSources[overrideHeroId]).toEqual({ file: 'pages/Override.css', selector: '.hero' })
+
+    // For RENDERING, the class name still resolves to exactly one id — the
+    // later-parsed file wins, matching cascade order closely enough for the
+    // canvas — so a node's classIds stay unambiguous.
+    const nodes = Object.values(pages[0]!.nodes)
+    const hero = nodes.find((n) => n.classIds.includes(overrideHeroId))
+    expect(hero).toBeDefined()
+    expect(nodes.some((n) => n.classIds.includes(homeHeroId))).toBe(false)
   })
 
   it('returns an empty sources map alongside an empty styleRules map', async () => {
@@ -237,8 +250,14 @@ describe('classIdsForClassName', () => {
 
 describe('styleRuleId', () => {
   it('is deterministic and distinguishes kind', () => {
-    expect(styleRuleId('class', 'hero')).toBe(styleRuleId('class', 'hero'))
-    expect(styleRuleId('class', 'hero')).not.toBe(styleRuleId('ambient', 'hero'))
-    expect(styleRuleId('class', 'hero')).toMatch(/^sc-[0-9a-f]{10}$/)
+    expect(styleRuleId('class', 'hero', 'a.css')).toBe(styleRuleId('class', 'hero', 'a.css'))
+    expect(styleRuleId('class', 'hero', 'a.css')).not.toBe(styleRuleId('ambient', 'hero', 'a.css'))
+    expect(styleRuleId('class', 'hero', 'a.css')).toMatch(/^sc-[0-9a-f]{10}$/)
+  })
+
+  // Track B1's landmine fix (S3d) — the file is now part of the id, so the
+  // SAME (kind, name) in two different files no longer collapses onto one.
+  it('distinguishes the same (kind, name) in two different files', () => {
+    expect(styleRuleId('class', 'hero', 'a.css')).not.toBe(styleRuleId('class', 'hero', 'b.css'))
   })
 })

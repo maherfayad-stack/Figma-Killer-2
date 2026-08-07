@@ -261,8 +261,15 @@ function tryUseMemoUnwrap(
  * ever runs, so a same-named local function that means something else just
  * gets a wrong-but-bounded string instead of `unresolved`, and every real
  * corpus that defines `cn`/`clsx`/`classNames` uses exactly this semantics.
+ *
+ * Exported (via the `@core/page-parser` barrel) so Track B2's
+ * `setJsxClassName` (`@core/ast-codemods`) recognizes exactly this same set
+ * of call shapes on the WRITE side — "append a literal arg to a `cn(...)`
+ * call" only makes sense for the identifiers the READ side already treats as
+ * a class-name join; a codemod that guessed at some other function call would
+ * be exactly the kind of guess §7's evaluator refuses to make.
  */
-const CLASS_NAME_JOIN_BUILTIN_NAMES: ReadonlySet<string> = new Set(['cn', 'clsx', 'classNames', 'classnames'])
+export const CLASS_NAME_JOIN_BUILTIN_NAMES: ReadonlySet<string> = new Set(['cn', 'clsx', 'classNames', 'classnames'])
 
 /**
  * `cn(...)`/`clsx(...)`/`classnames(...)` — a pure string join, added to Tier

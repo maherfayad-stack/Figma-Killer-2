@@ -14,6 +14,8 @@ interface ColorControlProps extends ControlProps<string> {
    */
   onPreview?: (value: string) => void
   onClearPreview?: () => void
+  /** A resolved CSS colour to compute a live WCAG contrast badge against — see `TokenizedColorField`'s doc. Omitted by any caller that doesn't yet resolve a background for the node/class being edited (T9, `STUDIO-FIGMA-PARITY-PLAN.md` §11). */
+  contrastAgainst?: string
 }
 
 export function ColorControl({
@@ -27,6 +29,7 @@ export function ColorControl({
   layout,
   onPreview,
   onClearPreview,
+  contrastAgainst,
 }: ColorControlProps) {
   return (
     <ControlRow
@@ -47,6 +50,7 @@ export function ColorControl({
         onChange={(next) => onChange(propKey, next)}
         onPreview={onPreview}
         onClearPreview={onClearPreview}
+        contrastAgainst={contrastAgainst}
       />
     </ControlRow>
   )

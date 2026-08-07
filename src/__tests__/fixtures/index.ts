@@ -66,6 +66,13 @@ export function makeNode(overrides: Partial<PageNode> & { id?: string } = {}): P
     dynamicBindings: overrides.dynamicBindings,
     propBindings: overrides.propBindings,
     textOrigin: overrides.textOrigin,
+    // Track F2 — studio-import provenance fields, previously dropped by this
+    // factory (silently: a test passing `lockReason` got a node with none).
+    // Needed by any test exercising `refuseStructuralEdit`/`isPropWritableToSource`/
+    // `explainPropConstraint`/`explainStructuralConstraint` against a fixture node.
+    lockReason: overrides.lockReason,
+    codeProps: overrides.codeProps,
+    resolvedProps: overrides.resolvedProps,
   }
 }
 

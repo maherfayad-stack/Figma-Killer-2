@@ -24,17 +24,13 @@
  *      (`componentBundleWorker.ts`, which is already a Tier-1 subprocess) —
  *      flagged as an explicit, honest gap in the `pkg-01` STATE.md entry.
  *
- * **Fully syntactic, never the type checker.** Classifying a prop's type
- * (`classifyPropType` below) reads the WRITTEN type annotation text/AST
- * shape directly (`PropertySignature.getTypeNode()`), never
- * `type.getType()`/the checker's resolved `Type`. A package's own `.d.ts`
- * typically does `import type { ReactNode } from 'react'`, and this
- * extractor's ts-morph `Project` never adds `react`'s own `.d.ts` files (no
- * reason to — nothing here needs semantic resolution) — asking the CHECKER
- * to resolve `ReactNode` would silently degrade to `any` the moment `react`'s
- * types aren't in scope, which erases exactly the signal this module exists
- * to extract. Reading the syntax directly sidesteps that entirely: whether or
- * not `react` resolves, the written text is still literally `ReactNode`.
+ * **The actual prop-type classification (`classifyPropType`), props-type
+ * resolution (`resolvePropsTypeNode`), and member extraction
+ * (`extractPropsFromMembers`) live in `componentSpecExtract.ts`** — moved
+ * out (Track E1, `STUDIO-FIGMA-PARITY-PLAN.md` §8) so the exact same
+ * syntactic classifier also serves `components.ts`'s whole-workspace LOCAL
+ * component catalog, not just this file's single-package extraction. See
+ * that module's own doc for the K3 named-union-alias resolution it added.
  *
  * Every resolution step is symlink-containment-checked against `dir` via
  * `workspacePackageResolve.ts`'s `isRealpathContained` (`sec-01`'s own
@@ -48,21 +44,13 @@
  * app root here, never the bare project directory.
  */
 import { existsSync, readFileSync, statSync } from 'node:fs'
-import { basename, join } from 'node:path'
-import {
-  Node,
-  Project,
-  SyntaxKind,
-  type ClassDeclaration,
-  type FunctionDeclaration,
-  type PropertySignature,
-  type TypeNode,
-  type VariableDeclaration,
-} from 'ts-morph'
+import { join } from 'node:path'
+import { Project } from 'ts-morph'
 import { Type, type Static, type TSchema } from '@core/utils/typeboxHelpers'
 import { safeParseJson } from '@core/utils/jsonValidate'
+import { buildComponentSpec, toPosix } from './componentSpecExtract'
 import type { ProbeWarning } from './projectProfileSchema'
-import type { ComponentSpec, PropKind, PropSpec } from './packageManifestSchema'
+import type { ComponentSpec } from './packageManifestSchema'
 import { isRealpathContained } from './workspacePackageResolve'
 
 export interface PackageManifestResult {
@@ -121,239 +109,8 @@ export function resolvePackageTsxEntry(dir: string, pkgName: string): string | u
 }
 
 // ---------------------------------------------------------------------------
-// Prop-type classification — purely syntactic, see module doc
-// ---------------------------------------------------------------------------
-
-const COLOR_NAME_RE = /color|fill|stroke|bg/i
-const IMAGE_NAME_RE = /src|image|icon|avatar|logo/i
-const REACT_NODE_TEXT_RE = /^(React\.)?(ReactNode|ReactElement(<.*>)?)$|^JSX\.Element$/
-
-function normalizedTypeText(node: TypeNode): string {
-  return node.getText().replace(/\s+/g, ' ').trim()
-}
-
-/** A single (already non-nullish) type node -> `PropKind`. Never touches the checker — see module doc. */
-function classifyNonNullish(name: string, node: TypeNode): PropKind {
-  if (node.getKind() === SyntaxKind.FunctionType) return { kind: 'handler' }
-
-  const text = normalizedTypeText(node)
-  if (REACT_NODE_TEXT_RE.test(text)) return { kind: 'node' }
-
-  if (node.getKind() === SyntaxKind.StringKeyword) {
-    if (COLOR_NAME_RE.test(name)) return { kind: 'color' }
-    if (IMAGE_NAME_RE.test(name)) return { kind: 'image' }
-    return { kind: 'string' }
-  }
-  if (node.getKind() === SyntaxKind.NumberKeyword) return { kind: 'number' }
-  if (node.getKind() === SyntaxKind.BooleanKeyword) return { kind: 'boolean' }
-
-  return { kind: 'unknown' }
-}
-
-/** A string-literal type node's own value (`'primary'` -> `'primary'`), or `undefined` for anything else. */
-function stringLiteralValue(node: TypeNode): string | undefined {
-  if (node.getKind() !== SyntaxKind.LiteralType) return undefined
-  const literal = node.asKindOrThrow(SyntaxKind.LiteralType).getLiteral()
-  return literal.getKind() === SyntaxKind.StringLiteral ? literal.getText().slice(1, -1) : undefined
-}
-
-/**
- * Classifies a property's declared type. `undefined`/`null` union members are
- * stripped first (an optional prop's syntactic type is `T | undefined`, which
- * must classify exactly like `T`, not fall through to `unknown`). A union of
- * two-or-more string literals becomes `enum`; a union of anything else — the
- * single remaining member aside — stays `unknown` rather than guessing.
- */
-export function classifyPropType(name: string, typeNode: TypeNode | undefined): PropKind {
-  if (!typeNode) return { kind: 'unknown' }
-
-  if (typeNode.getKind() === SyntaxKind.UnionType) {
-    const members = typeNode.asKindOrThrow(SyntaxKind.UnionType).getTypeNodes()
-    const nonNullish = members.filter((m) => {
-      const t = normalizedTypeText(m)
-      return t !== 'undefined' && t !== 'null'
-    })
-    if (nonNullish.length === 0) return { kind: 'unknown' }
-    if (nonNullish.length === 1) return classifyNonNullish(name, nonNullish[0]!)
-
-    const literalValues = nonNullish.map(stringLiteralValue)
-    if (literalValues.every((v): v is string => v !== undefined)) {
-      return { kind: 'enum', values: literalValues }
-    }
-    return { kind: 'unknown' }
-  }
-
-  return classifyNonNullish(name, typeNode)
-}
-
-// ---------------------------------------------------------------------------
-// Props-type resolution — from a component declaration to its member list
-// ---------------------------------------------------------------------------
-
-/** The minimal shape this module needs from a props type's declaration — `InterfaceDeclaration` and `TypeLiteralNode` both mix in `getProperties(): PropertySignature[]` syntactically (no checker involved), which already satisfies this structurally; the intersection-merge case below builds a plain object of the same shape. */
-interface MemberedNode {
-  getProperties(): PropertySignature[]
-}
-
-/** Finds an interface or type-alias-to-object-shape declared UNDER THIS SAME `.d.ts`'s `Project` by name — a component's props type is almost always declared in the same package, sometimes a different file within it. */
-function findNamedTypeMembers(project: Project, name: string, depth: number): MemberedNode | undefined {
-  if (depth > 3) return undefined // bounded — a self-referential alias chain must not loop forever
-  for (const sourceFile of project.getSourceFiles()) {
-    const iface = sourceFile.getInterface(name)
-    if (iface) return iface
-    const alias = sourceFile.getTypeAlias(name)
-    if (alias) {
-      const resolved = resolveTypeNodeToMembers(project, alias.getTypeNode(), depth + 1)
-      if (resolved) return resolved
-    }
-  }
-  return undefined
-}
-
-/** A props TYPE NODE (from a function parameter, or a `React.FC<X>`-style type argument) -> the object-like declaration whose properties are the component's props. Handles a direct type literal, a named reference (interface/alias lookup), and an intersection (merges every resolvable member — the common `Props & RefAttributes<T>` forwardRef shape; `RefAttributes` itself won't resolve locally and is silently skipped, which is the correct outcome — it contributes no prop a user would edit). */
-function resolveTypeNodeToMembers(project: Project, typeNode: TypeNode | undefined, depth = 0): MemberedNode | undefined {
-  if (!typeNode || depth > 3) return undefined
-
-  if (Node.isTypeLiteral(typeNode)) return typeNode
-
-  if (typeNode.getKind() === SyntaxKind.TypeReference) {
-    const ref = typeNode.asKindOrThrow(SyntaxKind.TypeReference)
-    const name = ref.getTypeName().getText().split('.').pop()
-    if (!name) return undefined
-    return findNamedTypeMembers(project, name, depth + 1)
-  }
-
-  if (typeNode.getKind() === SyntaxKind.IntersectionType) {
-    const parts = typeNode.asKindOrThrow(SyntaxKind.IntersectionType).getTypeNodes()
-    const merged = new Map<string, PropertySignature>()
-    for (const part of parts) {
-      const resolved = resolveTypeNodeToMembers(project, part, depth + 1)
-      if (!resolved) continue
-      for (const prop of resolved.getProperties()) merged.set(prop.getName(), prop)
-    }
-    if (merged.size === 0) return undefined
-    // A synthetic membered node isn't available from ts-morph directly — the
-    // caller only ever needs the PROPERTY LIST, so hand that back via a tiny
-    // adapter rather than a real AST node. Structurally satisfies `MemberedNode`.
-    return { getProperties: () => [...merged.values()] }
-  }
-
-  return undefined
-}
-
-/** A generic type reference's first type argument — `React.FC<ButtonProps>` -> `ButtonProps`'s type node. Syntactic (`TypeReferenceNode.getTypeArguments()`), no checker. */
-function firstTypeArgument(typeNode: TypeNode | undefined): TypeNode | undefined {
-  if (!typeNode || typeNode.getKind() !== SyntaxKind.TypeReference) return undefined
-  return typeNode.asKindOrThrow(SyntaxKind.TypeReference).getTypeArguments()[0]
-}
-
-/** The props type node for one component declaration — see the three shapes handled in the module doc's tier list. */
-function resolvePropsTypeNode(declaration: Node): TypeNode | undefined {
-  if (Node.isFunctionDeclaration(declaration) || Node.isArrowFunction(declaration) || Node.isFunctionExpression(declaration)) {
-    return declaration.getParameters()[0]?.getTypeNode()
-  }
-
-  if (Node.isVariableDeclaration(declaration)) {
-    const declaredType = declaration.getTypeNode()
-    if (declaredType) {
-      if (declaredType.getKind() === SyntaxKind.FunctionType) {
-        return declaredType.asKindOrThrow(SyntaxKind.FunctionType).getParameters()[0]?.getTypeNode()
-      }
-      const typeArg = firstTypeArgument(declaredType)
-      if (typeArg) return typeArg
-    }
-    const initializer = declaration.getInitializer()
-    if (initializer && (Node.isArrowFunction(initializer) || Node.isFunctionExpression(initializer))) {
-      return initializer.getParameters()[0]?.getTypeNode()
-    }
-  }
-
-  if (Node.isClassDeclaration(declaration)) {
-    for (const clause of declaration.getHeritageClauses()) {
-      for (const typeExpr of clause.getTypeNodes()) {
-        const args = typeExpr.getTypeArguments()
-        if (args[0]) return args[0]
-      }
-    }
-  }
-
-  return undefined
-}
-
-// ---------------------------------------------------------------------------
-// Component-candidate detection
-// ---------------------------------------------------------------------------
-
-const PASCAL_CASE_RE = /^[A-Z][A-Za-z0-9]*$/
-
-/** The generic wrapper names a `.d.ts` declares a component under — mirrors `projectProbe.ts`'s own `REACT_COMPONENT_EXPORT_RE` token set, so a random other generic-typed export (`const Config: Array<string>`) isn't mistaken for a component just because it has a type argument. */
-const COMPONENT_WRAPPER_NAME_RE = /^(React\.)?(FC|FunctionComponent|VFC|ComponentType|ForwardRefExoticComponent|NamedExoticComponent|MemoExoticComponent)$/
-
-/** Whether an exported declaration LOOKS like a component worth manifesting — name shape only; the actual props (if any) are extracted separately and an unresolvable props type just yields `props: []`, not exclusion. */
-function isComponentCandidate(name: string, declaration: Node): declaration is FunctionDeclaration | VariableDeclaration | ClassDeclaration {
-  if (!PASCAL_CASE_RE.test(name)) return false
-  if (Node.isFunctionDeclaration(declaration)) return true
-  if (Node.isClassDeclaration(declaration)) return true
-  if (Node.isVariableDeclaration(declaration)) {
-    const declaredType = declaration.getTypeNode()
-    if (declaredType) {
-      if (declaredType.getKind() === SyntaxKind.FunctionType) return true
-      if (declaredType.getKind() === SyntaxKind.TypeReference) {
-        const refName = declaredType.asKindOrThrow(SyntaxKind.TypeReference).getTypeName().getText()
-        if (COMPONENT_WRAPPER_NAME_RE.test(refName)) return true
-      }
-    }
-    const initializer = declaration.getInitializer()
-    return Boolean(initializer && (Node.isArrowFunction(initializer) || Node.isFunctionExpression(initializer)))
-  }
-  return false
-}
-
-/** `Button.d.ts` -> `Button`; strips a trailing `.d` from `.d.ts`'s own basename handling. */
-function pascalCaseFromFileBase(relPath: string): string | undefined {
-  const base = basename(relPath).replace(/\.(d\.)?(ts|tsx|js|jsx)$/, '')
-  const cleaned = base.replace(/[^A-Za-z0-9]/g, '')
-  if (!cleaned) return undefined
-  const capitalized = cleaned[0]!.toUpperCase() + cleaned.slice(1)
-  return PASCAL_CASE_RE.test(capitalized) ? capitalized : undefined
-}
-
-function extractPropsFromMembers(members: MemberedNode): PropSpec[] {
-  const props: PropSpec[] = []
-  for (const prop of members.getProperties()) {
-    const kind = classifyPropType(prop.getName(), prop.getTypeNode())
-    if (kind.kind === 'handler') continue // dropped, never stubbed — see module doc
-    props.push({ name: prop.getName(), kind, required: !prop.hasQuestionToken() })
-  }
-  return props
-}
-
-function buildComponentSpec(
-  project: Project,
-  exportName: string,
-  declaration: Node,
-  relFile: string,
-  isDefaultExport: boolean,
-): ComponentSpec | undefined {
-  const declaredName = Node.hasName(declaration) ? declaration.getName() : undefined
-  const name = isDefaultExport ? declaredName ?? pascalCaseFromFileBase(relFile) ?? exportName : exportName
-
-  if (!isComponentCandidate(name, declaration)) return undefined
-
-  const propsTypeNode = resolvePropsTypeNode(declaration)
-  const members = resolveTypeNodeToMembers(project, propsTypeNode)
-  const props = members ? extractPropsFromMembers(members) : []
-
-  return { name, file: relFile, exportName, isDefaultExport, props }
-}
-
-// ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
-
-function toPosix(p: string): string {
-  return p.split('\\').join('/')
-}
 
 /** One ts-morph `Project` scoped to a single package directory's declaration/source tree — never the workspace's own files, never `react`'s (see module doc for why that's deliberate). Every file matching `glob` is added so the entry file's `export * from './Button'`-style re-export chains resolve; only the ENTRY file's own resolved export map is walked, though — see `manifestFromEntry` — so an internal helper `.d.ts` never masquerades as public API. */
 function createPackageProject(pkgDir: string, glob: string): Project {

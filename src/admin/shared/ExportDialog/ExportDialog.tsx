@@ -556,14 +556,18 @@ interface SimpleDetailProps {
 }
 
 function SimpleDetail({ category, onToggle }: SimpleDetailProps) {
-  const Icon = CATEGORY_ICON[category.kind]
+  // Named CategoryIcon, not Icon — a PascalCase local named literally
+  // `Icon` collides with the direct-icon-imports architecture gate's
+  // `<Icon\b` regex, which exists to ban the *lazy* `pixel-art-icons/Icon`
+  // wrapper. Same pattern AlignBar.tsx / StyleCategoryRail.tsx use.
+  const CategoryIcon = CATEGORY_ICON[category.kind]
   const meta = detailMeta(category)
 
   return (
     <>
       <div className={styles.detHead}>
         <span className={styles.detIcon} style={{ '--tint': category.tint } as CSSProperties}>
-          <Icon size={16} aria-hidden="true" />
+          <CategoryIcon size={16} aria-hidden="true" />
         </span>
         <div className={styles.detHeadText}>
           <h3 className={styles.detTitle}>{category.label}</h3>

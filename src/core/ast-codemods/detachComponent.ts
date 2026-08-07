@@ -41,11 +41,11 @@
  * branch, reporting which one via `DetachSuccess.branchNote` — "the branch
  * actually being shown", per this work order's explicit instruction.
  */
-import * as path from 'node:path'
-import { Node, Project, QuoteKind, SyntaxKind, type JsxAttribute, type SourceFile } from 'ts-morph'
+import { Node, Project, QuoteKind, SyntaxKind, type JsxAttribute } from 'ts-morph'
 import { findJsxElementAtLocationOrThrow, loadSourceFile, type JsxOpeningLikeElement } from './locateJsxElement'
 import { createWorkspaceProject, getReturnedJsxRoots, type FunctionLike } from '@core/page-parser'
 import { resolveComponentCallSite } from './resolveComponentCallSite'
+import { addReconciledImports, removeImportIfLastUsage } from './importReconcile'
 
 export interface DetachComponentParams {
   /** Absolute path to the page file holding the call site. */
@@ -267,125 +267,6 @@ function referencedIdentifiers(root: Node, params: ReadonlySet<string>, children
     }
   })
   return names
-}
-
-/** A relative module specifier from `fromFileAbs`'s directory to `toFileAbs`, POSIX-separated. Local to this module (not `studioWriteback.ts`'s copy) so `src/core/ast-codemods` never depends on `server/`. */
-function relativeSpecifier(fromFileAbs: string, toFileAbs: string): string {
-  const fromDir = path.dirname(fromFileAbs)
-  let rel = path.relative(fromDir, toFileAbs).split(path.sep).join('/')
-  rel = rel.replace(/\.(tsx|jsx|ts|js)$/, '')
-  if (!rel.startsWith('.')) rel = `./${rel}`
-  return rel
-}
-
-/**
- * Adds imports to the page file so the pasted JSX resolves: for every
- * identifier Card's JSX references (sub-components, constants, `?raw`/CSS
- * imports) that Card's OWN file imports or declares, mirrors an equivalent
- * import into the page file — unless the page file ALREADY has a top-level
- * binding under that name, in which case it is trusted as-is (see this
- * function's own comment on the name-collision gap). Does NOT touch the
- * `Card` import itself — that is `removeImportIfLastUsage`'s job, called
- * separately, AFTER the call site's own JSX has actually been replaced (so
- * "is this still referenced" sees the post-detach file, not the original
- * call site it is about to remove).
- */
-function addReconciledImports(
-  pageFile: SourceFile,
-  targetFile: SourceFile,
-  identifiers: ReadonlySet<string>,
-): void {
-  const pageTopLevelNames = new Set<string>()
-  for (const decl of pageFile.getImportDeclarations()) {
-    if (decl.getDefaultImport()) pageTopLevelNames.add(decl.getDefaultImport()!.getText())
-    if (decl.getNamespaceImport()) pageTopLevelNames.add(decl.getNamespaceImport()!.getText())
-    for (const named of decl.getNamedImports()) {
-      pageTopLevelNames.add(named.getAliasNode()?.getText() ?? named.getNameNode().getText())
-    }
-  }
-  for (const fn of pageFile.getFunctions()) if (fn.getName()) pageTopLevelNames.add(fn.getName()!)
-  for (const v of pageFile.getVariableDeclarations()) pageTopLevelNames.add(v.getName())
-
-  for (const name of identifiers) {
-    if (pageTopLevelNames.has(name)) {
-      // Already in scope — trust it (a real name collision against a
-      // DIFFERENT source is rare enough, and detecting it precisely would
-      // need resolving the page's own binding's declaration file too; left
-      // as a documented gap rather than a guess — see this module's header).
-      continue
-    }
-
-    const targetImport = targetFile.getImportDeclarations().find((decl) => {
-      if (decl.getDefaultImport()?.getText() === name) return true
-      if (decl.getNamespaceImport()?.getText() === name) return true
-      return decl.getNamedImports().some((n) => (n.getAliasNode()?.getText() ?? n.getNameNode().getText()) === name)
-    })
-
-    if (targetImport) {
-      const specifierText = targetImport.getModuleSpecifierValue()
-      const isRelative = specifierText.startsWith('.')
-      const specifier = isRelative
-        ? relativeSpecifier(pageFile.getFilePath(), path.resolve(path.dirname(targetFile.getFilePath()), specifierText))
-        : specifierText
-      const isDefault = targetImport.getDefaultImport()?.getText() === name
-      const isNamespace = targetImport.getNamespaceImport()?.getText() === name
-      pageFile.addImportDeclaration({
-        moduleSpecifier: specifier,
-        ...(isDefault ? { defaultImport: name } : {}),
-        ...(isNamespace ? { namespaceImport: name } : {}),
-        ...(!isDefault && !isNamespace ? { namedImports: [name] } : {}),
-      })
-      continue
-    }
-
-    // Declared directly in Card's own file (a same-file helper/const) —
-    // import it from Card's file itself under its own name.
-    const declaredInTarget =
-      targetFile.getFunction(name) !== undefined || targetFile.getVariableDeclaration(name) !== undefined
-    if (declaredInTarget) {
-      const specifier = relativeSpecifier(pageFile.getFilePath(), targetFile.getFilePath())
-      pageFile.addImportDeclaration({ moduleSpecifier: specifier, namedImports: [name] })
-      continue
-    }
-    // Otherwise: a global (`Math`, `String`, …) or something this module
-    // can't trace — left unimported; TypeScript/the bundler will surface it
-    // loudly rather than this codemod guessing.
-  }
-}
-
-/** Removes `callTargetLocalName`'s import from `pageFile` if no JSX tag or identifier reference to it remains anywhere in the file. */
-function removeImportIfLastUsage(pageFile: SourceFile, localName: string): void {
-  const stillUsed = pageFile.getDescendants().some((node) => {
-    if (Node.isJsxSelfClosingElement(node) || Node.isJsxOpeningElement(node) || Node.isJsxClosingElement(node)) {
-      return node.getTagNameNode().getText().split('.')[0] === localName
-    }
-    if (Node.isIdentifier(node) && node.getText() === localName) {
-      const parent = node.getParent()
-      // Exclude the identifier's own declaration site (an import specifier),
-      // which always "matches" trivially.
-      return !(Node.isImportSpecifier(parent) || Node.isImportClause(parent) || Node.isNamespaceImport(parent))
-    }
-    return false
-  })
-  if (stillUsed) return
-
-  for (const decl of pageFile.getImportDeclarations()) {
-    if (decl.getDefaultImport()?.getText() === localName) {
-      if (decl.getNamedImports().length === 0 && !decl.getNamespaceImport()) decl.remove()
-      else decl.getDefaultImport()!.replaceWithText('') // rare mixed-import shape — leave named imports intact
-      return
-    }
-    if (decl.getNamespaceImport()?.getText() === localName) {
-      decl.remove()
-      return
-    }
-    const named = decl.getNamedImports().find((n) => (n.getAliasNode()?.getText() ?? n.getNameNode().getText()) === localName)
-    if (named) {
-      if (decl.getNamedImports().length === 1 && !decl.getDefaultImport() && !decl.getNamespaceImport()) decl.remove()
-      else named.remove()
-      return
-    }
-  }
 }
 
 /**

@@ -28,9 +28,16 @@
 import { describe, it, expect } from 'bun:test'
 import { readdirSync, readFileSync, statSync, existsSync } from 'fs'
 import { join, extname, relative } from 'path'
+import { toPosixPath } from './pathHelpers'
 
 const SRC_ROOT = join(import.meta.dir, '../../')
-const EDITOR_ROOT = join(SRC_ROOT, 'editor')
+// This gate's own SELECT_ACTIVE_PAGE_ALLOWLIST entries below (all
+// 'admin/pages/site/...') are the ground truth for where the "editor" this
+// gate means actually lives today — 'src/editor' never existed in this
+// repo's tracked history (checked via `git log --all -- src/editor`); the
+// gate silently scanned nothing since it was written. `src/admin/pages/site`
+// is the visual editor surface the doc comment above describes.
+const EDITOR_ROOT = join(SRC_ROOT, 'admin/pages/site')
 
 // ---------------------------------------------------------------------------
 // File walker
@@ -51,7 +58,23 @@ function collectTs(dir: string): string[] {
 }
 
 function relPath(full: string): string {
-  return relative(SRC_ROOT, full)
+  return toPosixPath(relative(SRC_ROOT, full))
+}
+
+// ---------------------------------------------------------------------------
+// Comment stripper — preserves line numbers by replacing non-newline chars
+// inside comments with spaces (same approach as db-postgres-isms.test.ts /
+// boundary-validation.test.ts). Needed once this gate actually scans real
+// files: without it, `selectActivePage` mentioned in a `/** ... */` doc
+// comment (e.g. NodeRenderer.tsx's file-header perf notes) reads as a false
+// "imports/uses" violation — the old `/^\s*\/\//` line check only strips
+// `//` line comments, not block-comment bodies or `*`-continuation lines.
+// ---------------------------------------------------------------------------
+
+const COMMENT_RE = /\/\/.*$|\/\*[\s\S]*?\*\//gm
+
+function stripComments(src: string): string {
+  return src.replace(COMMENT_RE, (m) => m.replace(/[^\n]/g, ' '))
 }
 
 // ---------------------------------------------------------------------------
@@ -86,6 +109,31 @@ const SELECT_ACTIVE_PAGE_ALLOWLIST = new Set<string>([
   // §A.5 — publish button: publishes the active page. Purely page-mode — publishing
   //   a standalone VC is not a supported workflow (VCs are embedded in pages).
   'admin/pages/site/toolbar/PublishButton.tsx',
+
+  // §A.6 — store.ts is the module that DEFINES both selectActivePage and
+  //   selectActiveCanvasPage; it is not a consumer. selectActiveCanvasPage's
+  //   own implementation legitimately calls selectActivePage(s) as its
+  //   page-mode branch (`if (!activeDocument || activeDocument.kind ===
+  //   'page') return selectActivePage(s)`) — that delegation IS the
+  //   VC-aware selector, not a bypass of it. Excluding the definition site
+  //   is the same pattern as excluding `mutateActiveTree` from the
+  //   no-vc-mode-branches-in-mutations gate.
+  'admin/pages/site/store/store.ts',
+
+  // §A.7 — useActiveLivePath: resolves the toolbar's "Open live page" deep
+  //   link. A Visual Component is never independently routable/publishable
+  //   (no slug, no permalink — see PublishButton's §A.5 and PreviewOverlay's
+  //   §A.4, the same "VCs are embedded in pages, not standalone routes"
+  //   reasoning). `activePageId` is deliberately NOT cleared when entering VC
+  //   edit mode (see uiSlice.ts's `setActiveDocument`/`previousActivePageId`),
+  //   so `selectActivePage` here keeps resolving the underlying page the
+  //   author was on before opening the VC — exactly the fallback this hook's
+  //   own module doc already describes for templates ("a template's own slug
+  //   has no public route ... open the page it's being previewed against").
+  //   Switching to `selectActiveCanvasPage` would be actively wrong: it
+  //   would resolve a virtual Page for the VC (slug `components/<Name>`) and
+  //   compute a live path that 404s, instead of falling back to a real page.
+  'admin/pages/site/hooks/useActiveLivePath.ts',
 ])
 
 describe('Canvas-aware selector gate — selectActivePage not imported in editor panels', () => {
@@ -104,14 +152,13 @@ describe('Canvas-aware selector gate — selectActivePage not imported in editor
       if (SELECT_ACTIVE_PAGE_ALLOWLIST.has(rel)) continue
 
       let src: string
-      try { src = readFileSync(file, 'utf8') } catch { continue }
+      try { src = stripComments(readFileSync(file, 'utf8')) } catch { continue }
 
       if (!IMPORT_RE.test(src)) continue
 
       const lines = src.split('\n')
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i]
-        if (/^\s*\/\//.test(line)) continue
         if (IMPORT_RE.test(line)) {
           violations.push(`${rel}:${i + 1} — imports/uses selectActivePage (page-only selector)`)
         }
@@ -142,11 +189,16 @@ describe('Canvas-aware selector gate — selectActivePage not imported in editor
 // page tree and silently returns null for any node inside a VC.
 // ---------------------------------------------------------------------------
 
+// 'components/<Panel>' never existed under EDITOR_ROOT in this repo — the
+// real layout is 'panels/<Panel>' for the three panels, and the canvas
+// surface is 'canvas/' directly (not nested under 'panels/'). Re-derived
+// from the doc comment ("DOM panel, Properties panel, Canvas, Selectors
+// panel") cross-referenced against the actual directory tree.
 const VC_AWARE_PANEL_DIRS = [
-  join(EDITOR_ROOT, 'components/PropertiesPanel'),
-  join(EDITOR_ROOT, 'components/DomPanel'),
-  join(EDITOR_ROOT, 'components/Canvas'),
-  join(EDITOR_ROOT, 'components/SelectorsPanel'),
+  join(EDITOR_ROOT, 'panels/PropertiesPanel'),
+  join(EDITOR_ROOT, 'panels/DomPanel'),
+  join(EDITOR_ROOT, 'canvas'),
+  join(EDITOR_ROOT, 'panels/SelectorsPanel'),
 ]
 
 describe('Canvas-aware selector gate — no raw pages.find in VC-aware panel directories', () => {
@@ -158,14 +210,13 @@ describe('Canvas-aware selector gate — no raw pages.find in VC-aware panel dir
     for (const dir of VC_AWARE_PANEL_DIRS) {
       for (const file of collectTs(dir)) {
         let src: string
-        try { src = readFileSync(file, 'utf8') } catch { continue }
+        try { src = stripComments(readFileSync(file, 'utf8')) } catch { continue }
 
         if (!PAGES_FIND_RE.test(src)) continue
 
         const lines = src.split('\n')
         for (let i = 0; i < lines.length; i++) {
           const line = lines[i]
-          if (/^\s*\/\//.test(line)) continue
           if (PAGES_FIND_RE.test(line)) {
             violations.push(
               `${relPath(file)}:${i + 1} — uses s.site?.pages.find( (page-tree only; ` +

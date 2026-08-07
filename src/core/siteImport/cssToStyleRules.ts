@@ -35,6 +35,21 @@
  * the later rule wins (later-in-source = higher cascade priority). One
  * `duplicate-class` warning is emitted per duplicated class. The rule's
  * order is kept as the FIRST occurrence.
+ *
+ * ## @layer pre-pass
+ *
+ * `CSSStyleSheet.replaceSync()` (the CSSOM engine this module parses with,
+ * in both browsers and the happy-dom test environment) silently drops every
+ * rule nested inside an `@layer` block — no `dropped-at-rule` signal, no
+ * warning, nothing. Tailwind v4's default build output wraps its entire
+ * stylesheet in `@layer theme, base, components, utilities { ... }`, so an
+ * unpatched import of a Tailwind v4 project silently imported ZERO rules.
+ * `unwrapCssLayers` (its own module, `./unwrapCssLayers.ts`) flattens every
+ * `@layer` form (statement, named block, anonymous block, nested, and mixed
+ * with `@media`/`@supports`/`@container`) out of the CSS text before it ever
+ * reaches `replaceSync`, preserving source order. See that module's doc
+ * comment for the cascade-order caveat this flattening carries and the
+ * `layer-order-flattened` warning that surfaces it.
  */
 
 import type { StyleRuleKind, Condition, ConditionDef } from '@core/page-tree'
@@ -44,6 +59,8 @@ import { getSheetConstructor } from './cssomSheet'
 import { processKeyframesRule } from './keyframesToStyleRule'
 import { encodeSubstitutionDeclarations } from '@core/css-substitution'
 import { matchMediaQueryToViewport } from './mediaQueryMatch'
+import { unwrapCssLayers } from './unwrapCssLayers'
+import { truncate } from './truncate'
 import {
   mergeRuleBaseDeclarations,
   mergeRuleContextDeclarations,
@@ -127,15 +144,6 @@ const SUPPORTS_RULE_TYPE = 12  // CSSSupportsRule
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
-
-/**
- * Truncate a CSS source string for use in warning messages.
- * Appends `…` when the string is cut.
- */
-function truncate(text: string, maxLen = 120): string {
-  if (text.length <= maxLen) return text
-  return `${text.slice(0, maxLen)}…`
-}
 
 /**
  * A single `.class-name` selector with no compound selectors, no combinators,
@@ -253,6 +261,11 @@ export function cssToStyleRules(
   }
 
   // ── Sheet-level parse ───────────────────────────────────────────────────
+  // @layer unwrap runs first (text → text) so replaceSync never sees an
+  // @layer construct at all — see "@layer pre-pass" above and
+  // `unwrapCssLayers`'s doc comment.
+  const unwrappedCss = unwrapCssLayers(cssText, warnings)
+
   let sheet: CSSStyleSheet
   try {
     sheet = new SheetCtor()
@@ -260,7 +273,7 @@ export function cssToStyleRules(
     // custom properties first — every engine preserves custom properties
     // verbatim, where shorthand-with-var handling is lossy and
     // engine-divergent. `parseDeclarations` decodes them back.
-    sheet.replaceSync(encodeSubstitutionDeclarations(cssText))
+    sheet.replaceSync(encodeSubstitutionDeclarations(unwrappedCss))
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     warnings.push({
@@ -420,9 +433,10 @@ function processTopLevelRule(
         }
       }
 
-      // Genuinely unsupported at-rules: @import, @page, @namespace, @layer,
-      // and anything else. (@import is usually silently
-      // dropped by replaceSync; this handles the rare surfaced case.)
+      // Genuinely unsupported at-rules: @import, @page, @namespace, and
+      // anything else. (@import is usually silently dropped by replaceSync;
+      // this handles the rare surfaced case.) @layer never reaches here —
+      // it's flattened by `unwrapCssLayers` before `replaceSync` runs.
       warnings.push({
         kind: 'dropped-at-rule',
         message: `${atRuleName(rule.type)} rule is not supported by the import engine`,

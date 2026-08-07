@@ -45,7 +45,14 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync, type Dirent } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { readTextCapped } from './cappedFileRead'
-import { classifyDeclaration, collectRootScopeMaps, resolveVarValue, toPx } from './tokenExtractCssScan'
+import {
+  classifyDeclaration,
+  collectRootScopeMaps,
+  ELEVATION_NAME_HINT_RE,
+  RADIUS_NAME_HINT_RE,
+  resolveVarValue,
+  toPx,
+} from './tokenExtractCssScan'
 import type { DesignSystemRef } from './projectProfileSchema'
 
 const CACHE_DIR_SEGMENTS = ['.studio', 'cache'] as const
@@ -177,24 +184,27 @@ function emptyDigestTokens(): DigestTokens {
   }
 }
 
-/** `--rounded-*`/`--radius-*` — not matched by `classifyDeclaration`'s own spacing name hint (`SPACING_NAME_HINT_RE` matches the literal substring "radius", not "rounded", the convention real design systems actually ship), which is exactly why `FrameworkSettings` has never had a radius family. */
-const RADIUS_NAME_RE = /round|radius/i
-/** `--elevation-*`/`--*-shadow` — a shadow value is a multi-part shorthand (`0px -4px 16px rgba(...)`), never a single color literal, so it always falls through `classifyDeclaration` as `unclassified` today. Checked by NAME, not value, for the same reason `classifyDeclaration` checks radius by hint after the color check: a shadow's resolved value has no single shape to test. */
-const ELEVATION_NAME_RE = /shadow|elevation/i
+// `RADIUS_NAME_HINT_RE`/`ELEVATION_NAME_HINT_RE` used to be private copies
+// here — this module was their only consumer, for the markdown digest.
+// `STUDIO-FIGMA-PARITY-PLAN.md` §11 (Track H, T6) promoted them into
+// `tokenExtractCssScan.ts`'s `classifyDesignTokenFamily` so the new
+// `DesignToken` model (`@core/design-tokens`) recognises radius/elevation
+// too — imported from there now so the digest and the picker agree on what
+// counts as a radius/elevation token, instead of two names for one rule.
 
-/** Classifies one `:root`-scope declaration for the digest — radius/elevation first (by name, see the regexes above), then delegates to `classifyDeclaration` for color/spacing/typography, exactly as `classifyCssText` does. */
+/** Classifies one `:root`-scope declaration for the digest — radius/elevation first (by name, see the imported regexes), then delegates to `classifyDeclaration` for color/spacing/typography, exactly as `classifyCssText` does. */
 function classifyForDigest(name: string, light: ReadonlyMap<string, string>, tokens: DigestTokens): void {
   const raw = light.get(name)!
   const resolved = resolveVarValue(raw, light)
 
-  if (RADIUS_NAME_RE.test(name)) {
+  if (RADIUS_NAME_HINT_RE.test(name)) {
     const px = toPx(resolved)
     if (px !== null) {
       tokens.radius.push({ name, px })
       return
     }
   }
-  if (ELEVATION_NAME_RE.test(name)) {
+  if (ELEVATION_NAME_HINT_RE.test(name)) {
     tokens.elevationNames.push(name)
     return
   }

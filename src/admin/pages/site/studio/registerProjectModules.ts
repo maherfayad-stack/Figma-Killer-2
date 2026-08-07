@@ -37,14 +37,28 @@
  *     for the currently-active project dir and calls `registry.unregister`
  *     on every one of them the moment the project changes, before
  *     registering the new project's set.
- *   - **The bundle is fetched lazily** — only when (a) the project's trust
- *     tier is ≥ 1 (`render-packages`/`run-project`; Tier 0 is the default for
- *     every fresh import, `meta-03` decision 1) AND (b) the currently loaded
- *     board actually contains an unregistered `pkg.*` node. Both conditions
- *     are checked once per project-load/trust-tier transition inside a
- *     `useEffect`, via a single IMPERATIVE `useEditorStore.getState()` read —
- *     never a reactive `useEditorStore(selector)` scan, which would run on
- *     every store change (store-engineer's own rule).
+ *   - **E4 (`STUDIO-FIGMA-PARITY-PLAN.md`) — the bundle fetch is driven by
+ *     E1's catalog + `ProjectProfile.componentPackages`, never by board
+ *     contents.** The bundle route (`componentBundle.ts`) already computes
+ *     its own demand list this way (`componentPackageDemand`, sourced from
+ *     `resolveProjectProfile`), so this hook's job is simply to CALL it once
+ *     per project-load/trust-tier transition — it used to additionally
+ *     require `siteHasUnregisteredPackageNode()` (a `pkg.*` node already on
+ *     the loaded board), which made registration impossible on a fresh page:
+ *     you needed a registered component to drag one in, and needed one
+ *     dragged in to register. That precondition is gone; the ONLY gate left
+ *     is trust — deliberately, per invariant 1 ("parse, never execute").
+ *     A trust-0 project still calls the bundle route (cheap: the route's own
+ *     demand computation is a cached filesystem read, and it refuses BEFORE
+ *     any parsing/bundling happens) so a project that DOES depend on a
+ *     component package gets an honest, actionable refusal
+ *     (`trust-tier-required`) recorded via `setPackageBundleStatus` — surfaced
+ *     by `ModulePicker.tsx`/`ModuleInserterDialog.tsx` with a "Promote
+ *     project" action, and by `PackageComponentPlaceholder.tsx` for a node
+ *     already on the board — rather than the picker just staying silently
+ *     empty. A project with no component-package dependency at all costs
+ *     nothing extra: `componentPackageDemand` is `[]`, so the route returns
+ *     `{ ok: true, components: [] }` without ever reaching the trust check.
  *   - **WS-3.4 — `ReactNode` props render as slots.** `iconPropFromJsx`
  *     (page-parser) still recovers only one level of raw SVG markup; anything
  *     else assigned to a component prop as JSX (`header={<PageHeader/>}`) is
@@ -71,10 +85,12 @@
  */
 import React, { useEffect, useSyncExternalStore } from 'react'
 import { apiRequest } from '@core/http'
+import { getErrorMessage } from '@core/utils/errorMessage'
 import { ensurePluginRuntime } from '@admin/pluginRuntimeBootstrap'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { sanitizeSvg } from '@core/sanitize'
 import { studioSlotNodeId } from '@core/utils/studioSlotSentinel'
+import { PropSpecSchema, controlForPropKind } from '@site/property-controls/componentPropKind'
 import {
   registry,
   packageModuleId,
@@ -84,7 +100,6 @@ import {
   type ModuleComponentProps,
 } from '@core/module-engine'
 import { useAdminUi } from '@admin/state/adminUi'
-import { useEditorStore } from '@site/store/store'
 import { NodeRenderer } from '@site/canvas/NodeRenderer'
 import { CursorClickSolidIcon } from 'pixel-art-icons/icons/cursor-click-solid'
 import { getStudioPaletteHiddenModuleIds } from './fsCodemodAdapter'
@@ -95,27 +110,12 @@ import { getStudioTrustTier, setPackageBundleStatus, subscribeStudioTrustTier } 
 // (`packageManifestSchema.ts`, `componentBundle.ts`). This file runs in the
 // browser, so — same reasoning as `fsCodemodAdapter.ts`'s `ComponentSourceSchema`
 // — it only needs to agree on the JSON wire shape, not import the Node/ts-morph
-// server modules that produce it.
+// server modules that produce it. `PropKindSchema`/`PropSpecSchema` (and the
+// `PropKind -> PropertyControl` mapping below) now live in the shared
+// `componentPropKind.ts` (E2.5) — this file's own copy was the ONLY other
+// place a local component's declared type could have been read the same way,
+// so it was moved, not duplicated, the moment a second consumer needed it.
 // ---------------------------------------------------------------------------
-
-const PropKindSchema = Type.Union([
-  Type.Object({ kind: Type.Literal('string') }),
-  Type.Object({ kind: Type.Literal('number') }),
-  Type.Object({ kind: Type.Literal('boolean') }),
-  Type.Object({ kind: Type.Literal('enum'), values: Type.Array(Type.String()) }),
-  Type.Object({ kind: Type.Literal('color') }),
-  Type.Object({ kind: Type.Literal('image') }),
-  Type.Object({ kind: Type.Literal('node') }),
-  Type.Object({ kind: Type.Literal('handler') }),
-  Type.Object({ kind: Type.Literal('unknown') }),
-])
-type PropKind = Static<typeof PropKindSchema>
-
-const PropSpecSchema = Type.Object({
-  name: Type.String(),
-  kind: PropKindSchema,
-  required: Type.Boolean(),
-})
 
 const BundledComponentSpecSchema = Type.Object({
   name: Type.String(),
@@ -301,39 +301,10 @@ function makePackageComponent(
 // Schema / defaults
 // ---------------------------------------------------------------------------
 
-function controlForKind(name: string, kind: PropKind): Record<string, unknown> | undefined {
-  switch (kind.kind) {
-    case 'enum':
-      return kind.values.length >= 2
-        ? { type: 'select', label: name, options: kind.values.map((v) => ({ label: v, value: v })) }
-        : { type: 'text', label: name }
-    case 'color':
-      return { type: 'color', label: name }
-    case 'image':
-      return { type: 'image', label: name }
-    case 'boolean':
-      return { type: 'toggle', label: name }
-    case 'number':
-      return { type: 'number', label: name }
-    case 'node':
-      // WS-6.5 — the sentinel value is meaningless in a scalar control, but
-      // the slot IS a real, editable node (WS-3.4's materialized child) —
-      // `SlotControl` renders an "Edit contents" affordance that selects it,
-      // rather than silently dropping the row (the prior behaviour: this
-      // component genuinely HAS an icon/header slot and a user had no way to
-      // discover that from the Properties panel).
-      return { type: 'slot', label: name }
-    case 'string':
-    case 'unknown':
-    default:
-      return { type: 'text', label: name }
-  }
-}
-
 function buildSchema(props: readonly BundledComponentSpec['props'][number][]): ModuleDefinition['schema'] {
   const schema: Record<string, unknown> = {}
   for (const p of props) {
-    const control = controlForKind(p.name, p.kind)
+    const control = controlForPropKind(p.name, p.kind)
     if (control) schema[p.name] = control
   }
   return schema as ModuleDefinition['schema']
@@ -375,83 +346,115 @@ function unregisterActiveProjectModules(): void {
   setPackageBundleStatus(null)
 }
 
-/** One-time imperative scan (NOT a reactive `useEditorStore(selector)`) — see module doc. */
-function siteHasUnregisteredPackageNode(): boolean {
-  const site = useEditorStore.getState().site
-  if (!site) return false
-  for (const page of site.pages) {
-    for (const node of Object.values(page.nodes)) {
-      if (node.moduleId.startsWith('pkg.') && !registry.has(node.moduleId)) return true
-    }
-  }
-  return false
-}
-
 /**
  * Fetches the project's component bundle and registers every component it
  * contains. Safe to call more than once for the same `dir` (the server
  * caches by content hash; `registerOrReplace` is idempotent).
+ *
+ * **The whole body is wrapped in try/catch, not just the structured
+ * `{ ok: false }` refusal branch.** E4 made this reachable on EVERY
+ * project-dir/trust-tier transition instead of only when the board already
+ * had an unregistered `pkg.*` node — which means it now also runs against
+ * environments this was never exercised against before: a network hiccup, a
+ * 500 from an unrelated route the caller's own fetch mock doesn't special-case
+ * (test envs), a malformed bundle URL failing `import()`. Before this, any of
+ * those left `syncProjectModules`'s promise REJECTED with nothing to catch it
+ * (`void syncProjectModules(...)` in the hook below) — an unhandled rejection
+ * that, in production, also left `PackageComponentPlaceholder`/`ModulePicker`/
+ * `ModuleInserterDialog` stuck showing "Loading…" forever, since
+ * `setPackageBundleStatus` was never reached. Catching here turns every
+ * failure mode into the SAME honest, actionable refusal the `{ ok: false }`
+ * branch already gives a structured server refusal — never a silent stall,
+ * never a floating rejection.
  */
 async function syncProjectModules(dir: string): Promise<void> {
-  const response = await apiRequest('/admin/api/studio/component-bundle', {
-    method: 'POST',
-    body: { dir },
-    schema: ComponentBundleResponseSchema,
-  })
-  if (dir !== activeProjectDir) return // project changed again while this request was in flight
+  try {
+    const response = await apiRequest('/admin/api/studio/component-bundle', {
+      method: 'POST',
+      body: { dir },
+      schema: ComponentBundleResponseSchema,
+    })
+    if (dir !== activeProjectDir) return // project changed again while this request was in flight
 
-  if (!response.ok) {
-    console.error(`[registerProjectModules] bundle refused (${response.code}): ${response.message}`)
-    setPackageBundleStatus({ ok: false, code: response.code, message: response.message })
-    return
+    if (!response.ok) {
+      console.error(`[registerProjectModules] bundle refused (${response.code}): ${response.message}`)
+      setPackageBundleStatus({ ok: false, code: response.code, message: response.message })
+      return
+    }
+    setPackageBundleStatus({ ok: true })
+    if (response.components.length === 0 || !response.url) return
+
+    await ensurePluginRuntime()
+    if (dir !== activeProjectDir) return
+
+    const mod: Record<string, unknown> = await import(/* @vite-ignore */ response.url)
+    if (dir !== activeProjectDir) return
+
+    const metaHidden = new Set(getStudioPaletteHiddenModuleIds())
+    const nextHidden = new Set<string>(paletteHiddenPackageModuleIds)
+    const Provider = findProvider(mod)
+
+    for (const spec of response.components) {
+      const exportKey = `${sanitizePackageName(spec.pkg)}__${spec.name}`
+      const Comp = mod[exportKey] as React.ComponentType<Record<string, unknown>> | undefined
+      if (!Comp) continue
+
+      const id = packageModuleId(spec.pkg, spec.name)
+      if (PALETTE_HIDDEN_NAME_RE.test(spec.name) || metaHidden.has(id)) nextHidden.add(id)
+
+      const mod_: ModuleDefinition<Record<string, unknown>> = {
+        id,
+        name: spec.name,
+        description: `${spec.name} — ${spec.pkg}`,
+        category: 'Design System',
+        version: '1.0.0',
+        icon: CursorClickSolidIcon,
+        trusted: true,
+        canHaveChildren: true,
+        schema: buildSchema(spec.props),
+        propsSchema: buildPropsSchema(spec.props),
+        defaults: buildDefaults(spec),
+        // How this component is spelled in the user's source, so adding it from
+        // the picker can write `import { X } from '<pkg>'` + `<X />` into the
+        // file — see `ModuleDefinition.sourceImport`.
+        sourceImport: { specifier: spec.pkg, name: spec.name },
+        component: makePackageComponent(spec.pkg, spec.name, Comp, Provider),
+        // Publish (HTML) path is out of scope, same as `register.tsx` — the canvas uses `component` above.
+        render: () => ({ html: '' }),
+      } as unknown as ModuleDefinition<Record<string, unknown>>
+
+      registry.registerOrReplace(mod_)
+      activeModuleIds.add(id)
+    }
+
+    paletteHiddenPackageModuleIds = nextHidden
+  } catch (err) {
+    if (dir !== activeProjectDir) return // project changed again while this request was in flight
+    console.error('[registerProjectModules] component bundle sync failed:', err)
+    setPackageBundleStatus({
+      ok: false,
+      code: 'sync-failed',
+      message: getErrorMessage(err, "Could not load this project's component bundle."),
+    })
   }
-  setPackageBundleStatus({ ok: true })
-  if (response.components.length === 0 || !response.url) return
+}
 
-  await ensurePluginRuntime()
-  if (dir !== activeProjectDir) return
-
-  const mod: Record<string, unknown> = await import(/* @vite-ignore */ response.url)
-  if (dir !== activeProjectDir) return
-
-  const metaHidden = new Set(getStudioPaletteHiddenModuleIds())
-  const nextHidden = new Set<string>(paletteHiddenPackageModuleIds)
-  const Provider = findProvider(mod)
-
-  for (const spec of response.components) {
-    const exportKey = `${sanitizePackageName(spec.pkg)}__${spec.name}`
-    const Comp = mod[exportKey] as React.ComponentType<Record<string, unknown>> | undefined
-    if (!Comp) continue
-
-    const id = packageModuleId(spec.pkg, spec.name)
-    if (PALETTE_HIDDEN_NAME_RE.test(spec.name) || metaHidden.has(id)) nextHidden.add(id)
-
-    const mod_: ModuleDefinition<Record<string, unknown>> = {
-      id,
-      name: spec.name,
-      description: `${spec.name} — ${spec.pkg}`,
-      category: 'Design System',
-      version: '1.0.0',
-      icon: CursorClickSolidIcon,
-      trusted: true,
-      canHaveChildren: true,
-      schema: buildSchema(spec.props),
-      propsSchema: buildPropsSchema(spec.props),
-      defaults: buildDefaults(spec),
-      // How this component is spelled in the user's source, so adding it from
-      // the picker can write `import { X } from '<pkg>'` + `<X />` into the
-      // file — see `ModuleDefinition.sourceImport`.
-      sourceImport: { specifier: spec.pkg, name: spec.name },
-      component: makePackageComponent(spec.pkg, spec.name, Comp, Provider),
-      // Publish (HTML) path is out of scope, same as `register.tsx` — the canvas uses `component` above.
-      render: () => ({ html: '' }),
-    } as unknown as ModuleDefinition<Record<string, unknown>>
-
-    registry.registerOrReplace(mod_)
-    activeModuleIds.add(id)
-  }
-
-  paletteHiddenPackageModuleIds = nextHidden
+/**
+ * E3/E4 seam — the explicit reset/resync entrypoint `useDependencyInstallJob.ts`
+ * calls after a Studio `bun add`/`bun remove` job lands, so a freshly-installed
+ * design-system package becomes registerable WITHOUT waiting for the two
+ * triggers `useRegisterProjectModules`'s own effect otherwise reacts to
+ * (a project-dir change, or a trust-tier change via `promoteProjectToTier1`).
+ * A site reload (`requestCmsSiteReload`) alone changes NEITHER — installing a
+ * dependency doesn't touch the project dir or the trust tier — so without this,
+ * `syncProjectModules` would never re-fire after an install and the newly
+ * available package would silently sit unregistered until the user happened
+ * to switch projects or promote. No-op when no project is currently active
+ * (nothing this could mean).
+ */
+export function resyncActiveProjectModules(): void {
+  if (!activeProjectDir) return
+  void syncProjectModules(activeProjectDir)
 }
 
 // ---------------------------------------------------------------------------
@@ -463,11 +466,24 @@ async function syncProjectModules(dir: string): Promise<void> {
  *   - On every project-dir change, unregisters the previous project's `pkg.*`
  *     modules FIRST — regardless of whether the new project needs a fetch —
  *     so switching away from a project never leaves its modules registered.
- *   - Fetches + registers the new project's bundle only when its trust tier
- *     is ≥ 1 AND the loaded board actually has an unregistered `pkg.*` node.
- *     Tier 0 (the default for every fresh import) leaves the canvas showing
- *     `NodeRenderer`'s "promote this project" placeholder instead — no
- *     network request, no code execution, until the user opts in.
+ *   - Fetches the new project's bundle on every project-dir/trust-tier
+ *     transition, **not gated on the board already containing a `pkg.*`
+ *     node** (E4 — that precondition made registration impossible on a
+ *     fresh page: nothing to drag in until something was already dragged
+ *     in). The bundle route's OWN demand list
+ *     (`ProjectProfile.componentPackages`, via E1's `resolveProjectProfile`)
+ *     decides what to fetch; a project with no component-package dependency
+ *     costs one cheap, cached, empty-result round trip.
+ *   - The trust gate stays exactly where it was — `render-packages`/
+ *     `run-project` (Tier ≥ 1) required to actually bundle/render a
+ *     package's code (invariant 1: parse, never execute). A Tier-0 project
+ *     that DOES depend on a component package still calls this route; the
+ *     route refuses with `trust-tier-required` BEFORE any parsing/bundling,
+ *     and that refusal is recorded via `setPackageBundleStatus` — read by
+ *     `ModulePicker.tsx`/`ModuleInserterDialog.tsx` (picker-level "N
+ *     components need this project promoted" notice) and
+ *     `PackageComponentPlaceholder.tsx` (per-node, once one is on the
+ *     board) — never a silent empty palette.
  *   - Re-runs when the trust tier changes (a successful "promote" action —
  *     `promoteProjectToTier1` in `studioProjectTrust.ts` — updates the
  *     external store this hook subscribes to), so promoting mid-session
@@ -483,8 +499,6 @@ export function useRegisterProjectModules(): void {
       activeProjectDir = projectDir
     }
     if (!projectDir) return
-    if (trust === 'static') return
-    if (!siteHasUnregisteredPackageNode()) return
     void syncProjectModules(projectDir)
   }, [projectDir, trust])
 }

@@ -7,6 +7,7 @@ import { useEditorStore } from '@site/store/store'
 import {
   findDomDropRow,
   getDomDropZone,
+  previewDomDropRefusal,
   resolveDomDropTarget,
   type DomDropRowMeta,
   type DomDropTarget,
@@ -66,6 +67,13 @@ export function useDomPanelDnd({
   const [dragPreview, setDragPreview] = useState<DragPreview | null>(null)
   const [target, setTarget] = useState<DomDropTarget | null>(null)
   const [invalidOverId, setInvalidOverId] = useState<string | null>(null)
+  /**
+   * G5 — set alongside `invalidOverId` when the row IS a structurally valid
+   * target but the source write would refuse it (shared component, route
+   * chrome, …) — distinct from an ordinary structural rejection, which
+   * leaves this `null`. See `previewDomDropRefusal`'s own doc.
+   */
+  const [invalidReason, setInvalidReason] = useState<string | null>(null)
 
   // exception #1: feeds resolveTargetAtPoint's effect-bound closure (exhaustive-deps)
   const canHaveChildren = useCallback((moduleId: string) => {
@@ -139,6 +147,7 @@ export function useDomPanelDnd({
     if (!page) {
       setResolvedTarget(null)
       setInvalidOverId(null)
+      setInvalidReason(null)
       clearAutoExpand()
       return
     }
@@ -147,6 +156,7 @@ export function useDomPanelDnd({
     if (!row) {
       setResolvedTarget(null)
       setInvalidOverId(null)
+      setInvalidReason(null)
       clearAutoExpand()
       return
     }
@@ -157,7 +167,7 @@ export function useDomPanelDnd({
     const draggedIds = activeIdsRef.current.length > 0
       ? activeIdsRef.current
       : [draggedId]
-    const next = resolveDomDropTarget({
+    const resolved = resolveDomDropTarget({
       page,
       draggedId,
       draggedIds,
@@ -166,8 +176,16 @@ export function useDomPanelDnd({
       canHaveChildren,
     })
 
+    // G5 — a structurally valid target may still refuse the source write.
+    // Ask BEFORE committing to `target`, so the drop line for a refused move
+    // never renders — the row shows the SAME invalid state a locked/cyclic
+    // target already shows, just with a reason attached.
+    const refusal = resolved ? previewDomDropRefusal(page, resolved) : null
+    const next = refusal ? null : resolved
+
     setResolvedTarget(next)
     setInvalidOverId(next ? null : row.nodeId)
+    setInvalidReason(refusal?.message ?? null)
     scheduleAutoExpand(next, point)
   }, [canHaveChildren, clearAutoExpand, page, scheduleAutoExpand, setResolvedTarget])
 
@@ -235,6 +253,7 @@ export function useDomPanelDnd({
     setDragPreview(null)
     setResolvedTarget(null)
     setInvalidOverId(null)
+    setInvalidReason(null)
   }, [clearAutoExpand, setResolvedTarget, stopAutoScroll])
 
   const handleDragStart = (event: DragStartEvent) => {
@@ -294,6 +313,7 @@ export function useDomPanelDnd({
     activeId,
     target,
     invalidOverId,
+    invalidReason,
     registerRow,
   }
 
@@ -306,6 +326,8 @@ export function useDomPanelDnd({
     activeCount: dragPreview?.count ?? 0,
     target,
     invalidOverId,
+    /** G5 — non-null only when `invalidOverId` is a refused SOURCE WRITE, not a structural rejection. */
+    invalidReason,
     registerRow,
     handleDragStart,
     handleDragMove,

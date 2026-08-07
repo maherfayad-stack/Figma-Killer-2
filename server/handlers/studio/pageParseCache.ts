@@ -108,3 +108,43 @@ export function setCachedRouteParse(
 export function clearPageParseCache(): void {
   cache.clear()
 }
+
+/**
+ * Track C5 (reload surgery) — the safety check behind a TARGETED per-file
+ * reload: whether ANY cached route for `dir`, other than the route(s) named
+ * in `excludeCacheKeys` (the one(s) about to be re-parsed and returned to the
+ * client), recorded `absFile` as one of ITS OWN dependencies (its own file,
+ * a resolved local-component import, or — for App Router — a layout-chain
+ * file). If some OTHER route depends on the same file, that route's content
+ * is now stale too and a narrow reload of just the touched route would
+ * silently desync the board; the caller must widen to a full reload instead.
+ *
+ * Three-way, not boolean, because "no data" and "no dependency" are different
+ * answers with different consequences:
+ *   - `true` — a sharing route was found. Always widen.
+ *   - `false` — every cached route for `dir` was checked and none depend on
+ *     `absFile`. Safe to reload narrowly.
+ *   - `null` — the cache holds NO entries at all for `dir` (a cold cache:
+ *     server restart, or nothing has parsed this project in this process
+ *     yet). There is no dependency data to consult, so there is nothing
+ *     honest to answer — the caller treats this the same as `true` and
+ *     widens, rather than guessing "probably fine".
+ *
+ * Cheap: a scan over the in-memory cache's own keys and each entry's already-
+ * recorded `depMtimes` object, no filesystem access.
+ */
+export function anyOtherRouteDependsOnFile(
+  dir: string,
+  absFile: string,
+  excludeCacheKeys: ReadonlySet<string>,
+): boolean | null {
+  const prefix = `${dir}::`
+  let sawEntryForDir = false
+  for (const [key, entry] of cache) {
+    if (!key.startsWith(prefix)) continue
+    sawEntryForDir = true
+    if (excludeCacheKeys.has(key)) continue
+    if (absFile in entry.depMtimes) return true
+  }
+  return sawEntryForDir ? false : null
+}

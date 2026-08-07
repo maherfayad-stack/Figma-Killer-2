@@ -39,6 +39,7 @@ import {
 } from './cssControlTypes'
 import { parseNudgeableValue } from '@site/property-controls/numericNudge'
 import { getFontWeightOptions } from './fontWeightOptions'
+import type { PropertyProvenance } from './stylePropertyProvenance'
 import styles from './ClassPropertyRow.module.css'
 
 // ---------------------------------------------------------------------------
@@ -69,6 +70,26 @@ interface ClassPropertyRowProps {
    */
   onPreview?: (property: keyof CSSPropertyBag, value: string | number | undefined) => void
   onClearPreview?: () => void
+  /**
+   * Track F1 — winner/loser provenance for this property, when the caller
+   * computed one (`StyleSurface`'s `provenanceByProperty`, threaded through
+   * `StyleSectionsEditor`). Purely additive: renders a small strip of every
+   * OTHER place that declares this property (struck through — "shadowed
+   * declarations render struck-through rather than hidden; seeing why a
+   * value lost is the entire point"), below the control. Never changes which
+   * value the control itself shows or edits — `value`/`placeholder`/`isSet`
+   * above, driven by the caller's own target-specific bag, are unchanged.
+   *
+   * F2 seam: a locked/refused WRITE reason for this specific row (e.g. this
+   * property resolved from a code expression) is a SEPARATE fact from
+   * provenance and is not modeled here yet — `InlineStyleComposer`'s
+   * `lockedPropertySet` currently short-circuits `onChange`/`onRemove`
+   * before this component ever sees the row. When F2's `EditConstraint`
+   * lands (`editConstraint.ts`, `scope: 'style-property'`), the natural next
+   * step is a `constraint?: EditConstraint` prop here, rendered as a
+   * lock glyph next to (not replacing) this provenance strip.
+   */
+  provenance?: PropertyProvenance
 }
 
 export function ClassPropertyRow({
@@ -82,6 +103,7 @@ export function ClassPropertyRow({
   onRemove,
   onPreview,
   onClearPreview,
+  provenance,
 }: ClassPropertyRowProps) {
   const type = getCSSPropertyControlType(property)
   const tokenSource = getCSSPropertyTokenSource(property)
@@ -270,6 +292,12 @@ export function ClassPropertyRow({
     }
   }
 
+  // Track F1 — every declared source that ISN'T the winner (or every source
+  // when nothing here won because of an honest `ambiguous` tie — see
+  // `stylePropertyProvenance.ts`), struck through rather than hidden.
+  const shadowedSources = provenance?.sources.filter((s) => !s.winner) ?? []
+  const showInheritedHint = provenance?.inherited === true && !isSet
+
   return (
     <div
       className={cn(
@@ -296,6 +324,22 @@ export function ClassPropertyRow({
         >
           <CloseIcon size={16} color="currentColor" aria-hidden="true" />
         </Button>
+      )}
+
+      {(shadowedSources.length > 0 || showInheritedHint) && (
+        <div className={styles.provenanceStrip} data-testid={`css-property-provenance-${String(property)}`}>
+          {showInheritedHint && <span className={styles.provenanceInherited}>inherited</span>}
+          {shadowedSources.map((source) => (
+            <span
+              key={`${source.kind}-${source.classId ?? 'inline'}`}
+              className={styles.provenanceLoser}
+              title={`${source.label}: ${source.value} — not applied here`}
+            >
+              <span className={styles.provenanceLoserLabel}>{source.label}</span>
+              <span className={styles.provenanceLoserValue}>{String(source.value)}</span>
+            </span>
+          ))}
+        </div>
       )}
     </div>
   )

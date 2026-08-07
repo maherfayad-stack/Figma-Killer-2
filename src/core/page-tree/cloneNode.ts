@@ -69,6 +69,11 @@ export function cloneNodeWithRemap(
     )
   }
   if (node.resolution) cloned.resolution = { ...node.resolution }
+  if (node.resolvedProps) {
+    cloned.resolvedProps = Object.fromEntries(
+      Object.entries(node.resolvedProps).map(([k, v]) => [k, { ...v }]),
+    )
+  }
 
   return cloned
 }

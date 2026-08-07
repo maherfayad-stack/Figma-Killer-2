@@ -46,8 +46,6 @@ function selectActiveLeftSidebarPanel(state: ReturnType<typeof useEditorStore.ge
 }
 
 interface LeftSidebarProps {
-  /** Drives the rail-button accent identity hash (`${workspace}:${id}:…`). */
-  workspace?: 'site' | 'content' | 'media'
   railOnly?: boolean
   /**
    * Whether the caller can perform structural edits (DnD, add/remove nodes,
@@ -73,7 +71,6 @@ interface LeftSidebarProps {
 const READ_ONLY_RAIL_IDS: ReadonlySet<LeftSidebarPanelId> = new Set(['explorer', 'inspect'])
 
 export function LeftSidebar({
-  workspace = 'site',
   railOnly = false,
   editable = true,
   canUseAiChat = true,
@@ -116,7 +113,6 @@ export function LeftSidebar({
       style={style}
     >
       <PanelRail
-        workspace={workspace}
         editable={editable}
         canUseAiChat={canUseAiChat}
         railOnly={railOnly}

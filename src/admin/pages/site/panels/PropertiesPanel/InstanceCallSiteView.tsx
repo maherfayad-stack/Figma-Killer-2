@@ -1,15 +1,28 @@
 /**
- * InstanceCallSiteView — PropertiesPanel view for a selected `studio.instance`
- * node (WS-4.2/4.3, `parser-05`). instance-ui-01: this is the CONSUMER of
- * that work order's engine layer — the call-site prop surface, and the
- * Detach/Swap actions, had no UI at all before this file.
+ * InstanceCallSiteView — PropertiesPanel's unified "Component" section for a
+ * selected `studio.instance` node (WS-4.2/4.3, `parser-05`; row set rebuilt
+ * by E2.5 on top of Track E1's catalog).
  *
  * Header: component glyph + name + source badge + Detach/Swap actions.
- * Body: one control per `props.callSiteProps` entry — a prop holding a
- * literal is writable via `updateInstanceCallSiteProp` (→ `setJsxProp` on
- * save); one that resolved from an expression is `codeProps`-locked and
- * renders read-only, exactly like every other Studio prop control
- * (`propLockReason` — imported, not re-derived).
+ * Body: one control per prop the component's own source DECLARES (E1's
+ * `GET /admin/api/studio/components`), not per prop the call site happens
+ * to pass — `buildComponentCallSiteRows` (own module, unit-tested without
+ * rendering) is the row-set contract. A prop the call site doesn't set
+ * still gets a row (writable, via `setJsxProp` adding a brand-new
+ * attribute); a prop the parser resolved from an expression is
+ * `codeProps`-locked and renders read-only, exactly like every other
+ * Studio prop control (`propLockReason` — imported, not re-derived).
+ *
+ * **This is the "one Component section" E2.5 asks for.** Before this pass,
+ * a `pkg.*`/`alm.*` design-system component already got a full declared-type
+ * row set (`registerProjectModules.ts`'s schema, built from the SAME
+ * `PropKind` shape) while a LOCAL component call site got a guessed,
+ * call-site-only row set (`controlForCallSiteValue`, deleted) — two
+ * different experiences for the same concept, "a component instance has
+ * props". Both paths now go through `controlForPropKind`
+ * (`componentPropKind.ts`) — the identical mapping, so a `variant?:
+ * ButtonVariant` union renders a dropdown whether the component lives in
+ * this project or an installed package.
  *
  * Editing a call-site prop here is INSTANCE-LOCAL (it writes the ONE call
  * site this node's own id decodes to), so `SharedComponentNotice` — which
@@ -22,22 +35,18 @@
  * `detachInstance`/`swapInstance`/`extractInstanceCopy` — direct, one-shot
  * HTTP calls (not the diffed `saveSite` batch), same posture
  * `saveStudioAssetEdit` already established for a discrete, deliberate
- * commit.
- *
- * Honest gap, stated plainly: the Swap picker's candidate list is LOCAL
- * components already instantiated elsewhere on the currently-loaded board
- * (deduped by `{sourceFile, componentName}`) — not a full project-wide
- * component catalog, and not package components. Building a "list every
- * component in this project" server endpoint is real, separate scope this
- * pass didn't reach; see this file's STATE.md handoff.
+ * commit. The Swap picker's candidates now come from E1's project-wide
+ * catalog (previously only components already instantiated on the LOADED
+ * BOARD) — still local-only (package components aren't in this catalog),
+ * disclosed below rather than silently narrowed.
  */
 import { useState } from 'react'
 import { useEditorStore } from '@site/store/store'
 import type { PageNode } from '@core/page-tree'
-import type { PropertyControl } from '@core/module-engine'
-import { studioSlotNodeId } from '@core/utils/studioSlotSentinel'
 import { PropertyControlRenderer } from '@site/property-controls/PropertyControlRenderer'
 import { propLockReason } from './propLockReason'
+import { buildComponentCallSiteRows } from './componentCallSiteRows'
+import { useLocalComponentCatalog, findLocalComponentSpec } from '@site/studio/componentCatalog'
 import { detachInstance, extractInstanceCopy, swapInstance } from '@site/studio/studioSaveRequests'
 import { getErrorMessage } from '@core/utils/errorMessage'
 import { Button } from '@ui/components/Button'
@@ -67,24 +76,6 @@ interface LocalSwapCandidate {
 }
 
 /**
- * A `studio.instance`'s call-site props have no per-field `PropKind`
- * classification (parser-05's honest gap #4 — deliberately scoped out to
- * avoid duplicating `pkg-02`'s concurrent PACKAGE-component PropKind work).
- * This infers a reasonable control from the VALUE'S OWN runtime type
- * instead of a declared signature — a real, working, but coarser rule than
- * WS-3.1's classification. `PropertyControlRenderer`'s own structured-value
- * guard (object/array → `CodeValueControl`, checked before this control type
- * is ever consulted) is what keeps a `{ actions: [...] }`-shaped call-site
- * prop safely read-only regardless of what this function returns for it.
- */
-function controlForCallSiteValue(value: unknown, label: string): PropertyControl {
-  if (studioSlotNodeId(value) !== undefined) return { type: 'slot', label }
-  if (typeof value === 'boolean') return { type: 'toggle', label }
-  if (typeof value === 'number') return { type: 'number', label }
-  return { type: 'text', label }
-}
-
-/**
  * Detach refusal reasons where "duplicate the component and edit the copy"
  * is a genuine way forward (the component itself can't be safely inlined
  * anywhere). Excludes `not-a-component`/`unresolvable`/`package-component`
@@ -104,16 +95,21 @@ export function InstanceCallSiteView({ nodeId, node }: InstanceCallSiteViewProps
   const source = instanceProps.source ?? 'local'
   const sourceFile = instanceProps.sourceFile ?? ''
   const callSiteProps = instanceProps.callSiteProps ?? {}
-  const callSiteKeys = Object.keys(callSiteProps)
 
   const updateCallSiteProp = useEditorStore((s) => s.updateInstanceCallSiteProp)
+
+  // E1/E2.5 — the project-wide component catalog, fetched once (cached per
+  // workspace dir) and reused for both the row set below and the Swap
+  // picker's candidate list.
+  const catalog = useLocalComponentCatalog()
+  const spec = findLocalComponentSpec(catalog, componentName, sourceFile)
+  const rows = buildComponentCallSiteRows(spec, callSiteProps)
 
   const [detaching, setDetaching] = useState(false)
   const [refusal, setRefusal] = useState<{ reason: string; message: string } | null>(null)
   const [extracting, setExtracting] = useState(false)
   const [swapOpen, setSwapOpen] = useState(false)
   const [swapQuery, setSwapQuery] = useState('')
-  const [swapCandidates, setSwapCandidates] = useState<LocalSwapCandidate[]>([])
   const [swappingKey, setSwappingKey] = useState<string | null>(null)
 
   async function handleDetach() {
@@ -150,26 +146,16 @@ export function InstanceCallSiteView({ nodeId, node }: InstanceCallSiteViewProps
     }
   }
 
-  // instance-ui-01 — a ONE-TIME imperative scan on a user click (opening the
-  // picker), not a reactive `useEditorStore(selector)` — the picker's own
-  // interaction, not a value the panel re-renders on every store tick.
-  // Deliberately outside `no-full-site-scan-in-selectors.test.ts`'s concern
-  // for the same reason `pkg-02`'s `siteHasUnregisteredPackageNode` is
-  // allowlisted there: an imperative read triggered by one click, never a
-  // selector callback.
+  // E2.5 — candidates now come from E1's project-wide catalog instead of a
+  // board scan (the honest gap the previous version's doc comment named):
+  // every OTHER local component the catalog knows about, still local-only
+  // (package components aren't in this catalog — a real, disclosed
+  // narrowing, not a silent one).
+  const swapCandidates: LocalSwapCandidate[] = catalog
+    .filter((c) => !(c.name === componentName && c.file === sourceFile))
+    .map((c) => ({ componentName: c.name, sourceFile: c.file }))
+
   function openSwapPicker() {
-    const state = useEditorStore.getState()
-    const seen = new Map<string, LocalSwapCandidate>()
-    for (const page of state.site?.pages ?? []) {
-      for (const candidate of Object.values(page.nodes)) {
-        if (candidate.moduleId !== 'studio.instance') continue
-        const p = candidate.props as InstanceProps
-        if (p.source !== 'local' || !p.componentName || !p.sourceFile) continue
-        if (p.componentName === componentName && p.sourceFile === sourceFile) continue
-        seen.set(`${p.sourceFile}#${p.componentName}`, { componentName: p.componentName, sourceFile: p.sourceFile })
-      }
-    }
-    setSwapCandidates([...seen.values()])
     setSwapQuery('')
     setSwapOpen(true)
   }
@@ -264,7 +250,7 @@ export function InstanceCallSiteView({ nodeId, node }: InstanceCallSiteViewProps
         </div>
       )}
 
-      {/* ── Swap picker — searchable, local components already on the board ── */}
+      {/* ── Swap picker — searchable, project-wide local components (E1) ── */}
       {swapOpen && (
         <div className={styles.swapPicker} data-testid="instance-swap-picker">
           <SearchBar
@@ -276,7 +262,7 @@ export function InstanceCallSiteView({ nodeId, node }: InstanceCallSiteViewProps
           />
           {filteredCandidates.length === 0 ? (
             <p className={styles.swapEmpty}>
-              No other local component is on this board yet — swap targets come from components already used elsewhere.
+              No other local component found in this project yet.
             </p>
           ) : (
             <ul className={styles.swapList} role="listbox" aria-label="Swap target">
@@ -302,18 +288,17 @@ export function InstanceCallSiteView({ nodeId, node }: InstanceCallSiteViewProps
         </div>
       )}
 
-      {/* ── Call-site props ──────────────────────────────────────────────── */}
-      {callSiteKeys.length === 0 ? (
-        <div className={styles.noParams}>This component takes no props at this call site.</div>
+      {/* ── Component props — one row per DECLARED prop (E1/E2.5) ─────────── */}
+      {rows.length === 0 ? (
+        <div className={styles.noParams}>This component takes no props.</div>
       ) : (
-        <div className={styles.propsList} role="list" aria-label="Call-site props">
-          {callSiteKeys.map((key) => {
-            const value = callSiteProps[key]
-            const control = controlForCallSiteValue(value, key)
+        <div className={styles.propsList} role="list" aria-label="Component props">
+          {rows.map(({ key, control, value }) => {
+            // A slot value is a navigation/write affordance (`SlotControl`'s
+            // own "Edit contents"/"Add"), not an editable scalar — always
+            // reachable, same as `pkg-02`'s unconditional `node`-kind
+            // handling for package components.
             const isSlot = control.type === 'slot'
-            // A slot value is a navigation affordance ("Edit contents"), not
-            // an editable scalar — always available, same as `pkg-02`'s
-            // unconditional `node`-kind handling for package components.
             const lockReason = isSlot ? undefined : propLockReason(node, `callSiteProps:${key}`)
             return (
               <div key={key} role="listitem" data-testid={`instance-call-site-prop-${key}`}>
@@ -323,6 +308,7 @@ export function InstanceCallSiteView({ nodeId, node }: InstanceCallSiteViewProps
                   value={value}
                   onChange={(propKey, next) => updateCallSiteProp(nodeId, propKey, next)}
                   sourceLockReason={lockReason}
+                  ownerNodeId={nodeId}
                 />
               </div>
             )

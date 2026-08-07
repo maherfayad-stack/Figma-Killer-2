@@ -19,6 +19,7 @@ import { clearCanvasSelectionDraft } from '../selectionSlice'
 import { createDefaultSiteDocument } from './defaults'
 import { emptyDirtyMarks, type DirtyMarks } from './dirtyTracking'
 import { reconcileFrameworkClasses } from './framework/reconcile'
+import { collectAllNodeIds, historySurvivesReload } from './historyPreservation'
 import { applyNodeIndexPatch, clearNodeIndexes, rebuildNodeIndexes } from './nodeIndex'
 import type { SiteSlice, SiteSliceHelpers } from './types'
 
@@ -95,7 +96,17 @@ export function createLifecycleActions({
       reindexSiteTreeParents(site)
       const packageJson = clonePackageJson(site.packageJson)
       const siteRuntime = cloneSiteRuntimeConfig(site.runtime)
+      // 0.2 (E2) fix — computed against the INCOMING site (pure, no draft
+      // needed) before deciding, inside `set()` below, whether the current
+      // `_historyPast`/`_historyFuture` can survive this reload intact. See
+      // `historyPreservation.ts`'s doc for what "safe" means and why a
+      // structural-edit reload no longer has to destroy the whole undo stack.
+      const knownNodeIds = collectAllNodeIds(site)
       set((state) => {
+        const historySafe =
+          historySurvivesReload(state._historyPast, knownNodeIds) &&
+          historySurvivesReload(state._historyFuture, knownNodeIds)
+
         state.site = { ...site, packageJson, runtime: siteRuntime }
         state.packageJson = packageJson
         state.siteRuntime = siteRuntime
@@ -116,11 +127,29 @@ export function createLifecycleActions({
           : (findHomePage(site.pages) ?? site.pages[0])?.id ?? null
         // Reset activeDocument — see createSite for rationale.
         state.activeDocument = null
-        state._historyPast = []
-        state._historyFuture = []
+        // 0.2 (E2) fix — wipe ONLY when replaying the existing stack against
+        // this reload's tree is not provably safe (see `historySafe` above).
+        // When safe, leave `_historyPast`/`_historyFuture` untouched — a
+        // Mutative draft that isn't assigned to keeps its prior structural
+        // sharing, so this is a real "keep", not a copy.
+        if (!historySafe) {
+          state._historyPast = []
+          state._historyFuture = []
+        }
+        // A reload boundary always ends an in-progress coalescing burst —
+        // the next edit must not fold into whatever burst was open before
+        // the document was replaced out from under it.
         state._historyCoalesceKey = null
-        state.canUndo = false
-        state.canRedo = false
+        state.canUndo = state._historyPast.length > 0
+        state.canRedo = state._historyFuture.length > 0
+        // Always cleared, regardless of `historySafe`: `state.site` above is
+        // unconditionally replaced by the freshly-loaded document, so any
+        // in-memory edit not already reflected in it is gone either way —
+        // preserving the flag without the edit it described would just be a
+        // stuck "unsaved" indicator with nothing left to save. Item (b) of
+        // this fix (flushing a pending debounced save before a structural
+        // reload fires) is what keeps a real edit from reaching this point
+        // undelivered in the first place.
         state.hasUnsavedChanges = false
         state._dirtySave = emptyDirtyMarks()
         // Full reload — including a re-parse after a `shifted: true` save,
@@ -170,7 +199,7 @@ export function createLifecycleActions({
       })
     },
 
-    // ── Agent-write live reload (WS-12-adjacent) ────────────────────────────
+    // ── Agent-write live reload (WS-12-adjacent) / Track C5 structural reload ──
     //
     // Deliberately bypasses `mutateSite`/`runHistoricMutation`: these pages
     // were just re-read FROM disk, not edited on the canvas. Recording undo
@@ -181,6 +210,22 @@ export function createLifecycleActions({
     // `fsCodemodAdapter.test.ts`'s header, "write-loop safety"). Untouched
     // pages' own history/dirty state are also left completely alone — this
     // is a targeted patch, not a reload.
+    //
+    // Track C5 — the ONE exception to "leaves history completely alone":
+    // a patched page's node ids can shift (a move/delete/insert always
+    // changes the line count under the edit, same as a full `loadSite`
+    // reparse would), which can leave `_historyPast`/`_historyFuture`
+    // pointing at ids that no longer exist in the freshly-patched tree. Uses
+    // the SAME `historySurvivesReload` predicate `loadSite` uses (0.2's
+    // fix) — not a second one — computed against the site AFTER the patch,
+    // since a stored patch can reference ANY page's node, not just the one(s)
+    // being patched. In the common case (the patch doesn't touch any node a
+    // stored history entry references — true for essentially every
+    // agent-driven `patchPages` call, since those touch pages the user
+    // wasn't mid-editing) this is a no-op and history survives exactly as it
+    // always has; it only wipes when replaying the stack against the new
+    // tree would silently no-op or mint a phantom key, matching `loadSite`'s
+    // own reasoning file-for-file (`historyPreservation.ts`).
     patchPages: ({ pages, removedPageIds = [] }) => {
       const { site } = get()
       if (!site) return
@@ -226,6 +271,10 @@ export function createLifecycleActions({
 
       const nextSite: SiteDocument = { ...site, pages: nextPages }
       reconcileSiteExplorerInPlace(nextSite)
+      // Track C5 — computed against the POST-patch site, pure, before `set()`,
+      // same ordering `loadSite` uses. See this method's own doc for why a
+      // patch (unlike most of what this method does) has to check this at all.
+      const knownNodeIds = collectAllNodeIds(nextSite)
 
       // Board-frame cleanup for a genuinely removed page — computed against
       // FROZEN (pre-`set()`) state, matching every other board mutation in
@@ -272,6 +321,26 @@ export function createLifecycleActions({
           state._dirtySave.pageIds.delete(id)
           state._dirtySave.deletedPageIds.delete(id)
         }
+
+        // Track C5 — wipe ONLY when replaying the existing stack against the
+        // freshly-patched tree is not provably safe (see this method's own
+        // doc, and `historyPreservation.ts`, whose predicate this reuses
+        // verbatim). Safe is the common case and leaves both arrays
+        // untouched — a Mutative draft that isn't assigned to keeps its
+        // prior structural sharing, same "real keep, not a copy" as `loadSite`.
+        const historySafe =
+          historySurvivesReload(state._historyPast, knownNodeIds) &&
+          historySurvivesReload(state._historyFuture, knownNodeIds)
+        if (!historySafe) {
+          state._historyPast = []
+          state._historyFuture = []
+        }
+        // A patch that reaches this point changed at least one page or
+        // removed one — the same "reload boundary" `loadSite` treats as
+        // always ending an open coalescing burst, safe or not.
+        state._historyCoalesceKey = null
+        state.canUndo = state._historyPast.length > 0
+        state.canRedo = state._historyFuture.length > 0
 
         // Keep the open page/document valid.
         if (state.activePageId && actuallyRemovedIds.has(state.activePageId)) {

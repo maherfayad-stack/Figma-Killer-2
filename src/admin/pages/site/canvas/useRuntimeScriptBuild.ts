@@ -22,18 +22,37 @@
  *   React reconcile clobbered script-mutated DOM).
  *
  * The 350ms debounce coalesces rapid edits (e.g. agent tool batches).
+ *
+ * Perf (Track C3 / audit 06 E9)
+ * ──────────────────────────────
+ * This used to subscribe to the WHOLE `s.site` object and call
+ * `computeBuildSignature` (a `JSON.stringify` of three of its fields) in the
+ * render body on every render that subscription triggered. `site`'s top-level
+ * reference changes on every site-touching mutation anywhere in the document,
+ * so the signature (and its `JSON.stringify`) was recomputed on every
+ * keystroke, in every mounted frame, regardless of whether `files`/`runtime`/
+ * `packageJson` had actually changed. It now selects those three fields
+ * directly — each is structurally-shared-stable across edits to node content
+ * (Mutative only recreates the branch of the tree actually touched) — so
+ * `computeBuildSignature` only re-runs when one of them, or the page/
+ * breakpoint/template inputs, genuinely changed.
  */
 
 import { useEffect, useEffectEvent, useState } from 'react'
-import type { Page, SiteDocument } from '@core/page-tree'
+import type { Page } from '@core/page-tree'
+import type { SiteFile } from '@core/files/schemas'
+import type { SitePackageJson } from '@core/site-dependencies/manifest'
 import type { TemplateRenderDataContext } from '@core/templates/dynamicBindings'
 import { useEditorStore } from '@site/store/store'
 import {
   buildCmsRuntimePreview,
   type CmsRuntimePreviewResult,
 } from '@core/persistence/cmsRuntime'
-import type { SiteRuntimeDiagnostic, SiteScriptFormat, SiteScriptPlacement } from '@core/site-runtime'
+import type { SiteRuntimeConfig, SiteRuntimeDiagnostic, SiteScriptFormat, SiteScriptPlacement } from '@core/site-runtime'
 import { getErrorMessage } from '@core/utils/errorMessage'
+
+/** Stable empty fallback for the files selector (Guideline #239). */
+const EMPTY_FILES: SiteFile[] = []
 
 export type RuntimeScriptStatus = 'idle' | 'building' | 'ready' | 'error'
 
@@ -98,20 +117,23 @@ function extractInjectableScripts(result: CmsRuntimePreviewResult): InjectableRu
 }
 
 function computeBuildSignature(
-  site: SiteDocument | null,
+  hasSite: boolean,
+  files: SiteFile[],
+  runtime: SiteRuntimeConfig | null,
+  packageJson: SitePackageJson | null,
   pageId: string | null,
   breakpointId: string,
   templateContext: TemplateRenderDataContext | undefined,
 ): string | null {
-  if (!site || !pageId) return null
+  if (!hasSite || !pageId) return null
   // Key on the bundle's actual inputs (script files, runtime config, deps)
   // rather than `site.updatedAt`, so editing the node tree — which leaves
   // these untouched — does NOT re-run scripts. Editing a script file or a
   // dependency rotates the signature and triggers a fresh bundle.
   return JSON.stringify({
-    files: site.files,
-    runtime: site.runtime ?? null,
-    packageJson: site.packageJson ?? null,
+    files,
+    runtime,
+    packageJson,
     pageId,
     breakpointId,
     templateContext: templateContext ?? null,
@@ -125,18 +147,26 @@ export function useRuntimeScriptBuild({
   enabled,
   debounceMs = 350,
 }: UseRuntimeScriptBuildArgs): RuntimeScriptBuildState {
-  const site = useEditorStore((s) => s.site)
+  // Narrow slices — see the module doc's "Perf (Track C3)" section. Each is
+  // reference-stable across an edit to node content anywhere on the board.
+  const hasSite = useEditorStore((s) => s.site !== null)
+  const files = useEditorStore((s) => s.site?.files ?? EMPTY_FILES)
+  const runtime = useEditorStore((s) => s.site?.runtime ?? null)
+  const packageJson = useEditorStore((s) => s.site?.packageJson ?? null)
   const [build, setBuild] = useState<BuildResult | null>(null)
   const [refreshNonce, setRefreshNonce] = useState(0)
 
   const buildSignature = computeBuildSignature(
-    site,
+    hasSite,
+    files,
+    runtime,
+    packageJson,
     page?.id ?? null,
     breakpointId,
     templateContext,
   )
 
-  const isIdle = !enabled || !site || !page || buildSignature === null
+  const isIdle = !enabled || !hasSite || !page || buildSignature === null
 
   const kickOffBuild = useEffectEvent(() => {
     if (page === null || buildSignature === null) return null

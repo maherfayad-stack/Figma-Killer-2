@@ -32,6 +32,7 @@ import {
 } from './cssControlTypes'
 import { hasStyleValue } from './styleValueUtils'
 import { useEditorPreference } from '@site/preferences/editorPreferences'
+import type { PropertyProvenance } from './stylePropertyProvenance'
 import styles from './StyleRuleComposer.module.css'
 import sectionStyles from '@ui/components/Section/Section.module.css'
 
@@ -64,6 +65,16 @@ interface StyleSectionsEditorProps {
   onClearProperties: (properties: ReadonlyArray<keyof CSSPropertyBag>) => void
   onPreview: (patch: Partial<CSSPropertyBag>) => void
   onClearPreview: () => void
+  /**
+   * Track F1 — per-property winner/loser provenance, keyed by the SAME
+   * string keys `ALL_CURATED_CSS_PROPERTIES` uses. Optional and purely
+   * additive (see `ClassPropertyRow`'s doc) — only reaches the generic
+   * fallback rows (Effects section, Border's Advanced disclosure, this
+   * editor's own generic branch); the 7 bespoke visual section components
+   * (Spacing/Layout/Position/Size/Typography/Background/Border's primary
+   * controls) are unchanged by this pass — see `StyleSurface`'s doc for why.
+   */
+  provenanceByProperty?: ReadonlyMap<string, PropertyProvenance>
 }
 
 // ---------------------------------------------------------------------------
@@ -81,6 +92,7 @@ export function StyleSectionsEditor({
   onClearProperties,
   onPreview,
   onClearPreview,
+  provenanceByProperty,
 }: StyleSectionsEditorProps) {
   const visibleStyleSections = getVisibleStyleSections(styleQuery)
 
@@ -103,6 +115,7 @@ export function StyleSectionsEditor({
             onClearProperties={onClearProperties}
             onPreview={onPreview}
             onClearPreview={onClearPreview}
+            provenanceByProperty={provenanceByProperty}
           />
         </div>
       ))}
@@ -143,6 +156,7 @@ interface StyleSectionGroupProps {
   onClearProperties: (properties: ReadonlyArray<keyof CSSPropertyBag>) => void
   onPreview: (patch: Partial<CSSPropertyBag>) => void
   onClearPreview: () => void
+  provenanceByProperty?: ReadonlyMap<string, PropertyProvenance>
 }
 
 function StyleSectionGroup({
@@ -157,6 +171,7 @@ function StyleSectionGroup({
   onClearProperties,
   onPreview,
   onClearPreview,
+  provenanceByProperty,
 }: StyleSectionGroupProps) {
   const setCount = section.properties.filter((prop) => hasStyleValue(storedStyles[prop])).length
 
@@ -280,6 +295,7 @@ function StyleSectionGroup({
               onRemove={onRemove}
               onPreview={previewProperty}
               onClearPreview={onClearPreview}
+              provenanceByProperty={provenanceByProperty}
             />
           </>
         ) : (
@@ -303,6 +319,7 @@ function StyleSectionGroup({
                 onRemove={onRemove}
                 onPreview={previewProperty}
                 onClearPreview={onClearPreview}
+                provenance={provenanceByProperty?.get(String(prop))}
               />
             )
           })
@@ -339,6 +356,7 @@ interface AdvancedRowsProps {
   onRemove: (property: keyof CSSPropertyBag) => void
   onPreview?: (property: keyof CSSPropertyBag, value: string | number | undefined) => void
   onClearPreview?: () => void
+  provenanceByProperty?: ReadonlyMap<string, PropertyProvenance>
 }
 
 function AdvancedRows({
@@ -350,6 +368,7 @@ function AdvancedRows({
   onRemove,
   onPreview,
   onClearPreview,
+  provenanceByProperty,
 }: AdvancedRowsProps) {
   const anySet = properties.some((prop) => hasStyleValue(storedStyles[prop]))
 
@@ -376,6 +395,7 @@ function AdvancedRows({
               onRemove={onRemove}
               onPreview={onPreview}
               onClearPreview={onClearPreview}
+              provenance={provenanceByProperty?.get(String(prop))}
             />
           )
         })}

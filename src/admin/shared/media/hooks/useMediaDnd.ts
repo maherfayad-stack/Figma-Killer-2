@@ -6,8 +6,13 @@
  * `utils/mediaDnd`. Both the canvas (grid + list) and the sidebar folder tree
  * consume this hook, so a single source governs which media drops are legal.
  */
-import { useState, type DragEvent } from 'react'
-import { hasMediaDropData, readMediaDropPayload } from '../utils/mediaDragDrop'
+import { useEffect, useState, type DragEvent } from 'react'
+import {
+  clearActiveMediaDragPayload,
+  hasMediaDropData,
+  readActiveMediaDragPayload,
+  readMediaDropPayload,
+} from '../utils/mediaDragDrop'
 import {
   canAcceptDrop,
   commitDropPayload,
@@ -28,10 +33,26 @@ interface MediaDnd {
 export function useMediaDnd(workspace: MediaDndTarget, enabled = true): MediaDnd {
   const [dropTargetKey, setDropTargetKey] = useState<string | null>(null)
 
+  // `dragend` fires on the drag SOURCE regardless of whether the drop
+  // succeeded, was rejected, or was cancelled (Escape / dropped outside any
+  // target) — the one place guaranteed to end every drag session. Cleared
+  // here rather than per-surface `onDragEnd` wiring so a stale
+  // `activeDragPayload` can never survive past the gesture that set it,
+  // no matter which of the several drag sources (asset tile/row, folder
+  // tile/row, sidebar folder tree) started it. See `mediaDragDrop.ts`'s
+  // module doc for why this session mirror exists at all.
+  useEffect(() => {
+    document.addEventListener('dragend', clearActiveMediaDragPayload)
+    return () => document.removeEventListener('dragend', clearActiveMediaDragPayload)
+  }, [])
+
   function handleDragOver(event: DragEvent<HTMLElement>, targetFolderId: string | null) {
     if (!enabled) return
     if (!hasMediaDropData(event.dataTransfer)) return
-    const payload = readMediaDropPayload(event.dataTransfer)
+    // `dataTransfer.getData()` is unreadable during `dragover` (HTML DnD spec
+    // "protected mode") — read the same-document session mirror instead of
+    // `readMediaDropPayload`, which only ever returns `""`/`null` here.
+    const payload = readActiveMediaDragPayload()
     if (!canAcceptDrop(workspace, payload, targetFolderId)) return
     event.preventDefault()
     event.stopPropagation()

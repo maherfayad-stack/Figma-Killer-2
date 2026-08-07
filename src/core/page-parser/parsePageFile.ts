@@ -20,15 +20,13 @@ import * as path from 'node:path'
 import {
   Node,
   Project,
-  type JsxAttribute,
   type JsxElement,
   type JsxSelfClosingElement,
-  type JsxSpreadAttribute,
   type SourceFile,
 } from 'ts-morph'
-import type { BranchAlternative, FunctionLike, NodeLoc, ParsedNode, ParsedPage, ParsedPropValue } from './types'
+import type { BranchAlternative, FunctionLike, NodeLoc, ParsedNode, ParsedPage } from './types'
 import { createEvalScope, type StaticEvalOptions } from './staticEval'
-import { withResolution } from './nodeResolution'
+import { withResolution, shortenResolutionMap } from './nodeResolution'
 import {
   getReturnedJsxRoots,
   isLockingExpression,
@@ -47,6 +45,7 @@ import {
 } from './jsxAttributeReaders'
 import { iterationEvalContext, loopCallbackBody, readStaticLoop } from './staticLoopExpansion'
 import { serializeInlineSvg } from './inlineSvg'
+import { captureSlotProps } from './slotCapture'
 
 // Re-exported so every existing `from './parsePageFile'` import (`index.ts`,
 // `inlineLocalComponents.ts`, `nextAppLayout.ts`, `componentSubstitution.ts`)
@@ -68,8 +67,6 @@ type JsxOpeningLike = JsxElement | JsxSelfClosingElement
 export const DYNAMIC_LOCK_REASON = 'dynamic — rendered in code'
 export const SPREAD_LOCK_REASON = 'spread props'
 export const DYNAMIC_SVG_LOCK_REASON = 'SVG built in code'
-/** WS-3.4 — a component prop's JSX value, materialized as a real child node. See `captureSlotProps`. */
-const SLOT_LOCK_REASON = 'slot content — fills a component prop'
 
 /**
  * `project` defaults to a fresh, single-file `Project` (this file only) —
@@ -387,6 +384,8 @@ function processElement(
       markup === undefined ? DYNAMIC_SVG_LOCK_REASON : lockReason,
       [...propsResult.resolutions, ...styleResult.resolutions],
     )
+    // R2 — per-prop counterpart of `svgLock.resolution`, see `ParsedNode.resolvedProps`.
+    const svgResolvedProps = shortenResolutionMap({ ...propsResult.resolutionsByKey, ...styleResult.resolutionsByKey })
     const svgNode: ParsedNode = {
       id,
       kind,
@@ -401,6 +400,7 @@ function processElement(
       codeProps: codePropNames([...propsResult.codeProps, 'svg'], styleResult.codeStyles),
       ...(styleResult.styles !== undefined ? { inlineStyles: styleResult.styles } : {}),
       ...(svgLock.resolution ? { resolution: svgLock.resolution } : {}),
+      ...(svgResolvedProps ? { resolvedProps: svgResolvedProps } : {}),
     }
     ctx.nodes[id] = svgNode
     return id
@@ -414,6 +414,8 @@ function processElement(
   const rawSvg = extractRawSvgMarkup(attributes, ctx)
   if (rawSvg !== undefined) {
     const rawLock = withResolution(locked, lockReason, [...propsResult.resolutions, ...styleResult.resolutions])
+    // R2 — per-prop counterpart of `rawLock.resolution`, see `ParsedNode.resolvedProps`.
+    const rawResolvedProps = shortenResolutionMap({ ...propsResult.resolutionsByKey, ...styleResult.resolutionsByKey })
     const rawNode: ParsedNode = {
       id,
       kind,
@@ -428,6 +430,7 @@ function processElement(
       codeProps: codePropNames([...propsResult.codeProps, 'svg'], styleResult.codeStyles),
       ...(styleResult.styles !== undefined ? { inlineStyles: styleResult.styles } : {}),
       ...(rawLock.resolution ? { resolution: rawLock.resolution } : {}),
+      ...(rawResolvedProps ? { resolvedProps: rawResolvedProps } : {}),
     }
     ctx.nodes[id] = rawNode
     return id
@@ -452,12 +455,23 @@ function processElement(
     ...propsResult.resolutions,
     ...styleResult.resolutions,
   ])
+  // R2 — every resolution keyed by the prop/style/text it actually explains,
+  // not just the first. See `ParsedNode.resolvedProps`.
+  const resolvedProps = shortenResolutionMap({
+    ...(textResult?.resolution ? { text: textResult.resolution } : {}),
+    ...propsResult.resolutionsByKey,
+    ...styleResult.resolutionsByKey,
+  })
 
   // WS-3.4 — a COMPONENT prop whose JSX value the readers above could not
   // resolve to a scalar/icon/structured value (a design-system slot: icon,
   // header, footer, …) is materialized as a real child node instead of being
-  // silently dropped. See `captureSlotProps`'s doc for the full shape.
-  const slotProps = kind === 'component' ? captureSlotProps(attributes, propsResult.props, ctx) : undefined
+  // silently dropped. See `captureSlotProps`'s doc (`./slotCapture.ts`) for
+  // the full shape, including E2.3's fragment-container extension.
+  // `processElement`/`processChildren` are passed in rather than imported —
+  // see that module's own header for why.
+  const slotProps =
+    kind === 'component' ? captureSlotProps(attributes, propsResult.props, ctx, processElement, processChildren) : undefined
   const props = slotProps
     ? {
         ...propsResult.props,
@@ -490,57 +504,11 @@ function processElement(
     ...(propsResult.assetOrigin ? { assetOrigin: propsResult.assetOrigin } : {}),
     ...(styleResult.styles !== undefined ? { inlineStyles: styleResult.styles } : {}),
     ...(lock.resolution ? { resolution: lock.resolution } : {}),
+    ...(resolvedProps ? { resolvedProps } : {}),
   }
   ctx.nodes[id] = node
 
   return id
-}
-
-/**
- * WS-3.4 — captures a COMPONENT prop's JSX-element value as a real child
- * node, for every attribute `extractProps` did NOT already resolve into
- * `existingProps` (a scalar, the `{svg}` icon shape, or a resolved
- * array/object all win over this — see `extractProps`'s own component-prop
- * branch in `jsxAttributeReaders.ts`).
- *
- * `<Cell icon={<Icon/>}/>` mints `<Icon/>` via the SAME `processElement` walk
- * every ordinary child goes through — identical locking rules, identical
- * props/text/svg capture — but the minted id is NOT added to `children`: a
- * slot value is not a DOM child of the host, it is handed to one specific
- * prop (see `studioSlotSentinel.ts`, which the caller uses to encode the
- * reference into `props`). The minted node is always locked
- * (`SLOT_LOCK_REASON`) — it cannot be dragged out of the slot structurally —
- * but its OWN props stay ordinary and editable, the same `locked`-is-
- * structure / `codeProps`-is-values split every other locked node in this
- * parser already follows.
- *
- * Only a single JSX element/self-closing element is captured — a fragment is
- * declined (returns no slot for that attribute) because it can expand to
- * zero or several roots, which is ambiguous for a prop expecting exactly one
- * element. `style`/`dangerouslySetInnerHTML` never reach here: `style`'s
- * value is never JSX, and a node with a resolvable `dangerouslySetInnerHTML`
- * already returned from `processElement` before this runs.
- */
-function captureSlotProps(
-  attributes: (JsxAttribute | JsxSpreadAttribute)[],
-  existingProps: Record<string, ParsedPropValue>,
-  ctx: ParseContext,
-): Record<string, string> | undefined {
-  let slots: Record<string, string> | undefined
-  for (const attribute of attributes) {
-    if (!Node.isJsxAttribute(attribute)) continue
-    const name = attribute.getNameNode().getText()
-    if (name in existingProps) continue // already a scalar/icon/structured value
-    const initializer = attribute.getInitializer()
-    if (!initializer || !Node.isJsxExpression(initializer)) continue
-    const expression = initializer.getExpression()
-    if (!expression) continue
-    if (!Node.isJsxElement(expression) && !Node.isJsxSelfClosingElement(expression)) continue
-    const slotChildId = processElement(expression, ctx, true, SLOT_LOCK_REASON)
-    slots ??= {}
-    slots[name] = slotChildId
-  }
-  return slots
 }
 
 /**

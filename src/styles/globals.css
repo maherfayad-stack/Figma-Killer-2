@@ -263,6 +263,12 @@
        neighbors. A fourth neon identity distinct from the selection (green),
        hover (pink), and selector (orange) rings above. */
     --canvas-snap-guide-color: #00c8ff;
+    /* Persisted ruler guide (D1): a user-placed guide line dragged out from
+       a ruler, saved to `boards.json` — a DIFFERENT concept from the
+       transient snap guide above (see `RulerGuidesLayer`'s doc for the name
+       collision this avoids). A fifth neon identity distinct from
+       selection/hover/selector/snap. */
+    --canvas-ruler-guide-color: #b14eff;
     /* Shared diagonal-stripe pattern used by every module's canvas empty
        state (image, video, content, loop, container, slot-outlet, VC ref
        placeholders). Strictly achromatic — colours derived from

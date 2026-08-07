@@ -179,11 +179,58 @@ describe('generateCanvasClassCSS', () => {
       colors,
     )
 
-    expect(css).toContain(':root.theme-alt')
-    expect(css).not.toContain('theme-dark')
+    expect(css).toContain("html[data-studio-scheme='dark']")
+    expect(css).not.toContain('theme-alt')
     expect(css).toContain('--primary: hsla(238, 100%, 62%, 1);')
     expect(css).toContain('.text-primary')
     expect(css).toContain('color: var(--primary);')
+  })
+
+  it('never re-declares an EXTRACTED color token\'s :root variable — its real declaration already lives in the project\'s own CSS (T4)', () => {
+    // Same fixture as the previous test, except `origin: 'project-css'` —
+    // stamped by `tokenExtractBuild.ts` on every token read out of the
+    // project's own CSS. Before the T4 fix this HSLA-normalized value
+    // competed with the project's own `:root` declaration for the same
+    // custom property, in the same cascade layer, with the winner decided
+    // by injector mount order (`ClassStyleInjector` vs.
+    // `UserStylesheetInjector`) — a silent divergence risk this test guards
+    // against directly.
+    const colors = {
+      tokens: [
+        {
+          id: 'extracted-token',
+          category: '',
+          slug: 'aqua',
+          lightValue: '#0c9ab0',
+          darkValue: '',
+          darkModeEnabled: false,
+          generateUtilities: { text: true, background: false, border: false, fill: false },
+          generateTransparent: false,
+          generateShades: { enabled: false, count: 0 },
+          generateTints: { enabled: false, count: 0 },
+          order: 0,
+          createdAt: 0,
+          updatedAt: 0,
+          origin: 'project-css' as const,
+        },
+      ],
+    }
+
+    const css = generateCanvasClassCSS(
+      generateFrameworkColorUtilityClasses(colors),
+      [],
+      [],
+      colors,
+    )
+
+    // No `:root` re-declaration of the extracted variable...
+    expect(css).not.toContain('--aqua:')
+    // ...but the locked utility class Studio itself generates still exists
+    // and still references the SAME variable name — it resolves fine
+    // because the project's own stylesheet (loaded by
+    // `UserStylesheetInjector`/`ProjectCssInjector`) supplies the value.
+    expect(css).toContain('.text-aqua')
+    expect(css).toContain('color: var(--aqua);')
   })
 })
 

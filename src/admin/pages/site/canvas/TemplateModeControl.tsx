@@ -11,7 +11,7 @@
 
 import { type CSSProperties } from 'react'
 import { useAsyncResource } from '@admin/lib/useAsyncResource'
-import { selectActivePage, useEditorStore } from '@site/store/store'
+import { selectActiveCanvasPage, useEditorStore } from '@site/store/store'
 import { isTemplatePage, primaryTemplateTableSlug } from '@core/templates'
 import { getCmsDataTableBySlug, previewCmsDataLoopItems } from '@core/persistence/cmsData'
 import type { LoopItem } from '@core/loops/types'
@@ -21,7 +21,7 @@ import { measureToolbarValueWidth } from './measureToolbarText'
 import styles from './TemplateModeControl.module.css'
 
 export default function TemplateModeControl() {
-  const activePage = useEditorStore(selectActivePage)
+  const activePage = useEditorStore(selectActiveCanvasPage)
   const isVcMode = useEditorStore((s) => s.activeDocument?.kind === 'visualComponent')
 
   if (isVcMode || !activePage || !activePage.template?.enabled) return null
@@ -50,7 +50,7 @@ export default function TemplateModeControl() {
 
 interface PreviewSourceSelectProps {
   templateId: string
-  page: NonNullable<ReturnType<typeof selectActivePage>>
+  page: NonNullable<ReturnType<typeof selectActiveCanvasPage>>
 }
 
 const EMPTY_ITEMS: LoopItem[] = []

@@ -55,6 +55,7 @@ import {
 import { pruneCanvasSelectionDraft } from '../selectionSlice'
 import { indexStyleRulesByName, linkImportedClassNames, mergeImportedStyleRules } from './importLinking'
 import type { SiteSlice, SiteSliceHelpers } from './types'
+import { coalesceKeyForPatch } from '../../historyCoalesce'
 
 /**
  * The subset of a module's defaults that has an unambiguous JSX spelling, for
@@ -124,24 +125,6 @@ function toastOutletBlocked(body: string): void {
     body,
     location: 'site-editor',
   })
-}
-
-/**
- * Build the history-coalescing options for a single-field patch, or `undefined`
- * for multi-field patches (which always get their own discrete undo entry).
- *
- * Per-keystroke text/number controls patch exactly one prop per change, so a
- * stable `<scope>:<nodeId>:<prop>` key lets `pushHistorySnapshot` fold a whole
- * typing burst into one undo step instead of cloning the site per character.
- */
-function coalesceKeyForPatch(
-  scope: string,
-  nodeId: string,
-  patch: Record<string, unknown>,
-): { coalesceKey: string } | undefined {
-  const keys = Object.keys(patch)
-  if (keys.length !== 1) return undefined
-  return { coalesceKey: `${scope}:${nodeId}:${keys[0]}` }
 }
 
 export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {

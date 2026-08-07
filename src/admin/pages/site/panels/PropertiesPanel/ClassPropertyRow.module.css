@@ -109,3 +109,36 @@
 .propertyRowWrapStacked[data-state="set"]::after {
     display: none;
 }
+
+/* ── Track F1 — provenance strip ────────────────────────────────────────
+   Shadowed declarations render struck-through rather than hidden; seeing
+   WHY a value lost is the entire point. Sits below the control, full row
+   width, wraps rather than overflowing the fixed label column. */
+.provenanceStrip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3xs);
+    padding-left: var(--class-remove-label-column);
+    color: var(--text-subtle);
+    font-size: var(--text-3xs);
+}
+
+.provenanceInherited {
+    color: var(--text-subtle);
+    font-style: italic;
+}
+
+.provenanceLoser {
+    display: inline-flex;
+    align-items: baseline;
+    gap: var(--space-4xs);
+}
+
+.provenanceLoserLabel {
+    color: var(--text-subtle);
+}
+
+.provenanceLoserValue {
+    color: var(--text-muted);
+    text-decoration: line-through;
+}

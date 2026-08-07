@@ -83,3 +83,20 @@ export function isStylePatchWritableToSource(node: SourceWritableNode, patch: Re
   const code = new Set(node.codeProps ?? [])
   return Object.keys(patch).every((key) => !code.has(styleValueKey(key)))
 }
+
+/**
+ * True when a node's whole `style=""` layer can be written back at all, based
+ * only on which module owns it. `fsCodemodAdapter.saveSite`'s inline-style
+ * writeback loop only ever emits a `kind:'style'` edit for a `base.*` node —
+ * a `pkg.*` design-system component, an `alm.*` primitive, or a
+ * `studio.instance` component ref renders its own `style=""` (if any) from
+ * ITS OWN source, not the call site's, so nothing this panel writes for that
+ * node has anywhere to land. This is the single predicate the offer
+ * (`StyleSurface`) and the write path must agree on — see
+ * docs/audits/2026-08-06/10-classes-vs-inline-styles.md finding S4, where the
+ * offer had no `moduleId` check at all and every keystroke was silently
+ * discarded.
+ */
+export function canWriteInlineStyleForModule(moduleId: string): boolean {
+  return moduleId.startsWith('base.')
+}

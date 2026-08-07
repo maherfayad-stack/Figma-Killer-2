@@ -28,12 +28,22 @@ import { createHash } from 'node:crypto'
 import { normalizeFrameworkColorSlug } from '@core/framework'
 import type {
   FrameworkColorToken,
+  FrameworkColorTokenOrigin,
   FrameworkScaleManualSize,
   FrameworkSettings,
   FrameworkSpacingGroup,
   FrameworkTypographyGroup,
 } from '@core/framework-schema'
 import type { ClassifiedColor, ClassifiedLength, ClassifiedTokens } from './tokenExtractCssScan'
+
+/**
+ * `TokenExtractionSource` minus `'none'` — the value stamped onto every
+ * `FrameworkColorToken.origin` this build produces. `'none'` never reaches
+ * `buildColorTokens` with a non-empty `colors` array: `tokenExtract.ts` only
+ * sets `source = 'none'` when `hasAnyTokens(tokens)` is false for every
+ * family, colors included.
+ */
+export type ExtractedColorOrigin = Exclude<FrameworkColorTokenOrigin, 'studio-authored'>
 
 // ---------------------------------------------------------------------------
 // Deterministic ids — same input, same id, forever (matches `studioCss.ts`'s
@@ -67,7 +77,10 @@ function namePrefix(rawName: string): string {
   return stripped.split('-')[0] || stripped
 }
 
-function buildColorTokens(colors: readonly ClassifiedColor[]): FrameworkColorToken[] {
+function buildColorTokens(
+  colors: readonly ClassifiedColor[],
+  origin: ExtractedColorOrigin,
+): FrameworkColorToken[] {
   return colors.map((c, order) => {
     const slug = normalizeFrameworkColorSlug(c.name)
     return {
@@ -77,10 +90,28 @@ function buildColorTokens(colors: readonly ClassifiedColor[]): FrameworkColorTok
       lightValue: c.light,
       darkValue: c.dark ?? '',
       darkModeEnabled: c.dark !== undefined && c.dark !== c.light,
+      // Stamped so the canvas (`filterReemittableColorTokens`,
+      // `@core/framework`'s colors.ts) knows this token's `:root`
+      // declaration already exists in the project's own CSS/theme and must
+      // not be re-declared a second time (STUDIO-FIGMA-PARITY-PLAN.md T4).
+      origin,
       generateUtilities: { text: true, background: true, border: true, fill: false },
-      generateTransparent: true,
-      generateShades: { enabled: true, count: 4 },
-      generateTints: { enabled: true, count: 4 },
+      // An EXTRACTED token is read out of the project's own CSS, not authored
+      // by Studio — Studio does not own its palette and cannot mint new
+      // declarations for it. `generateTransparent`/`generateShades`/
+      // `generateTints` each expand the base variable into MORE picker
+      // entries (`--<slug>-<n>`, `--<slug>-d-<n>`, `--<slug>-l-<n>`,
+      // `colors.ts`'s `buildColorVariants`) that exist only inside Studio's
+      // own injected `:root` block — never in the user's real app. Turning
+      // all three on here (as they were) meant one real project token
+      // produced 19 picker entries, 18 of which rendered as nothing outside
+      // Studio (STUDIO-FIGMA-PARITY-PLAN.md 0.13 / audit T3). The BASE
+      // variable (`--<slug>` itself) still always emits — see
+      // `buildColorVariants`'s own "base" entry — so the one name that
+      // exists in the project's CSS is still offered.
+      generateTransparent: false,
+      generateShades: { enabled: false, count: 0 },
+      generateTints: { enabled: false, count: 0 },
       order,
       createdAt: EXTRACTED_TIMESTAMP,
       updatedAt: EXTRACTED_TIMESTAMP,
@@ -165,8 +196,11 @@ function buildTypographyGroups(entries: readonly ClassifiedLength[]): FrameworkT
   })
 }
 
-export function buildFrameworkSettings(tokens: ClassifiedTokens): FrameworkSettings {
-  const colorTokens = buildColorTokens(tokens.colors)
+export function buildFrameworkSettings(
+  tokens: ClassifiedTokens,
+  origin: ExtractedColorOrigin,
+): FrameworkSettings {
+  const colorTokens = buildColorTokens(tokens.colors, origin)
   const spacingGroups = buildSpacingGroups(tokens.spacing)
   const typographyGroups = buildTypographyGroups(tokens.typographySizes)
   return {

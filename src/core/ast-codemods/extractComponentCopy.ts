@@ -18,6 +18,7 @@ import { Node, Project, QuoteKind, type SourceFile } from 'ts-morph'
 import { createWorkspaceProject } from '@core/page-parser'
 import { findJsxElementAtLocationOrThrow, loadSourceFile } from './locateJsxElement'
 import { resolveComponentCallSite } from './resolveComponentCallSite'
+import { relativeSpecifier, removeImportIfLastUsage } from './importReconcile'
 
 export interface ExtractComponentCopyParams {
   /** Absolute path to the page file holding the call site to repoint. */
@@ -107,7 +108,7 @@ export function extractComponentCopy(params: ExtractComponentCopyParams): Extrac
 
   // Repoint THIS ONE call site: rename the JSX tag, and point its import (or
   // add a fresh one) at the new file instead of the original.
-  const relSpecifier = importSpecifierFor(file, newPath)
+  const relSpecifier = relativeSpecifier(file, newPath)
   retagCallSite(opening, newName)
   repointImport(sourceFile, identifier, newName, relSpecifier)
   sourceFile.saveSync()
@@ -128,14 +129,6 @@ function renameDeclaration(sourceFile: SourceFile, oldName: string, newName: str
   }
 }
 
-function importSpecifierFor(fromFileAbs: string, toFileAbs: string): string {
-  const fromDir = path.dirname(fromFileAbs)
-  let rel = path.relative(fromDir, toFileAbs).split(path.sep).join('/')
-  rel = rel.replace(/\.(tsx|jsx|ts|js)$/, '')
-  if (!rel.startsWith('.')) rel = `./${rel}`
-  return rel
-}
-
 /** Same self-closing-vs-opening distinction as `swapComponentInstance.ts` — see its identical comment for why `.getParent()` is only meaningful when `opening` is a `JsxOpeningElement`. */
 function retagCallSite(opening: ReturnType<typeof findJsxElementAtLocationOrThrow>, newName: string): void {
   opening.getTagNameNode().replaceWithText(newName)
@@ -146,28 +139,8 @@ function retagCallSite(opening: ReturnType<typeof findJsxElementAtLocationOrThro
   }
 }
 
-/** Adds an import for `newName` from `specifier`, and drops `oldName`'s import if nothing else in the page file still references it. Mirrors `swapComponentInstance.ts`'s identical need — kept local here since this codemod predates it in the write order and the two refusal/edge-case shapes differ slightly (this one never needs a prop diff). */
+/** Adds an import for `newName` from `specifier`, and drops `oldName`'s import if nothing else in the page file still references it — `removeImportIfLastUsage` (`./importReconcile`), the same reconciliation `detachComponent.ts`/`extractSubtreeToComponent.ts` use for the identical question. */
 function repointImport(sourceFile: SourceFile, oldName: string, newName: string, specifier: string): void {
   sourceFile.addImportDeclaration({ moduleSpecifier: specifier, namedImports: [newName] })
-
-  const stillUsed = sourceFile.getDescendants().some((node) => {
-    if (Node.isJsxSelfClosingElement(node) || Node.isJsxOpeningElement(node) || Node.isJsxClosingElement(node)) {
-      return node.getTagNameNode().getText().split('.')[0] === oldName
-    }
-    return false
-  })
-  if (stillUsed) return
-
-  for (const decl of sourceFile.getImportDeclarations()) {
-    if (decl.getDefaultImport()?.getText() === oldName) {
-      if (decl.getNamedImports().length === 0 && !decl.getNamespaceImport()) decl.remove()
-      return
-    }
-    const named = decl.getNamedImports().find((n) => (n.getAliasNode()?.getText() ?? n.getNameNode().getText()) === oldName)
-    if (named) {
-      if (decl.getNamedImports().length === 1 && !decl.getDefaultImport() && !decl.getNamespaceImport()) decl.remove()
-      else named.remove()
-      return
-    }
-  }
+  removeImportIfLastUsage(sourceFile, oldName)
 }

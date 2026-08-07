@@ -4,6 +4,7 @@ import { registry } from '@core/module-engine'
 import type { InsertLocation } from '@site/store/insertLocation'
 import {
   getViewportLocalPoint,
+  getViewportZoom,
   measureCanvasDropCandidates,
 } from './canvasDomGeometry'
 import {
@@ -79,10 +80,15 @@ export function resolveCanvasPointerInsertionDrop({
   const iframe = viewport.querySelector<HTMLIFrameElement>('iframe')
   const point = getViewportLocalPoint(viewport, clientX, clientY)
   const candidates = measureCanvasDropCandidates(viewport, canvasPage, iframe)
+  // See `MIN_EDGE_HIT_ZONE_SCREEN_PX` in `canvasDnd.ts` — the edge bands are
+  // screen-space; convert with the live zoom before hit-testing frame-space
+  // candidates.
+  const zoom = getViewportZoom(viewport)
   const target = resolveCanvasInsertionTarget({
     tree: canvasPage,
     candidates,
     point,
+    zoom,
     canHaveChildren: (moduleId) => registry.get(moduleId)?.canHaveChildren === true,
   })
 

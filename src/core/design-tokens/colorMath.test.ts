@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { colorDifference, contrastRatio, parseHexColor, relativeLuminance } from './colorMath'
+import { colorDifference, contrastLevel, contrastRatio, cssColorToRgb, parseHexColor, relativeLuminance } from './colorMath'
 
 describe('parseHexColor', () => {
   it('reads the three hex forms a stylesheet actually uses', () => {
@@ -14,6 +14,27 @@ describe('parseHexColor', () => {
   it('returns null for every non-hex value a token can hold', () => {
     for (const value of ['currentColor', 'rgb(1,2,3)', 'var(--x)', '26px', '#gggggg', '#12345', '']) {
       expect(parseHexColor(value)).toBeNull()
+    }
+  })
+})
+
+describe('cssColorToRgb', () => {
+  it('parses hex, rgb()/rgba(), and hsl()/hsla() to the same shape', () => {
+    expect(cssColorToRgb('#0c9ab0')).toEqual({ r: 12, g: 154, b: 176 })
+    expect(cssColorToRgb('rgb(12, 154, 176)')).toEqual({ r: 12, g: 154, b: 176 })
+    expect(cssColorToRgb('rgba(12 154 176 / 0.5)')).toEqual({ r: 12, g: 154, b: 176 })
+    expect(cssColorToRgb('rgb(100% 0% 0%)')).toEqual({ r: 255, g: 0, b: 0 })
+  })
+
+  it('converts hsl() the same way a browser would for known landmarks', () => {
+    expect(cssColorToRgb('hsl(0, 0%, 0%)')).toEqual({ r: 0, g: 0, b: 0 })
+    expect(cssColorToRgb('hsl(0, 0%, 100%)')).toEqual({ r: 255, g: 255, b: 255 })
+    expect(cssColorToRgb('hsl(0deg 100% 50%)')).toEqual({ r: 255, g: 0, b: 0 })
+  })
+
+  it('returns null for a var() reference, currentColor, or garbage', () => {
+    for (const value of ['var(--x)', 'currentColor', 'calc(1px + 2px)', 'not-a-color']) {
+      expect(cssColorToRgb(value)).toBeNull()
     }
   })
 })
@@ -67,5 +88,22 @@ describe('relativeLuminance', () => {
     expect(white).toBeCloseTo(1, 5)
     expect(grey).toBeGreaterThan(black)
     expect(grey).toBeLessThan(white)
+  })
+})
+
+describe('contrastLevel', () => {
+  it('bands normal text at the 4.5/7 thresholds', () => {
+    expect(contrastLevel(21)).toBe('AAA')
+    expect(contrastLevel(7)).toBe('AAA')
+    expect(contrastLevel(6.99)).toBe('AA')
+    expect(contrastLevel(4.5)).toBe('AA')
+    expect(contrastLevel(4.49)).toBe('fail')
+    expect(contrastLevel(1)).toBe('fail')
+  })
+
+  it('bands large text at the looser 3/4.5 thresholds', () => {
+    expect(contrastLevel(4.5, true)).toBe('AAA')
+    expect(contrastLevel(3, true)).toBe('AA')
+    expect(contrastLevel(2.9, true)).toBe('fail')
   })
 })

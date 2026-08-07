@@ -222,6 +222,111 @@ describe('styleRuleSlice.setClassContextStyles', () => {
 })
 
 // ---------------------------------------------------------------------------
+// History coalescing (`STUDIO-FIGMA-PARITY-PLAN.md` 0.3 / audit E4) —
+// a single-property style/class edit burst (slider drag, color-picker nudge)
+// must fold into ONE undo entry, exactly like `updateNodeProps` already does
+// for a typed-value burst. Before the fix, `updateClassStyles` /
+// `setClassContextStyles` called `mutateSite` with no `coalesceKey` at all,
+// so every tick pushed its own history entry and could evict the 50-entry cap.
+// ---------------------------------------------------------------------------
+
+describe('styleRuleSlice — style/class edits coalesce into one undo entry', () => {
+  it('updateClassStyles: a same-property burst is ONE history entry, undo reverts to pre-burst value', () => {
+    setupSite()
+    const cls = getStore().createClass('btn')
+    getStore().updateClassStyles(cls.id, { fontSize: '10px' })
+    // An unrelated property closes the `fontSize` burst above (different
+    // coalesceKey), so the loop below opens a genuinely NEW burst rather than
+    // folding into the seed call — isolating exactly what's under test.
+    getStore().updateClassStyles(cls.id, { color: 'blue' })
+    const historyBefore = historyLength()
+
+    for (const size of ['12px', '14px', '16px', '18px']) {
+      getStore().updateClassStyles(cls.id, { fontSize: size })
+    }
+    expect(useEditorStore.getState().site!.styleRules[cls.id].styles.fontSize).toBe('18px')
+    // The whole drag/nudge burst folded into one entry, not four.
+    expect(historyLength()).toBe(historyBefore + 1)
+
+    getStore().undo()
+    expect(useEditorStore.getState().site!.styleRules[cls.id].styles.fontSize).toBe('10px')
+  })
+
+  it('updateClassStyles: a multi-property patch is NOT coalesced with a later single-property one', () => {
+    setupSite()
+    const cls = getStore().createClass('btn')
+    const historyBefore = historyLength()
+
+    getStore().updateClassStyles(cls.id, { fontSize: '10px', color: 'red' })
+    getStore().updateClassStyles(cls.id, { fontSize: '12px' })
+
+    // Multi-field patches always get their own discrete entry (matching
+    // `coalesceKeyForPatch`'s contract for the node-prop path) — two edits in.
+    expect(historyLength()).toBe(historyBefore + 2)
+  })
+
+  it('updateClassStyles: edits to DIFFERENT classes never coalesce into each other', () => {
+    setupSite()
+    const btn = getStore().createClass('btn')
+    const row = getStore().createClass('row')
+    const historyBefore = historyLength()
+
+    getStore().updateClassStyles(btn.id, { fontSize: '12px' })
+    getStore().updateClassStyles(row.id, { fontSize: '12px' })
+
+    expect(historyLength()).toBe(historyBefore + 2)
+    getStore().undo()
+    expect(useEditorStore.getState().site!.styleRules[row.id].styles.fontSize).toBeUndefined()
+    expect(useEditorStore.getState().site!.styleRules[btn.id].styles.fontSize).toBe('12px')
+  })
+
+  it('setClassContextStyles: a same-breakpoint, same-property burst is ONE history entry', () => {
+    setupSite()
+    const cls = getStore().createClass('btn')
+    getStore().setClassContextStyles(cls.id, 'mobile', { fontSize: '10px' })
+    // Different coalesceKey (`tablet` vs `mobile`) closes the burst above, so
+    // the loop below opens a genuinely NEW one.
+    getStore().setClassContextStyles(cls.id, 'tablet', { fontSize: '9px' })
+    const historyBefore = historyLength()
+
+    for (const size of ['11px', '12px', '13px']) {
+      getStore().setClassContextStyles(cls.id, 'mobile', { fontSize: size })
+    }
+    expect(useEditorStore.getState().site!.styleRules[cls.id].contextStyles.mobile?.fontSize).toBe('13px')
+    expect(historyLength()).toBe(historyBefore + 1)
+
+    getStore().undo()
+    expect(useEditorStore.getState().site!.styleRules[cls.id].contextStyles.mobile?.fontSize).toBe('10px')
+  })
+
+  it('setClassContextStyles: edits under DIFFERENT breakpoints never coalesce into each other', () => {
+    setupSite()
+    const cls = getStore().createClass('btn')
+    const historyBefore = historyLength()
+
+    getStore().setClassContextStyles(cls.id, 'mobile', { fontSize: '12px' })
+    getStore().setClassContextStyles(cls.id, 'tablet', { fontSize: '14px' })
+
+    expect(historyLength()).toBe(historyBefore + 2)
+  })
+
+  it('a style-edit burst does NOT fold into an unrelated node-prop burst on the same undo entry', () => {
+    const { childId } = setupSite()
+    const cls = getStore().createClass('btn')
+    getStore().updateNodeProps(childId, { text: 'hello' })
+    const historyBefore = historyLength()
+
+    getStore().updateClassStyles(cls.id, { fontSize: '12px' })
+
+    // A different coalesce key (`style:<classId>:fontSize` vs. `props:<nodeId>:text`)
+    // must open its own burst rather than folding into whatever burst was
+    // last open — otherwise an unrelated style edit could silently swallow a
+    // pending prop edit's coalescing key.
+    expect(historyLength()).toBe(historyBefore + 1)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // applyCssRules
 // ---------------------------------------------------------------------------
 

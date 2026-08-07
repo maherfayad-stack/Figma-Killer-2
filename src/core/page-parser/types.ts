@@ -188,6 +188,21 @@ export interface ParsedNode {
    */
   resolution?: { source: string; note?: string }
   /**
+   * R2 (`STUDIO-FIGMA-PARITY-PLAN.md` §9/F2) — the per-VALUE counterpart of
+   * `resolution` above. `resolution` keeps only the FIRST resolved value on a
+   * node (`withResolution`'s `resolutions[0]`), so a node with two code-valued
+   * props showed one real source and a generic "set in code" fallback for the
+   * other — see `docs/audits/2026-08-06/09-refusal-states.md` finding R2.
+   *
+   * Keyed exactly like `codeProps`: a prop name (`"title"`), a `style:<property>`
+   * inline-style entry, or the literal key `"text"` for the node's own captured
+   * text. Every key present here has a matching `codeProps` entry — this map
+   * only ever explains a value that is ALSO refused; it does not gate anything
+   * itself (`isPropWritableToSource`/`isStyleWritableToSource` still own that
+   * decision, unchanged). Built by `shortenResolutionMap` in `./nodeResolution`.
+   */
+  resolvedProps?: Record<string, { source: string; note?: string }>
+  /**
    * Present on the node the parser SELECTED when a component had more than
    * one JSX-bearing `return`, or a JSX child was a ternary/`&&` — see
    * `getReturnedJsxRoots`/`selectJsxBranch` in `parsePageFile.ts`. Lists the
@@ -288,6 +303,26 @@ export interface ParsedNode {
      */
     callSiteProps: Record<string, ParsedPropValue>
   }
+  /**
+   * E2.3 — present when this node is the materialized container for a
+   * FRAGMENT-valued component-prop slot (`header={<><Back/><Title/></>}`),
+   * minted by `captureSlotProps`'s fragment branch in `parsePageFile.ts`.
+   *
+   * A single-element slot value (`icon={<Icon/>}`) needs no marker — it mints
+   * an ordinary node via the same `processElement` walk every child goes
+   * through, and `resolveModuleId` picks its module the usual way. A fragment
+   * has no tag name to dispatch on, so this field is how `resolveModuleId`
+   * (`server/handlers/studioPageLoad.ts`) recognizes it and maps it to
+   * `studio.slot` — the zero-DOM `<>{children}</>` module
+   * (`src/modules/studio/slot/`) that mirrors `studio.instance`'s reasoning
+   * one prop-value down instead of one call-site down.
+   *
+   * The node's own `id` is the `JsxFragment`'s OWN source location, never a
+   * minted id — see `captureSlotProps`'s doc comment for why: a minted id
+   * would make `refuseMintedNodeInsert` correctly (but for the wrong stated
+   * reason) refuse every future insert into a multi-element slot.
+   */
+  fragmentSlot?: true
 }
 
 export interface ParsedPage {

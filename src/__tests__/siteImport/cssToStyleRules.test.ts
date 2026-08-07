@@ -265,6 +265,113 @@ describe('cssToStyleRules — dropped @-rules', () => {
 })
 
 // ---------------------------------------------------------------------------
+// @layer flattening — standing-09.
+//
+// `CSSStyleSheet.replaceSync()` silently drops every rule nested inside an
+// `@layer` block with no signal at all. Tailwind v4's default build output
+// wraps its ENTIRE stylesheet in `@layer theme, base, components, utilities`,
+// so an unpatched import of a Tailwind v4 project silently imported ZERO
+// rules. `unwrapCssLayers` flattens `@layer` out of the CSS text before
+// `replaceSync` ever sees it.
+// ---------------------------------------------------------------------------
+
+describe('cssToStyleRules — @layer flattening (not dropped)', () => {
+  it('named block: rule inside @layer imports exactly as if unwrapped', () => {
+    const { rules, warnings } = cssToStyleRules('@layer base { .x { color: red } }')
+    expect(rules).toHaveLength(1)
+    expect(rules[0].kind).toBe('class')
+    expect(rules[0].name).toBe('x')
+    expect(rules[0].styles).toMatchObject({ color: 'red' })
+    expect(warnings.filter((w) => w.kind === 'dropped-at-rule')).toHaveLength(0)
+  })
+
+  it('anonymous block: `@layer { ... }` unwraps too', () => {
+    const { rules, warnings } = cssToStyleRules('@layer { .y { color: blue } }')
+    expect(rules).toHaveLength(1)
+    expect(rules[0].name).toBe('y')
+    expect(rules[0].styles).toMatchObject({ color: 'blue' })
+    expect(warnings.filter((w) => w.kind === 'dropped-at-rule')).toHaveLength(0)
+  })
+
+  it('bare statement form: `@layer a, b, c;` alone declares order, produces no rules and no warnings', () => {
+    const { rules, warnings } = cssToStyleRules('@layer theme, base, components, utilities;')
+    expect(rules).toHaveLength(0)
+    expect(warnings).toHaveLength(0)
+  })
+
+  it('nested @layer unwraps recursively', () => {
+    const { rules, warnings } = cssToStyleRules('@layer a { @layer b { .z { color: green } } }')
+    expect(rules).toHaveLength(1)
+    expect(rules[0].name).toBe('z')
+    expect(rules[0].styles).toMatchObject({ color: 'green' })
+    expect(warnings.filter((w) => w.kind === 'dropped-at-rule')).toHaveLength(0)
+  })
+
+  it('@layer inside @media unwraps and the inner rule still follows @media policy', () => {
+    const css = '@media (max-width: 768px) { @layer base { .m { color: red } } }'
+    const { rules, warnings } = cssToStyleRules(css, {
+      breakpoints: [{ id: 'mobile', width: 768 }],
+    })
+    expect(rules).toHaveLength(1)
+    expect(rules[0].contextStyles.mobile).toMatchObject({ color: 'red' })
+    expect(warnings.filter((w) => w.kind === 'dropped-at-rule')).toHaveLength(0)
+  })
+
+  it('@media inside @layer unwraps and the @media block survives untouched', () => {
+    const css = '@layer base { @media (max-width: 768px) { .n { color: red } } }'
+    const { rules, warnings } = cssToStyleRules(css, {
+      breakpoints: [{ id: 'mobile', width: 768 }],
+    })
+    expect(rules).toHaveLength(1)
+    expect(rules[0].contextStyles.mobile).toMatchObject({ color: 'red' })
+    expect(warnings.filter((w) => w.kind === 'dropped-at-rule')).toHaveLength(0)
+  })
+
+  it('a realistic Tailwind v4 sample imports every rule, in source order, no warnings', () => {
+    const css = [
+      '@layer theme, base, components, utilities;',
+      '@layer theme { :root { --font-sans: ui-sans-serif } }',
+      '@layer base { h1 { font-weight: 700 } }',
+      '@layer components { .btn { padding: 8px } }',
+      '@layer utilities { .flex { display: flex } .p-4 { padding: 16px } }',
+    ].join('\n')
+    const { rules, warnings } = cssToStyleRules(css)
+    expect(warnings).toHaveLength(0)
+    const names = rules.map((r) => r.name)
+    // Source order is preserved end to end, not just rule count.
+    expect(names).toEqual([':root', 'h1', 'btn', 'flex', 'p-4'])
+    expect(rules.map((r) => r.order)).toEqual([0, 1, 2, 3, 4])
+    expect(rules.find((r) => r.name === 'h1')!.styles).toMatchObject({ fontWeight: '700' })
+    // padding is a shorthand — the CSS engine unrolls it into longhands,
+    // same as the existing `border` allowlist test above.
+    expect(rules.find((r) => r.name === 'btn')!.styles).toMatchObject({ paddingTop: '8px' })
+    expect(rules.find((r) => r.name === 'flex')!.styles).toMatchObject({ display: 'flex' })
+  })
+
+  it('declared order matching source order (the Tailwind case): no layer-order-flattened warning', () => {
+    const css = '@layer base, utilities;\n@layer base { .a { color: red } }\n@layer utilities { .b { color: blue } }'
+    const { rules, warnings } = cssToStyleRules(css)
+    expect(rules.map((r) => r.name)).toEqual(['a', 'b'])
+    expect(warnings.filter((w) => w.kind === 'layer-order-flattened')).toHaveLength(0)
+  })
+
+  it('a layer written out of its declared order gets a layer-order-flattened warning, not a silent cascade change', () => {
+    // `base` is declared FIRST (lowest priority) but its block is written
+    // SECOND in source. The browser still gives `utilities` higher priority
+    // (declared-order wins); this import flattens to source order instead,
+    // so `.a`'s @layer-scoped rule would win in the flattened import even
+    // though the browser would have `utilities` win for the same selector.
+    // That divergence must be surfaced, not silently absorbed.
+    const css = '@layer base, utilities;\n@layer utilities { .a { color: blue } }\n@layer base { .a { color: red } }'
+    const { warnings } = cssToStyleRules(css)
+    const layerWarnings = warnings.filter((w) => w.kind === 'layer-order-flattened')
+    expect(layerWarnings).toHaveLength(1)
+    expect(layerWarnings[0].message).toContain('base')
+    expect(layerWarnings[0].message).toContain('utilities')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Property allowlist filtering
 // ---------------------------------------------------------------------------
 

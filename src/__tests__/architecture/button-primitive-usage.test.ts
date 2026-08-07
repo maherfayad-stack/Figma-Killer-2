@@ -29,11 +29,11 @@ import { join, extname, relative } from 'path'
 
 const SRC_ROOT = join(import.meta.dir, '../..')
 const ADMIN_ROOT = join(SRC_ROOT, 'admin')
-const EDITOR_ROOT = join(SRC_ROOT, 'editor')
-const SCAN_ROOTS = [
-  { label: 'admin', root: ADMIN_ROOT },
-  { label: 'editor', root: EDITOR_ROOT },
-]
+// 'src/editor' never existed in this repo's tracked history (`git log --all
+// -- src/editor` is empty) — it contributed zero files here. 'admin' already
+// recursively covers the real site-editor surface (src/admin/pages/site/),
+// so dropping the dead 'editor' entry changes no scanned file set.
+const SCAN_ROOTS = [{ label: 'admin', root: ADMIN_ROOT }]
 
 // ---------------------------------------------------------------------------
 // TSX file walker

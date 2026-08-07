@@ -616,3 +616,19 @@ export function getCustomProperties(storedStyles: Record<string, unknown>): stri
     .filter((key) => hasStyleValue(storedStyles[key]) && !isCuratedProperty(key))
     .sort()
 }
+
+// ---------------------------------------------------------------------------
+// Track F1 — every curated property, flattened and deduped
+//
+// The full set of CSS properties the panel curates a control for, in ONE
+// frozen module-level array. Used to ask the frame (`useFrameComputedStyleValues`)
+// for the real `getComputedStyle` value of every row the panel can show, so
+// the "unset" placeholder can be ground truth instead of a guess — see
+// `stylePropertyProvenance.ts`'s module doc for the fuller story. Frozen and
+// built once at module scope (not per-render) per the selector-stability
+// convention for reference-stable arrays passed into hooks.
+// ---------------------------------------------------------------------------
+
+export const ALL_CURATED_CSS_PROPERTIES: ReadonlyArray<string> = Object.freeze([
+  ...new Set(CLASS_STYLE_SECTIONS.flatMap((section) => section.properties.map((p) => String(p)))),
+])

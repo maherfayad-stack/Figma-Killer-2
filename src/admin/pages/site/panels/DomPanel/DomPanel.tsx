@@ -492,6 +492,17 @@ function DomPanelInner({ editable = true }: { editable?: boolean }) {
             /* ── Normal tree mode ── */
             <DndContext
               sensors={sensors}
+              // dnd-kit's built-in auto-scroll is disabled: `useDomPanelDnd`
+              // (`runAutoScroll`, AUTO_SCROLL_EDGE_PX) already implements
+              // auto-scroll for this tree, and re-measures row rects
+              // (`measureRows`) + re-resolves the drop target on every scroll
+              // tick. Running BOTH scrolled the list at ~double speed near an
+              // edge, and dnd-kit's own scroll happened without a matching
+              // `measureRows()` — so cached row rects went stale under the
+              // pointer and no drop target ever resolved near a scroll edge
+              // (STUDIO-FIGMA-PARITY-PLAN.md 0.9 / STATE.md standing note;
+              // audit docs/audits/2026-08-06/07-drag-and-drop.md G11).
+              autoScroll={false}
               onDragStart={editable ? dnd.handleDragStart : undefined}
               onDragMove={editable ? dnd.handleDragMove : undefined}
               onDragEnd={handleDragEnd}

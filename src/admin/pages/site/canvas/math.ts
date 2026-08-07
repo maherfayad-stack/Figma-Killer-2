@@ -8,6 +8,23 @@
  * See Contribution #311 (perf regression suite) — imports from './math'.
  */
 
+/**
+ * The canvas pan/zoom transform: `{ zoom, panX, panY }`.
+ *
+ * Lives in this pure, dependency-free module (not `useCanvas.ts`, which
+ * re-exports it for backward compatibility) precisely so pure helpers that
+ * need the SHAPE but not the hook — `canvasZoomFit.ts`'s
+ * `computeZoomToFitTransform`, and any future one — can import it without
+ * creating a module cycle back through `useCanvas.ts`. See `useCanvas.ts`'s
+ * own `CanvasTransform` re-export for the full "why this is a published,
+ * shared contract" doc (D1's `transformRef`).
+ */
+export interface CanvasTransform {
+  zoom: number
+  panX: number
+  panY: number
+}
+
 export const MIN_ZOOM = 0.1
 export const MAX_ZOOM = 4
 /** Zoom the design canvas opens at — 50% keeps several breakpoint frames in view. */

@@ -19,11 +19,13 @@ import { studioScreenshotTool } from './screenshot'
 import { studioCompareMcpTools } from './compare'
 import { studioMeasureReferenceMcpTools } from './measureReference'
 import { studioExtractReferenceAssetMcpTools } from './extractReferenceAsset'
+import { studioQualityCheckMcpTools } from './qualityCheck'
 
 export const studioMcpTools: AiTool[] = [
   studioScreenshotTool,
   ...studioCompareMcpTools,
   ...studioMeasureReferenceMcpTools,
+  ...studioQualityCheckMcpTools,
   ...studioExtractReferenceAssetMcpTools,
   ...studioProjectMcpTools,
   ...studioEditMcpTools,

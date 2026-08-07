@@ -443,9 +443,22 @@ Declared by `base.text`, `base.button`, `base.link`. Values store `\n`, render
 
 `frameVirtualization.ts` already exists and is used by `BoardFramesLayer`:
 `isFrameOnScreen(frameRect, viewportState, marginPx)` — pure board→screen math,
-one extra screen of margin so panning doesn't pop frames.
+one extra screen of margin so panning doesn't pop frames. **Its own board→screen
+formula deliberately omits `CanvasTransformLayer`'s 80px `top`/`left` offset**
+(harmless there — a 600px culling margin absorbs it) — do not copy it for
+anything that needs to be pixel-exact (a ruler tick, a measurement HUD); see
+`CanvasRulers/rulerGeometry.ts` for the corrected formula and why.
 
 **Never** add a full-site scan inside a `useEditorStore(selector)` callback.
+
+`useCanvas()` returns `transformRef: RefObject<CanvasTransform>` — the LIVE
+transform, mutated in place every rAF tick during a gesture, up to 100ms
+AHEAD of the store's own debounced `zoom`/`panX`/`panY`. This is a published,
+shared contract (`CanvasViewportActionsContext` carries it too, for consumers
+that aren't direct children of `CanvasRoot`): anything that must track
+pan/zoom live — `CanvasRulers`, D2's drag/drop, a future measurement HUD —
+reads this ref, never the store selector, during an active gesture. See
+`docs/features/canvas-rulers-and-guides.md`.
 
 ---
 

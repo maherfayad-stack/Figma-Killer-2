@@ -116,14 +116,14 @@ export function FrameworkHome() {
   function card(
     tab: FrameworkPanelTab,
     title: string,
-    Icon: PixelArtIconComponent,
+    CardIcon: PixelArtIconComponent,
     preview: ReactNode,
   ) {
     return (
       <button type="button" className={styles.card} onClick={() => setTab(tab)}>
         <span className={styles.cardHead}>
           <span className={styles.cardIcon} aria-hidden="true">
-            <Icon size={16} />
+            <CardIcon size={16} />
           </span>
           <span className={styles.cardTitle}>{title}</span>
           <span className={styles.cardGo} aria-hidden="true">

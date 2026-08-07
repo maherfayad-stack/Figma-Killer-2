@@ -5,6 +5,7 @@ import type { CanvasDropResolution } from './canvasDnd'
 import { resolveCanvasDropTarget } from './canvasDnd'
 import {
   getViewportLocalPoint,
+  getViewportZoom,
   measureCanvasDropCandidates,
 } from './canvasDomGeometry'
 import { clearCanvasPointerRelay, markCanvasPointerRelay } from './canvasPointerRelay'
@@ -128,12 +129,17 @@ export function useCanvasReorderDrag({
     }
 
     const point = getViewportLocalPoint(viewport, clientX, clientY)
+    // Screen-space edge bands (`getCanvasDropZone`) must be converted into
+    // the frame-space units `point` / `session.candidates` are measured in —
+    // see `MIN_EDGE_HIT_ZONE_SCREEN_PX` in `canvasDnd.ts`.
+    const zoom = getViewportZoom(viewport)
     setResolution(resolveCanvasDropTarget({
       tree,
       draggedId: session.draggedId,
       draggedIds: session.draggedIds,
       candidates: session.candidates,
       point,
+      zoom,
       canHaveChildren,
     }))
   }, [setResolution, viewportRef])

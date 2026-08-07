@@ -67,6 +67,7 @@ import { ModuleInserterShortcuts } from './ModuleInserterShortcuts'
 import { ModuleWireframe } from './ModuleWireframe'
 import { useModuleInsertionContext } from './useModuleInsertionContext'
 import { useModuleInserterPreference } from './useModuleInserterPreference'
+import { PackageBundleNotice } from './PackageBundleNotice'
 import styles from './ModuleInserterDialog.module.css'
 
 interface ModuleInserterDialogProps {
@@ -452,7 +453,12 @@ export function ModuleInserterDialog({
 
           <nav className={styles.sectionList} aria-label="Module categories">
             {SECTIONS.map((item) => {
-              const Icon = item.icon
+              // Named SectionIcon, not Icon — a PascalCase local named
+              // literally `Icon` collides with the direct-icon-imports
+              // architecture gate's `<Icon\b` regex, which exists to ban
+              // the *lazy* `pixel-art-icons/Icon` wrapper. Same pattern
+              // AlignBar.tsx / StyleCategoryRail.tsx use.
+              const SectionIcon = item.icon
               const isActive = section === item.id
               return (
                 <Button
@@ -478,7 +484,7 @@ export function ModuleInserterDialog({
                 >
                   <span className={styles.sectionLabel}>
                     <span className={styles.sectionIcon} aria-hidden="true">
-                      <Icon size={16} />
+                      <SectionIcon size={16} />
                     </span>
                     <span className={styles.sectionName}>{item.name}</span>
                   </span>
@@ -521,30 +527,39 @@ export function ModuleInserterDialog({
             <Kbd className={styles.escHint}>Esc</Kbd>
           </div>
 
-          <div className={styles.sectionHeader} data-accent={selectedSection.accent}>
-            <span className={styles.sectionBar} aria-hidden="true" />
-            <span className={styles.sectionTitle}>{selectedSection.name}</span>
-            <span className={styles.headerCount}>{items.length} items</span>
-            <SegmentedControl<InserterView>
-              value={view}
-              onChange={updateView}
-              aria-label="Module inserter view"
-              className={styles.viewToggle}
-              options={[
-                {
-                  value: 'grid',
-                  icon: <Grid2x22SolidIcon size={13} aria-hidden="true" />,
-                  ariaLabel: 'Grid view',
-                  tooltip: 'Grid view',
-                },
-                {
-                  value: 'list',
-                  icon: <ListBoxSolidIcon size={13} aria-hidden="true" />,
-                  ariaLabel: 'List view',
-                  tooltip: 'List view',
-                },
-              ]}
-            />
+          {/* Wrapped in ONE element so this stays the grid's second row-track
+              child whether or not the package notice renders below it —
+              `.main`'s `grid-template-rows` has exactly three explicit
+              tracks (searchRow / this / scroller), and a fourth DIRECT grid
+              child would steal the scroller's `minmax(0, 1fr)` flex track. */}
+          <div className={styles.sectionHeaderGroup}>
+            <div className={styles.sectionHeader} data-accent={selectedSection.accent}>
+              <span className={styles.sectionBar} aria-hidden="true" />
+              <span className={styles.sectionTitle}>{selectedSection.name}</span>
+              <span className={styles.headerCount}>{items.length} items</span>
+              <SegmentedControl<InserterView>
+                value={view}
+                onChange={updateView}
+                aria-label="Module inserter view"
+                className={styles.viewToggle}
+                options={[
+                  {
+                    value: 'grid',
+                    icon: <Grid2x22SolidIcon size={13} aria-hidden="true" />,
+                    ariaLabel: 'Grid view',
+                    tooltip: 'Grid view',
+                  },
+                  {
+                    value: 'list',
+                    icon: <ListBoxSolidIcon size={13} aria-hidden="true" />,
+                    ariaLabel: 'List view',
+                    tooltip: 'List view',
+                  },
+                ]}
+              />
+            </div>
+
+            <PackageBundleNotice isStudio={insertionContext.isStudio} size="roomy" />
           </div>
 
           <div ref={scrollRef} className={styles.scroller}>

@@ -83,6 +83,25 @@ describe('measureReference', () => {
     expect(size.ascenderAssumption).toBeLessThan(size.capAssumption)
   })
 
+  it('always attaches a caveat naming the range as a Latin-sans estimate (A8)', async () => {
+    // The ratios this range is built from are calibrated for a Latin UI sans
+    // face and are silently wrong for a serif/display face or a non-Latin
+    // script — this must never be a bare confident range.
+    const bytes = await comp({ width: 786, height: 200, bars: [{ top: 20, height: 40 }] })
+
+    const { regions } = await measureReference(
+      bytes,
+      [{ x: 0, y: 0, width: 786, height: 200 }],
+      { cssScale: 0.5, cssSources: [ALM_CSS] },
+    )
+
+    const caveat = regions[0]!.fontSizePx!.caveat
+    expect(typeof caveat).toBe('string')
+    expect(caveat.length).toBeGreaterThan(0)
+    expect(caveat).toContain('Latin')
+    expect(caveat).toContain('non-Latin')
+  })
+
   it('names the nearest type token for the measurement, not for the role', async () => {
     // A screen title whose ink is 15 CSS px — the real case. Measured, the
     // nearest token is title/headline by VALUE; the failure being guarded is

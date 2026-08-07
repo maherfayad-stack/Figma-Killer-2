@@ -34,16 +34,49 @@ export {
   isStyleWritableToSource,
   isStylePatchWritableToSource,
   styleValueKey,
+  canWriteInlineStyleForModule,
 } from './sourceWritability'
 export type { SourceWritableNode } from './sourceWritability'
 // The structural counterpart: can this node's PLACE be written back?
-export { SourceStructureError, refuseMintedNodeInsert, refuseStructuralEdit } from './sourceStructure'
+export {
+  SourceStructureError,
+  refuseMintedNodeInsert,
+  refuseStructuralEdit,
+  refusePlacement,
+  previewStructuralMove,
+} from './sourceStructure'
 export type {
   SourceStructureNode,
   StructuralEditKind,
   StructuralRefusal,
   StructuralRefusalReason,
+  StructuralMoveCommit,
+  StructuralMovePreview,
 } from './sourceStructure'
+// Track F2 — the refusal model. Wraps the two predicates above (plus B2/B1's
+// className/CSS vocabularies and Detach's) into one typed shape every refusal
+// surface renders: reason + human explanation + a way forward. See the
+// module's own doc for why this stays a read-only translation layer.
+export {
+  explainClassNameConstraint,
+  explainCssRuleConstraint,
+  explainDetachConstraint,
+  explainGestureConstraint,
+  explainInstanceDuplicateConstraint,
+  explainMintedInsertConstraint,
+  explainPropConstraint,
+  explainStructuralConstraint,
+  explainStyleConstraint,
+  explainSwapConstraint,
+  explainUnexplainedSkip,
+} from './editConstraint'
+export type {
+  ConstraintPropSource,
+  ConstraintReason,
+  ConstraintScope,
+  EditConstraint,
+  EditConstraintAction,
+} from './editConstraint'
 export {
   TreeOperationSchema,
   TreeMutateResultSchema,

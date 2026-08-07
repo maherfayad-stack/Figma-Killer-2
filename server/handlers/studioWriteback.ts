@@ -1,23 +1,25 @@
 /**
- * studioWriteback — the typed studio-edit model and the pure dir+edit→codemod
- * dispatch that `POST /admin/api/studio/save` (`server/handlers/studio.ts`)
- * runs per edit (Phase 3, Slice B). Split out of `studio.ts` because this is
- * one coherent unit — the edit schema, the ordering rule, and the dispatcher
- * all exist to serve the same "batch of typed source writebacks" contract —
- * and it's independently unit-testable against temp fixture files without a
- * full Request/Response round trip.
+ * studioWriteback — the pure dir+edit→codemod DISPATCH BEHAVIOUR that `POST
+ * /admin/api/studio/save` (`server/handlers/studio.ts`) runs per edit (Phase
+ * 3, Slice B). Split out of `studio.ts` because this is one coherent unit —
+ * the ordering rule and the dispatcher exist to serve the same "batch of
+ * typed source writebacks" contract — and it's independently unit-testable
+ * against temp fixture files without a full Request/Response round trip.
  *
- * A batch of typed edits (`kind: 'prop' | 'text' | 'style' | 'literal' | 'tag'
- * | 'asset' | 'detach' | 'swap' | 'move' | 'delete' | 'insert' | 'css'`).
+ * The WIRE SHAPE (`StudioEditSchema`/`StudioEdit` — `kind: 'prop' | 'text' |
+ * 'style' | 'class' | 'literal' | 'tag' | 'asset' | 'detach' | 'swap' | 'move' |
+ * 'delete' | 'insert' | 'insert-slot' | 'promote-component' | 'add-slot-prop' |
+ * 'css'`) lives in `studioEditSchemas.ts` (split out for the
+ * `module-size-budgets` ceiling) and is re-exported below verbatim, so every
+ * existing consumer's import path is unchanged.
  *
- * This module owns the VALUE kinds, which all share one shape: decode the
- * `nodeId` back to a `rel:line:col`, path-guard it, and hand it to the matching
- * `ast-codemods` writer (`setJsxProp` / `setJsxText` / `setJsxStyle` /
- * `setStringLiteral` / `setJsxTagName` / `setImportSpecifier`) — a rewrite in
- * place that leaves the file's line count alone. Two SIBLINGS own the kinds
- * that do not fit that shape, and both dependencies run one way (this module
- * folds their schemas into `StudioEditSchema` and calls in; neither imports
- * back):
+ * This module dispatches the VALUE kinds, which all share one shape: decode
+ * the `nodeId` back to a `rel:line:col`, path-guard it, and hand it to the
+ * matching `ast-codemods` writer (`setJsxProp` / `setJsxText` / `setJsxStyle`
+ * / `setJsxClassName` / `setStringLiteral` / `setJsxTagName` /
+ * `setImportSpecifier`) — a rewrite in place that leaves the file's line
+ * count alone. Three SIBLINGS own the kinds that do not fit that shape, and
+ * every dependency runs one way (this module calls in; none import back):
  *
  *   - `studioCssWriteback.ts` — `css`. Its target is a FILE + SELECTOR rather
  *     than a decoded `line:col`, and it writes through a postcss CST.
@@ -26,6 +28,15 @@
  *     they change the file's line count (invalidating every id below them,
  *     which is why `isSharedSourceNodeId` always reports them as shared), and
  *     each can refuse for reasons only the AST can see.
+ *   - `studioSlotWriteback.ts` (E2.4/E2.2) — `insert-slot` / `promote-component`
+ *     / `add-slot-prop`. `insert-slot` writes into a component PROP rather
+ *     than a child list or an existing attribute's scalar; `promote-component`
+ *     mints a whole new component FILE; `add-slot-prop` rewrites an EXISTING
+ *     component's own signature. All three always change a touched file's
+ *     line count WHEN THEY WRITE — `add-slot-prop`'s `preview: true` case is
+ *     the one outcome in this whole module that can be `ok` and yet touch no
+ *     file at all (see `applyStudioEdit`'s dispatch case and
+ *     `applyStudioEditBatch`'s counting loop, both below).
  *
  * Synthetic nodes (e.g. the `index:body` root) don't match the loc pattern and
  * are skipped. The save route applies each edit independently — one codemod
@@ -39,6 +50,7 @@ import { isInlinedNodeId, isRouteChromeNodeId } from '@core/page-tree'
 import {
   detachComponentInstance,
   setImportSpecifier,
+  setJsxClassName,
   setJsxProp,
   setJsxStyle,
   setJsxTagName,
@@ -46,147 +58,36 @@ import {
   setStringLiteral,
   swapComponentInstance,
 } from '@core/ast-codemods'
-import { applyCssEdit, CssEditSchema } from './studioCssWriteback'
+import { applyCssEdit } from './studioCssWriteback'
 import {
-  applyStructuralEdit,
-  isStructuralEditKind,
-  StructuralEditSchemas,
-} from './studioStructuralWriteback'
-import { Type, type Static } from '@core/utils/typeboxHelpers'
+  applySlotEdit,
+  isSlotEditKind,
+  isSlotPreviewOutcome,
+  type StudioAddSlotPropDetail,
+  type StudioPromoteComponentDetail,
+} from './studioSlotWriteback'
+import { applyStructuralEdit, isStructuralEditKind } from './studioStructuralWriteback'
+import {
+  isRefusingEditKind,
+  type StudioEdit,
+  type StudioEditApplyOutcome,
+  type StudioEditBatchResult,
+  type StudioEditRefusal,
+  type StudioEditSwapDetail,
+  type StudioEditUnexplainedSkip,
+} from './studioEditSchemas'
+
+export {
+  StudioEditSchema,
+  type StudioEdit,
+  type StudioEditApplyOutcome,
+  type StudioEditBatchResult,
+  type StudioEditRefusal,
+  type StudioEditSwapDetail,
+  type StudioEditUnexplainedSkip,
+} from './studioEditSchemas'
 
 const NODE_LOC_ID = /^(.*):(\d+):(\d+)$/
-
-/**
- * One prop attribute writeback — `setJsxProp`.
- *
- * WS-4.2/4.3 — `prop` may arrive prefixed `callSiteProps:<name>` (the
- * convention `parsedPageToSitePage.ts` uses for a `studio.instance`'s
- * call-site props, parallel to `style:<property>`). `applyStudioEdit` strips
- * the prefix before calling `setJsxProp` — a `studio.instance`'s own id IS
- * the call site's plain (non-composite) location, so the prop write lands
- * on the call site's own JSX attribute exactly like any other node's.
- */
-const PropEditSchema = Type.Object({
-  kind: Type.Literal('prop'),
-  nodeId: Type.String(),
-  prop: Type.String(),
-  value: Type.Union([Type.String(), Type.Number(), Type.Boolean()]),
-})
-
-/** One element-text-children writeback — `setJsxText`. */
-const TextEditSchema = Type.Object({
-  kind: Type.Literal('text'),
-  nodeId: Type.String(),
-  text: Type.String(),
-})
-
-/** One `style={{ ... }}` merge writeback — `setJsxStyle`. */
-const StyleEditSchema = Type.Object({
-  kind: Type.Literal('style'),
-  nodeId: Type.String(),
-  style: Type.Record(Type.String(), Type.Union([Type.String(), Type.Number()])),
-})
-
-/**
- * One string-literal-in-place writeback — `setStringLiteral`.
- *
- * The odd one out: its target is not the JSX the node renders, but the literal
- * that JSX READS. `<span>{c.hotelsTag}</span>` cannot be written at the span —
- * that would replace the i18n binding with a baked string — while
- * `hotelsTag: 'Exclusive rates on hotels'` in `translations.js` is an ordinary
- * literal and rewriting it is exactly what editing that copy means. The client
- * emits this from `PageNode.textOrigin`.
- *
- * `nodeId` here is the ORIGIN's own `rel:line:col`, not the rendering node's, so
- * ordering / dedupe / touched-file collection all keep working through the one
- * `studioEditLocation` decoder — and two board nodes fed by the same dictionary
- * key dedupe onto one write, which is what shared copy means.
- */
-const LiteralEditSchema = Type.Object({
-  kind: Type.Literal('literal'),
-  nodeId: Type.String(),
-  text: Type.String(),
-})
-
-/**
- * One element rename — `setJsxTagName`.
- *
- * `tag` is the one editor property that is not an attribute: it is synthesized
- * from the element's NAME so an imported `<h1>` keeps rendering as an `<h1>`.
- * Writing it through `setJsxProp` added a literal `tag="section"` attribute and
- * left the element a `<div>`, so it gets its own kind and its own codemod.
- */
-const TagEditSchema = Type.Object({
-  kind: Type.Literal('tag'),
-  nodeId: Type.String(),
-  tag: Type.String(),
-})
-
-/**
- * One import-specifier writeback — `setImportSpecifier` (WS-8.3).
- *
- * The other odd one out, same shape of oddity as `literal` above: its target
- * is not the JSX the node renders (`<img src={heroImg}/>`), but the IMPORT
- * DECLARATION that JSX reads through. `nodeId` here is `PageNode.assetOrigin`'s
- * own `rel:line:col` — the import's module-specifier literal — so it decodes
- * through the same `studioEditLocation` every other edit kind shares.
- *
- * `assetPath` is the workspace-relative POSIX path of the file the import
- * should point at AFTER the edit (from `POST /admin/api/studio/asset-upload`'s
- * response, or an existing asset the picker offered) — never a specifier
- * string directly: computing the actual relative specifier from the
- * IMPORTING file's own directory to `assetPath` is `applyStudioEdit`'s job,
- * because only the server knows both paths precisely, and doing it here means
- * `assetPath` gets the same containment guard every other write target gets
- * (see `resolveContainedAssetPath`) before a single character reaches disk.
- */
-const AssetEditSchema = Type.Object({
-  kind: Type.Literal('asset'),
-  nodeId: Type.String(),
-  assetPath: Type.String(),
-})
-
-/**
- * One "detach a local component instance" writeback (WS-4.4) —
- * `detachComponentInstance`. `nodeId` is a `studio.instance` node's own id
- * (the call site's plain location — never composite, see that node's doc
- * comment). Unlike every other edit kind, this can REFUSE with a specific
- * reason rather than simply "no writable location" — see `applyStudioEdit`'s
- * `StudioEditRefusalError`.
- */
-const DetachEditSchema = Type.Object({
-  kind: Type.Literal('detach'),
-  nodeId: Type.String(),
-})
-
-/**
- * One "swap this instance for a different component" writeback (WS-4.5) —
- * `swapComponentInstance`. `newComponentFile` is a workspace-relative POSIX
- * path when `newComponentSource` is `'local'`, or a bare package specifier
- * when `'package'`.
- */
-const SwapEditSchema = Type.Object({
-  kind: Type.Literal('swap'),
-  nodeId: Type.String(),
-  newComponentName: Type.String(),
-  newComponentSource: Type.Union([Type.Literal('local'), Type.Literal('package')]),
-  newComponentFile: Type.String(),
-})
-
-/** Discriminated union of every studio edit kind — `kind` is the discriminator. */
-export const StudioEditSchema = Type.Union([
-  PropEditSchema,
-  TextEditSchema,
-  StyleEditSchema,
-  LiteralEditSchema,
-  TagEditSchema,
-  AssetEditSchema,
-  DetachEditSchema,
-  SwapEditSchema,
-  ...StructuralEditSchemas,
-  CssEditSchema,
-])
-export type StudioEdit = Static<typeof StudioEditSchema>
 
 /**
  * Thrown by `applyStudioEdit` when a `detach`/`swap` codemod REFUSES rather
@@ -251,8 +152,13 @@ const WRITABLE_SOURCE_EXTENSION = /\.(tsx?|jsx?|mjs|cjs)$/i
  * The extension check is the second half. Even contained, a writeback belongs on
  * app source and nowhere else, and every codemod here parses its target as
  * TypeScript/JavaScript anyway.
+ *
+ * Exported (not just used internally) so `studio/reloadScope.ts` (Track C5)
+ * can apply the SAME adversarial-path guard to the `files` list a reload-scope
+ * request round-trips back to the server, rather than a second, parallel
+ * check that could drift from this one.
  */
-function isWritableSourceRel(rel: string): boolean {
+export function isWritableSourceRel(rel: string): boolean {
   if (rel.length === 0) return false
   if (rel.startsWith('/') || rel.startsWith('\\') || /^[a-zA-Z]:/.test(rel)) return false
   const segments = rel.split(/[/\\]/)
@@ -290,10 +196,21 @@ function isWritableSourceRel(rel: string): boolean {
  *
  * `struct-01` — `move`/`delete` join them for the same reason: relocating or
  * removing a JSX child always changes the line count of every node id below it.
+ *
+ * E2.4/E2.2 — `insert-slot`/`promote-component`/`add-slot-prop` join them too:
+ * filling a slot with a multi-line subtree, pulling one out into its own
+ * file, and rewriting an existing component's own signature all change a
+ * touched file's line count exactly like the structural three — WHEN they
+ * write. A `preview: true` `add-slot-prop` writes nothing, but this function
+ * only sees `kind`, not the edit's own `preview` flag, so it still reports
+ * `true` for one; `applyStudioEditBatch`'s `written`-gated reload (see
+ * `docs/features/studio-import.md`'s "A save only reloads when a write
+ * actually landed") is what keeps a preview-only batch from reloading
+ * anything despite this.
  */
 export function isSharedSourceNodeId(nodeId: string, kind?: StudioEdit['kind']): boolean {
   if (kind === 'asset' || kind === 'detach' || kind === 'swap') return true
-  if (kind !== undefined && isStructuralEditKind(kind)) return true
+  if (kind !== undefined && (isStructuralEditKind(kind) || isSlotEditKind(kind))) return true
   return isInlinedNodeId(nodeId) || isRouteChromeNodeId(nodeId)
 }
 
@@ -329,7 +246,7 @@ export function orderStudioEditsForApply<T extends { nodeId: string }>(edits: re
  * to the same position — the second reading a file the first already changed,
  * for a silent last-write-wins with a stale intermediate.
  *
- * ## Why `insert` is exempt
+ * ## Why `insert` and `insert-slot` are exempt
  *
  * Every other kind OVERWRITES the span its nodeId points at, so two of them on
  * one location are the same write twice and last-one-wins is the honest
@@ -339,13 +256,21 @@ export function orderStudioEditsForApply<T extends { nodeId: string }>(edits: re
  * collapsing them silently dropped all but the last, so composing a screen one
  * batch at a time quietly produced a single child no matter how many were
  * asked for, with `written` reporting the truth and nothing reporting the loss.
+ *
+ * `insert-slot` (E2.4) is the identical shape one level down: its `nodeId`
+ * names the CALL SITE, not one attribute — filling `header` AND `footer` on
+ * the same call site in one batch is two different, both-wanted slots, not a
+ * duplicate. The dedup key below only distinguishes by the field name `prop`
+ * (`PropEditSchema`'s own field, not `insert-slot`'s `propName`), so without
+ * this exemption two DIFFERENT slot fills on one call site would collapse to
+ * whichever the batch listed first.
  */
 export function dedupeStudioEdits<T extends { nodeId: string; kind: string }>(edits: readonly T[]): T[] {
   const byTarget = new Map<string, T>()
   const passthrough: T[] = []
   for (const edit of edits) {
     const loc = studioEditLocation(edit.nodeId)
-    if (!loc || edit.kind === 'insert') {
+    if (!loc || edit.kind === 'insert' || edit.kind === 'insert-slot') {
       passthrough.push(edit)
       continue
     }
@@ -467,32 +392,11 @@ function relativeImportSpecifier(fromFileRel: string, toFileRel: string): string
  * outcome — see `detachComponentInstance`/`swapComponentInstance`) throws
  * `StudioEditRefusalError` specifically, so `applyStudioEditBatch` can surface
  * the reason instead of folding it into the generic skip-and-log path.
+ *
+ * `StudioEditSwapDetail`/`StudioEditApplyOutcome` (this function's own return
+ * shape) now live in `studioEditSchemas.ts`, alongside every other RESPONSE
+ * type this module builds and returns — see that module's own doc for why.
  */
-/**
- * WS-4.5 — what changed on the call site's props when a `swap` edit
- * succeeds: attributes the new component doesn't accept (dropped) and
- * required props it needs that the call site didn't already supply (left
- * for the user to fill in — never synthesized). Surfaced all the way to the
- * client (`StudioEditBatchResult.swapDetails` → `/save`'s response →
- * `swapComponentInstance` in `fsCodemodAdapter.ts`) so the Properties panel
- * can report it instead of a bare "swapped" toast.
- */
-export interface StudioEditSwapDetail {
-  removedProps: string[]
-  unfilledRequiredProps: string[]
-}
-
-/**
- * `applyStudioEdit`'s result. `applied: false` means "no writable source
- * location, nothing to do" (a synthetic node, an unresolvable asset target)
- * — not an error, the existing `skipped` counter's meaning. `swapDetail` is
- * populated only for a successful `swap` edit — see `StudioEditSwapDetail`.
- */
-export interface StudioEditApplyOutcome {
-  applied: boolean
-  swapDetail?: StudioEditSwapDetail
-}
-
 export function applyStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyOutcome {
   // WS-6.3 — a CSS edit's target is a FILE + SELECTOR (`edit.file`/
   // `edit.selector`), never the nodeId-encoded `rel:line:col` every other
@@ -504,7 +408,10 @@ export function applyStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyO
   if (edit.kind === 'css') {
     const outcome = applyCssEdit(dir, edit)
     if ('refusal' in outcome) throw new StudioEditRefusalError(outcome.refusal.reason, outcome.refusal.message)
-    return { applied: outcome.applied }
+    return {
+      applied: outcome.applied,
+      ...(outcome.createdStylesheet ? { createdStylesheet: outcome.createdStylesheet } : {}),
+    }
   }
 
   const target = studioEditLocation(edit.nodeId)
@@ -527,6 +434,16 @@ export function applyStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyO
     case 'style':
       setJsxStyle({ ...loc, style: edit.style })
       return { applied: true }
+    case 'class': {
+      // Track B2 — the real write behind Phase 0 item 0.6's honesty-only
+      // stopgap. `setJsxClassName` returns a NAMED refusal (never throws)
+      // for a `className` shape it can't safely rewrite — translated into
+      // `StudioEditRefusalError` here, the same "leaf returns, dispatcher
+      // throws" shape `applyCssEdit`'s `'css'` case already uses just above.
+      const result = setJsxClassName({ ...loc, add: edit.add, remove: edit.remove })
+      if (!result.ok) throw new StudioEditRefusalError(result.refusal.reason, result.refusal.message)
+      return { applied: true }
+    }
     case 'literal':
       setStringLiteral({ ...loc, value: edit.text })
       return { applied: true }
@@ -581,53 +498,36 @@ export function applyStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyO
         swapDetail: { removedProps: result.removedProps, unfilledRequiredProps: result.unfilledRequiredProps },
       }
     }
+    case 'insert-slot':
+    case 'promote-component':
+    case 'add-slot-prop': {
+      // E2.4/E2.2. `insert-slot`'s optional `anchorNodeId` is only meaningful
+      // for its `children` delegation; `add-slot-prop` never has one (see
+      // `studioSlotWriteback.ts`'s own doc) — same cross-file guard
+      // `move`/`insert` already apply above.
+      const anchorId = 'anchorNodeId' in edit ? edit.anchorNodeId : undefined
+      const anchor = anchorId ? studioEditLocation(anchorId) : null
+      const result = applySlotEdit(loc, edit, anchor && anchor.rel === target.rel ? anchor : null, dir)
+      if (!result.ok) throw new StudioEditRefusalError(result.reason, result.message)
+      // `applied` reads straight from the codemod's own answer (E2.2 — a
+      // `preview: true` add-slot-prop is `applied: false` here, on purpose;
+      // see `applyStudioEditBatch`'s loop for what that means for the
+      // written/skipped counters).
+      return {
+        applied: result.applied,
+        ...(result.promoteDetail ? { promoteDetail: result.promoteDetail } : {}),
+        ...(result.addSlotPropDetail ? { addSlotPropDetail: result.addSlotPropDetail } : {}),
+      }
+    }
   }
 }
 
 /**
- * One `detach`/`swap`/`move`/`delete`/`css` edit that refused rather than
- * writing — surfaced to the client so it can show the SPECIFIC reason (a toast
- * with an offer, per WS-4.4's plan; `StyleTargetChip`'s per-tier message for
- * `css`; the AST-only structural reasons for `move`/`delete`) instead of a
- * generic "skipped" count.
- */
-export interface StudioEditRefusal {
-  nodeId: string
-  kind: 'detach' | 'swap' | 'move' | 'delete' | 'insert' | 'css'
-  reason: string
-  message: string
-}
-
-/** The edit kinds whose refusal is a NAMED, expected outcome rather than a codemod exception. */
-function isRefusingEditKind(kind: StudioEdit['kind']): kind is StudioEditRefusal['kind'] {
-  return kind === 'detach' || kind === 'swap' || kind === 'css' || isStructuralEditKind(kind)
-}
-
-/** The result of applying a batch of studio edits — `POST /admin/api/studio/save`'s own response shape. */
-export interface StudioEditBatchResult {
-  written: number
-  skipped: number
-  /** True when any write shifted a touched file's line count — stale `line:col` node ids downstream must re-parse. */
-  shifted: boolean
-  /** True when any edit targets an inlined/shared source location — every OTHER frame reading the same file is now stale too. */
-  sharedComponents: boolean
-  /** WS-4.4/4.5 — every `detach`/`swap` edit that refused, with why. Empty array when none did (always present, never omitted, so a client doesn't need an `?.length` guard). */
-  refusals: StudioEditRefusal[]
-  /** WS-4.5 — every `swap` edit that SUCCEEDED, with what changed on the call site. Empty array when none did. */
-  swapDetails: (StudioEditSwapDetail & { nodeId: string })[]
-  /**
-   * mcp-tooling (WS-9's live-reload bridge) — every ABSOLUTE file path any
-   * edit in the batch decoded a location in, whether or not that edit
-   * ultimately wrote (a `css` edit's synthetic nodeId never decodes here —
-   * see `studioEditFile` — so a stylesheet-only batch reports none). Not
-   * "written" in the applied-count sense: `studio_apply_edits`'s caller maps
-   * this to page ids for a best-effort live-reload push, and re-reading a
-   * page whose edit happened to refuse is a harmless no-op, not a bug.
-   */
-  touchedFiles: string[]
-}
-
-/**
+ * `StudioEditRefusal`, `isRefusingEditKind`, `StudioEditUnexplainedSkip`, and
+ * `StudioEditBatchResult` (this function's own return shape, below) now live
+ * in `studioEditSchemas.ts` alongside every other RESPONSE type this module
+ * builds and returns — see that module's own doc for why.
+ *
  * Apply a batch of typed studio edits to `dir`, exactly the way `POST
  * /admin/api/studio/save` does — ordering (bottom-to-top, so a line-count-
  * changing codemod can't invalidate another pending edit's location),
@@ -648,6 +548,13 @@ export function applyStudioEditBatch(dir: string, edits: readonly StudioEdit[]):
   for (const edit of ordered) {
     const file = studioEditFile(dir, edit.nodeId)
     if (file) touchedFiles.add(file)
+    // A `css`/`create` edit's nodeId never decodes (it's synthetic), but the
+    // edit itself rewrites `pageFile`'s import list — a real line-count
+    // change downstream code needs to see, exactly like every OTHER kind's
+    // decoded location. Added explicitly rather than through
+    // `studioEditFile` because this kind's write target is a FILE +
+    // SELECTOR pair, never a `rel:line:col` (see `CssEditSchema`'s doc).
+    if (edit.kind === 'css' && edit.op === 'create') touchedFiles.add(join(dir, edit.pageFile))
   }
   const lineCountBefore = new Map<string, number>()
   for (const file of touchedFiles) {
@@ -658,20 +565,33 @@ export function applyStudioEditBatch(dir: string, edits: readonly StudioEdit[]):
   let skipped = 0
   const refusals: StudioEditRefusal[] = []
   const swapDetails: (StudioEditSwapDetail & { nodeId: string })[] = []
+  const createdStylesheets: { nodeId: string; file: string }[] = []
+  const promoteDetails: (StudioPromoteComponentDetail & { nodeId: string })[] = []
+  const addSlotPropDetails: (StudioAddSlotPropDetail & { nodeId: string })[] = []
+  const unexplainedSkips: StudioEditUnexplainedSkip[] = []
   for (const edit of ordered) {
     try {
       const outcome = applyStudioEdit(dir, edit)
-      if (outcome.applied) {
+      if (outcome.addSlotPropDetail) addSlotPropDetails.push({ nodeId: edit.nodeId, ...outcome.addSlotPropDetail })
+      if (isSlotPreviewOutcome(outcome)) {
+        // E2.2 — a deliberate `add-slot-prop` preview: `ok`, nothing written,
+        // not a failure. Neither counter moves; `addSlotPropDetails` above
+        // already carries the blast radius the caller asked to see.
+      } else if (outcome.applied) {
         written += 1
         if (outcome.swapDetail) swapDetails.push({ nodeId: edit.nodeId, ...outcome.swapDetail })
+        if (outcome.createdStylesheet) createdStylesheets.push({ nodeId: edit.nodeId, ...outcome.createdStylesheet })
+        if (outcome.promoteDetail) promoteDetails.push({ nodeId: edit.nodeId, ...outcome.promoteDetail })
       } else {
         skipped += 1
+        unexplainedSkips.push({ nodeId: edit.nodeId, kind: edit.kind })
       }
     } catch (err) {
       if (err instanceof StudioEditRefusalError && isRefusingEditKind(edit.kind)) {
         refusals.push({ nodeId: edit.nodeId, kind: edit.kind, reason: err.reason, message: err.message })
       } else {
         console.error('[studio]', err)
+        unexplainedSkips.push({ nodeId: edit.nodeId, kind: edit.kind })
       }
       skipped += 1
     }
@@ -686,5 +606,17 @@ export function applyStudioEditBatch(dir: string, edits: readonly StudioEdit[]):
     }
   }
 
-  return { written, skipped, shifted, sharedComponents, refusals, swapDetails, touchedFiles: [...touchedFiles] }
+  return {
+    written,
+    skipped,
+    shifted,
+    sharedComponents,
+    refusals,
+    swapDetails,
+    createdStylesheets,
+    promoteDetails,
+    addSlotPropDetails,
+    unexplainedSkips,
+    touchedFiles: [...touchedFiles],
+  }
 }

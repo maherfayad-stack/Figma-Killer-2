@@ -79,6 +79,8 @@ export type {
   ImportFontToken,
   ImportScriptDependency,
   ImportScript,
+  // parse warnings (Track B1/B3 — `studioCss.ts` surfaces these instead of discarding them)
+  ImportWarning,
 } from './cssImportTypes'
 
 export type {

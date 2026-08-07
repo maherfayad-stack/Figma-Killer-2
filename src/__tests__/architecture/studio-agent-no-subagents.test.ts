@@ -28,6 +28,7 @@
  */
 import { describe, expect, it } from 'bun:test'
 import { buildStudioAgentSystemPrompt } from '../../../server/ai/tools/studio/systemPrompt'
+import { studioAgentTools } from '../../../server/ai/tools/studio'
 import { resolveNativeToolAllowlist } from '../../../server/ai/drivers/claudeCliToolSurface'
 
 describe('the Studio agent holds no subagent dispatch', () => {
@@ -55,11 +56,11 @@ describe('the Studio agent holds no subagent dispatch', () => {
   })
 
   it('the prompt states plainly that there are no subagents', () => {
-    expect(buildStudioAgentSystemPrompt(null)[0]!).toContain('no subagents')
+    expect(buildStudioAgentSystemPrompt(null, studioAgentTools)[0]!).toContain('no subagents')
   })
 
   it('the prompt never tells the model to delegate', () => {
-    const staticPrefix = buildStudioAgentSystemPrompt(null)[0]!.toLowerCase()
+    const staticPrefix = buildStudioAgentSystemPrompt(null, studioAgentTools)[0]!.toLowerCase()
     // `subagent_type` is the parameter name; `Task(` is the call shape. Either
     // one appearing means the prompt is describing a tool the session withheld.
     expect(staticPrefix).not.toContain('subagent_type')

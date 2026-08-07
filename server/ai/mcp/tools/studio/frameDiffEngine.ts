@@ -21,6 +21,7 @@
 import { PNG } from 'pngjs'
 import pixelmatch from 'pixelmatch'
 import sharp from 'sharp'
+import { AI_USER_IMAGE_MAX_EDGE } from '@core/ai'
 
 const DEFAULT_PIXELMATCH_THRESHOLD = 0.1
 /** Sum of |Δr|+|Δg|+|Δb|+|Δa| above which a pixel counts as "different" for region bucketing (independent of pixelmatch's own threshold). */
@@ -83,6 +84,20 @@ export interface ReferenceReconciliation {
   /** A plain PNG buffer at the EXACT baseline pixel dimensions, ready for `decodePngBuffer`. */
   pngBuffer: Buffer
   method: 'exact' | 'resampled'
+  /**
+   * Present only when `method === 'resampled'` — names WHICH axis forced the
+   * resample and, when it looks like the vision-safe capture cap rather than
+   * a genuine size mismatch, says so plainly. Both `studio_compare` and
+   * `studio_diff_frames` surface this verbatim in their output rather than
+   * leaving the caller to infer it from a bare `method` string — see A2 in
+   * STUDIO-FIGMA-PARITY-PLAN.md: `studio_export_frames` clamps BOTH width
+   * AND height of every capture to `AI_USER_IMAGE_MAX_EDGE`px, so a frame
+   * taller than roughly that at the dpr requested falls into this branch even
+   * when `studio_recommend_export_dpr` already matched the reference's width
+   * exactly — the "exact-pixel" comparison the whole measurement pipeline is
+   * built around silently becomes interpolated for most real mobile screens.
+   */
+  note?: string
 }
 
 /**
@@ -133,7 +148,33 @@ export async function reconcileReference(
     .ensureAlpha()
     .png()
     .toBuffer()
-  return { ok: true, result: { pngBuffer, method: 'resampled' } }
+  return {
+    ok: true,
+    result: {
+      pngBuffer,
+      method: 'resampled',
+      note: describeResampleReason(referenceWidth, referenceHeight, baselineWidth, baselineHeight),
+    },
+  }
+}
+
+/** Builds `ReferenceReconciliation.note` — see that field's own doc for why this exists. */
+function describeResampleReason(
+  referenceWidth: number,
+  referenceHeight: number,
+  baselineWidth: number,
+  baselineHeight: number,
+): string {
+  const widthMismatch = referenceWidth !== baselineWidth
+  const heightMismatch = referenceHeight !== baselineHeight
+  const axis = widthMismatch && heightMismatch ? 'width and height' : heightMismatch ? 'height' : 'width'
+  // Only the HEIGHT side is a likely vision-cap symptom: studio_recommend_export_dpr
+  // already targets an exact WIDTH match, so a lingering width mismatch usually
+  // means that recommendation wasn't used, not that the cap fired on width.
+  const likelyVisionCap = heightMismatch && baselineHeight >= AI_USER_IMAGE_MAX_EDGE - 1
+  return likelyVisionCap
+    ? `Resampled the reference (${referenceWidth}x${referenceHeight}) to the captured baseline's size (${baselineWidth}x${baselineHeight}) — the ${axis} did not match. The baseline's height landed at or near the ${AI_USER_IMAGE_MAX_EDGE}px vision-safe capture cap, which studio_export_frames applies to BOTH width and height: this is very likely a tall screen whose full height could not be captured at the dpr that matched the reference's width, not a genuine content mismatch. This comparison is now interpolated, not exact-pixel — treat the score and any region near the bottom of the frame as directional.`
+    : `Resampled the reference (${referenceWidth}x${referenceHeight}) to the captured baseline's size (${baselineWidth}x${baselineHeight}) — the ${axis} did not match. This comparison is now interpolated, not exact-pixel.`
 }
 
 // ---------------------------------------------------------------------------

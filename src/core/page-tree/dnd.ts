@@ -70,8 +70,8 @@ export function resolvePageTreeDropTarget({
       if (isAncestor(tree, id, overId)) return null
     }
 
-    const index = normalizeIndexAfterRemoval(tree, draggedId, overId, over.children.length)
-    return noOpTarget(tree, draggedId, overId, index)
+    const index = normalizeIndexAfterRemoval(tree, draggedIds, overId, over.children.length)
+    return noOpTarget(tree, draggedIds, overId, index)
       ? null
       : {
           draggedId,
@@ -101,9 +101,9 @@ export function resolvePageTreeDropTarget({
   if (overIndex === -1) return null
 
   const rawIndex = zone === 'before' ? overIndex : overIndex + 1
-  const index = normalizeIndexAfterRemoval(tree, draggedId, parent.id, rawIndex)
+  const index = normalizeIndexAfterRemoval(tree, draggedIds, parent.id, rawIndex)
 
-  return noOpTarget(tree, draggedId, parent.id, index)
+  return noOpTarget(tree, draggedIds, parent.id, index)
     ? null
     : {
         draggedId,
@@ -116,27 +116,65 @@ export function resolvePageTreeDropTarget({
       }
 }
 
+/**
+ * `moveNodes` (mutations.ts) detaches EVERY id in `draggedIds` from its
+ * current parent before splicing into the new one (top-down, all at once —
+ * see mutations.ts:580-587). A raw drop index computed against the
+ * PRE-removal children array must therefore be discounted by every dragged
+ * sibling that sits at an index below it in `parentId`'s children today, not
+ * just the pivot (`draggedIds[0]`) — discounting only the pivot under-shifts
+ * the index by (removedBefore - 1) for an n>1 drag, landing the group too far
+ * to the right (G10).
+ */
 function normalizeIndexAfterRemoval(
   tree: NodeTree<PageNode>,
-  draggedId: string,
+  draggedIds: string[],
   parentId: string,
   rawIndex: number,
 ): number {
-  const currentParent = getParent(tree, draggedId)
-  if (!currentParent || currentParent.id !== parentId) return rawIndex
-
-  const currentIndex = currentParent.children.indexOf(draggedId)
-  if (currentIndex === -1 || currentIndex >= rawIndex) return rawIndex
-  return rawIndex - 1
+  let removedBefore = 0
+  for (const draggedId of draggedIds) {
+    const currentParent = getParent(tree, draggedId)
+    if (!currentParent || currentParent.id !== parentId) continue
+    const currentIndex = currentParent.children.indexOf(draggedId)
+    if (currentIndex !== -1 && currentIndex < rawIndex) removedBefore++
+  }
+  return rawIndex - removedBefore
 }
 
+/**
+ * Whether landing `draggedIds` at `index` inside `parentId` would leave
+ * `parentId.children` byte-for-byte unchanged (a drop back onto its own
+ * current position).
+ *
+ * **Must simulate the WHOLE group, not just the pivot (companion bug to
+ * G10).** The single-drag version this replaced compared only the pivot's
+ * OWN pre-move index against `index` — a comparison that is only meaningful
+ * when exactly one node is removed, because then "pivot's original slot
+ * number" and "pivot's post-removal target slot number" describe the SAME
+ * bijection. For an n>1 drag those are indices into arrays of DIFFERENT
+ * length (the full children list vs. the list with every dragged sibling
+ * already removed), so they can coincide NUMERICALLY by pure accident on a
+ * real, order-changing move — exactly what G10's fix (which makes `index`
+ * finally correct) surfaced: a group of 2 landing at the tail of a 4-item
+ * list can compute the same integer as the pivot's own original index,
+ * false-positive-canceling a real reorder. Mirrors `moveNodes`'
+ * (`mutations.ts`) own detach-then-splice arithmetic exactly, and
+ * `sourceStructure.ts`'s `simulateStructuralReorder` (the source-writeback
+ * preview's identical twin, kept in sync by hand — see that function's doc).
+ */
 function noOpTarget(
   tree: NodeTree<PageNode>,
-  draggedId: string,
+  draggedIds: readonly string[],
   parentId: string,
   index: number,
 ): boolean {
-  const currentParent = getParent(tree, draggedId)
-  if (!currentParent || currentParent.id !== parentId) return false
-  return currentParent.children.indexOf(draggedId) === index
+  const parent = tree.nodes[parentId]
+  if (!parent) return false
+  const moving = draggedIds.filter((id) => parent.children.includes(id))
+  if (moving.length === 0) return false
+  const without = parent.children.filter((id) => !moving.includes(id))
+  const at = Math.max(0, Math.min(index, without.length))
+  const next = [...without.slice(0, at), ...moving, ...without.slice(at)]
+  return next.length === parent.children.length && next.every((id, i) => id === parent.children[i])
 }

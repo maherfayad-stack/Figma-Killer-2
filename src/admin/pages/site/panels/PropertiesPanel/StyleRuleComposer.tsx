@@ -10,6 +10,7 @@ import { useEditorStore } from '@site/store/store'
 import type { StyleRule, CSSPropertyBag } from '@core/page-tree'
 import { StyleSectionsEditor } from './StyleSectionsEditor'
 import { getActiveStyleTab } from './cssControlTypes'
+import type { PropertyProvenance } from './stylePropertyProvenance'
 
 // ---------------------------------------------------------------------------
 // Props
@@ -21,6 +22,19 @@ interface StyleRuleComposerProps {
   /** Search query — filters visible properties across all categories. */
   styleQuery: string
   mode?: 'contextual' | 'global'
+  /**
+   * Track F1 — the frame's real `getComputedStyle` reading, keyed by the
+   * same curated property names `ALL_CURATED_CSS_PROPERTIES` lists. Folded
+   * UNDER this class's own stored values when building `currentStyles` (the
+   * bag every unset row's placeholder + every visual section's gating logic
+   * reads), so "unset" placeholders show what's actually rendering instead
+   * of a hand-written spec-default guess. `null`/`undefined` (no frame
+   * mounted — every existing test, or global-selector mode) degrades to
+   * exactly the pre-F1 behaviour: base class styles only.
+   */
+  computedValues?: Record<string, string> | null
+  /** Track F1 — see `StyleSectionsEditor`'s doc. */
+  provenanceByProperty?: ReadonlyMap<string, PropertyProvenance>
 }
 
 // ---------------------------------------------------------------------------
@@ -32,6 +46,8 @@ export function StyleRuleComposer({
   cls,
   styleQuery,
   mode: _mode = 'contextual',
+  computedValues,
+  provenanceByProperty,
 }: StyleRuleComposerProps) {
   const activeBreakpointId = useEditorStore((s) => s.activeBreakpointId)
   // The editing context is owned by the canvas toolbar's context switcher:
@@ -66,9 +82,14 @@ export function StyleRuleComposer({
   const storedStyles: Record<string, unknown> = activeContextId
     ? (cls.contextStyles[activeContextId] ?? {})
     : cls.styles
+  // Track F1 — the frame's computed truth is the base layer; this class's
+  // own stored values (base, then context override) win over it, matching
+  // the CSS cascade. `computedValues` is only ever `null`/`undefined` when
+  // no frame has rendered yet (test environment, or before first mount) —
+  // then this collapses to exactly the pre-F1 bag.
   const currentStyles: Record<string, unknown> = activeContextId
-    ? { ...cls.styles, ...storedStyles }
-    : cls.styles
+    ? { ...(computedValues ?? {}), ...cls.styles, ...storedStyles }
+    : { ...(computedValues ?? {}), ...cls.styles }
 
   const handleChange = (key: keyof CSSPropertyBag, value: string | number | undefined) => {
     const patch = { [key]: value ?? null } as Partial<CSSPropertyBag>
@@ -147,6 +168,7 @@ export function StyleRuleComposer({
       onClearProperties={handleClearProperties}
       onPreview={handlePreview}
       onClearPreview={handleClearPreview}
+      provenanceByProperty={provenanceByProperty}
     />
   )
 }

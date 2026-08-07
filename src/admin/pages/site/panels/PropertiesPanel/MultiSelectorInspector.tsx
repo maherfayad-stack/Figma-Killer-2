@@ -94,7 +94,7 @@ export function MultiSelectorInspector({
   }
 
   const handleApplyToNode = () => {
-    if (!selectedNodeId) return
+    if (!selectedNodeId || applicableToNode.length === 0) return
     // One batched mutation → a single undo step removes the whole apply.
     addNodeClasses(selectedNodeId, applicableToNode.map((cls) => cls.id))
   }

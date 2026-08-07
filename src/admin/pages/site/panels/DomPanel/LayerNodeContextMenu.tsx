@@ -32,6 +32,16 @@
  * shared `insertComponentRef` action in `siteSlice` so cycle detection and
  * VC/page-mode dispatch are applied uniformly.
  * See `src/__tests__/architecture/component-system-placement.test.ts`.
+ *
+ * Track F2 / R4 — Duplicate, Wrap, and Delete are now PRE-DISABLED before the
+ * user ever clicks, using the exact same `explainStructuralConstraint`
+ * (`@core/page-tree`, wrapping `refuseStructuralEdit`) the store's own guard
+ * consults — never a re-derived rule. Before this, the only feedback was a
+ * reactive toast fired AFTER the click; Figma greys these out. Reorder has no
+ * equivalent here — its refusal genuinely depends on the DROP TARGET, which
+ * isn't known until the drag lands (see `previewStructuralMove`, D2's
+ * gesture-time seam this file does not need — this is a context menu, not a
+ * drag).
  */
 
 import { useEffect, useRef } from 'react'
@@ -49,6 +59,7 @@ import { resolveInsertLocation } from '@site/store/insertLocation'
 import { ModulePicker } from '@site/module-picker'
 import { canComponentizeNode } from '@site/componentization'
 import { useConfirmDelete } from '@admin/shared/dialogs/ConfirmDeleteDialog'
+import { explainInstanceDuplicateConstraint, explainStructuralConstraint, type EditConstraint } from '@core/page-tree'
 import type { AnyModuleDefinition } from '@core/module-engine'
 import { PenSquareSolidIcon } from 'pixel-art-icons/icons/pen-square-solid'
 import { CopyPlusSolidIcon } from 'pixel-art-icons/icons/copy-plus-solid'
@@ -164,6 +175,48 @@ export function LayerNodeContextMenu({
     )
     return parent?.moduleId === 'base.visual-component-ref'
   })
+
+  // R4 — pre-computed constraints for Duplicate/Wrap/Delete, so the menu
+  // greys out an item the store would refuse rather than letting the user
+  // click and then explaining after the fact. All-or-nothing across
+  // `targetIds`, matching `planSourceCopy`/`deleteNodes`'s own "the whole
+  // gesture refuses if ANY selected node refuses" semantics — the FIRST
+  // refusal found is what the tooltip explains.
+  //
+  // Deliberately NOT a `useEditorStore(s => {...})` selector: that selector
+  // would construct a brand-new `{duplicate, wrap, delete}` object (and fresh
+  // `EditConstraint` objects inside it) on every store notification, which
+  // `useSyncExternalStore` sees as "the snapshot keeps changing" and enters
+  // an unbounded re-render loop (confirmed against this file's own test
+  // suite). `activePage` below IS a stable selector (referentially unchanged
+  // across renders that don't touch this tree — Mutative's whole-tree
+  // preservation), so deriving from it in the render body, as a plain value,
+  // is cheap and safe: three `explainStructuralConstraint` calls, pure
+  // functions over already-selected data.
+  const structuralConstraints = ((): { duplicate: EditConstraint | null; wrap: EditConstraint | null; delete: EditConstraint | null } => {
+    if (!activePage || targetIds.length === 0) return { duplicate: null, wrap: null, delete: null }
+    const nodes = targetIds.map((id) => activePage.nodes[id]).filter((n) => n !== undefined)
+    const firstRefusal = (kind: 'duplicate' | 'wrap' | 'delete'): EditConstraint | null => {
+      for (const node of nodes) {
+        const constraint = explainStructuralConstraint({ kind, node })
+        if (constraint) return constraint
+      }
+      return null
+    }
+    // R5 — a single `studio.instance`'s Duplicate gets the real "duplicate as
+    // a new file" wording instead of the generic "cannot duplicate imported
+    // code" every other node shows, since that hatch genuinely exists for it
+    // (reachable today from the Properties panel's Component section /
+    // Detach's own failure card — `InstanceCallSiteView.tsx`, not touched by
+    // this track). Still disabled here: this menu has no wiring to the
+    // extract flow itself, only a truer explanation of why the direct
+    // gesture refuses and where the real one lives.
+    const duplicate =
+      !isMulti && nodes.length === 1 && nodes[0]?.moduleId === 'studio.instance'
+        ? explainInstanceDuplicateConstraint()
+        : firstRefusal('duplicate')
+    return { duplicate, wrap: firstRefusal('wrap'), delete: firstRefusal('delete') }
+  })()
 
   // Whether the right-clicked node accepts children (root or canHaveChildren).
   // Used to gate the "Paste HTML here…" item — only offered when the target
@@ -364,6 +417,8 @@ export function LayerNodeContextMenu({
           <ContextMenuItem
             ref={!canToggleHidden && isMulti ? firstItemRef : undefined}
             onClick={dispatchDuplicate}
+            disabled={structuralConstraints.duplicate !== null}
+            tooltip={structuralConstraints.duplicate?.explanation}
           >
             <span aria-hidden="true"><CopyPlusSolidIcon size={13} /></span>
             Duplicate
@@ -418,18 +473,31 @@ export function LayerNodeContextMenu({
           {/* Wrap is now a submenu with Container / Loop choices. Same UX in
               single- and multi-select — for multi the closest common ancestor
               is computed by `wrapNodes` so cross-parent selections become a
-              single wrapper at the right tree level. */}
+              single wrapper at the right tree level. R4 — both choices share
+              ONE wrap refusal (the gesture, not the wrapper shape, is what's
+              refused), so both are disabled together. `ContextMenuSubmenu`
+              itself has no `disabled` prop (a shared primitive, not this
+              track's to extend) — disabling both inner items reads the same
+              to the user and needs no change there. */}
           <ContextMenuSubmenu
             label="Wrap in"
             icon={<ContainerSolidIcon size={13} />}
             onClose={onClose}
             width={200}
           >
-            <ContextMenuItem onClick={dispatchWrapInContainer}>
+            <ContextMenuItem
+              onClick={dispatchWrapInContainer}
+              disabled={structuralConstraints.wrap !== null}
+              tooltip={structuralConstraints.wrap?.explanation}
+            >
               <span aria-hidden="true"><CheckboxSolidIcon size={13} /></span>
               Container
             </ContextMenuItem>
-            <ContextMenuItem onClick={dispatchWrapInLoop}>
+            <ContextMenuItem
+              onClick={dispatchWrapInLoop}
+              disabled={structuralConstraints.wrap !== null}
+              tooltip={structuralConstraints.wrap?.explanation}
+            >
               <span aria-hidden="true"><BoxStackSolidIcon size={13} /></span>
               Loop
             </ContextMenuItem>
@@ -467,7 +535,12 @@ export function LayerNodeContextMenu({
         <>
           <ContextMenuSeparator />
 
-          <ContextMenuItem danger onClick={dispatchDelete}>
+          <ContextMenuItem
+            danger
+            onClick={dispatchDelete}
+            disabled={structuralConstraints.delete !== null}
+            tooltip={structuralConstraints.delete?.explanation}
+          >
             <span aria-hidden="true"><TrashSolidIcon size={13} /></span>
             Delete
           </ContextMenuItem>

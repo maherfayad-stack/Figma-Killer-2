@@ -10,6 +10,7 @@
 import { describe, it, expect } from 'bun:test'
 import { readdirSync, readFileSync, statSync, existsSync } from 'fs'
 import { join, extname } from 'path'
+import { toPosixPath } from './pathHelpers'
 
 const SRC_ROOT = join(import.meta.dir, '../../')
 
@@ -63,7 +64,12 @@ function collectFiles(dir: string, exts = ['.ts', '.tsx', '.js', '.jsx', '.mts',
   return results
 }
 
-const PROD_DIRS = ['editor', 'core', 'modules', 'ui', 'app', 'lib'].map((d) =>
+// 'editor', 'app', and 'lib' never existed in this repo's tracked history
+// (`git log --all -- src/editor src/app src/lib` is empty) — this list
+// silently never scanned `src/admin/`, the largest icon consumer in the
+// codebase (toolbar, panels, dialogs). 'admin' is the real directory;
+// 'core', 'modules', 'ui' already existed and were being scanned.
+const PROD_DIRS = ['admin', 'core', 'modules', 'ui'].map((d) =>
   join(SRC_ROOT, d),
 )
 
@@ -76,7 +82,7 @@ describe('Direct icon imports — no lazy Icon wrapper in production UI', () => 
     const violations: string[] = []
 
     for (const filePath of collectProdFiles()) {
-      const rel = filePath.replace(SRC_ROOT, 'src/')
+      const rel = toPosixPath(filePath.replace(SRC_ROOT, 'src/'))
 
       const raw = readFileSync(filePath, 'utf8')
       const sourceNoComments = stripComments(raw)

@@ -24,14 +24,22 @@
  * scope targets that page are included.
  */
 
-import type { Page, SiteDocument } from '@core/page-tree'
+import type { SiteDocument } from '@core/page-tree'
 import {
   DEFAULT_STYLE_RUNTIME_CONFIG,
   collectAppliedStyles,
   normalizeSiteRuntimeConfig,
+  type RuntimeScopedPage,
 } from '@core/site-runtime'
 
-export function collectUserStylesheetCss(site: SiteDocument, page?: Page): string {
+/**
+ * `page` only needs to satisfy `RuntimeScopedPage` (id + template presence) —
+ * scope matching (`assetScopeAppliesToPage`) never reads node content. This
+ * lets `UserStylesheetInjector` subscribe to just those two fields instead of
+ * the whole `Page` object, so editing a node's props/text doesn't invalidate
+ * the reference this function is called with.
+ */
+export function collectUserStylesheetCss(site: SiteDocument, page?: RuntimeScopedPage): string {
   // Guard against fixtures / partial sites that don't supply `files`. The
   // SiteDocument schema declares `files: SiteFile[]`, but legacy test fixtures
   // and some import paths construct sites without it. Treat absent as empty

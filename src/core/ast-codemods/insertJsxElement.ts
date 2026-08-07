@@ -394,8 +394,12 @@ function indentBlock(block: string, indent: string): string {
  * `resolvePlacement` decided it goes. That split is what lets placement and
  * rendering stay independent — the renderer never needs to know the parent's
  * column, and placement never needs to know the subtree's shape.
+ *
+ * Exported for `insertJsxIntoSlotProp.ts` (E2.4), which writes the identical
+ * subtree shape into a component PROP instead of a JSX child list and has no
+ * reason to re-implement this rendering.
  */
-function renderJsxNode(node: InsertJsxNode, unit: string): string {
+export function renderJsxNode(node: InsertJsxNode, unit: string): string {
   const parts: string[] = []
   for (const [key, value] of Object.entries(node.props ?? {})) {
     if (value === undefined) continue
@@ -431,8 +435,11 @@ function* walkSubtree(node: InsertJsxNode): Generator<InsertJsxNode> {
 /**
  * Every `(componentName, importSpecifier)` the subtree needs in scope,
  * deduplicated. Intrinsic tags contribute nothing.
+ *
+ * Exported for `insertJsxIntoSlotProp.ts` — a slot fill needs the identical
+ * "what imports does this subtree require" answer.
  */
-function collectSubtreeImports(root: InsertJsxNode): Map<string, string> {
+export function collectSubtreeImports(root: InsertJsxNode): Map<string, string> {
   const required = new Map<string, string>()
   for (const node of walkSubtree(root)) {
     if (node.importSpecifier !== undefined) required.set(node.name, node.importSpecifier)
@@ -444,8 +451,12 @@ function collectSubtreeImports(root: InsertJsxNode): Map<string, string> {
  * The first refusal anywhere in the subtree, or `undefined` when all of it is
  * writable. Runs before any byte is written so a bad grandchild cannot leave a
  * half-built element behind.
+ *
+ * Exported for `insertJsxIntoSlotProp.ts` — the tag-name/void-element rules
+ * are exactly the same for a subtree written into a prop as for one written
+ * into a child list; only the PLACEMENT differs between the two codemods.
  */
-function validateSubtree(root: InsertJsxNode): { ok: false; refusal: InsertJsxRefusal } | undefined {
+export function validateSubtree(root: InsertJsxNode): { ok: false; refusal: InsertJsxRefusal } | undefined {
   for (const node of walkSubtree(root)) {
     const { name, importSpecifier, children } = node
 
@@ -582,8 +593,11 @@ function importQuoteChar(declarations: readonly { getModuleSpecifier: () => Node
  * Reads declarations only, never references: the question is what the name
  * MEANS in this file, and a shadowing insert is the one outcome that would
  * silently change an element the user never touched.
+ *
+ * Exported for `insertJsxIntoSlotProp.ts` — filling a slot with a component
+ * asks the identical "would this shadow something already in scope" question.
  */
-function conflictingBinding(sourceFile: SourceFile, name: string, specifier: string): string | undefined {
+export function conflictingBinding(sourceFile: SourceFile, name: string, specifier: string): string | undefined {
   for (const declaration of sourceFile.getImportDeclarations()) {
     const from = declaration.getModuleSpecifierValue()
     const names = [
@@ -624,8 +638,11 @@ function countLeadingWhitespace(text: string, from: number): number {
  * tab-indented, otherwise the smallest non-zero space indent it uses (falling
  * back to two spaces). Copied rather than assumed so an insert never mixes a
  * second indentation style into a file.
+ *
+ * Exported for `insertJsxIntoSlotProp.ts` — a slot fill's nested children
+ * should indent in the file's own style too.
  */
-function indentUnit(text: string): string {
+export function indentUnit(text: string): string {
   let smallest = 0
   for (const line of text.split('\n')) {
     const width = countLeadingWhitespace(line, 0)

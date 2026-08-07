@@ -109,6 +109,10 @@ function createFrameworkColorTokenFromInput(
     lightValue,
     darkValue: input.darkValue?.trim() || generateDefaultDarkColor(lightValue),
     darkModeEnabled: input.darkModeEnabled ?? false,
+    // Created directly in the Colors panel — nothing else in the project
+    // declares this name, so the canvas must still emit its `:root`
+    // declaration (`filterReemittableColorTokens`, `@core/framework`).
+    origin: 'studio-authored',
     generateUtilities: {
       ...DEFAULT_COLOR_UTILITIES,
       ...(input.generateUtilities ?? {}),
@@ -208,6 +212,13 @@ function cloneFrameworkColorToken(
     order: nextOrderValue(colors.tokens),
     createdAt: now,
     updatedAt: now,
+    // A clone gets a NEW slug (`-copy`) that, unlike the source token's,
+    // does not exist in the project's own CSS — even when the source was
+    // `origin: 'project-css'` (etc.), the clone is a genuinely new name
+    // Studio just minted, so it must be re-emitted like any other
+    // studio-authored token or `--<slug>-copy` would resolve to nothing on
+    // the canvas (`filterReemittableColorTokens`).
+    origin: 'studio-authored',
   }
 }
 

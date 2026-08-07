@@ -51,7 +51,7 @@ import { isAbsolute, resolve as resolvePath } from 'node:path'
 import type { AiTool, ToolContext } from '../../../runtime/types'
 import { assertPathWithin } from '../../../../util/pathWithin'
 import { resolveToolProjectDir } from './resolveToolProjectDir'
-import { authoredFrameWidth } from '../../../../handlers/studio/boardGeometry'
+import { authoredFrameHeight, authoredFrameWidth } from '../../../../handlers/studio/boardGeometry'
 import { fetchRemoteBytes } from '../../../../handlers/studio/remoteAssetFetch'
 import {
   getDesignReference,
@@ -261,7 +261,7 @@ const recommendExportDprTool: AiTool = {
   scope: 'shared',
   execution: 'server',
   description:
-    'Compute the studio_export_frames `dpr` that makes its capture of `pageId`\'s board frame land on `referenceId`\'s registered pixel WIDTH — the dpr-matching alternative to letting studio_diff_frames resample the reference (a resampled score is a weaker claim than a dpr-matched one; see studio_diff_frames\' own description). Uses the frame\'s AUTHORED width from .studio/boards.json (before any dpr scaling), not a live capture — height is content-driven (scroll-unroll can make the real capture taller than the frame\'s nominal height) and cannot be predicted from this alone, so only WIDTH is guaranteed exact when you export at the recommended dpr; verify the actual result via studio_export_frames\' own reported width/height afterward. `dprClamped` is true when the ideal ratio falls outside the tool\'s 0.5–3 range; `exactWidthMatchExpected` is false when either that clamp OR the shared vision-safe edge cap will keep the capture narrower than the reference — in either case, expect studio_diff_frames\' referenceId path to resample rather than get an exact dimension match.',
+    'Compute the studio_export_frames `dpr` that makes its capture of `pageId`\'s board frame land on `referenceId`\'s registered pixel WIDTH — the dpr-matching alternative to letting studio_diff_frames resample the reference (a resampled score is a weaker claim than a dpr-matched one; see studio_diff_frames\' own description). Uses the frame\'s AUTHORED width from .studio/boards.json (before any dpr scaling), not a live capture — height is content-driven (scroll-unroll can make the real capture taller than the frame\'s nominal height) and cannot be predicted from this alone, so only WIDTH is guaranteed exact when you export at the recommended dpr; verify the actual result via studio_export_frames\' own reported width/height afterward. `dprClamped` is true when the ideal ratio falls outside the tool\'s 0.5–3 range; `exactWidthMatchExpected` is false when either that clamp OR the shared vision-safe edge cap will keep the capture narrower than the reference — in either case, expect studio_diff_frames\' referenceId path to resample rather than get an exact dimension match. `heightLikelyClamped` is a SEPARATE, one-sided warning on the other axis: even the frame\'s NOMINAL authored height (a floor — the real captured height with scroll-unrolled content can only be taller) would already exceed the same vision-safe cap at the recommended dpr, so an exact HEIGHT match is not just unverified but essentially impossible — read `heightNote` for the numbers. A tall mobile screen at dpr 2 hits this routinely; this is the single most common reason a "matched width" comparison still comes back `dimensionMatch: "resampled"`.',
   inputSchema: StudioRecommendExportDprInputSchema,
   handler: async (input, ctx: ToolContext) => {
     const { dir: dirInput, pageId, referenceId } = input as { dir?: string; pageId: string; referenceId: string }
@@ -293,6 +293,22 @@ const recommendExportDprTool: AiTool = {
           ? `A dpr of ${recommendedDpr} would produce a ${Math.round(rawCapturedWidth)}px-wide capture, above the shared ${AI_USER_IMAGE_MAX_EDGE}px vision-safe limit studio_export_frames enforces — the actual capture will be narrower than the reference.`
           : undefined
 
+    // Height side: a SEPARATE, one-sided check on the other axis the vision-safe
+    // cap also applies to (`renderEvidence.ts` clamps BOTH edges, not just the
+    // one this tool otherwise reasons about). `authoredFrameHeight` is a FLOOR
+    // — scroll-unrolled content can only make the real capture taller, never
+    // shorter — so if even that floor clears the cap at `recommendedDpr`, an
+    // exact height match is not just unverified, it is already known to be
+    // unreachable. Silence (both null here) when no board frame exists for
+    // this page at all; that failure mode is `frameWidth === null` above,
+    // already handled, so this can only be a fresh, unrelated read.
+    const frameHeight = authoredFrameHeight(dir, pageId)
+    const rawCapturedHeight = frameHeight === null ? null : frameHeight * recommendedDpr
+    const heightLikelyClamped = rawCapturedHeight !== null && rawCapturedHeight > AI_USER_IMAGE_MAX_EDGE
+    const heightNote = heightLikelyClamped
+      ? `The frame's authored height (${frameHeight}px, a FLOOR — real content may be taller) would already produce a ${Math.round(rawCapturedHeight!)}px-tall capture at dpr ${recommendedDpr}, above the shared ${AI_USER_IMAGE_MAX_EDGE}px vision-safe limit. An exact HEIGHT match is not reachable at any dpr that also keeps the width at its recommended value — expect studio_compare / studio_diff_frames' referenceId path to resample rather than get an exact dimension match, and treat that verdict as directional, not exact-pixel.`
+      : undefined
+
     return {
       ok: true,
       dir,
@@ -306,6 +322,8 @@ const recommendExportDprTool: AiTool = {
       expectedCapturedWidth,
       exactWidthMatchExpected,
       ...(note ? { note } : {}),
+      heightLikelyClamped,
+      ...(heightNote ? { heightNote } : {}),
     }
   },
 }

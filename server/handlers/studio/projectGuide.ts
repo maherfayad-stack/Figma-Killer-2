@@ -9,8 +9,11 @@
  *     everything in it is context the agent has BEFORE its first tool call —
  *     zero round trips, and cached across turns.
  *   - **`.claude/design-system-components.md`** — the installed design
- *     system's real component API, extracted from the package's own docs
- *     (`designSystemGuide.ts`).
+ *     system's real component API. Extracted from the package's own docs
+ *     (`designSystemGuide.ts`) when it ships them; otherwise built directly
+ *     from its real `.d.ts`/`.tsx` type declarations
+ *     (`resolveCatalogDesignSystemGuide`, below) — see `resolveDesignSystemGuide`
+ *     for which tier a given package gets and why neither is ALM-specific.
  *   - **`.claude/design-system.md`** — the token/BEM-class digest generated
  *     from the project's own CSS (`designSystemDigest.ts`), for projects
  *     whose design system arrived as plain CSS with no package docs.
@@ -53,12 +56,13 @@ import { reprobeProjectProfile, resolveProjectProfilePersisting } from './projec
 import type { ProjectProfile } from './projectProfileSchema'
 import { readTextCapped } from './cappedFileRead'
 import { getOrBuildDesignSystemDigest } from './designSystemDigest'
-import { buildDesignSystemGuide, renderComponentReference, renderIconReference, type DesignSystemGuide } from './designSystemGuide'
+import { buildDesignSystemGuide, renderComponentReference, renderIconReference, type ComponentApi, type DesignSystemGuide } from './designSystemGuide'
+import { buildPackageManifest } from './packageManifest'
+import type { PropKind, PropSpec } from './packageManifestSchema'
 import { detectPageFileExtension } from './pageScaffold'
 import { applyProjectSeed } from './projectSeed'
 import { projectPagesDir } from '../studioProjects'
 import {
-  ALM_PACKAGE,
   allOwnedFilesUnchangedSince,
   computeProjectGuideFingerprint,
   pruneLegacyGuideArtefacts,
@@ -174,6 +178,12 @@ function buildGuide(dir: string, profile: ProjectProfile, ds: DesignSystemGuide 
       '',
       `Full props for every component: read \`${COMPONENTS_PATH}\`.`,
       '',
+      `That file is generated once per turn. For the live catalog — every`,
+      'component this project can see, including one only reachable through a',
+      'Figma Code Connect binding rather than a real prop type — call',
+      '`studio_list_components` (browse) or `studio_find_component` (search by',
+      'name/prop) instead of assuming the file above is exhaustive.',
+      '',
     )
     if (ds.icons) {
       const named = ds.icons.components
@@ -226,6 +236,25 @@ function buildGuide(dir: string, profile: ProjectProfile, ds: DesignSystemGuide 
       '`.module.css` is SCOPED and only works through the imported binding,',
       '`className={styles.row}` — a plain string naming a local module class',
       'silently does nothing at all.',
+      '',
+    )
+  } else if (profile.componentPackages.length > 0) {
+    // A component package IS installed, but neither its own docs
+    // (`CLAUDE.md`/`design.md`) nor a readable `.d.ts`/`.tsx` entry produced
+    // anything static to show — see `resolveDesignSystemGuide`. Telling the
+    // agent nothing here would read as "no design system", which is false:
+    // real, importable components exist. `studio_list_components` reaches
+    // further (it also tries Figma Code Connect), so it may still answer
+    // what this generated file cannot.
+    lines.push(
+      `## This project has a design system, but its API could not be generated`,
+      '',
+      `\`${profile.componentPackages.join('`, `')}\` ${profile.componentPackages.length > 1 ? 'are' : 'is'} installed,`,
+      'but neither ships agent docs nor a `.d.ts`/`.tsx` entry this generator',
+      'could read — so no component/prop reference was written for it. Before',
+      'hand-rolling anything, call `studio_list_components` (it also checks',
+      'Figma Code Connect bindings, which this file does not) to confirm',
+      'whether the component you need already exists.',
       '',
     )
   }
@@ -304,11 +333,100 @@ function buildGuide(dir: string, profile: ProjectProfile, ds: DesignSystemGuide 
 // Assembly
 // ---------------------------------------------------------------------------
 
-/** The installed design system's own docs, when this project has one whose package ships them. */
+/** A `PropKind` spelled out as the short, honest text the guide can print inline — `enum ('primary' | 'ghost')`, `string`, `unknown`. Never a fabricated TypeScript type: this is exactly `classifyPropType`'s own classification, in words. */
+function renderPropKind(kind: PropKind): string {
+  return kind.kind === 'enum' ? `enum (${kind.values.map((v) => `'${v}'`).join(' | ')})` : kind.kind
+}
+
+/** One component's real prop signature from real type declarations, one bullet per prop — the catalog fallback's answer to a docs-based guide's hand-written fenced example. `undefined` for a component with no readable props (an untyped JS entry, or a component that genuinely takes none) — no fabricated shape either way. */
+function renderCatalogProps(props: readonly PropSpec[]): string | undefined {
+  if (props.length === 0) return undefined
+  return props.map((p) => `- \`${p.name}${p.required ? '' : '?'}\` — ${renderPropKind(p.kind)}`).join('\n')
+}
+
+/**
+ * The generic half of design-system knowledge (Track A5): for a component
+ * package with no agent-authored docs — `buildDesignSystemGuide` returns
+ * `undefined` for it, true of every real design system except one that ships
+ * a `CLAUDE.md`/`design.md` written for exactly this purpose — build the same
+ * `DesignSystemGuide` shape from the package's own real `.d.ts`/`.tsx` type
+ * declarations instead: `buildPackageManifest`, the identical syntactic
+ * extraction `studio_list_components` already exposes at runtime (Track E1's
+ * shared `componentSpecExtract.ts` classifier, including its K3 named-union
+ * enum resolution — so `variant?: ButtonVariant`, the shape MUI/Chakra/
+ * Mantine/shadcn all use, renders as a real enum here too). This is what
+ * makes the "## Use `<pkg>` — always" section and the component-prop
+ * reference file appear for ANY typed design system, not only one Studio
+ * happens to have shipped docs for.
+ *
+ * Deliberately does NOT also try Figma Code Connect the way
+ * `studio_list_components` does — reproducing that tool's enum-reduction
+ * logic here would be a second, harder-to-keep-in-sync copy of it for a
+ * generation-time file that is regenerated at most once per turn anyway. A
+ * package with neither `.d.ts` nor agent docs gets no generated section here
+ * (honest: nothing static was readable) — `buildGuide` tells the agent to
+ * call `studio_list_components` itself for that case, which still checks
+ * Code Connect.
+ *
+ * No `decisionMap` (there is no semantic "which component for this intent"
+ * data to derive from bare type declarations — that is genuinely
+ * docs-only knowledge) and no `icons` (an icon directory convention is a
+ * per-package layout guess, not something a `.d.ts` states). `buildGuide`
+ * already renders a plain "### What exists" name list when `decisionMap` is
+ * absent, and skips the icons section entirely when `icons` is absent — both
+ * the honest degradation this generator is required to produce, not an
+ * invented substitute.
+ */
+function resolveCatalogDesignSystemGuide(appRootAbs: string, pkg: string): DesignSystemGuide | undefined {
+  const { components: specs } = buildPackageManifest(appRootAbs, pkg)
+  if (specs.length === 0) return undefined
+
+  const components: ComponentApi[] = specs.map((spec) => {
+    const props = renderCatalogProps(spec.props)
+    return { name: spec.name, ...(props ? { props } : {}) }
+  })
+  const sample = components.slice(0, 8).map((c) => c.name).join(', ')
+  const importContract = [
+    '```jsx',
+    `import { ${sample} } from '${pkg}'`,
+    '```',
+    '',
+    `\`${pkg}\` is the exact specifier — import components by name from the package root; never deep-import a component file.`,
+  ].join('\n')
+  return { packageName: pkg, components, importContract }
+}
+
+/**
+ * The installed design system's own knowledge, generalized across every
+ * component package this project declares (Track A5) — never hardcoded to
+ * one package name. Two tiers per package, most-specific first:
+ *
+ *   1. The package's OWN agent-authored docs (`buildDesignSystemGuide`) — a
+ *      genuine intent-level decision map no static extraction can
+ *      synthesize. Nothing here checks the package's NAME; a package earns
+ *      this tier by shipping the convention, not by being a particular one.
+ *   2. A catalog built from the package's own real type declarations
+ *      (`resolveCatalogDesignSystemGuide`) — real component names and real
+ *      props, generically, for a package with no docs but a readable
+ *      `.d.ts`/`.tsx` (MUI, Chakra, Mantine, shadcn, a private kit).
+ *
+ * Returns the FIRST package that produces either tier's content — a project
+ * naming more than one component package still gets exactly one `ds` here
+ * (the one `buildGuide` has always rendered a single "## Use X" section
+ * for); every declared package, including ones this pass didn't pick, is
+ * still fully queryable at runtime via `studio_list_components`/
+ * `studio_find_component` (see the note `buildGuide` prints next to it).
+ */
 function resolveDesignSystemGuide(dir: string, profile: ProjectProfile): DesignSystemGuide | undefined {
-  if (!profile.componentPackages.includes(ALM_PACKAGE)) return undefined
-  const appRoot = joinAppRoot(dir, profile.appRoot)
-  return buildDesignSystemGuide(join(appRoot, 'node_modules', '@alm-design', 'design-system'), ALM_PACKAGE)
+  const appRootAbs = joinAppRoot(dir, profile.appRoot)
+  for (const pkg of profile.componentPackages) {
+    const pkgDir = join(appRootAbs, 'node_modules', ...pkg.split('/'))
+    const docsGuide = buildDesignSystemGuide(pkgDir, pkg)
+    if (docsGuide) return docsGuide
+    const catalogGuide = resolveCatalogDesignSystemGuide(appRootAbs, pkg)
+    if (catalogGuide) return catalogGuide
+  }
+  return undefined
 }
 
 function buildGuideFiles(dir: string, profile: ProjectProfile): GuideFile[] {

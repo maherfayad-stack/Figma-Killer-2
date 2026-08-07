@@ -146,7 +146,13 @@ describe('Error boundary coverage gate', () => {
   it('main.tsx createRoot callbacks log via the shared logErrorChain helper', () => {
     // Catches the regression where someone replaces logErrorChain with a raw
     // `console.error(error)` and we lose the [<module>] prefix + cause chain.
-    const source = read(MAIN_FILE.replace(SRC_ROOT + '/', ''))
+    // MAIN_FILE is already an absolute, OS-native path — read it directly
+    // rather than re-deriving a "relative" path via string replace(). On
+    // win32, `MAIN_FILE.replace(SRC_ROOT + '/', '')` never matches (MAIN_FILE
+    // is backslash-separated, the search string forward-slash-separated), so
+    // `read()` re-joined the untouched absolute path onto SRC_ROOT and threw
+    // ENOENT — the same mixed-separator bug class as STATE.md's parity-01.
+    const source = readFileSync(MAIN_FILE, 'utf8')
     expect(source).toMatch(/logErrorChain/)
     expect(source).toMatch(/flattenErrorChain/)
   })

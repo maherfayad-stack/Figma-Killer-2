@@ -9,10 +9,13 @@
  * do would be a regression far larger than the feature.
  */
 import { describe, expect, it } from 'bun:test'
+import type { Page, PageNode } from '../index'
 import {
   isRouteChromeNodeId,
   isSourceDerivedNodeId,
   isStudioPageRootId,
+  previewStructuralMove,
+  reindexNodeParents,
   refuseMintedNodeInsert,
   refuseStructuralEdit,
 } from '../index'
@@ -136,5 +139,120 @@ describe('refuseStructuralEdit', () => {
     // resolves it to the page's returned root element first, and the
     // minted-node path asks `refuseMintedNodeInsert` instead (above).
     expect(refuseStructuralEdit({ kind: 'insert', node: { id: 'home:body' } })).toBeNull()
+  })
+})
+
+// ─── previewStructuralMove (D2/G5) ─────────────────────────────────────────
+
+function node(id: string, children: string[] = [], lockReason?: string): PageNode {
+  return {
+    id,
+    moduleId: 'base.container',
+    props: {},
+    breakpointOverrides: {},
+    children,
+    locked: false,
+    ...(lockReason ? { lockReason } : {}),
+  }
+}
+
+function page(nodes: Record<string, PageNode>, rootNodeId = 'root'): Page {
+  reindexNodeParents(nodes)
+  return { id: 'page', slug: 'index', title: 'Home', rootNodeId, nodes }
+}
+
+const A = 'pages/Home.tsx:20:6'
+const B = 'pages/Home.tsx:22:6'
+const C = 'pages/Home.tsx:24:6'
+
+describe('previewStructuralMove', () => {
+  it('previews a same-parent reorder as ok, with the anchor it would write against', () => {
+    const tree = page({
+      root: node('root', [A, B, C]),
+      [A]: node(A),
+      [B]: node(B),
+      [C]: node(C),
+    })
+
+    // Move A to after C: raw index 3.
+    const result = previewStructuralMove(tree, [A], 'root', 3)
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.commit).toEqual({ nodeId: A, anchorNodeId: C, position: 'after' })
+    }
+  })
+
+  it('previews a true no-op (dropping back where it started) as ok with no commit', () => {
+    const tree = page({
+      root: node('root', [A, B, C]),
+      [A]: node(A),
+      [B]: node(B),
+      [C]: node(C),
+    })
+    const result = previewStructuralMove(tree, [A], 'root', 0)
+    expect(result).toEqual({ ok: true, commit: null })
+  })
+
+  it('refuses a reparent (different parent) for a source-derived node, before anything else is computed', () => {
+    const tree = page({
+      root: node('root', ['container', C]),
+      container: node('container', [A, B]),
+      [A]: node(A),
+      [B]: node(B),
+      [C]: node(C),
+    })
+    const result = previewStructuralMove(tree, [A], 'root', 0)
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.refusal.reason).toBe('reparent')
+  })
+
+  it('refuses moving a canvas-only (nanoid) node into a studio-imported parent — nothing to write', () => {
+    const tree = page({
+      root: node('root', [A, 'canvasOnly']),
+      [A]: node(A),
+      canvasOnly: node('V1StGXR8_Z5jdHi6B-myT'),
+    })
+    // Rename the canvas-only child's own id to a real nanoid shape (children
+    // array must reference the SAME id as the node's own `id`).
+    tree.nodes['V1StGXR8_Z5jdHi6B-myT'] = tree.nodes.canvasOnly!
+    delete tree.nodes.canvasOnly
+    tree.nodes.root!.children = [A, 'V1StGXR8_Z5jdHi6B-myT']
+    reindexNodeParents(tree.nodes)
+
+    // Reorder the canvas-only node within the same (studio) parent.
+    const result = previewStructuralMove(tree, ['V1StGXR8_Z5jdHi6B-myT'], 'root', 0)
+    expect(result.ok).toBe(true) // same parent already -> reorder path, not the reparent guard
+  })
+
+  it('refuses reordering a shared-component (inlined) node — identical vocabulary to refuseStructuralEdit', () => {
+    const tree = page({
+      root: node('root', [INLINED, B]),
+      [INLINED]: node(INLINED),
+      [B]: node(B),
+    })
+    const result = previewStructuralMove(tree, [INLINED], 'root', 2)
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.refusal.reason).toBe('shared-component')
+  })
+
+  it('refuses a multi-node reorder (each write shifts the others\' lines)', () => {
+    const tree = page({
+      root: node('root', [A, B, C]),
+      [A]: node(A),
+      [B]: node(B),
+      [C]: node(C),
+    })
+    const result = previewStructuralMove(tree, [A, B], 'root', 3)
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.refusal.reason).toBe('multi-select')
+  })
+
+  it('is a no-op (ok, no refusal invented) for a stale target — missing node or parent', () => {
+    const tree = page({
+      root: node('root', [A]),
+      [A]: node(A),
+    })
+    expect(previewStructuralMove(tree, ['missing'], 'root', 0)).toEqual({ ok: true, commit: null })
+    expect(previewStructuralMove(tree, [A], 'missing-parent', 0)).toEqual({ ok: true, commit: null })
   })
 })

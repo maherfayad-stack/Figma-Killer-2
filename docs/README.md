@@ -154,6 +154,7 @@ Three categories, three voices:
 | [features/studio-import.md](features/studio-import.md)           | Studio opens a real React repo as a board — parse, inline, resolve values, import CSS |
 | [features/editor-preferences.md](features/editor-preferences.md) | Catalog-driven local UI preferences for the editor                   |
 | [features/canvas-iframe-per-frame.md](features/canvas-iframe-per-frame.md) | Per-breakpoint iframe rendering in the visual editor canvas |
+| [features/canvas-rulers-and-guides.md](features/canvas-rulers-and-guides.md) | Design-canvas rulers + persisted draggable guides (D1), and the shared `useCanvas()` `transformRef` API |
 
 ### Reference
 

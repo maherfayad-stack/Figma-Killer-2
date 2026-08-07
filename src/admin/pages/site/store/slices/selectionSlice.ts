@@ -393,8 +393,12 @@ function applySelection(
 ): void {
   const nextAnchor = nextIds.length > 0 ? nextIds[nextIds.length - 1] : null
   const nextActiveClassId = getSelectionActiveClassId(current, nextAnchor)
-  // A node with inline styles but no class opens directly in inline-edit mode.
-  const nextInlineEditing = nextActiveClassId === null && nodeHasInlineStyles(current, nextAnchor)
+  // Track F1 / S6 — `activeClassId` and `inlineStyleEditing` are no longer
+  // mutually exclusive (see `uiStateActions.ts`'s `setActiveClass`/
+  // `setInlineStyleEditing`), so seeding inline-edit mode no longer depends
+  // on whether the anchor also has a class: a node with BOTH a class and its
+  // own inline styles opens with both sections visible.
+  const nextInlineEditing = nodeHasInlineStyles(current, nextAnchor)
   const shouldPreservePropertiesCollapse =
     options.preservePropertiesPanelCollapse &&
     current.propertiesPanel.collapsed &&
@@ -619,20 +623,39 @@ function nodeHasInlineStyles(state: EditorStore, nodeId: string | null): boolean
   return !!inline && Object.keys(inline).length > 0
 }
 
+/**
+ * Resolve a node by id across the whole site — `STUDIO-FIGMA-PARITY-PLAN.md`
+ * C4 / audit E10. Used to be an O(pages) `for (const page of state.site.pages)`
+ * scan on every `applySelection` (every click); now reads `_nodeIdToPageIds`
+ * (WS-5.2) instead, mirroring `canvas/InPlaceInspector/findNodeById.ts`'s
+ * exact idiom (not imported directly — a store-slice file importing FROM
+ * `canvas/` would invert this codebase's dependency direction) so the two
+ * don't silently drift apart the way this one already had from
+ * `resolveSelectableNode`, a few lines above in this same file.
+ *
+ * A node id is NOT unique across pages (a composed Next.js `layout.tsx` node
+ * shares one id across every route beneath it — `STATE.md` -> `meta-05`), so
+ * `_nodeIdToPageIds` is many-valued; prefer the id's copy on the ACTIVE page
+ * when it has one there, since the canvas is showing that copy — this is a
+ * genuine improvement over the old code's "whichever page happened to be
+ * first in the array," not just a perf-neutral rewrite, and matches
+ * `findNodeById.ts`'s own documented reasoning for the identical tie-break.
+ */
 function findSelectableNode(state: EditorStore, nodeId: string): BaseNode | null {
   if (!state.site) return null
+
+  const pageIds = state._nodeIdToPageIds.get(nodeId)
+  if (pageIds && pageIds.length > 0) {
+    const preferredPageId = pageIds.includes(state.activePageId ?? '') ? state.activePageId : pageIds[0]
+    const page = state.site.pages.find((p) => p.id === preferredPageId)
+    const node = page?.nodes[nodeId]
+    if (node) return node
+  }
 
   const activeDocument = state.activeDocument
   if (activeDocument?.kind === 'visualComponent') {
     const component = state.site.visualComponents?.find((vc) => vc.id === activeDocument.vcId)
-    if (component) {
-      const node = component.tree.nodes[nodeId]
-      if (node) return node
-    }
-  }
-
-  for (const page of state.site.pages) {
-    const node = page.nodes[nodeId]
+    const node = component?.tree.nodes[nodeId]
     if (node) return node
   }
 

@@ -9,8 +9,12 @@
  * up bundling the editor store into the non-editor admin graph.
  *
  * Adding new admin-wide event constants? Put them here, then have both
- * dispatchers and listeners import from this module.
+ * dispatchers and listeners import from this module. A `import type`-only
+ * reference to a `@core/*` type (e.g. `Page` below) is fine and doesn't
+ * reintroduce the bundling concern above — it is erased at compile time;
+ * the concern is VALUE imports of heavy modules like `usePersistence` itself.
  */
+import type { Page } from '@core/page-tree'
 
 /**
  * Fired on `window` after the editor reloads the site document (manual
@@ -43,6 +47,43 @@ export function consumePendingCmsSiteReload(): boolean {
   if (!cmsSiteReloadPending) return false
   cmsSiteReloadPending = false
   return true
+}
+
+/**
+ * Fired on `window` after a TARGETED (single/few-page) source writeback —
+ * `commitStructural`'s narrow-reload path (`STUDIO-FIGMA-PARITY-PLAN.md`
+ * Track C5) — carrying the ALREADY-FETCHED replacement pages, so the
+ * listener only has to hand them to the store's `patchPages` rather than
+ * re-fetch anything itself.
+ *
+ * Distinct from `CMS_SITE_RELOAD_EVENT`: that one is a bare signal ("something
+ * changed, go re-fetch everything") several unrelated subscribers listen for
+ * (site name/favicon, board geometry, the full document). This one carries
+ * data for exactly one consumer (the editor store's `patchPages`) and is a
+ * pure no-op — never retained, unlike a pending `requestCmsSiteReload()` —
+ * when no editor is mounted: a narrow patch is only ever correct against the
+ * LIVE, in-memory tree it was diffed against, so there is nothing honest to
+ * replay later if nobody was there to receive it.
+ *
+ * Lives here rather than in `studioSaveRequests.ts`/`fsCodemodAdapter.ts`
+ * (which fire it) for the exact reason `requestCmsSiteReload` does: those
+ * files are reachable from `store/slices/site/nodeActions.ts`, which is part
+ * of the store's OWN build graph — importing `useEditorStore` there directly
+ * would close a `store.ts -> nodeActions.ts -> studioSaveRequests.ts ->
+ * store.ts` cycle. `usePersistence.ts` (which already has store access) is
+ * the one listener that turns this into a `patchPages` call.
+ */
+export const CMS_SITE_PAGES_PATCH_EVENT = 'cms-site-pages-patch'
+
+export interface CmsSitePagesPatchDetail {
+  pages: Page[]
+  removedPageIds: string[]
+}
+
+/** Dispatches `CMS_SITE_PAGES_PATCH_EVENT`. No-op (and nothing retained) outside a browser or when nothing is listening — see this event's own doc for why, unlike `requestCmsSiteReload`, there is no "pending" fallback. */
+export function dispatchCmsSitePagesPatch(detail: CmsSitePagesPatchDetail): void {
+  if (typeof window === 'undefined') return
+  window.dispatchEvent(new CustomEvent(CMS_SITE_PAGES_PATCH_EVENT, { detail }))
 }
 
 /**

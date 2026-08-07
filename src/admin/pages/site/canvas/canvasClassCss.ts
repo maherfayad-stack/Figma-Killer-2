@@ -5,7 +5,7 @@ import {
   type ViewportContext,
   type ResponsiveCssOptions,
 } from '@core/publisher'
-import { generateFrameworkRootCss } from '@core/framework'
+import { filterReemittableColorTokens, generateFrameworkRootCss } from '@core/framework'
 import { generateFontsCss } from '@core/fonts'
 import { styleRuleSelector } from '@core/page-tree'
 import type { StyleRule, ConditionDef } from '@core/page-tree'
@@ -45,8 +45,14 @@ function buildCanvasClassCSS(
   // ordering keeps generated CSS easier to inspect.
   const fontsCss = generateFontsCss(fonts)
   if (fontsCss) blocks.push(fontsCss)
+  // Extracted color tokens are never re-declared here — their real `:root`
+  // declaration already exists in the project's own stylesheet, loaded by
+  // UserStylesheetInjector/ProjectCssInjector into the SAME document. See
+  // `filterReemittableColorTokens`'s doc (colors.ts) for the full account
+  // of why a second, HSLA-normalized declaration is a defect, not a
+  // convenience (STUDIO-FIGMA-PARITY-PLAN.md T4).
   const frameworkCss = generateFrameworkRootCss({
-    colors: frameworkColors,
+    colors: filterReemittableColorTokens(frameworkColors),
     typography: frameworkTypography,
     spacing: frameworkSpacing,
     preferences: frameworkPreferences,

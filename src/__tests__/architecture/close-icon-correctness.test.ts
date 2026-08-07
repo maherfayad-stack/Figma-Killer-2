@@ -39,6 +39,7 @@
 import { describe, it, expect } from 'bun:test'
 import { readdirSync, readFileSync, statSync, existsSync } from 'fs'
 import { join, extname } from 'path'
+import { toPosixPath } from './pathHelpers'
 
 const SRC_ROOT = join(import.meta.dir, '../../')
 
@@ -63,7 +64,14 @@ function collectFiles(dir: string, exts = ['.ts', '.tsx', '.js', '.jsx', '.mts',
 
 // Scan production source only — not __tests__ (test files contain the banned
 // pattern as regex strings and would false-positive).
-const PROD_DIRS = ['editor', 'core', 'modules', 'ui', 'app', 'lib'].map((d) =>
+//
+// 'editor', 'app', and 'lib' never existed in this repo's tracked history
+// (checked via `git log --all -- src/editor src/app src/lib` — empty) —
+// this PROD_DIRS list silently never scanned `src/admin/`, which is exactly
+// where this gate's own docstring says the XIcon-as-close-button mistake
+// happened ("several modal and overlay components"). 'admin' is the real
+// directory; 'core', 'modules', 'ui' already existed and were being scanned.
+const PROD_DIRS = ['admin', 'core', 'modules', 'ui'].map((d) =>
   join(SRC_ROOT, d)
 )
 
@@ -95,7 +103,7 @@ describe('Close-icon correctness — no X/Twitter logo used as close button', ()
     })
 
     if (violations.length > 0) {
-      const rel = violations.map((f) => f.replace(SRC_ROOT, 'src/'))
+      const rel = violations.map((f) => toPosixPath(f.replace(SRC_ROOT, 'src/')))
       throw new Error(
         [
           '[CI-1] XIcon (X/Twitter logo) found in production source.',

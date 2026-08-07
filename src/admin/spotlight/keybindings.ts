@@ -146,10 +146,20 @@ export const KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
 
   {
     commandId: 'editor.redo',
+    // Display/ARIA stay the canonical binding; `match` also recognises
+    // Ctrl/Cmd+Y, the Windows/Linux redo alias — this used to be a second,
+    // inline `(e.metaKey || e.ctrlKey) && e.key === 'y'` check hand-rolled in
+    // `UndoRedoButtons.tsx` alongside a lookup of THIS same binding, which is
+    // exactly the drift `keybindings-registry-single-source.test.ts` exists to
+    // catch. Folding the alias into one `match` (rather than a second registry
+    // entry) keeps a single canonical shortcut LABEL for redo everywhere it is
+    // displayed (help screen, button tooltip) while still accepting either
+    // keystroke — unchanged behavior from what `UndoRedoButtons.tsx` did by hand.
     shortcut: { mac: '⌘⇧Z', win: 'Ctrl+Shift+Z' },
     ariaKeyshortcuts: isPlatformMac() ? 'Meta+Shift+Z' : 'Control+Shift+Z',
     match: (e) =>
-      (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z' && e.shiftKey,
+      ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z' && e.shiftKey) ||
+      ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'y' && !e.shiftKey),
     scope: 'editor',
     ignoreInEditableField: true,
   },
@@ -219,6 +229,61 @@ export const KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
       ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key === 'Backspace') ||
       (!e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey &&
         (e.key === 'Delete' || e.key === 'Backspace')),
+    scope: 'canvas',
+    ignoreInEditableField: true,
+  },
+
+  // ── Canvas viewport (zoom to fit / selection — D3) ──────────────────────
+  // Virtual ids: no matching spotlight Command yet (a discrete viewport
+  // action, not a palette-run gesture) — `displayName` is the help-screen
+  // fallback title, same pattern as `spotlight.open`/`board.selectAllFrames`.
+  {
+    commandId: 'canvas.zoomToFit',
+    displayName: 'Zoom to fit',
+    shortcut: { mac: '⇧1', win: 'Shift+1' },
+    ariaKeyshortcuts: 'Shift+1',
+    match: (e) => e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && e.key === '1',
+    scope: 'canvas',
+    ignoreInEditableField: true,
+  },
+
+  {
+    commandId: 'canvas.zoomToSelection',
+    displayName: 'Zoom to selection',
+    shortcut: { mac: '⇧2', win: 'Shift+2' },
+    ariaKeyshortcuts: 'Shift+2',
+    match: (e) => e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && e.key === '2',
+    scope: 'canvas',
+    ignoreInEditableField: true,
+  },
+
+  // ── Layers (keyboard reorder — G12) ──────────────────────────────────────
+  // `layers.moveUp`/`layers.moveDown` already exist as spotlight Commands
+  // (`spotlight/commands/layers.ts`) but had no keyboard binding — reordering
+  // a node required a mouse. Alt+↑/↓ rather than a plain arrow key: plain
+  // arrows are free today but are the obvious future home for "select
+  // previous/next sibling" (`layers.selectParent`'s siblings, also unbound),
+  // and Alt+↑/↓ doesn't collide with `CanvasTreeLadderOverlay`'s Alt-HOLD
+  // hover-ladder gesture (that overlay only intercepts Arrow keys while its
+  // ladder is actively showing, i.e. Alt held AND hovering a valid node —
+  // see its own `handleKeyDown`; a bare Alt+↑ tap while not hovering falls
+  // through to this binding untouched).
+  {
+    // Real spotlight Command (`spotlight/commands/layers.ts`) — no
+    // `displayName` needed, the command's own `title` is the help-screen label.
+    commandId: 'layers.moveUp',
+    shortcut: { mac: '⌥↑', win: 'Alt+↑' },
+    ariaKeyshortcuts: 'Alt+ArrowUp',
+    match: (e) => e.altKey && !e.metaKey && !e.ctrlKey && !e.shiftKey && e.key === 'ArrowUp',
+    scope: 'canvas',
+    ignoreInEditableField: true,
+  },
+
+  {
+    commandId: 'layers.moveDown',
+    shortcut: { mac: '⌥↓', win: 'Alt+↓' },
+    ariaKeyshortcuts: 'Alt+ArrowDown',
+    match: (e) => e.altKey && !e.metaKey && !e.ctrlKey && !e.shiftKey && e.key === 'ArrowDown',
     scope: 'canvas',
     ignoreInEditableField: true,
   },

@@ -1,0 +1,39 @@
+/**
+ * RulerGuidesLayer — persisted ruler guides (D1).
+ * Uses design tokens from globals.css (no hardcoded colours).
+ *
+ * Absolutely positioned at the transform layer's origin, same as
+ * BoardGuidesLayer/BoardNotesLayer/BoardDocsLayer, so `--guide-position`
+ * (set inline per-guide by RulerGuidesLayer.tsx) is a plain board unit.
+ */
+.layer {
+    position: absolute;
+    top: 0;
+    left: 0;
+    pointer-events: none;
+}
+
+.line {
+    position: absolute;
+    background: var(--canvas-ruler-guide-color);
+    pointer-events: auto;
+    touch-action: none;
+}
+
+/* A vertical guide at board-x `--guide-position`, spanning the full reachable pan range on the y axis. */
+.line[data-axis='x'] {
+    left: var(--guide-position);
+    top: calc(var(--guide-span) / -2);
+    width: 1px;
+    height: var(--guide-span);
+    cursor: ew-resize;
+}
+
+/* A horizontal guide at board-y `--guide-position`, spanning the full reachable pan range on the x axis. */
+.line[data-axis='y'] {
+    top: var(--guide-position);
+    left: calc(var(--guide-span) / -2);
+    height: 1px;
+    width: var(--guide-span);
+    cursor: ns-resize;
+}

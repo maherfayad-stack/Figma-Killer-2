@@ -19,7 +19,8 @@
  * `board.selectAllFrames` below.
  */
 
-import { useEditorStore } from '@site/store/store'
+import { getParent } from '@core/page-tree'
+import { selectActiveCanvasPage, useEditorStore } from '@site/store/store'
 import { getKeybindingForCommand } from '@admin/spotlight/keybindings'
 
 type CanvasKeyEvent = React.KeyboardEvent<HTMLDivElement>
@@ -90,6 +91,40 @@ function runDuplicateShortcut(
     deps.duplicateNodes([...currentIds])
   } else {
     deps.duplicateNode(selectedNodeId)
+  }
+}
+
+/**
+ * `Alt+↑`/`Alt+↓` (`layers.moveUp`/`layers.moveDown`, G12) — the ONLY keyboard
+ * path for reordering a node; before this, dragging (mouse only) was the
+ * whole story. Mirrors `spotlight/commands/layers.ts`'s own `layers.moveUp`/
+ * `layers.moveDown` command bodies exactly (same store call, same sibling-index
+ * arithmetic) so the keyboard and palette paths can never disagree about what
+ * "move up" means. Deliberately calls the existing `moveNode` store action
+ * rather than adding a new one — `moveNode` already runs the same structural
+ * write-back gate every other reorder surface does (`struct-01`), so a
+ * refused move surfaces the same toast here as it does from a mouse drag.
+ * Single-node only: a multi-selection has no well-defined "up" (the members
+ * may not even share a parent), so this silently no-ops for a multi-select —
+ * matching the audit's scoped intent (G12 is the a11y unblock, not a new
+ * multi-move semantics).
+ */
+function runMoveShortcut(direction: 'up' | 'down', selectedNodeId: string, currentIds: readonly string[]): void {
+  if (currentIds.length > 1) return
+  const store = useEditorStore.getState()
+  const page = selectActiveCanvasPage(store)
+  if (!page) return
+  const parent = getParent(page, selectedNodeId)
+  if (!parent) return
+  const siblings = parent.children
+  const idx = siblings.indexOf(selectedNodeId)
+  if (idx === -1) return
+  if (direction === 'up') {
+    if (idx <= 0) return
+    store.moveNode(selectedNodeId, parent.id, idx - 1)
+  } else {
+    if (idx >= siblings.length - 1) return
+    store.moveNode(selectedNodeId, parent.id, idx + 1)
   }
 }
 
@@ -198,6 +233,18 @@ export function useCanvasKeyboardShortcuts(
         duplicateNode,
         duplicateNodes,
       })
+      return
+    }
+
+    if (getKeybindingForCommand('layers.moveUp')?.match(event)) {
+      event.preventDefault()
+      runMoveShortcut('up', selectedNodeId, currentIds)
+      return
+    }
+
+    if (getKeybindingForCommand('layers.moveDown')?.match(event)) {
+      event.preventDefault()
+      runMoveShortcut('down', selectedNodeId, currentIds)
       return
     }
 

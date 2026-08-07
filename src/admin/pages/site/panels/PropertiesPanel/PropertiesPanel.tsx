@@ -239,6 +239,7 @@ export function PropertiesPanel({ variant = 'floating' }: PropertiesPanelProps) 
               activeVc={data.activeVc}
               activeClass={data.activeClass}
               activeClassId={data.activeClassId}
+              assignedClassRules={data.assignedClassRules}
               moduleTabContent={moduleTabContent}
               classPickerRef={classPickerRef}
               onFocusClassPicker={handleFocusClassPicker}

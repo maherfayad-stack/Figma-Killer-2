@@ -79,14 +79,20 @@ export function resolveNotFoundTemplate(site: SiteDocument): Page | null {
 }
 
 /**
- * Collect every template matching the route, ordered outer → inner. At most
- * one template per breadth level (highest priority, document order breaks ties).
+ * Collect every template matching the route, ordered outer → inner, from an
+ * already-known list of pages. Extracted from `resolveTemplateChain` so a
+ * caller that only ever needs to react to the TEMPLATE-marked subset of pages
+ * (e.g. a canvas selector — see `canvasComposition.ts`'s doc) can pass that
+ * narrower list directly, instead of the whole `SiteDocument`. `pages` need
+ * not be pre-filtered to templates only — `isTemplatePage` still gates below
+ * — but passing only template pages lets a caller subscribe to a smaller,
+ * more stable slice.
  */
-export function resolveTemplateChain(
-  site: SiteDocument,
+export function resolveTemplateChainFromPages(
+  pages: Page[],
   ctx: RouteResolutionContext,
 ): Page[] {
-  const indexed = site.pages.map((page, index) => ({ page, index }))
+  const indexed = pages.map((page, index) => ({ page, index }))
   const chain: Page[] = []
   for (const level of LEVELS) {
     const winner = indexed
@@ -95,4 +101,15 @@ export function resolveTemplateChain(
     if (winner) chain.push(winner.page)
   }
   return chain
+}
+
+/**
+ * Collect every template matching the route, ordered outer → inner. At most
+ * one template per breadth level (highest priority, document order breaks ties).
+ */
+export function resolveTemplateChain(
+  site: SiteDocument,
+  ctx: RouteResolutionContext,
+): Page[] {
+  return resolveTemplateChainFromPages(site.pages, ctx)
 }

@@ -1001,6 +1001,92 @@ are the remaining WS-2 items, not yet dispatched. See
 
 ## Recently landed
 
+### parity-01 — Phase 0 + Band 1/2 of `STUDIO-FIGMA-PARITY-PLAN.md` executed by 13 parallel agents. **Uncommitted, in the working tree, awaiting human review.**
+- **Agent:** coordinator (13 specialist agents, 4 waves, disjoint file sets)
+- **Stage:** implementation complete for the dispatched scope; gates green except one in-flight lint fix. **NOTHING IS COMMITTED** — the human asked for a single review at the end.
+- **Updated:** 2026-08-07
+- **Goal:** execute the plan's Phase 0 barrier (13 fixes — stop losing work, stop lying) plus every Band 1/2 track whose files were uncontended.
+
+- **Landed (all in the working tree, ~174 changed/new paths):**
+  - **Phase 0, all 13 items.** 0.1 undo-after-autosave desync (baseline now advances post-save); 0.2 forced reload no longer wipes undo (reload gated on `written > 0`, pending save flushed, history preserved when every patched node id still resolves); 0.3 style/class edits coalesce; **0.4 Componentize gated out of Studio** (was cloning subtrees into DB rows `saveSite` never persists — subtree gone on reload); 0.5 inline-style locks shown before interaction; 0.6 class-assignment refusal at save time; 0.7 skip toasts name the node; 0.8 drop-edge hit zones scale with zoom; 0.9 double auto-scroll removed; 0.10 illegal media drops no longer highlight as valid; 0.11 system prompt is capability-filtered; 0.12 `studio_fidelity_report` reachable; 0.13 derived colour variants no longer offered for extracted tokens, dark values re-targeted to `html[data-studio-scheme]`.
+  - **Track B (CSS authoring):** `insertRule` codemod, destination resolution (single editable stylesheet or honest `no-editable-stylesheet` refusal), `CssEditSchema` `insert` op, `styleRuleSources` synthesis so a new rule is editable on its next edit without reload. **`styleRuleId` now includes the source file** — two `.css` files defining `.button` were collapsing into one rule, the earlier becoming invisible *and* unwritable.
+  - **B3 / `standing-09` closed:** `@layer` unwrap pre-pass. Tailwind v4 projects imported **zero** rules and **zero** warnings — happy-dom's `replaceSync` strips `@layer` before `cssRules`, so even `dropped-at-rule` never fired. Non-faithful cascade flattening now warns (`layer-order-flattened`) instead of silently importing wrong.
+  - **Track C:** C1 sweep-scoped memo for `selectCanvasPageFor` (~64k comparisons/commit on a 40-page board); C3 narrowed three whole-`s.site` subscriptions — **measured 2→1 renders** per keystroke and per off-page edit; C4 dirty-hint save diff + `findSelectableNode` index.
+  - **D1:** rulers + persisted guides. `useCanvas` now exports **`transformRef`** (live pan/zoom, ~100 ms ahead of the debounced store) via `CanvasViewportActionsContext` — **D2 and the measurement HUD must use this, not the store selector.**
+  - **E1:** `componentSpecExtract.ts` + `GET /admin/api/studio/components`. **K3 landed:** named union aliases (`variant?: ButtonVariant` — MUI/Chakra/Mantine/shadcn) now classify as enums instead of free-text.
+  - **E2.1/E2.3:** `extractSubtreeToComponent` + `importReconcile` (4 call sites deduped); parser captures fragment-valued slots as `studio.slot`, zero-DOM module, empty slots produce **no node**.
+  - **E3/E4:** package registration driven by the E1 catalog instead of board contents (was impossible to bootstrap on a fresh page); Dependencies panel actually installs.
+  - **Track A:** A1 page-scoped chat references, A2 tall-screen resampling disclosure, A3 `studio_quality_check`, A4 `includeImages`, A6 re-armed canonical check, A8 font-size caveat.
+  - `PROJECT-BRIEF.md` corrected — six false claims, plus a **seventh** found during verification.
+
+- **Durable facts learned (do not rediscover):**
+  - **Three architecture gates are vacuously red on Windows** and have been enforcing nothing: `codemirror-lazy-only`, `dispatcher-html-pipeline`, `keybindings-registry` each flag *the very file they whitelist*, comparing `src/admin/pages/...` against `src/admin\pages\...`. `siteExplorerPanel` matches a regex with literal `\n` against CRLF. **Worth a dedicated fix; they are not real violations.**
+  - **The repo sat exactly on the 700-line `module-size-budgets` ceiling everywhere** — five files were at 685-699, so any real feature work trips the gate. All five were split by responsibility this wave; none used `GRANDFATHERED`.
+  - **happy-dom does not enforce `DataTransfer` protected mode**, so drag code that reads `getData()` during `dragover` passes tests and fails in browsers. A `ProtectedModeDataTransfer` double now exists in `src/__tests__/media/mediaDragDrop.test.ts`.
+  - **The toast bus only resets between test files, not within a test.** Three "failures" this wave were tests reading their own earlier toast. Drain with `__resetToastBusForTests()` between assertions.
+  - `isExported()`/`isDefaultExport()` trigger a one-time TypeScript binder pass — ~755 ms cold on a 300-file project in the component catalog. No cross-request cache yet.
+  - `checkCanonicalJsx` **silently mis-scored any screen with a cross-file `.map` const as non-canonical** — a pre-existing bug in the self-check itself, now fixed with a workspace-aware ts-morph project.
+  - `syncProjectModules` had **no top-level try/catch** — inert while board-gated, a real stuck-"Loading…" bug once E4 made it reachable.
+
+- **Verification (all three gates run by the coordinator after the last agent finished):** `bun run lint` → **0 errors, 0 warnings**. `bun run build` (`tsc -b && vite build`) → **passes**. `bun test` → **9384 pass / 34 fail / 1 skip** across 914 files — the same failure count as the documented pre-existing baseline, with ~1,770 tests added. Of the 34: the known pre-existing set (plugin QuickJS/worker suites, Windows path gates, `generateStudioProjectGuide`, `AgentPanel`), plus a cluster of canvas/layout suites that **pass in isolation and fail only in the full run** (resource contention — verified individually, not assumed).
+- **Process lesson for the next parallel wave:** agents were forbidden from running `build`/`lint` because four concurrent `tsc -b`/`vite build` runs collide on `dist/` and `.tsbuildinfo`. That is correct, but it let 10 lint errors survive to the very end — and `tsc -b` also catches things `tsc --noEmit -p tsconfig.json` does not (an unused sub-router param). **Have each agent run `eslint` on its own changed files only; keep `build` centralised.**
+
+- **Second wave (also landed, same working tree):** B1b create-a-stylesheet · **B2 `setJsxClassName`** (Tailwind element editing now exists; replaces 0.6's refusal) · C2 · C5 targeted reload · D3 · **D2 partial** · E2.2/E2.4 (**E2.1's codemod now has a live caller**) · **E2.5 incomplete — killed mid-work, in the tree, unverified** · **F1/F2 (S6 shipped: inline + class styling simultaneous)** · H scanner + T4 · A5 · architecture-gate repairs.
+
+- **Durable facts from the second wave:**
+  - 🚨 **`./node_modules/.bin/tsc --noEmit -p tsconfig.json` COMPILES NOTHING.** The root `tsconfig.json` is solution-style — `"files": []` plus `references` to `tsconfig.app.json` / `tsconfig.node.json` / `tests/e2e`. Every "typecheck clean" claim made with that command this session was **vacuous**, and it hid three real type errors (`FunctionLike` imported from `ts-morph` instead of `@core/page-parser`; an unused sub-router `url` param; a `DomPanelDndContextValue` default missing `invalidReason`) until `bun run build` caught them. **Use `bun run build` (`tsc -b`), or `tsc -b tsconfig.app.json` / `tsconfig.node.json` for a subset.** This refines `standing-08`: the danger is not only `npx tsc` resolving the wrong version — it is *also* `-p tsconfig.json` silently checking zero files. Same disease as the vacuous architecture gates, in our own verification.
+  - **Four architecture gates were enforcing nothing.** Two scanned a nonexistent `src/editor`; three icon gates never scanned `src/admin/` — the largest icon consumer. Repairing them surfaced **two real user-facing bugs**: `BindingPickerPopover` and `UserStylesheetInjector` both resolved the **stale pre-VC page**, because `activePageId` is deliberately *not* cleared entering VC mode. Treat "which page does this actually mean" as a standing hazard; `canvas-aware-selectors.test.ts` now genuinely catches it.
+  - `src/__tests__/architecture/pathHelpers.ts` (`toPosixPath`) exists — **use it in any new gate.** The test for a gate is: *if its subject matter vanished entirely, would it still pass?*
+  - **Filename-pinned tests rot silently** as the 700-line gate forces splits. `styleRuleWriteback.test.ts` and `overlayRafDiscipline.test.ts` both broke when `BoardFramesLayer` split. Scan directories, not filenames.
+  - **Several canvas/layout suites fail only in the full run and pass in isolation** (resource contention, not defects) — `canvasFrameMounting`, `boardFrameVariantSelection`, `canvasFormControls`, `editorLayoutPersistence`. Verify in isolation before chasing.
+  - A Zustand selector returning a fresh `?? []` caused **three** separate defects this session, one an infinite render loop. `selectorStability.test.ts` gates it; use module-level frozen constants.
+
+- **Not done / next:** **Track G (density) — never started, and it is gated behind F, which is now done, so it is the obvious next item.** Also: **D2's structural half — G2 (can't drag an element on canvas), G3 (cross-frame drag impossible), G6 (~2400 forced layout reads per pointermove), G7 (insertion lands in the wrong page), G8, G15, and the `@dnd-kit` removal.** Plus A7, A2's region-scoped compare, and the refused-edit self-correction C5 deliberately left open. E2.5 needs finishing and verifying.
+- **Human action needed:** review the uncommitted tree; the plan's §15 has six open product decisions, two of which gate real work (granting `studio.run.project` to Admin; whether to keep force-seeding `@alm-design`). Dogfood the 0.1 repro: edit → autosave → Ctrl+Z → reload, and confirm disk matches screen.
+- **Handoffs:** all 15 agent handoffs preserved at [`docs/audits/2026-08-07-parity-handoffs/`](docs/audits/2026-08-07-parity-handoffs/) (~3,600 lines) — copied out of the session scratchpad, which is session-scoped and gets collected. Each names its published contracts, refusal vocabularies, and open seams; read the relevant one before extending a track.
+
+### audit-01 — 12-agent whole-repo audit → `STUDIO-FIGMA-PARITY-PLAN.md`. Two CRITICAL data-loss bugs found. Nothing fixed yet.
+- **Agent:** coordinator (12 parallel specialist audits)
+- **Stage:** audit + plan complete. **No production code changed.** Execution not started.
+- **Updated:** 2026-08-06
+- **Goal:** answer the user's question — how robust is Studio across Figma-fidelity, design-system authoring, creative-from-scratch, canvas (rulers/Figma-feel/perf/DnD), the properties panel (density/refusals/classes-vs-inline), and components/tokens — and produce a phased, parallelism-aware remediation plan.
+- **Scope:** new `STUDIO-FIGMA-PARITY-PLAN.md` (1,356 lines) + `docs/audits/2026-08-06/` (12 reports, ~5,700 lines, full `file:line` evidence). No source files touched.
+
+- **Done so far:**
+  - 12 disjoint audits, each reading actual code (not docs) and reporting `file:line` + a cross-area dependency field. The dependency fields are what the plan's parallelism map is computed from.
+  - **Two CRITICAL, unrecoverable data-loss bugs found, both trivially reachable in ordinary use:**
+    - **`loadedValuesBaseline.ts`** is reset only on full `loadSite()`, never advanced after a non-reloading save. So: edit → autosave (2 s) → **Ctrl+Z once** → next autosave diffs against a stale baseline, sees "no change", **emits nothing**, `hasUnsavedChanges` clears, UI says "Saved" — and the `.tsx` keeps the pre-undo value permanently. The sibling CSS and localized-text paths **do** advance their baselines; only the main node-prop path forgets. Fix is one call.
+    - **`componentizeEligibility.ts:4-14`** never checks `isStudioMode()`, so the dormant CMS "Componentize" button is live in Studio. It mints a nanoid VC, clones the subtree out of the page, replaces it with a `base.visual-component-ref` — inside `mutateSiteState`, **bypassing `refuseStructuralEdit`** — and `saveSite` has no `visualComponents` path at all. VCs are `data_rows`. **The subtree is gone on reload.** Two entry points, one predicate fixes both.
+  - Diagnosed the unifying defect (plan §2): *the interface asserts something the filesystem does not honour, and nothing tells anyone* — the same failure in 13 places (E1, K11, S1, S4, C1, G5, G3, F3, F1, T1, T3, T5, `standing-09`). Proposed invariant: every edit surface **writes**, **refuses with a reason**, or **is not offered**; accepted-then-discarded is a bug regardless of cause.
+  - **Root constraint identified:** CSS write-back can EDIT an existing declaration but cannot CREATE anything (`styleRuleWriteback.ts:200-267` → `unmapped`; no `insertRule` codemod). Four separate features silently block on this alone: new classes, `@font-face`, new tokens, `@keyframes`/`position:absolute` persistence.
+  - Flagship feature designed end to end (page-as-component with slots), resting on the observation that `header={<Original/>}` is **already** the shape `captureSlotProps` materializes — so a filled slot round-trips with **zero parser change**.
+
+- **Corrections to `PROJECT-BRIEF.md` — six false claims, each of which wastes days if believed** (plan §1; not yet applied to the brief itself):
+  - npm package components, component instances, swap, and detach are listed as not working. **All four work and are wired to UI**, with a passing browser e2e (`STATE.md:4530`). The brief predates `pkg-01`/`pkg-02`/`parser-05`/`instance-ui-01`.
+  - "CSS write-back to disk" listed as not working: **editing works** (`panel-02`, real postcss CST). *Creating* does not — that is the accurate framing.
+  - New-page creation listed as a gap: **works** (`pageScaffold.ts:68`, `studio_create_page`).
+  - `BreakpointFrame.tsx` is **not** CMS residue — board mode wraps every frame in one (`BoardFramesLayer.tsx:658-667`).
+  - Trap #11's two O(pages×nodes) selectors are **both fixed**; a third, worse one was found instead (`store.ts:300-310`, called **twice per node**, ~64k comparisons/commit on a 40-page board).
+  - `docs/reference/canvas-dnd.md` is **materially false** (claims dnd-kit is the only library, that `CanvasRoot` owns a `DndContext`, that `NodeRenderer` uses `useDraggable` — none true; its "forbidden patterns" table bans exactly what ships). No gate holds it honest.
+
+- **Next step:** dispatch **Phase 0** — 13 fixes, all effort S, as 4 parallel agents on disjoint file sets (§4 names the split). It removes every known silent-data-loss path and every known false statement in the UI. **Ship 0.4 (Componentize gate) first, alone, immediately** — one line against unrecoverable loss. Then Band 1 (five parallel tracks: CSS engine · store/perf · component catalog · rulers · agent fidelity).
+
+- **Decisions taken (audit-scope only):** ordered the plan by *truthfulness first, capability second, polish third* — every later track adds write surface that would otherwise inherit the same disease. Kept `STUDIO-IMPORT-V2-PLAN.md` intact as the feature roadmap rather than merging; this plan is the defect/ergonomics companion and is newer where they overlap.
+
+- **Landmines for whoever executes:**
+  - **`StudioEditSchema` is a three-way collision** (B1 `insert`, B2 `class`, E2.4 `insert-slot`/`promote-component`). **Serialize B1 → B2 → E2.4.** Same for `sourceStructure.ts` (E2.1 → D2 → F2).
+  - **Rulers:** `.transformLayer` sits at a static `top:80px;left:80px` (`CanvasTransformLayer.module.css:17-30`) — a term **`frameVirtualization.ts`'s own documented formula omits** (harmless there, 80px-wrong for rulers). And store `zoom/pan` lag the DOM by up to 100 ms during a gesture; rulers/DnD must read `useCanvas`'s `transformRef`, which is **not exposed today**.
+  - **`styleRuleId(kind, name)` omits the file**, so two `.css` files defining `.button` collapse into one rule — the earlier becomes invisible *and* unwritable. **Fix before `insertRule` exists**, or inserts land in the wrong file.
+  - **`standing-09` is still live and now has a measured blast radius:** happy-dom's CSSOM silently drops every rule inside `@layer`, so a **Tailwind v4 project imports zero rules**, with no warning. `studioCss.ts:274-292` also discards `parsed.warnings` entirely.
+  - **Phase 0.6 is honesty-only** — it makes class assignment *refuse*, not work. The real codemod is B2. Do not conflate.
+  - `tests/e2e/structural-writeback.e2e.ts` currently encodes post-hoc drag refusal as **intended**; it must change when D2 lands.
+  - `@dnd-kit/core` cannot cross the iframe boundary — that is *why* a parallel hand-rolled system exists. Per no-old-and-new, one must go.
+
+- **Verification:** none run — no source changed. `git status` shows only the two new doc paths.
+- **Human action needed:** **six product decisions in §15**, of which two gate real work: (1) grant `studio.run.project` to Admin? — today the only tool that validates against the *executing* app is unreachable for every real operator; recommendation is to grant it behind the existing Tier-2 trust promotion. (2) keep force-seeding every new project with `@alm-design` (`projectSeed.ts:112-165`)? — recommendation is to make it a launcher choice, but only after Track B makes "blank" viable. Also §15.4 (spacing/border diagrams: replace or keep behind "Advanced") is a feel call that needs dogfooding a real selection.
+
+---
+
 ### sec-02 — Claude CLI's `--mcp-config` leaked secrets in plaintext via `ps` — now written to a private 0600 temp file
 - **Agent:** security-guard
 - **Stage:** done

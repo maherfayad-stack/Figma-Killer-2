@@ -61,6 +61,15 @@ interface PropertiesPanelData {
   // ─── Class context ─────────────────────────────────────────────────────
   activeClass: StyleRule | null
   activeClassId: string | null
+  /**
+   * EVERY class assigned to the selected node (not just `activeClass`),
+   * resolved in `classIds` order. Track F1 — per-property provenance needs
+   * to know about every source that could shadow another, not just the one
+   * class currently "open" for editing (`usePropertiesPanelData.ts:165-168`'s
+   * `activeClass` derivation only ever consulted one). Empty when there's no
+   * selected node or it has no classes.
+   */
+  assignedClassRules: StyleRule[]
   selectedSelectorClass: StyleRule | null
   selectedSelectorClassId: string | null
   selectedSelectorClassIds: string[]
@@ -166,6 +175,14 @@ export function usePropertiesPanelData(): PropertiesPanelData {
     !selectedSelectorClass && activeClassId && selectedNode
       ? site?.styleRules[activeClassId] ?? null
       : null
+  // Track F1 — every class the node actually carries, in assignment order,
+  // for per-property provenance (StyleSurface builds the class chain from
+  // this). `site.styleRules` is already subscribed above; no new store read.
+  const assignedClassRules: StyleRule[] = selectedNode
+    ? selectedNode.classIds
+        .map((id) => site?.styleRules[id])
+        .filter((rule): rule is StyleRule => rule != null)
+    : []
   const activePage = site?.pages.find((page) => page.id === activePageId) ?? null
 
   // Dynamic bindings are available whenever the selected node sits inside a
@@ -250,6 +267,7 @@ export function usePropertiesPanelData(): PropertiesPanelData {
 
     activeClass,
     activeClassId,
+    assignedClassRules,
     selectedSelectorClass,
     selectedSelectorClassId,
     selectedSelectorClassIds,

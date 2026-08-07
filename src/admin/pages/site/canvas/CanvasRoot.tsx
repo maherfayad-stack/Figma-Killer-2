@@ -40,6 +40,7 @@ import { useRuntimeScriptBuild } from './useRuntimeScriptBuild'
 import { CanvasNotch } from './CanvasNotch'
 import { CanvasModeToggle } from './CanvasModeToggle'
 import { CanvasContextSelector } from './CanvasContextSelector'
+import { CanvasRulers } from './CanvasRulers/CanvasRulers'
 import { CanvasSelectionContext, CanvasViewportActionsContext } from './CanvasContexts'
 // Class / user-stylesheet injectors are now mounted per breakpoint frame
 // (inside each iframe's document) by `IframeFrameSurface`. CanvasRoot no
@@ -169,7 +170,7 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
   // silently mutating transformRef while in preview, which would otherwise
   // make the design canvas visibly jump on the first interaction after
   // returning from preview.
-  const { bind, handleKeyDown: canvasKeyDown, panBy, centerOnBreakpointFrame } = useCanvas({
+  const { bind, handleKeyDown: canvasKeyDown, panBy, centerOnBreakpointFrame, transformRef } = useCanvas({
     canvasRootRef: canvasRef,
     transformLayerRef,
     enabled: !isLive,
@@ -348,7 +349,7 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
   // re-render per selection/hover event rather than the entire canvas tree.
   const selectionContextValue = { onNodeClick, onNodeHover, onNodeContextMenu, onNodeDoubleClick }
 
-  const viewportActionsContextValue = { canvasRootRef: canvasRef, panBy }
+  const viewportActionsContextValue = { canvasRootRef: canvasRef, panBy, transformRef }
 
   // ─── Canvas-level keyboard shortcuts ──────────────────────────────────────
   // Match predicates come from the keybindings registry — single source of truth.
@@ -586,8 +587,17 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
           {/* The editing-context switcher targets per-context style overrides
               (viewports + custom conditions), so it's only meaningful for
               callers who can edit style or structure. Content-only Clients and
-              pure Viewers get the same plain frames without this affordance. */}
-          {!isLive && rightSidebarExpanded && (permissions.canEditStyle || permissions.canEditStructure) && (
+              pure Viewers get the same plain frames without this affordance.
+              D3 — hidden on a Studio board: every board frame renders under
+              ONE hardcoded synthetic breakpoint id (`'studio'`,
+              `BoardFramesLayer.tsx`) that ignores `activeBreakpointId`
+              entirely, so this control renders and takes clicks but changes
+              nothing a board frame actually reads — a genuine no-op, not a
+              degraded affordance. Keyed off `activeBoardId` (not a board-mode
+              prop) because that's the exact same signal `CanvasTransformLayer`
+              already uses to decide whether to render `BoardFramesLayer`
+              instead of ordinary breakpoint frames (`selectActiveBoard`). */}
+          {!isLive && !activeBoardId && rightSidebarExpanded && (permissions.canEditStyle || permissions.canEditStructure) && (
             <CanvasContextSelector />
           )}
 
@@ -623,6 +633,14 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
               />
             )}
           </ErrorBoundary>
+
+          {/* D1 — rulers. A SIBLING of CanvasTransformLayer, never inside it
+              (see CanvasRulers/rulerGeometry.ts for why) — same untransformed
+              chrome tier as CanvasNotch/CanvasModeToggle. Design mode only: a
+              live frame has no pan/zoom to rule against. */}
+          {!isLive && editable && (
+            <CanvasRulers canvasRootRef={canvasRef} transformRef={transformRef} />
+          )}
 
           {/*
           Plugin-registered canvas overlays. Mounted after the transform

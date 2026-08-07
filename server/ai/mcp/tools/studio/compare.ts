@@ -111,6 +111,9 @@ const InputSchema = Type.Object(
     maxRegionCoverage: Type.Optional(
       Type.Number({ minimum: 0, maximum: 100, description: `The largest share of the frame (percent) any single differing region may cover and still pass. Default ${DEFAULT_MAX_REGION_COVERAGE}. This is the structural test — lower it to catch smaller defects.` }),
     ),
+    includeImages: Type.Optional(
+      Type.Boolean({ description: 'Whether to attach the three images (your screen, the reference, the diff) to the result. Default true. The prescribed loop calls this tool after EVERY fix pass, and each image costs real context — once you have already looked at a screen and know roughly what is still wrong, set this to false on the next few calls and read the numeric verdict (pass, similarityScore, regions[]) alone; set it back to true when you actually need to SEE the current state again (a new region appeared, or the verdict is confusing).' }),
+    ),
   },
   { additionalProperties: false },
 )
@@ -140,16 +143,17 @@ export const studioCompareTool: AiTool = {
   mutates: true,
   requiredCapabilities: ['studio.write'],
   description:
-    'Measure a screen against the design it is supposed to match, and get a verdict instead of an opinion. Captures the live screen at the resolution that matches the registered design reference, diffs the two server-side, and returns { pass, similarityScore, regions[] } plus three images: your screen, the reference, and the diff. Each region is a rectangle that is actually wrong, worst first, with the node ids inside it — so "it looks off" becomes "this 240x88 block at y=412 is 71% different and covers these nodes". Name the screen the way you named the file ("Checkout"); the reference is picked up automatically from the ones registered for that page. `pass` is deliberately NOT pixel-identity — a browser and Figma rasterise text differently, so it requires high overall similarity AND no single differing region big enough to be structural. A failing result is a work list: fix the largest region first, then call this again. Use this rather than studio_diff_frames — a capture reaches you as an image you cannot turn back into the base64 that tool wants.',
+    'Measure a screen against the design it is supposed to match, and get a verdict instead of an opinion. Captures the live screen at the resolution that matches the registered design reference, diffs the two server-side, and returns { pass, similarityScore, regions[] } plus, by default, three images: your screen, the reference, and the diff. Each region is a rectangle that is actually wrong, worst first, with the node ids inside it — so "it looks off" becomes "this 240x88 block at y=412 is 71% different and covers these nodes". Name the screen the way you named the file ("Checkout"); the reference is picked up automatically from the ones registered for that page. `pass` is deliberately NOT pixel-identity — a browser and Figma rasterise text differently, so it requires high overall similarity AND no single differing region big enough to be structural. A failing result is a work list: fix the largest region first, then call this again — the prescribed loop calls this tool after EVERY fix pass, so pass `includeImages:false` on the calls where you already know roughly what is wrong and only need the numbers to confirm a fix landed; the three images are the most expensive part of the response and you do not need to re-look every single time. capture.dimensionMatch is "resampled", not "exact", whenever the captured screen could not be produced at the reference\'s own pixel size — the vision-safe capture cap (~1568px, applied to BOTH width and height) is the usual cause on a tall mobile screen, and capture.dimensionMatchNote names the axis and explains it when this fires: treat that verdict as directional, not exact-pixel. Use this rather than studio_diff_frames — a capture reaches you as an image you cannot turn back into the base64 that tool wants.',
   inputSchema: InputSchema,
   handler: async (input, ctx: ToolContext) => {
-    const { dir: dirInput, page, referenceId, topN, passScore, maxRegionCoverage } = input as {
+    const { dir: dirInput, page, referenceId, topN, passScore, maxRegionCoverage, includeImages } = input as {
       dir?: string
       page: string
       referenceId?: string
       topN?: number
       passScore?: number
       maxRegionCoverage?: number
+      includeImages?: boolean
     }
     const dir = resolveToolProjectDir(dirInput, ctx)
 
@@ -235,11 +239,19 @@ export const studioCompareTool: AiTool = {
           ? `Does NOT match: overall similarity is fine (${diff.similarityScore.toFixed(2)}%) but ${structuralRegions.length} region(s) differ structurally — something in a specific place is wrong, not the whole screen. Start with regions[0].`
           : `Does NOT match: ${diff.similarityScore.toFixed(2)}% similar (needs ${requiredScore}%), spread thinly rather than concentrated in one region. Usually a colour, a font, or a global spacing value that is slightly off everywhere.`
 
-    const images: AiToolImage[] = [
-      { mimeType: 'image/png', data: capturedImage.data },
-      { mimeType: reference.mimeType, data: Buffer.from(referenceBytes).toString('base64') },
-      { mimeType: 'image/png', data: diff.diffPngBuffer.toString('base64') },
-    ]
+    // A4 (STUDIO-FIGMA-PARITY-PLAN.md): the three images are the expensive
+    // part of this response, and the prescribed loop calls this tool after
+    // EVERY fix pass — default true preserves today's behaviour for a caller
+    // that hasn't opted in, `includeImages:false` lets a later-loop call take
+    // the numeric verdict alone.
+    const wantImages = includeImages ?? true
+    const images: AiToolImage[] = wantImages
+      ? [
+          { mimeType: 'image/png', data: capturedImage.data },
+          { mimeType: reference.mimeType, data: Buffer.from(referenceBytes).toString('base64') },
+          { mimeType: 'image/png', data: diff.diffPngBuffer.toString('base64') },
+        ]
+      : []
 
     return aiToolOk(
       {
@@ -262,6 +274,7 @@ export const studioCompareTool: AiTool = {
           height: diff.height,
           dpr: dpr ?? 1,
           dimensionMatch: reconciled.result.method,
+          ...(reconciled.result.note ? { dimensionMatchNote: reconciled.result.note } : {}),
         },
         structuralRegionCount: structuralRegions.length,
         regions: diff.regions,
@@ -269,7 +282,7 @@ export const studioCompareTool: AiTool = {
         ...(worstRegion && !pass
           ? { worstRegionNodeIds: worstRegion.nodeIds }
           : {}),
-        images: { 0: 'your screen', 1: 'the design reference', 2: 'the diff' },
+        ...(wantImages ? { images: { 0: 'your screen', 1: 'the design reference', 2: 'the diff' } } : {}),
       },
       images,
     )

@@ -68,6 +68,13 @@
     opacity: 0.5;
 }
 
+/* Track F1 — the "Assign class" informational row. Neutral, not a warning:
+   it isn't refusing anything, it's pointing at a different control. */
+.chipInfo {
+    color: var(--text-subtle);
+    border-style: dashed;
+}
+
 .warningIcon {
     flex: 0 0 auto;
     color: var(--warning);

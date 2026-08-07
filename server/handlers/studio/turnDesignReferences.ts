@@ -31,6 +31,26 @@
  * So the transient path now feeds the durable one. Attaching a design is
  * enough; there is no second control to remember.
  *
+ * ## Why it takes the turn's active page id
+ *
+ * Every reference used to register with NO `pageId`, so it could never win
+ * `resolveDesignReference`'s ("this page's own" beats "most recent
+ * project-wide") branch — only the explicit-id and most-recent-project-wide
+ * fallbacks ever fired. Paste screen 1's comp, build it, then paste screen
+ * 2's comp anywhere later in the SAME conversation, and every subsequent
+ * `studio_compare`/`studio_measure_reference` call for screen 1 silently
+ * started measuring against screen 2's design instead — the literal flagship
+ * workflow (paste several frames, build several screens) failing with a
+ * confident, wrong number instead of an error.
+ *
+ * `pageId` here is the turn's live active-page id, threaded in by the caller
+ * from the same `StudioAgentSnapshot.activePageId` the live digest is already
+ * built from (`chat.ts`) — never re-derived by a second, possibly-stale path.
+ * `undefined` when no Studio project is open or the browser posted no/an
+ * invalid snapshot; the reference then registers unscoped and only the
+ * explicit-id / most-recent-project-wide fallbacks can find it again, exactly
+ * as before this fix — an honest degradation, not a silent wrong answer.
+ *
  * ## Why it is idempotent by content hash
  *
  * This runs on EVERY turn, and a conversation re-sends its attachments as the
@@ -73,11 +93,17 @@ export const CHAT_ATTACHMENT_REFERENCE_SOURCE = 'chat-attachment'
  * attachment order — existing entries included, so the caller sees the full
  * set regardless of which turn first registered them.
  *
+ * `pageId` scopes freshly-registered references to the page the user was
+ * looking at when they pasted the image — see the module doc's "Why it takes
+ * the turn's active page id". An already-registered match (by content hash)
+ * is returned as-is and never re-scoped by a later paste of the same bytes.
+ *
  * Never throws.
  */
 export async function registerTurnDesignReferences(
   dir: string,
   imageBytes: readonly Uint8Array[],
+  pageId?: string,
 ): Promise<DesignReference[]> {
   const armed: DesignReference[] = []
 
@@ -94,6 +120,7 @@ export async function registerTurnDesignReferences(
       const result = await registerDesignReference(dir, bytes, {
         label: imageBytes.length > 1 ? `Attached in chat (${index + 1})` : 'Attached in chat',
         source: CHAT_ATTACHMENT_REFERENCE_SOURCE,
+        ...(pageId ? { pageId } : {}),
       })
       if (!result.ok) {
         // Expected for an SVG or an undecodable attachment. The turn still runs.

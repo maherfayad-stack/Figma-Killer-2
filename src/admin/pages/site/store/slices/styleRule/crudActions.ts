@@ -16,6 +16,7 @@ import { isValidCssSelector } from '../../styleRuleRename'
 import type { SiteSliceHelpers } from '../site/types'
 import type { StyleRuleSlice } from './types'
 import { nextRuleOrder, hasStylePatchChanges } from './helpers'
+import { coalesceKeyForPatch } from '../../historyCoalesce'
 
 type CrudActions = Pick<
   StyleRuleSlice,
@@ -376,7 +377,7 @@ export function createCrudActions({ get, mutateSite }: SiteSliceHelpers): CrudAc
         }
         draftClass.updatedAt = Date.now()
         return true
-      })
+      }, coalesceKeyForPatch('style', classId, patch))
     },
 
     setClassContextStyles(classId, contextId, patch) {
@@ -413,7 +414,7 @@ export function createCrudActions({ get, mutateSite }: SiteSliceHelpers): CrudAc
         }
         draftClass.updatedAt = Date.now()
         return true
-      })
+      }, coalesceKeyForPatch(`style-context:${contextId}`, classId, patch))
     },
 
     applyCssRules(rules, conditions, mode) {

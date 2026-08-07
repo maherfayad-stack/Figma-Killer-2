@@ -49,7 +49,7 @@
  * measurement of line-height, and it is reported as one.
  */
 import sharp from 'sharp'
-import { colorDifference, contrastRatio, parseHexColor, relativeLuminance, type Rgb } from './colorMath'
+import { colorDifference, contrastRatio, parseHexColor, relativeLuminance, type Rgb } from '@core/design-tokens'
 import {
   buildProjectTokenIndex,
   nearestSizeToken,
@@ -104,6 +104,16 @@ export interface MeasuredRegion {
     readonly capAssumption: number
     readonly ascenderAssumption: number
     readonly nearestToken: { readonly name: string; readonly px: number; readonly deltaPx: number } | null
+    /**
+     * A2/A8 (STUDIO-FIGMA-PARITY-PLAN.md) — always present, never a per-script
+     * calibration: `CAP_HEIGHT_RATIO`/`ASCENDER_SPAN_RATIO` are constants
+     * calibrated for a Latin UI sans face and are silently wrong for a serif
+     * or display face, and for a non-Latin script — notably Arabic, which
+     * Studio explicitly supports via its RTL preview axis, whose ink metrics
+     * sit outside this ratio entirely. Read this before treating either bound
+     * as a confident number rather than a coarse Latin-sans estimate.
+     */
+    readonly caveat: string
   } | null
   /** Measured directly from line pitch — no assumption. `null` with fewer than two lines. */
   readonly lineHeightPx: number | null
@@ -121,6 +131,18 @@ const COLOR_BUCKET = 8
 const CAP_HEIGHT_RATIO = 0.72
 /** Ascender-to-descender ink span as a share of em, the other end of the range. */
 const ASCENDER_SPAN_RATIO = 0.95
+/**
+ * A8 (STUDIO-FIGMA-PARITY-PLAN.md) — attached to every `fontSizePx` result,
+ * unconditionally. `CAP_HEIGHT_RATIO`/`ASCENDER_SPAN_RATIO` are calibrated for
+ * Latin UI sans faces; this module has no signal about the actual typeface or
+ * script of the measured ink (a raster gives up that information), so it
+ * cannot know when the calibration doesn't apply — only that it might not.
+ * Naming the uncertainty is the honest move; a per-script calibration table
+ * is a much larger, separately-scoped project and is explicitly out of scope
+ * here.
+ */
+const FONT_SIZE_RANGE_CAVEAT =
+  'This range assumes a Latin UI sans face (cap-height ~0.72em, ascender-to-descender ~0.95em). It is a coarse estimate, not a calibrated measurement, for a serif or display face, and for a non-Latin script — Arabic ink metrics in particular fall outside this ratio. Trust a design connector\'s own token values over this range whenever both are available.'
 /** Regions larger than this are downsampled before analysis — the statistics do not change and an 8 MP loop per region would dominate the turn. */
 const MAX_ANALYSED_PIXELS = 1_200_000
 
@@ -342,6 +364,7 @@ async function measureOne(
           nearestToken: nearest
             ? { name: nearest.token.name, px: nearest.token.px, deltaPx: nearest.deltaPx }
             : null,
+          caveat: FONT_SIZE_RANGE_CAVEAT,
         }
       })()
     : null

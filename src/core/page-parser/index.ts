@@ -28,6 +28,7 @@ export { applyAsyncServerComponentFinding, composeAppRouterRoute } from './nextA
 export type { ComposeAppRouterRouteOptions, ComposeAppRouterRouteResult } from './nextAppLayout'
 export { createEvalScope, createPageEvalBudget, evaluateExpression } from './staticEval'
 export type { EvalScope, PageEvalBudget, StaticEvalOptions, StaticValue, ValueOrigin } from './staticEval'
+export { CLASS_NAME_JOIN_BUILTIN_NAMES } from './staticEvalCalls'
 export { CANONICAL_JSX_RULES, canonicalRuleDef, checkCanonicalJsx, summarizeCanonicalFindings } from './canonicalCheck'
 export type {
   CanonicalCheckInput,

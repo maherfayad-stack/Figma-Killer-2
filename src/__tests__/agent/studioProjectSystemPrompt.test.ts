@@ -11,6 +11,7 @@ import { mkdtempSync, mkdirSync, rmSync, utimesSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildStudioProjectSystemPrompt } from '../../../server/ai/handlers/chat'
+import { studioAgentTools } from '../../../server/ai/tools/studio'
 import type { StudioAgentSnapshot } from '../../../server/ai/tools/studio/snapshot'
 import { createStalenessTracker } from '../../../server/ai/tools/studio/staleness'
 
@@ -47,7 +48,7 @@ describe('buildStudioProjectSystemPrompt', () => {
   })
 
   it('builds the cacheable 3-element form from a real project probe, never the CMS/site prompt', async () => {
-    const prompt = await buildStudioProjectSystemPrompt(dir, undefined, 'conv-1')
+    const prompt = await buildStudioProjectSystemPrompt(dir, undefined, 'conv-1', studioAgentTools)
     expect(prompt).toHaveLength(3)
     expect(prompt[1]).toBe('__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__')
     // The CMS prompt's own vocabulary must never leak into a Studio-project turn.
@@ -59,7 +60,7 @@ describe('buildStudioProjectSystemPrompt', () => {
   })
 
   it('the dynamic suffix carries the real dir, never a placeholder', async () => {
-    const prompt = await buildStudioProjectSystemPrompt(dir, undefined, 'conv-1')
+    const prompt = await buildStudioProjectSystemPrompt(dir, undefined, 'conv-1', studioAgentTools)
     expect(prompt[2]).toContain(dir)
   })
 
@@ -69,7 +70,7 @@ describe('buildStudioProjectSystemPrompt', () => {
       // No try/catch around the call itself: an unexpected throw fails the
       // test on its own via the unhandled rejection, exactly what "never
       // throws" means to assert.
-      const prompt = await buildStudioProjectSystemPrompt(emptyDir, undefined, 'conv-1')
+      const prompt = await buildStudioProjectSystemPrompt(emptyDir, undefined, 'conv-1', studioAgentTools)
       expect(prompt).toHaveLength(3)
     } finally {
       rmSync(emptyDir, { recursive: true, force: true })
@@ -77,7 +78,7 @@ describe('buildStudioProjectSystemPrompt', () => {
   })
 
   it('a malformed snapshot degrades to the profile-only suffix rather than throwing', async () => {
-    const prompt = await buildStudioProjectSystemPrompt(dir, { garbage: true }, 'conv-1')
+    const prompt = await buildStudioProjectSystemPrompt(dir, { garbage: true }, 'conv-1', studioAgentTools)
     expect(prompt).toHaveLength(3)
     expect(prompt[2]).not.toContain('Board:')
   })
@@ -106,7 +107,7 @@ describe('buildStudioProjectSystemPrompt', () => {
       selectedNodeId: null,
       axes: { direction: 'ltr', colorScheme: 'light' },
     }
-    const prompt = await buildStudioProjectSystemPrompt(dir, snapshot, 'conv-2', { staleness: createStalenessTracker() })
+    const prompt = await buildStudioProjectSystemPrompt(dir, snapshot, 'conv-2', studioAgentTools, { staleness: createStalenessTracker() })
     expect(prompt[2]).toContain('Board: board-1')
     expect(prompt[2]).toContain(pageId)
     expect(prompt[2]).toContain('Active page:')
@@ -130,7 +131,7 @@ describe('buildStudioProjectSystemPrompt', () => {
       selectedNodeId: buttonNodeId,
       axes: { direction: 'ltr', colorScheme: 'light' },
     }
-    const prompt = await buildStudioProjectSystemPrompt(dir, snapshot, 'conv-3', { staleness: createStalenessTracker() })
+    const prompt = await buildStudioProjectSystemPrompt(dir, snapshot, 'conv-3', studioAgentTools, { staleness: createStalenessTracker() })
     expect(prompt[2]).toContain(`Selected: ${buttonNodeId}`)
   })
 
@@ -148,7 +149,7 @@ describe('buildStudioProjectSystemPrompt', () => {
     // this test's assertions can't leak into or out of another test's run.
     const staleness = { staleness: createStalenessTracker() }
 
-    const first = await buildStudioProjectSystemPrompt(dir, snapshot, 'conv-1', staleness)
+    const first = await buildStudioProjectSystemPrompt(dir, snapshot, 'conv-1', studioAgentTools, staleness)
     expect(first[2]).not.toContain('node ids re-issued')
 
     // Simulate a write landing on the page file between turns — bump its
@@ -157,7 +158,7 @@ describe('buildStudioProjectSystemPrompt', () => {
     const future = new Date(Date.now() + 5000)
     utimesSync(target, future, future)
 
-    const second = await buildStudioProjectSystemPrompt(dir, snapshot, 'conv-1', staleness)
+    const second = await buildStudioProjectSystemPrompt(dir, snapshot, 'conv-1', studioAgentTools, staleness)
     expect(second[2]).toContain('node ids re-issued')
   })
 
@@ -172,12 +173,12 @@ describe('buildStudioProjectSystemPrompt', () => {
       axes: { direction: 'ltr', colorScheme: 'light' },
     }
     const staleness = { staleness: createStalenessTracker() }
-    await buildStudioProjectSystemPrompt(dir, snapshot, 'conv-a', staleness)
+    await buildStudioProjectSystemPrompt(dir, snapshot, 'conv-a', studioAgentTools, staleness)
     const target = join(dir, 'pages', 'Home.tsx')
     const future = new Date(Date.now() + 5000)
     utimesSync(target, future, future)
     // conv-b has never looked at this file before — first look, no warning.
-    const otherConv = await buildStudioProjectSystemPrompt(dir, snapshot, 'conv-b', staleness)
+    const otherConv = await buildStudioProjectSystemPrompt(dir, snapshot, 'conv-b', studioAgentTools, staleness)
     expect(otherConv[2]).not.toContain('node ids re-issued')
   })
 })

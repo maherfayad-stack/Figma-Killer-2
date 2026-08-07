@@ -12,7 +12,7 @@
  * either the light or dark map).
  */
 import { describe, expect, it } from 'bun:test'
-import { collectRootScopeMaps } from '../tokenExtractCssScan'
+import { classifyDesignTokenFamily, collectRootScopeMaps, detectRootFontSizePx, toPx } from '../tokenExtractCssScan'
 
 describe('collectRootScopeMaps — at-rule descent', () => {
   it('descends into @media (prefers-color-scheme:dark) and classifies a nested :root:not([data-theme=light]) as dark (the real design-system shape)', () => {
@@ -60,6 +60,108 @@ describe('collectRootScopeMaps — at-rule descent', () => {
     const { light, dark } = collectRootScopeMaps(css)
     expect(light.has('--a')).toBe(false)
     expect(dark.has('--a')).toBe(false)
+  })
+})
+
+describe('collectRootScopeMaps — Tailwind v4 @theme (T6, STUDIO-FIGMA-PARITY-PLAN.md §11)', () => {
+  it('collects a bare @theme block directly — no nested :root selector exists in real Tailwind v4 output', () => {
+    const css = '@theme{--color-brand:#0c9ab0;--font-sans:ui-sans-serif, system-ui, sans-serif;}'
+    const { light, dark } = collectRootScopeMaps(css)
+    expect(light.get('--color-brand')).toBe('#0c9ab0')
+    expect(light.get('--font-sans')).toBe('ui-sans-serif, system-ui, sans-serif')
+    expect(dark.size).toBe(0)
+  })
+
+  it('collects @theme inline / @theme reference / @theme static — every declared modifier form', () => {
+    for (const modifier of ['inline', 'reference', 'static']) {
+      const { light } = collectRootScopeMaps(`@theme ${modifier}{--a:#111}`)
+      expect(light.get('--a')).toBe('#111')
+    }
+  })
+
+  it('a realistic Tailwind v4 stylesheet — @layer theme, base, components, utilities; followed by @theme — imports the theme block', () => {
+    const css = [
+      '@layer theme, base, components, utilities;',
+      '@layer theme{@theme{--color-brand:#0c9ab0;--radius-md:8px}}',
+      '@layer base{*{box-sizing:border-box}}',
+    ].join('\n')
+    const { light } = collectRootScopeMaps(css)
+    expect(light.get('--color-brand')).toBe('#0c9ab0')
+    expect(light.get('--radius-md')).toBe('8px')
+  })
+
+  it('a colour-scheme-only @media wrapping @theme routes its declarations to dark', () => {
+    const css = '@media (prefers-color-scheme:dark){@theme{--color-brand:#0a7f92}}'
+    const { light, dark } = collectRootScopeMaps(css)
+    expect(dark.get('--color-brand')).toBe('#0a7f92')
+    expect(light.has('--color-brand')).toBe(false)
+  })
+
+  it('is unconditional even at top level, with no surrounding @layer at all', () => {
+    const { light } = collectRootScopeMaps('@theme{--space-md:16px}')
+    expect(light.get('--space-md')).toBe('16px')
+  })
+})
+
+describe('classifyDesignTokenFamily — the 9-way classifier behind the new DesignToken model (T6/T12)', () => {
+  it('promotes radius (--rounded-*, not just --radius-*, matching designSystemDigest.ts before this change)', () => {
+    expect(classifyDesignTokenFamily('--rounded-md', '8px')).toBe('radius')
+    expect(classifyDesignTokenFamily('--radius-sm', '4px')).toBe('radius')
+  })
+
+  it('promotes elevation by name — a shadow shorthand has no single-literal shape to test by value', () => {
+    expect(classifyDesignTokenFamily('--shadow-md', '0px 4px 16px rgba(0,0,0,0.2)')).toBe('elevation')
+    expect(classifyDesignTokenFamily('--elevation-2', '0px 2px 4px rgba(0,0,0,0.1)')).toBe('elevation')
+  })
+
+  it('splits typography-detail into its own real families instead of one discard bucket', () => {
+    expect(classifyDesignTokenFamily('--type-headline-family', "'Open Sans', system-ui")).toBe('font-family')
+    expect(classifyDesignTokenFamily('--type-headline-weight', '700')).toBe('font-weight')
+    expect(classifyDesignTokenFamily('--type-headline-lh', '40px')).toBe('line-height')
+    expect(classifyDesignTokenFamily('--type-headline-ls', '0.02em')).toBe('letter-spacing')
+  })
+
+  it('names a Tailwind v4 @theme font token with no -family suffix (--font-sans) as font-family by its stack-shaped value', () => {
+    expect(classifyDesignTokenFamily('--font-sans', 'ui-sans-serif, system-ui, sans-serif')).toBe('font-family')
+    expect(classifyDesignTokenFamily('--font-mono', 'ui-monospace, monospace')).toBe('font-family')
+  })
+
+  it('still classifies color/font-size/space exactly as classifyDeclaration does', () => {
+    expect(classifyDesignTokenFamily('--color-aqua-100', '#0c9ab0')).toBe('color')
+    expect(classifyDesignTokenFamily('--type-title-size', '18px')).toBe('font-size')
+    expect(classifyDesignTokenFamily('--space-md', '16px')).toBe('space')
+  })
+
+  it('reports unclassified honestly rather than guessing', () => {
+    expect(classifyDesignTokenFamily('--z-index-modal', '50')).toBe('unclassified')
+  })
+})
+
+describe('detectRootFontSizePx / toPx — non-16px root (T6, STUDIO-FIGMA-PARITY-PLAN.md §11)', () => {
+  it('defaults to 16 when no root font-size declaration exists', () => {
+    expect(detectRootFontSizePx(':root{--a:8px}')).toBe(16)
+  })
+
+  it('reads an explicit html{font-size} in px', () => {
+    expect(detectRootFontSizePx('html{font-size:10px}')).toBe(10)
+  })
+
+  it('reads the common 62.5% trick (10px root, so 1rem === 10px)', () => {
+    expect(detectRootFontSizePx('html{font-size:62.5%}')).toBe(10)
+  })
+
+  it('reads :root{font-size} too, not just html', () => {
+    expect(detectRootFontSizePx(':root{font-size:20px}')).toBe(20)
+  })
+
+  it('ignores a @media-conditional font-size override — not the canonical base', () => {
+    expect(detectRootFontSizePx('html{font-size:16px}@media (min-width:900px){html{font-size:20px}}')).toBe(16)
+  })
+
+  it('toPx converts rem against the detected root, not a hardcoded 16', () => {
+    const rootPx = detectRootFontSizePx('html{font-size:62.5%}')
+    expect(toPx('1.6rem', rootPx)).toBe(16)
+    expect(toPx('1.6rem')).toBe(25.6) // the default-root behaviour is unchanged when the caller doesn't pass one
   })
 })
 

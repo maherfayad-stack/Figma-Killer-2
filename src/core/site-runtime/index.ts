@@ -14,6 +14,7 @@ export type {
   SiteScriptPlacement,
   SiteScriptTiming,
 } from './schemas'
+export type { RuntimeScopedPage } from './runtimeConfig'
 export {
   PublishedPageRuntimeAssetsSchema,
   RuntimePackageImportmapSchema,

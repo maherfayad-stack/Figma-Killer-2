@@ -7,6 +7,7 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import {
+  anyOtherRouteDependsOnFile,
   clearPageParseCache,
   getCachedRouteParse,
   hashWorkspaceConfig,
@@ -84,6 +85,59 @@ describe('pageParseCache', () => {
   it('keeps entries under different cache keys independent', () => {
     setCachedRouteParse('key1', 'h1', [fileA], fakeResult)
     expect(getCachedRouteParse('key2', 'h1')).toBeNull()
+  })
+})
+
+describe('anyOtherRouteDependsOnFile (Track C5 — reload-scope safety check)', () => {
+  let tmpDir: string
+  let fileA: string
+  let fileB: string
+
+  beforeEach(() => {
+    clearPageParseCache()
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'page-parse-cache-dep-'))
+    fileA = path.join(tmpDir, 'A.tsx')
+    fileB = path.join(tmpDir, 'B.tsx')
+    fs.writeFileSync(fileA, 'export default function A() { return <div/> }', 'utf8')
+    fs.writeFileSync(fileB, 'export default function B() { return <div/> }', 'utf8')
+  })
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  it('returns null (unknown) when the cache holds no entries at all for this dir', () => {
+    expect(anyOtherRouteDependsOnFile(tmpDir, fileA, new Set())).toBeNull()
+  })
+
+  it('returns false when every OTHER cached route is checked and none depend on the file', () => {
+    setCachedRouteParse(`${tmpDir}::pages/A.tsx`, 'h1', [fileA], fakeResult)
+    setCachedRouteParse(`${tmpDir}::pages/B.tsx`, 'h1', [fileB], fakeResult)
+    // Excludes A's own entry (the route about to be re-parsed); B's recorded
+    // deps are just its own file, which is not A's file.
+    expect(anyOtherRouteDependsOnFile(tmpDir, fileA, new Set([`${tmpDir}::pages/A.tsx`]))).toBe(false)
+  })
+
+  it('returns true when an OTHER route (not excluded) recorded the file as a dependency — a locally-inlined component shared across pages', () => {
+    // B's own parse resolved fileA as a local-component dependency (e.g. `B.tsx` imports `A.tsx`).
+    setCachedRouteParse(`${tmpDir}::pages/A.tsx`, 'h1', [fileA], fakeResult)
+    setCachedRouteParse(`${tmpDir}::pages/B.tsx`, 'h1', [fileB, fileA], fakeResult)
+    expect(anyOtherRouteDependsOnFile(tmpDir, fileA, new Set([`${tmpDir}::pages/A.tsx`]))).toBe(true)
+  })
+
+  it('ignores entries for a DIFFERENT dir entirely', () => {
+    const otherDir = fs.mkdtempSync(path.join(os.tmpdir(), 'page-parse-cache-dep-other-'))
+    try {
+      setCachedRouteParse(`${otherDir}::pages/C.tsx`, 'h1', [fileA], fakeResult) // pathological but shouldn't matter — different dir prefix
+      expect(anyOtherRouteDependsOnFile(tmpDir, fileA, new Set())).toBeNull() // no entries for `tmpDir`, still unknown
+    } finally {
+      fs.rmSync(otherDir, { recursive: true, force: true })
+    }
+  })
+
+  it('an excluded cache key never counts as "another route", even if it happens to reference the file', () => {
+    setCachedRouteParse(`${tmpDir}::pages/A.tsx`, 'h1', [fileA], fakeResult)
+    expect(anyOtherRouteDependsOnFile(tmpDir, fileA, new Set([`${tmpDir}::pages/A.tsx`]))).toBe(false)
   })
 })
 

@@ -113,6 +113,7 @@ import {
 import type { FrameAlignEdge } from '@site/canvas/BoardFramesLayer/frameAlign'
 import * as bulk from './boardBulkFrameActions'
 import * as annotations from './boardAnnotationActions'
+import * as guideActions from './boardGuideActions'
 import { createFrameSelectionActions } from './boardFrameSelectionActions'
 
 export type { FrameAlignEdge }
@@ -214,6 +215,10 @@ interface BoardSlice {
   updateDocMarkdown: (docId: string, markdown: string) => void
   /** Delete a doc block from the active board. */
   removeDoc: (docId: string) => void
+  /** D1 — persisted ruler guides. All three are no-ops with no active board (moveGuide/removeGuide also no-op for an unknown id). */
+  addGuide: (axis: 'x' | 'y', position: number) => void
+  moveGuide: (guideId: string, position: number) => void
+  removeGuide: (guideId: string) => void
   /**
    * Reposition ONE existing frame by its own `id` (WS-10 Phase 2). No-op if
    * that frame id doesn't exist on the active board, or there is no active
@@ -489,6 +494,23 @@ export const createBoardSlice: EditorStoreSliceCreator<BoardSlice> = (set, get) 
     const board = getActiveBoard(boards, activeBoardId)
     if (!board) return
     set({ boards: upsertBoard(boards, annotations.removeDoc(board, docId)), boardsDirty: true })
+  },
+
+  // D1 — persisted ruler guides (one-lined to stay under the size-budget ceiling).
+  addGuide: (axis, position) => {
+    const { boards, activeBoardId } = get()
+    const board = getActiveBoard(boards, activeBoardId)
+    if (board) set({ boards: upsertBoard(boards, guideActions.addGuide(board, axis, position)), boardsDirty: true })
+  },
+  moveGuide: (guideId, position) => {
+    const { boards, activeBoardId } = get()
+    const board = getActiveBoard(boards, activeBoardId)
+    if (board) set({ boards: upsertBoard(boards, guideActions.moveGuide(board, guideId, position)), boardsDirty: true })
+  },
+  removeGuide: (guideId) => {
+    const { boards, activeBoardId } = get()
+    const board = getActiveBoard(boards, activeBoardId)
+    if (board) set({ boards: upsertBoard(boards, guideActions.removeGuide(board, guideId)), boardsDirty: true })
   },
 
   setFramePosition: (frameId, x, y) => {

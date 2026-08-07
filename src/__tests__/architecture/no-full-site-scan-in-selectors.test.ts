@@ -51,14 +51,11 @@ const SCAN_ROOT = join(SRC_ROOT, 'admin')
  * times already.
  */
 const FULL_SITE_SCAN_ALLOWLIST = new Set<string>([
-  // pkg-02/WS-3.3 — registerProjectModules.ts's `siteHasUnregisteredPackageNode`
-  // walks `useEditorStore.getState().site.pages` IMPERATIVELY, once per
-  // `useEffect` run keyed on `[projectDir, trust]` (a project load/switch or
-  // a trust-tier promotion) — never inside a subscribed `useEditorStore(selector)`
-  // callback, so it does not run on every store change. The file does import
-  // `useEditorStore` (for `.getState()`), which is what this gate's text
-  // match can't distinguish from a reactive selector subscription.
-  'admin/pages/site/studio/registerProjectModules.ts',
+  // E4 (`STUDIO-FIGMA-PARITY-PLAN.md`) removed the one entry this allowlist
+  // ever needed — `registerProjectModules.ts`'s `siteHasUnregisteredPackageNode`
+  // (which walked `site.pages` to gate registration on board contents, the
+  // BLOCKER this change fixes). No file in this tree currently needs an
+  // entry here; add one only with a fresh justification.
 ])
 
 // Windows' `path.relative` emits backslashes; normalize before comparing or

@@ -30,7 +30,15 @@ interface CollectAppliedStylesInput {
   page: RuntimeScopedPage
 }
 
-interface RuntimeScopedPage {
+/**
+ * The minimal page shape scope-matching needs: an id (for `pages`/
+ * `templatePageIds` scopes) and whether the page carries a template (for the
+ * `templates` scope). Exported so callers (e.g. `collectUserStylesheetCss`)
+ * can accept this narrow shape instead of a full `Page`, letting a canvas
+ * selector subscribe to just these two fields instead of the whole page
+ * object — the page's node content never affects scope matching.
+ */
+export interface RuntimeScopedPage {
   id: string
   template?: unknown
 }

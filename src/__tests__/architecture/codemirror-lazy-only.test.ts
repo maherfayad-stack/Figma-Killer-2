@@ -36,6 +36,7 @@
 import { describe, it, expect } from 'bun:test'
 import { readdirSync, readFileSync, statSync, existsSync } from 'fs'
 import { join, extname, relative } from 'path'
+import { toPosixPath } from './pathHelpers'
 
 const SRC_ROOT = join(import.meta.dir, '../../')
 
@@ -103,7 +104,7 @@ describe('CodeMirror lazy-load enforcement', () => {
     const violations: { file: string; family: string }[] = []
 
     for (const file of allFiles) {
-      const rel = relative(SRC_ROOT, file)
+      const rel = toPosixPath(relative(SRC_ROOT, file))
       if (rel === ALLOWED_CONSUMER) continue
 
       let source: string

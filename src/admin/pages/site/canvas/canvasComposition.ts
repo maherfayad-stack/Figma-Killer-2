@@ -17,11 +17,20 @@
  *   - editing a notFound tpl   → wrapped by the `everywhere` layout (matching
  *     how the public router composes the 404 render);
  *   - editing the everywhere tpl → nothing wraps it (it is the broadest).
+ *
+ * Perf (Track C3 / audit 06 E9): `resolveEditorWrapperTemplates` takes the
+ * TEMPLATE-marked pages directly (`templatePages`) rather than the whole
+ * `SiteDocument`, so `CanvasComposedTree` can subscribe with a `useShallow`
+ * selector over `site.pages.filter(isTemplatePage)` instead of `s.site`. That
+ * keeps its reference stable across an edit to any ordinary (non-template)
+ * page — which is the overwhelming majority of pages on a real board — so a
+ * keystroke on page B no longer re-renders the `CanvasComposedTree` mounted
+ * for page A.
  */
 
-import type { Page, SiteDocument } from '@core/page-tree'
+import type { Page } from '@core/page-tree'
 import {
-  resolveTemplateChain,
+  resolveTemplateChainFromPages,
   treeHasOutlet,
   type RouteResolutionContext,
 } from '@core/templates'
@@ -37,8 +46,12 @@ function levelRank(page: Page): number {
  * The templates that wrap `activeDoc` at publish time, ordered outermost-first.
  * Empty when nothing wraps it (the active doc is an `everywhere` layout, or no
  * matching wrapper template has an outlet to host it).
+ *
+ * `templatePages` is the site's template-marked pages ONLY (every page where
+ * `isTemplatePage(page)` is true) — see this module's perf doc above for why
+ * the caller passes this narrower list rather than the whole `SiteDocument`.
  */
-export function resolveEditorWrapperTemplates(site: SiteDocument, activeDoc: Page): Page[] {
+export function resolveEditorWrapperTemplates(templatePages: Page[], activeDoc: Page): Page[] {
   const myRank = levelRank(activeDoc)
   // An `everywhere` template (rank 0) is the broadest — never wrapped.
   if (myRank <= 0) return []
@@ -56,7 +69,7 @@ export function resolveEditorWrapperTemplates(site: SiteDocument, activeDoc: Pag
   // Keep only templates strictly broader than the active doc (so a sibling
   // postTypes winner for the same route never wraps another postTypes template)
   // that actually have an outlet to host the wrapped content.
-  return resolveTemplateChain(site, ctx).filter(
+  return resolveTemplateChainFromPages(templatePages, ctx).filter(
     (page) => page.id !== activeDoc.id && levelRank(page) < myRank && treeHasOutlet(page),
   )
 }

@@ -109,3 +109,51 @@ export function useInspectComputedStyle(
   if (!element) return null
   return readComputedStyleSnapshot(element)
 }
+
+/**
+ * Track F1 — the generalized sibling of `useInspectComputedStyle`, for the
+ * Properties Panel rather than the read-only Inspect panel. Reads
+ * `getComputedStyle` for an ARBITRARY set of CSS property keys (camelCase,
+ * the same naming `CSSStyleDeclaration`/`CSSPropertyBag` both use) instead of
+ * a fixed shape — the Properties Panel curates ~90 properties across its
+ * sections (`ALL_CURATED_CSS_PROPERTIES`), far more than `ComputedStyleSnapshot`
+ * models, and every one of them is a legitimate camelCase accessor on a real
+ * `CSSStyleDeclaration` (the CSS2Properties convenience interface every
+ * browser implements).
+ *
+ * Same synchronous, render-time read as `useInspectComputedStyle` — no
+ * `useEffect`/`useState`, no polling — for the same reason: `getComputedStyle`
+ * is a pure read with no side effects, and the caller already re-renders on
+ * every relevant change (selection, breakpoint, and — for the Properties
+ * Panel specifically — every keystroke that edits the selected node, since
+ * that keystroke's own store write already changes the node's object
+ * identity and re-renders the panel to show it; this read does not add an
+ * EXTRA re-render, it piggybacks the one already happening). It does not
+ * cascade to other frames or other nodes — the caller's own subscriptions
+ * (`selectedNodeId`, `selectedNode`, `activeBreakpointId`) are the only
+ * narrow slice driving it, same discipline the C3 track's narrow-slice fix
+ * used for whole-`site` selectors.
+ *
+ * Returns `null` when the node has no rendered element yet (no canvas
+ * mounted — e.g. every existing panel test, which render `PropertiesPanel`
+ * with no live iframe). Callers must treat `null` as "no frame truth
+ * available" and fall back to the existing spec-default table, not as
+ * "everything is unset."
+ */
+export function useFrameComputedStyleValues(
+  nodeId: string | null,
+  activeBreakpointId: string,
+  properties: ReadonlyArray<string>,
+): Record<string, string> | null {
+  if (!nodeId) return null
+  const element = resolveElement(nodeId, activeBreakpointId)
+  if (!element) return null
+  const view = element.ownerDocument.defaultView
+  if (!view) return null
+  const cs = view.getComputedStyle(element) as unknown as Record<string, string>
+  const values: Record<string, string> = {}
+  for (const prop of properties) {
+    values[prop] = cs[prop] ?? ''
+  }
+  return values
+}

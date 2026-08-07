@@ -56,6 +56,23 @@
     padding: 0;
 }
 
+/* ── Track F1 / S6 — Element + Class blocks, shown together ─────────────────
+   Each write target's own composer gets a small label so it's always clear
+   which one a row belongs to — the two blocks are independent, not tabs. */
+.targetBlock {
+    display: grid;
+    gap: var(--space-px);
+}
+
+.targetBlockLabel {
+    padding: var(--space-2xs) var(--space-l);
+    color: var(--text-subtle);
+    font-size: var(--text-2xs);
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+}
+
 /* ────────────────────────────────────────────────────────────────────────────
    LockedStylePreview
    ──────────────────────────────────────────────────────────────────────────── */

@@ -20,7 +20,7 @@ The load path is `GET /admin/api/studio/load?dir=<abs>` → `loadStudioPages` (`
 - **The parser SELECTS one `return`** (parser-06) — the last JSX-bearing one, the component's "normal" state — and leaves it unlocked. A screen with `if (stage === 'loading') return …` shows the branch that survives every guard; the guard branches are recorded as `label` + source location (`ParsedNode.branchAlternatives`), never rendered. A ternary/`&&` inside JSX gets the same treatment one level down (parser-07 closed a gap where `&&` used to render unconditionally, with no static check at all), and both honor a `useState(<literal>)` binding's own initial value as a real, first-paint answer when the condition names one.
 - **A component's array/object props survive.** `<ActionSheet actions={[{ label }, { label }]}/>` reaches the canvas as a real array, so the design-system component renders its buttons. HTML elements stay scalar-only (an attribute is a string).
 - **Non-literal values are statically resolved** where it is safe to — `{t.homepage.greeting}` becomes `"Hi Muhammad"`. The resolved **prop** is read-only (writing an edited literal back over the expression would destroy the binding in the user's source file), but the **node is not locked**: it is an ordinary element at a known line and column.
-- **Imported CSS is read-only.** `.css` files become `StyleRule`s and `node.classIds`, but **nothing is ever written back to a `.css` file**. An edit made in the CSS Classes panel is lost on the next reload. See [CSS is one-way](#css-is-one-way).
+- **CSS writes back two ways.** A rule *declaration* edited in the CSS Classes panel rewrites its `.css` file on save, for plain hand-authored stylesheets — see [CSS write-back](#css-write-back-ws-63-panel-02). An element's own `className` *attribute* — adding/removing a class token, independent of whether that class has a mapped rule at all — writes back through a separate codemod, and is how a Tailwind element is edited at all, since a Tailwind utility class has no `.css` declaration to rewrite — see [`className` write-back](#classname-write-back-track-b2-setjsxclassname).
 - **Writeback covers values, plus three structural verbs** — a sibling reorder, a delete (`struct-01`, below) and an insert (adding a design-system component from the picker, which writes the element *and* its import) — and only for nodes whose id is a real single source location. Every other structural gesture (reparent, duplicate, wrap) **refuses with a reason**; none of them silently no-ops any more.
 
 ---
@@ -688,12 +688,40 @@ The path, end to end:
 | `important-override` | a covering shorthand carries `!important` |
 | `compiled-stylesheet` | `.module.css`, `.min.css`, or a `dist/`-style build path (`classifyStylesheetEditability`) |
 
-**What still does not reach disk**, reported to the user rather than dropped silently (`meta-03` decision 3's third tier):
+**What still does not reach disk as a rule declaration**, reported to the user rather than dropped silently (`meta-03` decision 3's third tier):
 
-- A rule with **no mapped `.css` source** — a Tailwind/Sass/PostCSS-generated class or a CSS Modules compile. The correct edit for Tailwind is an element `className` change, which is a separate feature; until it exists the user is told the change is canvas-only.
+- A rule with **no mapped `.css` source** — a Tailwind/Sass/PostCSS-generated class or a CSS Modules compile. There is no stylesheet declaration to rewrite, so this refusal is permanent, not a gap awaiting a feature — but the element carrying that class is not stuck: its own `className` attribute is a *different* write target, covered next.
 - A **real breakpoint/condition override** (`mobile`, a `@media` condition). Writing one needs `setDeclarationAtMedia` plus the condition's query, which the `css` edit kind does not carry yet.
 
 Both surface as toasts on save. Silence is the one outcome that loses a user's work without telling them, so neither is a silent skip.
+
+### `className` write-back (Track B2, `setJsxClassName`)
+
+The previous section rewrites a rule's *declaration* in its `.css` file. This one rewrites the *attribute* — an element's own `className` — and is the write path that makes a Tailwind element editable at all: a fill/spacing change on a Tailwind element is `bg-red-500` → `bg-blue-600`, a class-token swap on the element, not a stylesheet declaration, so it needs no mapped `.css` source and is not subject to the `unmapped` refusal above.
+
+`kind: 'class'` edits (`ClassEditSchema` in `server/handlers/studioEditSchemas.ts`) carry `add`/`remove` as class **names** (`site.styleRules[id].name`), never `sc-<hash>` ids — the codemod edits the literal token text in the user's `className`, and ids are Studio's own bookkeeping with no meaning in source. They dispatch to `setJsxClassName` (`src/core/ast-codemods/setJsxClassName.ts`), which understands:
+
+| `className` shape | Handling |
+|---|---|
+| absent | creates the attribute |
+| `className="a b"` (plain string literal) | token add/remove in place |
+| `className={"a b"}` / `` className={`a b`} `` (static expression) | same, token add/remove |
+| `` className={`a ${x}`} `` (dynamic template) | ADD appends to the static head only; REMOVE refuses `template-dynamic` — a token might live in the interpolated part, unreadable from source text |
+| `className={cn('a', x)}` / `clsx`/`classNames`/`classnames` | ADD merges into a literal string argument (or appends one); REMOVE strips the token from every literal argument it appears in, best-effort — a token reachable only through a non-literal argument (`isActive && 'active'`) is left alone |
+
+and refuses, by name, rather than guessing:
+
+| Refusal | When |
+|---|---|
+| `css-module-binding` | `className={styles.card}`, a default import from a `*.module.css` file — the honest edit is the class's own declaration, not this binding |
+| `template-dynamic` | removing a token from a dynamic template literal (see table above) |
+| `unsupported-call` | a function call other than `cn`/`clsx`/`classNames`/`classnames` |
+| `spread-attribute` | `className={...spread}` |
+| `unsupported-expression` | a bare identifier, ternary, or any other shape this codemod does not recognize |
+
+A request where every `add` token is already present and every `remove` token is already absent is a silent no-op — `{ ok: true }` with the file untouched — so a re-sent, already-applied edit never re-refuses or rewrites. A pure token **reorder** (no add/remove) writes nothing, by design: token order inside a `className` attribute has no effect on CSS cascade order — that is decided by declaration order in the stylesheet — so there is nothing honest to persist.
+
+This replaced Phase 0 item 0.6's honesty-only stopgap. `classAssignmentUnsavedNotice.ts`'s toast is narrower now: it fires only for a node with no writable source location at all (a `.map` row, a synthetic root) — see `src/admin/pages/site/studio/classNameWriteback.ts`'s `collectClassNameEdits`, which is what `saveSite` calls to turn a `classIds` drift into `kind: 'class'` edits.
 
 ## Structural write-back — move and delete (`struct-01`)
 

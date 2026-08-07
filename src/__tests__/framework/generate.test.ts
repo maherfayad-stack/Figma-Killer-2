@@ -112,7 +112,7 @@ describe('framework generation facade', () => {
     expect(baseRoot).toContain('--primary: hsla(238, 100%, 62%, 1);')
     expect(baseRoot).toContain('--text-')
     expect(baseRoot).toContain('--space-')
-    expect(css).toContain(':root.theme-alt')
+    expect(css).toContain("html[data-studio-scheme='dark']")
     expect(css).toContain('--primary: hsla(238, 100%, 42%, 1);')
   })
 

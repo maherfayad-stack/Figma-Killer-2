@@ -3,6 +3,7 @@ import type { Page, PageNode } from '@core/page-tree'
 import { reindexNodeParents } from '@core/page-tree'
 import {
   getDomDropZone,
+  previewDomDropRefusal,
   resolveDomDropTarget,
   type DomDropRowMeta,
 } from '@site/panels/DomPanel/domPanelDnd'
@@ -154,5 +155,42 @@ describe('DOMPanel DnD target resolution', () => {
     expect(resolveDomDropTarget({ page: p, draggedId: 'locked', overId: 'b', zone: 'before', canHaveChildren })).toBeNull()
     expect(resolveDomDropTarget({ page: p, draggedId: 'b', overId: 'b', zone: 'inside', canHaveChildren })).toBeNull()
     expect(resolveDomDropTarget({ page: p, draggedId: 'b', overId: 'b', zone: 'before', canHaveChildren })).toBeNull()
+  })
+
+  it('previews a source-writeback refusal for a structurally valid tree-row target (G5)', () => {
+    const inlinedA = 'pages/Home.tsx:10:4~ui/Card.tsx:2:4'
+    const inlinedB = 'pages/Home.tsx:12:4~ui/Card.tsx:2:4'
+    const p = page({
+      root: node('root', 'base.body', ['container']),
+      container: node('container', 'base.container', [inlinedA, inlinedB]),
+      [inlinedA]: node(inlinedA, 'base.text'),
+      [inlinedB]: node(inlinedB, 'base.text'),
+    })
+
+    const target = resolveDomDropTarget({
+      page: p,
+      draggedId: inlinedA,
+      overId: inlinedB,
+      zone: 'after',
+      canHaveChildren,
+    })
+    // The tree-shape resolver alone considers this a perfectly valid target.
+    expect(target).not.toBeNull()
+
+    const refusal = previewDomDropRefusal(p, target!)
+    expect(refusal).not.toBeNull()
+    expect(refusal?.overId).toBe(inlinedB)
+    expect(refusal?.message).toContain('shared component')
+  })
+
+  it('does not invent a refusal for an ordinary CMS (nanoid) tree', () => {
+    const p = page({
+      root: node('root', 'base.body', ['a', 'b']),
+      a: node('a', 'base.text'),
+      b: node('b', 'base.text'),
+    })
+    const target = resolveDomDropTarget({ page: p, draggedId: 'a', overId: 'b', zone: 'after', canHaveChildren })
+    expect(target).not.toBeNull()
+    expect(previewDomDropRefusal(p, target!)).toBeNull()
   })
 })

@@ -1,4 +1,4 @@
-import type { Board, BoardFrame, BoardsFile, DocBlock, NoteColor, StickyNote } from './types'
+import type { Board, BoardFrame, BoardGuide, BoardsFile, DocBlock, NoteColor, StickyNote } from './types'
 import type { PreviewAxes } from './previewAxes'
 
 const NOTE_COLORS: NoteColor[] = ['yellow', 'green', 'blue', 'pink', 'gray']
@@ -84,6 +84,16 @@ function coerceDoc(raw: unknown): DocBlock | undefined {
   return { id, x, y, w, h, markdown }
 }
 
+/** D1 — a persisted ruler guide. Mirrors `coerceNote`/`coerceDoc`'s tolerant shape. */
+function coerceGuide(raw: unknown): BoardGuide | undefined {
+  if (!isPlainObject(raw)) return undefined
+  const id = raw.id
+  if (typeof id !== 'string' || id.length === 0) return undefined
+  if (raw.axis !== 'x' && raw.axis !== 'y') return undefined
+  if (typeof raw.position !== 'number' || !Number.isFinite(raw.position)) return undefined
+  return { id, axis: raw.axis, position: raw.position }
+}
+
 function coerceBoard(raw: unknown): Board | undefined {
   if (!isPlainObject(raw)) return undefined
   const id = raw.id
@@ -102,8 +112,13 @@ function coerceBoard(raw: unknown): Board | undefined {
   const docs: DocBlock[] = Array.isArray(raw.docs)
     ? raw.docs.map(coerceDoc).filter((d): d is DocBlock => d !== undefined)
     : []
+  // `guides` (D1) is newer still — same "missing/malformed defaults to []"
+  // tolerance as `docs` above.
+  const guides: BoardGuide[] = Array.isArray(raw.guides)
+    ? raw.guides.map(coerceGuide).filter((g): g is BoardGuide => g !== undefined)
+    : []
 
-  return { id, name, frames, notes, docs }
+  return { id, name, frames, notes, docs, guides }
 }
 
 export function parseBoardsFile(raw: unknown): BoardsFile {

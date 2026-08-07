@@ -112,7 +112,12 @@ export function MediaSidebar({ workspace, activePanel, onActivePanelChange }: Me
       >
         <div className={panelRailStyles.itemGroup}>
           {railItems.map((item, index) => {
-            const Icon = item.icon
+            // Named RailIcon, not Icon — a PascalCase local named literally
+            // `Icon` collides with the direct-icon-imports architecture
+            // gate's `<Icon\b` regex, which exists to ban the *lazy*
+            // `pixel-art-icons/Icon` wrapper. Same pattern AlignBar.tsx /
+            // StyleCategoryRail.tsx use.
+            const RailIcon = item.icon
             const active = activePanel === item.id
             const action = active ? 'Close' : 'Open'
             const accent = railAccents[index] ?? 'mint'
@@ -136,7 +141,7 @@ export function MediaSidebar({ workspace, activePanel, onActivePanelChange }: Me
                 className={panelRailStyles.railButton}
               >
                 <span className={panelRailStyles.activeIndicator} aria-hidden="true" />
-                <Icon size={16} className={panelRailStyles.railIcon} />
+                <RailIcon size={16} className={panelRailStyles.railIcon} />
               </Button>
             )
           })}

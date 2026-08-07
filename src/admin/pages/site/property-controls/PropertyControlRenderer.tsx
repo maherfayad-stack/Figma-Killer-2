@@ -79,6 +79,8 @@ interface RenderControlOptions {
    */
   sourceLockReason?: string
   dynamicBinding?: DynamicBindingRenderContext
+  /** E2.5 — forwarded to `SlotControl` only; see `ControlProps.ownerNodeId`. */
+  ownerNodeId?: string
 }
 
 /**
@@ -130,6 +132,7 @@ export function PropertyControlRenderer({
   disabled = false,
   sourceLockReason,
   dynamicBinding,
+  ownerNodeId,
 }: RenderControlOptions) {
   const layout = resolveControlLayout(control)
 
@@ -151,6 +154,7 @@ export function PropertyControlRenderer({
     isOverride,
     disabled: effectiveDisabled,
     layout,
+    ownerNodeId,
   }
 
   // Nothing writable behind this control: either the value has no scalar form,

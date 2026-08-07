@@ -1,3 +1,4 @@
+import { Type, type Static } from '@sinclair/typebox'
 import type { PreviewAxes } from './previewAxes'
 
 export type NoteColor = 'yellow' | 'green' | 'blue' | 'pink' | 'gray'
@@ -57,12 +58,42 @@ export interface DocBlock {
   markdown: string
 }
 
+/**
+ * D1 — a PERSISTED ruler guide (dragged out from `CanvasRulers`, saved to
+ * `boards.json`). NOT the same thing as `SnapGuide` (`canvas/boardSnapping.ts`)
+ * / `boardSnapGuides` (`boardSlice.ts`) — those are transient, computed-on-
+ * every-drag alignment lines that never persist. Schema-first (TypeBox) per
+ * this field's own contract, unlike its `BoardFrame`/`StickyNote`/`DocBlock`
+ * siblings above, which predate that convention in this module and stay
+ * plain interfaces — `axis`/`position` is intentionally the ONLY shape here,
+ * so a schema costs nothing and buys a real `Static<>`-derived type.
+ */
+export const BoardGuideSchema = Type.Object({
+  id: Type.String(),
+  axis: Type.Union([Type.Literal('x'), Type.Literal('y')]),
+  /** Board-space coordinate the guide sits at (board x for a vertical/`'x'` guide, board y for a horizontal/`'y'` guide). */
+  position: Type.Number(),
+})
+
+export type BoardGuide = Static<typeof BoardGuideSchema>
+
 export interface Board {
   id: string
   name: string
   frames: BoardFrame[]
   notes: StickyNote[]
   docs: DocBlock[]
+  /**
+   * Persisted ruler guides (D1). OPTIONAL, unlike `notes`/`docs` — every
+   * OTHER place in the codebase that constructs a `Board` object literal
+   * (test fixtures across `server/ai/**`, `server/handlers/**`, this
+   * module's own tests) predates this field, so requiring it would silently
+   * become a breaking type change for files this change has no business
+   * touching. Read via `board.guides ?? []`, same as any other optional
+   * array field. `serialize.ts`'s `coerceGuide` always produces `[]` (never
+   * omits the key) for anything this codebase itself reads back from disk.
+   */
+  guides?: BoardGuide[]
 }
 
 export interface BoardsFile {

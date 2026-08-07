@@ -1,5 +1,6 @@
 import type { Page } from '@core/page-tree'
 import {
+  previewStructuralMove,
   resolvePageTreeDropTarget,
   type PageTreeDropPosition,
   type PageTreeDropTarget,
@@ -8,6 +9,19 @@ import {
 type DomDropZone = PageTreeDropPosition
 
 export type DomDropTarget = PageTreeDropTarget
+
+/**
+ * G5 — the outcome of resolving a tree-row drop when the position is
+ * structurally valid (`resolveDomDropTarget` returned a target) but the
+ * SOURCE WRITE `previewStructuralMove` would refuse it (shared component,
+ * route chrome, …). Distinguishes "no valid position here at all" (`null`
+ * from `resolveDomDropTarget`) from "this position exists, but the store's
+ * own gate would still refuse it" — see `previewStructuralMove`'s own doc.
+ */
+export interface DomDropRefusal {
+  overId: string
+  message: string
+}
 
 interface DomDropRowRect {
   top: number
@@ -26,8 +40,9 @@ interface ResolveDomDropTargetInput {
   draggedId: string
   /**
    * All ids being dragged. Optional — defaults to `[draggedId]` for
-   * single-drag callers. Cycle and no-op checks consider every id in this
-   * list; index normalization is computed against the pivot only.
+   * single-drag callers. Cycle, no-op, AND index-normalization checks all
+   * consider every id in this list (G10 — normalization used to discount
+   * only the pivot, landing a multi-drag group `n-1` slots too far right).
    */
   draggedIds?: string[]
   overId: string
@@ -74,4 +89,20 @@ export function resolveDomDropTarget({
     zone,
     canHaveChildren,
   })
+}
+
+/**
+ * G5 — asks whether a STRUCTURALLY VALID `target` (already resolved by
+ * `resolveDomDropTarget`) would be refused by the source write-back gate.
+ * Kept as a SEPARATE call rather than folded into `resolveDomDropTarget`
+ * itself so a caller that only cares about tree shape (an ordinary CMS tree,
+ * a test fixture with no source-derived ids) never pays for it — every real
+ * call site in the editor calls both, in sequence, on every resolved target.
+ * `null` means "would write fine" — includes the ordinary case of an
+ * un-imported CMS tree, where `previewStructuralMove` always allows.
+ */
+export function previewDomDropRefusal(page: Page, target: DomDropTarget): DomDropRefusal | null {
+  const preview = previewStructuralMove(page, target.draggedIds, target.parentId, target.index)
+  if (preview.ok) return null
+  return { overId: target.overId, message: preview.refusal.message }
 }

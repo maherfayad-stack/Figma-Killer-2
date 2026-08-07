@@ -9,12 +9,18 @@
  * and turning them into `FrameworkColorToken`/`FrameworkSpacingGroup`/
  * `FrameworkTypographyGroup` entries.
  *
- * Split across three files (module-size-budget discipline, same reason
+ * Split across five files (module-size-budget discipline, same reason
  * `styleCompile.ts` split into Tier0/Tier1/file-read collaborators):
  *   - `tokenExtractCssScan.ts` — the `:root` scan + var() resolution +
  *     value-first classification engine (`classifyCssText`).
- *   - `tokenExtractTailwind.ts` — the Tailwind `theme.extend` static reader
- *     (`extractTailwindThemeTokens`).
+ *   - `tokenExtractTailwind.ts` — the Tailwind theme (`theme` AND
+ *     `theme.extend`, merged) static reader (`extractTailwindThemeTokens`).
+ *   - `tokenExtractScss.ts` — the Sass `$variable` static reader
+ *     (`extractScssVariableTokens`, T6/`STUDIO-FIGMA-PARITY-PLAN.md` §11).
+ *   - `tokenExtractJsTheme.ts` — the open-project JS/TS/JSON theme-file
+ *     reader (`extractJsThemeTokens`, T6 — reuses
+ *     `designImport/parseCssTokens.ts`'s `extractJsTokens`/`extractJsonTokens`,
+ *     previously wired only to the EXTERNAL npm/GitHub design-import wizard).
  *   - `tokenExtractBuild.ts` — `ClassifiedTokens -> FrameworkSettings`
  *     (`buildFrameworkSettings`) — the "Shape gap: typography is lossy by
  *     design" doc lives there, next to the code it explains.
@@ -30,7 +36,13 @@
  *      FROM that output (rather than re-globbing the workspace) means this
  *      module works through the exact same compiled text Tailwind/Sass/CSS-
  *      Modules projects already produce for the canvas — one producer, two
- *      consumers (`studioCss.ts`'s style-rule registry, and this).
+ *      consumers (`studioCss.ts`'s style-rule registry, and this). This is
+ *      also where Tailwind v4's `@theme { ... }` block resolves, once
+ *      compiled — `tokenExtractCssScan.ts`'s scanner reads it directly too
+ *      (see that module's doc), so a Tier-0 `@theme` block in the project's
+ *      OWN uncompiled CSS (not behind a `@import "tailwindcss"` that needs
+ *      Tier 1 to resolve) is already covered by this source, not a separate
+ *      one.
  *   2. **`tailwind-theme`** — only tried when (1) found nothing AND the probe
  *      detected Tailwind. Static read only — see `tokenExtractTailwind.ts`.
  *   3. **`vendor-css`** — `compiledStyles.vendorCss` (WS-2.3's read-only
@@ -40,6 +52,16 @@
  *      corpus actually resolves through, once `node_modules` is installed
  *      (vendor CSS needs no Tier 1 trust promotion, only the package present
  *      on disk — see `styleCompile.ts`'s `collectVendorCss`).
+ *   4. **`scss-vars`** — only tried when (1)–(3) found nothing AND the probe
+ *      detected Sass. Static read of every `.scss` file's top-level
+ *      `$variable` declarations — see `tokenExtractScss.ts`. Weaker signal
+ *      than the above (an un-re-exported Sass variable may not reach any
+ *      compiled output at all), so tried only once everything stronger has
+ *      failed.
+ *   5. **`js-theme`** — only tried when (1)–(4) found nothing. A
+ *      conventionally-named theme file (`theme`/`tokens`/`design-tokens`/
+ *      `colors`/`palette`, any of `.ts`/`.tsx`/`.js`/`.jsx`/`.json`)
+ *      anywhere in the OPEN project — see `tokenExtractJsTheme.ts`.
  *
  * `'none'` when every source came up empty — reported honestly via a
  * `no-design-tokens-found` warning, never a fabricated default.
@@ -90,7 +112,9 @@ import { resolveProjectProfile } from './projectProbe'
 import type { ProbeWarning, ProjectProfile } from './projectProfileSchema'
 import { classifyCssText, hasAnyTokens, type ClassifiedTokens } from './tokenExtractCssScan'
 import { extractTailwindThemeTokens } from './tokenExtractTailwind'
-import { buildFrameworkSettings } from './tokenExtractBuild'
+import { extractScssVariableTokens, findScssFileCandidates } from './tokenExtractScss'
+import { extractJsThemeTokens, findJsThemeFileCandidates } from './tokenExtractJsTheme'
+import { buildFrameworkSettings, type ExtractedColorOrigin } from './tokenExtractBuild'
 
 export type { ClassifiedTokens } from './tokenExtractCssScan'
 
@@ -98,7 +122,7 @@ export type { ClassifiedTokens } from './tokenExtractCssScan'
 // extractProjectTokens — the entry point
 // ---------------------------------------------------------------------------
 
-export type TokenExtractionSource = 'project-css' | 'tailwind-theme' | 'vendor-css' | 'none'
+export type TokenExtractionSource = 'project-css' | 'tailwind-theme' | 'vendor-css' | 'scss-vars' | 'js-theme' | 'none'
 
 export interface TokenExtractionCounts {
   colors: number
@@ -151,11 +175,42 @@ export async function extractProjectTokens(dir: string, profile: ProjectProfile)
     }
   }
 
+  // T6 (STUDIO-FIGMA-PARITY-PLAN.md §11) — a Sass design system authored
+  // purely in `$variables` (never re-exported as custom properties) and a
+  // JS/TS theme object in the OPEN project both used to be invisible here,
+  // even though the identical shapes were already handled elsewhere
+  // (Tier-1 Sass compilation for the former; the external design-import
+  // wizard for the latter). Tried last, in this order, because both are
+  // Tier-0 TEXT scans of source files that may not agree with what actually
+  // ships (an un-re-exported Sass variable, a theme object the app never
+  // imports) — real signal, but weaker than something already reachable
+  // through compiled/vendor CSS.
+  if (!hasAnyTokens(tokens) && profile.styleToolchain.sass) {
+    const scssFiles = findScssFileCandidates(dir)
+    const combined = scssFiles.map((relPath) => readCappedFile(join(dir, ...relPath.split('/'))) ?? '').join('\n')
+    const scssTokens = extractScssVariableTokens(combined)
+    if (hasAnyTokens(scssTokens)) {
+      tokens = scssTokens
+      source = 'scss-vars'
+    }
+  }
+
+  if (!hasAnyTokens(tokens)) {
+    const jsThemeFiles = findJsThemeFileCandidates(dir)
+    if (jsThemeFiles.length > 0) {
+      const jsTokens = extractJsThemeTokens(dir, jsThemeFiles)
+      if (hasAnyTokens(jsTokens)) {
+        tokens = jsTokens
+        source = 'js-theme'
+      }
+    }
+  }
+
   if (!hasAnyTokens(tokens)) {
     source = 'none'
     warnings.push({
       code: 'no-design-tokens-found',
-      message: "No design tokens were found in this project's CSS custom properties, Tailwind theme, or vendor package CSS.",
+      message: "No design tokens were found in this project's CSS custom properties, Tailwind theme, vendor package CSS, Sass $variables, or a conventionally-named theme file (theme/tokens/design-tokens/colors/palette).",
       fix: compiled.vendorCss === '' && compileWarnings.some((w) => w.code === 'vendor-css-requires-install')
         ? 'Run dependency install, then re-scan — this project imports a package stylesheet that has not been resolved yet.'
         : "Add design tokens as `:root` custom properties, or configure Tailwind's theme, then re-scan.",
@@ -177,7 +232,13 @@ export async function extractProjectTokens(dir: string, profile: ProjectProfile)
     })
   }
 
-  return { framework: buildFrameworkSettings(tokens), source, counts: countTokens(tokens), warnings }
+  // `source === 'none'` only occurs when `tokens` has zero colors/spacing/
+  // typography entries (`hasAnyTokens` failed for every attempted source),
+  // so `buildColorTokens` never actually reads this placeholder value in
+  // that branch — `'project-css'` here is a type-satisfying default, not a
+  // real claim about provenance.
+  const colorOrigin: ExtractedColorOrigin = source === 'none' ? 'project-css' : source
+  return { framework: buildFrameworkSettings(tokens, colorOrigin), source, counts: countTokens(tokens), warnings }
 }
 
 // ---------------------------------------------------------------------------

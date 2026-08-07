@@ -71,7 +71,6 @@ const GLOBAL_RAIL_ITEMS: PrimaryRailItem[] = [
 ]
 
 interface PanelRailProps {
-  workspace?: 'site' | 'content' | 'media'
   editable?: boolean
   canUseAiChat?: boolean
   railOnly?: boolean
@@ -84,7 +83,6 @@ const getPluginPanelsSnapshot = () => pluginRuntime.getPanels()
 const SERVER_PLUGIN_PANELS_SNAPSHOT: ReturnType<typeof getPluginPanelsSnapshot> = []
 
 export function PanelRail({
-  workspace = 'site',
   editable = true,
   canUseAiChat = true,
   railOnly = false,
@@ -131,8 +129,16 @@ export function PanelRail({
     : PRIMARY_RAIL_ITEMS.filter((item) => READ_ONLY_RAIL_IDS.has(item.id))
   const visibleGlobalItems = canUseAiChat ? GLOBAL_RAIL_ITEMS : []
 
+  // D3 — `workspace` was a dead prop (`'site' | 'content' | 'media'`; only
+  // `'site'` was ever passed, and the `'content'`/`'media'` workspaces don't
+  // exist on disk). Deleted the prop, but the identity STRING keeps its
+  // literal `'site:'` prefix rather than dropping it outright —
+  // `assignRailAccents` hashes this exact string per item, and several rail
+  // colors (see the `primaryAccents` comment below) are already deliberately
+  // pinned to today's hash output; changing the string would silently
+  // reshuffle colors for users with no functional prop left to explain why.
   function railIdentity(item: PrimaryRailItem) {
-    return `${workspace}:${item.id}:${item.label}`
+    return `site:${item.id}:${item.label}`
   }
 
   function revealBuiltInPanel(panelId: LeftSidebarPanelId) {

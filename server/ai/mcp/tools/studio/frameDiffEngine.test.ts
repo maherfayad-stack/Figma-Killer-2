@@ -160,4 +160,44 @@ describe('reconcileReference', () => {
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.error).toContain('aspect ratio')
   })
+
+  it('names the vision-safe capture cap when a resample looks caused by it (A2)', async () => {
+    // studio_export_frames clamps BOTH width and height at ~1568px. A
+    // baseline whose captured HEIGHT lands right at that cap, while its
+    // WIDTH still matches the reference, is the routine tall-mobile-screen
+    // case — the note should call this out by name rather than leave the
+    // caller to infer it from a bare `method: "resampled"`.
+    const referenceWidth = 400
+    const referenceHeight = 1600
+    const baselineWidth = 400
+    const baselineHeight = 1568
+    const reference = new PNG({ width: referenceWidth, height: referenceHeight })
+    const result = await reconcileReference(
+      PNG.sync.write(reference),
+      referenceWidth,
+      referenceHeight,
+      baselineWidth,
+      baselineHeight,
+    )
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.result.method).toBe('resampled')
+      expect(result.result.note).toBeDefined()
+      expect(result.result.note).toContain('vision-safe')
+      expect(result.result.note).toContain('height')
+    }
+  })
+
+  it('names the mismatched axis without claiming the vision cap when the resample is not near it', async () => {
+    // Small width-only mismatch, well within the 5% aspect-ratio tolerance,
+    // and both dimensions far below the vision-safe cap.
+    const result = await reconcileReference(PNG.sync.write(new PNG({ width: 208, height: H })), 208, H, W, H)
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.result.method).toBe('resampled')
+      expect(result.result.note).toBeDefined()
+      expect(result.result.note).not.toContain('vision-safe')
+      expect(result.result.note).toContain('width')
+    }
+  })
 })

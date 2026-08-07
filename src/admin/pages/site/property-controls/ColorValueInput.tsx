@@ -25,6 +25,13 @@ interface ColorValueInputProps {
    */
   onPreview?: (value: string) => void
   onClearPreview?: () => void
+  /**
+   * A resolved CSS colour to compute a live WCAG contrast badge against — see
+   * `TokenizedColorField`'s doc. Passed through untouched; omitted by any
+   * caller that doesn't yet resolve a background for the node/class being
+   * edited (T9, `STUDIO-FIGMA-PARITY-PLAN.md` §11).
+   */
+  contrastAgainst?: string
 }
 
 /**
@@ -51,6 +58,7 @@ export function ColorValueInput({
   onChange,
   onPreview,
   onClearPreview,
+  contrastAgainst,
 }: ColorValueInputProps) {
   // Hover previews are gated by the shared "Preview suggestions on hover"
   // preference; when off we don't wire the preview callbacks through.
@@ -110,6 +118,7 @@ export function ColorValueInput({
       onTokenSelect={handleCommit}
       onTokenPreview={previewActive ? onPreview : undefined}
       onTokenPreviewClear={previewActive ? onClearPreview : undefined}
+      contrastAgainst={contrastAgainst}
     />
   )
 }

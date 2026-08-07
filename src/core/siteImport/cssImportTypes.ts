@@ -35,8 +35,15 @@ export type NewStyleRule = Omit<StyleRule, 'id' | 'createdAt' | 'updatedAt'>
  *
  * Phase 1 (CSS parser) kinds:
  * - `dropped-at-rule`: an @-rule that the engine can't model was silently
- *   dropped (@page, @namespace, @layer, etc.). `@keyframes`, `@font-face`,
- *   `@supports`, and `@container` are imported through dedicated paths.
+ *   dropped (@page, @namespace, etc.). `@keyframes`, `@font-face`,
+ *   `@supports`, `@container`, and `@layer` are imported through dedicated
+ *   paths — `@layer` is flattened out by `unwrapCssLayers` (see
+ *   `cssToStyleRules.ts`'s "@layer pre-pass") rather than dropped.
+ * - `layer-order-flattened`: the source declared an explicit `@layer a, b,
+ *   c;` order and then wrote the named blocks in a different order than
+ *   declared. Flattening `@layer` replaces the browser's declared-order
+ *   cascade priority with source order, so this stylesheet's cascade may not
+ *   exactly match the original — see `unwrapCssLayers`'s doc comment.
  * - `unmatched-media-query`: an @media query that could not be matched to any
  *   defined viewport context. Inner declarations are still imported under a
  *   reusable media condition so nothing is silently lost.
@@ -80,6 +87,7 @@ export type NewStyleRule = Omit<StyleRule, 'id' | 'createdAt' | 'updatedAt'>
  */
 type ImportWarningKind =
   | 'dropped-at-rule'
+  | 'layer-order-flattened'
   | 'unmatched-media-query'
   | 'invalid-rule'
   | 'unknown-property'

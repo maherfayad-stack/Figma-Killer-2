@@ -23,6 +23,8 @@ import {
   type ParsedNode,
   type StaticEvalOptions,
 } from '@core/page-parser'
+import { decodeSourceNodeId, hasWritableSourceLocation, isSourceDerivedNodeId } from '@core/page-tree'
+import { studioSlotNodeId } from '@core/utils/studioSlotSentinel'
 
 let tmpDir: string
 
@@ -310,5 +312,124 @@ describe('JSX-valued icon props', () => {
     expect(span?.name).toBe('span')
     // Not a normal DOM child of Cell — only reachable via the sentinel.
     expect(cell.children).not.toContain(slotId)
+  })
+})
+
+describe('E2.3 — fragment-valued slots (studio.slot)', () => {
+  it('captures a multi-element (fragment) slot value as a studio.slot container at the FRAGMENT\'s own source location', () => {
+    write(
+      'pages/SheetLayout.jsx',
+      [
+        'export default function SheetLayout() {',
+        '  return (',
+        '    <Sheet',
+        '      header={',
+        '        <>',
+        '          <BackButton />',
+        '          <span>Title</span>',
+        '        </>',
+        '      }',
+        '    />',
+        '  )',
+        '}',
+        '',
+      ].join('\n'),
+    )
+
+    const nodes = loadNodes('pages/SheetLayout.jsx', evalOptions())
+    const sheet = named(nodes, 'Sheet')
+    const headerValue = sheet.props.header
+    expect(typeof headerValue).toBe('string')
+    const slotId = studioSlotNodeId(headerValue)
+    expect(slotId).toBeDefined()
+    expect(slotId).not.toBe(headerValue) // proves the sentinel prefix was actually present
+
+    // ⚠️ The published id grammar E2.4/E2.5 depend on: a real, decodable
+    // `rel:line:col` — the fragment's OWN location, never a minted id. A
+    // minted id here would make `refuseMintedNodeInsert` correctly (but for
+    // the wrong stated reason) refuse every future insert into this slot.
+    expect(isSourceDerivedNodeId(slotId!)).toBe(true)
+    expect(hasWritableSourceLocation(slotId!)).toBe(true)
+    // Line 5, column 9 — where `<>` (the fragment's own opening) sits.
+    expect(decodeSourceNodeId(slotId!)).toEqual({ rel: 'pages/SheetLayout.jsx', line: 5, col: 9 })
+
+    const container = nodes.find((n) => n.id === slotId)
+    expect(container).toBeDefined()
+    // Structurally locked — the whole point is it cannot be dragged out of
+    // the slot — but its CHILDREN are real, ordinary nodes underneath it.
+    expect(container!.locked).toBe(true)
+    expect(container!.children.length).toBe(2)
+
+    const back = nodes.find((n) => n.id === container!.children[0])
+    const title = nodes.find((n) => n.id === container!.children[1])
+    expect(back?.name).toBe('BackButton')
+    expect(title?.name).toBe('span')
+    expect(title?.text).toBe('Title')
+
+    // Not a normal DOM child of Sheet — only reachable via the sentinel,
+    // exactly like the single-element slot case above.
+    expect(sheet.children).not.toContain(slotId)
+  })
+
+  it('a declared-but-unfilled slot prop produces NO node — the tree stays honest about what source actually places', () => {
+    write(
+      'pages/Bare.jsx',
+      ['export default function Bare() {', '  return <Sheet title="Confirm" />', '}', ''].join('\n'),
+    )
+
+    const nodes = loadNodes('pages/Bare.jsx', evalOptions())
+    const sheet = named(nodes, 'Sheet')
+
+    // No `header` prop was ever written at the call site, so nothing about a
+    // slot named `header` should exist anywhere — not on `props`, and not as
+    // a materialized placeholder node. The panel is expected to learn that
+    // `Sheet` HAS a `header` slot from E1's component catalog, not from here.
+    expect(sheet.props.header).toBeUndefined()
+    expect(Object.keys(sheet.props)).toEqual(['title'])
+    expect(nodes.length).toBe(1) // just the call site itself — no phantom slot node
+  })
+
+  it('a single-element slot on the SAME call site as a fragment slot round-trips exactly as before — no cross-talk between the two capture paths', () => {
+    write(
+      'pages/Mixed.jsx',
+      [
+        'export default function Mixed() {',
+        '  return (',
+        '    <Sheet',
+        '      icon={<Icon name="star" />}',
+        '      header={',
+        '        <>',
+        '          <BackButton />',
+        '          <CloseButton />',
+        '        </>',
+        '      }',
+        '    />',
+        '  )',
+        '}',
+        '',
+      ].join('\n'),
+    )
+
+    const nodes = loadNodes('pages/Mixed.jsx', evalOptions())
+    const sheet = named(nodes, 'Sheet')
+
+    const iconSlotId = studioSlotNodeId(sheet.props.icon)
+    const headerSlotId = studioSlotNodeId(sheet.props.header)
+    expect(iconSlotId).toBeDefined()
+    expect(headerSlotId).toBeDefined()
+    expect(iconSlotId).not.toBe(headerSlotId)
+
+    // The single-element slot mints an ORDINARY node, exactly the pre-E2.3
+    // shape — no `studio.slot`-only marker, no forced fragment wrapper.
+    const iconNode = nodes.find((n) => n.id === iconSlotId)
+    expect(iconNode?.name).toBe('Icon')
+    expect(iconNode?.fragmentSlot).toBeUndefined()
+    expect(iconNode?.locked).toBe(true)
+    expect(iconNode?.children.length).toBe(0)
+
+    // The fragment slot mints the container, as its own test above proves.
+    const headerNode = nodes.find((n) => n.id === headerSlotId)
+    expect(headerNode?.fragmentSlot).toBe(true)
+    expect(headerNode?.children.length).toBe(2)
   })
 })

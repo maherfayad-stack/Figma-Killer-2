@@ -1,4 +1,4 @@
-import type { Board, BoardFrame, BoardsFile, DocBlock, StickyNote } from './types'
+import type { Board, BoardFrame, BoardGuide, BoardsFile, DocBlock, StickyNote } from './types'
 import type { PreviewAxes } from './previewAxes'
 
 export function createBoardsFile(): BoardsFile {
@@ -6,7 +6,7 @@ export function createBoardsFile(): BoardsFile {
 }
 
 export function createBoard(id: string, name: string): Board {
-  return { id, name, frames: [], notes: [], docs: [] }
+  return { id, name, frames: [], notes: [], docs: [], guides: [] }
 }
 
 export function upsertBoard(file: BoardsFile, board: Board): BoardsFile {
@@ -157,6 +157,34 @@ export function setFrameAxes(board: Board, frameId: string, axes: Partial<Previe
     return { ...f, axes }
   })
   return { ...board, frames }
+}
+
+// ---------------------------------------------------------------------------
+// Guides (D1) — persisted ruler guides, `board.guides`. Mirrors the
+// note/doc shape above exactly (upsert / move / remove), keyed by `id`.
+// Distinct from `SnapGuide` (`canvas/boardSnapping.ts`) — see `BoardGuide`'s
+// doc in `types.ts` for the name collision this avoids.
+// ---------------------------------------------------------------------------
+
+export function upsertGuide(board: Board, guide: BoardGuide): Board {
+  const guides = board.guides ?? []
+  const index = guides.findIndex((g) => g.id === guide.id)
+  const nextGuides =
+    index === -1 ? [...guides, guide] : guides.map((g, i) => (i === index ? guide : g))
+  return { ...board, guides: nextGuides }
+}
+
+/** No-op for a missing guide id. */
+export function moveGuide(board: Board, guideId: string, position: number): Board {
+  const guides = board.guides ?? []
+  const index = guides.findIndex((g) => g.id === guideId)
+  if (index === -1) return board
+  const nextGuides = guides.map((g, i) => (i === index ? { ...g, position } : g))
+  return { ...board, guides: nextGuides }
+}
+
+export function removeGuide(board: Board, guideId: string): Board {
+  return { ...board, guides: (board.guides ?? []).filter((g) => g.id !== guideId) }
 }
 
 /**

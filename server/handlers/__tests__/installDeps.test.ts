@@ -394,6 +394,143 @@ describe('startInstallJob', () => {
   })
 })
 
+// ---------------------------------------------------------------------------
+// E3 — a single add/remove dependency mutation rides the same job runner
+// ---------------------------------------------------------------------------
+
+describe('startInstallJob — dependency mutation (E3)', () => {
+  let tmpDir: string
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'installdeps-mutation-'))
+  })
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  it('runs `bun add <name> --ignore-scripts` for an add mutation with no version', async () => {
+    const { spawn, calls } = makeSpawnSpy(() => makeFakeProcess({ exitCode: 0 }).proc)
+    const timer = makeInertTimer()
+    const jobId = startInstallJob(tmpDir, { spawn, ...timer }, { kind: 'add', name: 'axios', version: '*', dev: false })
+    await waitForSettle(jobId)
+
+    expect(calls[0].argv).toEqual(['bun', 'add', 'axios', '--ignore-scripts'])
+  })
+
+  it('pins a version in the argv spec, and adds --dev for a devDependency', async () => {
+    const { spawn, calls } = makeSpawnSpy(() => makeFakeProcess({ exitCode: 0 }).proc)
+    const timer = makeInertTimer()
+    const jobId = startInstallJob(tmpDir, { spawn, ...timer }, { kind: 'add', name: 'axios', version: '1.6.0', dev: true })
+    await waitForSettle(jobId)
+
+    expect(calls[0].argv).toEqual(['bun', 'add', 'axios@1.6.0', '--dev', '--ignore-scripts'])
+  })
+
+  it('runs pnpm add --save-dev for a devDependency on a pnpm project', async () => {
+    fs.writeFileSync(path.join(tmpDir, 'pnpm-lock.yaml'), '')
+    const { spawn, calls } = makeSpawnSpy(() => makeFakeProcess({ exitCode: 0 }).proc)
+    const timer = makeInertTimer()
+    const jobId = startInstallJob(tmpDir, { spawn, ...timer }, { kind: 'add', name: 'zod', version: '*', dev: true })
+    await waitForSettle(jobId)
+
+    expect(calls[0].argv).toEqual(['pnpm', 'add', 'zod', '--save-dev', '--ignore-scripts'])
+  })
+
+  it('runs npm install <spec> --save-dev --ignore-scripts on an npm project', async () => {
+    fs.writeFileSync(path.join(tmpDir, 'package-lock.json'), '')
+    const { spawn, calls } = makeSpawnSpy(() => makeFakeProcess({ exitCode: 0 }).proc)
+    const timer = makeInertTimer()
+    const jobId = startInstallJob(tmpDir, { spawn, ...timer }, { kind: 'add', name: 'lodash', version: '^4.0.0', dev: true })
+    await waitForSettle(jobId)
+
+    expect(calls[0].argv).toEqual(['npm', 'install', 'lodash@^4.0.0', '--save-dev', '--ignore-scripts'])
+  })
+
+  it('runs `bun remove <name> --ignore-scripts` for a remove mutation', async () => {
+    const { spawn, calls } = makeSpawnSpy(() => makeFakeProcess({ exitCode: 0 }).proc)
+    const timer = makeInertTimer()
+    const jobId = startInstallJob(tmpDir, { spawn, ...timer }, { kind: 'remove', name: 'axios' })
+    await waitForSettle(jobId)
+
+    expect(calls[0].argv).toEqual(['bun', 'remove', 'axios', '--ignore-scripts'])
+  })
+
+  it('runs `npm uninstall <name> --ignore-scripts` for a remove mutation on an npm project — npm alone spells it differently', async () => {
+    fs.writeFileSync(path.join(tmpDir, 'package-lock.json'), '')
+    const { spawn, calls } = makeSpawnSpy(() => makeFakeProcess({ exitCode: 0 }).proc)
+    const timer = makeInertTimer()
+    const jobId = startInstallJob(tmpDir, { spawn, ...timer }, { kind: 'remove', name: 'axios' })
+    await waitForSettle(jobId)
+
+    expect(calls[0].argv).toEqual(['npm', 'uninstall', 'axios', '--ignore-scripts'])
+  })
+})
+
+describe('tryServeStudioInstall — dependency mutation validation (E3)', () => {
+  function makeRequest(pathAndQuery: string, init?: RequestInit): { req: Request; url: URL; pathname: string } {
+    const url = new URL(`http://localhost${pathAndQuery}`)
+    const req = new Request(url, init)
+    return { req, url, pathname: url.pathname }
+  }
+
+  let tmpDir: string
+
+  beforeEach(() => {
+    const root = projectsRootDir()
+    fs.mkdirSync(root, { recursive: true })
+    tmpDir = fs.mkdtempSync(path.join(root, '__installdeps_mutation_test_'))
+  })
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  it('400s an add with an unsafe package name — never reaches the spawn step', async () => {
+    const { req, url, pathname } = makeRequest('/admin/api/studio/install', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ dir: tmpDir, add: { name: '; rm -rf /' } }),
+    })
+    const res = await tryServeStudioInstall(req, url, pathname)
+    expect(res).not.toBeNull()
+    expect(res!.status).toBe(400)
+  })
+
+  it('400s an add with an unsafe version specifier', async () => {
+    const { req, url, pathname } = makeRequest('/admin/api/studio/install', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ dir: tmpDir, add: { name: 'axios', version: '--ignore-scripts' } }),
+    })
+    const res = await tryServeStudioInstall(req, url, pathname)
+    expect(res).not.toBeNull()
+    expect(res!.status).toBe(400)
+  })
+
+  it('400s a request that carries both add and remove', async () => {
+    const { req, url, pathname } = makeRequest('/admin/api/studio/install', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ dir: tmpDir, add: { name: 'axios' }, remove: { name: 'lodash' } }),
+    })
+    const res = await tryServeStudioInstall(req, url, pathname)
+    expect(res).not.toBeNull()
+    expect(res!.status).toBe(400)
+  })
+
+  it('400s a remove with an unsafe package name', async () => {
+    const { req, url, pathname } = makeRequest('/admin/api/studio/install', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ dir: tmpDir, remove: { name: '../../etc/passwd' } }),
+    })
+    const res = await tryServeStudioInstall(req, url, pathname)
+    expect(res).not.toBeNull()
+    expect(res!.status).toBe(400)
+  })
+})
+
 describe('getInstallJob', () => {
   it('returns null for an unknown job id', () => {
     expect(getInstallJob('this-job-does-not-exist')).toBeNull()

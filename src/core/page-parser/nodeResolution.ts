@@ -22,6 +22,24 @@ export interface Resolution {
   note?: string
 }
 
+/**
+ * `Resolution`, keyed by WHICH value it explains — a prop name, a
+ * `style:<property>` inline-style entry (mirrors `codeProps`' own namespace,
+ * see `sourceWritability.ts`'s `styleValueKey`), or the literal key `'text'`
+ * for the node's captured text.
+ *
+ * This is the R2 fix (`STUDIO-FIGMA-PARITY-PLAN.md` §9/F2,
+ * `docs/audits/2026-08-06/09-refusal-states.md` finding R2): `ParsedNode.resolution`
+ * (singular) only ever kept the FIRST resolution recorded on a node, so a node
+ * with two code-valued props showed one real source and a generic "set in code"
+ * fallback for the other. `ParsedNode.resolvedProps` is the honest per-key
+ * record — additive alongside `resolution`, which keeps its existing singular
+ * behaviour unchanged (still consulted by `server/ai/mcp/tools/studio/fidelityReport.ts`
+ * and the branch-selection/async-server-component "chose one of several"
+ * whole-node note, neither of which needed per-prop granularity).
+ */
+export type ResolutionMap = Record<string, Resolution>
+
 const MAX_RESOLUTION_SOURCE_LENGTH = 80
 
 /**
@@ -168,4 +186,25 @@ export function withResolution(
     ...(structuralLocked && structuralReason ? { lockReason: structuralReason } : {}),
     ...(resolution ? { resolution } : {}),
   }
+}
+
+/**
+ * R2's per-prop counterpart of `withResolution` — shortens every entry's
+ * `source` the same way, and returns `undefined` for an empty map so callers
+ * can `...(resolvedProps ? { resolvedProps } : {})` exactly like every other
+ * optional `ParsedNode` field. Pure formatting, no locking decision: which
+ * keys land in the map is entirely up to the caller (`extractProps`/
+ * `extractInlineStyles`/`extractSingleText` build the per-key entries;
+ * `processElement` merges them keyed by prop name, `style:<prop>`, or `'text'`
+ * — see `ParsedNode.resolvedProps`'s own doc comment in `./types`).
+ */
+export function shortenResolutionMap(resolutions: ResolutionMap): ResolutionMap | undefined {
+  const keys = Object.keys(resolutions)
+  if (keys.length === 0) return undefined
+  const shortened: ResolutionMap = {}
+  for (const key of keys) {
+    const entry = resolutions[key]!
+    shortened[key] = { source: shortenSource(entry.source), ...(entry.note ? { note: entry.note } : {}) }
+  }
+  return shortened
 }

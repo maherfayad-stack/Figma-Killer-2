@@ -562,7 +562,11 @@ function renderCmsMediaThumb(asset: NonNullable<CmsBundleState['bundle']['media'
     )
   }
 
-  const Icon = asset.mimeType.startsWith('image/')
+  // Named ThumbIcon, not Icon — a PascalCase local named literally `Icon`
+  // collides with the direct-icon-imports architecture gate's `<Icon\b`
+  // regex, which exists to ban the *lazy* `pixel-art-icons/Icon` wrapper.
+  // Same pattern AlignBar.tsx / StyleCategoryRail.tsx use.
+  const ThumbIcon = asset.mimeType.startsWith('image/')
     ? ImageSolidIcon
     : asset.mimeType.startsWith('font/')
       ? HeadingIcon
@@ -573,7 +577,7 @@ function renderCmsMediaThumb(asset: NonNullable<CmsBundleState['bundle']['media'
 
   return (
     <span className={styles.cmsFileThumb} style={style} aria-hidden="true">
-      <Icon size={17} />
+      <ThumbIcon size={17} />
     </span>
   )
 }

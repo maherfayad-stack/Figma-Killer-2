@@ -1,0 +1,80 @@
+/**
+ * CanvasRulers — untransformed chrome, siblings of CanvasTransformLayer
+ * inside `.canvas` (CanvasRoot.module.css). Never inside the transformed
+ * subtree — see this folder's rulerGeometry.ts for why.
+ *
+ * `--ruler-thickness` must match RULER_THICKNESS_PX in rulerPaint.ts.
+ */
+.shell {
+    --ruler-thickness: 22px;
+    position: absolute;
+    inset: 0;
+    /* Chrome, not content: never intercepts clicks meant for the canvas.
+       Individual rulers/corner re-enable pointer-events for guide creation. */
+    pointer-events: none;
+    /* Above board content, below selection rings (51/52) and notch (53) — a
+       ring or the notch must never be hidden behind ruler chrome. */
+    z-index: 45;
+}
+
+.corner {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: var(--ruler-thickness);
+    height: var(--ruler-thickness);
+    background: var(--bg-surface-3);
+    border-right: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+}
+
+.rulerH {
+    position: absolute;
+    top: 0;
+    left: var(--ruler-thickness);
+    right: 0;
+    height: var(--ruler-thickness);
+    border-bottom: 1px solid var(--border);
+    cursor: crosshair;
+    pointer-events: auto;
+    touch-action: none;
+}
+
+.rulerV {
+    position: absolute;
+    top: var(--ruler-thickness);
+    left: 0;
+    bottom: 0;
+    width: var(--ruler-thickness);
+    border-right: 1px solid var(--border);
+    cursor: crosshair;
+    pointer-events: auto;
+    touch-action: none;
+}
+
+/* Preview line shown while dragging a new guide out from a ruler — follows
+   the pointer 1:1 in screen space (no zoom math: this is a not-yet-board-space
+   affordance, committed to board space only on release).
+
+   ALWAYS mounted (never conditionally rendered off React state — see
+   useRulerGuideCreation.ts's doc), hidden by default. `display` is toggled
+   imperatively by that hook via `previewElRef`, not by a class/prop change. */
+.creationPreview {
+    display: none;
+    position: absolute;
+    background: var(--canvas-ruler-guide-color);
+    pointer-events: none;
+    z-index: 46;
+}
+
+.creationPreview[data-axis='x'] {
+    top: 0;
+    bottom: 0;
+    width: 1px;
+}
+
+.creationPreview[data-axis='y'] {
+    left: 0;
+    right: 0;
+    height: 1px;
+}

@@ -16,6 +16,7 @@ import { Node, Project, QuoteKind, type SourceFile } from 'ts-morph'
 import { createWorkspaceProject, getFunctionLikeNode, resolveExportedDeclaration } from '@core/page-parser'
 import { findJsxElementAtLocationOrThrow, loadSourceFile } from './locateJsxElement'
 import { buildParamBindings } from './detachComponent'
+import { relativeSpecifier, removeImportIfLastUsage, topLevelBindingNames } from './importReconcile'
 
 export interface SwapComponentInstanceParams {
   /** Absolute path to the page file holding the call site. */
@@ -55,55 +56,6 @@ export type SwapResult = SwapSuccess | SwapFailure
 
 function refuse(reason: SwapRefusalReason, message: string): SwapFailure {
   return { ok: false, refusal: { reason, message } }
-}
-
-/** Every top-level (import + function/const) binding name already in scope in `sourceFile`. */
-function topLevelBindingNames(sourceFile: SourceFile): Set<string> {
-  const names = new Set<string>()
-  for (const decl of sourceFile.getImportDeclarations()) {
-    if (decl.getDefaultImport()) names.add(decl.getDefaultImport()!.getText())
-    if (decl.getNamespaceImport()) names.add(decl.getNamespaceImport()!.getText())
-    for (const named of decl.getNamedImports()) names.add(named.getAliasNode()?.getText() ?? named.getNameNode().getText())
-  }
-  for (const fn of sourceFile.getFunctions()) if (fn.getName()) names.add(fn.getName()!)
-  for (const v of sourceFile.getVariableDeclarations()) names.add(v.getName())
-  return names
-}
-
-function relativeSpecifier(fromFileAbs: string, toFileAbs: string): string {
-  const fromDir = path.dirname(fromFileAbs)
-  let rel = path.relative(fromDir, toFileAbs).split(path.sep).join('/')
-  rel = rel.replace(/\.(tsx|jsx|ts|js)$/, '')
-  if (!rel.startsWith('.')) rel = `./${rel}`
-  return rel
-}
-
-/** Removes `localName`'s import from `sourceFile` if no JSX tag reference to it remains. Duplicated in spirit from `detachComponent.ts`'s identical helper — kept local (no shared cross-module dependency for a ~15-line function). */
-function removeImportIfUnused(sourceFile: SourceFile, localName: string): void {
-  const stillUsed = sourceFile.getDescendants().some((node) => {
-    if (Node.isJsxSelfClosingElement(node) || Node.isJsxOpeningElement(node) || Node.isJsxClosingElement(node)) {
-      return node.getTagNameNode().getText().split('.')[0] === localName
-    }
-    return false
-  })
-  if (stillUsed) return
-
-  for (const decl of sourceFile.getImportDeclarations()) {
-    if (decl.getDefaultImport()?.getText() === localName) {
-      if (decl.getNamedImports().length === 0 && !decl.getNamespaceImport()) decl.remove()
-      return
-    }
-    if (decl.getNamespaceImport()?.getText() === localName) {
-      decl.remove()
-      return
-    }
-    const named = decl.getNamedImports().find((n) => (n.getAliasNode()?.getText() ?? n.getNameNode().getText()) === localName)
-    if (named) {
-      if (decl.getNamedImports().length === 1 && !decl.getDefaultImport() && !decl.getNamespaceImport()) decl.remove()
-      else named.remove()
-      return
-    }
-  }
 }
 
 /**
@@ -242,7 +194,7 @@ export function swapComponentInstance(params: SwapComponentInstanceParams): Swap
     ? relativeSpecifier(file, path.resolve(workspaceRoot, newComponentFile))
     : newComponentFile
   sourceFile.addImportDeclaration({ moduleSpecifier: specifier, namedImports: [newComponentName] })
-  if (identifier !== newComponentName) removeImportIfUnused(sourceFile, identifier)
+  if (identifier !== newComponentName) removeImportIfLastUsage(sourceFile, identifier)
 
   sourceFile.saveSync()
 

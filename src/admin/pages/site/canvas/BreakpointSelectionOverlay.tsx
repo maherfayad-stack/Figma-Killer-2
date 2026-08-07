@@ -668,6 +668,20 @@ export function BreakpointSelectionOverlay({
             className={styles.invalidDropIndicator}
             style={rectStyle(reorderDrag.invalid.rect)}
             data-axis={reorderDrag.invalid.axis}
+            // G5 — present when this box means "this position would refuse
+            // the source write" (a real drop target the store's own gate
+            // would still reject — shared component, route chrome, …),
+            // distinct from an ordinary structural rejection (locked node,
+            // cycle) which carries no message. `reorderDrag.invalid.
+            // refusalMessage` holds the full sentence for a FUTURE
+            // cursor-following label — not wired up to a visible tooltip
+            // here: this element is `pointer-events: none` (so a native
+            // `title` would never fire) and a real label needs a small
+            // positioned component this pass didn't build. The red box
+            // itself is what ships today — previously this exact case
+            // (a structurally valid position the write would still refuse)
+            // rendered a confident VALID drop line instead.
+            data-refusal-reason={reorderDrag.invalid.refusalMessage ? 'source-writeback' : undefined}
             aria-hidden="true"
           />
         )}

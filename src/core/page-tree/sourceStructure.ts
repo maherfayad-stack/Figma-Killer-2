@@ -75,7 +75,10 @@ import {
   isInlinedNodeId,
   isRouteChromeNodeId,
   isSourceDerivedNodeId,
+  isStudioPageRootId,
 } from './sourceNodeId'
+import type { PageNode } from './pageNode'
+import type { NodeTree } from './treeSchema'
 
 /** The structural gestures the editor offers. One refusal vocabulary for all of them. */
 export type StructuralEditKind = 'reorder' | 'reparent' | 'delete' | 'insert' | 'duplicate' | 'wrap'
@@ -228,8 +231,33 @@ export function refuseStructuralEdit(input: {
  * than the gesture — shared by the moved element and by the sibling a reorder
  * is written against, because "is this an ordinary element at a known line"
  * is the same question for both.
+ *
+ * **Published contract (E2.1/D2/F2, `STUDIO-FIGMA-PARITY-PLAN.md` §8's
+ * Track E).** Originally a private half of `refuseStructuralEdit`; exported
+ * because three more verbs — extract-to-component (E2.1), and the two work
+ * orders serialized after it (D2, F2) — ask exactly this question ("is this
+ * node an ordinary, singly-placed element, or does the parser's own
+ * structural verdict rule out ANY single honest writeback target here") for
+ * gestures that are not reorder/delete/insert at all. Reusing this function
+ * means all of them refuse `list-row` / `shared-component` / `route-chrome` /
+ * `code-placed` with the IDENTICAL vocabulary the user already sees on a
+ * failed move or delete, rather than each verb inventing its own parallel
+ * set of reasons for the same four underlying facts.
+ *
+ * `gesture` is the only thing a new caller supplies beyond `node` — a past-
+ * tense verb (`'Moved'`, `'Extracted'`, …) the four messages below splice in
+ * (`` `${gesture} a row of a list…` ``). `node.lockReason` is the parser's
+ * OWN structural verdict (`ParsedNode.lockReason`) — this function is pure
+ * and has no access to the loaded page tree itself, so a caller that HAS one
+ * (the store, a server handler that already parsed the workspace) must pass
+ * it through; a caller that only has raw AST coordinates (no parsed tree)
+ * gets `route-chrome` for free (`isRouteChromeNodeId` reads the id's
+ * filename alone) but not `list-row`/`shared-component`/`code-placed`, which
+ * need information only a parse carries. See `extractSubtreeToComponent.ts`'s
+ * own module doc for how it threads this through when a caller can supply it,
+ * and what it checks independently from the AST when a caller cannot.
  */
-function refusePlacement(node: SourceStructureNode, gesture: string): StructuralRefusal | null {
+export function refusePlacement(node: SourceStructureNode, gesture: string): StructuralRefusal | null {
   if (!hasWritableSourceLocation(node.id)) {
     return {
       reason: 'list-row',
@@ -255,6 +283,159 @@ function refusePlacement(node: SourceStructureNode, gesture: string): Structural
     }
   }
   return null
+}
+
+/** Where a reordered element is written: next to which sibling, on which side. */
+export interface StructuralMoveCommit {
+  nodeId: string
+  anchorNodeId: string
+  position: 'before' | 'after'
+}
+
+/**
+ * A gesture that may proceed. `commit` is the source write to issue AFTER the
+ * tree mutation lands, or `null` when there is nothing to write (an ordinary
+ * CMS tree, or a move that turned out to change no order).
+ */
+export type StructuralMovePreview =
+  | { ok: true; commit: StructuralMoveCommit | null }
+  | { ok: false; refusal: StructuralRefusal }
+
+/**
+ * Whether a move of `nodeIds` into `newParentId` at `newIndex` would be
+ * written back to source, and if so, against which sibling — PURE, tree-only.
+ *
+ * **Published contract (D2 → F2, `STUDIO-FIGMA-PARITY-PLAN.md` §D2/G5).**
+ * Extracted from the store's `structuralSourceEdits.ts`'s `planSourceMove` so
+ * a DROP RESOLVER (`core/page-tree/dnd.ts`, and anything F2 builds on top of
+ * it) can ask "would this move actually write?" WHILE THE POINTER IS STILL
+ * DOWN, not just after `pointerup`. Before this, `core/page-tree/dnd.ts` only
+ * checked tree SHAPE (root, locked, cycle, VC-ref/slot rules) — never source
+ * writability — so a confident drop-line preview would render right up to the
+ * moment of a post-hoc refusal toast. Per `STATE.md`'s `shared-component`
+ * refusal-rate finding, that was true for roughly HALF of all real drags.
+ *
+ * **Identical logic to `structuralSourceEdits.ts`'s `planSourceMove`, by
+ * design — not a coincidence.** That function could not be deleted/re-pointed
+ * at this one in this pass because it lives under `src/admin/pages/site/
+ * store/**`, owned by a concurrent agent this task was explicitly told not to
+ * touch. This is real, disclosed duplication, not an oversight: the two
+ * copies must be kept in sync by hand until a future pass collapses
+ * `planSourceMove` into a thin wrapper over `previewStructuralMove` (mirroring
+ * how `refusePlacement` itself was already lifted out and published for
+ * exactly this reason). Whoever does that pass: `planSourceMove`'s own
+ * `refuseCanvasOnlyNodeIntoSource` inner helper is the ONE piece of logic this
+ * function could not also absorb, because `refuseCanvasOnlyNodeIntoSource`'s
+ * message ("Add the component from the picker instead...") is UI-facing
+ * product copy that belongs with the store's toast wiring, not in a pure core
+ * module — this function's own version below is a deliberately reason-only
+ * (no message) subset the caller can still act on.
+ *
+ * **What a caller gets:** the exact same 4 structural-source reasons
+ * `refuseStructuralEdit`/`refusePlacement` already answer
+ * (`list-row`/`shared-component`/`route-chrome`/`code-placed`), plus
+ * `reparent`/`no-sibling-anchor`/`cross-file`/`multi-select` for the
+ * reorder-specific questions "does this even land in the same parent" and
+ * "is there an ordinary sibling to write the move against". A tree-shape
+ * rejection (locked node, cycle, dropping into a non-container) is NOT this
+ * function's job — `resolvePageTreeDropTarget` already answers that and
+ * returns `null` before a caller should even reach this. Call this ONLY
+ * after `resolvePageTreeDropTarget` returns a non-null target, with that
+ * target's own `parentId`/`index`.
+ *
+ * **What F2 gets for free by depending on this instead of re-deriving it:**
+ * the identical refusal vocabulary a failed mouse-drag already shows, so a
+ * differently-triggered move (agent, plugin, future command) refuses with the
+ * same sentence a human sees for the same underlying reason.
+ */
+export function previewStructuralMove(
+  tree: NodeTree<PageNode>,
+  nodeIds: readonly string[],
+  newParentId: string,
+  newIndex: number,
+): StructuralMovePreview {
+  const nodeId = nodeIds[0]
+  if (nodeId === undefined) return { ok: true, commit: null }
+  const node = tree.nodes[nodeId]
+  const newParent = tree.nodes[newParentId]
+  // A stale drop target — the mutation itself already throws or no-ops on
+  // this; inventing a refusal for it would explain the wrong thing.
+  if (!node || !newParent) return { ok: true, commit: null }
+
+  if (!newParent.children.includes(nodeId)) {
+    const refusal =
+      refuseStructuralEdit({ kind: 'reparent', node }) ?? previewCanvasOnlyNodeIntoSourceRefusal(tree, newParent)
+    return refusal ? { ok: false, refusal } : { ok: true, commit: null }
+  }
+
+  const multi = nodeIds.length > 1
+  const reordered = simulateStructuralReorder(newParent.children, nodeIds, newIndex)
+  if (reordered === null) return { ok: true, commit: null }
+
+  const index = reordered.indexOf(nodeId)
+  const candidates: StructuralMoveCommit[] = []
+  const previous = reordered[index - 1]
+  if (previous !== undefined) candidates.push({ nodeId, anchorNodeId: previous, position: 'after' })
+  const next = reordered[index + 1]
+  if (next !== undefined) candidates.push({ nodeId, anchorNodeId: next, position: 'before' })
+
+  let firstRefusal: StructuralRefusal | null = null
+  for (const candidate of candidates) {
+    const refusal = refuseStructuralEdit({
+      kind: 'reorder',
+      node,
+      anchor: tree.nodes[candidate.anchorNodeId] ?? { id: candidate.anchorNodeId },
+      multi,
+    })
+    if (!refusal) return { ok: true, commit: isSourceDerivedNodeId(nodeId) ? candidate : null }
+    firstRefusal ??= refusal
+  }
+
+  const refusal = firstRefusal ?? refuseStructuralEdit({ kind: 'reorder', node, anchor: null, multi })
+  return refusal ? { ok: false, refusal } : { ok: true, commit: null }
+}
+
+/**
+ * Reason-only counterpart of `structuralSourceEdits.ts`'s
+ * `refuseCanvasOnlyNodeIntoSource` — see `previewStructuralMove`'s doc for why
+ * the two aren't the same function. `reason: 'insert'` matches what
+ * `refuseStructuralEdit`'s own `insert` case would say for the same
+ * situation (a write with no addressable source target), since "a canvas-only
+ * node has nothing to move into a studio file" is the insert refusal's
+ * question asked about a drag instead of the picker.
+ */
+function previewCanvasOnlyNodeIntoSourceRefusal(
+  tree: NodeTree<PageNode>,
+  newParent: PageNode,
+): StructuralRefusal | null {
+  const intoStudioTree = isSourceDerivedNodeId(newParent.id) || isStudioPageRootId(tree.rootNodeId)
+  if (!intoStudioTree) return null
+  return {
+    reason: 'insert',
+    message:
+      'This element exists only on the canvas — there is no markup for it in the code, so Studio has nothing to move into the file. Add the component from the picker instead, which writes it to the source.',
+  }
+}
+
+/**
+ * The parent's child order AFTER a move would run, or `null` when the order
+ * does not actually change (dropping a row back where it started). Mirrors
+ * `moveNode`/`moveNodes`'s own arithmetic exactly (`mutations.ts`: remove
+ * every dragged id first, then splice at a clamped index) — an anchor derived
+ * from different arithmetic than the mutation uses would preview a different
+ * order than the one that actually lands.
+ */
+function simulateStructuralReorder(
+  children: readonly string[],
+  nodeIds: readonly string[],
+  newIndex: number,
+): string[] | null {
+  const moving = nodeIds.filter((id) => children.includes(id))
+  if (moving.length === 0) return null
+  const without = children.filter((id) => !moving.includes(id))
+  const at = Math.max(0, Math.min(newIndex, without.length))
+  const next = [...without.slice(0, at), ...moving, ...without.slice(at)]
+  return next.every((id, i) => id === children[i]) ? null : next
 }
 
 /** Lower-cases the first character so a refusal can be quoted mid-sentence. */

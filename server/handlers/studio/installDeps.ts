@@ -85,10 +85,24 @@
  * passed to "spawn" and simulate a timeout deterministically, without
  * touching the network, a real subprocess, or the wall clock — see
  * `server/handlers/__tests__/installDeps.test.ts`.
+ *
+ * **E3 (`STUDIO-FIGMA-PARITY-PLAN.md`) — a single ADD/REMOVE mutation rides
+ * the SAME job runner**, rather than a second install path: `POST
+ * /admin/api/studio/install` now optionally carries `{ add: { name, version?,
+ * dev? } }` or `{ remove: { name } }`. Both are validated with the SAME
+ * `isSafePackageName` gate the client (`DepsSection.tsx`) and the runtime
+ * dependency resolver (`dependencyResolver.ts`) already use, then translate
+ * to `<packageManager> add/remove …` argv (still `--ignore-scripts`, still
+ * `runInstallJob`'s existing spawn/timeout/log-cap machinery, still the same
+ * post-success `reprobeProjectProfile` call) instead of the bare `install`
+ * argv. A plain `{ dir }` body (no `add`/`remove`) keeps running the original
+ * "install everything already in package.json" job unchanged — this is
+ * `InstallDependenciesPrompt.tsx`'s own call, untouched by this addition.
  */
 import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import { join, resolve, sep } from 'node:path'
 import { Type } from '@core/utils/typeboxHelpers'
+import { isSafePackageName } from '@core/site-dependencies/packageNames'
 import { badRequest, jsonResponse, readValidatedBody } from '../../http'
 import { projectsRootDir, resolveProjectDir } from '../studioProjects'
 import { resolveAppRoot } from './appRoot'
@@ -125,6 +139,77 @@ const INSTALL_ARGV: Record<PackageManager, string[]> = {
   pnpm: ['pnpm', 'install', '--ignore-scripts'],
   yarn: ['yarn', 'install', '--ignore-scripts'],
   npm: ['npm', 'install', '--ignore-scripts'],
+}
+
+// ---------------------------------------------------------------------------
+// E3 — a single add/remove dependency mutation, riding this same job runner
+// ---------------------------------------------------------------------------
+
+export interface AddDependencyMutation {
+  kind: 'add'
+  /** Already validated by `isSafeDependencyName` at the route boundary — see that function's doc. */
+  name: string
+  /** Already validated by `isSafeDependencyVersion`. `'*'` when the caller didn't specify one — resolves to each manager's own "latest" behaviour. */
+  version: string
+  dev: boolean
+}
+export interface RemoveDependencyMutation {
+  kind: 'remove'
+  name: string
+}
+export type DependencyMutation = AddDependencyMutation | RemoveDependencyMutation
+
+/** Same package-name gate the client (`DepsSection.tsx`) and the runtime dependency resolver already use — re-validated here because a request body is never trusted just because the client already checked. */
+export function isSafeDependencyName(name: string): boolean {
+  return isSafePackageName(name)
+}
+
+/**
+ * A version/range specifier is appended directly after `name@` in a single
+ * argv token (`bun add foo@<version>`) — never shell-interpolated, but still
+ * validated so it can't be crafted to look like a FLAG to the package
+ * manager (e.g. a version starting with `-`) or carry characters no real
+ * semver range/tag uses. `'*'`/`'latest'` (the common "no opinion" values)
+ * and ordinary semver ranges (`^1.2.3`, `~1.2.3`, `1.x`, `>=1.0.0 <2.0.0` is
+ * NOT supported — a single token only, which covers every version this UI
+ * actually lets a user type) all pass.
+ */
+const SAFE_DEPENDENCY_VERSION_RE = /^[A-Za-z0-9][A-Za-z0-9.^~*_+-]*$/
+
+export function isSafeDependencyVersion(version: string): boolean {
+  return SAFE_DEPENDENCY_VERSION_RE.test(version)
+}
+
+/** `name@version` — `'*'`/`'latest'` degrade to a bare `name` so each manager resolves its own idea of "latest" rather than being told to literally install the tag `"*"`. */
+function dependencySpec(name: string, version: string): string {
+  return version === '*' || version === 'latest' ? name : `${name}@${version}`
+}
+
+function addArgv(manager: PackageManager, mutation: AddDependencyMutation): string[] {
+  const spec = dependencySpec(mutation.name, mutation.version)
+  switch (manager) {
+    case 'bun':
+      return ['bun', 'add', spec, ...(mutation.dev ? ['--dev'] : []), '--ignore-scripts']
+    case 'pnpm':
+      return ['pnpm', 'add', spec, ...(mutation.dev ? ['--save-dev'] : []), '--ignore-scripts']
+    case 'yarn':
+      return ['yarn', 'add', spec, ...(mutation.dev ? ['--dev'] : []), '--ignore-scripts']
+    case 'npm':
+      return ['npm', 'install', spec, mutation.dev ? '--save-dev' : '--save', '--ignore-scripts']
+  }
+}
+
+function removeArgv(manager: PackageManager, mutation: RemoveDependencyMutation): string[] {
+  // npm alone spells this "uninstall" — every other manager (and npm's own
+  // alias) accepts "remove", but this stays explicit rather than relying on
+  // an alias.
+  const verb = manager === 'npm' ? 'uninstall' : 'remove'
+  return [manager, verb, mutation.name, '--ignore-scripts']
+}
+
+function installArgv(manager: PackageManager, mutation: DependencyMutation | undefined): string[] {
+  if (!mutation) return INSTALL_ARGV[manager]
+  return mutation.kind === 'add' ? addArgv(manager, mutation) : removeArgv(manager, mutation)
 }
 
 // ---------------------------------------------------------------------------
@@ -371,12 +456,23 @@ async function runInstallJob(
  * the overwhelmingly common case (app root === project dir) is a no-op. The
  * spawn + stream pump + timeout race run in the background; nothing here
  * blocks the caller.
+ *
+ * `mutation` (E3) — when present, this runs `<packageManager> add`/`remove`
+ * instead of the bare `install`; the CALLER (`tryServeStudioInstall`) is
+ * responsible for validating `mutation.name`/`version` with
+ * `isSafeDependencyName`/`isSafeDependencyVersion` before this is ever
+ * reached — this function does not re-validate, so any direct (e.g. test)
+ * caller must do the same.
  */
-export function startInstallJob(dirInput: string, overrides: InstallJobOverrides = {}): string {
+export function startInstallJob(
+  dirInput: string,
+  overrides: InstallJobOverrides = {},
+  mutation?: DependencyMutation,
+): string {
   const projectDir = resolve(dirInput)
   const cwd = resolveAppRoot(projectDir)
   const packageManager = detectPackageManager(cwd)
-  const argv = INSTALL_ARGV[packageManager]
+  const argv = installArgv(packageManager, mutation)
   const spawn = overrides.spawn ?? defaultSpawn
   const proc = spawn(argv, { cwd, env: installSubprocessEnv(), stdout: 'pipe', stderr: 'pipe', stdin: 'ignore' })
 
@@ -497,9 +593,45 @@ export function resolveInstallJobStatus(id: string, appRootDir?: string): Public
 // Routes
 // ---------------------------------------------------------------------------
 
+const AddDependencyBodySchema = Type.Object({
+  name: Type.String(),
+  version: Type.Optional(Type.String()),
+  dev: Type.Optional(Type.Boolean()),
+})
+const RemoveDependencyBodySchema = Type.Object({
+  name: Type.String(),
+})
+
 const InstallBodySchema = Type.Object({
   dir: Type.Optional(Type.String()),
+  /** E3 — present to run `<packageManager> add <name>[@version]` instead of a bare install. Mutually exclusive with `remove`. */
+  add: Type.Optional(AddDependencyBodySchema),
+  /** E3 — present to run `<packageManager> remove <name>` instead of a bare install. Mutually exclusive with `add`. */
+  remove: Type.Optional(RemoveDependencyBodySchema),
 })
+
+/** Body -> a validated `DependencyMutation`, or a `Response` when the request refuses. `undefined` mutation + `undefined` response means "plain install, no mutation" — the pre-E3 behaviour. */
+function resolveDependencyMutation(
+  body: { add?: { name: string; version?: string; dev?: boolean }; remove?: { name: string } },
+): DependencyMutation | Response | undefined {
+  if (body.add && body.remove) return badRequest('an install request cannot both add and remove a dependency')
+
+  if (body.add) {
+    const name = body.add.name.trim()
+    if (!isSafeDependencyName(name)) return badRequest(`invalid package name "${body.add.name}"`)
+    const version = (body.add.version ?? '*').trim() || '*'
+    if (!isSafeDependencyVersion(version)) return badRequest(`invalid package version "${body.add.version}"`)
+    return { kind: 'add', name, version, dev: Boolean(body.add.dev) }
+  }
+
+  if (body.remove) {
+    const name = body.remove.name.trim()
+    if (!isSafeDependencyName(name)) return badRequest(`invalid package name "${body.remove.name}"`)
+    return { kind: 'remove', name }
+  }
+
+  return undefined
+}
 
 const INSTALL_ROUTE = '/admin/api/studio/install'
 const INSTALL_STATUS_ROUTE = `${INSTALL_ROUTE}/status`
@@ -522,7 +654,9 @@ export async function tryServeStudioInstall(req: Request, url: URL, pathname: st
       if (!body) return badRequest('invalid install body')
       const dir = resolveProjectDir(body.dir)
       if (!isDirWithinWorkspace(dir)) return new Response('Not found', { status: 404 })
-      const jobId = startInstallJob(dir)
+      const mutationOrRefusal = resolveDependencyMutation(body)
+      if (mutationOrRefusal instanceof Response) return mutationOrRefusal
+      const jobId = startInstallJob(dir, {}, mutationOrRefusal)
       return jsonResponse({ jobId })
     } catch (err) {
       console.error('[studio:install]', err)

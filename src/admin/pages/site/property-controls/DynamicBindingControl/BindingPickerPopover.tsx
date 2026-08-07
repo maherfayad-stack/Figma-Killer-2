@@ -26,7 +26,7 @@ import type { PropertyControl } from '@core/module-engine'
 import type { DynamicPropBinding } from '@core/page-tree'
 import type { LoopItem, LoopSourceField } from '@core/loops/types'
 import type { DataMeta, DataMetaField, DataMetaTable } from '@core/data/schemas'
-import { useEditorStore, selectActivePage } from '@site/store/store'
+import { useEditorStore, selectActiveCanvasPage } from '@site/store/store'
 import { Button } from '@ui/components/Button'
 import { ContextMenu } from '@ui/components/ContextMenu'
 import { EmptyState } from '@ui/components/EmptyState'
@@ -166,15 +166,20 @@ export function BindingPickerPopover({
   }, [])
 
   // ─── Active page template for auto-scope + frame data ─────────────────
+  // selectActiveCanvasPage (not selectActivePage): this control also renders
+  // for a node selected inside a Visual Component's own edit canvas, where
+  // selectActivePage would silently keep reporting the page the author was
+  // on BEFORE entering VC mode — scoping bindings to an unrelated page's
+  // template table instead of the VC being edited.
   const activePageTableSlug = useEditorStore((s) => {
-    const page = selectActivePage(s)
+    const page = selectActiveCanvasPage(s)
     return page ? primaryTemplateTableSlug(page) : null
   })
 
   // Live page/site frames for the per-row value preview. Read off the
   // store so the preview shows the same values bindings will resolve to
   // on the actual page.
-  const activePageForFrame = useEditorStore(selectActivePage)
+  const activePageForFrame = useEditorStore(selectActiveCanvasPage)
   const activeSite = useEditorStore((s) => s.site)
 
   const pageFrame = activePageForFrame ? buildPageFrame(activePageForFrame) : null

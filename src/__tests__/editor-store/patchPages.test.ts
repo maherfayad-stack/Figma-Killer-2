@@ -12,9 +12,13 @@
  *     patch, and is dropped cleanly (no dangling id) when it does not
  *   - a page with local (unsaved) edits that gets overwritten surfaces a
  *     toast — the "merge" policy's explicit data-loss case
- *   - THE GATE: patching never marks the store dirty and never touches undo
- *     history — the write -> reload -> re-dirty -> autosave -> write loop
- *     `fsCodemodAdapter.test.ts` protects against, applied to this new path.
+ *   - THE GATE: patching never marks the store dirty — the write -> reload ->
+ *     re-dirty -> autosave -> write loop `fsCodemodAdapter.test.ts` protects
+ *     against, applied to this new path.
+ *   - Track C5 — patching leaves undo history untouched UNLESS the patch
+ *     would leave a stored entry pointing at a node id that no longer
+ *     resolves (the same `historySurvivesReload` predicate `loadSite` uses,
+ *     0.2's fix) — in which case it wipes, exactly like a full reload would.
  */
 import { beforeEach, describe, expect, it } from 'bun:test'
 import { useEditorStore } from '@site/store/store'
@@ -34,6 +38,21 @@ function freshStore() {
     hasUnsavedChanges: false,
     boardsDirty: false,
     boardsPendingExplicitRemoval: false,
+    // Reset history too — every other test file's `freshStore` does this.
+    // Without it, a PRIOR test's `_historyPast`/`_historyFuture` entries can
+    // leak into this file's `loadSite(twoPageSite())` calls: `loadSite`
+    // (0.2's history-preservation fix — `historyPreservation.ts`) only wipes
+    // history when it can't prove every referenced node id still resolves,
+    // and this fixture's synthetic ids (`root`, `hero`, `about-root`) are
+    // common enough across fixtures to coincidentally "prove safe" a
+    // leftover entry from an unrelated test/site. Explicitly starting clean
+    // is what every sibling `freshStore` already does; this file just hadn't
+    // needed it while `loadSite` unconditionally wiped history for everyone.
+    _historyPast: [],
+    _historyFuture: [],
+    _historyCoalesceKey: null,
+    canUndo: false,
+    canRedo: false,
   } as Parameters<typeof useEditorStore.setState>[0])
 }
 
@@ -292,5 +311,80 @@ describe('patchPages — never marks the store dirty (write-loop gate)', () => {
 
     // This IS supposed to autosave boards.json — the page is genuinely gone.
     expect(useEditorStore.getState().boardsDirty).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Track C5 — history survives a patch on the SAME honest condition
+// `loadSite` uses (`historyPreservation.ts`), reused rather than duplicated.
+// ---------------------------------------------------------------------------
+
+describe('patchPages — history (Track C5)', () => {
+  it('keeps _historyPast/_historyFuture (same array references) when the patch does not touch any referenced node id', () => {
+    useEditorStore.getState().loadSite(twoPageSite())
+    useEditorStore.getState().openPageInCanvas('about')
+    // A real undo-able edit on 'about-root' — the page this patch will NOT touch.
+    useEditorStore.getState().updateNodeProps('about-root', { tag: 'section' })
+    const pastBefore = useEditorStore.getState()._historyPast
+    expect(pastBefore.length).toBeGreaterThan(0)
+    expect(useEditorStore.getState().canUndo).toBe(true)
+
+    // Patches ONLY 'home' — 'about-root' (what the history entry references)
+    // is untouched and still resolves.
+    const freshHome = makePage({ id: 'home', slug: 'index', title: 'Home (from disk)' })
+    useEditorStore.getState().patchPages({ pages: [freshHome] })
+
+    expect(useEditorStore.getState()._historyPast).toBe(pastBefore)
+    expect(useEditorStore.getState().canUndo).toBe(true)
+  })
+
+  it('wipes _historyPast/_historyFuture when the patch removes a node id a stored entry references', () => {
+    useEditorStore.getState().loadSite(twoPageSite())
+    useEditorStore.getState().openPageInCanvas('home')
+    // A real undo-able edit on 'hero' — the exact node the incoming patch is about to shift away.
+    useEditorStore.getState().updateNodeProps('hero', { text: 'User edit' })
+    expect(useEditorStore.getState()._historyPast.length).toBeGreaterThan(0)
+    expect(useEditorStore.getState().canUndo).toBe(true)
+
+    // Re-parsed 'home' no longer has 'hero' — same shape a shifted move/
+    // delete/insert produces (struct-01's `shifted` contract).
+    const freshHome = makePage({
+      id: 'home',
+      slug: 'index',
+      title: 'Home',
+      rootNodeId: 'root',
+      nodes: {
+        root: makeNode({ id: 'root', moduleId: 'base.body', children: ['hero-shifted'] }),
+        'hero-shifted': makeNode({ id: 'hero-shifted', moduleId: 'base.text', props: { text: 'Hi' } }),
+      },
+    })
+    useEditorStore.getState().patchPages({ pages: [freshHome] })
+
+    expect(useEditorStore.getState()._historyPast).toEqual([])
+    expect(useEditorStore.getState()._historyFuture).toEqual([])
+    expect(useEditorStore.getState().canUndo).toBe(false)
+  })
+
+  it('always ends an open coalescing burst, whether or not history survives the patch', () => {
+    useEditorStore.getState().loadSite(twoPageSite())
+    useEditorStore.getState().openPageInCanvas('about')
+    useEditorStore.getState().updateNodeProps('about-root', { tag: 'section' }) // opens a burst
+    expect(useEditorStore.getState()._historyCoalesceKey).not.toBeNull()
+
+    const freshHome = makePage({ id: 'home', slug: 'index', title: 'Home (from disk)' })
+    useEditorStore.getState().patchPages({ pages: [freshHome] })
+
+    expect(useEditorStore.getState()._historyCoalesceKey).toBeNull()
+  })
+
+  it('is a safe no-op when history is already empty', () => {
+    useEditorStore.getState().loadSite(twoPageSite())
+    expect(useEditorStore.getState()._historyPast).toEqual([])
+
+    const freshHome = makePage({ id: 'home', slug: 'index', title: 'Home (from disk)' })
+    useEditorStore.getState().patchPages({ pages: [freshHome] })
+
+    expect(useEditorStore.getState()._historyPast).toEqual([])
+    expect(useEditorStore.getState().canUndo).toBe(false)
   })
 })

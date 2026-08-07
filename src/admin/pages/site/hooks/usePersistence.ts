@@ -60,10 +60,12 @@ import { registerEditorSave } from './editorSaveRef'
  */
 
 import {
+  CMS_SITE_PAGES_PATCH_EVENT,
   CMS_SITE_RELOAD_EVENT,
   EDITOR_SAVE_REQUEST_EVENT,
   consumePendingCmsSiteReload,
   hasPendingCmsSiteReload,
+  type CmsSitePagesPatchDetail,
 } from '@admin/state/adminEvents'
 
 export interface PersistenceSaveStatus {
@@ -358,6 +360,25 @@ export function usePersistence(
     window.addEventListener(CMS_SITE_RELOAD_EVENT, handleReload)
     return () => window.removeEventListener(CMS_SITE_RELOAD_EVENT, handleReload)
   }, [enabled, requestedSiteId])
+
+  // Track C5 — the targeted-reload counterpart to the full reload above.
+  // `commitStructural`'s narrow path already fetched the replacement pages
+  // (via the SAME `?pageIds=` filter the MCP live-reload bridge uses) before
+  // dispatching this event; this listener's only job is to hand them to the
+  // store. Deliberately NOT retained like `requestCmsSiteReload`'s pending
+  // flag — see `CMS_SITE_PAGES_PATCH_EVENT`'s own doc for why a stale patch
+  // has nothing honest to replay against a not-yet-mounted editor.
+  useEffect(() => {
+    if (!enabled) return undefined
+
+    function handlePagesPatch(evt: Event) {
+      const detail = (evt as CustomEvent<CmsSitePagesPatchDetail>).detail
+      useEditorStore.getState().patchPages({ pages: detail.pages, removedPageIds: detail.removedPageIds })
+    }
+
+    window.addEventListener(CMS_SITE_PAGES_PATCH_EVENT, handlePagesPatch)
+    return () => window.removeEventListener(CMS_SITE_PAGES_PATCH_EVENT, handlePagesPatch)
+  }, [enabled])
 
   // ─── 2. Auto-save (debounced) ──────────────────────────────────────────────
   useEffect(() => {

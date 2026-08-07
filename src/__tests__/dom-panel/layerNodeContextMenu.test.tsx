@@ -883,3 +883,131 @@ describe('LayerNodeContextMenu — multi-delete confirmation', () => {
     expect(pageAfterConfirm?.nodes.c).toBeDefined()
   })
 })
+
+// ---------------------------------------------------------------------------
+// Track F2 / R4 — Duplicate, Wrap, and Delete are pre-disabled before the
+// click, driven by `explainStructuralConstraint` (`@core/page-tree`) — the
+// exact predicate the store's own guard consults, never a re-derived rule.
+// ---------------------------------------------------------------------------
+
+function renderMenuForNode(nodeId: string, page: ReturnType<typeof makePage>) {
+  localStorage.clear()
+  useEditorStore.setState({
+    site: makeSite({ pages: [page], files: [], visualComponents: [] }),
+    activePageId: page.id,
+    selectedNodeId: nodeId,
+    hoveredNodeId: null,
+    activeDocument: null,
+    _historyPast: [],
+    _historyFuture: [],
+    canUndo: false,
+    canRedo: false,
+    hasUnsavedChanges: false,
+  } as Parameters<typeof useEditorStore.setState>[0])
+  return render(
+    <LayerNodeContextMenu
+      x={100}
+      y={200}
+      nodeId={nodeId}
+      onClose={noop}
+      onDelete={noop}
+      onDuplicate={noop}
+      onRename={noop}
+      onWrapInContainer={noop}
+      onCopy={noop}
+      onCut={noop}
+      onPaste={noop}
+    />,
+  )
+}
+
+describe('LayerNodeContextMenu — R4 pre-disabled structural gestures', () => {
+  it('an ordinary CMS node (no source id) can duplicate, wrap, and delete', () => {
+    const page = makePage({
+      id: 'page-cms',
+      rootNodeId: 'root',
+      nodes: { root: makeNode({ id: 'root', moduleId: 'base.body', children: ['leaf'] }), leaf: makeNode({ id: 'leaf' }) },
+    })
+    renderMenuForNode('leaf', page)
+
+    for (const label of [/duplicate/i, /delete/i]) {
+      const item = screen.getByRole('menuitem', { name: label })
+      expect(item.getAttribute('aria-disabled')).toBeNull()
+    }
+    fireEvent.mouseEnter(screen.getByRole('menuitem', { name: /wrap in/i }))
+    const containerItem = within(screen.getByRole('menu', { name: 'Wrap in' })).getByRole('menuitem', { name: /container/i })
+    expect(containerItem.getAttribute('aria-disabled')).toBeNull()
+  })
+
+  it('a source-derived node with NO structural lock can still be deleted, but not duplicated or wrapped', () => {
+    const page = makePage({
+      id: 'page-src',
+      rootNodeId: 'root',
+      nodes: {
+        root: makeNode({ id: 'root', moduleId: 'base.body', children: ['src/screens/Home.jsx:9:1'] }),
+        'src/screens/Home.jsx:9:1': makeNode({ id: 'src/screens/Home.jsx:9:1' }),
+      },
+    })
+    renderMenuForNode('src/screens/Home.jsx:9:1', page)
+
+    const deleteItem = screen.getByRole('menuitem', { name: /delete/i })
+    expect(deleteItem.getAttribute('aria-disabled')).toBeNull()
+
+    const duplicateItem = screen.getByRole('menuitem', { name: /duplicate/i })
+    expect(duplicateItem.getAttribute('aria-disabled')).toBe('true')
+
+    fireEvent.mouseEnter(screen.getByRole('menuitem', { name: /wrap in/i }))
+    const containerItem = within(screen.getByRole('menu', { name: 'Wrap in' })).getByRole('menuitem', { name: /container/i })
+    expect(containerItem.getAttribute('aria-disabled')).toBe('true')
+  })
+
+  it('a structurally locked source node (e.g. spread props) cannot be deleted either, and the tooltip names the reason', () => {
+    const page = makePage({
+      id: 'page-locked',
+      rootNodeId: 'root',
+      nodes: {
+        root: makeNode({ id: 'root', moduleId: 'base.body', children: ['src/screens/Home.jsx:9:1'] }),
+        'src/screens/Home.jsx:9:1': makeNode({ id: 'src/screens/Home.jsx:9:1', lockReason: 'spread props' }),
+      },
+    })
+    renderMenuForNode('src/screens/Home.jsx:9:1', page)
+
+    const deleteItem = screen.getByRole('menuitem', { name: /delete/i })
+    expect(deleteItem.getAttribute('aria-disabled')).toBe('true')
+    fireEvent.mouseEnter(deleteItem)
+    expect(screen.getByRole('tooltip').textContent).toContain('spread props')
+  })
+
+  it('a `.map` row cannot be deleted, duplicated, or wrapped', () => {
+    const page = makePage({
+      id: 'page-loop',
+      rootNodeId: 'root',
+      nodes: {
+        root: makeNode({ id: 'root', moduleId: 'base.body', children: ['src/screens/Home.jsx:9:1#0'] }),
+        'src/screens/Home.jsx:9:1#0': makeNode({ id: 'src/screens/Home.jsx:9:1#0' }),
+      },
+    })
+    renderMenuForNode('src/screens/Home.jsx:9:1#0', page)
+
+    for (const label of [/duplicate/i, /delete/i]) {
+      expect(screen.getByRole('menuitem', { name: label }).getAttribute('aria-disabled')).toBe('true')
+    }
+  })
+
+  it('R5 — a `studio.instance` node gets the real "duplicate as a new file" wording instead of the generic refusal', () => {
+    const page = makePage({
+      id: 'page-instance',
+      rootNodeId: 'root',
+      nodes: {
+        root: makeNode({ id: 'root', moduleId: 'base.body', children: ['src/screens/Home.jsx:9:1'] }),
+        'src/screens/Home.jsx:9:1': makeNode({ id: 'src/screens/Home.jsx:9:1', moduleId: 'studio.instance' }),
+      },
+    })
+    renderMenuForNode('src/screens/Home.jsx:9:1', page)
+
+    const duplicateItem = screen.getByRole('menuitem', { name: /duplicate/i })
+    expect(duplicateItem.getAttribute('aria-disabled')).toBe('true')
+    fireEvent.mouseEnter(duplicateItem)
+    expect(screen.getByRole('tooltip').textContent).toContain('new file')
+  })
+})

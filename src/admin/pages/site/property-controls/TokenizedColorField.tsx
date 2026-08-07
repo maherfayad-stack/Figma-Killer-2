@@ -1,6 +1,8 @@
-import { useState, type CSSProperties, type ChangeEvent, type FocusEvent, type KeyboardEvent } from 'react'
+import { useRef, useState, type CSSProperties, type ChangeEvent, type FocusEvent, type KeyboardEvent } from 'react'
 import { generateFrameworkColorVariableSets } from '@core/framework'
+import { contrastLevel, contrastRatio, cssColorToRgb, type WcagContrastLevel } from '@core/design-tokens'
 import { useEditorStore } from '@site/store/store'
+import { Button } from '@ui/components/Button'
 import { ColorInput } from '@ui/components/ColorInput'
 import { Input } from '@ui/components/Input'
 import { cn } from '@ui/cn'
@@ -32,6 +34,27 @@ interface TokenizedColorFieldProps {
    */
   onTokenPreview?: (value: string) => void
   onTokenPreviewClear?: () => void
+  /**
+   * A resolved CSS colour (hex/`rgb()`/`hsl()`) to compute a live WCAG
+   * contrast badge against — the intended use is the element's own resolved
+   * background. T9 (`STUDIO-FIGMA-PARITY-PLAN.md` §11): `contrastRatio` had
+   * zero imports from `src/` before this — an agent could report a design's
+   * contrast ratio, but a human picking a colour here got no signal at all.
+   * Omitted by a caller that doesn't have a background to compare against
+   * yet — the badge simply doesn't render; nothing else changes.
+   */
+  contrastAgainst?: string
+}
+
+/** `AA 7.2` / `AAA 12.1` / `2.3:1` (below AA — the ratio itself, not a false pass label) — one line, computed from `contrastAgainst`. */
+function contrastBadgeFor(value: string, contrastAgainst: string | undefined): { level: WcagContrastLevel; label: string } | null {
+  if (!contrastAgainst) return null
+  const fg = cssColorToRgb(value)
+  const bg = cssColorToRgb(contrastAgainst)
+  if (!fg || !bg) return null
+  const ratio = Math.round(contrastRatio(fg, bg) * 10) / 10
+  const level = contrastLevel(ratio)
+  return { level, label: level === 'fail' ? `${ratio}:1` : `${level} ${ratio}` }
 }
 
 export function TokenizedColorField({
@@ -50,10 +73,12 @@ export function TokenizedColorField({
   onTokenSelect,
   onTokenPreview,
   onTokenPreviewClear,
+  contrastAgainst,
 }: TokenizedColorFieldProps) {
   const colorSettings = useEditorStore((state) => state.site?.settings.framework?.colors)
   const [open, setOpen] = useState(false)
   const [activeIndex, setActiveIndex] = useState(0)
+  const hiddenColorInputRef = useRef<HTMLInputElement>(null)
   const variables = generateFrameworkColorVariableSets(colorSettings).light
     .filter((variable) => variable.tokenId !== excludeTokenId)
   const filteredVariables = computeFilteredVariables(value, variables)
@@ -100,6 +125,26 @@ export function TokenizedColorField({
     setOpen(false)
   }
 
+  /**
+   * T8 (`STUDIO-FIGMA-PARITY-PLAN.md` §11) — the swatch used to BE a native
+   * `<input type="color">`: one click opened the OS colour dialog and wrote a
+   * raw hex on change, silently detaching the value from whatever token it
+   * held. The swatch now opens the same token menu the text field does;
+   * "Custom colour…" (below) is the only way to reach the native dialog.
+   */
+  function handleSwatchTriggerClick() {
+    if (!disabled) setOpen((wasOpen) => !wasOpen)
+  }
+
+  function openCustomColorPicker() {
+    onTokenPreviewClear?.()
+    setOpen(false)
+    // Defer past this click so the menu finishes closing before the native
+    // OS dialog steals focus — clicking the hidden input synchronously here
+    // can fire while the menu's own blur handling is still settling.
+    window.setTimeout(() => hiddenColorInputRef.current?.click(), 0)
+  }
+
   function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
     if (!showMenu) {
       if (event.key === 'ArrowDown' && filteredVariables.length > 0) {
@@ -125,18 +170,45 @@ export function TokenizedColorField({
     }
   }
 
+  const currentContrast = contrastBadgeFor(swatchValue, contrastAgainst)
+
   return (
     <div className={styles.colorRow}>
       <div className={styles.colorField} data-color-field="true">
+        <Button
+          type="button"
+          variant="ghost"
+          size="micro"
+          iconOnly
+          disabled={disabled}
+          onClick={handleSwatchTriggerClick}
+          aria-label={swatchLabel}
+          aria-haspopup="listbox"
+          aria-expanded={showMenu}
+          className={styles.colorSwatchTrigger}
+        >
+          <span
+            className={styles.colorTokenOptionSwatch}
+            style={{ '--color-token-option-value': swatchValue } as TokenSwatchStyle}
+            aria-hidden="true"
+          />
+        </Button>
+        {/* The ONLY route to a raw, un-tokenized colour — reached exclusively
+            via "Custom colour…" below (`openCustomColorPicker`), never by a
+            direct click. Visually hidden, not `display:none` (a hidden input
+            can't be `.click()`-triggered reliably across browsers once
+            display is none). */}
         <ColorInput
+          ref={hiddenColorInputRef}
           id={id ? `${id}-swatch` : undefined}
           value={swatchValue}
           swatchValue={swatchValue}
           disabled={disabled}
           onChange={handleSwatchChange}
-          aria-label={swatchLabel}
+          aria-hidden="true"
+          tabIndex={-1}
           fieldSize="xs"
-          className={styles.colorInlineSwatch}
+          className={styles.hiddenColorInput}
         />
         <Input
           id={id}
@@ -159,41 +231,73 @@ export function TokenizedColorField({
           spellCheck={false}
           className={cn(styles.colorText, styles.colorTextWithPreview)}
         />
-        {showMenu && (
-          <div
-            id={menuId}
-            role="listbox"
-            aria-label={`${inputLabel} color tokens`}
-            className={styles.colorTokenMenu}
-            onMouseLeave={() => onTokenPreviewClear?.()}
+        {currentContrast && (
+          <span
+            className={cn(styles.colorContrastBadge, styles[`colorContrastBadge-${currentContrast.level}`])}
+            title="WCAG contrast against the resolved background"
           >
-            {filteredVariables.map((variable, index) => (
-              <button
-                key={`${variable.tokenId}-${variable.variantId}`}
-                type="button"
-                role="option"
-                aria-selected={index === activeIndex}
-                className={styles.colorTokenOption}
-                onMouseEnter={() => {
-                  setActiveIndex(index)
-                  onTokenPreview?.(`var(${variable.name})`)
-                }}
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => commitToken(variable)}
-              >
-                <span
-                  className={styles.colorTokenOptionSwatch}
-                  style={{ '--color-token-option-value': variable.value } as TokenSwatchStyle}
-                  aria-hidden="true"
-                />
-                <span className={styles.colorTokenOptionText}>
-                  <span className={styles.colorTokenOptionName}>{variable.name}</span>
-                  {variable.variantName && (
-                    <span className={styles.colorTokenOptionMeta}>{variable.variantName}</span>
-                  )}
-                </span>
-              </button>
-            ))}
+            {currentContrast.label}
+          </span>
+        )}
+        {showMenu && (
+          <div className={styles.colorTokenMenuWrap}>
+            <div
+              id={menuId}
+              role="listbox"
+              aria-label={`${inputLabel} color tokens`}
+              className={styles.colorTokenMenu}
+              onMouseLeave={() => onTokenPreviewClear?.()}
+            >
+              {filteredVariables.map((variable, index) => {
+                const optionContrast = contrastBadgeFor(variable.value, contrastAgainst)
+                return (
+                  <button
+                    key={`${variable.tokenId}-${variable.variantId}`}
+                    type="button"
+                    role="option"
+                    aria-selected={index === activeIndex}
+                    className={styles.colorTokenOption}
+                    onMouseEnter={() => {
+                      setActiveIndex(index)
+                      onTokenPreview?.(`var(${variable.name})`)
+                    }}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => commitToken(variable)}
+                  >
+                    <span
+                      className={styles.colorTokenOptionSwatch}
+                      style={{ '--color-token-option-value': variable.value } as TokenSwatchStyle}
+                      aria-hidden="true"
+                    />
+                    <span className={styles.colorTokenOptionText}>
+                      <span className={styles.colorTokenOptionName}>{variable.name}</span>
+                      {variable.variantName && (
+                        <span className={styles.colorTokenOptionMeta}>{variable.variantName}</span>
+                      )}
+                    </span>
+                    {optionContrast && (
+                      <span
+                        className={cn(styles.colorContrastBadge, styles[`colorContrastBadge-${optionContrast.level}`])}
+                      >
+                        {optionContrast.label}
+                      </span>
+                    )}
+                  </button>
+                )
+              })}
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              menuItem
+              fullWidth
+              align="start"
+              className={styles.colorCustomAction}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={openCustomColorPicker}
+            >
+              Custom color…
+            </Button>
           </div>
         )}
       </div>

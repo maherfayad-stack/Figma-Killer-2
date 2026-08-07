@@ -32,13 +32,7 @@ import { join, sep } from 'node:path'
 import { readFileSync, statSync } from 'node:fs'
 import { Type } from '@core/utils/typeboxHelpers'
 import { decodeSourceNodeId } from '@core/page-tree'
-import {
-  EXCLUDED_WORKSPACE_DIR_NAMES,
-  checkCanonicalJsx,
-  listWorkspaceFiles,
-  parsePageFile,
-  summarizeCanonicalFindings,
-} from '@core/page-parser'
+import { EXCLUDED_WORKSPACE_DIR_NAMES, listWorkspaceFiles } from '@core/page-parser'
 import type { AiTool, ToolContext } from '../../../runtime/types'
 import {
   listStudioProjects,
@@ -52,6 +46,7 @@ import { startInstallJob, getInstallJob, probeInstallStatus } from '../../../../
 import { loadStudioPages } from '../../../../handlers/studioPageLoad'
 import { createScaffoldedPage } from '../../../../handlers/studio/pageScaffold'
 import { readTextCapped } from '../../../../handlers/studio/cappedFileRead'
+import { canonicalSummaryForFile } from '../../../../handlers/studio/canonicalPageCheck'
 import { isRealpathContainedAllowingMissing } from '../../../../handlers/studio/workspacePackageResolve'
 import { pushStudioLiveReload } from './liveReloadPush'
 
@@ -469,30 +464,6 @@ function resolveSafeWorkspaceFile(dir: string, rawPath: string): string | null {
   return resolved
 }
 
-/**
- * When `rawPath` looks like a JSX/TSX page-shaped file, also run the WS-13
- * canonical check on it and fold in a compact summary — the "confirm the
- * screen is still canonical" step of the create-a-screen flow, without a
- * dedicated tool. `checkCanonicalJsx`/`summarizeCanonicalFindings`'s own doc
- * comments name this exact caller ("the single signal step 4's scaffolder and
- * WS-12's agent should check"). Never thrown, never asserted for a file that
- * isn't page-shaped: `parsePageFile` never throws (a guard trip just yields
- * an empty page), so a plain component/util file degrades to
- * `isCanonical: true, violations: 0` rather than a false negative — harmless
- * either way, since the caller only reads this field on a `.tsx`/`.jsx` path
- * it already expects to be a screen.
- */
-function canonicalSummaryFor(resolved: string, dir: string, rawPath: string): { isCanonical: boolean; violations: number; advisories: number } | undefined {
-  if (!/\.(tsx|jsx)$/.test(rawPath)) return undefined
-  try {
-    const parsed = parsePageFile(resolved, dir)
-    const findings = checkCanonicalJsx({ page: parsed })
-    return summarizeCanonicalFindings(findings)
-  } catch {
-    return undefined
-  }
-}
-
 const readFileTool: AiTool = {
   name: 'studio_read_file',
   scope: 'shared',
@@ -519,7 +490,7 @@ const readFileTool: AiTool = {
     if (content === undefined) {
       return { ok: false, error: `"${rawPath}" does not exist, is not a regular file, or exceeds ${READ_FILE_MAX_BYTES.toLocaleString('en-US')} bytes. Call studio_list_files to see what paths actually exist rather than guessing another one.` }
     }
-    const canonical = canonicalSummaryFor(resolved, dir, rawPath)
+    const canonical = canonicalSummaryForFile(resolved, dir, rawPath)
     return { ok: true, dir, path: rawPath, content, ...(canonical ? { canonical } : {}) }
   },
 }

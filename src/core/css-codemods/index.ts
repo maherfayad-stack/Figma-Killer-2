@@ -14,6 +14,7 @@
  * exactly one honest target?), then `setDeclaration` (do it).
  */
 export { setDeclaration, setDeclarationAtMedia, type SetDeclarationResult } from './setDeclaration'
+export { insertRule, type InsertRuleResult, type InsertRuleOptions } from './insertRule'
 export {
   analyzeDeclarationTarget,
   type DeclarationTargetAnalysis,

@@ -26,6 +26,7 @@ import { useEffect, useId, useRef, useState, type CSSProperties } from 'react'
 import { Button } from '@ui/components/Button'
 import { Checkbox } from '@ui/components/Checkbox'
 import { Dialog } from '@ui/components/Dialog'
+import { FileUpload } from '@ui/components/FileUpload'
 import { Input } from '@ui/components/Input'
 import { Select } from '@ui/components/Select'
 import { SkeletonBlock } from '@ui/components/Skeleton'
@@ -374,12 +375,20 @@ export function AddCustomFontDialog({
           <h3 className={styles.dialogSectionTitle}>
             Font files from media ({pickedIds.length} selected)
           </h3>
-          <Button
-            variant="secondary"
-            size="xs"
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={installing || uploading}
+          {/* The shared primitive owns the hidden native input and the click
+              forwarding — a raw `<input type="file">` here is gated by
+              `ui-primitives-location.test.ts`. `ref` still reaches the input so
+              the post-upload value reset below keeps working. */}
+          <FileUpload
+            ref={fileInputRef}
+            buttonProps={{
+              variant: 'secondary',
+              size: 'xs',
+              disabled: installing || uploading,
+            }}
+            accept={ACCEPT_EXTENSIONS}
+            multiple
+            onChange={(e) => handleUploadPicked(e.target.files)}
           >
             {uploading ? (
               <>
@@ -388,18 +397,8 @@ export function AddCustomFontDialog({
             ) : (
               'Upload font file'
             )}
-          </Button>
+          </FileUpload>
         </div>
-
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept={ACCEPT_EXTENSIONS}
-          multiple
-          hidden
-          aria-label="Upload font files"
-          onChange={(e) => handleUploadPicked(e.target.files)}
-        />
 
         {uploadError && <p role="alert" className={styles.errorAlert}>{uploadError}</p>}
 

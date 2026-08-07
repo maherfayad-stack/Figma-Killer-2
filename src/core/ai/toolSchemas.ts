@@ -434,7 +434,7 @@ export const StudioExportFramesInputSchema = Type.Object({
   dpr: Type.Optional(Type.Number({
     minimum: 0.5,
     maximum: 3,
-    description: 'Output pixel-density multiplier applied to each frame\'s native captured size (e.g. 2 for a retina-equivalent PNG). Still capped so no image edge exceeds the shared vision-safe limit. Default 1.',
+    description: 'Output pixel-density multiplier applied to each frame\'s native captured size (e.g. 2 for a retina-equivalent PNG). Still capped so no image edge — width OR height — exceeds the shared ~1568px vision-safe limit; a tall frame\'s HEIGHT is the axis most likely to be the one that clamps, silently producing a captured image shorter than `dpr` alone would predict. Default 1.',
   })),
   axes: Type.Optional(Type.Object({
     direction: Type.Optional(Type.Union([Type.Literal('ltr'), Type.Literal('rtl')])),

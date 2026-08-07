@@ -56,8 +56,14 @@ export interface SetDeclarationResult {
   changed: boolean
 }
 
-/** Match a direct-child rule of `container` whose selector equals `selector`, trimmed. */
-function findRule(container: Container, selector: string): Rule | undefined {
+/**
+ * Match a direct-child rule of `container` whose selector equals `selector`,
+ * trimmed. Exported for `insertRule.ts` (Track B1), which needs the exact
+ * same "does this selector already have a rule in this scope" check before
+ * deciding to merge into it instead of appending a duplicate — sharing the
+ * function keeps the two codemods' notion of "the same rule" from drifting.
+ */
+export function findRule(container: Container, selector: string): Rule | undefined {
   const target = selector.trim()
   let found: Rule | undefined
   container.each((node) => {
@@ -71,8 +77,13 @@ function findRule(container: Container, selector: string): Rule | undefined {
   return found
 }
 
-/** Set (or insert) one declaration inside an existing rule node. Returns whether it changed anything. */
-function applyDeclaration(rule: Rule, property: string, value: string): boolean {
+/**
+ * Set (or insert) one declaration inside an existing rule node. Returns
+ * whether it changed anything. Exported for `insertRule.ts` (Track B1) —
+ * see `findRule`'s doc for why the two codemods share this rather than each
+ * growing their own copy.
+ */
+export function applyDeclaration(rule: Rule, property: string, value: string): boolean {
   const propLower = property.toLowerCase()
   let existing: Rule['nodes'][number] | undefined
   rule.walkDecls((decl) => {

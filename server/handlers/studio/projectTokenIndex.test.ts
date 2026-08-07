@@ -59,9 +59,29 @@ describe('buildProjectTokenIndex', () => {
     expect(index.fontSizes.find((t) => t.name === '--type-body-size')?.px).toBe(15)
   })
 
-  it('ignores rem, whose px value depends on a root size this index does not know', () => {
+  it('resolves rem at the standard 16px root, agreeing with the picker scan (T12)', () => {
+    // This index used to refuse `rem` outright while `tokenExtractCssScan.ts`
+    // (the picker's own source) resolved it at 16px — the same measured
+    // value could be answered with a token here and not there. Both now
+    // share `toPx`, so they agree.
     const index = buildProjectTokenIndex(':root{--type-rem-size:1.5rem}')
-    expect(index.fontSizes).toHaveLength(0)
+    expect(index.fontSizes.find((t) => t.name === '--type-rem-size')?.px).toBe(24)
+  })
+
+  it('names a colour written as hsl()/rgb(), not just hex — agreeing with the picker scan (T12)', () => {
+    const index = buildProjectTokenIndex(':root{--brand:hsl(187 88% 37%);--accent:rgb(239, 69, 80)}')
+    expect(index.colors.find((c) => c.name === '--brand')?.hex).toBe('#0b9eb1')
+    expect(index.colors.find((c) => c.name === '--accent')?.hex).toBe('#ef4550')
+  })
+
+  it('resolves a var() chain deeper than one level — agreeing with the picker scan (T12)', () => {
+    const index = buildProjectTokenIndex(':root{--a:20px;--b:var(--a);--type-chained-size:var(--b)}')
+    expect(index.fontSizes.find((t) => t.name === '--type-chained-size')?.px).toBe(20)
+  })
+
+  it('converts rem against the project\'s own root font-size, not a hardcoded 16 (T6)', () => {
+    const index = buildProjectTokenIndex('html{font-size:62.5%}:root{--type-rem-size:1.6rem}')
+    expect(index.fontSizes.find((t) => t.name === '--type-rem-size')?.px).toBe(16)
   })
 
   it('returns an empty index for CSS with no custom properties', () => {

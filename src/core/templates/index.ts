@@ -14,6 +14,7 @@ export {
   primaryTemplateTableSlug,
   templateTargetLabel,
   resolveTemplateChain,
+  resolveTemplateChainFromPages,
   resolveNotFoundTemplate,
   type RouteResolutionContext,
 } from './templateMatching'

@@ -35,6 +35,7 @@
 import { describe, it, expect } from 'bun:test'
 import { readdirSync, readFileSync, statSync, existsSync } from 'fs'
 import { join, extname } from 'path'
+import { toPosixPath } from './pathHelpers'
 
 const SRC_ROOT = join(import.meta.dir, '../../')
 
@@ -59,7 +60,13 @@ function collectFiles(dir: string, exts = ['.ts', '.tsx', '.js', '.jsx', '.mts',
 
 // Scan production source only — not __tests__ (test files contain banned
 // strings as regex patterns and would false-positive).
-const PROD_DIRS = ['editor', 'core', 'modules', 'ui', 'app', 'lib'].map((d) =>
+//
+// 'editor', 'app', and 'lib' never existed in this repo's tracked history
+// (`git log --all -- src/editor src/app src/lib` is empty) — this gate's
+// own docstring says "No file under src/ may import…" but the list silently
+// never scanned `src/admin/`. 'admin' is the real directory; 'core',
+// 'modules', 'ui' already existed and were being scanned.
+const PROD_DIRS = ['admin', 'core', 'modules', 'ui'].map((d) =>
   join(SRC_ROOT, d)
 )
 
@@ -119,7 +126,7 @@ describe('Constraint #348 — No third-party icon libraries in production src/',
       try { return bannedPkg.pattern.test(readFileSync(f, 'utf8')) } catch { return false }
     })
     if (violations.length > 0) {
-      const rel = violations.map((f) => f.replace(SRC_ROOT, 'src/'))
+      const rel = violations.map((f) => toPosixPath(f.replace(SRC_ROOT, 'src/')))
       throw new Error(
         `[Constraint #348] "${bannedPkg.name}" found in production source.\n` +
         `Use pixel-art-icons from 'pixel-art-icons/icons/<name>'.\n` +
@@ -138,7 +145,7 @@ describe('Constraint #348 — No third-party icon libraries in production src/',
       for (const f of allFiles) {
         try {
           if (bannedPkg.pattern.test(readFileSync(f, 'utf8'))) {
-            allViolations.push({ file: f.replace(SRC_ROOT, 'src/'), pkg: bannedPkg.name })
+            allViolations.push({ file: toPosixPath(f.replace(SRC_ROOT, 'src/')), pkg: bannedPkg.name })
           }
         } catch {
           // skip unreadable files

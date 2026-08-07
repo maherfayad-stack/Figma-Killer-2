@@ -7,8 +7,11 @@
  * small set of pre-existing §T-allowlisted files.
  *
  * SCAN ROOTS:
- *   src/admin/**                    — host admin shell
- *   src/editor/**                   — host editor shell
+ *   src/admin/**                    — host admin shell (includes the visual
+ *                                     site editor at src/admin/pages/site/;
+ *                                     'src/editor/**' never existed in this
+ *                                     repo's tracked history and scanned zero
+ *                                     files — dropped, see git log --all)
  *
  * ALLOWLIST (§T-coded):
  *   §T.0  src/ui/components/Tabs/   — the Tabs primitive itself; role="tablist"
@@ -58,10 +61,7 @@ function walkTSX(dir: string, out: string[] = []): string[] {
 }
 
 function collectAllFiles(): string[] {
-  return [
-    ...walkTSX(join(SRC_ROOT, 'admin')),
-    ...walkTSX(join(SRC_ROOT, 'editor')),
-  ]
+  return walkTSX(join(SRC_ROOT, 'admin'))
 }
 
 // ---------------------------------------------------------------------------

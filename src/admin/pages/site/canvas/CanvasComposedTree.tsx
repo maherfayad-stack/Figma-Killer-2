@@ -24,11 +24,29 @@
  * `NodeRenderer` at the document root, whose `base.body` claims the iframe body
  * as usual. Its own outlet, if any, still previews matched content through
  * `OutletEditor`.
+ *
+ * Perf (Track C3 / audit 06 E9)
+ * ──────────────────────────────
+ * This used to subscribe to the WHOLE `s.site` object purely to call
+ * `resolveEditorWrapperTemplates(site, page)`. `site`'s top-level reference
+ * changes on every site-touching mutation anywhere in the document, so this
+ * component — mounted once per board frame — re-ran its whole body (including
+ * the template-matching pass) on a keystroke on ANY frame, not just its own.
+ *
+ * The only part of `site` this component needs is the TEMPLATE-marked pages
+ * (`isTemplatePage`) — ordinary content pages never participate in template
+ * matching or wrapper-chrome rendering. `templatePages` below is selected with
+ * `useShallow`, so its identity survives an edit to any non-template page
+ * (the overwhelming majority): only editing an actual template's own content,
+ * toggling a page's template config, or adding/removing a page changes it.
+ * `styleRules` was already narrowly selected.
  */
 
 import { use, useEffect, type ReactNode } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import type { BaseNode, Page } from '@core/page-tree'
 import { classNamesForClassIds } from '@core/page-tree'
+import { isTemplatePage } from '@core/templates'
 import { useEditorStore } from '@site/store/store'
 import { ReadOnlyNodeTree } from '@modules/base/utils/ReadOnlyNodeTree'
 import { htmlAttributesForReact } from '@modules/base/shared/htmlAttributes'
@@ -39,6 +57,8 @@ import { CanvasDocumentContext, CanvasTemplateContext } from './CanvasContexts'
 import { applyIframeBodyPresentation } from './iframeBodyPresentation'
 
 const NO_WRAPPERS: Page[] = []
+/** Stable empty fallback for the template-pages selector (Guideline #239). */
+const EMPTY_TEMPLATE_PAGES: Page[] = []
 
 interface CanvasComposedTreeProps {
   /** The active document being edited (the editable page / template). */
@@ -46,14 +66,16 @@ interface CanvasComposedTreeProps {
 }
 
 export function CanvasComposedTree({ page }: CanvasComposedTreeProps) {
-  const site = useEditorStore((s) => s.site)
   const isVcMode = useEditorStore((s) => s.activeDocument?.kind === 'visualComponent')
   const styleRules = useEditorStore((s) => s.site?.styleRules ?? null)
+  const templatePages = useEditorStore(
+    useShallow((s) => s.site?.pages.filter(isTemplatePage) ?? EMPTY_TEMPLATE_PAGES),
+  )
   const templateContext = use(CanvasTemplateContext)
 
   // Templates wrapping the active document (outermost-first). A Visual
   // Component edit surface is never a published route, so it is never wrapped.
-  const wrappers = !isVcMode && site ? resolveEditorWrapperTemplates(site, page) : NO_WRAPPERS
+  const wrappers = !isVcMode ? resolveEditorWrapperTemplates(templatePages, page) : NO_WRAPPERS
   const outerBody = wrappers[0]?.nodes[wrappers[0].rootNodeId]
 
   // No wrapping templates → render the document exactly as before; its own

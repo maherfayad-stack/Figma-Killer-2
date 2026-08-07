@@ -5,12 +5,14 @@ import {
   duplicateFrame,
   moveDoc,
   moveFrame,
+  moveGuide,
   moveNote,
   parseBoardsFile,
   removeBoard,
   removeDoc,
   removeFrame,
   removeFramesForPage,
+  removeGuide,
   removeNote,
   renameBoard,
   resizeFrame,
@@ -19,9 +21,10 @@ import {
   upsertBoard,
   upsertDoc,
   upsertFrame,
+  upsertGuide,
   upsertNote,
 } from '../index'
-import type { Board, BoardFrame, BoardsFile, DocBlock, StickyNote } from '../types'
+import type { Board, BoardFrame, BoardGuide, BoardsFile, DocBlock, StickyNote } from '../types'
 
 describe('create helpers', () => {
   test('createBoardsFile returns empty file', () => {
@@ -35,6 +38,7 @@ describe('create helpers', () => {
       frames: [],
       notes: [],
       docs: [],
+      guides: [],
     })
   })
 })
@@ -90,7 +94,7 @@ describe('renameBoard', () => {
   test('returns a board with the new name', () => {
     const board = createBoard('b1', 'Old Name')
     const result = renameBoard(board, 'New Name')
-    expect(result).toEqual({ id: 'b1', name: 'New Name', frames: [], notes: [], docs: [] })
+    expect(result).toEqual({ id: 'b1', name: 'New Name', frames: [], notes: [], docs: [], guides: [] })
   })
 
   test('does not mutate the input board', () => {
@@ -466,6 +470,72 @@ describe('duplicateFrame', () => {
   })
 })
 
+const guide = (overrides: Partial<BoardGuide> = {}): BoardGuide => ({
+  id: 'g1',
+  axis: 'x',
+  position: 100,
+  ...overrides,
+})
+
+describe('upsertGuide', () => {
+  test('adds a new guide', () => {
+    const board = createBoard('b1', 'Board 1')
+    const result = upsertGuide(board, guide())
+    expect(result.guides).toEqual([guide()])
+  })
+
+  test('replaces a guide with the same id', () => {
+    const board = upsertGuide(createBoard('b1', 'Board 1'), guide())
+    const replacement = guide({ position: 250 })
+    const result = upsertGuide(board, replacement)
+    expect(result.guides).toEqual([replacement])
+    expect(result.guides).toHaveLength(1)
+  })
+
+  test('does not mutate the input board', () => {
+    const board = createBoard('b1', 'Board 1')
+    const originalGuidesRef = board.guides
+    upsertGuide(board, guide())
+    expect(board.guides).toBe(originalGuidesRef)
+    expect(board.guides).toHaveLength(0)
+  })
+})
+
+describe('moveGuide', () => {
+  test('updates the position', () => {
+    const board = upsertGuide(createBoard('b1', 'Board 1'), guide())
+    const result = moveGuide(board, 'g1', 320)
+    expect(result.guides![0]).toEqual(guide({ position: 320 }))
+  })
+
+  test('is a no-op for a missing id', () => {
+    const board = upsertGuide(createBoard('b1', 'Board 1'), guide())
+    const result = moveGuide(board, 'missing', 320)
+    expect(result).toBe(board)
+  })
+
+  test('does not mutate the input board', () => {
+    const board = upsertGuide(createBoard('b1', 'Board 1'), guide())
+    const snapshot = JSON.parse(JSON.stringify(board))
+    moveGuide(board, 'g1', 320)
+    expect(board).toEqual(snapshot)
+  })
+})
+
+describe('removeGuide', () => {
+  test('drops the guide with the given id', () => {
+    const board = upsertGuide(createBoard('b1', 'Board 1'), guide())
+    const result = removeGuide(board, 'g1')
+    expect(result.guides).toEqual([])
+  })
+
+  test('is a no-op for a missing id', () => {
+    const board = upsertGuide(createBoard('b1', 'Board 1'), guide())
+    const result = removeGuide(board, 'missing')
+    expect(result.guides).toEqual(board.guides)
+  })
+})
+
 describe('serialize round-trip', () => {
   test('parseBoardsFile(serializeBoardsFile(f)) deep-equals f', () => {
     let board = createBoard('b1', 'Board 1')
@@ -542,7 +612,7 @@ describe('parseBoardsFile tolerance', () => {
     expect(result.boards).toHaveLength(2)
 
     const good = result.boards.find((b) => b.id === 'good')
-    expect(good).toEqual({ id: 'good', name: 'Good Board', frames: [], notes: [], docs: [] })
+    expect(good).toEqual({ id: 'good', name: 'Good Board', frames: [], notes: [], docs: [], guides: [] })
 
     const partial = result.boards.find((b) => b.id === 'partial') as Board
     expect(partial.frames).toEqual([
@@ -567,7 +637,7 @@ describe('parseBoardsFile tolerance', () => {
 
     const result = parseBoardsFile(raw)
     expect(result.boards).toEqual([
-      { id: 'legacy', name: 'Legacy Board', frames: [], notes: [], docs: [] },
+      { id: 'legacy', name: 'Legacy Board', frames: [], notes: [], docs: [], guides: [] },
     ])
   })
 
@@ -810,6 +880,77 @@ describe('parseBoardsFile — frame id/axes (WS-10 Phase 2)', () => {
   test('serialize round-trip preserves a per-frame axes override', () => {
     let board = createBoard('b1', 'Board 1')
     board = upsertFrame(board, { id: 'f1', pageId: 'home', x: 0, y: 0, axes: { direction: 'rtl' } })
+    const file: BoardsFile = upsertBoard(createBoardsFile(), board)
+    const parsed = parseBoardsFile(serializeBoardsFile(file))
+    expect(parsed).toEqual(file)
+  })
+})
+
+describe('parseBoardsFile — guides (D1)', () => {
+  test('a board missing the guides key entirely (pre-D1 boards.json) parses with an empty guides list', () => {
+    const raw = {
+      version: 1,
+      boards: [{ id: 'legacy', name: 'Legacy Board', frames: [], notes: [], docs: [] }],
+    }
+    const result = parseBoardsFile(raw)
+    expect(result.boards[0].guides).toEqual([])
+  })
+
+  test('a board with a malformed (non-array) guides field parses with an empty guides list', () => {
+    const raw = {
+      version: 1,
+      boards: [{ id: 'b1', name: 'Board 1', frames: [], notes: [], docs: [], guides: 'not-an-array' }],
+    }
+    const result = parseBoardsFile(raw)
+    expect(result.boards[0].guides).toEqual([])
+  })
+
+  test('a valid guide is kept', () => {
+    const raw = {
+      version: 1,
+      boards: [
+        {
+          id: 'b1',
+          name: 'Board 1',
+          frames: [],
+          notes: [],
+          docs: [],
+          guides: [{ id: 'g1', axis: 'y', position: -40 }],
+        },
+      ],
+    }
+    const result = parseBoardsFile(raw)
+    expect(result.boards[0].guides).toEqual([{ id: 'g1', axis: 'y', position: -40 }])
+  })
+
+  test('a guide with an invalid axis, missing/non-finite position, or missing id is dropped', () => {
+    const raw = {
+      version: 1,
+      boards: [
+        {
+          id: 'b1',
+          name: 'Board 1',
+          frames: [],
+          notes: [],
+          docs: [],
+          guides: [
+            { id: 'g1', axis: 'diagonal', position: 10 }, // invalid axis
+            { id: 'g2', axis: 'x', position: 'nope' }, // non-numeric position
+            { id: 'g3', axis: 'x', position: Number.NaN }, // non-finite position
+            { axis: 'x', position: 10 }, // missing id
+            'garbage', // not an object
+          ],
+        },
+      ],
+    }
+    const result = parseBoardsFile(raw)
+    expect(result.boards[0].guides).toEqual([])
+  })
+
+  test('serialize round-trip preserves guides', () => {
+    let board = createBoard('b1', 'Board 1')
+    board = upsertGuide(board, guide({ id: 'g1', axis: 'x', position: 640 }))
+    board = upsertGuide(board, guide({ id: 'g2', axis: 'y', position: -80 }))
     const file: BoardsFile = upsertBoard(createBoardsFile(), board)
     const parsed = parseBoardsFile(serializeBoardsFile(file))
     expect(parsed).toEqual(file)

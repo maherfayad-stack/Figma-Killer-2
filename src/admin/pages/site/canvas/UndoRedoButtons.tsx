@@ -44,11 +44,10 @@ export function UndoRedoButtons() {
         e.preventDefault()
         undo()
       } else if (kbRedo?.match(e)) {
-        e.preventDefault()
-        redo()
-      } else if ((e.metaKey || e.ctrlKey) && e.key === 'y') {
-        // Ctrl+Y is a Windows/Linux redo alias — not in the registry since
-        // ⌘⇧Z is the canonical binding, but handled here for convenience.
+        // `editor.redo`'s own `match` also accepts Ctrl/Cmd+Y (the
+        // Windows/Linux redo alias) — see that binding's comment in
+        // `keybindings.ts`. No inline key-combo check belongs here; the
+        // registry is the single source for what counts as "redo".
         e.preventDefault()
         redo()
       }

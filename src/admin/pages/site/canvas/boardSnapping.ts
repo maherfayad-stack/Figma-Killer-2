@@ -14,7 +14,7 @@
  * itself. Frames without a saved size fall back to `FRAME_WIDTH`/`FRAME_HEIGHT`
  * — the same fallback `BoardFramesLayer` itself uses at render time.
  */
-import { FRAME_WIDTH, FRAME_HEIGHT, type Board } from '@core/studio-board'
+import { FRAME_WIDTH, FRAME_HEIGHT, type Board, type BoardGuide } from '@core/studio-board'
 
 /** A furniture rect in board-space units (top-left + size). */
 export interface SnapRect {
@@ -176,4 +176,28 @@ export function collectPeerRects(board: Board, dragged: DraggedFurniture): SnapR
   }
 
   return peers
+}
+
+/**
+ * D1 — persisted ruler guides (`@core/studio-board`'s `BoardGuide`, NOT this
+ * file's own transient `SnapGuide`) as `computeSnap`-compatible peer rects,
+ * so a dragged frame/note/doc can align to them the same way it aligns to
+ * other furniture. A guide is a single-coordinate infinite line on ONE axis,
+ * not a rect — represented as a zero-size point PLACED FAR OFF-SCREEN on the
+ * OTHER axis (`OFF_AXIS_SENTINEL`), so `findClosestMatch`'s distance check on
+ * that other axis can never spuriously fall within any real threshold.
+ *
+ * NOT YET called from `collectPeerRects` or wired into a live drag handler
+ * (`BoardFrameView.tsx` etc.) — the caller is expected to concat this with
+ * `collectPeerRects`'s own result once one exists. See `STATE.md`'s D1
+ * handoff for why this stops at the pure-function level.
+ */
+const OFF_AXIS_SENTINEL = 1_000_000
+
+export function guideSnapRects(guides: readonly BoardGuide[]): SnapRect[] {
+  return guides.map((guide) =>
+    guide.axis === 'x'
+      ? { x: guide.position, y: OFF_AXIS_SENTINEL, width: 0, height: 0 }
+      : { x: OFF_AXIS_SENTINEL, y: guide.position, width: 0, height: 0 },
+  )
 }

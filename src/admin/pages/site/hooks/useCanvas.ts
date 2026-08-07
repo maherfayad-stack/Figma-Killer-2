@@ -15,12 +15,14 @@
  * - Pinch (touch) → zoom+pan
  * - +/- keys → zoom in/out (committed immediately)
  * - Ctrl/Cmd+0 → reset to 100% zoom
- * - Shift+1 → fit-to-screen (1:1 zoom, centered)
+ * - Shift+1 → zoom to fit (every visible frame, centered) — `canvas.zoomToFit`
+ * - Shift+2 → zoom to selection (the selected node(s), centered) — `canvas.zoomToSelection`
  */
 
-import { useRef, useEffect, useCallback } from 'react'
+import { useRef, useEffect, useCallback, type RefObject } from 'react'
 import { useGesture } from '@use-gesture/react'
 import { useEditorStore, type EditorStore } from '@site/store/store'
+import { getKeybindingForCommand } from '@admin/spotlight/keybindings'
 import {
   applyZoom,
   applyPan,
@@ -28,8 +30,10 @@ import {
   clampZoom,
   clampPan,
   incrementalScaleFromPinchMovement,
+  type CanvasTransform,
 } from '@site/canvas/math'
 import { panToCenterBreakpointFrame } from '@site/canvas/canvasDomGeometry'
+import { computeZoomToFitTransform, type CanvasFitRect } from '@site/canvas/canvasZoomFit'
 import {
   CANVAS_DRAG_PAN_BUTTONS,
   isCanvasPointerPanActive,
@@ -38,11 +42,31 @@ import {
   setCanvasSpacePanActive,
 } from '@site/canvas/canvasPanInput'
 
-interface Transform {
-  zoom: number
-  panX: number
-  panY: number
-}
+/**
+ * The live canvas transform — `{ zoom, panX, panY }`.
+ *
+ * Re-exported (and, since D1, the `transformRef` holding it is returned from
+ * `useCanvas`) because it is now a SHARED, STABLE API, not a `useCanvas`-only
+ * concern: the store's `zoom`/`panX`/`panY` are debounced 100ms behind the
+ * real DOM transform during an active gesture (see the module doc above), so
+ * anything that must track pan/zoom live — mid-drag, not 100ms later — has to
+ * read this ref instead of subscribing to the store. `CanvasRulers` (D1),
+ * `D2`'s unified drag/drop, and the (future) Alt-hover measurement HUD all
+ * need exactly this. Treat this as a published contract: `transformRef.current`
+ * is always the up-to-date transform (mutated in place, never replaced with a
+ * new object identity — do not rely on identity changes to detect updates,
+ * poll the fields), and it is READ-ONLY from every consumer but this hook.
+ *
+ * **Defined in `math.ts`, not here** (and re-exported for every existing
+ * `from '@site/hooks/useCanvas'` import site to keep working unchanged) —
+ * `canvasZoomFit.ts`'s pure `computeZoomToFitTransform` needs this SHAPE
+ * without importing the hook module itself, and `useCanvas.ts` imports
+ * FROM `canvasZoomFit.ts` (for `zoomToFit`/`zoomToSelection`) — defining the
+ * type here would make that a circular module dependency. Same fix shape
+ * `useRulerCanvasPaint.ts` settled on for a comparable problem: the pure/
+ * math layer owns the shared shape, the hook re-exports it.
+ */
+export type { CanvasTransform }
 
 interface UseCanvasOptions {
   /** Ref to the gesture capture root */
@@ -101,7 +125,7 @@ function cssAttrEscape(value: string): string {
 
 export function useCanvas({ canvasRootRef, transformLayerRef, enabled }: UseCanvasOptions) {
   // Ref-based transform — not React state — avoids re-renders during interaction
-  const transformRef = useRef<Transform>({ zoom: 1, panX: 0, panY: 0 })
+  const transformRef = useRef<CanvasTransform>({ zoom: 1, panX: 0, panY: 0 })
   const rafRef = useRef<number | null>(null)
   const commitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const animatingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -131,7 +155,7 @@ export function useCanvas({ canvasRootRef, transformLayerRef, enabled }: UseCanv
    */
   // Exception #1: referenced in useEffect dep arrays (mount sync, external
   // store-subscription sync) — exhaustive-deps needs a stable identity here.
-  const applyTransformToDOM = useCallback((t: Transform, animated = false) => {
+  const applyTransformToDOM = useCallback((t: CanvasTransform, animated = false) => {
     const el = transformLayerRef.current
     if (!el) return
 
@@ -195,7 +219,7 @@ export function useCanvas({ canvasRootRef, transformLayerRef, enabled }: UseCanv
    */
   // Exception #1: transitive dep of updateTransform, which feeds the wheel
   // listener's useEffect dep array — needs a stable identity.
-  const scheduleTransformWrite = useCallback((t: Transform) => {
+  const scheduleTransformWrite = useCallback((t: CanvasTransform) => {
     transformRef.current = t
     if (rafRef.current !== null) return // already scheduled
     rafRef.current = requestAnimationFrame(() => {
@@ -210,7 +234,7 @@ export function useCanvas({ canvasRootRef, transformLayerRef, enabled }: UseCanv
    */
   // Exception #1: transitive dep of updateTransform, which feeds the wheel
   // listener's useEffect dep array — needs a stable identity.
-  const scheduleStoreCommit = useCallback((t: Transform) => {
+  const scheduleStoreCommit = useCallback((t: CanvasTransform) => {
     if (commitTimerRef.current) clearTimeout(commitTimerRef.current)
     commitTimerRef.current = setTimeout(() => {
       setCanvasTransform(t.zoom, t.panX, t.panY)
@@ -218,7 +242,7 @@ export function useCanvas({ canvasRootRef, transformLayerRef, enabled }: UseCanv
   }, [setCanvasTransform])
 
   // Exception #1: referenced in the native wheel listener's useEffect dep array.
-  const updateTransform = useCallback((t: Transform) => {
+  const updateTransform = useCallback((t: CanvasTransform) => {
     scheduleTransformWrite(t)
     scheduleStoreCommit(t)
   }, [scheduleTransformWrite, scheduleStoreCommit])
@@ -278,6 +302,83 @@ export function useCanvas({ canvasRootRef, transformLayerRef, enabled }: UseCanv
     },
     [canvasRootRef, transformLayerRef, applyTransformToDOM, setCanvasTransform],
   )
+
+  /**
+   * Zoom/pan so `targetRects` (screen-space, relative to the canvas root)
+   * are entirely visible, centered. Shared by `zoomToFit` and
+   * `zoomToSelection` — the only difference between the two is which rects
+   * they measure. Returns `false` when there was nothing to fit (empty or
+   * fully-degenerate rect list — see `computeZoomToFitTransform`).
+   */
+  const applyZoomToFitRects = useCallback(
+    (targetRects: readonly CanvasFitRect[]): boolean => {
+      const root = canvasRootRef.current
+      if (!root) return false
+      const rootRect = root.getBoundingClientRect()
+      const next = computeZoomToFitTransform(
+        { width: rootRect.width, height: rootRect.height },
+        targetRects,
+        transformRef.current,
+      )
+      if (!next) return false
+      transformRef.current = next
+      applyTransformToDOM(next, true)
+      setCanvasTransform(next.zoom, next.panX, next.panY)
+      return true
+    },
+    [canvasRootRef, applyTransformToDOM, setCanvasTransform],
+  )
+
+  /**
+   * `Shift+1` (`canvas.zoomToFit`) — fit every visible breakpoint frame on
+   * the board (or every viewport context frame outside board mode) into the
+   * viewport at once. D3, `STUDIO-FIGMA-PARITY-PLAN.md`: this used to be a
+   * "reset to 100%" alias; it is now the real Figma-style fit.
+   */
+  const zoomToFit = useCallback((): boolean => {
+    const root = canvasRootRef.current
+    const layer = transformLayerRef.current
+    if (!root || !layer) return false
+    const rootRect = root.getBoundingClientRect()
+    // `data-breakpoint-id` sits on each frame's own iframe-viewport wrapper
+    // (`BreakpointFrame.tsx`) — one per rendered frame, and unlike
+    // `canvas-frame-<id>` it has no `-activate-`/`-live-`/`-collapse-`
+    // button siblings sharing the prefix, so a plain attribute-presence
+    // selector can't accidentally pick up chrome buttons.
+    const frames = layer.querySelectorAll<HTMLElement>('[data-breakpoint-id]')
+    const rects: CanvasFitRect[] = []
+    frames.forEach((frame) => {
+      const r = frame.getBoundingClientRect()
+      if (r.width === 0 && r.height === 0) return
+      rects.push({ left: r.left - rootRect.left, top: r.top - rootRect.top, width: r.width, height: r.height })
+    })
+    return applyZoomToFitRects(rects)
+  }, [canvasRootRef, transformLayerRef, applyZoomToFitRects])
+
+  /**
+   * `Shift+2` (`canvas.zoomToSelection`) — fit the current selection. Reads
+   * the ALREADY-POSITIONED selection ring element(s)
+   * (`[data-canvas-selection-ring="true"]`, `BreakpointSelectionOverlay.tsx`)
+   * rather than re-deriving node geometry: the ring is already the exact
+   * cross-iframe, `nodeVisualRect`-aware, per-`(frameId,nodeId)`-scoped
+   * screen rect a selection has, computed every RAF tick this hook has no
+   * visibility into (see `canvasSelectionOverlayPositioning.ts`). Multiple
+   * rings (multi-select) are unioned automatically by
+   * `computeZoomToFitTransform`. No-ops (`false`) when nothing is selected.
+   */
+  const zoomToSelection = useCallback((): boolean => {
+    const root = canvasRootRef.current
+    if (!root) return false
+    const rootRect = root.getBoundingClientRect()
+    const rings = document.querySelectorAll<HTMLElement>('[data-canvas-selection-ring="true"]')
+    const rects: CanvasFitRect[] = []
+    rings.forEach((ring) => {
+      const r = ring.getBoundingClientRect()
+      if (r.width === 0 && r.height === 0) return
+      rects.push({ left: r.left - rootRect.left, top: r.top - rootRect.top, width: r.width, height: r.height })
+    })
+    return applyZoomToFitRects(rects)
+  }, [canvasRootRef, applyZoomToFitRects])
 
   // ─── Spacebar tracking (for Space+drag pan) ───────────────────────────────
 
@@ -374,10 +475,15 @@ export function useCanvas({ canvasRootRef, transformLayerRef, enabled }: UseCanv
     } else if ((e.metaKey || e.ctrlKey) && e.key === '0') {
       e.preventDefault()
       resetCanvasView()
-    } else if (e.key === '1' && e.shiftKey) {
-      // `Shift+1` → Reset to 100% zoom (legacy muscle-memory shortcut).
+    } else if (getKeybindingForCommand('canvas.zoomToFit')?.match(e)) {
+      // `Shift+1` → zoom to fit every visible frame (D3 — was a "reset to
+      // 100%" alias before; see this function's own module doc).
       e.preventDefault()
-      resetCanvasView()
+      zoomToFit()
+    } else if (getKeybindingForCommand('canvas.zoomToSelection')?.match(e)) {
+      // `Shift+2` → zoom to the current selection (D3 — did not exist before).
+      e.preventDefault()
+      zoomToSelection()
     }
     // Ctrl/Cmd+Z / Ctrl/Cmd+Shift+Z handled by App-level listener
   }
@@ -566,7 +672,19 @@ export function useCanvas({ canvasRootRef, transformLayerRef, enabled }: UseCanv
     handleKeyDown,
     panBy,
     centerOnBreakpointFrame,
+    /** `Shift+1` (`canvas.zoomToFit`) as a callable, e.g. for a future toolbar button. */
+    zoomToFit,
+    /** `Shift+2` (`canvas.zoomToSelection`) as a callable, e.g. for a future toolbar button. */
+    zoomToSelection,
     /** Whether a space-pan drag is in progress */
     isDragging: isDraggingRef,
+    /**
+     * The LIVE canvas transform — see `CanvasTransform`'s doc above. Read
+     * `transformRef.current` on every rAF tick / pointer event rather than
+     * subscribing to the store's `zoom`/`panX`/`panY`, which lag up to 100ms
+     * behind this during an active gesture. Never write to it from outside
+     * this hook.
+     */
+    transformRef: transformRef as RefObject<CanvasTransform>,
   }
 }

@@ -395,6 +395,44 @@ export default function Home() {
   })
 })
 
+describe('applyStudioEditBatch — unexplainedSkips (STUDIO-FIGMA-PARITY-PLAN.md item 0.7)', () => {
+  it('names a synthetic-node skip (no writable source location) with its nodeId and kind', () => {
+    const result = applyStudioEditBatch(tmpDir, [
+      { kind: 'prop', nodeId: 'index:body', prop: 'title', value: 'Hi' },
+    ])
+
+    expect(result.skipped).toBe(1)
+    expect(result.refusals).toHaveLength(0)
+    expect(result.unexplainedSkips).toEqual([{ nodeId: 'index:body', kind: 'prop' }])
+  })
+
+  it('does not double-count a NAMED refusal as an unexplained skip', () => {
+    write('src/Home.tsx', `import { Button } from './ui/Button'\n\nexport default function Home() {\n  return (\n    <section>\n      <Button />\n    </section>\n  )\n}\n`)
+
+    const result = applyStudioEditBatch(tmpDir, [{
+      kind: 'insert',
+      nodeId: 'src/Home.tsx:5:6',
+      name: 'Button',
+      importSpecifier: '@alm-design/design-system',
+    }])
+
+    expect(result.skipped).toBe(1)
+    expect(result.refusals).toHaveLength(1)
+    expect(result.unexplainedSkips).toHaveLength(0)
+  })
+
+  it('a successful write contributes nothing to unexplainedSkips', () => {
+    write('src/Home.tsx', `export default function Home() {\n  return <h1 title="old">Hi</h1>\n}\n`)
+
+    const result = applyStudioEditBatch(tmpDir, [
+      { kind: 'prop', nodeId: 'src/Home.tsx:2:11', prop: 'title', value: 'new' },
+    ])
+
+    expect(result.written).toBe(1)
+    expect(result.unexplainedSkips).toHaveLength(0)
+  })
+})
+
 describe('isSharedSourceNodeId', () => {
   it('flags an inlined component instance', () => {
     expect(isSharedSourceNodeId('pages/Home.tsx:12:5~components/Card.tsx:3:1')).toBe(true)
@@ -444,6 +482,7 @@ describe('applyStudioEdit — the css kind (WS-6.3)', () => {
 
     const applied = applyStudioEdit(tmpDir, {
       kind: 'css',
+      op: 'set',
       nodeId: 'css:src/screens/Home.css#.hero#color',
       file: 'src/screens/Home.css',
       selector: '.hero',
@@ -460,6 +499,7 @@ describe('applyStudioEdit — the css kind (WS-6.3)', () => {
 
     const applied = applyStudioEdit(tmpDir, {
       kind: 'css',
+      op: 'set',
       nodeId: 'css:src/screens/Home.css#.hero#padding',
       file: 'src/screens/Home.css',
       selector: '.hero',
@@ -481,6 +521,7 @@ describe('applyStudioEdit — the css kind (WS-6.3)', () => {
 
     const result = applyStudioEditBatch(tmpDir, [{
       kind: 'css',
+      op: 'set',
       nodeId: 'css:src/screens/Home.module.css#.hero#color',
       file: 'src/screens/Home.module.css',
       selector: '.hero',
@@ -498,6 +539,7 @@ describe('applyStudioEdit — the css kind (WS-6.3)', () => {
 
     const result = applyStudioEditBatch(tmpDir, [{
       kind: 'css',
+      op: 'set',
       nodeId: 'css:src/screens/Home.module.css#.row#display',
       file: 'src/screens/Home.module.css',
       selector: '.row',
@@ -514,6 +556,7 @@ describe('applyStudioEdit — the css kind (WS-6.3)', () => {
 
     const result = applyStudioEditBatch(tmpDir, [{
       kind: 'css',
+      op: 'set',
       nodeId: 'css:dist/style.min.css#.a#color',
       file: 'dist/style.min.css',
       selector: '.a',
@@ -531,6 +574,7 @@ describe('applyStudioEdit — the css kind (WS-6.3)', () => {
     try {
       const applied = applyStudioEdit(tmpDir, {
         kind: 'css',
+        op: 'set',
         nodeId: 'css:../outside.css#.a#color',
         file: '../outside.css',
         selector: '.a',
@@ -549,6 +593,7 @@ describe('applyStudioEdit — the css kind (WS-6.3)', () => {
 
     const applied = applyStudioEdit(tmpDir, {
       kind: 'css',
+      op: 'set',
       nodeId: 'css:src/screens/Home.scss#.hero#color',
       file: 'src/screens/Home.scss',
       selector: '.hero',
@@ -563,6 +608,7 @@ describe('applyStudioEdit — the css kind (WS-6.3)', () => {
   it('writes nothing for a target that does not exist on disk', () => {
     const applied = applyStudioEdit(tmpDir, {
       kind: 'css',
+      op: 'set',
       nodeId: 'css:src/screens/Gone.css#.hero#color',
       file: 'src/screens/Gone.css',
       selector: '.hero',
@@ -578,6 +624,7 @@ describe('applyStudioEdit — the css kind (WS-6.3)', () => {
 
     const applied = applyStudioEdit(tmpDir, {
       kind: 'css',
+      op: 'set',
       nodeId: 'css:src/screens/Home.css#.hero#color',
       file: 'src/screens/Home.css',
       selector: '.hero',
@@ -594,6 +641,7 @@ describe('applyStudioEdit — the css kind (WS-6.3)', () => {
 
     const result = applyStudioEditBatch(tmpDir, [{
       kind: 'css',
+      op: 'set',
       nodeId: 'css:src/screens/Home.css#.hero#color',
       file: 'src/screens/Home.css',
       selector: '.hero',
@@ -622,6 +670,7 @@ describe('applyStudioEditBatch — css edits refuse rather than write invisibly'
 
     const result = applyStudioEditBatch(tmpDir, [{
       kind: 'css',
+      op: 'set',
       nodeId: 'css:src/screens/Home.css#.hero#color',
       file: 'src/screens/Home.css',
       selector: '.hero',
@@ -641,6 +690,7 @@ describe('applyStudioEditBatch — css edits refuse rather than write invisibly'
 
     const result = applyStudioEditBatch(tmpDir, [{
       kind: 'css',
+      op: 'set',
       nodeId: 'css:src/screens/Home.css#.hero#padding-top',
       file: 'src/screens/Home.css',
       selector: '.hero',
@@ -659,6 +709,7 @@ describe('applyStudioEditBatch — css edits refuse rather than write invisibly'
 
     const result = applyStudioEditBatch(tmpDir, [{
       kind: 'css',
+      op: 'set',
       nodeId: 'css:src/screens/Home.css#.hero#margin-left',
       file: 'src/screens/Home.css',
       selector: '.hero',
@@ -676,6 +727,7 @@ describe('applyStudioEditBatch — css edits refuse rather than write invisibly'
 
     const result = applyStudioEditBatch(tmpDir, [{
       kind: 'css',
+      op: 'set',
       nodeId: 'css:src/screens/Home.css#.hero#color',
       file: 'src/screens/Home.css',
       selector: '.hero',
@@ -692,6 +744,7 @@ describe('applyStudioEditBatch — css edits refuse rather than write invisibly'
 
     const result = applyStudioEditBatch(tmpDir, [{
       kind: 'css',
+      op: 'set',
       nodeId: 'css:src/screens/Home.css#.hero#color',
       file: 'src/screens/Home.css',
       selector: '.hero',
@@ -709,12 +762,314 @@ describe('applyStudioEditBatch — css edits refuse rather than write invisibly'
     write('src/screens/Good.css', '.b {\n  color: red;\n}\n')
 
     const result = applyStudioEditBatch(tmpDir, [
-      { kind: 'css', nodeId: 'css:a', file: 'src/screens/Bad.css', selector: '.a', property: 'color', value: 'blue' },
-      { kind: 'css', nodeId: 'css:b', file: 'src/screens/Good.css', selector: '.b', property: 'color', value: 'blue' },
+      { kind: 'css', op: 'set', nodeId: 'css:a', file: 'src/screens/Bad.css', selector: '.a', property: 'color', value: 'blue' },
+      { kind: 'css', op: 'set', nodeId: 'css:b', file: 'src/screens/Good.css', selector: '.b', property: 'color', value: 'blue' },
     ])
 
     expect(result.written).toBe(1)
     expect(result.refusals).toHaveLength(1)
     expect(read('src/screens/Good.css')).toBe('.b {\n  color: blue;\n}\n')
+  })
+})
+
+describe('applyStudioEdit — the insert-slot kind (E2.4)', () => {
+  const SHEET = `import { Sheet } from './Sheet'
+
+export default function Page() {
+  return (
+    <Sheet title="Where to?" />
+  )
+}
+`
+
+  it('adds an absent slot prop as a single JSX value', () => {
+    write('src/Page.tsx', SHEET)
+
+    const applied = applyStudioEdit(tmpDir, {
+      kind: 'insert-slot',
+      nodeId: 'src/Page.tsx:5:6',
+      propName: 'header',
+      node: { name: 'Icon', importSpecifier: '@alm-design/design-system' },
+    })
+
+    expect(applied.applied).toBe(true)
+    const written = read('src/Page.tsx')
+    expect(written).toContain('header={<Icon />}')
+    expect(written).toContain("import { Icon } from '@alm-design/design-system'")
+  })
+
+  it('wraps an existing single-element slot value and the new one in a fragment', () => {
+    write(
+      'src/Page.tsx',
+      `import { Sheet } from './Sheet'
+import { BackButton } from './BackButton'
+
+export default function Page() {
+  return (
+    <Sheet header={<BackButton />} />
+  )
+}
+`,
+    )
+
+    const applied = applyStudioEdit(tmpDir, {
+      kind: 'insert-slot',
+      nodeId: 'src/Page.tsx:6:6',
+      propName: 'header',
+      node: { name: 'span', children: 'Title' },
+    })
+
+    expect(applied.applied).toBe(true)
+    const written = read('src/Page.tsx')
+    expect(written).toContain('<BackButton />')
+    expect(written).toContain('<span>Title</span>')
+    expect(written).toContain('<>')
+  })
+
+  it('delegates the children prop to insertJsxElement', () => {
+    write('src/Page.tsx', `import { Sheet } from './Sheet'
+
+export default function Page() {
+  return (
+    <Sheet title="Where to?"></Sheet>
+  )
+}
+`)
+
+    const applied = applyStudioEdit(tmpDir, {
+      kind: 'insert-slot',
+      nodeId: 'src/Page.tsx:5:6',
+      propName: 'children',
+      node: { name: 'span', children: 'Hi' },
+    })
+
+    expect(applied.applied).toBe(true)
+    expect(read('src/Page.tsx')).toContain('<span>Hi</span>')
+  })
+
+  it('reports slot-ambiguous through the batch rather than guessing', () => {
+    write(
+      'src/Page.tsx',
+      `import { Sheet } from './Sheet'
+
+export default function Page({ headerNode }) {
+  return (
+    <Sheet header={headerNode} />
+  )
+}
+`,
+    )
+    const before = read('src/Page.tsx')
+
+    const result = applyStudioEditBatch(tmpDir, [
+      {
+        kind: 'insert-slot',
+        nodeId: 'src/Page.tsx:5:6',
+        propName: 'header',
+        node: { name: 'Icon', importSpecifier: '@alm-design/design-system' },
+      },
+    ])
+
+    expect(result.written).toBe(0)
+    expect(result.refusals?.[0]?.reason).toBe('slot-ambiguous')
+    expect(read('src/Page.tsx')).toBe(before)
+  })
+
+  it('is always treated as shared — the write shifts every line below it', () => {
+    expect(isSharedSourceNodeId('src/Page.tsx:5:6', 'insert-slot')).toBe(true)
+  })
+
+  it('two DIFFERENT slot fills on one call site in a single batch both land — dedup does not collapse them', () => {
+    write(
+      'src/Page.tsx',
+      `import { Sheet } from './Sheet'
+
+export default function Page() {
+  return (
+    <Sheet title="Where to?" />
+  )
+}
+`,
+    )
+
+    const result = applyStudioEditBatch(tmpDir, [
+      { kind: 'insert-slot', nodeId: 'src/Page.tsx:5:6', propName: 'header', node: { name: 'span', children: 'H' } },
+      { kind: 'insert-slot', nodeId: 'src/Page.tsx:5:6', propName: 'footer', node: { name: 'span', children: 'F' } },
+    ])
+
+    expect(result.written).toBe(2)
+    const written = read('src/Page.tsx')
+    expect(written).toContain('header={<span>H</span>}')
+    expect(written).toContain('footer={<span>F</span>}')
+  })
+})
+
+describe('applyStudioEdit — the promote-component kind (E2.4/E2.1)', () => {
+  it("gives extractSubtreeToComponent a live caller — the exact codemod E2.1 shipped with none", () => {
+    write(
+      'src/Page.tsx',
+      `export default function Page() {
+  return (
+    <div className="card">
+      <h2>Sign in</h2>
+    </div>
+  )
+}
+`,
+    )
+
+    const applied = applyStudioEdit(tmpDir, {
+      kind: 'promote-component',
+      nodeId: 'src/Page.tsx:3:6',
+      componentName: 'Card',
+    })
+
+    expect(applied.applied).toBe(true)
+    expect(applied.promoteDetail?.componentName).toBe('Card')
+    expect(applied.promoteDetail?.newFile).toBe('src/Card.tsx')
+    expect(read('src/Page.tsx')).toContain('<Card />')
+    expect(read('src/Page.tsx')).toContain("import { Card } from './Card'")
+    expect(read('src/Card.tsx')).toContain('export function Card()')
+    expect(read('src/Card.tsx')).toContain('<h2>Sign in</h2>')
+  })
+
+  it('surfaces freeVariables through the batch result (swapDetails-shaped)', () => {
+    write(
+      'src/Page.tsx',
+      `export default function Page({ user }) {
+  return (
+    <div className="card">
+      <h2>{user.name}</h2>
+    </div>
+  )
+}
+`,
+    )
+
+    const result = applyStudioEditBatch(tmpDir, [
+      { kind: 'promote-component', nodeId: 'src/Page.tsx:3:6', componentName: 'Card' },
+    ])
+
+    expect(result.written).toBe(1)
+    expect(result.promoteDetails).toHaveLength(1)
+    expect(result.promoteDetails[0]?.componentName).toBe('Card')
+    expect(result.promoteDetails[0]?.freeVariables.map((v) => v.name)).toEqual(['user'])
+    expect(read('src/Page.tsx')).toContain('<Card user={user} />')
+  })
+
+  it('reports a refusal through the batch rather than throwing (name-taken)', () => {
+    write(
+      'src/Page.tsx',
+      `export default function Page() {
+  return (
+    <div className="card">
+      <h2>Sign in</h2>
+    </div>
+  )
+}
+`,
+    )
+    write('src/Card.tsx', 'export function Card() { return <div /> }\n')
+    const before = read('src/Page.tsx')
+
+    const result = applyStudioEditBatch(tmpDir, [
+      { kind: 'promote-component', nodeId: 'src/Page.tsx:3:6', componentName: 'Card' },
+    ])
+
+    expect(result.written).toBe(0)
+    expect(result.refusals?.[0]?.reason).toBe('name-taken')
+    expect(read('src/Page.tsx')).toBe(before)
+  })
+
+  it('is always treated as shared — extraction always shifts line numbers', () => {
+    expect(isSharedSourceNodeId('src/Page.tsx:3:6', 'promote-component')).toBe(true)
+  })
+})
+
+describe('applyStudioEdit — the add-slot-prop kind (E2.2)', () => {
+  function writeCard(): void {
+    write(
+      'src/Card.tsx',
+      `export default function Card({ title }: { title: string }) {
+  return (
+    <section>
+      <h1>{title}</h1>
+      <footer>Static</footer>
+    </section>
+  )
+}
+`,
+    )
+  }
+
+  it('gives addSlotPropToComponent a live caller — the exact codemod E2.2 shipped with none', () => {
+    writeCard()
+
+    const applied = applyStudioEdit(tmpDir, {
+      kind: 'add-slot-prop',
+      nodeId: 'src/Card.tsx:5:8',
+      exportName: 'default',
+      slotName: 'footer',
+    })
+
+    expect(applied.applied).toBe(true)
+    expect(applied.addSlotPropDetail?.slotName).toBe('footer')
+    expect(applied.addSlotPropDetail?.committed).toBe(true)
+    expect(read('src/Card.tsx')).toContain('footer?: ReactNode')
+    expect(read('src/Card.tsx')).toContain('{footer}')
+    expect(read('src/Card.tsx')).not.toContain('Static</footer>')
+  })
+
+  it('preview: true reports the blast radius WITHOUT writing, and is neither written nor skipped in the batch', () => {
+    writeCard()
+    write('src/Home.tsx', "import Card from './Card'\nexport default function Home() {\n  return <Card title=\"a\" />\n}\n")
+    const before = read('src/Card.tsx')
+
+    const result = applyStudioEditBatch(tmpDir, [
+      { kind: 'add-slot-prop', nodeId: 'src/Card.tsx:5:8', exportName: 'default', slotName: 'footer', preview: true },
+    ])
+
+    expect(result.written).toBe(0)
+    expect(result.skipped).toBe(0)
+    expect(result.unexplainedSkips).toEqual([])
+    expect(result.addSlotPropDetails).toHaveLength(1)
+    expect(result.addSlotPropDetails[0]?.committed).toBe(false)
+    expect(result.addSlotPropDetails[0]?.callSites).toHaveLength(1)
+    expect(result.addSlotPropDetails[0]?.callSites[0]?.file).toBe('src/Home.tsx')
+    expect(read('src/Card.tsx')).toBe(before)
+  })
+
+  it('a preview followed by a real commit (two separate batch calls) both report the SAME blast radius, and only the second writes', () => {
+    writeCard()
+    write('src/Home.tsx', "import Card from './Card'\nexport default function Home() {\n  return <Card title=\"a\" />\n}\n")
+
+    const preview = applyStudioEditBatch(tmpDir, [
+      { kind: 'add-slot-prop', nodeId: 'src/Card.tsx:5:8', exportName: 'default', slotName: 'footer', preview: true },
+    ])
+    const commit = applyStudioEditBatch(tmpDir, [
+      { kind: 'add-slot-prop', nodeId: 'src/Card.tsx:5:8', exportName: 'default', slotName: 'footer' },
+    ])
+
+    expect(preview.written).toBe(0)
+    expect(commit.written).toBe(1)
+    expect(commit.addSlotPropDetails[0]?.callSites).toEqual(preview.addSlotPropDetails[0]?.callSites)
+    expect(read('src/Card.tsx')).toContain('footer?: ReactNode')
+  })
+
+  it('reports a refusal through the batch rather than throwing (no-jsx-parent)', () => {
+    write('src/Only.tsx', 'export default function Only() {\n  return <section>Only content</section>\n}\n')
+    const before = read('src/Only.tsx')
+
+    const result = applyStudioEditBatch(tmpDir, [
+      { kind: 'add-slot-prop', nodeId: 'src/Only.tsx:2:11', exportName: 'default', slotName: 'children' },
+    ])
+
+    expect(result.written).toBe(0)
+    expect(result.refusals?.[0]?.reason).toBe('no-jsx-parent')
+    expect(read('src/Only.tsx')).toBe(before)
+  })
+
+  it('is always treated as shared — a committed edit always shifts line numbers', () => {
+    expect(isSharedSourceNodeId('src/Card.tsx:5:8', 'add-slot-prop')).toBe(true)
   })
 })

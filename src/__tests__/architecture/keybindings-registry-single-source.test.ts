@@ -23,6 +23,7 @@
 import { describe, it, expect } from 'bun:test'
 import { readdirSync, readFileSync, statSync, existsSync } from 'fs'
 import { join, extname, relative } from 'path'
+import { toPosixPath } from './pathHelpers'
 
 const SRC_ROOT = join(import.meta.dir, '../../')
 const ADMIN_SRC = join(SRC_ROOT, 'admin')
@@ -109,7 +110,7 @@ describe('Keybindings registry — single source of truth', () => {
     const violations: string[] = []
 
     for (const file of files) {
-      const rel = relative(SRC_ROOT, file)
+      const rel = toPosixPath(relative(SRC_ROOT, file))
       if (ALLOWLIST.has(rel)) continue
 
       const rawSource = readFileSync(file, 'utf8')
@@ -159,7 +160,7 @@ describe('Keybindings registry — single source of truth', () => {
     for (const file of files) {
       if (!file.endsWith('.tsx')) continue
 
-      const rel = relative(SRC_ROOT, file)
+      const rel = toPosixPath(relative(SRC_ROOT, file))
       if (ALLOWLIST.has(rel)) continue
 
       const lines = readFileSync(file, 'utf8').split('\n')

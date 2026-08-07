@@ -400,3 +400,144 @@ describe('buildDesignSystemGuide', () => {
     expect(rendered).toContain('do not re-implement it')
   })
 })
+
+/**
+ * Track A5 — the generated guide is no longer hardcoded to
+ * `@alm-design/design-system`. Every one of these installs a REAL,
+ * non-ALM-named package under `node_modules` and asserts on the actual
+ * generated content, not on `resolveDesignSystemGuide` in isolation — the
+ * consumer (`generateStudioProjectGuide` -> `CLAUDE.md` +
+ * `.claude/design-system-components.md`) is what an agent actually reads.
+ */
+describe('generateStudioProjectGuide — design-system knowledge for a non-ALM package', () => {
+  let dir: string
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'studio-guide-a5-'))
+    write(dir, 'pages/Home.tsx', 'export default function Home() {\n  return <main />\n}\n')
+  })
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('builds a real "Use X" section and prop reference from a typed package with NO agent docs', () => {
+    // Satisfies BOTH `detectComponentPackages`' declaration tier (a PascalCase
+    // export whose type mentions `JSX.Element`) and `buildPackageManifest`'s
+    // own `.d.ts` extraction — a stand-in for MUI/Chakra/Mantine/shadcn: real
+    // types, no `CLAUDE.md`/`design.md` written for an agent.
+    write(
+      dir,
+      'package.json',
+      JSON.stringify({ name: 'p', dependencies: { 'js-ui-kit': '1.0.0' } }),
+    )
+    write(
+      dir,
+      'node_modules/js-ui-kit/package.json',
+      JSON.stringify({ name: 'js-ui-kit', types: 'index.d.ts' }),
+    )
+    write(
+      dir,
+      'node_modules/js-ui-kit/index.d.ts',
+      [
+        'export interface ButtonProps {',
+        "  variant?: 'primary' | 'ghost' | 'danger';",
+        '  label: string;',
+        '}',
+        'export declare function Button(props: ButtonProps): JSX.Element;',
+      ].join('\n'),
+    )
+
+    const result = generateStudioProjectGuide(dir)
+    expect(result.written).toContain('.claude/design-system-components.md')
+
+    const guide = read(dir, 'CLAUDE.md')
+    expect(guide).toContain('## Use `js-ui-kit` — always')
+    // No decision map exists for a bare `.d.ts` — the catalog fallback must
+    // degrade to a plain name list, never invent an intent-level mapping.
+    expect(guide).toContain('### What exists')
+    expect(guide).not.toContain('### Which component')
+    // The runtime catalog is queryable even though this file is generated
+    // once per turn — the explicit A5 ask.
+    expect(guide).toContain('studio_list_components')
+    expect(guide).toContain('studio_find_component')
+
+    const components = read(dir, '.claude/design-system-components.md')
+    expect(components).toContain('### Button')
+    // The real enum, extracted from the real union type — not the ALM
+    // constant, and not a guessed shape.
+    expect(components).toContain("enum ('primary' | 'ghost' | 'danger')")
+    expect(components).toContain('`label` — string')
+  })
+
+  it('degrades honestly for an untyped component: the name is known, its props are not', () => {
+    // `js-ui-kit-untyped` satisfies `detectComponentPackages`'s BUILT-JS-ENTRY
+    // tier (imports the JSX runtime, exports a PascalCase binding) so it is a
+    // real `componentPackages` entry, but its `.tsx` SOURCE — the only thing
+    // `buildPackageManifest` can read here (no `.d.ts` at all) — declares no
+    // prop types. This must read as "names known, types unknown", never a
+    // fabricated prop list.
+    write(
+      dir,
+      'package.json',
+      JSON.stringify({ name: 'p', dependencies: { 'js-ui-kit-untyped': '1.0.0' } }),
+    )
+    write(
+      dir,
+      'node_modules/js-ui-kit-untyped/package.json',
+      JSON.stringify({ name: 'js-ui-kit-untyped', main: 'dist/index.js', source: 'src/index.tsx' }),
+    )
+    write(
+      dir,
+      'node_modules/js-ui-kit-untyped/dist/index.js',
+      "import { jsx as _jsx } from 'react/jsx-runtime';\nexport function Card() { return _jsx('div', {}); }\n",
+    )
+    write(
+      dir,
+      'node_modules/js-ui-kit-untyped/src/index.tsx',
+      'export function Card(props) {\n  return null\n}\n',
+    )
+
+    const result = generateStudioProjectGuide(dir)
+    expect(result.written).toContain('.claude/design-system-components.md')
+
+    const guide = read(dir, 'CLAUDE.md')
+    expect(guide).toContain('## Use `js-ui-kit-untyped` — always')
+
+    const components = read(dir, '.claude/design-system-components.md')
+    expect(components).toContain('### Card')
+    // No prop line at all — never a stubbed/guessed prop shape for an
+    // untyped export.
+    expect(components).not.toMatch(/^- `.+` —/m)
+  })
+
+  it('tells the agent a design system exists even when its API could not be generated at all', () => {
+    // Neither a `.d.ts` nor a `.tsx`/`.jsx` source entry, and no agent docs —
+    // the honest "nothing static was readable" case. Must not read as "no
+    // design system" (false — a real, importable package IS installed), and
+    // must not silently omit the design-system section either.
+    write(
+      dir,
+      'package.json',
+      JSON.stringify({ name: 'p', dependencies: { 'bundled-only-kit': '1.0.0' } }),
+    )
+    write(
+      dir,
+      'node_modules/bundled-only-kit/package.json',
+      JSON.stringify({ name: 'bundled-only-kit', main: 'dist/index.js' }),
+    )
+    write(
+      dir,
+      'node_modules/bundled-only-kit/dist/index.js',
+      "import { jsx as _jsx } from 'react/jsx-runtime';\nexport function Tag() { return _jsx('span', {}); }\n",
+    )
+
+    const result = generateStudioProjectGuide(dir)
+    expect(result.written).not.toContain('.claude/design-system-components.md')
+
+    const guide = read(dir, 'CLAUDE.md')
+    expect(guide).toContain('bundled-only-kit')
+    expect(guide).toContain('could not be generated')
+    expect(guide).toContain('studio_list_components')
+  })
+})

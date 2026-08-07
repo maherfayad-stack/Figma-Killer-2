@@ -30,6 +30,20 @@
  * no colour-scheme prelude of its own, it classifies by its own selector
  * exactly as an unwrapped top-level rule would.
  *
+ * Also unconditional, and handled SEPARATELY from `@layer`/`@media`
+ * descent: Tailwind v4's `@theme { --color-brand: …; }` (and its
+ * `@theme inline`/`@theme reference`/`@theme static` variants — see
+ * `AT_THEME_RE`). Unlike `@layer`, an `@theme` block's declarations sit
+ * DIRECTLY in its body — there is no nested `:root { … }` selector to
+ * recurse into — so `collectScopedRules` collects them straight into the
+ * current light/dark map the same way a global host selector's own
+ * declarations are collected, rather than treating the body as more rules to
+ * scan. Before this, `@theme` was invisible: it is not a global host
+ * selector (`isGlobalTokenHostSelector`) and was not in
+ * `atRuleDescentContext`'s allowlist, so a Tailwind v4 project's
+ * source-of-truth token block produced zero tokens at Tier 0 — the gap only
+ * closed once Tailwind actually compiled (Tier 1, not auto-run on import).
+ *
  * Deliberately NOT recursive into anything else — any OTHER `@media`
  * (width/height/resolution/orientation/print/hover/…, or colour-scheme
  * combined with another feature via `and`/`,`), plus `@supports`,
@@ -103,6 +117,7 @@
  * declarations needs no real CSS parser.
  */
 import { isCssColorValue, isRootScopeSelector } from '@core/siteImport'
+import type { DesignTokenFamily } from '@core/design-tokens'
 
 // ---------------------------------------------------------------------------
 // :root declaration scanning
@@ -261,6 +276,8 @@ function mediaColorSchemeOnly(preludeAfterAtMedia: string): ColorSchemeContext {
 
 const AT_LAYER_RE = /^@layer\b/i
 const AT_MEDIA_RE = /^@media\b(.*)$/i
+/** Tailwind v4's token host — `@theme`, `@theme inline`, `@theme reference`, `@theme static`. See the module doc's "Also unconditional" paragraph for why this is handled separately from `atRuleDescentContext`, not added to its allowlist. */
+const AT_THEME_RE = /^@theme\b/i
 
 /**
  * Whether — and with what colour-scheme context — to descend into an
@@ -309,6 +326,14 @@ function collectScopedRules(
   if (depth > MAX_AT_RULE_DEPTH) return
   for (const rule of scanRulesAtOneLevel(css)) {
     if (rule.selector.startsWith('@')) {
+      if (AT_THEME_RE.test(rule.selector.trim())) {
+        // `@theme`'s body IS the declaration list — no nested selector to
+        // recurse into (see module doc). Collect straight into whichever map
+        // the current ambient colour-scheme context says, exactly as a
+        // global host selector's own declarations are collected below.
+        collectDeclarations(rule.body, colorScheme === 'dark' ? dark : light)
+        continue
+      }
       const descendContext = atRuleDescentContext(rule.selector, colorScheme)
       if (descendContext !== undefined) collectScopedRules(rule.body, depth + 1, descendContext, light, dark)
       continue
@@ -415,22 +440,116 @@ export function classifyDeclaration(name: string, resolved: string): Classificat
   return 'unclassified'
 }
 
+// ---------------------------------------------------------------------------
+// classifyDesignTokenFamily — the richer 9-way classifier behind the new
+// `DesignToken` model (`@core/design-tokens`, `STUDIO-FIGMA-PARITY-PLAN.md`
+// §11 T6/T12). ADDITIONAL to `classifyDeclaration` above, not a replacement
+// of it: `classifyDeclaration`'s 5-way output still drives
+// `FrameworkSettings`/`designImport` exactly as before (in particular,
+// `--radius-*` still lands in `spacing` there, via `SPACING_NAME_HINT_RE`'s
+// literal "radius" — changing that would silently reshuffle an existing
+// persisted scale group). This function instead promotes the two families
+// `FrameworkSettings` genuinely has no home for (radius, elevation — see
+// `designSystemDigest.ts`, which used to carry its own private copies of
+// these two regexes for the markdown digest only) plus splits the
+// `typography-detail` catch-all into its real families, so the new model
+// can offer a font-family/font-weight/line-height/letter-spacing/radius/
+// elevation token instead of silently discarding it.
+// ---------------------------------------------------------------------------
+
+/** `--rounded-*`/`--radius-*` — promoted from `designSystemDigest.ts`'s private copy so the digest and the new `DesignToken` model agree on what counts as a radius token. Not folded into `SPACING_NAME_HINT_RE` (which already matches the literal substring "radius" but not "round") because this module's own callers need radius as its OWN family, not a spacing scale step. */
+export const RADIUS_NAME_HINT_RE = /round|radius/i
+/** `--elevation-*`/`--*-shadow` — promoted from `designSystemDigest.ts`'s private copy. A shadow value is a multi-part shorthand (`0px -4px 16px rgba(...)`), never a single colour literal, so it is checked by NAME, the same reason radius is. */
+export const ELEVATION_NAME_HINT_RE = /shadow|elevation/i
+const FONT_FAMILY_SUFFIX_RE = /-family$/i
+const FONT_WEIGHT_SUFFIX_RE = /-weight$/i
+const LINE_HEIGHT_SUFFIX_RE = /-(lh|line-height)$/i
+const LETTER_SPACING_SUFFIX_RE = /-(ls|letter-spacing)$/i
+/**
+ * Tailwind v4's `@theme` font tokens (`--font-sans`, `--font-mono`, …) carry
+ * no `-family` suffix at all — the property name IS the role, the value IS
+ * the stack. Once a typography-hinted name has failed every suffix and size
+ * check, a value that reads as a font stack (comma-separated, or containing
+ * a generic family keyword) is font-family, not an honest "unclassified" —
+ * see `classifyDesignTokenFamily`'s doc.
+ */
+const FONT_STACK_VALUE_RE = /,|serif|monospace|cursive|fantasy|system-ui|ui-(sans-serif|serif|monospace|rounded)/i
+
+/**
+ * Classifies one `name` + already-`var()`-resolved `resolved` value pair into
+ * the 9-way `DesignTokenFamily` — value first (colour), then name hints,
+ * radius/elevation before the generic spacing hint (a `--radius-sm` must not
+ * fall into `space` just because "radius" is also spacing-adjacent), then
+ * the typography detail suffixes as their OWN families before the size
+ * fallback. `undefined`/`'unclassified'` is a first-class, honest answer —
+ * never a guess.
+ */
+export function classifyDesignTokenFamily(name: string, resolved: string): DesignTokenFamily | 'unclassified' {
+  if (isCssColorValue(resolved)) return 'color'
+  if (RADIUS_NAME_HINT_RE.test(name) && LENGTH_RE.test(resolved)) return 'radius'
+  if (ELEVATION_NAME_HINT_RE.test(name)) return 'elevation'
+  if (SPACING_NAME_HINT_RE.test(name) && LENGTH_RE.test(resolved)) return 'space'
+  if (TYPOGRAPHY_NAME_HINT_RE.test(name)) {
+    if (FONT_FAMILY_SUFFIX_RE.test(name)) return 'font-family'
+    if (FONT_WEIGHT_SUFFIX_RE.test(name)) return 'font-weight'
+    if (LINE_HEIGHT_SUFFIX_RE.test(name)) return 'line-height'
+    if (LETTER_SPACING_SUFFIX_RE.test(name)) return 'letter-spacing'
+    if (/-size$/i.test(name) || LENGTH_RE.test(resolved)) return 'font-size'
+    if (FONT_STACK_VALUE_RE.test(resolved)) return 'font-family'
+    return 'unclassified'
+  }
+  // Generic `size` last: only once no typography hint claimed the name.
+  if (GENERIC_SIZE_NAME_HINT_RE.test(name) && LENGTH_RE.test(resolved)) return 'space'
+  return 'unclassified'
+}
+
 /**
  * Parses a bare `px`/`rem`/`em`/`pt` length to a px number, or `null`.
- * `rem`/`em` are approximated against the standard 16px browser default —
- * this module has no way to know a project's own `html { font-size }`
- * override without a further scan, and the browser default is the correct
- * assumption for the overwhelming majority of real projects. `pt` converts
- * via the standard 96/72 (CSS px-per-inch over points-per-inch) ratio.
+ * `rem`/`em` convert against `rootFontSizePx` (default 16, the browser
+ * default) — pass `detectRootFontSizePx(css)`'s result when the project's
+ * own root size is known; a project using the common `html{font-size:62.5%}`
+ * trick (10px root, so `1.6rem` really means 16px) would otherwise convert
+ * every `rem` token 1.6× too large. `pt` converts via the standard 96/72
+ * (CSS px-per-inch over points-per-inch) ratio, independent of root size.
  */
-export function toPx(value: string): number | null {
+export function toPx(value: string, rootFontSizePx = 16): number | null {
   const m = /^(-?\d*\.?\d+)(px|rem|em|pt)$/.exec(value.trim())
   if (!m) return null
   const n = Number(m[1])
   if (!Number.isFinite(n)) return null
   if (m[2] === 'px') return n
   if (m[2] === 'pt') return n * (96 / 72)
-  return n * 16 // rem/em
+  return n * rootFontSizePx // rem/em
+}
+
+const ROOT_FONT_SIZE_PX_RE = /^(-?\d*\.?\d+)px$/
+const ROOT_FONT_SIZE_PERCENT_RE = /^(-?\d*\.?\d+)%$/
+
+/**
+ * Scans `css` for an unconditional `html`/`:root { font-size: ... }`
+ * declaration and returns the effective root px size, or the browser
+ * default (16) when none is found or it can't be read as a plain `px`/`%`
+ * value. Only a TOP-LEVEL (not `@media`-conditional — a responsive
+ * `font-size` override is exactly the kind of conditional value
+ * `atRuleDescentContext` already refuses to treat as canonical, for the
+ * same reason: it is one breakpoint's override, not the base) declaration
+ * counts. `%` is read relative to the browser's own 16px default (the
+ * standard `html{font-size:62.5%}` convention, which exists specifically so
+ * `1rem === 10px`).
+ */
+export function detectRootFontSizePx(css: string): number {
+  for (const rule of scanRulesAtOneLevel(css)) {
+    if (rule.selector.startsWith('@')) continue
+    if (!/^(html|:root)$/i.test(rule.selector.trim())) continue
+    const m = /font-size\s*:\s*([^;]+);?/.exec(rule.body)
+    if (!m) continue
+    const value = m[1]!.trim()
+    const px = ROOT_FONT_SIZE_PX_RE.exec(value)
+    if (px) return Number(px[1])
+    const pct = ROOT_FONT_SIZE_PERCENT_RE.exec(value)
+    if (pct) return (Number(pct[1]) / 100) * 16
+  }
+  return 16
 }
 
 // ---------------------------------------------------------------------------
@@ -467,7 +586,14 @@ export function hasAnyTokens(t: ClassifiedTokens): boolean {
   return t.colors.length > 0 || t.spacing.length > 0 || t.typographySizes.length > 0
 }
 
-/** Classifies every `:root`-scope custom property found in `css` — the shared engine behind both the `project-css` and `vendor-css` sources (they differ only in which CSS text is handed in). */
+/**
+ * Classifies every `:root`-scope custom property found in `css` — the shared
+ * engine behind both the `project-css` and `vendor-css` sources (they differ
+ * only in which CSS text is handed in). `rem`/`em` px conversion uses `css`'s
+ * OWN root font-size (`detectRootFontSizePx`) rather than assuming 16 — a
+ * project that sets `html{font-size:62.5%}` (so `1rem === 10px`) would
+ * otherwise have every `rem`-valued token converted 1.6× too large.
+ */
 export function classifyCssText(css: string): ClassifiedTokens {
   const result = emptyClassifiedTokens()
   if (!css) return result
@@ -475,6 +601,7 @@ export function classifyCssText(css: string): ClassifiedTokens {
   const { light, dark } = collectRootScopeMaps(css)
   if (light.size === 0) return result
 
+  const rootFontSizePx = detectRootFontSizePx(css)
   const darkMerged = dark.size > 0 ? new Map([...light, ...dark]) : undefined
 
   for (const [name, raw] of light) {
@@ -488,13 +615,13 @@ export function classifyCssText(css: string): ClassifiedTokens {
       continue
     }
     if (kind === 'spacing') {
-      const px = toPx(resolvedLight)
+      const px = toPx(resolvedLight, rootFontSizePx)
       if (px !== null) result.spacing.push({ name, px })
       else result.unclassifiedCount++
       continue
     }
     if (kind === 'typography-size') {
-      const px = toPx(resolvedLight)
+      const px = toPx(resolvedLight, rootFontSizePx)
       if (px !== null) result.typographySizes.push({ name, px })
       else result.typographyDetailCount++ // e.g. a unitless `--text-lg: 1.25` — real, just not a px step
       continue

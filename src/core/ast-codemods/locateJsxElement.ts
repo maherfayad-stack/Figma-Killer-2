@@ -91,6 +91,28 @@ export function findJsxElementAtLocationOrThrow(
   return element
 }
 
+/**
+ * Resolves a located `JsxOpeningElement`/`JsxSelfClosingElement` to the node
+ * that represents the WHOLE element — for a self-closing tag that's the tag
+ * itself; for an opening tag, it's the tag's PARENT `JsxElement` (the
+ * open+close pair together), never the opening tag alone. Shared by every
+ * codemod that needs to treat a located element as one movable/replaceable
+ * unit (`extractSubtreeToComponent.ts`, `subtreeSlotChildren.ts`,
+ * `addSlotPropToComponent.ts`) — previously duplicated inline in each.
+ *
+ * `jsxElementWrapper ?? opening` in the open/close case is defensive, not
+ * reachable in practice: a `JsxOpeningElement`'s `.getParent()` is a
+ * `JsxElement` by TypeScript's own grammar (an opening tag cannot exist
+ * without its element), but ts-morph's type for `.getParent()` is `Node |
+ * undefined`, so this keeps the return type exact without an `as` cast.
+ */
+export function resolveJsxWholeElement(opening: JsxOpeningLikeElement): { root: Node; isSelfClosing: boolean } {
+  const isSelfClosing = Node.isJsxSelfClosingElement(opening)
+  const jsxElementWrapper = !isSelfClosing ? opening.getParent() : undefined
+  const root: Node = isSelfClosing ? opening : (jsxElementWrapper ?? opening)
+  return { root, isSelfClosing }
+}
+
 // Re-exported so callers/tests don't need their own `SyntaxKind` import
 // just to reference JSX node kinds.
 export { SyntaxKind }

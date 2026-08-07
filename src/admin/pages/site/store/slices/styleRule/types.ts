@@ -79,10 +79,14 @@ export interface StyleRuleSlice {
   setActiveClass(id: string | null): void
 
   /**
-   * When true, the Properties panel edits the selected node's inline styles
-   * (`node.inlineStyles`) instead of a class. Mutually exclusive with
-   * `activeClassId` — selecting a class clears this, and enabling this clears
-   * the active class. Reset to false whenever the node selection changes.
+   * When true, the Properties panel shows the selected node's inline-style
+   * section (`node.inlineStyles`) alongside its class section — Track F1 /
+   * S6 removed the old mutual exclusion with `activeClassId` (a user no
+   * longer has to delete a class to see or edit inline styles; both render
+   * together, with per-property provenance showing which one wins). Seeded
+   * to true on selection when the node already has inline styles
+   * (`applySelection` in `selectionSlice.ts`); otherwise the user opts in via
+   * the Element target toggle or "Style inline" in the locked-preview teaser.
    */
   inlineStyleEditing: boolean
   setInlineStyleEditing(active: boolean): void

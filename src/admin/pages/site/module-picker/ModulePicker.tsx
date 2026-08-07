@@ -12,6 +12,15 @@
  *
  * Selection callbacks are wired by the caller, which decides the parent
  * and any post-insert side effects.
+ *
+ * **E4 (`STUDIO-FIGMA-PARITY-PLAN.md`) — a package-bundle refusal is never
+ * silent here.** In Studio mode, `registerProjectModules.ts` now fetches the
+ * project's component bundle regardless of board contents, so an empty list
+ * is either "this project genuinely has no component-package dependency" or
+ * "it has one, but the trust tier/React version/build blocks it." `<PackageBundleNotice>`
+ * (shared with `ModuleInserterDialog.tsx`) surfaces that refusal at the
+ * PICKER level — with a "Promote project" action for the one actionable
+ * refusal code — instead of just staying quietly empty.
  */
 
 import {
@@ -35,6 +44,7 @@ import {
 import { ModuleIcon } from '@site/ui/ModuleIcon'
 import { moduleAvailability } from './moduleInserterModel'
 import { useModuleInsertionContext } from './useModuleInsertionContext'
+import { PackageBundleNotice } from './PackageBundleNotice'
 import styles from './ModulePicker.module.css'
 
 const EMPTY_VCS: VisualComponent[] = []
@@ -148,6 +158,8 @@ export function ModulePicker({
           className={styles.searchField}
         />
       </div>
+
+      <PackageBundleNotice isStudio={insertionContext.isStudio} stopPropagationOnInteraction />
 
       {isEmpty && (
         <ContextMenuItem disabled aria-disabled="true">

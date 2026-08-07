@@ -22,9 +22,19 @@
  * `[object Object]` in a text box where one keystroke replaced a whole array of
  * actions with that string; case 2 rendered the real copy in a text box that
  * silently discarded everything typed into it.
+ *
+ * Track F2 / R1-R2's "per-field design" — the WHY used to be a permanent
+ * inline `· set in code` string appended to the value, eating row width on
+ * every code-valued prop. `hint` (built by `propLockReason`, which now names
+ * this PROP's own resolved source — R2 — rather than a generic node-level
+ * fallback) moves into a lock glyph's tooltip instead: the fact is still one
+ * hover away, but the row reads as "value, plus a small badge" rather than
+ * "value, plus a paragraph".
  */
 import type { ControlProps } from './shared'
 import { ControlRow } from '@ui/components/ControlRow'
+import { Button } from '@ui/components/Button'
+import { LockSolidIcon } from 'pixel-art-icons/icons/lock-solid'
 import styles from './controls.module.css'
 
 /** Longest scalar shown inline before it is clipped — this is a 100px-labelled row. */
@@ -71,8 +81,17 @@ export function CodeValueControl({
   return (
     <ControlRow propKey={propKey} label={label} layout={layout} isOverride={isOverride} disabled>
       <span className={styles.codeValue} data-testid={`code-value-${propKey}`}>
-        {summariseValue(value)}
-        <span className={styles.codeValueHint}> · {hint}</span>
+        <span className={styles.codeValueText}>{summariseValue(value)}</span>
+        <Button
+          variant="ghost"
+          size="micro"
+          iconOnly
+          tooltip={hint}
+          aria-label={`Why this value is read-only: ${hint}`}
+          className={styles.codeValueGlyph}
+        >
+          <LockSolidIcon size={11} />
+        </Button>
       </span>
     </ControlRow>
   )

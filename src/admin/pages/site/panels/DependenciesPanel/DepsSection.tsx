@@ -9,13 +9,28 @@
  *   - SAFE_PACKAGE_NAME validation on every add (Constraint #361 Rule 5 / CWE-78)
  *   - Inline remove confirmation (Guideline #258)
  *   - Search with aria-live result count (WCAG 2.1 AA)
- *   - setDependency / removeDependency store actions
+ *   - setDependency / removeDependency store actions — update the in-memory
+ *     `packageJson` mirror (feeds the CDN-resolved runtime dependency lock;
+ *     `resolveDependencyLock`/`useAutoResolveDependencies`)
+ *   - **E3 (`STUDIO-FIGMA-PARITY-PLAN.md`) — in Studio mode, Add/Remove ALSO
+ *     run a real `bun add`/`bun remove` (or the project's own detected
+ *     package manager) against the on-disk project**, riding the existing
+ *     WS-1.4 install job (`installDeps.ts`) instead of a second install path.
+ *     This deletes the two `// TODO(Phase G)` stubs that made "install it
+ *     from the Dependencies panel" — `PROJECT-BRIEF.md`'s own documented
+ *     remedy for a missing package — untrue. A successful install/remove
+ *     requests a site reload (`requestCmsSiteReload`) so the workspace
+ *     re-parses with the change on disk; `registerProjectModules.ts` (E4)
+ *     then picks up any newly-available design-system package without a full
+ *     page refresh. Outside Studio mode (the CMS half's classic dependency
+ *     UI, which has no on-disk project to install into), only the in-memory
+ *     mirror updates — unchanged from before.
  *
  * @see Constraint #361 — Phase G Security (Rule 5: package-name validation, CWE-78)
  * @see Guideline #258 — Inline Confirmation UI Pattern
  * @see Contribution #512 — Phase E+ Site Panel UX Spec §4
  */
-import { useState, useRef, useId } from 'react'
+import { useRef, useState, useId } from 'react'
 import { useEditorStore } from '@site/store/store'
 import { Button } from '@ui/components/Button'
 import { Input } from '@ui/components/Input'
@@ -36,6 +51,7 @@ import {
   type SiteRuntimeDiagnostic,
 } from '@core/site-runtime'
 import { evaluateDependencyLockStatus } from './lockStatus'
+import { useDependencyInstallJob } from './useDependencyInstallJob'
 import styles from './DepsSection.module.css'
 
 // ---------------------------------------------------------------------------
@@ -44,7 +60,6 @@ import styles from './DepsSection.module.css'
 
 interface RemoveConfirmState {
   name: string
-  /** TODO(Phase G): used by `bun remove --dev` when bridge is active */
   dev: boolean
 }
 
@@ -82,6 +97,9 @@ export function DepsSection() {
   const [addError, setAddError] = useState<string | null>(null)
   const devToggleId = useId()
   const [removeConfirm, setRemoveConfirm] = useState<RemoveConfirmState | null>(null)
+
+  // E3 — the one Studio install/remove job this panel may have in flight.
+  const { installState, runDependencyMutation } = useDependencyInstallJob()
 
   const cancelRef = useRef<HTMLButtonElement>(null)
 
@@ -141,7 +159,7 @@ export function DepsSection() {
     setDependency(name, '*', addDev)
     setAddName('')
     setAddError(null)
-    // TODO(Phase G): ask the site bridge to install this in the user site.
+    runDependencyMutation('add', name, { add: { name, version: '*', dev: addDev } })
   }
 
   const handleRuntimeIssueAction = (issue: RuntimeDependencyIssue) => {
@@ -165,9 +183,10 @@ export function DepsSection() {
 
   const confirmRemove = () => {
     if (removeConfirm) {
-      removeDependency(removeConfirm.name)
+      const { name } = removeConfirm
+      removeDependency(name)
       setRemoveConfirm(null)
-      // TODO(Phase G): ask the site bridge to remove this from the user site.
+      runDependencyMutation('remove', name, { remove: { name } })
     }
   }
 
@@ -276,6 +295,7 @@ export function DepsSection() {
                 onConfirmRemove={confirmRemove}
                 onCancelRemove={cancelRemove}
                 onKeyDown={handleRemoveKeyDown}
+                installBusy={installState !== null}
               />
             ))}
           </>
@@ -298,6 +318,7 @@ export function DepsSection() {
                 onConfirmRemove={confirmRemove}
                 onCancelRemove={cancelRemove}
                 onKeyDown={handleRemoveKeyDown}
+                installBusy={installState !== null}
               />
             ))}
           </>
@@ -380,7 +401,7 @@ export function DepsSection() {
             variant="primary"
             size="xs"
             onClick={handleAddPackage}
-            disabled={!!addError || !addName.trim()}
+            disabled={!!addError || !addName.trim() || installState !== null}
             aria-label="Add dependency"
             tooltip="Add dependency"
           >
@@ -388,6 +409,13 @@ export function DepsSection() {
             Add
           </Button>
         </div>
+
+        {/* E3 — Studio install/remove job progress, riding installDeps.ts */}
+        {installState && (
+          <div className={styles.installStatus} role="status">
+            {installState.kind === 'add' ? 'Installing' : 'Removing'} {installState.name}…
+          </div>
+        )}
 
         {/* dev toggle */}
         <div className={styles.devToggle}>
@@ -420,6 +448,8 @@ interface DepRowProps {
   onConfirmRemove: () => void
   onCancelRemove: () => void
   onKeyDown: (e: React.KeyboardEvent) => void
+  /** E3 — a Studio install/remove job is already in flight for THIS panel; disable starting a second one against the same `node_modules`. */
+  installBusy: boolean
 }
 
 function DepRow({
@@ -434,6 +464,7 @@ function DepRow({
   onConfirmRemove,
   onCancelRemove,
   onKeyDown,
+  installBusy,
 }: DepRowProps) {
   const isPendingRemoval = confirmState?.name === name
 
@@ -457,6 +488,7 @@ function DepRow({
           variant="destructive"
           size="sm"
           onClick={onConfirmRemove}
+          disabled={installBusy}
           aria-label={`Confirm remove ${name}`}
         >
           Remove
@@ -511,6 +543,7 @@ function DepRow({
         variant="ghost"
         size="xs"
         iconOnly
+        disabled={installBusy}
         data-testid={`remove-dep-${name}`}
         onClick={() => onRemove(name, dev)}
         aria-label={`Remove ${name}`}

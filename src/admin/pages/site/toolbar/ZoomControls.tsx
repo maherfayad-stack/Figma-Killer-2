@@ -14,11 +14,23 @@
  * Performance: subscribes only to `zoom` + `canvasView` — no re-render when
  * other canvas state changes.
  *
- * Keyboard shortcuts (handled in useCanvas, documented here for screen readers):
+ * Keyboard shortcuts (handled in useCanvas via the keybindings registry,
+ * documented here for screen readers):
  *   +/= → zoom in
  *   -   → zoom out
  *   Cmd/Ctrl+0 → reset to 100%
- *   Shift+1 → reset to 100% (legacy muscle-memory)
+ *   Shift+1 (`canvas.zoomToFit`) → zoom to fit every visible frame (D3 —
+ *     used to alias "reset to 100%"; that muscle-memory shortcut is now
+ *     Cmd/Ctrl+0 only)
+ *   Shift+2 (`canvas.zoomToSelection`) → zoom to the current selection (D3 —
+ *     did not exist before)
+ *
+ * `zoomToFit`/`zoomToSelection` are keyboard-only for now — this component
+ * renders outside `CanvasRoot`'s `CanvasViewportActionsContext` provider (see
+ * `AdminCanvasLayout.tsx`), so a toolbar button for them needs that context
+ * threaded out here first, or a second, independent DOM-measurement path
+ * duplicating `useCanvas.ts`'s `zoomToFit`/`zoomToSelection`. Left as a
+ * follow-up rather than duplicated ad hoc.
  */
 
 import { useEditorStore } from '@site/store/store'

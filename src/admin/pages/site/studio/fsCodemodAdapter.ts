@@ -53,12 +53,22 @@ import { CUSTOM_HTML_TAG_VALUE } from '@modules/base/utils/htmlTag'
 import { requestCmsSiteReload } from '@admin/state/adminEvents'
 import { useAdminUi } from '@admin/state/adminUi'
 import { pushToast } from '@ui/components/Toast'
+import { notifyUnexplainedSkips } from '@site/panels/unexplainedSkipsNotice'
+import { notifyClassAssignmentUnsaved } from '@site/panels/classAssignmentUnsavedNotice'
 import { getStudioWorkspaceDir } from './studioWorkspaceDir'
 import { fetchExtractedTokens, type TokenExtractionStatus } from './studioTokenStatus'
 import { setStudioTrustTier } from './studioProjectTrust'
-import { StudioSaveResponseSchema, setStudioLoadedDir, studioWriteDir } from './studioSaveRequests'
+import { StudioSaveResponseSchema, notifyCreatedStylesheets, setStudioLoadedDir, studioWriteDir } from './studioSaveRequests'
 import { StudioLoadStreamLineSchema, type ComponentSource } from './studioLoadStreamSchema'
-import { getLoadedNodeValues, literalInlineStyles, resetLoadedValues } from './loadedValuesBaseline'
+import {
+  commitClassIdsBaseline,
+  commitNodeValuesBaseline,
+  getLoadedNodeValues,
+  literalInlineStyles,
+  resetLoadedValues,
+  type NodeValueBump,
+} from './loadedValuesBaseline'
+import { collectClassNameEdits } from './classNameWriteback'
 import {
   collectStyleRuleEdits,
   commitBaseline as commitStyleRuleBaseline,
@@ -204,15 +214,32 @@ export const STUDIO_AUTOSAVE_DELAY_MS = 2_000
  * validates (`SaveBodySchema`/`StudioEdit`). Kept as a local mirror rather than
  * a shared import: this file runs in the browser, the server file runs in
  * Node/ts-morph, and the two sides only need to agree on the JSON wire shape.
+ *
+ * Track B1 — the `css` variant is now three ops (`studioCssWriteback.ts`'s
+ * `CssEditSchema`): `set`, `insert` (one editable stylesheet exists),
+ * `create` (none do, but the server can invent a co-located one). Widened
+ * here only because `collectStyleRuleEdits`'s return type includes all
+ * three. `create`'s "which file was created" surfacing is wired: `saveSite`
+ * calls `notifyCreatedStylesheets` (`studioSaveRequests.ts`) once the save
+ * response arrives, alongside the `unexplainedSkips` handling.
+ *
+ * Track B2 — `class` (`server/handlers/studioEditSchemas.ts`'s
+ * `ClassEditSchema`, matching `classNameWriteback.ts`'s `ClassNameEditPayload`)
+ * replaces Phase 0 item 0.6's honesty-only stopgap: a `node.classIds` add/
+ * remove now reaches disk via `setJsxClassName` instead of only ever warning
+ * that it couldn't.
  */
 type StudioEditPayload =
   | { kind: 'prop'; nodeId: string; prop: string; value: string | number | boolean }
   | { kind: 'text'; nodeId: string; text: string }
   | { kind: 'style'; nodeId: string; style: Record<string, string | number> }
+  | { kind: 'class'; nodeId: string; add: string[]; remove: string[] }
   | { kind: 'literal'; nodeId: string; text: string }
   | { kind: 'tag'; nodeId: string; tag: string }
   | { kind: 'asset'; nodeId: string; assetPath: string }
-  | { kind: 'css'; nodeId: string; file: string; selector: string; property: string; value: string }
+  | { kind: 'css'; op: 'set'; nodeId: string; file: string; selector: string; property: string; value: string }
+  | { kind: 'css'; op: 'insert'; nodeId: string; file: string; selector: string; declarations: Record<string, string>; atMedia?: string }
+  | { kind: 'css'; op: 'create'; nodeId: string; pageFile: string; selector: string; declarations: Record<string, string>; atMedia?: string }
 
 /**
  * The HTML tag an element node renders as, or `undefined` when the module has no
@@ -332,14 +359,35 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
     return site
   },
 
-  async saveSite(site: SiteDocument, _opts: SaveSiteOptions = {}): Promise<void> {
+  async saveSite(site: SiteDocument, opts: SaveSiteOptions = {}): Promise<void> {
     // Collect current literal props + inline styles for every source-backed
     // node across all pages. Re-writing unchanged values is idempotent, so we
     // don't need a per-field diff for this first pass. Synthetic nodes (e.g.
     // `index:body`) don't match the loc pattern and are skipped server-side.
     const edits: StudioEditPayload[] = []
+    // Parallel to `edits` — one `(nodeId, baseline key, value)` entry per
+    // node-value edit pushed below, so `loadedValues` can be advanced to
+    // exactly what this batch wrote once the POST confirms it landed. See
+    // `commitNodeValuesBaseline`'s doc for why this is E1's fix and why it is
+    // gated on `unexplainedSkips === 0` below rather than committed
+    // unconditionally.
+    const bumps: NodeValueBump[] = []
 
-    for (const page of site.pages) {
+    // C4 — this loop used to scan every node of every page on every autosave
+    // tick, ignoring `opts.dirty` (fed correctly by every `mutateSite`/
+    // `mutateActiveTree` call, see `dirtyTracking.ts`). A page NOT in
+    // `dirty.pageIds` produced zero site patches since the last snapshot, so
+    // it holds no unshipped edit — skipping its scan is lossless. Absent
+    // hints or `dirty.all` fall back to the full scan (`SaveSiteOptions`'s own
+    // "Absent -> replace-mode full save" contract). Scope: only THIS loop is
+    // filtered — `collectClassIdsDrift`/`commitClassIdsBaseline`/
+    // `collectStyleRuleEdits` below stay unfiltered (cheaper per-node checks,
+    // lower risk to touch alongside the 0.6 seam than the payoff is worth).
+    const dirty = opts.dirty
+    const dirtyPages =
+      !dirty || dirty.all ? site.pages : site.pages.filter((page) => dirty.pageIds.has(page.id))
+
+    for (const page of dirtyPages) {
       for (const node of Object.values(page.nodes)) {
         // The module's declared inline-text-edit prop (if any) routes that
         // one prop as a `text` edit (rewrites the element's text children)
@@ -359,6 +407,7 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
           if (typeof value === 'string' && !(baseline && Object.is(baseline[textProp], value))) {
             const { rel, line, col } = node.textOrigin
             edits.push({ kind: 'literal', nodeId: `${rel}:${line}:${col}`, text: value })
+            bumps.push({ nodeId: node.id, key: textProp, value })
           }
         }
 
@@ -378,6 +427,13 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
           const baselineTag = effectiveTag(baseline)
           if (tag !== undefined && tag !== baselineTag) {
             edits.push({ kind: 'tag', nodeId: node.id, tag })
+            // `effectiveTag(baseline)` reads BOTH raw keys — bump both so a
+            // later save's `baselineTag` recomputes from what's now on disk,
+            // not from the as-loaded pair.
+            const rawTag = node.props?.tag
+            if (typeof rawTag === 'string') bumps.push({ nodeId: node.id, key: 'tag', value: rawTag })
+            const rawCustomTag = node.props?.customTag
+            if (typeof rawCustomTag === 'string') bumps.push({ nodeId: node.id, key: 'customTag', value: rawCustomTag })
           }
         }
 
@@ -406,6 +462,7 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
           } else {
             edits.push({ kind: 'prop', nodeId: node.id, prop, value })
           }
+          bumps.push({ nodeId: node.id, key: prop, value })
         }
 
         // instance-ui-01 — a `studio.instance`'s call-site props are a
@@ -424,6 +481,7 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
             if (baseline && Object.is(baseline[codeKey], value)) continue
             if (!isPropWritableToSource(node, codeKey)) continue
             edits.push({ kind: 'prop', nodeId: node.id, prop: codeKey, value })
+            bumps.push({ nodeId: node.id, key: codeKey, value })
           }
         }
 
@@ -442,10 +500,34 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
           )
           if (changed.length > 0) {
             edits.push({ kind: 'style', nodeId: node.id, style: Object.fromEntries(changed) })
+            for (const [k, v] of changed) bumps.push({ nodeId: node.id, key: styleValueKey(k), value: v })
           }
         }
       }
     }
+
+    // Track B2 — Studio (filesystem) mode now has a real `class` edit kind
+    // (`setJsxClassName`): `collectClassNameEdits` diffs `node.classIds`
+    // against the load-time baseline right here — the same place
+    // `collectStyleRuleEdits` (just below) diffs `site.styleRules` — and
+    // turns most of the drift into `kind: 'class'` edits sent in the same
+    // batch as everything else. The residual `unwritable` subset (a `.map`
+    // row, a synthetic root — no single JSX location a class token could
+    // land on) still gets Phase 0.6's honesty toast, now scoped to exactly
+    // that subset instead of every class change in the project. Fires
+    // exactly when the write is attempted, catches every entry point
+    // (including a future AI-agent-driven class edit), and never re-fires
+    // for a node whose classes are unchanged since the last save.
+    const classPlan = collectClassNameEdits(site.pages, site.styleRules, site.visualComponents)
+    edits.push(...classPlan.edits)
+    if (classPlan.unwritable.length > 0) notifyClassAssignmentUnsaved(classPlan.unwritable)
+    // Advance unconditionally, same discipline `commitStyleRuleBaseline`
+    // below uses: one user change produces exactly one write attempt and
+    // (if refused) exactly one refusal toast, not a re-send/re-toast on
+    // every later autosave tick. A `class` edit's per-token REFUSAL (a CSS
+    // Modules binding, a dynamic template, …) is reported once via
+    // `result.refusals` below, same channel `detach`/`swap`/`css` use.
+    commitClassIdsBaseline(site.pages)
 
     // `panel-02` (WS-6.3) — CSS write-back, owned by `styleRuleWriteback.ts`:
     // it diffs each rule's BASE `styles` bag against the load-time baseline
@@ -507,6 +589,7 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
         detach: 'Detach refused',
         swap: 'Swap refused',
         css: 'Style not saved to source',
+        class: 'Class change not saved to source',
       }
       const refusals = result.refusals ?? []
       for (const refusal of refusals) {
@@ -520,17 +603,37 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
       // binding away into a string. Say so — the alternative is the user
       // watching their edit snap back with no explanation. Excludes skips
       // already explained by a refusal toast above.
+      //
+      // Phase 0 item 0.7 — `result.unexplainedSkips` (added alongside
+      // `refusals`/`shifted`/etc. on `StudioSaveResponseSchema`) carries the
+      // actual `{ nodeId, kind }[]` behind this count, so the toast can name
+      // the affected node(s) instead of a bare number — see
+      // `unexplainedSkipsNotice.ts`. `?? []` covers an older/dev server that
+      // hasn't picked up the field yet; `notifyUnexplainedSkips([])` is a
+      // documented no-op, matching the old `unexplainedSkips > 0` guard.
       const unexplainedSkips = result.skipped - refusals.length
-      if (unexplainedSkips > 0) {
-        pushToast({
-          kind: 'error',
-          title: 'Some changes were not saved to source',
-          body:
-            `${unexplainedSkips} edit${unexplainedSkips === 1 ? '' : 's'} had no writable location in the code. ` +
-            'Text that comes from a prop or a variable cannot be edited on the canvas yet — ' +
-            'edit it where the value is defined.',
-        })
-      }
+      notifyUnexplainedSkips(result.unexplainedSkips ?? [])
+
+      // Track B1 create branch — name the file Studio invented and register it
+      // in the write-back map, so the same rule is writable through the ordinary
+      // `set` path on its next edit with no reload. Creating a file is a bigger
+      // surprise than choosing one, so it is never silent.
+      notifyCreatedStylesheets(result, site.styleRules)
+
+      // E1 fix (`STUDIO-FIGMA-PARITY-PLAN.md` 0.1) — advance the node-value
+      // baseline to what this batch wrote, so the NEXT autosave tick diffs
+      // against disk-as-it-now-is rather than the as-loaded snapshot. Gated
+      // on `unexplainedSkips === 0`: the response only reports aggregate
+      // counts for the whole POST (props + text + style + tag + CSS +
+      // localized text all share one `written`/`skipped`), so there is no
+      // per-edit signal to tell which SPECIFIC bump landed when only some of
+      // the batch did. Skipping the whole commit in that rare case is the
+      // safe direction — a bump that should have landed just gets re-diffed
+      // (harmless, `setJsxProp`/`setJsxText` are idempotent) on the next
+      // tick, instead of a refused/skipped edit's value being silently
+      // adopted as the new baseline and the user never seeing why their
+      // change didn't stick.
+      if (unexplainedSkips === 0) commitNodeValuesBaseline(bumps)
 
       // A write shifted line numbers, so every `line:col` node id below that
       // point is now stale against disk. Re-parse the workspace to re-derive

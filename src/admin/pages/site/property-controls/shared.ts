@@ -27,4 +27,13 @@ export interface ControlProps<T = unknown> {
    * defaults), so individual controls always receive a concrete value.
    */
   layout?: PropertyControlLayout
+  /**
+   * The id of the node that OWNS this prop — the call site for a
+   * `studio.instance`'s `callSiteProps:<key>`, or the node itself for every
+   * other module. Only `SlotControl` (E2.5) reads this: filling an empty
+   * slot writes an `insert-slot` edit whose `nodeId` targets the CALL SITE,
+   * never the slot's own (locked) node — see that control's doc comment.
+   * Every other control ignores it.
+   */
+  ownerNodeId?: string
 }

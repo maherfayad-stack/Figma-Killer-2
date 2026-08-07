@@ -36,11 +36,44 @@ export function hasMediaDropData(dataTransfer: DataTransfer): boolean {
   return hasType(dataTransfer, MEDIA_ASSET_DRAG_TYPE) || hasType(dataTransfer, MEDIA_FOLDER_DRAG_TYPE)
 }
 
+/**
+ * A same-document mirror of the active media drag's payload, outside
+ * `DataTransfer`.
+ *
+ * Per the HTML drag-and-drop spec, `DataTransfer` is in "protected mode"
+ * during `dragover` — `dataTransfer.getData()` is REQUIRED to return `""`
+ * there (readable only on `dragstart` and `drop`). `dataTransfer.types` IS
+ * readable during `dragover` (`hasMediaDropData` relies on that), but it
+ * carries no payload, only type names.
+ *
+ * Media drags never leave this single admin document (no iframe boundary),
+ * so a module-scoped variable set on `dragstart` (by `writeMedia*DragData`,
+ * called from every drag source's `onDragStart`) and cleared on `dragend` is
+ * a safe substitute: it lets `useMediaDnd`'s `handleDragOver` judge legality
+ * (self-drop, drop-onto-own-parent, descendant-cycle — `canAcceptDrop` in
+ * `mediaDnd.ts`) BEFORE the drop, instead of treating an unreadable payload
+ * as always legal. Before this existed, `canAcceptDrop(workspace, null, …)`
+ * short-circuited to `true` for every `dragover`, so illegal folder drops
+ * highlighted as valid drop targets and then silently no-opped on drop.
+ */
+let activeDragPayload: MediaDropPayload | null = null
+
+/** The active drag's payload, or `null` when no media drag is in flight. */
+export function readActiveMediaDragPayload(): MediaDropPayload | null {
+  return activeDragPayload
+}
+
+/** Called on `dragend` (drop or cancel) — see `useMediaDnd`'s document listener. */
+export function clearActiveMediaDragPayload(): void {
+  activeDragPayload = null
+}
+
 export function writeMediaAssetDragData(dataTransfer: DataTransfer, assetIds: string[]) {
   const cleanIds = uniqueNonEmpty(assetIds)
   if (cleanIds.length === 0) return
   dataTransfer.setData(MEDIA_ASSET_DRAG_TYPE, JSON.stringify({ assetIds: cleanIds }))
   dataTransfer.effectAllowed = 'move'
+  activeDragPayload = { kind: 'assets', assetIds: cleanIds }
 }
 
 export function writeMediaFolderDragData(dataTransfer: DataTransfer, folderId: string) {
@@ -48,6 +81,7 @@ export function writeMediaFolderDragData(dataTransfer: DataTransfer, folderId: s
   if (!cleanId) return
   dataTransfer.setData(MEDIA_FOLDER_DRAG_TYPE, JSON.stringify({ folderId: cleanId }))
   dataTransfer.effectAllowed = 'move'
+  activeDragPayload = { kind: 'folder', folderId: cleanId }
 }
 
 export function readMediaDropPayload(dataTransfer: DataTransfer): MediaDropPayload | null {

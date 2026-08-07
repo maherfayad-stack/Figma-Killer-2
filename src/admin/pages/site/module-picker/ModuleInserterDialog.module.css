@@ -298,6 +298,15 @@
     justify-self: end;
 }
 
+/* Wraps `.sectionHeader` + the optional E4 package notice as ONE grid child
+ * — see the component's own comment for why a second direct grid child here
+ * would steal the scroller's flex track. */
+.sectionHeaderGroup {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
 .sectionHeader {
     display: flex;
     align-items: center;
@@ -307,6 +316,11 @@
     box-shadow: 0px 10px 10px 0 var(--bg-surface);
     z-index: 2;
 }
+
+/* E4's package-bundle refusal notice itself now lives in the shared
+ * `PackageBundleNotice` component (`PackageBundleNotice.module.css`) — its
+ * `size="roomy"` variant supplies the `var(--space-5xl)` side margins this
+ * dialog's rows use. */
 
 .sectionBar {
     width: 4px;

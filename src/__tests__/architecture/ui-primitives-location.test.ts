@@ -10,10 +10,25 @@
 import { describe, expect, it } from 'bun:test'
 import { existsSync, readdirSync, readFileSync, statSync } from 'fs'
 import { extname, join, relative } from 'path'
+import { toPosixPath } from './pathHelpers'
 
 const SRC_ROOT = join(import.meta.dir, '../..')
 const UI_COMPONENTS_ROOT = join(SRC_ROOT, 'ui/components')
-const EDITOR_ROOT = join(SRC_ROOT, 'editor')
+// 'src/editor' never existed in this repo's tracked history (`git log --all
+// -- src/editor` is empty) — every test below that walked EDITOR_ROOT scanned
+// zero files since this gate was written. `src/admin/pages/site` is the
+// visual editor surface this file's doc comment ("editor panels, settings,
+// toolbar") describes; see the identical derivation + evidence in
+// canvas-aware-selectors.test.ts.
+const EDITOR_ROOT = join(SRC_ROOT, 'admin/pages/site')
+// `src/app` ALSO never existed in this repo's tracked history and has no
+// current equivalent — there is no top-level "app" surface in this codebase
+// (see docs/architecture.md's folder layout: src/admin, src/core, src/modules,
+// src/ui). Left as-is rather than guessed at a replacement; the one test that
+// reads it (`keeps native color and file inputs...` below) still exercises
+// its EDITOR_ROOT half correctly. Flagged in the test-engineer handoff as an
+// unresolved intent — needs a decision from whoever knows what this root was
+// meant to cover (a since-removed public-site renderer surface, most likely).
 
 const REQUIRED_PRIMITIVES = [
   'Button/Button.tsx',
@@ -33,6 +48,19 @@ const REQUIRED_PRIMITIVES = [
   'FileUpload/FileUpload.tsx',
   'FileUpload/FileUpload.module.css',
 ]
+
+// Comment stripper — preserves line numbers by replacing non-newline chars
+// inside comments with spaces (same approach as canvas-aware-selectors.test.ts /
+// db-postgres-isms.test.ts). Needed for the "keeps native color and file
+// inputs..." scan below: without it, a doc comment merely MENTIONING
+// `<input type="color">` (e.g. TokenizedColorField.tsx's T8 note explaining
+// why the swatch stopped being a native color input) reads as a false
+// violation even though the file doesn't render one.
+const COMMENT_RE = /\/\/.*$|\/\*[\s\S]*?\*\//gm
+
+function stripComments(src: string): string {
+  return src.replace(COMMENT_RE, (m) => m.replace(/[^\n]/g, ' '))
+}
 
 function collectTSXFiles(dir: string): string[] {
   const results: string[] = []
@@ -74,7 +102,7 @@ describe('UI primitives location', () => {
     for (const file of collectTSXFiles(EDITOR_ROOT)) {
       const source = readFileSync(file, 'utf-8')
       if (/from ['"].*\/ui\/Button['"]/.test(source)) {
-        violations.push(relative(EDITOR_ROOT, file))
+        violations.push(toPosixPath(relative(EDITOR_ROOT, file)))
       }
     }
 
@@ -87,9 +115,9 @@ describe('UI primitives location', () => {
 
     for (const root of roots) {
       for (const file of collectTSXFiles(root)) {
-        const source = readFileSync(file, 'utf-8')
+        const source = stripComments(readFileSync(file, 'utf-8'))
         if (/<input[\s\S]*type=["'](?:color|file)["']/.test(source)) {
-          violations.push(relative(SRC_ROOT, file))
+          violations.push(toPosixPath(relative(SRC_ROOT, file)))
         }
       }
     }

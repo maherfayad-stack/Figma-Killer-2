@@ -147,9 +147,16 @@ function resolveModuleId(
     props?: Record<string, ParsedPropValue>
     /** WS-4.2 — present when `inlineLocalComponents` successfully expanded this call site into an instance. */
     instanceOf?: { componentName: string; source: 'local' | 'package'; sourceFile: string | null }
+    /** E2.3 — present when `captureSlotProps`'s fragment branch minted this node as a fragment-valued slot's container. */
+    fragmentSlot?: true
   },
   componentSources: Record<string, ComponentSource>,
 ): string {
+  // E2.3 — checked before the `kind`-based dispatch below, same as
+  // `instanceOf` is: a fragment-captured slot container has no tag name to
+  // route on (`node.name` is the placeholder `'Fragment'`), so this must be
+  // the first thing asked, not a fallback.
+  if (node.fragmentSlot) return 'studio.slot'
   if (node.kind === 'component') {
     // WS-4.2 — a call site `inlineLocalComponents` actually expanded renders
     // as the zero-DOM instance fragment, whatever `componentSources` says
