@@ -31,7 +31,29 @@ export const SPACING_RATIO_OPTIONS: ReadonlyArray<{ value: string; label: string
   { value: '2',     label: 'Perfect Octave (2)' },
 ]
 
-const DEFAULT_ROOT_FONT_SIZE = 10
+/**
+ * The root font size every generated `rem` is divided by — and it MUST match
+ * the root font size the browser actually uses, which is 16px unless something
+ * sets otherwise.
+ *
+ * This was 10, mirroring an upstream preset that pairs a 10 divisor with an
+ * `html { font-size: 62.5% }` rule. Studio ported the divisor and never emitted
+ * the rule, so a 14px design token was generated as `1.4rem` and then resolved
+ * against the real 16px root — rendering 22.4px. Every generated type and
+ * spacing value came out 1.6x too large, uniformly, and it was invisible in
+ * source: nothing in the repo contains a rem value to grep for, because the
+ * inflation happens at generation time.
+ *
+ * It was compounded by these variables sharing the design system's own names
+ * (`--type-body-size` and friends), so the generated `:root` block overrode an
+ * installed design system's correct px values — which is why a button whose
+ * package says 14px rendered at 22.4px on the canvas.
+ *
+ * A non-16 value is still honoured, and `emitRootFontSizeCss` now writes the
+ * matching root rule so the divisor and the actual root can never disagree
+ * again. 16 is the default because it is the truth about an unstyled document.
+ */
+const DEFAULT_ROOT_FONT_SIZE = 16
 const DEFAULT_MIN_SCREEN_WIDTH = 320
 const DEFAULT_MAX_SCREEN_WIDTH = 1400
 const DEFAULT_IS_REM = true
@@ -62,8 +84,19 @@ function round(value: number): number {
   return Number(value.toFixed(2))
 }
 
+/**
+ * Deliberately 4 decimals, not `round`'s 2.
+ *
+ * At 2 decimals a 14px token becomes `0.88rem`, which renders 14.08px — a
+ * sub-pixel error nobody can see, but the agent now compares its rendered
+ * numbers against the design's (`studio_computed_styles` vs a Figma
+ * connector's variable definitions), and a systematic 0.08px offset on every
+ * token reads as a real mismatch to chase. 4 decimals is exact for any integer
+ * px against any power-of-two root (1/16 = 0.0625), so 14px round-trips as
+ * `0.875rem` -> 14px.
+ */
 function pxToRem(px: number, rootFontSize = 16): string {
-  return `${round(px / rootFontSize)}rem`
+  return `${Number((px / rootFontSize).toFixed(4))}rem`
 }
 
 function convertToDesiredUnit(

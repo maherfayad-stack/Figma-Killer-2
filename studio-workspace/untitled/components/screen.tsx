@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { GlassButton } from '@alm-design/design-system'
 import '@alm-design/design-system/dist/index.css'
+import '../styles/fonts.css'
 import styles from './Screen.module.css'
 
 type ScreenProps = {

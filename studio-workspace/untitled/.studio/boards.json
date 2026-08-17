@@ -6,84 +6,76 @@
       "name": "Board 1",
       "frames": [
         {
-          "id": "frame-signup",
-          "pageId": "signup",
-          "x": 0,
-          "y": 0,
-          "width": 393,
-          "height": 800
-        },
-        {
-          "id": "frame-verifyemail",
-          "pageId": "verifyemail",
-          "x": 493,
-          "y": 0,
-          "width": 375,
-          "height": 800
-        },
-        {
-          "id": "frame-addmobile",
-          "pageId": "addmobile",
-          "x": 968,
-          "y": 0,
-          "width": 376,
-          "height": 800
-        },
-        {
-          "id": "frame-verifysms",
-          "pageId": "verifysms",
-          "x": 1444,
-          "y": 0,
-          "width": 375,
-          "height": 800
-        },
-        {
-          "id": "frame-onboarding",
-          "pageId": "onboarding",
-          "x": 1919,
-          "y": 0,
-          "width": 393,
-          "height": 852
-        },
-        {
-          "id": "a6c15a16-c1ed-4566-a8b7-2b51c9230d14",
-          "pageId": "add-mobile",
-          "x": 1104,
-          "y": 1760,
-          "width": 393,
-          "height": 852
-        },
-        {
-          "id": "77a696f7-17ff-45cf-8f3b-dde390065017",
-          "pageId": "page",
-          "x": 0,
-          "y": 2640,
-          "width": 393,
-          "height": 852
-        },
-        {
           "id": "a102e792-d5f3-42a2-be94-13520427f2a2",
           "pageId": "sign-up",
-          "x": 1104,
-          "y": 2640,
+          "x": 0.0,
+          "y": 0.0,
           "width": 393,
-          "height": 852
+          "height": 800,
+          "axes": {
+            "direction": "ltr",
+            "colorScheme": "light"
+          }
         },
         {
           "id": "32f943b3-6cb9-4d75-8f1d-ee3ae209453e",
           "pageId": "verify-email",
-          "x": 0,
-          "y": 3520,
-          "width": 393,
-          "height": 852
+          "x": 493.0,
+          "y": 0.0,
+          "width": 375,
+          "height": 800,
+          "axes": {
+            "direction": "ltr",
+            "colorScheme": "light"
+          }
+        },
+        {
+          "id": "a6c15a16-c1ed-4566-a8b7-2b51c9230d14",
+          "pageId": "add-mobile",
+          "x": 968.0,
+          "y": 0.0,
+          "width": 375,
+          "height": 800,
+          "axes": {
+            "direction": "ltr",
+            "colorScheme": "light"
+          }
         },
         {
           "id": "5271581d-69f1-4d71-bf80-2a7fbc53be24",
           "pageId": "verify-sms",
-          "x": 1104,
-          "y": 3520,
+          "x": 1443.0,
+          "y": 0.0,
+          "width": 375,
+          "height": 800,
+          "axes": {
+            "direction": "ltr",
+            "colorScheme": "light"
+          }
+        },
+        {
+          "id": "frame-onboarding",
+          "pageId": "onboarding",
+          "x": 1918.0,
+          "y": 0.0,
           "width": 393,
-          "height": 852
+          "height": 800,
+          "axes": {
+            "direction": "ltr",
+            "colorScheme": "light"
+          }
+        },
+        {
+          "id": "77a696f7-17ff-45cf-8f3b-dde390065017",
+          "pageId": "page",
+          "x": 0.0,
+          "y": 1000.0,
+          "width": 393,
+          "height": 800,
+          "axes": {
+            "direction": "ltr",
+            "colorScheme": "light"
+          }
         }
       ],
       "notes": [],

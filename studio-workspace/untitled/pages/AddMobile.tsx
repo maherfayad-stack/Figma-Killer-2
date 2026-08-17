@@ -47,7 +47,7 @@ export default function AddMobile() {
         </div>
 
         <div className={styles.verifyBtn}>
-          <Button variant="primary" label="Verify Number" />
+          <Button variant="primary" size="medium" label="Verify Number" />
         </div>
 
         <p className={styles.footnote}>

@@ -94,6 +94,7 @@ export {
   RenderSnapshotInputSchema,
   StudioExportFramesInputSchema,
   StudioSetFrameAxesInputSchema,
+  StudioComputedStylesInputSchema,
   StudioDuplicateFrameAsVariantInputSchema,
   StudioUploadAssetInputSchema,
   StudioListComponentsInputSchema,

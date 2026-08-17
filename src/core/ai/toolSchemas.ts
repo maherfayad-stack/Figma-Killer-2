@@ -472,6 +472,32 @@ export const StudioSetFrameAxesInputSchema = Type.Object({
   axes: StudioFrameAxesPatchSchema,
 })
 
+/**
+ * `studio_computed_styles` — what a screen's CSS ACTUALLY resolved to, read off
+ * the live canvas.
+ *
+ * The gap this closes: the agent could see the design's intended values (a
+ * Figma connector's variable definitions) and a picture of its own output, but
+ * never the values its own stylesheet computed to. So "does this button render
+ * at 14px?" was answerable only by squinting at a screenshot, and a label
+ * rendering at the wrong size survived four rounds of corrections — each one
+ * editing a number that was already right.
+ *
+ * Deliberately per-NODE rather than per-component: it needs no catalogue of
+ * component variants and no knowledge of what `size="default"` means, so it
+ * covers buttons, inputs and everything else the same way.
+ */
+export const StudioComputedStylesInputSchema = Type.Object({
+  pageId: Type.String({ minLength: 1, description: 'Studio page id (from studio_list_pages) whose live board frame is read.' }),
+  nodeIds: Type.Optional(Type.Array(Type.String({ minLength: 1 }), {
+    description: 'Restrict to these node ids (from studio_screenshot\'s nodeRects or studio_find_nodes). Omit to report every node in the frame that renders text or a visible box.',
+  })),
+  textOnly: Type.Optional(Type.Boolean({
+    description: 'Default true — report only nodes with their own text, which is what a type mismatch lives on. Set false to include layout containers (their padding, radius and background).',
+  })),
+  limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 300, description: 'Cap on reported nodes. Default 80, with an honest truncated count.' })),
+})
+
 export const StudioDuplicateFrameAsVariantInputSchema = Type.Object({
   pageId: Type.String({ minLength: 1, description: 'Studio page id whose board frame is duplicated as a new, independently-addressable variant frame.' }),
   frameId: Type.Optional(Type.String({ description: 'Duplicate a SPECIFIC frame when the page already has more than one — omit to duplicate the first frame found for pageId.' })),

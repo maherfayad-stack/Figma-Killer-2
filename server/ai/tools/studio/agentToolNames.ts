@@ -42,6 +42,11 @@ export const STUDIO_AGENT_TOOL_NAMES: readonly string[] = [
   // reads colours off a picture by eye and picks type tokens by NAME, which
   // skews consistently large — see `measureReference.ts`.
   'studio_measure_reference',
+  // What the screen's CSS actually resolved to. The other half of a fidelity
+  // comparison: the reference tools say what the design wants, this says what
+  // the build produced. Without it a type or colour mismatch is only inferable
+  // from a screenshot, which is how a wrong font-size survives being "fixed".
+  'studio_computed_styles',
   'studio_render_reference',
   // A3 (STUDIO-FIGMA-PARITY-PLAN.md) — the reference-free counterpart to
   // studio_compare/studio_measure_reference above: neither has anything to

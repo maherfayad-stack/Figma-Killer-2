@@ -12,10 +12,26 @@
  */
 import {
   StudioSetFrameAxesInputSchema,
+  StudioComputedStylesInputSchema,
   StudioDuplicateFrameAsVariantInputSchema,
   StudioUploadAssetInputSchema,
 } from '@core/ai'
 import type { AiTool } from '../../../runtime/types'
+
+/**
+ * The only READ in this file, and the only tool here that does not mutate: it
+ * reports what the live canvas actually computed, which is the half of a
+ * fidelity loop the agent was missing. See `studioComputedStyles.ts` for why
+ * a screenshot could not answer the same question.
+ */
+const computedStylesTool: AiTool = {
+  name: 'studio_computed_styles',
+  scope: 'site',
+  execution: 'browser',
+  description:
+    'Read what a screen\'s CSS ACTUALLY resolved to on the live canvas: per node, the real font-size and line-height in px, the font-weight, the colour and background as rgb, and the font family the text is genuinely SET IN (not the declared stack — a stack whose first family never loaded looks identical to one that did, and that difference makes correct px look like the wrong size). Use it to close a design difference by arithmetic instead of guessing from a screenshot: compare these numbers against the design\'s own values (a Figma connector\'s variable-definitions tool gives exact tokens) and fix whatever disagrees. This is how you catch a component whose size/variant name resolves to a different token than you assumed, and a font-family naming a font the project never loaded — neither of which is visible in a picture, and the second of which no font-size edit can fix. Per NODE, so it covers buttons, inputs, labels and containers identically. Defaults to nodes with their own text (textOnly); pass textOnly:false for container padding/radius/background. Requires the project open in a Studio browser tab.',
+  inputSchema: StudioComputedStylesInputSchema,
+}
 
 const setFrameAxesTool: AiTool = {
   name: 'studio_set_frame_axes',
@@ -52,6 +68,7 @@ const uploadAssetTool: AiTool = {
 
 export const studioBrowserBridgeMcpTools: AiTool[] = [
   setFrameAxesTool,
+  computedStylesTool,
   duplicateFrameAsVariantTool,
   uploadAssetTool,
 ]

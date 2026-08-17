@@ -123,9 +123,36 @@ describe('framework/typography', () => {
     )
     const baseVar = variables.find((v) => v.name === '--text-m')
     expect(baseVar).toBeDefined()
-    // Default preferences emit rem; root_font_size = 10 → 16px → 1.6rem; 18px → 1.8rem
-    expect(baseVar!.value).toContain('1.6rem')
-    expect(baseVar!.value).toContain('1.8rem')
+    // Default preferences emit rem against a 16px root — the root a browser
+    // actually uses. 16px → 1rem; 18px → 1.125rem.
+    //
+    // This previously asserted 1.6rem/1.8rem, i.e. a 10px root that nothing
+    // ever set, so it was pinning the bug in place: those values rendered
+    // 25.6px and 28.8px. A generated rem is only correct if the divisor equals
+    // the document's real root size.
+    expect(baseVar!.value).toContain('1rem')
+    expect(baseVar!.value).toContain('1.125rem')
+  })
+
+  // Guards the invariant the old expectation violated: a generated rem BOUND,
+  // times the root it was divided by, is the px value that was asked for.
+  //
+  // Only the clamp's min and max are checked. The middle term is a fluid
+  // interpolation (`calc(0.19vw + 0.9631rem)`) whose rem offset is a slope
+  // intercept, not a design value, so it is legitimately fractional — asserting
+  // on it would be testing the interpolation maths, not the unit conversion.
+  it('round-trips an integer px design value exactly at both clamp bounds', () => {
+    const variables = generateFrameworkTypographyVariables(
+      fixedTypographySettings(),
+      DEFAULT_FRAMEWORK_PREFERENCES,
+    )
+    const baseVar = variables.find((v) => v.name === '--text-m')
+    const bounds = /^clamp\(([0-9.]+)rem,.*,\s*([0-9.]+)rem\)$/.exec(baseVar!.value)
+    expect(bounds).not.toBeNull()
+    for (const raw of [bounds![1], bounds![2]]) {
+      const px = Number(raw) * DEFAULT_FRAMEWORK_PREFERENCES.rootFontSize
+      expect(px).toBeCloseTo(Math.round(px), 5)
+    }
   })
 
   it('produces a :root block when generating root CSS', () => {

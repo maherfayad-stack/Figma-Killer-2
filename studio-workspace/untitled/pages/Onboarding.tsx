@@ -4,6 +4,7 @@ import chartSvg from '@alm-design/design-system/src/icons/line-icons/discount.sv
 import lightningSvg from '@alm-design/design-system/src/icons/line-icons/lightning.svg?raw'
 import discountSvg from '@alm-design/design-system/src/icons/line-icons/percentSimple.svg?raw'
 import '@alm-design/design-system/dist/index.css'
+import '../styles/fonts.css'
 import styles from './Onboarding.module.css'
 
 const features = [
@@ -58,7 +59,7 @@ export default function Onboarding() {
 
         <div className={styles.actions}>
           <div className={styles.primaryBtn}>
-            <Button variant="primary" label="Agree" />
+            <Button variant="primary" size="medium" label="Agree" />
           </div>
           <button type="button" className={styles.textBtn}>Maybe later</button>
           <p className={styles.legal}>

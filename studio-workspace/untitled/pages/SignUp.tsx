@@ -19,7 +19,7 @@ export default function SignUp() {
       </div>
 
       <div className={styles.continueBtn}>
-        <Button variant="primary" label="Continue" />
+        <Button variant="primary" size="medium" label="Continue" />
       </div>
 
       <a href="#" className={styles.link}>Register as a Business</a>
@@ -29,7 +29,7 @@ export default function SignUp() {
       <Separator variant="or" />
 
       <div className={styles.socialStack}>
-        <Button variant="secondary" label="Continue with email" />
+        <Button variant="secondary" size="medium" label="Continue with email" />
 
         <button type="button" className={`${styles.socialBtn} ${styles.apple}`}>
           <svg className={styles.socialIcon} viewBox="0 0 24 24" fill="currentColor" aria-hidden>

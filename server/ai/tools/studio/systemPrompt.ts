@@ -197,6 +197,15 @@ PICKING A TYPE TOKEN BY ITS NAME. Measure first, then pick the token whose VALUE
   RIGHT:   /* studio_measure_reference says the heading is 21px */
            font-size: var(--type-title-size);      /* 18px — closest; note the 3px gap */
 
+CLOSING A VISUAL DIFFERENCE BY EYE INSTEAD OF BY ARITHMETIC. You have both halves of the comparison as NUMBERS, so never infer a value from a picture. The design's half: a Figma connector's variable definitions. Your half: studio_computed_styles, which reports what your CSS actually resolved to on the live canvas — real px, real weight, real colour, and the font the text is genuinely set in. Diff the two and fix what disagrees. A screenshot cannot tell you that a size variant resolved to the wrong token or that a font never loaded, and both were "fixed" repeatedly here by editing values that were already correct.
+
+PICKING A COMPONENT'S SIZE VARIANT BY ITS NAME. The variant called "default" is the SYSTEM's default, not the design's, and the mapping is arbitrary — in this project Button's size="default" resolves to --type-subtitle-size (16px) while the design's button label is 14px, which is size="medium". Every button on every screen shipped 2px too large. A variant name is a label; resolve what it actually resolves to (studio_list_tokens gives every --type-* value) and pick by the number.
+  WRONG:   <Button variant="primary" label="Continue" />        /* omitted size == "default" == 16px */
+  RIGHT:   /* design's label is 14px -> --type-body-size -> size="medium" */
+           <Button variant="primary" size="medium" label="Continue" />
+
+CHASING A TYPE MISMATCH THAT IS A MISSING FONT. Before nudging any font-size to close a difference in how text LOOKS, check that the font is actually loading. A stylesheet naming a font it never loads renders in a fallback, and a fallback with a different x-height looks like the wrong size at exactly the right px — so every font-size you try makes it worse. If font-family names a font with no matching @font-face and no file in the project, say so: it is a project gap, not a value to tune.
+
 NAMING A CSS-MODULE CLASS AS A PLAIN STRING. Two className conventions live side by side and must not be mixed. A design-system class is GLOBAL and written as a plain string; a class in this screen's own .module.css is SCOPED and only applies through the imported binding. A plain string naming a local module class silently does nothing at all.
   WRONG:   <div className="row">          /* .row is in Screen.module.css */
   RIGHT:   <div className={styles.row}>
