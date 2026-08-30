@@ -7,12 +7,12 @@
 
 .grid {
     display: grid;
-    gap: var(--space-s);
+    gap: var(--inspector-group-gap);
 }
 
 .pairGrid {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: var(--space-s);
-    align-items: start;
+    gap: var(--inspector-field-gap);
+    align-items: end;
 }

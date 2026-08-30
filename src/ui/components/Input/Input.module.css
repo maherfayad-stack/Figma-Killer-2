@@ -265,3 +265,76 @@
     -webkit-appearance: none;
     margin: 0;
 }
+
+/* ─── Inspector field skin ─────────────────────────────────────────────────
+ * Opted into by an ancestor carrying `data-field-skin="inspector"` — set once
+ * on the properties-panel root rather than threaded as a prop through the
+ * ~40 call sites between the panel shell and a leaf input.
+ *
+ * Why a different skin at all: the admin's default field is a pill outline
+ * sized for a form. An inspector renders twenty of them in a column, most of
+ * them unset, and twenty pill outlines read as a ladder of empty boxes. Figma
+ * solves this the same way — a filled rectangle with no border, the border
+ * appearing only on hover and focus — so an unset field recedes and the one
+ * you are pointing at is the only one with an edge.
+ *
+ * Scoped by attribute (a global selector) combined with the module's own
+ * hashed classes, so nothing outside the panel can pick this up by accident.
+ */
+
+[data-field-skin='inspector'] .input,
+[data-field-skin='inspector'] .inputWrapper {
+    min-height: var(--inspector-row-h);
+    border-color: transparent;
+    border-radius: var(--inspector-field-radius);
+    background: var(--inspector-field-bg);
+    font-size: var(--text-xs);
+}
+
+[data-field-skin='inspector'] .input:hover,
+[data-field-skin='inspector'] .inputWrapper:hover {
+    border-color: transparent;
+    background: var(--inspector-field-bg-hover);
+}
+
+[data-field-skin='inspector'] .input:focus,
+[data-field-skin='inspector'] .input:focus-within,
+[data-field-skin='inspector'] .inputWrapper:focus-within {
+    border-color: var(--overlay-50);
+    background: var(--inspector-field-bg);
+}
+
+/* The wrapper owns the fill when affixes are present; its inner input must
+ * stay transparent or the prefix glyph sits on a second, lighter rectangle. */
+[data-field-skin='inspector'] .inputWithAffix,
+[data-field-skin='inspector'] .inputWithAffix:hover,
+[data-field-skin='inspector'] .inputWithAffix:focus,
+[data-field-skin='inspector'] .inputWithAffix:focus-within {
+    background: transparent;
+}
+
+[data-field-skin='inspector'] .input,
+[data-field-skin='inspector'] .inputWithAffix {
+    padding-top: 0;
+    padding-bottom: 0;
+}
+
+[data-field-skin='inspector'] .input {
+    padding-inline: var(--space-xs);
+}
+
+/* Glyph prefixes (`W`, `H`, the line-height mark) are the field's LABEL in
+ * this skin — not decoration — so they carry the muted-label colour and a
+ * fixed 16px box, which keeps every value in a 2-up pair starting on the
+ * same x regardless of how wide its glyph draws. */
+[data-field-skin='inspector'] .prefix {
+    justify-content: center;
+    min-width: 16px;
+    padding-inline: var(--space-4xs) 0;
+    color: var(--text-subtle);
+}
+
+[data-field-skin='inspector'] .spinner {
+    border-left-color: transparent;
+    background: transparent;
+}

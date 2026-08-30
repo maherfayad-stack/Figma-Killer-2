@@ -107,17 +107,28 @@ describe('PropertyControlRenderer — wrapper (data-testid + minHeight)', () => 
   })
 
   it('wrapper has compact min-height (Guideline #357 — WCAG touch targets waived for editor chrome)', async () => {
-    // Guideline #357: editor chrome controls use compact density (28px)
+    // Guideline #357: editor chrome controls use compact density.
     // Post-Task #399: min-height is in ControlRow.module.css, not an inline style.
-    // Source-scan approach: verify min-height is defined in the CSS module.
+    // It is now the shared `--control-row-h` token rather than a literal, so
+    // the properties panel can rebind it to the inspector's tighter 24px row
+    // without every other admin inspector following it down. Assert the
+    // indirection plus the concrete values behind it.
     const { readFileSync } = await import('fs')
     const css = readFileSync(
       new URL('../../ui/components/ControlRow/ControlRow.module.css', import.meta.url),
       'utf-8',
     )
-    // Accept: min-height: 28px OR min-height: 44px (OR-pattern for migration)
-    const hasHeight = /min-height:\s*(28|44)px/.test(css)
-    expect(hasHeight).toBe(true)
+    const globals = readFileSync(
+      new URL('../../styles/globals.css', import.meta.url),
+      'utf-8',
+    )
+    expect(css).toMatch(/min-height:\s*var\(--control-row-h\)/)
+    // The admin default stays at the documented compact density; the
+    // inspector's own row is tighter still, and never taller.
+    const adminRow = Number(globals.match(/--control-row-h:\s*(\d+)px/)?.[1])
+    const inspectorRow = Number(globals.match(/--inspector-row-h:\s*(\d+)px/)?.[1])
+    expect(adminRow).toBe(28)
+    expect(inspectorRow).toBeLessThanOrEqual(adminRow)
   })
 
   it('keeps the renderer shell separate from the concrete control layout wrapper', async () => {
@@ -739,68 +750,27 @@ describe('PropertyControlRenderer — disabled prop', () => {
   })
 })
 
-describe('PropertyControlRenderer — dynamic binding affordance eligibility', () => {
-  const dynamicBinding = {
-    onSet: () => {},
-    onClear: () => {},
-  }
-
-  it('does not add a data-token affordance to fixed option selects', () => {
-    render(
-      <PropertyControlRenderer
-        propKey="loading"
-        control={{
-          type: 'select',
-          label: 'Loading',
-          options: [
-            { label: 'Lazy', value: 'lazy' },
-            { label: 'Eager', value: 'eager' },
-          ],
-        }}
-        value="lazy"
-        onChange={() => {}}
-        dynamicBinding={dynamicBinding}
-      />,
-    )
-
-    expect(screen.queryByRole('button', { name: /insert binding for loading/i })).toBeNull()
-    expect(screen.queryByRole('button', { name: /bind loading/i })).toBeNull()
-  })
-
-  it('does not add a data-token affordance to color values', () => {
-    render(
-      <PropertyControlRenderer
-        propKey="background"
-        control={{ type: 'color', label: 'Background' }}
-        value="#ffffff"
-        onChange={() => {}}
-        dynamicBinding={dynamicBinding}
-      />,
-    )
-
-    expect(screen.queryByRole('button', { name: /insert binding for background/i })).toBeNull()
-    expect(screen.queryByRole('button', { name: /bind background/i })).toBeNull()
-  })
-
-  it('uses whole-prop binding mode for image controls', async () => {
-    const restoreFetch = installMediaFetchStub(mediaAssets)
-    try {
+/**
+ * Data binding ("Bind to data field") was removed from the editor entirely.
+ * This block replaces the old affordance-eligibility suite: the contract is no
+ * longer "which controls get a binding affordance" but "none of them do", and
+ * pinning it keeps the CMS-era control from quietly reappearing on a row.
+ */
+describe('PropertyControlRenderer — no data-binding affordance', () => {
+  for (const [name, control, value] of [
+    ['text', { type: 'text', label: 'Title' }, 'Hello'],
+    ['select', { type: 'select', label: 'Loading', options: [{ label: 'Lazy', value: 'lazy' }] }, 'lazy'],
+    ['color', { type: 'color', label: 'Background' }, '#ffffff'],
+    ['toggle', { type: 'toggle', label: 'Skeleton' }, false],
+  ] as const) {
+    it(`offers no binding control on a ${name} row`, () => {
       render(
-        <PropertyControlRenderer
-          propKey="src"
-          control={{ type: 'image', label: 'Image Source' }}
-          value=""
-          onChange={() => {}}
-          dynamicBinding={dynamicBinding}
-        />,
+        <PropertyControlRenderer propKey="prop" control={control} value={value} onChange={() => {}} />,
       )
-
-      expect(await screen.findByRole('button', { name: /bind image source/i })).toBeDefined()
-      expect(screen.queryByRole('button', { name: /insert binding for image source/i })).toBeNull()
-    } finally {
-      restoreFetch()
-    }
-  })
+      expect(screen.queryByRole('button', { name: /bind/i })).toBeNull()
+      expect(screen.queryByText(/bind to data/i)).toBeNull()
+    })
+  }
 })
 
 // ---------------------------------------------------------------------------

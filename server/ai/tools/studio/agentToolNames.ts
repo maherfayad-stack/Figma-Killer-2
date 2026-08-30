@@ -56,6 +56,11 @@ export const STUDIO_AGENT_TOOL_NAMES: readonly string[] = [
   // stylesheet for one-off values a project token already covers and for
   // same-rule colour pairs that fail WCAG AA contrast.
   'studio_quality_check',
+  // The ONE verification studio_compare/studio_screenshot cannot give: does
+  // the code the agent just wrote actually compile. Runs the PROJECT's own
+  // tsc — see systemPrompt.ts's "not done until it both compares clean AND
+  // typechecks" rule.
+  'studio_typecheck',
   // The machine-readable "what will not import faithfully" report: turns
   // `PageNode.lockReason`/`resolution`/`codeProps` into stable finding codes
   // with a node id, file:line, and a fix. Was absent here — every OTHER
@@ -67,6 +72,16 @@ export const STUDIO_AGENT_TOOL_NAMES: readonly string[] = [
   'studio_register_design_reference',
   'studio_list_design_references',
   'studio_read_design_reference',
+  // The design's OWN declared values (typically read via a connected Figma
+  // MCP server's get_variable_defs), so studio_measure_reference can answer
+  // "what colour/size does the design say" by lookup instead of inferring it
+  // from pixels. Studio never fetches these itself — this is where the agent
+  // hands over what IT already fetched. `_delete_` is deliberately excluded
+  // from this surface, matching the design-reference tools above: cleanup by
+  // id is not a decision this agent needs to make mid-turn.
+  'studio_ingest_design_variables',
+  'studio_list_design_variables',
+  'studio_read_design_variable_set',
   // Board geometry and per-frame axes — state that lives in `.studio/`, not
   // in the source files the agent can write.
   'studio_set_frames',

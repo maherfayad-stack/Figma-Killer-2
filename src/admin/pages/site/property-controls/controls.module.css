@@ -458,7 +458,17 @@
     flex-wrap: wrap;
 }
 
+/*
+ * `grid-column: 1 / -1` is load-bearing, not cosmetic. `ControlRow` is a
+ * two-column grid (`--control-label-w` + `1fr`), and the picker is its THIRD
+ * child — so without this it wraps onto a new implicit row and lands in the
+ * LABEL column, which the properties panel narrows to `--inspector-label-w`.
+ * The whole picker then rendered at label width: icon names truncated to
+ * `airl…`, and the "showing N of M" line broke one word per line. The sibling
+ * `.description` in `ControlRow.module.css` spans for the same reason.
+ */
 .slotPicker {
+    grid-column: 1 / -1;
     display: flex;
     flex-direction: column;
     gap: var(--space-2xs);
@@ -466,6 +476,7 @@
     padding: var(--space-xs);
     border-radius: var(--radius);
     background: var(--bg-surface-2);
+    min-width: 0;
 }
 
 .slotPickerEmpty {
@@ -477,6 +488,19 @@
     line-height: 1.5;
 }
 
+/* The "showing N of M" footnote — a status line under a full list, not an empty state, so it gets none of the empty state's padding. */
+.slotPickerCount {
+    margin: 0;
+    font-size: var(--text-2xs);
+    color: var(--text-disabled);
+    line-height: 1.4;
+}
+
+/*
+ * Taller than the 160px it carried when the only source was a project's own
+ * handful of components: an icon catalogue runs to hundreds, and five visible
+ * rows makes the list a keyhole rather than something you can browse.
+ */
 .slotPickerList {
     display: flex;
     flex-direction: column;
@@ -484,11 +508,46 @@
     margin: var(--space-2xs) 0 0;
     padding: 0;
     list-style: none;
-    max-height: 160px;
+    max-height: 260px;
     overflow-y: auto;
 }
 
 .slotPickerCandidate {
     width: 100%;
     justify-content: flex-start;
+    gap: var(--space-2xs);
+}
+
+/*
+ * A fixed preview box on EVERY row, icon or not, so the names stay on one
+ * vertical line as the list mixes sources — an icon file, an icon component
+ * and a project component are all one list.
+ */
+.slotPickerPreview {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    width: 16px;
+    height: 16px;
+    color: var(--text-muted);
+}
+
+.slotPickerPreview svg {
+    width: 100%;
+    height: 100%;
+}
+
+.slotPickerName {
+    flex: 1 1 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: start;
+}
+
+.slotPickerGroup {
+    flex: 0 0 auto;
+    font-size: var(--text-3xs);
+    color: var(--text-disabled);
 }

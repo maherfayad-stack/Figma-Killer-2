@@ -44,7 +44,9 @@ export function hasEditorBridge(userId: string, scope: EditorBridgeScope): boole
 }
 
 /**
- * How long a tool that NEEDS the live board waits for it before giving up.
+ * How long ONE wait window lasts before this function looks again at whether
+ * it should keep waiting at all (`BRIDGE_MAX_ATTEMPTS`) — see that constant's
+ * doc for why there are two of these back to back instead of one longer one.
  *
  * The registry is in-memory, so every server restart drops every registration
  * while the user's tab stays open and healthy. The browser reconnects on its
@@ -54,17 +56,50 @@ export function hasEditorBridge(userId: string, scope: EditorBridgeScope): boole
  * board is open" message telling the user to open a tab that was open the
  * whole time. Waiting slightly longer than one reconnect interval converts the
  * common case from a hard failure into a pause nobody notices.
- *
- * Deliberately NOT longer: when a board genuinely is closed, the agent should
- * hear so quickly rather than stall the turn.
  */
 const BRIDGE_WAIT_MS = 4_000
 const BRIDGE_POLL_MS = 250
 
 /**
- * The live workspace bridge, waiting up to `BRIDGE_WAIT_MS` for a reconnecting
- * browser before answering null. Use this from any tool whose failure message
- * would otherwise tell the user to open a tab they already have open.
+ * (mcp-tooling CHANGE C) How many `BRIDGE_WAIT_MS`-long windows this function
+ * spans before giving up.
+ *
+ * This used to be ONE window, with the second attempt living in the SYSTEM
+ * PROMPT instead: `studio_screenshot`/`studio_compare` returned "no Studio
+ * board is connected" as soon as ONE `BRIDGE_WAIT_MS` window elapsed, and the
+ * prompt told the model to call the same tool again if that happened — a
+ * whole extra model round trip just to re-run the identical wait loop.
+ * Spanning two windows IN THIS FUNCTION reproduces that same total patience
+ * (what the two-call sequence bought before) inside a single tool call, so
+ * one call is now sufficient for the case the prompt used to paper over.
+ *
+ * Still bounded, still fast on a genuine "board is closed" — `signal.aborted`
+ * is checked before EVERY poll, in EVERY window, so a cancelled turn returns
+ * immediately rather than sitting through the remaining attempts.
+ */
+const BRIDGE_MAX_ATTEMPTS = 2
+
+/** One `BRIDGE_WAIT_MS`-bounded wait for the bridge to appear, polling every `BRIDGE_POLL_MS`. `null` on timeout OR abort. */
+async function waitForEditorBridgeOnce(
+  userId: string,
+  scope: EditorBridgeScope,
+  signal: AbortSignal | undefined,
+): Promise<AiBrowserBridge | null> {
+  const deadline = Date.now() + BRIDGE_WAIT_MS
+  while (Date.now() < deadline) {
+    if (signal?.aborted) return null
+    await new Promise((resolve) => setTimeout(resolve, BRIDGE_POLL_MS))
+    const bridge = getEditorBridgeForUser(userId, scope)
+    if (bridge) return bridge
+  }
+  return null
+}
+
+/**
+ * The live workspace bridge, waiting up to `BRIDGE_MAX_ATTEMPTS *
+ * BRIDGE_WAIT_MS` (two ~4s windows, back to back) for a reconnecting browser
+ * before answering null. Use this from any tool whose failure message would
+ * otherwise tell the user to open a tab they already have open.
  */
 export async function awaitEditorBridgeForUser(
   userId: string,
@@ -74,11 +109,9 @@ export async function awaitEditorBridgeForUser(
   const immediate = getEditorBridgeForUser(userId, scope)
   if (immediate) return immediate
 
-  const deadline = Date.now() + BRIDGE_WAIT_MS
-  while (Date.now() < deadline) {
+  for (let attempt = 0; attempt < BRIDGE_MAX_ATTEMPTS; attempt++) {
     if (signal?.aborted) return null
-    await new Promise((resolve) => setTimeout(resolve, BRIDGE_POLL_MS))
-    const bridge = getEditorBridgeForUser(userId, scope)
+    const bridge = await waitForEditorBridgeOnce(userId, scope, signal)
     if (bridge) return bridge
   }
   return null

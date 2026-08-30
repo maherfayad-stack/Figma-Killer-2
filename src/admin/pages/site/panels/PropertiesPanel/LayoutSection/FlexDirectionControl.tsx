@@ -19,7 +19,7 @@ interface FlexDirectionControlProps {
 
 export function FlexDirectionControl({ value, isSet, onChange, onClear }: FlexDirectionControlProps) {
   return (
-    <LabeledControl label="Direction" isSet={isSet}>
+    <LabeledControl isSet={isSet}>
       <SegmentedControl
         fullWidth
         aria-label="Flex direction"

@@ -26,6 +26,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type ReactNode,
   type Ref,
 } from 'react'
 import { createPortal } from 'react-dom'
@@ -60,11 +61,13 @@ interface TokenAwareInputProps {
   /** Placeholder shown when no value is set. Token-display is applied. */
   placeholder?: string
   /**
-   * Optional short label rendered inside the field's leading edge (e.g.
-   * `W`, `H`, `Min W`) — the Figma-style in-field label. Purely visual; it
-   * doesn't affect the committed value.
+   * Optional short label or glyph rendered inside the field's leading edge
+   * (e.g. `W`, `H`, `Min W`, or the line-height mark) — the Figma-style
+   * in-field label. Purely visual; it doesn't affect the committed value.
+   * A glyph is `aria-hidden`, so the caller's `aria-label` remains the
+   * field's only accessible name either way.
    */
-  prefix?: string
+  prefix?: ReactNode
   /** Token catalog to suggest. Empty array → plain text input behaviour. */
   tokens: ReadonlyArray<Token>
   /** Commit handler — receives the resolved CSS expression or undefined. */

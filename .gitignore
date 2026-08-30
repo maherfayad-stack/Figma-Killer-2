@@ -126,6 +126,16 @@ docs/superpowers/
 # running server's disk", not "survives a git clone" — see the store's own
 # module doc for the full reasoning.
 **/.studio/references/
+# Design variables (server/handlers/studio/designVariableStore.ts) — an
+# ingested design's OWN declared variable table (typically read by the agent
+# via a connected Figma MCP server's get_variable_defs and handed to Studio
+# to persist), so studio_measure_reference can answer a measurement by
+# lookup instead of pixel inference. Same durability class and exclusion
+# reasoning as .studio/references/ just above: user-supplied intent, not
+# disposable, but cheap enough to lose that "survives on the running
+# server's disk" is the durability guarantee, not "survives a git clone" —
+# the agent re-fetches it from the design tool on request.
+**/.studio/variables/
 # The per-project guide Studio writes into a workspace project on every chat
 # turn (`server/handlers/studio/projectGuide.ts`, tracked by
 # `.claude/.studio-generated.json`). Generated output, not source — distinct

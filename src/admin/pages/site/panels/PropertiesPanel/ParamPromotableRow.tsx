@@ -3,8 +3,6 @@
  *
  * Behavior:
  *   - If propBindings[propKey] is set on the node → renders <ParamRow mode='default-edit'>.
- *   - If the node has a dynamicBinding on this prop → renders PropertyControlRenderer
- *     without the expose icon (dynamic binding takes precedence per spec rule 4).
  *   - Otherwise → renders PropertyControlRenderer + inline expose icon button.
  *     Clicking expose opens an inline menu (no portal) to:
  *       (a) bind to an existing compatible param, or
@@ -65,7 +63,7 @@ export function ParamPromotableRow({
   const [newParamName, setNewParamName] = useState(propKey)
   const [newParamNameError, setNewParamNameError] = useState<string | null>(null)
 
-  // ── Store: VC params + node propBindings + dynamicBinding ────────────────
+  // ── Store: VC params + node propBindings ─────────────────────────────────
 
   const vcParams = useEditorStore(
     (s) => s.site?.visualComponents?.find((v) => v.id === vcId)?.params ?? EMPTY_PARAMS,
@@ -73,10 +71,6 @@ export function ParamPromotableRow({
 
   const propBinding = useEditorStore(
     (s) => selectActiveCanvasPage(s)?.nodes[nodeId]?.propBindings?.[propKey] ?? null,
-  )
-
-  const hasDynamicBinding = useEditorStore((s) =>
-    Boolean(selectActiveCanvasPage(s)?.nodes[nodeId]?.dynamicBindings?.[propKey]),
   )
 
   // ── Store actions ─────────────────────────────────────────────────────────
@@ -162,20 +156,6 @@ export function ParamPromotableRow({
       e.preventDefault()
       setExposeOpen(false)
     }
-  }
-
-  // ── Render: rule 4 — dynamic binding takes precedence ────────────────────
-
-  if (hasDynamicBinding) {
-    return (
-      <PropertyControlRenderer
-        propKey={propKey}
-        control={control}
-        value={value}
-        onChange={onChange}
-        isOverride={isOverride}
-      />
-    )
   }
 
   // ── Render: param bound → show ParamRow in default-edit mode ─────────────

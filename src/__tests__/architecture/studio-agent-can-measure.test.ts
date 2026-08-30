@@ -55,10 +55,13 @@ describe('the Studio agent can measure its own work', () => {
     expect(studioAgentTools.map((t) => t.name).sort()).toEqual([...STUDIO_AGENT_TOOL_NAMES].sort())
   })
 
-  it('studio_compare captures for itself — it takes a page NAME, not image bytes', () => {
+  it('studio_compare captures for itself — it takes page NAMEs, not image bytes', () => {
     const compare = studioAgentTools.find((t) => t.name === 'studio_compare')!
     const props = (compare.inputSchema as { properties?: Record<string, unknown> }).properties ?? {}
-    expect(Object.keys(props)).toContain('page')
+    // mcp-tooling CHANGE A — `page` (singular) became `pages` (a name-resolved
+    // batch, same shape `studio_screenshot` already used) so a multi-screen
+    // flow can be measured in one call instead of one round trip per screen.
+    expect(Object.keys(props)).toContain('pages')
     // The moment `studio_compare` grows a base64 image input, it has
     // reintroduced the exact unreachability this gate exists to prevent.
     expect(Object.keys(props)).not.toContain('baseline')

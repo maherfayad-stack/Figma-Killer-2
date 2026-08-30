@@ -21,7 +21,6 @@ import type {
   PropertySchema,
 } from '@core/module-engine'
 import { resolvePropertyControlCategory } from '@core/module-engine'
-import type { DynamicPropBinding } from '@core/page-tree'
 import { useEditorPermissions } from '@site/editorPermissionsContext'
 import { ChevronRightIcon } from 'pixel-art-icons/icons/chevron-right'
 import { TextControl } from './TextControl'
@@ -37,32 +36,8 @@ import { SvgControl } from './SvgControl'
 import { SlotControl } from './SlotControl'
 import { CodeValueControl } from './CodeValueControl'
 import { DataTableControl } from './DataTableControl'
-import { DynamicBindingControl } from './DynamicBindingControl'
-import { getDynamicBindingMode } from './bindingCompatibility'
 import { cn } from '@ui/cn'
 import styles from './controls.module.css'
-
-interface DynamicBindingRenderContext {
-  binding?: DynamicPropBinding
-  onSet: (binding: DynamicPropBinding) => void
-  onClear: () => void
-  /**
-   * Fields available on the closest enclosing scope's source (a loop's
-   * registered LoopEntitySource, or the page's content collection). When
-   * present, the binding picker generates options from these instead of
-   * the hard-coded content-entry option set. Field labels and id come from
-   * the source's `fields` declaration.
-   */
-  availableFields?: import('@core/loops/types').LoopSourceField[]
-  /** Optional human label for the binding source — shown in the picker. */
-  sourceLabel?: string
-  /**
-   * When the enclosing loop is bound to a specific data table, this is its
-   * table id. The picker uses it to auto-scope to that single table instead
-   * of listing every table in the workspace.
-   */
-  loopTableId?: string | null
-}
 
 interface RenderControlOptions {
   propKey: string
@@ -78,7 +53,6 @@ interface RenderControlOptions {
    * present itself as an input. Carries the reason so the row can say it.
    */
   sourceLockReason?: string
-  dynamicBinding?: DynamicBindingRenderContext
   /** E2.5 — forwarded to `SlotControl` only; see `ControlProps.ownerNodeId`. */
   ownerNodeId?: string
 }
@@ -131,7 +105,6 @@ export function PropertyControlRenderer({
   isOverride = false,
   disabled = false,
   sourceLockReason,
-  dynamicBinding,
   ownerNodeId,
 }: RenderControlOptions) {
   const layout = resolveControlLayout(control)
@@ -157,9 +130,24 @@ export function PropertyControlRenderer({
     ownerNodeId,
   }
 
+  // A `slot` is exempt, and this is the one exemption that matters. Both
+  // conditions below ask "can a SCALAR write land on this attribute?" — the
+  // right question for a text box, and the wrong one for a slot, which never
+  // writes the attribute's value at all: "Add" runs the `insert-slot` codemod
+  // against the CALL SITE (and does its own `explainStructuralConstraint`
+  // check), while "Edit contents" merely selects a node that already exists.
+  //
+  // Without the exemption a slot became unusable the moment it was FILLED: a
+  // JSX-valued prop is code, not a writable literal, so `propLockReason`
+  // returned "set in code", and the row swapped itself for a padlocked code
+  // value displaying the raw `studio-slot:<nodeId>` sentinel — an internal
+  // marker no user should ever see, in place of the affordance for the icon
+  // they had just successfully inserted.
+  const isSlot = control.type === 'slot'
+
   // Nothing writable behind this control: either the value has no scalar form,
   // or the node itself refuses writes. Same read-only row for both.
-  if (sourceLockReason !== undefined || isStructuredValue(control, value)) {
+  if (!isSlot && (sourceLockReason !== undefined || isStructuredValue(control, value))) {
     return (
       <div
         data-testid={`property-control-${propKey}`}
@@ -287,41 +275,7 @@ export function PropertyControlRenderer({
     )
   }
 
-  // Bake the resolved disabled flag into the inner-content for the
-  // DynamicBindingControl branch below.
   const isDisabled = effectiveDisabled
-
-  // Binding mode is explicit. Token mode is only for free text-ish props
-  // that can safely contain `{source.field}` snippets. Structured mode
-  // writes a whole-prop dynamicBindings overlay for non-token values such
-  // as media URLs, numbers, and booleans.
-  const bindingMode = getDynamicBindingMode(control)
-
-  const content = dynamicBinding && !isDisabled && bindingMode !== null ? (
-    <DynamicBindingControl
-      propKey={propKey}
-      label={control.label ?? propKey}
-      control={control}
-      layout={layout}
-      binding={dynamicBinding.binding}
-      onSet={dynamicBinding.onSet}
-      onClear={dynamicBinding.onClear}
-      insertMode={bindingMode === 'token'}
-      onInsertToken={(token) => {
-        // Append to the current string value with a leading space when
-        // the value isn't empty. Stage A — caret-position-aware
-        // insertion lands in Stage B with the chip UI.
-        const current = typeof value === 'string' ? value : ''
-        const next = current.length === 0 ? token : `${current} ${token}`
-        onChange(propKey, next)
-      }}
-      availableFields={dynamicBinding.availableFields}
-      sourceLabel={dynamicBinding.sourceLabel}
-      loopTableId={dynamicBinding.loopTableId}
-    >
-      {inner}
-    </DynamicBindingControl>
-  ) : inner
 
   return (
     <div
@@ -331,7 +285,7 @@ export function PropertyControlRenderer({
       data-override={isOverride ? 'true' : undefined}
       data-layout={layout}
     >
-      {content}
+      {inner}
     </div>
   )
 }

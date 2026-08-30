@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import { GlobalWindow } from 'happy-dom'
-import { applyPreviewAxesToFrameDocument, parseClassSchemeSelector } from '../previewAxesFrameEffect'
+import { applyPreviewAxesToFrameDocument, parseClassSchemeSelector, VENDOR_THEME_ATTR } from '../previewAxesFrameEffect'
 import { DARK_SCHEME_ATTR } from '../darkSchemeCssTransform'
 
 function freshHtmlElement(): HTMLElement {
@@ -34,7 +34,19 @@ describe('applyPreviewAxesToFrameDocument', () => {
     expect(html.getAttribute('dir')).toBe('rtl')
     expect(html.getAttribute('lang')).toBe('ar')
     expect(html.getAttribute(DARK_SCHEME_ATTR)).toBe('dark')
+    expect(html.getAttribute(VENDOR_THEME_ATTR)).toBe('dark')
     expect(html.style.colorScheme).toBe('dark')
+  })
+
+  // The vendor stylesheet Studio injects into EVERY frame declares its light
+  // tokens under `:root:not([data-theme=light])`, so an unset attribute means
+  // DARK. Light must therefore be written, never merely un-written.
+  it('writes an explicit light theme rather than removing the attribute', () => {
+    const html = freshHtmlElement()
+    applyPreviewAxesToFrameDocument(html, { direction: 'ltr', colorScheme: 'light' }, null)
+    expect(html.getAttribute(VENDOR_THEME_ATTR)).toBe('light')
+    expect(html.getAttribute(DARK_SCHEME_ATTR)).toBe('light')
+    expect(html.style.colorScheme).toBe('light')
   })
 
   it('clears lang on ltr', () => {
@@ -67,7 +79,16 @@ describe('applyPreviewAxesToFrameDocument', () => {
       { direction: 'ltr', colorScheme: 'light' },
       { mechanism: 'class', selector: '[data-theme="dark"]' },
     )
-    expect(html.hasAttribute('data-theme')).toBe(false)
+    expect(html.getAttribute('data-theme')).toBe('light')
+  })
+
+  // A `.dark` class gate has no light counterpart to add, so the class comes
+  // off — but the generic vendor attribute is still written in both schemes.
+  it('leaves a class-mechanism project on an explicit vendor theme attribute too', () => {
+    const html = freshHtmlElement()
+    applyPreviewAxesToFrameDocument(html, { direction: 'ltr', colorScheme: 'light' }, { mechanism: 'class', selector: '.dark' })
+    expect(html.classList.contains('dark')).toBe(false)
+    expect(html.getAttribute(VENDOR_THEME_ATTR)).toBe('light')
   })
 
   it('does nothing extra for a media-mechanism or none-mechanism capability', () => {

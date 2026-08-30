@@ -35,6 +35,8 @@ interface StyleRuleComposerProps {
   computedValues?: Record<string, string> | null
   /** Track F1 — see `StyleSectionsEditor`'s doc. */
   provenanceByProperty?: ReadonlyMap<string, PropertyProvenance>
+  /** Section-header style-apply target — see `StyleSectionsEditor`'s doc. */
+  styleTarget?: { nodeId: string; assignedClassIds: ReadonlyArray<string> }
 }
 
 // ---------------------------------------------------------------------------
@@ -48,6 +50,7 @@ export function StyleRuleComposer({
   mode: _mode = 'contextual',
   computedValues,
   provenanceByProperty,
+  styleTarget,
 }: StyleRuleComposerProps) {
   const activeBreakpointId = useEditorStore((s) => s.activeBreakpointId)
   // The editing context is owned by the canvas toolbar's context switcher:
@@ -169,6 +172,7 @@ export function StyleRuleComposer({
       onPreview={handlePreview}
       onClearPreview={handleClearPreview}
       provenanceByProperty={provenanceByProperty}
+      styleTarget={styleTarget}
     />
   )
 }

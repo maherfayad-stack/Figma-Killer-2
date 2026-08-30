@@ -144,4 +144,44 @@ describe('studio_fidelity_report', () => {
     }
     expect(result.projectFindings.some((f) => f.code === 'pages-dir-not-found')).toBe(true)
   })
+
+  describe('pages (mcp-tooling CHANGE A — name-resolved batching)', () => {
+    it('restricts the report to the named screens, resolved by name rather than raw id', async () => {
+      write(tmpDir, 'pages/Home.tsx', ['export default function Home() { return <div /> }', ''].join('\n'))
+      write(tmpDir, 'pages/About.tsx', ['export default function About() { return <div /> }', ''].join('\n'))
+
+      const result = (await studioFidelityReportTool.handler!({ dir: tmpDir, pages: ['About'] }, {} as never)) as {
+        pages: Array<{ title: string }>
+      }
+      expect(result.pages.map((p) => p.title)).toEqual(['About'])
+    })
+
+    it('a name that matches no screen is reported in unmatched, and errors only when NOTHING in the request resolves', async () => {
+      write(tmpDir, 'pages/Home.tsx', ['export default function Home() { return <div /> }', ''].join('\n'))
+
+      const partial = (await studioFidelityReportTool.handler!(
+        { dir: tmpDir, pages: ['Home', 'DoesNotExist'] },
+        {} as never,
+      )) as { pages: Array<{ title: string }>; unmatched?: string[] }
+      expect(partial.pages.map((p) => p.title)).toEqual(['Home'])
+      expect(partial.unmatched).toEqual(['DoesNotExist'])
+
+      const total = (await studioFidelityReportTool.handler!(
+        { dir: tmpDir, pages: ['DoesNotExist'] },
+        {} as never,
+      )) as { ok: boolean; error?: string }
+      expect(total.ok).toBe(false)
+      expect(total.error).toContain('DoesNotExist')
+    })
+
+    it('omitting pages still reports on every screen, uncapped', async () => {
+      write(tmpDir, 'pages/Home.tsx', ['export default function Home() { return <div /> }', ''].join('\n'))
+      write(tmpDir, 'pages/About.tsx', ['export default function About() { return <div /> }', ''].join('\n'))
+
+      const result = (await studioFidelityReportTool.handler!({ dir: tmpDir }, {} as never)) as {
+        pages: Array<{ title: string }>
+      }
+      expect(result.pages.map((p) => p.title).sort()).toEqual(['About', 'Home'])
+    })
+  })
 })

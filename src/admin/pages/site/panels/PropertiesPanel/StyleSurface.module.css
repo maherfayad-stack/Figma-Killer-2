@@ -30,6 +30,17 @@
     padding-bottom: var(--space-7xl);
 }
 
+/*
+ * A grid item defaults to `min-width: auto`, i.e. "never shrink below my
+ * widest child". `min-width: 0` on the container alone does not reach the
+ * items, so one wide row was enough to widen the whole column past the panel
+ * and get its right edge clipped by the scroll container. Declared for the
+ * items, which is where the constraint actually binds.
+ */
+.surfaceContent > * {
+    min-width: 0;
+}
+
 /* ── Sticky search bar ───────────────────────────────────────────────────── */
 .searchBarRow {
     position: absolute;

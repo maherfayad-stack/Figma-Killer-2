@@ -93,7 +93,38 @@ root, rather than being re-instantiated per screen with different literal
 config. This keeps every screen's rendered output consistent and makes the
 provider's own config resolvable in one place instead of N.
 
-## 7. Prefer literal prop values over computed ones at the call site
+It is also what makes the board's direction toggle work. Studio previews a
+frame in RTL by setting \`dir\` on the frame's \`<html>\` — which reaches CSS,
+and reaches nothing that resolves direction in JavaScript. A design system
+whose components call a \`useDir()\`-style hook reads its provider's context
+instead, so Studio renders those components under the package's own provider
+with the frame's direction passed in. A provider set up once at the root gets
+that for free.
+
+## 7. Direction and colour scheme: gate on values, never on absence
+
+Write logical CSS properties (\`margin-inline-start\`, \`padding-inline-end\`,
+\`inset-inline-start\`, \`text-align: start\`), not physical ones. A
+\`margin-left\` is a claim about the alphabet, not the layout, and it is the
+single most common reason a screen looks correct in LTR and broken in RTL.
+
+Finding code if this fails: \`RTL_PHYSICAL_PROPERTY\`.
+
+Do not write \`dir=\` on an individual component. An explicit prop outranks the
+provider, which pins that one component to a direction the board's toggle can
+no longer change.
+
+For dark mode, gate on the attribute's VALUE. Studio always writes an explicit
+\`data-theme="light"\` or \`data-theme="dark"\` on the frame root, because
+absence is not neutral: a design system whose tokens are declared under
+\`:root:not([data-theme=light])\` treats an unset attribute as DARK. A rule
+written as "dark unless something says otherwise" renders dark in a light
+preview. \`studio_project_profile\` reports \`profile.colorScheme\` —
+\`mechanism\`, the exact \`selector\`, and the \`source\` file it was found in,
+which is frequently the installed design system's own stylesheet rather than
+any file in the project. Use that gate; do not introduce a second one.
+
+## 8. Prefer literal prop values over computed ones at the call site
 
 \`<Icon size={24}/>\` is editable. \`<Icon size={isCompact ? 16 : 24}/>\` is not
 — that specific prop becomes \`codeProps\`-locked (read-only) while its literal
@@ -101,7 +132,7 @@ siblings stay editable.
 
 Finding code if this fails: \`CODE_VALUED_PROP\`.
 
-## 8. CSS: prefer plain CSS, CSS Modules, or Tailwind over CSS-in-JS
+## 9. CSS: prefer plain CSS, CSS Modules, or Tailwind over CSS-in-JS
 
 Plain \`.css\` imports and CSS Modules (\`.module.css\`) compile and resolve
 through the evaluator. Tailwind compiles through the project's own toolchain
@@ -112,9 +143,10 @@ renders structurally correct and completely unstyled.
 ## Before you rely on any of this: call studio_fidelity_report
 
 \`studio_project_profile\` tells you what toolchain/framework was detected;
-\`studio_fidelity_report(dir, pageId?)\` tells you, per screen, exactly which
+\`studio_fidelity_report(dir, pages?)\` tells you, per screen, exactly which
 node violates which rule above, with a suggested fix and the file:line to go
-fix it. Read the report before guessing from a screenshot diff alone.
+fix it — name one or more screens, or omit \`pages\` for the whole project.
+Read the report before guessing from a screenshot diff alone.
 `
 
 export const MCP_RESOURCES: readonly McpResourceDef[] = [
@@ -122,7 +154,7 @@ export const MCP_RESOURCES: readonly McpResourceDef[] = [
     uri: 'studio://guidelines',
     name: 'Studio import guidelines',
     description:
-      'How to write React that Studio\'s static parser imports faithfully — module-scope data, literal classNames, one return per component, ?raw icon imports, provider placement. Read once, write conformant code thereafter.',
+      'How to write React that Studio\'s static parser imports faithfully — module-scope data, literal classNames, one return per component, ?raw icon imports, provider placement, and the direction/colour-scheme rules the canvas previews against. Read once, write conformant code thereafter.',
     mimeType: 'text/markdown',
     text: STUDIO_GUIDELINES_TEXT,
   },

@@ -21,7 +21,7 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import { probeProject, tryServeStudioProbe } from '../studio/projectProbe'
 import { detectLocales } from '../studio/localeProbe'
-import type { ProjectProfile } from '../studio/projectProfileSchema'
+import { PROBE_VERSION, type ProjectProfile } from '../studio/projectProfileSchema'
 import { mergeStudioMeta, readStudioMeta, writeStudioMeta } from '../studio/studioMeta'
 
 let tmpDir: string
@@ -42,6 +42,24 @@ function write(relPath: string, contents: string): void {
 
 function writePackageJson(deps: Record<string, string> = {}, devDeps: Record<string, string> = {}): void {
   write('package.json', JSON.stringify({ name: 'fixture', dependencies: deps, devDependencies: devDeps }))
+}
+
+/** A cached profile that disagrees with every fixture in this file (`astro`), so "was the cache served or re-probed" is decidable from `framework` alone. */
+function cachedAstroProfile(probeVersion: number): ProjectProfile {
+  return {
+    probeVersion,
+    framework: 'astro',
+    appRoot: '',
+    pagesDir: 'src/pages',
+    routeStyle: 'file-router',
+    entryFiles: [],
+    packageManager: 'bun',
+    styleToolchain: { tailwind: null, cssModules: false, sass: false, postcssConfigPath: null, cssInJs: null },
+    componentPackages: [],
+    colorScheme: { mechanism: 'none' },
+    aliases: {},
+    warnings: [],
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -505,6 +523,13 @@ describe('detectLocales', () => {
 // ---------------------------------------------------------------------------
 
 describe('probeProject — colorScheme', () => {
+  /** An installed package that `detectComponentPackages` recognises, shipping one stylesheet. */
+  function writeDesignSystemPackage(name: string, cssRelPath: string, css: string): void {
+    write(`node_modules/${name}/package.json`, JSON.stringify({ name, version: '1.0.0', types: 'index.d.ts' }))
+    write(`node_modules/${name}/index.d.ts`, 'export declare const Button: React.FC<{ label: string }>;\n')
+    write(`node_modules/${name}/${cssRelPath}`, css)
+  }
+
   it('reports "none" when no dark-mode mechanism is detectable', () => {
     write('src/App.css', '.btn { color: black; }\n')
     expect(probeProject(tmpDir).colorScheme).toEqual({ mechanism: 'none' })
@@ -513,18 +538,18 @@ describe('probeProject — colorScheme', () => {
   it('detects a Tailwind v3 class-based darkMode config', () => {
     writePackageJson({ tailwindcss: '^3.4.0' })
     write('tailwind.config.js', 'module.exports = { darkMode: "class", theme: {} }\n')
-    expect(probeProject(tmpDir).colorScheme).toEqual({ mechanism: 'class', selector: '.dark' })
+    expect(probeProject(tmpDir).colorScheme).toEqual({ mechanism: 'class', selector: '.dark', source: 'tailwind.config.js' })
   })
 
   it('detects a Tailwind v3 array-form darkMode config', () => {
     writePackageJson({ tailwindcss: '^3.4.0' })
     write('tailwind.config.js', "module.exports = { darkMode: ['class', '.dark-mode'], theme: {} }\n")
-    expect(probeProject(tmpDir).colorScheme).toEqual({ mechanism: 'class', selector: '.dark' })
+    expect(probeProject(tmpDir).colorScheme).toEqual({ mechanism: 'class', selector: '.dark', source: 'tailwind.config.js' })
   })
 
   it('detects a hand-authored .dark class selector with no Tailwind at all', () => {
     write('src/theme.css', ':root { --bg: white; }\n.dark { --bg: black; }\n')
-    expect(probeProject(tmpDir).colorScheme).toEqual({ mechanism: 'class', selector: '.dark' })
+    expect(probeProject(tmpDir).colorScheme).toEqual({ mechanism: 'class', selector: '.dark', source: 'src/theme.css' })
   })
 
   it('does not false-positive on a class name that merely starts with "dark"', () => {
@@ -534,12 +559,12 @@ describe('probeProject — colorScheme', () => {
 
   it('detects a [data-theme="dark"] attribute selector', () => {
     write('src/theme.css', '[data-theme="dark"] { --bg: black; }\n')
-    expect(probeProject(tmpDir).colorScheme).toEqual({ mechanism: 'class', selector: '[data-theme="dark"]' })
+    expect(probeProject(tmpDir).colorScheme).toEqual({ mechanism: 'class', selector: '[data-theme="dark"]', source: 'src/theme.css' })
   })
 
   it('detects @media (prefers-color-scheme: dark) when there is no class mechanism', () => {
     write('src/theme.css', '@media (prefers-color-scheme: dark) {\n  body { color: white; }\n}\n')
-    expect(probeProject(tmpDir).colorScheme).toEqual({ mechanism: 'media' })
+    expect(probeProject(tmpDir).colorScheme).toEqual({ mechanism: 'media', source: 'src/theme.css' })
   })
 
   it('prefers the class mechanism over an incidental prefers-color-scheme query', () => {
@@ -547,11 +572,52 @@ describe('probeProject — colorScheme', () => {
       'src/theme.css',
       '.dark { --bg: black; }\n@media (prefers-color-scheme: dark) {\n  body { color: white; }\n}\n',
     )
-    expect(probeProject(tmpDir).colorScheme).toEqual({ mechanism: 'class', selector: '.dark' })
+    expect(probeProject(tmpDir).colorScheme).toEqual({ mechanism: 'class', selector: '.dark', source: 'src/theme.css' })
   })
 
   it('does not match a compound media condition — false negative is the honest outcome', () => {
     write('src/theme.css', '@media (min-width: 768px) and (prefers-color-scheme: dark) {\n  body { color: white; }\n}\n')
+    expect(probeProject(tmpDir).colorScheme).toEqual({ mechanism: 'none' })
+  })
+
+  // The case the probe used to be structurally blind to: the project's own
+  // CSS says nothing about dark mode because its DESIGN SYSTEM says all of it.
+  it('detects the gate in an installed design system\'s own stylesheet', () => {
+    writePackageJson({ 'acme-ui': '^1.0.0' })
+    writeDesignSystemPackage('acme-ui', 'dist/index.css', ':root[data-theme="dark"] { --bg: #000; }\n')
+    write('src/App.css', '.btn { color: var(--bg); }\n')
+
+    expect(probeProject(tmpDir).colorScheme).toEqual({
+      mechanism: 'class',
+      selector: '[data-theme="dark"]',
+      source: 'node_modules/acme-ui/dist/index.css',
+    })
+  })
+
+  it('detects a package stylesheet sitting at the package root', () => {
+    writePackageJson({ 'acme-ui': '^1.0.0' })
+    writeDesignSystemPackage('acme-ui', 'style.css', '@media (prefers-color-scheme: dark) { body { color: #fff } }\n')
+
+    expect(probeProject(tmpDir).colorScheme).toEqual({
+      mechanism: 'media',
+      source: 'node_modules/acme-ui/style.css',
+    })
+  })
+
+  it("lets the project's own mechanism win over its design system's", () => {
+    writePackageJson({ 'acme-ui': '^1.0.0' })
+    writeDesignSystemPackage('acme-ui', 'dist/index.css', ':root[data-theme="dark"] { --bg: #000; }\n')
+    write('src/theme.css', '.dark { --bg: black; }\n')
+
+    expect(probeProject(tmpDir).colorScheme).toEqual({ mechanism: 'class', selector: '.dark', source: 'src/theme.css' })
+  })
+
+  it('ignores a package that is installed but is not a component package', () => {
+    writePackageJson({ 'acme-utils': '^1.0.0' })
+    write('node_modules/acme-utils/package.json', JSON.stringify({ name: 'acme-utils', version: '1.0.0', types: 'index.d.ts' }))
+    write('node_modules/acme-utils/index.d.ts', 'export declare function noop(): void;\n')
+    write('node_modules/acme-utils/dist/index.css', '.dark { --bg: black; }\n')
+
     expect(probeProject(tmpDir).colorScheme).toEqual({ mechanism: 'none' })
   })
 })
@@ -703,26 +769,30 @@ describe('tryServeStudioProbe', () => {
   it('GET returns the cached profile verbatim without re-probing', async () => {
     writePackageJson({ vite: '^5.0.0' })
     write('vite.config.ts', 'export default {}\n')
-    const cachedProfile: ProjectProfile = {
-      framework: 'astro',
-      appRoot: '',
-      pagesDir: 'src/pages',
-      routeStyle: 'file-router',
-      entryFiles: [],
-      packageManager: 'bun',
-      styleToolchain: { tailwind: null, cssModules: false, sass: false, postcssConfigPath: null, cssInJs: null },
-      componentPackages: [],
-      colorScheme: { mechanism: 'none' },
-      aliases: {},
-      warnings: [],
-    }
-    writeStudioMeta(tmpDir, { profile: cachedProfile })
+    writeStudioMeta(tmpDir, { profile: cachedAstroProfile(PROBE_VERSION) })
 
     const { req, url, pathname } = makeRequest(`/admin/api/studio/probe?dir=${encodeURIComponent(tmpDir)}`)
     const res = await tryServeStudioProbe(req, url, pathname)
     const body = (await res!.json()) as { profile: ProjectProfile }
     // A live probe of this fixture would say "vite" — proving the cache was used, not a fresh probe.
     expect(body.profile.framework).toBe('astro')
+  })
+
+  // The heal `PROBE_VERSION` exists for: a cache written by a probe that could
+  // not yet see an installed design system's dark-mode gate is not merely old,
+  // it is wrong, so it must be re-probed rather than served.
+  it('re-probes a cache written by an older probe version', async () => {
+    writePackageJson({ vite: '^5.0.0' })
+    write('vite.config.ts', 'export default {}\n')
+    writeStudioMeta(tmpDir, { profile: cachedAstroProfile(PROBE_VERSION - 1) })
+
+    const { req, url, pathname } = makeRequest(`/admin/api/studio/probe?dir=${encodeURIComponent(tmpDir)}`)
+    const res = await tryServeStudioProbe(req, url, pathname)
+    const body = (await res!.json()) as { profile: ProjectProfile }
+    expect(body.profile.framework).toBe('vite')
+    expect(body.profile.probeVersion).toBe(PROBE_VERSION)
+    // A cache proven wrong is corrected on disk, not just in the response.
+    expect((readStudioMeta(tmpDir).profile as ProjectProfile).framework).toBe('vite')
   })
 
   it('POST re-probes and persists the profile via a merging write', async () => {

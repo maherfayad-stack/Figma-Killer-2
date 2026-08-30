@@ -15,7 +15,7 @@ interface FlexWrapControlProps {
 
 export function FlexWrapControl({ value, isSet, onChange, onClear }: FlexWrapControlProps) {
   return (
-    <LabeledControl label="Wrap" isSet={isSet}>
+    <LabeledControl isSet={isSet}>
       <SegmentedControl
         fullWidth
         aria-label="Flex wrap"

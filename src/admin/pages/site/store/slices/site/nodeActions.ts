@@ -101,8 +101,6 @@ type NodeActions = Pick<
   | 'duplicateNodes'
   | 'wrapNode'
   | 'wrapNodes'
-  | 'setNodeDynamicBinding'
-  | 'clearNodeDynamicBinding'
 >
 
 function recordPatchChanges(
@@ -655,39 +653,6 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
       return wrapperId
     },
 
-    setNodeDynamicBinding: (nodeId, propKey, binding) => {
-      mutateActiveTree((tree) => {
-        const node = tree.nodes[nodeId]
-        if (!node) return false
-        const current = node.dynamicBindings?.[propKey]
-        if (
-          current &&
-          current.source === binding.source &&
-          current.field === binding.field &&
-          current.format === binding.format &&
-          current.fallback === binding.fallback
-        ) {
-          return false
-        }
-        node.dynamicBindings = {
-          ...(node.dynamicBindings ?? {}),
-          [propKey]: binding,
-        }
-        return true
-      })
-    },
-
-    clearNodeDynamicBinding: (nodeId, propKey) => {
-      mutateActiveTree((tree) => {
-        const node = tree.nodes[nodeId]
-        if (!node?.dynamicBindings?.[propKey]) return false
-        delete node.dynamicBindings[propKey]
-        if (Object.keys(node.dynamicBindings).length === 0) {
-          delete node.dynamicBindings
-        }
-        return true
-      })
-    },
   }
 
   return actions

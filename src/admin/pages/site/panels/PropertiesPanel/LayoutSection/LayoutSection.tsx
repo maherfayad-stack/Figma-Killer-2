@@ -228,36 +228,45 @@ export function LayoutSection({
       {/* Flex-only fields, revealed when display === 'flex' */}
       {display === 'flex' && (
         <div className={styles.flexBlock}>
-          <FlexDirectionControl
-            value={flexDirection}
-            isSet={hasStyleValue(storedStyles.flexDirection)}
-            onChange={(v) => onChange('flexDirection', v)}
-            onClear={() => onClearProperty('flexDirection')}
-          />
-          <FlexWrapControl
-            value={flexWrap}
-            isSet={hasStyleValue(storedStyles.flexWrap)}
-            onChange={(v) => onChange('flexWrap', v)}
-            onClear={() => onClearProperty('flexWrap')}
-          />
-          <AlignmentControl
-            axis="cross"
-            flexDirection={flexDirection}
-            value={alignItems}
-            isSet={hasStyleValue(storedStyles.alignItems)}
-            onChange={(v) => onChange('alignItems', v)}
-            onClear={() => onClearProperty('alignItems')}
-            label="Align"
-          />
-          <AlignmentControl
-            axis="main"
-            flexDirection={flexDirection}
-            value={justifyContent}
-            isSet={hasStyleValue(storedStyles.justifyContent)}
-            onChange={(v) => onChange('justifyContent', v)}
-            onClear={() => onClearProperty('justifyContent')}
-            label="Justify"
-          />
+          {/* Direction beside wrap: two uncaptioned icon groups, because a row
+              of arrows and a wrap mark each say what they are. */}
+          <div className={styles.flexPair}>
+            <FlexDirectionControl
+              value={flexDirection}
+              isSet={hasStyleValue(storedStyles.flexDirection)}
+              onChange={(v) => onChange('flexDirection', v)}
+              onClear={() => onClearProperty('flexDirection')}
+            />
+            <FlexWrapControl
+              value={flexWrap}
+              isSet={hasStyleValue(storedStyles.flexWrap)}
+              onChange={(v) => onChange('flexWrap', v)}
+              onClear={() => onClearProperty('flexWrap')}
+            />
+          </div>
+          {/* Align beside justify — these two DO keep their captions: the icon
+              sets are near-identical, and which axis you are on is the one
+              thing the pictures can't tell you. */}
+          <div className={styles.flexPair}>
+            <AlignmentControl
+              axis="cross"
+              flexDirection={flexDirection}
+              value={alignItems}
+              isSet={hasStyleValue(storedStyles.alignItems)}
+              onChange={(v) => onChange('alignItems', v)}
+              onClear={() => onClearProperty('alignItems')}
+              label="Align"
+            />
+            <AlignmentControl
+              axis="main"
+              flexDirection={flexDirection}
+              value={justifyContent}
+              isSet={hasStyleValue(storedStyles.justifyContent)}
+              onChange={(v) => onChange('justifyContent', v)}
+              onClear={() => onClearProperty('justifyContent')}
+              label="Justify"
+            />
+          </div>
           <GapInput
             value={readString(currentStyles, 'gap')}
             isSet={hasStyleValue(storedStyles.gap)}
@@ -287,22 +296,24 @@ export function LayoutSection({
             onChange={(v) => onChange('gridTemplateRows', v)}
             onClear={() => onClearProperty('gridTemplateRows')}
           />
-          <GridAxisControl
-            label="Align"
-            axis="block"
-            value={alignItems}
-            isSet={hasStyleValue(storedStyles.alignItems)}
-            onChange={(v) => onChange('alignItems', v)}
-            onClear={() => onClearProperty('alignItems')}
-          />
-          <GridAxisControl
-            label="Justify"
-            axis="inline"
-            value={readString(currentStyles, 'justifyItems')}
-            isSet={hasStyleValue(storedStyles.justifyItems)}
-            onChange={(v) => onChange('justifyItems', v)}
-            onClear={() => onClearProperty('justifyItems')}
-          />
+          <div className={styles.flexPair}>
+            <GridAxisControl
+              label="Align"
+              axis="block"
+              value={alignItems}
+              isSet={hasStyleValue(storedStyles.alignItems)}
+              onChange={(v) => onChange('alignItems', v)}
+              onClear={() => onClearProperty('alignItems')}
+            />
+            <GridAxisControl
+              label="Justify"
+              axis="inline"
+              value={readString(currentStyles, 'justifyItems')}
+              isSet={hasStyleValue(storedStyles.justifyItems)}
+              onChange={(v) => onChange('justifyItems', v)}
+              onClear={() => onClearProperty('justifyItems')}
+            />
+          </div>
           <GapInput
             value={readString(currentStyles, 'gap')}
             isSet={hasStyleValue(storedStyles.gap)}

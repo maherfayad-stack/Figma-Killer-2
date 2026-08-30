@@ -1,57 +1,108 @@
-/* Section - shared collapsible category primitive for inspector panels. */
+/* Section — shared inspector section primitive (Figma right-sidebar anatomy). */
 
+/*
+ * A section is separated from its neighbour by a hairline and nothing else.
+ * No chip, no fill, no radius: at nine sections those read as a stack of
+ * buttons and bury the controls. The divider is drawn on the section itself
+ * rather than between siblings so a section keeps its edge wherever it is
+ * mounted (first, last, inside a search-filtered subset).
+ */
 .section {
-    padding: var(--space-4xs) var(--space-3xs);
+    padding: var(--space-2xs) 0;
+    border-top: 1px solid var(--inspector-divider);
 }
 
 /* Flush variant — no vertical padding; the parent grid gap is the only spacing
-   between sections (1px-gap card pattern in the Properties panel). */
+ * between sections (borderless-tile pattern in the Properties panel). */
 .sectionFlush {
     padding-top: 0;
     padding-bottom: 0;
 }
 
 .sectionOpen {
-    background: var(--overlay-5);
+    background: transparent;
 }
 
-.sectionFlush.sectionOpen {
-    background: transparent;
+/* ── Header row ──────────────────────────────────────────────────────────── */
+/*
+ * The toggle and the trailing actions are siblings, not nested: a control
+ * inside a control is invalid HTML and the inner one is unreachable by
+ * keyboard.
+ */
+.sectionHeader {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4xs);
+    min-height: var(--inspector-header-h);
+    padding-inline: var(--inspector-pad-x);
 }
 
 .sectionToggle {
     display: flex;
     align-items: center;
-    gap: var(--space-3xs);
-    width: 100%;
-    min-height: 32px;
-    padding: 0 var(--space-s);
+    gap: var(--space-4xs);
+    flex: 1;
+    min-width: 0;
+    min-height: var(--inspector-header-h);
+    padding: 0;
     background: transparent;
     border: 0;
+    border-radius: var(--radius-sm);
     cursor: pointer;
-    color: var(--text-muted);
-    background: var(--overlay-10);
-    border-radius: 12px;
+    color: var(--text);
     font-family: inherit;
     text-align: left;
 }
 
 .sectionToggle:hover {
-    background: var(--overlay-10);
-    color: var(--text);
+    background: transparent;
+    color: var(--text-bright);
 }
 
-.sectionIcon {
+/*
+ * Identity mark and disclosure chevron, stacked in one 16px box.
+ *
+ * The chevron is absent at rest — a resting panel should read as flat titled
+ * blocks (Figma), not as a column of accordions — and appears on hover in the
+ * icon's place. Sharing the box is what keeps the title from shifting, without
+ * either reserving a second slot or hanging the chevron outside the header.
+ */
+.sectionMarker {
+    position: relative;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
+    width: 16px;
+    height: 16px;
     color: var(--text-subtle);
 }
 
-.sectionIcon {
-    width: 18px;
-    height: 18px;
+.sectionMarkerIcon,
+.sectionMarkerChevron {
+    position: absolute;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: opacity 100ms ease, transform 120ms ease;
+}
+
+.sectionToggle:hover .sectionMarkerIcon,
+.sectionToggle:focus-visible .sectionMarkerIcon {
+    opacity: 0;
+}
+
+.sectionMarkerChevron {
+    opacity: 0;
+}
+
+.sectionToggle:hover .sectionMarkerChevron,
+.sectionToggle:focus-visible .sectionMarkerChevron {
+    opacity: 1;
+}
+
+.sectionMarkerChevronOpen {
+    transform: rotate(90deg);
 }
 
 .sectionTitleGroup {
@@ -59,15 +110,17 @@
     min-width: 0;
     display: inline-flex;
     align-items: center;
-    gap: var(--space-s);
+    gap: var(--space-xs);
 }
 
+/* Figma's section title: small, bold, full-contrast — the only strong text
+   in the section, which is what lets everything under it be quiet. */
 .sectionTitle {
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: var(--text-s);
+    font-size: var(--text-xs);
     font-weight: 700;
     color: var(--text);
 }
@@ -85,15 +138,23 @@
 }
 
 .sectionIndicatorDot {
-    width: 5px;
-    height: 5px;
+    width: 4px;
+    height: 4px;
     border-radius: 50%;
     background: var(--success);
     flex-shrink: 0;
 }
 
+/* Trailing icon-button slot (apply a style, add a fill). */
+.sectionActions {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-4xs);
+    flex-shrink: 0;
+}
+
 .sectionContent {
-    padding: var(--space-s) 0 var(--space-s) var(--space-s);
+    padding: 0 var(--inspector-pad-x) var(--space-m);
 }
 
 /**
@@ -105,5 +166,5 @@
  */
 .sectionBody {
     display: grid;
-    gap: var(--space-s);
+    gap: var(--inspector-group-gap);
 }

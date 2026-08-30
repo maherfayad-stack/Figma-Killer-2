@@ -47,6 +47,18 @@
  * Line PITCH — the distance between the tops of consecutive lines — needs no
  * such assumption. When a region holds two or more lines that is a direct
  * measurement of line-height, and it is reported as one.
+ *
+ * ## The three-way mapping (design variables)
+ *
+ * When the caller supplies `designVariableSets` (the ingested tables
+ * applicable to this page/reference — see `designVariableStore.ts`'s
+ * `resolveApplicableDesignVariableSets`), every measured colour/size is
+ * ALSO matched against the design's own declared values
+ * (`designVariableIndex.ts`), and the matched VARIABLE's own value (never
+ * the measured pixel) is what gets looked up against the project token
+ * index — see this module's own top-level doc, "The three-way mapping".
+ * Omitted or empty `designVariableSets` makes every `designVariable` field
+ * below simply absent; nothing degrades into a guess.
  */
 import sharp from 'sharp'
 import { colorDifference, contrastRatio, parseHexColor, relativeLuminance, type Rgb } from '@core/design-tokens'
@@ -58,6 +70,14 @@ import {
   type ProjectTokenIndex,
   type SizeTokenEntry,
 } from './projectTokenIndex'
+import {
+  buildDesignVariableIndex,
+  nearestDesignVariableColor,
+  nearestDesignVariableSize,
+  type DesignVariableColorEntry,
+  type DesignVariableIndex,
+} from './designVariableIndex'
+import type { DesignVariableSet } from './designVariableSchema'
 
 /** A rectangle to measure, in REFERENCE PIXEL coordinates (what a caller reads off the image it was shown). */
 export interface MeasureRegionInput {
@@ -68,12 +88,38 @@ export interface MeasureRegionInput {
   readonly height: number
 }
 
+/** The design's own declared value nearest a measured colour/size, plus (when one exists) the project token resolved from THAT declared value — never from the measured pixel. Absent whenever no applicable design-variable table has been ingested, or none is within range; see the module doc's "three-way mapping". */
+export interface DesignVariableColorMatch {
+  readonly name: string
+  /** Authored value exactly as ingested, e.g. "#EF4550". */
+  readonly value: string
+  /** Normalised lowercase 6-digit hex. */
+  readonly hex: string
+  readonly deltaE: number
+  readonly source: string
+  readonly setId: string
+  readonly projectToken?: { readonly name: string; readonly hex: string; readonly deltaE: number }
+}
+
+export interface DesignVariableSizeMatch {
+  readonly name: string
+  readonly value: string
+  readonly px: number
+  readonly deltaPx: number
+  /** True when the design tool reported a bare, unit-less number for this variable and `px` was derived by assuming px — see `designVariableNormalize.ts`. */
+  readonly unitAssumed: boolean
+  readonly source: string
+  readonly setId: string
+  readonly projectToken?: { readonly name: string; readonly px: number; readonly deltaPx: number }
+}
+
 export interface MeasuredColor {
   readonly hex: string
   /** Share of the region's pixels, 0–100. */
   readonly coveragePercent: number
   /** Nearest project token, when one is within `COLOR_MATCH_MAX_DELTA_E`. */
   readonly token?: { readonly name: string; readonly hex: string; readonly deltaE: number }
+  readonly designVariable?: DesignVariableColorMatch
 }
 
 export interface MeasuredLine {
@@ -114,6 +160,8 @@ export interface MeasuredRegion {
      * as a confident number rather than a coarse Latin-sans estimate.
      */
     readonly caveat: string
+    /** Nearest declared design-variable size, matched against the range's midpoint — same "always report nearest, caller judges distance" stance as `nearestToken`. Absent when no applicable design-variable table has any size-kind entry. */
+    readonly designVariable?: DesignVariableSizeMatch
   } | null
   /** Measured directly from line pitch — no assumption. `null` with fewer than two lines. */
   readonly lineHeightPx: number | null
@@ -224,12 +272,47 @@ function nearestColorToken(
   return { ...best, deltaE: Math.round(best.deltaE * 100) / 100 }
 }
 
-function toMeasuredColor(rgb: Rgb, count: number, total: number, tokens: readonly ColorTokenEntry[]): MeasuredColor {
+/**
+ * The design's own declared colour nearest `rgb`, plus (when one exists) the
+ * project token resolved from that DECLARED value — see the module doc's
+ * "three-way mapping". `undefined` when `variableColors` is empty (no
+ * applicable design-variable table) or nothing is within range; never a
+ * guess.
+ */
+function toDesignVariableColorMatch(
+  rgb: Rgb,
+  variableColors: readonly DesignVariableColorEntry[],
+  projectTokens: readonly ColorTokenEntry[],
+): DesignVariableColorMatch | undefined {
+  const nearest = nearestDesignVariableColor(variableColors, rgb)
+  if (!nearest) return undefined
+  const { variable, deltaE } = nearest
+  const projectToken = nearestColorToken(projectTokens, variable.rgb)
+  return {
+    name: variable.name,
+    value: variable.raw,
+    hex: variable.hex,
+    deltaE,
+    source: variable.source,
+    setId: variable.setId,
+    ...(projectToken ? { projectToken } : {}),
+  }
+}
+
+function toMeasuredColor(
+  rgb: Rgb,
+  count: number,
+  total: number,
+  tokens: readonly ColorTokenEntry[],
+  variableColors: readonly DesignVariableColorEntry[],
+): MeasuredColor {
   const token = nearestColorToken(tokens, rgb)
+  const designVariable = toDesignVariableColorMatch(rgb, variableColors, tokens)
   return {
     hex: rgbToHex(rgb),
     coveragePercent: Math.round((count / Math.max(1, total)) * 1000) / 10,
     ...(token ? { token } : {}),
+    ...(designVariable ? { designVariable } : {}),
   }
 }
 
@@ -266,11 +349,23 @@ export interface MeasureReferenceOptions {
   readonly cssScale: number
   /** CSS sources whose custom properties measured values are matched against. */
   readonly cssSources: readonly string[]
+  /**
+   * Ingested design-variable sets applicable to this page/reference — the
+   * caller resolves these via `resolveApplicableDesignVariableSets`
+   * (`designVariableStore.ts`) BEFORE calling this function; measurement
+   * itself only indexes and matches, it never reads from disk. Omitted or
+   * empty (the ordinary case until an agent calls
+   * `studio_ingest_design_variables`) makes every `designVariable` field
+   * simply absent — see the module doc's "three-way mapping".
+   */
+  readonly designVariableSets?: readonly DesignVariableSet[]
 }
 
 export interface MeasureReferenceResult {
   readonly regions: readonly MeasuredRegion[]
   readonly tokenIndex: { readonly colorCount: number; readonly fontSizeCount: number }
+  /** How many design-variable sets were applicable and how many of their entries were indexable as colours/sizes. `setCount: 0` is the honest "no design-variable table has been ingested for this page/reference" signal — every `designVariable` field's absence traces back to this. */
+  readonly designVariableIndex: { readonly setCount: number; readonly colorCount: number; readonly sizeCount: number }
 }
 
 /**
@@ -284,6 +379,8 @@ export async function measureReference(
   options: MeasureReferenceOptions,
 ): Promise<MeasureReferenceResult> {
   const tokens = buildProjectTokenIndex(...options.cssSources)
+  const variableSets = options.designVariableSets ?? []
+  const variables = buildDesignVariableIndex(variableSets)
   const base = sharp(Buffer.from(imageBytes))
   const meta = await base.metadata()
   const imageWidth = meta.width ?? 0
@@ -291,12 +388,17 @@ export async function measureReference(
 
   const measured: MeasuredRegion[] = []
   for (const region of regions) {
-    measured.push(await measureOne(imageBytes, region, imageWidth, imageHeight, options, tokens))
+    measured.push(await measureOne(imageBytes, region, imageWidth, imageHeight, options, tokens, variables))
   }
 
   return {
     regions: measured,
     tokenIndex: { colorCount: tokens.colors.length, fontSizeCount: tokens.fontSizes.length },
+    designVariableIndex: {
+      setCount: variableSets.length,
+      colorCount: variables.colors.length,
+      sizeCount: variables.sizes.length,
+    },
   }
 }
 
@@ -307,6 +409,7 @@ async function measureOne(
   imageHeight: number,
   options: MeasureReferenceOptions,
   tokens: ProjectTokenIndex,
+  variables: DesignVariableIndex,
 ): Promise<MeasuredRegion> {
   const left = Math.max(0, Math.min(Math.round(region.x), Math.max(0, imageWidth - 1)))
   const top = Math.max(0, Math.min(Math.round(region.y), Math.max(0, imageHeight - 1)))
@@ -329,11 +432,11 @@ async function measureOne(
   const totalCounted = counted.reduce((sum, entry) => sum + entry.count, 0)
 
   const backgroundRgb = counted[0]?.rgb ?? { r: 255, g: 255, b: 255 }
-  const background = toMeasuredColor(backgroundRgb, counted[0]?.count ?? 0, totalCounted, tokens.colors)
+  const background = toMeasuredColor(backgroundRgb, counted[0]?.count ?? 0, totalCounted, tokens.colors, variables.colors)
 
   const foregroundEntry = counted.find((entry) => colorDifference(entry.rgb, backgroundRgb) > INK_DELTA_E)
   const foreground = foregroundEntry
-    ? toMeasuredColor(foregroundEntry.rgb, foregroundEntry.count, totalCounted, tokens.colors)
+    ? toMeasuredColor(foregroundEntry.rgb, foregroundEntry.count, totalCounted, tokens.colors, variables.colors)
     : null
 
   // Reference px -> CSS px. `analysedScale` undoes the downsample first.
@@ -355,9 +458,29 @@ async function measureOne(
         const inkCssPx = toCssPx(tallest.height)
         const capAssumption = Math.round((inkCssPx / CAP_HEIGHT_RATIO) * 10) / 10
         const ascenderAssumption = Math.round((inkCssPx / ASCENDER_SPAN_RATIO) * 10) / 10
+        const midpoint = (capAssumption + ascenderAssumption) / 2
         // Match the midpoint of the range: committing the nearest-token answer
         // to either extreme would bias it exactly the way picking by name did.
-        const nearest = nearestSizeToken(tokens.fontSizes, (capAssumption + ascenderAssumption) / 2)
+        const nearest = nearestSizeToken(tokens.fontSizes, midpoint)
+        const nearestVariable = nearestDesignVariableSize(variables.sizes, midpoint)
+        const designVariable = nearestVariable
+          ? (() => {
+              const projectToken = nearestSizeToken(tokens.fontSizes, nearestVariable.variable.px)
+              const match: DesignVariableSizeMatch = {
+                name: nearestVariable.variable.name,
+                value: nearestVariable.variable.raw,
+                px: nearestVariable.variable.px,
+                deltaPx: nearestVariable.deltaPx,
+                unitAssumed: nearestVariable.variable.unitAssumed,
+                source: nearestVariable.variable.source,
+                setId: nearestVariable.variable.setId,
+                ...(projectToken
+                  ? { projectToken: { name: projectToken.token.name, px: projectToken.token.px, deltaPx: projectToken.deltaPx } }
+                  : {}),
+              }
+              return match
+            })()
+          : undefined
         return {
           capAssumption,
           ascenderAssumption,
@@ -365,6 +488,7 @@ async function measureOne(
             ? { name: nearest.token.name, px: nearest.token.px, deltaPx: nearest.deltaPx }
             : null,
           caveat: FONT_SIZE_RANGE_CAVEAT,
+          ...(designVariable ? { designVariable } : {}),
         }
       })()
     : null
@@ -383,7 +507,7 @@ async function measureOne(
         : null,
     palette: counted
       .slice(0, 6)
-      .map((entry) => toMeasuredColor(entry.rgb, entry.count, totalCounted, tokens.colors)),
+      .map((entry) => toMeasuredColor(entry.rgb, entry.count, totalCounted, tokens.colors, variables.colors)),
     lines,
     fontSizePx,
     lineHeightPx,

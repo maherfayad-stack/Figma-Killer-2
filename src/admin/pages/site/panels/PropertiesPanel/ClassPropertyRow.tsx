@@ -13,13 +13,14 @@
  */
 
 import type { CSSPropertyBag } from '@core/page-tree'
+import type { IconComponent } from 'pixel-art-icons/types'
 import { TextControl } from '@site/property-controls/TextControl'
 import { ColorControl } from '@site/property-controls/ColorControl'
 import { SelectControl } from '@site/property-controls/SelectControl'
 import { BackgroundImageControl } from '@site/property-controls/BackgroundImageControl'
 import { FontFamilyControl } from '@site/property-controls/FontFamilyControl'
 import { useEditorStore } from '@site/store/store'
-import { ControlRow } from '@ui/components/ControlRow'
+import { ControlRow, type ControlRowLayout } from '@ui/components/ControlRow'
 import { TokenAwareInput } from '@site/property-controls/TokenAwareInput'
 import {
   useSpacingTokens,
@@ -29,6 +30,7 @@ import {
 import { Button } from '@ui/components/Button'
 import { CloseIcon } from 'pixel-art-icons/icons/close'
 import { cn } from '@ui/cn'
+import { SegmentedControl } from '@ui/components/SegmentedControl'
 import {
   getCSSPropertyControlType,
   getCSSPropertyTokenSource,
@@ -37,10 +39,32 @@ import {
   isLengthNudgeProp,
   NUMBER_TYPED_PROPS,
 } from './cssControlTypes'
+import {
+  getIconEnumOptions,
+  getPropertyFieldGlyph,
+  isSelfDescribingProperty,
+} from './cssPropertyIcons'
 import { parseNudgeableValue } from '@site/property-controls/numericNudge'
 import { getFontWeightOptions } from './fontWeightOptions'
 import type { PropertyProvenance } from './stylePropertyProvenance'
 import styles from './ClassPropertyRow.module.css'
+
+// ---------------------------------------------------------------------------
+// PropertyGlyph — the in-field mark, rendered through a stable component.
+//
+// The glyph is looked up per property from a map, so it is a component VALUE
+// computed during render. Rendering it inline resets its state on every pass
+// (`react-hooks/static-components`); taking it as a prop on a module-scope
+// component does not. Same shape as `StyleCategoryRail`'s `ModuleRailButton`.
+//
+// The local is `Mark`, not `Icon`: `direct-icon-imports.test.ts` is a
+// plain-text scan for the literal opening tag of a lazy `Icon` wrapper, and a
+// local variable of that name trips it even though nothing lazy is involved.
+// ---------------------------------------------------------------------------
+
+function PropertyGlyph({ icon: Mark }: { icon: IconComponent }) {
+  return <Mark size={13} aria-hidden="true" />
+}
 
 // ---------------------------------------------------------------------------
 // ClassPropertyRow
@@ -53,9 +77,18 @@ interface ClassPropertyRowProps {
   fontFamilyValue?: unknown
   isSet?: boolean
   /**
-   * Row layout. `inline` (default) keeps the 100px side-label column; `stacked`
-   * puts a small label above a full-width control — used by the compact
-   * paired-column sections (e.g. Typography) to fit two controls per row.
+   * Row layout. `stacked` (the default) is the inspector's compact cell: the
+   * row resolves per property to a caption, a bare field, or an icon toggle
+   * group — see `resolvedLayout` below. `inline` opts a row back into the
+   * side-label column, and exists for the rare row whose control is too wide
+   * to sit under its own name.
+   *
+   * The default used to be `inline`, and every section that wanted Figma's
+   * density had to say `stacked` at each call site — which meant a section
+   * nobody had converted yet silently kept the label gutter, and the panel
+   * read as two designs stacked on top of each other. Every caller of this
+   * component is the properties panel, so the panel's own rhythm is the
+   * honest default.
    */
   layout?: 'inline' | 'stacked'
   onChange: (property: keyof CSSPropertyBag, value: string | number | undefined) => void
@@ -98,7 +131,7 @@ export function ClassPropertyRow({
   placeholder,
   fontFamilyValue,
   isSet = true,
-  layout,
+  layout = 'stacked',
   onChange,
   onRemove,
   onPreview,
@@ -108,6 +141,40 @@ export function ClassPropertyRow({
   const type = getCSSPropertyControlType(property)
   const tokenSource = getCSSPropertyTokenSource(property)
   const label = cssPropertyLabel(String(property))
+  // The two ways this row sheds its label column: an enum that draws itself
+  // as a toggle group, and a length whose meaning rides inside the field as a
+  // glyph. Both are `undefined` for most properties, which keep a word.
+  const iconEnumOptions = getIconEnumOptions(property)
+  const FieldGlyph = getPropertyFieldGlyph(property)
+
+  /*
+   * `stacked` is the caller saying "this is a cell in a compact paired grid",
+   * not a finished layout decision — what a cell actually draws depends on
+   * the property. This resolves it in one place so every compact section
+   * agrees.
+   *
+   * Three ways a cell sheds its caption, and one way it keeps it:
+   *   - an icon toggle group needs no words at all;
+   *   - a glyph inside the field already names it, and printing the name
+   *     above it too is the same word twice — which is exactly the "unneeded
+   *     titles" the panel was carrying;
+   *   - `Bold` / `16px` / `border-box` name themselves;
+   *   - everything else keeps the small caption Figma gives it, because
+   *     `nowrap` or `space-between` alone is cryptic.
+   */
+  const resolvedLayout: ControlRowLayout =
+    layout !== 'stacked'
+      ? (layout ?? 'inline')
+      : iconEnumOptions || FieldGlyph || isSelfDescribingProperty(property)
+        ? 'bare'
+        : 'caption'
+
+  // A glyph replaces a label column; in `inline` layout the column is still
+  // there, so showing both would name the field twice.
+  const glyphPrefix =
+    FieldGlyph && resolvedLayout !== 'inline'
+      ? <PropertyGlyph icon={FieldGlyph} />
+      : undefined
   const placeholderText = placeholder !== undefined ? String(placeholder) : undefined
   const fonts = useEditorStore((state) => state.site?.settings.fonts ?? null)
 
@@ -194,22 +261,51 @@ export function ClassPropertyRow({
         placeholder={placeholderText}
         onChange={handleControlChange}
         label={label}
-        layout={layout}
+        layout={resolvedLayout}
         onPreview={onPreview ? (v) => handleControlPreview(String(property), v) : undefined}
         onClearPreview={onClearPreview}
       />
     )
   } else if (tokenSource) {
     control = (
-      <ControlRow propKey={String(property)} label={label} layout={layout}>
+      <ControlRow
+        propKey={String(property)}
+        label={label}
+        layout={resolvedLayout}
+      >
         <TokenAwareInput
           aria-label={label}
           value={value !== undefined ? String(value) : undefined}
           placeholder={placeholderText}
+          prefix={glyphPrefix}
           tokens={tokens}
           onCommit={handleTokenCommit}
           onPreview={onPreview ? handleTokenPreview : undefined}
           onClearPreview={onClearPreview}
+        />
+      </ControlRow>
+    )
+  } else if (iconEnumOptions) {
+    // The enum draws itself. No label row at all — a picture that still needs
+    // a word beside it isn't doing its job, and the tooltip + `aria-label` on
+    // each segment carry the name for anyone who needs it spelled out.
+    // Clicking the active segment clears the property, which is the only way
+    // back to "unset" once a toggle group has no empty option.
+    control = (
+      <ControlRow propKey={String(property)} label={label} layout={resolvedLayout}>
+        <SegmentedControl
+          value={value !== undefined && value !== '' ? String(value) : undefined}
+          options={iconEnumOptions.map((option) => ({
+            value: option.value,
+            icon: option.icon ? <option.icon size={14} aria-hidden="true" /> : undefined,
+            label: option.label,
+            ariaLabel: `${label}: ${option.tooltip}`,
+            tooltip: option.tooltip,
+          }))}
+          onChange={(next) => handleControlChange(String(property), next)}
+          onClear={() => onRemove(property)}
+          fullWidth={iconEnumOptions.some((option) => option.label != null)}
+          aria-label={label}
         />
       </ControlRow>
     )
@@ -238,7 +334,7 @@ export function ClassPropertyRow({
           placeholder={placeholderText}
           onChange={handleControlChange}
           label={label}
-          layout={layout}
+          layout={resolvedLayout}
           onPreview={onPreview ? (v) => handleControlPreview(String(property), v) : undefined}
           onClearPreview={onClearPreview}
         />
@@ -257,7 +353,7 @@ export function ClassPropertyRow({
           placeholder={placeholderText}
           onChange={handleControlChange}
           label={label}
-          layout={layout}
+          layout={resolvedLayout}
           options={[
             { label: '—', value: '' },
             ...opts.map((o) => ({ label: o, value: o })),
@@ -284,7 +380,8 @@ export function ClassPropertyRow({
           placeholder={placeholderText}
           onChange={handleControlChange}
           label={label}
-          layout={layout}
+          layout={resolvedLayout}
+          prefix={glyphPrefix}
           nudgeEmptyUnit={nudgeEmptyUnit}
         />
       )
@@ -303,6 +400,7 @@ export function ClassPropertyRow({
       className={cn(
         styles.propertyRowWrap,
         layout === 'stacked' && styles.propertyRowWrapStacked,
+        resolvedLayout === 'bare' && styles.propertyRowWrapBare,
         !isSet && styles.propertyRowUnset,
       )}
       data-state={isSet ? 'set' : 'unset'}

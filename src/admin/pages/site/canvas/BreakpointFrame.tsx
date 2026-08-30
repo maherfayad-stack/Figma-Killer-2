@@ -25,6 +25,7 @@ import { CanvasComposedTree } from './CanvasComposedTree'
 import { BreakpointSelectionOverlay } from './BreakpointSelectionOverlay'
 import { CanvasBreakpointContext, CanvasTemplateContext } from './CanvasContexts'
 import { IframeFrameSurface, type IframeFrameSurfaceHandle } from './IframeFrameSurface'
+import { useResolvedFrameAxes } from './previewAxesFrameEffect'
 import type { InjectableRuntimeScript } from './useRuntimeScriptBuild'
 import { Button } from '@ui/components/Button'
 import { CursorTooltip, type CursorTooltipPoint } from '@ui/components/Tooltip'
@@ -89,6 +90,9 @@ export function BreakpointFrame({
 }: BreakpointFrameProps) {
   // --bp-width drives both label width and viewport width via CSS (dynamic value)
   const bpStyle = { '--bp-width': `${breakpoint.width}px` } as CSSProperties
+  // This wrapper sits OUTSIDE the iframe's portal, so it resolves the frame's
+  // effective axes itself rather than reading `FramePreviewAxesContext`.
+  const resolvedAxes = useResolvedFrameAxes(axesOverride)
 
   // Outer viewport `<div>` wrapping the iframe. The selection overlay still
   // measures the viewport (not the iframe) for zoom/pan/toolbar positioning;
@@ -261,6 +265,9 @@ export function BreakpointFrame({
       <div
         ref={viewportRef}
         data-breakpoint-id={breakpoint.id}
+        // Paints the same paper as the iframe it wraps, for the same reason —
+        // see `--canvas-frame-paper`.
+        data-preview-scheme={resolvedAxes.colorScheme}
         className={styles.viewport}
       >
         <IframeFrameSurface

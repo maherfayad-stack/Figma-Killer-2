@@ -23,7 +23,9 @@ import { PositionSection } from './PositionSection'
 import { SizeSection } from './SizeSection'
 import { TypographySection } from './TypographySection'
 import { BackgroundSection } from './BackgroundSection'
+import { EffectsSection } from './EffectsSection'
 import { InteractionSection } from './InteractionSection'
+import { SectionStylesMenu } from './SectionStylesMenu'
 import {
   CLASS_STYLE_SECTIONS,
   cssPropertyLabel,
@@ -43,6 +45,7 @@ const SIZE_SECTION_ID = 'size'
 const TYPOGRAPHY_SECTION_ID = 'typography'
 const BACKGROUND_SECTION_ID = 'background'
 const INTERACTION_SECTION_ID = 'interaction'
+const EFFECTS_SECTION_ID = 'effects'
 const BORDER_SECTION_ID = 'border'
 
 // ---------------------------------------------------------------------------
@@ -75,6 +78,17 @@ interface StyleSectionsEditorProps {
    * controls) are unchanged by this pass — see `StyleSurface`'s doc for why.
    */
   provenanceByProperty?: ReadonlyMap<string, PropertyProvenance>
+  /**
+   * The node a section-header STYLE applies to, and the classes already on it.
+   *
+   * Deliberately separate from the style bags above. Everything else in this
+   * component is target-agnostic — it edits whatever bag it was handed, class
+   * or inline. Applying a generated utility class is a different kind of
+   * write: it touches `node.classIds`, never the active bag, and it means the
+   * same thing whichever bag happens to be open. Omitted in global-selector
+   * mode, where there is no node, and the buttons then don't render.
+   */
+  styleTarget?: { nodeId: string; assignedClassIds: ReadonlyArray<string> }
 }
 
 // ---------------------------------------------------------------------------
@@ -93,6 +107,7 @@ export function StyleSectionsEditor({
   onPreview,
   onClearPreview,
   provenanceByProperty,
+  styleTarget,
 }: StyleSectionsEditorProps) {
   const visibleStyleSections = getVisibleStyleSections(styleQuery)
 
@@ -116,6 +131,7 @@ export function StyleSectionsEditor({
             onPreview={onPreview}
             onClearPreview={onClearPreview}
             provenanceByProperty={provenanceByProperty}
+            styleTarget={styleTarget}
           />
         </div>
       ))}
@@ -157,6 +173,7 @@ interface StyleSectionGroupProps {
   onPreview: (patch: Partial<CSSPropertyBag>) => void
   onClearPreview: () => void
   provenanceByProperty?: ReadonlyMap<string, PropertyProvenance>
+  styleTarget?: { nodeId: string; assignedClassIds: ReadonlyArray<string> }
 }
 
 function StyleSectionGroup({
@@ -172,6 +189,7 @@ function StyleSectionGroup({
   onPreview,
   onClearPreview,
   provenanceByProperty,
+  styleTarget,
 }: StyleSectionGroupProps) {
   const setCount = section.properties.filter((prop) => hasStyleValue(storedStyles[prop])).length
 
@@ -190,6 +208,15 @@ function StyleSectionGroup({
       indicator={setCount > 0}
       indicatorTestId={`class-style-section-dot-${section.id}`}
       meta={setCount > 0 ? `${setCount} set` : undefined}
+      actions={
+        styleTarget && (
+          <SectionStylesMenu
+            sectionId={section.id}
+            nodeId={styleTarget.nodeId}
+            assignedClassIds={styleTarget.assignedClassIds}
+          />
+        )
+      }
     >
       <div className={sectionStyles.sectionBody}>
         {section.id === SPACING_SECTION_ID ? (
@@ -253,6 +280,18 @@ function StyleSectionGroup({
           />
         ) : section.id === BACKGROUND_SECTION_ID ? (
           <BackgroundSection
+            key={activeTab}
+            storedStyles={storedStyles}
+            currentStyles={currentStyles}
+            visibleProperties={section.properties}
+            activeTab={activeTab}
+            onChange={onChange}
+            onRemove={onRemove}
+            onPreview={onPreview}
+            onClearPreview={onClearPreview}
+          />
+        ) : section.id === EFFECTS_SECTION_ID ? (
+          <EffectsSection
             key={activeTab}
             storedStyles={storedStyles}
             currentStyles={currentStyles}

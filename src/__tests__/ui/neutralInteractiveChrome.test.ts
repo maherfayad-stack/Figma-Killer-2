@@ -113,11 +113,21 @@ describe('neutral interactive chrome', () => {
     expectNoSurfaceBackground(tabActive)
   })
 
-  it('keeps flush inspector sections from painting an open group background', () => {
+  it('keeps inspector sections from painting an open group background', () => {
     const css = readFileSync(SECTION_CSS, 'utf8')
 
-    const flushOpen = cssRule(css, '.sectionFlush.sectionOpen')
+    // This used to be scoped to `.sectionFlush.sectionOpen` because the
+    // non-flush variant DID paint `--overlay-5` when open. It no longer does:
+    // a section is now separated from its neighbour by a hairline and nothing
+    // else (Figma's right-sidebar anatomy), so NO section paints a background
+    // when open and the narrower assertion has become the general one.
+    expect(cssRule(css, '.sectionOpen')).toMatch(/background:\s*transparent;/)
 
-    expect(flushOpen).toMatch(/background:\s*transparent;/)
+    // The header itself is likewise unpainted — it used to be a rounded
+    // `--overlay-10` chip, which at nine sections read as a stack of buttons
+    // with the controls as an afterthought.
+    const toggle = cssRule(css, '.sectionToggle')
+    expect(toggle).toMatch(/background:\s*transparent;/)
+    expectNoSurfaceBackground(toggle)
   })
 })

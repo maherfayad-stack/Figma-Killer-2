@@ -6,9 +6,9 @@
  * frame remount here would cost ~100-140ms per frame — see `perf-01` in
  * `STATE.md` — for every toggle across the whole board).
  */
-import { useEffect, useSyncExternalStore } from 'react'
+import { createContext, useContext, useEffect, useSyncExternalStore } from 'react'
 import { useEditorStore } from '@site/store/store'
-import type { PreviewAxes } from '@core/studio-board'
+import { DEFAULT_PREVIEW_AXES, type PreviewAxes } from '@core/studio-board'
 import {
   getColorSchemeCapability,
   subscribeColorSchemeCapability,
@@ -49,9 +49,33 @@ export function parseClassSchemeSelector(selector: string): ClassSelector | Attr
 }
 
 /**
+ * The de-facto convention every design system shipped as vendor CSS uses to
+ * gate its token set, and therefore the one attribute the frame root must
+ * carry an EXPLICIT value for in BOTH schemes.
+ *
+ * Absence is not neutral. `@alm-design/design-system` — which
+ * `ProjectCssInjector.tsx` injects into every canvas frame — gates its light
+ * tokens on `:root:not([data-theme=light])`, i.e. **no attribute means
+ * dark**. So the previous behaviour here (set `data-theme="dark"` for dark,
+ * REMOVE it for light) previewed light as dark: exactly the same
+ * "broken in both directions" shape as the `prefers-color-scheme` bug
+ * `darkSchemeCssTransform.ts` exists to fix, one layer up. Writing
+ * `light`/`dark` explicitly is correct for both conventions — a project that
+ * only styles `[data-theme=dark]` simply doesn't match `light`.
+ *
+ * Set unconditionally, whatever mechanism the probe detected, because the
+ * vendor CSS is injected unconditionally too. When the detected mechanism IS
+ * this attribute, the two writes agree by construction.
+ */
+export const VENDOR_THEME_ATTR = 'data-theme'
+
+/**
  * Applies `axes` to `html` — the frame document's root element. Always:
  *   - `dir` — the load-bearing mechanism (Trap #1: no wrapper element, the
- *     attribute goes on the document element the frame already has).
+ *     attribute goes on the document element the frame already has). Note
+ *     this drives CSS only; a design-system component that resolves its
+ *     direction in JS (a `useDir()`/provider context) is driven separately,
+ *     through {@link FramePreviewAxesContext}.
  *   - `lang` — see {@link RTL_PREVIEW_LANG}'s doc.
  *   - `data-studio-scheme` + inline `color-scheme` — the generic attribute
  *     `darkSchemeCssTransform.ts`'s rewritten rules match against, and the UA
@@ -59,11 +83,12 @@ export function parseClassSchemeSelector(selector: string): ClassSelector | Attr
  *     staying light in a dark frame. Set unconditionally, regardless of the
  *     detected mechanism — harmless when nothing in the document's CSS
  *     matches it.
+ *   - `data-theme` — see {@link VENDOR_THEME_ATTR}.
  *
  * Additionally, when `capability.mechanism === 'class'` and its `selector`
  * parses, toggles that EXACT class/attribute on `html` too — the project's
  * own dark-mode gate, so its styles respond exactly as they would in the
- * real app rather than relying solely on the generic attribute above.
+ * real app rather than relying solely on the generic attributes above.
  */
 export function applyPreviewAxesToFrameDocument(
   html: HTMLElement,
@@ -74,20 +99,76 @@ export function applyPreviewAxesToFrameDocument(
   if (axes.direction === 'rtl') html.setAttribute('lang', RTL_PREVIEW_LANG)
   else html.removeAttribute('lang')
 
+  const isDark = axes.colorScheme === 'dark'
   html.setAttribute(DARK_SCHEME_ATTR, axes.colorScheme)
+  html.setAttribute(VENDOR_THEME_ATTR, axes.colorScheme)
   html.style.colorScheme = axes.colorScheme
 
   if (capability?.mechanism !== 'class' || !capability.selector) return
   const parsed = parseClassSchemeSelector(capability.selector)
   if (!parsed) return
 
-  const isDark = axes.colorScheme === 'dark'
   if (parsed.kind === 'class') {
+    // A class gate has no light counterpart to add — `.dark` off IS light.
     html.classList.toggle(parsed.name, isDark)
     return
   }
-  if (isDark) html.setAttribute(parsed.name, parsed.value ?? '')
-  else html.removeAttribute(parsed.name)
+  // An attribute gate does: see `VENDOR_THEME_ATTR` for why removing it is
+  // not the same as saying "light".
+  html.setAttribute(parsed.name, isDark ? (parsed.value ?? 'dark') : 'light')
+}
+
+/**
+ * WS-10 Phase 2 (§4.4) — a "duplicate as variant" board frame's own
+ * `BoardFrame.axes` overrides the board-global default PER AXIS, not
+ * wholesale: a frame that only overrides `direction` still inherits the
+ * board's current `colorScheme`.
+ */
+function resolveFrameAxes(boardAxes: PreviewAxes, override: Partial<PreviewAxes> | undefined): PreviewAxes {
+  return override ? { ...boardAxes, ...override } : boardAxes
+}
+
+/**
+ * The axes THIS frame is being previewed under, published to everything
+ * React renders inside it.
+ *
+ * `dir` on the frame's `<html>` is enough for CSS, and it is NOT enough for
+ * a design system whose components resolve their own direction in JavaScript.
+ * `@alm-design/design-system` is the case that forced this: every component
+ * calls `useDir(prop)`, which reads `DesignSystemProvider`'s context and
+ * falls back to a built-in `'ltr'`. Studio wraps each design-system component
+ * in that provider (`src/modules/alm/register.tsx`,
+ * `registerProjectModules.ts`) and used to pass it NO props at all — so every
+ * mirrored chevron, every direction-aware label and every platform-aware
+ * layout on the canvas was pinned left-to-right no matter what the board's
+ * direction toggle said, while the CSS half of the same component flipped.
+ * Half-RTL screens, which is worse than either whole.
+ *
+ * A context (rather than reading `document.dir` back off the frame) because
+ * per-frame overrides are real — a "duplicate as variant" frame previews RTL
+ * beside the board's LTR — so "the direction" is a property of the frame a
+ * component is rendered into, not of the board.
+ *
+ * The default value is the board default, for the one case where a module
+ * component renders outside any frame (a panel preview): LTR/light, which is
+ * what it rendered as before this existed.
+ */
+export const FramePreviewAxesContext = createContext<PreviewAxes>(DEFAULT_PREVIEW_AXES)
+
+/** The preview axes of the frame the calling component is rendered into. See {@link FramePreviewAxesContext}. */
+export function useFramePreviewAxes(): PreviewAxes {
+  return useContext(FramePreviewAxesContext)
+}
+
+/**
+ * The same merge {@link useApplyPreviewAxes} performs, for a component that is
+ * OUTSIDE the frame's portal and so cannot read
+ * {@link FramePreviewAxesContext} — `BreakpointFrame`'s wrapper element, which
+ * paints the same paper the iframe does.
+ */
+export function useResolvedFrameAxes(axesOverride?: Partial<PreviewAxes>): PreviewAxes {
+  const boardAxes = useEditorStore((s) => s.previewAxes)
+  return resolveFrameAxes(boardAxes, axesOverride)
 }
 
 /**
@@ -99,26 +180,35 @@ export function applyPreviewAxesToFrameDocument(
  * plain `useEffect` keyed on the frame document + both inputs. See this
  * module's top doc for why that has to be an attribute effect, never
  * `srcDoc`/a `key`.
+ *
+ * Returns the frame's EFFECTIVE axes so the caller can publish them on
+ * {@link FramePreviewAxesContext} — one resolution of the board/override
+ * merge, feeding both the DOM attributes and the React tree.
  */
 export function useApplyPreviewAxes(
   iframeDoc: Document | null,
   axesOverride?: Partial<PreviewAxes>,
-): void {
+): PreviewAxes {
   const boardAxes = useEditorStore((s) => s.previewAxes)
   const colorSchemeCapability = useSyncExternalStore(
     subscribeColorSchemeCapability,
     getColorSchemeCapability,
     getColorSchemeCapability,
   )
+  const effectiveAxes = resolveFrameAxes(boardAxes, axesOverride)
   useEffect(() => {
     if (!iframeDoc?.documentElement) return
-    // WS-10 Phase 2 (§4.4) — a "duplicate as variant" board frame's own
-    // `BoardFrame.axes` overrides the board-global default PER AXIS, not
-    // wholesale — a frame that only overrides `direction` still inherits the
-    // board's current `colorScheme`. Computed inside the effect (rather than
-    // as a `const` above it) so the dependency array can name the two actual
-    // inputs instead of a fresh object literal recomputed every render.
-    const effectiveAxes: PreviewAxes = axesOverride ? { ...boardAxes, ...axesOverride } : boardAxes
-    applyPreviewAxesToFrameDocument(iframeDoc.documentElement, effectiveAxes, colorSchemeCapability)
+    // Re-resolved inside the effect rather than closing over `effectiveAxes`
+    // so the dependency array names the two ACTUAL inputs. Depending on the
+    // merged object instead makes `react-hooks/exhaustive-deps` warn about a
+    // conditionally-constructed value it cannot prove stable — and the fix it
+    // asks for (`useMemo`) is exactly the manual memoization this repo's
+    // React Compiler setup bans.
+    applyPreviewAxesToFrameDocument(
+      iframeDoc.documentElement,
+      resolveFrameAxes(boardAxes, axesOverride),
+      colorSchemeCapability,
+    )
   }, [iframeDoc, boardAxes, axesOverride, colorSchemeCapability])
+  return effectiveAxes
 }

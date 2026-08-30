@@ -163,6 +163,13 @@
  *       makes that readable. Read-only, off the same `createWorkspaceProject`
  *       ts-morph `Project` the page-parse pipeline already builds.
  *
+ *   GET  /admin/api/studio/icons               → `studio/iconCatalog.ts`
+ *       The icon set the project's installed component packages ship as SVG
+ *       FILES (`@alm-design/design-system`'s 568-file `src/icons/`), which no
+ *       registry lookup can see — the slot picker's icon source alongside the
+ *       handful of `*Icon` React exports. Read-only, no trust tier: it is
+ *       `readdir` + `readFile`, nothing is imported or evaluated.
+ *
  *   POST /admin/api/studio/reload-scope        → `studio/reloadScope.ts`
  *       Track C5 (`STUDIO-FIGMA-PARITY-PLAN.md` §6, reload surgery) — given
  *       the workspace-relative files a batch of edits just wrote (the `/save`
@@ -212,6 +219,7 @@ import { tryServeStudioExtractComponent } from './studio/extractComponent'
 import { tryServeStudioPreviewAxes } from './studio/previewAxes'
 import { tryServeStudioLocalizedPage } from './studio/localizedPage'
 import { tryServeStudioComponents } from './studio/components'
+import { tryServeStudioIcons } from './studio/iconCatalog'
 import { tryServeStudioProjectRoutes } from './studio/projectRoutes'
 import { tryServeStudioReloadScope } from './studio/reloadScope'
 
@@ -239,6 +247,7 @@ const STUDIO_SUB_ROUTERS = [
   tryServeStudioPreviewAxes,
   tryServeStudioLocalizedPage,
   tryServeStudioComponents,
+  tryServeStudioIcons,
   tryServeStudioProjectRoutes,
   tryServeStudioReloadScope,
 ] as const

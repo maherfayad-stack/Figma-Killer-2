@@ -61,6 +61,7 @@ export const STUDIO_CANVAS_PARITY_MATRIX: readonly ParityRow[] = [
   { action: 'Resize / move a board frame (bulk)', status: { kind: 'tool', toolNames: ['studio_set_frames'] } },
   { action: 'Install dependencies', status: { kind: 'tool', toolNames: ['studio_install_deps'] } },
   { action: 'Poll an install job', status: { kind: 'tool', toolNames: ['studio_install_status'] } },
+  { action: 'Confirm the code just written actually compiles', status: { kind: 'tool', toolNames: ['studio_typecheck'] } },
   { action: 'Read a project profile (framework/styling/deps)', status: { kind: 'tool', toolNames: ['studio_project_profile'] } },
   { action: 'List pages / board frames', status: { kind: 'tool', toolNames: ['studio_list_pages'] } },
   { action: 'See what a screen actually looks like', status: { kind: 'tool', toolNames: ['studio_screenshot'] } },
@@ -97,6 +98,10 @@ export const STUDIO_CANVAS_PARITY_MATRIX: readonly ParityRow[] = [
   {
     action: 'Register / remove a durable design reference for later measurement against a frame',
     status: { kind: 'tool', toolNames: ['studio_register_design_reference', 'studio_list_design_references', 'studio_read_design_reference'] },
+  },
+  {
+    action: "Record a design's own declared variable table so a measurement resolves by lookup instead of by pixel inference",
+    status: { kind: 'tool', toolNames: ['studio_ingest_design_variables', 'studio_list_design_variables', 'studio_read_design_variable_set'] },
   },
 
   // ── Deliberately withheld — by design, not by oversight.

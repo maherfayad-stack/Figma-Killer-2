@@ -64,7 +64,12 @@ const InputSchema = Type.Object(
     reference: Type.Optional(Type.String({ description: 'Base64-encoded PNG bytes — typically a studio_render_reference capture. Must be the exact same pixel dimensions as `baseline`, or this returns ok:false naming the mismatch (no reconciliation on this path). Provide exactly one of `reference` or `referenceId`.' })),
     referenceId: Type.Optional(Type.String({ description: 'A studio_register_design_reference id instead of base64 bytes — the reference\'s bytes are read server-side and never transit you. Unlike `reference`, a pixel-dimension mismatch is RECONCILED here (dpr-equivalent resampling, aspect-ratio-bounded) rather than refused outright; the result\'s `dimensionReconciliation` field states which path was used. Provide exactly one of `reference` or `referenceId`.' })),
     nodeRects: Type.Optional(Type.Array(NodeRectSchema, {
-      description: 'Frame-local node rectangles (studio_export_frames\' response returns exactly this shape as `nodeRects`) — used to map each top differing region back to the node ids it overlaps. Omit for a pure pixel/region diff with no node mapping.',
+      description: 'Frame-local node rectangles in CSS px (studio_export_frames\' response returns exactly this shape as `nodeRects`) — used to map each top differing region back to the node ids it overlaps. Omit for a pure pixel/region diff with no node mapping.',
+    })),
+    nodeRectsImageScale: Type.Optional(Type.Number({
+      minimum: 0,
+      exclusiveMinimum: 0,
+      description: 'Multiplier from `nodeRects`\' CSS-px space into `baseline`\'s actual pixel space — studio_export_frames\' response returns this as `imageScale` alongside `nodeRects` for exactly this purpose. Default 1 (correct for an unscaled dpr:1 capture); REQUIRED whenever `baseline` was captured at any other effective resolution, or the region→node mapping silently targets the wrong nodes (only the top-left portion of the frame could ever map correctly at scale 2).',
     })),
     topN: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_TOP_N, description: `Number of top differing regions to return, ranked by differing-pixel count. Default ${DEFAULT_TOP_N}.` })),
     threshold: Type.Optional(Type.Number({ minimum: 0, maximum: 1, description: 'pixelmatch per-pixel match threshold (0 = strictest, 1 = loosest). Default 0.1.' })),
@@ -80,12 +85,13 @@ export const diffFramesTool: AiTool = {
     'Server-side pixel + region diff between `baseline` (base64 PNG bytes YOU already hold) and EITHER `reference` (base64) OR `referenceId` (a studio_register_design_reference id — its bytes are read here, never transiting you). Returns an overall similarity score, a diff PNG, and the top differing rectangles ranked by differing-pixel count — each with a diffPercent and, when `nodeRects` was supplied, the node ids whose rect intersects it. NOTE: if you are the agent working inside Studio, use studio_compare instead — it captures the screen and measures it in one call, because a capture reaches you as an image you cannot turn back into the base64 `baseline` needs. This tool is for a client that captured the frame in its own process. With `reference`, both images must be the exact same pixel dimensions or this returns ok:false. With `referenceId`, a dimension mismatch is instead RECONCILED by resampling the reference (labelled `dimensionReconciliation.method: "resampled"` — a weaker claim than an exact match, with `dimensionReconciliation.note` naming which axis mismatched and calling out the ~1568px vision-safe capture cap when that looks like the cause) unless the aspect ratios diverge too far to attribute to resolution, in which case it refuses rather than silently stretch the image.',
   inputSchema: InputSchema,
   handler: async (input, ctx: ToolContext) => {
-    const { dir: dirInput, baseline, reference, referenceId, nodeRects, topN, threshold } = input as {
+    const { dir: dirInput, baseline, reference, referenceId, nodeRects, nodeRectsImageScale, topN, threshold } = input as {
       dir?: string
       baseline: string
       reference?: string
       referenceId?: string
       nodeRects?: NodeRect[]
+      nodeRectsImageScale?: number
       topN?: number
       threshold?: number
     }
@@ -140,7 +146,11 @@ export const diffFramesTool: AiTool = {
       }
     }
 
-    const diff = computeFrameDiff(a, b, { nodeRects, topN: topN ?? DEFAULT_TOP_N, threshold })
+    const diff = computeFrameDiff(a, b, {
+      nodeRects: nodeRects ? { rects: nodeRects, imageScale: nodeRectsImageScale ?? 1 } : undefined,
+      topN: topN ?? DEFAULT_TOP_N,
+      threshold,
+    })
 
     return aiToolOk(
       {

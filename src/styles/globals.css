@@ -194,6 +194,43 @@
     --input-radius: 1em;
     --tooltip-radius: 6px;
 
+    /* ── Control rows ─────────────────────────────────────────────────────
+       The label column and row height every `ControlRow` uses. Form-shaped
+       by default (the data admin's inspectors); the properties panel rebinds
+       both to its `--inspector-*` values below. */
+    --control-label-w: 100px;
+    --control-row-h: 28px;
+
+    /* ── Inspector geometry ───────────────────────────────────────────────
+       The properties panel is a distinct surface with its own, much tighter
+       rhythm than the rest of the admin: it is a design tool's inspector,
+       and its reference is Figma's right sidebar (240px, 24px fields, an
+       8px gutter, captions above groups instead of a label column).
+
+       Elsewhere in the admin a control is a form field with a label beside
+       it; here a control is a cell in a dense grid whose meaning comes from
+       a glyph inside it. These tokens are what makes that second rhythm one
+       decision rather than thirty scattered literals — the three hardcoded
+       `100px` label columns this replaced are the cautionary tale. */
+    --inspector-pad-x: 8px;
+    /* Field + icon-button height. Figma's inspector row. */
+    --inspector-row-h: 24px;
+    --inspector-header-h: 32px;
+    /* Gutter between two fields on the same row, and between caption groups. */
+    --inspector-field-gap: 6px;
+    --inspector-group-gap: 8px;
+    /* Caption ("Line height") to the field it names. */
+    --inspector-caption-gap: 3px;
+    /* The remaining text-label column, for rows with no honest glyph. */
+    --inspector-label-w: 68px;
+    /* Inspector fields are filled rectangles, not the admin's pill outline —
+       the border only appears on hover/focus, so a column of unset fields
+       reads as one quiet block instead of a ladder of outlines. */
+    --inspector-field-radius: 5px;
+    --inspector-field-bg: var(--overlay-5);
+    --inspector-field-bg-hover: var(--overlay-10);
+    --inspector-divider: var(--overlay-10);
+
     /* Scrollbars */
     --scrollbar-size: 6px;
     --scrollbar-radius: var(--radius-sm);
@@ -231,6 +268,19 @@
     --kbd-drop: var(--scrim-30);
 
     /* Canvas */
+    /* The "paper" a frame is painted on — what shows wherever the previewed
+       page paints nothing of its own (below a short page, and in the strip a
+       grow-to-content iframe leaves inside its device box).
+       DELIBERATELY THEME-INDEPENDENT, and deliberately not `--overlay`: this
+       stands for the PREVIEWED page's own canvas, so it follows the board's
+       colour-scheme axis, never the admin's theme. Painting a dark-mode
+       preview on white paper is the same category of error as a sticky note
+       following the theme (see `--note-*`).
+       The dark value is the UA's own dark canvas colour, so the paper matches
+       what a real browser paints for `color-scheme: dark` behind an
+       unstyled document. */
+    --canvas-frame-paper: #ffffff;
+    --canvas-frame-paper-dark: #121212;
     --canvas-chrome-shadow: 0 12px 28px var(--scrim-30);
     --canvas-selection-ring: inset 0 0 0 1px #39ff14;
     --canvas-hover-ring: inset 0 0 0 1px #ff2bd6;

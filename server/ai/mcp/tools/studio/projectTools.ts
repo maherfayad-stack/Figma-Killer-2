@@ -107,7 +107,7 @@ const projectProfileTool: AiTool = {
   scope: 'shared',
   execution: 'server',
   description:
-    'Return the full ProjectProfile for a studio project: detected framework, route style, pages directory, style toolchain (Tailwind/Sass/CSS Modules/CSS-in-JS), component packages, path aliases, and the probe\'s own warnings (each a { code, message, fix } — the same codes studio_fidelity_report surfaces). Uses the cached probe from .studio/meta.json when present, else probes fresh (never writes the cache itself). Call this before touching a project you have not seen before — "what am I working with" in one call.',
+    'Return the full ProjectProfile for a studio project: detected framework, route style, pages directory, style toolchain (Tailwind/Sass/CSS Modules/CSS-in-JS), component packages, design systems, path aliases, the dark-mode and locale capabilities, and the probe\'s own warnings (each a { code, message, fix } — the same codes studio_fidelity_report surfaces). profile.colorScheme is how this project expresses dark mode: mechanism (class/media/none), the exact selector to gate a dark rule on, and the source file it was found in — which is often the installed design system\'s own stylesheet, not a file in the project. Uses the cached probe from .studio/meta.json when present, else probes fresh (never writes the cache itself, except to heal a cache an older probe version got wrong). Call this before touching a project you have not seen before — "what am I working with" in one call.',
   inputSchema: DirInputSchema,
   handler: async (input, ctx: ToolContext) => {
     const { dir: dirInput } = input as { dir?: string }

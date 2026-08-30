@@ -64,6 +64,8 @@ interface InlineStyleComposerProps {
   computedValues?: Record<string, string> | null
   /** Track F1 — see `StyleSectionsEditor`'s doc. */
   provenanceByProperty?: ReadonlyMap<string, PropertyProvenance>
+  /** Section-header style-apply target — see `StyleSectionsEditor`'s doc. */
+  styleTarget?: { nodeId: string; assignedClassIds: ReadonlyArray<string> }
 }
 
 export function InlineStyleComposer({
@@ -73,6 +75,7 @@ export function InlineStyleComposer({
   codeProps,
   computedValues,
   provenanceByProperty,
+  styleTarget,
 }: InlineStyleComposerProps) {
   const setNodeInlineStyles = useEditorStore((s) => s.setNodeInlineStyles)
   const removeNodeInlineStyleProperty = useEditorStore((s) => s.removeNodeInlineStyleProperty)
@@ -141,6 +144,7 @@ export function InlineStyleComposer({
         onPreview={noop}
         onClearPreview={noop}
         provenanceByProperty={provenanceByProperty}
+        styleTarget={styleTarget}
       />
     </>
   )

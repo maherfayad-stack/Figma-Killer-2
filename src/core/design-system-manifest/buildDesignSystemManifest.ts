@@ -14,7 +14,7 @@
 import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import type { ComponentManifest, ComponentSpec, PropSpec } from '../component-manifest/types'
+import type { ComponentManifest, ComponentSpec, PropSpec, PropSpecKind } from '../component-manifest/types'
 
 const PACKAGE_NAME = '@alm-design/design-system'
 const FILE_SPECIFIER = PACKAGE_NAME
@@ -90,6 +90,63 @@ function resolvePackageRoot(): string {
   }
 }
 
+/**
+ * Matches a JSX usage-example line's prop NAME and raw VALUE:
+ *   skeleton={false}       // renders a shimmer
+ *   icon={<SvgIcon />}
+ *   bg="default"           // default | primary | dim
+ * Group 2 is everything after `=` up to a trailing `//` comment (which
+ * `ENUM_COMMENT_LINE` above parses separately). Deliberately greedy up to the
+ * comment so a braced value containing `/` (`<Icon a="b/c"/>`) survives.
+ */
+const PROP_VALUE_LINE = /^([A-Za-z_$][A-Za-z0-9_$]*)=(.*?)(?:\s*\/\/.*)?$/
+
+/**
+ * The prop kinds this package's docs can express, read off the VALUE FORM in
+ * each component's JSX example. Nothing here guesses from the prop's NAME
+ * except the icon/node distinction, which is a presentation choice (both are
+ * React nodes; an icon-named one gets a picker instead of a bare slot).
+ *
+ * A form this does not recognise — a structured `{[…]}` array, a `{{…}}`
+ * object, an interpolation — returns `undefined` rather than a wrong answer,
+ * and the prop keeps whatever the enum pass gave it (or falls through to
+ * `'unknown'`, i.e. a text box). That is the honest failure mode: a text box
+ * for a value we could not classify, never a toggle for something that is not
+ * a boolean.
+ */
+function classifyPropValue(propName: string, rawValue: string): PropSpecKind | undefined {
+  const value = rawValue.trim()
+  if (value === '') return undefined
+
+  // `prop` with no `=` in JSX means `prop={true}`; the docs write it out.
+  if (/^\{(true|false)\}$/.test(value)) return 'boolean'
+  if (/^\{-?\d+(\.\d+)?\}$/.test(value)) return 'number'
+  // `{fn}`, `{() => …}`, `{handleX}` — a callback. Never editable: a text box
+  // here can only write a string where the component expects a function.
+  if (/^\{(fn|\(\)\s*=>|\w*[Hh]andler\b|on[A-Z])/.test(value) || /^on[A-Z]/.test(propName)) return 'handler'
+  if (/^\{\s*</.test(value)) return ICON_PROP_NAME_RE.test(propName) ? 'icon' : 'node'
+  if (/^["']/.test(value)) return 'string'
+  return undefined
+}
+
+/** A prop whose node value is an ICON rather than arbitrary content — it gets the icon picker instead of a generic slot row. */
+const ICON_PROP_NAME_RE = /(^|[a-z])icon([A-Z0-9]|$)/i
+
+/** Prop name -> raw documented value, from the first fenced JSX block. Same block `parseEnumValues` reads. */
+function parsePropValues(doc: string | null): Map<string, string> {
+  const values = new Map<string, string>()
+  if (!doc) return values
+  const block = /```[a-z]*\n([\s\S]*?)```/i.exec(doc)
+  if (!block) return values
+  for (const rawLine of block[1].split('\n')) {
+    const match = PROP_VALUE_LINE.exec(rawLine.trim())
+    if (!match) continue
+    const [, propName, rawValue] = match
+    if (!values.has(propName)) values.set(propName, rawValue)
+  }
+  return values
+}
+
 function buildProps(name: string, catalog: DesignSystemCatalog): PropSpec[] {
   let propNames: string[] | null
   try {
@@ -106,6 +163,7 @@ function buildProps(name: string, catalog: DesignSystemCatalog): PropSpec[] {
   }
 
   const enumValues = parseEnumValues(doc)
+  const propValues = parsePropValues(doc)
 
   return (propNames ?? []).map((propName): PropSpec => {
     const spec: PropSpec = {
@@ -117,6 +175,11 @@ function buildProps(name: string, catalog: DesignSystemCatalog): PropSpec[] {
     if (values) {
       spec.enumValues = values
     }
+    // An enum beats the value form: `bg="default" // default | primary | dim`
+    // reads as a plain string by shape, and the comment is what says it is a
+    // closed set. Everything else takes the form's answer.
+    const kind = values ? 'enum' : classifyPropValue(propName, propValues.get(propName) ?? '')
+    if (kind) spec.kind = kind
     return spec
   })
 }

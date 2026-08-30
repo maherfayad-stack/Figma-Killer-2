@@ -1,1 +1,1 @@
-export { ControlRow } from './ControlRow'
+export { ControlRow, type ControlRowLayout } from './ControlRow'

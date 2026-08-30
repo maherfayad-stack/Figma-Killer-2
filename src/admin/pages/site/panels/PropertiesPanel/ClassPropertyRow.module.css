@@ -6,9 +6,13 @@
 .propertyRowWrap {
     position: relative;
     color: var(--text);
-    --class-remove-label-column: 100px;
-    --class-remove-row-center: 14px;
-    --class-remove-button-size: 22px;
+    /* Anchors for the hover-revealed remove button. Derived from the shared
+       control-row geometry rather than restated as literals — this file used
+       to carry its own `100px`, which had to be kept in step by hand with the
+       two other copies in ControlRow and LayoutSection. */
+    --class-remove-label-column: var(--control-label-w);
+    --class-remove-row-center: calc(var(--control-row-h) / 2);
+    --class-remove-button-size: 20px;
     --class-remove-fade-width: 36px;
     --class-remove-row-bg: var(--bg-body);
 }
@@ -97,7 +101,7 @@
 }
 
 /* ── Stacked layout (label above control) ─────────────────────────────────
-   The remove button's default anchor is the 100px inline label column, which
+   The remove button's default anchor is the inline label column, which
    doesn't exist in stacked cells. Re-anchor it to the row's top-right corner
    (over the trailing end of the label line) and drop the label-column fade. */
 .propertyRowWrapStacked .removeBtn {
@@ -110,6 +114,14 @@
     display: none;
 }
 
+/* A row whose control carries its own clear affordance — an icon toggle group
+   (click the pressed segment), an empty-to-clear field — gets no overlay
+   button. In a 24px bare cell it would sit on top of the value it removes,
+   and it would be the second way to do the same thing. */
+.propertyRowWrapBare .removeBtn {
+    display: none;
+}
+
 /* ── Track F1 — provenance strip ────────────────────────────────────────
    Shadowed declarations render struck-through rather than hidden; seeing
    WHY a value lost is the entire point. Sits below the control, full row
@@ -118,7 +130,6 @@
     display: flex;
     flex-wrap: wrap;
     gap: var(--space-3xs);
-    padding-left: var(--class-remove-label-column);
     color: var(--text-subtle);
     font-size: var(--text-3xs);
 }

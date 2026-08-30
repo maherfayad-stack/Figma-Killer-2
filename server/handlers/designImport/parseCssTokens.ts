@@ -289,9 +289,11 @@ interface CssCandidateResult {
  * combined map already resolves duplicates by.
  *
  * Dark values are resolved through the MERGED light+dark map (mirrors
- * `tokenExtractCssScan.ts`'s `classifyCssText`) — a dark block typically
- * overrides only some tokens, and a `var()` chain inside it commonly falls
- * back to a light-only definition for the rest.
+ * `tokenExtractCssScan.ts`'s `classifyCssText`, deliberately — the two must
+ * agree) — a dark block typically overrides only some tokens, and a `var()`
+ * chain inside it commonly falls back to a light-only definition for the rest.
+ * Every token is re-resolved under that map, not only the ones the dark block
+ * names, so an alias inherits its palette's dark leaf.
  */
 function buildCssCandidates(cssFiles: ReadonlyArray<{ relPath: string; contents: string }>): CssCandidateResult {
   if (cssFiles.length === 0) return { vars: [], darkByName: new Map() }
@@ -318,9 +320,15 @@ function buildCssCandidates(cssFiles: ReadonlyArray<{ relPath: string; contents:
       value: resolvedLight,
       file: nameToFile.get(name) ?? cssFiles[0]!.relPath,
     })
-    const darkRaw = dark.get(name)
-    if (darkRaw !== undefined) {
-      const resolvedDark = resolveVarValue(darkRaw, darkMerged!)
+    // A token's dark value is what its OWN declaration resolves to under the
+    // dark scope — NOT only what a dark block re-declares for its name. See
+    // `classifyCssText`'s matching comment for the measurement; in short, a
+    // design system's semantic layer is declared once as `var(--raw-token)`
+    // and never repeated in the dark block, so reading only `dark.get(name)`
+    // imported the raw palette's dark values and none of the aliases built on
+    // them — which is every token a page actually references.
+    if (darkMerged) {
+      const resolvedDark = resolveVarValue(dark.get(name) ?? raw, darkMerged)
       if (resolvedDark !== resolvedLight) darkByName.set(bareTokenName(name), resolvedDark)
     }
   }

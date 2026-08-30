@@ -88,3 +88,53 @@
     .clearOverlay {
     opacity: 1;
 }
+
+/* ─── Inspector skin ───────────────────────────────────────────────────────
+ * Opted into by an ancestor carrying `data-field-skin="inspector"` (set once
+ * on the properties-panel root — see `Input.module.css` for the rationale).
+ *
+ * The default track — a 12px-radius bordered pill wrapping the segments — is
+ * right for a two- or three-way switch sitting alone in a form. In an
+ * inspector the group is one cell among a dozen, and the track turns every
+ * enum into a raised object competing with the fields around it. Figma draws
+ * the same control as bare icon buttons on the panel background, with a fill
+ * only on the active one, so a row of toggle groups reads as a row of icons.
+ */
+
+[data-field-skin='inspector'] .group {
+    gap: 0;
+    padding: 0;
+    border-color: transparent;
+    border-radius: var(--inspector-field-radius);
+    background: transparent;
+}
+
+[data-field-skin='inspector'] .group .segment.segment {
+    flex: 0 0 var(--inspector-row-h);
+    min-height: var(--inspector-row-h);
+    width: var(--inspector-row-h);
+    padding: 0;
+    border-radius: var(--inspector-field-radius);
+    color: var(--text-muted);
+}
+
+/* A group carrying text segments (`AG` / `ag` / `Ag`) must not be squeezed to
+ * the square icon width — the letterforms ARE the glyph there. */
+[data-field-skin='inspector'] .fullWidth .segment.segment {
+    flex: 1 1 0;
+    width: auto;
+}
+
+[data-field-skin='inspector'] .group .segment.segment:hover {
+    background: var(--inspector-field-bg-hover);
+    color: var(--text);
+}
+
+[data-field-skin='inspector'] .group .segment.segment[aria-pressed='true'] {
+    background: var(--inspector-field-bg-hover);
+    color: var(--text-bright);
+}
+
+[data-field-skin='inspector'] .group .segment .clearOverlay {
+    border-radius: var(--inspector-field-radius);
+}

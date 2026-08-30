@@ -242,6 +242,17 @@ export function StyleSurface({
   // class was ever consulted before (`usePropertiesPanelData.ts`'s old
   // single-class `activeClass` derivation).
   const classChain = buildClassChain(assignedClassRules, activeContextId)
+
+  /*
+   * Target for the section-header STYLE buttons. This is the one place that
+   * knows both facts a style-apply needs — which node is selected, and what is
+   * already on it — so it is assembled here and threaded down rather than
+   * re-derived from the store inside each menu. `null` in global-selector
+   * mode (no node at all), which is what hides the buttons there.
+   */
+  const styleTarget = nodeId
+    ? { nodeId, assignedClassIds: assignedClassRules.map((rule) => rule.id) }
+    : undefined
   const computedValues = useFrameComputedStyleValues(
     nodeId,
     activeBreakpointId ?? 'desktop',
@@ -323,6 +334,7 @@ export function StyleSurface({
         codeProps={codeProps}
         computedValues={computedValues}
         provenanceByProperty={provenanceByProperty}
+        styleTarget={styleTarget}
       />
     )
   }
@@ -342,6 +354,7 @@ export function StyleSurface({
         styleQuery={styleQuery}
         computedValues={computedValues}
         provenanceByProperty={provenanceByProperty}
+        styleTarget={styleTarget}
       />
     )
   }

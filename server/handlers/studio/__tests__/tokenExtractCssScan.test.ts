@@ -12,7 +12,7 @@
  * either the light or dark map).
  */
 import { describe, expect, it } from 'bun:test'
-import { classifyDesignTokenFamily, collectRootScopeMaps, detectRootFontSizePx, toPx } from '../tokenExtractCssScan'
+import { classifyCssText, classifyDesignTokenFamily, collectRootScopeMaps, detectRootFontSizePx, toPx } from '../tokenExtractCssScan'
 
 describe('collectRootScopeMaps — at-rule descent', () => {
   it('descends into @media (prefers-color-scheme:dark) and classifies a nested :root:not([data-theme=light]) as dark (the real design-system shape)', () => {
@@ -283,5 +283,41 @@ describe('collectRootScopeMaps — regression coverage for behavior this change 
     const css = ':root{--a:#111}:root{--a:#222}'
     const { light } = collectRootScopeMaps(css)
     expect(light.get('--a')).toBe('#222')
+  })
+})
+
+/**
+ * A design system expresses dark mode for its SEMANTIC layer through aliasing:
+ * `--background-base-default: var(--color-light)` is declared once, and only
+ * the raw `--color-light` is re-declared inside the dark block. Reading a dark
+ * value only for names the dark block itself names therefore captured the raw
+ * palette and missed every alias built on it — measured against the real
+ * `@alm-design/design-system`: 27 of 171 colour tokens, none of them ones a
+ * page actually references. Those flattened light literals are emitted by the
+ * framework engine into `@layer user-authored`, which outranks the `@layer
+ * vendor` bucket the package's own `:root[data-theme=dark]` palette lands in —
+ * so a dark preview rendered fully light. See `board-08` in `STATE.md`.
+ */
+describe('classifyCssText — dark values through var() aliases', () => {
+  it('gives an alias the dark value of the palette entry it points at', () => {
+    const css = ':root{--color-light:#FFFFFF;--background-base-default:var(--color-light)}\n:root[data-theme=dark]{--color-light:#1C1C1C}'
+    const { colors } = classifyCssText(css)
+    expect(colors.find((c) => c.name === '--background-base-default')).toEqual({
+      name: '--background-base-default',
+      light: '#FFFFFF',
+      dark: '#1C1C1C',
+    })
+  })
+
+  it('leaves a token whose chain never darkens without a dark value', () => {
+    const css = ':root{--white-static:#FFFFFF;--scrim:var(--white-static)}\n:root[data-theme=dark]{--other:#111}'
+    const { colors } = classifyCssText(css)
+    expect(colors.find((c) => c.name === '--scrim')).toEqual({ name: '--scrim', light: '#FFFFFF' })
+  })
+
+  it('keeps an explicit dark re-declaration winning over the inherited one', () => {
+    const css = ':root{--color-light:#FFFFFF;--surface:var(--color-light)}\n:root[data-theme=dark]{--color-light:#1C1C1C;--surface:#000000}'
+    const { colors } = classifyCssText(css)
+    expect(colors.find((c) => c.name === '--surface')?.dark).toBe('#000000')
   })
 })

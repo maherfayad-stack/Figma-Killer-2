@@ -609,9 +609,31 @@ export function classifyCssText(css: string): ClassifiedTokens {
     const kind = classifyDeclaration(name, resolvedLight)
 
     if (kind === 'color') {
-      const darkRaw = dark.get(name)
-      const resolvedDark = darkRaw !== undefined ? resolveVarValue(darkRaw, darkMerged!) : undefined
-      result.colors.push({ name, light: resolvedLight, ...(resolvedDark !== undefined ? { dark: resolvedDark } : {}) })
+      // A token's dark value is what its OWN declaration resolves to under the
+      // dark scope — NOT only what a dark block re-declares for its name.
+      //
+      // This is the whole reason a design system's semantic layer works: it is
+      // declared once (`--background-base-default: var(--color-light)`) and
+      // never repeated in the dark block, because the RAW palette underneath
+      // it is what flips. Reading only `dark.get(name)` therefore captured the
+      // handful of raw palette entries and missed every semantic alias built
+      // on them — measured on `@alm-design/design-system`: 27 of 226 colour
+      // tokens got a dark value, and none of the ones a page actually uses.
+      // The flattened light literals then shadowed the package's own
+      // `:root[data-theme=dark]` palette (framework CSS is `@layer
+      // user-authored`, which outranks `@layer vendor` regardless of
+      // specificity), so a dark preview rendered fully light.
+      //
+      // `dark.get(name) ?? raw` keeps an explicit dark re-declaration winning
+      // where one exists; otherwise the token's own value is re-resolved
+      // against `darkMerged` (dark entries layered over light), which walks
+      // the alias chain to the palette's dark leaf.
+      const resolvedDark = darkMerged ? resolveVarValue(dark.get(name) ?? raw, darkMerged) : undefined
+      // Only a value that actually CHANGES is a dark value. Without this every
+      // static token (a brand colour, a fixed scrim) would be written out
+      // twice and reported as dark-mode-aware when it is deliberately not.
+      const hasDark = resolvedDark !== undefined && resolvedDark !== resolvedLight
+      result.colors.push({ name, light: resolvedLight, ...(hasDark ? { dark: resolvedDark } : {}) })
       continue
     }
     if (kind === 'spacing') {

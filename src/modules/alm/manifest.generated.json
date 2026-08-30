@@ -9,22 +9,26 @@
         {
           "name": "background",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "boolean"
         },
         {
           "name": "dir",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "icon",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "boolean"
         },
         {
           "name": "label",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "size",
@@ -33,7 +37,8 @@
           "enumValues": [
             "regular",
             "small"
-          ]
+          ],
+          "kind": "enum"
         }
       ]
     },
@@ -50,22 +55,26 @@
           "enumValues": [
             "ltr",
             "rtl"
-          ]
+          ],
+          "kind": "enum"
         },
         {
           "name": "expanded",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "boolean"
         },
         {
           "name": "skeleton",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "boolean"
         },
         {
           "name": "title",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         }
       ]
     },
@@ -83,17 +92,20 @@
         {
           "name": "description",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "dir",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "dismissOnScrim",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "boolean"
         },
         {
           "name": "items",
@@ -103,7 +115,8 @@
         {
           "name": "onClose",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "handler"
         },
         {
           "name": "platform",
@@ -112,12 +125,14 @@
           "enumValues": [
             "ios",
             "android"
-          ]
+          ],
+          "kind": "enum"
         },
         {
           "name": "title",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         }
       ]
     },
@@ -130,12 +145,14 @@
         {
           "name": "actionLabel",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "chevron",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "boolean"
         },
         {
           "name": "dir",
@@ -144,17 +161,20 @@
           "enumValues": [
             "ltr",
             "rtl"
-          ]
+          ],
+          "kind": "enum"
         },
         {
           "name": "imageActionLabel",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "imageSrc",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "layout",
@@ -163,47 +183,56 @@
           "enumValues": [
             "mobile",
             "desktop"
-          ]
+          ],
+          "kind": "enum"
         },
         {
           "name": "logo",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "node"
         },
         {
           "name": "logoSrc",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "onAction",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "handler"
         },
         {
           "name": "onClick",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "handler"
         },
         {
           "name": "onImageAction",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "handler"
         },
         {
           "name": "showAction",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "boolean"
         },
         {
           "name": "showImageAction",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "boolean"
         },
         {
           "name": "showSponsored",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "boolean"
         },
         {
           "name": "size",
@@ -213,27 +242,32 @@
             "mobile",
             "medium",
             "large"
-          ]
+          ],
+          "kind": "enum"
         },
         {
           "name": "skeleton",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "boolean"
         },
         {
           "name": "sponsoredLabel",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "subtitle",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "title",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         }
       ]
     },
@@ -250,7 +284,8 @@
           "enumValues": [
             "en",
             "ar"
-          ]
+          ],
+          "kind": "enum"
         },
         {
           "name": "type",
@@ -260,7 +295,8 @@
             "wordmark",
             "logomark",
             "applogo"
-          ]
+          ],
+          "kind": "enum"
         },
         {
           "name": "variant",
@@ -269,12 +305,14 @@
           "enumValues": [
             "colour",
             "white"
-          ]
+          ],
+          "kind": "enum"
         },
         {
           "name": "width",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "number"
         }
       ]
     },
@@ -310,12 +348,14 @@
         {
           "name": "codeLabel",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "codeText",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "color",
@@ -326,47 +366,56 @@
             "info",
             "promo",
             "featured"
-          ]
+          ],
+          "kind": "enum"
         },
         {
           "name": "dir",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "iconSrc",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "onClose",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "handler"
         },
         {
           "name": "showAction",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "boolean"
         },
         {
           "name": "showDismiss",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "boolean"
         },
         {
           "name": "showVisual",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "boolean"
         },
         {
           "name": "subtitle",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "title",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         }
       ]
     },
@@ -379,47 +428,56 @@
         {
           "name": "actionLabel",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "bookingDetailsLabel",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "fromLabel",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "onAction",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "handler"
         },
         {
           "name": "onBack",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "handler"
         },
         {
           "name": "originalPrice",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "paymentLogo",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "node"
         },
         {
           "name": "paymentMethod",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "price",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "type",
@@ -429,7 +487,8 @@
             "starting-price",
             "funnel",
             "payment"
-          ]
+          ],
+          "kind": "enum"
         }
       ]
     },
@@ -442,22 +501,26 @@
         {
           "name": "actionIcon",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "icon"
         },
         {
           "name": "dir",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "onAction",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "handler"
         },
         {
           "name": "onClose",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "handler"
         },
         {
           "name": "open",
@@ -471,12 +534,14 @@
           "enumValues": [
             "ios",
             "android"
-          ]
+          ],
+          "kind": "enum"
         },
         {
           "name": "search",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "node"
         },
         {
           "name": "size",
@@ -486,17 +551,20 @@
             "medium",
             "small",
             "fullscreen"
-          ]
+          ],
+          "kind": "enum"
         },
         {
           "name": "subtitle",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "title",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         }
       ]
     },
@@ -509,12 +577,14 @@
         {
           "name": "cardArt",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "cardLast4",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "dir",
@@ -523,17 +593,20 @@
           "enumValues": [
             "ltr",
             "rtl"
-          ]
+          ],
+          "kind": "enum"
         },
         {
           "name": "label",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "leadingIcon",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "icon"
         },
         {
           "name": "size",
@@ -543,12 +616,14 @@
             "default",
             "medium",
             "small"
-          ]
+          ],
+          "kind": "enum"
         },
         {
           "name": "trailingIcon",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "icon"
         },
         {
           "name": "variant",
@@ -567,7 +642,8 @@
             "gpay-pay-with",
             "gpay-checkout-with",
             "skeleton"
-          ]
+          ],
+          "kind": "enum"
         }
       ]
     },
@@ -580,17 +656,20 @@
         {
           "name": "dir",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "icon",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "boolean"
         },
         {
           "name": "label",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "size",
@@ -599,7 +678,8 @@
           "enumValues": [
             "regular",
             "small"
-          ]
+          ],
+          "kind": "enum"
         }
       ]
     },
@@ -616,87 +696,104 @@
           "enumValues": [
             "ltr",
             "rtl"
-          ]
+          ],
+          "kind": "enum"
         },
         {
           "name": "icon",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "icon"
         },
         {
           "name": "iconSrc",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "label",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "onStepperChange",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "handler"
         },
         {
           "name": "onToggleChange",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "handler"
         },
         {
           "name": "selected",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "boolean"
         },
         {
           "name": "showSeparator",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "boolean"
         },
         {
           "name": "sideIcon",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "icon"
         },
         {
           "name": "sideIconSrc",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "stepperMax",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "number"
         },
         {
           "name": "stepperMin",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "number"
         },
         {
           "name": "stepperValue",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "number"
         },
         {
           "name": "subtext",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "tag",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "title",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "toggleChecked",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "boolean"
         },
         {
           "name": "trailing",
@@ -707,12 +804,14 @@
             "toggle",
             "stepper",
             "none"
-          ]
+          ],
+          "kind": "enum"
         },
         {
           "name": "value",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "visual",
@@ -723,7 +822,8 @@
             "3d-icon",
             "image",
             "null"
-          ]
+          ],
+          "kind": "enum"
         }
       ]
     },
@@ -736,7 +836,8 @@
         {
           "name": "checked",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "boolean"
         },
         {
           "name": "dir",
@@ -745,32 +846,38 @@
           "enumValues": [
             "ltr",
             "rtl"
-          ]
+          ],
+          "kind": "enum"
         },
         {
           "name": "disabled",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "boolean"
         },
         {
           "name": "error",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "boolean"
         },
         {
           "name": "id",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "onChange",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "handler"
         },
         {
           "name": "skeleton",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "boolean"
         }
       ]
     },
@@ -787,32 +894,38 @@
           "enumValues": [
             "ltr",
             "rtl"
-          ]
+          ],
+          "kind": "enum"
         },
         {
           "name": "dropdown",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "boolean"
         },
         {
           "name": "icon",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "icon"
         },
         {
           "name": "label",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "selected",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "boolean"
         },
         {
           "name": "skeleton",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "boolean"
         },
         {
           "name": "state",
@@ -821,7 +934,8 @@
           "enumValues": [
             "default",
             "error"
-          ]
+          ],
+          "kind": "enum"
         }
       ]
     },
@@ -838,12 +952,14 @@
           "enumValues": [
             "ltr",
             "rtl"
-          ]
+          ],
+          "kind": "enum"
         },
         {
           "name": "label",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "platform",
@@ -852,7 +968,8 @@
           "enumValues": [
             "ios",
             "android"
-          ]
+          ],
+          "kind": "enum"
         },
         {
           "name": "size",
@@ -861,7 +978,8 @@
           "enumValues": [
             "default",
             "large"
-          ]
+          ],
+          "kind": "enum"
         }
       ]
     },
@@ -884,7 +1002,8 @@
         {
           "name": "description",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "destructiveAction",
@@ -898,17 +1017,20 @@
           "enumValues": [
             "ltr",
             "rtl"
-          ]
+          ],
+          "kind": "enum"
         },
         {
           "name": "dismissOnScrim",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "boolean"
         },
         {
           "name": "icon",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "icon"
         },
         {
           "name": "layout",
@@ -917,12 +1039,14 @@
           "enumValues": [
             "stacked",
             "side-by-side"
-          ]
+          ],
+          "kind": "enum"
         },
         {
           "name": "onClose",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "handler"
         },
         {
           "name": "platform",
@@ -931,7 +1055,8 @@
           "enumValues": [
             "ios",
             "android"
-          ]
+          ],
+          "kind": "enum"
         },
         {
           "name": "primaryAction",
@@ -946,7 +1071,8 @@
         {
           "name": "title",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         }
       ]
     },
@@ -959,7 +1085,8 @@
         {
           "name": "collapsedLabel",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "dir",
@@ -968,22 +1095,26 @@
           "enumValues": [
             "ltr",
             "rtl"
-          ]
+          ],
+          "kind": "enum"
         },
         {
           "name": "expanded",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "boolean"
         },
         {
           "name": "expandedLabel",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "onChange",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "handler"
         }
       ]
     },
@@ -996,32 +1127,38 @@
         {
           "name": "appCtaLabel",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "appDescription",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "appLogo",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "node"
         },
         {
           "name": "appTagline",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "appTitle",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "awardsSrc",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "badges",
@@ -1031,7 +1168,8 @@
         {
           "name": "barcodeSrc",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "columns",
@@ -1041,7 +1179,8 @@
         {
           "name": "contactHeading",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "contacts",
@@ -1051,7 +1190,8 @@
         {
           "name": "copyright",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "dir",
@@ -1060,7 +1200,8 @@
           "enumValues": [
             "ltr",
             "rtl"
-          ]
+          ],
+          "kind": "enum"
         },
         {
           "name": "licenses",
@@ -1070,7 +1211,8 @@
         {
           "name": "onAppCta",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "handler"
         },
         {
           "name": "paymentLogos",
@@ -1084,7 +1226,8 @@
           "enumValues": [
             "desktop",
             "pwa"
-          ]
+          ],
+          "kind": "enum"
         },
         {
           "name": "ratings",
@@ -1127,7 +1270,8 @@
             "default",
             "primary",
             "dim"
-          ]
+          ],
+          "kind": "enum"
         },
         {
           "name": "dir",
@@ -1136,27 +1280,32 @@
           "enumValues": [
             "ltr",
             "rtl"
-          ]
+          ],
+          "kind": "enum"
         },
         {
           "name": "icon1",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "icon"
         },
         {
           "name": "icon2",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "icon"
         },
         {
           "name": "label",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "onClick",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "handler"
         },
         {
           "name": "type",
@@ -1169,7 +1318,8 @@
             "1-icon",
             "2-icons",
             "x"
-          ]
+          ],
+          "kind": "enum"
         }
       ]
     },
@@ -1182,7 +1332,8 @@
         {
           "name": "icon",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "icon"
         },
         {
           "name": "size",
@@ -1192,7 +1343,8 @@
             "default",
             "medium",
             "small"
-          ]
+          ],
+          "kind": "enum"
         },
         {
           "name": "variant",
@@ -1203,7 +1355,8 @@
             "secondary",
             "overlay",
             "grey"
-          ]
+          ],
+          "kind": "enum"
         }
       ]
     },
@@ -1220,7 +1373,8 @@
           "enumValues": [
             "ltr",
             "rtl"
-          ]
+          ],
+          "kind": "enum"
         },
         {
           "name": "platform",
@@ -1229,12 +1383,14 @@
           "enumValues": [
             "ios",
             "android"
-          ]
+          ],
+          "kind": "enum"
         },
         {
           "name": "value",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "number"
         }
       ]
     },
@@ -1247,62 +1403,74 @@
         {
           "name": "dir",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "disabled",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "boolean"
         },
         {
           "name": "error",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "boolean"
         },
         {
           "name": "icon",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "icon"
         },
         {
           "name": "id",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "keyValue",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "label",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "name",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "onChange",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "handler"
         },
         {
           "name": "selected",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "boolean"
         },
         {
           "name": "skeleton",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "boolean"
         },
         {
           "name": "tag",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "type",
@@ -1312,7 +1480,8 @@
             "icon",
             "radio",
             "checkbox"
-          ]
+          ],
+          "kind": "enum"
         }
       ]
     },
@@ -1325,12 +1494,14 @@
         {
           "name": "actionLabel",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "buttonDisabled",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "boolean"
         },
         {
           "name": "buttonProps",
@@ -1340,67 +1511,80 @@
         {
           "name": "buttonSize",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "buttonVariant",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "centerTitle",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "dir",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "imageSize",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "imageSrc",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "partnerLogoSrc",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "skeleton",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "boolean"
         },
         {
           "name": "subtitle",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "tag1Label",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "tag2Label",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "tagCount",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "number"
         },
         {
           "name": "title",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "type",
@@ -1410,7 +1594,8 @@
             "solid",
             "gradient-small",
             "gradient-large"
-          ]
+          ],
+          "kind": "enum"
         }
       ]
     },
@@ -1432,7 +1617,8 @@
           "enumValues": [
             "ltr",
             "rtl"
-          ]
+          ],
+          "kind": "enum"
         },
         {
           "name": "platform",
@@ -1441,7 +1627,8 @@
           "enumValues": [
             "ios",
             "android"
-          ]
+          ],
+          "kind": "enum"
         },
         {
           "name": "segmentedControl",
@@ -1456,7 +1643,8 @@
             "default",
             "gradient",
             "overlay"
-          ]
+          ],
+          "kind": "enum"
         },
         {
           "name": "toolbar",
@@ -1474,12 +1662,14 @@
         {
           "name": "currentStep",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "number"
         },
         {
           "name": "steps",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "number"
         }
       ]
     },
@@ -1492,7 +1682,8 @@
         {
           "name": "checked",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "boolean"
         },
         {
           "name": "dir",
@@ -1501,37 +1692,44 @@
           "enumValues": [
             "ltr",
             "rtl"
-          ]
+          ],
+          "kind": "enum"
         },
         {
           "name": "disabled",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "boolean"
         },
         {
           "name": "error",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "boolean"
         },
         {
           "name": "id",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "name",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "onChange",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "handler"
         },
         {
           "name": "skeleton",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "boolean"
         }
       ]
     },
@@ -1548,32 +1746,38 @@
           "enumValues": [
             "ltr",
             "rtl"
-          ]
+          ],
+          "kind": "enum"
         },
         {
           "name": "label",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "onChange",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "handler"
         },
         {
           "name": "onClear",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "handler"
         },
         {
           "name": "onClose",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "handler"
         },
         {
           "name": "placeholder",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "platform",
@@ -1582,12 +1786,14 @@
           "enumValues": [
             "ios",
             "android"
-          ]
+          ],
+          "kind": "enum"
         },
         {
           "name": "showClose",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "boolean"
         },
         {
           "name": "value",
@@ -1609,7 +1815,8 @@
           "enumValues": [
             "ltr",
             "rtl"
-          ]
+          ],
+          "kind": "enum"
         },
         {
           "name": "items",
@@ -1619,7 +1826,8 @@
         {
           "name": "onChange",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "handler"
         },
         {
           "name": "platform",
@@ -1628,12 +1836,14 @@
           "enumValues": [
             "ios",
             "android"
-          ]
+          ],
+          "kind": "enum"
         },
         {
           "name": "value",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "number"
         }
       ]
     },
@@ -1650,12 +1860,14 @@
           "enumValues": [
             "ltr",
             "rtl"
-          ]
+          ],
+          "kind": "enum"
         },
         {
           "name": "label",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "type",
@@ -1664,7 +1876,8 @@
           "enumValues": [
             "cell",
             "section"
-          ]
+          ],
+          "kind": "enum"
         },
         {
           "name": "variant",
@@ -1674,7 +1887,8 @@
             "simple",
             "or",
             "dashed"
-          ]
+          ],
+          "kind": "enum"
         }
       ]
     },
@@ -1691,37 +1905,44 @@
           "enumValues": [
             "ltr",
             "rtl"
-          ]
+          ],
+          "kind": "enum"
         },
         {
           "name": "max",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "number"
         },
         {
           "name": "min",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "number"
         },
         {
           "name": "onChange",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "handler"
         },
         {
           "name": "step",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "number"
         },
         {
           "name": "ticks",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "number"
         },
         {
           "name": "value",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "number"
         }
       ]
     },
@@ -1734,22 +1955,26 @@
         {
           "name": "dir",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "duration",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "number"
         },
         {
           "name": "message",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "onClose",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "handler"
         },
         {
           "name": "show",
@@ -1771,27 +1996,32 @@
           "enumValues": [
             "ltr",
             "rtl"
-          ]
+          ],
+          "kind": "enum"
         },
         {
           "name": "max",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "number"
         },
         {
           "name": "min",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "number"
         },
         {
           "name": "onChange",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "handler"
         },
         {
           "name": "value",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "number"
         }
       ]
     },
@@ -1804,12 +2034,14 @@
         {
           "name": "actionLabel",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "description",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "dir",
@@ -1818,17 +2050,20 @@
           "enumValues": [
             "ltr",
             "rtl"
-          ]
+          ],
+          "kind": "enum"
         },
         {
           "name": "icon",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "boolean"
         },
         {
           "name": "onAction",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "handler"
         },
         {
           "name": "platform",
@@ -1837,22 +2072,26 @@
           "enumValues": [
             "mobile",
             "desktop"
-          ]
+          ],
+          "kind": "enum"
         },
         {
           "name": "skeleton",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "boolean"
         },
         {
           "name": "tag",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "title",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "type",
@@ -1864,7 +2103,8 @@
             "success",
             "caution",
             "error"
-          ]
+          ],
+          "kind": "enum"
         }
       ]
     },
@@ -1881,7 +2121,8 @@
           "enumValues": [
             "ltr",
             "rtl"
-          ]
+          ],
+          "kind": "enum"
         },
         {
           "name": "items",
@@ -1891,7 +2132,8 @@
         {
           "name": "onChange",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "handler"
         },
         {
           "name": "platform",
@@ -1900,12 +2142,14 @@
           "enumValues": [
             "ios",
             "android"
-          ]
+          ],
+          "kind": "enum"
         },
         {
           "name": "value",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "number"
         }
       ]
     },
@@ -1918,17 +2162,20 @@
         {
           "name": "label",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "leadingIcon",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "icon"
         },
         {
           "name": "skeleton",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "boolean"
         },
         {
           "name": "style",
@@ -1937,12 +2184,14 @@
           "enumValues": [
             "tinted",
             "filled"
-          ]
+          ],
+          "kind": "enum"
         },
         {
           "name": "trailingIcon",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "icon"
         },
         {
           "name": "variant",
@@ -1954,7 +2203,8 @@
             "caution",
             "success",
             "neutral"
-          ]
+          ],
+          "kind": "enum"
         }
       ]
     },
@@ -1971,72 +2221,86 @@
           "enumValues": [
             "ltr",
             "rtl"
-          ]
+          ],
+          "kind": "enum"
         },
         {
           "name": "disabled",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "boolean"
         },
         {
           "name": "dropdown",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "boolean"
         },
         {
           "name": "errorText",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "helperText",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "label",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "leadingIcon",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "icon"
         },
         {
           "name": "multiline",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "boolean"
         },
         {
           "name": "onChange",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "handler"
         },
         {
           "name": "onClear",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "handler"
         },
         {
           "name": "password",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "boolean"
         },
         {
           "name": "required",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "boolean"
         },
         {
           "name": "skeleton",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "boolean"
         },
         {
           "name": "trailingIcon",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "icon"
         },
         {
           "name": "value",
@@ -2054,7 +2318,8 @@
         {
           "name": "checked",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "boolean"
         },
         {
           "name": "dir",
@@ -2063,17 +2328,20 @@
           "enumValues": [
             "ltr",
             "rtl"
-          ]
+          ],
+          "kind": "enum"
         },
         {
           "name": "label",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "onChange",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "handler"
         },
         {
           "name": "platform",
@@ -2082,7 +2350,8 @@
           "enumValues": [
             "ios",
             "android"
-          ]
+          ],
+          "kind": "enum"
         },
         {
           "name": "state",
@@ -2092,7 +2361,8 @@
             "default",
             "disabled",
             "skeleton"
-          ]
+          ],
+          "kind": "enum"
         }
       ]
     },
@@ -2110,17 +2380,20 @@
             "center",
             "start",
             "end"
-          ]
+          ],
+          "kind": "enum"
         },
         {
           "name": "content",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "dir",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "position",
@@ -2129,7 +2402,8 @@
           "enumValues": [
             "top",
             "bottom"
-          ]
+          ],
+          "kind": "enum"
         }
       ]
     },
@@ -2142,52 +2416,62 @@
         {
           "name": "accentColor",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "actionLabel",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "dir",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "imageSrc",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "onAction",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "handler"
         },
         {
           "name": "onClose",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "handler"
         },
         {
           "name": "priceLabel",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "priceValue",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "showBottomBar",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "boolean"
         },
         {
           "name": "showDismiss",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "boolean"
         },
         {
           "name": "size",
@@ -2196,17 +2480,20 @@
           "enumValues": [
             "medium",
             "large"
-          ]
+          ],
+          "kind": "enum"
         },
         {
           "name": "subtitle",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         },
         {
           "name": "title",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string"
         }
       ]
     }

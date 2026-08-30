@@ -11,7 +11,7 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import { joinAppRoot, resolveAppRoot } from '../studio/appRoot'
 import { writeStudioMeta } from '../studio/studioMeta'
-import type { ProjectProfile } from '../studio/projectProfileSchema'
+import { PROBE_VERSION, type ProjectProfile } from '../studio/projectProfileSchema'
 
 let tmpDir: string
 
@@ -64,6 +64,9 @@ describe('resolveAppRoot', () => {
   it('reads the CACHED profile.appRoot without re-probing', () => {
     fs.mkdirSync(path.join(tmpDir, 'cached-app'), { recursive: true })
     const cachedProfile = {
+      // Without this the cache is below `PROBE_VERSION`, i.e. provably stale,
+      // and `resolveProjectProfile` correctly re-probes instead of serving it.
+      probeVersion: PROBE_VERSION,
       framework: 'unknown',
       appRoot: 'cached-app',
       pagesDir: 'cached-app/pages',

@@ -75,9 +75,10 @@ const StyleToolchainSchema = Type.Object({
 })
 
 /**
- * WS-10 Phase 1 (§3.1) — how (if at all) this project expresses dark mode in
- * its own CSS. Two real mechanisms exist and the canvas has to handle them
- * differently, so this is a probe result, not a toggle:
+ * WS-10 Phase 1 (§3.1) — how (if at all) this project expresses dark mode,
+ * in its own CSS **or in the design system it installed**. Two real
+ * mechanisms exist and the canvas has to handle them differently, so this is
+ * a probe result, not a toggle:
  *
  *   - `'class'`  — a Tailwind `darkMode: 'class' | 'selector'` config, or a
  *     `.dark` / `[data-theme=…]` / `[data-scheme=…]` selector present in the
@@ -93,11 +94,21 @@ const StyleToolchainSchema = Type.Object({
  *   - `'none'`   — neither was found. The toolbar's dark-mode control renders
  *     disabled with this as the reason (never a silent no-op toggle — WS-10
  *     §7.4 "probe honesty").
+ *
+ * The project's own stylesheets are scanned first and win; an installed
+ * component package's stylesheet is only consulted when the project itself
+ * declares nothing (`colorSchemeDetect.ts` — its module doc explains why a
+ * probe blind to `node_modules` reported `'none'` for every project that gets
+ * its theming from a design system). `source` names the file the mechanism
+ * was actually found in, so "why is this enabled/disabled" always has a
+ * concrete answer rather than an assertion from nowhere.
  */
 const ColorSchemeCapabilitySchema = Type.Object({
   mechanism: Type.Union([Type.Literal('media'), Type.Literal('class'), Type.Literal('none')]),
   /** The exact class/attribute selector detected — only present for `'class'`. */
   selector: Type.Optional(Type.String()),
+  /** The stylesheet (or Tailwind config) the mechanism was found in, relative to the app root — `node_modules/...` when it came from an installed design system. Absent for `'none'`, and for a profile probed before this field existed. */
+  source: Type.Optional(Type.String()),
 })
 export type ColorSchemeCapability = Static<typeof ColorSchemeCapabilitySchema>
 
@@ -167,7 +178,23 @@ const DesignSystemRefSchema = Type.Object({
 })
 export type DesignSystemRef = Static<typeof DesignSystemRefSchema>
 
+/**
+ * The version of the PROBE'S OWN LOGIC that produced a cached profile — bumped
+ * whenever a detector starts finding something it previously could not, so a
+ * profile cached by an older Studio is provably stale rather than merely old.
+ * `resolveProjectProfile` (`projectProbe.ts`) re-probes and heals below this.
+ *
+ * History:
+ *   1 — implicit; every profile written before this field existed.
+ *   2 — `colorSchemeDetect` learned to read an installed design system's own
+ *       stylesheet, so every project themed by its package (rather than by its
+ *       own CSS) had a cached `colorScheme: {mechanism:'none'}` that was wrong.
+ */
+export const PROBE_VERSION = 2
+
 export const ProjectProfileSchema = Type.Object({
+  /** See {@link PROBE_VERSION}. Absent means "written before probe versioning existed" — treated as version 1, i.e. stale. */
+  probeVersion: Type.Optional(Type.Number()),
   framework: FrameworkSchema,
   /**
    * Project-relative POSIX path to the app's own root — the nearest directory

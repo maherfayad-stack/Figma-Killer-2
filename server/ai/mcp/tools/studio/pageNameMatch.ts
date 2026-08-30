@@ -7,9 +7,20 @@
  * screen accepts the name — `"Checkout"`, `"Checkout.tsx"`,
  * `"pages/Checkout.tsx"` and the raw id all resolve to the same frame.
  *
- * Shared by `screenshot.ts` and `compare.ts` so the two cannot drift on what
- * `"AddMobile"` means.
+ * Shared by `screenshot.ts`, `compare.ts`, `qualityCheck.ts` and
+ * `fidelityReport.ts` so none of the four can drift on what `"AddMobile"`
+ * means, or on how many screens one call may name.
  */
+
+/**
+ * The batch ceiling every multi-page Studio tool shares — mirrors
+ * `StudioExportFramesInputSchema`'s own `pageIds` cap (`@core/ai`), the
+ * browser capture path's hard ceiling. `studio_screenshot` established this
+ * shape first (name-resolved, optional, capped, omit-means-every-page up to
+ * the cap); `studio_compare` and `studio_quality_check` reuse it verbatim so
+ * the family has one batching convention, not four.
+ */
+export const MAX_BATCH_PAGES = 20
 
 /**
  * Reduce a caller-supplied name to the form a page id already has.

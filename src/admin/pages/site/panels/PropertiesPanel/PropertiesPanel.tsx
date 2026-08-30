@@ -148,13 +148,8 @@ export function PropertiesPanel({ variant = 'floating' }: PropertiesPanelProps) 
     overrideKeys: data.overrideKeys,
     activeDocument: data.activeDocument,
     activePage: data.activePage,
-    dynamicBindingsEnabled: data.dynamicBindingsEnabled,
-    enclosingLoopSource: data.enclosingLoopSource,
-    enclosingLoopTableId: data.enclosingLoopTableId,
     handleChange: data.handleChange,
     handlePatch: data.handlePatch,
-    onSetDynamicBinding: data.handleSetDynamicBinding,
-    onClearDynamicBinding: data.handleClearDynamicBinding,
   })
 
   return (
@@ -166,6 +161,16 @@ export function PropertiesPanel({ variant = 'floating' }: PropertiesPanelProps) 
       aria-label="Properties"
       tabIndex={-1}
       data-variant={variant}
+      /*
+       * Opts every shared primitive rendered inside this panel into the
+       * inspector field skin — filled 24px rectangles with no resting border,
+       * bare icon toggle groups — instead of the admin's form-shaped pill
+       * outlines. Declared once here rather than threaded as a prop through
+       * the ~40 components between this shell and a leaf `Input`; the skins
+       * themselves live next to the primitives they restyle
+       * (`Input.module.css`, `SegmentedControl.module.css`).
+       */
+      data-field-skin="inspector"
       onKeyDown={handlePropertiesPanelKeyDown}
       onFocus={() => data.setFocusedPanel('properties')}
       onClick={(e) => e.stopPropagation()}

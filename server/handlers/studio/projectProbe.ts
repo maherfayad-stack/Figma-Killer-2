@@ -78,6 +78,7 @@ import { detectStyleToolchain } from './styleToolchainDetect'
 import { mergeStudioMeta, readStudioMeta } from './studioMeta'
 import { detectColorScheme } from './colorSchemeDetect'
 import { detectLocales } from './localeProbe'
+import { PROBE_VERSION } from './projectProfileSchema'
 import type { ProbeWarning, ProjectProfile } from './projectProfileSchema'
 
 // ---------------------------------------------------------------------------
@@ -470,6 +471,7 @@ export function probeProject(dir: string): ProjectProfile {
   const componentPackages = detectComponentPackages(appRootAbs, pkg, warnings)
 
   return {
+    probeVersion: PROBE_VERSION,
     framework: shape.framework,
     appRoot,
     pagesDir,
@@ -483,7 +485,7 @@ export function probeProject(dir: string): ProjectProfile {
     },
     componentPackages,
     designSystems: detectDesignSystems(root, componentPackages, prefixAppRoot),
-    colorScheme: detectColorScheme(appRootAbs),
+    colorScheme: detectColorScheme(appRootAbs, componentPackages),
     aliases: { ...extractTsconfigAliases(appRootAbs), ...extractViteAliases(appRootAbs) },
     warnings,
     ...(pagesDirCandidates ? { pagesDirCandidates } : {}),
@@ -497,8 +499,12 @@ export function probeProject(dir: string): ProjectProfile {
 // ---------------------------------------------------------------------------
 
 /**
- * A cached profile is STALE when it says `node_modules` was missing and
- * `node_modules` is now on disk.
+ * A cached profile is STALE when either:
+ *   - its `probeVersion` is below {@link PROBE_VERSION} — the probe's own
+ *     logic has since learned to find something this profile could not, so it
+ *     is provably wrong rather than merely old (see that constant's history);
+ *     or
+ *   - it says `node_modules` was missing and `node_modules` is now on disk.
  *
  * This is the one detectable way the cache can silently go wrong, and it is
  * the common one: the probe runs at IMPORT time, dependency install runs
@@ -507,18 +513,16 @@ export function probeProject(dir: string): ProjectProfile {
  * version resolved from `node_modules`) was therefore frozen at its
  * pre-install value forever, for every project ever imported.
  *
- * `designSystems` is optional for the SAME reason `colorScheme`/`locales` are
- * (see `ProjectProfileSchema`'s doc) and deliberately does NOT get its own
- * staleness check here: a profile cached before that field existed simply
- * reads as "not yet known", the same posture every other optional-field
- * addition to this schema has taken — consumers (`buildReferenceFiles`)
- * already treat `undefined` as `[]`. Forcing a re-probe on absence would
- * silently discard the "GET serves the cache verbatim" contract this
- * function exists to protect for every OTHER field on the same cached
- * profile; the explicit `POST /probe` re-probe (or the next
- * `dependencies-not-installed` heal) is what picks a newly-added field up
- * for an already-cached project, same as `colorScheme` and `locales` before
- * it.
+ * ADDING a field to the schema is still NOT a staleness reason on its own.
+ * `designSystems` is optional for the same reason `colorScheme`/`locales`
+ * are (see `ProjectProfileSchema`'s doc): a profile cached before that field
+ * existed reads as "not yet known", which consumers (`buildReferenceFiles`)
+ * already treat as `[]`, and forcing a re-probe on mere absence would discard
+ * the "GET serves the cache verbatim" contract for every OTHER field on the
+ * same profile. `probeVersion` is the different case, and the reason it is a
+ * version rather than a presence check: it is bumped only when an EXISTING
+ * field's value is now known to be wrong — a positive statement that this
+ * cache lies, not the passive fact that it predates something.
  *
  * The check is cheap on the fast path: the warning-code scan short-circuits
  * for any profile that was computed WITH dependencies installed (the steady
@@ -531,6 +535,7 @@ export function probeProject(dir: string): ProjectProfile {
  * profile is what we are in the middle of validating.
  */
 function isProfileStale(dir: string, profile: ProjectProfile): boolean {
+  if ((profile.probeVersion ?? 1) < PROBE_VERSION) return true
   if (!profile.warnings.some((w) => w.code === DEPENDENCIES_NOT_INSTALLED)) return false
   const appRootAbs = profile.appRoot ? join(dir, ...profile.appRoot.split('/')) : dir
   return existsSync(join(appRootAbs, 'node_modules'))

@@ -10,15 +10,33 @@
  * the studio MCP family: it is the guide an agent reads to know exactly which
  * source restructure would make a given screen import more faithfully,
  * instead of guessing from a screenshot diff alone.
+ *
+ * ## `pages` (mcp-tooling CHANGE A)
+ *
+ * Name-resolved (`resolveRequestedPages`, same as `studio_screenshot`/
+ * `studio_compare`/`studio_quality_check`) rather than the raw page id the
+ * old singular `pageId` field required — an agent that just wrote
+ * `pages/Checkout.tsx` can say `"Checkout"` here too now, without a prior
+ * `studio_list_pages` round trip.
+ *
+ * Deliberately DOES NOT cap the "omit `pages`" case at `MAX_BATCH_PAGES` the
+ * way the other three batched tools do: this tool's whole point is a
+ * PROJECT-WIDE report, each page's own entry is compact (bounded by
+ * `maxFindingsPerPage`, not by images or captures), and truncating a
+ * 30-screen project's report to the first 20 would silently hide the other
+ * ten from the one tool whose job is to surface exactly this kind of gap. An
+ * EXPLICIT `pages` selection still shares the family's `MAX_BATCH_PAGES` cap.
  */
 import { Type } from '@core/utils/typeboxHelpers'
-import { decodeSourceNodeId } from '@core/page-tree'
+import { decodeSourceNodeId, type Page } from '@core/page-tree'
+import { aiToolError } from '@core/ai'
 import type { AiTool, ToolContext } from '../../../runtime/types'
 import { resolveToolProjectDir } from './resolveToolProjectDir'
 import { resolveProjectProfile } from '../../../../handlers/studio/projectProbe'
 import { loadStudioPages } from '../../../../handlers/studioPageLoad'
 import { PARSER_FIDELITY_CODES, probeWarningToFinding } from './fidelityCodes'
 import { findPhysicalPropertiesOnNode } from './rtlPhysicalPropertyScan'
+import { MAX_BATCH_PAGES, resolveRequestedPages } from './pageNameMatch'
 
 const MAX_FINDINGS_PER_PAGE = 100
 
@@ -72,7 +90,13 @@ const DirInputSchema = Type.Object(
     dir: Type.Optional(
       Type.String({ description: 'Absolute project directory. Defaults to the project currently open in Studio — omit it unless you deliberately mean a DIFFERENT project than the one this conversation is about.' }),
     ),
-    pageId: Type.Optional(Type.String({ description: 'Restrict the report to one page id (from studio_list_pages). Omit for every page.' })),
+    pages: Type.Optional(
+      Type.Array(Type.String({ minLength: 1 }), {
+        maxItems: MAX_BATCH_PAGES,
+        description:
+          'Restrict the report to these screens, by name — "Checkout", "Checkout.tsx", "pages/Checkout.tsx", or a raw page id all work. Omit for EVERY page in the project (no cap — this is a project-wide report, not a capture).',
+      }),
+    ),
     maxFindingsPerPage: Type.Optional(
       Type.Integer({ minimum: 1, maximum: 500, description: 'Cap on findings returned per page. Default 100; excess is summarized in findingCounts.' }),
     ),
@@ -85,12 +109,12 @@ export const studioFidelityReportTool: AiTool = {
   scope: 'shared',
   execution: 'server',
   description:
-    'The machine-readable "what will not import faithfully" report. Per page: a score (nodes/resolved/locked/codeValued) and a findings[] list, each { code, nodeId, file, line, message, fix, impact } — every documented studio-import limitation as a stable, actionable code (see docs/features/studio-import.md "What still does not import"). Also returns projectFindings from the project probe (missing Tailwind config, dependencies not installed, guessed pages dir, …) using the SAME codes studio_project_profile exposes. Call this before doing a visual audit — it tells you WHY a screen looks wrong and what source change would fix it, which a pixel diff alone cannot.',
+    'The machine-readable "what will not import faithfully" report, for one or more screens (or the whole project). Per page: a score (nodes/resolved/locked/codeValued) and a findings[] list, each { code, nodeId, file, line, message, fix, impact } — every documented studio-import limitation as a stable, actionable code (see docs/features/studio-import.md "What still does not import"). Also returns projectFindings from the project probe (missing Tailwind config, dependencies not installed, guessed pages dir, …) using the SAME codes studio_project_profile exposes. Name screens the way you named the files ("Checkout"), pass several at once, or omit `pages` entirely for a project-wide report. Call this before doing a visual audit — it tells you WHY a screen looks wrong and what source change would fix it, which a pixel diff alone cannot.',
   inputSchema: DirInputSchema,
   handler: async (input, ctx: ToolContext) => {
-    const { dir: dirInput, pageId, maxFindingsPerPage } = input as {
+    const { dir: dirInput, pages: pagesInput, maxFindingsPerPage } = input as {
       dir?: string
-      pageId?: string
+      pages?: string[]
       maxFindingsPerPage?: number
     }
     const dir = resolveToolProjectDir(dirInput, ctx)
@@ -100,7 +124,26 @@ export const studioFidelityReportTool: AiTool = {
     const projectFindings = profile.warnings.map(probeWarningToFinding)
 
     const { pages, styleRules } = await loadStudioPages(dir)
-    const targetPages = pageId ? pages.filter((p) => p.id === pageId) : pages
+
+    // Deliberately NOT `resolveRequestedPages`'s own capped-when-omitted
+    // default — see this module's doc for why "omit means every page,
+    // uncapped" is the right shape for a project-wide report specifically.
+    // An EXPLICIT selection still gets the family's shared name resolution
+    // and cap.
+    let targetPages: Page[]
+    let unmatched: string[] = []
+    if (pagesInput && pagesInput.length > 0) {
+      const resolved = resolveRequestedPages(pages, pagesInput, MAX_BATCH_PAGES)
+      unmatched = resolved.unmatched
+      const byId = new Map(pages.map((p) => [p.id, p]))
+      targetPages = resolved.ids.map((id) => byId.get(id)!)
+      if (targetPages.length === 0) {
+        const known = pages.map((p) => p.title).join(', ') || '(no pages found)'
+        return aiToolError(`No screen matched ${unmatched.map((n) => `"${n}"`).join(', ')}. This project has: ${known}.`)
+      }
+    } else {
+      targetPages = pages
+    }
 
     const pageReports = targetPages.map((page) => {
       let resolved = 0
@@ -202,6 +245,6 @@ export const studioFidelityReportTool: AiTool = {
       }
     })
 
-    return { dir, projectFindings, pages: pageReports }
+    return { dir, projectFindings, pages: pageReports, ...(unmatched.length > 0 ? { unmatched } : {}) }
   },
 }

@@ -20,7 +20,63 @@ const FRAME_WAIT_POLL_MS = 16
 // downsizes the long edge to ~1568px before the model ever sees it. So we cap
 // the long edge of the capture here: a tall landing-page screenshot stays under
 // the hard limit AND we never ship more pixels than the model actually uses.
+// Applies ONLY to `purpose: 'vision'` captures (the default) — an image that
+// will actually be looked at by a model. See `MEASUREMENT_MAX_PIXELS` for the
+// separate cap on captures that exist purely to be pixel-diffed.
 const MAX_IMAGE_EDGE = 1568
+
+/**
+ * `purpose: 'measurement'` cap — for a capture that is diffed server-side
+ * with pixelmatch (`studio_compare`) and never necessarily shown to a model.
+ * The vision-safe `MAX_IMAGE_EDGE` clamp has nothing to do with pixel-diff
+ * correctness and was actively harmful here: applied to BOTH width and
+ * height, it silently degraded studio_compare's "exact-pixel" comparison
+ * into an interpolated one for most real mobile screens taller than ~784 CSS
+ * px at 2x (STUDIO-FIGMA-PARITY-PLAN.md A2) — the reference reconciliation's
+ * resample branch was firing on ordinary tall screens, not just genuine size
+ * mismatches.
+ *
+ * Bounded by TOTAL PIXEL COUNT instead of a per-edge clamp, so a moderately
+ * tall/narrow frame (the common mobile case) keeps its full requested
+ * resolution instead of being punished by a symmetric edge limit that has no
+ * relationship to how much memory the capture actually costs.
+ *
+ * Memory reasoning (this must not be able to OOM the tab): `html-to-image`'s
+ * `toCanvas()` paints into an offscreen `<canvas>`, backed by an RGBA
+ * ImageData-shaped buffer — 4 bytes/px — and `canvas.toDataURL('image/png')`
+ * then holds roughly a second same-size buffer while it re-encodes to PNG.
+ * 15,000,000px × 4B × 2 buffers ≈ 120MB of transient, short-lived (freed as
+ * soon as the same task's `await` resolves) canvas memory for a single,
+ * user-triggered, one-at-a-time capture — comfortably inside a modern
+ * browser tab's budget, while still refusing a genuinely unbounded request
+ * (an accidental 3x capture of a 10,000px-tall unrolled page), and with
+ * enough headroom above the concrete case this cap exists for (a 1440×2000
+ * frame at true 2x is 11,520,000px) that the ordinary case is never clamped.
+ *
+ * Deliberately set BELOW `MEASUREMENT_MAX_EDGE²` (~16.8M): if it were set
+ * at or above that figure, the budget could mathematically never be the
+ * binding constraint — whenever both post-scale edges are ≤
+ * `MEASUREMENT_MAX_EDGE`, their product is already ≤ `MEASUREMENT_MAX_EDGE²`,
+ * so a higher budget would just be dead code shadowed by the edge ceiling,
+ * silently degrading back into "a per-edge clamp with a bigger number" —
+ * exactly the shape of cap this mode exists to NOT be.
+ */
+const MEASUREMENT_MAX_PIXELS = 15_000_000
+/**
+ * Hard per-edge ceiling for `purpose: 'measurement'`, independent of the
+ * pixel budget above — protects against a single very elongated axis (e.g. a
+ * narrow but extremely tall scroll-unrolled page) where the total pixel
+ * count stays modest but one dimension alone would exceed what a `<canvas>`
+ * backing store can hold. Individual canvas dimension limits are UA-defined
+ * and vary a lot: Chromium and Gecko permit tens of thousands of px per
+ * edge, but WebKit has historically been far more restrictive (as low as
+ * 4096px on some builds, notably older mobile Safari). This project does not
+ * gate which browser opens the Studio admin, so the ceiling is set at the
+ * well-known cross-engine-safe figure rather than the most permissive one.
+ */
+const MEASUREMENT_MAX_EDGE = 4096
+
+export type CapturePurpose = 'vision' | 'measurement'
 
 interface CaptureRenderSnapshotOptions {
   /** Configured breakpoint id to capture. Defaults to the first canvas frame. */
@@ -43,11 +99,23 @@ interface CaptureRenderSnapshotOptions {
   captureScreenshot?: boolean
   /**
    * Output pixel-density multiplier, e.g. `2` for a retina-equivalent PNG.
-   * Still capped so neither edge exceeds `MAX_IMAGE_EDGE` — a caller asking
-   * for `dpr: 3` on a huge frame gets the same safe cap `site_render_snapshot`
-   * already enforces, not an unbounded image.
+   * Still capped so the capture stays bounded — the SHAPE of the cap depends
+   * on `purpose` (see that field).
    */
   pixelRatio?: number
+  /**
+   * What this capture is FOR — governs which pixel cap applies.
+   *   - `'vision'` (default): the image will be looked at, directly or by a
+   *     model. Capped so neither edge exceeds `MAX_IMAGE_EDGE` (~1568px),
+   *     matching Anthropic's own internal downsize.
+   *   - `'measurement'`: the image exists to be pixel-diffed server-side
+   *     (`studio_compare`) and is not necessarily shown to anyone. Capped by
+   *     total pixel count (`MEASUREMENT_MAX_PIXELS`) plus a much higher hard
+   *     edge ceiling (`MEASUREMENT_MAX_EDGE`), so a tall mobile screen keeps
+   *     its true requested resolution instead of losing exactness to a
+   *     vision-safety limit that does not apply to this path.
+   */
+  purpose?: CapturePurpose
   /** Exact visible or transient frame selected by the browser executor. */
   frame?: HTMLElement
 }
@@ -107,6 +175,7 @@ export async function captureAgentRenderSnapshot({
   nodeId,
   captureScreenshot = true,
   pixelRatio,
+  purpose = 'vision',
   frame: selectedFrame,
 }: CaptureRenderSnapshotOptions = {}): Promise<AgentRenderSnapshotPayload | null> {
   if (typeof document === 'undefined') return null
@@ -143,7 +212,7 @@ export async function captureAgentRenderSnapshot({
 
   const layout = collectLayoutReport(root, captureRegion, resolvedBreakpointId, nodeId)
   const screenshot = captureScreenshot
-    ? await captureElementScreenshot(root, captureRegion, documentRegion, pixelRatio)
+    ? await captureElementScreenshot(root, captureRegion, documentRegion, pixelRatio, purpose)
     : unavailableScreenshot('Screenshot capture not requested.')
 
   return {
@@ -402,6 +471,7 @@ async function captureElementScreenshot(
   captureRegion: CaptureRegion,
   documentRegion: CaptureRegion,
   pixelRatioOverride?: number,
+  purpose: CapturePurpose = 'vision',
 ): Promise<AgentScreenshotContext> {
   try {
     const { toCanvas } = await import('html-to-image')
@@ -409,16 +479,24 @@ async function captureElementScreenshot(
       return unavailableScreenshot('Captured element has no visible size.')
     }
 
-    // Cap BOTH dimensions at MAX_IMAGE_EDGE (never upscale past 1:1, even when
-    // a caller asks for a higher `pixelRatioOverride` — e.g. `studio_export_frames`
-    // requesting `dpr: 2` on an already-large frame). A tall page is
-    // constrained by its height; a wide one by its width.
+    // Never upscale past 1:1, even when a caller asks for a higher
+    // `pixelRatioOverride` (e.g. `studio_export_frames` requesting `dpr: 2`
+    // on an already-large frame). WHICH cap applies depends on `purpose` —
+    // see `MAX_IMAGE_EDGE` and `MEASUREMENT_MAX_PIXELS`'s own docs for why
+    // these are two genuinely different bounds, not one constant reused.
     const requestedRatio = pixelRatioOverride && pixelRatioOverride > 0 ? pixelRatioOverride : 1
-    const pixelRatio = Math.min(
-      requestedRatio,
-      MAX_IMAGE_EDGE / Math.max(1, captureRegion.width),
-      MAX_IMAGE_EDGE / Math.max(1, captureRegion.height),
-    )
+    const pixelRatio = purpose === 'measurement'
+      ? Math.min(
+          requestedRatio,
+          MEASUREMENT_MAX_EDGE / Math.max(1, captureRegion.width),
+          MEASUREMENT_MAX_EDGE / Math.max(1, captureRegion.height),
+          Math.sqrt(MEASUREMENT_MAX_PIXELS / Math.max(1, captureRegion.width * captureRegion.height)),
+        )
+      : Math.min(
+          requestedRatio,
+          MAX_IMAGE_EDGE / Math.max(1, captureRegion.width),
+          MAX_IMAGE_EDGE / Math.max(1, captureRegion.height),
+        )
 
     // Always rasterise the iframe document element. A node on its own has no
     // ancestor painting context, while a cloned body omits the <html>/viewport

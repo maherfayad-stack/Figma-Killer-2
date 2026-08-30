@@ -3,7 +3,8 @@
  * browser's lean `StudioAgentSnapshot` (board/selection/axes ids only) into
  * the rich, bounded facts the dynamic suffix reports: board frame titles,
  * the active page's file + root, the selected node's editable-vs-locked
- * facts, a fidelity digest, install status, and the staleness warning.
+ * facts, a fidelity digest, install status, a capability digest (see
+ * `StudioCapabilityDigest` below), and the staleness warning.
  *
  * **Cost discipline (trap #11 — never walk every page's nodes):**
  * `loadStudioPages(dir)` is called exactly ONCE per turn, and IS mtime-cache-
@@ -15,12 +16,25 @@
  *   - the fidelity digest and the selected-node lookup walk the ACTIVE
  *     PAGE's nodes only — one page, never the whole project.
  * No other page's node map is ever touched.
+ *
+ * **The capability digest adds no new caching story.** Every probe it runs
+ * (`probeFigmaConnectorStatus`, `probeTypecheckAvailability`) is a handful of
+ * synchronous, small-file disk reads (`.studio/meta.json`, an optional
+ * `.mcp.json`, an `existsSync` check) — the same cost class `probeInstallStatus`
+ * already pays fresh on every turn, uncached, a few lines above it. Nothing
+ * here spawns a subprocess or makes a network call.
  */
 import type { Page } from '@core/page-tree'
 import { loadStudioPages } from '../../../handlers/studioPageLoad'
 import { probeInstallStatus } from '../../../handlers/studio/installDeps'
 import { listDesignReferences } from '../../../handlers/studio/designReferenceStore'
 import { resolvePageSourceFile } from '../../../handlers/studio/pageSourceFile'
+import { readStudioMeta } from '../../../handlers/studio/studioMeta'
+import { resolveProjectTscPath } from '../../../handlers/studio/typecheck'
+import { loopbackAssetFetchEnabled } from '../../../handlers/studio/remoteAssetFetch'
+import { listProjectMcpServers } from '../../drivers/projectMcpServers'
+import { listRegisteredMcpServers } from '../../drivers/registeredMcpServers'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { studioSnapshotStaleness, STALE_NODE_IDS_WARNING, type StalenessTracker } from './staleness'
 import type { StudioAgentSnapshot } from './snapshot'
@@ -57,6 +71,158 @@ export interface StudioLiveDigest {
   }>
   /** Set when the active page's source file changed since this conversation's last turn — see `staleness.ts`. */
   readonly staleWarning: string | null
+  /**
+   * The agent's own environment limits, stated as facts — see
+   * `StudioCapabilityDigest`'s own doc comment for why this exists and the
+   * asymmetric rendering it drives (`buildCapabilityDigestLines` in
+   * `systemPrompt.ts`).
+   */
+  readonly capabilities: StudioCapabilityDigest
+}
+
+/**
+ * Whether a figma-named MCP server is CONFIGURED (declared + approved) for
+ * this turn — never whether it will actually respond. `'unknown'` is the
+ * honest degrade when the cheap, synchronous probes below throw (they are
+ * documented never to, but this field still never claims a status it did not
+ * actually check — see the module's "Honest" design goal).
+ */
+export type FigmaConnectorStatus = 'configured' | 'not-configured' | 'unknown'
+
+/**
+ * Why `studio_typecheck` would refuse or fail before even running `tsc` —
+ * mirrors (never duplicates) the SAME resolution `runProjectTypecheck`
+ * (`handlers/studio/typecheck.ts`) and its caller (`mcp/tools/studio/
+ * typecheck.ts`) already perform: `resolveProjectTscPath` is imported and
+ * called directly, not reimplemented; the `trust`/`tsconfig.json` checks
+ * mirror those two files' own one-line short-circuits exactly, because
+ * running the actual `tsc --noEmit` here (up to `TYPECHECK_TIMEOUT_MS`, i.e.
+ * up to two minutes) on every turn would violate the "cheap" and
+ * "non-blocking" goals this digest exists to uphold — this reports whether
+ * the CALL would even be attempted, never whether the code currently
+ * compiles.
+ */
+export type TypecheckAvailability =
+  | { readonly available: true }
+  | { readonly available: false; readonly reason: 'trust-tier' | 'no-tsconfig' | 'typescript-not-installed' | 'unknown' }
+
+/**
+ * Environment limits the agent would otherwise only discover by calling a
+ * tool and reading its failure — the same argument that justified
+ * `designReferences` above, generalized (WS-9 mcp-tooling task). Two
+ * capabilities, both cheap, synchronous, disk-only probes (no subprocess, no
+ * network call, no `tsc` invocation):
+ *
+ *   - `figma`: is a `figma`-named MCP server configured for this project?
+ *     Checked from BOTH sources that can put one in this turn's merged
+ *     `--mcp-config` (`claudeCli.ts`'s `buildMcpConfig`): a project's own
+ *     approved `.mcp.json` entry (`listProjectMcpServers`,
+ *     `projectMcpServers.ts`) and Studio's self-approving loopback built-in
+ *     (`listRegisteredMcpServers`, `registeredMcpServers.ts` — present by
+ *     default unless the project explicitly disabled it). Reachability is
+ *     deliberately NOT probed: `registeredMcpServers.ts`'s own doc comment
+ *     states the built-in's URL is never checked ("probing on every turn
+ *     would add latency to buy a guess that is stale the moment it is
+ *     made") — this field reports CONFIGURATION, not a live connection, and
+ *     the prompt's wording (`systemPrompt.ts`) says so rather than promising
+ *     more than was checked.
+ *   - `typecheck`: would `studio_typecheck` even run, before it runs `tsc`?
+ *     See `TypecheckAvailability` above.
+ *
+ * Deliberately excluded because the digest already reports it elsewhere
+ * (never duplicated): project trust tier is on the dynamic suffix's
+ * `Project: ... trust: …` line (`studioPromptContextFromProfile`), and
+ * dependency-install status is `StudioLiveDigest.install` above — this
+ * struct only adds derived, ACTIONABLE facts those two don't already state.
+ */
+export interface StudioCapabilityDigest {
+  readonly figma: {
+    readonly status: FigmaConnectorStatus
+    /**
+     * Only meaningful when `status === 'configured'`: whether
+     * `studio_fetch_remote_asset`/registering a reference by URL from that
+     * connector would be blocked because it resolves to a loopback address
+     * (`registeredMcpServers.ts`'s built-in always does; a project-declared
+     * `.mcp.json` entry might) and `STUDIO_ALLOW_LOOPBACK_ASSET_FETCH`
+     * (`remoteAssetFetch.ts`) is not set. Always `false` when `status` is
+     * not `'configured'` — there is no connector to fetch assets from at
+     * all in that case, which the `figma` line's own wording already covers.
+     */
+    readonly loopbackAssetFetchBlocked: boolean
+  }
+  readonly typecheck: TypecheckAvailability
+}
+
+/** `true` for a URL whose hostname resolves to loopback ONLY — used here purely to word the digest line correctly, never as a security boundary (that check lives in `remoteAssetFetch.ts`/`ssrfGuard.ts` and is unaffected by anything in this file). */
+function isLoopbackUrl(raw: string): boolean {
+  try {
+    const hostname = new URL(raw).hostname
+    return hostname === '127.0.0.1' || hostname === 'localhost' || hostname === '::1' || hostname === '[::1]'
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Never throws (wrapped defensively even though every function it calls is
+ * separately documented never to) — a probe failure degrades to `'unknown'`
+ * rather than aborting the digest or the turn.
+ */
+function probeFigmaConnectorStatus(dir: string): StudioCapabilityDigest['figma'] {
+  try {
+    const projectDeclared = listProjectMcpServers(dir).find((s) => s.name === 'figma')
+    const registered = listRegisteredMcpServers(dir).find((s) => s.name === 'figma')
+    // Registered (built-in or a user override of the same name) wins on a
+    // collision — the same precedence `buildMcpConfig` applies when merging
+    // the two into one `--mcp-config` (project servers spread first,
+    // registered servers spread after, so registered overwrites on a name
+    // collision).
+    const approved = registered?.approved ? registered : projectDeclared?.approved ? projectDeclared : null
+    if (!approved) return { status: 'not-configured', loopbackAssetFetchBlocked: false }
+    const url = 'url' in approved.definition ? approved.definition.url : null
+    const loopback = url !== null && isLoopbackUrl(url)
+    return { status: 'configured', loopbackAssetFetchBlocked: loopback && !loopbackAssetFetchEnabled() }
+  } catch (err) {
+    console.error('[ai/liveDigest] figma connector probe failed — degrading to unknown:', err)
+    return { status: 'unknown', loopbackAssetFetchBlocked: false }
+  }
+}
+
+/**
+ * Never throws. Mirrors `runProjectTypecheck`'s own short-circuits
+ * (`no-tsconfig`, `typescript-not-installed`) plus the trust-tier refusal
+ * `mcp/tools/studio/typecheck.ts` applies BEFORE calling it — see
+ * `TypecheckAvailability`'s doc comment for why this never actually spawns
+ * `tsc`.
+ */
+function probeTypecheckAvailability(dir: string): TypecheckAvailability {
+  try {
+    const trust = readStudioMeta(dir).trust ?? 'static'
+    if (trust === 'static') return { available: false, reason: 'trust-tier' }
+    if (!existsSync(join(dir, 'tsconfig.json'))) return { available: false, reason: 'no-tsconfig' }
+    if (!resolveProjectTscPath(dir)) return { available: false, reason: 'typescript-not-installed' }
+    return { available: true }
+  } catch (err) {
+    console.error('[ai/liveDigest] typecheck availability probe failed — degrading to unknown:', err)
+    return { available: false, reason: 'unknown' }
+  }
+}
+
+/**
+ * Both capability probes together — exported on its own (not just inlined
+ * into `buildStudioLiveDigest`) so it is independently testable without
+ * depending on `loadStudioPages` succeeding first: `buildStudioLiveDigest`
+ * calls `loadStudioPages(dir)` BEFORE this, and that call resolves the
+ * project's pages directory through the SAME `readStudioMeta(dir)` these
+ * probes read — a fixture built to make `readStudioMeta` throw (to exercise
+ * the 'unknown' degrade below) would otherwise never reach this function at
+ * all under the full pipeline.
+ */
+export function buildStudioCapabilityDigest(dir: string): StudioCapabilityDigest {
+  return {
+    figma: probeFigmaConnectorStatus(dir),
+    typecheck: probeTypecheckAvailability(dir),
+  }
 }
 
 export interface BuildStudioLiveDigestOptions {
@@ -149,6 +315,7 @@ export async function buildStudioLiveDigest(
       ...(r.label ? { label: r.label } : {}),
     })),
     staleWarning,
+    capabilities: buildStudioCapabilityDigest(dir),
   }
 }
 

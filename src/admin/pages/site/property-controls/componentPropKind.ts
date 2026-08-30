@@ -64,17 +64,75 @@ export const LocalComponentSpecSchema = Type.Object({
 export type LocalComponentSpec = Static<typeof LocalComponentSpecSchema>
 
 /**
+ * Props the CANVAS owns on a design-system component — never the panel, and
+ * never a per-node value.
+ *
+ * `dir` is the whole set. A design system resolves direction through a
+ * `useDir(prop)`-shaped hook — explicit prop > provider > a built-in `'ltr'`
+ * — and both registration paths wrap every component they render in the
+ * package's own provider, fed the FRAME's preview direction
+ * (`useFramePreviewAxes`). Leaving `dir` in the editable prop surface meant
+ * the manifest's own enum default (`values[0]`, i.e. `'ltr'`) was stamped
+ * onto every inserted component, and an explicit prop outranks the provider
+ * — so the board's RTL toggle was defeated by a value nobody chose, on every
+ * component that documents a `dir` prop.
+ *
+ * This rule applies ONLY to the two design-system registration paths
+ * (`src/modules/alm/register.tsx`, `registerProjectModules.ts`), because they
+ * are the two that actually supply the value from the provider. A LOCAL
+ * component's call site (`componentCallSiteRows.ts`) is deliberately NOT
+ * filtered: Studio wraps no provider around it, so hiding its `dir` row would
+ * remove a control with nothing left to drive it.
+ */
+export const CANVAS_DRIVEN_PROPS: ReadonlySet<string> = new Set(['dir'])
+
+export function isCanvasDrivenProp(name: string): boolean {
+  return CANVAS_DRIVEN_PROPS.has(name)
+}
+
+/**
+ * Drops every {@link CANVAS_DRIVEN_PROPS} entry from a node's props before
+ * they reach the design-system component, returning the SAME object when
+ * there is nothing to drop (the overwhelmingly common case — one allocation
+ * per render is not worth spending on every node).
+ *
+ * Stripping at render time is what makes the rule hold for props the schema
+ * never produced: a `dir="ltr"` literal already sitting in the user's source,
+ * or one stamped by an older Studio build, arrives on the node regardless of
+ * what the panel offers. The source file is left untouched — this is a
+ * PREVIEW decision, and the board's direction axis is what a direction
+ * preview means.
+ */
+export function stripCanvasDrivenProps(props: Record<string, unknown>): Record<string, unknown> {
+  let stripped: Record<string, unknown> | undefined
+  for (const name of CANVAS_DRIVEN_PROPS) {
+    if (!(name in props)) continue
+    stripped ??= { ...props }
+    delete stripped[name]
+  }
+  return stripped ?? props
+}
+
+/**
  * The ONE `PropKind -> PropertyControl` mapping — moved verbatim from
  * `registerProjectModules.ts`'s private `controlForKind`, behaviour
- * unchanged (same case order, same >= 2 values guard on `enum`, same
- * `string`/`unknown`/default fallthrough to `text`). `handler`-kind props
- * are dropped before they ever reach a `PropSpec` array
- * (`componentSpecExtract.ts`'s own "dropped, never stubbed" rule, mirrored
- * server-side for the package-bundle path too) — no case here needs to
- * special-case it, same as the original.
+ * unchanged for every value-carrying kind (same case order, same >= 2 values
+ * guard on `enum`, same `string`/`unknown`/default fallthrough to `text`).
+ *
+ * `handler` is the one case that returns NO control. A callback is not a
+ * value a text box can produce, and writing one back would put a string where
+ * the component expects a function. The rule lives here rather than in each
+ * caller's own filter because this is the single place that decides what a
+ * prop's editor is — `componentSpecExtract.ts` drops handlers server-side for
+ * the local-component and package-bundle paths, but a design-system manifest
+ * generated from a package's own docs (`buildDesignSystemManifest.ts`) does
+ * record them, and that path deserves the same answer rather than a second
+ * copy of the rule.
  */
 export function controlForPropKind(name: string, kind: PropKind): PropertyControl | undefined {
   switch (kind.kind) {
+    case 'handler':
+      return undefined
     case 'enum':
       return kind.values.length >= 2
         ? { type: 'select', label: name, options: kind.values.map((v) => ({ label: v, value: v })) }

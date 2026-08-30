@@ -8,7 +8,7 @@
   margin-inline: auto;
   padding-bottom: var(--spacing-400, 2rem);
   background: var(--background-base-default);
-  color: var(--text-primary-default);
+  color: var(--text-base-default);
   min-height: 100%;
 }
 
@@ -28,5 +28,5 @@
 .heading {
   margin: 0;
   font: var(--font-title-2-emphasized, 600 1.125rem/1.3 system-ui);
-  color: var(--text-primary-default);
+  color: var(--text-base-default);
 }

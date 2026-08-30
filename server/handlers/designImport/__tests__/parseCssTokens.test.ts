@@ -305,6 +305,29 @@ describe('buildTokenCandidates', () => {
       expect(brand).toMatchObject({ value: '#fff', dark: '#000' })
     })
 
+    // The shape that made a whole design system's dark mode invisible: a
+    // semantic token is declared ONCE, as an alias, and the raw palette
+    // underneath it is what the dark block flips. Reading only the names the
+    // dark block re-declares imported 27 of `@alm-design/design-system`'s 171
+    // colour tokens and none of the semantic ones a page references — so the
+    // imported (light) literals shadowed the package's own dark palette and a
+    // dark preview rendered fully light.
+    it('inherits a dark value through a var() alias the dark block never re-declares', () => {
+      const css = `:root{--color-light:#FFFFFF;--background-base-default:var(--color-light)}\n:root[data-theme=dark]{--color-light:#1C1C1C}`
+      const result = buildTokenCandidates([{ relPath: 'a.css', contents: css }])
+      expect(result.colors.find((c) => c.name === 'color-light')).toMatchObject({ value: '#FFFFFF', dark: '#1C1C1C' })
+      expect(result.colors.find((c) => c.name === 'background-base-default')).toMatchObject({
+        value: '#FFFFFF',
+        dark: '#1C1C1C',
+      })
+    })
+
+    it('still omits `dark` for an alias whose whole chain is light-only', () => {
+      const css = `:root{--static-white:#FFFFFF;--scrim:var(--static-white)}\n:root[data-theme=dark]{--other:#111}`
+      const result = buildTokenCandidates([{ relPath: 'a.css', contents: css }])
+      expect(result.colors.find((c) => c.name === 'scrim')).not.toHaveProperty('dark')
+    })
+
     it('does not attach a dark value to a candidate whose winning value came from a later JSON/JS token file, not CSS', () => {
       const cssFiles = [{ relPath: 'a.css', contents: `:root{--brand:#fff}\n:root[data-theme=dark]{--brand:#111}` }]
       const tokenFiles = [{ relPath: 'tokens.json', contents: JSON.stringify({ brand: '#abc' }) }]

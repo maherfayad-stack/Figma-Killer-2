@@ -89,9 +89,9 @@ import { applyIframeBodyReset, type IframeInteraction } from './iframeBodyReset'
 import { isCanvasSpacePanActive, setCanvasSpacePanActive, shouldStartCanvasPointerPan } from './canvasPanInput'
 import { useEditorStore } from '@site/store/store'
 import { closestReadonlyRegion, isElementLike } from './readonlyRegion'
-import { CanvasDocumentContext, CanvasFrameElementContext } from './CanvasContexts'
 import styles from './IframeFrameSurface.module.css'
 import { IFRAME_SRC_DOC, claimIframeSrcDocument } from './iframeSrcDocument'
+import { CanvasFrameContexts } from './CanvasFrameContexts'
 import { useApplyPreviewAxes } from './previewAxesFrameEffect'
 import type { PreviewAxes } from '@core/studio-board'
 
@@ -207,7 +207,7 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
     // WS-10 — direction/color-scheme, an attribute effect (never `srcDoc`/a
     // `key` — see `previewAxesFrameEffect.ts`). `axesOverride` (Phase 2) is a
     // per-frame override merged onto the board-global axes inside the hook.
-    useApplyPreviewAxes(iframeDoc, axesOverride)
+    const frameAxes = useApplyPreviewAxes(iframeDoc, axesOverride)
 
     // Bridge the iframe handle out to the parent (selection overlay reads
     // `iframeElement` to translate inside-iframe rects into editor coordinates).
@@ -648,6 +648,8 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
           // internally, so they take 100% in both axes.
           style={isLive ? { ...style, width: '100%', height: '100%' } : { ...style, width: `${width}px` }}
           title={`Canvas frame for ${breakpointId}`}
+          // Paper follows the PREVIEWED scheme — see `--canvas-frame-paper`.
+          data-preview-scheme={frameAxes.colorScheme}
           {...dataAttrSpread}
           // Allow the same-origin policy so the parent can read/write the
           // iframe's document. `allow-scripts` so authored script modules
@@ -655,43 +657,41 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
         />
         {iframeDoc &&
           createPortal(
-            <CanvasFrameElementContext.Provider value={iframeRef.current}>
-              <CanvasDocumentContext.Provider value={iframeDoc}>
-                {/* Editor-chrome stylesheet — UNLAYERED so it beats every other bucket */}
-                <EditorChromeInjector targetDocument={iframeDoc} parentDocument={document} />
-                {/* Design frames only: selection/hover rings + the node-name badge
-                    render INSIDE this document (WS-5.1) so they track the element
-                    with zero zoom/pan conversion. See its own docblock. */}
-                {!isLive && !isCapture && (
-                  <CanvasSelectionOverlayInjector
-                    targetDocument={iframeDoc}
-                    parentDocument={document}
-                    onRootReady={setOverlayRoot}
-                  />
-                )}
-                {/* Vendor package CSS (Alm design-system + the open project's own
-                    bare-specifier package CSS) — read-only, @layer vendor,
-                    ordered below @layer user-authored. See canvasCssLayers.ts. */}
-                <ProjectCssInjector targetDocument={iframeDoc} />
-                {/* Design frames only: animations play once and hold their last
-                    keyframe, so an imported app's infinite shimmers/spinners
-                    don't run forever behind the selection ring. Live mode is a
-                    visitor preview, so it keeps the real motion. */}
-                {!isLive && <CanvasAnimationInjector targetDocument={iframeDoc} />}
-                {/* Design frames only: internal scroll regions (a flex:1
-                    overflow:auto app shell) become content-sized so the whole
-                    screen is visible instead of a scrollable box. Live mode
-                    scrolls natively and keeps the app's own clipping. */}
-                {!isLive && <CanvasScrollUnrollInjector targetDocument={iframeDoc} />}
-                {/* Author CSS — both wrapped in @layer user-authored inside the injectors */}
-                <ClassStyleInjector targetDocument={iframeDoc} viewport={viewport} />
-                <UserStylesheetInjector targetDocument={iframeDoc} viewport={viewport} />
-                {children}
-                {/* Runtime scripts (opt-in) run against the node tree mounted
-                    above. Empty list = no-op, so this is safe to always mount. */}
-                <RuntimeScriptInjector targetDocument={iframeDoc} scripts={runtimeScripts ?? EMPTY_RUNTIME_SCRIPTS} />
-              </CanvasDocumentContext.Provider>
-            </CanvasFrameElementContext.Provider>,
+            <CanvasFrameContexts frameElement={iframeRef.current} frameDocument={iframeDoc} axes={frameAxes}>
+              {/* Editor-chrome stylesheet — UNLAYERED so it beats every other bucket */}
+              <EditorChromeInjector targetDocument={iframeDoc} parentDocument={document} />
+              {/* Design frames only: selection/hover rings + the node-name badge
+                  render INSIDE this document (WS-5.1) so they track the element
+                  with zero zoom/pan conversion. See its own docblock. */}
+              {!isLive && !isCapture && (
+                <CanvasSelectionOverlayInjector
+                  targetDocument={iframeDoc}
+                  parentDocument={document}
+                  onRootReady={setOverlayRoot}
+                />
+              )}
+              {/* Vendor package CSS (Alm design-system + the open project's own
+                  bare-specifier package CSS) — read-only, @layer vendor,
+                  ordered below @layer user-authored. See canvasCssLayers.ts. */}
+              <ProjectCssInjector targetDocument={iframeDoc} />
+              {/* Design frames only: animations play once and hold their last
+                  keyframe, so an imported app's infinite shimmers/spinners
+                  don't run forever behind the selection ring. Live mode is a
+                  visitor preview, so it keeps the real motion. */}
+              {!isLive && <CanvasAnimationInjector targetDocument={iframeDoc} />}
+              {/* Design frames only: internal scroll regions (a flex:1
+                  overflow:auto app shell) become content-sized so the whole
+                  screen is visible instead of a scrollable box. Live mode
+                  scrolls natively and keeps the app's own clipping. */}
+              {!isLive && <CanvasScrollUnrollInjector targetDocument={iframeDoc} />}
+              {/* Author CSS — both wrapped in @layer user-authored inside the injectors */}
+              <ClassStyleInjector targetDocument={iframeDoc} viewport={viewport} />
+              <UserStylesheetInjector targetDocument={iframeDoc} viewport={viewport} />
+              {children}
+              {/* Runtime scripts (opt-in) run against the node tree mounted
+                  above. Empty list = no-op, so this is safe to always mount. */}
+              <RuntimeScriptInjector targetDocument={iframeDoc} scripts={runtimeScripts ?? EMPTY_RUNTIME_SCRIPTS} />
+            </CanvasFrameContexts>,
             iframeDoc.body,
           )}
       </>

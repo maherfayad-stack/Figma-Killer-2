@@ -57,6 +57,11 @@ export function SelectControl({
     >
       <Select
         id={`ctrl-${propKey}`}
+        /* Named unconditionally, exactly as TextControl and ColorControl do.
+           A `bare` row draws no `<label for>` at all — that is the whole point
+           of a value like `border-box` that names itself — and without this
+           the combobox reaches assistive tech with no name whatsoever. */
+        aria-label={label ?? propKey}
         value={String(value ?? '')}
         placeholder={placeholder}
         disabled={disabled}

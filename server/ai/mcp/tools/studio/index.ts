@@ -9,6 +9,7 @@ import { studioExportMcpTools } from './exportFrames'
 import { studioReferenceMcpTools } from './referenceRender'
 import { studioDiffMcpTools } from './diffFrames'
 import { studioDesignReferenceMcpTools } from './designReferenceTools'
+import { studioDesignVariableMcpTools } from './designVariableTools'
 import { studioBrowserBridgeMcpTools } from './browserBridgeTools'
 import { studioPackageDocMcpTools } from './packageDocTools'
 import { studioFrameworkTokenMcpTools } from './frameworkTokenTools'
@@ -20,12 +21,14 @@ import { studioCompareMcpTools } from './compare'
 import { studioMeasureReferenceMcpTools } from './measureReference'
 import { studioExtractReferenceAssetMcpTools } from './extractReferenceAsset'
 import { studioQualityCheckMcpTools } from './qualityCheck'
+import { studioTypecheckMcpTools } from './typecheck'
 
 export const studioMcpTools: AiTool[] = [
   studioScreenshotTool,
   ...studioCompareMcpTools,
   ...studioMeasureReferenceMcpTools,
   ...studioQualityCheckMcpTools,
+  ...studioTypecheckMcpTools,
   ...studioExtractReferenceAssetMcpTools,
   ...studioProjectMcpTools,
   ...studioEditMcpTools,
@@ -34,6 +37,7 @@ export const studioMcpTools: AiTool[] = [
   ...studioReferenceMcpTools,
   ...studioDiffMcpTools,
   ...studioDesignReferenceMcpTools,
+  ...studioDesignVariableMcpTools,
   ...studioBrowserBridgeMcpTools,
   ...studioPackageDocMcpTools,
   ...studioFrameworkTokenMcpTools,

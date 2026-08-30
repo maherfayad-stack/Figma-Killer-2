@@ -161,6 +161,9 @@ describe('SlotControl', () => {
       nodeId: owner.id,
       propName: 'icon',
       node: { name: 'Icon', importSpecifier: '../components/Icon' },
+      // An EMPTY slot's "Add" appends — there is nothing to replace. The
+      // "Replace" affordance only exists once the slot is filled.
+      mode: 'append',
     })
   })
 })

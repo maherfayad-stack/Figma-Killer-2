@@ -4,7 +4,7 @@
  * Styles are now in controls.module.css — imported per-component.
  * This file only exports TypeScript interfaces.
  */
-import type { PropertyControlLayout } from '@core/module-engine'
+import type { ControlRowLayout } from '@ui/components/ControlRow'
 
 /** Props shared by every property control component. */
 export interface ControlProps<T = unknown> {
@@ -21,12 +21,18 @@ export interface ControlProps<T = unknown> {
   /** Disable the control */
   disabled?: boolean
   /**
-   * Row layout — `inline` (default) renders a 100px label column + control,
-   * `stacked` renders the label above a full-width control. Resolved by
+   * Row layout — `inline` (default) renders a label column + control,
+   * `stacked` renders the label above a full-width control, `caption` draws
+   * that label as a small inspector caption, and `bare` drops it entirely
+   * (for a field whose meaning rides on a glyph inside it). Resolved by
    * `PropertyControlRenderer` from the schema (with sensible per-type
    * defaults), so individual controls always receive a concrete value.
+   *
+   * Wider than `PropertyControlLayout`: that union is the persisted schema a
+   * module author declares, while `caption`/`bare` are choices the inspector
+   * makes at render time about a property it already understands.
    */
-  layout?: PropertyControlLayout
+  layout?: ControlRowLayout
   /**
    * The id of the node that OWNS this prop — the call site for a
    * `studio.instance`'s `callSiteProps:<key>`, or the node itself for every

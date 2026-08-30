@@ -32,6 +32,8 @@ import { requestCmsSiteReload } from '@admin/state/adminEvents'
 import { isStudioMode } from '@site/studio/studioMode'
 import { getStudioWorkspaceDir } from '@site/studio/studioWorkspaceDir'
 import { resyncActiveProjectModules } from '@site/studio/registerProjectModules'
+import { invalidateLocalComponentCatalog } from '@site/studio/componentCatalog'
+import { invalidateStudioIconCatalog } from '@site/studio/iconCatalog'
 import {
   getDependencyInstallJob,
   startDependencyInstall,
@@ -93,6 +95,12 @@ export function useDependencyInstallJob() {
           })
           requestCmsSiteReload()
           resyncActiveProjectModules()
+          // Both panel catalogues are cached per project for the whole
+          // session, so an install/remove that changes which components and
+          // icons exist has to drop them — otherwise the slot picker keeps
+          // offering the pre-install answer until the user switches projects.
+          invalidateLocalComponentCatalog()
+          invalidateStudioIconCatalog()
         } else {
           pushToast({ kind: 'error', ...installFailureToast(kind, name, job) })
         }

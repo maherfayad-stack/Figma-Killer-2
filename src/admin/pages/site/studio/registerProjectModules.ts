@@ -90,7 +90,12 @@ import { ensurePluginRuntime } from '@admin/pluginRuntimeBootstrap'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { sanitizeSvg } from '@core/sanitize'
 import { studioSlotNodeId } from '@core/utils/studioSlotSentinel'
-import { PropSpecSchema, controlForPropKind } from '@site/property-controls/componentPropKind'
+import {
+  PropSpecSchema,
+  controlForPropKind,
+  isCanvasDrivenProp,
+  stripCanvasDrivenProps,
+} from '@site/property-controls/componentPropKind'
 import {
   registry,
   packageModuleId,
@@ -101,6 +106,7 @@ import {
 } from '@core/module-engine'
 import { useAdminUi } from '@admin/state/adminUi'
 import { NodeRenderer } from '@site/canvas/NodeRenderer'
+import { useFramePreviewAxes } from '@site/canvas/previewAxesFrameEffect'
 import { CursorClickSolidIcon } from 'pixel-art-icons/icons/cursor-click-solid'
 import { getStudioPaletteHiddenModuleIds } from './fsCodemodAdapter'
 import { getStudioTrustTier, setPackageBundleStatus, subscribeStudioTrustTier } from './studioProjectTrust'
@@ -251,11 +257,22 @@ function reviveProps(props: Record<string, unknown>): Record<string, unknown> {
   return revived ?? props
 }
 
+/**
+ * A design-system provider's props, as far as Studio drives them: the board's
+ * current preview direction. A provider that does not declare `dir` receives
+ * an extra, unread prop — harmless — while one that does (the near-universal
+ * convention, and what `useDir()`-style hooks read) stops falling back to its
+ * built-in `'ltr'` default. See `DesignSystemProviderProps` in
+ * `src/modules/alm/register.tsx` for the same declaration on the other
+ * registration path.
+ */
+type DesignSystemProviderProps = { children?: React.ReactNode; dir?: 'ltr' | 'rtl' }
+
 /** The first export whose name ends in `Provider` in the bundled module namespace, or `undefined`. See module doc's "honest gap" note. */
-function findProvider(mod: Record<string, unknown>): React.ComponentType<{ children?: React.ReactNode }> | undefined {
+function findProvider(mod: Record<string, unknown>): React.ComponentType<DesignSystemProviderProps> | undefined {
   for (const [key, value] of Object.entries(mod)) {
     if (typeof value === 'function' && /Provider$/.test(key)) {
-      return value as React.ComponentType<{ children?: React.ReactNode }>
+      return value as React.ComponentType<DesignSystemProviderProps>
     }
   }
   return undefined
@@ -265,14 +282,24 @@ function makePackageComponent(
   pkg: string,
   name: string,
   Comp: React.ComponentType<Record<string, unknown>>,
-  Provider: React.ComponentType<{ children?: React.ReactNode }> | undefined,
+  Provider: React.ComponentType<DesignSystemProviderProps> | undefined,
 ): React.FC<ModuleComponentProps> {
   const PackageModuleComponent: React.FC<ModuleComponentProps> = ({ props, nodeWrapperProps, mcClassName, children }) => {
+    // The frame's own preview direction, not the board's — a "duplicate as
+    // variant" frame previews RTL beside an LTR board. Passing it is what
+    // makes the board's direction toggle reach a component that resolves
+    // direction in JS; `html[dir]` alone only reaches its CSS. See
+    // `FramePreviewAxesContext`.
+    const { direction } = useFramePreviewAxes()
     // `style` is pulled OUT of the editor bag: it holds the node's own inline
     // styles, which belong on the styled component, not on the transparent
     // host where `display: contents` would make them inert.
     const { style: nodeStyle, ...editorProps } = nodeWrapperProps ?? {}
-    const dsProps = reviveProps(props as Record<string, unknown>)
+    // `dir` is stripped so `useDir()` falls through to the provider below,
+    // which carries the FRAME's direction — a `dir` left on the node (an older
+    // build's stamped default, or a literal in the user's source) would
+    // otherwise pin this one component against the board's toggle.
+    const dsProps = reviveProps(stripCanvasDrivenProps(props as Record<string, unknown>))
     // The node's CSS classes go on the design-system component, where the
     // source wrote them — applying them to the host too double-applies
     // every padding and margin in the rule.
@@ -286,7 +313,7 @@ function makePackageComponent(
       },
       children,
     )
-    const provided = Provider ? React.createElement(Provider, null, inner) : inner
+    const provided = Provider ? React.createElement(Provider, { dir: direction }, inner) : inner
     return React.createElement(
       'div',
       { ...editorProps, style: TRANSPARENT_HOST_STYLE },
@@ -301,9 +328,18 @@ function makePackageComponent(
 // Schema / defaults
 // ---------------------------------------------------------------------------
 
+/**
+ * `isCanvasDrivenProp` skips `dir` for the same reason `register.tsx` does —
+ * this path wraps every component in the package's own provider (see
+ * `findProvider`), fed the frame's preview direction, and an explicit prop
+ * outranks a provider. The two registration paths share the rule rather than
+ * each carrying a copy; `handler`-kind props get no control from
+ * `controlForPropKind` itself.
+ */
 function buildSchema(props: readonly BundledComponentSpec['props'][number][]): ModuleDefinition['schema'] {
   const schema: Record<string, unknown> = {}
   for (const p of props) {
+    if (isCanvasDrivenProp(p.name)) continue
     const control = controlForPropKind(p.name, p.kind)
     if (control) schema[p.name] = control
   }
@@ -319,13 +355,19 @@ function buildSchema(props: readonly BundledComponentSpec['props'][number][]): M
  */
 function buildPropsSchema(props: readonly BundledComponentSpec['props'][number][]) {
   const shape: Record<string, ReturnType<typeof Type.Optional>> = {}
-  for (const p of props) shape[p.name] = Type.Optional(Type.Unknown())
+  for (const p of props) {
+    if (isCanvasDrivenProp(p.name)) continue
+    shape[p.name] = Type.Optional(Type.Unknown())
+  }
   return Type.Object(shape)
 }
 
 function buildDefaults(spec: BundledComponentSpec): Record<string, unknown> {
   const defaults: Record<string, unknown> = {}
   for (const p of spec.props) {
+    // `dir` belongs to the board's direction axis, not to a node — stamping
+    // the enum's first value (`'ltr'`) here is exactly what used to defeat it.
+    if (isCanvasDrivenProp(p.name)) continue
     if (p.name === 'label') defaults[p.name] = spec.name
     else if (p.kind.kind === 'enum' && p.kind.values.length > 0) defaults[p.name] = p.kind.values[0]
   }

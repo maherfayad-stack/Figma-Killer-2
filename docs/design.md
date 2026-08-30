@@ -232,6 +232,7 @@ These are admin tokens. The published-site Framework engine also emits short spa
 | `--panel-radius`     | 12px  | Floating overlay panels (Spotlight, modals, popovers)        |
 | `--card-radius`      | 16px  | Borderless tile cards (Widget, dashboard cells, module inserter tiles) |
 | `--input-radius`     | 1em   | Pill-shaped inputs, classes / property chips                 |
+| `--inspector-field-radius` | 5px | Fields inside the properties panel — see "The inspector" below |
 | `--tooltip-radius`   | 6px   | Tooltips                                                     |
 
 Do not introduce ad-hoc radius values. Tile-card surfaces use `--card-radius`.
@@ -354,7 +355,113 @@ Bordered, transparent, pill-shaped:
 
 The border is the input's identity. Don't fill them. Don't square the corners.
 
-### 4. Panel rail (the colored sidebar)
+**One scoped exception: the properties panel.** It renders twenty fields in a
+column, most of them unset, and twenty pill outlines read as a ladder of empty
+boxes rather than as values. There the field is a filled 5px rectangle whose
+border appears only on hover and focus. It is opted into per-surface, never per
+control — see "The inspector" below — so nothing outside that panel picks it up.
+
+### 4. The inspector (properties panel)
+
+The right-hand properties panel is a design tool's inspector, and its reference
+is Figma's right sidebar. It runs on a tighter rhythm than the rest of the
+admin, because it is answering a different question: elsewhere a control is a
+form field with a label beside it; here it is a cell in a dense grid whose
+meaning comes from a glyph inside it.
+
+**Geometry.** One set of tokens, in `globals.css`:
+
+| Token | Value | Use |
+|---|---|---|
+| `--inspector-row-h` | 24px | Field and icon-button height |
+| `--inspector-header-h` | 32px | Section header |
+| `--inspector-pad-x` | 8px | Section horizontal padding |
+| `--inspector-field-gap` | 6px | Between two fields on one row |
+| `--inspector-group-gap` | 8px | Between caption groups |
+| `--inspector-caption-gap` | 3px | Caption to the field it names |
+| `--inspector-label-w` | 68px | The remaining text-label column |
+| `--inspector-field-radius` | 5px | Field corner |
+| `--inspector-field-bg` / `-hover` | overlay 5% / 10% | Field fill |
+| `--inspector-divider` | overlay 10% | The hairline between sections |
+
+`ControlRow` and every control that has to line up with it read
+`--control-label-w` and `--control-row-h` (100px / 28px by default); the panel
+root rebinds both to its `--inspector-*` values. **Never write the label column
+or the row height as a literal** — it used to appear as `100px` in three files
+that had to agree by hand.
+
+**Naming a value: picture first, caption second, label last.**
+
+A control names itself in exactly one way. These are ordered, and the first
+that applies wins — a field that carries a mark does **not** also get a
+caption, because printing the name twice is most of what makes a panel feel
+crowded.
+
+1. An enum with a readable mark renders as an icon toggle group and no words at
+   all (`text-align`, `font-style`, `text-decoration`, `text-transform`; flex
+   flow, wrap and alignment in `LayoutSection`). The registry is
+   `cssPropertyIcons.ts`. An enum whose values a 14px glyph cannot say —
+   `white-space`, `overflow`, `object-fit`, `cursor` — keeps its dropdown. A
+   picture that has to be decoded is worse than a word.
+2. A property whose name fits inside its own field carries a glyph or
+   letterform there via `Input`/`TokenAwareInput`'s `prefix` or `ScrubInput`'s
+   `label`: `W` / `H` / `X` / `Y`, the min/max size constraints, line-height,
+   letter-spacing, aspect-ratio, opacity, z-index, gap, stroke weight, corner
+   radius. The glyph is `aria-hidden`, so the control **must** still carry the
+   property's name as its `aria-label`.
+3. A value that already reads as its own label gets neither
+   (`isSelfDescribingProperty`): `Bold`, `16px`, `border-box`, and a colour
+   swatch beside its hex. The `background` shorthand is deliberately NOT in
+   that set — sitting under `backgroundColor`, two uncaptioned colour-ish
+   fields would be indistinguishable.
+4. Anything else gets Figma's small subdued caption above the field
+   (`ControlRow layout="caption"`), not a label beside it. `nowrap` or
+   `space-between` under nothing is a riddle; the caption is what stops rule 1
+   from turning the panel into a rebus.
+
+`ClassPropertyRow` resolves all four in one place, so a section cannot drift
+into its own vocabulary. `LayoutSection`'s `LabeledControl` and
+`BorderControl`'s `FieldRow` speak the same language for their bespoke
+controls — both take an **optional** label and most of their rows pass none.
+
+Bespoke marks live in `src/ui/components/InspectorIcons/` — `src/ui/` is the one
+place the icon gates exempt for hand-drawn glyphs, and they follow the vendored
+set's drawing conventions (24×24, `fill`, axis-aligned segments on a 2px grid,
+diagonals as staircases).
+
+**Sections** are separated by a hairline and nothing else: no chip, no fill, no
+radius. The title doubles as the disclosure toggle, with the chevron sharing the
+section icon's 16px box and appearing only on hover. `Section`'s `actions` slot
+carries the icon buttons Figma puts flush right of a title.
+
+**Opting in.** The panel root carries `data-field-skin="inspector"`; the skins
+themselves live beside the primitives they restyle (`Input.module.css`,
+`Select.module.css`, `ScrubInput.module.css`, `SegmentedControl.module.css`) as
+`[data-field-skin='inspector'] .x { … }`. This is deliberate: threading a `size`
+or `skin` prop through the ~40 components between the panel shell and a leaf
+input would mean every new control had to remember to forward it, and the one
+that forgot would be a lone pill in a column of rectangles.
+
+**Variables and styles.** Two different things, both applied at the point of
+use. A *variable* is a value (`var(--brand-600)`, `var(--text-l)`) and is
+offered inside the field that takes it — `TokenizedColorField` on any colour
+row, `TokenAwareInput` on the type and spacing scales. A *style* is a bundle of
+declarations under one name, which here is a framework-generated utility class;
+`SectionStylesMenu` puts it behind a styles button in the header of the
+section that owns it. Applying one adds the class to `node.classIds`, so
+editing the framework still moves every user of the style.
+
+**One button per family.** Typography's header carries two — a type mark for
+text styles, a swatch for text-colour styles — and each menu contains only its
+own family. A single button opening both was unusable on a real project: the
+framework generates a handful of text styles and several hundred colour
+utilities, so the six things the button existed for drowned. Which family you
+are applying is a choice you have already made before you reach for the
+button, so it belongs in the button, not in a heading halfway down the list.
+Every menu is capped at 40 rows with a search field and an honest "N more"
+count, because a colour family is still hundreds long on its own.
+
+### 5. Panel rail (the colored sidebar)
 
 42px-wide vertical rail of icon buttons. Each button carries a `data-accent` identity and a `--rail-icon-tint` custom property from the automatic rail-accent helper. The CSS derives the icon color, semi-transparent hover/active background, and glow from that token:
 
@@ -370,7 +477,7 @@ Icons in the rail get a `drop-shadow` glow matching their tint. The active rail 
 
 This pattern (automatic per-item rail tint plus `data-accent` for inspection) is the recipe for any equivalent sidebar — media sidebar, data sidebar, content sidebar, etc.
 
-### 5. Scrollbar chrome
+### 6. Scrollbar chrome
 
 Scrollable admin surfaces use a shared, quiet scrollbar: transparent track, muted achromatic thumb, and a slightly brighter hover state. Scrollbar styling lives in `src/styles/globals.css` so Firefox (`scrollbar-color`) and WebKit/Blink (`::-webkit-scrollbar`) stay visually aligned. Panel layouts that place a rail beside scrollable content should reserve a stable gutter so the scrollbar never covers rail icons.
 
@@ -397,8 +504,9 @@ Every interactive control in the admin and editor goes through a primitive from 
 | `Tabs`               | Top-level tab navigation within a workspace.                                |
 | `Stack`              | Small flex layouts for host/admin and plugin UI.                            |
 | `Separator`          | Visual divider between sections.                                            |
-| `Section`            | Titled section block in panels.                                             |
-| `ControlRow`         | Standard label + control row in property panels.                            |
+| `Section`            | Titled section block in panels — hairline separator, `actions` header slot.  |
+| `ControlRow`         | Label + control row in property panels (`inline` / `stacked` / `caption` / `bare`). |
+| `InspectorIcons`     | Hand-drawn marks for the properties panel's icon toggle groups and in-field glyphs. |
 | `Card`               | Token-backed panel surface for grouped host/admin content.                  |
 | `ContextMenu`        | Right-click and `…` overflow menus.                                         |
 | `FilterBar`          | Compound filter row (type + folder + date + query).                         |

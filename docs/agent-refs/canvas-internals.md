@@ -133,10 +133,46 @@ ALREADY-MOUNTED `iframeDoc.documentElement`:
 - `data-studio-scheme` + inline `color-scheme` — always set, regardless of
   the project's detected mechanism. This is the attribute
   `darkSchemeCssTransform.ts`'s rewritten CSS matches against.
+- `data-theme` (`VENDOR_THEME_ATTR`) — always set, to `light` or `dark`,
+  **never removed**. This is the convention design systems shipped as vendor
+  CSS gate on, and absence is NOT neutral: `@alm-design/design-system`, which
+  `ProjectCssInjector.tsx` injects into every frame, declares its light tokens
+  under `:root:not([data-theme=light])`, so an unset attribute reads as DARK.
+  Removing the attribute for "light" previewed light as dark — the same
+  broken-in-both-directions shape as the `prefers-color-scheme` bug below.
+  (`ProjectCssInjector` used to pin `data-theme="light"` itself, from before
+  the board had a dark-mode control; that second writer is gone —
+  `previewAxesFrameEffect.ts` owns every root attribute the axes drive.)
 - When the probe detected a `'class'`-mechanism project (a `.dark` class or
   `[data-theme="dark"]` attribute), that EXACT selector is also toggled —
   the project's own gate, so its styles respond as they would in the real
-  app.
+  app. A class comes off for light; an ATTRIBUTE is set to `light`, for the
+  reason above.
+
+**The frame's PAPER follows the preview, not the admin theme.** An iframe
+document that paints no background of its own is transparent, so the embedding
+element is what shows through — and a grow-to-content frame leaves a lot of it
+uncovered below a short page. `.iframe`/`.viewport` used a fixed `--overlay`
+there, which painted every dark-mode preview on white paper: dark content on
+top, a white band under it. They now read `--canvas-frame-paper` /
+`--canvas-frame-paper-dark`, selected by `data-preview-scheme` on the element
+(from the frame's own effective axes — `useResolvedFrameAxes` for
+`BreakpointFrame`'s wrapper, which sits outside the portal and cannot read the
+context). Those two tokens are deliberately THEME-INDEPENDENT: they stand for
+the previewed page's own canvas, not for admin chrome. Verified in Chromium,
+not reasoned about.
+
+**`dir` reaches CSS, and only CSS.** A design system whose components resolve
+their own direction in JavaScript — ALM's every component calls `useDir(prop)`,
+which reads `DesignSystemProvider`'s context and falls back to a built-in
+`'ltr'` — cannot see `html[dir]` at all. So the frame also publishes its
+effective axes on `FramePreviewAxesContext` (`previewAxesFrameEffect.ts`,
+provided by `CanvasFrameContexts.tsx`), and both module-registration paths
+(`src/modules/alm/register.tsx`, `studio/registerProjectModules.ts`) pass
+`dir` into the package's provider. Before that, both wrapped every component
+in the provider with NO props, pinning the JS half of every design-system
+component to LTR while its CSS half flipped — half-mirrored RTL screens.
+Regression test: `designSystemPreviewDirection.test.tsx`.
 
 Why this matters: wiring either axis through `srcDoc` or a `key` would
 remount the frame on every toggle — ~100-140ms per frame (`perf-01`'s
@@ -189,6 +225,9 @@ dimension, not by touching the id grammar:
 - `CanvasFrameContext` (`canvas/CanvasContexts.ts`) — ambient per-frame
   identity for `NodeRenderer`, mirroring `CanvasBreakpointContext`. Set by
   `BoardFramesLayer.tsx` around each `<BreakpointFrame frameId={frame.id}>`.
+  (The three contexts a MOUNTED frame publishes — its `<iframe>`, its
+  `Document`, and its effective `PreviewAxes` — are provided together by
+  `CanvasFrameContexts.tsx`, not inline in `IframeFrameSurface`.)
 - `selectedNodeFrameId`/`hoveredFrameId` (`selectionSlice.ts`) — the frame a
   selection/hover currently belongs to. `null` means "board-wide" (used
   outside Studio board mode, where frame identity doesn't exist).

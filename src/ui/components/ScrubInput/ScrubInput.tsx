@@ -29,6 +29,7 @@ import {
   type FocusEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
+  type ReactNode,
 } from 'react'
 import { cn } from '@ui/cn'
 import { MIXED, isMixed, type Mixed } from '../MixedValue'
@@ -52,8 +53,16 @@ export interface ScrubInputProps {
   /** Optional as-you-type / as-you-drag preview channel, cleared via `onClearPreview`. */
   onPreview?: (next: string) => void
   onClearPreview?: () => void
-  /** Short in-field label (e.g. `"W"`, `"H"`, `"X"`). Drag this to scrub. */
-  label: string
+  /**
+   * The in-field mark. Drag it to scrub.
+   *
+   * A letterform where one is unambiguous (`W`, `H`, `X`), a glyph where it
+   * isn't: "Min W" and "Max H" spelled out cost more of a 24px field than
+   * the number they sit beside, which is why Figma draws them. Either way
+   * the field's own `aria-label` is the accessible name — a glyph passed
+   * here is decoration and must be `aria-hidden`.
+   */
+  label: ReactNode
   'aria-label': string
   /** Unit assigned when scrubbing/nudging starts from an empty field. Default `'px'`. */
   unit?: string

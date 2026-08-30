@@ -6,10 +6,19 @@ import {
   type StoredWorkspaceLayout,
 } from './workspaceLayoutStorage'
 
-export const SIDEBAR_MIN_WIDTH = 300
+/**
+ * Sidebar width bounds.
+ *
+ * The floor is 260, not 300, because the properties panel no longer spends a
+ * 100px column on labels: an enum draws itself as an icon group and a length
+ * carries its name as a glyph inside the field, so the panel's content is now
+ * two ~120px fields and a gutter. Figma's inspector is 240px; 260 is that plus
+ * our scrollbar gutter and category rail.
+ */
+export const SIDEBAR_MIN_WIDTH = 260
 export const SIDEBAR_MAX_WIDTH = 520
 export const LEFT_SIDEBAR_DEFAULT_WIDTH = 320
-export const RIGHT_SIDEBAR_DEFAULT_WIDTH = 360
+export const RIGHT_SIDEBAR_DEFAULT_WIDTH = 300
 
 export interface WorkspacePanelState {
   collapsed: boolean

@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import type { ControlProps } from './shared'
 import type { TextControlNormalize } from '@core/module-engine'
 import { normalizeIdentifierInput, normalizeIdentifierValue } from '@core/utils/identifier'
@@ -15,6 +16,14 @@ interface TextControlProps extends ControlProps<string> {
    * which leaves arrow keys as plain caret movement.
    */
   nudgeEmptyUnit?: string
+  /**
+   * Mark rendered inside the field's leading edge, standing in for the label
+   * — the inspector's way of naming a value without spending a row on it.
+   * When set, the caller is expected to pass `layout="bare"` so the label is
+   * not drawn twice; the label text still reaches assistive tech through the
+   * input's `aria-label`.
+   */
+  prefix?: ReactNode
 }
 
 export function TextControl({
@@ -25,6 +34,7 @@ export function TextControl({
   placeholder,
   normalize,
   nudgeEmptyUnit,
+  prefix,
   isOverride,
   disabled,
   layout,
@@ -53,6 +63,8 @@ export function TextControl({
         value={value ?? ''}
         placeholder={placeholder}
         disabled={disabled}
+        prefix={prefix}
+        aria-label={label ?? propKey}
         fieldSize="sm"
         autoCapitalize={normalize === 'identifier' ? 'none' : undefined}
         spellCheck={normalize === 'identifier' ? false : undefined}

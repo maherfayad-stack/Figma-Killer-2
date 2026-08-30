@@ -95,6 +95,8 @@ const InsertSlotEditSchema = Type.Object({
   nodeId: Type.String(),
   propName: Type.String(),
   node: SlotJsxNodeSchema,
+  /** `'replace'` swaps the slot's current JSX value for `node` instead of adding alongside it — see `insertJsxIntoSlotProp`'s `mode`. Omitted means `'append'`. */
+  mode: Type.Optional(Type.Union([Type.Literal('append'), Type.Literal('replace')])),
   anchorNodeId: Type.Optional(Type.String()),
   position: Type.Optional(Type.Union([Type.Literal('before'), Type.Literal('after')])),
 })
@@ -275,6 +277,7 @@ export function applySlotEdit(
           ...(edit.node.props === undefined ? {} : { props: edit.node.props }),
           ...(edit.node.children === undefined ? {} : { children: edit.node.children }),
         },
+        ...(edit.mode === undefined ? {} : { mode: edit.mode }),
         ...(anchor ? { anchorLine: anchor.line, anchorCol: anchor.col, position: edit.position } : {}),
       })
       return result.ok ? { ok: true, applied: true } : { ok: false, ...result.refusal }

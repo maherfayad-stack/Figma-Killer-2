@@ -40,6 +40,7 @@ import { handleNudgeKeydown, parseNudgeableValue } from '@site/property-controls
 import { useEditorPreference } from '@site/preferences/editorPreferences'
 import { LinkIcon } from 'pixel-art-icons/icons/link'
 import { CloseIcon } from 'pixel-art-icons/icons/close'
+import { StrokeWeightIcon, CornerRadiusIcon } from '@ui/components/InspectorIcons'
 import { cn } from '@ui/cn'
 import { getEnumOptions } from '../cssControlTypes'
 import styles from './BorderControl.module.css'
@@ -264,9 +265,10 @@ export function BorderControl({
           />
 
           <div className={styles.fields}>
-            <FieldRow label="Width">
+            <FieldRow>
               <Input
                 fieldSize="sm"
+                prefix={<StrokeWeightIcon size={13} aria-hidden="true" />}
                 value={widthValue}
                 placeholder={widthPlaceholder}
                 aria-label={`Border ${borderLinked ? 'all sides' : editSide.toLowerCase()} width`}
@@ -279,7 +281,7 @@ export function BorderControl({
               />
             </FieldRow>
 
-            <FieldRow label="Style">
+            <FieldRow>
               <Select
                 fieldSize="sm"
                 value={styleValue}
@@ -294,7 +296,7 @@ export function BorderControl({
               />
             </FieldRow>
 
-            <FieldRow label="Color">
+            <FieldRow>
               <ColorValueInput
                 id={`border-${editSide}-color`}
                 value={colorValue}
@@ -350,9 +352,10 @@ export function BorderControl({
             }}
           />
           <div className={styles.fields}>
-            <FieldRow label="Radius">
+            <FieldRow>
               <Input
                 fieldSize="sm"
+                prefix={<CornerRadiusIcon size={13} aria-hidden="true" />}
                 value={radiusValue}
                 placeholder={radiusPlaceholder}
                 aria-label={`Border radius ${radiusLinked ? 'all corners' : cornerLabel(editCorner)}`}
@@ -402,13 +405,21 @@ export function BorderControl({
 }
 
 // ---------------------------------------------------------------------------
-// FieldRow — label column + control, matching ControlRow's inline anatomy
+// FieldRow — a control with an optional caption above it
 // ---------------------------------------------------------------------------
 
-function FieldRow({ label, children }: { label: string; children: React.ReactNode }) {
+/**
+ * This was a 52px label column beside every control, which made Border the
+ * last section in the panel still printing "Width" / "Style" / "Color" next
+ * to a field that could say those things itself: a weight mark inside the
+ * width field, `solid` / `dashed` in the style select, a swatch plus a hex in
+ * the colour field. Those three lose their label; `Outline` and `Offset` keep
+ * a caption, because a bare `none` under nothing is a riddle.
+ */
+function FieldRow({ label, children }: { label?: string; children: React.ReactNode }) {
   return (
     <div className={styles.fieldRow}>
-      <span className={styles.fieldLabel}>{label}</span>
+      {label !== undefined && <span className={styles.fieldLabel}>{label}</span>}
       <div className={styles.fieldControl}>{children}</div>
     </div>
   )

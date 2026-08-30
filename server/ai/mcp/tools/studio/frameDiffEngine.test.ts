@@ -101,14 +101,68 @@ describe('computeFrameDiff', () => {
     const base = solid(255, 255, 255)
     const result = computeFrameDiff(decode(base), decode(withBlock(base, 20, 30, 60, 40, [255, 0, 0])), {
       topN: 5,
-      nodeRects: [
-        { nodeId: 'hero', x: 0, y: 0, width: 200, height: 100 },
-        { nodeId: 'footer', x: 0, y: 150, width: 200, height: 50 },
-      ],
+      nodeRects: {
+        rects: [
+          { nodeId: 'hero', x: 0, y: 0, width: 200, height: 100 },
+          { nodeId: 'footer', x: 0, y: 150, width: 200, height: 50 },
+        ],
+        imageScale: 1,
+      },
     })
 
     expect(result.regions[0]!.nodeIds).toContain('hero')
     expect(result.regions[0]!.nodeIds).not.toContain('footer')
+  })
+
+  it('scales CSS-px node rects into the diff image\'s pixel space before mapping — the dpr!=1 regression (mcp-tooling FIX 1)', () => {
+    // A 400x400 diff image (e.g. a 200x200 CSS-px frame captured at dpr:2).
+    // The differing block sits in the LOWER-RIGHT quadrant of the image —
+    // pixel space (300,300)-(340,340) — which corresponds to CSS-px node
+    // rect (150,150)-(170,170). Before FIX 1, node rects were intersected
+    // directly against the region's IMAGE-space rect with no scaling, so a
+    // node living in the lower-right CSS quadrant could never match a region
+    // that only ever appears in the upper-left quarter of image space.
+    const W2 = 400
+    const H2 = 400
+    function solid2(r: number, g: number, b: number): PNG {
+      const png = new PNG({ width: W2, height: H2 })
+      for (let i = 0; i < png.data.length; i += 4) {
+        png.data[i] = r
+        png.data[i + 1] = g
+        png.data[i + 2] = b
+        png.data[i + 3] = 255
+      }
+      return png
+    }
+    function block2(base: PNG): PNG {
+      const png = new PNG({ width: W2, height: H2 })
+      base.data.copy(png.data)
+      for (let y = 300; y < 340; y++) {
+        for (let x = 300; x < 340; x++) {
+          const i = (y * W2 + x) * 4
+          png.data[i] = 255
+          png.data[i + 1] = 0
+          png.data[i + 2] = 0
+          png.data[i + 3] = 255
+        }
+      }
+      return png
+    }
+    const base = solid2(255, 255, 255)
+    const result = computeFrameDiff(decode(base), decode(block2(base)), {
+      topN: 5,
+      nodeRects: {
+        rects: [
+          { nodeId: 'top-left-card', x: 0, y: 0, width: 100, height: 100 }, // CSS px — well away from the defect at any scale
+          { nodeId: 'bottom-right-card', x: 140, y: 140, width: 40, height: 40 }, // CSS px (150,150) sits inside this — matches ONLY when scaled by 2
+        ],
+        imageScale: 2,
+      },
+    })
+
+    expect(result.regions).toHaveLength(1)
+    expect(result.regions[0]!.nodeIds).toContain('bottom-right-card')
+    expect(result.regions[0]!.nodeIds).not.toContain('top-left-card')
   })
 
   it('ranks regions worst-first, so regions[0] is always the right thing to fix next', () => {
@@ -184,6 +238,35 @@ describe('reconcileReference', () => {
       expect(result.result.method).toBe('resampled')
       expect(result.result.note).toBeDefined()
       expect(result.result.note).toContain('vision-safe')
+      expect(result.result.note).toContain('height')
+    }
+  })
+
+  it('does not claim the vision-safe cap for a much taller baseline — the measurement-purpose false-positive (mcp-tooling FIX 2)', async () => {
+    // `studio_compare` now captures under `purpose: 'measurement'`, whose
+    // ceiling (4096px) is nowhere near the vision-safe cap (1568px). Before
+    // tightening the heuristic to a near-cap band, ANY baselineHeight >=
+    // 1567 (with no upper bound) satisfied the old `>=` check, so a
+    // legitimately much-taller measurement capture would have been
+    // misattributed to the vision-safety limit — a false story about why the
+    // resample happened.
+    const referenceWidth = 400
+    const referenceHeight = 4200
+    const baselineWidth = 400
+    const baselineHeight = 4096
+    const reference = new PNG({ width: referenceWidth, height: referenceHeight })
+    const result = await reconcileReference(
+      PNG.sync.write(reference),
+      referenceWidth,
+      referenceHeight,
+      baselineWidth,
+      baselineHeight,
+    )
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.result.method).toBe('resampled')
+      expect(result.result.note).toBeDefined()
+      expect(result.result.note).not.toContain('vision-safe')
       expect(result.result.note).toContain('height')
     }
   })

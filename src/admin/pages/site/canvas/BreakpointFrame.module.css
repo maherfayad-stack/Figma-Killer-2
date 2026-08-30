@@ -58,8 +58,15 @@
 .viewport {
     width: var(--bp-width);
     min-height: 100vh;
-    background: var(--overlay);
+    /* Same paper as the iframe it wraps — see `IframeFrameSurface.module.css`.
+       Both paint it because either can be the surface a short page leaves
+       uncovered. */
+    background: var(--canvas-frame-paper);
     box-shadow: 0 2px 12px var(--scrim-30);
     overflow: hidden;
     position: relative;
+}
+
+.viewport[data-preview-scheme='dark'] {
+    background: var(--canvas-frame-paper-dark);
 }

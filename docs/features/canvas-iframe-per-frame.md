@@ -151,6 +151,51 @@ The fix: `ProjectCssInjector`'s content lives in its own named layer, `@layer ve
 
 `CanvasAnimationInjector`/`CanvasScrollUnrollInjector` stay unlayered + `!important` and are unaffected by this: `!important` declarations always beat non-`!important` ones regardless of cascade layer, so the freeze/unroll rules keep winning against both `@layer vendor` and `@layer user-authored` content exactly as they did when vendor CSS was unlayered.
 
+### Vendor CSS and the preview axes
+
+Two things about vendor CSS only become visible once the board can preview
+dark mode and RTL, and both were wrong until they were fixed together.
+
+**The frame root carries an explicit `data-theme`, in both schemes.** A design
+system's tokens are commonly declared under `:root:not([data-theme=light])` —
+`@alm-design/design-system` does exactly this — which means an UNSET attribute
+resolves to the dark palette. `previewAxesFrameEffect.ts` therefore writes
+`data-theme="light"` or `"dark"`, and never removes it; removing it for
+"light" rendered the vendor palette dark on a light preview.
+`ProjectCssInjector` used to pin `data-theme="light"` itself (written before
+the board had a dark-mode control) — that pin is gone, because two writers of
+one attribute is how the light case silently stopped working.
+
+**The dark-mode probe reads package stylesheets too.** `detectColorScheme`
+(`server/handlers/studio/colorSchemeDetect.ts`) scans the project's own CSS
+first, then the CSS its installed component packages ship. A project whose
+theming lives entirely in its design system used to report `mechanism: 'none'`,
+which disabled the toolbar's dark-mode toggle and told the agent, through
+`studio_project_profile`, that the project had no dark mode at all.
+
+**The framework's extracted tokens outrank the vendor bucket, so their dark
+values have to be right.** The token extractor writes a project's palette into
+`.studio/framework.json`, and the framework engine emits it at `:root` inside
+`@layer user-authored` — which beats `@layer vendor` regardless of specificity.
+A design system declares its SEMANTIC tokens once, as aliases over a raw
+palette (`--background-base-default: var(--color-light)`), and flips only the
+raw palette in its dark block. An extractor that reads a dark value only for
+names the dark block re-declares therefore captures the palette and misses
+every alias — i.e. every token a page actually uses — and the resulting light
+literals shadow the package's own dark palette entirely. Both extractors
+(`tokenExtractCssScan.ts`, `designImport/parseCssTokens.ts`) re-resolve each
+token's own declaration under the merged light+dark map for this reason.
+**A project extracted before that fix keeps its old store** —
+`mergeExtractedFramework` never clobbers a non-empty `colors` family — and must
+have `.studio/framework.json` removed to pick up the correction.
+
+**`dir` is not enough for a component that resolves direction in JS.** The
+`[dir=rtl]` rules a package ships respond to `html[dir]` correctly. A component
+that calls a `useDir()`-style hook does not — it reads its provider's context,
+whose default is `'ltr'`. Studio renders every design-system component under
+the package's own provider and passes the frame's direction into it; see
+`FramePreviewAxesContext` in `previewAxesFrameEffect.ts`.
+
 ### Freeze and unroll — a design frame is a still, whole screen
 
 Two injectors, design frames only (`!isLive` in `IframeFrameSurface`), never mounted in live mode, never reach the publisher.

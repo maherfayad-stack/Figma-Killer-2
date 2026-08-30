@@ -1,6 +1,28 @@
 import { describe, expect, it } from 'bun:test'
 import sharp from 'sharp'
 import { measureReference } from './referenceMeasure'
+import { normalizeDesignVariableValue } from './designVariableNormalize'
+import type { DesignVariable, DesignVariableSet } from './designVariableSchema'
+
+/** Build a synthetic ingested set the way `ingestDesignVariables` would, without touching disk — `measureReference` only ever receives already-resolved sets, never reads the store itself. */
+function variableSet(
+  id: string,
+  entries: ReadonlyArray<{ name: string; raw: string }>,
+  meta: { pageId?: string; referenceId?: string } = {},
+): DesignVariableSet {
+  const variables: DesignVariable[] = entries.map(({ name, raw }) => {
+    const normalized = normalizeDesignVariableValue(raw)
+    return {
+      name,
+      raw,
+      kind: normalized.kind,
+      ...(normalized.hex ? { hex: normalized.hex } : {}),
+      ...(normalized.px !== undefined ? { px: normalized.px } : {}),
+      ...(normalized.unitAssumed ? { unitAssumed: true } : {}),
+    }
+  })
+  return { id, ingestedAt: new Date().toISOString(), source: 'test fixture', ...meta, variables }
+}
 
 const ALM_CSS = `:root{
   --color-aqua-100:#0c9ab0;
@@ -253,5 +275,117 @@ describe('measureReference', () => {
     expect(tokenIndex.colorCount).toBe(0)
     expect(regions[0]!.background.hex).toBe('#ffffff')
     expect(regions[0]!.fontSizePx?.nearestToken).toBeNull()
+  })
+})
+
+describe('measureReference — design-variable three-way mapping', () => {
+  it('honesty: with no design-variable sets, every designVariable field is absent and the index reports zero', async () => {
+    const bytes = await comp({
+      width: 400,
+      height: 200,
+      bars: [{ top: 80, height: 40 }],
+      ink: [12, 154, 176], // --color-aqua-100, exact
+    })
+
+    const { regions, designVariableIndex } = await measureReference(
+      bytes,
+      [{ x: 0, y: 0, width: 400, height: 200 }],
+      { cssScale: 1, cssSources: [ALM_CSS] },
+    )
+
+    expect(designVariableIndex).toEqual({ setCount: 0, colorCount: 0, sizeCount: 0 })
+    expect(regions[0]!.foreground?.designVariable).toBeUndefined()
+    expect(regions[0]!.background.designVariable).toBeUndefined()
+    expect(regions[0]!.fontSizePx?.designVariable).toBeUndefined()
+    // Direct pixel -> project token matching is completely unaffected.
+    expect(regions[0]!.foreground?.token?.name).toBe('--color-aqua-100')
+  })
+
+  it('measured -> design variable -> project token: names the design\'s own value, and says plainly when the project has no matching token', async () => {
+    // The design declares "coral/100" = #EF4550. The project has no coral
+    // token at all — only the unrelated aqua/metal tokens from ALM_CSS.
+    const sets = [variableSet('set-1', [{ name: 'coral/100', raw: '#EF4550' }])]
+    const bytes = await comp({
+      width: 400,
+      height: 200,
+      bars: [{ top: 80, height: 40 }],
+      ink: [239, 69, 80], // #ef4550, exact
+    })
+
+    const { regions, designVariableIndex } = await measureReference(
+      bytes,
+      [{ x: 0, y: 0, width: 400, height: 200 }],
+      { cssScale: 1, cssSources: [ALM_CSS], designVariableSets: sets },
+    )
+
+    expect(designVariableIndex).toEqual({ setCount: 1, colorCount: 1, sizeCount: 0 })
+    const fg = regions[0]!.foreground!
+    // No project token is close to coral — the honest "no token covers this".
+    expect(fg.token).toBeUndefined()
+    // But the design variable itself is named exactly.
+    expect(fg.designVariable?.name).toBe('coral/100')
+    expect(fg.designVariable?.value).toBe('#EF4550')
+    expect(fg.designVariable?.hex).toBe('#ef4550')
+    expect(fg.designVariable?.deltaE).toBeCloseTo(0, 1)
+    expect(fg.designVariable?.source).toBe('test fixture')
+    expect(fg.designVariable?.setId).toBe('set-1')
+    // And it says plainly that nothing in the project covers it either.
+    expect(fg.designVariable?.projectToken).toBeUndefined()
+  })
+
+  it('measured -> design variable -> project token: resolves the DECLARED value\'s own token, not the noisy pixel\'s', async () => {
+    // Project now has the coral token, and the design's declared value is the
+    // exact same hex.
+    const CSS_WITH_CORAL = `${ALM_CSS.slice(0, -1)}--alm-coral-100:#ef4550;}`
+    const sets = [variableSet('set-2', [{ name: 'coral/100', raw: '#EF4550' }])]
+    // Ink is a couple of RGB steps off the exact value — real-world JPEG
+    // noise — close enough to match both independently, but this is the
+    // shape a caller reads: two SEPARATE matches (direct pixel -> token,
+    // and pixel -> variable -> variable's OWN value -> token) that happen to
+    // agree here because both are within range of the same true colour.
+    const bytes = await comp({
+      width: 400,
+      height: 200,
+      bars: [{ top: 80, height: 40 }],
+      ink: [237, 71, 82],
+    })
+
+    const { regions } = await measureReference(
+      bytes,
+      [{ x: 0, y: 0, width: 400, height: 200 }],
+      { cssScale: 1, cssSources: [CSS_WITH_CORAL], designVariableSets: sets },
+    )
+
+    const fg = regions[0]!.foreground!
+    expect(fg.designVariable?.name).toBe('coral/100')
+    // The project token is resolved from the VARIABLE's declared #ef4550,
+    // not from the measured pixel — so it is an EXACT match (deltaE ~ 0)
+    // even though the pixel itself was slightly off.
+    expect(fg.designVariable?.projectToken?.name).toBe('--alm-coral-100')
+    expect(fg.designVariable?.projectToken?.deltaE).toBeCloseTo(0, 1)
+  })
+
+  it('measured -> design variable -> project token, for a SIZE: a bare unit-less number is flagged unitAssumed and still resolves', async () => {
+    // Screen title ink, same shape as the "names the nearest type token"
+    // test above: 15 CSS px of ink -> midpoint ~18.3, nearest project token
+    // --type-title-size (18px).
+    const bytes = await comp({ width: 786, height: 200, bars: [{ top: 10, height: 30 }] })
+    const sets = [variableSet('set-3', [{ name: 'type/title', raw: '18' }])]
+
+    const { regions } = await measureReference(
+      bytes,
+      [{ x: 0, y: 0, width: 786, height: 200 }],
+      { cssScale: 0.5, cssSources: [ALM_CSS], designVariableSets: sets },
+    )
+
+    const dv = regions[0]!.fontSizePx!.designVariable!
+    expect(dv.name).toBe('type/title')
+    expect(dv.value).toBe('18')
+    expect(dv.px).toBe(18)
+    expect(dv.unitAssumed).toBe(true)
+    // Resolved from the variable's OWN 18px, exactly matching the project's
+    // 18px token — not from either bound of the measured range.
+    expect(dv.projectToken?.name).toBe('--type-title-size')
+    expect(dv.projectToken?.deltaPx).toBe(0)
   })
 })

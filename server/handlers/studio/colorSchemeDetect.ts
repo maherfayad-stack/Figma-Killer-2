@@ -4,9 +4,35 @@
  * ceiling (same reasoning `tokenExtractTailwind.ts` gives for its own split
  * off `tokenExtract.ts`). Purely syntactic — a text scan, never an
  * execution, same posture as every other detector in `projectProbe.ts`.
+ *
+ * ## Why it also reads `node_modules`
+ *
+ * The scan used to walk `listWorkspaceFiles(root)` alone, which excludes
+ * `node_modules` by policy. That made it structurally blind to the single
+ * most common way a real project expresses dark mode: it doesn't. Its
+ * DESIGN SYSTEM does, in the package stylesheet the project imports by bare
+ * specifier and Studio already injects into every canvas frame as
+ * `@layer vendor` (`ProjectCssInjector.tsx`). `@alm-design/design-system` is
+ * exactly this — `:root[data-theme=dark]`, `:root:not([data-theme=light])`
+ * and six `prefers-color-scheme:dark` blocks, none of them in a file this
+ * probe could see. Such a project reported `mechanism: 'none'`, so Studio's
+ * dark-mode toggle rendered DISABLED with "no dark-mode stylesheet was
+ * detected" and `studio_project_profile` told the agent the same thing —
+ * both false, about a project whose every component is dark-mode capable.
+ *
+ * So the scan now runs in two passes, project-first:
+ *
+ *   1. the project's OWN stylesheets (`listWorkspaceFiles`, unchanged), then
+ *   2. the stylesheets shipped by its installed component packages.
+ *
+ * The order is the precedence: a project that ships its own gate is driven by
+ * its own gate, and a package's mechanism is only reported when the project
+ * itself declares none. `source` names which one won, so a disabled/enabled
+ * control and an agent reading the profile can both say WHERE the mechanism
+ * came from instead of asserting it from nowhere.
  */
-import { join } from 'node:path'
-import { existsSync } from 'node:fs'
+import { join, relative, sep } from 'node:path'
+import { existsSync, readdirSync } from 'node:fs'
 import { listWorkspaceFiles } from '@core/page-parser'
 import { readTextCapped } from './cappedFileRead'
 import type { ColorSchemeCapability } from './projectProfileSchema'
@@ -35,6 +61,73 @@ const TAILWIND_DARK_MODE_CLASS_RE = /darkMode\s*:\s*(?:['"](class|selector)['"]|
  */
 const PREFERS_COLOR_SCHEME_DARK_RE = /@media\s*\(\s*prefers-color-scheme\s*:\s*dark\s*\)/i
 
+const STYLESHEET_RE = /\.(css|scss|sass|less)$/i
+const MAX_STYLESHEET_BYTES = 200_000
+
+/**
+ * Where a package keeps its built stylesheet. A package root is not walked
+ * recursively — a design system's `node_modules` entry can hold thousands of
+ * files, and no package ships its distributable CSS more than one level deep
+ * under a conventional output directory. `''` is the package root itself
+ * (`style.css` beside `package.json`, the pattern `package.json#style`
+ * points at).
+ */
+const PACKAGE_CSS_DIRS = ['', 'dist', 'build', 'lib', 'es', 'esm', 'styles', 'css'] as const
+
+/** Ceiling on how many package stylesheets one probe reads, so a pathological dependency cannot turn a probe into a directory walk. */
+const MAX_PACKAGE_STYLESHEETS = 24
+
+/** Every `.css`/`.scss`/`.sass`/`.less` file directly inside `absDir`, sorted for a stable, reproducible probe result. Never throws — an absent or unreadable directory contributes nothing. */
+function listStylesheetsIn(absDir: string): string[] {
+  try {
+    return readdirSync(absDir, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && STYLESHEET_RE.test(entry.name))
+      .map((entry) => join(absDir, entry.name))
+      .sort()
+  } catch {
+    return []
+  }
+}
+
+/** The stylesheets an installed package ships, looked for only in the conventional places (`PACKAGE_CSS_DIRS`) and capped at `MAX_PACKAGE_STYLESHEETS`. */
+function listPackageStylesheets(appRootAbs: string, packageName: string): string[] {
+  const pkgRoot = join(appRootAbs, 'node_modules', ...packageName.split('/'))
+  if (!existsSync(pkgRoot)) return []
+  const files: string[] = []
+  for (const dir of PACKAGE_CSS_DIRS) {
+    for (const file of listStylesheetsIn(dir ? join(pkgRoot, dir) : pkgRoot)) {
+      files.push(file)
+      if (files.length >= MAX_PACKAGE_STYLESHEETS) return files
+    }
+  }
+  return files
+}
+
+/** The dark-mode gate a single stylesheet's text declares, or `undefined` when it declares none. A class gate wins over a media query within one file for the same reason it wins across files — see `detectColorScheme`. */
+function gateInStylesheet(text: string): { kind: 'class'; selector: string } | { kind: 'media' } | undefined {
+  const selector = DARK_CLASS_SELECTOR_RE.exec(text) ? '.dark' : DATA_THEME_SELECTOR_RE.exec(text)?.[0]
+  if (selector) return { kind: 'class', selector }
+  if (PREFERS_COLOR_SCHEME_DARK_RE.test(text)) return { kind: 'media' }
+  return undefined
+}
+
+/** Scans one ordered group of stylesheets: the first class gate found wins outright; a media gate is remembered but only reported when no class gate exists anywhere in the group. */
+function scanStylesheets(files: Iterable<{ abs: string; source: string }>): ColorSchemeCapability | undefined {
+  let media: ColorSchemeCapability | undefined
+  for (const { abs, source } of files) {
+    const text = readTextCapped(abs, MAX_STYLESHEET_BYTES)
+    if (!text) continue
+    const gate = gateInStylesheet(text)
+    if (!gate) continue
+    if (gate.kind === 'media') {
+      media ??= { mechanism: 'media', source }
+      continue
+    }
+    return { mechanism: 'class', selector: gate.selector, source }
+  }
+  return media
+}
+
 /**
  * Detects how (if at all) this project expresses dark mode — see
  * `ColorSchemeCapabilitySchema`'s doc for the three outcomes and why the
@@ -43,25 +136,40 @@ const PREFERS_COLOR_SCHEME_DARK_RE = /@media\s*\(\s*prefers-color-scheme\s*:\s*d
  * query (rare, but Tailwind's own generated utilities can include one) is
  * still driven by its class toggle, which is the one the canvas can force
  * regardless of host OS preference without a CSS rewrite.
+ *
+ * `componentPackages` is the list `detectComponentPackages` already computed
+ * for the same profile — pass it so a project whose dark mode lives entirely
+ * in its design system is reported honestly (see the module doc). Omitting
+ * it scans the project's own files only, which is what a caller with no
+ * package list can truthfully claim.
  */
-export function detectColorScheme(root: string): ColorSchemeCapability {
+export function detectColorScheme(root: string, componentPackages: readonly string[] = []): ColorSchemeCapability {
   const tailwindConfig = findConfigFile(root, TAILWIND_CONFIG_NAMES)
   if (tailwindConfig) {
-    const configText = readTextCapped(join(root, tailwindConfig), 200_000)
+    const configText = readTextCapped(join(root, tailwindConfig), MAX_STYLESHEET_BYTES)
     if (configText && TAILWIND_DARK_MODE_CLASS_RE.test(configText)) {
-      return { mechanism: 'class', selector: '.dark' }
+      return { mechanism: 'class', selector: '.dark', source: tailwindConfig }
     }
   }
 
-  let sawMediaDark = false
-  for (const relFile of listWorkspaceFiles(root)) {
-    if (!/\.(css|scss|sass|less)$/i.test(relFile)) continue
-    const text = readTextCapped(join(root, ...relFile.split('/')), 200_000)
-    if (!text) continue
-    const classMatch = DARK_CLASS_SELECTOR_RE.exec(text) ? '.dark' : DATA_THEME_SELECTOR_RE.exec(text)?.[0]
-    if (classMatch) return { mechanism: 'class', selector: classMatch }
-    if (!sawMediaDark && PREFERS_COLOR_SCHEME_DARK_RE.test(text)) sawMediaDark = true
-  }
-  if (sawMediaDark) return { mechanism: 'media' }
-  return { mechanism: 'none' }
+  const projectFiles = (function* () {
+    for (const relFile of listWorkspaceFiles(root)) {
+      if (!STYLESHEET_RE.test(relFile)) continue
+      yield { abs: join(root, ...relFile.split('/')), source: relFile }
+    }
+  })()
+  const fromProject = scanStylesheets(projectFiles)
+  // A project's own gate beats its design system's, even when the project's
+  // is only a media query and the package ships a class toggle: the project
+  // is what the published app actually runs under.
+  if (fromProject) return fromProject
+
+  const packageFiles = (function* () {
+    for (const name of componentPackages) {
+      for (const abs of listPackageStylesheets(root, name)) {
+        yield { abs, source: relative(root, abs).split(sep).join('/') }
+      }
+    }
+  })()
+  return scanStylesheets(packageFiles) ?? { mechanism: 'none' }
 }

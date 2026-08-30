@@ -99,10 +99,6 @@ describe('No-op mutation contract', () => {
     expectNoDocumentMutation(() => {
       useEditorStore.getState().clearBreakpointOverride('text-1', 'mobile')
     })
-
-    expectNoDocumentMutation(() => {
-      useEditorStore.getState().clearNodeDynamicBinding('text-1', 'title')
-    })
   })
 
   it('does not dirty history for no-op breakpoint and font mutations', () => {

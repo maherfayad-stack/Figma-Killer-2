@@ -23,7 +23,13 @@
    * Once content exceeds the viewport, the measurement loop sets a larger
    * inline `height` and the frame grows to fit. */
   min-height: 100vh;
-  background: var(--overlay);
+  /* The frame's paper — see `--canvas-frame-paper` in globals.css. It follows
+     the board's PREVIEWED colour scheme (`data-preview-scheme`, set from the
+     frame's own effective axes in `IframeFrameSurface`), not the admin theme:
+     an iframe document with no background of its own is transparent, so this
+     is what shows below a short page, and a fixed white here painted every
+     dark-mode preview on white paper. */
+  background: var(--canvas-frame-paper);
   box-shadow: 0 2px 12px var(--scrim-30);
   /* `overflow: hidden` would clip pop-out chrome inside the iframe (e.g.
    * a sticky nav that overlaps the page bottom). We rely on the iframe's
@@ -32,6 +38,10 @@
   position: relative;
   border: 0;
   display: block;
+}
+
+.iframe[data-preview-scheme='dark'] {
+  background: var(--canvas-frame-paper-dark);
 }
 
 :global(html[data-studio-canvas-parent-space-pan='1']) .iframe:not(.iframeLive),

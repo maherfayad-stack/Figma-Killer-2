@@ -2,13 +2,19 @@
 
 .panel {
     position: absolute;
-    --panel-x: calc(100% - 376px);
+    --panel-x: calc(100% - 316px);
     --panel-y: 16px;
     /* Background the inner fade gradients (ClassPicker fade, search-bar fade,
        locked-preview teaser) blend into. Floating panel surface is --bg-surface;
        the docked variant is transparent over the --bg-body sidebar, so it
        overrides this below. Descendants read it via var(--panel-fade-bg). */
     --panel-fade-bg: var(--bg-surface);
+    /* Rebind the shared control-row geometry to the inspector's own rhythm.
+       Everything under this root — including primitives shared with the data
+       admin — picks the tighter values up from the cascade, so there is one
+       decision here instead of a `size` prop threaded through every control. */
+    --control-label-w: var(--inspector-label-w);
+    --control-row-h: var(--inspector-row-h);
     left: var(--panel-x);
     top: var(--panel-y);
     bottom: 12px;
@@ -81,7 +87,7 @@
     display: flex;
     align-items: center;
     gap: var(--space-l);
-    padding: var(--space-m) var(--space-xl) 0;
+    padding: var(--space-xs) var(--inspector-pad-x) 0;
 }
 
 .nodeViewSwitcher .nodeViewButton {
@@ -112,7 +118,7 @@
 .headerClassPicker {
     position: relative;
     z-index: 1;
-    padding: var(--space-m) var(--space-xl) 0;
+    padding: var(--space-xs) var(--inspector-pad-x) 0;
 }
 
 /*  Soft fade just below the ClassPicker — mirrors the bottom search bar's
@@ -158,7 +164,7 @@
 /* ── SelectorInspector: search bar + scroll-container+rail grid ────────────── */
 
 .selectorSearchBar {
-    padding: var(--space-l) var(--space-xl);
+    padding: var(--space-s) var(--inspector-pad-x);
     background: var(--overlay-5);
 }
 

@@ -142,3 +142,29 @@
 .placeholderOption .optionLabel {
     color: var(--text-subtle);
 }
+
+/* ─── Inspector field skin ─────────────────────────────────────────────────
+ * Opted into by an ancestor carrying `data-field-skin="inspector"`. See
+ * `Input.module.css` for why the skin is scoped by attribute rather than
+ * threaded as a prop, and why the inspector's field is a filled rectangle
+ * whose border only appears under the pointer. A select has to follow the
+ * inputs it sits beside in a paired row, or one half of the pair reads as a
+ * raised pill next to a flat one. */
+
+[data-field-skin='inspector'] .select {
+    min-height: var(--inspector-row-h);
+    border-color: transparent;
+    border-radius: var(--inspector-field-radius);
+    background: var(--inspector-field-bg);
+}
+
+[data-field-skin='inspector'] .select:hover {
+    border-color: transparent;
+    background: var(--inspector-field-bg-hover);
+}
+
+[data-field-skin='inspector'] .select:focus-within,
+[data-field-skin='inspector'] .select[data-open='true'] {
+    border-color: var(--overlay-50);
+    background: var(--inspector-field-bg);
+}

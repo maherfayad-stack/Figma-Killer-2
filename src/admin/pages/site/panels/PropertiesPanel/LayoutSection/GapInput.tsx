@@ -5,10 +5,14 @@
  * blocks where it belongs (right below Justify). Backed by `TokenAwareInput`
  * so users get framework spacing variable autocomplete as they type — same
  * vocabulary as the SpacingBoxControl side inputs.
+ *
+ * The two-panels-with-a-channel mark rides inside the field, so the row costs
+ * one line rather than a line plus a caption. `aria-label` still says "Gap".
  */
 
 import { TokenAwareInput } from '@site/property-controls/TokenAwareInput'
 import { useSpacingTokens } from '@site/property-controls/tokenUtils'
+import { GapIcon } from '@ui/components/InspectorIcons'
 import { LabeledControl } from './LabeledControl'
 
 interface GapInputProps {
@@ -23,11 +27,12 @@ interface GapInputProps {
 export function GapInput({ value, isSet, onChange, onPreview, onClearPreview }: GapInputProps) {
   const tokens = useSpacingTokens()
   return (
-    <LabeledControl label="Gap" isSet={isSet}>
+    <LabeledControl isSet={isSet}>
       <TokenAwareInput
         aria-label="Gap"
         value={value}
         placeholder="0px"
+        prefix={<GapIcon size={13} aria-hidden="true" />}
         tokens={tokens}
         onCommit={onChange}
         onPreview={onPreview}

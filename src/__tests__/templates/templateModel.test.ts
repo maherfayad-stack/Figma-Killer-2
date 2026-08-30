@@ -70,29 +70,10 @@ describe('dynamic template model', () => {
     expect(useEditorStore.getState().hasUnsavedChanges).toBe(true)
   })
 
-  it('sets and removes a node dynamic binding without changing the static prop fallback', () => {
-    const site = makeSite()
-    const page = site.pages[0]
-    const root = page.nodes[page.rootNodeId]
-    root.props = { text: 'Static fallback' }
-
-    useEditorStore.setState({
-      site,
-      activePageId: page.id,
-      activeDocument: { kind: 'page', pageId: page.id },
-      hasUnsavedChanges: false,
-    })
-    useEditorStore.getState().setNodeDynamicBinding(root.id, 'text', {
-      source: 'currentEntry',
-      field: 'title',
-    })
-
-    expect(useEditorStore.getState().site?.pages[0].nodes[root.id].props.text).toBe('Static fallback')
-    expect(useEditorStore.getState().site?.pages[0].nodes[root.id].dynamicBindings?.text?.field).toBe('title')
-
-    useEditorStore.getState().clearNodeDynamicBinding(root.id, 'text')
-
-    expect(useEditorStore.getState().site?.pages[0].nodes[root.id].props.text).toBe('Static fallback')
-    expect(useEditorStore.getState().site?.pages[0].nodes[root.id].dynamicBindings).toBeUndefined()
-  })
+  // The store actions that CREATED a binding (`setNodeDynamicBinding` /
+  // `clearNodeDynamicBinding`) were removed with the rest of the "Bind to data
+  // field" authoring surface — see `board-12` in STATE.md. The cases above stay
+  // because they cover the other half, which is deliberately kept: a page tree
+  // that ALREADY holds `dynamicBindings` still round-trips through validation
+  // and still has them dropped when a template is converted back to a page.
 })

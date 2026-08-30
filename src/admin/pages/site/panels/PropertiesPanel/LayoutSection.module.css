@@ -91,19 +91,32 @@
  * without painting a frame around the rows. */
 .flexBlock {
     display: grid;
-    gap: var(--space-s);
+    gap: var(--inspector-group-gap);
 }
 
-/* Mini label + control row used by the flex / grid sub-fields. Matches the
- * 100px label column + 4px gap from controls.module.css's .controlWrapper
- * so the labels align vertically with the fallback ClassPropertyRow rows
- * rendered below the visual block. */
+/* Two sub-fields side by side — direction beside wrap, align beside justify.
+ * Both halves of each pair are the same shape (a connected icon group), so
+ * they read as one decision made twice rather than as two unrelated rows. */
+.flexPair {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--inspector-field-gap);
+    align-items: end;
+}
+
+.flexPair > * {
+    min-width: 0;
+}
+
+/* One flex / grid sub-field: an optional small caption stacked above a
+ * full-width control — the same shape `ControlRow`'s `caption` layout draws,
+ * so a captioned field here lines up with a captioned property row below the
+ * visual block. This used to be a side-label row on `--control-label-w`,
+ * which made Layout the one section still paying a label gutter per row. */
 .labeledRow {
     display: grid;
-    grid-template-columns: 100px 1fr;
-    align-items: center;
-    gap: var(--space-3xs);
-    min-height: 28px;
+    gap: var(--inspector-caption-gap);
+    min-width: 0;
 }
 
 /* Default (no state hint) keeps the secondary-text colour used by
@@ -113,9 +126,9 @@
  * switchers and generic property rows share a single language for
  * "this property is/isn't set". */
 .labeledLabel {
-    color: var(--text-muted);
-    font-size: var(--text-xs);
-    font-weight: 620;
+    color: var(--text-subtle);
+    font-size: var(--text-2xs);
+    font-weight: 500;
 }
 
 .labeledRow[data-state="set"] .labeledLabel {

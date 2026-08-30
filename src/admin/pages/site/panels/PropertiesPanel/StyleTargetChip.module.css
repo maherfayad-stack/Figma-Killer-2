@@ -1,8 +1,19 @@
+/*
+ * The write-target row: an "Editing" label, the Element / class chips, and the
+ * assign-class action. It is the widest fixed run of content in the panel, and
+ * with no `min-width: 0` it refused to shrink — pushing the whole scroll
+ * column past the panel edge, where `overflow-x: hidden` quietly amputated
+ * whatever fell off the right (the assign button, the clear buttons on the
+ * rows below it). Wrapping is the honest failure mode for a row that genuinely
+ * cannot fit: two short lines beat one line with its end cut off.
+ */
 .row {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: var(--space-xs);
-    padding: var(--space-2xs) var(--space-s);
+    min-width: 0;
+    padding: var(--space-2xs) var(--inspector-pad-x);
 }
 
 .editingLabel {
@@ -20,7 +31,10 @@
 
 .chip.chip {
     gap: var(--space-4xs);
-    max-width: 160px;
+    /* Caps the chip at half a 260px panel's content column so a long class
+       name ellipses inside the chip instead of widening the row. */
+    max-width: 120px;
+    min-width: 0;
 }
 
 .chip.chip > * {
@@ -31,11 +45,20 @@
 
 /* Presentational chip (the class target — see StyleTargetChip.tsx's doc for
    why it isn't a Button). Same visual shell as the Button-based Element
-   chip's `secondary` variant so the two read as one control group. */
+   chip's `secondary` variant so the two read as one control group.
+
+   The truncation lives here, not on `.chip.chip > *`: that rule targets child
+   ELEMENTS, and this chip's class name is a bare text node with no wrapper, so
+   it was capped at 120px and then painted straight through the chip's right
+   edge and over the button beside it. */
 .chipStatic {
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     height: 22px;
     padding: 0 var(--space-xs);
     border: 1px solid var(--overlay-20);

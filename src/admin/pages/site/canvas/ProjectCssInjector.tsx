@@ -42,6 +42,15 @@
  * WS-10 Phase 1 — a package's own `prefers-color-scheme` media query (many
  * design systems ship one) is rewritten the same way `UserStylesheetInjector`
  * rewrites the project's own CSS — see `darkSchemeCssTransform.ts`.
+ *
+ * This injector does NOT set a theme attribute on the frame root. It used to
+ * pin `data-theme="light"` (the design system's tokens default to DARK via
+ * `:root:not([data-theme=light])`, so an unset root rendered dark components
+ * on a white canvas) — written before the board had a dark-mode control, and
+ * a second writer of the same attribute once it did. `previewAxesFrameEffect.ts`
+ * is the single owner of every root attribute the preview axes drive, and it
+ * now writes `data-theme` explicitly in BOTH schemes for exactly the reason
+ * this pin existed. See `VENDOR_THEME_ATTR` there.
  */
 import { useEffect, useSyncExternalStore } from 'react'
 // Vite `?inline` yields the processed CSS as a default string export. This is
@@ -77,15 +86,6 @@ export function ProjectCssInjector({ targetDocument }: { targetDocument?: Docume
     styleEl.textContent = vendorCss
       ? `${CANVAS_CSS_LAYER_ORDER}\n@layer ${VENDOR_LAYER} {\n${vendorCss}\n}`
       : `${CANVAS_CSS_LAYER_ORDER}\n/* no vendor css */`
-
-    // The design system's tokens default to DARK (`:root:not([data-theme=light])`).
-    // The canvas page surface is light, so opt the iframe root into the light
-    // token set explicitly; otherwise every alm.* component renders dark-mode
-    // colors on a white canvas. (Theme toggling can be wired to a canvas
-    // control later.)
-    if (!doc.documentElement.getAttribute('data-theme')) {
-      doc.documentElement.setAttribute('data-theme', 'light')
-    }
 
     return () => {
       doc.getElementById(STYLE_TAG_ID)?.remove()

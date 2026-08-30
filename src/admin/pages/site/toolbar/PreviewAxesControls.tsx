@@ -42,7 +42,7 @@ import {
 } from '@site/studio/previewAxesCapability'
 import styles from './PreviewAxesControls.module.css'
 
-const NO_DARK_MODE_REASON = 'No dark-mode stylesheet was detected in this project (no `.dark`/`[data-theme]` selector and no `@media (prefers-color-scheme: dark)` rule).'
+const NO_DARK_MODE_REASON = 'No dark-mode stylesheet was detected in this project or in the design system it installs (no `.dark`/`[data-theme]` selector and no `@media (prefers-color-scheme: dark)` rule).'
 const NO_LOCALE_REASON = 'No locale dictionary was detected in this project (no `translations[lang]`-style index, i18next/react-intl `resources` map, or `locales/*.json` directory).'
 
 export function PreviewAxesControls() {
@@ -56,6 +56,10 @@ export function PreviewAxesControls() {
   const isRtl = previewAxes.direction === 'rtl'
   const isDark = previewAxes.colorScheme === 'dark'
   const schemeApplies = colorScheme !== null && colorScheme.mechanism !== 'none'
+  // The probe names the file it found the mechanism in — an installed design
+  // system's own stylesheet as readily as the project's. Saying so is the
+  // difference between a toggle the user trusts and one they wonder about.
+  const schemeSource = colorScheme?.source ? ` (detected in ${colorScheme.source})` : ''
   const localeApplies = locales !== null
 
   const toggleDirection = () => {
@@ -107,7 +111,7 @@ export function PreviewAxesControls() {
         size="sm"
         pressed={isDark}
         aria-label={`Preview color scheme: ${isDark ? 'dark' : 'light'}. ${schemeApplies ? 'Click to switch.' : NO_DARK_MODE_REASON}`}
-        tooltip={schemeApplies ? (isDark ? 'Previewing dark — click for light' : 'Previewing light — click for dark') : NO_DARK_MODE_REASON}
+        tooltip={schemeApplies ? `${isDark ? 'Previewing dark — click for light' : 'Previewing light — click for dark'}${schemeSource}` : NO_DARK_MODE_REASON}
         disabled={!schemeApplies}
         onClick={toggleScheme}
         className={styles.axisButton}

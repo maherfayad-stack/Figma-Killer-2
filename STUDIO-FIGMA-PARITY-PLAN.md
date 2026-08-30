@@ -43,7 +43,8 @@ and `STATE.md`'s `parity-01` entry is the coordination record.
 | **C5** reload surgery | ✅ landed — 40-page board, one file: payload 38,637 → 1,174 B; page-ref churn 40/40 → 1/40 |
 | Architecture-gate repairs + backlog | ✅ landed — and they hid **two real bugs**: `BindingPickerPopover` and `UserStylesheetInjector` both resolved the **stale pre-VC page** |
 | **E2.5** panel surfaces | ◐ **incomplete** — agent was killed by a session limit just before its handoff; work is in the tree, unverified |
-| **G** density · **A7** Figma discoverability · **A2** region-scoped compare | ⬜ not started |
+| **G** density · **A7** Figma discoverability | ⬜ not started |
+| **A2** exact-pixel diffing (capture-purpose split, not the originally-proposed region crop) | ✅ landed — see A2's own entry for why the crop framing was rejected |
 
 **Still true and still blocking:** the six open decisions in §15 are unanswered,
 and none of this has had the human dogfood pass that `standing-authorization`
@@ -1045,6 +1046,50 @@ source* · *edit the data array* (`.map` row) · *detach or edit the definition*
 
 ## 10. TRACK G — Panel density (M) — run **after** F
 
+> **STATUS 2026-08-30 — the density win and the label→icon swap have SHIPPED.**
+> The table below is kept as the record of what was wrong. What landed:
+> panel default 360→300 and floor 300→260; the three hardcoded `100px` label
+> columns collapsed into `--control-label-w` (rebound per-surface to
+> `--inspector-label-w`), with `--control-row-h` beside it; a full
+> `--inspector-*` geometry scale in `globals.css`; `Section` reduced to a
+> hairline + title + `actions` slot; an inspector field skin
+> (`data-field-skin="inspector"`, filled 5px rectangles) on `Input`, `Select`,
+> `ScrubInput` and `SegmentedControl`; `IconToggleGroup` built as a skin on the
+> EXISTING `SegmentedControl` rather than as a new primitive, wired to
+> `textAlign` / `fontStyle` / `textDecoration` / `textTransform` via
+> `cssPropertyIcons.ts`; in-field glyphs for `lineHeight` / `letterSpacing`;
+> and `ClassPropertyRow`'s default layout flipped from `inline` to the compact
+> cell, which is what stopped half the panel silently keeping the label gutter.
+> Design rules in [`docs/design.md`](docs/design.md) → "The inspector".
+>
+> **SECOND PASS 2026-08-30 — the caption sweep.** The first pass left every
+> glyph-bearing field ALSO printing its name above itself, and left three
+> sections speaking the old side-label vocabulary. What landed:
+> `ClassPropertyRow` now drops the caption for any field that carries a mark
+> (a control names itself exactly once); `ScrubInput.label` widened to
+> `ReactNode` so `SizeSection`'s Min/Max fields carry the converging /
+> diverging arrow marks instead of "Min W" / "Max H", and `aspectRatio` +
+> `boxSizing` pair into one uncaptioned row; `LayoutSection`'s
+> `LabeledControl` and `BorderControl`'s `FieldRow` both took an optional
+> label and lost the gutter, with direction/wrap and align/justify paired side
+> by side and stroke-weight / corner-radius glyphs in their fields; a new
+> `EffectsSection` pairs the six long-tail effect properties. New glyphs:
+> min/max width/height, aspect ratio, opacity, gap, stroke weight, corner
+> radius. Measured on the fixture project: Effects 398→257px, Border 404→373px,
+> Size 8 rows→4. Also fixed en route: `SelectControl` reached assistive tech
+> with NO accessible name whenever its row was captionless.
+>
+> `SectionStylesMenu` went from one button per section offering both families
+> to **one button per family** — a project generates a handful of text styles
+> and hundreds of colour utilities, and mixing them made the Typography menu
+> useless for the thing it existed for.
+>
+> **Still open in this track:** `SpacingBoxControl` (~253px measured) still
+> leads with its diagram and is now the tallest block in the panel;
+> `BorderControl`'s side/corner pickers are what is left of its height;
+> `AlignGrid`; multi-select style editing; drag-scrub beyond `SizeSection`;
+> the Shift-nudge 10-vs-8 inconsistency; math expressions in numeric fields.
+>
 > **This track is much smaller than expected.** WS-6.1–6.4 largely shipped
 > already: `ScrubInput` (drag-scrub, ±1/Shift±10/Alt×0.1, `MIXED`),
 > `StyleTargetChip`, `AlignBar`, `SpacingBoxControl`, `BorderControl`, and the
@@ -1077,7 +1122,7 @@ Keep the existing 28/32px control-height rhythm — it already matches Figma.
 | Primitive | Why |
 |---|---|
 | `AlignGrid` (3×3) | `AlignmentControl` uses two linear `SegmentedControl` rows for what Figma does in one grid |
-| `IconToggleGroup` | six enums (`textAlign`, `textDecoration`, `textTransform`, `fontStyle`, `objectFit`, `boxSizing`) render as word-labeled dropdowns |
+| ~~`IconToggleGroup`~~ | SHIPPED as a skin on `SegmentedControl` for `textAlign` / `textDecoration` / `textTransform` / `fontStyle`. `objectFit` and `boxSizing` deliberately keep dropdowns — `scale-down` and `border-box` have no honest 14px picture, and `boxSizing` instead lost its caption because its values name themselves |
 | `ColorField` | today's `ColorInput` is a native `<input type="color">` — no alpha, no eyedropper, no hex/rgb/hsl toggle, no recents. **Keep its token-picker integration, which is genuinely good** |
 | Math expressions | `"100/2"` rejected by both `scrubMath.ts:23` and `numericNudge.ts:41` |
 
@@ -1132,6 +1177,22 @@ systems"). **That comment is a correct diagnosis of a wrong architecture.**
   silently detaching the token. Demote it behind "Custom".
 - **T9 — `contrastRatio` is server-only** (`colorMath.ts:110`, zero imports from
   `src/`). No AA/AAA badge anywhere. **Cheapest high-value fix in the audit.**
+- **T-applied (2026-08-30) — a style could not be applied where it is used.**
+  A *variable* was already offered at the point of use (`TokenizedColorField`
+  on any colour row, `TokenAwareInput` on the type/spacing scales). A *style* —
+  a framework-generated utility class — was reachable only by typing its name
+  into the ClassPicker at the top of the panel, which required already knowing
+  that the way to set body type is to type `text-m` into a box labelled with
+  the element's classes. `SectionStylesMenu` now puts a styles button in the
+  header of the section that owns the family (Typography → type styles + text
+  colour utilities; Background → background; Border → border), grouped as
+  Figma's "Text styles" / "Color styles". **The generated catalogue is huge —
+  measured at 4,294 entries for one section on the ALM fixture** (every colour
+  token × every shade/tint × every enabled utility), so the menu ships a search
+  field, a 40-row cap that spends its budget on type styles first, and a count
+  of what it left out. Swatches resolve `var(--…)` through
+  `generateFrameworkColorVariableSets` because those custom properties live in
+  the CANVAS document, not in the admin chrome the menu renders into.
 - **T10 — no eyedropper, no reference sampling.** Zero `EyeDropper` matches. The
   server machinery (`referenceMeasure.ts` palettes, `extractReferenceAsset.ts`
   crops) is **already built** — UI only.
@@ -1180,19 +1241,79 @@ as an optional `pageId`. Add an explicit trap entry to the system prompt's
 (`systemPrompt.ts:194-197`) covers the Figma-connector download path, not the
 ordinary paste.
 
-### A2 — Exact-pixel diffing survives tall screens (S doc / M real)
+### A2 — Exact-pixel diffing survives tall screens (S doc / M real) — ✅ landed, differently than proposed
 
-`renderEvidence.ts:412-421` clamps `pixelRatio` by **both** width and height
-against `MAX_IMAGE_EDGE = 1568`. Any frame taller than ~784 CSS px at 2× drops
+`renderEvidence.ts:412-421` clamped `pixelRatio` by **both** width and height
+against `MAX_IMAGE_EDGE = 1568`. Any frame taller than ~784 CSS px at 2× fell
 into `frameDiffEngine.ts:105-137`'s `resampled` branch (`fit: 'fill'`) — so the
-"exact-pixel" comparison the measurement pipeline is built around becomes
+"exact-pixel" comparison the measurement pipeline is built around became
 interpolated for **most real mobile screens**. Disclosed via
 `capture.dimensionMatch` but never flagged proactively, and
-`studio_recommend_export_dpr` warns only about the width side (`:264`).
+`studio_recommend_export_dpr` warned only about the width side.
 
-**Fix.** Short term: name the height clamp in the tool's description/output.
-Real fix: region-scoped compare (crop to a viewport-height slice) so exactness
-survives scroll-unrolled content.
+**"Region-scoped compare (crop to a viewport-height slice)" — rejected.** The
+~1568px clamp is applied at CAPTURE time (`renderEvidence.ts`'s
+`captureElementScreenshot`, before `html-to-image`'s `toCanvas()` rasterizes),
+not at diff time. Slicing the diff image afterward cannot recover resolution
+that was never captured — it would only re-slice an already-degraded image.
+Cropping is not the fix; the clamp itself needs to not apply to this path.
+
+**What actually shipped: decouple the vision cap from the measurement cap.**
+The 1568px figure exists because it matches Anthropic's internal downsize of
+an image actually shown to a model (`AI_USER_IMAGE_MAX_EDGE`,
+`src/core/ai/userImage.ts`) — a constraint `studio_compare` never needed,
+since it diffs server-side with pixelmatch and controls model visibility
+separately via `includeImages` (A4, already shipped — see below).
+
+- `captureAgentRenderSnapshot`/`captureElementScreenshot`
+  (`renderEvidence.ts`) gained a `purpose: 'vision' | 'measurement'` option
+  (default `'vision'`, unchanged behavior for every existing caller).
+  `'vision'` keeps the old per-edge `MAX_IMAGE_EDGE` (1568px) clamp.
+  `'measurement'` is instead bounded by a **total pixel budget**
+  (`MEASUREMENT_MAX_PIXELS = 15,000,000` — ~120MB of transient canvas/PNG-
+  encode memory, comfortably inside a browser tab's budget for a one-shot
+  capture) plus a much higher hard per-edge ceiling
+  (`MEASUREMENT_MAX_EDGE = 4096`, the well-known cross-engine-safe canvas
+  dimension figure). The budget is deliberately set BELOW the edge ceiling
+  squared (~16.8M) — otherwise the edge ceiling alone would always win and
+  the budget would be dead code, degrading back into "a per-edge clamp with
+  a bigger number."
+- `studio_export_frames`' input schema (`StudioExportFramesInputSchema`,
+  `src/core/ai/toolSchemas.ts`) gained the matching `purpose` field, threaded
+  through to `renderEvidence.ts` by `studioExportFrames.ts`. Default
+  `'vision'` — an external MCP caller who wants to actually look at the
+  exported PNG still gets the old behavior unless it opts in.
+  `studio_compare` (`compare.ts`) now requests `purpose: 'measurement'` on
+  its own internal capture.
+- **FIX 1 (a real, separate correctness bug found while landing this):**
+  `frameDiffEngine.ts`'s region→node-id mapping intersected a differing
+  REGION (in the diff image's pixel space — CSS px × capture dpr) directly
+  against `nodeRects` (always plain CSS px, `getBoundingClientRect()`
+  output). At dpr:1 this coincidentally worked; at dpr 2-3 (the routine case
+  when matching a Figma export's own pixel width) only the top-left quadrant
+  of a frame could ever map to a node. Fixed by making `FrameDiffOptions.
+  nodeRects` a `{ rects, imageScale }` pair with NO default scale — the type
+  system now refuses to compile a caller that forgets it.
+  `studio_export_frames`'s response gained a matching `imageScale` field
+  (derived from the REAL captured pixel size ÷ CSS width, not the requested
+  `dpr`, so it stays correct even when the effective ratio was clamped);
+  `studio_diff_frames` gained the equivalent `nodeRectsImageScale` input
+  (optional, default 1, for backward compatibility with existing dpr:1
+  callers). This bug and A2 compose directly: raising the capture resolution
+  changes the image-space scale factor, so FIX 1 had to land first for A2's
+  higher-resolution captures to map to the right nodes.
+- `describeResampleReason`'s "likely caused by the vision-safe cap" heuristic
+  was a loose `baselineHeight >= 1567` check with no upper bound — harmless
+  while `'vision'` was the only capture mode (the clamp made a taller
+  baseline impossible), but a real false-positive risk once `'measurement'`
+  captures can legitimately be much taller. Tightened to a ±2px band around
+  the actual cap value.
+
+Net effect: a typical mobile frame (e.g. 390×844) measured against its own 2x
+Figma export (780×1688) now captures at the exact dpr that produces
+780×1688 pixel-for-pixel, landing `reconcileReference`'s `exact` branch
+instead of the `resampled` fallback — no interpolation, no `dimensionMatch`
+caveat.
 
 ### A3 — Reference-free quality signals (M)
 

@@ -7,8 +7,9 @@
  * failure mode this gate exists to catch before it ships.
  */
 import { describe, expect, it } from 'bun:test'
-import { buildStudioAgentSystemPrompt } from './systemPrompt'
+import { buildStudioAgentSystemPrompt, type StudioPromptContext } from './systemPrompt'
 import { studioAgentTools } from './index'
+import type { StudioLiveDigest } from './liveDigest'
 
 /** Every `studio_snake_case` token appearing anywhere in `text`, de-duplicated. */
 function extractToolLikeTokens(text: string): Set<string> {
@@ -74,5 +75,113 @@ describe('Studio system prompt — capability-aware "Tools available" line (0.11
   it('names every tool that IS in the resolved list handed in', () => {
     const [prefix] = buildStudioAgentSystemPrompt(null, studioAgentTools)
     expect(prefix).toContain('studio_render_reference')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Capability digest (mcp-tooling task) — asymmetric rendering
+// ---------------------------------------------------------------------------
+
+const FIXTURE_CTX: StudioPromptContext = {
+  dir: '/tmp/fixture',
+  name: 'fixture',
+  trust: 'static',
+  framework: 'react',
+  pagesDir: 'pages',
+  packageManager: 'bun',
+  styleToolchain: { tailwind: false, sass: false, cssModules: true },
+  componentPackages: [],
+  warningCount: 0,
+}
+
+function baseLiveDigest(capabilities: StudioLiveDigest['capabilities']): StudioLiveDigest {
+  return {
+    board: { activeBoardId: null, frames: [] },
+    activePage: null,
+    selection: null,
+    fidelity: null,
+    install: { hasPackageJson: true, hasNodeModules: true, dependencyCount: 3 },
+    axes: { direction: 'ltr', colorScheme: 'light' },
+    designReferences: [],
+    staleWarning: null,
+    capabilities,
+  }
+}
+
+describe('Studio system prompt — capability digest (mcp-tooling task)', () => {
+  it('all-available: emits no "unavailable"/"not configured" wording, and the figma line stays terse', () => {
+    const live = baseLiveDigest({
+      figma: { status: 'configured', loopbackAssetFetchBlocked: false },
+      typecheck: { available: true },
+    })
+    const [, , suffix] = buildStudioAgentSystemPrompt(FIXTURE_CTX, studioAgentTools, live)
+
+    // Typecheck is fully available: no line about it at all — the terse/
+    // omitted half of the asymmetry.
+    expect(suffix).not.toContain('studio_typecheck: unavailable')
+    expect(suffix).not.toContain('typecheck')
+
+    // Figma is configured with nothing blocking it: one short, non-actionable
+    // line, not the longer "not configured" fallback instructions.
+    expect(suffix).toContain('Figma MCP connector: configured (desktop app must be running to respond).')
+    expect(suffix).not.toContain('not configured for this project')
+    expect(suffix).not.toContain('asset downloads from it are blocked')
+  })
+
+  it('degraded: figma not configured produces an actionable line naming the fallback tool', () => {
+    const live = baseLiveDigest({
+      figma: { status: 'not-configured', loopbackAssetFetchBlocked: false },
+      typecheck: { available: true },
+    })
+    const [, , suffix] = buildStudioAgentSystemPrompt(FIXTURE_CTX, studioAgentTools, live)
+
+    expect(suffix).toContain('Figma MCP connector: not configured for this project')
+    expect(suffix).toContain('studio_measure_reference')
+  })
+
+  it('degraded: a configured but asset-blocked figma connector names the loopback env var and the fallback tool', () => {
+    const live = baseLiveDigest({
+      figma: { status: 'configured', loopbackAssetFetchBlocked: true },
+      typecheck: { available: true },
+    })
+    const [, , suffix] = buildStudioAgentSystemPrompt(FIXTURE_CTX, studioAgentTools, live)
+
+    expect(suffix).toContain('STUDIO_ALLOW_LOOPBACK_ASSET_FETCH')
+    expect(suffix).toContain('studio_extract_reference_asset')
+  })
+
+  it('degraded: figma probe degraded to "unknown" still tells the agent to fall back rather than staying silent', () => {
+    const live = baseLiveDigest({
+      figma: { status: 'unknown', loopbackAssetFetchBlocked: false },
+      typecheck: { available: true },
+    })
+    const [, , suffix] = buildStudioAgentSystemPrompt(FIXTURE_CTX, studioAgentTools, live)
+
+    expect(suffix).toContain('Figma MCP connector: status unknown')
+    expect(suffix).toContain('studio_measure_reference')
+  })
+
+  it('degraded: each typecheck unavailability reason renders its own actionable fix, and stays out of the prompt when available', () => {
+    const reasons = [
+      { reason: 'trust-tier' as const, expectSubstring: 'ask the user to promote it' },
+      { reason: 'no-tsconfig' as const, expectSubstring: 'no tsconfig.json' },
+      { reason: 'typescript-not-installed' as const, expectSubstring: 'studio_install_deps' },
+      { reason: 'unknown' as const, expectSubstring: 'availability probe failed' },
+    ]
+    for (const { reason, expectSubstring } of reasons) {
+      const live = baseLiveDigest({
+        figma: { status: 'configured', loopbackAssetFetchBlocked: false },
+        typecheck: { available: false, reason },
+      })
+      const [, , suffix] = buildStudioAgentSystemPrompt(FIXTURE_CTX, studioAgentTools, live)
+      expect(suffix).toContain('studio_typecheck: unavailable')
+      expect(suffix).toContain(expectSubstring)
+    }
+  })
+
+  it('no live digest at all (no browser snapshot posted): the suffix still builds and says nothing about capabilities', () => {
+    const [, , suffix] = buildStudioAgentSystemPrompt(FIXTURE_CTX, studioAgentTools, null)
+    expect(suffix).not.toContain('Figma MCP connector')
+    expect(suffix).not.toContain('studio_typecheck: unavailable')
   })
 })

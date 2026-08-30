@@ -26,12 +26,7 @@ import type {
   AnyModuleDefinition,
   PropertyControl,
 } from '@core/module-engine'
-import type {
-  DynamicPropBinding,
-  Page,
-  PageNode,
-} from '@core/page-tree'
-import type { LoopEntitySource } from '@core/loops/types'
+import type { Page, PageNode } from '@core/page-tree'
 import type { ActiveDocument } from '../../store/slices/uiSlice'
 import { isStudioMode } from '@site/studio/studioMode'
 import { LoopPropertiesView } from './LoopPropertiesView'
@@ -52,13 +47,8 @@ interface ModuleTabContentArgs {
   overrideKeys: Set<string>
   activeDocument: ActiveDocument | null
   activePage: Page | null
-  dynamicBindingsEnabled: boolean
-  enclosingLoopSource: LoopEntitySource | undefined
-  enclosingLoopTableId: string | null
   handleChange: (propKey: string, value: unknown) => void
   handlePatch: (patch: Record<string, unknown>) => void
-  onSetDynamicBinding: (propKey: string, binding: DynamicPropBinding) => void
-  onClearDynamicBinding: (propKey: string) => void
 }
 
 export function renderModuleTabContent(args: ModuleTabContentArgs): React.ReactNode {
@@ -70,13 +60,8 @@ export function renderModuleTabContent(args: ModuleTabContentArgs): React.ReactN
     overrideKeys,
     activeDocument,
     activePage,
-    dynamicBindingsEnabled,
-    enclosingLoopSource,
-    enclosingLoopTableId,
     handleChange: updateModuleProp,
     handlePatch: patchModuleProps,
-    onSetDynamicBinding,
-    onClearDynamicBinding,
   } = args
 
   // Branch 1: `base.loop` gets the dedicated loop UI.
@@ -185,14 +170,6 @@ export function renderModuleTabContent(args: ModuleTabContentArgs): React.ReactN
             // element (unlike `studio.instance`, there's no separate call
             // site), so the owner IS the selected node.
             ownerNodeId={selectedNodeId ?? undefined}
-            dynamicBinding={dynamicBindingsEnabled && selectedNodeId ? {
-              binding: selectedNode.dynamicBindings?.[key],
-              onSet: (binding) => onSetDynamicBinding(key, binding),
-              onClear: () => onClearDynamicBinding(key),
-              availableFields: enclosingLoopSource?.fields,
-              sourceLabel: enclosingLoopSource?.label,
-              loopTableId: enclosingLoopTableId,
-            } : undefined}
           />
         )
       })}

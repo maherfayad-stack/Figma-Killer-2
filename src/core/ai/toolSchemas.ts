@@ -434,7 +434,11 @@ export const StudioExportFramesInputSchema = Type.Object({
   dpr: Type.Optional(Type.Number({
     minimum: 0.5,
     maximum: 3,
-    description: 'Output pixel-density multiplier applied to each frame\'s native captured size (e.g. 2 for a retina-equivalent PNG). Still capped so no image edge — width OR height — exceeds the shared ~1568px vision-safe limit; a tall frame\'s HEIGHT is the axis most likely to be the one that clamps, silently producing a captured image shorter than `dpr` alone would predict. Default 1.',
+    description: 'Output pixel-density multiplier applied to each frame\'s native captured size (e.g. 2 for a retina-equivalent PNG). Capped so the capture stays bounded — see `purpose` for the SHAPE of that cap, which differs sharply between the two.',
+  })),
+  purpose: Type.Optional(Type.Union([Type.Literal('vision'), Type.Literal('measurement')], {
+    description:
+      'What this capture is FOR. `\'vision\'` (default) is for an image that will actually be looked at, directly or by a model — capped so neither edge (width OR height) exceeds the shared ~1568px vision-safe limit; a tall frame\'s HEIGHT is the axis most likely to clamp, silently producing a captured image shorter than `dpr` alone would predict. `\'measurement\'` is for a capture that exists ONLY to be pixel-diffed server-side (studio_compare) and is never necessarily shown to anyone — it is instead bounded by total pixel count with a much higher hard edge ceiling, so a tall mobile screen keeps its true requested dpr instead of losing exactness to a vision-safety limit that has nothing to do with pixel-diff correctness. Only pass `\'measurement\'` when you are NOT going to look at the resulting image yourself — studio_compare sets this automatically for its own internal capture and decides your visibility into it separately via its own `includeImages` flag.',
   })),
   axes: Type.Optional(Type.Object({
     direction: Type.Optional(Type.Union([Type.Literal('ltr'), Type.Literal('rtl')])),

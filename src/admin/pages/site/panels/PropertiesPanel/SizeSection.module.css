@@ -6,10 +6,24 @@
  * ones. Each field carries its label *inside* the leading edge (via the
  * Input `prefix` slot), matching Figma's "W 1440 / H 732" cells. */
 
+/* Two equal columns on the inspector's own field gap — the same rhythm
+ * `StackedPropertyGrid` uses for its paired cells, so the Size block lines up
+ * with Typography rather than being a second grid with its own spacing. */
 .sizeGrid {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: var(--space-xs);
+    gap: var(--inspector-field-gap);
+    min-width: 0;
+}
+
+.sizeGrid + .sizeGrid {
+    margin-top: var(--inspector-group-gap);
+}
+
+/* Grid items default to `min-width: auto`, which lets a long value push a
+ * cell past its track and the whole panel into horizontal overflow. */
+.sizeGrid > * {
+    min-width: 0;
 }
 
 /* One dimension cell wraps a single in-field-labelled input plus a

@@ -125,6 +125,8 @@ NEVER CLAIM A MATCH YOU DID NOT MEASURE. Every other rule here is advice; this o
 
 A screen is DONE when studio_compare returns pass:true. Not when it looks close, not when the remaining difference seems acceptable, not one turn before.
 
+A screen that does not typecheck is not done either, no matter what studio_compare says. Call studio_typecheck (scoped to the file(s) you just wrote) after writing or editing any .ts/.tsx/.jsx — a passing compare on code that does not compile is not verification, it is a screenshot of a mirage.
+
 ARMING THE RULER IS YOUR JOB. "No reference was registered" is not an exemption from this rule — it is the first task the rule gives you, and the Assets section tells you how. An unmeasured screen has exactly one honest report: say it is UNVERIFIED and list what you could not check. A screen that renders without errors is not a screen that matches the design — those are different claims, and only one of them was ever asked for. "Clean", "done", "matches the design", and saying nothing about verification at all are all the same failure.
 
 # Required workflow (follow this order)
@@ -133,7 +135,7 @@ ARMING THE RULER IS YOUR JOB. "No reference was registered" is not an exemption 
 
 2. GET THE DESIGN'S REAL VALUES. Never infer a colour or a type size from a picture.
 
-   If a Figma connector is available, its VARIABLE-DEFINITIONS tool is the best source that exists: it returns the design's own tokens by name with exact values — "coral/100: #EF4550", "Heading 1/EN: Open Sans SemiBold 26px, lineHeight 36, letterSpacing -0.5". Exact, not estimated. Call it on the screen's node before you write a stylesheet, and again on a node whose styling surprises you.
+   If a Figma connector is available, its VARIABLE-DEFINITIONS tool is the best source that exists: it returns the design's own tokens by name with exact values — "coral/100: #EF4550", "Heading 1/EN: Open Sans SemiBold 26px, lineHeight 36, letterSpacing -0.5". Exact, not estimated. Call it on the screen's node before you write a stylesheet, and again on a node whose styling surprises you. Pass that table to studio_ingest_design_variables once per design file: from then on studio_measure_reference resolves a measured colour to the design's declared variable AND the project token that matches it, so the answer is a lookup instead of a guess.
 
    studio_measure_reference is the fallback, for a registered image with no live connector behind it. It reads pixels, so a type size comes back as a RANGE and its nearest-token guess can land a step high — trust the variable definitions over it whenever both exist. It remains the right tool for colours and spacing in a flat comp, and for checking what you actually built.
 
@@ -169,11 +171,13 @@ Real styling belongs in the stylesheet. Inline style={{…}} is for a single dyn
 
 Screens are responsive. Never put a fixed pixel width on a container — a board frame shows one device width, which is a preview, not the specification. width:100% with a max-width, fluid values (clamp/%/rem) over breakpoints, and a media query only when the layout must genuinely change.
 
-Screens are built for both directions and both colour schemes, and you are expected to CHECK, not assume. The canvas can render either — studio_screenshot takes an axes override ({direction:'rtl'} / {colorScheme:'dark'}) that captures under it and restores the user's session afterwards, so looking costs one call and leaves nothing behind. Look before you claim a screen is done, whenever the project has an Arabic locale or the design system ships dark tokens (the live digest line above names the current axes; studio_project_profile reports whether a dark mechanism was detected at all).
+Screens are built for both directions and both colour schemes, and you are expected to CHECK, not assume. The canvas can render either — studio_screenshot takes an axes override ({direction:'rtl'} / {colorScheme:'dark'}) that captures under it and restores the user's session afterwards, so looking costs one call and leaves nothing behind. Look before you claim a screen is done, whenever the project has an Arabic locale or the design system ships dark tokens (the live digest line above names the current axes; studio_project_profile's profile.colorScheme reports the detected mechanism, the exact selector, and the file it was found in).
 
-  Direction: write LOGICAL properties, never physical ones — margin-inline-start, padding-inline-end, inset-inline-start, text-align:start. margin-left on a screen that ships in Arabic is a bug in LTR too, because it is a statement about the alphabet rather than the layout. studio_fidelity_report flags these as RTL_PHYSICAL_PROPERTY; a clean report is the bar, and where you deliberately keep a physical value (a genuinely direction-independent thing, like a fixed drop shadow) say why.
+  How the canvas drives them, so you know what your code has to respond to. Each frame's <html> carries dir, lang, an explicit data-theme of light or dark, and Studio's own data-studio-scheme; a project's own prefers-color-scheme: dark media query is rewritten against that attribute in the injected copy only, never on disk. Design-system components are additionally rendered under the package's own provider with the frame's direction passed in, because a component that resolves direction in JS (a useDir()/context hook) cannot see html[dir].
 
-  Colour scheme: never hard-code a colour that only reads on one background. Take colours from the project's semantic tokens, which are what the dark block redefines — a raw hex, or a token picked for its light value, survives the toggle and turns invisible. If the screen genuinely needs a dark-only rule, write it the way the project already gates dark mode (studio_project_profile reports the mechanism); do not invent a second one.
+  Direction: write LOGICAL properties, never physical ones — margin-inline-start, padding-inline-end, inset-inline-start, text-align:start. margin-left on a screen that ships in Arabic is a bug in LTR too, because it is a statement about the alphabet rather than the layout. studio_fidelity_report flags these as RTL_PHYSICAL_PROPERTY; a clean report is the bar, and where you deliberately keep a physical value (a genuinely direction-independent thing, like a fixed drop shadow) say why. Do not write dir= on a component call site: an explicit prop outranks the provider, so it pins that component to one direction and the board's toggle stops reaching it. Set direction once, at the app root, through the design system's provider.
+
+  Colour scheme: never hard-code a colour that only reads on one background. Take colours from the project's semantic tokens, which are what the dark block redefines — a raw hex, or a token picked for its light value, survives the toggle and turns invisible. If the screen genuinely needs a dark-only rule, write it the way the project already gates dark mode (profile.colorScheme.selector is the exact gate, and profile.colorScheme.source names the stylesheet it came from — often the design system's own, not the project's); do not invent a second one. Absence of an attribute is not "light": a design system whose tokens default to dark reads an unset data-theme as dark, so gate on the value, never on the gate being missing.
 
 # Assets
 
@@ -237,7 +241,7 @@ SHAPING A LOGO OUT OF CSS. A gradient is not a logo and a hand-written path is n
   WRONG:   .googleGlyph { background: conic-gradient(from -45deg, #ea4335 25%, …); }
   RIGHT:   download the real mark (Assets, step 2), or leave a neutral box and NAME it as a gap in your reply.
 
-TREATING A DISCONNECTED BOARD AS A DEAD END. studio_screenshot and studio_compare drive the live board in the user's browser. The tab reconnects by itself within a few seconds of any interruption, and both tools already wait for it — so if one reports no connected board, CALL IT ONCE MORE before concluding anything. Only if it fails twice is the project genuinely not open; say so in one sentence then, and do not write a pile of files you have no way to verify.
+TREATING A DISCONNECTED BOARD AS A DEAD END. studio_screenshot and studio_compare drive the live board in the user's browser. The tab reconnects by itself within a few seconds of any interruption, and the tool already waits through two full reconnect windows internally before it answers — so if it STILL reports no connected board, the project is genuinely not open. Say so in one sentence, and do not write a pile of files you have no way to verify. Do not call it again expecting a different answer when nothing else has changed.
 
 Others, without examples: surveying the repository before writing anything; re-reading a file you just wrote; asking a question the reference image already answers; reporting progress in place of a passing studio_compare; restyling a user's imported screen toward your own habits.
 
@@ -293,7 +297,51 @@ function boundedList(items: readonly string[], cap: number): string {
   return `${items.slice(0, cap).join(', ')}, +${items.length - cap} more`
 }
 
-/** `board`/`activePage`/`selection`/`fidelity`/`install`/`axes` — WS-12 §2.1's live-state lines, rebuilt fresh from disk every turn (never cached across turns, so "the snapshot is rebuilt" per §2.2 point 3 is true by construction, not an extra step). `null`/absent fields degrade to an honest placeholder rather than a fabricated one. */
+/**
+ * The capability digest (mcp-tooling task) — renders `StudioLiveDigest.capabilities`
+ * as a short, ASYMMETRIC set of lines: **a limiting capability gets an
+ * actionable line naming the fallback; a fully-available one gets one short
+ * word or nothing at all.** This is deliberate, not an oversight — the
+ * dynamic suffix is NOT prompt-cached (unlike the static prefix above), so
+ * every line here costs tokens on every single turn, forever. Stating "X is
+ * fine" a thousand times over a long conversation is waste; stating "X is
+ * NOT fine, do Y instead" even once is exactly the fact that would otherwise
+ * cost a failed tool call to discover — see `designReferences`' doc comment
+ * in `liveDigest.ts` for the precedent this generalizes.
+ */
+function buildCapabilityDigestLines(caps: StudioLiveDigest['capabilities']): string[] {
+  const lines: string[] = []
+
+  if (caps.figma.status === 'configured') {
+    lines.push(
+      caps.figma.loopbackAssetFetchBlocked
+        ? 'Figma MCP connector: configured, but asset downloads from it are blocked (STUDIO_ALLOW_LOOPBACK_ASSET_FETCH is not set) — design-context/variable-def tool calls still work; get real assets via studio_extract_reference_asset from the registered reference instead.'
+        : 'Figma MCP connector: configured (desktop app must be running to respond).',
+    )
+  } else if (caps.figma.status === 'not-configured') {
+    lines.push(
+      'Figma MCP connector: not configured for this project — measure from the registered design reference with studio_measure_reference instead, and do not claim an exact variable name or value you did not measure.',
+    )
+  } else {
+    lines.push('Figma MCP connector: status unknown (probe failed) — treat as unavailable and measure from the registered reference with studio_measure_reference instead.')
+  }
+
+  if (!caps.typecheck.available) {
+    const detail =
+      caps.typecheck.reason === 'trust-tier'
+        ? 'project is Tier 0 (static) trust — ask the user to promote it, you may not promote it yourself'
+        : caps.typecheck.reason === 'no-tsconfig'
+          ? 'no tsconfig.json at the project root'
+          : caps.typecheck.reason === 'typescript-not-installed'
+            ? 'typescript is not installed — call studio_install_deps first'
+            : 'availability probe failed'
+    lines.push(`studio_typecheck: unavailable (${detail}). A passing studio_compare on code that does not typecheck is not verification.`)
+  }
+
+  return lines
+}
+
+/** `board`/`activePage`/`selection`/`fidelity`/`install`/`axes`/capability — WS-12 §2.1's live-state lines, rebuilt fresh from disk every turn (never cached across turns, so "the snapshot is rebuilt" per §2.2 point 3 is true by construction, not an extra step). `null`/absent fields degrade to an honest placeholder rather than a fabricated one. */
 function buildLiveDigestLines(live: StudioLiveDigest): string[] {
   const lines: string[] = []
   const frameList = live.board.frames.map((f) => `${f.pageId}="${f.title}"@(${f.x},${f.y})`)
@@ -331,6 +379,7 @@ function buildLiveDigestLines(live: StudioLiveDigest): string[] {
     `Deps: ${live.install.hasNodeModules ? 'installed' : live.install.hasPackageJson ? 'not installed' : 'no package.json'} (${live.install.dependencyCount} declared)`,
   )
   lines.push(`Axes: ${live.axes.direction} / ${live.axes.locale ?? '(default locale)'} / ${live.axes.colorScheme}`)
+  lines.push(...buildCapabilityDigestLines(live.capabilities))
   if (live.staleWarning) lines.push(live.staleWarning)
   return lines
 }

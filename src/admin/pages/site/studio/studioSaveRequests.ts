@@ -561,6 +561,25 @@ export async function swapInstance(
 }
 
 /**
+ * One element written into a slot — the browser's mirror of
+ * `studioSlotWriteback.ts`'s `SlotJsxNodeSchema`, which is what actually
+ * validates it on arrival (and is itself `insertJsxElement`'s own
+ * `InsertJsxNode`). Declared here rather than imported from
+ * `@core/ast-codemods` because that module pulls in ts-morph, which must
+ * never reach the browser bundle — the same posture `registerProjectModules.ts`
+ * takes for `ICON_PROP_SVG_KEY`.
+ *
+ * A component fill names its `importSpecifier`; an inline SVG icon
+ * (`svgToJsxNode.ts`) is a tree of intrinsic tags and names none.
+ */
+export interface SlotJsxNode {
+  name: string
+  importSpecifier?: string
+  props?: Record<string, string | number | boolean>
+  children?: string | SlotJsxNode[]
+}
+
+/**
  * E2.5 — the Properties panel's slot "Add"/"Add another" action:
  * `insert-slot` (E2.4, `insertJsxIntoSlotProp`). `nodeId` is the CALL SITE's
  * own (plain, un-prefixed) id — the slot being filled is one of ITS
@@ -576,19 +595,16 @@ export async function swapInstance(
 export async function commitStudioInsertSlot(fill: {
   nodeId: string
   propName: string
-  name: string
-  importSpecifier: string
-  props?: Record<string, string | number | boolean>
+  node: SlotJsxNode
+  /** `'replace'` swaps whatever the slot holds for `node`; omitted adds alongside it. */
+  mode?: 'append' | 'replace'
 }): Promise<InstanceCodemodResult> {
   const result = await postOneEdit({
     kind: 'insert-slot',
     nodeId: fill.nodeId,
     propName: fill.propName,
-    node: {
-      name: fill.name,
-      importSpecifier: fill.importSpecifier,
-      ...(fill.props ? { props: fill.props } : {}),
-    },
+    node: fill.node,
+    ...(fill.mode ? { mode: fill.mode } : {}),
   })
   const refusal = (result.refusals ?? [])[0]
   if (refusal) return { ok: false, reason: refusal.reason, message: refusal.message }

@@ -81,6 +81,40 @@ describe('studio_diff_frames', () => {
     expect(topRegion.nodeIds).not.toContain('footer')
   })
 
+  it('scales nodeRects by nodeRectsImageScale before mapping — the dpr!=1 regression (mcp-tooling FIX 1)', async () => {
+    // A 192x192 diff image (a 96x96 CSS-px frame captured at an
+    // effective scale of 2). The differing block sits in the
+    // lower-right quadrant of image space, (64,64)-(128,128), which
+    // corresponds to CSS-px node rect (32,32)-(64,64).
+    const width = 192
+    const height = 192
+    const a = makePng(width, height, () => WHITE)
+    const b = makePng(width, height, (x, y) => (x >= 64 && x < 128 && y >= 64 && y < 128 ? RED : WHITE))
+
+    const nodeRects = [
+      { nodeId: 'top-left', x: 0, y: 0, width: 30, height: 30 }, // CSS px — never overlaps at any realistic scale
+      { nodeId: 'bottom-right', x: 20, y: 20, width: 40, height: 40 }, // CSS px — overlaps the defect ONLY when scaled by 2
+    ]
+
+    const withoutScale = (await diffFramesTool.handler!(
+      { baseline: a, reference: b, nodeRects, topN: 5 },
+      {} as never,
+    )) as ToolResult
+    // Default (no imageScale) intersects the unscaled CSS-px rects directly
+    // against the image-space region — the pre-FIX-1 behaviour, kept as the
+    // explicit default for backward compatibility with dpr:1 callers — so
+    // neither node (both living in the CSS-px upper-left quadrant) overlaps
+    // a region that only ever appears in the lower-right of image space.
+    expect(withoutScale.data!.regions[0]!.nodeIds).not.toContain('bottom-right')
+
+    const withScale = (await diffFramesTool.handler!(
+      { baseline: a, reference: b, nodeRects, nodeRectsImageScale: 2, topN: 5 },
+      {} as never,
+    )) as ToolResult
+    expect(withScale.data!.regions[0]!.nodeIds).toContain('bottom-right')
+    expect(withScale.data!.regions[0]!.nodeIds).not.toContain('top-left')
+  })
+
   it('refuses to diff two differently-sized images with a clear message', async () => {
     const a = makePng(64, 64, () => WHITE)
     const b = makePng(32, 32, () => WHITE)

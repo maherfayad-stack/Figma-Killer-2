@@ -66,6 +66,8 @@ export async function savePreviewAxes(dir: string, patch: Partial<PreviewAxes>):
 const ColorSchemeCapabilitySchema = Type.Object({
   mechanism: Type.Union([Type.Literal('media'), Type.Literal('class'), Type.Literal('none')]),
   selector: Type.Optional(Type.String()),
+  /** The stylesheet the mechanism was found in — `node_modules/...` when it came from an installed design system. Shown in the toggle's tooltip so "why is this on" has an answer. */
+  source: Type.Optional(Type.String()),
 })
 export type ColorSchemeCapability = Static<typeof ColorSchemeCapabilitySchema>
 

@@ -118,8 +118,8 @@ interface ContextMenuProps extends Omit<HTMLAttributes<HTMLDivElement>, 'childre
    * matches the anchor's measured width (clamped to `minWidth` floor).
    * Tracks the anchor live via ResizeObserver so dropdowns stay flush
    * with their trigger when the panel is resized. Use for combobox /
-   * input-attached dropdowns (ClassPicker, DynamicBindingControl,
-   * SpacingBoxControl) where the dropdown should span the input row.
+   * input-attached dropdowns (ClassPicker, SpacingBoxControl) where the
+   * dropdown should span the input row.
    */
   matchAnchorWidth?: boolean
   /**

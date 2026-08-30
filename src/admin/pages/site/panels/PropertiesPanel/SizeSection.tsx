@@ -1,26 +1,44 @@
 /**
  * SizeSection — Figma-style visual editor for the `size` CSS section.
  *
- * Replaces the six stacked full-width rows (width / height / min / max) with
- * three paired-column rows, each field carrying its label inside the leading
- * edge (W · H, Min W · Min H, Max W · Max H) — the compact "W 1440 / H 732"
- * shape from Figma's design panel. `aspectRatio` and `boxSizing` keep their
- * generic ClassPropertyRow treatment below the grid since they don't pair.
+ * Six stacked full-width rows became three paired-column rows, each field
+ * carrying its own name inside its leading edge instead of in a label column
+ * beside it. Width and height keep letterforms — `W` and `H` are unambiguous
+ * and Figma keeps them too — but the four constraint fields do not: "Min W"
+ * spelled out is five characters of a 24px-tall field that has a number to
+ * show, so they carry the converging/diverging arrow marks Figma draws
+ * (`MinWidthIcon` and friends). The field's `aria-label` still says
+ * "Minimum width", so nothing is lost for anyone who needs the words.
  *
- * Cells build on the shared nudge-enabled TokenAwareInput, so arrow-key
- * nudging (±1 / ±8 Shift / ±0.1 Alt, empty starts from 0) works here too.
- * Emptying a field clears the property; the hover-revealed clear button is
- * a discoverable shortcut for the same.
+ * `aspectRatio` and `boxSizing` pair into a fourth row rather than owning two
+ * full-width captioned rows of their own: the ratio field carries a frame
+ * glyph, and `border-box` / `content-box` name themselves, so neither needs a
+ * caption above it.
+ *
+ * Cells build on the shared nudge-enabled ScrubInput, so drag-to-scrub and
+ * arrow-key nudging (±1 / ±8 Shift / ±0.1 Alt, empty starts from 0) work
+ * here too. Emptying a field clears the property; the hover-revealed clear
+ * button is a discoverable shortcut for the same.
  */
 
+import type { ReactNode } from 'react'
 import type { CSSPropertyBag } from '@core/page-tree'
 import { Button } from '@ui/components/Button'
 import { CloseIcon } from 'pixel-art-icons/icons/close'
+import {
+  MinWidthIcon,
+  MaxWidthIcon,
+  MinHeightIcon,
+  MaxHeightIcon,
+} from '@ui/components/InspectorIcons'
 import { ClassPropertyRow } from './ClassPropertyRow'
 import { ScrubInput } from '@ui/components/ScrubInput'
 import { getCSSPropertyDefaultValue } from './cssControlTypes'
 import { hasStyleValue } from './styleValueUtils'
 import styles from './SizeSection.module.css'
+
+/** Marks are 13px to match the in-field glyphs the generic rows draw. */
+const GLYPH_SIZE = 13
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -61,110 +79,71 @@ export function SizeSection({
         onPreview({ [property]: value ?? null } as Partial<CSSPropertyBag>)
     : undefined
 
+  const cell = (
+    property: keyof CSSPropertyBag,
+    label: ReactNode,
+    ariaLabel: string,
+  ) => (
+    <DimensionCell
+      property={property}
+      label={label}
+      ariaLabel={ariaLabel}
+      storedValue={storedStyles[property]}
+      currentValue={currentStyles[property]}
+      onChange={onChange}
+      onClear={onClearProperty}
+      onPreview={previewProperty}
+      onClearPreview={onClearPreview}
+    />
+  )
+
   return (
     <>
       <div className={styles.sizeGrid}>
-        <DimensionCell
-          property="width"
-          label="W"
-          ariaLabel="Width"
-          storedValue={storedStyles.width}
-          currentValue={currentStyles.width}
+        {cell('width', 'W', 'Width')}
+        {cell('height', 'H', 'Height')}
+        {cell('minWidth', <MinWidthIcon size={GLYPH_SIZE} aria-hidden="true" />, 'Minimum width')}
+        {cell('minHeight', <MinHeightIcon size={GLYPH_SIZE} aria-hidden="true" />, 'Minimum height')}
+        {cell('maxWidth', <MaxWidthIcon size={GLYPH_SIZE} aria-hidden="true" />, 'Maximum width')}
+        {cell('maxHeight', <MaxHeightIcon size={GLYPH_SIZE} aria-hidden="true" />, 'Maximum height')}
+      </div>
+      {/* aspectRatio (free-form text, carries a frame glyph) and boxSizing
+          (enum whose values name themselves) pair into one uncaptioned row —
+          neither earns the full-width labelled row it used to own. */}
+      <div className={styles.sizeGrid}>
+        <GenericSizeRow
+          activeTab={activeTab}
+          property="aspectRatio"
+          storedStyles={storedStyles}
+          currentStyles={currentStyles}
           onChange={onChange}
-          onClear={onClearProperty}
+          onRemove={onRemove}
           onPreview={previewProperty}
           onClearPreview={onClearPreview}
         />
-        <DimensionCell
-          property="height"
-          label="H"
-          ariaLabel="Height"
-          storedValue={storedStyles.height}
-          currentValue={currentStyles.height}
+        <GenericSizeRow
+          activeTab={activeTab}
+          property="boxSizing"
+          storedStyles={storedStyles}
+          currentStyles={currentStyles}
           onChange={onChange}
-          onClear={onClearProperty}
-          onPreview={previewProperty}
-          onClearPreview={onClearPreview}
-        />
-        <DimensionCell
-          property="minWidth"
-          label="Min W"
-          ariaLabel="Minimum width"
-          storedValue={storedStyles.minWidth}
-          currentValue={currentStyles.minWidth}
-          onChange={onChange}
-          onClear={onClearProperty}
-          onPreview={previewProperty}
-          onClearPreview={onClearPreview}
-        />
-        <DimensionCell
-          property="minHeight"
-          label="Min H"
-          ariaLabel="Minimum height"
-          storedValue={storedStyles.minHeight}
-          currentValue={currentStyles.minHeight}
-          onChange={onChange}
-          onClear={onClearProperty}
-          onPreview={previewProperty}
-          onClearPreview={onClearPreview}
-        />
-        <DimensionCell
-          property="maxWidth"
-          label="Max W"
-          ariaLabel="Maximum width"
-          storedValue={storedStyles.maxWidth}
-          currentValue={currentStyles.maxWidth}
-          onChange={onChange}
-          onClear={onClearProperty}
-          onPreview={previewProperty}
-          onClearPreview={onClearPreview}
-        />
-        <DimensionCell
-          property="maxHeight"
-          label="Max H"
-          ariaLabel="Maximum height"
-          storedValue={storedStyles.maxHeight}
-          currentValue={currentStyles.maxHeight}
-          onChange={onChange}
-          onClear={onClearProperty}
+          onRemove={onRemove}
           onPreview={previewProperty}
           onClearPreview={onClearPreview}
         />
       </div>
-      {/* aspectRatio (free-form text) and boxSizing (enum) don't pair into the
-          W/H columns — keep them as generic labelled rows below the grid. */}
-      <GenericSizeRow
-        activeTab={activeTab}
-        property="aspectRatio"
-        storedStyles={storedStyles}
-        currentStyles={currentStyles}
-        onChange={onChange}
-        onRemove={onRemove}
-        onPreview={previewProperty}
-        onClearPreview={onClearPreview}
-      />
-      <GenericSizeRow
-        activeTab={activeTab}
-        property="boxSizing"
-        storedStyles={storedStyles}
-        currentStyles={currentStyles}
-        onChange={onChange}
-        onRemove={onRemove}
-        onPreview={previewProperty}
-        onClearPreview={onClearPreview}
-      />
     </>
   )
 }
 
 // ---------------------------------------------------------------------------
-// DimensionCell — in-field-labelled numeric input for one size property
+// DimensionCell — in-field-marked numeric input for one size property
 // ---------------------------------------------------------------------------
 
 interface DimensionCellProps {
   property: keyof CSSPropertyBag
-  /** In-field leading label (e.g. `W`, `Min H`). */
-  label: string
+  /** In-field leading mark — a letterform (`W`, `H`) or a glyph. */
+  label: ReactNode
   ariaLabel: string
   storedValue: unknown
   currentValue: unknown

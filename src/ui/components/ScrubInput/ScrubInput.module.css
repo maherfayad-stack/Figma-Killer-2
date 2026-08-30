@@ -67,6 +67,14 @@
     touch-action: none;
 }
 
+/* A glyph label (Min W / Max H) instead of a letterform. `block` kills the
+ * inline-baseline gap that would otherwise push a 24px field taller than the
+ * number beside it. */
+.label svg {
+    display: block;
+    flex: 0 0 auto;
+}
+
 .labelDisabled {
     cursor: not-allowed;
 }
@@ -100,4 +108,35 @@
 .input.keyword {
     color: var(--text-subtle);
     font-style: italic;
+}
+
+/* ─── Inspector field skin ─────────────────────────────────────────────────
+ * Opted into by an ancestor carrying `data-field-skin="inspector"`. This file's
+ * own header states the contract it has to keep — "matches Input's visual
+ * shell so it drops into the same rows" — and the inspector changes that
+ * shell, so the scrub field has to follow it there too. Without this the Size
+ * section's six W/H/Min/Max fields stay pill-outlined while every field around
+ * them is a flat rectangle. */
+
+[data-field-skin='inspector'] .wrapper {
+    min-height: var(--inspector-row-h);
+    border-color: transparent;
+    border-radius: var(--inspector-field-radius);
+    background: var(--inspector-field-bg);
+}
+
+[data-field-skin='inspector'] .wrapper:hover {
+    border-color: transparent;
+    background: var(--inspector-field-bg-hover);
+}
+
+[data-field-skin='inspector'] .wrapper:focus-within {
+    border-color: var(--overlay-50);
+    background: var(--inspector-field-bg);
+}
+
+/* The drag-to-scrub state keeps its ring — it is the one moment the field is
+ * doing something, and losing the edge there would hide it. */
+[data-field-skin='inspector'] .wrapper[data-dragging='true'] {
+    border-color: var(--canvas-selection-ring-color);
 }

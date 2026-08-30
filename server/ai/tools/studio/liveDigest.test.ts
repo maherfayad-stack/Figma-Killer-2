@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { buildStudioLiveDigest } from './liveDigest'
+import { buildStudioLiveDigest, buildStudioCapabilityDigest } from './liveDigest'
 import { createStalenessTracker } from './staleness'
 import type { StudioAgentSnapshot } from './snapshot'
 
@@ -97,5 +97,124 @@ describe('buildStudioLiveDigest — cost discipline (trap #11)', () => {
     const digest = await buildStudioLiveDigest(dir, snapshot, 'conv-3', { staleness: createStalenessTracker() })
     expect(digest.activePage).toBeNull()
     expect(digest.fidelity).toBeNull()
+  })
+})
+
+/**
+ * The capability digest (mcp-tooling task) — `StudioLiveDigest.capabilities`.
+ * Every probe here is a cheap, synchronous, disk-only check (see
+ * `liveDigest.ts`'s module doc); these tests exercise the real fixtures the
+ * probes read (`.studio/meta.json`, `.mcp.json`, `tsconfig.json`,
+ * `node_modules/typescript/bin/tsc`) rather than mocking the probe
+ * functions, so a change to what they actually check is caught here too.
+ */
+describe('buildStudioLiveDigest — capabilities', () => {
+  let dir: string
+  const emptySnapshot: StudioAgentSnapshot = {
+    activeBoardId: null,
+    frames: [],
+    activePageId: null,
+    selectedNodeId: null,
+    axes: { direction: 'ltr', colorScheme: 'light' },
+  }
+  // Hermetic against the developer's own shell/`.env` — same concern
+  // `remoteAssetFetch.test.ts` documents for this exact var.
+  let previousLoopbackEnv: string | undefined
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'studio-livedigest-caps-'))
+    mkdirSync(join(dir, 'pages'), { recursive: true })
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'fixture', dependencies: { react: '^18.0.0' } }))
+    previousLoopbackEnv = process.env.STUDIO_ALLOW_LOOPBACK_ASSET_FETCH
+    delete process.env.STUDIO_ALLOW_LOOPBACK_ASSET_FETCH
+  })
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true })
+    if (previousLoopbackEnv === undefined) delete process.env.STUDIO_ALLOW_LOOPBACK_ASSET_FETCH
+    else process.env.STUDIO_ALLOW_LOOPBACK_ASSET_FETCH = previousLoopbackEnv
+  })
+
+  it('figma: self-approving built-in reports "configured" on a fresh project with no .studio/meta.json at all', async () => {
+    const digest = await buildStudioLiveDigest(dir, emptySnapshot, 'conv-figma-default', { staleness: createStalenessTracker() })
+    expect(digest.capabilities.figma.status).toBe('configured')
+    // The built-in is loopback (http://127.0.0.1:3845/mcp) and the env var
+    // was deleted above, so asset fetch from it is blocked.
+    expect(digest.capabilities.figma.loopbackAssetFetchBlocked).toBe(true)
+  })
+
+  it('figma: reports "configured" with asset fetch NOT blocked when STUDIO_ALLOW_LOOPBACK_ASSET_FETCH is set', async () => {
+    process.env.STUDIO_ALLOW_LOOPBACK_ASSET_FETCH = '1'
+    const digest = await buildStudioLiveDigest(dir, emptySnapshot, 'conv-figma-loopback-allowed', { staleness: createStalenessTracker() })
+    expect(digest.capabilities.figma.status).toBe('configured')
+    expect(digest.capabilities.figma.loopbackAssetFetchBlocked).toBe(false)
+  })
+
+  it('figma: reports "not-configured" when the built-in is disabled and nothing else is approved', async () => {
+    mkdirSync(join(dir, '.studio'), { recursive: true })
+    writeFileSync(join(dir, '.studio', 'meta.json'), JSON.stringify({ disabledBuiltInMcpServers: ['figma'] }))
+    const digest = await buildStudioLiveDigest(dir, emptySnapshot, 'conv-figma-disabled', { staleness: createStalenessTracker() })
+    expect(digest.capabilities.figma.status).toBe('not-configured')
+    expect(digest.capabilities.figma.loopbackAssetFetchBlocked).toBe(false)
+  })
+
+  it('figma: an approved, non-loopback project .mcp.json entry is "configured" with asset fetch never blocked', async () => {
+    mkdirSync(join(dir, '.studio'), { recursive: true })
+    writeFileSync(
+      join(dir, '.studio', 'meta.json'),
+      JSON.stringify({ disabledBuiltInMcpServers: ['figma'], approvedMcpServers: ['figma'] }),
+    )
+    writeFileSync(join(dir, '.mcp.json'), JSON.stringify({ mcpServers: { figma: { type: 'http', url: 'https://mcp.figma.com/mcp' } } }))
+    const digest = await buildStudioLiveDigest(dir, emptySnapshot, 'conv-figma-cloud', { staleness: createStalenessTracker() })
+    expect(digest.capabilities.figma.status).toBe('configured')
+    expect(digest.capabilities.figma.loopbackAssetFetchBlocked).toBe(false)
+  })
+
+  it('figma + typecheck: both degrade to "unknown" rather than throwing when .studio/meta.json cannot be read as a file', () => {
+    // `readStudioMeta` has no try/catch of its own around this read — making
+    // the path a DIRECTORY forces a real EISDIR throw, which both
+    // `listRegisteredMcpServers` (figma probe) and the typecheck probe call
+    // directly and must catch. Exercised through `buildStudioCapabilityDigest`
+    // directly (not the full `buildStudioLiveDigest` pipeline): the pipeline
+    // resolves the project's pages directory through this SAME
+    // `readStudioMeta(dir)` first (`loadStudioPages` -> `projectPagesDir`),
+    // so a fixture broken this way never reaches the capability probes under
+    // the full pipeline at all — that earlier, pre-existing gap is not this
+    // task's to fix, and is unrelated to whether these two probes themselves
+    // degrade honestly.
+    mkdirSync(join(dir, '.studio', 'meta.json'), { recursive: true })
+    const capabilities = buildStudioCapabilityDigest(dir)
+    expect(capabilities.figma).toEqual({ status: 'unknown', loopbackAssetFetchBlocked: false })
+    expect(capabilities.typecheck).toEqual({ available: false, reason: 'unknown' })
+  })
+
+  it('typecheck: unavailable with reason "trust-tier" on a fresh (default static-trust) project', async () => {
+    const digest = await buildStudioLiveDigest(dir, emptySnapshot, 'conv-tsc-trust', { staleness: createStalenessTracker() })
+    expect(digest.capabilities.typecheck).toEqual({ available: false, reason: 'trust-tier' })
+  })
+
+  it('typecheck: unavailable with reason "no-tsconfig" once promoted past Tier 0 but no tsconfig.json exists', async () => {
+    mkdirSync(join(dir, '.studio'), { recursive: true })
+    writeFileSync(join(dir, '.studio', 'meta.json'), JSON.stringify({ trust: 'render-packages' }))
+    const digest = await buildStudioLiveDigest(dir, emptySnapshot, 'conv-tsc-no-tsconfig', { staleness: createStalenessTracker() })
+    expect(digest.capabilities.typecheck).toEqual({ available: false, reason: 'no-tsconfig' })
+  })
+
+  it('typecheck: unavailable with reason "typescript-not-installed" once promoted with a tsconfig but no installed compiler', async () => {
+    mkdirSync(join(dir, '.studio'), { recursive: true })
+    writeFileSync(join(dir, '.studio', 'meta.json'), JSON.stringify({ trust: 'render-packages' }))
+    writeFileSync(join(dir, 'tsconfig.json'), JSON.stringify({ compilerOptions: {} }))
+    const digest = await buildStudioLiveDigest(dir, emptySnapshot, 'conv-tsc-no-compiler', { staleness: createStalenessTracker() })
+    expect(digest.capabilities.typecheck).toEqual({ available: false, reason: 'typescript-not-installed' })
+  })
+
+  it('typecheck: available once promoted, with a tsconfig, and with the project\'s own tsc installed', async () => {
+    mkdirSync(join(dir, '.studio'), { recursive: true })
+    writeFileSync(join(dir, '.studio', 'meta.json'), JSON.stringify({ trust: 'render-packages' }))
+    writeFileSync(join(dir, 'tsconfig.json'), JSON.stringify({ compilerOptions: {} }))
+    mkdirSync(join(dir, 'node_modules', 'typescript', 'bin'), { recursive: true })
+    writeFileSync(join(dir, 'node_modules', 'typescript', 'bin', 'tsc'), '#!/usr/bin/env node\n')
+    const digest = await buildStudioLiveDigest(dir, emptySnapshot, 'conv-tsc-available', { staleness: createStalenessTracker() })
+    expect(digest.capabilities.typecheck).toEqual({ available: true })
   })
 })

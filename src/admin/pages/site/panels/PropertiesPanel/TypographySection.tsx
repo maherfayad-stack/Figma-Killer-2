@@ -1,12 +1,19 @@
 /**
  * TypographySection — Figma-style compact editor for the `typography` section.
  *
- * Font family spans the full width; size/weight, line-height/letter-spacing,
+ * Font family spans the full width; weight/size, line-height/letter-spacing,
  * alignment/style, and decoration/transform pair into two columns each.
  * Colour, white-space, and text-shadow keep full-width rows — they read
  * better wide. All of it is just a layout spec over StackedPropertyGrid, so
  * the dispatch / token / preview / font-weight logic is shared with every
  * other property row.
+ *
+ * What each cell actually draws is NOT decided here. `ClassPropertyRow`
+ * resolves it per property: the four alignment/style/decoration/transform
+ * enums render as icon toggle groups with no words at all, line-height and
+ * letter-spacing carry a caption plus a glyph inside the field, and family /
+ * weight / size are captionless because their own values name them. This
+ * file only says what sits beside what.
  */
 
 import type { CSSPropertyBag } from '@core/page-tree'
@@ -14,12 +21,14 @@ import { StackedPropertyGrid, type StackedGridEntry } from './StackedPropertyGri
 
 const TYPOGRAPHY_SPEC: ReadonlyArray<StackedGridEntry> = [
   'fontFamily',
-  ['fontSize', 'fontWeight'],
+  // Weight before size: Figma's order, and the one that reads correctly —
+  // the family and its weight are one choice, the size is a separate one.
+  ['fontWeight', 'fontSize'],
   ['lineHeight', 'letterSpacing'],
   ['textAlign', 'fontStyle'],
   ['textDecoration', 'textTransform'],
-  'whiteSpace',
   'color',
+  'whiteSpace',
   'textShadow',
 ]
 

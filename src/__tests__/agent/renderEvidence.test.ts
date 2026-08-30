@@ -285,6 +285,67 @@ describe('captureAgentRenderSnapshot — on-demand browser bridge', () => {
     expect(call.fillRects).toEqual([[0, 0, 940, 1568]])
   })
 
+  it('purpose: "measurement" keeps the requested dpr for a tall frame the vision-safe clamp would otherwise degrade (mcp-tooling FIX 2)', async () => {
+    const doc = mountFrame('mobile', 400, 2000)
+    setRect(doc.body, { x: 0, y: 0, width: 400, height: 2000 })
+
+    await captureAgentRenderSnapshot({ breakpointId: 'mobile', captureScreenshot: true, pixelRatio: 2 })
+    const visionCall = rasterCalls.at(-1)!
+    // Default purpose ('vision'): 1568 / 2000 height clamps below the
+    // requested dpr:2 — the exact A2 bug this fix addresses.
+    expect(visionCall.options.pixelRatio).toBeLessThan(2)
+
+    await captureAgentRenderSnapshot({
+      breakpointId: 'mobile',
+      captureScreenshot: true,
+      pixelRatio: 2,
+      purpose: 'measurement',
+    })
+    const measurementCall = rasterCalls.at(-1)!
+    // Same frame, same dpr, purpose: 'measurement' — the requested dpr
+    // survives because neither the far-higher edge ceiling nor the total
+    // pixel budget is anywhere close to binding for this ordinary mobile
+    // frame size.
+    expect(measurementCall.options.pixelRatio).toBe(2)
+  })
+
+  it('purpose: "measurement" bounds by total pixel count, not a per-edge clamp, for a large near-square frame', async () => {
+    const doc = mountFrame('desktop', 3000, 3000)
+    setRect(doc.body, { x: 0, y: 0, width: 3000, height: 3000 })
+
+    await captureAgentRenderSnapshot({
+      breakpointId: 'desktop',
+      captureScreenshot: true,
+      pixelRatio: 5,
+      purpose: 'measurement',
+    })
+    const call = rasterCalls.at(-1)!
+    const edgeOnlyRatio = 4096 / 3000
+    const budgetRatio = Math.sqrt(15_000_000 / (3000 * 3000))
+    // The pixel budget is the tighter constraint here — proves this is a
+    // genuine total-pixel-budget cap, not just a per-edge clamp with a
+    // bigger number.
+    expect(budgetRatio).toBeLessThan(edgeOnlyRatio)
+    expect(call.options.pixelRatio as number).toBeCloseTo(budgetRatio, 5)
+  })
+
+  it('purpose: "measurement" still refuses a single extremely elongated axis via the hard edge ceiling', async () => {
+    const doc = mountFrame('mobile', 200, 50_000)
+    setRect(doc.body, { x: 0, y: 0, width: 200, height: 50_000 })
+
+    await captureAgentRenderSnapshot({
+      breakpointId: 'mobile',
+      captureScreenshot: true,
+      pixelRatio: 2,
+      purpose: 'measurement',
+    })
+    const call = rasterCalls.at(-1)!
+    // Total native area (10,000,000px) is under the pixel budget, so ONLY
+    // the hard edge ceiling protects against this single monstrously tall
+    // axis — proving the two caps are genuinely complementary, not redundant.
+    expect(call.canvasHeight).toBeLessThanOrEqual(4096)
+  })
+
   it('captures every explicitly requested mounted breakpoint', async () => {
     const breakpoints = [
       { id: 'mobile', width: 375 },

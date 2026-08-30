@@ -11,7 +11,6 @@ import type { Draft, Patches } from 'mutative'
 import type { FrameworkColorToken, FrameworkColorUtilityType, FrameworkPreferencesSettings, FrameworkScaleManualSize, FrameworkScaleMode, FrameworkSettings, FrameworkSpacingClassGenerator, FrameworkSpacingGroup, FrameworkTypographyClassGenerator, FrameworkTypographyGroup } from '@core/framework-schema'
 import type {
   DecorativeSiteExplorerSectionId,
-  DynamicPropBinding,
   ExplorerPathChangePlan,
   Page,
   PageNode,
@@ -289,8 +288,6 @@ export interface SiteSlice {
    * semantics. Returns the new wrapper id, or `null` when the selection is empty.
    */
   wrapNodes: (nodeIds: string[], containerModuleId: string, defaults?: Record<string, unknown>) => string | null
-  setNodeDynamicBinding: (nodeId: string, propKey: string, binding: DynamicPropBinding) => void
-  clearNodeDynamicBinding: (nodeId: string, propKey: string) => void
 
   // Breakpoint mutations
   addBreakpoint: (bp: Omit<Breakpoint, 'id'>) => Breakpoint

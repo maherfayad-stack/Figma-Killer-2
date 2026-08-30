@@ -8,6 +8,22 @@
     padding-bottom: var(--space-2xl);
 }
 
+/*
+ * Each section sits in its own grid item, and a grid item's default
+ * `min-width: auto` means it refuses to shrink below its widest child. One
+ * long class name in a section header was therefore enough to push the whole
+ * track wider than the panel — the scroll container clips overflow on the x
+ * axis, so the result was silently amputated controls on the right edge
+ * (a clear button with no left half, a truncated "Assign class") rather than
+ * anything that announced itself as broken.
+ *
+ * Measured at a 300px panel before this line: content column 257px, scroll
+ * width 326px. It was there at 360px too, just 60px further out of sight.
+ */
+.styleSections > * {
+    min-width: 0;
+}
+
 .noStyleMatches {
     padding: var(--space-l) var(--space-xl);
     color: var(--text-subtle);

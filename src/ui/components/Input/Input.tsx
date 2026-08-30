@@ -12,7 +12,13 @@ import styles from './Input.module.css'
 type FieldSize = 'xs' | 'sm' | 'md'
 type TextEmphasis = 'default' | 'strong'
 
-interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
+/*
+ * `prefix` is also a global HTML attribute (typed `string` by React), and this
+ * component's meaning for it — a mark rendered inside the field's leading edge
+ * — is the one every call site wants. Omitted from the extended attributes so
+ * the richer type below wins instead of colliding with it.
+ */
+interface InputProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 'prefix'> {
   invalid?: boolean
   fieldSize?: FieldSize
   monospace?: boolean
@@ -21,8 +27,14 @@ interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
    * Optional prefix displayed inside the input on the leading edge
    * (e.g. "--", "$", "@"). Renders to the left of the value, inside
    * the same border so it reads as part of the field.
+   *
+   * Accepts a node, not just a string, because in the inspector skin the
+   * prefix IS the field's label — a `W` / `H` letterform or a line-height
+   * glyph standing in for a label column that no longer exists. It is
+   * `aria-hidden`, so a caller using a glyph must still supply an
+   * `aria-label` on the input itself.
    */
-  prefix?: string
+  prefix?: ReactNode
   /**
    * Optional unit displayed inside the input on the trailing edge
    * (e.g. "px", "rem", "%"). Renders to the right of the value, inside

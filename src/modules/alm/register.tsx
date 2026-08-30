@@ -20,28 +20,25 @@
 import React from 'react'
 import * as DS from '@alm-design/design-system'
 import { Type } from '@core/utils/typeboxHelpers'
+import {
+  controlForPropKind,
+  isCanvasDrivenProp,
+  stripCanvasDrivenProps,
+  type PropKind,
+} from '@site/property-controls/componentPropKind'
 import { registry, type ModuleDefinition, type ModuleComponentProps } from '@core/module-engine'
 import { sanitizeSvg } from '@core/sanitize'
 import { studioSlotNodeId } from '@core/utils/studioSlotSentinel'
 import { NodeRenderer } from '@site/canvas/NodeRenderer'
+import { useFramePreviewAxes } from '@site/canvas/previewAxesFrameEffect'
 import { CursorClickSolidIcon } from 'pixel-art-icons/icons/cursor-click-solid'
+import type { ComponentManifest, ComponentSpec, PropSpec } from '@core/component-manifest'
 import manifestJson from './manifest.generated.json'
 
-interface PropSpec {
-  name: string
-  tsType: string
-  required: boolean
-  defaultValue?: string
-  enumValues?: string[]
-}
-interface ComponentSpec {
-  name: string
-  file: string
-  exportName: string
-  isDefaultExport: boolean
-  props: PropSpec[]
-}
-const manifest = manifestJson as { components: ComponentSpec[] }
+// The manifest's own types, not a hand-copied structural twin: this file
+// consumes exactly what `buildDesignSystemManifest` writes, `PropSpec.kind`
+// included, so the two cannot drift.
+const manifest = manifestJson as ComponentManifest
 
 /**
  * The specifier every component here is imported from in a user's source.
@@ -91,22 +88,62 @@ class AlmErrorBoundary extends React.Component<
   }
 }
 
+/**
+ * What Studio drives on the design system's provider. `dir` is the load-bearing
+ * one: every ALM component resolves its direction through `useDir(prop)` —
+ * explicit prop > this provider > a built-in `'ltr'` default — so a provider
+ * rendered with NO props pinned the whole canvas left-to-right regardless of
+ * the board's direction toggle, while the same components' `[dir=rtl]` CSS
+ * rules (40 of them in the package stylesheet) flipped correctly off
+ * `html[dir]`. That mismatch is what made an RTL preview come out half-mirrored.
+ */
+type DesignSystemProviderProps = { children?: React.ReactNode; dir?: 'ltr' | 'rtl' }
+
 const Provider = (DS as Record<string, unknown>).DesignSystemProvider as
-  | React.ComponentType<{ children?: React.ReactNode }>
+  | React.ComponentType<DesignSystemProviderProps>
   | undefined
+
+/**
+ * Maps this package's documented prop kinds onto Studio's ONE
+ * `PropKind -> PropertyControl` mapping — the same one every `pkg.*` component
+ * and every local `studio.instance` call site goes through.
+ *
+ * This file used to carry its own two-case version (enum -> select, everything
+ * else -> text), which is why a boolean rendered as a text box you had to type
+ * the word `false` into, a number rendered as a text box, and an `onClick`
+ * rendered as an editable field at all. The manifest now carries a real
+ * `kind` per prop (`buildDesignSystemManifest`, derived from the package's own
+ * documented value forms), so there is no reason for a second mapping to
+ * exist — CLAUDE.md's "no old-and-new side by side" applies to a mapping
+ * function as much as to a feature. `handler` is passed straight through for
+ * the same reason: `controlForPropKind` is what decides a handler gets no
+ * control, not a private filter here.
+ */
+function propKindFor(p: PropSpec): PropKind {
+  if (p.enumValues && p.enumValues.length >= 2) return { kind: 'enum', values: p.enumValues }
+  switch (p.kind) {
+    case 'handler':
+      return { kind: 'handler' }
+    case 'boolean':
+      return { kind: 'boolean' }
+    case 'number':
+      return { kind: 'number' }
+    case 'icon':
+    case 'node':
+      return { kind: 'node' }
+    case 'string':
+      return { kind: 'string' }
+    default:
+      return { kind: 'unknown' }
+  }
+}
 
 function buildSchema(props: PropSpec[]): ModuleDefinition['schema'] {
   const schema: Record<string, unknown> = {}
   for (const p of props) {
-    if (p.enumValues && p.enumValues.length >= 2) {
-      schema[p.name] = {
-        type: 'select',
-        label: p.name,
-        options: p.enumValues.map((v) => ({ label: v, value: v })),
-      }
-    } else {
-      schema[p.name] = { type: 'text', label: p.name }
-    }
+    if (isCanvasDrivenProp(p.name)) continue
+    const control = controlForPropKind(p.name, propKindFor(p))
+    if (control) schema[p.name] = control
   }
   return schema as ModuleDefinition['schema']
 }
@@ -124,13 +161,21 @@ function buildSchema(props: PropSpec[]): ModuleDefinition['schema'] {
  */
 function buildPropsSchema(props: PropSpec[]) {
   const shape: Record<string, ReturnType<typeof Type.Optional>> = {}
-  for (const p of props) shape[p.name] = Type.Optional(Type.Unknown())
+  // Handler props stay in the SCHEMA (a parsed call site legitimately carries
+  // `onClick={fn}`, and `validateNodeProps` must let it through untouched) —
+  // they are only absent from `schema`, the panel's control list.
+  for (const p of props) {
+    if (isCanvasDrivenProp(p.name)) continue
+    shape[p.name] = Type.Optional(Type.Unknown())
+  }
   return Type.Object(shape)
 }
 
 function buildDefaults(spec: ComponentSpec): Record<string, unknown> {
   const defaults: Record<string, unknown> = {}
   for (const p of spec.props) {
+    // `dir` is the canvas's, not the node's — see `CANVAS_DRIVEN_PROPS`.
+    if (isCanvasDrivenProp(p.name)) continue
     if (p.name === 'label') defaults[p.name] = spec.name
     else if (p.enumValues?.length) defaults[p.name] = p.enumValues[0]
   }
@@ -216,11 +261,22 @@ function mergeClassNames(a: unknown, b: string | undefined): string | undefined 
 function makeComponent(name: string): React.FC<ModuleComponentProps> {
   const Comp = (DS as Record<string, unknown>)[name] as React.ComponentType<Record<string, unknown>> | undefined
   const AlmEditor: React.FC<ModuleComponentProps> = ({ props, nodeWrapperProps, mcClassName }) => {
+    // The direction of the FRAME this component is rendered into (a "duplicate
+    // as variant" frame can preview RTL beside an LTR board), fed to the
+    // design system's own provider — see `DesignSystemProviderProps`.
+    const { direction } = useFramePreviewAxes()
     // `style` is pulled OUT of the editor bag: it holds the node's own inline
     // styles, which belong on the styled component, not on the transparent host
     // where `display: contents` would make them inert.
     const { style: nodeStyle, ...editorProps } = nodeWrapperProps ?? {}
-    const dsProps = reviveIconProps(props as Record<string, unknown>)
+    // `dir` is stripped from the props the component receives so `useDir()`
+    // falls through to the provider below, which carries the FRAME's
+    // direction. An explicit prop outranks the provider, so a `dir` left on
+    // the node — the manifest default that used to be stamped on every
+    // insert, or a literal in the user's source — would silently pin this one
+    // component against the board's direction toggle. The board axis is what
+    // a direction PREVIEW means; see `CANVAS_DRIVEN_PROPS`.
+    const dsProps = reviveIconProps(stripCanvasDrivenProps(props as Record<string, unknown>))
     // The node's CSS classes go on the design-system component, where the source
     // wrote them — applying them to the host as well double-applied every
     // padding and margin in the rule.
@@ -232,7 +288,7 @@ function makeComponent(name: string): React.FC<ModuleComponentProps> {
           ...(nodeStyle ? { style: nodeStyle } : {}),
         })
       : React.createElement('span', null, name)
-    const provided = Provider ? React.createElement(Provider, null, inner) : inner
+    const provided = Provider ? React.createElement(Provider, { dir: direction }, inner) : inner
     return React.createElement(
       'div',
       { ...editorProps, style: TRANSPARENT_HOST_STYLE },

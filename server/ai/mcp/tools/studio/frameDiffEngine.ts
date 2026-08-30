@@ -38,7 +38,27 @@ const MAX_GRID_CELLS_PER_AXIS = 48
  * exists to surface.
  */
 const ASPECT_RATIO_TOLERANCE = 0.05
+/**
+ * How close (px) a baseline's height must land to `AI_USER_IMAGE_MAX_EDGE`
+ * before `describeResampleReason` attributes a resample to the vision-safe
+ * capture cap. See that function's own comment for why this must be a tight
+ * band, not a `>=` floor, now that a `purpose: 'measurement'` capture can
+ * legitimately be much taller.
+ */
+const VISION_CAP_MATCH_TOLERANCE_PX = 2
 
+/**
+ * A node's bounding rect in ordinary CSS px — exactly what
+ * `getBoundingClientRect()` reports, relative to the captured frame's
+ * origin. This is `studio_export_frames`' `nodeRects` shape, and it is
+ * deliberately NEVER scaled by whatever capture dpr produced the
+ * accompanying image (`relativeRect`/`collectNodeLayout` in
+ * `src/admin/pages/site/agent/renderEvidence.ts` build it straight from
+ * layout geometry before any pixelRatio is applied). See
+ * `FrameDiffOptions.nodeRects` for how a caller must supply the multiplier
+ * that maps this rect into a SPECIFIC diff's image-pixel space — there is no
+ * implicit scale here, on purpose.
+ */
 export interface NodeRect {
   nodeId: string
   x: number
@@ -89,13 +109,23 @@ export interface ReferenceReconciliation {
    * resample and, when it looks like the vision-safe capture cap rather than
    * a genuine size mismatch, says so plainly. Both `studio_compare` and
    * `studio_diff_frames` surface this verbatim in their output rather than
-   * leaving the caller to infer it from a bare `method` string — see A2 in
-   * STUDIO-FIGMA-PARITY-PLAN.md: `studio_export_frames` clamps BOTH width
-   * AND height of every capture to `AI_USER_IMAGE_MAX_EDGE`px, so a frame
-   * taller than roughly that at the dpr requested falls into this branch even
-   * when `studio_recommend_export_dpr` already matched the reference's width
-   * exactly — the "exact-pixel" comparison the whole measurement pipeline is
-   * built around silently becomes interpolated for most real mobile screens.
+   * leaving the caller to infer it from a bare `method` string.
+   *
+   * A2 in STUDIO-FIGMA-PARITY-PLAN.md originally found that
+   * `studio_export_frames` clamped BOTH width AND height of EVERY capture to
+   * `AI_USER_IMAGE_MAX_EDGE`px, so a frame taller than roughly that at the
+   * requested dpr fell into this branch even when `studio_recommend_export_dpr`
+   * already matched the reference's width exactly — the "exact-pixel"
+   * comparison the whole measurement pipeline is built around silently
+   * became interpolated for most real mobile screens. `studio_compare` now
+   * captures under `purpose: 'measurement'`, which is bounded by a much
+   * larger total-pixel budget instead of that per-edge clamp specifically
+   * because it never needs to satisfy the vision constraint (it measures the
+   * image server-side; showing it to a model is a separate, optional step
+   * via `includeImages`) — so this branch should now be rare for the common
+   * mobile-screen case, and `describeResampleReason` no longer assumes a
+   * tall baseline hit the vision cap unless its height actually lands near
+   * that specific number.
    */
   note?: string
 }
@@ -171,7 +201,18 @@ function describeResampleReason(
   // Only the HEIGHT side is a likely vision-cap symptom: studio_recommend_export_dpr
   // already targets an exact WIDTH match, so a lingering width mismatch usually
   // means that recommendation wasn't used, not that the cap fired on width.
-  const likelyVisionCap = heightMismatch && baselineHeight >= AI_USER_IMAGE_MAX_EDGE - 1
+  //
+  // The match must be NEAR the cap, not merely at-or-above it (a tight
+  // tolerance for canvas Math.round() rounding, not a loose floor) — since
+  // `studio_export_frames` gained a `purpose: 'measurement'` capture mode
+  // (STUDIO-FIGMA-PARITY-PLAN.md A2), a baseline captured that way for
+  // studio_compare can legitimately be far TALLER than the vision-safe cap
+  // (bounded instead by a much larger total-pixel budget). A loose `>=`
+  // check would misattribute that entirely different, much larger capture to
+  // this vision-safety limit — a false story about why the resample
+  // happened. When the height isn't actually near this specific cap, this
+  // function says nothing about a specific cause rather than guess wrong.
+  const likelyVisionCap = heightMismatch && Math.abs(baselineHeight - AI_USER_IMAGE_MAX_EDGE) <= VISION_CAP_MATCH_TOLERANCE_PX
   return likelyVisionCap
     ? `Resampled the reference (${referenceWidth}x${referenceHeight}) to the captured baseline's size (${baselineWidth}x${baselineHeight}) — the ${axis} did not match. The baseline's height landed at or near the ${AI_USER_IMAGE_MAX_EDGE}px vision-safe capture cap, which studio_export_frames applies to BOTH width and height: this is very likely a tall screen whose full height could not be captured at the dpr that matched the reference's width, not a genuine content mismatch. This comparison is now interpolated, not exact-pixel — treat the score and any region near the bottom of the frame as directional.`
     : `Resampled the reference (${referenceWidth}x${referenceHeight}) to the captured baseline's size (${baselineWidth}x${baselineHeight}) — the ${axis} did not match. This comparison is now interpolated, not exact-pixel.`
@@ -294,10 +335,39 @@ export interface FrameDiffResult {
 }
 
 export interface FrameDiffOptions {
-  nodeRects?: readonly NodeRect[]
+  /**
+   * Node rectangles to map each differing region back to, paired with the
+   * multiplier that converts `NodeRect`'s CSS-px space into the pixel space
+   * of the two images `computeFrameDiff` is scoring (CSS px × the capture's
+   * effective device pixel ratio).
+   *
+   * `imageScale` has no default and cannot be omitted while `rects` is
+   * present: a diff region is computed directly in the two decoded images'
+   * pixel space, so intersecting it against unscaled CSS-px node rects is
+   * only correct at dpr:1. `studio_compare` routinely captures at dpr 2-3 to
+   * match a Figma export's own pixel width — at dpr:2 that silent scale
+   * mismatch meant only the top-left quadrant of a frame could ever map to a
+   * node. Pass `imageScale: 1` explicitly for an unscaled capture; there is
+   * no implicit fallback to 1 here on purpose, so a future caller cannot
+   * reintroduce this bug by simply forgetting the field.
+   */
+  nodeRects?: {
+    rects: readonly NodeRect[]
+    imageScale: number
+  }
   topN: number
   /** pixelmatch per-pixel match threshold (0 = strictest, 1 = loosest). */
   threshold?: number
+}
+
+/** Scales a CSS-px `NodeRect` into a diff's image-pixel space. See `FrameDiffOptions.nodeRects`. */
+function scaleNodeRectToImageSpace(rect: NodeRect, imageScale: number): Rect {
+  return {
+    x: rect.x * imageScale,
+    y: rect.y * imageScale,
+    width: rect.width * imageScale,
+    height: rect.height * imageScale,
+  }
 }
 
 /**
@@ -326,7 +396,11 @@ export function computeFrameDiff(a: DecodedImage, b: DecodedImage, options: Fram
       diffPixels: r.diffPixels,
       diffPercent: area > 0 ? Math.min(100, (r.diffPixels / area) * 100) : 0,
       frameCoveragePercent: totalPixels > 0 ? (area / totalPixels) * 100 : 0,
-      nodeIds: (options.nodeRects ?? []).filter((n) => rectsIntersect(rect, n)).map((n) => n.nodeId),
+      nodeIds: options.nodeRects
+        ? options.nodeRects.rects
+            .filter((n) => rectsIntersect(rect, scaleNodeRectToImageSpace(n, options.nodeRects!.imageScale)))
+            .map((n) => n.nodeId)
+        : [],
     }
   })
 

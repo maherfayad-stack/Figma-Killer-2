@@ -74,7 +74,7 @@
  * has. This is deliberately not held to the byte-exactness standard those
  * structural codemods are.
  */
-import { Node, QuoteKind, type JsxAttribute, type JsxFragment, type Project, type SourceFile } from 'ts-morph'
+import { Node, QuoteKind, SyntaxKind, type JsxAttribute, type JsxFragment, type Project, type SourceFile } from 'ts-morph'
 import { createProject, findJsxElementAtLocation, loadSourceFile } from './locateJsxElement'
 import {
   collectSubtreeImports,
@@ -109,6 +109,20 @@ export interface InsertJsxIntoSlotPropParams {
   propName: string
   /** The subtree written into the slot. */
   node: InsertJsxIntoSlotPropNode
+  /**
+   * `'append'` (the default) adds alongside whatever the slot already holds —
+   * the four shapes in this module's doc. `'replace'` DISCARDS the current
+   * JSX value and writes `node` in its place, which is what "choose a
+   * different icon" means: without it, picking a second icon left the first
+   * one sitting beside it in a fragment and the slot rendered both.
+   *
+   * Replace is refused on exactly the same ambiguous shapes append is (an
+   * identifier, a call, a ternary) and for the identical reason — Studio
+   * cannot tell a real binding from "nothing", and overwriting one would
+   * destroy it silently. It is only ever applied to a value this pipeline can
+   * see is JSX.
+   */
+  mode?: 'append' | 'replace'
   /** Only consulted when `propName === 'children'` — passed straight through to `insertJsxElement`. */
   anchorLine?: number
   anchorCol?: number
@@ -117,7 +131,11 @@ export interface InsertJsxIntoSlotPropParams {
   project?: Project
 }
 
-export type InsertSlotRefusalReason = InsertJsxRefusalReason | 'slot-ambiguous' | 'spread-attribute'
+export type InsertSlotRefusalReason =
+  | InsertJsxRefusalReason
+  | 'slot-ambiguous'
+  | 'spread-attribute'
+  | 'replace-not-supported'
 
 export interface InsertSlotRefusal {
   reason: InsertSlotRefusalReason
@@ -133,6 +151,7 @@ function refuse(reason: InsertSlotRefusalReason, message: string): { ok: false; 
 
 export function insertJsxIntoSlotProp(params: InsertJsxIntoSlotPropParams): InsertJsxIntoSlotPropResult {
   const { file, line, col, propName, node } = params
+  const mode = params.mode ?? 'append'
 
   // Validated before any lookup happens, same ordering `insertJsxElement`
   // uses — a bad grandchild refuses before touching the file at all.
@@ -148,6 +167,15 @@ export function insertJsxIntoSlotProp(params: InsertJsxIntoSlotPropParams): Inse
   const sourceFile = loadSourceFile(project, file)
 
   if (propName === 'children') {
+    if (mode === 'replace') {
+      // The default slot's contents are ordinary child NODES with their own
+      // ids, selection and delete path — not an attribute value this codemod
+      // owns. Silently appending instead would be the wrong write; say so.
+      return refuse(
+        'replace-not-supported',
+        'The default slot holds ordinary child elements — select the one you want to change on the canvas and edit or delete it there, rather than replacing the whole slot.',
+      )
+    }
     // The default slot is the element's ordinary child list, not an
     // attribute at all — see this module's own doc for why this delegates
     // wholesale rather than reimplementing placement.
@@ -202,8 +230,12 @@ export function insertJsxIntoSlotProp(params: InsertJsxIntoSlotPropParams): Inse
       `The "${propName}" prop is a spread attribute — Studio can't tell what it currently holds, so it won't guess whether inserting here is safe.`,
     )
   } else {
-    const outcome = fillExistingSlotAttribute(existingAttribute, propName, newNodeText, unit)
+    const outcome = fillExistingSlotAttribute(existingAttribute, propName, newNodeText, unit, mode)
     if (!outcome.ok) return outcome
+    // Pruned BEFORE the new imports are added, so a replace that swaps one
+    // icon for another out of the SAME package leaves one tidy declaration
+    // rather than a removed-then-recreated one.
+    pruneImportsOrphanedBy(sourceFile, outcome.replacedNames)
   }
 
   addRequiredImports(sourceFile, imports)
@@ -211,24 +243,45 @@ export function insertJsxIntoSlotProp(params: InsertJsxIntoSlotPropParams): Inse
   return { ok: true }
 }
 
+/** A successful fill, naming the bindings the OLD value referenced (empty on append — nothing was removed). */
+type FillOutcome =
+  | { ok: true; replacedNames: ReadonlySet<string> }
+  | { ok: false; refusal: InsertSlotRefusal }
+
 /**
  * Writes into an ALREADY-PRESENT slot attribute — the "single element" and
  * "already a fragment" cases from this module's own doc, plus the
  * `slot-ambiguous` refusal for everything else.
+ *
+ * `mode: 'replace'` short-circuits both JSX cases to a straight overwrite: it
+ * is the same three shapes being asked a different question ("what should this
+ * attribute say" rather than "what should it say as well"), so it shares the
+ * ambiguity refusal rather than getting its own.
  */
 function fillExistingSlotAttribute(
   attribute: JsxAttribute,
   propName: string,
   newNodeText: string,
   unit: string,
-): InsertJsxIntoSlotPropResult {
+  mode: 'append' | 'replace',
+): FillOutcome {
   const initializer = attribute.getInitializer()
   const expr = initializer && Node.isJsxExpression(initializer) ? initializer.getExpression() : undefined
   if (!expr) {
     return refuse(
       'slot-ambiguous',
-      `The "${propName}" prop has no JSX value to insert alongside (a valueless shorthand, a plain string, or an empty expression container) — Studio won't guess what that currently means.`,
+      `The "${propName}" prop has no JSX value to ${mode === 'replace' ? 'replace' : 'insert alongside'} (a valueless shorthand, a plain string, or an empty expression container) — Studio won't guess what that currently means.`,
     )
+  }
+
+  const isJsxValue = Node.isJsxFragment(expr) || Node.isJsxElement(expr) || Node.isJsxSelfClosingElement(expr)
+  if (isJsxValue && mode === 'replace') {
+    // Collected BEFORE the overwrite, while the old value still exists to
+    // read — these are the candidates `pruneImportsOrphanedBy` then checks
+    // against the rewritten file.
+    const replacedNames = referencedIdentifiers(expr)
+    attribute.setInitializer(`{${newNodeText}}`)
+    return { ok: true, replacedNames }
   }
 
   const fullText = attribute.getSourceFile().getFullText()
@@ -238,16 +291,71 @@ function fillExistingSlotAttribute(
   if (Node.isJsxFragment(expr)) {
     const childrenTexts = [...existingFragmentChildrenTexts(expr), newNodeText]
     attribute.setInitializer(buildFragmentInitializer(childrenTexts, indent, childIndent))
-    return { ok: true }
+    return { ok: true, replacedNames: NO_REPLACED_NAMES }
   }
   if (Node.isJsxElement(expr) || Node.isJsxSelfClosingElement(expr)) {
     attribute.setInitializer(buildFragmentInitializer([expr.getText(), newNodeText], indent, childIndent))
-    return { ok: true }
+    return { ok: true, replacedNames: NO_REPLACED_NAMES }
   }
   return refuse(
     'slot-ambiguous',
     `The "${propName}" prop is set to an expression ("${expr.getText()}") rather than JSX markup — Studio can't tell whether that currently means "empty" or is a real binding, so it refuses rather than guess.`,
   )
+}
+
+const NO_REPLACED_NAMES: ReadonlySet<string> = new Set()
+
+/** Every identifier appearing anywhere inside `node` — the names a replaced value was using. */
+function referencedIdentifiers(node: Node): ReadonlySet<string> {
+  const names = new Set<string>()
+  for (const identifier of node.getDescendantsOfKind(SyntaxKind.Identifier)) names.add(identifier.getText())
+  return names
+}
+
+/**
+ * Drops the named imports a replaced slot value was the last user of.
+ *
+ * Swapping `icon={<ChevronRightIcon/>}` for a different glyph otherwise leaves
+ * `ChevronRightIcon` imported and unused, which trips `noUnusedLocals` and
+ * every lint setup that checks it — Studio would be handing the user a file
+ * that no longer builds.
+ *
+ * `deleteJsxElement` REFUSES on the same situation ("remove the element and
+ * its import together in the file") and that is right for a structural delete,
+ * where the user asked to remove one thing and the codemod has no mandate to
+ * touch another. A slot replace is the opposite: the user asked to SWAP this
+ * value, so retiring the binding it alone was using is part of the write they
+ * requested, not a side effect — and it is checked, never assumed. Only a name
+ * with zero remaining non-import references is removed, and a declaration is
+ * only deleted once emptied by this function, so a side-effect import
+ * (`import './styles.css'`) is untouched.
+ */
+function pruneImportsOrphanedBy(sourceFile: SourceFile, replacedNames: ReadonlySet<string>): void {
+  if (replacedNames.size === 0) return
+
+  const stillReferenced = new Set<string>()
+  for (const identifier of sourceFile.getDescendantsOfKind(SyntaxKind.Identifier)) {
+    if (identifier.getFirstAncestorByKind(SyntaxKind.ImportDeclaration)) continue
+    stillReferenced.add(identifier.getText())
+  }
+
+  for (const declaration of [...sourceFile.getImportDeclarations()]) {
+    let removedAny = false
+    for (const named of [...declaration.getNamedImports()]) {
+      const local = (named.getAliasNode() ?? named.getNameNode()).getText()
+      if (!replacedNames.has(local) || stillReferenced.has(local)) continue
+      named.remove()
+      removedAny = true
+    }
+    if (
+      removedAny &&
+      declaration.getNamedImports().length === 0 &&
+      !declaration.getDefaultImport() &&
+      !declaration.getNamespaceImport()
+    ) {
+      declaration.remove()
+    }
+  }
 }
 
 /** The element children of an existing fragment, verbatim — whitespace/expression children excluded. */

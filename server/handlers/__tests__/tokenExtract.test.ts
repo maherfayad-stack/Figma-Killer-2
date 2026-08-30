@@ -88,8 +88,17 @@ describe('extractProjectTokens — project-css source, a corpus sharing nothing 
     expect(bySlug.get('brand-primary')?.category).toBe('brand')
     // Resolved THROUGH the indirection, not left as the literal `var(...)` text.
     expect(bySlug.get('brand-secondary')?.lightValue).toBe('#3366ff')
-    // No dark override was declared for this one — must not fabricate one.
-    expect(bySlug.get('brand-secondary')?.darkModeEnabled).toBe(false)
+    // ...and the indirection is resolved in the DARK scope too. This assertion
+    // used to read `darkModeEnabled === false`, on the reasoning that "no dark
+    // override was declared for this one, so don't fabricate one". That
+    // confused "the dark block names this token" with "this token resolves
+    // differently in dark", and the difference is the whole of a design
+    // system's semantic layer: `--brand-secondary: var(--brand-primary)` IS
+    // #7799ff under `[data-theme=dark]` in any browser. Treating that as
+    // "no dark value" imported a light literal that then shadowed the
+    // package's own dark palette — see `board-08` in `STATE.md`.
+    expect(bySlug.get('brand-secondary')?.darkValue).toBe('#7799ff')
+    expect(bySlug.get('brand-secondary')?.darkModeEnabled).toBe(true)
 
     const spacingGroups = result.framework.spacing?.groups ?? []
     const gapGroup = spacingGroups.find((g) => g.namingConvention === 'gap')

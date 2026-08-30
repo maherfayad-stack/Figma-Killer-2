@@ -90,8 +90,16 @@ interface FrameExportSuccess {
   height: number
   /** Index into the tool result's `images[]` array — the MCP image block for this frame. */
   imageIndex: number
-  /** Node rects in frame-local coordinates, reusable as `studio_diff_frames`' `nodeRects` input. */
+  /** Node rects in frame-local CSS px, reusable as `studio_diff_frames`' `nodeRects` input. */
   nodeRects: Array<{ nodeId: string; x: number; y: number; width: number; height: number }>
+  /**
+   * Multiplier from `nodeRects`' CSS-px space into THIS image's actual pixel
+   * space — derived from the real captured pixel size (`width` above ÷ the
+   * frame's CSS width), not from the requested `dpr`, so a diff tool gets
+   * the right answer even when the effective capture ratio was clamped down
+   * (see `renderEvidence.ts`'s `captureElementScreenshot`).
+   */
+  imageScale: number
   warnings: string[]
 }
 
@@ -174,6 +182,7 @@ async function exportFrames(input: StudioExportFramesInput): Promise<AiToolOutpu
         pageId,
         captureScreenshot: true,
         pixelRatio: input.dpr,
+        purpose: input.purpose,
         frame: mounted,
       })
       if (!snapshot || snapshot.screenshot.status !== 'ok' || !snapshot.screenshot.data) {
@@ -189,10 +198,18 @@ async function exportFrames(input: StudioExportFramesInput): Promise<AiToolOutpu
 
       const imageIndex = images.length
       images.push({ mimeType: snapshot.screenshot.mimeType ?? 'image/png', data: snapshot.screenshot.data })
+      const capturedWidth = snapshot.screenshot.width ?? snapshot.width
+      const cssWidth = snapshot.layout.viewport.width
+      // Derived from the ACTUAL captured pixel size, not the requested `dpr` —
+      // `captureElementScreenshot` can clamp the effective ratio down (a tall
+      // frame, or `purpose: 'measurement'`'s own pixel budget), so this is the
+      // only value a caller can trust to convert `nodeRects` (CSS px) into
+      // this specific image's pixel space. See `imageScale`'s own doc.
+      const imageScale = cssWidth > 0 ? capturedWidth / cssWidth : 1
       results.push({
         pageId,
         ok: true,
-        width: snapshot.screenshot.width ?? snapshot.width,
+        width: capturedWidth,
         height: snapshot.screenshot.height ?? snapshot.layout.viewport.height,
         imageIndex,
         nodeRects: snapshot.layout.nodes.map((n) => ({
@@ -202,6 +219,7 @@ async function exportFrames(input: StudioExportFramesInput): Promise<AiToolOutpu
           width: n.rect.width,
           height: n.rect.height,
         })),
+        imageScale,
         warnings: snapshot.layout.warnings.map((w) => w.message),
       })
     }

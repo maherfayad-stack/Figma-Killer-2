@@ -16,20 +16,13 @@ import { useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { useEditorStore, selectSelectedNode } from '@site/store/store'
 import { registry } from '@core/module-engine'
-import { getAncestors, resolveProps } from '@core/page-tree'
-import { loopSourceRegistry } from '@core/loops/registry'
+import { resolveProps } from '@core/page-tree'
 import { buildClassTokenUsageMap, buildSelectorUsageMap, resolveSelectorUsage } from '../selectorUsage'
 import type {
   AnyModuleDefinition,
 } from '@core/module-engine'
-import type {
-  StyleRule,
-  DynamicPropBinding,
-  Page,
-  PageNode,
-} from '@core/page-tree'
+import type { StyleRule, Page, PageNode } from '@core/page-tree'
 import type { VisualComponent } from '@core/visualComponents'
-import type { LoopEntitySource } from '@core/loops/types'
 import type { ActiveDocument, PanelState, FocusedPanel, PropertiesPanelMode } from '../../store/slices/uiSlice'
 
 const DEFAULT_WIDTH = 360
@@ -77,9 +70,6 @@ interface PropertiesPanelData {
   selectedSelectorUsage: string | null
 
   // ─── Loop / dynamic-binding context ────────────────────────────────────
-  enclosingLoopSource: LoopEntitySource | undefined
-  enclosingLoopTableId: string | null
-  dynamicBindingsEnabled: boolean
 
   // ─── Panel chrome state ────────────────────────────────────────────────
   panelState: PanelState
@@ -100,8 +90,6 @@ interface PropertiesPanelData {
   // ─── Prop change handlers ──────────────────────────────────────────────
   handleChange: (propKey: string, value: unknown) => void
   handlePatch: (patch: Record<string, unknown>) => void
-  handleSetDynamicBinding: (propKey: string, binding: DynamicPropBinding) => void
-  handleClearDynamicBinding: (propKey: string) => void
 }
 
 export function usePropertiesPanelData(): PropertiesPanelData {
@@ -110,8 +98,6 @@ export function usePropertiesPanelData(): PropertiesPanelData {
   const selectedNodeId = useEditorStore((s) => s.selectedNodeId)
   const selectedNodeIds = useEditorStore(useShallow((s) => s.selectedNodeIds))
   const updateNodeProps = useEditorStore((s) => s.updateNodeProps)
-  const setNodeDynamicBinding = useEditorStore((s) => s.setNodeDynamicBinding)
-  const clearNodeDynamicBinding = useEditorStore((s) => s.clearNodeDynamicBinding)
   const setBreakpointOverride = useEditorStore((s) => s.setBreakpointOverride)
   const renameClass = useEditorStore((s) => s.renameClass)
   const deleteClass = useEditorStore((s) => s.deleteClass)
@@ -185,24 +171,6 @@ export function usePropertiesPanelData(): PropertiesPanelData {
     : []
   const activePage = site?.pages.find((page) => page.id === activePageId) ?? null
 
-  // Dynamic bindings are available whenever the selected node sits inside a
-  // scope that produces a `currentEntry` at render time:
-  //   - on a single-entry template page (the page itself injects an entry), OR
-  //   - inside a `base.loop` subtree (the loop pushes an iteration item per render).
-  // For nodes with a `base.loop` ancestor we expose the same `currentEntry`
-  // bindings — they resolve to the loop's iteration item via the publisher's
-  // entry-stack semantics.
-  const { enclosingLoopSource, enclosingLoopTableId } = resolveEnclosingLoopContext(
-    activePage,
-    selectedNodeId,
-  )
-  // Bindings are always available. The picker decides which sources are
-  // meaningful in the current context (`currentEntry` / `parentEntry`
-  // only when inside a loop or template page; page / site / route
-  // are always offered). Phase 3 of the binding system refactor —
-  // see docs/superpowers/plans/2026-05-… for the broader plan.
-  const dynamicBindingsEnabled = true
-
   // ─── Prop change handler ────────────────────────────────────────────────
   //
   // A non-default breakpoint frame routes writes through
@@ -235,18 +203,6 @@ export function usePropertiesPanelData(): PropertiesPanelData {
     setStatusMessage('Form settings updated')
   }
 
-  const handleSetDynamicBinding = (propKey: string, binding: DynamicPropBinding) => {
-    if (!selectedNodeId) return
-    setNodeDynamicBinding(selectedNodeId, propKey, binding)
-    setStatusMessage(`${propKey} bound`)
-  }
-
-  const handleClearDynamicBinding = (propKey: string) => {
-    if (!selectedNodeId) return
-    clearNodeDynamicBinding(selectedNodeId, propKey)
-    setStatusMessage(`${propKey} binding removed`)
-  }
-
   const collapsed = panelState.collapsed
   const width = Math.max(panelState.width || DEFAULT_WIDTH, MIN_WIDTH)
 
@@ -274,9 +230,6 @@ export function usePropertiesPanelData(): PropertiesPanelData {
     isSelectorMultiSelect,
     selectedSelectorUsage,
 
-    enclosingLoopSource,
-    enclosingLoopTableId,
-    dynamicBindingsEnabled,
 
     panelState,
     collapsed,
@@ -294,8 +247,6 @@ export function usePropertiesPanelData(): PropertiesPanelData {
 
     handleChange,
     handlePatch,
-    handleSetDynamicBinding,
-    handleClearDynamicBinding,
   }
 }
 
@@ -320,53 +271,3 @@ function resolveOverrideKeys(
   )
 }
 
-interface EnclosingLoopContext {
-  enclosingLoopSource: LoopEntitySource | undefined
-  enclosingLoopTableId: string | null
-}
-
-function resolveEnclosingLoopContext(
-  activePage: Page | null,
-  selectedNodeId: string | null,
-): EnclosingLoopContext {
-  if (!activePage || !selectedNodeId) {
-    return { enclosingLoopSource: undefined, enclosingLoopTableId: null }
-  }
-
-  const ancestors = getAncestors(activePage, selectedNodeId)
-  // Closest enclosing loop wins — that's the one whose source defines the
-  // available fields for `currentEntry` bindings inside this subtree.
-  const enclosingLoopNode = [...ancestors]
-    .reverse()
-    .find((a) => a.moduleId === 'base.loop')
-
-  if (!enclosingLoopNode) {
-    return { enclosingLoopSource: undefined, enclosingLoopTableId: null }
-  }
-
-  const enclosingLoopSourceId = typeof enclosingLoopNode.props.sourceId === 'string'
-    ? enclosingLoopNode.props.sourceId
-    : null
-  const enclosingLoopSource = enclosingLoopSourceId
-    ? loopSourceRegistry.get(enclosingLoopSourceId)
-    : undefined
-
-  return {
-    enclosingLoopSource,
-    enclosingLoopTableId: extractLoopTableId(enclosingLoopNode, enclosingLoopSourceId),
-  }
-}
-
-// Loop bound to a specific data table — pass its tableId down so the binding
-// picker can auto-scope to that table (the only one the loop will iterate),
-// instead of offering every table in the workspace.
-function extractLoopTableId(
-  enclosingLoopNode: PageNode,
-  enclosingLoopSourceId: string | null,
-): string | null {
-  if (enclosingLoopSourceId !== 'data.rows') return null
-  const filters = enclosingLoopNode.props.filters
-  if (!filters || typeof filters !== 'object' || Array.isArray(filters)) return null
-  const tableId = (filters as Record<string, unknown>).tableId
-  return typeof tableId === 'string' && tableId ? tableId : null
-}

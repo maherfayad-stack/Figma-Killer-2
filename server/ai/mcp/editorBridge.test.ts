@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import { resolveBridgeToolResult } from '../runtime'
-import { createEditorBridgeStream, getEditorBridgeForUser, hasEditorBridge } from './editorBridge'
+import { awaitEditorBridgeForUser, createEditorBridgeStream, getEditorBridgeForUser, hasEditorBridge } from './editorBridge'
 
 const dec = new TextDecoder()
 
@@ -107,4 +107,54 @@ describe('editor bridge', () => {
     await secondReader.cancel()
     expect(hasEditorBridge(userId, 'site')).toBe(false)
   })
+})
+
+describe('awaitEditorBridgeForUser (mcp-tooling CHANGE C — internal retry)', () => {
+  it('returns immediately when a bridge is already connected', async () => {
+    const userId = `u_${Math.floor(performance.now())}_immediate`
+    const ctrl = new AbortController()
+    const reader = createEditorBridgeStream(userId, 'site', ctrl.signal).getReader()
+    await readUntil(reader, (e) => e.type === 'bridgeReady')
+
+    const start = performance.now()
+    const bridge = await awaitEditorBridgeForUser(userId, 'site')
+    expect(bridge).not.toBeNull()
+    expect(performance.now() - start).toBeLessThan(200)
+
+    ctrl.abort()
+    await reader.read().catch(() => {})
+  })
+
+  it('aborts promptly instead of sitting through either wait window', async () => {
+    const userId = `u_${Math.floor(performance.now())}_abort`
+    const signal = AbortSignal.timeout(50)
+
+    const start = performance.now()
+    const bridge = await awaitEditorBridgeForUser(userId, 'site', signal)
+    expect(bridge).toBeNull()
+    // Bounded by the abort, not by BRIDGE_WAIT_MS * BRIDGE_MAX_ATTEMPTS (~8s).
+    expect(performance.now() - start).toBeLessThan(2000)
+  })
+
+  it('finds a bridge that connects during the SECOND wait window — the retry the system prompt used to spend a whole extra tool call on', async () => {
+    const userId = `u_${Math.floor(performance.now())}_second_window`
+    let stream: ReturnType<typeof createEditorBridgeStream> | null = null
+    let reader: ReadableStreamDefaultReader<Uint8Array> | null = null
+    const ctrl = new AbortController()
+
+    // Connects partway through the second ~4s window (after the first
+    // window's own ~4s has already elapsed) — a single `awaitEditorBridgeForUser`
+    // call must still find it, with no second external call.
+    setTimeout(() => {
+      stream = createEditorBridgeStream(userId, 'site', ctrl.signal)
+      reader = stream.getReader()
+      void readUntil(reader, (e) => e.type === 'bridgeReady')
+    }, 4300)
+
+    const bridge = await awaitEditorBridgeForUser(userId, 'site')
+    expect(bridge).not.toBeNull()
+
+    ctrl.abort()
+    await reader?.read().catch(() => {})
+  }, 10_000)
 })

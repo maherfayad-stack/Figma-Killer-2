@@ -48,10 +48,10 @@ import { resolvePageSourceFile } from '../../../../handlers/studio/pageSourceFil
 import { awaitEditorBridgeForUser } from '../../editorBridge'
 import { awaitStudioLiveReload } from './liveReloadPush'
 import { resolveToolProjectDir } from './resolveToolProjectDir'
-import { resolveRequestedPages } from './pageNameMatch'
+import { MAX_BATCH_PAGES, resolveRequestedPages } from './pageNameMatch'
 
-/** The browser capture path's own batch ceiling (`StudioExportFramesInputSchema`). */
-const MAX_FRAMES = 20
+/** The browser capture path's own batch ceiling (`StudioExportFramesInputSchema`) — now the shared family-wide cap (`pageNameMatch.ts`'s `MAX_BATCH_PAGES`). */
+const MAX_FRAMES = MAX_BATCH_PAGES
 
 const ScreenshotInputSchema = Type.Object(
   {
