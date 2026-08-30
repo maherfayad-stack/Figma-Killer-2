@@ -285,6 +285,11 @@
         color-mix(in srgb, var(--text-subtle) 4%, transparent);
 
     /* Z-index layers */
+    /* A toolbar that floats over the canvas anchored to a piece of board
+     * furniture (the doc card's rich-text bar). Below --z-dropdown on purpose:
+     * the Selects INSIDE that toolbar portal their menus at --z-dropdown and
+     * must paint over the bar they belong to. */
+    --z-canvas-floating-toolbar: 15;
     --z-dropdown: 20;
 
     /* Tooltips are transient hover hints that must sit above every modal layer,
@@ -331,20 +336,38 @@
     --plugins-hero-tint-b: rgba(49, 64, 94, 0.24);
     --canvas-live-scrim: rgba(24, 24, 27, 0.82);
 
-    /* Board sticky notes (Studio board overlay) — identity color picker.
-       Reuses the existing accent scale rather than inventing a parallel
-       color vocabulary; "gray" is achromatic by design (two-layer color
-       model — a note's color is identity, nothing more). */
-    --note-yellow: var(--accent-7);
-    --note-yellow-tint: var(--accent-7-10);
-    --note-green: var(--accent-6);
-    --note-green-tint: var(--accent-6-10);
-    --note-blue: var(--accent-3);
-    --note-blue-tint: var(--accent-3-10);
-    --note-pink: var(--accent-5);
-    --note-pink-tint: var(--accent-5-10);
-    --note-gray: var(--text-subtle);
-    --note-gray-tint: var(--overlay-10);
+    /* Board sticky notes (Studio board overlay).
+     *
+     * These are the one place in the app that is deliberately NOT drawn from
+     * the accent scale and NOT theme-reactive. A sticky note is a picture of a
+     * physical object: it is an opaque pastel square with dark ink on it, in
+     * light mode and in dark mode alike, exactly as it is in Miro and on a
+     * real wall. An earlier version derived them from `--accent-*` at 10%
+     * alpha, which produced a translucent olive/navy wash of the canvas
+     * background — a tint of the board, not a note on it.
+     *
+     * Because the fill is a fixed light pastel in both themes, the text on it
+     * is a fixed dark ink rather than `--text`: the surface does not follow
+     * the theme, so its foreground must not either.
+     *
+     * "Gray" is the achromatic option, for a note whose colour should not
+     * mean anything. */
+    --note-yellow: #fff8b8;
+    --note-green: #d3f39b;
+    --note-blue: #aed4fb;
+    --note-pink: #ffcfe1;
+    --note-gray: #dfe3ea;
+    /* Selection ring for BOARD FURNITURE (sticky notes, doc cards) — plain
+       white, deliberately not `--canvas-selection-ring-color`. Green means
+       "this node in the page tree is selected"; a note is not a node, and one
+       colour for both made a selected doc card read as a selected component. */
+    --annotation-selection-ring: #ffffff;
+    --note-ink: #1f2126;
+    --note-ink-subtle: rgba(31, 33, 38, 0.45);
+    /* Contact shadow. Softer and tighter than `--shadow-panel-drop`, which is
+       tuned for a panel floating far above a dark surface; a sticky sits ON
+       the board. */
+    --note-shadow: 0 1px 2px rgba(0, 0, 0, 0.22), 0 6px 14px rgba(0, 0, 0, 0.18);
 }
 
 :root[data-editor-text-scale='small'],

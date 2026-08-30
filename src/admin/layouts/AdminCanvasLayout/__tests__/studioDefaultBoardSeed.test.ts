@@ -26,11 +26,20 @@ const BASE: StudioDefaultBoardSeedInputs = {
   boardCount: 1,
   activeBoardFrameCount: 0,
   pageCount: 5,
+  frameDefaultsSettled: true,
 }
 
 describe('shouldSeedDefaultBoard', () => {
   it('seeds a legitimately-empty single board once pages are loaded', () => {
     expect(shouldSeedDefaultBoard(BASE)).toBe(true)
+  })
+
+  it('refuses until the project frame defaults are known', () => {
+    // The seed stamps every frame it creates with the project's default size.
+    // Running before that answer arrives silently seeds the whole board at the
+    // hardcoded FRAME_WIDTH/FRAME_HEIGHT — which is what would make a project
+    // created as Mobile open its first screen at 1024x800.
+    expect(shouldSeedDefaultBoard({ ...BASE, frameDefaultsSettled: false })).toBe(false)
   })
 
   it('refuses when boardsLoadFailed is true — the boards-fetch-race-01 regression', () => {

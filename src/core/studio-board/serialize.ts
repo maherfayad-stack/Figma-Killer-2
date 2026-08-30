@@ -1,3 +1,4 @@
+import { renderMarkdownToHtml } from '@core/markdown/renderMarkdown'
 import type { Board, BoardFrame, BoardGuide, BoardsFile, DocBlock, NoteColor, StickyNote } from './types'
 import type { PreviewAxes } from './previewAxes'
 
@@ -59,6 +60,16 @@ function coerceFrame(raw: unknown): BoardFrame | undefined {
   return frame
 }
 
+/**
+ * `z` (paint order) is additive and OPTIONAL — omitted entirely when absent or
+ * invalid, so a `boards.json` written before stacking existed round-trips
+ * byte-for-byte instead of gaining a synthesized value on the next save. Same
+ * precedent `coerceFrame` set for `width`/`height`.
+ */
+function coerceZ(raw: Record<string, unknown>): { z?: number } {
+  return typeof raw.z === 'number' && Number.isFinite(raw.z) ? { z: raw.z } : {}
+}
+
 function coerceNote(raw: unknown): StickyNote | undefined {
   if (!isPlainObject(raw)) return undefined
   const id = raw.id
@@ -69,9 +80,21 @@ function coerceNote(raw: unknown): StickyNote | undefined {
   const h = typeof raw.h === 'number' ? raw.h : 120
   const text = typeof raw.text === 'string' ? raw.text : ''
   const color = NOTE_COLORS.includes(raw.color as NoteColor) ? (raw.color as NoteColor) : 'yellow'
-  return { id, x, y, w, h, text, color }
+  return { id, x, y, w, h, text, color, ...coerceZ(raw) }
 }
 
+/**
+ * `html` is the current shape. A pre-rich-text file carries `markdown`
+ * instead; it is rendered to HTML HERE, once, at the read boundary, so no
+ * downstream reader ever sees two shapes (see `DocBlock`'s doc for why the
+ * field changed rather than gaining a sibling).
+ *
+ * The rendered HTML is deliberately NOT sanitized here. `parseBoardsFile` runs
+ * on the server too, where DOMPurify may not be installed and `sanitizeRichtext`
+ * degrades to stripping ALL tags — which would silently destroy a user's doc
+ * card on a read that never intended to write. Sanitization happens where a
+ * DOM is guaranteed: on write (`updateDocHtml`) and on render (`DocBlockView`).
+ */
 function coerceDoc(raw: unknown): DocBlock | undefined {
   if (!isPlainObject(raw)) return undefined
   const id = raw.id
@@ -80,8 +103,13 @@ function coerceDoc(raw: unknown): DocBlock | undefined {
   const y = typeof raw.y === 'number' ? raw.y : 0
   const w = typeof raw.w === 'number' ? raw.w : 320
   const h = typeof raw.h === 'number' ? raw.h : 200
-  const markdown = typeof raw.markdown === 'string' ? raw.markdown : ''
-  return { id, x, y, w, h, markdown }
+  const html =
+    typeof raw.html === 'string'
+      ? raw.html
+      : typeof raw.markdown === 'string' && raw.markdown.length > 0
+        ? renderMarkdownToHtml(raw.markdown)
+        : ''
+  return { id, x, y, w, h, html, ...coerceZ(raw) }
 }
 
 /** D1 — a persisted ruler guide. Mirrors `coerceNote`/`coerceDoc`'s tolerant shape. */

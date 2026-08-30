@@ -114,9 +114,11 @@ shape (missing/malformed → `[]`, never a parse failure).
 note/doc transforms.
 
 **Store wiring.** `store/slices/boardGuideActions.ts` (pure `Board -> Board`
-wrapper, mints the id) + three thin `boardSlice.ts` actions (`addGuide`,
-`moveGuide`, `removeGuide`) — one-lined to stay under the
-module-size-budget ceiling (see that file's inline comment).
+wrappers, mints the id) + four thin `boardSlice.ts` actions (`addGuide`,
+`moveGuide`, `removeGuide`, `clearGuides`) — one-lined to stay under the
+module-size-budget ceiling (see that file's inline comment). `clearGuides`
+takes an optional axis, so "clear the guides" is usable on a board with a
+deliberate column grid on one axis and scratch guides on the other.
 
 **Rendering + interaction.** `canvas/RulerGuidesLayer/RulerGuidesLayer.tsx`
 mounts inside `CanvasTransformLayer` (via `StudioBoardLayers`, last — paints
@@ -124,16 +126,34 @@ above frames/notes/docs/snap-guides), so it inherits the pan/zoom transform
 the same way `BoardGuidesLayer` does. Each guide line drags to reposition
 (commits via `moveGuide` on pointerup; live feedback is a direct
 `--guide-position` custom-property write during the drag, never `setState`
-per pointermove) and double-click deletes it (`removeGuide`).
+per pointermove). Double-click deletes it, and right-click opens a menu —
+delete this guide, clear this axis, clear the board. The menu is what makes
+deletion discoverable: double-click is Figma muscle memory, not something a
+line on a canvas advertises. A guide's `pointerdown` handler only arms a drag
+for the primary button, so a right-click falls through to `onContextMenu`
+untouched.
 
-**Creation.** Drag out from a ruler (`useRulerGuideCreation.ts`, in
-`CanvasRulers/`) — gated on an active Studio board (`BoardGuide` only exists
+**Creation.** Drag (or simply click) on a ruler — `useRulerGuideCreation.ts`,
+in `CanvasRulers/`. Gated on an active Studio board (`BoardGuide` only exists
 on `Board`, so there's nowhere to persist a guide outside board mode; the
 rulers themselves still render everywhere design mode does).
 
-**Known rough edge:** a persisted guide's clickable hit-target is exactly its
-1px visual width — no invisible wider hit-padding yet. Worth widening in a
-follow-up if dogfooding finds it fiddly.
+**Which ruler makes which guide — the trap.** Each ruler produces a guide
+PARALLEL to itself, dragged perpendicular to itself: a horizontal line pulled
+DOWN out of the top ruler, a vertical line pulled RIGHT out of the left one.
+In `BoardGuide`'s vocabulary a horizontal line is `axis: 'y'` (positioned by a
+board Y) and a vertical line is `axis: 'x'` — so the horizontal ruler yields
+`'y'` and the vertical ruler yields `'x'`, which reads backwards at a glance.
+It was wired the other way round originally and every guide came out
+perpendicular to the ruler it was dragged from. The mapping now lives in one
+named function with a test, `guideAxisForRuler` in `rulerGeometry.ts`; do not
+inline it back. Note it is deliberately NOT the axis a ruler PAINTS — the top
+ruler measures the x axis (its ticks are x positions) while creating y guides.
+
+**Hit target.** A guide's 1px ink carries a wider invisible pointer target
+(a `::before` inset by `--guide-hit`, 4 board units either side), so grabbing
+or right-clicking one does not require pixel-perfect aim. It is in board
+units, so it shrinks with the canvas as you zoom out.
 
 **Scoped out, deliberately:** node-level (inside-a-frame) snap-to-guide.
 Canvas nodes are real DOM elements in flow, not freely-positioned vector

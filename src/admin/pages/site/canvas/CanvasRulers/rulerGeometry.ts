@@ -167,3 +167,30 @@ export function resolveRulerOriginBoard(
   }
   return { x: 0, y: 0 }
 }
+
+/** Which ruler a gesture started on. Named by the ruler's own orientation, which is also the orientation of the guide it produces. */
+export type RulerOrientation = 'horizontal' | 'vertical'
+
+/**
+ * The `BoardGuide.axis` a guide dragged out of `ruler` must have.
+ *
+ * A ruler produces a guide PARALLEL to itself, dragged perpendicular to
+ * itself: you pull a horizontal line DOWN out of the top ruler, and a vertical
+ * line RIGHT out of the left one. That is the Figma/Sketch/Illustrator
+ * convention and the only mapping that matches the gesture.
+ *
+ * In `BoardGuide`'s vocabulary a horizontal line is `axis: 'y'` (it is
+ * positioned by a board Y) and a vertical line is `axis: 'x'`. So the
+ * horizontal ruler yields `'y'` and the vertical ruler yields `'x'` — which
+ * reads backwards at a glance, and is exactly why this is a named function
+ * with a test rather than two inline literals at the call site. It was wired
+ * the other way round once, and every guide came out perpendicular to the
+ * ruler it was dragged from.
+ *
+ * Note this is deliberately NOT the axis a ruler PAINTS: the horizontal ruler
+ * measures the x axis (its ticks are x positions) while creating y guides. Two
+ * different questions.
+ */
+export function guideAxisForRuler(ruler: RulerOrientation): 'x' | 'y' {
+  return ruler === 'horizontal' ? 'y' : 'x'
+}

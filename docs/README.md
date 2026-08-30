@@ -155,6 +155,7 @@ Three categories, three voices:
 | [features/editor-preferences.md](features/editor-preferences.md) | Catalog-driven local UI preferences for the editor                   |
 | [features/canvas-iframe-per-frame.md](features/canvas-iframe-per-frame.md) | Per-breakpoint iframe rendering in the visual editor canvas |
 | [features/canvas-rulers-and-guides.md](features/canvas-rulers-and-guides.md) | Design-canvas rulers + persisted draggable guides (D1), and the shared `useCanvas()` `transformRef` API |
+| [features/board-annotations.md](features/board-annotations.md) | Sticky notes + rich-text doc cards on the Studio board: selection, resize, stacking, clipboard, the doc editor |
 
 ### Reference
 

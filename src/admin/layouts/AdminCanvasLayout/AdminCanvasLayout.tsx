@@ -396,9 +396,13 @@ function useStudioBoardsPersistence(studioMode: boolean): void {
 
       // WS-7.2 — the per-project frame default (`.studio/meta.json`'s
       // `frameDefaults`), so a page added THIS session inherits a width set
-      // via "apply to all pages" earlier. Best-effort: an absent/failed fetch
-      // just leaves the mirror at its `{}` default (no toast — this is a
-      // background hydration, not a user-triggered action).
+      // via "apply to all pages" earlier, and every screen in a project
+      // created as Mobile/Web opens at that form factor's size.
+      //
+      // Cleared FIRST: until this project's own answer arrives, the previous
+      // project's defaults are not this project's, and the default-board seed
+      // (which waits on `frameDefaultsSettled`) must not run on them.
+      useEditorStore.getState().clearFrameDefaults()
       import('@site/studio/frameDefaultsApi')
         .then(({ fetchFrameDefaults }) => fetchFrameDefaults(getStudioWorkspaceDir()))
         .then((defaults) => {
@@ -406,6 +410,10 @@ function useStudioBoardsPersistence(studioMode: boolean): void {
         })
         .catch((err) => {
           console.error('[AdminCanvasLayout] frame-defaults load failed:', err)
+          // Settled-but-empty, not "still waiting": a failed hydration must
+          // unblock the seed (the board still has to render) and fall back to
+          // the hardcoded frame size, rather than stall it forever.
+          if (!isStale()) useEditorStore.getState().setFrameDefaults({})
         })
     }
 
@@ -546,15 +554,16 @@ function useStudioDefaultBoardSeed(studioMode: boolean): void {
   const activeBoard = useEditorStore(selectActiveBoard)
   const activeBoardFrameCount = activeBoard?.frames.length ?? null
   const pageCount = useEditorStore((s) => s.site?.pages.length ?? 0)
+  const frameDefaultsSettled = useEditorStore((s) => s.frameDefaultsSettled)
 
   useEffect(() => {
-    if (!shouldSeedDefaultBoard({ studioMode, boardsLoaded, boardsLoadFailed, boardCount, activeBoardFrameCount, pageCount })) return
+    if (!shouldSeedDefaultBoard({ studioMode, boardsLoaded, boardsLoadFailed, boardCount, activeBoardFrameCount, pageCount, frameDefaultsSettled })) return
 
     const sitePages = useEditorStore.getState().site?.pages
     const pageIds = sitePages ? sitePages.map((p) => p.id) : []
     if (pageIds.length === 0) return
     useEditorStore.getState().seedFramesForActiveBoard(pageIds)
-  }, [studioMode, boardsLoaded, boardsLoadFailed, boardCount, activeBoardFrameCount, pageCount])
+  }, [studioMode, boardsLoaded, boardsLoadFailed, boardCount, activeBoardFrameCount, pageCount, frameDefaultsSettled])
 }
 
 function usePostPaintEditorBodyGate(): boolean {

@@ -62,21 +62,58 @@ describe('BreakpointSelectionOverlay RAF loop', () => {
 })
 
 describe('Board object drags stay off the overlay RAF loop', () => {
-  const boardDragFiles = [
+  /**
+   * Files that OWN a board-object drag gesture, and must implement it with
+   * pointer capture rather than a RAF loop.
+   *
+   * The sticky-note and doc-card gestures used to live in their two views;
+   * they now share one implementation (`useAnnotationInteraction.ts`), so that
+   * hook is what this half of the gate follows. The views themselves are
+   * checked separately below — they must still never grow a RAF loop of their
+   * own, which is the invariant that actually protects the idle main thread.
+   */
+  const dragOwners = [
     // The per-frame drag/resize pointer-capture handlers live in
     // `BoardFrameView.tsx` (extracted out of `BoardFramesLayer.tsx` for
     // `module-size-budgets` — Track C2) — that's the file this gate must
     // track, not the board-level layer that only positions/virtualizes them.
     'canvas/BoardFramesLayer/BoardFrameView.tsx',
+    // Sticky notes AND doc cards, both.
+    'canvas/useAnnotationInteraction.ts',
+  ]
+
+  for (const file of dragOwners) {
+    it(`${file} drags via pointer capture, not requestAnimationFrame`, () => {
+      const source = read(file)
+      expect(source).toMatch(/setPointerCapture/)
+      // The CALL form, not the bare word: these files legitimately name the
+      // API in a comment explaining why they do not use it.
+      expect(source).not.toMatch(/requestAnimationFrame\(/)
+    })
+  }
+
+  const boardObjectViews = [
     'canvas/BoardDocsLayer/DocBlockView.tsx',
     'canvas/BoardNotesLayer/StickyNoteView.tsx',
   ]
 
-  for (const file of boardDragFiles) {
-    it(`${file} drags via pointer capture, not requestAnimationFrame`, () => {
-      const source = read(file)
-      expect(source).toMatch(/setPointerCapture/)
-      expect(source).not.toMatch(/requestAnimationFrame/)
+  for (const file of boardObjectViews) {
+    it(`${file} runs no RAF loop of its own`, () => {
+      expect(read(file)).not.toMatch(/requestAnimationFrame\(/)
     })
   }
+
+  /**
+   * The doc card's floating toolbar must not run a RAF loop either. It did
+   * once — tracking its anchor card's on-screen rect every frame — and it was
+   * a reported source of lag: it measured and wrote to the DOM 60 times a
+   * second for the whole editing session. The position is now recomputed from
+   * the canvas transform plus a ResizeObserver, which fire only when the
+   * answer actually changes.
+   */
+  it('canvas/BoardDocsLayer/DocToolbar.tsx positions from the canvas transform, not a RAF loop', () => {
+    const source = read('canvas/BoardDocsLayer/DocToolbar.tsx')
+    expect(source).not.toMatch(/requestAnimationFrame\(/)
+    expect(source).toMatch(/ResizeObserver/)
+  })
 })

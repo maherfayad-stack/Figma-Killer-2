@@ -23,7 +23,7 @@ import { useAdminUi } from '@admin/state/adminUi'
 import { useEditorStore } from '@site/store/store'
 import { selectActiveBoard } from '@site/store/slices/boardSlice'
 import type { Breakpoint, Page } from '@core/page-tree'
-import type { BoardFrame, PreviewAxes } from '@core/studio-board'
+import { MIN_FRAME_SIZE, type BoardFrame, type PreviewAxes } from '@core/studio-board'
 import { Input } from '@ui/components/Input'
 import { ContextMenu, ContextMenuItem } from '@ui/components/ContextMenu'
 import { useInlineRename } from '@site/hooks/useInlineRename'
@@ -32,7 +32,7 @@ import { PenSquareSolidIcon } from 'pixel-art-icons/icons/pen-square-solid'
 import { CopyPlusSolidIcon } from 'pixel-art-icons/icons/copy-plus-solid'
 import { CanvasFrameContext, CanvasPageContext } from '../CanvasContexts'
 import { BreakpointFrame } from '../BreakpointFrame'
-import { resizeFrameRect, MIN_FRAME_SIZE, type FrameResizeRect, type ResizeHandle } from './frameResize'
+import { resizeRect, RESIZE_HANDLES, type ResizeRect, type ResizeHandle } from '../rectResize'
 import { computeSnap, collectPeerRects, SNAP_THRESHOLD_BOARD_UNITS } from '../boardSnapping'
 import { useFramePosterCapture } from './useFramePosterCapture'
 import { getFramePoster } from './frameSnapshotCache'
@@ -64,13 +64,6 @@ function buildStudioBreakpoint(width: number): Breakpoint {
   return { ...STUDIO_BREAKPOINT_BASE, width }
 }
 
-/**
- * Every resize handle a frame renders. Cursor-per-handle is a CSS concern
- * (`[data-handle="..."]` selectors in `BoardFramesLayer.module.css`), not a
- * JS-driven inline style.
- */
-const RESIZE_HANDLES: ResizeHandle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']
-
 interface DragState {
   pointerId: number
   startClientX: number
@@ -84,8 +77,8 @@ interface ResizeDragState {
   handle: ResizeHandle
   startClientX: number
   startClientY: number
-  /** The frame's full rect at drag-start — the pure `resizeFrameRect` anchor. */
-  anchor: FrameResizeRect
+  /** The frame's full rect at drag-start — the pure `resizeRect` anchor. */
+  anchor: ResizeRect
 }
 
 interface BoardFrameViewProps {
@@ -112,7 +105,14 @@ interface BoardFrameViewProps {
   isOnScreen: boolean
   onActivate: () => void
   onMove: (x: number, y: number) => void
-  onResize: (width: number, height: number) => void
+  /**
+   * `height: undefined` means "hug the content" — a width-only drag on a
+   * frame that was already hugging passes it, so dragging the side never
+   * silently pins the height. See `resizeRect`'s use below.
+   */
+  onResize: (width: number, height: number | undefined) => void
+  /** Clears the stored height so the frame hugs its content again. */
+  onResetHeight: () => void
   onRemove: () => void
   onRename: (title: string) => void
   /** WS-10 Phase 2 — "duplicate as variant": create a sibling frame of this page with the given axis override. */
@@ -133,6 +133,7 @@ export function BoardFrameView({
   onActivate,
   onMove,
   onResize,
+  onResetHeight,
   onRemove,
   onRename,
   onDuplicateAsVariant,
@@ -244,7 +245,7 @@ export function BoardFrameView({
   // Resize handles — same pointer-capture + screenDelta/zoom pattern as the
   // header drag above, so a handle tracks the cursor 1:1 at any zoom. The
   // geometry itself (which edges move, the min-size clamp) is the pure
-  // `resizeFrameRect` — this handler only converts screen pixels to board
+  // `resizeRect` — this handler only converts screen pixels to board
   // units and applies the result via the existing `onMove` (position) /
   // `onResize` (size) callbacks.
   const handleResizePointerDown = (handle: ResizeHandle) => (e: ReactPointerEvent<HTMLDivElement>) => {
@@ -253,12 +254,19 @@ export function BoardFrameView({
     // grabbing a handle never also starts a move-drag.
     e.stopPropagation()
     e.currentTarget.setPointerCapture(e.pointerId)
+    // A hugging frame's `height` prop is the FALLBACK default, not what is on
+    // screen — the box grew to fit its iframe. Anchoring a vertical drag on
+    // the prop would snap the frame to that default the instant the pointer
+    // moved. Measure the box instead (screen px ÷ zoom = board units).
+    const zoom = useEditorStore.getState().zoom
+    const measured = frameBodyRef.current?.getBoundingClientRect().height
+    const anchorHeight = !hasManualHeight && measured ? measured / zoom : height
     resizeRef.current = {
       pointerId: e.pointerId,
       handle,
       startClientX: e.clientX,
       startClientY: e.clientY,
-      anchor: { x, y, width, height },
+      anchor: { x, y, width, height: anchorHeight },
     }
   }
 
@@ -268,9 +276,14 @@ export function BoardFrameView({
     const zoom = useEditorStore.getState().zoom
     const dx = (e.clientX - drag.startClientX) / zoom
     const dy = (e.clientY - drag.startClientY) / zoom
-    const next = resizeFrameRect(drag.anchor, drag.handle, dx, dy, MIN_FRAME_SIZE)
+    const next = resizeRect(drag.anchor, drag.handle, dx, dy, MIN_FRAME_SIZE)
     if (next.x !== drag.anchor.x || next.y !== drag.anchor.y) onMove(next.x, next.y)
-    onResize(next.width, next.height)
+    // Only a handle that actually moves a horizontal edge is "I chose this
+    // height". Dragging `e`/`w` used to commit the resolved fallback height as
+    // if the author had picked it, which silently turned auto-hug off on a
+    // frame the author had only made wider.
+    const changesHeight = drag.handle.includes('n') || drag.handle.includes('s')
+    onResize(next.width, changesHeight || hasManualHeight ? next.height : undefined)
   }
 
   const endResize = (e: ReactPointerEvent<HTMLDivElement>) => {
@@ -370,6 +383,11 @@ export function BoardFrameView({
               Duplicate as {otherLocale?.toUpperCase()}
             </ContextMenuItem>
           )}
+          {hasManualHeight && (
+            <ContextMenuItem onClick={() => { setContextMenu(null); onResetHeight() }}>
+              Fit height to content
+            </ContextMenuItem>
+          )}
           <ContextMenuItem
             danger
             onClick={() => { setContextMenu(null); onRemove() }}
@@ -413,6 +431,12 @@ export function BoardFrameView({
                 onActivate={onActivate}
                 frameId={frame.id}
                 axesOverride={frame.axes}
+                // The board frame carries its own header (title, rename,
+                // context menu, drag handle) and its own size in the
+                // Properties panel, so `BreakpointFrame`'s breakpoint row
+                // would be a second, board-global chrome strip on top of it.
+                // See `showBreakpointChrome`'s doc on `BreakpointFrame`.
+                showBreakpointChrome={false}
               />
             </CanvasFrameContext.Provider>
           </CanvasPageContext.Provider>
@@ -420,10 +444,16 @@ export function BoardFrameView({
           <FramePosterPlaceholder title={page.title} posterUrl={getFramePoster(page, width)} />
         )}
       </div>
-      {/* Resize handles — active frame only, mirroring the selection ring's
-          own active-only visibility. Corners resize both axes; edges resize
-          one. See frameResize.ts for the geometry. */}
-      {isActive && (
+      {/* Resize handles — SELECTED frames only, not merely active.
+          `activePageId` is the edit target: it is set by a capture-phase click
+          anywhere inside a frame and is never cleared, so gating on it left
+          handles (and, before this change, a ring) permanently drawn around
+          the last frame the user happened to touch — indistinguishable from a
+          selection that could not be dismissed. Resizing is something you do
+          to what you SELECTED, so the handles follow `selectedFrameIds`, which
+          a background click, Escape, or a marquee all clear.
+          Corners resize both axes; edges resize one. See rectResize.ts. */}
+      {isSelected && (
         <div className={styles.resizeHandles} aria-hidden="true">
           {RESIZE_HANDLES.map((handle) => (
             <div
@@ -431,6 +461,16 @@ export function BoardFrameView({
               className={styles.resizeHandle}
               data-handle={handle}
               data-testid={`board-frame-resize-${handle}`}
+              // Double-clicking the BOTTOM edge clears the stored height, so
+              // the frame goes back to hugging its content — the standard
+              // "double-click a sizing edge to fit" gesture. Only on `s`: it
+              // is the edge that reads as "the bottom of the page", and a
+              // corner double-click would be ambiguous about which axis it
+              // meant. The same action is in the frame's context menu, which
+              // is the discoverable and keyboard-reachable path (these handles
+              // sit in an `aria-hidden` container).
+              title={handle === 's' && hasManualHeight ? 'Double-click to fit height to content' : undefined}
+              onDoubleClick={handle === 's' ? onResetHeight : undefined}
               onPointerDown={handleResizePointerDown(handle)}
               onPointerMove={handleResizePointerMove}
               onPointerUp={endResize}

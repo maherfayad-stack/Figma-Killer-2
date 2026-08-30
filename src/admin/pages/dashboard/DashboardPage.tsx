@@ -6,9 +6,13 @@
  * `GET /admin/api/studio/projects`). Opening a project points Studio at its
  * directory (`setStudioWorkspaceDir`) and jumps into the Site editor's studio
  * canvas; "New project" scaffolds a fresh, blank folder + starter page via
- * `createStudioProject()` (no name prompt — the project starts `Untitled`,
- * `Untitled 2`, … and is renamed later from the toolbar) and drops straight
- * into it.
+ * `createStudioProject()` and drops straight into it. "New project" first
+ * opens `NewProjectDialog` to ask the one question that cannot be changed
+ * cheaply afterwards — mobile or web — because that answer becomes the
+ * project's `frameDefaults`, the size every screen in it opens at. The name
+ * stays optional there, so the previous one-click behaviour (auto-named
+ * `Untitled`, `Untitled 2`, … and renamed later from the toolbar) is still one
+ * Enter away.
  *
  * `requestCmsSiteReload()` is called before every `openProject` (new or
  * existing) so `usePersistence`'s mount effect doesn't short-circuit on a
@@ -31,11 +35,13 @@ import { pushToast } from '@ui/components/Toast'
 import { getErrorMessage } from '@core/utils/errorMessage'
 import { requestCmsSiteReload } from '@admin/state/adminEvents'
 import { setStudioWorkspaceDir } from '@site/studio/studioWorkspaceDir'
+import type { ProjectPlatform } from '@core/studio-board'
 import {
   createStudioProject,
   useStudioProjects,
   type StudioProject,
 } from './hooks/useStudioProjects'
+import { NewProjectDialog } from './NewProjectDialog'
 import styles from './DashboardPage.module.css'
 
 function greetingFor(displayName: string | null | undefined): string {
@@ -52,6 +58,7 @@ export function DashboardPage() {
 
   const [query, setQuery] = useState('')
   const [busy, setBusy] = useState(false)
+  const [createOpen, setCreateOpen] = useState(false)
   // Projects created this session, layered over the fetched list so a new
   // project shows up immediately without waiting for a refetch.
   const [created, setCreated] = useState<StudioProject[]>([])
@@ -75,15 +82,18 @@ export function DashboardPage() {
     navigate('/admin/site?studio')
   }
 
-  async function handleCreate() {
+  async function handleCreate(options: { name?: string; platform: ProjectPlatform }) {
     if (busy) return
     setBusy(true)
     try {
-      const project = await createStudioProject()
+      const project = await createStudioProject(options)
       setCreated((prev) => [...prev, project])
+      setCreateOpen(false)
       openProject(project)
     } catch (err) {
       console.error('[DashboardPage] create project failed:', err)
+      // The dialog stays open on failure so the entered name and chosen
+      // platform survive a name collision (409) and can be corrected in place.
       pushToast({
         kind: 'error',
         title: 'Could not create project',
@@ -108,7 +118,7 @@ export function DashboardPage() {
           aria-label="Search projects"
           className={styles.search}
         />
-        <Button variant="primary" onClick={() => void handleCreate()} disabled={busy}>
+        <Button variant="primary" onClick={() => setCreateOpen(true)} disabled={busy}>
           <PlusIcon size={12} aria-hidden="true" /> New project
         </Button>
       </div>
@@ -142,6 +152,13 @@ export function DashboardPage() {
           ))}
         </ul>
       )}
+
+      <NewProjectDialog
+        open={createOpen}
+        busy={busy}
+        onClose={() => setCreateOpen(false)}
+        onCreate={(options) => void handleCreate(options)}
+      />
     </AdminPageLayout>
   )
 }

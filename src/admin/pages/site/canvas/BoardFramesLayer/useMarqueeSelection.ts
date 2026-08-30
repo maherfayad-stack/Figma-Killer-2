@@ -52,7 +52,16 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 import { useEditorStore } from '@site/store/store'
 import { isCanvasSpacePanActive } from '../canvasPanInput'
-import { framesInMarquee, marqueeRectFromPoints, type MarqueeFrame, type MarqueeRect } from './framesInMarquee'
+import type { AnnotationRef } from '@core/studio-board'
+import { annotationRefKey } from '@site/store/slices/boardAnnotationSliceActions'
+import {
+  annotationsInMarquee,
+  framesInMarquee,
+  marqueeRectFromPoints,
+  type MarqueeAnnotation,
+  type MarqueeFrame,
+  type MarqueeRect,
+} from './framesInMarquee'
 
 /** Marquee movement (screen px) before a drag counts as "selecting", so a plain click doesn't flash an empty marquee. */
 const MARQUEE_DRAG_THRESHOLD_PX = 3
@@ -68,6 +77,34 @@ const MARQUEE_DRAG_THRESHOLD_PX = 3
  * virtualization — `BoardFramesLayer` only swaps a frame's BODY for a poster
  * when it goes offscreen, the `.frame` box itself always stays mounted.
  */
+/**
+ * Every sticky note and doc card's rendered box, in the same space as the
+ * frames above.
+ *
+ * Measured from the CANVAS ROOT, not from the frames layer: notes and docs
+ * live in their own sibling layers (`BoardNotesLayer`, `BoardDocsLayer`), so a
+ * query scoped to the frames layer would find none of them. Read once per
+ * gesture for the same reason frames are.
+ */
+function measureAnnotationRects(canvasRootEl: HTMLElement): MarqueeAnnotation[] {
+  const origin = canvasRootEl.getBoundingClientRect()
+  const annotations: MarqueeAnnotation[] = []
+  for (const el of canvasRootEl.querySelectorAll<HTMLElement>('[data-annotation-id]')) {
+    const id = el.dataset.annotationId
+    const kind = el.dataset.annotationKind
+    if (!id || (kind !== 'note' && kind !== 'doc')) continue
+    const rect = el.getBoundingClientRect()
+    annotations.push({
+      ref: { kind, id },
+      x: rect.left - origin.left,
+      y: rect.top - origin.top,
+      width: rect.width,
+      height: rect.height,
+    })
+  }
+  return annotations
+}
+
 function measureFrameRects(layerEl: HTMLElement, canvasRootEl: HTMLElement): MarqueeFrame[] {
   const origin = canvasRootEl.getBoundingClientRect()
   const frames: MarqueeFrame[] = []
@@ -113,7 +150,9 @@ export function useMarqueeSelection(
     startY: number
     additive: boolean
     baseSelection: string[]
+    baseAnnotationSelection: AnnotationRef[]
     frames: MarqueeFrame[]
+    annotations: MarqueeAnnotation[]
   } | null>(null)
   const [marqueeRect, setMarqueeRect] = useState<MarqueeRect | null>(null)
   // Mirrors `marqueeRect` for the native pointer-event effect below, which
@@ -157,7 +196,9 @@ export function useMarqueeSelection(
         startY: e.clientY - rect.top,
         additive: e.shiftKey,
         baseSelection: useEditorStore.getState().selectedFrameIds,
+        baseAnnotationSelection: useEditorStore.getState().selectedAnnotations,
         frames: measureFrameRects(layerEl, canvasRootEl),
+        annotations: measureAnnotationRects(canvasRootEl),
       }
       canvasRootEl.setPointerCapture(e.pointerId)
       // Claim the whole gesture — see the module doc for why this
@@ -189,7 +230,22 @@ export function useMarqueeSelection(
       const nextIds = drag.additive
         ? [...drag.baseSelection, ...hits.filter((id) => !drag.baseSelection.includes(id))]
         : hits
+
       state.setSelectedFrameIds(nextIds)
+
+      // Notes and docs are marquee-selectable too, and by the SAME drag: on a
+      // board they are objects alongside frames, so a drag across a region
+      // picks up everything in it. `setSelectedAnnotations` deliberately does
+      // NOT clear the frame selection (unlike clicking one annotation) —
+      // otherwise this line would silently discard the frames the same drag
+      // just selected. See `boardAnnotationSliceActions.ts`'s `setSelection`.
+      const annotationHits = annotationsInMarquee(drag.annotations, next)
+      const baseKeys = new Set(drag.baseAnnotationSelection.map(annotationRefKey))
+      state.setSelectedAnnotations(
+        drag.additive
+          ? [...drag.baseAnnotationSelection, ...annotationHits.filter((r) => !baseKeys.has(annotationRefKey(r)))]
+          : annotationHits,
+      )
     }
 
     const handlePointerEnd = (e: PointerEvent) => {

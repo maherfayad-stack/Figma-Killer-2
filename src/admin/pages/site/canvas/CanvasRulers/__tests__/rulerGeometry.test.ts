@@ -8,6 +8,7 @@ import {
   niceTickStep,
   computeRulerTicks,
   resolveRulerOriginBoard,
+  guideAxisForRuler,
 } from '../rulerGeometry'
 
 describe('rulerGeometry', () => {
@@ -156,5 +157,20 @@ describe('rulerGeometry', () => {
     it('shifts to the single frame\'s own (x, y) when exactly one frame is active', () => {
       expect(resolveRulerOriginBoard({ frames: [{ x: 340, y: -120 }] })).toEqual({ x: 340, y: -120 })
     })
+  })
+})
+
+describe('guideAxisForRuler', () => {
+  // Regression: these were wired the other way round, so dragging out of the
+  // top ruler produced a VERTICAL guide and dragging out of the left ruler a
+  // HORIZONTAL one — perpendicular to the ruler in both cases, and to the
+  // gesture that made them.
+  it('gives the horizontal (top) ruler a horizontal guide', () => {
+    // `'y'` IS the horizontal line: it is positioned by a board Y coordinate.
+    expect(guideAxisForRuler('horizontal')).toBe('y')
+  })
+
+  it('gives the vertical (left) ruler a vertical guide', () => {
+    expect(guideAxisForRuler('vertical')).toBe('x')
   })
 })

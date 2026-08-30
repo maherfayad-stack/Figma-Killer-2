@@ -25,6 +25,7 @@
  * question ("should this frame mount at all"), and answers it before any DOM
  * exists to measure.
  */
+import type { AnnotationRef } from '@core/studio-board'
 
 /** The drag rectangle, in screen space (canvas-root-relative pixels), already normalized to a non-negative width/height. */
 export interface MarqueeRect {
@@ -37,6 +38,11 @@ export interface MarqueeRect {
 /** A marquee-selectable frame: its rendered screen-space rect plus the id selecting it resolves to. */
 export interface MarqueeFrame extends MarqueeRect {
   pageId: string
+}
+
+/** A marquee-selectable annotation (a sticky note or a doc card): its rendered rect plus the ref selecting it resolves to. */
+export interface MarqueeAnnotation extends MarqueeRect {
+  ref: AnnotationRef
 }
 
 /**
@@ -55,24 +61,33 @@ export function marqueeRectFromPoints(
 }
 
 /**
- * The `pageId`s of every frame whose rendered rect intersects `marquee`.
- * Intersection, not containment — a frame partially inside the marquee is
- * selected, matching the spec ("drag to select intersecting frames") and
- * Figma's own marquee behaviour. Touching edges do not count as intersecting.
+ * Whether `rect` overlaps `marquee`. Intersection, not containment — an object
+ * partially inside the marquee is selected, matching the spec ("drag to select
+ * intersecting frames") and Figma's own marquee behaviour. Touching edges do
+ * not count as intersecting.
  */
-export function framesInMarquee(frames: readonly MarqueeFrame[], marquee: MarqueeRect): string[] {
-  const mLeft = marquee.x
-  const mTop = marquee.y
-  const mRight = marquee.x + marquee.width
-  const mBottom = marquee.y + marquee.height
+export function intersectsMarquee(rect: MarqueeRect, marquee: MarqueeRect): boolean {
+  return (
+    rect.x < marquee.x + marquee.width &&
+    rect.x + rect.width > marquee.x &&
+    rect.y < marquee.y + marquee.height &&
+    rect.y + rect.height > marquee.y
+  )
+}
 
-  const selected: string[] = []
-  for (const frame of frames) {
-    const right = frame.x + frame.width
-    const bottom = frame.y + frame.height
-    if (frame.x < mRight && right > mLeft && frame.y < mBottom && bottom > mTop) {
-      selected.push(frame.pageId)
-    }
-  }
-  return selected
+/** The `pageId`s of every frame whose rendered rect intersects `marquee`. */
+export function framesInMarquee(frames: readonly MarqueeFrame[], marquee: MarqueeRect): string[] {
+  return frames.filter((frame) => intersectsMarquee(frame, marquee)).map((frame) => frame.pageId)
+}
+
+/**
+ * The refs of every sticky note / doc card whose rendered rect intersects
+ * `marquee`. Same test as `framesInMarquee`, different id shape — an
+ * annotation is addressed by `{ kind, id }`, not a page id.
+ */
+export function annotationsInMarquee(
+  annotations: readonly MarqueeAnnotation[],
+  marquee: MarqueeRect,
+): AnnotationRef[] {
+  return annotations.filter((a) => intersectsMarquee(a, marquee)).map((a) => a.ref)
 }

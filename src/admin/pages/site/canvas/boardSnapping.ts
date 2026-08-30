@@ -6,7 +6,7 @@
  * OTHER furniture on the active board, and a threshold (board units), it
  * finds the closest edge/center alignment on each axis independently and
  * returns the adjusted top-left position plus the guide line(s) to draw.
- * Pure — no React, no DOM — mirroring `frameResize.ts` / `frameVirtualization.ts`.
+ * Pure — no React, no DOM — mirroring `rectResize.ts` / `frameVirtualization.ts`.
  *
  * `collectPeerRects` is the one non-pure-math helper: it turns a `Board`'s
  * frames/notes/docs into the flat `SnapRect[]` peer list `computeSnap` wants,

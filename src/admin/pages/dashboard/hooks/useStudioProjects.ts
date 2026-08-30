@@ -19,6 +19,7 @@
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { apiRequest } from '@core/http'
 import { useAsyncResource } from '@admin/lib/useAsyncResource'
+import type { ProjectPlatform } from '@core/studio-board'
 
 const StudioProjectSchema = Type.Object(
   {
@@ -56,15 +57,23 @@ export function useStudioProjects(): StudioProject[] | null {
 
 /**
  * Creates a new project (a folder under `studio-workspace/` with a starter
- * page) and resolves to its summary. `name` is optional — omit it for the
- * one-click "New project" action and the server auto-names it `Untitled`,
- * `Untitled 2`, …. Throws `ApiError` on failure (e.g. a name collision → 409)
- * so the caller can surface the message via a toast.
+ * page) and resolves to its summary.
+ *
+ * `name` is optional — omit it and the server auto-names it `Untitled`,
+ * `Untitled 2`, …. `platform` is the form factor chosen on the create dialog;
+ * the server turns it into the project's `frameDefaults`, so every screen in
+ * the project — the starter page included — opens at that size
+ * (`@core/studio-board`'s `platformPresets.ts`).
+ *
+ * Throws `ApiError` on failure (e.g. a name collision → 409) so the caller can
+ * surface the message via a toast.
  */
-export function createStudioProject(name?: string): Promise<StudioProject> {
+export function createStudioProject(
+  options: { name?: string; platform?: ProjectPlatform } = {},
+): Promise<StudioProject> {
   return apiRequest('/admin/api/studio/create', {
     method: 'POST',
-    body: { name },
+    body: { name: options.name, platform: options.platform },
     schema: CreateProjectResponseSchema,
   }).then((res) => res.project)
 }

@@ -55,6 +55,7 @@ import { CanvasLayerContextMenu } from './CanvasLayerContextMenu'
 import { useCanvasLayerContextMenu } from './useCanvasLayerContextMenu'
 import { useCanvasKeyboardShortcuts, isTextInputTarget } from './useCanvasKeyboardShortcuts'
 import { useCanvasSelectionKeyboard } from './useCanvasSelectionKeyboard'
+import { useBoardAnnotationKeyboard } from './useBoardAnnotationKeyboard'
 import { clientPointToEditorDoc } from './canvasDomGeometry'
 import { useConfirmDelete } from '@admin/shared/dialogs/ConfirmDeleteDialog'
 import { useEditorPreference, readEditorSelectPreference } from '@site/preferences/editorPreferences'
@@ -459,6 +460,9 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
   // focus-scoping silently killed Escape the moment the user touched a panel.
   useCanvasSelectionKeyboard(editable, isLive)
 
+  // Sticky notes + doc cards: delete / duplicate / copy-paste / nudge.
+  useBoardAnnotationKeyboard(editable, isLive)
+
   // ─── Canvas background click → deselect ───────────────────────────────────
   //
   // `board-02`: this handler sits on the OUTERMOST canvas div, so a click
@@ -478,11 +482,7 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
   const handleCanvasClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (e.target !== e.currentTarget && e.target !== transformLayerRef.current) return
     contextMenu.close()
-    clearSelection()
-    // WS-7.1 — a background click also deselects any board-frame
-    // multi-selection (a no-op outside studio board mode, where
-    // `selectedFrameIds` never leaves its empty default).
-    useEditorStore.getState().clearFrameSelection()
+    useEditorStore.getState().clearAllSelections()
   }
 
   // Resolve the active breakpoint object for the live surface (which wants the

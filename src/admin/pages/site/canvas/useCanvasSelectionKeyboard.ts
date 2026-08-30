@@ -5,8 +5,11 @@
  *
  *   1. `Enter` with a `studio.instance` selected steps INTO it (WS-4.2).
  *   2. `Escape` inside an entered instance steps back OUT one level.
- *   3. `Escape` with anything else selected clears the node selection, the
- *      board-frame selection, and Visual Component mode.
+ *   3. `Escape` with anything else selected clears EVERY selection — nodes,
+ *      board frames, sticky notes / doc cards — and leaves Visual Component
+ *      mode. All in one press: they are independent lists (a marquee can leave
+ *      frames and annotations selected at once), so clearing a subset would
+ *      leave the board looking deselected while Delete still had a target.
  *
  * Both listeners are on the parent `document`, not React `onKeyDown` props, and
  * that is load-bearing for two independent reasons — one per direction of the
@@ -104,14 +107,16 @@ export function useCanvasSelectionKeyboard(editable: boolean, isLive: boolean): 
       if (isInsideEscapeOwningOverlay(event.target)) return
 
       const state = useEditorStore.getState()
-      const hasSelection = state.selectedNodeId !== null || state.selectedFrameIds.length > 0
+      const hasSelection =
+        state.selectedNodeId !== null ||
+        state.selectedFrameIds.length > 0 ||
+        state.selectedAnnotations.length > 0
       const inVisualComponentMode = state.activeDocument?.kind === 'visualComponent'
       // Nothing to clear — leave the keystroke for whoever else wants it.
       if (!hasSelection && !inVisualComponentMode) return
 
       event.preventDefault()
-      state.clearSelection()
-      state.clearFrameSelection()
+      state.clearAllSelections()
       // Escape has always doubled as "leave VC canvas mode" (SF-1 / CR #666),
       // in the same press as the clear.
       if (inVisualComponentMode) state.setActiveDocument(null)

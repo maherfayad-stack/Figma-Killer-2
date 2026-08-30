@@ -1,6 +1,6 @@
 /**
  * frameAlign — pure board-space geometry for bulk frame align/distribute
- * (WS-7.2). Sibling of `frameGrid.ts`/`frameResize.ts`/`frameVirtualization.ts`
+ * (WS-7.2). Sibling of `frameGrid.ts`/`frameVirtualization.ts`
  * — same "pure, no React, no store" shape, consumed by `boardSlice`'s
  * `alignSelectedFrames`/`distributeSelectedFrames` actions.
  */

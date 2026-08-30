@@ -188,7 +188,7 @@ const doc = (overrides: Partial<DocBlock> = {}): DocBlock => ({
   y: 0,
   w: 320,
   h: 200,
-  markdown: '# hello',
+  html: '<h1>hello</h1>',
   ...overrides,
 })
 
@@ -201,7 +201,7 @@ describe('upsertDoc', () => {
 
   test('replaces a doc with the same id', () => {
     const board = upsertDoc(createBoard('b1', 'Board 1'), doc())
-    const replacement = doc({ markdown: 'updated' })
+    const replacement = doc({ html: '<p>updated</p>' })
     const result = upsertDoc(board, replacement)
     expect(result.docs).toEqual([replacement])
     expect(result.docs).toHaveLength(1)
@@ -383,6 +383,28 @@ describe('resizeFrame', () => {
     const result = resizeFrame(board, 'p1', 393, 852)
     expect(result.frames[0]).toEqual({ id: 'p1', pageId: 'p1', x: 10, y: 20, width: 393, height: 852 })
   })
+
+  // `height: undefined` means "hug the content", and hugging is the ABSENCE of
+  // the key — `hasManualHeight` in BoardFramesLayer reads `height !== undefined`,
+  // and `boards.json` is JSON, so a stored `null` would not round-trip as absent.
+  test('an undefined height DELETES the stored one, restoring hug-to-content', () => {
+    const board = upsertFrame(createBoard('b1', 'Board 1'), frame({ width: 1024, height: 800 }))
+    const result = resizeFrame(board, 'p1', 1024, undefined)
+    expect(result.frames[0]).toEqual(frame({ width: 1024 }))
+    expect('height' in result.frames[0]).toBe(false)
+  })
+
+  test('an undefined height still applies the new width', () => {
+    const board = upsertFrame(createBoard('b1', 'Board 1'), frame({ width: 1024, height: 800 }))
+    const result = resizeFrame(board, 'p1', 480, undefined)
+    expect(result.frames[0]).toEqual(frame({ width: 480 }))
+  })
+
+  test('an undefined height on an already-hugging frame leaves it hugging', () => {
+    const board = upsertFrame(createBoard('b1', 'Board 1'), frame())
+    const result = resizeFrame(board, 'p1', 480, undefined)
+    expect('height' in result.frames[0]).toBe(false)
+  })
 })
 
 describe('frames keyed by id, not pageId (WS-10 Phase 2)', () => {
@@ -541,7 +563,7 @@ describe('serialize round-trip', () => {
     let board = createBoard('b1', 'Board 1')
     board = upsertFrame(board, frame({ pageId: 'home', x: 100, y: 200 }))
     board = upsertNote(board, note({ id: 'n1', text: 'note text', color: 'pink' }))
-    board = upsertDoc(board, doc({ id: 'd1', markdown: '# doc text' }))
+    board = upsertDoc(board, doc({ id: 'd1', html: '<h1>doc text</h1>' }))
     const file: BoardsFile = upsertBoard(createBoardsFile(), board)
 
     const serialized = serializeBoardsFile(file)
@@ -600,7 +622,7 @@ describe('parseBoardsFile tolerance', () => {
           ],
           docs: [
             { id: 'd1' }, // coerced to defaults
-            { id: 'd2', w: 'nope', markdown: 123 }, // invalid w/markdown coerced to defaults
+            { id: 'd2', w: 'nope', html: 123 }, // invalid w/html coerced to defaults
             {}, // missing id -> dropped
           ],
         },
@@ -624,8 +646,8 @@ describe('parseBoardsFile tolerance', () => {
       { id: 'n2', x: 0, y: 0, w: 200, h: 120, text: '', color: 'yellow' },
     ])
     expect(partial.docs).toEqual([
-      { id: 'd1', x: 0, y: 0, w: 320, h: 200, markdown: '' },
-      { id: 'd2', x: 0, y: 0, w: 320, h: 200, markdown: '' },
+      { id: 'd1', x: 0, y: 0, w: 320, h: 200, html: '' },
+      { id: 'd2', x: 0, y: 0, w: 320, h: 200, html: '' },
     ])
   })
 

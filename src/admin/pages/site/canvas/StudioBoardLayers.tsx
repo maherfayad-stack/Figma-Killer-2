@@ -14,7 +14,7 @@
  *
  * `CanvasTransformLayer` now only mounts this component when `activeBoard`
  * is truthy, so the dynamic `import()` — and everything reachable from these
- * five files (`frameResize.ts`, `frameVirtualization.ts`, `boardSnapping.ts`,
+ * five files (`rectResize.ts`, `frameVirtualization.ts`, `boardSnapping.ts`,
  * `StickyNoteView`, `DocBlockView`, their CSS) — is never even requested for
  * the default (non-Studio) editor.
  *

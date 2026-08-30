@@ -28,8 +28,8 @@
  * below) stays PAGE-id-keyed on purpose — see that section for the accepted
  * scope boundary this creates once a duplicated variant exists.
  *
- * Doc blocks: `board.docs` mirrors the sticky-note shape exactly (`addDoc` /
- * `moveDoc` / `updateDocMarkdown` / `removeDoc`) — markdown-authored
+ * Doc cards: `board.docs` mirrors the sticky-note shape exactly (`addDoc` /
+ * `moveDoc` / `updateDocHtml` / `removeDoc`) — rich-text-authored
  * documentation cards rendered by `BoardDocsLayer`/`DocBlockView`.
  *
  * Boards are plural: `addBoard` / `renameBoard` / `removeBoard` /
@@ -91,7 +91,7 @@
  * container with no direct HTTP calls.
  */
 import type { EditorStoreSliceCreator, EditorStore } from '@site/store/types'
-import type { Board, BoardsFile, NoteColor, PreviewAxes } from '@core/studio-board'
+import type { AnnotationRef, Board, BoardsFile, NoteColor, PreviewAxes } from '@core/studio-board'
 import type { SnapGuide } from '@site/canvas/boardSnapping'
 import {
   createBoard,
@@ -112,9 +112,13 @@ import {
 } from '@core/studio-board'
 import type { FrameAlignEdge } from '@site/canvas/BoardFramesLayer/frameAlign'
 import * as bulk from './boardBulkFrameActions'
-import * as annotations from './boardAnnotationActions'
 import * as guideActions from './boardGuideActions'
 import { createFrameSelectionActions } from './boardFrameSelectionActions'
+import {
+  createAnnotationActions,
+  EMPTY_ANNOTATION_CLIPBOARD,
+  type AnnotationClipboard,
+} from './boardAnnotationSliceActions'
 
 export type { FrameAlignEdge }
 
@@ -197,6 +201,11 @@ interface BoardSlice {
   removeBoard: (boardId: string) => void
   /** Switch which board is active. No-op for an unknown id. */
   setActiveBoard: (boardId: string) => void
+  // ── Annotations: sticky notes + doc cards ───────────────────────────────
+  // Wiring lives in `boardAnnotationSliceActions.ts`; the pure transforms in
+  // `boardAnnotationActions.ts`. See the former's module doc for why the
+  // annotation selection is its own `AnnotationRef` list rather than reusing
+  // `selectedFrameIds`.
   /** Create a sticky note at (x, y) on the active board. No-op with no active board. */
   addNote: (x: number, y: number) => void
   /** Reposition a note on the active board. */
@@ -207,18 +216,44 @@ interface BoardSlice {
   setNoteColor: (noteId: string, color: NoteColor) => void
   /** Delete a note from the active board. */
   removeNote: (noteId: string) => void
-  /** Create a doc block at (x, y) on the active board. No-op with no active board. */
+  /** Create a doc card at (x, y) on the active board. No-op with no active board. */
   addDoc: (x: number, y: number) => void
-  /** Reposition a doc block on the active board. */
+  /** Reposition a doc card on the active board. */
   moveDoc: (docId: string, x: number, y: number) => void
-  /** Update a doc block's markdown content. */
-  updateDocMarkdown: (docId: string, markdown: string) => void
-  /** Delete a doc block from the active board. */
+  /** Replace a doc card's rich text. Sanitized before it is stored. */
+  updateDocHtml: (docId: string, html: string) => void
+  /** Delete a doc card from the active board. */
   removeDoc: (docId: string) => void
-  /** D1 — persisted ruler guides. All three are no-ops with no active board (moveGuide/removeGuide also no-op for an unknown id). */
+  /** Set a note's or doc's rect (drag-resize). Size is clamped to `MIN_ANNOTATION_SIZE`. */
+  resizeAnnotation: (ref: AnnotationRef, rect: { x: number; y: number; w: number; h: number }) => void
+
+  /** Notes/docs currently selected. Mutually exclusive with `selectedNodeIds` and `selectedFrameIds`. */
+  selectedAnnotations: AnnotationRef[]
+  /** Copied annotation VALUES — see `boardAnnotationSliceActions.ts` for why values, not refs. */
+  annotationClipboard: AnnotationClipboard
+  /** How many times the CURRENT clipboard has been pasted, so each paste steps further from the last. Reset by every copy. */
+  annotationPasteCount: number
+  /** Select one annotation, replacing the selection or toggling it into the set. */
+  selectAnnotation: (ref: AnnotationRef, mode?: 'replace' | 'toggle') => void
+  setSelectedAnnotations: (refs: readonly AnnotationRef[]) => void
+  clearAnnotationSelection: () => void
+  deleteSelectedAnnotations: () => void
+  /** Copy the selection in place and select the copies. */
+  duplicateSelectedAnnotations: () => void
+  copySelectedAnnotations: () => void
+  pasteAnnotations: () => void
+  /** Move the selection by a board-unit delta (arrow-key nudge). */
+  nudgeSelectedAnnotations: (dx: number, dy: number) => void
+  /** Raise the selection above, or lower it below, every other annotation. */
+  reorderSelectedAnnotations: (to: 'front' | 'back') => void
+  /** Deselect everything — nodes, board frames and annotations. The three are independent lists; see `boardAnnotationSliceActions.ts`. */
+  clearAllSelections: () => void
+  /** D1 — persisted ruler guides. All are no-ops with no active board (moveGuide/removeGuide also no-op for an unknown id). */
   addGuide: (axis: 'x' | 'y', position: number) => void
   moveGuide: (guideId: string, position: number) => void
   removeGuide: (guideId: string) => void
+  /** Drop every guide on the active board, or only the given axis's. */
+  clearGuides: (axis?: 'x' | 'y') => void
   /**
    * Reposition ONE existing frame by its own `id` (WS-10 Phase 2). No-op if
    * that frame id doesn't exist on the active board, or there is no active
@@ -231,7 +266,8 @@ interface BoardSlice {
    * device presets), by `id` (WS-10 Phase 2). No-op with no active board, or
    * if the frame id doesn't exist.
    */
-  setFrameSize: (frameId: string, width: number, height: number) => void
+  /** Persist a frame's own size. `height: undefined` CLEARS it — "hug the content"; see `resizeFrame`. */
+  setFrameSize: (frameId: string, width: number, height: number | undefined) => void
   /** Remove EVERY frame of `pageId` from the active board (e.g. the page itself was deleted, or a bulk multi-select remove — `selectedFrameIds` is page-id-keyed, see module doc). */
   removeFrame: (pageId: string) => void
   /** WS-10 Phase 2 — remove ONE frame instance by its own `id`, never touching a sibling "duplicate as variant" of the same page. This is what `BoardFrameView`'s "Remove from board" menu item calls. */
@@ -292,8 +328,25 @@ interface BoardSlice {
   // ── Per-project frame size default (WS-7.2 — "apply to all pages") ──────
   /** Local mirror of `.studio/meta.json`'s `frameDefaults` — hydrated by `AdminCanvasLayout`, read by `addFrame`/`seedFramesForActiveBoard`. */
   frameDefaults: FrameDefaults
-  /** Replace the local `frameDefaults` mirror (load-time hydration; does not itself persist anything). */
+  /**
+   * True once the project's `frameDefaults` have been RESOLVED for this
+   * session — whether they came back populated, empty, or the fetch failed.
+   * Not "are there defaults", but "do we yet know".
+   *
+   * `useStudioDefaultBoardSeed` waits on this. Without it the default-board
+   * seed races the `frameDefaults` fetch (two independent promises started
+   * together in `AdminCanvasLayout`), and losing that race stamps every
+   * seeded frame with the hardcoded `FRAME_WIDTH`/`FRAME_HEIGHT` — so a
+   * project created as Mobile would open its first screen at 1024×800 and
+   * silently persist that, exactly the outcome the platform choice exists to
+   * prevent. Reset to `false` on every project switch by `setFrameDefaults`'s
+   * caller re-running its load effect.
+   */
+  frameDefaultsSettled: boolean
+  /** Replace the local `frameDefaults` mirror (load-time hydration; does not itself persist anything). Marks `frameDefaultsSettled`. */
   setFrameDefaults: (defaults: FrameDefaults) => void
+  /** Drop the mirror back to "not yet known" at the START of a project load, so the seed never runs on the PREVIOUS project's defaults. */
+  clearFrameDefaults: () => void
 
   // ── Bulk frame actions (WS-7.2) — all operate on `selectedFrameIds` ─────
   /**
@@ -350,6 +403,10 @@ export const createBoardSlice: EditorStoreSliceCreator<BoardSlice> = (set, get) 
   boardSnapGuides: [],
   selectedFrameIds: [],
   frameDefaults: {},
+  frameDefaultsSettled: false,
+  selectedAnnotations: [],
+  annotationClipboard: EMPTY_ANNOTATION_CLIPBOARD,
+  annotationPasteCount: 0,
 
   loadBoards: (file) => {
     if (file.boards.length > 0) {
@@ -430,71 +487,7 @@ export const createBoardSlice: EditorStoreSliceCreator<BoardSlice> = (set, get) 
     set({ activeBoardId: boardId })
   },
 
-  addNote: (x, y) => {
-    const { boards, activeBoardId } = get()
-    const board = getActiveBoard(boards, activeBoardId)
-    if (!board) return
-    set({ boards: upsertBoard(boards, annotations.addNote(board, x, y)), boardsDirty: true })
-  },
-
-  moveNote: (noteId, x, y) => {
-    const { boards, activeBoardId } = get()
-    const board = getActiveBoard(boards, activeBoardId)
-    if (!board) return
-    set({ boards: upsertBoard(boards, annotations.moveNote(board, noteId, x, y)), boardsDirty: true })
-  },
-
-  updateNoteText: (noteId, text) => {
-    const { boards, activeBoardId } = get()
-    const board = getActiveBoard(boards, activeBoardId)
-    const nextBoard = board && annotations.updateNoteText(board, noteId, text)
-    if (!nextBoard) return
-    set({ boards: upsertBoard(boards, nextBoard), boardsDirty: true })
-  },
-
-  setNoteColor: (noteId, color) => {
-    const { boards, activeBoardId } = get()
-    const board = getActiveBoard(boards, activeBoardId)
-    const nextBoard = board && annotations.setNoteColor(board, noteId, color)
-    if (!nextBoard) return
-    set({ boards: upsertBoard(boards, nextBoard), boardsDirty: true })
-  },
-
-  removeNote: (noteId) => {
-    const { boards, activeBoardId } = get()
-    const board = getActiveBoard(boards, activeBoardId)
-    if (!board) return
-    set({ boards: upsertBoard(boards, annotations.removeNote(board, noteId)), boardsDirty: true })
-  },
-
-  addDoc: (x, y) => {
-    const { boards, activeBoardId } = get()
-    const board = getActiveBoard(boards, activeBoardId)
-    if (!board) return
-    set({ boards: upsertBoard(boards, annotations.addDoc(board, x, y)), boardsDirty: true })
-  },
-
-  moveDoc: (docId, x, y) => {
-    const { boards, activeBoardId } = get()
-    const board = getActiveBoard(boards, activeBoardId)
-    if (!board) return
-    set({ boards: upsertBoard(boards, annotations.moveDoc(board, docId, x, y)), boardsDirty: true })
-  },
-
-  updateDocMarkdown: (docId, markdown) => {
-    const { boards, activeBoardId } = get()
-    const board = getActiveBoard(boards, activeBoardId)
-    const nextBoard = board && annotations.updateDocMarkdown(board, docId, markdown)
-    if (!nextBoard) return
-    set({ boards: upsertBoard(boards, nextBoard), boardsDirty: true })
-  },
-
-  removeDoc: (docId) => {
-    const { boards, activeBoardId } = get()
-    const board = getActiveBoard(boards, activeBoardId)
-    if (!board) return
-    set({ boards: upsertBoard(boards, annotations.removeDoc(board, docId)), boardsDirty: true })
-  },
+  ...createAnnotationActions(set, get),
 
   // D1 — persisted ruler guides (one-lined to stay under the size-budget ceiling).
   addGuide: (axis, position) => {
@@ -511,6 +504,13 @@ export const createBoardSlice: EditorStoreSliceCreator<BoardSlice> = (set, get) 
     const { boards, activeBoardId } = get()
     const board = getActiveBoard(boards, activeBoardId)
     if (board) set({ boards: upsertBoard(boards, guideActions.removeGuide(board, guideId)), boardsDirty: true })
+  },
+  clearGuides: (axis) => {
+    const { boards, activeBoardId } = get()
+    const board = getActiveBoard(boards, activeBoardId)
+    if (!board) return
+    const next = guideActions.clearGuides(board, axis)
+    if (next) set({ boards: upsertBoard(boards, next), boardsDirty: true })
   },
 
   setFramePosition: (frameId, x, y) => {
@@ -637,7 +637,8 @@ export const createBoardSlice: EditorStoreSliceCreator<BoardSlice> = (set, get) 
 
   // ── Per-project frame size default (WS-7.2) ─────────────────────────────
 
-  setFrameDefaults: (defaults) => set({ frameDefaults: defaults }),
+  setFrameDefaults: (defaults) => set({ frameDefaults: defaults, frameDefaultsSettled: true }),
+  clearFrameDefaults: () => set({ frameDefaults: {}, frameDefaultsSettled: false }),
 
   // ── Bulk frame actions (WS-7.2) — pure transforms live in
   // `boardBulkFrameActions.ts` (module-size split); this is just the

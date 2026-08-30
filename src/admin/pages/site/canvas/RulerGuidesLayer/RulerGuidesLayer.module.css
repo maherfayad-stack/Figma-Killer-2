@@ -20,8 +20,33 @@
     touch-action: none;
 }
 
+/*
+ * A 1px line is a 1px hit target — fine to see, unusable to grab or
+ * right-click, and it gets worse as you zoom out (the whole layer is inside
+ * the zoomed transform, so at 25% the line is a quarter of a pixel wide).
+ * This widens the POINTER target either side of the line without widening the
+ * ink, the same trick Figma's guides use. `--guide-hit` is in board units, so
+ * it shrinks on screen as you zoom out along with everything else — 4px is
+ * chosen to still be grabbable well below 100%, not to be pixel-exact at it.
+ */
+.line::before {
+    content: "";
+    position: absolute;
+    inset-block: 0;
+    inset-inline: 0;
+}
+
+.line[data-axis='x']::before {
+    inset-inline: calc(var(--guide-hit) * -1);
+}
+
+.line[data-axis='y']::before {
+    inset-block: calc(var(--guide-hit) * -1);
+}
+
 /* A vertical guide at board-x `--guide-position`, spanning the full reachable pan range on the y axis. */
 .line[data-axis='x'] {
+    --guide-hit: 4px;
     left: var(--guide-position);
     top: calc(var(--guide-span) / -2);
     width: 1px;
@@ -31,6 +56,7 @@
 
 /* A horizontal guide at board-y `--guide-position`, spanning the full reachable pan range on the x axis. */
 .line[data-axis='y'] {
+    --guide-hit: 4px;
     top: var(--guide-position);
     left: calc(var(--guide-span) / -2);
     height: 1px;

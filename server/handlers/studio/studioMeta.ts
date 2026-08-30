@@ -119,6 +119,21 @@ export const StudioMetaSchema = Type.Object({
   /** WS-7 — per-project frame size default; overrides the editor's own preference (project wins, same precedent as `defaultBreakpoint`). */
   frameDefaults: Type.Optional(FrameDefaultsSchema),
   /**
+   * The form factor the project's screens are designed for, chosen once at
+   * creation (`POST /admin/api/studio/create`). This records the ANSWER;
+   * `frameDefaults` above records its CONSEQUENCE (the width/height every new
+   * frame starts at) and is what the board actually reads. Both are written
+   * together at creation — see `@core/studio-board`'s `platformPresets.ts`.
+   *
+   * Kept as its own field rather than inferred from `frameDefaults.width`
+   * because the two answer different questions and drift apart legitimately:
+   * a mobile project whose author resized every frame to 430 is still a
+   * mobile project, and the agent reads this to know which form factor it is
+   * designing for. Optional — every project created before this field, and
+   * every GitHub import, simply has no recorded platform.
+   */
+  platform: Type.Optional(Type.Union([Type.Literal('mobile'), Type.Literal('web')])),
+  /**
    * WS-3.3 — extra package-component module ids (`pkg.<sanitized>.<Name>`,
    * see `@core/module-engine`'s `packageModuleId`) to hide from the insert
    * palette, ADDED to the name-heuristic hides `registerProjectModules.ts`

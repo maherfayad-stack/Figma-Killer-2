@@ -4,6 +4,10 @@
  *
  * Position/size come from `--note-x` / `--note-y` / `--note-w` / `--note-h`,
  * set inline (dynamic per-note geometry) by StickyNoteView.tsx.
+ *
+ * The look is a physical sticky, not an admin surface: an OPAQUE pastel square
+ * with dark ink, a tight contact shadow, and no border. See the `--note-*`
+ * tokens in globals.css for why those colours do not follow the theme.
  */
 .note {
     position: absolute;
@@ -11,59 +15,75 @@
     top: var(--note-y);
     width: var(--note-w);
     height: var(--note-h);
+    /* Paint order across BOTH annotation kinds. Neither `.layer` sets a
+       z-index, so neither creates a stacking context — which is exactly what
+       lets a note and a doc interleave here rather than notes always sitting
+       under docs. `--annotation-z` is written inline per item; 0 is the
+       "never reordered" default (see `BoardStacked` in @core/studio-board). */
+    z-index: var(--annotation-z);
     display: flex;
     flex-direction: column;
-    border-radius: var(--radius);
-    box-shadow: var(--shadow-panel-drop);
+    /* Barely rounded, like a cut square of paper. A panel radius here makes it
+       read as another floating UI surface instead of an object on the board. */
+    border-radius: var(--radius-sm);
+    box-shadow: var(--note-shadow);
+    color: var(--note-ink);
     pointer-events: auto;
     cursor: grab;
-    overflow: hidden;
+    /* `visible`, not `hidden`: the resize handles sit just OUTSIDE the note's
+       box (-5px) and the hover toolbar floats above its top edge, so clipping
+       would make both unreachable. The text still clips — `.textBox` owns its
+       own overflow. */
+    overflow: visible;
 }
 
 .note:active {
     cursor: grabbing;
 }
 
-.note[data-note-color='yellow'] {
-    background: var(--note-yellow-tint);
-    outline: 1px solid var(--note-yellow);
-}
+/* Identity colour. One property per note, read back by `.note` — a solid fill,
+   with no outline: paper has no stroke. */
+.note[data-note-color='yellow'] { background: var(--note-yellow); }
+.note[data-note-color='green'] { background: var(--note-green); }
+.note[data-note-color='blue'] { background: var(--note-blue); }
+.note[data-note-color='pink'] { background: var(--note-pink); }
+.note[data-note-color='gray'] { background: var(--note-gray); }
 
-.note[data-note-color='green'] {
-    background: var(--note-green-tint);
-    outline: 1px solid var(--note-green);
-}
-
-.note[data-note-color='blue'] {
-    background: var(--note-blue-tint);
-    outline: 1px solid var(--note-blue);
-}
-
-.note[data-note-color='pink'] {
-    background: var(--note-pink-tint);
-    outline: 1px solid var(--note-pink);
-}
-
-.note[data-note-color='gray'] {
-    background: var(--note-gray-tint);
-    outline: 1px solid var(--note-gray);
-}
-
-/* Chrome (swatches + delete) — hidden until the note is hovered/focused, so
-   the board reads clean at rest. */
+/*
+ * Chrome (swatches + delete) floats just ABOVE the note's top edge on hover,
+ * the way Miro's per-object toolbar does, rather than sitting inside it.
+ *
+ * Two reasons it is not in the note's flow, and both were visible bugs: an
+ * in-flow row permanently reserved ~20px at the top even at `opacity: 0`, so
+ * the text could never be vertically centred; and ghost `Button`s drawn
+ * directly on a light pastel fill use the app's dark-surface hover colours and
+ * washed out. Its own dark pill restores the surface those buttons expect.
+ */
 .chrome {
+    position: absolute;
+    inset-block-end: calc(100% + var(--space-s));
+    inset-inline-start: 0;
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: var(--space-xs);
-    padding: var(--space-3xs) var(--space-2xs);
+    gap: var(--space-2xs);
+    padding: var(--space-4xs) var(--space-3xs);
+    background: var(--bg-surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--input-radius);
+    /* Its own tight shadow, not `--shadow-panel-drop`: that one's blur radius
+       is tuned for a panel floating over a dark app surface and, cast down
+       onto a pale sticky a few pixels below, it reads as a smudge on the
+       paper rather than as depth. */
+    box-shadow: 0 2px 6px var(--overlay-40);
+    color: var(--text);
     opacity: 0;
     pointer-events: none;
     transition: opacity 120ms ease;
 }
 
 .note:hover .chrome,
-.note:focus-within .chrome {
+.note:focus-within .chrome,
+.noteSelected .chrome {
     opacity: 1;
     pointer-events: auto;
 }
@@ -83,21 +103,99 @@
 .swatch.swatch:hover,
 .swatch.swatch:active {
     background: var(--swatch-color);
+    border-radius: 50%;
 }
 
 .swatch[aria-pressed='true'] {
-    box-shadow: inset 0 0 0 2px var(--bg-surface);
+    box-shadow: inset 0 0 0 2px var(--bg-surface-2), 0 0 0 2px var(--swatch-color);
+}
+
+/*
+ * The text box and the text are two elements, not one.
+ *
+ * The box is the fixed rectangle and owns the centring and the clipping; the
+ * text is the auto-fitted content and owns the caret. They have to be separate
+ * because `useAutoFitText` measures the text's natural height against the
+ * box's available height — a single centred, clipped element reports neither
+ * honestly (content overflowing a centred box escapes in both directions,
+ * which `scrollHeight` does not see).
+ */
+.textBox {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--space-xs);
+    /* Never a scrollbar: the text is fitted to this box, so anything a
+       scrollbar would reveal is a fitting bug, not something to scroll to. */
+    overflow: hidden;
+    cursor: text;
 }
 
 .text {
-    flex: 1;
-    padding: var(--space-2xs) var(--space-xs) var(--space-xs);
-    font-size: var(--text-s);
-    line-height: 1.35;
-    color: var(--text);
-    overflow: auto;
+    width: 100%;
+    /* Centred like a sticky, not ranged left like a paragraph. */
+    text-align: center;
+    font-weight: 500;
+    line-height: 1.25;
+    color: var(--note-ink);
     outline: none;
-    cursor: text;
     white-space: pre-wrap;
     word-break: break-word;
+    /* `font-size` is written here by `useAutoFitText`; this is the size an
+       empty note starts at. */
+    font-size: var(--text-m);
+}
+
+.text[data-empty='true'] {
+    color: var(--note-ink-subtle);
+    font-style: italic;
+    font-weight: 400;
+}
+
+/*
+ * Selection ring, layered over the note's contact shadow. It is
+ * `--annotation-selection-ring` (white), not the canvas green — green means
+ * "this node in the page tree is selected", and a note is furniture, not a
+ * node. The 1px dark spacer keeps the ring off the pastel fill so it stays
+ * legible on the yellow note too.
+ */
+.noteSelected {
+    box-shadow:
+        var(--note-shadow),
+        0 0 0 1px var(--bg-body),
+        0 0 0 3px var(--annotation-selection-ring);
+}
+
+/*
+ * Resize handles — rendered only while the note is selected, so an unselected
+ * note is a clean rectangle. Positioned by `data-handle`; the cursor per
+ * handle is a CSS concern, not a JS-driven inline style (same rule the frame
+ * handles follow).
+ */
+.resizeHandle {
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    background: transparent;
+    z-index: 1;
+}
+
+.resizeHandle[data-handle='nw'] { top: -5px; left: -5px; cursor: nwse-resize; }
+.resizeHandle[data-handle='n']  { top: -5px; left: 50%; margin-left: -5px; cursor: ns-resize; }
+.resizeHandle[data-handle='ne'] { top: -5px; right: -5px; cursor: nesw-resize; }
+.resizeHandle[data-handle='e']  { top: 50%; right: -5px; margin-top: -5px; cursor: ew-resize; }
+.resizeHandle[data-handle='se'] { bottom: -5px; right: -5px; cursor: nwse-resize; }
+.resizeHandle[data-handle='s']  { bottom: -5px; left: 50%; margin-left: -5px; cursor: ns-resize; }
+.resizeHandle[data-handle='sw'] { bottom: -5px; left: -5px; cursor: nesw-resize; }
+.resizeHandle[data-handle='w']  { top: 50%; left: -5px; margin-top: -5px; cursor: ew-resize; }
+
+/* A colour dot in the right-click menu, mirroring the inline swatch row. */
+.menuSwatch {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--swatch-color);
 }

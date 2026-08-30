@@ -61,6 +61,17 @@ interface BreakpointFrameProps {
    * `useApplyPreviewAxes` — `undefined` for every non-board frame.
    */
   axesOverride?: Partial<PreviewAxes>
+  /**
+   * Whether to render the breakpoint chrome row (label + "open in live" +
+   * collapse). Studio BOARD frames pass `false`: every board frame shares one
+   * synthetic breakpoint id (`'studio'`), so all three controls are
+   * board-global rather than per-frame — activating a breakpoint that is the
+   * only one there is means nothing, and collapsing or opening "the studio
+   * breakpoint" in live mode acts on every frame at once. See
+   * `BoardFramesLayer.tsx`'s module doc. The CMS multi-breakpoint canvas
+   * (`CanvasTransformLayer`) has real, distinct breakpoints and keeps it.
+   */
+  showBreakpointChrome?: boolean
 }
 
 export function BreakpointFrame({
@@ -74,6 +85,7 @@ export function BreakpointFrame({
   runtimeScripts,
   frameId,
   axesOverride,
+  showBreakpointChrome = true,
 }: BreakpointFrameProps) {
   // --bp-width drives both label width and viewport width via CSS (dynamic value)
   const bpStyle = { '--bp-width': `${breakpoint.width}px` } as CSSProperties
@@ -108,7 +120,12 @@ export function BreakpointFrame({
   const setCanvasView = useEditorStore((s) => s.setCanvasView)
   const setActiveBreakpoint = useEditorStore((s) => s.setActiveBreakpoint)
   const toggleBreakpointCollapsed = useEditorStore((s) => s.toggleBreakpointCollapsed)
-  const isCollapsed = useEditorStore((s) => s.collapsedBreakpointIds.includes(breakpoint.id))
+  // Collapse is reachable ONLY through the chrome row's toggle, so a frame
+  // rendered without that row is never collapsible — otherwise a board frame
+  // would inherit the shared `'studio'` breakpoint's collapsed state (set from
+  // some other surface) and render as an empty box with no control to undo it.
+  const isBreakpointCollapsed = useEditorStore((s) => s.collapsedBreakpointIds.includes(breakpoint.id))
+  const isCollapsed = showBreakpointChrome && isBreakpointCollapsed
 
   const handleOpenLive = () => {
     setActiveBreakpoint(breakpoint.id)
@@ -129,6 +146,12 @@ export function BreakpointFrame({
   // pure Viewers; they get plain frames without an active-state outline.
   const permissions = useEditorPermissions()
   const breakpointChromeVisible = permissions.canEditStyle || permissions.canEditStructure
+  // The chrome ROW is gated on BOTH the permission above and the caller's
+  // opt-out. Kept separate from `breakpointChromeVisible` on purpose: that
+  // flag also drives click-to-activate and the activation hint INSIDE the
+  // frame, which a board frame still wants — only the row itself is dead
+  // chrome there. See `showBreakpointChrome`'s doc.
+  const labelRowVisible = showBreakpointChrome && breakpointChromeVisible
 
   const handleIframeRef = (handle: IframeFrameSurfaceHandle | null) => {
     iframeHandleRef.current = handle
@@ -173,11 +196,13 @@ export function BreakpointFrame({
       data-testid={`canvas-frame-${breakpoint.id}`}
       style={bpStyle}
     >
-      {/* Frame chrome row — breakpoint label.
+      {/* Frame chrome row — breakpoint label + live-mode + collapse.
           Hidden for non-editors: the label button activates a per-breakpoint
           override target, which only makes sense when the caller can edit
-          styles or structure. */}
-      {breakpointChromeVisible && (
+          styles or structure. Also hidden whenever the caller opts out via
+          `showBreakpointChrome` — see that prop's doc for why every Studio
+          board frame does. */}
+      {labelRowVisible && (
         <div className={styles.labelRow}>
           <Button
             variant="ghost"

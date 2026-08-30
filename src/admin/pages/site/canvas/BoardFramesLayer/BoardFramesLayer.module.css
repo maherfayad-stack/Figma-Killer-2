@@ -26,13 +26,20 @@
 
 /* Sized to the frame's OWN width/height (`--frame-w`/`--frame-h`, Phase
    6E) — a real "device box" for both the live iframe and the offscreen
-   placeholder, driving `.frame`'s own `max-content` width. Content taller
-   than `--frame-h` scrolls inside rather than growing the box, so the
-   configured device size stays true regardless of page content length. */
+   placeholder, driving `.frame`'s own `max-content` width.
+
+   `hidden`, never `auto`: a frame is an artboard, and an artboard CLIPS. A
+   scrollbar inside a frame on an infinite canvas is a second, nested scroll
+   surface competing with the canvas's own pan — you cannot tell which one a
+   wheel gesture will move, and the bar itself is a piece of browser chrome
+   painted over the design being reviewed. A frame reaches this fixed-box state
+   only when the author has dragged a horizontal edge; until then it hugs its
+   content (see the auto-height rule below), and double-clicking the bottom
+   edge or the frame's "Fit height to content" menu item puts it back. */
 .frameBody {
     width: var(--frame-w);
     height: var(--frame-h);
-    overflow: auto;
+    overflow: hidden;
     border-radius: 0 0 var(--radius) var(--radius);
 }
 
@@ -68,8 +75,14 @@
     cursor: grabbing;
 }
 
+/* The ACTIVE frame — the page an edit routes into (`activePageId`). This is
+   plumbing, not a selection: it is set by a capture-phase click anywhere in a
+   frame and never cleared, so it must not wear the selection ring. It used to,
+   which made the last-touched frame look permanently selected with no way to
+   dismiss it. A raised header tone is enough to say "edits land here"; the
+   Explorer's page tree carries the same signal in its own row highlight. */
 .frame[data-active='true'] .header {
-    box-shadow: var(--canvas-selection-ring);
+    background: var(--bg-surface-4);
 }
 
 /* Frame multi-selection (WS-7.1) — distinct from `data-active` (the edit

@@ -17,6 +17,15 @@ export const FRAME_GAP = 80
 export const GRID_COLUMNS = 2
 
 /**
+ * Smallest a frame may be resized to, in board units, on either axis. Lives
+ * here with the other frame-size constants rather than beside the resize
+ * geometry (`@site/canvas/rectResize.ts`), which is now shared with notes and
+ * docs and has no opinion about how small any particular thing may get — the
+ * floor is the caller's, passed in per gesture.
+ */
+export const MIN_FRAME_SIZE = 200
+
+/**
  * Header height (board units) added to a frame's own height for on-screen
  * intersection tests, so the drag header itself isn't cut off the rect.
  * Shared by `BoardFramesLayer.tsx`'s virtualization window and its

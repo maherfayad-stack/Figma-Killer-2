@@ -7,6 +7,10 @@
  * sibling module from the start rather than growing the slice file directly).
  *
  * `addGuide` mints the id (`crypto.randomUUID()`), matching `addNote`/`addDoc`.
+ *
+ * `clearGuides` returns `null` for "nothing to do" — the `null` contract
+ * `boardAnnotationActions.ts` documents — so clearing an already-empty board
+ * never flips `boardsDirty` and never wakes the 800 ms autosave.
  */
 import {
   upsertGuide,
@@ -27,4 +31,16 @@ export function moveGuide(board: Board, guideId: string, position: number): Boar
 
 export function removeGuide(board: Board, guideId: string): Board {
   return removeGuideFromBoard(board, guideId)
+}
+
+/**
+ * Drops every guide on the board, or — with `axis` — only that axis's. The
+ * axis form is what makes "clear the guides" usable on a board that has a
+ * deliberate column grid on one axis and scratch guides on the other.
+ */
+export function clearGuides(board: Board, axis?: 'x' | 'y'): Board | null {
+  const existing = board.guides ?? []
+  const kept = axis ? existing.filter((g) => g.axis !== axis) : []
+  if (kept.length === existing.length) return null
+  return { ...board, guides: kept }
 }

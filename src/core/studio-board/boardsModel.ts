@@ -1,4 +1,4 @@
-import type { Board, BoardFrame, BoardGuide, BoardsFile, DocBlock, StickyNote } from './types'
+import type { Board, BoardFrame, BoardGuide, BoardsFile, BoardStacked, DocBlock, StickyNote } from './types'
 import type { PreviewAxes } from './previewAxes'
 
 export function createBoardsFile(): BoardsFile {
@@ -84,6 +84,108 @@ export function removeDoc(board: Board, docId: string): Board {
 }
 
 // ---------------------------------------------------------------------------
+// Annotation geometry + stacking — shared by notes and docs, which differ only
+// in which array they live in. `AnnotationRef` is how every caller addresses
+// one; see `types.ts`'s `BoardStacked` for what `z` means and why it is
+// optional.
+// ---------------------------------------------------------------------------
+
+/** The smallest an annotation may be dragged to. Below this the chrome (colour swatches, the doc header) no longer fits and the card becomes ungrabbable. */
+export const MIN_ANNOTATION_SIZE = 80
+
+export type AnnotationKind = 'note' | 'doc'
+
+export interface AnnotationRef {
+  kind: AnnotationKind
+  id: string
+}
+
+/** Every note and doc on the board as one addressable list, in paint order (see `annotationPaintOrder`). */
+export function boardAnnotations(board: Board): (StickyNote | DocBlock)[] {
+  return [...board.notes, ...board.docs]
+}
+
+/**
+ * `items` sorted into paint order: everything without a `z` first, in its own
+ * array order, then everything with a `z` ascending. Stable — two items with
+ * the same `z` keep their relative array order, so raising one item can never
+ * silently reshuffle its neighbours.
+ */
+export function annotationPaintOrder<T extends BoardStacked>(items: readonly T[]): T[] {
+  return items
+    .map((item, index) => ({ item, index }))
+    .sort((a, b) => {
+      const az = a.item.z
+      const bz = b.item.z
+      if (az === undefined && bz === undefined) return a.index - b.index
+      if (az === undefined) return -1
+      if (bz === undefined) return 1
+      if (az !== bz) return az - bz
+      return a.index - b.index
+    })
+    .map((entry) => entry.item)
+}
+
+function replaceAnnotation(
+  board: Board,
+  ref: AnnotationRef,
+  update: (item: StickyNote & DocBlock) => Partial<StickyNote & DocBlock>,
+): Board {
+  if (ref.kind === 'note') {
+    const index = board.notes.findIndex((n) => n.id === ref.id)
+    if (index === -1) return board
+    const notes = board.notes.map((n, i) =>
+      i === index ? { ...n, ...update(n as StickyNote & DocBlock) } : n,
+    )
+    return { ...board, notes }
+  }
+  const index = board.docs.findIndex((d) => d.id === ref.id)
+  if (index === -1) return board
+  const docs = board.docs.map((d, i) =>
+    i === index ? { ...d, ...update(d as StickyNote & DocBlock) } : d,
+  )
+  return { ...board, docs }
+}
+
+/** Set an annotation's rect. Width/height are clamped to `MIN_ANNOTATION_SIZE` here rather than at the drag site, so a programmatic caller cannot produce an ungrabbable card either. */
+export function resizeAnnotation(
+  board: Board,
+  ref: AnnotationRef,
+  rect: { x: number; y: number; w: number; h: number },
+): Board {
+  return replaceAnnotation(board, ref, () => ({
+    x: rect.x,
+    y: rect.y,
+    w: Math.max(MIN_ANNOTATION_SIZE, rect.w),
+    h: Math.max(MIN_ANNOTATION_SIZE, rect.h),
+  }))
+}
+
+/**
+ * Raise `refs` above every other annotation (`'front'`) or lower them below
+ * every other (`'back'`), preserving their order relative to each other.
+ *
+ * Assigns absolute `z` values rather than incrementing: after a `'front'` the
+ * moved items hold the top N slots outright, so a second `'front'` on a
+ * different item cannot land it in a tie it then loses to array order.
+ */
+export function reorderAnnotations(board: Board, refs: readonly AnnotationRef[], to: 'front' | 'back'): Board {
+  if (refs.length === 0) return board
+  const moving = new Set(refs.map((r) => `${r.kind}:${r.id}`))
+  const ordered = annotationPaintOrder([
+    ...board.notes.map((n) => ({ ref: { kind: 'note' as const, id: n.id }, z: n.z })),
+    ...board.docs.map((d) => ({ ref: { kind: 'doc' as const, id: d.id }, z: d.z })),
+  ])
+  const stay = ordered.filter((e) => !moving.has(`${e.ref.kind}:${e.ref.id}`))
+  const move = ordered.filter((e) => moving.has(`${e.ref.kind}:${e.ref.id}`))
+  const sequence = to === 'front' ? [...stay, ...move] : [...move, ...stay]
+  return sequence.reduce(
+    (acc, entry, index) => replaceAnnotation(acc, entry.ref, () => ({ z: index })),
+    board,
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Frames — keyed by `BoardFrame.id` (WS-10 Phase 2), NOT `pageId`. Before
 // "duplicate as variant" a board never had two frames of the same page, so
 // `pageId` alone was already a unique frame key; a duplicated variant breaks
@@ -116,11 +218,30 @@ export function moveFrame(board: Board, frameId: string, x: number, y: number): 
   return { ...board, frames }
 }
 
-/** No-op for a missing frame id, mirroring `moveFrame`. */
-export function resizeFrame(board: Board, frameId: string, width: number, height: number): Board {
+/**
+ * No-op for a missing frame id, mirroring `moveFrame`.
+ *
+ * `height: undefined` is MEANINGFUL, not "leave it alone": it clears the
+ * stored height, returning the frame to hugging its content. `BoardFrame.height`
+ * being absent is exactly what `hasManualHeight` reads to decide between the
+ * auto-growing box and a fixed one, so "hug" has to be expressible here — it is
+ * what a width-only drag preserves, and what "Fit height to content" restores.
+ */
+export function resizeFrame(
+  board: Board,
+  frameId: string,
+  width: number,
+  height: number | undefined,
+): Board {
   const index = board.frames.findIndex((f) => f.id === frameId)
   if (index === -1) return board
-  const frames = board.frames.map((f, i) => (i === index ? { ...f, width, height } : f))
+  const frames = board.frames.map((f, i) => {
+    if (i !== index) return f
+    // Delete rather than store `undefined`: `boards.json` is JSON, and an
+    // explicit `"height": null` would not round-trip as "absent".
+    const { height: _dropped, ...rest } = f
+    return height === undefined ? { ...rest, width } : { ...rest, width, height }
+  })
   return { ...board, frames }
 }
 

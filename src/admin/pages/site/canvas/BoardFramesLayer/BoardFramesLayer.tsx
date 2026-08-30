@@ -51,15 +51,19 @@
  * header's context menu (Rename / Remove from board) without ever starting
  * a drag or losing the frame's activation.
  *
- * KNOWN LIMITATION: every studio frame shares one synthetic breakpoint id
+ * Every studio frame shares one synthetic breakpoint id
  * (`STUDIO_BREAKPOINT.id === 'studio'`), so breakpoint-KEYED chrome inside
  * `BreakpointFrame` (collapsed-state, "open in live", the toolbar's
  * activeBreakpointId-driven highlight) is not per-frame-correct — it behaves
- * as one shared breakpoint across all frames. This is acceptable for this
- * increment because the piece that matters for editing — the selection RING
- * — still resolves correctly per-frame: `BreakpointSelectionOverlay` queries
- * each frame's own iframe document by node id, not by breakpoint id. Revisit
- * if per-frame breakpoint chrome becomes necessary.
+ * as one shared breakpoint across all frames. Board frames therefore render
+ * WITHOUT that chrome row (`showBreakpointChrome={false}` — see the prop's
+ * doc on `BreakpointFrame`): a board frame's identity, size and actions all
+ * live on its OWN header and in the Properties panel, so the breakpoint row
+ * was a second, board-global strip promising per-frame control it could not
+ * deliver. The piece that matters for editing — the selection RING — was
+ * never breakpoint-keyed and still resolves per-frame:
+ * `BreakpointSelectionOverlay` queries each frame's own iframe document by
+ * node id.
  *
  * Virtualization: a live `BreakpointFrame` (iframe + full `NodeRenderer`
  * tree) is only mounted for frames whose board-space rect intersects the
@@ -249,6 +253,8 @@ export function BoardFramesLayer() {
               onActivate={() => openPageInCanvas(page.id)}
               onMove={(nx, ny) => setFramePosition(frame.id, nx, ny)}
               onResize={(nw, nh) => setFrameSize(frame.id, nw, nh)}
+              // `undefined` height clears the stored one — see `resizeFrame`.
+              onResetHeight={() => setFrameSize(frame.id, frame.width ?? width, undefined)}
               onRemove={() => removeFrameById(frame.id)}
               onRename={(title) => renamePage(page.id, title)}
               onDuplicateAsVariant={(axes) => duplicateFrameAsVariant(frame.id, axes)}

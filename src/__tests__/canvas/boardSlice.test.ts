@@ -7,8 +7,8 @@
  *   - addNote / moveNote / updateNoteText / setNoteColor / removeNote mutate
  *     the active board via the pure @core/studio-board transforms and flip
  *     boardsDirty
- *   - addDoc / moveDoc / updateDocMarkdown / removeDoc do the same for
- *     board.docs (markdown documentation blocks)
+ *   - addDoc / moveDoc / updateDocHtml / removeDoc do the same for
+ *     board.docs (rich-text documentation cards)
  *   - setFramePosition / removeFrame do the same for `board.frames`
  *   - markBoardsClean clears the dirty flag
  *   - selectActiveBoard resolves the right board (or null)
@@ -359,7 +359,7 @@ describe('removeNote', () => {
 })
 
 // ---------------------------------------------------------------------------
-// addDoc / moveDoc / updateDocMarkdown / removeDoc
+// addDoc / moveDoc / updateDocHtml / removeDoc
 // ---------------------------------------------------------------------------
 
 describe('addDoc', () => {
@@ -375,7 +375,7 @@ describe('addDoc', () => {
     expect(doc?.y).toBe(200)
     expect(doc?.w).toBe(320)
     expect(doc?.h).toBe(200)
-    expect(doc?.markdown).toBe('')
+    expect(doc?.html).toBe('')
     expect(state().boardsDirty).toBe(true)
   })
 
@@ -408,16 +408,16 @@ describe('moveDoc', () => {
   })
 })
 
-describe('updateDocMarkdown', () => {
-  it('updates a doc block\'s markdown', () => {
+describe('updateDocHtml', () => {
+  it('updates a doc card\'s rich text', () => {
     state().loadBoards(createBoardsFile())
     state().addDoc(0, 0)
     const docId = selectActiveBoard(state())!.docs[0].id
     state().markBoardsClean()
 
-    state().updateDocMarkdown(docId, '# hello board')
+    state().updateDocHtml(docId, '<h1>hello board</h1>')
 
-    expect(selectActiveBoard(state())!.docs[0].markdown).toBe('# hello board')
+    expect(selectActiveBoard(state())!.docs[0].html).toBe('<h1>hello board</h1>')
     expect(state().boardsDirty).toBe(true)
   })
 
@@ -425,14 +425,14 @@ describe('updateDocMarkdown', () => {
     state().loadBoards(createBoardsFile())
     state().markBoardsClean()
 
-    state().updateDocMarkdown('missing', 'nope')
+    state().updateDocHtml('missing', 'nope')
 
     expect(selectActiveBoard(state())!.docs).toHaveLength(0)
     expect(state().boardsDirty).toBe(false)
   })
 
   it('is a no-op with no active board', () => {
-    state().updateDocMarkdown('missing', 'nope')
+    state().updateDocHtml('missing', 'nope')
     expect(selectActiveBoard(state())).toBeNull()
     expect(state().boardsDirty).toBe(false)
   })

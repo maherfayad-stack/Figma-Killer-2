@@ -7,7 +7,10 @@
  * name collision this file's name avoids).
  *
  * Interactive, unlike `BoardGuidesLayer`: drag a line to reposition it,
- * double-click to delete it. Pointer math goes through `.canvas`'s own
+ * double-click to delete it, right-click for a menu (delete this one, clear
+ * the axis, clear the board). The menu is what makes deletion discoverable —
+ * double-click is the Figma muscle-memory shortcut, not something a line on a
+ * canvas advertises. Pointer math goes through `.canvas`'s own
  * untransformed rect + the LIVE `transformRef` (from
  * `CanvasViewportActionsContext` — see that context's doc for why this reads
  * the ref, not the store's debounced `zoom`/`panX`/`panY`), same as ruler
@@ -20,10 +23,13 @@
  * pointermove — same perf rule `useCanvas`'s gesture handling follows) and
  * committed via `moveGuide` on release.
  */
-import { useContext, useRef, type CSSProperties } from 'react'
+import { useContext, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react'
+import { createPortal } from 'react-dom'
 import type { BoardGuide } from '@core/studio-board'
 import { useEditorStore } from '@site/store/store'
 import { selectActiveBoard } from '@site/store/slices/boardSlice'
+import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from '@ui/components/ContextMenu'
+import { CloseIcon } from 'pixel-art-icons/icons/close'
 import { CanvasViewportActionsContext } from '../CanvasContexts'
 import { screenToBoard } from '../CanvasRulers/rulerGeometry'
 import { MAX_PAN } from '../math'
@@ -36,10 +42,16 @@ function GuideLine({ guide }: { guide: BoardGuide }) {
   const viewportActions = useContext(CanvasViewportActionsContext)
   const moveGuide = useEditorStore((s) => s.moveGuide)
   const removeGuide = useEditorStore((s) => s.removeGuide)
+  const clearGuides = useEditorStore((s) => s.clearGuides)
   const lineRef = useRef<HTMLDivElement | null>(null)
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
 
   const onPointerDown = (event: React.PointerEvent) => {
     if (!viewportActions) return
+    // Only the primary button starts a drag — a right-click has to fall
+    // through untouched to `onContextMenu` below, exactly as the board
+    // frame's own drag header does (`BoardFramesLayer.tsx`'s module doc).
+    if (event.button !== 0) return
     event.preventDefault()
     event.stopPropagation()
     const { canvasRootRef, transformRef } = viewportActions
@@ -70,22 +82,58 @@ function GuideLine({ guide }: { guide: BoardGuide }) {
     document.addEventListener('pointerup', onUp, { once: true })
   }
 
+  const onContextMenu = (event: ReactMouseEvent) => {
+    event.preventDefault()
+    event.stopPropagation()
+    setContextMenu({ x: event.clientX, y: event.clientY })
+  }
+
+  const axisLabel = guide.axis === 'x' ? 'Vertical' : 'Horizontal'
+
   return (
-    <div
-      ref={lineRef}
-      className={styles.line}
-      data-axis={guide.axis}
-      data-testid="ruler-guide-line"
-      onPointerDown={onPointerDown}
-      onDoubleClick={(e) => {
-        e.stopPropagation()
-        removeGuide(guide.id)
-      }}
-      style={{
-        '--guide-position': `${guide.position}px`,
-        '--guide-span': `${GUIDE_SPAN_PX}px`,
-      } as CSSProperties}
-    />
+    <>
+      <div
+        ref={lineRef}
+        className={styles.line}
+        data-axis={guide.axis}
+        data-testid="ruler-guide-line"
+        onPointerDown={onPointerDown}
+        onContextMenu={onContextMenu}
+        onDoubleClick={(e) => {
+          e.stopPropagation()
+          removeGuide(guide.id)
+        }}
+        style={{
+          '--guide-position': `${guide.position}px`,
+          '--guide-span': `${GUIDE_SPAN_PX}px`,
+        } as CSSProperties}
+      />
+      {contextMenu && createPortal(
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          ariaLabel={`${axisLabel} guide at ${guide.position} options`}
+          animateExit
+          onClose={() => setContextMenu(null)}
+        >
+          <ContextMenuItem
+            danger
+            onClick={() => { setContextMenu(null); removeGuide(guide.id) }}
+          >
+            <span aria-hidden="true"><CloseIcon size={13} /></span>
+            Delete guide
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          <ContextMenuItem onClick={() => { setContextMenu(null); clearGuides(guide.axis) }}>
+            Clear {guide.axis === 'x' ? 'vertical' : 'horizontal'} guides
+          </ContextMenuItem>
+          <ContextMenuItem onClick={() => { setContextMenu(null); clearGuides() }}>
+            Clear all guides
+          </ContextMenuItem>
+        </ContextMenu>,
+        document.body,
+      )}
+    </>
   )
 }
 

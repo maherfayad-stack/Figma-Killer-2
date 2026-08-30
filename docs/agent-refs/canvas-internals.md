@@ -363,6 +363,42 @@ the unroll stylesheet forced `body, html { height: auto !important }` —
 have overridden the pin outright and collapsed every `height: 100%` chain.
 Regression coverage: `src/__tests__/canvas/canvasScrollUnrollPinInteraction.test.tsx`.
 
+### A board frame hugs its content until the author sets a height
+
+`.frameBody` has two states, chosen by `hasManualHeight`
+(`BoardFrame.height !== undefined`):
+
+- **hugging** (`data-frame-auto-height`) — `height: auto`, floored by
+  `min-height: --frame-h` so a frame whose iframe has not measured yet does not
+  flash to near-zero. This is the default and the state a new frame is in.
+- **fixed** — the configured device box, `overflow: hidden`.
+
+**`overflow` is `hidden`, never `auto`.** A frame is an artboard, and an
+artboard clips. A scrollbar inside a frame on an infinite canvas is a second,
+nested scroll surface competing with the canvas's own pan — you cannot tell
+which one a wheel gesture will move — and the bar itself is browser chrome
+painted over the design under review.
+
+Three rules keep the two states honest:
+
+1. **Only a handle that moves a horizontal edge (`n`/`s`/a corner) sets a
+   height.** Dragging `e`/`w` used to commit the *resolved fallback* height as
+   though the author had chosen it, silently ending hug-to-content on a frame
+   the author had only made wider. `changesHeight` in `BoardFrameView` gates
+   this.
+2. **A vertical drag on a hugging frame anchors on the MEASURED box**, not on
+   the `height` prop — that prop is the fallback default, not what is on
+   screen, so anchoring on it snapped the frame to the default the instant the
+   pointer moved.
+3. **`resizeFrame(board, id, width, undefined)` deletes the stored height**,
+   returning the frame to hugging. It is deleted, not set to `undefined`:
+   `boards.json` is JSON, and a stored `null` would not round-trip as absent.
+
+The author gets back to hugging by double-clicking the frame's bottom (`s`)
+resize handle, or via **Fit height to content** in the frame's context menu —
+which is the discoverable and keyboard-reachable path, since the handles live
+in an `aria-hidden` container.
+
 ---
 
 ## Events across the iframe boundary

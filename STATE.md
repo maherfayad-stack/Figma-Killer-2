@@ -8,6 +8,100 @@ Entry ids are `<area>-<nn>`. Areas in use: `parser`, `canvas`, `store`, `panel`,
 
 ---
 
+### board-06 — the heading control worked all along; its own type scale was what made it look broken
+- **Agent:** claude (single pass)
+- **Stage:** done. `tsc -b`, `bun run build`, `bun run lint` green; canvas/board/dashboard suite has the same 19 pre-existing failures as before this change; architecture 497/0.
+- **Updated:** 2026-08-30
+
+**"Changing from Body to Heading doesn't apply" was my own regression from `board-05`.** Tuning `.rendered h1` down to `--text-l` so a heading would not overrun a 320px card put a 14px H1 above a 12px body. The command applied every time; the result was invisible. Proved from the user's own screenshot: the block `<Select>` is now controlled by `readBlockFormat()` reading the live DOM, and it read back "Heading 1" — so the `<h1>` existed. The scale is now H1 `--text-5xl` → body `--text-s`, roughly 2×. **Do not narrow these steps to save horizontal space; a heading wrapping onto two lines is the correct outcome.**
+
+**A hypothesis that the browser disproved — do not re-derive it.** I first blamed focus: "`execCommand` needs the editing host focused, and a `<Select>` steals it". Measured in Chrome against the real module: `formatBlock` applies correctly with focus parked on a button. The refocus in `run()` stays, but it is there so the CARET is usable for the next keystroke, not to make commands work. Both the code comments and `docRichText`'s module doc now say so.
+
+**Lists could never be applied cleanly, and the fix is counter-intuitive.** Chrome nests a list INSIDE the current block: `insertUnorderedList` on an `<h1>` gives `<h1><ul>…</ul></h1>`, and flattening to `<p>` first only trades it for `<p><ul>…</ul></p>` — which happens even starting from an ordinary paragraph. `formatBlock('<div>')` first is the ONLY sequence producing a clean `<ul><li>`. Verified across h1, blockquote, p and a multi-block selection.
+
+**Toolbar: 475px → 332px** (the card it formats is 320px). The two list toggles moved INTO the block-format `<Select>` — a block is a heading or a quote or a list, never two, and `docRichText` has to enforce that anyway, so one control says it out loud. Alignment and clear-formatting moved to an overflow `⋯` menu. The `<Select>` is now controlled: an uncontrolled one cannot re-apply the value it already displays, so picking "Heading 1" a second time in a different paragraph fired no change event at all.
+
+**Board frames now hug their content, and never scroll.** `.frameBody` was `overflow: auto` — a nested scroll surface competing with the canvas pan, with browser chrome painted over the design. It is `hidden` now: a frame is an artboard, and an artboard clips. Auto-hug (`data-frame-auto-height`) already existed; three things kept breaking it, all fixed and written up in `docs/agent-refs/canvas-internals.md`:
+- dragging a SIDE handle committed the resolved fallback height as if the author had picked it, silently ending hug-to-content on a frame only made wider (`changesHeight`);
+- a vertical drag on a hugging frame anchored on the `height` PROP — the fallback default, not what is on screen — so the frame snapped to that default the moment the pointer moved. It anchors on the measured box now;
+- there was no way back to hugging. `resizeFrame(board, id, w, undefined)` now DELETES the stored height (deleted, not `undefined`: `boards.json` is JSON and a `null` would not round-trip as absent), reached by double-clicking the bottom (`s`) handle or via "Fit height to content" in the frame's context menu — the latter being the keyboard-reachable path, since the handles sit in an `aria-hidden` container.
+
+**Selection rings on board furniture are white now** (`--annotation-selection-ring`), not the canvas green. Green means "this node in the page tree is selected"; a note or a doc card is furniture, not a node, and one colour for both made a selected doc card read as a selected component. The new-project dialog's chosen card likewise uses `--text-bright`, not the canvas green — it is a form choice in a dialog and was borrowing a canvas vocabulary that means something else there.
+
+**Also:** the platform cards carry real device drawings (inline SVG in `NewProjectDialog.tsx`, all `currentColor` so the card tints them), ranged to the inline start on the same axis as the label.
+
+**Files:** `src/admin/pages/site/canvas/BoardDocsLayer/{docRichText.ts,DocToolbar.tsx,DocToolbar.module.css,DocBlockView.module.css}`, `src/admin/pages/site/canvas/BoardFramesLayer/{BoardFrameView.tsx,BoardFramesLayer.tsx,BoardFramesLayer.module.css}`, `src/admin/pages/site/canvas/BoardNotesLayer/StickyNoteView.module.css`, `src/core/studio-board/boardsModel.ts` (+ tests), `src/admin/pages/site/store/slices/boardSlice.ts`, `src/admin/pages/dashboard/{NewProjectDialog.tsx,NewProjectDialog.module.css}`, `src/styles/globals.css`, `docs/agent-refs/canvas-internals.md`.
+
+---
+
+### board-05 — the doc card duplicated itself because React owned a node whose children it did not write; sticky notes were a tint of the board, not paper on it
+- **Agent:** claude (single pass)
+- **Stage:** done. `tsc -b`, `bun run build`, `bun run lint` green; suite triaged against a clean-HEAD worktree (same 19 pre-existing failures). Look verified by screenshot in headless Chrome; **the live app is still not dogfooded — see `board-04`'s "Not verified".**
+- **Updated:** 2026-08-30
+
+**Follow-up to `board-04`.** Three reports: the new-project dialog looked broken; the doc card "duplicates text when unhovered / styles don't apply / still laggy"; and the sticky notes "were not touched" — they did not look or work like Miro.
+
+**1. The duplication and the missing styles were ONE bug, and it was React reconciliation.** The doc card's editing `<div>` and its reader `<div>` sat in the same child slot with no keys, so React treated them as the same host instance and merely swapped props across the transition. That node's children are **not React's** — the editor writes them with `el.innerHTML`, because `execCommand` mutates the DOM directly. Leaving a session, React therefore believed the node was empty, mounted the reader's markup and **appended** it beside the text already present: the document rendered twice, once unstyled (the leftover no longer carried `.rendered`, so it lost the doc typography and the padding — exactly the reported "styles don't apply") and once styled. Each state now renders under its own key.
+
+  Locked down by `BoardDocsLayer/__tests__/docBlockEditingSession.test.tsx`, which was **confirmed to fail on the pre-fix markup** before being kept. **The general rule, now in the feature doc:** an element whose children are written imperatively must never share a reconciliation slot with an element whose children are React's.
+
+**2. The remaining lag was the toolbar re-rendering at typing speed.** `selectionchange` fires per keystroke, and `readActiveCommands` allocates a fresh `Set` each call — so every character re-rendered two `<Select>`s, a `<ColorInput>` and eight tooltip-bearing `<Button>`s. The setter now compares set *contents*. (The rAF half of this lag was already removed in `board-04`.)
+
+**3. Sticky notes were drawn as an admin surface instead of as an object.** `--note-*` derived the fills from `--accent-*` at 10% alpha, so a note was a translucent olive/navy wash **of** the canvas rather than paper **on** it, wearing `--text` and an `overflow: auto` scrollbar. They are now opaque pastel with fixed dark ink, no border, a tight contact shadow, `--radius-sm`, centred text and no scrollbar — and the tokens are deliberately **theme-independent**, because a surface that does not follow the theme must not have a foreground that does.
+  - The swatch/delete chrome moved into a dark pill floating **above** the note. In-flow it reserved ~20px at `opacity: 0` (so the text could never centre), and ghost `Button`s on a pale fill use dark-surface hover colours and washed out.
+  - `useAutoFitText` now measures the **content against its box**, which are two separate elements. Measuring content against itself only works while text is top-aligned; a vertically centred overflow escapes in both directions and `scrollHeight` sees neither, so a note would settle at a size whose first and last lines were invisible. The `ResizeObserver` watches the box — the content's size is the hook's own output.
+  - Notes commit `innerText`, not `textContent`: Enter inserts a `<div>`/`<br>` and `textContent` concatenates across them, storing a two-line note as one run-on line.
+
+**4. The new-project platform cards were the `Button` primitive fighting a card layout.** They inherited its pill radius, its fixed 32px height and its `white-space: nowrap`, so each card rendered as a lozenge with its content spilling out both ends. Rebuilt as a real **radio group** — an invisible-but-focusable `<input type="radio">` covering a `<label>` card — which is the honest control for two mutually exclusive answers, keeps native arrow-key navigation and AT semantics, and is not governed by BTN-3 at all.
+
+**Trap for the next agent:** BTN-3 (`button-primitive-usage.test.ts`) is a plain-text regex over the file. A code **comment** containing the literal lowercase button tag fails the gate. Describe it in prose.
+
+**Files:** `src/admin/pages/site/canvas/BoardDocsLayer/{DocBlockView.tsx,DocBlockView.module.css,DocToolbar.tsx}`, `.../BoardDocsLayer/__tests__/docBlockEditingSession.test.tsx` (new), `src/admin/pages/site/canvas/BoardNotesLayer/{StickyNoteView.tsx,StickyNoteView.module.css,useAutoFitText.ts}`, `src/admin/pages/dashboard/{NewProjectDialog.tsx,NewProjectDialog.module.css}`, `src/styles/globals.css`, `docs/features/board-annotations.md`.
+
+---
+
+### board-04 — five board/UX asks, and two bugs found under them: the ruler made guides perpendicular to itself, and every project's dark palette was dead CSS
+- **Agent:** claude (single pass)
+- **Stage:** done. `bun run build`, `bun run lint`, `tsc -b` all green; suite triaged against a clean-HEAD worktree (identical 19 failures, no new ones). **NOT dogfooded in the browser beyond the two headless proofs below.**
+- **Updated:** 2026-08-30
+
+**The asks.** Remove the per-frame "Studio 1231.43px + expand + eye" bar; ask mobile-or-web when creating a project and size new screens accordingly; make sticky notes and doc cards actually useful (Miro-grade); ruler-click guides with right-click delete; audit/fix RTL + light/dark from an NPM design system, tested against `@alm-design/design-system`. Mid-task the user added: empty-canvas click should deselect everything; frame selection wasn't clearing; guides came out perpendicular to their ruler; the doc toolbar was too wide, its dropdowns dead, and it lagged.
+
+**Two real bugs were underneath, both verified in a real browser rather than reasoned about.**
+
+1. **Every project whose dark palette lives on `:root` previewed permanently light.** `darkSchemeCssTransform.ts` wrapped a whole `@media (prefers-color-scheme: dark)` block in `:where(html[data-studio-scheme='dark']) { … }` and let CSS nesting scope it. Nesting inserts a **descendant** combinator, so the near-universal `@media (prefers-color-scheme: dark) { :root { --bg: … } }` compiled to `:where(html[…]) :root` — which can never match, because `:root` IS `<html>` and `<html>` is not its own descendant. Proved in headless Chrome against the real `alm-design-design-system-1-1-3/src/tokens/colors.css`: the untouched media query and the old rewrite were **both** wrong, in opposite directions (dark preview stayed light on a light host; light preview stayed dark on a dark host). Fixed by rewriting each rule's SELECTOR into two forms — `:where(gate) S` and `S:where(gate)` — instead of nesting. A selector ending in a pseudo-element gets only the first (appending after `::before` is invalid and would drop the whole rule). Specificity is unchanged either way, `:where()` being zero. **Do not "simplify" this back into a nesting wrapper.**
+   The ALM design system masked it: it also ships `:root[data-theme="dark"]` outside the media query, which Studio's class-mechanism toggle drives. A project with only the media query had nothing.
+2. **The rulers made guides perpendicular to themselves.** The top (horizontal) ruler was wired to `axis: 'x'` — a *vertical* guide — and the left ruler to `'y'`. The mapping now lives in `guideAxisForRuler` (`rulerGeometry.ts`) with a test, because the correct pairing reads backwards (`horizontal` → `'y'`, since `BoardGuide.axis: 'y'` means "positioned by a board Y", i.e. a horizontal line) and is *deliberately not* the axis each ruler paints.
+
+**A third, subtler one, fixed before it shipped:** the default-board seed races the `frameDefaults` fetch. Both promises start together in `AdminCanvasLayout` and nothing orders them, so losing the race stamps every seeded frame with the hardcoded `FRAME_WIDTH`/`FRAME_HEIGHT` — a project created as Mobile would have opened its first screen at 1024×800 and autosaved it. Gated on a new `frameDefaultsSettled` flag ("do we yet know", not "are there defaults" — a *failed* fetch settles too, or the board would never seed).
+
+**"Frame selection won't clear" was not a selection bug.** The persistent green ring + resize handles were `activePageId` — the EDIT TARGET, set by a capture-phase click anywhere inside a frame and never cleared. It wore `--canvas-selection-ring` and gated the resize handles, so the last-touched frame looked permanently selected with nothing able to dismiss it. Chrome now follows `selectedFrameIds`; `activePageId` keeps only a raised header tone. **If a future change makes active-frame chrome look like selection again, this is the bug it reintroduces.**
+
+**What shipped.**
+- Board frames pass `showBreakpointChrome={false}` to `BreakpointFrame` — that row was board-global chrome promising per-frame control it could not deliver (the "KNOWN LIMITATION" note in `BoardFramesLayer.tsx` is now resolved, not restated).
+- `platformPresets.ts` (`@core/studio-board`) + `platform` on `StudioMetaSchema` + a create dialog. Mobile → 393×852, Web → 1440×1024, written as `frameDefaults`, which every existing code path already reads.
+- Notes and docs: resize, multi-select (incl. marquee, alongside frames), duplicate, copy/paste, z-order, arrow-nudge, right-click menus, click-again-to-edit, auto-fitting sticky text, and a rich-text doc editor. Full writeup: **`docs/features/board-annotations.md`** — read it before touching either view.
+- Guides: right-click menu (delete / clear axis / clear board), a wider invisible hit target, `clearGuides`.
+- Empty-canvas click and Escape both clear all three selection lists via one `clearAllSelections`.
+- Agent prompt gained an RTL/dark section: it already had `studio_screenshot`'s axes override and `studio_fidelity_report`'s `RTL_PHYSICAL_PROPERTY` finding, and was never told to use either.
+
+**Refactors this forced (do not undo).** `frameResize.ts` → `canvas/rectResize.ts` (a note is not a frame; `minSize` is now a required argument because a frame's floor is 200 and an annotation's is 80); `MIN_FRAME_SIZE` → `@core/studio-board/frameGrid.ts`; annotation store wiring → `boardAnnotationSliceActions.ts` (`boardSlice.ts` was sitting exactly on the 700-line ceiling and could not absorb it).
+
+**Three traps in the doc-card toolbar, all live bugs, all now in the feature doc.**
+- `onMouseDown={e => e.preventDefault()}` on the toolbar container keeps the text selection alive AND stops every `<Select>` opening — a custom listbox opens on the very mousedown being cancelled. Remember the Range instead and restore it before each command.
+- Ending the edit session on the editable's `blur` unmounts the toolbar mid-click, because the toolbar is portaled to `document.body`. Use an outside-**pointerdown** check that recognises `[data-doc-toolbar]` and portaled `[role="dialog"|"listbox"|"menu"]`.
+- Positioning the toolbar from a `requestAnimationFrame` loop was a reported lag: 60 measure+write cycles a second for the whole session. Store `zoom`/`panX`/`panY` + a `ResizeObserver` is sufficient — the canvas cannot be pointer-panned mid-edit anyway.
+
+Font-family and font-size controls were built, found to silently do nothing for a collapsed caret or a multi-block selection, and **removed** rather than shipped as controls that lie. Block format owns sizing.
+
+**Verification.** `tsc -b`, `bun run build`, `bun run lint` clean. Suite compared against a clean-HEAD `git worktree` running the identical command: `src/__tests__/canvas` + `src/core/studio-board` + `AdminCanvasLayout` gave **the same 19 failures on both** (diff of the sorted failure lists is empty) — all pre-existing cross-file pollution in iframe-mounting tests, which pass in isolation. `bun test src/__tests__/architecture` 497 pass / 0 fail. New tests: `boardAnnotations.test.ts`, `platformPresets.test.ts`, `projectPlatformMeta.test.ts`, the `:root` regression cases in `darkSchemeCssTransform.test.ts`, `guideAxisForRuler` in `rulerGeometry.test.ts`. Gates moved with their rules: `overlayRafDiscipline` (pointer capture lives in the shared hook now; matches CALL sites, not prose), `module-size-budgets`, `button-primitive-usage`.
+
+**Not verified — do this first.** None of the interaction work was driven in a real browser (the admin login blocks it here): click-again-to-edit vs. drag, marquee over mixed frames+notes, the doc toolbar's restore-the-Range path, and whether the dark/RTL fix looks right on a live canvas rather than in the two headless proofs. The `POST /admin/api/studio/create` route wiring is covered only by typecheck — deliberately not by a route test, since it scaffolds into the real `studio-workspace/` (see `store-02`).
+
+**Files:** `src/core/studio-board/{types,boardsModel,serialize,frameGrid,platformPresets,index}.ts`, `src/core/sanitize.ts`, `src/admin/pages/site/canvas/{rectResize,useAnnotationInteraction,useBoardAnnotationKeyboard,darkSchemeCssTransform,previewAxesFrameEffect,BreakpointFrame,CanvasRoot,useCanvasSelectionKeyboard}.tsx?`, `canvas/{BoardNotesLayer,BoardDocsLayer,RulerGuidesLayer,CanvasRulers,BoardFramesLayer}/**`, `src/admin/pages/site/store/slices/{boardSlice,boardAnnotationActions,boardAnnotationSliceActions,boardGuideActions}.ts`, `src/admin/layouts/AdminCanvasLayout/{AdminCanvasLayout.tsx,studioDefaultBoardSeed.ts}`, `src/admin/pages/dashboard/{DashboardPage.tsx,NewProjectDialog.tsx,hooks/useStudioProjects.ts}`, `server/handlers/studio/{studioMeta,projectRoutes}.ts`, `server/ai/tools/studio/systemPrompt.ts`, `src/styles/globals.css`, `docs/features/{board-annotations,canvas-rulers-and-guides,canvas-iframe-per-frame}.md`, `docs/agent-refs/path-index.md`, `docs/README.md`.
+
+---
+
 ### agent-05 — the harness taught the agent the ONE icon import that cannot render, and nothing ever armed the ruler
 - **Agent:** claude (single pass)
 - **Stage:** done. Build + lint green, full suite triaged against a clean-HEAD baseline. **NOT dogfooded against a real chat turn.**

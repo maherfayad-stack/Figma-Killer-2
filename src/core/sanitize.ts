@@ -144,6 +144,35 @@ const RICHTEXT_CONFIG: Config = {
 }
 
 /**
+ * Board doc-card config — `RICHTEXT_CONFIG` plus the attributes a WYSIWYG
+ * card actually produces: `style` (inline font family, font size, colour and
+ * alignment, which the doc toolbar writes and markdown has no syntax for) and
+ * `align`.
+ *
+ * Widening `style` is safe here and is NOT a widening of the publisher's
+ * profile: DOMPurify runs allowed inline styles through its own CSS parser,
+ * dropping `url()`, `expression()`, `behavior` and anything else that can
+ * execute. And a `DocBlock` is board furniture — it lives in
+ * `.studio/boards.json`, renders only inside the admin canvas, and is never
+ * emitted by the publisher — so this profile is deliberately its own constant
+ * rather than a relaxation of `RICHTEXT_CONFIG`, which IS on the published
+ * path and must stay as tight as it is.
+ */
+const BOARD_DOC_CONFIG: Config = {
+  ...RICHTEXT_CONFIG,
+  ALLOWED_ATTR: [...(RICHTEXT_CONFIG.ALLOWED_ATTR ?? []), 'style', 'align'],
+}
+
+/**
+ * Sanitize a board doc card's rich text (`DocBlock.html`). Call at every write
+ * AND at every render — the write path covers what the editor produced, the
+ * render path covers what an edited-by-hand `boards.json` contains.
+ */
+export function sanitizeBoardDocHtml(value: unknown): string {
+  return sanitizeRichtext(value, BOARD_DOC_CONFIG)
+}
+
+/**
  * Strict config — strips ALL HTML tags; returns plain text only.
  * Use for single-line fields that should never contain markup.
  * Pass this to `sanitizeRichtext()` — it applies a post-strip pass to catch

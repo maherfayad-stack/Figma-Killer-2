@@ -31,6 +31,7 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { Type } from '@core/utils/typeboxHelpers'
+import { DEFAULT_PROJECT_PLATFORM, frameDefaultsForPlatform } from '@core/studio-board'
 import { badRequest, jsonResponse, readValidatedBody } from '../../http'
 import { applyProjectSeed } from './projectSeed'
 import { generateStudioProjectGuide } from './projectGuide'
@@ -53,9 +54,16 @@ import {
  * Body of POST /admin/api/studio/create — scaffold a new project folder.
  * `name` is optional: the "New project" dashboard action omits it entirely
  * (no name-prompt UI) and the server auto-names it `Untitled`, `Untitled 2`, ….
+ *
+ * `platform` is the form factor the dashboard asks for before creating — it
+ * decides the `frameDefaults` every screen in this project starts at (see
+ * `@core/studio-board`'s `platformPresets.ts`). Optional so a scripted or
+ * older client that omits it still creates a working project; it then gets
+ * `DEFAULT_PROJECT_PLATFORM`.
  */
 const CreateProjectBodySchema = Type.Object({
   name: Type.Optional(Type.String()),
+  platform: Type.Optional(Type.Union([Type.Literal('mobile'), Type.Literal('web')])),
 })
 
 /** Body of POST /admin/api/studio/rename — change a project's display name. */
@@ -114,7 +122,12 @@ export async function tryServeStudioProjectRoutes(
       const home = starterPage('Home')
       writeFileSync(join(pagesDir, 'Home.tsx'), home.component)
       writeFileSync(join(pagesDir, home.stylesFileName), home.styles)
-      writeProjectMeta(dir, { displayName })
+      // The chosen form factor, and the frame size it implies. `frameDefaults`
+      // is the field the board actually reads (`boardSlice`'s `addFrame`, and
+      // `pageScaffold.ts` server-side), so every page added to this project
+      // later opens at the right width without being resized by hand.
+      const platform = body.platform ?? DEFAULT_PROJECT_PLATFORM
+      writeProjectMeta(dir, { displayName, platform, frameDefaults: frameDefaultsForPlatform(platform) })
       // Design system + its declared dependency, copied from the local seed —
       // AFTER the scaffolder's own files, which the seed never overwrites.
       // Best-effort: a project without a seed is exactly what it used to be.

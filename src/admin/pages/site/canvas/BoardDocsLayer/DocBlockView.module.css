@@ -1,5 +1,5 @@
 /**
- * DocBlockView — markdown documentation card.
+ * DocBlockView — rich-text documentation card.
  * Uses design tokens from globals.css (no hardcoded colours).
  *
  * Position/size come from `--doc-x` / `--doc-y` / `--doc-w` / `--doc-h`,
@@ -11,6 +11,12 @@
     top: var(--doc-y);
     width: var(--doc-w);
     height: var(--doc-h);
+    /* Paint order across BOTH annotation kinds. Neither `.layer` sets a
+       z-index, so neither creates a stacking context — which is exactly what
+       lets a note and a doc interleave here rather than notes always sitting
+       under docs. `--annotation-z` is written inline per item; 0 is the
+       "never reordered" default (see `BoardStacked` in @core/studio-board). */
+    z-index: var(--annotation-z);
     display: flex;
     flex-direction: column;
     background: var(--bg-surface-2);
@@ -18,7 +24,10 @@
     border-radius: var(--panel-radius);
     box-shadow: var(--shadow-panel-drop);
     pointer-events: auto;
-    overflow: hidden;
+    /* `visible`, not `hidden`: the resize handles sit just OUTSIDE the card's
+       box (-5px), so clipping would make them unreachable. `.body` still
+       clips its own overflow, which is what actually needed clipping. */
+    overflow: visible;
 }
 
 .header {
@@ -26,11 +35,15 @@
     align-items: center;
     justify-content: space-between;
     gap: var(--space-xs);
-    padding: var(--space-2xs) var(--space-s);
+    padding: var(--space-2xs) var(--space-2xs) var(--space-2xs) var(--space-s);
     background: var(--bg-surface-3);
     border-bottom: 1px solid var(--border);
+    border-radius: var(--panel-radius) var(--panel-radius) 0 0;
     cursor: grab;
     user-select: none;
+    /* The header is a fixed-height grab strip; only the body scrolls. */
+    flex: none;
+    min-height: 26px;
 }
 
 .header:active {
@@ -45,16 +58,47 @@
     letter-spacing: 0.04em;
 }
 
+/*
+ * Delete is hidden until the card is hovered, focused, or selected — a
+ * permanently-lit red X on every card is the loudest thing on a board of
+ * documents, and it is the one action you least often want.
+ */
 .chrome {
     display: flex;
     align-items: center;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 120ms ease;
 }
 
+.doc:hover .chrome,
+.doc:focus-within .chrome,
+.docSelected .chrome {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+/*
+ * The scroll box. It is the SAME element in all three states (editing,
+ * rendered, empty) so leaving an editing session never rebuilds the card's
+ * scroll position — only its single keyed child swaps. Laid out as a column
+ * so that child fills the card even when the text is one short line, which is
+ * what gives an almost-empty card a full-height caret target.
+ */
 .body {
     flex: 1;
     min-height: 0;
     overflow: auto;
     cursor: text;
+    display: flex;
+    flex-direction: column;
+}
+
+.rendered,
+.placeholder {
+    /* Fills the scroll box when the text is short (so the whole card is a
+       caret target) and overflows it when the text is long. */
+    flex: 1 0 auto;
 }
 
 .rendered {
@@ -64,6 +108,19 @@
     color: var(--text);
 }
 
+/*
+ * Heading sizes are set explicitly rather than left to the browser's
+ * `2em`/`1.5em` defaults, which are relative to the body size.
+ *
+ * The scale is deliberately WIDE — H1 lands at roughly TWICE the body size,
+ * and each step down is a clear jump. A first attempt tuned these towards the
+ * body size so a heading would not overrun a 320px card, and the result was a
+ * 14px H1 above a 12px body: the format applied, and looked like it had done
+ * nothing at all. On a card viewed at canvas zoom, a block format that cannot
+ * be told apart from body text is the same as a broken one. Size difference IS
+ * the control — do not narrow these steps to save horizontal space; a long
+ * heading wrapping onto two lines is the correct outcome.
+ */
 .rendered :global(h1),
 .rendered :global(h2),
 .rendered :global(h3),
@@ -75,6 +132,13 @@
     font-weight: 600;
     line-height: 1.3;
 }
+
+.rendered :global(h1) { font-size: var(--text-5xl); }
+.rendered :global(h2) { font-size: var(--text-3xl); }
+.rendered :global(h3) { font-size: var(--text-xl); }
+.rendered :global(h4),
+.rendered :global(h5),
+.rendered :global(h6) { font-size: var(--text-m); }
 
 .rendered :global(p) {
     margin: 0 0 var(--space-xs);
@@ -122,16 +186,48 @@
     font-style: italic;
 }
 
-.textarea {
-    width: 100%;
-    height: 100%;
-    padding: var(--space-s);
-    border: none;
+/*
+ * The contentEditable body while editing. `.rendered` already supplies the
+ * typography and the flex-grow that guarantees a full-height caret target, so
+ * this only removes the focus outline the card's own selection ring replaces.
+ */
+.editing {
     outline: none;
-    resize: none;
-    background: transparent;
-    color: var(--text);
-    font-family: inherit;
-    font-size: var(--text-s);
-    line-height: 1.5;
 }
+
+/*
+ * Selection ring. The card already owns `border`, so the ring is a box-shadow
+ * layered over the drop shadow.
+ *
+ * It is `--annotation-selection-ring` (white), NOT the canvas green: green is
+ * the signal for "this NODE in the page tree is selected", and board furniture
+ * is a different kind of object. Using one colour for both made a selected
+ * doc card look like a selected component.
+ */
+.docSelected {
+    box-shadow:
+        var(--shadow-panel-drop),
+        0 0 0 2px var(--annotation-selection-ring);
+}
+
+/*
+ * Resize handles — rendered only while the card is selected. Positioned by
+ * `data-handle`; cursor-per-handle is a CSS concern, matching the frame and
+ * sticky-note handles.
+ */
+.resizeHandle {
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    background: transparent;
+    z-index: 1;
+}
+
+.resizeHandle[data-handle='nw'] { top: -5px; left: -5px; cursor: nwse-resize; }
+.resizeHandle[data-handle='n']  { top: -5px; left: 50%; margin-left: -5px; cursor: ns-resize; }
+.resizeHandle[data-handle='ne'] { top: -5px; right: -5px; cursor: nesw-resize; }
+.resizeHandle[data-handle='e']  { top: 50%; right: -5px; margin-top: -5px; cursor: ew-resize; }
+.resizeHandle[data-handle='se'] { bottom: -5px; right: -5px; cursor: nwse-resize; }
+.resizeHandle[data-handle='s']  { bottom: -5px; left: 50%; margin-left: -5px; cursor: ns-resize; }
+.resizeHandle[data-handle='sw'] { bottom: -5px; left: -5px; cursor: nesw-resize; }
+.resizeHandle[data-handle='w']  { top: 50%; left: -5px; margin-top: -5px; cursor: ew-resize; }

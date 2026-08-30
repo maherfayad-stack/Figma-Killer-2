@@ -76,23 +76,46 @@
  * `@layer` wrappers included — is left byte-for-byte untouched; only the
  * exact matched `@media (...) { ... }` text is replaced.
  *
+ * ## How the gate is applied, and the `:root` trap that shaped it
+ *
+ * Each style rule inside a matched block has its SELECTOR LIST rewritten: for
+ * every selector `S`, the block emits both
+ *
+ *     :where(html[data-studio-scheme='dark']) S      -- S is a descendant of html
+ *     S:where(html[data-studio-scheme='dark'])       -- S *is* html
+ *
+ * The obvious implementation — wrapping the whole block in
+ * `:where(html[data-studio-scheme='dark']) { <inner, byte-preserved> }` and
+ * letting CSS nesting scope it — was what this module did first, and it is
+ * WRONG for the single most common dark-mode rule there is. Nesting inserts a
+ * DESCENDANT combinator, and the rule that carries a project's dark tokens is
+ * almost always written on the root element:
+ *
+ *     @media (prefers-color-scheme: dark) { :root { --bg: #000 } }
+ *
+ * `:where(html[…]) :root` can never match: `:root` IS `<html>`, and `<html>`
+ * is not a descendant of itself. So the whole dark palette silently did
+ * nothing — verified in Chromium, not reasoned about. The second selector
+ * above is what covers that case (`:root:where(html[…])` matches the root
+ * element itself); the first covers everything else. A selector ending in a
+ * pseudo-element (`.a::before`) gets only the first form — appending anything
+ * after `::before` is invalid and would take the whole rule down with it.
+ *
  * ## Specificity neutrality
  *
- * `:where(...)` has zero specificity by spec. The wrapper is
- * `:where(html[data-studio-scheme='dark']) { <inner, byte-preserved> }` — CSS
- * nesting (universally supported in the evergreen browsers Studio targets)
- * gives each inner rule's effective selector an implicit
- * `:where(...) <descendant>` combinator, so `.btn { padding: 8px }` becomes
- * `:where(html[data-studio-scheme='dark']) .btn { padding: 8px }`. Because
- * `html` is always an ancestor of every element in the document, this matches
- * EXACTLY the same elements the original (unscoped, inside the media query)
- * `.btn` selector matched — the rewrite changes *when* the rule applies
- * (attribute gate instead of media gate), never *what* it matches or how
- * strongly it wins a specificity fight. `docs/features/canvas-iframe-per-frame.md`
- * documents this as a targeted, narrow exception to "no selector rewriting":
- * unlike a wrapper `<div>`, nothing here changes the DOM the selectors match
- * against — only the CONDITION under which a media-gated block applies, and
- * only inside the injected copy.
+ * `:where(...)` has zero specificity by spec, so both emitted selectors carry
+ * exactly `S`'s own specificity — identical to what `S` had inside the media
+ * query. The rewrite changes *when* a rule applies (attribute gate instead of
+ * media gate), never how strongly it wins a specificity fight.
+ * `docs/features/canvas-iframe-per-frame.md` documents this as a targeted,
+ * narrow exception to "no selector rewriting": nothing here changes the DOM
+ * the selectors match against, only the condition under which a media-gated
+ * block applies, and only inside the injected copy.
+ *
+ * Declarations, comments and formatting inside each rule are still preserved
+ * byte-for-byte; only the selector text ahead of each `{` is rewritten, and
+ * nested at-rules (`@supports`, `@layer`, a nested `@media`) are recursed into
+ * with their preludes intact.
  */
 import { getSheetConstructor } from '@core/siteImport'
 
@@ -232,11 +255,13 @@ function isValidMediaPrelude(prelude: string, SheetCtor: typeof CSSStyleSheet): 
 
 /**
  * Rewrites every `@media (prefers-color-scheme: dark|light)` block in `css`
- * into `:where(html[data-studio-scheme='<scheme>']) { <inner> }`. Everything
- * else — including surrounding `@layer`/`@supports` wrappers, comments,
- * formatting — is left byte-for-byte untouched. Returns `css` unchanged when
- * no CSS engine is available (defensive; `getSheetConstructor` already
- * degrades this way for `cssToStyleRules.ts`) or when nothing matches.
+ * so its rules are gated on `html[data-studio-scheme='<scheme>']` instead —
+ * see this module's doc for the exact selector forms and why there are two.
+ * Everything outside a matched block — surrounding `@layer`/`@supports`
+ * wrappers, comments, formatting — is left byte-for-byte untouched, as are the
+ * DECLARATIONS inside each rewritten rule. Returns `css` unchanged when no CSS
+ * engine is available (defensive; `getSheetConstructor` already degrades this
+ * way for `cssToStyleRules.ts`) or when nothing matches.
  */
 export function rewritePrefersColorScheme(css: string, sheetConstructor?: typeof CSSStyleSheet): string {
   const SheetCtor = getSheetConstructor(sheetConstructor)
@@ -254,8 +279,123 @@ export function rewritePrefersColorScheme(css: string, sheetConstructor?: typeof
     if (!scheme) continue
     if (!isValidMediaPrelude(block.preludeText, SheetCtor)) continue
     const inner = css.slice(block.bodyStart + 1, block.bodyEnd)
-    const replacement = `:where(html[${DARK_SCHEME_ATTR}='${scheme}']) {${inner}}`
-    out = out.slice(0, block.start) + replacement + out.slice(block.end)
+    const gate = `html[${DARK_SCHEME_ATTR}='${scheme}']`
+    out = out.slice(0, block.start) + gateBlock(inner, gate) + out.slice(block.end)
   }
+  return out
+}
+
+/** Splits a selector list on TOP-LEVEL commas only — a comma inside `:is(a, b)`, `[attr="a,b"]` or a comment does not separate selectors. */
+function splitSelectorList(selectorText: string): string[] {
+  const parts: string[] = []
+  let depth = 0
+  let start = 0
+  let i = 0
+  while (i < selectorText.length) {
+    const ch = selectorText[i]
+    if (ch === '/' && selectorText[i + 1] === '*') {
+      const close = selectorText.indexOf('*/', i + 2)
+      i = close === -1 ? selectorText.length : close + 2
+      continue
+    }
+    if (ch === '"' || ch === "'") { i = skipString(selectorText, i); continue }
+    if (ch === '(' || ch === '[') depth++
+    else if (ch === ')' || ch === ']') depth--
+    else if (ch === ',' && depth === 0) {
+      parts.push(selectorText.slice(start, i))
+      start = i + 1
+    }
+    i++
+  }
+  parts.push(selectorText.slice(start))
+  return parts
+}
+
+/**
+ * `selectorText` rewritten so it applies only under `gate`. See the module doc
+ * for why each selector yields TWO forms (descendant-of-root and is-root), and
+ * why a pseudo-element selector yields only the first.
+ */
+export function gateSelectorList(selectorText: string, gate: string): string {
+  const gated: string[] = []
+  for (const raw of splitSelectorList(selectorText)) {
+    const selector = raw.trim()
+    if (!selector) continue
+    gated.push(`:where(${gate}) ${selector}`)
+    // `.a::before:where(...)` is invalid CSS — nothing may follow a
+    // pseudo-element — and one invalid selector invalidates the whole list,
+    // taking the rule with it. Such a selector can never BE the root element
+    // anyway, so the descendant form above is already complete for it.
+    if (!selector.includes('::')) gated.push(`${selector}:where(${gate})`)
+  }
+  // A block whose body held no style rule at all (only comments) leaves
+  // nothing to gate; the caller drops it rather than emitting `{ … }` with no
+  // selector, which would be a parse error.
+  return gated.join(', ')
+}
+
+/**
+ * Applies `gate` to every top-level style rule in a block body, recursing into
+ * nested at-rules with their preludes preserved. Anything that is not a rule
+ * (comments, stray whitespace, a bare declaration in an invalid position) is
+ * passed through untouched.
+ */
+function gateBlock(body: string, gate: string): string {
+  let out = ''
+  let i = 0
+  let preludeStart = 0
+
+  while (i < body.length) {
+    const ch = body[i]
+    if (ch === '/' && body[i + 1] === '*') {
+      const close = body.indexOf('*/', i + 2)
+      i = close === -1 ? body.length : close + 2
+      continue
+    }
+    if (ch === '"' || ch === "'") { i = skipString(body, i); continue }
+
+    if (ch === '{') {
+      // Find this block's matching close, tracking nesting/strings/comments the
+      // same way `findMediaBlocks` does.
+      let depth = 1
+      let k = i + 1
+      while (k < body.length && depth > 0) {
+        const c = body[k]
+        if (c === '/' && body[k + 1] === '*') {
+          const close = body.indexOf('*/', k + 2)
+          k = close === -1 ? body.length : close + 2
+          continue
+        }
+        if (c === '"' || c === "'") { k = skipString(body, k); continue }
+        if (c === '{') depth++
+        else if (c === '}') depth--
+        k++
+      }
+      if (depth !== 0) break // malformed — leave the remainder verbatim
+
+      const prelude = body.slice(preludeStart, i)
+      const innerBody = body.slice(i + 1, k - 1)
+      const trimmed = prelude.trim()
+
+      if (trimmed.startsWith('@')) {
+        // A nested at-rule: keep its prelude, gate what is inside it.
+        out += `${prelude}{${gateBlock(innerBody, gate)}}`
+      } else {
+        const gatedSelectors = gateSelectorList(prelude, gate)
+        // Preserve the leading whitespace/comments that sat before the
+        // selector, so formatting survives.
+        const leading = prelude.slice(0, prelude.length - prelude.trimStart().length)
+        if (gatedSelectors) out += `${leading}${gatedSelectors} {${innerBody}}`
+      }
+
+      i = k
+      preludeStart = k
+      continue
+    }
+    i++
+  }
+
+  // Trailing text after the last rule (whitespace, comments).
+  out += body.slice(preludeStart)
   return out
 }

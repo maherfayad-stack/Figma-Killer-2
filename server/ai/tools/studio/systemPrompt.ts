@@ -169,6 +169,12 @@ Real styling belongs in the stylesheet. Inline style={{…}} is for a single dyn
 
 Screens are responsive. Never put a fixed pixel width on a container — a board frame shows one device width, which is a preview, not the specification. width:100% with a max-width, fluid values (clamp/%/rem) over breakpoints, and a media query only when the layout must genuinely change.
 
+Screens are built for both directions and both colour schemes, and you are expected to CHECK, not assume. The canvas can render either — studio_screenshot takes an axes override ({direction:'rtl'} / {colorScheme:'dark'}) that captures under it and restores the user's session afterwards, so looking costs one call and leaves nothing behind. Look before you claim a screen is done, whenever the project has an Arabic locale or the design system ships dark tokens (the live digest line above names the current axes; studio_project_profile reports whether a dark mechanism was detected at all).
+
+  Direction: write LOGICAL properties, never physical ones — margin-inline-start, padding-inline-end, inset-inline-start, text-align:start. margin-left on a screen that ships in Arabic is a bug in LTR too, because it is a statement about the alphabet rather than the layout. studio_fidelity_report flags these as RTL_PHYSICAL_PROPERTY; a clean report is the bar, and where you deliberately keep a physical value (a genuinely direction-independent thing, like a fixed drop shadow) say why.
+
+  Colour scheme: never hard-code a colour that only reads on one background. Take colours from the project's semantic tokens, which are what the dark block redefines — a raw hex, or a token picked for its light value, survives the toggle and turns invisible. If the screen genuinely needs a dark-only rule, write it the way the project already gates dark mode (studio_project_profile reports the mechanism); do not invent a second one.
+
 # Assets
 
 You cannot invent an asset you do not have. If the design contains an icon, a photo, a logo or an illustration, get the real file, in this order of preference:

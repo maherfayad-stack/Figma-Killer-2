@@ -3,7 +3,20 @@ import type { PreviewAxes } from './previewAxes'
 
 export type NoteColor = 'yellow' | 'green' | 'blue' | 'pink' | 'gray'
 
-export interface StickyNote {
+/**
+ * Paint order for board furniture (notes and docs), lowest first. OPTIONAL on
+ * both: absent means "unordered", and every unordered item paints below every
+ * ordered one in its own array order — so an existing `boards.json` opens with
+ * exactly the stacking it had (array order) and gains explicit `z` values only
+ * on the items a user actually raises or lowers. Frames are NOT part of this
+ * ordering: they are the document, notes and docs are annotation ON it, and
+ * `StudioBoardLayers` keeps them in separate layers for that reason.
+ */
+export interface BoardStacked {
+  z?: number
+}
+
+export interface StickyNote extends BoardStacked {
   id: string
   x: number
   y: number
@@ -48,14 +61,30 @@ export interface BoardFrame {
   axes?: Partial<PreviewAxes>
 }
 
-// a markdown-authored documentation card, rendered as canvas furniture
-export interface DocBlock {
+/**
+ * A rich-text documentation card, rendered as canvas furniture.
+ *
+ * `html` is SANITIZED rich text (`sanitizeBoardDocHtml` in `@core/sanitize`),
+ * authored in place through a contentEditable surface — headings, lists,
+ * links, inline colour, font family and font size. It replaced a raw-markdown
+ * `markdown` field: a card you format by typing cannot round-trip through
+ * markdown without either losing the formatting markdown has no syntax for
+ * (font family, size, colour, alignment) or inventing a dialect for it.
+ *
+ * A pre-rich-text `boards.json` still carries `markdown`. `serialize.ts`'s
+ * `coerceDoc` renders it to HTML on READ, so the migration happens once, at
+ * the boundary, and nothing downstream ever sees two shapes — the pattern
+ * CLAUDE.md prescribes for a persisted-JSON change ("change the reader/writer
+ * code to handle the new shape"). There is no `markdown` field on this type
+ * and no code path that writes one.
+ */
+export interface DocBlock extends BoardStacked {
   id: string
   x: number
   y: number
   w: number
   h: number
-  markdown: string
+  html: string
 }
 
 /**

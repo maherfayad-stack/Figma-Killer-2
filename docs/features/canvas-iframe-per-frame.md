@@ -2,7 +2,9 @@
 
 How the visual editor canvas renders page trees inside isolated per-viewport iframes, and how the design and live views are built on top of that foundation.
 
-Each viewport frame runs in its own `<iframe>` with its own `<html><body>`. The page tree portals into the iframe body, so user CSS, combinators (`>`, `+`, `:nth-child()`), and viewport units behave exactly as on the published page — no selector rewriting, no scoping, no impedance mismatch.
+Each viewport frame runs in its own `<iframe>` with its own `<html><body>`. The page tree portals into the iframe body, so user CSS, combinators (`>`, `+`, `:nth-child()`), and viewport units behave exactly as on the published page — no scoping, no impedance mismatch.
+
+There is exactly **one** sanctioned selector rewrite, and it is deliberately narrow: `darkSchemeCssTransform.ts` re-gates `@media (prefers-color-scheme: …)` blocks on a Studio-controlled attribute, because that media feature resolves from the host OS and cannot be forced per-iframe. It rewrites only the selector text of rules inside such a block, only in the injected copy, and never with any added specificity (`:where()`). Nothing else in the canvas rewrites a selector; see that module's own doc for the `:root` trap that shaped its exact output.
 
 ---
 

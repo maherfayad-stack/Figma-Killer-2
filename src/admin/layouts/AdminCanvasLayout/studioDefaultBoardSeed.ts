@@ -39,6 +39,17 @@ export interface StudioDefaultBoardSeedInputs {
   boardCount: number
   activeBoardFrameCount: number | null
   pageCount: number
+  /**
+   * Whether the project's `frameDefaults` are known yet (`boardSlice`'s
+   * `frameDefaultsSettled` — populated, empty, or failed; "settled", not
+   * "non-empty"). The seed hands every frame it creates the project's default
+   * size, so running it before that answer arrives silently stamps the whole
+   * board with the hardcoded `FRAME_WIDTH`/`FRAME_HEIGHT` — the exact race
+   * that would make a project created as Mobile open its first screen at
+   * 1024×800. The two fetches are started together and neither orders the
+   * other, so this has to be an explicit gate.
+   */
+  frameDefaultsSettled: boolean
 }
 
 export function shouldSeedDefaultBoard(inputs: StudioDefaultBoardSeedInputs): boolean {
@@ -48,5 +59,6 @@ export function shouldSeedDefaultBoard(inputs: StudioDefaultBoardSeedInputs): bo
   if (inputs.boardCount !== 1) return false
   if (inputs.activeBoardFrameCount !== 0) return false
   if (inputs.pageCount === 0) return false
+  if (!inputs.frameDefaultsSettled) return false
   return true
 }
