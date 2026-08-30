@@ -13,13 +13,10 @@ import { pluginRuntime } from '@core/plugins/runtime'
 import type { SavedLayout } from '@core/layouts'
 import type { VisualComponent } from '@core/visualComponents'
 import type { InsertLocation } from '@site/store/insertLocation'
-import { selectActiveCanvasPage, useEditorStore } from '@site/store/store'
-import {
-  dropPreviewStyle,
-  resolveCanvasPointerInsertionDrop,
-  type CanvasDropPreview,
-} from '@site/canvas/canvasInsertionDrop'
-import { clearCanvasPointerRelay, markCanvasPointerRelay } from '@site/canvas/canvasPointerRelay'
+import { useEditorStore } from '@site/store/store'
+import { dropPreviewStyle } from '@site/canvas/canvasInsertionDrop'
+import { useCanvasInsertionDrag } from '@site/canvas/useCanvasInsertionDrag'
+import { ghostPositionStyle } from '@site/canvas/CanvasInsertionDragOverlay/ghostPositionStyle'
 import { Button } from '@ui/components/Button'
 import { EmptyState } from '@ui/components/EmptyState'
 import { Kbd } from '@ui/components/Kbd'
@@ -51,10 +48,6 @@ import {
 } from './moduleInserterPrefs'
 import { SavedLayoutManageMenu, type SavedLayoutMenuState } from './SavedLayoutManageMenu'
 import {
-  ghostStyle,
-  type DragVisualState,
-} from './moduleInserterDragPreview'
-import {
   scrollSelectedItemIntoView,
   type ModuleInserterSelectionSource,
 } from './moduleInserterSelectionScroll'
@@ -79,11 +72,6 @@ interface ModuleInserterDialogProps {
   ) => boolean
 }
 
-interface PointerDropResolution {
-  location: InsertLocation
-  preview: CanvasDropPreview
-  breakpointId: string
-}
 
 type InserterZone = 'search' | 'grid' | 'rail'
 
@@ -107,18 +95,14 @@ export function ModuleInserterDialog({
   const [zone, setZone] = useState<InserterZone>('search')
   const [view, setView] = useState<InserterView>(prefs.view)
   const [recentRefs, setRecentRefs] = useState<ModuleInserterRecentRef[]>(prefs.recent)
-  const [drag, setDrag] = useState<DragVisualState | null>(null)
   const [savedLayoutMenu, setSavedLayoutMenu] = useState<SavedLayoutMenuState | null>(null)
   const backdropRef = useRef<HTMLDivElement | null>(null)
   const searchRef = useRef<HTMLInputElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
-  const suppressClickRef = useRef(false)
   const selectionSourceRef = useRef<ModuleInserterSelectionSource>('pointer')
 
   const visualComponents = useEditorStore((s) => s.site?.visualComponents ?? EMPTY_COMPONENTS)
   const savedLayouts = useEditorStore((s) => s.site?.layouts ?? EMPTY_LAYOUTS)
-  const setActiveBreakpoint = useEditorStore((s) => s.setActiveBreakpoint)
-  const canvasPage = useEditorStore(selectActiveCanvasPage)
   const insertionContext = useModuleInsertionContext()
   const {
     isFavorite,
@@ -333,82 +317,28 @@ export function ModuleInserterDialog({
     writeModuleInserterView(next)
   }
 
+  // The gesture, the drop resolution and the click suppression are all
+  // `useCanvasInsertionDrag`, shared with the canvas notch and the media
+  // explorer. Only what gets inserted is this dialog's own — it drops modules,
+  // saved layouts and Visual Components through `pickItem`, which the other
+  // two callers have no equivalent of.
+  const canvasDrag = useCanvasInsertionDrag<ModuleInserterItem>({
+    onDrop: (item, location) => pickItem(item, location, 'drop'),
+    // Dim the dialog's own backdrop while dragging, so it stops covering the
+    // canvas the drop is aimed at.
+    onDraggingChange: (dragging) => {
+      if (dragging) backdropRef.current?.setAttribute('data-dragging', 'true')
+      else backdropRef.current?.removeAttribute('data-dragging')
+    },
+  })
+
   function handlePointerDown(
     item: ModuleInserterItem,
     event: ReactPointerEvent<HTMLButtonElement>,
   ) {
-    if (event.button !== 0) return
     // Disabled items can't be dragged to the canvas either.
     if (item.disabledReason) return
-    const startX = event.clientX
-    const startY = event.clientY
-    let started = false
-
-    const cleanup = () => {
-      window.removeEventListener('pointermove', move)
-      window.removeEventListener('pointerup', up)
-      window.removeEventListener('pointercancel', cancel)
-      clearCanvasPointerRelay()
-      backdropRef.current?.removeAttribute('data-dragging')
-    }
-
-    const move = (moveEvent: PointerEvent) => {
-      if (!started) {
-        if (Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY) < 6) return
-        started = true
-        backdropRef.current?.setAttribute('data-dragging', 'true')
-      }
-
-      const resolved = resolvePointerDrop(moveEvent.clientX, moveEvent.clientY)
-      setDrag({
-        item,
-        x: moveEvent.clientX,
-        y: moveEvent.clientY,
-        preview: resolved?.preview ?? null,
-      })
-    }
-
-    const up = (upEvent: PointerEvent) => {
-      cleanup()
-
-      const resolved = started
-        ? resolvePointerDrop(upEvent.clientX, upEvent.clientY)
-        : null
-      setDrag(null)
-      if (!started) return
-
-      suppressClickRef.current = true
-      window.setTimeout(() => {
-        suppressClickRef.current = false
-      }, 0)
-
-      if (resolved && pickItem(item, resolved.location, 'drop')) {
-        setActiveBreakpoint(resolved.breakpointId)
-      }
-    }
-
-    const cancel = () => {
-      cleanup()
-      setDrag(null)
-    }
-
-    markCanvasPointerRelay(event.pointerId)
-    window.addEventListener('pointermove', move)
-    window.addEventListener('pointerup', up)
-    window.addEventListener('pointercancel', cancel)
-  }
-
-  function resolvePointerDrop(
-    clientX: number,
-    clientY: number,
-  ): PointerDropResolution | null {
-    if (!canvasPage) return null
-    return resolveCanvasPointerInsertionDrop({
-      canvasPage,
-      clientX,
-      clientY,
-      label: 'Drop',
-    })
+    canvasDrag.startDrag(event, item, 'Drop')
   }
 
   function handleBackdropClick(event: React.MouseEvent<HTMLDivElement>) {
@@ -437,7 +367,7 @@ export function ModuleInserterDialog({
       className={styles.backdrop}
       role="presentation"
       onMouseDown={handleBackdropClick}
-      data-dragging={drag ? 'true' : undefined}
+      data-dragging={canvasDrag.drag ? 'true' : undefined}
     >
       <div
         className={styles.panel}
@@ -591,7 +521,7 @@ export function ModuleInserterDialog({
                         setSelectedKeyOverride(item.key)
                       }}
                       onPick={() => {
-                        if (suppressClickRef.current) return
+                        if (canvasDrag.shouldSuppressClick()) return
                         pickItem(item, undefined, 'click')
                       }}
                       onToggleFavorite={() => {
@@ -608,16 +538,16 @@ export function ModuleInserterDialog({
         </main>
       </div>
 
-      {drag?.preview ? (
+      {canvasDrag.drag?.preview ? (
         <div
           className={styles.dropPreview}
-          data-position={drag.preview.position}
-          style={dropPreviewStyle(drag.preview)}
+          data-position={canvasDrag.drag.preview.position}
+          style={dropPreviewStyle(canvasDrag.drag.preview)}
           aria-hidden="true"
         >
           <span className={styles.dropTag}>
             <AppGridPlusGlyphIcon size={11} aria-hidden="true" />
-            {drag.preview.label}
+            {canvasDrag.drag.preview.label}
           </span>
         </div>
       ) : null}
@@ -630,14 +560,14 @@ export function ModuleInserterDialog({
         />
       )}
 
-      {drag ? (
-        <div className={styles.ghost} style={ghostStyle(drag)} aria-hidden="true">
+      {canvasDrag.drag ? (
+        <div className={styles.ghost} style={ghostPositionStyle(canvasDrag.drag)} aria-hidden="true">
           <div className={styles.ghostWire}>
-            <ModuleWireframe node={drag.item.wire} />
+            <ModuleWireframe node={canvasDrag.drag.ghost.wire} />
           </div>
-          <span className={styles.ghostLabel} data-accent={drag.item.accent}>
+          <span className={styles.ghostLabel} data-accent={canvasDrag.drag.ghost.accent}>
             <span className={styles.tintDot} aria-hidden="true" />
-            {drag.item.name}
+            {canvasDrag.drag.ghost.name}
           </span>
         </div>
       ) : null}

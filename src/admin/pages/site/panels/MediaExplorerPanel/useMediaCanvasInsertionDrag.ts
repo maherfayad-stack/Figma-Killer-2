@@ -1,140 +1,54 @@
-import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
+/**
+ * useMediaCanvasInsertionDrag — drag a media asset from the explorer onto the
+ * canvas.
+ *
+ * The gesture, the drop resolution and the click suppression are all
+ * `useCanvasInsertionDrag`, shared with the canvas notch's element primitives
+ * and the module inserter. This file owns only what is media-specific: which
+ * module an asset becomes (`mediaCanvasInsertionForAsset` — an image, a video)
+ * and the props it is inserted with.
+ */
+import { type PointerEvent as ReactPointerEvent } from 'react'
 import { registry } from '@core/module-engine'
 import type { CmsMediaAsset } from '@core/persistence/cmsMedia'
-import {
-  dropPreviewStyle,
-  resolveCanvasPointerInsertionDrop,
-  type CanvasDropPreview,
-} from '@site/canvas/canvasInsertionDrop'
-import { clearCanvasPointerRelay, markCanvasPointerRelay } from '@site/canvas/canvasPointerRelay'
+import type { CanvasDropPreview } from '@site/canvas/canvasInsertionDrop'
+import { useCanvasInsertionDrag } from '@site/canvas/useCanvasInsertionDrag'
 import { useInsertModule } from '@site/hooks/useInsertModule'
-import { selectActiveCanvasPage, useEditorStore } from '@site/store/store'
 import { mediaCanvasInsertionForAsset, type MediaCanvasInsertion } from './mediaCanvasInsertion'
 
-export interface MediaCanvasDragState {
+interface MediaGhost {
   asset: CmsMediaAsset
   insertion: MediaCanvasInsertion
+}
+
+export interface MediaCanvasDragState extends MediaGhost {
   x: number
   y: number
   preview: CanvasDropPreview | null
 }
 
-const DRAG_THRESHOLD_PX = 6
-
 export function useMediaCanvasInsertionDrag() {
-  const canvasPage = useEditorStore(selectActiveCanvasPage)
-  const setActiveBreakpoint = useEditorStore((s) => s.setActiveBreakpoint)
   const insertModule = useInsertModule()
-  const suppressClickRef = useRef(false)
-  const removeListenersRef = useRef<(() => void) | null>(null)
-  const [drag, setDrag] = useState<MediaCanvasDragState | null>(null)
 
-  const shouldSuppressClick = () => suppressClickRef.current
+  const canvasDrag = useCanvasInsertionDrag<MediaGhost>({
+    onDrop: ({ insertion }, location) => {
+      const mod = registry.get(insertion.moduleId)
+      if (!mod) return false
+      return insertModule(mod, location, { defaults: insertion.defaults }) !== null
+    },
+  })
 
-  useEffect(() => {
-    return () => {
-      removeListenersRef.current?.()
-      removeListenersRef.current = null
-      clearCanvasPointerRelay()
-    }
-  }, [])
-
-  const handlePointerDown = (
-    asset: CmsMediaAsset,
-    event: ReactPointerEvent<HTMLButtonElement>,
-  ) => {
-    if (event.button !== 0) return
+  const handlePointerDown = (asset: CmsMediaAsset, event: ReactPointerEvent<HTMLButtonElement>) => {
     const insertion = mediaCanvasInsertionForAsset(asset)
     if (!insertion) return
-
-    const startX = event.clientX
-    const startY = event.clientY
-    let started = false
-
-    const resolveDrop = (clientX: number, clientY: number) => {
-      if (!canvasPage) return null
-      return resolveCanvasPointerInsertionDrop({
-        canvasPage,
-        clientX,
-        clientY,
-        label: `Drop ${insertion.name.toLowerCase()}`,
-      })
-    }
-
-    const move = (moveEvent: PointerEvent) => {
-      if (!started) {
-        if (Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY) < DRAG_THRESHOLD_PX) return
-        started = true
-      }
-
-      const resolved = resolveDrop(moveEvent.clientX, moveEvent.clientY)
-      setDrag({
-        asset,
-        insertion,
-        x: moveEvent.clientX,
-        y: moveEvent.clientY,
-        preview: resolved?.preview ?? null,
-      })
-    }
-
-    const up = (upEvent: PointerEvent) => {
-      removeListenersRef.current?.()
-      removeListenersRef.current = null
-      clearCanvasPointerRelay()
-
-      const resolved = started ? resolveDrop(upEvent.clientX, upEvent.clientY) : null
-      setDrag(null)
-      if (!started) return
-
-      suppressClickRef.current = true
-      window.setTimeout(() => {
-        suppressClickRef.current = false
-      }, 0)
-
-      if (!resolved) return
-
-      const mod = registry.get(insertion.moduleId)
-      if (!mod) return
-
-      const insertedNodeId = insertModule(mod, resolved.location, { defaults: insertion.defaults })
-      if (insertedNodeId) {
-        setActiveBreakpoint(resolved.breakpointId)
-      }
-    }
-
-    const cancel = () => {
-      removeListenersRef.current?.()
-      removeListenersRef.current = null
-      clearCanvasPointerRelay()
-      setDrag(null)
-    }
-
-    removeListenersRef.current?.()
-    markCanvasPointerRelay(event.pointerId)
-    window.addEventListener('pointermove', move)
-    window.addEventListener('pointerup', up)
-    window.addEventListener('pointercancel', cancel)
-    removeListenersRef.current = () => {
-      window.removeEventListener('pointermove', move)
-      window.removeEventListener('pointerup', up)
-      window.removeEventListener('pointercancel', cancel)
-    }
+    canvasDrag.startDrag(event, { asset, insertion }, `Drop ${insertion.name.toLowerCase()}`)
   }
 
-  return {
-    drag,
-    handlePointerDown,
-    shouldSuppressClick,
-  }
-}
+  // Flattened back into the shape the panel renders from — the ghost payload
+  // and the pointer position are one object at the call site.
+  const drag: MediaCanvasDragState | null = canvasDrag.drag
+    ? { ...canvasDrag.drag.ghost, x: canvasDrag.drag.x, y: canvasDrag.drag.y, preview: canvasDrag.drag.preview }
+    : null
 
-export function mediaDropPreviewStyle(preview: CanvasDropPreview): CSSProperties {
-  return dropPreviewStyle(preview)
-}
-
-export function mediaDragGhostStyle(drag: MediaCanvasDragState): CSSProperties {
-  return {
-    '--ghost-x': `${drag.x}px`,
-    '--ghost-y': `${drag.y}px`,
-  } as CSSProperties
+  return { drag, handlePointerDown, shouldSuppressClick: canvasDrag.shouldSuppressClick }
 }

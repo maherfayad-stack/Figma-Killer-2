@@ -401,6 +401,48 @@ in an `aria-hidden` container.
 
 ---
 
+## Dragging something onto the canvas
+
+One gesture, three callers: the notch's element primitives, the module inserter
+dialog, and the media explorer. They share `useCanvasInsertionDrag`
+(`canvas/useCanvasInsertionDrag.ts`) — each used to carry its own copy of the
+same ~60 lines, and the copies had already drifted.
+
+The seam is deliberate: **the hook owns the gesture and the geometry, the
+caller owns what gets inserted.** That is the only part that genuinely
+differs — the dialog drops modules, saved layouts and Visual Components through
+its own dispatch; the other two drop one known module — and folding it in would
+have meant a union type every caller then re-narrowed. The caller supplies
+`onDrop(ghost, location)` and returns whether anything landed; a `true` promotes
+the dropped-on frame to the active breakpoint.
+
+**Pointer events, not HTML5 drag-and-drop.** The drop target is inside an
+`<iframe>`: a native `dragover` never reaches the parent document from a
+cross-document child, and the drag image cannot be painted outside the source
+document either. `markCanvasPointerRelay` tells the iframe layer to forward the
+pointer stream back up, which is what makes a drop *into* a frame observable at
+all. See "Events across the iframe boundary" below.
+
+The preview rect and its label come from `resolveCanvasPointerInsertionDrop` —
+the same resolver a click-to-insert goes through, so "where the ghost says it
+will land" and "where it lands" are one computation rather than two that agree
+by luck.
+
+Two traps worth keeping:
+
+- **Resolve the drop BEFORE tearing down.** The relay has to still be armed for
+  the release point to hit-test against a frame's iframe.
+- **Suppress the click that ends a drag.** The same pointerup fires a click on
+  the button the drag started from, which would insert a second copy at the
+  default location. `shouldSuppressClick()` covers exactly one tick.
+
+`CanvasInsertionDragOverlay` draws the shared preview (a rect, or a 2px line for
+a before/after drop) and a cursor-following ghost, portaled to `document.body`
+so it can paint over an iframe. Its ghost takes children: the notch shows a
+label, the media explorer keeps its own thumbnail card.
+
+---
+
 ## Events across the iframe boundary
 
 React synthetic events bubble through the **fiber** tree, so React handlers work

@@ -1,4 +1,4 @@
-import { useState, type MouseEvent, type ReactNode, type SyntheticEvent } from "react";
+import { useState, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type SyntheticEvent } from "react";
 import { createPortal } from "react-dom";
 import { registry } from "@core/module-engine";
 import type { VisualComponent } from "@core/visualComponents";
@@ -37,6 +37,8 @@ import {
   ContextMenuSeparator,
 } from "@ui/components/ContextMenu";
 import { UndoRedoButtons } from "./UndoRedoButtons";
+import { useCanvasInsertionDrag } from "./useCanvasInsertionDrag";
+import { CanvasInsertionDragOverlay } from "./CanvasInsertionDragOverlay";
 import { cn } from "@ui/cn";
 import styles from "./CanvasNotch.module.css";
 
@@ -171,49 +173,87 @@ function stopCanvasInteraction(event: SyntheticEvent) {
  */
 const PRIMITIVE_MODULE_IDS: ReadonlySet<string> = new Set(["base.text", "base.container"]);
 
+/** One primitive: which module it writes, with which prop overrides. */
+interface PrimitiveSpec {
+  id: string;
+  label: string;
+  icon: IconComponent;
+  moduleId: string;
+  defaults?: Record<string, unknown>;
+}
+
 function PrimitiveNotchActions() {
   const insertModule = useInsertModule();
 
-  const textModule = registry.get("base.text");
-  const containerModule = registry.get("base.container");
+  // Each button both CLICKS and DRAGS. Click inserts at the current selection;
+  // drag lands it exactly where the ghost says, in whichever frame the pointer
+  // is over — `useCanvasInsertionDrag` resolves both through the same
+  // `resolveInsertLocation`, so the two entry points cannot disagree.
+  const canvasDrag = useCanvasInsertionDrag<PrimitiveSpec>({
+    onDrop: (spec, location) => {
+      const mod = registry.get(spec.moduleId);
+      if (!mod) return false;
+      return insertModule(mod, location, { defaults: resolveDefaults(mod, spec) }) !== null;
+    },
+  });
+
+  const specs: PrimitiveSpec[] = [
+    { id: "primitive-text", label: "Text", icon: TextGlyphIcon, moduleId: "base.text" },
+    // Div and Span are the SAME module (`base.container`, whose `tag` prop
+    // decides the element), so they cannot share its registry icon or they
+    // would draw identically. Each wears the mark for what it writes.
+    { id: "primitive-div", label: "Div", icon: FrameGlyphIcon, moduleId: "base.container" },
+    {
+      id: "primitive-span",
+      label: "Span",
+      icon: SectionGlyphIcon,
+      moduleId: "base.container",
+      defaults: { tag: CUSTOM_HTML_TAG_VALUE, customTag: "span" },
+    },
+  ];
 
   return (
     <>
-      {textModule &&
-        renderActionButton({
-          id: "primitive-text",
-          label: "Text",
-          icon: TextGlyphIcon,
-          onClick: () => insertModule(textModule),
-        })}
-      {containerModule && (
-        <>
-          {renderActionButton({
-            id: "primitive-div",
-            label: "Div",
-            // NOT `base.container`'s registry icon: Div and Span are the same
-            // module, so sharing that icon would draw the two buttons
-            // identically. Each wears the mark for the ELEMENT it writes.
-            icon: FrameGlyphIcon,
-            onClick: () => insertModule(containerModule),
-          })}
-          {renderActionButton({
-            id: "primitive-span",
-            label: "Span",
-            icon: SectionGlyphIcon,
-            onClick: () =>
-              insertModule(containerModule, undefined, {
-                defaults: {
-                  ...containerModule.defaults,
-                  tag: CUSTOM_HTML_TAG_VALUE,
-                  customTag: "span",
-                },
-              }),
-          })}
-        </>
-      )}
+      {specs.map((spec) => {
+        const mod = registry.get(spec.moduleId);
+        if (!mod) return null;
+        return renderActionButton(
+          {
+            id: spec.id,
+            label: spec.label,
+            icon: spec.icon,
+            onClick: () => {
+              // The pointerup that ends a drag also fires a click on the
+              // button it started from — which would insert a second copy at
+              // the default location.
+              if (canvasDrag.shouldSuppressClick()) return;
+              insertModule(mod, undefined, { defaults: resolveDefaults(mod, spec) });
+            },
+          },
+          {
+            onPointerDown: (event) =>
+              canvasDrag.startDrag(event, spec, `Drop ${spec.label.toLowerCase()}`),
+          },
+        );
+      })}
+      <CanvasInsertionDragOverlay drag={canvasDrag.drag}>
+        {canvasDrag.drag && (
+          <>
+            <canvasDrag.drag.ghost.icon size={13} aria-hidden="true" />
+            {canvasDrag.drag.ghost.label}
+          </>
+        )}
+      </CanvasInsertionDragOverlay>
     </>
   );
+}
+
+/** A primitive's own prop overrides layered onto the module's defaults. */
+function resolveDefaults(
+  mod: { defaults?: Record<string, unknown> },
+  spec: PrimitiveSpec,
+): Record<string, unknown> {
+  return { ...(mod.defaults ?? {}), ...(spec.defaults ?? {}) };
 }
 
 interface FavoriteMenuState {
@@ -390,7 +430,10 @@ function actionForItem(
 
 function renderActionButton(
   action: CanvasNotchAction,
-  options?: { onContextMenu?: (event: MouseEvent<HTMLButtonElement>) => void },
+  options?: {
+    onContextMenu?: (event: MouseEvent<HTMLButtonElement>) => void;
+    onPointerDown?: (event: ReactPointerEvent<HTMLButtonElement>) => void;
+  },
 ) {
   const ActionIcon = action.icon;
   return (
@@ -402,6 +445,7 @@ function renderActionButton(
       className={styles.quickButton}
       onClick={action.onClick}
       onContextMenu={options?.onContextMenu}
+      onPointerDown={options?.onPointerDown}
       disabled={Boolean(action.disabledReason)}
       aria-label={`Add ${action.label}`}
       tooltip={action.disabledReason ?? `Add ${action.label}`}

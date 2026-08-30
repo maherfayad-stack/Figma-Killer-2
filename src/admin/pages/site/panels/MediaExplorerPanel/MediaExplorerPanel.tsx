@@ -52,11 +52,9 @@ import {
 } from './mediaExplorerUtils'
 import { MediaExplorerSection } from './MediaExplorerSection'
 import { MediaExplorerItemList } from './MediaExplorerItem'
-import {
-  mediaDragGhostStyle,
-  mediaDropPreviewStyle,
-  useMediaCanvasInsertionDrag,
-} from './useMediaCanvasInsertionDrag'
+import { dropPreviewStyle } from '@site/canvas/canvasInsertionDrop'
+import { ghostPositionStyle } from '@site/canvas/CanvasInsertionDragOverlay/ghostPositionStyle'
+import { useMediaCanvasInsertionDrag } from './useMediaCanvasInsertionDrag'
 import styles from '../SiteExplorerPanel/SiteExplorerPanel.module.css'
 import { getErrorMessage } from '@core/utils/errorMessage'
 
@@ -475,7 +473,7 @@ export function MediaExplorerPanel({
             <div
               className={styles.mediaCanvasDropPreview}
               data-position={mediaCanvasDrag.drag.preview.position}
-              style={mediaDropPreviewStyle(mediaCanvasDrag.drag.preview)}
+              style={dropPreviewStyle(mediaCanvasDrag.drag.preview)}
               aria-hidden="true"
             >
               <span className={styles.mediaCanvasDropTag}>
@@ -490,7 +488,7 @@ export function MediaExplorerPanel({
         ? createPortal(
             <div
               className={styles.mediaCanvasDragGhost}
-              style={mediaDragGhostStyle(mediaCanvasDrag.drag)}
+              style={ghostPositionStyle(mediaCanvasDrag.drag)}
               aria-hidden="true"
             >
               <span className={styles.mediaCanvasDragPreview}>
