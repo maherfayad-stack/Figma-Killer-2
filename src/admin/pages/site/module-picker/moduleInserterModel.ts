@@ -28,6 +28,13 @@ export interface RegistryModuleForInserter {
   name: string
   category: string
   description?: string
+  /**
+   * Present when the module has an intrinsic spelling in a user's source
+   * (`ModuleDefinition.sourceIntrinsic`). Only its PRESENCE matters here — it
+   * is what makes a `base.*` module insertable in studio mode — so this is
+   * typed as an opaque callable rather than restating the signature.
+   */
+  sourceIntrinsic?: (props: never) => unknown
 }
 
 interface BaseInserterItem {
@@ -158,9 +165,18 @@ export function moduleAvailability(
   // heuristic plus `.studio/meta.json`'s `paletteHiddenModuleIds` override,
   // computed per project by `registerProjectModules.ts`.
   if (getPaletteHiddenPackageModuleIds().has(mod.id)) return { kind: 'hidden' }
-  // Studio mode: only design-system components are user-insertable; the built-in
-  // Studio block modules are host-HTML renderers, not palette entries.
-  if (context.isStudio && mod.category !== DESIGN_SYSTEM_CATEGORY) return { kind: 'hidden' }
+  // Studio mode: a module is insertable only if it has an honest spelling in
+  // the user's source — a design-system component (imported), or an intrinsic
+  // element (`sourceIntrinsic`: `base.container` is a `<div>`, `base.text` a
+  // `<p>`). Everything else is an editor construct with no JSX to write, and
+  // stays hidden rather than offering an insert that can only be refused.
+  if (
+    context.isStudio &&
+    mod.category !== DESIGN_SYSTEM_CATEGORY &&
+    mod.sourceIntrinsic === undefined
+  ) {
+    return { kind: 'hidden' }
+  }
   if (mod.id === 'base.slot-outlet' && !context.isVCMode) return { kind: 'hidden' }
   if (mod.id === 'base.outlet') {
     if (context.isVCMode) {

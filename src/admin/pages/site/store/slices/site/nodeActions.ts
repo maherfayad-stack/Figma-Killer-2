@@ -174,24 +174,38 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
     if (!plan.commit) return false // an ordinary CMS tree — nothing to write
 
     const mod = registry.get(moduleId)
+    const props = { ...(mod?.defaults ?? {}), ...(defaults ?? {}) }
     const sourceImport = mod?.sourceImport
-    if (!sourceImport) {
-      // A `base.*` block module has no spelling in a user's repository. The
-      // picker already hides these in studio mode (`moduleAvailability`), so
-      // this is the programmatic path — an agent or a plugin — and it gets the
-      // same sentence a person would.
-      toastStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.insert, {
-        reason: 'insert',
-        message: `"${mod?.name ?? moduleId}" is an editor building block, not a component in your project's code, so there is nothing Studio could write to the file. Add a design-system component instead.`,
+
+    if (sourceImport) {
+      void commitStudioInsert({
+        ...plan.commit,
+        name: sourceImport.name,
+        importSpecifier: sourceImport.specifier,
+        props: literalJsxProps(props),
       })
       return true
     }
 
-    void commitStudioInsert({
-      ...plan.commit,
-      name: sourceImport.name,
-      importSpecifier: sourceImport.specifier,
-      props: literalJsxProps({ ...(mod?.defaults ?? {}), ...(defaults ?? {}) }),
+    // Still possibly a real element: `base.container` is a `<div>`/`<span>`,
+    // `base.text` a `<p>` wrapping text. `insertJsxElement` writes those by
+    // omitting `importSpecifier`. See `sourceIntrinsic` on `ModuleDefinition`.
+    const intrinsic = mod?.sourceIntrinsic?.(props)
+    if (intrinsic) {
+      void commitStudioInsert({
+        ...plan.commit,
+        name: intrinsic.tag,
+        props: {},
+        ...(intrinsic.text === undefined ? {} : { children: intrinsic.text }),
+      })
+      return true
+    }
+
+    // Everything else is an editor construct with no spelling in a user's repo;
+    // the picker hides those in studio mode, so this is the programmatic path.
+    toastStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.insert, {
+      reason: 'insert',
+      message: `"${mod?.name ?? moduleId}" is an editor building block, not a component in your project's code, so there is nothing Studio could write to the file. Add a design-system component instead.`,
     })
     return true
   }

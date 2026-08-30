@@ -26,6 +26,15 @@ function mod(id: string, category: string, name = id): RegistryModuleForInserter
   return { id, category, name, description: `${name} description` }
 }
 
+/**
+ * A module that HAS an intrinsic spelling in a user's source — `base.container`
+ * is a `<div>`, `base.text` a `<p>`. Only the field's presence is read by
+ * `moduleAvailability`, so the stub returns a plausible tag and nothing more.
+ */
+function intrinsicMod(id: string, category: string, name = id): RegistryModuleForInserter {
+  return { ...mod(id, category, name), sourceIntrinsic: () => ({ tag: 'div' }) }
+}
+
 const PAGE_CTX: ModuleInsertionContext = { isVCMode: false, activeVcId: null, isTemplate: false, hasOutlet: false, isStudio: false }
 const TEMPLATE_CTX: ModuleInsertionContext = { isVCMode: false, activeVcId: null, isTemplate: true, hasOutlet: false, isStudio: false }
 const VC_CTX: ModuleInsertionContext = { isVCMode: true, activeVcId: 'vc-1', isTemplate: false, hasOutlet: false, isStudio: false }
@@ -54,21 +63,30 @@ describe('module inserter model', () => {
     expect(vcModeIds).toEqual(['base.container', 'base.slot-outlet', 'base.text'])
   })
 
-  it('hides every built-in Studio block from the palette in studio mode, keeping only design-system components', () => {
+  // In studio mode the rule is "does this have an honest spelling in the user's
+  // source?", not "is this a design-system component". A component answers yes
+  // by being imported; `base.container` and `base.text` answer yes by being
+  // intrinsic elements (`sourceIntrinsic`) — a `<div>` and a `<p>` need no
+  // import, which is exactly what `insertJsxElement` writes when
+  // `importSpecifier` is omitted. Everything else really is an editor construct
+  // with no JSX to write, and stays hidden rather than offering an insert that
+  // could only be refused.
+  it('in studio mode shows design-system components AND intrinsic elements, hiding editor-only blocks', () => {
     const modules = [
-      mod('base.container', 'Layout', 'Container'),
-      mod('base.text', 'Typography', 'Text'),
+      intrinsicMod('base.container', 'Layout', 'Container'),
+      intrinsicMod('base.text', 'Typography', 'Text'),
       mod('base.button', 'Interactive', 'Button'),
+      mod('base.loop', 'Layout', 'Loop'),
       mod('alm.Button', 'Design System', 'Button'),
       mod('alm.Chip', 'Design System', 'Chip'),
     ]
 
     const studioIds = getVisibleModuleItems(modules, STUDIO_CTX).map((item) => item.id)
-    expect(studioIds).toEqual(['alm.Button', 'alm.Chip'])
+    expect(studioIds).toEqual(['base.container', 'base.text', 'alm.Button', 'alm.Chip'])
 
     // The same base modules remain insertable in ordinary (CMS) page mode.
     const pageIds = getVisibleModuleItems(modules, PAGE_CTX).map((item) => item.id)
-    expect(pageIds).toEqual(['base.container', 'base.text', 'base.button', 'alm.Button', 'alm.Chip'])
+    expect(pageIds).toEqual(['base.container', 'base.text', 'base.button', 'base.loop', 'alm.Button', 'alm.Chip'])
   })
 
   it('keeps the content outlet visible but disabled outside an insertable template context', () => {

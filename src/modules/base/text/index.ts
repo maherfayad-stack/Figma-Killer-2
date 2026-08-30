@@ -46,6 +46,15 @@ export const TextModule: ModuleDefinition<TextStoredProps> = {
     return tag === 'none' ? null : tag
   },
 
+  // Written to a user's source as the tag wrapping its literal text —
+  // `<p>Add your text here.</p>`. `'none'` means "no wrapper" on the canvas,
+  // which has no JSX equivalent the parser could hand an id back for (a bare
+  // text node is not an element), so a source insert uses the default tag.
+  sourceIntrinsic: (props) => {
+    const tag = normalizeTag(props.tag)
+    return { tag: tag === 'none' ? 'p' : tag, text: props.text }
+  },
+
   render: (props) => {
     // props.text is pre-escaped by escapeProps — only turn newlines into the
     // hard <br> breaks the author typed (sanitizer allows <br>).

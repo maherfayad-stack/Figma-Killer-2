@@ -15,6 +15,7 @@ import {
 import { useModuleInserterPreference } from "@site/module-picker/useModuleInserterPreference";
 import { useModuleInsertionContext } from "@site/module-picker/useModuleInsertionContext";
 import { resolveInsertLocation } from "@site/store/insertLocation";
+import { CUSTOM_HTML_TAG_VALUE } from "@modules/base/utils/htmlTag";
 import { selectActiveCanvasPage, useEditorStore } from "@site/store/store";
 import { ModulePickerDropdown } from "@site/toolbar/ModulePickerDropdown";
 import { ModuleIcon } from "@site/ui/ModuleIcon";
@@ -24,6 +25,11 @@ import { LayoutSolidIcon } from "pixel-art-icons/icons/layout-solid";
 import { ArrowLeftIcon } from "pixel-art-icons/icons/arrow-left";
 import { ArrowRightIcon } from "pixel-art-icons/icons/arrow-right";
 import { CloseIcon } from "pixel-art-icons/icons/close";
+import {
+  FrameGlyphIcon,
+  SectionGlyphIcon,
+  TextGlyphIcon,
+} from "@ui/components/ElementIcons";
 import { Button } from "@ui/components/Button";
 import {
   ContextMenu,
@@ -105,9 +111,15 @@ export function CanvasNotch({
             </>
           )}
 
-          {actions
-            ? actions.map((action) => renderActionButton(action))
-            : <FavoriteNotchActions />}
+          {actions ? (
+            actions.map((action) => renderActionButton(action))
+          ) : (
+            <>
+              <PrimitiveNotchActions />
+              <div aria-hidden="true" className={styles.divider} />
+              <FavoriteNotchActions />
+            </>
+          )}
 
           {addControl === undefined ? (
             <ModulePickerDropdown
@@ -128,6 +140,80 @@ export function CanvasNotch({
 
 function stopCanvasInteraction(event: SyntheticEvent) {
   event.stopPropagation();
+}
+
+/**
+ * The always-present element primitives: Text, Div, Span.
+ *
+ * Separate from `FavoriteNotchActions`, and deliberately NOT implemented as
+ * seeded favourites. Favourites are the author's own shelf — reorderable,
+ * undockable, and persisted per user — so anything put there can be removed,
+ * and a design tool's most basic "drop an element" affordances must not be
+ * one right-click away from disappearing. These three are fixed chrome; the
+ * favourites bar sits to their right and still owns everything else.
+ *
+ * Div and Span are the SAME module (`base.container`, whose `tag` prop decides
+ * the element). Span goes through the tag control's `custom` escape hatch
+ * because `span` is not in `htmlTag.ts`'s built-in list. That is deliberate:
+ * it is exactly how the HTML importer already stores an imported `<span>`
+ * (`structurePreservation.test.ts`), so inserting one here and importing one
+ * produce the same node rather than two representations of the same element.
+ * Promoting `span` to a built-in choice would be a real improvement, but it
+ * has to change the importer in the same breath or that agreement breaks.
+ *
+ * The modules shown here are filtered OUT of the favourites bar
+ * (`PRIMITIVE_MODULE_IDS`) — `base.text` and `base.container` are both default
+ * favourites, so without that the notch showed two identical "Add Text"
+ * buttons. Filtering beats reseeding the defaults: favourites are persisted
+ * per user, so an existing shelf would still carry its own Text and duplicate
+ * anyway. Nothing is lost — a favourited Container is already in the bar, as
+ * "Div".
+ */
+const PRIMITIVE_MODULE_IDS: ReadonlySet<string> = new Set(["base.text", "base.container"]);
+
+function PrimitiveNotchActions() {
+  const insertModule = useInsertModule();
+
+  const textModule = registry.get("base.text");
+  const containerModule = registry.get("base.container");
+
+  return (
+    <>
+      {textModule &&
+        renderActionButton({
+          id: "primitive-text",
+          label: "Text",
+          icon: TextGlyphIcon,
+          onClick: () => insertModule(textModule),
+        })}
+      {containerModule && (
+        <>
+          {renderActionButton({
+            id: "primitive-div",
+            label: "Div",
+            // NOT `base.container`'s registry icon: Div and Span are the same
+            // module, so sharing that icon would draw the two buttons
+            // identically. Each wears the mark for the ELEMENT it writes.
+            icon: FrameGlyphIcon,
+            onClick: () => insertModule(containerModule),
+          })}
+          {renderActionButton({
+            id: "primitive-span",
+            label: "Span",
+            icon: SectionGlyphIcon,
+            onClick: () =>
+              insertModule(containerModule, undefined, {
+                defaults: {
+                  ...containerModule.defaults,
+                  tag: CUSTOM_HTML_TAG_VALUE,
+                  customTag: "span",
+                },
+              }),
+          })}
+        </>
+      )}
+    </>
+  );
 }
 
 interface FavoriteMenuState {
@@ -155,10 +241,11 @@ function FavoriteNotchActions() {
     visualComponents,
   });
   const resolvedFavorites = resolveInserterRefs(favorites, allItems);
-  const favoriteItems =
+  const favoriteItems = (
     favorites.length > 0 && resolvedFavorites.length === 0
       ? resolveInserterRefs(DEFAULT_MODULE_INSERTER_FAVORITES, allItems)
-      : resolvedFavorites;
+      : resolvedFavorites
+  ).filter((item) => !(item.kind === "module" && PRIMITIVE_MODULE_IDS.has(item.id)));
 
   function insertComponent(componentId: string) {
     if (!canvasPage) return;

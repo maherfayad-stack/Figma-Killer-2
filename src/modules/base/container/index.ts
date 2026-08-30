@@ -49,6 +49,11 @@ export const ContainerModule: ModuleDefinition<ContainerStoredProps> = {
 
   htmlTag: (props) => resolveHtmlTag(props.tag, props.customTag),
 
+  // A container has an honest spelling in a real repo: it IS the tag. Same
+  // resolver as `htmlTag` above, so what Studio writes to the file and what
+  // the canvas renders can never disagree.
+  sourceIntrinsic: (props) => ({ tag: resolveHtmlTag(props.tag, props.customTag) }),
+
   render: (props, renderedChildren) => {
     const tag = resolveHtmlTag(props.tag, props.customTag)
     const attrs = htmlAttributesAttr(props.htmlAttributes)

@@ -329,8 +329,15 @@ export async function commitStudioInsert(insert: {
   anchorNodeId: string | null
   position: 'before' | 'after'
   name: string
-  importSpecifier: string
+  /**
+   * Omit for an INTRINSIC element (`<div>`, `<p>`) — those need no import, and
+   * `insertJsxElement` reads the field's absence as exactly that. Present for a
+   * component, which is imported from this specifier.
+   */
+  importSpecifier?: string
   props: Record<string, string | number | boolean>
+  /** Literal text written as the element's only child, e.g. `<p>Heading</p>`. */
+  children?: string
 }): Promise<void> {
   await commitStructural(
     [
@@ -339,7 +346,11 @@ export async function commitStudioInsert(insert: {
         nodeId: insert.parentNodeId,
         ...(insert.anchorNodeId ? { anchorNodeId: insert.anchorNodeId, position: insert.position } : {}),
         name: insert.name,
-        importSpecifier: insert.importSpecifier,
+        // Spread conditionally, never passed as `undefined`: the codemod
+        // branches on `importSpecifier === undefined` to choose intrinsic vs
+        // component, and the wire schema has it optional for the same reason.
+        ...(insert.importSpecifier === undefined ? {} : { importSpecifier: insert.importSpecifier }),
+        ...(insert.children === undefined ? {} : { children: insert.children }),
         props: insert.props,
       },
     ],

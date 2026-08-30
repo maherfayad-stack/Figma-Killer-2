@@ -337,6 +337,25 @@ export interface ModuleDefinition<
   sourceImport?: { specifier: string; name: string }
 
   /**
+   * How this module is spelled in a user's React source when it is an
+   * INTRINSIC element rather than an imported component — the counterpart to
+   * `sourceImport`, for the few `base.*` modules that genuinely do have a
+   * spelling in a real repository.
+   *
+   * `base.container` is a `<div>`/`<section>`/`<span>`; `base.text` is a
+   * `<p>`/`<h2>` wrapping literal text. Those need no import, which is exactly
+   * what `insertJsxElement` means by omitting `importSpecifier`. Every other
+   * `base.*` module (a loop, a form, a slot outlet) is an editor construct
+   * with no honest JSX to write, and omits this — inserting one into imported
+   * code is still refused, and still says why.
+   *
+   * Returns the resolved tag plus, for a leaf carrying a label, the text to
+   * write as its only child. Props are deliberately NOT part of this: a
+   * container's `tag` prop IS the tag name, and `<div tag="div">` is nonsense.
+   */
+  sourceIntrinsic?: (props: TProps) => { tag: string; text?: string }
+
+  /**
    * How the publisher's node walker dispatches this module. Makes the
    * otherwise-invisible two-tier render contract explicit on the definition:
    *
