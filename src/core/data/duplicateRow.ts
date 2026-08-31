@@ -1,6 +1,7 @@
 import { readStringCell } from './cells'
 import { dataTableHasField } from './fields'
-import type { DataRow, DataRowCells, DataTable } from './schemas'
+import type { DataTable } from './schemas'
+import type { DataRow, DataRowCells } from './dataRowSchema'
 
 function hasCell(cells: DataRowCells, fieldId: string): boolean {
   return Object.prototype.hasOwnProperty.call(cells, fieldId)

@@ -12,7 +12,7 @@
  *   row.createdAt (ISO)  → layout.createdAt (epoch ms)
  */
 
-import type { DataRow, DataRowCells } from '@core/data/schemas'
+import type { DataRow, DataRowCells } from '@core/data/dataRowSchema'
 import { layoutSlugFromName, parseSavedLayout, type SavedLayout } from '@core/layouts'
 
 // ---------------------------------------------------------------------------

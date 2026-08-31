@@ -44,17 +44,24 @@
  * rather than hand-mutating `Board` / `BoardsFile` objects, so this slice
  * stays a thin translation from store actions to the pure board model.
  *
- * Three groups of those transforms/actions live in sibling modules, purely to
- * stay under the 700-line ceiling: `boardBulkFrameActions.ts` (WS-7.2 bulk
- * frame actions) and `boardAnnotationActions.ts` (note/doc transforms, split
- * out when `store-02`'s `boardsLoadFailed` fix pushed this file to 732) are
- * pure `Board -> Board | null`, where `null` means "nothing to do" so this
- * slice skips `set()` rather than flipping `boardsDirty` for a no-op.
- * `boardFrameSelectionActions.ts` (WS-7.1 frame multi-select, split out when
- * this store-02-follow-up change added `boardsPendingExplicitRemoval`) is the
- * one exception carrying its own `set`/`get` wiring rather than a pure
- * transform — the four actions it holds mutate `selectedFrameIds` directly
- * and have no `Board`-shaped return value to hand back.
+ * Several groups of those transforms/actions/selectors live in sibling
+ * modules, purely to stay under the 700-line ceiling: `boardBulkFrameActions.ts`
+ * (WS-7.2 bulk frame actions) and `boardAnnotationActions.ts` (note/doc
+ * transforms, split out when `store-02`'s `boardsLoadFailed` fix pushed this
+ * file to 732) are pure `Board -> Board | null`, where `null` means "nothing
+ * to do" so this slice skips `set()` rather than flipping `boardsDirty` for a
+ * no-op. `boardFrameSelectionActions.ts` (WS-7.1 frame multi-select, split
+ * out when this store-02-follow-up change added `boardsPendingExplicitRemoval`)
+ * and `boardBulkFrameSliceActions.ts` (the `set`/`get` wiring for the six
+ * WS-7.2 bulk actions, split out when the WS-8 board-slice narrow-selectors
+ * fix pushed this file to 772) both carry their own `set`/`get` wiring rather
+ * than a pure transform — the frame-selection actions mutate `selectedFrameIds`
+ * directly with no `Board`-shaped return value to hand back, and the bulk
+ * wiring is uniform boilerplate around `boardBulkFrameActions.ts`'s pure
+ * transforms. `boardSelectors.ts` holds the read side — `selectActiveBoard`,
+ * `selectHasActiveBoard`, the four narrow per-collection selectors, and
+ * `selectBoardSnapGuides` — split out the same time as
+ * `boardBulkFrameSliceActions.ts`, for the same reason.
  *
  * Snap guides (Phase 6B): `boardSnapGuides` is a TRANSIENT UI field — the
  * alignment guide lines `BoardGuidesLayer` draws while a frame/note/doc is
@@ -90,8 +97,14 @@
  * write in this codebase (rename, probe) — the store stays a pure state
  * container with no direct HTTP calls.
  */
-import type { EditorStoreSliceCreator, EditorStore } from '@site/store/types'
-import type { AnnotationRef, Board, BoardsFile, NoteColor, PreviewAxes } from '@core/studio-board'
+import type { EditorStoreSliceCreator } from '@site/store/types'
+import type {
+  AnnotationRef,
+  Board,
+  BoardsFile,
+  NoteColor,
+  PreviewAxes,
+} from '@core/studio-board'
 import type { SnapGuide } from '@site/canvas/boardSnapping'
 import {
   createBoard,
@@ -111,9 +124,9 @@ import {
   FRAME_WIDTH,
 } from '@core/studio-board'
 import type { FrameAlignEdge } from '@site/canvas/BoardFramesLayer/frameAlign'
-import * as bulk from './boardBulkFrameActions'
 import * as guideActions from './boardGuideActions'
 import { createFrameSelectionActions } from './boardFrameSelectionActions'
+import { createBulkFrameActions } from './boardBulkFrameSliceActions'
 import {
   createAnnotationActions,
   EMPTY_ANNOTATION_CLIPBOARD,
@@ -268,6 +281,16 @@ interface BoardSlice {
    */
   /** Persist a frame's own size. `height: undefined` CLEARS it — "hug the content"; see `resizeFrame`. */
   setFrameSize: (frameId: string, width: number, height: number | undefined) => void
+  /**
+   * Combined position+size write for ONE frame, in a single `set()` — what
+   * an edge/corner drag on a resize handle needs when the handle also moves
+   * the frame's anchor (`n`/`w`-side handles), instead of the pointermove
+   * handler calling `setFramePosition` then `setFrameSize` back to back
+   * (two `Board` reallocations and two selector sweeps per tick for what is
+   * one gesture). `height: undefined` CLEARS the stored height, same as
+   * `setFrameSize`.
+   */
+  setFrameRect: (frameId: string, x: number, y: number, width: number, height: number | undefined) => void
   /** Remove EVERY frame of `pageId` from the active board (e.g. the page itself was deleted, or a bulk multi-select remove — `selectedFrameIds` is page-id-keyed, see module doc). */
   removeFrame: (pageId: string) => void
   /** WS-10 Phase 2 — remove ONE frame instance by its own `id`, never touching a sibling "duplicate as variant" of the same page. This is what `BoardFrameView`'s "Remove from board" menu item calls. */
@@ -527,6 +550,15 @@ export const createBoardSlice: EditorStoreSliceCreator<BoardSlice> = (set, get) 
     set({ boards: upsertBoard(boards, resizeFrame(board, frameId, width, height)), boardsDirty: true })
   },
 
+  setFrameRect: (frameId, x, y, width, height) => {
+    const { boards, activeBoardId } = get()
+    const board = getActiveBoard(boards, activeBoardId)
+    if (!board) return
+    const moved = moveFrame(board, frameId, x, y)
+    const resized = resizeFrame(moved, frameId, width, height)
+    set({ boards: upsertBoard(boards, resized), boardsDirty: true })
+  },
+
   removeFrame: (pageId) => {
     const { boards, activeBoardId } = get()
     const board = getActiveBoard(boards, activeBoardId)
@@ -641,60 +673,8 @@ export const createBoardSlice: EditorStoreSliceCreator<BoardSlice> = (set, get) 
   clearFrameDefaults: () => set({ frameDefaults: {}, frameDefaultsSettled: false }),
 
   // ── Bulk frame actions (WS-7.2) — pure transforms live in
-  // `boardBulkFrameActions.ts` (module-size split); this is just the
-  // `set`/`get` wiring around them, uniform across all six.
-  setSelectedFramesSize: (width, height) => {
-    const { boards, activeBoardId, selectedFrameIds } = get()
-    const board = getActiveBoard(boards, activeBoardId)
-    const nextBoard = board && bulk.setSelectedFramesSize(board, selectedFrameIds, width, height)
-    if (!nextBoard) return
-    set({ boards: upsertBoard(boards, nextBoard), boardsDirty: true })
-  },
-
-  applyWidthToAllFrames: (width) => {
-    const { boards, activeBoardId, frameDefaults } = get()
-    const board = getActiveBoard(boards, activeBoardId)
-    const nextBoard = board && bulk.applyWidthToAllFrames(board, width)
-    if (!nextBoard) return
-    set({ boards: upsertBoard(boards, nextBoard), boardsDirty: true, frameDefaults: { ...frameDefaults, width } })
-  },
-
-  setFrameHeights: (heightsByPageId) => {
-    const { boards, activeBoardId } = get()
-    const board = getActiveBoard(boards, activeBoardId)
-    const nextBoard = board && bulk.setFrameHeights(board, heightsByPageId)
-    if (!nextBoard) return
-    set({ boards: upsertBoard(boards, nextBoard), boardsDirty: true })
-  },
-
-  alignSelectedFrames: (edge) => {
-    const { boards, activeBoardId, selectedFrameIds } = get()
-    const board = getActiveBoard(boards, activeBoardId)
-    const nextBoard = board && bulk.alignSelectedFrames(board, selectedFrameIds, edge)
-    if (!nextBoard) return
-    set({ boards: upsertBoard(boards, nextBoard), boardsDirty: true })
-  },
-
-  distributeSelectedFrames: (axis) => {
-    const { boards, activeBoardId, selectedFrameIds } = get()
-    const board = getActiveBoard(boards, activeBoardId)
-    const nextBoard = board && bulk.distributeSelectedFrames(board, selectedFrameIds, axis)
-    if (!nextBoard) return
-    set({ boards: upsertBoard(boards, nextBoard), boardsDirty: true })
-  },
-
-  tidySelectedFrames: () => {
-    const { boards, activeBoardId, selectedFrameIds } = get()
-    const board = getActiveBoard(boards, activeBoardId)
-    const nextBoard = board && bulk.tidySelectedFrames(board, selectedFrameIds)
-    if (!nextBoard) return
-    set({ boards: upsertBoard(boards, nextBoard), boardsDirty: true })
-  },
+  // `boardBulkFrameActions.ts`; the `set`/`get` wiring around them (uniform
+  // across all six) is split out to `boardBulkFrameSliceActions.ts`, same
+  // module-size reasoning as `boardFrameSelectionActions.ts`.
+  ...createBulkFrameActions(set, get),
 })
-
-/** Select the active board (or `null` — not studio mode / not loaded yet). */
-export const selectActiveBoard = (s: EditorStore): Board | null =>
-  getActiveBoard(s.boards, s.activeBoardId)
-
-/** Select the active drag's snap guides (empty outside of a drag). */
-export const selectBoardSnapGuides = (s: EditorStore): SnapGuide[] => s.boardSnapGuides

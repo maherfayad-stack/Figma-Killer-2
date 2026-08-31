@@ -8,6 +8,143 @@ Entry ids are `<area>-<nn>`. Areas in use: `parser`, `canvas`, `store`, `panel`,
 
 ---
 
+### perf-02 — Studio's lag was three unrelated bottlenecks, and the biggest one was invisible on every test fixture
+
+A five-surface scan (canvas, store, panels, server, bundle) found the "laggy"
+symptom had no single cause. Three independent bottlenecks each dominated a
+DIFFERENT interaction, which is why no earlier single fix ever moved the needle.
+
+**1. The server blocked 600-850ms on every load AND every edit-reload.**
+`collectEntryStylesheets` (`src/core/studio-sync/collectPageStylesheets.ts`)
+BFS-walks the app's import graph via ts-morph's `getModuleSpecifierSourceFile()`
+— a type-checker-backed API — with zero caching, fully synchronously, blocking
+Bun's single JS thread for every concurrent request. Measured on real
+`esim-journey`, 6 warm calls: 628/506/499/503/504ms — never dropping.
+`pageParseCache` works correctly but this path sits OUTSIDE it; `?pageIds=`
+filters the response not the compute; `?stream=1` pipelines bytes only AFTER
+the block.
+**Why nobody caught it for so long: `studio-workspace/untitled` and
+`untitled-2` have no root `index.html`, so `findEntryFile()` returns undefined
+and the walk short-circuits to `[]` in ~4ms. ONLY real imported projects pay
+this. The test fixtures structurally dodge the bug.** Any perf fixture for the
+load path MUST have a real entry file or it measures nothing.
+Fixed by `src/core/studio-sync/entryStylesheetCache.ts` (key
+`${root}::${entryFile}`; invalidated by visited/resolved file mtimes, a
+NEGATIVE cache of checked-and-absent paths, and watched dir mtimes). After:
+52/52/44/47/40ms. Deliberately NOT done: caching the ts-morph `Project` — only
+~20-25ms more, but downstream `project.getSourceFile()` callers rely on a full
+glob having run, so an incremental cache risks a corrupt parse.
+
+**2. Every keystroke forced synchronous layout, in two places at once.**
+Inspector: `useFrameComputedStyleValues` did an uncached
+`document.querySelectorAll('iframe')` + cross-document `querySelector` per
+breakpoint, then `getComputedStyle` over 101 curated properties, per render —
+and `StyleSurface` re-renders per character. Canvas: `collectScrollDeficits`
+did `body.querySelectorAll('*')` + forced `scrollHeight` reads on EVERY
+element, retriggered per character because the auto-height MutationObserver
+sets `characterData: true`.
+Fixed by `RenderedCanvasNodeCache`, a `TokenCatalogProvider` (token catalogs
+were rebuilt per row × ~101 rows), and `frameFitMutationScheduler.ts` which
+classifies mutations by KIND — `childList` settles immediately, all-
+`characterData` debounces 200ms. 25 keystrokes: 7 full-body scans -> 0 during
+the burst, 1 on settle.
+**Landmine:** if you add a new mutation source during inline text editing that
+needs an IMMEDIATE pin reset, it will be silently debounced unless it includes
+a `childList` record. Also `collectSiteStyleBackgroundImagePaths`
+(`@core/publisher`) must NEVER be memoized inside `@core/publisher` — it is
+shared with the server-side publisher and a module-level cache there would leak
+one site's data into another site's request. The canvas-only cache lives in
+`canvasBackgroundImagePaths.ts` for exactly that reason.
+
+**3. Dragging one frame re-rendered the whole board.** `selectActiveBoard`
+returned the whole `Board`; every board write changes that reference, so all
+five layers re-rendered, and `BoardFrameView`/`StickyNoteView`/`DocBlockView`
+had no `memo()`. O(frames+notes+docs) per pointermove on a 15-frame board.
+Fixed with narrow per-collection selectors (now in `boardSelectors.ts`) +
+`memo()` (React Compiler exception #2). **Adding `memo()` alone would have been
+decorative** — the parent minted fresh `onMove`/`onResize` closures per `.map()`
+iteration, so the bailout could never fire; those props were removed entirely
+and `BoardFrameView` now calls store actions via `getState()` from its own props.
+`Profiler.onRender` STILL FIRES for a memo-bailed child — render-count tests
+must spy on a function the component calls in its body, not use Profiler.
+
+**Bundle:** the largest chunk in the app (`useInsertInserterItem`, 694,890 B)
+was `ModuleInserterDialog` + a live iframe-sandbox preview engine, conditionally
+RENDERED but not conditionally IMPORTED at three always-mounted call sites. Now
+lazy behind `LazyModuleInserterDialog.tsx` with hover/focus prefetch: 6,607 B
+eager. NOT a win: splitting `core/data/schemas.ts` saved ~4.8kB, not the
+~100-150kB estimated — TypeBox builder calls minify extremely well.
+
+**Refuted, do not re-investigate:** ts-morph is NOT in any browser chunk (0
+matches in `dist`). CodeMirror is correctly lazy. There is NO filesystem watcher
+anywhere in `server/`. No per-file ts-morph `Project` explosion. Pan is already
+60fps with 0 mutations. Frames are already virtualized. Injected class CSS is
+already shared, not per-frame. Disk writeback is already debounced 2s.
+Still open, measured, unfixed: a ~300ms stall when a zoom crosses the
+virtualization mount boundary (`perf-01`); `useDeferredValue` and mount
+staggering were both tried and BOTH made it worse or did nothing.
+
+Verified: `bun run build` clean, `bun run lint` clean. Attribution done against
+a detached `git worktree` baseline at HEAD rather than agent self-reports —
+baseline had 20 failures in canvas+architecture, final tree has 11, ZERO new,
+9 pre-existing ones incidentally fixed. `bun test` 9704 pass.
+
+### test-01 — ~30 of the suite's 35 failures were one bug in the RUNNER, not thirty bugs in the code
+- **Agent:** claude (single pass, asked to fix every failing test)
+- **Stage:** done for the runner-level cause. 35 -> 9 failures; three of the survivors belong to other sessions' uncommitted work and are deliberately untouched. Residual count varies run to run (4-9).
+- **Updated:** 2026-08-31
+
+**The tell: every one of them passed alone.** `canvasFrameMounting.test.tsx` — 3 pass, 515ms on its own; 3 fail in the suite. The failure set also MOVED between runs and got **worse** with a longer per-test timeout (`--timeout=20000` took `src/__tests__/canvas` from 11 fail to 63), which is the opposite of what a slow test does. That is the signature of shared mutable global state, not of thirty broken behaviours.
+
+**Root cause.** `bun test` runs every file against ONE global object. This suite mounts real iframes, `MutationObserver`s, `ResizeObserver`s and a module-scoped Zustand store (`useEditorStore`), and tears none of them down per file. A canvas file's live observers kept firing while an unrelated file ran; a file that seeded the store left the next one editing its fixture.
+
+**Fix: `--parallel=4` in package.json's `test` scripts** (one worker PROCESS per file; implies `--isolate`). Full suite **9621 pass / 35 fail → 9723 pass / 9 fail**. The residual count is NOT stable — consecutive runs gave 4, 5 and 9. Isolation removed the cross-FILE leakage; what is left includes intra-file interference (tests within one file still share a global) and genuine flakes, so treat any single run's number as a sample, not a fact.
+
+Two traps encoded in `bunfig.toml`'s comment, both of which cost real time here:
+- **bunfig has no `isolate`/`parallel` key and silently ignores one.** The flag MUST live in the npm script. A bunfig entry looks like it works and changes nothing.
+- **`--isolate` alone segfaults Bun 1.3.13** partway through a full run (`panic: Segmentation fault`, a Bun bug, not ours). `--parallel` survives it because a crashed worker's file is retried in a fresh process — that resilience is why the flag is `--parallel`, not `--isolate`.
+- **`=4` is deliberate.** Bare `--parallel` uses every core and starves the CPU-bound whole-graph tests: `no-circular-dependencies` (madge over the whole tsconfig graph) took 117s against its own 60s budget and failed.
+
+**Two genuine bugs fixed underneath the noise:**
+- `BoardNotesToolbar.module.css` had a committed `margin-left: 20px` — the one violation the admin spacing gate had been reporting for weeks. Now `var(--space-5xl)`, the scale's 20px step, so the position is unchanged.
+- `agentPanel.test.tsx` searched the whole container for `input[type=file][accept="image/png,…"]` and asserted `multiple`. `DesignReferenceAttachment` renders a file input with an IDENTICAL `accept` list earlier in the composer, so the query returned that one — single-file. **The product was correct the whole time**; the selector is now scoped to the picker's own `FileUpload` wrapper.
+
+**Still failing, and NOT mine to fix — each is another session's uncommitted work:**
+- `Module size budgets` — `boardSlice.ts` is **+73 uncommitted lines**, now 772 against the 700 ceiling.
+- `Circular dependencies` — `collectPageStylesheets.ts` (modified) ⇄ `entryStylesheetCache.ts` (untracked, brand new).
+- `AdminCanvasLayout — permanent panel rail` — `PanelRail.tsx` has **+9 uncommitted lines** adding a `content` rail item; its test still asserts the committed contract.
+
+**The one real remaining test bug: `pin ⇄ unroll interaction > …unroll tagging…`.** Reproduced with a throwaway probe: append a `position: fixed` div to the canvas frame body and `CanvasScrollUnrollInjector` tags it at the first poll **when the page body is empty**, and NEVER tags it when the page has a child node. happy-dom is not the problem — `getComputedStyle(nav).position` correctly reports `fixed` inside the iframe, and `requestAnimationFrame` exists there. The probe also showed `iframes in doc: 3` (one per default breakpoint) and `tagged count: 0` in the document the test holds, so the suspicion is that `waitForCanvasFrameDocument` hands back a frame whose injector effect returned early (`if (!enabled || !targetDocument.body) return`, with `doc.body` not a dep, so it never re-runs once the body arrives). **Unverified — that is a hypothesis, not a finding.** Whoever picks this up: start from `CanvasScrollUnrollInjector.tsx:150`.
+
+**Files:** `package.json` (test scripts), `bunfig.toml` (the why), `src/admin/pages/site/canvas/BoardNotesLayer/BoardNotesToolbar.module.css`, `src/__tests__/panels/agentPanel.test.tsx`.
+
+---
+
+### panel-09 — the styles menu was blind to the project's own CSS, and the panel answered in the browser's vocabulary
+- **Agent:** claude (single pass, fixing three defects found by the user driving `panel-08`)
+- **Stage:** done. `tsc -p tsconfig.app.json` clean, `bun run lint` exit 0, verified in a browser on the real fixture.
+- **Updated:** 2026-08-31
+
+**Three defects, one shared root: the panel trusted metadata over the actual document.**
+
+**1. `SectionStylesMenu` showed nothing, on a project full of styles.** It filtered `generated?.origin !== 'framework'`, so it only ever offered framework-generated utility classes. On a real Studio project that is almost nothing — the repo IS the document, `studioCss.ts` parses style rules out of the project's own CSS, and a parsed rule carries **no `generated` metadata because nothing generated it**. Measured: `typography.classes` is `0` in all four workspace projects, so the framework half produced nothing either. The user opened "Text styles" on a project with 40+ authored classes and was told "no generated text styles yet" — true, useless, and blaming a panel they had no reason to visit.
+
+  New `styleFamilyClassifier.ts` classifies by **what a rule declares**. **The judgement worth knowing:** a rule qualifies only when EVERY property it declares is in that family's vocabulary and at least one is the family's core property. `.PlanCard_name { font-weight: 600 }` is a text style; `.ESimActivation_frame { display; max-width; font-family; color; background }` is a whole-component class and is deliberately excluded. A permissive test (`declares color → colour style`) turns this menu into a second ClassPicker, which is exactly what `SectionStylesMenu`'s own doc warns against. If someone reports a missing style, widen the vocabulary — do not drop the "every property" rule.
+
+**2. Placeholders answered in `getComputedStyle`'s vocabulary.** Track F1 correctly made the placeholder the frame's real computed value instead of a spec-default guess. Two consequences shipped unnoticed: an applied colour style read `rgb(135, 91, 247)` and never `var(--brand-500)`, and every shorthand came back expanded (`background` → `rgba(0, 0, 0, 0) none repeat scroll 0% 0% / auto padding-box border-box`). New `stylePlaceholder.ts` orders it **declaration → computed → spec default**, and suppresses the placeholder entirely for expansion-noise shorthands. `stylePropertyProvenance` already knew the winning declaration; nothing was using it for this.
+
+**3. Provenance never reached the four `StackedPropertyGrid` sections.** Typography, Background, Effects and Interaction got no `provenanceByProperty`, so applying a style left those rows looking completely untouched. Now threaded.
+
+**A regression I caused and caught in the browser, worth understanding.** Threading provenance into Typography made the pre-existing bare `inherited` chip fire on **all ten rows at once** — a column of identical tags. It had been invisible because provenance previously reached only Effects/Layout fallbacks, whose properties (`opacity`, `transform`) are not CSS-inherited, so the flag never fired. **The chip is deleted.** The dimmed placeholder already says "not set here"; a *losing* declaration is the only part of that strip that carries information. **Symptom if someone re-adds it: every text section grows one italic `inherited` per row.**
+
+**Dogfooding note.** Only a browser found #3's fallout — the tests were green. Measured evidence for #2 was `input.value === '' && input.placeholder === 'rgba(0, 0, 0, 0) none repeat scroll…'`, i.e. every field was a placeholder, nothing was stored. Read `value` vs `placeholder` separately before concluding a panel is showing a stored value.
+
+**Not done, deliberately:** `SizeSection` / `PositionSection` / `LayoutSection` compute their own placeholders and do not use `resolveStylePlaceholder`. They show lengths, not colours or shorthands, so neither symptom appears there — but they are the remaining inconsistency if someone wants `width: var(--container)` to read as the token.
+
+**Files:** `.../PropertiesPanel/styleFamilyClassifier.ts`, `.../stylePlaceholder.ts` (both new), `.../SectionStylesMenu.tsx`, `.../StackedPropertyGrid.tsx`, `.../StyleSectionsEditor.tsx`, `.../ClassPropertyRow.{tsx,module.css}`, `.../{Typography,Background,Effects,Interaction}Section.tsx`, `src/__tests__/panels/{stylePlaceholder,sectionStylesMenu}.test.tsx`, `docs/design.md`.
+
+---
+
 ### panel-08 — the caption sweep: a control names itself once, and a styles button offers one family
 - **Agent:** claude (single pass, follow-up to `panel-07`)
 - **Stage:** done. `tsc -p tsconfig.app.json` clean, `bun run lint` exit 0. **Dogfooded in a real browser** at :5173 with measured geometry, not eyeballed.
@@ -10688,3 +10825,183 @@ UI: a filled slot now shows **Edit contents · Replace · Add another**. `SlotCo
 **Still not offered: Clear.** No `clear-slot` codemod exists, and E2.3's parser locks every slot child structurally, so a Clear button would fail on every click. Replace covers the actual need (swap this for that); emptying a slot back to nothing remains a real, disclosed gap.
 
 **Files:** `src/core/ast-codemods/insertJsxIntoSlotProp.ts`, `server/handlers/studioSlotWriteback.ts`, `src/admin/pages/site/studio/studioSaveRequests.ts`, `src/admin/pages/site/property-controls/{SlotControl.tsx,SlotPicker.tsx}`, tests `src/__tests__/property-controls/{slotReplace.test.ts,SlotControl.test.tsx}`.
+
+### board-14 — a Content tab: the project's own dictionary as an editable en/ar table
+- **Agent:** coordinator (direct)
+- **Stage:** data layer + panel shipped and tested (11 new tests). **Two parts of the request are NOT built — see "Not built" below.** `tsc -b` + `bun run lint` clean. Not dogfooded in a browser.
+- **Updated:** 2026-08-31
+
+Asked for: a new rail tab to edit content in Arabic and English, that maps all the content automatically, with an AI translate action.
+
+**The load-bearing decision, made explicitly with the user:** Arabic is written into the **project's own i18n**, not a Studio sidecar. Studio's premise is that the repository is the document, so a translation edited in the panel is a real edit to `src/i18n/translations.js` (or `locales/ar.json`) and ships with the user's app. A sidecar would have shown Arabic on the canvas that never existed in production.
+
+**"Maps all the content automatically" needed no scanner.** A dictionary already IS that map. `translationCatalog.ts` reads all three shapes `localeProbe` detects into one flat `key -> { en, ar }` table, flattening nested keys to `nav.home` (a depth-1 reader would silently show an object where a string belongs). Verified against the real `esim-journey` dictionary: **138 entries, both locales, nesting intact.**
+
+`localeProbe` deliberately reads locale KEYS and never values — its job is populating a `Select` before any page is parsed. The catalogue is the next question, and the writer shares the reader's `findLocaleRootLiteral` so it can never target a literal the reader did not display.
+
+**Creating what is missing is the normal path, not an error.** A key with no Arabic, a missing intermediate object for a dotted key, a missing leaf — all created. What is NOT created is the locale root: a dictionary with no `ar` key means the project never declared that locale, and inventing one writes a locale the app never reads. A value that is code (`greeting: buildGreeting()`) is refused rather than overwritten, with the reason surfaced as a toast — the panel could not have displayed it honestly in the first place.
+
+**Panel shape:** rows stack the locales under the key rather than sitting side by side. The left sidebar is a narrow column and two horizontal text inputs in it are each too small to read a sentence — the same width constraint `board-12` hit with the slot picker. Commits on blur, never per keystroke: each commit rewrites the user's dictionary file.
+
+**Not built — both explicitly in the request:**
+1. **The AI translate action.** The drivers are streaming chat adapters (`AiProvider.stream`), so a one-shot "translate these N strings to Arabic" needs credential resolution, model-capability resolution and stream consumption — a real integration, not a button. The route (`POST /admin/api/studio/translations`) and the table it would fill are both in place, so this is additive: batch the untranslated keys, one call, write each result through `writeTranslationEntry`.
+2. **"Set up Arabic" for a project with no i18n at all.** This is what `untitled-2` — the user's active project — needs; it has `locales: null` and hardcoded JSX literals, so the panel currently shows its "no locale dictionary" state there. **Design decided, not implemented:** do NOT big-bang rewrite every literal. Create the dictionary + provider, then let the panel list the hardcoded strings the parser already found and extract them ONE at a time ("Localize this string" → mint a key, write both locales, rewrite that one literal to a lookup). Incremental extraction is reviewable, and it matches the invariant that a write has exactly one honest target; a project-wide literal rewrite does not.
+
+**Files:** `server/handlers/studio/{translationCatalog,translationWrite,translations}.ts`, `server/handlers/studio.ts`, `src/admin/pages/site/studio/translationCatalogClient.ts`, `src/admin/pages/site/panels/ContentPanel/*`, `src/admin/pages/site/sidebars/{PanelRail/PanelRail.tsx,LeftSidebar/LeftSidebar.tsx}`, `src/admin/pages/site/store/slices/uiSlice.ts`, `docs/agent-refs/path-index.md`, tests `src/__tests__/studio/translationCatalog.test.ts` + `src/__tests__/panels/contentPanel.test.tsx`.
+
+### board-15 — AI translation, and content mapping for a project with no i18n
+- **Agent:** coordinator (direct)
+- **Stage:** both built and tested (13 further tests, 83 across the feature). `tsc -b` and `bun run lint` clean for these files. Not dogfooded in a browser.
+- **Updated:** 2026-08-31
+
+The two pieces `board-14` left open.
+
+**1. AI translation.** `server/ai/oneShot.ts` is the entry the drivers were missing: every existing caller is the chat runner — a multi-turn tool loop with a browser bridge, a conversation log and an SSE stream — which is the wrong shape for "translate these forty strings". `runOneShotCompletion` is one system prompt, one user message, text out. `AiStreamRequest.bridge` is required by the interface and with `tools: []` no driver can legitimately reach it, so the bridge passed **throws**: that encodes the invariant instead of pretending to satisfy it, and a driver that does call it surfaces as a bug rather than hanging forever on a browser POST that will never arrive.
+
+`POST /admin/api/ai/translate-content` sends the whole untranslated batch as ONE JSON object. Not for round-trip economy — a translator that sees a screen's copy together produces consistent terminology, which per-string calls structurally cannot. The reply is validated against a TypeBox schema **before a single write**, so a model that returns prose or invents keys refuses the whole call rather than writing half of it; keys the model omitted come back as `skipped`, never silently dropped. Each translation is then applied through `writeTranslationEntry`, so a key whose value is code refuses exactly as it would under a hand edit, per key, in `failures`. Partial success is reported as partial.
+
+It lives under `server/ai/handlers/` rather than beside the other translation routes because the studio sub-routers are handed `(req, url, pathname)` and have no `db` — and this needs the user, their `ai.chat` capability, and the admin-configured default `(credentialId, modelId)`, all of which the AI dispatch already carries. No model picker in the panel: it uses the configured default.
+
+`selectPendingEntries` is exported and separately tested because it is the part most easily got wrong and the damage is invisible: **with no explicit key list this fills gaps and never overwrites** a translation somebody already reviewed. Passing `keys` is the explicit opt-in to retranslate.
+
+**2. Content mapping without a dictionary.** `hardcodedStrings.ts` scans the project's JSX for copy-shaped literals. The filter IS the feature, and the case that forced it is SVG: a path's `d` attribute is long, has spaces and has letters, so it passes every "looks like a sentence" heuristic. Measured on the real `untitled-2`: **4 of the first 14 hits were path data**, hundreds of characters each, burying the six real strings on that screen. Excluding `<svg>` subtrees wholesale — rather than blacklisting `d`, `viewBox`, `points` one at a time — is what makes it hold for the next SVG attribute nobody thought of. Plus a machinery-prop list and a digit-ratio guard. The bias is deliberately toward MISSING a string: a miss is visible on the canvas and the user can say so, while a false positive silently invites a destructive edit. Result on `untitled-2`: **15 strings, all real copy, no noise.**
+
+The panel now has two honest modes. With a dictionary: the editable en/ar table plus "Translate missing → ar". Without one: those 15 strings listed **read-only** with their source locations, and a note saying why they cannot be translated yet. Read-only is the point — with no dictionary there is nowhere to write a translation, so an input there would be a control that lies.
+
+**Still not built — the last piece:** extracting a hardcoded string INTO a dictionary (scaffold `translations.ts` + a defaulting `useTranslations()` hook, then per-string: mint a key, write both locales, rewrite that one literal to `{t.key}` plus the import and hook call). Deliberately still incremental rather than a project-wide rewrite, and deliberately with a hook that works WITHOUT a provider so an extraction can never break the app. Studio's Tier B.4 evaluator already resolves dictionary lookups, so an extracted string keeps rendering on the canvas.
+
+**Files:** `server/ai/{oneShot.ts,handlers/translateContent.ts,handlers/index.ts}`, `server/handlers/studio/{hardcodedStrings.ts,translations.ts}`, `src/admin/pages/site/studio/translationCatalogClient.ts`, `src/admin/pages/site/panels/ContentPanel/*`, `docs/agent-refs/path-index.md`, tests `src/__tests__/studio/{translateContent,hardcodedStrings}.test.ts` + `src/__tests__/panels/contentPanel.test.tsx`.
+
+### board-16 — every project gets English + Arabic
+- **Agent:** coordinator (direct)
+- **Stage:** built, tested, verified end-to-end against a copy of the real `untitled-2`. `bunx tsc -b` and `eslint` clean for these files; `src/__tests__/architecture` 494 pass / 0 fail. Not dogfooded in a browser.
+- **Updated:** 2026-08-31
+
+Asked for: *"all projects should have arabic and english languages."* This closes `board-15`'s last open piece — extracting hardcoded copy INTO a dictionary — and reverses one decision it recorded.
+
+**Reversed from `board-14`/`board-15`: extraction is ONE action per project, not one per string.** The per-string "Localize this string" design was wrong for a reason that only shows up in the code: the import and the `const { t } = useLanguage()` line are a per-FILE decision, so fifteen per-string actions mean fifteen re-parses of one file, each racing the last one's positions. It is also a second way to do a thing the repo bans having two ways to do. What preserves the reviewability the old design was protecting is that **the read-only list the panel already showed IS the preview** — the user sees exactly which strings will move before pressing the button.
+
+**The generated code's shape is not a style choice — three constraints fix every line** (`i18nScaffold.ts` carries the full argument):
+1. `localeProbe` rule 1 must DETECT it → a top-level `export const translations = {` with locale-code keys, plus a `translations[<ident>]` element access.
+2. `staticEvalCalls` Tier B must TRACE it → `useContext` as the hook's first statement, and exactly ONE `<LanguageContext.Provider>` in the workspace. The provider's value is a `useMemo` object holding `t: translations[lang]`, and because `lang` comes from `useState` — which `staticEvalCore.ts` deliberately does NOT resolve for a dictionary key — §7.4 picks the branch by **preview locale**. That is what makes the RTL board show Arabic.
+3. The hook must work with **no provider mounted** → `createContext` gets a real default carrying the English dictionary, and there is deliberately no `if (!ctx) throw` (which the `esim-journey` corpus shape has). An extraction can therefore never break a running app; worst case is untranslated copy, which is what was there before.
+
+**Verified, not assumed:** parsed a real extracted `Home.tsx` through `createWorkspaceProject` + `parsePageFile` at both preview locales. English resolves every extracted label; Arabic resolves only the keys actually translated. Note for future agents: `parsePageFile` with a bare `new Project()` resolves NOTHING through Tier B — `findProviders` scans the project's source files, so the workspace project is required. Two smoke runs looked like a broken scaffold before that was the answer.
+
+**The scanner got two documented widenings, both found by running it on the user's real project rather than a fixture:**
+- **A single word is copy when it is CAPITALISED** (`From`, `To`, `Dates`, `Support`) and an enum token when it is not (`primary`, `solid`, `chevron`). The old "reject any short single token" rule silently dropped the shortest and commonest labels on a screen — exactly the copy a translator needs most.
+- **Literals nested in a prop EXPRESSION** are read too (`toolbar={{ title: 'Account' }}`, `items={['Flights','Stays']}`). This is how this corpus's design system takes structured props, so the old attribute-only scan reported every `<Cell>`'s label while reporting nothing at all for the `<Navbar>` beside it. The `<svg>` exclusion moved from per-PROP to per-LITERAL in the same change — `icon={<svg stroke="currentColor"…/>}` puts geometry inside a copy prop, and three `currentColor` hits proved it.
+
+Measured on `untitled-2`: **15 → 28 strings, every new one real copy, no false positives.** End-to-end on a copy: 27 extracted across 2 files, 0 failures.
+
+**Two cosmetic fixes worth keeping:** both codemods now set `quoteKind: Single` + `indentationText: TwoSpaces`. ts-morph's 4-space, double-quote, semicolon-terminated defaults are a visible foreign edit in somebody's repo — and the dictionary write creates whole nested objects, so it was the more visible of the two. The added import also matches the file's own semicolon style.
+
+**Deleted:** `src/__tests__/architecture/binding-compatibility-coverage.test.ts` — orphaned by `board-13`'s removal of the dynamic-binding surface (the module it gates has been gone since `505f19c`; the gate outlived it and was failing on import). Plus the dead `DynamicBindingControl` comment block in `controls.module.css`.
+
+**Not done:** browser dogfooding. The flow is verified at the parse/AST level, not by driving the panel.
+
+**Files:** `server/handlers/studio/{i18nScaffold,i18nSetup,hardcodedStrings,translationWrite}.ts`, `server/handlers/studio.ts`, `src/core/ast-codemods/{extractStringsToDictionary.ts,index.ts}`, `src/admin/pages/site/studio/translationCatalogClient.ts`, `src/admin/pages/site/panels/ContentPanel/ContentPanel.tsx`, `src/admin/pages/site/property-controls/controls.module.css`, `docs/agent-refs/path-index.md`, tests `src/__tests__/core/extractStringsToDictionary.test.ts` + `src/__tests__/studio/{i18nSetup,hardcodedStrings}.test.ts` + `src/__tests__/panels/contentPanel.test.tsx`.
+
+### board-17 — content table, setup without a click, and a translate reply that survives a real model
+- **Agent:** coordinator (direct)
+- **Stage:** built and tested (10 further tests). `tsc -b`, `eslint` and `src/__tests__/architecture` (504 pass / 0 fail) clean for these files. Still not dogfooded in a browser.
+- **Updated:** 2026-08-31
+
+Three fixes off one round of the user actually using `board-16`.
+
+**1. Reversed `board-14`'s stacked-row layout.** That entry argued locales must stack because the sidebar is narrow. Twenty-seven keys made the cost obvious: three screens of scrolling to compare two columns. It is now one CSS grid with a sticky header, rows as `display: contents` so every cell shares the ONE grid (a per-row nested grid cannot keep columns aligned), and the container scrolls in **both** axes — the locale columns keep a readable minimum and the panel scrolls sideways when dragged narrow, rather than crushing every cell. The column template is data-driven (a project may declare more than two locales) via a custom property, which is the one inline-style shape this repo allows.
+
+**2. Setup runs on its own.** Opening this panel on a project with no dictionary IS the request for one, so the button is gone from the happy path. Guarded by a `useRef`, not state: this rewrites the user's source, and a retry-per-render would be a disaster. A refusal shows its reason plus an explicit retry. The button survives only as that retry.
+
+**3. The AI translate action was broken on the real batch**, and the cause is worth remembering: **dotted keys invite a nested reply.** Handed thirty keys named `home.searchFlights`, a model very reasonably answers with the nested object those names describe — and `safeParseJson(raw, Record<string, string>)` rejected the whole thing. A schema check is right for an API, where deviation means a bug; it is the wrong tool for model output formatting, which is the one part expected to vary. Refusing a perfect set of translations because of its shape throws away work the user already paid for.
+
+`server/ai/translationReply.ts` now absorbs the presentational deviations (prose around the object, a code fence, a `{"translations": …}` wrapper, and nesting → flattened back to dotted keys) and refuses only what would change what gets WRITTEN (a non-string leaf, a key nobody asked for — both dropped and reported, never coerced or written). The prompt also now says explicitly that the object is FLAT and a dotted key is one key. It lives beside `oneShot.ts`, NOT in `handlers/`: that folder is gated on every file calling `requireCapability`, and a pure parser would have to break that rule to sit there.
+
+**Durable trap, cost a confusing warning:** under `bun test` a CSS-module import resolves to the stylesheet TEXT (a `String`), so `styles.foo` is `undefined` for every real class — harmless — **except** where the class is named after a `String.prototype` member. `.search` came back as `String.prototype.search` and React rendered `className={function}`. Renamed to `.searchField`. Avoid `search`, `link`, `trim`, `concat`, `bold`, `sub`, `at` as class names in a module a test renders.
+
+**Also fixed:** `--editor-surface` in the new CSS is a deprecated token (`css-token-vocabulary` gate) → `--bg-surface`.
+
+**Files:** `src/admin/pages/site/panels/ContentPanel/{ContentPanel.tsx,ContentPanel.module.css}`, `server/ai/translationReply.ts` (new), `server/ai/handlers/translateContent.ts`, tests `src/__tests__/studio/translationReply.test.ts` + `src/__tests__/panels/contentPanel.test.tsx`.
+
+### board-18 — the translate action never had a prompt
+- **Agent:** coordinator (direct)
+- **Stage:** fixed and tested (3 further tests). `tsc -b`, `eslint` clean; 1571 pass / 0 fail across ai + studio + panels + core + architecture. The fix is verified by test, not yet by a real model call.
+- **Updated:** 2026-08-31
+
+`board-17`'s tolerant reply parser was necessary but was treating a symptom. The server log had the real answer, and it is the kind of thing a schema error would never have revealed:
+
+> `[ai:translateContent] unparsable reply: You've sent the same JSON again without a request. What would you like me to do — translate it, convert format, add keys, integrate it into a project?`
+
+**The model was never given the instructions.** It answered correctly for what it actually received: a bare JSON blob.
+
+**Root cause — a durable fact about this repo's drivers.** `AiStreamRequest.systemPrompt` is part of the `AiProvider` interface, and **`claudeCli` does not forward it.** That driver pipes only the latest user message to the subprocess and lets the CLI supply its own operating instructions — the same reason it never forwards `req.tools`. It is defensible for the CHAT path (the CLI is an agent, not a raw model, and Studio's chat prompt describes a tool surface the CLI never receives; the project's generated `CLAUDE.md`, loaded from the subprocess cwd, is what teaches it instead) but it was **entirely undocumented**, so `oneShot.ts` was written against an interface field that silently evaporates on the only provider configured here. Now documented in `claudeCli.ts` under a heading of its own.
+
+**Fix:** a one-shot composes its instruction into the single user message and sends `systemPrompt: []`. That is not a workaround — for a SINGLE-turn completion there was never a reason to split them: no conversation for a system prompt to persist across, no history for it to sit in front of. `OneShotParams.systemPrompt` is renamed `instructions` so the field no longer names a channel it does not use, and every driver now receives the same thing. Regression-tested directly (`src/__tests__/ai/oneShot.test.ts` asserts `systemPrompt` is empty and the instruction is in the message).
+
+**Deliberately NOT done:** making `claudeCli` honour `systemPrompt` via `--append-system-prompt`. That is the "real" fix to the interface violation and it is a genuine option — but it changes what the MAIN CHAT sends on every turn, on the only provider this install has configured, and it cannot be validated without spending real turns. It is a deliberate change with its own validation, not a drive-by fix inside a translation bug. **Flagged as open.**
+
+**Keep `board-17`'s parser regardless** — it is independently right (a model's output FORMATTING is not an API contract), and it is what will absorb the nested-reply case now that the model is actually being asked to do something.
+
+**Files:** `server/ai/oneShot.ts`, `server/ai/handlers/translateContent.ts`, `server/ai/drivers/claudeCli.ts` (doc only), test `src/__tests__/ai/oneShot.test.ts`.
+
+### board-19 — the RTL preview was pinned LTR by a false premise
+- **Agent:** coordinator (direct)
+- **Stage:** built and tested. `tsc -b`, `eslint` clean; 1607 pass / 0 fail across modules + studio + panels + ai + core + architecture. The `dir` fix is reasoned from the installed bundle and gated by test; not yet confirmed on a board.
+- **Updated:** 2026-08-31
+
+Three findings from the user's first real RTL board. The third invalidates a decision `board-13` recorded.
+
+**1. `board-13`'s `dir` rule was built on a premise that is false for the installed package.** It stripped `dir` from a design-system component's props so `useDir()` would fall through to `DesignSystemProvider`, which Studio renders with the frame's direction. Measured against `@alm-design/design-system@1.1.2`:
+
+- **`useDir(` appears ZERO times in the shipped bundle.**
+- **20 of its 26 components declare `dir` as an ordinary prop defaulting to the literal `'ltr'`**, which each writes onto its own root element.
+
+`dir="ltr"` on a component's own root BEATS the `html[dir="rtl"]` the frame sets. So stripping the prop did not fall through to anything — it pinned twenty components left-to-right and defeated the frame's own direction. The symptom was precisely the reported one: an RTL board where text reflows and components do not mirror (`SystemBanner`'s icon stayed left; `.system-banner` is plain `display:flex` with no physical properties, so it could only have failed to flip by being in an LTR context).
+
+The canvas now **supplies** the value instead of hoping something else will — `withCanvasDrivenProps(props, { direction })`, replacing `stripCanvasDrivenProps` on both render paths. An explicit prop is also the highest-precedence input for a component that DOES consult a provider, so this is correct for both shapes and no longer depends on which one a package uses. The provider is still rendered (a future version may start consulting it) but direction does not depend on it. Its doc comment, which asserted the false premise in detail, is corrected rather than deleted — the wrong belief is worth naming.
+
+Stripping is still right for the SCHEMA and DEFAULTS paths (`dir` is not an editable row and is never persisted), so both functions exist and do different jobs.
+
+**2. A string literal in CHILD position was invisible.** `<h3>{"asdasdasdas"}</h3>` is neither a JSX text child nor a prop, so nothing scanned it — and the prop-position identifier heuristic (`^[a-z0-9_-]+$`, which exists to reject `primary`/`solid`) would have rejected it anyway. In child position there IS no prop whose name could make a literal machinery, so that heuristic has nothing to protect against and only does harm: it hid placeholder copy the user had typed onto the canvas and could see on screen. Split into `looksLikeRenderedCopy` (child position) and `looksLikeCopy` (prop position) over a shared `isReadableText`.
+
+**3. `value` is machinery on a host element and copy on a component.** On `<input>` it is form state; on `<Cell>` it is the text down the right-hand side of the row — which is what hid `Dubai (DXB)`, `Jeddah (JED)`, `English` and `SAR`. The TAG tells them apart: lowercase is a DOM element, capitalised is a component. Same rule for `placeholder`.
+
+Also: the digit guard rejected `11 – 28 Aug` (36% digits). A run of three letters now rescues a digit-heavy string — enough for `Aug`, `SAR`, `adults`, and not something SVG path data produces.
+
+Measured on `untitled-2` after `board-16`'s extraction: **9 further strings found, all real copy** — the exact set the user named.
+
+**Files:** `src/admin/pages/site/property-controls/componentPropKind.ts`, `src/modules/alm/register.tsx`, `src/admin/pages/site/studio/registerProjectModules.ts`, `server/handlers/studio/hardcodedStrings.ts`, tests `src/__tests__/modules/canvasDrivenProps.test.ts` + `src/__tests__/studio/hardcodedStrings.test.ts`.
+
+### board-20 — three bugs behind "reloaded and can't find them"
+- **Agent:** coordinator (direct)
+- **Stage:** all three fixed and regression-tested (8 further tests). `tsc -b`, `eslint` clean; 1615 pass / 0 fail. Verified end-to-end on a copy of the real `untitled-2`: 9 inline strings -> 0.
+- **Updated:** 2026-08-31
+
+`board-19` found 9 more strings; the user reloaded and could not see them. Three separate defects, each hiding the next.
+
+**1. The panel only rendered still-inline strings when there was NO dictionary.** `ContentPanel`'s own doc already said "a project WITH a dictionary can still have strings that never made it in", and the server has always returned both halves — but the catalog branch never read `hardcoded`. The moment the dictionary existed, the remaining strings were in the payload and absent from the UI. They now sit above the table in a collapsed section (count + action, expandable), capped at 40% height so a project with a hundred cannot push the table off screen.
+
+**2. `setUpProjectI18n` refused outright once a dictionary existed.** Scaffolding and extracting were one step, so the action could only ever run once — yet extraction is inherently repeatable: a screen written later, a literal the scanner learned to see later, a string a rewrite refused. Now: scaffold only when there is no dictionary, then extract either way. A dictionary Studio did NOT write is refused with a reason (`findScaffoldedI18n` recognises Studio's own shape by content, not just path) — extraction needs to know which module exports the hook and what it is called, and guessing would write an import to a symbol that may not exist.
+
+**3. The `t` collision guard treated Studio's own previous edit as a conflict.** A second run lands in a file already carrying `const { t } = useLanguage()`, and a plain "is `t` bound?" check refused every string in it. **That is the exact toast the user saw: "9 left in place: Home.tsx already binds t".** `bindsNameElsewhere` now ignores a binding whose initializer is the extraction hook itself.
+
+**And a fourth, exposed only once #3 was fixed:** `2 adults · Economy` minted `home.2AdultsEconomy`, and `t.home.2AdultsEconomy` is a syntax error. ts-morph rejects the whole FILE's manipulation when one appears, so one bad key took down the other 8 strings in `Home.tsx`. Fixed at the source (`identifierSegment` prefixes `_`; the digit is kept because it is load-bearing in the string it names) AND guarded in the codemod (`isWritableKey` -> a named `invalid-key` refusal per string), so a future minting mistake can never corrupt a file again.
+
+**The lesson worth keeping:** #3 and #4 were both invisible to every test because the suite only ever ran the FIRST extraction on a fresh fixture. The second run is a different code path and it was never exercised. Both now have explicit "run it twice" regressions.
+
+**Files:** `src/admin/pages/site/panels/ContentPanel/{ContentPanel.tsx,ContentPanel.module.css}`, `server/handlers/studio/{i18nScaffold,i18nSetup}.ts`, `src/core/ast-codemods/extractStringsToDictionary.ts`, tests `src/__tests__/core/extractStringsToDictionary.test.ts` + `src/__tests__/studio/i18nSetup.test.ts` + `src/__tests__/panels/contentPanel.test.tsx`.
+
+### board-21 — what a full-suite run caught that the targeted runs did not
+- **Agent:** coordinator (direct)
+- **Stage:** two real defects found and fixed; the rest triaged as not-mine. Full `--parallel=4` re-run in flight at time of writing.
+- **Updated:** 2026-08-31
+
+Every board from 14 to 20 verified with TARGETED suites (`src/__tests__/{studio,panels,core,modules,architecture,ai}`) and all were green. A full `src/__tests__` run found two things those could not.
+
+**1. A rail gate I broke in `board-14` and never noticed.** `editorLayoutPersistence.test.tsx` pins the primary rail's exact contents — testids AND icon names, in order — and I added the Content tab without updating it. It lives under `src/__tests__/layout/`, which none of my targeted runs covered. Gate updated. **The lesson: "my targeted suites are green" is not the same as "my change is clean" when the change touches a shared surface** — a rail, a route table, a barrel. Grep for the surface's name across `src/__tests__` as well as running the obvious folder.
+
+**2. The Content panel could rewrite the user's source without the user ever opening it.** Every sibling panel in `LeftSidebar` is hidden-but-mounted so its scroll position and local state survive a tab switch, and I followed that pattern without thinking about what my mount effect DOES. It fetches — and on a project with no dictionary it scaffolds one and rewrites JSX. `board-17` justified the auto-setup with "opening this panel IS the request for localisation", and that argument is only sound if opening the panel is what MOUNTS it. Hidden-mounted, merely opening the editor was enough. The panel is now mounted only while it is the active panel; it has no state worth preserving anyway (it deliberately re-reads on every mount, because the file is the source of truth). The visible symptom that led here was 12 `[ContentPanel] content fetch failed` lines in an unrelated layout test.
+
+**Triage of the remaining 19 failures: not mine, and mostly not real.** All canvas/NodeRenderer/breakpoint/frame-mounting, and they PASS in isolation. Cause: I ran `bun test src/__tests__` directly, without the `--parallel=4` that lives in `package.json`'s `test` script — which `bunfig.toml` documents at length as producing exactly this (a shared module-scoped Zustand store and live observers not torn down per file; measured there as 9621/35 shared vs 9728/8 parallel). **Use `bun run test`, or pass `--parallel=4`; a bare `bun test` over the whole suite reports failures that are an artefact of the runner.** Those files are also the parallel session's active `boardSlice`/`boardSelectors` refactor, which `tsc -b` independently shows mid-flight (`selectActiveBoard` not yet exported).
+
+**Files:** `src/admin/pages/site/sidebars/LeftSidebar/LeftSidebar.tsx`, `src/__tests__/layout/editorLayoutPersistence.test.tsx`.

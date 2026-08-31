@@ -19,7 +19,8 @@
 import { useRef, useState } from 'react'
 import { AppGridPlusGlyphIcon } from 'pixel-art-icons/icons/app-grid-plus-glyph'
 import { Button } from '@ui/components/Button'
-import { ModuleInserterDialog } from '@site/module-picker/ModuleInserterDialog'
+import { LazyModuleInserterDialog } from '@site/module-picker/LazyModuleInserterDialog'
+import { preloadModuleInserterDialog } from '@site/module-picker/preloadModuleInserterDialog'
 import { useInsertInserterItem } from '@site/hooks/useInsertInserterItem'
 
 interface ModulePickerDropdownProps {
@@ -55,17 +56,18 @@ export function ModulePickerDropdown({
         aria-expanded={open}
         tooltip="Add to canvas"
         onClick={handleOpen}
+        onPointerEnter={preloadModuleInserterDialog}
+        onFocus={preloadModuleInserterDialog}
         data-testid={triggerTestId}
       >
         <AppGridPlusGlyphIcon size={13} />
       </Button>
 
-      {open && (
-        <ModuleInserterDialog
-          onClose={handleClose}
-          onInsertItem={handleInsertItem}
-        />
-      )}
+      <LazyModuleInserterDialog
+        open={open}
+        onClose={handleClose}
+        onInsertItem={handleInsertItem}
+      />
     </>
   )
 }

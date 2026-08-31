@@ -29,9 +29,9 @@ import { SectionStylesMenu } from './SectionStylesMenu'
 import {
   CLASS_STYLE_SECTIONS,
   cssPropertyLabel,
-  getCSSPropertyDefaultValue,
   type ClassStyleSectionDefinition,
 } from './cssControlTypes'
+import { resolveStylePlaceholder } from './stylePlaceholder'
 import { hasStyleValue } from './styleValueUtils'
 import { useEditorPreference } from '@site/preferences/editorPreferences'
 import type { PropertyProvenance } from './stylePropertyProvenance'
@@ -277,6 +277,7 @@ function StyleSectionGroup({
             onRemove={onRemove}
             onPreview={onPreview}
             onClearPreview={onClearPreview}
+            provenanceByProperty={provenanceByProperty}
           />
         ) : section.id === BACKGROUND_SECTION_ID ? (
           <BackgroundSection
@@ -289,6 +290,7 @@ function StyleSectionGroup({
             onRemove={onRemove}
             onPreview={onPreview}
             onClearPreview={onClearPreview}
+            provenanceByProperty={provenanceByProperty}
           />
         ) : section.id === EFFECTS_SECTION_ID ? (
           <EffectsSection
@@ -301,6 +303,7 @@ function StyleSectionGroup({
             onRemove={onRemove}
             onPreview={onPreview}
             onClearPreview={onClearPreview}
+            provenanceByProperty={provenanceByProperty}
           />
         ) : section.id === INTERACTION_SECTION_ID ? (
           <InteractionSection
@@ -313,6 +316,7 @@ function StyleSectionGroup({
             onRemove={onRemove}
             onPreview={onPreview}
             onClearPreview={onClearPreview}
+            provenanceByProperty={provenanceByProperty}
           />
         ) : section.id === BORDER_SECTION_ID ? (
           <>
@@ -341,24 +345,29 @@ function StyleSectionGroup({
           section.properties.map((prop) => {
             const storedValue = storedStyles[prop]
             const isSet = hasStyleValue(storedValue)
-            const currentValue = currentStyles[prop]
-            const fallbackValue = hasStyleValue(currentValue)
-              ? currentValue
-              : getCSSPropertyDefaultValue(prop)
+            const provenance = provenanceByProperty?.get(String(prop))
 
             return (
               <ClassPropertyRow
                 key={`${activeTab}-${String(prop)}`}
                 property={prop}
                 value={isSet ? (storedValue as string | number) : undefined}
-                placeholder={!isSet ? fallbackValue : undefined}
+                placeholder={
+                  isSet
+                    ? undefined
+                    : resolveStylePlaceholder({
+                        property: prop,
+                        provenance,
+                        currentValue: currentStyles[prop],
+                      })
+                }
                 fontFamilyValue={currentStyles.fontFamily}
                 isSet={isSet}
                 onChange={onChange}
                 onRemove={onRemove}
                 onPreview={previewProperty}
                 onClearPreview={onClearPreview}
-                provenance={provenanceByProperty?.get(String(prop))}
+                provenance={provenance}
               />
             )
           })
@@ -418,23 +427,28 @@ function AdvancedRows({
         {properties.map((prop) => {
           const storedValue = storedStyles[prop]
           const isSet = hasStyleValue(storedValue)
-          const currentValue = currentStyles[prop]
-          const fallbackValue = hasStyleValue(currentValue)
-            ? currentValue
-            : getCSSPropertyDefaultValue(prop)
+          const provenance = provenanceByProperty?.get(String(prop))
           return (
             <ClassPropertyRow
               key={`${activeTab}-${String(prop)}`}
               property={prop}
               value={isSet ? (storedValue as string | number) : undefined}
-              placeholder={!isSet ? fallbackValue : undefined}
+              placeholder={
+                isSet
+                  ? undefined
+                  : resolveStylePlaceholder({
+                      property: prop,
+                      provenance,
+                      currentValue: currentStyles[prop],
+                    })
+              }
               fontFamilyValue={currentStyles.fontFamily}
               isSet={isSet}
               onChange={onChange}
               onRemove={onRemove}
               onPreview={onPreview}
               onClearPreview={onClearPreview}
-              provenance={provenanceByProperty?.get(String(prop))}
+              provenance={provenance}
             />
           )
         })}

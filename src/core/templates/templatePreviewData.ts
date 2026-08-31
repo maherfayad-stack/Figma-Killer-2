@@ -14,7 +14,8 @@
  * not available in the browser context.
  */
 
-import type { DataTable, DataField, DataRowCells } from '@core/data/schemas'
+import type { DataTable, DataField } from '@core/data/schemas'
+import type { DataRowCells } from '@core/data/dataRowSchema'
 import {
   POST_TYPE_FIELD_BODY,
   POST_TYPE_FIELD_FEATURED_MEDIA,

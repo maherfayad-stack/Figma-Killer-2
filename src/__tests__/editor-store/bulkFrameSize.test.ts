@@ -16,7 +16,7 @@
  */
 import { describe, it, expect, beforeEach, afterAll } from 'bun:test'
 import { useEditorStore } from '@site/store/store'
-import { selectActiveBoard } from '@site/store/slices/boardSlice'
+import { selectActiveBoard } from '@site/store/slices/boardSelectors'
 import {
   createBoard,
   createBoardsFile,

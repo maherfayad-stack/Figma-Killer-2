@@ -8,12 +8,28 @@
  * board-level concerns (frame membership, virtualization, activation
  * routing, drag-to-reposition) this component's own doc comments below cross
  * reference.
+ *
+ * `memo()`'d (React Compiler exception #2 — a hot, list-rendered component;
+ * see `NodeRenderer.tsx`'s identical justification): a 15-frame board's
+ * `BoardFramesLayer` re-renders on every board write, and without this every
+ * frame's OWN `BreakpointFrame` + iframe would re-render with it. This only
+ * pays off because every prop below is either a primitive or traces back to
+ * `frame`/`page` object references that `boardsModel.ts`'s per-collection
+ * transforms deliberately keep stable for every UNAFFECTED frame (copy-on-
+ * write replaces only the touched array element, `.map()`-preserving every
+ * other one) — see `boardSlice.ts`'s `selectActiveBoardFrames` doc. Mutating
+ * actions (`setFramePosition`, `setFrameSize`, `removeFrameById`, …) are
+ * called directly against `useEditorStore.getState()` from inside this
+ * component rather than threaded down as parent-bound closures, precisely so
+ * this file never has to depend on a `.map()` callback producing a stable
+ * closure identity to make the `memo()` bailout real.
  */
 import {
   useEffect,
   useRef,
   useState,
   useSyncExternalStore,
+  memo,
   type CSSProperties,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
@@ -21,7 +37,7 @@ import {
 import { createPortal } from 'react-dom'
 import { useAdminUi } from '@admin/state/adminUi'
 import { useEditorStore } from '@site/store/store'
-import { selectActiveBoard } from '@site/store/slices/boardSlice'
+import { selectActiveBoard } from '@site/store/slices/boardSelectors'
 import type { Breakpoint, Page } from '@core/page-tree'
 import { MIN_FRAME_SIZE, type BoardFrame, type PreviewAxes } from '@core/studio-board'
 import { Input } from '@ui/components/Input'
@@ -103,23 +119,19 @@ interface BoardFrameViewProps {
   /** WS-7.1 — whether this frame is part of the bulk-selection set (`selectedFrameIds`). Distinct from `isActive`. */
   isSelected: boolean
   isOnScreen: boolean
-  onActivate: () => void
-  onMove: (x: number, y: number) => void
-  /**
-   * `height: undefined` means "hug the content" — a width-only drag on a
-   * frame that was already hugging passes it, so dragging the side never
-   * silently pins the height. See `resizeRect`'s use below.
-   */
-  onResize: (width: number, height: number | undefined) => void
-  /** Clears the stored height so the frame hugs its content again. */
-  onResetHeight: () => void
-  onRemove: () => void
-  onRename: (title: string) => void
-  /** WS-10 Phase 2 — "duplicate as variant": create a sibling frame of this page with the given axis override. */
-  onDuplicateAsVariant: (axes: Partial<PreviewAxes>) => void
 }
 
-export function BoardFrameView({
+/**
+ * A plain functional component, wrapped in `memo()` at the bottom export —
+ * every callback this used to receive as a parent-bound prop (`onActivate`,
+ * `onMove`, `onResize`, `onResetHeight`, `onRemove`, `onRename`,
+ * `onDuplicateAsVariant`) now calls the matching store action directly
+ * against `useEditorStore.getState()` using this component's own `frame`/
+ * `page` props, so the `memo()` bailout below doesn't depend on
+ * `BoardFramesLayer`'s `.map()` producing stable closures per frame — see
+ * this module's top doc comment.
+ */
+function BoardFrameViewImpl({
   frame,
   page,
   x,
@@ -130,17 +142,12 @@ export function BoardFrameView({
   isActive,
   isSelected,
   isOnScreen,
-  onActivate,
-  onMove,
-  onResize,
-  onResetHeight,
-  onRemove,
-  onRename,
-  onDuplicateAsVariant,
 }: BoardFrameViewProps) {
   const dragRef = useRef<DragState | null>(null)
   const resizeRef = useRef<ResizeDragState | null>(null)
-  const [rename, renameInputRef] = useInlineRename({ onCommit: onRename })
+  const [rename, renameInputRef] = useInlineRename({
+    onCommit: (title) => useEditorStore.getState().renamePage(page.id, title),
+  })
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
   // WS-10 Phase 2 — "duplicate as variant" flips whichever axis it targets
   // relative to what this frame is ACTUALLY previewing right now (its own
@@ -187,8 +194,10 @@ export function BoardFrameView({
   // Capture phase — fires before the frame's own node-click handling, so
   // `activePageId` is already switched to this page by the time selection
   // logic runs (see the module doc's "Activation + edit routing" note).
+  const activatePage = () => useEditorStore.getState().openPageInCanvas(page.id)
+
   const handleActivateCapture = () => {
-    if (!isActive) onActivate()
+    if (!isActive) activatePage()
   }
 
   const handleHeaderPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
@@ -232,7 +241,7 @@ export function BoardFrameView({
     const peers = board ? collectPeerRects(board, { kind: 'frame', pageId: page.id }) : []
     const snapped = computeSnap({ x: rawX, y: rawY, width, height }, peers, SNAP_THRESHOLD_BOARD_UNITS)
     useEditorStore.getState().setBoardSnapGuides(snapped.guides)
-    onMove(snapped.x, snapped.y)
+    useEditorStore.getState().setFramePosition(frame.id, snapped.x, snapped.y)
   }
 
   const endDrag = (e: ReactPointerEvent<HTMLDivElement>) => {
@@ -245,9 +254,12 @@ export function BoardFrameView({
   // Resize handles — same pointer-capture + screenDelta/zoom pattern as the
   // header drag above, so a handle tracks the cursor 1:1 at any zoom. The
   // geometry itself (which edges move, the min-size clamp) is the pure
-  // `resizeRect` — this handler only converts screen pixels to board
-  // units and applies the result via the existing `onMove` (position) /
-  // `onResize` (size) callbacks.
+  // `resizeRect` — this handler only converts screen pixels to board units
+  // and applies the result via `setFrameRect`, ONE combined position+size
+  // store write per tick (a corner/edge handle can move x/y AND w/h in the
+  // same gesture; two separate `setFramePosition`+`setFrameSize` calls used
+  // to mean two `Board` reallocations and two selector sweeps per tick for
+  // one drag).
   const handleResizePointerDown = (handle: ResizeHandle) => (e: ReactPointerEvent<HTMLDivElement>) => {
     // A handle sits inside the frame's own pointerdown-capture region — stop
     // it reaching `handleActivateCapture`/the header's drag handlers so
@@ -277,14 +289,26 @@ export function BoardFrameView({
     const dx = (e.clientX - drag.startClientX) / zoom
     const dy = (e.clientY - drag.startClientY) / zoom
     const next = resizeRect(drag.anchor, drag.handle, dx, dy, MIN_FRAME_SIZE)
-    if (next.x !== drag.anchor.x || next.y !== drag.anchor.y) onMove(next.x, next.y)
     // Only a handle that actually moves a horizontal edge is "I chose this
     // height". Dragging `e`/`w` used to commit the resolved fallback height as
     // if the author had picked it, which silently turned auto-hug off on a
     // frame the author had only made wider.
     const changesHeight = drag.handle.includes('n') || drag.handle.includes('s')
-    onResize(next.width, changesHeight || hasManualHeight ? next.height : undefined)
+    useEditorStore.getState().setFrameRect(
+      frame.id,
+      next.x,
+      next.y,
+      next.width,
+      changesHeight || hasManualHeight ? next.height : undefined,
+    )
   }
+
+  /** Clears the stored height so the frame hugs its content again. */
+  const handleResetHeight = () => useEditorStore.getState().setFrameSize(frame.id, width, undefined)
+  const handleRemove = () => useEditorStore.getState().removeFrameById(frame.id)
+  /** WS-10 Phase 2 — "duplicate as variant": create a sibling frame of this page with the given axis override. */
+  const handleDuplicateAsVariant = (axes: Partial<PreviewAxes>) =>
+    useEditorStore.getState().duplicateFrameAsVariant(frame.id, axes)
 
   const endResize = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (resizeRef.current?.pointerId === e.pointerId) resizeRef.current = null
@@ -355,7 +379,7 @@ export function BoardFrameView({
           <ContextMenuItem
             onClick={() => {
               setContextMenu(null)
-              onDuplicateAsVariant({ direction: effectiveAxes.direction === 'rtl' ? 'ltr' : 'rtl' })
+              handleDuplicateAsVariant({ direction: effectiveAxes.direction === 'rtl' ? 'ltr' : 'rtl' })
             }}
           >
             <span aria-hidden="true"><CopyPlusSolidIcon size={13} /></span>
@@ -365,7 +389,7 @@ export function BoardFrameView({
             <ContextMenuItem
               onClick={() => {
                 setContextMenu(null)
-                onDuplicateAsVariant({ colorScheme: effectiveAxes.colorScheme === 'dark' ? 'light' : 'dark' })
+                handleDuplicateAsVariant({ colorScheme: effectiveAxes.colorScheme === 'dark' ? 'light' : 'dark' })
               }}
             >
               <span aria-hidden="true"><CopyPlusSolidIcon size={13} /></span>
@@ -376,7 +400,7 @@ export function BoardFrameView({
             <ContextMenuItem
               onClick={() => {
                 setContextMenu(null)
-                onDuplicateAsVariant({ locale: otherLocale })
+                handleDuplicateAsVariant({ locale: otherLocale })
               }}
             >
               <span aria-hidden="true"><CopyPlusSolidIcon size={13} /></span>
@@ -384,13 +408,13 @@ export function BoardFrameView({
             </ContextMenuItem>
           )}
           {hasManualHeight && (
-            <ContextMenuItem onClick={() => { setContextMenu(null); onResetHeight() }}>
+            <ContextMenuItem onClick={() => { setContextMenu(null); handleResetHeight() }}>
               Fit height to content
             </ContextMenuItem>
           )}
           <ContextMenuItem
             danger
-            onClick={() => { setContextMenu(null); onRemove() }}
+            onClick={() => { setContextMenu(null); handleRemove() }}
           >
             <span aria-hidden="true"><CloseIcon size={13} /></span>
             Remove from board
@@ -428,7 +452,7 @@ export function BoardFrameView({
                 page={page}
                 breakpoint={buildStudioBreakpoint(width)}
                 isActive={isActive}
-                onActivate={onActivate}
+                onActivate={activatePage}
                 frameId={frame.id}
                 axesOverride={frame.axes}
                 // The board frame carries its own header (title, rename,
@@ -470,7 +494,7 @@ export function BoardFrameView({
               // is the discoverable and keyboard-reachable path (these handles
               // sit in an `aria-hidden` container).
               title={handle === 's' && hasManualHeight ? 'Double-click to fit height to content' : undefined}
-              onDoubleClick={handle === 's' ? onResetHeight : undefined}
+              onDoubleClick={handle === 's' ? handleResetHeight : undefined}
               onPointerDown={handleResizePointerDown(handle)}
               onPointerMove={handleResizePointerMove}
               onPointerUp={endResize}
@@ -482,3 +506,5 @@ export function BoardFrameView({
     </div>
   )
 }
+
+export const BoardFrameView = memo(BoardFrameViewImpl)

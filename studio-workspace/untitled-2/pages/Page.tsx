@@ -7,8 +7,10 @@ import {
   Button, ChevronDownIcon } from '@alm-design/design-system'
 import '@alm-design/design-system/dist/index.css'
 import styles from './Page.module.css'
+import { useLanguage } from '../i18n/LanguageContext'
 
 export default function Page() {
+  const { t } = useLanguage()
   const [notifications, setNotifications] = useState(true)
   const [darkMode, setDarkMode] = useState(false)
 
@@ -17,7 +19,7 @@ export default function Page() {
       <Navbar
         toolbar={{
           variant: 'default',
-          title: 'Account',
+          title: t.page.account,
           onBack: () => {},
         }} surface="default"
       />
@@ -25,27 +27,27 @@ export default function Page() {
       <section className={styles.section}>
         <SystemBanner
           type="success"
-          title="Profile verified"
-          description="Your identity has been confirmed and you're ready to book."
+          title={t.page.profileVerified}
+          description={t.page.yourIdentityHasBeenConfirmed}
         />
-        <h3>{"asdasdasdas"}</h3>
+        <h3>{t.page.asdasdasdas}</h3>
         <div style={{ position: "relative" }}>
           <p className="text-background-base-hover" style={{ paddingLeft: "var(--space-unit)",
               paddingRight: "var(--space-md)",
               paddingTop: "var(--space-md)",
               paddingBottom: "var(--space-md)"
-        }}>Add your text here.</p>
-          <p>Add your text here.</p>
+        }}>{t.page.addYourTextHere}</p>
+          <p>{t.page.addYourTextHere}</p>
         </div>
-        <p>{"asdasda"}</p>
+        <p>{t.page.asdasda}</p>
       </section>
 
       <section className={styles.group}>
-        <h2 className={styles.heading}>Preferences</h2>
+        <h2 className={styles.heading}>{t.page.preferences}</h2>
         <div className={styles.card}>
           <Cell
             visual="icon"
-            label="Push notifications"
+            label={t.page.pushNotifications}
             trailing="toggle"
             toggleChecked={false}
             onToggleChange={() => setNotifications((v) => !v)}
@@ -64,7 +66,7 @@ export default function Page() {
           />
           <Cell
             visual="icon"
-            label="Dark appearance"
+            label={t.page.darkAppearance}
             trailing="toggle"
             toggleChecked={darkMode}
             onToggleChange={() => setDarkMode((v) => !v)}
@@ -75,33 +77,33 @@ export default function Page() {
           />
           <Cell
             visual="icon"
-            label="Language"
-            value="English"
+            label={t.page.language}
+            value={t.page.english}
             trailing="chevron"
             showSeparator
           />
           <Cell
             visual="icon"
-            label="Currency"
-            value="SAR"
+            label={t.page.currency}
+            value={t.page.sar}
             trailing="chevron"
           />
         </div>
       </section>
 
       <section className={styles.group}>
-        <h2 className={styles.heading}>Support</h2>
+        <h2 className={styles.heading}>{t.page.support}</h2>
         <div className={styles.card}>
-          <Cell visual="icon" label="Help centre" trailing="chevron" showSeparator />
-          <Cell visual="icon" label="Contact us" trailing="chevron" showSeparator />
-          <Cell visual="icon" label="Terms & privacy" trailing="chevron" />
+          <Cell visual="icon" label={t.page.helpCentre} trailing="chevron" showSeparator />
+          <Cell visual="icon" label={t.page.contactUs} trailing="chevron" showSeparator />
+          <Cell visual="icon" label={t.page.termsPrivacy} trailing="chevron" />
         </div>
       </section>
 
       <Separator type="section separator" />
 
       <section className={styles.section}>
-        <Button variant="destructive" label="Sign out" />
+        <Button variant="destructive" label={t.page.signOut} />
       </section>
     </main>
   )

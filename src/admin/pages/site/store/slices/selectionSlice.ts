@@ -5,7 +5,7 @@ import type { BaseNode } from '@core/page-tree'
 import type { NodeTree } from '@core/page-tree'
 import type { PageNode } from '@core/page-tree'
 import { flattenSubtree, getParent } from '@core/page-tree'
-import { selectActiveBoard } from './boardSlice'
+import { selectActiveBoard } from './boardSelectors'
 
 /**
  * Selection mode for `selectNode`:

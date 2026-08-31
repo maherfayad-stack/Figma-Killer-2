@@ -29,7 +29,8 @@ import {
   type BundlePreview,
   type BundleRowConflict,
 } from '@core/data/bundleSchema'
-import type { DataRow, DataTable } from '@core/data/schemas'
+import type { DataTable } from '@core/data/schemas'
+import type { DataRow } from '@core/data/dataRowSchema'
 import { CMS_API_PREFIX } from './shared'
 
 export async function handleImportPreviewRoute(

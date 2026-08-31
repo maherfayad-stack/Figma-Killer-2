@@ -29,7 +29,7 @@
  */
 
 import { Type, type Static } from '@sinclair/typebox'
-import { DataRowSchema } from '@core/data/schemas'
+import { DataRowSchema } from '@core/data/dataRowSchema'
 import { FontEntrySchema } from '@core/fonts'
 import {
   PublishedPageRuntimeAssetsSchema,

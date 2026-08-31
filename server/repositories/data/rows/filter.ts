@@ -8,7 +8,7 @@
  * for cells_json paths) — `db-postgres-isms.test.ts` gates against drift.
  */
 import type { DbClient } from '../../../db/client'
-import type { DataRow } from '@core/data/schemas'
+import type { DataRow } from '@core/data/dataRowSchema'
 import type { StorageFilterOperator, StorageFilterValue } from '@core/plugin-sdk/storageSchemas'
 import { jsonField } from '../../../db/jsonExtract'
 import { placeholder, selectHydratedDataRows } from './mapper'

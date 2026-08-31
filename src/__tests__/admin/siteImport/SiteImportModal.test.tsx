@@ -47,7 +47,8 @@ import type {
   NewStyleRule,
   SiteImportAdapter,
 } from '@core/siteImport'
-import type { DataRow, DataTable } from '@core/data/schemas'
+import type { DataTable } from '@core/data/schemas'
+import type { DataRow } from '@core/data/dataRowSchema'
 import type { CmsCurrentUser } from '@core/persistence'
 import type { SiteBundle } from '@core/data/bundleSchema'
 import type { Page, SiteDocument } from '@core/page-tree'

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import { pageFromRow, pageToCells } from '../pageFromRow'
-import type { DataRow } from '@core/data/schemas'
+import type { DataRow } from '@core/data/dataRowSchema'
 
 const baseRow = (cells: Record<string, unknown>): DataRow => ({
   id: 'p1', tableId: 'pages', slug: 'posts-template', cells: cells as never,

@@ -31,6 +31,14 @@ const InspectPanel = lazy(() =>
   import('@site/panels/InspectPanel').then((module) => ({ default: module.InspectPanel })),
 )
 
+// Content (bilingual dictionary editor) — lazy for the same reason as the two
+// above: its catalogue fetch and table are only needed once someone opens the
+// tab, and it stays mounted-but-hidden afterwards so an in-progress edit
+// survives a tab switch.
+const ContentPanel = lazy(() =>
+  import('@site/panels/ContentPanel').then((module) => ({ default: module.ContentPanel })),
+)
+
 function selectActiveLeftSidebarPanel(state: ReturnType<typeof useEditorStore.getState>): LeftSidebarPanelId | null {
   // A plugin panel takes precedence over the built-in `*PanelOpen` flags;
   // the LeftSidebar reads `activePluginPanelId` separately and shows the
@@ -41,6 +49,7 @@ function selectActiveLeftSidebarPanel(state: ReturnType<typeof useEditorStore.ge
   if (state.frameworkPanelOpen) return 'framework'
   if (state.dependenciesPanelOpen) return 'dependencies'
   if (state.inspectPanelOpen) return 'inspect'
+  if (state.contentPanelOpen) return 'content'
   if (state.isAgentOpen) return 'agent'
   return null
 }
@@ -140,6 +149,29 @@ export function LeftSidebar({
               <InspectPanel />
             </Suspense>
           </div>
+          {/* Content — the project's own locale dictionary as an editable
+              en/ar table. Read-only-safe tier: it reads the project's
+              dictionary like Explorer reads its pages, and each write goes
+              through the same server-side refusal path as any other source
+              edit.
+
+              Mounted ONLY while it is the active panel, unlike its siblings.
+              They are hidden-but-mounted so their scroll position and local
+              state survive a tab switch; this one has no state worth keeping
+              (it deliberately re-reads the dictionary on every mount — the
+              file is the source of truth) and, decisively, its mount effect
+              does WORK: it fetches, and on a project with no dictionary it
+              scaffolds one and rewrites JSX. "Opening this panel is the
+              request for localisation" is only true if opening the panel is
+              what mounts it — hidden-mounted, merely opening the editor would
+              have rewritten the user's source. */}
+          {effectiveActivePanel === 'content' ? (
+            <div className={styles.panelMount}>
+              <Suspense fallback={null}>
+                <ContentPanel />
+              </Suspense>
+            </div>
+          ) : null}
           {/* Editor-only panels — only mounted when the caller can perform
               structural edits. Mounting them for non-editors would expose
               actions (style edits, framework token changes, plugin panels)

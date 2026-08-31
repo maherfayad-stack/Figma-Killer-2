@@ -140,7 +140,15 @@ const BUDGETS: ChunkBudget[] = [
     // If a later change pushes past 36 KB, audit what is actually in the
     // shell rather than raising this again — two consecutive bumps is the
     // signal that something belongs in `AdminCanvasEditorBody` instead.
-    maxBytes: 36_000,
+    //
+    // Raised 36,000 -> 36,100 B when `DataRowSchema` moved out of
+    // `src/core/data/schemas.ts` into its own `dataRowSchema.ts` (perf fix —
+    // `cmsAuth.ts` -> `responseSchemas.ts` needed only `DataRowSchema` but
+    // dragged the whole 14-variant `DataField` union along on every login).
+    // Audited: no new code entered this chunk — `dataRowSchema-<hash>.js` is
+    // simply a longer generated filename than `schemas-<hash>.js` was in the
+    // one import specifier this chunk references it by. Measured 36,021 B.
+    maxBytes: 36_100,
     rationale:
       'site route shell (current ~34 KB raw / ~12 KB gzipped). Must not ' +
       'pull the visual editor body, DnD, canvas, first-party modules, or ' +

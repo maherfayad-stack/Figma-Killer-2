@@ -62,13 +62,10 @@
 import { useEffect } from 'react'
 import { useEditorStore } from '@site/store/store'
 import { styleRuleSelector, type ConditionDef, type StyleRule } from '@core/page-tree'
-import {
-  collectBackgroundImagePaths,
-  collectSiteStyleBackgroundImagePaths,
-  PUBLISHER_RESET_CSS,
-} from '@core/publisher'
+import { collectBackgroundImagePaths, PUBLISHER_RESET_CSS } from '@core/publisher'
 import { useResponsiveEditorMediaAssets } from '@admin/shared/media/hooks/useResponsiveBackgroundStyle'
 import { selectorStatePseudo } from '@site/cssStatePseudo'
+import { registryBackgroundImagePaths } from './canvasBackgroundImagePaths'
 import { generateCanvasClassCSS, generateForcedStateCSS, generatePreviewClassCSS } from './canvasClassCss'
 import { resolveViewportUnitsForCanvas, type CanvasViewport } from './resolveViewportUnits'
 import { CANVAS_CSS_LAYER_ORDER, RESET_LAYER, USER_AUTHORED_LAYER } from './canvasCssLayers'
@@ -131,7 +128,7 @@ export function ClassStyleInjector({ targetDocument, viewport }: ClassStyleInjec
   const activeClassId = useEditorStore((s) => s.activeClassId)
   const selectedNodeId = useEditorStore((s) => s.selectedNodeId)
   const backgroundPaths = [
-    ...collectSiteStyleBackgroundImagePaths({ styleRules: classes ?? EMPTY_STYLE_RULES }),
+    ...registryBackgroundImagePaths(classes ?? EMPTY_STYLE_RULES),
     ...collectBackgroundImagePaths(previewClassStyles?.styles.backgroundImage),
   ]
   const {

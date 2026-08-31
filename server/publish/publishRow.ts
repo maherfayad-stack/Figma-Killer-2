@@ -14,7 +14,8 @@
  * direction is one-way: publish → repositories, never back.
  */
 import type { DbClient } from '../db/client'
-import type { DataRow, DataRowVersion } from '@core/data/schemas'
+import type { DataRowVersion } from '@core/data/schemas'
+import type { DataRow } from '@core/data/dataRowSchema'
 import { resolveTemplateChain } from '@core/templates'
 import {
   getPublishedDataRowByRoute,

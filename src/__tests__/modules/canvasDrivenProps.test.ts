@@ -22,6 +22,7 @@ import {
   controlForPropKind,
   isCanvasDrivenProp,
   stripCanvasDrivenProps,
+  withCanvasDrivenProps,
 } from '@site/property-controls/componentPropKind'
 import { buildComponentCallSiteRows } from '@site/panels/PropertiesPanel/componentCallSiteRows'
 
@@ -49,14 +50,29 @@ describe('canvas-driven props', () => {
     expect(stripCanvasDrivenProps(without)).toBe(without)
   })
 
+  it("supplies the frame's `dir`, because stripping alone leaves the component defaulting to ltr", () => {
+    // The regression this pins: `@alm-design/design-system@1.1.2` has ZERO
+    // `useDir()` call sites, and 20 of its 26 components declare `dir` as a
+    // prop defaulting to the literal `'ltr'` which they write on their own
+    // root — beating the frame's inherited `html[dir="rtl"]`. Stripping the
+    // prop and trusting a provider therefore pinned an RTL board to LTR.
+    expect(withCanvasDrivenProps({ dir: 'ltr', title: 'Account' }, { direction: 'rtl' })).toEqual({
+      title: 'Account',
+      dir: 'rtl',
+    })
+    // A node with no `dir` of its own still gets the frame's.
+    expect(withCanvasDrivenProps({ title: 'Account' }, { direction: 'rtl' }).dir).toBe('rtl')
+    expect(withCanvasDrivenProps({ title: 'Account' }, { direction: 'ltr' }).dir).toBe('ltr')
+  })
+
   it('is applied by BOTH design-system registration paths', () => {
     for (const rel of REGISTRATION_PATHS) {
       const source = readFileSync(join(REPO_ROOT, rel), 'utf8')
-      // The panel's control list, the persisted defaults, and the props handed
-      // to the component — a path that skips any one of the three still lets a
-      // `dir` reach the component and outrank the provider.
+      // The panel's control list and the persisted defaults must not offer
+      // `dir`, and the render path must SUPPLY it — a path that skips any one
+      // of the three still renders a component against the board's toggle.
       expect(source).toContain('isCanvasDrivenProp')
-      expect(source).toContain('stripCanvasDrivenProps')
+      expect(source).toContain('withCanvasDrivenProps')
       // ...and neither may keep a private copy of the rule.
       expect(source).not.toContain("new Set(['dir'])")
     }

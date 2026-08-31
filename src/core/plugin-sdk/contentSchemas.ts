@@ -26,7 +26,8 @@
  */
 
 import { Type, type Static } from '@core/utils/typeboxHelpers'
-import { DataTableKindSchema, DataRowStatusSchema } from '@core/data/schemas'
+import { DataTableKindSchema } from '@core/data/schemas'
+import { DataRowStatusSchema } from '@core/data/dataRowSchema'
 import {
   TreeMutateResultSchema,
   TreeOperationSchema,

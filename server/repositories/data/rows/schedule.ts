@@ -9,7 +9,7 @@
  * `listDuePublishSchedules` and calls the regular publish path on each result.
  */
 import type { DbClient } from '../../../db/client'
-import type { DataRow } from '@core/data/schemas'
+import type { DataRow } from '@core/data/dataRowSchema'
 import { isoDate } from '@core/utils/isoDate'
 import { getDataRow } from './read'
 

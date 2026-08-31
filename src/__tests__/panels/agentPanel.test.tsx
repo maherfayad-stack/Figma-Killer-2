@@ -699,9 +699,13 @@ describe('AgentPanel', () => {
     await screen.findByLabelText('Message to AI assistant')
     const picker = screen.getByRole('button', { name: 'Attach images' })
     expect(picker).toBeTruthy()
-    const input = container.querySelector<HTMLInputElement>(
-      'input[type="file"][accept="image/png,image/jpeg,image/webp"]',
-    )
+    // Scoped to THIS picker's own `FileUpload` wrapper, not to the first
+    // matching input in the container. `DesignReferenceAttachment` renders a
+    // file input with the identical `accept` list earlier in the composer, so
+    // a container-wide query returned that one — single-file, hence a
+    // `multiple` assertion that failed while the product was correct.
+    const input = picker.parentElement?.querySelector<HTMLInputElement>('input[type="file"]')
+    expect(input?.accept).toBe('image/png,image/jpeg,image/webp')
     expect(input?.multiple).toBe(true)
 
     fireEvent.change(input!, {

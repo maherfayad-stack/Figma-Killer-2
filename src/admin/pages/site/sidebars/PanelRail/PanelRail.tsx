@@ -7,6 +7,7 @@ import { DatabaseSolidIcon } from 'pixel-art-icons/icons/database-solid'
 import { PaintBucketSolidIcon } from 'pixel-art-icons/icons/paint-bucket-solid'
 import { ColorsSwatchSolidIcon } from 'pixel-art-icons/icons/colors-swatch-solid'
 import { EyeSolidIcon } from 'pixel-art-icons/icons/eye-solid'
+import { GlobeSolidIcon } from 'pixel-art-icons/icons/globe-solid'
 import { Button } from '@ui/components/Button'
 import { assignRailAccents, railTintVar, type RailAccent } from '@ui/railAccent'
 import { pluginRuntime } from '@core/plugins/runtime'
@@ -59,6 +60,12 @@ const PRIMARY_RAIL_ITEMS: PrimaryRailItem[] = [
     icon: EyeSolidIcon,
     iconName: 'eye-solid',
   },
+  {
+    id: 'content',
+    label: 'Content',
+    icon: GlobeSolidIcon,
+    iconName: 'globe-solid',
+  },
 ]
 
 const GLOBAL_RAIL_ITEMS: PrimaryRailItem[] = [
@@ -92,6 +99,7 @@ export function PanelRail({
   const frameworkOpen = useEditorStore((s) => s.frameworkPanelOpen)
   const dependenciesOpen = useEditorStore((s) => s.dependenciesPanelOpen)
   const inspectOpen = useEditorStore((s) => s.inspectPanelOpen)
+  const contentOpen = useEditorStore((s) => s.contentPanelOpen)
   const agentOpen = useEditorStore((s) => s.isAgentOpen)
   const activePluginPanelId = useEditorStore((s) => s.activePluginPanelId)
 
@@ -117,6 +125,7 @@ export function PanelRail({
     framework: frameworkOpen,
     dependencies: dependenciesOpen,
     inspect: inspectOpen,
+    content: contentOpen,
   } satisfies Record<LeftSidebarPanelId, boolean>
 
   // Read-only callers (Viewer / Client) see only the Explorer panel (the

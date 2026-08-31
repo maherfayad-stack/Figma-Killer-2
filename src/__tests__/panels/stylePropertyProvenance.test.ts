@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'bun:test'
 import {
   buildClassChain,
+  provenanceEqual,
   resolvePropertyProvenance,
   type ClassChainEntry,
+  type PropertyProvenance,
 } from '@site/panels/PropertiesPanel/stylePropertyProvenance'
 import type { StyleRule } from '@core/page-tree'
 
@@ -143,5 +145,69 @@ describe('resolvePropertyProvenance', () => {
       computedValue: 'rgb(0,0,0)',
     })
     expect(result.sources).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// provenanceEqual — perf-01
+//
+// `StyleSurface` recomputes `resolvePropertyProvenance` for all ~101 curated
+// properties on every render (cheap — a short array filter per property).
+// What used to hand every unaffected `ClassPropertyRow` a NEW object every
+// keystroke was building a fresh `Map` of fresh result objects regardless of
+// whether a given property's result actually changed. `provenanceEqual` is
+// what lets `StyleSurface` reuse the PREVIOUS render's object for a property
+// whose provenance is unchanged — these tests pin its equality contract
+// directly, independent of the `useRef`-based map-reuse it enables.
+// ---------------------------------------------------------------------------
+
+describe('provenanceEqual', () => {
+  const classChain: ClassChainEntry[] = [{ classId: 'c1', selector: '.card', styles: { color: 'blue' } }]
+
+  function provenanceFor(computedValue: string | undefined): PropertyProvenance {
+    return resolvePropertyProvenance('color', { classChain, inlineStyles: {}, computedValue })
+  }
+
+  it('is true for two structurally identical results computed separately', () => {
+    const a = provenanceFor('rgb(0, 0, 255)')
+    const b = provenanceFor('rgb(0, 0, 255)')
+    expect(a).not.toBe(b) // distinct objects...
+    expect(provenanceEqual(a, b)).toBe(true) // ...but equal
+  })
+
+  it('is false when the computed (ground-truth) value differs', () => {
+    const a = provenanceFor('rgb(0, 0, 255)')
+    const b = provenanceFor('rgb(0, 255, 0)')
+    expect(provenanceEqual(a, b)).toBe(false)
+  })
+
+  it('is false when a source value changes even though computedValue is unchanged', () => {
+    const a = resolvePropertyProvenance('color', {
+      classChain: [{ classId: 'c1', selector: '.card', styles: { color: 'blue' } }],
+      inlineStyles: {},
+      computedValue: undefined,
+    })
+    const b = resolvePropertyProvenance('color', {
+      classChain: [{ classId: 'c1', selector: '.card', styles: { color: 'navy' } }],
+      inlineStyles: {},
+      computedValue: undefined,
+    })
+    expect(provenanceEqual(a, b)).toBe(false)
+  })
+
+  it('is false when the winner attribution changes even though the source list looks the same', () => {
+    const twoClasses: ClassChainEntry[] = [
+      { classId: 'c1', selector: '.card', styles: { color: 'blue' } },
+      { classId: 'c2', selector: '.override', styles: { color: 'green' } },
+    ]
+    const a = resolvePropertyProvenance('color', { classChain: twoClasses, inlineStyles: {}, computedValue: 'blue' })
+    const b = resolvePropertyProvenance('color', { classChain: twoClasses, inlineStyles: {}, computedValue: 'green' })
+    expect(provenanceEqual(a, b)).toBe(false)
+  })
+
+  it('is true for two empty (no sources, no computed value) results', () => {
+    const a = resolvePropertyProvenance('display', { classChain: [], inlineStyles: {}, computedValue: undefined })
+    const b = resolvePropertyProvenance('display', { classChain: [], inlineStyles: {}, computedValue: undefined })
+    expect(provenanceEqual(a, b)).toBe(true)
   })
 })

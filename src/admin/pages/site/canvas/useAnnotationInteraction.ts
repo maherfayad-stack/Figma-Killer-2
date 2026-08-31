@@ -24,7 +24,7 @@
 import { useRef, type PointerEvent as ReactPointerEvent } from 'react'
 import { MIN_ANNOTATION_SIZE, type AnnotationRef } from '@core/studio-board'
 import { useEditorStore } from '@site/store/store'
-import { selectActiveBoard } from '@site/store/slices/boardSlice'
+import { selectActiveBoard } from '@site/store/slices/boardSelectors'
 import { computeSnap, collectPeerRects, SNAP_THRESHOLD_BOARD_UNITS } from './boardSnapping'
 import { resizeRect, type ResizeHandle, type ResizeRect } from './rectResize'
 

@@ -75,7 +75,8 @@ import { isStudioMode } from '@site/studio/studioMode'
 import { SearchBar } from '@ui/components/SearchBar'
 import { SkeletonTree } from '@ui/components/Skeleton'
 import { Button } from '@ui/components/Button'
-import { ModuleInserterDialog } from '@site/module-picker/ModuleInserterDialog'
+import { LazyModuleInserterDialog } from '@site/module-picker/LazyModuleInserterDialog'
+import { preloadModuleInserterDialog } from '@site/module-picker/preloadModuleInserterDialog'
 import { useInsertInserterItem } from '@site/hooks/useInsertInserterItem'
 import { AppGridPlusGlyphIcon } from 'pixel-art-icons/icons/app-grid-plus-glyph'
 import type { IconComponent } from 'pixel-art-icons/types'
@@ -453,6 +454,8 @@ function DomPanelInner({ editable = true }: { editable?: boolean }) {
                 tooltip="Insert module"
                 data-testid="dom-tree-insert-module"
                 onClick={() => setInsertOpen(true)}
+                onPointerEnter={preloadModuleInserterDialog}
+                onFocus={preloadModuleInserterDialog}
               >
                 <AppGridPlusGlyphIcon size={13} aria-hidden="true" />
               </Button>
@@ -552,8 +555,9 @@ function DomPanelInner({ editable = true }: { editable?: boolean }) {
 
       {/* Module inserter — same command surface + target resolution as the
           canvas "+" and toolbar "+ Add". */}
-      {editable && insertOpen && (
-        <ModuleInserterDialog
+      {editable && (
+        <LazyModuleInserterDialog
+          open={insertOpen}
           onClose={() => {
             setInsertOpen(false)
             insertTriggerRef.current?.focus()

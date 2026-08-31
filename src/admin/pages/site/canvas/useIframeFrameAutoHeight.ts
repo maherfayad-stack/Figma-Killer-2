@@ -3,6 +3,10 @@ import { resolveCanvasFrameHeight } from './iframeFrameHeight'
 import { CANVAS_VIEWPORT_HEIGHT } from './resolveViewportUnits'
 import { collectScrollDeficits, resolveFrameFitHeight } from './resolveFrameFitHeight'
 import {
+  createFrameFitMutationScheduler,
+  FRAME_FIT_TEXT_MUTATION_DEBOUNCE_MS,
+} from './frameFitMutationScheduler'
+import {
   getIframeObserverConstructors,
   getIframeObserverDocument,
   observeIframeMutations,
@@ -108,22 +112,32 @@ export function useIframeFrameAutoHeight({
     const ro = new FrameResizeObserver(scheduleMeasure)
     ro.observe(observerBody)
     ro.observe(observerRoot)
-    const mo = observeIframeMutations(FrameMutationObserver, observerDocument, () => {
-      selfResizes = 0
-      // Real content changed, so the fit has to be re-derived from scratch —
-      // otherwise an edit that REMOVES content leaves the frame stuck at the
-      // height the old content needed. Re-fitting is monotonic from the viewport
-      // height again, so this is the only place the pin can shrink, and it takes
-      // a user edit to get here.
-      pinnedHeight = CANVAS_VIEWPORT_HEIGHT
-      fitPasses = 0
-      if (observerDocument.body) {
-        observerDocument.body.style.height = `${CANVAS_VIEWPORT_HEIGHT}px`
-      }
-      scheduleMeasure()
+    // Real content changed, so the fit has to be re-derived from scratch —
+    // otherwise an edit that REMOVES content leaves the frame stuck at the
+    // height the old content needed. Re-fitting is monotonic from the viewport
+    // height again, so this is the only place the pin can shrink, and it takes
+    // a user edit to get here. Coalesced through `frameFitMutationScheduler`
+    // so inline-text-edit keystrokes (one `characterData` mutation each)
+    // don't each pay the O(all elements) `collectScrollDeficits` scan this
+    // triggers — see that module's doc for the full defect and fix shape.
+    const scheduler = createFrameFitMutationScheduler({
+      debounceMs: FRAME_FIT_TEXT_MUTATION_DEBOUNCE_MS,
+      onSettle: () => {
+        selfResizes = 0
+        pinnedHeight = CANVAS_VIEWPORT_HEIGHT
+        fitPasses = 0
+        if (observerDocument.body) {
+          observerDocument.body.style.height = `${CANVAS_VIEWPORT_HEIGHT}px`
+        }
+        scheduleMeasure()
+      },
+    })
+    const mo = observeIframeMutations(FrameMutationObserver, observerDocument, (records) => {
+      scheduler.handle(records)
     })
     return () => {
       if (rafId !== null) cancelAnimationFrame(rafId)
+      scheduler.dispose()
       ro.disconnect()
       mo?.disconnect()
     }

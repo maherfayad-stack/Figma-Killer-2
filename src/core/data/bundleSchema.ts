@@ -33,7 +33,8 @@
  */
 
 import { Type, type Static } from '@core/utils/typeboxHelpers'
-import { DataTableSchema, DataRowSchema, DataTableKindSchema } from './schemas'
+import { DataTableSchema, DataTableKindSchema } from './schemas'
+import { DataRowSchema } from './dataRowSchema'
 import { SiteShellSchema } from '@core/page-tree'
 
 // ---------------------------------------------------------------------------

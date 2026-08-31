@@ -7,6 +7,7 @@
 
 import type { CSSPropertyBag } from '@core/page-tree'
 import { StackedPropertyGrid, type StackedGridEntry } from './StackedPropertyGrid'
+import type { PropertyProvenance } from './stylePropertyProvenance'
 
 const INTERACTION_SPEC: ReadonlyArray<StackedGridEntry> = [
   ['cursor', 'pointerEvents'],
@@ -22,6 +23,8 @@ interface InteractionSectionProps {
   onRemove: (property: keyof CSSPropertyBag) => void
   onPreview?: (patch: Partial<CSSPropertyBag>) => void
   onClearPreview?: () => void
+  /** Track F1 — see `StackedPropertyGrid`'s doc. */
+  provenanceByProperty?: ReadonlyMap<string, PropertyProvenance>
 }
 
 export function InteractionSection(props: InteractionSectionProps) {

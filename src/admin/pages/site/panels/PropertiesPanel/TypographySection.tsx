@@ -18,6 +18,7 @@
 
 import type { CSSPropertyBag } from '@core/page-tree'
 import { StackedPropertyGrid, type StackedGridEntry } from './StackedPropertyGrid'
+import type { PropertyProvenance } from './stylePropertyProvenance'
 
 const TYPOGRAPHY_SPEC: ReadonlyArray<StackedGridEntry> = [
   'fontFamily',
@@ -43,6 +44,8 @@ interface TypographySectionProps {
   onRemove: (property: keyof CSSPropertyBag) => void
   onPreview?: (patch: Partial<CSSPropertyBag>) => void
   onClearPreview?: () => void
+  /** Track F1 — see `StackedPropertyGrid`'s doc. */
+  provenanceByProperty?: ReadonlyMap<string, PropertyProvenance>
 }
 
 export function TypographySection(props: TypographySectionProps) {

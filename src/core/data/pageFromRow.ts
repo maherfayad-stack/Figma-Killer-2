@@ -20,7 +20,7 @@
 
 import type { Page, PageNode, PageTemplateConfig } from '@core/page-tree'
 import { parsePageTemplate } from '@core/page-tree'
-import type { DataRow, DataRowCells } from '@core/data/schemas'
+import type { DataRow, DataRowCells } from '@core/data/dataRowSchema'
 
 // ---------------------------------------------------------------------------
 // DataRow → Page

@@ -1,5 +1,27 @@
 [test]
 preload = ["./src/__tests__/setup.ts"]
+# NOTE: test files run with `--parallel=4` (one worker PROCESS per file, which
+# implies `--isolate`). That flag lives in package.json's `test` scripts, NOT
+# here — bunfig has no `parallel`/`isolate` key and silently ignores one.
+#
+# The `=4` is deliberate, not timidity. Bare `--parallel` uses every core, and
+# the CPU-bound whole-graph tests then starve: `no-circular-dependencies`
+# (madge over the entire tsconfig graph) took 117s against its own 60s budget
+# and failed. Four workers keep it comfortably inside it.
+#
+# It is load-bearing, not a speed knob. This suite mounts real iframes,
+# MutationObservers, ResizeObservers and a module-scoped Zustand store
+# (`useEditorStore`), none of which are torn down per file. Sharing one global
+# across ~950 files meant a canvas file's live observers kept firing while an
+# unrelated file ran, and a file that seeded the store left the next one
+# editing its fixture. That produced ~30 failures which each PASSED in
+# isolation, moved between runs, and got WORSE with a longer per-test timeout
+# (more overlap, not more patience).
+#
+# Measured on the full suite: 9621 pass / 35 fail shared -> 9728 pass / 8 fail
+# parallel. `--isolate` alone fixes the same leakage but segfaults Bun 1.3.13
+# partway through a full run (a Bun bug, not ours); `--parallel` survives it
+# because a crashed worker's file is retried in a fresh process.
 # `files/` holds standalone scaffolds (see files/demo) copied out by `pnpm create-file`.
 # They are independent projects with their own toolchain (vitest, not bun test) and
 # their own dependency graph — bun's test runner must not discover or execute them.

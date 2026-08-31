@@ -23,7 +23,7 @@ import { Type } from '@core/utils/typeboxHelpers'
 import {
   controlForPropKind,
   isCanvasDrivenProp,
-  stripCanvasDrivenProps,
+  withCanvasDrivenProps,
   type PropKind,
 } from '@site/property-controls/componentPropKind'
 import { registry, type ModuleDefinition, type ModuleComponentProps } from '@core/module-engine'
@@ -89,13 +89,17 @@ class AlmErrorBoundary extends React.Component<
 }
 
 /**
- * What Studio drives on the design system's provider. `dir` is the load-bearing
- * one: every ALM component resolves its direction through `useDir(prop)` —
- * explicit prop > this provider > a built-in `'ltr'` default — so a provider
- * rendered with NO props pinned the whole canvas left-to-right regardless of
- * the board's direction toggle, while the same components' `[dir=rtl]` CSS
- * rules (40 of them in the package stylesheet) flipped correctly off
- * `html[dir]`. That mismatch is what made an RTL preview come out half-mirrored.
+ * What Studio drives on the design system's provider.
+ *
+ * The provider is still rendered with the frame's direction, but **it is not
+ * what makes direction work** — do not rely on it. Measured against the
+ * installed `@alm-design/design-system@1.1.2`: the bundle has ZERO `useDir(`
+ * call sites, and 20 of its 26 components take `dir` as an ordinary prop
+ * defaulting to the literal `'ltr'`, which each writes onto its own root
+ * element — where it beats the `html[dir]` the frame sets. Direction is
+ * therefore passed as an explicit prop by `withCanvasDrivenProps`; this
+ * provider is kept for whatever else it carries, and because a future version
+ * of the package may start consulting it.
  */
 type DesignSystemProviderProps = { children?: React.ReactNode; dir?: 'ltr' | 'rtl' }
 
@@ -269,14 +273,12 @@ function makeComponent(name: string): React.FC<ModuleComponentProps> {
     // styles, which belong on the styled component, not on the transparent host
     // where `display: contents` would make them inert.
     const { style: nodeStyle, ...editorProps } = nodeWrapperProps ?? {}
-    // `dir` is stripped from the props the component receives so `useDir()`
-    // falls through to the provider below, which carries the FRAME's
-    // direction. An explicit prop outranks the provider, so a `dir` left on
-    // the node — the manifest default that used to be stamped on every
-    // insert, or a literal in the user's source — would silently pin this one
-    // component against the board's direction toggle. The board axis is what
-    // a direction PREVIEW means; see `CANVAS_DRIVEN_PROPS`.
-    const dsProps = reviveIconProps(stripCanvasDrivenProps(props as Record<string, unknown>))
+    // The node's own `dir` is replaced by the FRAME's — see
+    // `withCanvasDrivenProps` for why the value is passed explicitly rather
+    // than left to the provider below (this package's components default
+    // `dir` to `'ltr'` and write it on their own root, which beats the
+    // frame's `html[dir]`). The board axis is what a direction PREVIEW means.
+    const dsProps = reviveIconProps(withCanvasDrivenProps(props as Record<string, unknown>, { direction }))
     // The node's CSS classes go on the design-system component, where the source
     // wrote them — applying them to the host as well double-applied every
     // padding and margin in the rule.

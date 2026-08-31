@@ -24,8 +24,18 @@
  * ink, centred text, no border, and a tight contact shadow — not as an admin
  * surface. The colour tokens behind that are deliberately theme-independent;
  * see `--note-*` in `globals.css`.
+ *
+ * `memo()`'d (React Compiler exception #2 — a hot, list-rendered component;
+ * see `NodeRenderer.tsx`'s identical justification): `BoardNotesLayer`
+ * re-renders on every write to `board.notes`, and every OTHER note's `note`
+ * prop stays referentially stable across that write (`moveNote`/`upsertNote`
+ * in `boardsModel.ts` `.map()`-replace only the touched note, reusing every
+ * sibling's object reference), so this bailout skips every note not
+ * involved in the write. Every other prop this reads comes from its OWN
+ * `useEditorStore` subscriptions (e.g. `selected`), not from a parent-bound
+ * closure, so there is nothing here for the memo to be defeated by.
  */
-import { useEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react'
+import { useEffect, useRef, useState, memo, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react'
 import { createPortal } from 'react-dom'
 import type { StickyNote, NoteColor } from '@core/studio-board'
 import { useEditorStore } from '@site/store/store'
@@ -57,7 +67,7 @@ interface StickyNoteViewProps {
   note: StickyNote
 }
 
-export function StickyNoteView({ note }: StickyNoteViewProps) {
+function StickyNoteViewImpl({ note }: StickyNoteViewProps) {
   const moveNote = useEditorStore((s) => s.moveNote)
   const updateNoteText = useEditorStore((s) => s.updateNoteText)
   const setNoteColor = useEditorStore((s) => s.setNoteColor)
@@ -323,3 +333,5 @@ export function StickyNoteView({ note }: StickyNoteViewProps) {
     </>
   )
 }
+
+export const StickyNoteView = memo(StickyNoteViewImpl)

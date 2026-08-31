@@ -62,7 +62,7 @@ import {
 } from '@core/ai'
 import type { Static } from '@core/utils/typeboxHelpers'
 import type { EditorStore } from '@site/store/types'
-import { selectActiveBoard } from '@site/store/slices/boardSlice'
+import { selectActiveBoard } from '@site/store/slices/boardSelectors'
 import { FRAME_WIDTH, FRAME_HEIGHT } from '@core/studio-board'
 import { getAgentStoreApi } from './storeRef'
 import { captureAgentRenderSnapshot, waitForAgentRenderFrame } from './renderEvidence'

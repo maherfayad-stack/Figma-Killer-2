@@ -10,7 +10,7 @@
  * on import: the user ids from the source instance will not exist in the target.
  */
 import type { DbClient } from '../../../db/client'
-import type { DataRowCells, DataRowStatus } from '@core/data/schemas'
+import type { DataRowCells, DataRowStatus } from '@core/data/dataRowSchema'
 
 export interface DataRowImportInput {
   id: string

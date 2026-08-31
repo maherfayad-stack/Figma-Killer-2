@@ -15,7 +15,14 @@
  */
 import { describe, it, expect, beforeEach, afterAll } from 'bun:test'
 import { useEditorStore } from '@site/store/store'
-import { selectActiveBoard } from '@site/store/slices/boardSlice'
+import {
+  selectActiveBoard,
+  selectActiveBoardDocs,
+  selectActiveBoardFrames,
+  selectActiveBoardGuides,
+  selectActiveBoardNotes,
+  selectHasActiveBoard,
+} from '@site/store/slices/boardSelectors'
 import { createBoard, createBoardsFile, type BoardsFile } from '@core/studio-board'
 
 /** Neutral board state — matches a freshly-created, not-yet-loaded store. */
@@ -518,6 +525,56 @@ describe('setFramePosition', () => {
   })
 })
 
+describe('setFrameRect', () => {
+  // The combined position+size write a resize-handle drag uses instead of
+  // calling `setFramePosition` then `setFrameSize` back to back — see
+  // `BoardFrameView.tsx`'s `handleResizePointerMove`. Asserts BOTH the
+  // resulting frame shape AND that it lands in ONE `set()` (one history/
+  // dirty tick), not two.
+  it('writes position and size together in a single store update', () => {
+    state().loadBoards(createBoardsFile())
+    state().addFrame('home')
+    const frameId = selectActiveBoard(state())!.frames[0]!.id
+    state().markBoardsClean()
+
+    let boardsRefBefore: unknown
+    const unsubscribe = useEditorStore.subscribe((s) => {
+      boardsRefBefore = s.boards
+    })
+    let setCount = 0
+    const unsubscribeCount = useEditorStore.subscribe(() => { setCount += 1 })
+
+    state().setFrameRect(frameId, 10, 20, 300, 400)
+    unsubscribe()
+    unsubscribeCount()
+
+    const board = selectActiveBoard(state())
+    expect(board?.frames[0]).toEqual({ id: frameId, pageId: 'home', x: 10, y: 20, width: 300, height: 400 })
+    expect(state().boardsDirty).toBe(true)
+    expect(setCount).toBe(1)
+    expect(boardsRefBefore).toBe(state().boards)
+  })
+
+  it('height: undefined clears the stored height, same as setFrameSize', () => {
+    state().loadBoards(createBoardsFile())
+    state().addFrame('home')
+    const frameId = selectActiveBoard(state())!.frames[0]!.id
+    state().setFrameRect(frameId, 0, 0, 500, 300)
+
+    state().setFrameRect(frameId, 5, 5, 500, undefined)
+
+    const frame = selectActiveBoard(state())!.frames[0]!
+    expect(frame.height).toBeUndefined()
+    expect(frame).toEqual({ id: frameId, pageId: 'home', x: 5, y: 5, width: 500 })
+  })
+
+  it('is a no-op with no active board', () => {
+    state().setFrameRect('home', 0, 0, 100, 100)
+    expect(selectActiveBoard(state())).toBeNull()
+    expect(state().boardsDirty).toBe(false)
+  })
+})
+
 describe('removeFrame', () => {
   it('removes every frame of a page from the active board', () => {
     state().loadBoards(createBoardsFile())
@@ -746,5 +803,96 @@ describe('selectActiveBoard', () => {
     })
 
     expect(selectActiveBoard(state())).toEqual(boardB)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// selectActiveBoardFrames / Notes / Docs / Guides / selectHasActiveBoard —
+// the O(frames+notes+docs) cascade fix. The whole point of these selectors
+// is that a write to ONE collection must not change the REFERENCE of the
+// others — that reference stability is what lets a board layer subscribed
+// to just one of them skip re-rendering. `boardLayerNarrowSelectorsScope.test.tsx`
+// proves the resulting component-level behaviour; these are the narrower,
+// faster unit-level proof of the underlying selector contract.
+// ---------------------------------------------------------------------------
+
+describe('selectHasActiveBoard / per-collection board selectors', () => {
+  it('selectHasActiveBoard is false with no active board, true once one is loaded', () => {
+    expect(selectHasActiveBoard(state())).toBe(false)
+    state().loadBoards(createBoardsFile())
+    expect(selectHasActiveBoard(state())).toBe(true)
+  })
+
+  it('the four collection selectors return a stable empty array with no active board', () => {
+    expect(selectActiveBoardFrames(state())).toEqual([])
+    expect(selectActiveBoardNotes(state())).toEqual([])
+    expect(selectActiveBoardDocs(state())).toEqual([])
+    expect(selectActiveBoardGuides(state())).toEqual([])
+    // Same reference across two calls — a fresh `?? []` literal would break
+    // any consumer relying on it for a Zustand equality check.
+    expect(selectActiveBoardFrames(state())).toBe(selectActiveBoardFrames(state()))
+  })
+
+  it('a frame write changes selectActiveBoardFrames but NOT notes/docs/guides references', () => {
+    state().loadBoards(createBoardsFile())
+    state().addNote(0, 0)
+    state().addDoc(0, 0)
+    state().addGuide('x', 10)
+    state().addFrame('home')
+
+    const notesBefore = selectActiveBoardNotes(state())
+    const docsBefore = selectActiveBoardDocs(state())
+    const guidesBefore = selectActiveBoardGuides(state())
+    const framesBefore = selectActiveBoardFrames(state())
+
+    const frameId = framesBefore[0]!.id
+    state().setFramePosition(frameId, 5, 5)
+
+    expect(selectActiveBoardFrames(state())).not.toBe(framesBefore)
+    expect(selectActiveBoardNotes(state())).toBe(notesBefore)
+    expect(selectActiveBoardDocs(state())).toBe(docsBefore)
+    expect(selectActiveBoardGuides(state())).toBe(guidesBefore)
+  })
+
+  it('a note write changes selectActiveBoardNotes but NOT frames/docs/guides references', () => {
+    state().loadBoards(createBoardsFile())
+    state().addNote(0, 0)
+    state().addDoc(0, 0)
+    state().addGuide('x', 10)
+    state().addFrame('home')
+
+    const framesBefore = selectActiveBoardFrames(state())
+    const docsBefore = selectActiveBoardDocs(state())
+    const guidesBefore = selectActiveBoardGuides(state())
+    const notesBefore = selectActiveBoardNotes(state())
+
+    const noteId = notesBefore[0]!.id
+    state().moveNote(noteId, 7, 7)
+
+    expect(selectActiveBoardNotes(state())).not.toBe(notesBefore)
+    expect(selectActiveBoardFrames(state())).toBe(framesBefore)
+    expect(selectActiveBoardDocs(state())).toBe(docsBefore)
+    expect(selectActiveBoardGuides(state())).toBe(guidesBefore)
+  })
+
+  it('a doc write changes selectActiveBoardDocs but NOT frames/notes/guides references', () => {
+    state().loadBoards(createBoardsFile())
+    state().addNote(0, 0)
+    state().addDoc(0, 0)
+    state().addGuide('x', 10)
+    state().addFrame('home')
+
+    const framesBefore = selectActiveBoardFrames(state())
+    const notesBefore = selectActiveBoardNotes(state())
+    const guidesBefore = selectActiveBoardGuides(state())
+    const docsBefore = selectActiveBoardDocs(state())
+
+    const docId = docsBefore[0]!.id
+    state().moveDoc(docId, 7, 7)
+
+    expect(selectActiveBoardDocs(state())).not.toBe(docsBefore)
+    expect(selectActiveBoardFrames(state())).toBe(framesBefore)
+    expect(selectActiveBoardNotes(state())).toBe(notesBefore)
+    expect(selectActiveBoardGuides(state())).toBe(guidesBefore)
   })
 })

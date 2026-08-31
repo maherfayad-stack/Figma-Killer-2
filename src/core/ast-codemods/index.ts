@@ -88,6 +88,14 @@ export type {
 export { analyzeFreeVariables } from './subtreeFreeVariables'
 export type { FreeVariable, FreeVariableKind } from './subtreeFreeVariables'
 export { addReconciledImports, relativeSpecifier, removeImportIfLastUsage, topLevelBindingNames } from './importReconcile'
+export { extractStringsToDictionary } from './extractStringsToDictionary'
+export type {
+  ExtractStringsParams,
+  ExtractStringsResult,
+  ExtractionRefusal,
+  ExtractionRefusalReason,
+  StringExtraction,
+} from './extractStringsToDictionary'
 export { collectSlotChildCandidates, listSlotChildCandidates, suggestSlotNames, SOLE_SLOT_DEFAULT_NAME } from './subtreeSlotChildren'
 export type { ListSlotChildCandidatesParams, ResolvedSlotChildCandidate, SlotChildCandidate, SlotChildCandidateKind } from './subtreeSlotChildren'
 export { addSlotPropToComponent } from './addSlotPropToComponent'

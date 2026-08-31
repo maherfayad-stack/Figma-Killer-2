@@ -48,10 +48,19 @@
         "dir": "pages",
         "score": 1
       }
-    ]
+    ],
+    "locales": {
+      "keys": [
+        "en",
+        "ar"
+      ],
+      "defaultKey": "en",
+      "source": "i18n/translations.ts"
+    }
   },
   "previewAxes": {
     "direction": "ltr",
-    "colorScheme": "light"
+    "colorScheme": "dark",
+    "locale": "en"
   }
 }

@@ -452,12 +452,14 @@ describe('AdminCanvasLayout — permanent panel rail', () => {
       'panel-rail-framework',
       'panel-rail-selectors',
       'panel-rail-inspect',
+      'panel-rail-content',
     ])
     expect(primaryButtons.map((button) => button.getAttribute('data-icon'))).toEqual([
       'database-solid',
       'colors-swatch',
       'paint-bucket',
       'eye-solid',
+      'globe-solid',
     ])
     const primaryAccents = primaryButtons.map((button) => button.getAttribute('data-accent'))
     expect(primaryAccents.every(Boolean)).toBe(true)

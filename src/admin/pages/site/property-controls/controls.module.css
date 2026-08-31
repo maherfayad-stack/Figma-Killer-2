@@ -339,9 +339,6 @@
     white-space: nowrap;
 }
 
-/* ── DynamicBindingControl ───────────────────────────────────────────────── */
-/* Affordance, bound-state, and picker styles live in DynamicBindingControl.module.css */
-
 .videoPreview {
     display: flex;
     align-items: center;

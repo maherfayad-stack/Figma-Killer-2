@@ -107,9 +107,12 @@ function loadSite(
 
 beforeEach(resetStore)
 
-function openInserter(): HTMLElement {
+async function openInserter(): Promise<HTMLElement> {
   fireEvent.click(screen.getByTestId('toolbar-add-module-btn'))
-  return screen.getByRole('dialog', { name: 'Add to canvas' })
+  // ModuleInserterDialog is lazy-loaded (LazyModuleInserterDialog) — its
+  // chunk resolves asynchronously even in tests, so the dialog cannot be
+  // found synchronously right after the click.
+  return screen.findByRole('dialog', { name: 'Add to canvas' })
 }
 
 function clickSection(name: string) {
@@ -117,11 +120,11 @@ function clickSection(name: string) {
 }
 
 describe('ModulePickerDropdown — Visual Components', () => {
-  it('exposes stable names for inserter category buttons when labels are visually hidden', () => {
+  it('exposes stable names for inserter category buttons when labels are visually hidden', async () => {
     loadSite()
     render(<ModulePickerDropdown />)
 
-    const dialog = openInserter()
+    const dialog = await openInserter()
     const categories = within(dialog).getByRole('navigation', { name: 'Module categories' })
     for (const name of ['Modules', 'Layouts', 'Components', 'Recent']) {
       const button = within(categories).getByRole('button', {
@@ -131,37 +134,37 @@ describe('ModulePickerDropdown — Visual Components', () => {
     }
   })
 
-  it('lists site VCs as items inside the Components section', () => {
+  it('lists site VCs as items inside the Components section', async () => {
     loadSite([
       makeVC('vc-1', 'HeroCard', 3),
       makeVC('vc-2', 'PricingTable', 1),
     ])
     render(<ModulePickerDropdown />)
 
-    const dialog = openInserter()
+    const dialog = await openInserter()
     clickSection('Components')
 
     expect(within(dialog).getAllByText('HeroCard').length).toBeGreaterThan(0)
     expect(within(dialog).getAllByText('PricingTable').length).toBeGreaterThan(0)
   })
 
-  it('renders data-vc-id attribute on VC items', () => {
+  it('renders data-vc-id attribute on VC items', async () => {
     loadSite([makeVC('vc-abc', 'MyComponent', 0)])
     render(<ModulePickerDropdown />)
-    const dialog = openInserter()
+    const dialog = await openInserter()
     clickSection('Components')
 
     const vcItem = dialog.querySelector('[data-vc-id="vc-abc"]')
     expect(vcItem?.getAttribute('data-vc-id')).toBe('vc-abc')
   })
 
-  it('filters VCs by search query', () => {
+  it('filters VCs by search query', async () => {
     loadSite([
       makeVC('vc-1', 'HeroCard', 2),
       makeVC('vc-2', 'PricingTable', 1),
     ])
     render(<ModulePickerDropdown />)
-    const dialog = openInserter()
+    const dialog = await openInserter()
     clickSection('Components')
 
     const searchBox = screen.getByRole('searchbox', { name: 'Search modules' })
@@ -171,10 +174,10 @@ describe('ModulePickerDropdown — Visual Components', () => {
     expect(within(dialog).queryByText('PricingTable')).toBeNull()
   })
 
-  it('calls insertComponentRef with correct parent when a VC item is clicked', () => {
+  it('calls insertComponentRef with correct parent when a VC item is clicked', async () => {
     loadSite([makeVC('vc-1', 'HeroCard', 0)])
     render(<ModulePickerDropdown />)
-    const dialog = openInserter()
+    const dialog = await openInserter()
     clickSection('Components')
 
     // Use the data-vc-id to find and click the VC item
@@ -192,10 +195,10 @@ describe('ModulePickerDropdown — Visual Components', () => {
     expect(refs[0]?.props.componentId).toBe('vc-1')
   })
 
-  it('closes the inserter after clicking a VC item', () => {
+  it('closes the inserter after clicking a VC item', async () => {
     loadSite([makeVC('vc-1', 'HeroCard', 0)])
     render(<ModulePickerDropdown />)
-    const dialog = openInserter()
+    const dialog = await openInserter()
     clickSection('Components')
 
     const vcItem = dialog.querySelector('[data-vc-id="vc-1"]') as HTMLElement
@@ -204,10 +207,10 @@ describe('ModulePickerDropdown — Visual Components', () => {
     expect(screen.queryByRole('dialog', { name: 'Add to canvas' })).toBeNull()
   })
 
-  it('closes the inserter after clicking a module item', () => {
+  it('closes the inserter after clicking a module item', async () => {
     loadSite([])
     render(<ModulePickerDropdown />)
-    const dialog = openInserter()
+    const dialog = await openInserter()
 
     const textItem = dialog.querySelector('[data-module-id="base.text"]') as HTMLElement
     expect(textItem).not.toBeNull()
@@ -223,10 +226,10 @@ describe('ModulePickerDropdown — Visual Components', () => {
     expect(textNodes.length).toBe(1)
   })
 
-  it('does not expose unfinished community catalog affordances', () => {
+  it('does not expose unfinished community catalog affordances', async () => {
     loadSite([])
     render(<ModulePickerDropdown />)
-    const dialog = openInserter()
+    const dialog = await openInserter()
 
     expect(screen.queryByRole('button', { name: /^Community\b/ })).toBeNull()
     expect(screen.getByRole('searchbox', { name: 'Search modules' }).getAttribute('placeholder'))
@@ -235,11 +238,11 @@ describe('ModulePickerDropdown — Visual Components', () => {
     expect(within(dialog).queryByText(/Community modules/i)).toBeNull()
   })
 
-  it('drops into the breakpoint frame under the pointer and activates that frame', () => {
+  it('drops into the breakpoint frame under the pointer and activates that frame', async () => {
     loadSite([])
     useEditorStore.getState().setActiveBreakpoint('desktop')
     render(<ModulePickerDropdown />)
-    const dialog = openInserter()
+    const dialog = await openInserter()
     installCanvasViewport('desktop', { left: 0, top: 0, width: 200, height: 300 })
     installCanvasViewport('mobile', { left: 240, top: 0, width: 120, height: 300 })
 
@@ -264,7 +267,7 @@ describe('ModulePickerDropdown — Visual Components', () => {
   it('does not let idle hover replace the selected item', async () => {
     loadSite([])
     render(<ModulePickerDropdown />)
-    const dialog = openInserter()
+    const dialog = await openInserter()
 
     const loopItem = dialog.querySelector('[data-module-id="base.loop"]') as HTMLElement
     const textItem = dialog.querySelector('[data-module-id="base.text"]') as HTMLElement
@@ -280,7 +283,7 @@ describe('ModulePickerDropdown — Visual Components', () => {
   it('does preview the item under actual pointer movement', async () => {
     loadSite([])
     render(<ModulePickerDropdown />)
-    const dialog = openInserter()
+    const dialog = await openInserter()
 
     const loopItem = dialog.querySelector('[data-module-id="base.loop"]') as HTMLElement
     const textItem = dialog.querySelector('[data-module-id="base.text"]') as HTMLElement
@@ -293,10 +296,10 @@ describe('ModulePickerDropdown — Visual Components', () => {
     expect(loopItem?.getAttribute('data-selected')).toBeNull()
   })
 
-  it('hides base.visual-component-ref from the picker in page mode', () => {
+  it('hides base.visual-component-ref from the picker in page mode', async () => {
     loadSite([])
     render(<ModulePickerDropdown />)
-    const dialog = openInserter()
+    const dialog = await openInserter()
 
     // base.visual-component-ref should not appear as a module item
     const vcRefItem = within(dialog).queryAllByRole('button').find(
@@ -305,10 +308,10 @@ describe('ModulePickerDropdown — Visual Components', () => {
     expect(vcRefItem).toBeUndefined()
   })
 
-  it('hides base.slot-outlet in page mode (name: Slot)', () => {
+  it('hides base.slot-outlet in page mode (name: Slot)', async () => {
     loadSite([])
     render(<ModulePickerDropdown />)
-    const dialog = openInserter()
+    const dialog = await openInserter()
 
     // base.slot-outlet (display name: "Slot") should not appear in page mode
     const slotItem = within(dialog).queryAllByRole('button').find(
@@ -317,11 +320,11 @@ describe('ModulePickerDropdown — Visual Components', () => {
     expect(slotItem).toBeUndefined()
   })
 
-  it('shows base.slot-outlet in VC edit mode', () => {
+  it('shows base.slot-outlet in VC edit mode', async () => {
     const vc = makeVC('vc-1', 'HeroCard', 0)
     loadSite([vc], { kind: 'visualComponent', vcId: vc.id })
     render(<ModulePickerDropdown />)
-    const dialog = openInserter()
+    const dialog = await openInserter()
 
     // base.slot-outlet (display name: "Slot") should be visible in VC mode
     const slotItem = within(dialog).queryAllByRole('button').find(
@@ -330,10 +333,10 @@ describe('ModulePickerDropdown — Visual Components', () => {
     expect(slotItem).toBeDefined()
   })
 
-  it('hides base.slot-instance in page mode (auto-materialized only)', () => {
+  it('hides base.slot-instance in page mode (auto-materialized only)', async () => {
     loadSite([])
     render(<ModulePickerDropdown />)
-    const dialog = openInserter()
+    const dialog = await openInserter()
 
     // base.slot-instance is materialized as a VC ref child by syncSlotInstances —
     // it must NEVER appear as a user-insertable option in the picker. Otherwise
@@ -345,11 +348,11 @@ describe('ModulePickerDropdown — Visual Components', () => {
     expect(slotInstanceItem).toBeUndefined()
   })
 
-  it('hides base.slot-instance in VC edit mode (auto-materialized only)', () => {
+  it('hides base.slot-instance in VC edit mode (auto-materialized only)', async () => {
     const vc = makeVC('vc-1', 'HeroCard', 0)
     loadSite([vc], { kind: 'visualComponent', vcId: vc.id })
     render(<ModulePickerDropdown />)
-    const dialog = openInserter()
+    const dialog = await openInserter()
 
     // Same rule as page mode — slot-instance is structural-only, never picker-visible.
     const slotInstanceItem = within(dialog).queryAllByRole('button').find(

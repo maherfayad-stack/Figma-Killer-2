@@ -11,7 +11,8 @@ import type {
   ContentTableSchema as ContentTableSchemaShape,
   ContentTableSummary,
 } from '@core/plugin-sdk/contentSchemas'
-import type { DataField, DataRow, DataTable } from '@core/data/schemas'
+import type { DataField, DataTable } from '@core/data/schemas'
+import type { DataRow } from '@core/data/dataRowSchema'
 import type { DbClient } from '../../../db/client'
 import { getDataTableBySlug, listDataTables } from '../../../repositories/data'
 

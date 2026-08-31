@@ -18,7 +18,8 @@
  */
 import { nanoid } from 'nanoid'
 import type { DbClient } from '../../../db/client'
-import type { DataRow, DataRowStatus, DeletedRowSummary } from '@core/data/schemas'
+import type { DeletedRowSummary } from '@core/data/schemas'
+import type { DataRow, DataRowStatus } from '@core/data/dataRowSchema'
 import { bumpPublishVersionSerialized } from '../../../publish/publishState'
 import { type InsertDataRowInput, type UpdateDataRowDraftInput } from './mapper'
 import { isoDateOrNull } from '@core/utils/isoDate'

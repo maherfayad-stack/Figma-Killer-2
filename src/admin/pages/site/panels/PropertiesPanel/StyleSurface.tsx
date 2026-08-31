@@ -78,8 +78,15 @@ import {
   getClassStyleSectionSetCounts,
   getActiveStyleTab,
 } from './cssControlTypes'
-import { buildClassChain, resolvePropertyProvenance, type PropertyProvenance } from './stylePropertyProvenance'
+import {
+  buildClassChain,
+  buildStableProvenanceMap,
+  resolvePropertyProvenance,
+  type PropertyProvenance,
+} from './stylePropertyProvenance'
 import { useFrameComputedStyleValues } from '@site/panels/InspectPanel/useInspectComputedStyle'
+import { useMutableBox } from '@site/hooks/useMutableBox'
+import { TokenCatalogProvider } from '@site/property-controls/TokenCatalogProvider'
 import { useEditorPreference } from '@site/preferences/editorPreferences'
 import { useEditorPermissions } from '@site/editorPermissionsContext'
 import { EmptyState } from '@ui/components/EmptyState'
@@ -258,15 +265,25 @@ export function StyleSurface({
     activeBreakpointId ?? 'desktop',
     ALL_CURATED_CSS_PROPERTIES,
   )
-  const provenanceByProperty = new Map<string, PropertyProvenance>(
-    ALL_CURATED_CSS_PROPERTIES.map((prop) => [
-      prop,
+  // Reference-stabilized against the PREVIOUS render's map: a keystroke that
+  // edits one property still recomputes provenance for all ~101 curated
+  // properties (cheap — a short array filter per property, not the DOM read
+  // above), but reuses the SAME object for every property whose result is
+  // unchanged rather than handing every `ClassPropertyRow` a new-but-identical
+  // object every render. See `buildStableProvenanceMap`'s doc for why the box
+  // read/write lives in that plain helper rather than inline here, and why
+  // this is what lets React Compiler's own memoization of the downstream
+  // per-row JSX/placeholder computations actually take effect.
+  const previousProvenanceBox = useMutableBox<Map<string, PropertyProvenance>>()
+  const provenanceByProperty = buildStableProvenanceMap(
+    previousProvenanceBox,
+    ALL_CURATED_CSS_PROPERTIES,
+    (prop) =>
       resolvePropertyProvenance(prop as keyof CSSPropertyBag, {
         classChain,
         inlineStyles: inlineStyles ?? {},
         computedValue: computedValues?.[prop],
       }),
-    ]),
   )
 
   // `panel-02` / Track B1/B1b (WS-6.3) — whether the active class's
@@ -402,77 +419,83 @@ export function StyleSurface({
   const ModuleIcon = definition?.icon
 
   return (
-    <div ref={scrollRef} className={styles.surface}>
-      {/* ── Left column: search + module section + CSS area ─────────── */}
-      <div className={styles.surfaceContent}>
+    // TokenCatalogProvider computes the spacing/typography token catalogs
+    // ONCE for this whole render pass — see that module's doc for why every
+    // `ClassPropertyRow` reading them via `useTokenCatalog()` instead of
+    // calling the raw hooks itself matters on the keystroke path.
+    <TokenCatalogProvider>
+      <div ref={scrollRef} className={styles.surface}>
+        {/* ── Left column: search + module section + CSS area ─────────── */}
+        <div className={styles.surfaceContent}>
 
-        {/* Track F1 — write-target menu. Node mode only (nodeId != null); the
-            global selector surface (SelectorInspector) always edits a class
-            and has no "Element" concept to switch to. */}
-        {nodeId != null && (
-          <StyleTargetChip
-            elementVisible={elementBlockVisible}
-            classSelector={activeClass ? styleRuleSelector(activeClass) : undefined}
-            classCssEditability={classCssEditability}
-            onToggleElement={canToggleElement ? () => setInlineStyleEditing(!inlineIntent) : undefined}
-          />
-        )}
-
-        {/* Search bar — sticky at the top, searches both module and CSS.
-            Hidden when no class is selected or the active class is a locked
-            generated utility (no CSS rows to search in either state). */}
-        {searchableClass && (
-          <div className={styles.searchBarRow}>
-            <SearchBar
-              value={styleQuery}
-              onValueChange={setStyleQuery}
-              onClear={clearStyleQuery}
-              onKeyDown={(e) => {
-                if (e.key === 'Escape') {
-                  e.preventDefault()
-                  clearStyleQuery()
-                }
-              }}
-              placeholder={`Search styles in ${styleRuleSelector(searchableClass)}...`}
-              aria-label="Search class style properties to add"
+          {/* Track F1 — write-target menu. Node mode only (nodeId != null); the
+              global selector surface (SelectorInspector) always edits a class
+              and has no "Element" concept to switch to. */}
+          {nodeId != null && (
+            <StyleTargetChip
+              elementVisible={elementBlockVisible}
+              classSelector={activeClass ? styleRuleSelector(activeClass) : undefined}
+              classCssEditability={classCssEditability}
+              onToggleElement={canToggleElement ? () => setInlineStyleEditing(!inlineIntent) : undefined}
             />
-          </div>
-        )}
+          )}
 
-        {/* Module section — same Section accordion as CSS sections */}
-        {moduleVisible && (
-          <div data-style-section={MODULE_CATEGORY_ID}>
-            <Section
-              title={definition!.name}
-              icon={ModuleIcon}
-              defaultOpen={sectionsExpanded}
-              flush
-            >
-              {/* sectionBody gives the same display:grid + gap as CSS sections.
-                  key={nodeId} remounts on node change (replaces the old div wrapper). */}
-              <div key={nodeId} className={sectionStyles.sectionBody}>
-                {moduleContent}
-              </div>
-            </Section>
-          </div>
-        )}
+          {/* Search bar — sticky at the top, searches both module and CSS.
+              Hidden when no class is selected or the active class is a locked
+              generated utility (no CSS rows to search in either state). */}
+          {searchableClass && (
+            <div className={styles.searchBarRow}>
+              <SearchBar
+                value={styleQuery}
+                onValueChange={setStyleQuery}
+                onClear={clearStyleQuery}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') {
+                    e.preventDefault()
+                    clearStyleQuery()
+                  }
+                }}
+                placeholder={`Search styles in ${styleRuleSelector(searchableClass)}...`}
+                aria-label="Search class style properties to add"
+              />
+            </div>
+          )}
 
-        {/* CSS area — Element block, Class block, locked preview, or generated lock */}
-        {cssContent}
+          {/* Module section — same Section accordion as CSS sections */}
+          {moduleVisible && (
+            <div data-style-section={MODULE_CATEGORY_ID}>
+              <Section
+                title={definition!.name}
+                icon={ModuleIcon}
+                defaultOpen={sectionsExpanded}
+                flush
+              >
+                {/* sectionBody gives the same display:grid + gap as CSS sections.
+                    key={nodeId} remounts on node change (replaces the old div wrapper). */}
+                <div key={nodeId} className={sectionStyles.sectionBody}>
+                  {moduleContent}
+                </div>
+              </Section>
+            </div>
+          )}
+
+          {/* CSS area — Element block, Class block, locked preview, or generated lock */}
+          {cssContent}
+        </div>
+
+        {/* ── Right column: sticky rail ────────────────────────────── */}
+        <div className={styles.railSticky}>
+          <StyleCategoryRail
+            activeAnchorId={activeAnchorId}
+            sectionSetCounts={sectionSetCounts}
+            onSectionClick={handleSectionClick}
+            definition={definition ?? null}
+            activeClass={activeClass}
+            editingInline={elementBlockVisible}
+          />
+        </div>
       </div>
-
-      {/* ── Right column: sticky rail ────────────────────────────── */}
-      <div className={styles.railSticky}>
-        <StyleCategoryRail
-          activeAnchorId={activeAnchorId}
-          sectionSetCounts={sectionSetCounts}
-          onSectionClick={handleSectionClick}
-          definition={definition ?? null}
-          activeClass={activeClass}
-          editingInline={elementBlockVisible}
-        />
-      </div>
-    </div>
+    </TokenCatalogProvider>
   )
 }
 

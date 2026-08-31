@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import { classKindSelector, type Page, type StyleRule, type SiteShell } from '@core/page-tree'
 import { pageFromRow } from '@core/data/pageFromRow'
-import type { DataRow } from '@core/data/schemas'
+import type { DataRow } from '@core/data/dataRowSchema'
 import { selectStudioTools } from '../../../server/ai/tools'
 import {
   createCapabilityTestHarness,

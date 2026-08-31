@@ -27,7 +27,7 @@ import { useContext, useRef, useState, type CSSProperties, type MouseEvent as Re
 import { createPortal } from 'react-dom'
 import type { BoardGuide } from '@core/studio-board'
 import { useEditorStore } from '@site/store/store'
-import { selectActiveBoard } from '@site/store/slices/boardSlice'
+import { selectActiveBoardGuides } from '@site/store/slices/boardSelectors'
 import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from '@ui/components/ContextMenu'
 import { CloseIcon } from 'pixel-art-icons/icons/close'
 import { CanvasViewportActionsContext } from '../CanvasContexts'
@@ -137,12 +137,14 @@ function GuideLine({ guide }: { guide: BoardGuide }) {
   )
 }
 
-/** Stable identity for the no-guides case — an inline `?? []` mints a new array every render. */
-const NO_GUIDES: readonly BoardGuide[] = []
-
 export function RulerGuidesLayer() {
-  const board = useEditorStore(selectActiveBoard)
-  const guides = board?.guides ?? NO_GUIDES
+  // `board.guides` alone (`selectActiveBoardGuides`), not the whole `Board`
+  // — a frame/note/doc write changes `Board`'s reference (copy-on-write in
+  // `boardsModel.ts`) but reuses this layer's `guides` array untouched. See
+  // `boardSlice.ts`'s doc on the four per-collection selectors; that
+  // selector already returns a stable empty array with no active board, so
+  // there is no separate `?? []` fallback needed here anymore.
+  const guides = useEditorStore(selectActiveBoardGuides)
 
   if (guides.length === 0) return null
 

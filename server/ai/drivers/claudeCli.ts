@@ -68,6 +68,22 @@
  * not a replayed `AiMessage[]` log the way every HTTP driver in this
  * directory does it.
  *
+ * ## `req.systemPrompt` is NOT forwarded — and that is not an oversight
+ *
+ * For the same reason `req.tools` is not: the CLI is an agent, not a raw
+ * model. It supplies its own operating instructions, and Studio's chat system
+ * prompt describes a tool surface this driver never hands it. What this driver
+ * gives the CLI instead is the project's own generated `CLAUDE.md`, loaded for
+ * free from the subprocess `cwd` (see the guide generation below).
+ *
+ * The consequence is easy to trip over and has: **a caller whose instructions
+ * live only in `systemPrompt` reaches this model with none of them.** That is
+ * what `server/ai/oneShot.ts` composes around — read its module doc before
+ * adding another non-chat caller. Making this driver honour `systemPrompt`
+ * (`--append-system-prompt`) is a real option, but it would change what the
+ * main chat sends on every turn, so it is a deliberate change with its own
+ * validation, not a drive-by fix.
+ *
  * Whether THIS turn establishes or resumes is decided by
  * `shouldEstablishClaudeCliSession`: does the CLI already have a transcript
  * file for the derived uuid at this `cwd`? Not a message-count heuristic —

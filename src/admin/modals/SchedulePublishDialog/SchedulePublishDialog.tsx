@@ -19,7 +19,7 @@ import {
   scheduleCmsDataRowPublish,
   cancelCmsDataRowSchedule,
 } from '@core/persistence'
-import type { DataRow } from '@core/data/schemas'
+import type { DataRow } from '@core/data/dataRowSchema'
 import { Dialog } from '@ui/components/Dialog'
 import { Button } from '@ui/components/Button'
 import { DateTimePicker } from '@ui/components/DateTimePicker'

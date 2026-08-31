@@ -368,7 +368,7 @@ describe('canvas selection toolbar', () => {
     ])
   })
 
-  it('does not bubble toolbar clicks to the canvas background', () => {
+  it('does not bubble toolbar clicks to the canvas background', async () => {
     // Regression: the toolbar is portaled into the canvas root, whose onClick
     // clears the selection on background clicks. A toolbar click must not
     // bubble up — otherwise opening the Insert-module dialog would clear the
@@ -406,10 +406,11 @@ describe('canvas selection toolbar', () => {
 
     expect(backgroundClicks).toBe(0)
     // The module inserter dialog opened and stayed open (selection still intact).
-    expect(screen.getByRole('dialog', { name: 'Add to canvas' })).toBeTruthy()
+    // ModuleInserterDialog is lazy-loaded, so it does not resolve synchronously.
+    expect(await screen.findByRole('dialog', { name: 'Add to canvas' })).toBeTruthy()
   })
 
-  it('inserts a module inside a nestable selected layer from the toolbar', () => {
+  it('inserts a module inside a nestable selected layer from the toolbar', async () => {
     const site = useEditorStore.getState().createSite('Insert Nestable Test')
     const rootId = site.pages[0].rootNodeId
     const containerId = useEditorStore.getState().insertNode('base.container', {}, rootId)
@@ -432,6 +433,8 @@ describe('canvas selection toolbar', () => {
     act(() => {
       fireEvent.click(screen.getByRole('button', { name: 'Insert module' }))
     })
+    // ModuleInserterDialog is lazy-loaded — wait for its chunk before querying it.
+    await screen.findByRole('dialog', { name: 'Add to canvas' })
     act(() => {
       fireEvent.click(document.querySelector('[data-module-id="base.text"]')!)
     })
@@ -444,7 +447,7 @@ describe('canvas selection toolbar', () => {
     expect(currentPage.nodes[rootId].children).toEqual([containerId])
   })
 
-  it('inserts a module as a sibling of a non-nestable selected layer from the toolbar', () => {
+  it('inserts a module as a sibling of a non-nestable selected layer from the toolbar', async () => {
     const { page, textId } = createSelectedTextPage()
     const rootId = page.rootNodeId
 
@@ -460,6 +463,8 @@ describe('canvas selection toolbar', () => {
     act(() => {
       fireEvent.click(screen.getByRole('button', { name: 'Insert module' }))
     })
+    // ModuleInserterDialog is lazy-loaded — wait for its chunk before querying it.
+    await screen.findByRole('dialog', { name: 'Add to canvas' })
     act(() => {
       fireEvent.click(document.querySelector('[data-module-id="base.text"]')!)
     })

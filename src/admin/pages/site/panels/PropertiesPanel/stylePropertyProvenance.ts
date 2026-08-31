@@ -204,6 +204,74 @@ export function resolvePropertyProvenance(
   return { property, sources, confidence, computedValue, inherited }
 }
 
+/**
+ * Structural equality for two `PropertyProvenance` results, source-by-source.
+ *
+ * Used to reference-stabilize `StyleSurface`'s per-render
+ * `provenanceByProperty` map: a keystroke that edits ONE property still
+ * calls `resolvePropertyProvenance` for all ~101 curated properties (the
+ * loop itself is cheap — see that module's doc), but the ~100 unaffected
+ * properties get a content-identical result every time. Comparing here lets
+ * the caller hand back the SAME object reference for those, instead of a
+ * new-but-equal one — which is what lets React Compiler's own auto-memoized
+ * `ClassPropertyRow` element creation (and the `placeholder` computation
+ * that reads `provenance`) actually skip re-work on a render where a given
+ * row's provenance didn't change, without any manual `useMemo`.
+ */
+export function provenanceEqual(a: PropertyProvenance, b: PropertyProvenance): boolean {
+  if (a.property !== b.property) return false
+  if (a.confidence !== b.confidence) return false
+  if (a.computedValue !== b.computedValue) return false
+  if (a.inherited !== b.inherited) return false
+  if (a.sources.length !== b.sources.length) return false
+  for (let i = 0; i < a.sources.length; i++) {
+    const sa = a.sources[i]
+    const sb = b.sources[i]
+    if (
+      sa.kind !== sb.kind ||
+      sa.classId !== sb.classId ||
+      sa.label !== sb.label ||
+      sa.value !== sb.value ||
+      sa.winner !== sb.winner
+    ) {
+      return false
+    }
+  }
+  return true
+}
+
+/**
+ * Builds `provenanceByProperty` for `properties`, reusing the PREVIOUS
+ * render's object for any property whose result is `provenanceEqual` to
+ * what it was last time, and updates `box` (from `useMutableBox`) to hold
+ * this render's map for the NEXT call.
+ *
+ * The box read/write happens INSIDE this plain helper function, not inline
+ * in `StyleSurface`'s own render body — `eslint-plugin-react-hooks`'s
+ * immutability rule flags mutating a value obtained from a hook call
+ * directly in the component/hook that called it ("Modifying a value
+ * returned from a hook is not allowed"), even when the mutation is exactly
+ * the "remember last render's value" idiom `useMutableBox` exists for.
+ * Routing it through an ordinary function call sidesteps that false
+ * positive the same way `useInspectComputedStyle.ts`'s `stabilizeRecord`
+ * does for computed-style snapshots.
+ */
+export function buildStableProvenanceMap(
+  box: { current: Map<string, PropertyProvenance> | null },
+  properties: ReadonlyArray<string>,
+  resolve: (property: string) => PropertyProvenance,
+): Map<string, PropertyProvenance> {
+  const next = new Map<string, PropertyProvenance>(
+    properties.map((prop) => {
+      const result = resolve(prop)
+      const previous = box.current?.get(prop)
+      return [prop, previous && provenanceEqual(previous, result) ? previous : result]
+    }),
+  )
+  box.current = next
+  return next
+}
+
 /** Empty, stable provenance for a property with no sources and no frame reading available. Reused so callers building a full map don't allocate one per miss. */
 export const EMPTY_PROPERTY_PROVENANCE_PARAMS: ResolvePropertyProvenanceParams = Object.freeze({
   classChain: Object.freeze([]),

@@ -15,8 +15,9 @@
 
 import type { CSSPropertyBag } from '@core/page-tree'
 import { ClassPropertyRow } from './ClassPropertyRow'
-import { getCSSPropertyDefaultValue } from './cssControlTypes'
+import { resolveStylePlaceholder } from './stylePlaceholder'
 import { hasStyleValue } from './styleValueUtils'
+import type { PropertyProvenance } from './stylePropertyProvenance'
 import styles from './StackedPropertyGrid.module.css'
 
 // ---------------------------------------------------------------------------
@@ -45,6 +46,17 @@ interface StackedPropertyGridProps {
   /** Patch-shaped hover / as-you-type preview channel. */
   onPreview?: (patch: Partial<CSSPropertyBag>) => void
   onClearPreview?: () => void
+  /**
+   * Track F1 — per-property winner/loser provenance.
+   *
+   * This used to reach only the generic fallback rows, so the four sections
+   * built on this grid (Typography, Background, Effects, Interaction) showed
+   * no hint of WHERE a value came from — apply a colour style and the row
+   * still read as unset with a raw `rgb(…)` under it. They get it now, which
+   * both draws the shadowed-source strip and lets the placeholder quote the
+   * user's own declaration instead of the browser's resolution of it.
+   */
+  provenanceByProperty?: ReadonlyMap<string, PropertyProvenance>
 }
 
 // ---------------------------------------------------------------------------
@@ -61,6 +73,7 @@ export function StackedPropertyGrid({
   onRemove,
   onPreview,
   onClearPreview,
+  provenanceByProperty,
 }: StackedPropertyGridProps) {
   const visible = new Set(visibleProperties)
 
@@ -72,17 +85,22 @@ export function StackedPropertyGrid({
   const renderRow = (property: keyof CSSPropertyBag) => {
     const storedValue = storedStyles[property]
     const isSet = hasStyleValue(storedValue)
-    const currentValue = currentStyles[property]
-    const fallbackValue = hasStyleValue(currentValue)
-      ? currentValue
-      : getCSSPropertyDefaultValue(property)
+    const provenance = provenanceByProperty?.get(String(property))
 
     return (
       <ClassPropertyRow
         key={`${activeTab}-${String(property)}`}
         property={property}
         value={isSet ? (storedValue as string | number) : undefined}
-        placeholder={!isSet ? fallbackValue : undefined}
+        placeholder={
+          isSet
+            ? undefined
+            : resolveStylePlaceholder({
+                property,
+                provenance,
+                currentValue: currentStyles[property],
+              })
+        }
         fontFamilyValue={currentStyles.fontFamily}
         isSet={isSet}
         layout="stacked"
@@ -90,6 +108,7 @@ export function StackedPropertyGrid({
         onRemove={onRemove}
         onPreview={previewProperty}
         onClearPreview={onClearPreview}
+        provenance={provenance}
       />
     )
   }

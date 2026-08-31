@@ -25,7 +25,7 @@
  */
 import { useState } from 'react'
 import { useEditorStore } from '@site/store/store'
-import { selectActiveBoard } from '@site/store/slices/boardSlice'
+import { selectActiveBoard } from '@site/store/slices/boardSelectors'
 import { isStudioMode } from '@site/studio/studioMode'
 import { DEVICE_PRESETS, findMatchingPreset, FRAME_WIDTH, FRAME_HEIGHT, MIN_FRAME_SIZE, type DevicePreset } from '@core/studio-board'
 import { Select } from '@ui/components/Select'

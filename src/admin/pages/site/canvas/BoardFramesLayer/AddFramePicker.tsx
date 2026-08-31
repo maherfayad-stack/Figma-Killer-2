@@ -13,7 +13,7 @@
  */
 import { useRef, useState } from 'react'
 import { useEditorStore } from '@site/store/store'
-import { selectActiveBoard } from '@site/store/slices/boardSlice'
+import { selectActiveBoard } from '@site/store/slices/boardSelectors'
 import type { Page } from '@core/page-tree'
 import { Button, type ButtonProps } from '@ui/components/Button'
 import { ContextMenu, ContextMenuItem } from '@ui/components/ContextMenu'

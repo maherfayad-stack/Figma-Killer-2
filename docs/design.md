@@ -442,13 +442,47 @@ or `skin` prop through the ~40 components between the panel shell and a leaf
 input would mean every new control had to remember to forward it, and the one
 that forgot would be a lone pill in a column of rectangles.
 
+**What an unset row shows.** The placeholder is not a spec-default guess —
+`StyleSurface` reads the frame's real `getComputedStyle` and folds it under
+each composer's stored bag. But `getComputedStyle` answers in the *browser's*
+vocabulary, so `resolveStylePlaceholder` (`stylePlaceholder.ts`) puts a better
+answer first when there is one:
+
+1. **the winning declaration's own text** — `var(--brand-500)`, not
+   `rgb(135, 91, 247)`. `stylePropertyProvenance` already knows which
+   declaration is in effect; an `ambiguous` cascade crowns nobody and falls
+   through rather than guessing.
+2. **the computed value** from the real frame — ground truth, browser's words.
+3. **the spec default** from the hand-written table.
+
+An expansion-noise shorthand (`background`, `border`, `transition`,
+`animation`, `font`, `flex`, `outline`) stops after step 1 and shows an empty
+field: `rgba(0, 0, 0, 0) none repeat scroll 0% 0% / auto padding-box
+border-box` is not something a person reads, and the longhand rows beneath it
+already say it legibly.
+
+Provenance reaches **every** section, the four `StackedPropertyGrid`-backed
+ones included — it used to reach only the generic fallback rows, so applying a
+style left a Typography or Background row looking untouched. A row draws the
+strip of *losing* declarations, struck through; it does NOT draw a bare
+"inherited" tag, because on a section where every property is CSS-inherited
+that fires on all ten rows at once and says nothing the dimmed field didn't.
+
 **Variables and styles.** Two different things, both applied at the point of
 use. A *variable* is a value (`var(--brand-600)`, `var(--text-l)`) and is
 offered inside the field that takes it — `TokenizedColorField` on any colour
 row, `TokenAwareInput` on the type and spacing scales. A *style* is a bundle of
-declarations under one name, which here is a framework-generated utility class;
-`SectionStylesMenu` puts it behind a styles button in the header of the
-section that owns it. Applying one adds the class to `node.classIds`, so
+declarations under one name. **Any class the project declares counts** — the
+repo is the document, so a rule parsed out of the project's own CSS is a style
+exactly as much as a framework-generated utility is. `styleFamilyClassifier.ts`
+decides by what a rule DECLARES, not by where it came from: a rule qualifies
+for a family when every property it declares is in that family's vocabulary
+and at least one is the family's core property. `.PlanCard_name { font-weight:
+600 }` is a text style; `.frame { display; max-width; font-family; color }` is
+a whole-component class and stays in the ClassPicker where it belongs — a
+permissive test would make this menu a second ClassPicker with a different
+icon. `SectionStylesMenu` puts the result behind a styles button in the header
+of the section that owns it. Applying one adds the class to `node.classIds`, so
 editing the framework still moves every user of the style.
 
 **One button per family.** Typography's header carries two — a type mark for

@@ -15,7 +15,8 @@
 import { useRef, useState } from 'react'
 import { AppGridPlusGlyphIcon } from 'pixel-art-icons/icons/app-grid-plus-glyph'
 import { Button } from '@ui/components/Button'
-import { ModuleInserterDialog } from '@site/module-picker/ModuleInserterDialog'
+import { LazyModuleInserterDialog } from '@site/module-picker/LazyModuleInserterDialog'
+import { preloadModuleInserterDialog } from '@site/module-picker/preloadModuleInserterDialog'
 import { useInsertInserterItem } from '@site/hooks/useInsertInserterItem'
 
 interface CanvasInsertModuleButtonProps {
@@ -48,16 +49,17 @@ export function CanvasInsertModuleButton({
         tooltip="Insert module"
         className={buttonClassName}
         onClick={() => setOpen(true)}
+        onPointerEnter={preloadModuleInserterDialog}
+        onFocus={preloadModuleInserterDialog}
       >
         <AppGridPlusGlyphIcon size={13} color="var(--text)" />
       </Button>
 
-      {open && (
-        <ModuleInserterDialog
-          onClose={handleClose}
-          onInsertItem={handleInsertItem}
-        />
-      )}
+      <LazyModuleInserterDialog
+        open={open}
+        onClose={handleClose}
+        onInsertItem={handleInsertItem}
+      />
     </>
   )
 }

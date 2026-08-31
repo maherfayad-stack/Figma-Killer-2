@@ -20,7 +20,8 @@
 
 import type { ApiCallFor } from '../../protocol/apiCallSchema'
 import type { ContentTableSummary, PublishedSnapshot } from '@core/plugin-sdk/contentSchemas'
-import type { DataRow, DataTable } from '@core/data/schemas'
+import type { DataTable } from '@core/data/schemas'
+import type { DataRow } from '@core/data/dataRowSchema'
 import { parsePageNodeTree } from '@core/page-tree'
 import { readPageTree, mutatePageTree } from '../../../ai/content/treeService'
 import { hookBus } from '@core/plugins/hookBus'

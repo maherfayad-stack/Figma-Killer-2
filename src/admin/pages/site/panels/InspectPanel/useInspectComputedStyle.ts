@@ -34,8 +34,44 @@
  * When multiple canvas frames have rendered the node (one per breakpoint),
  * the frame whose `data-breakpoint-id` matches the active breakpoint is
  * preferred; otherwise the first rendered match is used.
+ *
+ * ## Element-lookup cost — cached, not re-scanned every render (perf-01)
+ *
+ * "This only re-runs when the caller re-renders" was written when the
+ * caller re-rendered once per SELECTION. `StyleSurface` (the Properties
+ * panel's `useFrameComputedStyleValues` below) re-renders once per
+ * KEYSTROKE that edits the selected node's style — and this panel, showing
+ * the SAME node, re-renders right alongside it (`selectedNode`'s object
+ * identity changes on every such edit, per the trigger list above). Each of
+ * those re-renders used to redo the FULL element lookup from scratch:
+ * `document.querySelectorAll('iframe')` over the whole admin document, then
+ * a cross-document `frameDoc.querySelector('[data-node-id=…]')` INSIDE each
+ * breakpoint iframe's own (arbitrarily large, user-authored) page — once per
+ * open breakpoint frame, once per character typed.
+ *
+ * `RenderedCanvasNodeCache` (`canvasNodeLookup.ts`) now holds that lookup
+ * across renders, one instance per hook call site (a `useState` lazy
+ * initializer, not module-level — each mounted panel gets its own, so no
+ * cross-panel leakage; see `useRenderedCanvasNodeCache`'s own doc for why
+ * that's `useState` and not `useRef`). A cached entry is re-validated (not
+ * blindly trusted) on every call — every element must still be `.isConnected`
+ * and the live canvas-iframe count must be unchanged — so it self-heals on a
+ * real remount (a structural edit, a frame reload, a breakpoint frame
+ * opened/closed) instead of ever returning a stale element. See that class's
+ * own doc for why `CanvasNodeElementCache` (the selection overlay's cache)
+ * isn't directly reusable here.
+ *
+ * `getComputedStyle(element)` itself still runs on every call that reaches
+ * it — it must, to stay correct, since the whole point of this hook firing
+ * again is "the node's own data changed, go read what that produced." What
+ * the cache removes is the redundant DOM SCAN that used to precede it; the
+ * layout-forcing cost of the read itself is unchanged and would need a
+ * browser profile to quantify (see this repo's task handoff for what was
+ * proved by test vs. what still needs one).
  */
-import { findRenderedCanvasNodes } from '@site/canvas/canvasNodeLookup'
+import { useState } from 'react'
+import { RenderedCanvasNodeCache, type RenderedCanvasNode } from '@site/canvas/canvasNodeLookup'
+import { useMutableBox } from '@site/hooks/useMutableBox'
 import type { ComputedStyleSnapshot } from './inspectModel'
 
 function frameBodyElement(frame: HTMLIFrameElement): HTMLElement | null {
@@ -47,13 +83,74 @@ function frameBodyElement(frame: HTMLIFrameElement): HTMLElement | null {
   }
 }
 
-function resolveElement(nodeId: string, activeBreakpointId: string): HTMLElement | null {
-  const rendered = findRenderedCanvasNodes(nodeId)
+function pickPreferredElement(
+  rendered: readonly RenderedCanvasNode[],
+  activeBreakpointId: string,
+): HTMLElement | null {
   if (rendered.length === 0) return null
   const preferred = rendered.find(
     (entry) => frameBodyElement(entry.frame)?.getAttribute('data-breakpoint-id') === activeBreakpointId,
   )
   return (preferred ?? rendered[0]).element
+}
+
+function resolveElement(
+  cache: RenderedCanvasNodeCache,
+  nodeId: string,
+  activeBreakpointId: string,
+): HTMLElement | null {
+  cache.retainOnly(new Set([nodeId]))
+  return pickPreferredElement(cache.resolve(nodeId), activeBreakpointId)
+}
+
+/**
+ * Lazily-initialized, render-persistent cache — the lazy initializer runs
+ * exactly once per mounted hook call site, same one-per-caller scoping
+ * `BreakpointSelectionOverlay` gets from its own `CanvasNodeElementCache`
+ * (that component uses `useRef` for it because it only ever reads the cache
+ * from an effect/RAF tick, never during render itself — this hook needs the
+ * opposite, see `useMutableBox`'s doc above for why that's `useState` here).
+ */
+function useRenderedCanvasNodeCache(): RenderedCanvasNodeCache {
+  const [cache] = useState(() => new RenderedCanvasNodeCache())
+  return cache
+}
+
+/**
+ * Returns `next` unless it is shallow-equal (same keys, `===` values) to the
+ * PREVIOUS object `ref` produced — in which case it hands back that previous
+ * reference instead of `next`. `getComputedStyle` is still read fresh on
+ * every call this render makes it to (see the module doc for why that read
+ * itself can't be skipped without risking staleness); this only stops a
+ * content-identical result from LOOKING like a change to every downstream
+ * consumer.
+ *
+ * That matters because React Compiler auto-memoizes derived values based on
+ * their inputs' referential identity — `StyleSurface`'s `provenanceByProperty`
+ * map and the per-row placeholders it feeds are exactly the kind of
+ * computation the compiler already skips re-running when its inputs didn't
+ * change, but a `getComputedStyle` read rebuilding a brand-new object every
+ * time (even when every string value inside it is identical) permanently
+ * defeated that — every keystroke looked like "the computed style changed"
+ * even on renders where nothing about it actually did (e.g. this same node
+ * re-rendering for an unrelated reason, or a breakpoint switch that happens
+ * to produce identical values). Takes the `{ current }` box from
+ * `useMutableBox`, not `useMemo` — see that function's doc for why.
+ */
+function stabilizeRecord<T extends Record<string, string>>(box: { current: T | null }, next: T): T {
+  const prev = box.current
+  if (prev && shallowRecordEqual(prev, next)) return prev
+  box.current = next
+  return next
+}
+
+function shallowRecordEqual(a: Record<string, string>, b: Record<string, string>): boolean {
+  const aKeys = Object.keys(a)
+  if (aKeys.length !== Object.keys(b).length) return false
+  for (const key of aKeys) {
+    if (a[key] !== b[key]) return false
+  }
+  return true
 }
 
 function readComputedStyleSnapshot(element: HTMLElement): ComputedStyleSnapshot | null {
@@ -104,10 +201,28 @@ export function useInspectComputedStyle(
   activeBreakpointId: string,
 ): ComputedStyleSnapshot | null {
   void node
+  const cache = useRenderedCanvasNodeCache()
+  // Held as the widened `Record<string, string>` shape `stabilizeRecord`
+  // operates on (every `ComputedStyleSnapshot` field IS a string — the
+  // interface just names them instead of using an index signature, which is
+  // all `stabilizeRecord` needs structurally). Narrowed back at the return
+  // below; every value stored here was produced by `readComputedStyleSnapshot`,
+  // which always returns a real `ComputedStyleSnapshot`.
+  const snapshotBox = useMutableBox<Record<string, string>>()
   if (!nodeId) return null
-  const element = resolveElement(nodeId, activeBreakpointId)
+  const element = resolveElement(cache, nodeId, activeBreakpointId)
   if (!element) return null
-  return readComputedStyleSnapshot(element)
+  const snapshot = readComputedStyleSnapshot(element)
+  if (!snapshot) return null
+  // `stabilizeRecord`'s box parameter is invariant in `T` (it both reads AND
+  // writes `box.current`), so TS can't unify a fixed-key interface with the
+  // `Record<string, string>` box declared above through generic inference
+  // alone, even though every field genuinely IS a string. Widen through
+  // `unknown` at this one boundary — safe because `readComputedStyleSnapshot`
+  // is the only producer of a value stored here, and it always returns a real
+  // `ComputedStyleSnapshot`.
+  const stabilized = stabilizeRecord(snapshotBox, snapshot as unknown as Record<string, string>)
+  return stabilized as unknown as ComputedStyleSnapshot
 }
 
 /**
@@ -145,8 +260,10 @@ export function useFrameComputedStyleValues(
   activeBreakpointId: string,
   properties: ReadonlyArray<string>,
 ): Record<string, string> | null {
+  const cache = useRenderedCanvasNodeCache()
+  const valuesBox = useMutableBox<Record<string, string>>()
   if (!nodeId) return null
-  const element = resolveElement(nodeId, activeBreakpointId)
+  const element = resolveElement(cache, nodeId, activeBreakpointId)
   if (!element) return null
   const view = element.ownerDocument.defaultView
   if (!view) return null
@@ -155,5 +272,5 @@ export function useFrameComputedStyleValues(
   for (const prop of properties) {
     values[prop] = cs[prop] ?? ''
   }
-  return values
+  return stabilizeRecord(valuesBox, values)
 }

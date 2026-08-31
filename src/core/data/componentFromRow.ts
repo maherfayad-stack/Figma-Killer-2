@@ -17,7 +17,7 @@
  * field was never read anywhere and is not stored.
  */
 
-import type { DataRow, DataRowCells } from '@core/data/schemas'
+import type { DataRow, DataRowCells } from '@core/data/dataRowSchema'
 import { parseVisualComponent, vcSlugFromName, type VisualComponent } from '@core/visualComponents'
 
 // ---------------------------------------------------------------------------

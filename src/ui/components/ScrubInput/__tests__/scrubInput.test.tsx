@@ -192,3 +192,84 @@ describe('ScrubInput — typing commits on blur', () => {
     expect(onChange).toHaveBeenCalledWith('40px')
   })
 })
+
+/**
+ * `onPreview` rAF-coalescing (see the ScrubInput file docblock for the
+ * defect: an uncoalesced `pointermove` → live-store-write path multiplied by
+ * N mounted breakpoint iframes' `ClassStyleInjector`s). `fireEvent.pointerMove`
+ * dispatches synchronously — a burst of them inside one JS task always lands
+ * inside the SAME animation frame, exactly like a fast real-hardware drag
+ * gesture whose `pointermove` events outrun the display refresh rate.
+ */
+describe('ScrubInput — onPreview rAF-coalescing', () => {
+  it('collapses a burst of pointermoves within one frame into a single onPreview call', async () => {
+    const onPreview = mock((_next: string) => {})
+    render(<ScrubInput value="100px" onChange={mock(() => {})} onPreview={onPreview} label="W" aria-label="Width" data-testid="w" />)
+    const label = screen.getByTestId('w-label')
+
+    pointerDown(label, 0)
+    // 20 pointermoves in one synchronous burst — no store write must land
+    // per move.
+    for (let dx = 1; dx <= 20; dx += 1) {
+      pointerMove(label, dx)
+    }
+    expect(onPreview).not.toHaveBeenCalled()
+
+    // Let the coalesced frame flush.
+    await new Promise((resolve) => requestAnimationFrame(resolve))
+
+    expect(onPreview).toHaveBeenCalledTimes(1)
+    // The coalesced call carries the LATEST value from the burst, not a
+    // stale intermediate one.
+    expect(onPreview).toHaveBeenLastCalledWith('120px')
+
+    pointerUp(label, 20)
+  })
+
+  it('never drops the final value on release, even mid-coalesced-frame', () => {
+    const onChange = mock((_next: string) => {})
+    const onPreview = mock((_next: string) => {})
+    render(<ScrubInput value="100px" onChange={onChange} onPreview={onPreview} label="W" aria-label="Width" data-testid="w" />)
+    const label = screen.getByTestId('w-label')
+
+    pointerDown(label, 0)
+    pointerMove(label, 5)
+    // Release happens before the coalesced preview frame has had a chance to
+    // fire — the committed value must still be exactly correct, computed
+    // fresh rather than riding the (now-cancelled) scheduled preview.
+    pointerUp(label, 5)
+
+    expect(onChange).toHaveBeenLastCalledWith('105px')
+  })
+
+  it('a completed drag eventually fires onPreview at least once during the gesture (liveness — the canvas never goes silent while scrubbing)', async () => {
+    const onPreview = mock((_next: string) => {})
+    render(<ScrubInput value="100px" onChange={mock(() => {})} onPreview={onPreview} label="W" aria-label="Width" data-testid="w" />)
+    const label = screen.getByTestId('w-label')
+
+    pointerDown(label, 0)
+    pointerMove(label, 10)
+    await new Promise((resolve) => requestAnimationFrame(resolve))
+    pointerMove(label, 25)
+    await new Promise((resolve) => requestAnimationFrame(resolve))
+
+    expect(onPreview.mock.calls.length).toBeGreaterThanOrEqual(2)
+    expect(onPreview).toHaveBeenLastCalledWith('125px')
+
+    pointerUp(label, 25)
+  })
+
+  it('cancels a pending coalesced preview on unmount (no callback into a torn-down caller)', async () => {
+    const onPreview = mock((_next: string) => {})
+    const view = render(<ScrubInput value="100px" onChange={mock(() => {})} onPreview={onPreview} label="W" aria-label="Width" data-testid="w" />)
+    const label = screen.getByTestId('w-label')
+
+    pointerDown(label, 0)
+    pointerMove(label, 10)
+    view.unmount()
+
+    await new Promise((resolve) => requestAnimationFrame(resolve))
+
+    expect(onPreview).not.toHaveBeenCalled()
+  })
+})

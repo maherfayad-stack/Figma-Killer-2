@@ -13,7 +13,7 @@
  */
 import type { CSSProperties } from 'react'
 import { useEditorStore } from '@site/store/store'
-import { selectBoardSnapGuides } from '@site/store/slices/boardSlice'
+import { selectBoardSnapGuides } from '@site/store/slices/boardSelectors'
 import styles from './BoardGuidesLayer.module.css'
 
 export function BoardGuidesLayer() {

@@ -79,7 +79,7 @@
  * collide on) ensures React cleanly (re)mounts a fresh iframe when a frame
  * re-enters the viewport, and gives each variant its own component identity.
  *
- * Self-gates on `selectActiveBoard`: renders nothing outside studio board
+ * Self-gates on `selectHasActiveBoard`: renders nothing outside studio board
  * mode, so `CanvasTransformLayer` can always mount it without an extra check.
  *
  * Frame multi-selection (WS-7.1): distinct from node selection
@@ -107,7 +107,7 @@ import {
 import { createPortal } from 'react-dom'
 import { useShallow } from 'zustand/react/shallow'
 import { useEditorStore, lookupCanvasPageById } from '@site/store/store'
-import { selectActiveBoard } from '@site/store/slices/boardSlice'
+import { selectActiveBoardFrames, selectHasActiveBoard } from '@site/store/slices/boardSelectors'
 import type { Page } from '@core/page-tree'
 import { CanvasViewportActionsContext } from '../CanvasContexts'
 import { AddFramePicker } from './AddFramePicker'
@@ -126,26 +126,27 @@ import styles from './BoardFramesLayer.module.css'
 const EMPTY_PAGES: (Page | null)[] = []
 
 export function BoardFramesLayer() {
-  const board = useEditorStore(selectActiveBoard)
+  // C3 (this change) — subscribe to `board.frames` alone, not the whole
+  // `Board`. Every board-mutating helper does copy-on-write on the whole
+  // `Board` object for Mutative/history correctness, so `selectActiveBoard`
+  // changes reference on a note/doc/guide write too — this layer only ever
+  // renders frames, so it should only ever re-render on a frames write. See
+  // `boardSlice.ts`'s doc on `selectActiveBoardFrames` for why this is safe.
+  const hasActiveBoard = useEditorStore(selectHasActiveBoard)
+  const frames = useEditorStore(selectActiveBoardFrames)
   // C2 — ONLY this board's own pages, never whole `site.pages` (a fresh
   // array on ANY page edit — Mutative copy-on-write). `useShallow` keeps
   // identity stable across an edit to a page not on this board.
   // `lookupCanvasPageById` is C1's shared sweep-scoped Map cache (store.ts).
   const relevantPages = useEditorStore(
     useShallow((s) => {
-      const activeBoard = selectActiveBoard(s)
+      const activeBoardFrames = selectActiveBoardFrames(s)
       const site = s.site
-      if (!activeBoard || !site) return EMPTY_PAGES
-      return activeBoard.frames.map((frame) => lookupCanvasPageById(site, frame.pageId))
+      if (!site) return EMPTY_PAGES
+      return activeBoardFrames.map((frame) => lookupCanvasPageById(site, frame.pageId))
     }),
   )
   const activePageId = useEditorStore((s) => s.activePageId)
-  const openPageInCanvas = useEditorStore((s) => s.openPageInCanvas)
-  const setFramePosition = useEditorStore((s) => s.setFramePosition)
-  const setFrameSize = useEditorStore((s) => s.setFrameSize)
-  const removeFrameById = useEditorStore((s) => s.removeFrameById)
-  const duplicateFrameAsVariant = useEditorStore((s) => s.duplicateFrameAsVariant)
-  const renamePage = useEditorStore((s) => s.renamePage)
   const zoom = useEditorStore((s) => s.zoom)
   const panX = useEditorStore((s) => s.panX)
   const panY = useEditorStore((s) => s.panY)
@@ -183,9 +184,9 @@ export function BoardFramesLayer() {
   const layerRef = useRef<HTMLDivElement>(null)
   const marqueeRect = useMarqueeSelection(viewportActions?.canvasRootRef, layerRef)
 
-  if (!board) return null
+  if (!hasActiveBoard) return null
 
-  const framesWithPages = resolveFramesWithPages(board.frames, relevantPages)
+  const framesWithPages = resolveFramesWithPages(frames, relevantPages)
 
   // One bounding box around the whole multi-selection (board-space, so it
   // lives inside `.layer` and pans/zooms with the frames it encloses).
@@ -250,14 +251,6 @@ export function BoardFramesLayer() {
               isActive={page.id === activePageId}
               isSelected={selectedFrameIds.includes(page.id)}
               isOnScreen={isOnScreen}
-              onActivate={() => openPageInCanvas(page.id)}
-              onMove={(nx, ny) => setFramePosition(frame.id, nx, ny)}
-              onResize={(nw, nh) => setFrameSize(frame.id, nw, nh)}
-              // `undefined` height clears the stored one — see `resizeFrame`.
-              onResetHeight={() => setFrameSize(frame.id, frame.width ?? width, undefined)}
-              onRemove={() => removeFrameById(frame.id)}
-              onRename={(title) => renamePage(page.id, title)}
-              onDuplicateAsVariant={(axes) => duplicateFrameAsVariant(frame.id, axes)}
             />
           )
         })

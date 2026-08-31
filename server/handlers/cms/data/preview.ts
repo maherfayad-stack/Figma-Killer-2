@@ -19,7 +19,8 @@
 
 import { Type } from '@sinclair/typebox'
 import type { DbClient } from '../../../db/client'
-import type { DataRow, DataRowCells, PublishedDataRow } from '@core/data/schemas'
+import type { PublishedDataRow } from '@core/data/schemas'
+import type { DataRow, DataRowCells } from '@core/data/dataRowSchema'
 import { resolveTemplateChain, composeTemplateChain } from '@core/templates'
 import { buildRouteFrame } from '@core/templates/contextFrames'
 import { publishPage } from '@core/publisher'

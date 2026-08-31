@@ -2,8 +2,6 @@ import { Type } from '@sinclair/typebox'
 import type {
   DataTable,
   DataTableListItem,
-  DataRow,
-  DataUserReference,
   CreateDataTableInput,
   UpdateDataTableInput,
   CreateDataRowInput,
@@ -11,14 +9,14 @@ import type {
   DataMeta,
 } from '@core/data/schemas'
 import type { DeletedRowSummary } from '@core/data/schemas'
+import type { DataRow, DataUserReference } from '@core/data/dataRowSchema'
 import {
   DataMetaSchema,
-  DataRowSchema,
   DataTableListItemSchema,
   DataTableSchema,
-  DataUserReferenceSchema,
   DeletedRowSummarySchema,
 } from '@core/data/schemas'
+import { DataRowSchema, DataUserReferenceSchema } from '@core/data/dataRowSchema'
 import type { LoopItem } from '@core/loops/types'
 import { LoopItemSchema } from '@core/loops/types'
 import { apiRequest, assertOk, ApiError, type FetchLike } from '@core/http'

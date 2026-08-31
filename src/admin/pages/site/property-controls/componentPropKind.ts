@@ -102,6 +102,10 @@ export function isCanvasDrivenProp(name: string): boolean {
  * what the panel offers. The source file is left untouched — this is a
  * PREVIEW decision, and the board's direction axis is what a direction
  * preview means.
+ *
+ * On its own this is only HALF the rule — see {@link withCanvasDrivenProps},
+ * which supplies the value the canvas owns. Stripping without supplying is
+ * what made an RTL board render left-to-right.
  */
 export function stripCanvasDrivenProps(props: Record<string, unknown>): Record<string, unknown> {
   let stripped: Record<string, unknown> | undefined
@@ -111,6 +115,39 @@ export function stripCanvasDrivenProps(props: Record<string, unknown>): Record<s
     delete stripped[name]
   }
   return stripped ?? props
+}
+
+/**
+ * The props a design-system component is actually rendered with: the node's
+ * own, minus what the canvas owns, plus what the canvas drives.
+ *
+ * ## Why `dir` is PASSED and not left to the provider
+ *
+ * The original rule stripped `dir` and relied on the package's
+ * `DesignSystemProvider` to answer a `useDir()` call inside each component.
+ * Measured against the installed `@alm-design/design-system@1.1.2`, that
+ * premise is false: the bundle contains **zero** `useDir(` call sites, and
+ * **20 of its 26 components declare `dir` as an ordinary prop defaulting to
+ * the literal `'ltr'`**, which each one then writes onto its own root
+ * element. A `dir="ltr"` on the component's root BEATS the inherited
+ * `html[dir="rtl"]` the frame sets, so stripping the prop did not fall
+ * through to the provider — it pinned twenty components left-to-right and
+ * defeated the frame's own direction. That is exactly the reported symptom:
+ * an RTL board where the text reflows but the components do not mirror.
+ *
+ * So the canvas supplies the value rather than hoping something else will.
+ * An explicit prop is also the highest-precedence input for any component
+ * that DOES consult a provider, so this is correct for both shapes and does
+ * not depend on which one a given package uses.
+ *
+ * The provider is still rendered — it carries whatever else it carries — but
+ * direction no longer depends on it.
+ */
+export function withCanvasDrivenProps(
+  props: Record<string, unknown>,
+  axes: { direction: 'ltr' | 'rtl' },
+): Record<string, unknown> {
+  return { ...stripCanvasDrivenProps(props), dir: axes.direction }
 }
 
 /**

@@ -9,7 +9,7 @@
  * — the one server-wide date-coercion helper.
  */
 
-import type { DataUserReference } from '@core/data/schemas'
+import type { DataUserReference } from '@core/data/dataRowSchema'
 
 export type UserJoinPrefix = 'author' | 'created_by' | 'updated_by' | 'published_by'
 

@@ -45,20 +45,21 @@
  * the raw bytes into the canvas iframe as a read-only `@layer vendor` bucket
  * (`ProjectCssInjector`) that never touches `site.styleRules`/`classIds`.
  */
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 import path from 'node:path'
 import type { Project } from 'ts-morph'
 import type { ParsedPage } from '@core/page-parser'
+import type { PageStylesheet } from './pageStylesheet'
+import {
+  entryStylesheetCacheKey,
+  getCachedEntryStylesheets,
+  setCachedEntryStylesheets,
+  statMtimeOrNull,
+  type EntryStylesheetDeps,
+} from './entryStylesheetCache'
 
 /** Stylesheet extensions worth trying to parse. `.scss`/`.less` are accepted as specifiers but will only parse usefully if they contain plain CSS — `cssToStyleRules` reports the rest as warnings rather than failing the load. */
 const STYLESHEET_EXTENSIONS: ReadonlySet<string> = new Set(['.css', '.scss', '.sass', '.less'])
-
-export interface PageStylesheet {
-  /** Workspace-relative POSIX path — the stable identity used for deterministic style-rule ids. */
-  relPath: string
-  /** Absolute path on disk, ready to read. */
-  absPath: string
-}
 
 /**
  * Conventional app entry points, tried in order when `index.html` doesn't name
@@ -71,6 +72,9 @@ const ENTRY_CANDIDATES = [
 
 /** Bounds the entry-graph walk. A real app entry reaches every screen; this only stops a pathological repo. */
 const MAX_ENTRY_GRAPH_FILES = 2000
+
+/** Extensions tried, in order, for an extensionless relative JS/TS specifier — mirrors TypeScript's plain extension + index-file lookup (not `package.json` "exports"/"main"). Used only to build `entryStylesheetCache`'s `missingCandidates`/`watchedDirMtimes` for an unresolved import; see that module's doc for why this is a best-effort mirror, not a reimplementation. */
+const MODULE_RESOLUTION_EXTENSIONS = ['.ts', '.tsx', '.d.ts', '.js', '.jsx', '.mjs', '.cjs'] as const
 
 /**
  * The GLOBAL stylesheets — the ones reached from the app's entry module rather
@@ -94,9 +98,20 @@ export function collectEntryStylesheets(project: Project, workspaceRoot: string)
   const entry = findEntryFile(root)
   if (!entry) return []
 
+  // `findEntryFile` above is cheap (~4ms) and always re-run fresh; only the
+  // walk below is expensive enough to cache. See `entryStylesheetCache`'s
+  // doc for why keying on `(root, entry)` — not `root` alone — is what makes
+  // the entry file appearing/disappearing/changing a plain cache-key miss
+  // with no separate invalidation logic needed.
+  const cacheKey = entryStylesheetCacheKey(root, entry)
+  const cached = getCachedEntryStylesheets(cacheKey)
+  if (cached) return [...cached]
+
   const collected = new Map<string, PageStylesheet>()
   const visited = new Set<string>()
   const queue: string[] = [entry]
+  const missingCandidates = new Set<string>()
+  const watchedDirs = new Set<string>()
 
   while (queue.length > 0 && visited.size < MAX_ENTRY_GRAPH_FILES) {
     const absFile = queue.shift()!
@@ -115,16 +130,101 @@ export function collectEntryStylesheets(project: Project, workspaceRoot: string)
       }
       // Follow relative module imports so `main -> App -> App.css` is reachable.
       if (!specifier.startsWith('./') && !specifier.startsWith('../')) continue
+
+      const withoutQuery = specifier.split('?')[0]!
+      if (STYLESHEET_EXTENSIONS.has(path.extname(withoutQuery).toLowerCase())) {
+        // A relative stylesheet specifier `resolveStylesheetSpecifier` just
+        // rejected — either it escapes the workspace (never our concern) or
+        // it simply doesn't exist on disk yet. Record the exact candidate so
+        // a LATER cache read notices if it gets created.
+        recordMissingStylesheetCandidate(withoutQuery, absFile, root, missingCandidates)
+        continue
+      }
+
       const target = decl.getModuleSpecifierSourceFile()
       const targetPath = target?.getFilePath()
-      if (!targetPath) continue
+      if (!targetPath) {
+        // An unresolved relative JS/TS import. The exact target file is
+        // unknown (an extensionless specifier), so record every standard
+        // resolution candidate AND watch its containing director{y,ies} —
+        // see `entryStylesheetCache`'s doc for why both.
+        for (const candidate of moduleResolutionCandidates(absFile, withoutQuery)) missingCandidates.add(candidate)
+        for (const dir of moduleResolutionWatchDirs(absFile, withoutQuery)) watchedDirs.add(dir)
+        continue
+      }
       const rel = path.relative(root, targetPath)
       if (rel.startsWith('..') || path.isAbsolute(rel)) continue
       if (!visited.has(targetPath)) queue.push(targetPath)
     }
   }
 
-  return [...collected.values()]
+  const result = [...collected.values()]
+  setCachedEntryStylesheets(cacheKey, result, buildEntryStylesheetDeps(visited, collected, missingCandidates, watchedDirs))
+  return result
+}
+
+/** Every visited/resolved file's mtime, plus the "still absent" candidates and watched directories collected during the walk — the exact dependency set `entryStylesheetCache` needs to know this result is stale. */
+function buildEntryStylesheetDeps(
+  visited: ReadonlySet<string>,
+  collected: ReadonlyMap<string, PageStylesheet>,
+  missingCandidates: ReadonlySet<string>,
+  watchedDirs: ReadonlySet<string>,
+): EntryStylesheetDeps {
+  const fileMtimes: Record<string, number> = {}
+  for (const absFile of visited) {
+    const mtime = statMtimeOrNull(absFile)
+    if (mtime !== null) fileMtimes[absFile] = mtime
+  }
+  for (const absPath of collected.keys()) {
+    const mtime = statMtimeOrNull(absPath)
+    if (mtime !== null) fileMtimes[absPath] = mtime
+  }
+  const watchedDirMtimes: Record<string, number> = {}
+  for (const dir of watchedDirs) {
+    const mtime = statMtimeOrNull(dir)
+    if (mtime !== null) watchedDirMtimes[dir] = mtime
+  }
+  return { fileMtimes, missingCandidates: [...missingCandidates], watchedDirMtimes }
+}
+
+/** Records the absolute path a relative stylesheet specifier would resolve to, unless it escapes `root` — matches `resolveStylesheetSpecifier`'s own containment check. */
+function recordMissingStylesheetCandidate(
+  specifierWithoutQuery: string,
+  importerAbsPath: string,
+  root: string,
+  out: Set<string>,
+): void {
+  const absPath = path.resolve(path.dirname(importerAbsPath), specifierWithoutQuery)
+  const relPath = path.relative(root, absPath)
+  if (relPath.startsWith('..') || path.isAbsolute(relPath)) return
+  out.add(absPath)
+}
+
+/** The literal file paths TypeScript's relative-import resolution would try for an extensionless (or already-extensioned) specifier that just failed to resolve. A best-effort mirror of the standard extension + index-file lookup order — see `entryStylesheetCache`'s doc for what this does not model. */
+function moduleResolutionCandidates(importerAbsPath: string, specifierWithoutQuery: string): string[] {
+  const base = path.resolve(path.dirname(importerAbsPath), specifierWithoutQuery)
+  const ext = path.extname(base)
+  if ((MODULE_RESOLUTION_EXTENSIONS as readonly string[]).includes(ext)) return [base]
+  return [
+    ...MODULE_RESOLUTION_EXTENSIONS.map((candidateExt) => base + candidateExt),
+    ...MODULE_RESOLUTION_EXTENSIONS.map((candidateExt) => path.join(base, `index${candidateExt}`)),
+  ]
+}
+
+/** Directories to watch by mtime as a robustness net beyond `moduleResolutionCandidates`'s literal guesses — see `entryStylesheetCache`'s doc for why. */
+function moduleResolutionWatchDirs(importerAbsPath: string, specifierWithoutQuery: string): string[] {
+  const base = path.resolve(path.dirname(importerAbsPath), specifierWithoutQuery)
+  const dirs = [path.dirname(base)]
+  if (isDirectory(base)) dirs.push(base)
+  return dirs
+}
+
+function isDirectory(absPath: string): boolean {
+  try {
+    return statSync(absPath).isDirectory()
+  } catch {
+    return false
+  }
 }
 
 /**

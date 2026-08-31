@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import { buildDuplicateRowCells } from '@core/data/duplicateRow'
-import type { DataRow, DataTable } from '@core/data/schemas'
+import type { DataTable } from '@core/data/schemas'
+import type { DataRow } from '@core/data/dataRowSchema'
 
 const now = '2026-06-01T10:00:00.000Z'
 

@@ -5,7 +5,7 @@
  *                    tables by slug, returning a lightweight summary
  */
 import type { DbClient } from '../../../db/client'
-import type { DataRowStatus } from '@core/data/schemas'
+import type { DataRowStatus } from '@core/data/dataRowSchema'
 import { isoDate } from '@core/utils/isoDate'
 
 /**

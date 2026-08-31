@@ -13,6 +13,7 @@
 
 import type { CSSPropertyBag } from '@core/page-tree'
 import { StackedPropertyGrid, type StackedGridEntry } from './StackedPropertyGrid'
+import type { PropertyProvenance } from './stylePropertyProvenance'
 
 const EFFECTS_SPEC: ReadonlyArray<StackedGridEntry> = [
   'opacity',
@@ -31,6 +32,8 @@ interface EffectsSectionProps {
   onRemove: (property: keyof CSSPropertyBag) => void
   onPreview?: (patch: Partial<CSSPropertyBag>) => void
   onClearPreview?: () => void
+  /** Track F1 — see `StackedPropertyGrid`'s doc. */
+  provenanceByProperty?: ReadonlyMap<string, PropertyProvenance>
 }
 
 export function EffectsSection(props: EffectsSectionProps) {

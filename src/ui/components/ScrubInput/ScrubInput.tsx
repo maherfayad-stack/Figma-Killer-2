@@ -14,6 +14,22 @@
  *     typing replaces the value on every selected item (the caller's
  *     `onChange` decides what "every" means).
  *
+ * `onPreview` during a drag is rAF-coalesced, not fired per `pointermove`. A
+ * drag gesture can deliver `pointermove` well over 60Hz (a high-poll-rate
+ * mouse/trackpad), and each call is wired all the way to a live editor-store
+ * write (`setPreviewClassStyles`) that every mounted breakpoint iframe's
+ * `ClassStyleInjector` re-derives style CSS from — firing it faster than the
+ * screen can paint does strictly more work for zero additional visible
+ * smoothness. `schedulePreview` (below) keeps only the latest in-flight
+ * value and flushes it on the next animation frame, so a fast drag collapses
+ * to at most one store write per frame. The field's own `draft` state (what
+ * the label/input show) still updates synchronously on every `pointermove` —
+ * only the external preview channel is throttled, so the control itself
+ * never looks laggy. The final value on release is never coalesced:
+ * `handleLabelPointerUp` cancels any pending preview and commits through
+ * `onChange` directly, so a fast release can never be dropped behind a stale
+ * scheduled frame.
+ *
  * Value contract: a CSS-length-ish string (`"120px"`, `"auto"`, `"50%"`),
  * matching what the rest of the CSS property editors already pass around
  * (`ClassPropertyRow`, `TokenAwareInput`). Only bare `<number><unit>`
@@ -24,6 +40,7 @@
  * exactly the kind of lying control this codebase's controls avoid.
  */
 import {
+  useEffect,
   useRef,
   useState,
   type FocusEvent,
@@ -114,8 +131,53 @@ export function ScrubInput({
     setDraft(display)
   }
 
+  // rAF-coalescing for the drag preview channel — see the file docblock.
+  // `onPreviewRef` is kept fresh every render (not memoized) so the
+  // scheduled frame always calls the LATEST `onPreview`, never one captured
+  // in a stale closure from whichever `pointermove` happened to start it.
+  // Refs must not be written during render (React reference semantics), so
+  // the sync runs in an effect with no dependency array — it re-runs after
+  // every commit, deliberately.
+  const onPreviewRef = useRef(onPreview)
+  useEffect(() => {
+    onPreviewRef.current = onPreview
+  })
+  const previewRafIdRef = useRef<number | null>(null)
+  const pendingPreviewValueRef = useRef<string | null>(null)
+
+  function schedulePreview(next: string) {
+    pendingPreviewValueRef.current = next
+    if (previewRafIdRef.current !== null) return
+    previewRafIdRef.current = requestAnimationFrame(() => {
+      previewRafIdRef.current = null
+      const value = pendingPreviewValueRef.current
+      pendingPreviewValueRef.current = null
+      if (value !== null) onPreviewRef.current?.(value)
+    })
+  }
+
+  function cancelScheduledPreview() {
+    if (previewRafIdRef.current !== null) {
+      cancelAnimationFrame(previewRafIdRef.current)
+      previewRafIdRef.current = null
+    }
+    pendingPreviewValueRef.current = null
+  }
+
+  // A drag abandoned by unmount (e.g. the selection changes mid-scrub, or the
+  // Properties panel closes) must not fire a scheduled preview against a
+  // caller that's already gone. Written against the refs directly (not the
+  // `cancelScheduledPreview` closure above) so this effect has no non-ref
+  // dependency and never needs to re-run.
+  useEffect(() => {
+    return () => {
+      if (previewRafIdRef.current !== null) cancelAnimationFrame(previewRafIdRef.current)
+    }
+  }, [])
+
   function commit(raw: string) {
     setIsEditing(false)
+    cancelScheduledPreview()
     onClearPreview?.()
     if (raw !== display) onChange(raw)
   }
@@ -142,7 +204,7 @@ export function ScrubInput({
     const next = applyScrubDelta(drag.baseline, totalDx, { scale, min, max, fallbackUnit: unit })
     if (next !== null) {
       setDraft(next)
-      onPreview?.(next)
+      schedulePreview(next)
     }
   }
 
@@ -154,6 +216,11 @@ export function ScrubInput({
     }
     dragRef.current = null
     setIsDragging(false)
+    // The final value on release always commits via `onChange` below, computed
+    // fresh from this exact pointerup's `clientX` — cancel rather than flush
+    // any still-pending coalesced preview so a stale mid-gesture value can
+    // never land a frame after the real final value already did.
+    cancelScheduledPreview()
     if (!drag.moved) {
       // A click with no movement — treat as "focus the field to type".
       inputRef.current?.focus()

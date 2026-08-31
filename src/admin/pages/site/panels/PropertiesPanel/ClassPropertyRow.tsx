@@ -22,11 +22,8 @@ import { FontFamilyControl } from '@site/property-controls/FontFamilyControl'
 import { useEditorStore } from '@site/store/store'
 import { ControlRow, type ControlRowLayout } from '@ui/components/ControlRow'
 import { TokenAwareInput } from '@site/property-controls/TokenAwareInput'
-import {
-  useSpacingTokens,
-  useTypographyTokens,
-  type Token,
-} from '@site/property-controls/tokenUtils'
+import { useTokenCatalog } from '@site/property-controls/TokenCatalogContext'
+import type { Token } from '@site/property-controls/tokenUtils'
 import { Button } from '@ui/components/Button'
 import { CloseIcon } from 'pixel-art-icons/icons/close'
 import { cn } from '@ui/cn'
@@ -178,11 +175,17 @@ export function ClassPropertyRow({
   const placeholderText = placeholder !== undefined ? String(placeholder) : undefined
   const fonts = useEditorStore((state) => state.site?.settings.fonts ?? null)
 
-  // Always read both token catalogs — hooks must run unconditionally on
-  // every render. The selected catalog is forwarded to TokenAwareInput
-  // when the property has a `tokenSource`, otherwise it's unused (no cost).
-  const spacingTokens = useSpacingTokens()
-  const typographyTokens = useTypographyTokens()
+  // Both token catalogs come from `TokenCatalogProvider` (mounted once in
+  // `StyleSurface`), NOT from calling `useSpacingTokens`/`useTypographyTokens`
+  // here directly. Those hooks each subscribe to the store and allocate a
+  // fresh `Token[]` — cheap for one call, but this component renders up to
+  // ~101 times (one per curated CSS property) and re-renders on every
+  // keystroke that edits the selected node's style, so calling them per-row
+  // multiplied that allocation up to 101x per character typed. A comment
+  // here used to call that "no cost" — it wasn't; see `TokenCatalogContext`'s
+  // doc for the fix. `useTokenCatalog()` is a plain `useContext` read: no
+  // subscription, no allocation, whether or not this row has a `tokenSource`.
+  const { spacingTokens, typographyTokens } = useTokenCatalog()
   const tokens: ReadonlyArray<Token> =
     tokenSource === 'typography'
       ? typographyTokens
@@ -392,8 +395,16 @@ export function ClassPropertyRow({
   // Track F1 — every declared source that ISN'T the winner (or every source
   // when nothing here won because of an honest `ambiguous` tie — see
   // `stylePropertyProvenance.ts`), struck through rather than hidden.
+  //
+  // There used to be a bare `inherited` chip here too. It was invisible in
+  // practice while provenance reached only the Effects/Layout fallback rows,
+  // because `opacity` and `transform` are not CSS-inherited properties and
+  // the flag never fired. The moment provenance reached Typography — where
+  // EVERY property is inherited — it fired on all ten rows at once and the
+  // section grew a column of identical tags saying nothing. The dimmed
+  // placeholder already says "not set here"; a shadowed source that LOST is
+  // the only part of this that carries information.
   const shadowedSources = provenance?.sources.filter((s) => !s.winner) ?? []
-  const showInheritedHint = provenance?.inherited === true && !isSet
 
   return (
     <div
@@ -424,9 +435,8 @@ export function ClassPropertyRow({
         </Button>
       )}
 
-      {(shadowedSources.length > 0 || showInheritedHint) && (
+      {shadowedSources.length > 0 && (
         <div className={styles.provenanceStrip} data-testid={`css-property-provenance-${String(property)}`}>
-          {showInheritedHint && <span className={styles.provenanceInherited}>inherited</span>}
           {shadowedSources.map((source) => (
             <span
               key={`${source.kind}-${source.classId ?? 'inline'}`}

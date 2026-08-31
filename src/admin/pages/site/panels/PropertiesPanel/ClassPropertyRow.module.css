@@ -134,11 +134,6 @@
     font-size: var(--text-3xs);
 }
 
-.provenanceInherited {
-    color: var(--text-subtle);
-    font-style: italic;
-}
-
 .provenanceLoser {
     display: inline-flex;
     align-items: baseline;

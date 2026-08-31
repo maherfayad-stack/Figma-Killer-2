@@ -1,7 +1,7 @@
 import type { RefObject } from 'react'
 import type { CanvasTransform } from '@site/hooks/useCanvas'
 import { useEditorStore } from '@site/store/store'
-import { selectActiveBoard } from '@site/store/slices/boardSlice'
+import { selectActiveBoardFrames, selectHasActiveBoard } from '@site/store/slices/boardSelectors'
 import { guideAxisForRuler, resolveRulerOriginBoard } from './rulerGeometry'
 import { RulerH } from './RulerH'
 import { RulerV } from './RulerV'
@@ -42,11 +42,18 @@ interface CanvasRulersProps {
  * perpendicular to the ruler it was dragged from.
  */
 export function CanvasRulers({ canvasRootRef, transformRef }: CanvasRulersProps) {
-  const activeBoard = useEditorStore(selectActiveBoard)
+  // `board.frames` + a cheap boolean, not the whole `Board` — this only
+  // needs the frame list (for `resolveRulerOriginBoard`'s "zero on the lone
+  // frame" rule) and whether a board is active at all (to gate guide
+  // creation), so a note/doc/guide write elsewhere on the board must not
+  // re-render the rulers. See `boardSlice.ts`'s doc on the per-collection
+  // selectors.
+  const hasActiveBoard = useEditorStore(selectHasActiveBoard)
+  const frames = useEditorStore(selectActiveBoardFrames)
   const addGuide = useEditorStore((s) => s.addGuide)
-  const origin = resolveRulerOriginBoard(activeBoard)
+  const origin = resolveRulerOriginBoard(hasActiveBoard ? { frames } : null)
 
-  const onCreate = activeBoard ? (axis: 'x' | 'y', position: number) => addGuide(axis, position) : null
+  const onCreate = hasActiveBoard ? (axis: 'x' | 'y', position: number) => addGuide(axis, position) : null
 
   // Destructured IMMEDIATELY at the call site — same pattern
   // `useCanvas()`'s own `transformRef` consumer (`CanvasRoot.tsx`) uses.

@@ -1,0 +1,202 @@
+/* ContentPanel — the bilingual dictionary table. */
+
+.panel {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+}
+
+.toolbar {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2xs);
+    padding: var(--space-xs);
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+.toolbarRow {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2xs);
+    flex-wrap: wrap;
+}
+
+/* The search box takes the slack; the translate action keeps its label. */
+.searchRow {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2xs);
+}
+
+/*
+ * `searchField`, not `search`: under `bun test` a CSS-module import resolves
+ * to the stylesheet TEXT (a String), so a class named after a
+ * `String.prototype` member — `search`, `link`, `trim`, `concat`, `bold` —
+ * reads back as that function and React renders `className={function}`.
+ * Harmless under Vite, a warning and a real footgun here.
+ */
+.searchField {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.searchRow > button {
+    flex: 0 0 auto;
+}
+
+.source {
+    margin: 0;
+    margin-inline-start: auto;
+    font-size: var(--text-2xs);
+    color: var(--text-disabled);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/*
+ * The table scrolls in BOTH axes. A dictionary is one row per key and one
+ * column per locale, and a locale column narrow enough to always fit is too
+ * narrow to read a sentence in — so the columns keep a usable minimum and the
+ * container scrolls sideways when the sidebar is dragged narrow, rather than
+ * crushing every cell to fit.
+ */
+.tableScroll {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+}
+
+.table {
+    display: grid;
+    /* Set per render from the declared locale count — see `ContentPanel.tsx`. */
+    grid-template-columns: var(--content-columns);
+    align-content: start;
+    min-width: min-content;
+    padding-bottom: var(--space-xs);
+}
+
+/*
+ * Header and body rows are `display: contents` so their cells participate in
+ * the ONE grid the table declares — that is what keeps every column aligned
+ * across rows, which a per-row nested grid cannot do.
+ */
+.headerRow,
+.row {
+    display: contents;
+}
+
+.headerCell {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    padding: var(--space-2xs) var(--space-xs);
+    background: var(--bg-surface);
+    border-bottom: 1px solid var(--border-subtle);
+    font-size: var(--text-2xs);
+    font-weight: 620;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+}
+
+.key {
+    display: flex;
+    align-items: center;
+    padding: var(--space-4xs) var(--space-xs);
+    font-size: var(--text-2xs);
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.cell {
+    width: 100%;
+    min-width: 0;
+}
+
+/* Row rhythm comes from the grid, so each cell carries its own gutter. */
+.row > .cell,
+.row > .key {
+    margin-block: var(--space-4xs);
+}
+
+.row > .cell {
+    margin-inline-end: var(--space-xs);
+}
+
+.empty {
+    margin: 0;
+    padding: var(--space-m);
+    font-size: var(--text-xs);
+    color: var(--text-disabled);
+    line-height: 1.5;
+    grid-column: 1 / -1;
+}
+
+.emptyTitle {
+    margin: 0 0 var(--space-xs);
+    color: var(--text-muted);
+    font-weight: 620;
+}
+
+.note {
+    margin: 0;
+    font-size: var(--text-2xs);
+    color: var(--text-disabled);
+    line-height: 1.5;
+}
+
+/*
+ * Strings still written into the JSX, on a project that already has a
+ * dictionary. Capped and scrollable so a project with a hundred of them
+ * cannot push the table off the screen.
+ */
+.inlineStrings {
+    flex: 0 0 auto;
+    border-bottom: 1px solid var(--border-subtle);
+    max-height: 40%;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.inlineHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2xs);
+    padding: var(--space-2xs) var(--space-xs);
+}
+
+/* The inline-copy list shown when setting a dictionary up was refused. */
+.rows {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    padding: var(--space-xs);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+}
+
+.literalRow {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4xs);
+}
+
+/*
+ * A hardcoded string is shown, not edited: without a dictionary there is
+ * nowhere to write a translation, so an input here would be a control that
+ * lies. Read-only text with its source location is the honest affordance.
+ */
+.literal {
+    font-size: var(--text-xs);
+    color: var(--text);
+    line-height: 1.4;
+    word-break: break-word;
+}

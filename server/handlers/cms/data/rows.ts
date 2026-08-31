@@ -16,7 +16,7 @@
  */
 import type { DbClient } from '../../../db/client'
 import type { AuthUser } from '../../../repositories/users'
-import type { DataRow } from '@core/data/schemas'
+import type { DataRow } from '@core/data/dataRowSchema'
 import { createAuditEvent } from '../../../repositories/audit'
 import {
   applyContentEntryCellsFilter,

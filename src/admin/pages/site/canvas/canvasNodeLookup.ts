@@ -231,3 +231,73 @@ export function findRenderedCanvasNodes(
   }
   return nodes
 }
+
+/**
+ * Per-caller cache of nodeId → every canvas frame currently rendering it
+ * (`findRenderedCanvasNodes`'s own result, cached).
+ *
+ * Written for the properties/inspect panels' computed-style readers
+ * (`useInspectComputedStyle.ts`), which re-run this lookup on every render —
+ * for the Properties panel, that means once per KEYSTROKE that edits the
+ * selected node's style, since `StyleSurface` re-renders to show what was
+ * just typed. Before this cache, that was an uncached
+ * `document.querySelectorAll('iframe')` over the whole admin document
+ * followed by a cross-document `frameDoc.querySelector('[data-node-id=…]')`
+ * INSIDE each breakpoint iframe's own (arbitrarily large, user-authored)
+ * page — on every character typed, fanned out across every open breakpoint
+ * frame (commonly 3+).
+ *
+ * `CanvasNodeElementCache` above is NOT reusable here directly: it caches
+ * exactly one element per nodeId, keyed by nodeId alone, because its caller
+ * (the selection overlay) already knows which single frame `Document` it's
+ * asking about and calls `resolve(doc, nodeId)` once per frame in its own
+ * loop. This cache's callers don't have that per-frame loop — they need
+ * "every frame that renders this node" in one shot, exactly what
+ * `findRenderedCanvasNodes` returns — so caching would need one cache slot
+ * per (frame, nodeId) pair, not one per nodeId. Same validate-on-read design
+ * as `CanvasNodeElementCache` (`isConnected`, not blind TTL), extended with a
+ * frame-count check so a frame being added or removed (a new breakpoint
+ * preview opened/closed) isn't missed the way a single element's
+ * `isConnected` flip would.
+ *
+ * Correctness: a cached entry is trusted only when EVERY element in it is
+ * still `.isConnected` (a node re-render replaces the DOM node — Studio's
+ * canvas iframes re-render the whole app on a style/prop edit, but stable
+ * elements keep the SAME node, e.g. a `style=""` attribute mutation — so
+ * this both keeps the fast path for in-place updates and self-heals on an
+ * actual remount) AND the live count of canvas iframes under `root` hasn't
+ * changed since the entry was built. Both checks failing forces a fresh
+ * `findRenderedCanvasNodes` scan, which repopulates the cache — never a
+ * stale read.
+ */
+export class RenderedCanvasNodeCache {
+  private entries = new Map<string, RenderedCanvasNode[]>()
+  private frameCountAtLastScan = -1
+
+  resolve(nodeId: string, root: Document = document): RenderedCanvasNode[] {
+    const liveFrameCount = root.querySelectorAll('iframe').length
+    const cached = this.entries.get(nodeId)
+    const cacheIsValid =
+      cached !== undefined &&
+      liveFrameCount === this.frameCountAtLastScan &&
+      cached.every((entry) => entry.element.isConnected && entry.frame.isConnected)
+    if (cacheIsValid) return cached
+
+    const fresh = findRenderedCanvasNodes(nodeId, root)
+    this.entries.set(nodeId, fresh)
+    this.frameCountAtLastScan = liveFrameCount
+    return fresh
+  }
+
+  /**
+   * Drop every cached entry except `nodeIds` — call with the single
+   * currently-selected node id (or an empty set on deselect) so switching
+   * between many nodes over a session doesn't pin detached DOM subtrees in
+   * memory forever.
+   */
+  retainOnly(nodeIds: ReadonlySet<string>): void {
+    for (const id of this.entries.keys()) {
+      if (!nodeIds.has(id)) this.entries.delete(id)
+    }
+  }
+}

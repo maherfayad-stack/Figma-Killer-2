@@ -16,7 +16,7 @@
  * these helpers directly.
  */
 import { placeholder, type DbClient } from '../../../db/client'
-import type { DataRow, DataRowCells, DataRowStatus } from '@core/data/schemas'
+import type { DataRow, DataRowCells, DataRowStatus } from '@core/data/dataRowSchema'
 import { userRefAt, userRefColumns, userRefJoin, type UserJoinColumns } from '../shared'
 import { isoDate, isoDateOrNull } from '@core/utils/isoDate'
 

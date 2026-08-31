@@ -67,7 +67,9 @@ describe('CanvasNotch insertion events', () => {
     renderInsideCanvasClickBoundary()
 
     await user.click(screen.getByTestId('canvas-notch-add-btn'))
-    const dialog = screen.getByRole('dialog', { name: 'Add to canvas' })
+    // ModuleInserterDialog is lazy-loaded (LazyModuleInserterDialog) — its
+    // chunk resolves asynchronously even in tests.
+    const dialog = await screen.findByRole('dialog', { name: 'Add to canvas' })
     await user.click(within(dialog).getByRole('button', { name: /^Text\b/ }))
 
     const state = useEditorStore.getState()

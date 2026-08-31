@@ -170,6 +170,12 @@
  *       handful of `*Icon` React exports. Read-only, no trust tier: it is
  *       `readdir` + `readFile`, nothing is imported or evaluated.
  *
+ *   GET/POST /admin/api/studio/translations    → `studio/translations.ts`
+ *       The project's OWN locale dictionary, read as a flat
+ *       `key -> { en, ar }` table and written one entry at a time
+ *       (`translationCatalog.ts` / `translationWrite.ts`). Backs the Content
+ *       panel's side-by-side editor.
+ *
  *   POST /admin/api/studio/reload-scope        → `studio/reloadScope.ts`
  *       Track C5 (`STUDIO-FIGMA-PARITY-PLAN.md` §6, reload surgery) — given
  *       the workspace-relative files a batch of edits just wrote (the `/save`
@@ -220,6 +226,8 @@ import { tryServeStudioPreviewAxes } from './studio/previewAxes'
 import { tryServeStudioLocalizedPage } from './studio/localizedPage'
 import { tryServeStudioComponents } from './studio/components'
 import { tryServeStudioIcons } from './studio/iconCatalog'
+import { tryServeStudioTranslations } from './studio/translations'
+import { tryServeStudioI18nSetup } from './studio/i18nSetup'
 import { tryServeStudioProjectRoutes } from './studio/projectRoutes'
 import { tryServeStudioReloadScope } from './studio/reloadScope'
 
@@ -248,6 +256,8 @@ const STUDIO_SUB_ROUTERS = [
   tryServeStudioLocalizedPage,
   tryServeStudioComponents,
   tryServeStudioIcons,
+  tryServeStudioTranslations,
+  tryServeStudioI18nSetup,
   tryServeStudioProjectRoutes,
   tryServeStudioReloadScope,
 ] as const

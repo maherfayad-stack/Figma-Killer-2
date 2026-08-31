@@ -25,7 +25,7 @@ import { firstImagePathFromMarkdown } from '@core/markdown/renderMarkdown'
 import { normalizeRouteBase } from '@core/templates/templateMatching'
 import { publicDataUserFromParts } from '@core/data/publicDataUser'
 import { readFeaturedMediaCell } from '@core/data/cells'
-import type { DataRowCells } from '@core/data/schemas'
+import type { DataRowCells } from '@core/data/dataRowSchema'
 
 // ---------------------------------------------------------------------------
 // Internal SQL row shape

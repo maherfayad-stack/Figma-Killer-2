@@ -83,7 +83,8 @@ import type { Project } from 'ts-morph'
 import type { ParsedPage } from '@core/page-parser'
 import type { ConditionDef, StyleRule } from '@core/page-tree'
 import { cssToStyleRules, type ImportWarning } from '@core/siteImport'
-import { collectEntryStylesheets, collectPageStylesheets, type PageStylesheet } from '@core/studio-sync/collectPageStylesheets'
+import { collectEntryStylesheets, collectPageStylesheets } from '@core/studio-sync/collectPageStylesheets'
+import type { PageStylesheet } from '@core/studio-sync/pageStylesheet'
 
 /** Guard against a pathological vendored bundle being pulled in as "the page's CSS". */
 const MAX_STYLESHEET_BYTES = 2 * 1024 * 1024

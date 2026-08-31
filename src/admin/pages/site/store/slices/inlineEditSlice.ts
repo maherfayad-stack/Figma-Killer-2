@@ -35,7 +35,7 @@ import { isPropWritableToSource } from '@core/page-tree'
 import { pushToast } from '@ui/components/Toast'
 import type { EditorStore, EditorStoreSliceCreator } from '@site/store/types'
 import { getActiveTree } from './selectionSlice'
-import { selectActiveBoard } from './boardSlice'
+import { selectActiveBoard } from './boardSelectors'
 import { localizedPageKey } from './localizedPageSlice'
 
 interface ActiveInlineEdit {

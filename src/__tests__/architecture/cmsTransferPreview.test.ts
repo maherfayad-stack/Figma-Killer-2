@@ -36,7 +36,8 @@ import { parseValue } from '@core/utils/typeboxHelpers'
 import { BundlePreviewSchema } from '@core/data/bundleSchema'
 import type { DbClient } from '../../../server/db/client'
 import type { SiteShell } from '@core/page-tree'
-import type { DataRow, DataTable } from '@core/data/schemas'
+import type { DataTable } from '@core/data/schemas'
+import type { DataRow } from '@core/data/dataRowSchema'
 
 // ---------------------------------------------------------------------------
 // Minimal valid site shell for seeding

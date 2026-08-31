@@ -20,8 +20,16 @@
  * WRITE (`updateDocHtml` in the store) and again on RENDER here — the second
  * pass is not redundant, it covers a hand-edited `.studio/boards.json` that
  * never went through the store at all.
+ *
+ * `memo()`'d (React Compiler exception #2 — a hot, list-rendered component;
+ * see `NodeRenderer.tsx`'s / `StickyNoteView.tsx`'s identical
+ * justification): `BoardDocsLayer` re-renders on every write to
+ * `board.docs`, and every OTHER doc's `doc` prop stays referentially stable
+ * across that write (`moveDoc`/`upsertDoc` in `boardsModel.ts` `.map()`-
+ * replace only the touched doc), so this bailout skips every card not
+ * involved in the write.
  */
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, memo, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react'
 import { createPortal } from 'react-dom'
 import type { DocBlock } from '@core/studio-board'
 import { sanitizeBoardDocHtml } from '@core/sanitize'
@@ -43,7 +51,7 @@ interface DocBlockViewProps {
   doc: DocBlock
 }
 
-export function DocBlockView({ doc }: DocBlockViewProps) {
+function DocBlockViewImpl({ doc }: DocBlockViewProps) {
   const moveDoc = useEditorStore((s) => s.moveDoc)
   const updateDocHtml = useEditorStore((s) => s.updateDocHtml)
   const removeDoc = useEditorStore((s) => s.removeDoc)
@@ -335,3 +343,5 @@ export function DocBlockView({ doc }: DocBlockViewProps) {
     </>
   )
 }
+
+export const DocBlockView = memo(DocBlockViewImpl)

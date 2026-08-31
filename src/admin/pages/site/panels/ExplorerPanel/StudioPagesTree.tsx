@@ -41,7 +41,7 @@
  */
 import { useState } from 'react'
 import { useEditorStore } from '@site/store/store'
-import { selectActiveBoard } from '@site/store/slices/boardSlice'
+import { selectActiveBoard } from '@site/store/slices/boardSelectors'
 import type { Page } from '@core/page-tree'
 import { DomPanel, PageLayerSubtree } from '@site/panels/DomPanel'
 import { AddFramePicker, NewPageButton } from '@site/canvas/BoardFramesLayer'

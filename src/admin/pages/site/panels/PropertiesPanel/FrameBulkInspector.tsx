@@ -23,7 +23,7 @@
  */
 import { useState } from 'react'
 import { useEditorStore } from '@site/store/store'
-import { selectActiveBoard } from '@site/store/slices/boardSlice'
+import { selectActiveBoard } from '@site/store/slices/boardSelectors'
 import { getStudioWorkspaceDir } from '@site/studio/studioWorkspaceDir'
 import { DEVICE_PRESETS, findMatchingPreset, FRAME_WIDTH, FRAME_HEIGHT, MIN_FRAME_SIZE, type DevicePreset } from '@core/studio-board'
 import { escapeCssAttributeValue } from '@site/canvas/canvasNodeLookup'

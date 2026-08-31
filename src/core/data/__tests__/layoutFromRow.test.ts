@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import type { DataRow } from '@core/data/schemas'
+import type { DataRow } from '@core/data/dataRowSchema'
 import { savedLayoutFromRow, savedLayoutToCells } from '@core/data/layoutFromRow'
 import { layoutSlugFromName, type SavedLayout } from '@core/layouts'
 

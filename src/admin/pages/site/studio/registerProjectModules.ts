@@ -94,7 +94,7 @@ import {
   PropSpecSchema,
   controlForPropKind,
   isCanvasDrivenProp,
-  stripCanvasDrivenProps,
+  withCanvasDrivenProps,
 } from '@site/property-controls/componentPropKind'
 import {
   registry,
@@ -295,11 +295,10 @@ function makePackageComponent(
     // styles, which belong on the styled component, not on the transparent
     // host where `display: contents` would make them inert.
     const { style: nodeStyle, ...editorProps } = nodeWrapperProps ?? {}
-    // `dir` is stripped so `useDir()` falls through to the provider below,
-    // which carries the FRAME's direction — a `dir` left on the node (an older
-    // build's stamped default, or a literal in the user's source) would
-    // otherwise pin this one component against the board's toggle.
-    const dsProps = reviveProps(stripCanvasDrivenProps(props as Record<string, unknown>))
+    // The node's own `dir` is replaced by the FRAME's — see
+    // `withCanvasDrivenProps` for why the value is passed explicitly rather
+    // than left to a provider to answer.
+    const dsProps = reviveProps(withCanvasDrivenProps(props as Record<string, unknown>, { direction }))
     // The node's CSS classes go on the design-system component, where the
     // source wrote them — applying them to the host too double-applies
     // every padding and margin in the rule.

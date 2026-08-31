@@ -12,7 +12,8 @@
  */
 
 import { Type, type Static } from '@core/utils/typeboxHelpers'
-import { DataRowSchema, DataTableSchema } from './schemas'
+import { DataTableSchema } from './schemas'
+import { DataRowSchema } from './dataRowSchema'
 import { SiteShellSchema } from '@core/page-tree'
 import {
   BundleMediaFolderSchema,

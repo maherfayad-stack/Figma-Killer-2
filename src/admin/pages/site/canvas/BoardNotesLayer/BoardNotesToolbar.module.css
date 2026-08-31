@@ -11,5 +11,9 @@
     z-index: 53;
     display: flex;
     gap: var(--space-xs);
-    margin-left: 20px;
+    /* Cleared the left rail. `left` already anchors this bar; the extra
+       offset was a hardcoded 20px on top of it — the one violation the
+       admin spacing gate has been reporting. `--space-5xl` is the scale's
+       20px step, so the position is unchanged. */
+    margin-left: var(--space-5xl);
 }

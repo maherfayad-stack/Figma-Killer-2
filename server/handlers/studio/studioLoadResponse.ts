@@ -34,13 +34,23 @@
  *    this and returned stale `styleRules` would render the edited page
  *    WRONG, which is worse than the full reload this feature replaces. So the
  *    meta line is ALWAYS a full, fresh recompute, filtered or not.
- * 2. **The cache already pays for it.** `pageParseCache.ts` (WS-5.5) keys on
- *    each route's own file plus its resolved local-component dependencies'
- *    mtimes — completely independent of whether THIS call filters its
- *    output. By the time a targeted reload fires, the board's own initial
- *    load already warmed the cache for every untouched page; only the file
- *    an agent tool just wrote has a stale mtime and pays a real re-parse. So
- *    running the unfiltered pipeline and filtering the OUTPUT costs the same
+ * 2. **The cache already pays for it — now genuinely, on both halves of the
+ *    pipeline.** `pageParseCache.ts` (WS-5.5) keys on each route's own file
+ *    plus its resolved local-component dependencies' mtimes — completely
+ *    independent of whether THIS call filters its output. By the time a
+ *    targeted reload fires, the board's own initial load already warmed the
+ *    cache for every untouched page; only the file an agent tool just wrote
+ *    has a stale mtime and pays a real re-parse. This claim used to be only
+ *    HALF true: `loadStudioStyles` -> `collectEntryStylesheets` (the entry
+ *    `index.html`/`main` import-graph BFS that finds the app's GLOBAL
+ *    stylesheets) had no cache of its own and ran its full ts-morph
+ *    semantic-resolution walk on every single `loadStudioPages` call
+ *    regardless of `pageParseCache` hits — 500-850ms of synchronous compute
+ *    paid again on every targeted reload no matter how narrow. Fixed by
+ *    `@core/studio-sync`'s `entryStylesheetCache` (mtime + missing-candidate
+ *    keyed, invalidated on any dependency it walked moving) — see that
+ *    module's doc for the exact contract. With both caches warm, running the
+ *    unfiltered pipeline and filtering the OUTPUT costs the same
  *    server-side compute as a genuinely page-scoped parse would, for the
  *    common case this feature exists for. What filtering actually saves is
  *    the part that scales with project size regardless of caching: the

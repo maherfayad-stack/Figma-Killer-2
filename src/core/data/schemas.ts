@@ -20,29 +20,20 @@
  * All cell values live in `cells_json` keyed by field id. `slug` and
  * `status` are denormalized columns on the row for index / route lookup.
  *
+ * `DataRowSchema` itself — plus its `DataRowStatusSchema`/`DataRowCellsSchema`/
+ * `DataUserReferenceSchema` dependencies — lives in `./dataRowSchema.ts`, not
+ * here: none of the three reference the `DataField` union or `DataTableSchema`
+ * below, and co-locating them dragged that whole union along with a
+ * `DataRowSchema`-only import (see that file's doc comment). This file
+ * imports `DataRowCellsSchema`/`DataRowStatusSchema` back for the row-shaped
+ * schemas that DO stay here (`DataRowVersionSchema`, `PublishedDataRowSchema`,
+ * `DeletedRowSummarySchema`, the create/draft input schemas).
+ *
  * Schemas are the source of truth. Types are derived via `Static<typeof T>`.
  */
 
 import { Type, type Static } from '@core/utils/typeboxHelpers'
-
-// ---------------------------------------------------------------------------
-// DataRowStatus
-// ---------------------------------------------------------------------------
-
-export const DataRowStatusSchema = Type.Union([
-  Type.Literal('draft'),
-  Type.Literal('published'),
-  Type.Literal('unpublished'),
-  // 'scheduled' rows wait for the publish scheduler tick — see
-  // `server/publish/publishScheduler.ts`. The row's
-  // `scheduledPublishAt` carries the target ISO datetime; the tick
-  // calls `publishDataRow(...)` once `now() >= scheduledPublishAt`
-  // and flips the row to 'published' (or back to 'draft' on
-  // publish failure).
-  Type.Literal('scheduled'),
-])
-
-export type DataRowStatus = Static<typeof DataRowStatusSchema>
+import { DataRowCellsSchema, DataRowStatusSchema } from './dataRowSchema'
 
 // ---------------------------------------------------------------------------
 // DataTableKind
@@ -319,68 +310,6 @@ export const DataTableListItemSchema = Type.Composite([
 ])
 
 export type DataTableListItem = Static<typeof DataTableListItemSchema>
-
-// ---------------------------------------------------------------------------
-// DataRowCells
-// ---------------------------------------------------------------------------
-
-const DataRowCellsSchema = Type.Record(Type.String(), Type.Unknown())
-
-export type DataRowCells = Static<typeof DataRowCellsSchema>
-
-// ---------------------------------------------------------------------------
-// DataUserReference (was: ContentUserReference)
-// ---------------------------------------------------------------------------
-
-export const DataUserReferenceSchema = Type.Object({
-  id: Type.String(),
-  email: Type.String(),
-  displayName: Type.String(),
-  roleSlug: Type.Union([Type.String(), Type.Null()]),
-  roleName: Type.Union([Type.String(), Type.Null()]),
-})
-
-export type DataUserReference = Static<typeof DataUserReferenceSchema>
-
-const NullableDataUserReferenceSchema = Type.Union([DataUserReferenceSchema, Type.Null()])
-const NullableUserIdSchema = Type.Union([Type.String(), Type.Null()])
-
-// ---------------------------------------------------------------------------
-// DataRow — the live, mutable row state.
-// ---------------------------------------------------------------------------
-
-export const DataRowSchema = Type.Object({
-  id: Type.String(),
-  tableId: Type.String(),
-  cells: DataRowCellsSchema,
-  /** Denormalized from `cells.slug` for fast unique / route lookup. */
-  slug: Type.String(),
-  status: DataRowStatusSchema,
-  authorUserId: NullableUserIdSchema,
-  createdByUserId: NullableUserIdSchema,
-  updatedByUserId: NullableUserIdSchema,
-  publishedByUserId: NullableUserIdSchema,
-  author: NullableDataUserReferenceSchema,
-  createdBy: NullableDataUserReferenceSchema,
-  updatedBy: NullableDataUserReferenceSchema,
-  publishedBy: NullableDataUserReferenceSchema,
-  /** ISO datetime string from DB */
-  createdAt: Type.String(),
-  /** ISO datetime string from DB */
-  updatedAt: Type.String(),
-  publishedAt: Type.Union([Type.String(), Type.Null()]),
-  /**
-   * Wall-clock ISO datetime at which the publish scheduler should fire
-   * `publishDataRow(...)` for this row. Set whenever
-   * `status === 'scheduled'`; null otherwise. Server-side tick:
-   * `server/publish/publishScheduler.ts`. UI entry point: the
-   * "Schedule publish…" action in the page/post toolbar.
-   */
-  scheduledPublishAt: Type.Union([Type.String(), Type.Null()]),
-  deletedAt: Type.Union([Type.String(), Type.Null()]),
-})
-
-export type DataRow = Static<typeof DataRowSchema>
 
 // ---------------------------------------------------------------------------
 // DeletedRowSummary — the narrow shape returned by a soft-delete.

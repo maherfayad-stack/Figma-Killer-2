@@ -11,7 +11,7 @@
  *   listDataAuthorOptions — active users for the author picker
  */
 import type { DbClient } from '../../../db/client'
-import type { DataRow } from '@core/data/schemas'
+import type { DataRow } from '@core/data/dataRowSchema'
 import { selectHydratedDataRows, isOwnedByUser, placeholder } from './mapper'
 
 interface ListDataRowsVisibility {

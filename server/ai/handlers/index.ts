@@ -11,6 +11,7 @@ import type { DbClient } from '../../db/client'
 import { jsonResponse } from '../../http'
 import { isStateChangingMethod, originAllowed } from '../../auth/security'
 import { tryHandleAiAudit } from './audit'
+import { tryHandleAiTranslateContent } from './translateContent'
 import { tryHandleAiChat } from './chat'
 import { tryHandleAiToolResult } from './toolResult'
 import { tryHandleAiCredentials } from './credentials'
@@ -47,6 +48,7 @@ export function tryHandleAi(
     tryHandleAiMcpProjectServers(req, db, url, pathname) ??
     tryHandleAiEditorBridge(req, db, pathname) ??
     tryHandleAiAudit(req, db, url, pathname) ??
+    tryHandleAiTranslateContent(req, db, url) ??
     tryHandleAiChat(req, db, pathname) ??
     tryHandleAiToolResult(req, db, pathname) ??
     tryHandleAiCredentials(req, db, pathname) ??

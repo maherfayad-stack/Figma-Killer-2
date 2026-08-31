@@ -8,7 +8,7 @@
  *   softDeleteDataRowMany — bulk-soft-delete N rows
  */
 import type { DbClient } from '../../../db/client'
-import type { DataRow } from '@core/data/schemas'
+import type { DataRow } from '@core/data/dataRowSchema'
 import type { InsertDataRowInput, UpdateDataRowDraftInput } from './mapper'
 import { createDataRow, saveDataRowDraft, softDeleteDataRow } from './mutations'
 
