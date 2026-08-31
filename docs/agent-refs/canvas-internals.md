@@ -32,8 +32,9 @@ IframeFrameSurface                       (the primitive)
   <iframe srcDoc="<!doctype html>…">
     head ← EditorChromeInjector          unlayered  — editor chrome only
     head ← ProjectCssInjector            @layer vendor — read-only package CSS (WS-2.3)
-    head ← ClassStyleInjector            @layer reset — publisher reset (LOWEST)
-                                         @layer user-authored — class registry
+    head ← AuthoredCssInjector           @layer user-authored — project's own CSS, RAW (board-27)
+    head ← ClassStyleInjector            @layer reset — publisher reset (LOWEST, CMS pages only)
+                                         @layer user-authored — class registry OVERLAY
     head ← UserStylesheetInjector        @layer user-authored — user stylesheets
     head ← CanvasAnimationInjector       !important — design frames only
     head ← CanvasScrollUnrollInjector    !important — design frames only, toggleable
@@ -67,6 +68,43 @@ the editable class registry. The animation injector needs `!important`
 because `!important` declarations always beat non-`!important` ones
 regardless of layer — it has to beat both `@layer vendor` and `@layer
 user-authored` selectors that are more specific than `*`.
+
+**A Studio project's own CSS renders from TWO sources, deliberately not one
+(`board-27`).** `server/handlers/studioCss.ts` parses every stylesheet
+through happy-dom's CSSOM to build `site.styleRules` — and happy-dom silently
+DROPS any declaration it cannot parse (`color-mix()`, `Canvas`/`CanvasText`
+system colours, slash-alpha `rgb(0 0 0 / .2)` all measured). Rendering the
+canvas exclusively from that registry meant the canvas quietly disagreed with
+a real browser. `AuthoredCssInjector` fixes this by injecting the SAME
+stylesheets' RAW text (`StudioStyles.authoredCss`) completely unparsed —
+same pattern `UserStylesheetInjector` already used for CMS stylesheets, same
+`@layer user-authored` bucket vendor CSS is exempt from entirely (it's
+already raw, `mc-vendor`, which is the proof this works). `ClassStyleInjector`
+still regenerates `mc-classes` from the registry, but only for rules that
+NEED it — `canvasClassCss.ts`'s `styleRuleNeedsCanvasOverlay` keeps an
+editor-authored rule (no `sc-` id prefix) or a session-edited imported rule
+(`updatedAt > 0`) in the overlay, and lets everything else render from the
+raw text alone. `AuthoredCssInjector` always `insertBefore(head.firstChild)`s
+itself (like `ProjectCssInjector`), so `mc-authored` precedes `mc-classes` in
+source order regardless of mount timing — inside one `@layer`, cascade
+priority is source order, so a live session edit still wins over the raw,
+on-disk snapshot for the same selector. Known gap: deleting an imported
+`ambient` rule removes it from the registry but not from the raw snapshot
+until the next reload — see `AuthoredCssInjector`'s own doc.
+
+**The reset itself is CMS-only.** It's the right baseline for a CMS-authored
+page (module engine, no stylesheet of its own) but wrong for a Studio-parsed
+page — a real project's own `.tsx`, where "the repository is the document"
+means the project's own CSS (or the genuine absence of one) is the whole
+truth. A reset there makes an unstyled `<ul>`/heading/table/link look BETTER
+than a real browser would render it, exactly in the "did I actually style
+this" case someone is most likely checking. `ClassStyleInjector` gates the
+`@layer reset { … }` block on `isStudioMode()`
+(`src/admin/pages/site/studio/studioMode.ts`) — the same read every other
+studio-vs-CMS canvas decision uses, including which canvas
+(`CanvasTransformLayer`) mounts in the first place. See
+`docs/features/canvas-iframe-per-frame.md`'s "The publisher reset is
+CMS-only".
 
 **A design frame must be a still, whole screen — two injectors, both design-
 frame-only, both `!isLive` in `IframeFrameSurface`, neither ever reaches the

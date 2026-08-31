@@ -1,31 +1,45 @@
 /**
- * NewPageButton — one click creates a brand-new page in the active project (a
- * real `pages/<Component>.tsx` file, auto-named `Page`, `Page2`, …). Studio
- * users author pages, not just curate already-made ones — no naming step
- * first.
+ * NewPageButton — creates a brand-new page in the active project (a real
+ * `pages/<Component>.tsx` file, auto-named from the kind: `Page`, `Page2`, …
+ * for a screen, `Sheet`, `Sheet2`, … for a bottom sheet). Studio users author
+ * pages, not just curate already-made ones.
  *
- * Flow: click → `createStudioPage()` writes the starter file (server picks
- * the next free `PageN` name) and auto-places it on the project's board
- * SERVER-SIDE (WS-13 step 4, D5 §11.3 — the same write path an MCP/agent
- * caller with no browser tab open goes through) → `requestCmsSiteReload()`
- * re-parses the workspace AND re-fetches `.studio/boards.json`
- * (`useStudioBoardsPersistence` in `AdminCanvasLayout.tsx` listens on the same
- * reload event), which is what actually brings the new frame onto THIS
- * board. No client-side `addFrame` call — the server's placement is the one
- * source of truth, so a page created here and one created by the agent land
- * identically instead of two independent grid-slot computations racing to be
- * the last write. Self-gates on `selectActiveBoard`, like `AddFramePicker`:
- * renders nothing outside studio board mode.
+ * The trigger opens a menu of {@link PAGE_KINDS} rather than creating a screen
+ * outright. It used to be one click, and the module doc defended that as "no
+ * naming step first" — which is still the rule, and this does not break it: a
+ * kind menu is not a name prompt, it is the choice that used to be unavailable.
+ * A journey is drawn as screens AND the things presented over them, and there
+ * was no way to ask for the second kind at all; putting `Screen` first keeps
+ * the common case one keystroke away while making the other three findable at
+ * the moment someone wants one.
+ *
+ * Flow: pick a kind → `createStudioPage(undefined, kind)` writes the starter
+ * files (server picks the next free name for that kind) and auto-places the
+ * page on the project's board SERVER-SIDE (WS-13 step 4, D5 §11.3 — the same
+ * write path an MCP/agent caller with no browser tab open goes through) →
+ * `requestCmsSiteReload()` re-parses the workspace AND re-fetches
+ * `.studio/boards.json` (`useStudioBoardsPersistence` in
+ * `AdminCanvasLayout.tsx` listens on the same reload event), which is what
+ * actually brings the new frame onto THIS board. No client-side `addFrame`
+ * call — the server's placement is the one source of truth, so a page created
+ * here and one created by the agent land identically instead of two
+ * independent grid-slot computations racing to be the last write.
+ *
+ * Self-gates on `selectActiveBoard`, like `AddFramePicker`: renders nothing
+ * outside studio board mode.
  */
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useEditorStore } from '@site/store/store'
 import { selectActiveBoard } from '@site/store/slices/boardSelectors'
+import { PAGE_KINDS, type PageKind } from '@core/studio-board'
 import { Button, type ButtonProps } from '@ui/components/Button'
+import { ContextMenu, ContextMenuItem } from '@ui/components/ContextMenu'
 import { pushToast } from '@ui/components/Toast'
 import { getErrorMessage } from '@core/utils/errorMessage'
 import { requestCmsSiteReload } from '@admin/state/adminEvents'
 import { createStudioPage } from '@site/studio/studioSaveRequests'
 import { FilePlusSolidIcon } from 'pixel-art-icons/icons/file-plus-solid'
+import styles from './NewPageButton.module.css'
 
 interface NewPageButtonProps {
   label?: string
@@ -45,14 +59,16 @@ export function NewPageButton({
 }: NewPageButtonProps = {}) {
   const board = useEditorStore(selectActiveBoard)
   const [busy, setBusy] = useState(false)
+  const [open, setOpen] = useState(false)
+  const triggerRef = useRef<HTMLButtonElement>(null)
 
   if (!board) return null
 
-  async function create() {
+  async function create(kind: PageKind) {
     if (busy) return
     setBusy(true)
     try {
-      await createStudioPage()
+      await createStudioPage(undefined, kind)
       // The server already placed the frame (see module doc) — reload picks
       // up the page in `site.pages` AND the board frame that now references it.
       requestCmsSiteReload()
@@ -69,17 +85,48 @@ export function NewPageButton({
   }
 
   return (
-    <Button
-      variant={variant}
-      size={size}
-      iconOnly={iconOnly}
-      disabled={busy}
-      aria-label={iconOnly ? (ariaLabel ?? label) : undefined}
-      tooltip={iconOnly ? (ariaLabel ?? label) : undefined}
-      onClick={() => void create()}
-    >
-      <FilePlusSolidIcon size={iconOnly ? 11 : 12} aria-hidden="true" />
-      {!iconOnly && <span>{label}</span>}
-    </Button>
+    <>
+      <Button
+        ref={triggerRef}
+        variant={variant}
+        size={size}
+        iconOnly={iconOnly}
+        disabled={busy}
+        aria-label={iconOnly ? (ariaLabel ?? label) : undefined}
+        tooltip={iconOnly ? (ariaLabel ?? label) : undefined}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        active={open}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <FilePlusSolidIcon size={iconOnly ? 11 : 12} aria-hidden="true" />
+        {!iconOnly && <span>{label}</span>}
+      </Button>
+      {open && (
+        <ContextMenu
+          ariaLabel="New page"
+          onClose={() => setOpen(false)}
+          anchorRef={triggerRef}
+          side="bottom"
+          align="start"
+          width={260}
+        >
+          {PAGE_KINDS.map((preset) => (
+            <ContextMenuItem
+              key={preset.kind}
+              onClick={() => {
+                setOpen(false)
+                void create(preset.kind)
+              }}
+            >
+              <span className={styles.kind}>
+                <span className={styles.kindLabel}>{preset.label}</span>
+                <span className={styles.kindDescription}>{preset.description}</span>
+              </span>
+            </ContextMenuItem>
+          ))}
+        </ContextMenu>
+      )}
+    </>
   )
 }

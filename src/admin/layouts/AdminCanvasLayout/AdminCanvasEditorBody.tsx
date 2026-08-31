@@ -11,7 +11,9 @@ import { CodeEditorPanel, CodeEditorSkeleton } from '@admin/pages/site/code-edit
 import { useActiveLivePath } from '@admin/pages/site/hooks/useActiveLivePath'
 import { useAutoResolveDependencies } from '@admin/pages/site/hooks/useAutoResolveDependencies'
 import { useRegisterProjectModules } from '@admin/pages/site/studio/registerProjectModules'
+import { isStudioMode } from '@admin/pages/site/studio/studioMode'
 import { usePreviewAxesHydration } from '@admin/pages/site/studio/usePreviewAxesHydration'
+import { useStudioCommentsLoad } from '@admin/pages/site/studio/useStudioCommentsLoad'
 import { LayoutNameDialog } from '@admin/pages/site/dialogs/LayoutNameDialog'
 import { PropertiesPanel } from '@admin/pages/site/panels/PropertiesPanel'
 import { LeftSidebar } from '@admin/pages/site/sidebars/LeftSidebar'
@@ -59,6 +61,9 @@ export function AdminCanvasEditorBody({
   // WS-10 Phase 1 — loads the project's persisted preview axes + dark-mode
   // capability probe on open. See its own doc.
   usePreviewAxesHydration()
+  // Review comments — editor-only, and only meaningful once there is a board
+  // to pin them on. See the hook's own doc for why it is not in the shell.
+  useStudioCommentsLoad(isStudioMode())
   // Own the toolbar's "Open live page" target. Resolves templates to the
   // page / post they're previewed against (templates have no routable slug of
   // their own); lives here, in the lazy body, so the CMS fetch it needs for

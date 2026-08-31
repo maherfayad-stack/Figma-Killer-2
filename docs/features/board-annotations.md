@@ -6,6 +6,14 @@ text-only) and **doc cards** (larger, rich-text). They live in
 autosave, and never touch the user's React source — they annotate the board,
 they are not part of the document.
 
+> **Not the same thing as review comments**
+> ([`studio-comments.md`](studio-comments.md)). Notes and doc cards are the
+> designer's own scratch space — owned by a board, deleted when they stop being
+> useful, and living in `boards.json` on the shared autosave. A comment is
+> review: it is *about* a specific element, has an author who is not
+> necessarily the reader, ends in `resolved` rather than deletion, lives in its
+> own `.studio/comments.json`, and is readable by the agent.
+
 Frames are the document; annotations are commentary on it. That distinction is
 why they are separate layers, a separate selection list, and separate keyboard
 handling, and why `bring to front` orders annotations against each other but

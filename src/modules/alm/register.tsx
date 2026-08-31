@@ -68,6 +68,31 @@ export const PALETTE_HIDDEN_ALM_MODULE_IDS: ReadonlySet<string> = new Set(
   PALETTE_HIDDEN_COMPONENTS.map((name) => `alm.${name}`),
 )
 
+/**
+ * Components that render their own `children` — the ones a user can compose
+ * INTO on the canvas.
+ *
+ * Every module here used to declare `canHaveChildren: false`, which was wrong
+ * for the container-shaped ones and wrong in the expensive direction: a
+ * scaffolded (or imported) `<BottomSheet><p>…</p></BottomSheet>` parsed into a
+ * real child node, listed it in the layer tree, and then drew an EMPTY sheet —
+ * the package's `.bottom-sheet__content` div rendered with nothing in it. The
+ * content was not lost, it was invisible, which is the worst of both.
+ *
+ * A curated list rather than a manifest field because the manifest is built
+ * from the package's `mcp/catalog.js`, which documents props and says nothing
+ * about children — same reason `PALETTE_HIDDEN_COMPONENTS` above is a list.
+ * These three are the package's own overlay shells, each documented as taking
+ * its panel content as `children` (`CLAUDE.md`, per-component sections).
+ * Extend it when another component's own docs say the same; do NOT flip it on
+ * wholesale — `Button`/`Tag`/`Chip` take their text through a `label` prop and
+ * explicitly do **not** render children, so allowing a drop into one would
+ * silently swallow the dropped node.
+ */
+const CHILD_ACCEPTING_COMPONENTS = ['BottomSheet', 'Dialog', 'ActionSheet'] as const
+
+const CHILD_ACCEPTING_COMPONENT_NAMES: ReadonlySet<string> = new Set(CHILD_ACCEPTING_COMPONENTS)
+
 // ---------------------------------------------------------------------------
 // Error boundary so a throwing design-system component degrades to a label
 // instead of taking down the canvas iframe.
@@ -135,6 +160,9 @@ function propKindFor(p: PropSpec): PropKind {
     case 'icon':
     case 'node':
       return { kind: 'node' }
+    // A URL the user should be able to upload or pick, not type by hand.
+    case 'image':
+      return { kind: 'image' }
     case 'string':
       return { kind: 'string' }
     default:
@@ -262,9 +290,27 @@ function mergeClassNames(a: unknown, b: string | undefined): string | undefined 
   return names.size > 0 ? [...names].join(' ') : undefined
 }
 
-function makeComponent(name: string): React.FC<ModuleComponentProps> {
+/**
+ * `handlerProps` are the prop names this component's manifest marks
+ * `kind: 'handler'`. Several design-system components gate a visible
+ * affordance on being given one — a `BottomSheet` draws its leading close
+ * button only when `onClose` is provided, and its trailing action button only
+ * for `onAction` — and a function is exactly what the parser cannot hand over
+ * (the prop is code-valued, so it never reaches `props`). The result was a
+ * sheet whose close button was missing from a design that plainly has one.
+ *
+ * `codeProps` says which handlers the SOURCE actually wrote, so each one can
+ * be stood up with a no-op. Conditional on that, never blanket: defaulting
+ * every handler on would draw a trailing action button on every sheet ever
+ * scaffolded, inventing an affordance the design does not have.
+ */
+function makeComponent(name: string, handlerProps: readonly string[]): React.FC<ModuleComponentProps> {
   const Comp = (DS as Record<string, unknown>)[name] as React.ComponentType<Record<string, unknown>> | undefined
-  const AlmEditor: React.FC<ModuleComponentProps> = ({ props, nodeWrapperProps, mcClassName }) => {
+  // Stands in for a handler the source supplied but the canvas can never
+  // receive. One identity per component definition, not per render — a fresh
+  // arrow each pass would change the design-system component's props every time.
+  const noopHandler = (): void => {}
+  const AlmEditor: React.FC<ModuleComponentProps> = ({ props, nodeWrapperProps, mcClassName, children, codeProps }) => {
     // The direction of the FRAME this component is rendered into (a "duplicate
     // as variant" frame can preview RTL beside an LTR board), fed to the
     // design system's own provider — see `DesignSystemProviderProps`.
@@ -279,16 +325,29 @@ function makeComponent(name: string): React.FC<ModuleComponentProps> {
     // `dir` to `'ltr'` and write it on their own root, which beats the
     // frame's `html[dir]`). The board axis is what a direction PREVIEW means.
     const dsProps = reviveIconProps(withCanvasDrivenProps(props as Record<string, unknown>, { direction }))
+    for (const prop of handlerProps) {
+      if (codeProps?.includes(prop)) dsProps[prop] = noopHandler
+    }
     // The node's CSS classes go on the design-system component, where the source
     // wrote them — applying them to the host as well double-applied every
     // padding and margin in the rule.
     const className = mergeClassNames(dsProps.className, mcClassName)
+    // The canvas has always rendered this node's child modules and handed
+    // them in; nothing here ever passed them on, so a container component's
+    // slot rendered empty. Forwarded unconditionally — a component that takes
+    // its text through a `label` prop simply ignores them, exactly as it does
+    // in the user's own source. `canHaveChildren` (below) is the separate
+    // question of whether the EDITOR offers it as a drop target.
     const inner = Comp
-      ? React.createElement(Comp, {
-          ...dsProps,
-          ...(className !== undefined ? { className } : {}),
-          ...(nodeStyle ? { style: nodeStyle } : {}),
-        })
+      ? React.createElement(
+          Comp,
+          {
+            ...dsProps,
+            ...(className !== undefined ? { className } : {}),
+            ...(nodeStyle ? { style: nodeStyle } : {}),
+          },
+          children,
+        )
       : React.createElement('span', null, name)
     const provided = Provider ? React.createElement(Provider, { dir: direction }, inner) : inner
     return React.createElement(
@@ -304,6 +363,7 @@ function makeComponent(name: string): React.FC<ModuleComponentProps> {
 let registered = 0
 for (const spec of manifest.components) {
   const propsSchema = buildPropsSchema(spec.props)
+  const handlerProps = spec.props.filter((prop) => prop.kind === 'handler').map((prop) => prop.name)
   const mod = {
     id: `alm.${spec.name}`,
     name: spec.name,
@@ -312,12 +372,12 @@ for (const spec of manifest.components) {
     version: '1.0.0',
     icon: CursorClickSolidIcon,
     trusted: true,
-    canHaveChildren: false,
+    canHaveChildren: CHILD_ACCEPTING_COMPONENT_NAMES.has(spec.name),
     schema: buildSchema(spec.props),
     propsSchema,
     defaults: buildDefaults(spec),
     sourceImport: { specifier: ALM_PACKAGE_SPECIFIER, name: spec.name },
-    component: makeComponent(spec.name),
+    component: makeComponent(spec.name, handlerProps),
     // Publish (HTML) path is a later step — the canvas uses `component` above.
     render: () => ({ html: '' }),
   } as unknown as ModuleDefinition<Record<string, unknown>>
@@ -365,12 +425,15 @@ for (const name of iconExportNames) {
     version: '1.0.0',
     icon: CursorClickSolidIcon,
     trusted: true,
+    // An icon is a leaf, always — it is not in CHILD_ACCEPTING_COMPONENTS and
+    // `spec` isn't even in scope here (these come from the package's runtime
+    // exports, not the manifest).
     canHaveChildren: false,
     schema: buildSchema([]),
     propsSchema: buildPropsSchema([]),
     defaults: {},
     sourceImport: { specifier: ALM_PACKAGE_SPECIFIER, name },
-    component: makeComponent(name),
+    component: makeComponent(name, []),
     render: () => ({ html: '' }),
   } as unknown as ModuleDefinition<Record<string, unknown>>
 

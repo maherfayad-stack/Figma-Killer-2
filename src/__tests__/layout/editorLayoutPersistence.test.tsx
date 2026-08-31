@@ -468,9 +468,19 @@ describe('AdminCanvasLayout — permanent panel rail', () => {
     // used to resolve to — consolidating into one rail button shouldn't
     // change its established color.
     expect(primaryAccents[0]).toBe('gold')
-    expect(globalButtons.map((button) => button.getAttribute('data-testid'))).toEqual(['panel-rail-agent'])
-    expect(globalButtons[0]?.getAttribute('data-icon')).toBe('ai-settings-solid')
-    expect(globalButtons[0]?.getAttribute('data-accent')).toBeTruthy()
+    // Comments joins the AI assistant in the global group rather than the
+    // primary one: both open a surface that is NOT the left sidebar (comments
+    // opens the right sidebar's pane), so neither can ride
+    // `toggleLeftSidebarPanel` and neither belongs beside the panels that do.
+    expect(globalButtons.map((button) => button.getAttribute('data-testid'))).toEqual([
+      'panel-rail-comments',
+      'panel-rail-agent',
+    ])
+    expect(globalButtons.map((button) => button.getAttribute('data-icon'))).toEqual([
+      'comment-bubble',
+      'ai-settings-solid',
+    ])
+    expect(globalButtons.every((button) => button.getAttribute('data-accent'))).toBe(true)
     expect(rail.lastElementChild).toBe(screen.getByTestId('panel-rail-global'))
 
     const railCss = readFileSync(

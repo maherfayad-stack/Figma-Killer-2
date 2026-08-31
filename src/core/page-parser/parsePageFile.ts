@@ -494,7 +494,14 @@ function processElement(
     locked: lock.locked,
     ...(lock.lockReason ? { lockReason: lock.lockReason } : {}),
     ...(codeProps.length > 0 ? { codeProps } : {}),
-    ...(textResult?.resolution ? { codeText: true } : {}),
+    // `codeText` covers two different reasons the text isn't a literal: it
+    // resolved (via code, hence `resolution`) OR it definitely could NOT
+    // resolve (`hasCodeText`) — both mean "this node's text came from an
+    // expression", which is the field's whole contract; only the RESOLVED
+    // case additionally carries a `text` value. See `extractSingleText`'s
+    // `hasCodeText` doc comment for why the unresolved case must not be
+    // conflated with "this node genuinely has no text at all".
+    ...(textResult?.resolution || textResult?.hasCodeText ? { codeText: true } : {}),
     ...(text !== undefined ? { text } : {}),
     // Only when the text came from a `.map` iteration's own scope would this be
     // ambiguous, and `idSuffix` marks those ids as unwritable anyway.

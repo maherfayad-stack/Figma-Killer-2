@@ -81,20 +81,13 @@ import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import type { Project } from 'ts-morph'
 import type { ParsedPage } from '@core/page-parser'
-import type { ConditionDef, StyleRule } from '@core/page-tree'
+import { IMPORTED_RULE_ID_PREFIX, IMPORTED_RULE_TIMESTAMP, type ConditionDef, type StyleRule } from '@core/page-tree'
 import { cssToStyleRules, type ImportWarning } from '@core/siteImport'
 import { collectEntryStylesheets, collectPageStylesheets } from '@core/studio-sync/collectPageStylesheets'
 import type { PageStylesheet } from '@core/studio-sync/pageStylesheet'
 
 /** Guard against a pathological vendored bundle being pulled in as "the page's CSS". */
 const MAX_STYLESHEET_BYTES = 2 * 1024 * 1024
-
-/**
- * Rules are not user-authored here — the `.css` file is the record of change —
- * so a real timestamp would differ on every reload and churn the document for
- * no reason. Fixed at 0, the same value `parseTimestamp` falls back to.
- */
-const IMPORTED_RULE_TIMESTAMP = 0
 
 /** Where a `StyleRule` was parsed from, when it has a single hand-authored `.css` file to point at — see this module's "Write-back mapping" doc. */
 export interface StyleRuleSource {
@@ -124,9 +117,24 @@ export interface StudioStyles {
    * but no longer silently thrown away at the source.
    */
   warnings: ImportWarning[]
+  /**
+   * `board-27` — every stylesheet's RAW text this load read, concatenated in
+   * the same order `mergeParsedCss` parsed them (`extraCss` first, then each
+   * `.css` file in cascade order). This is the byte-faithful counterpart to
+   * `styleRules`: happy-dom's CSSOM (`cssToStyleRules`, above) silently drops
+   * any declaration it cannot parse — `color-mix()`, `Canvas`/`CanvasText`
+   * system colours, slash-alpha `rgb(0 0 0 / .2)` all measured — so the
+   * REGISTRY can no longer be trusted to render what the project's own CSS
+   * actually says. The client renders THIS text verbatim
+   * (`AuthoredCssInjector`) and uses `styleRules` only for the parts that
+   * genuinely need structured access: the CSS Classes panel and the write-
+   * back diff. See `canvasClassCss.ts`'s `styleRuleNeedsCanvasOverlay` for how
+   * the two stay reconciled once a user edits an imported rule mid-session.
+   */
+  authoredCss: string
 }
 
-const EMPTY_STYLES: StudioStyles = { styleRules: {}, conditions: [], classIdsByName: {}, sources: {}, warnings: [] }
+const EMPTY_STYLES: StudioStyles = { styleRules: {}, conditions: [], classIdsByName: {}, sources: {}, warnings: [], authoredCss: '' }
 
 /**
  * Deterministic rule id. Derived from the rule's identity so the same CSS
@@ -154,7 +162,7 @@ const EMPTY_STYLES: StudioStyles = { styleRules: {}, conditions: [], classIdsByN
  * stops the earlier rule from being silently destroyed in the registry.
  */
 export function styleRuleId(kind: StyleRule['kind'], name: string, file: string): string {
-  return `sc-${createHash('sha1').update(`${kind}|${name}|${file}`).digest('hex').slice(0, 10)}`
+  return `${IMPORTED_RULE_ID_PREFIX}${createHash('sha1').update(`${kind}|${name}|${file}`).digest('hex').slice(0, 10)}`
 }
 
 /**
@@ -303,6 +311,11 @@ export async function loadStudioStyles(
   const classIdsByName: Record<string, string> = {}
   const sources: Record<string, StyleRuleSource> = {}
   const warnings: ImportWarning[] = []
+  // `board-27` — the raw text of every stylesheet, in the same order it's
+  // parsed below (`extraCss` first, then each sheet in cascade order). See
+  // `StudioStyles.authoredCss`'s doc for why this exists alongside the
+  // (lossy) `styleRules` registry.
+  const authoredCssParts: string[] = []
   const moduleSourceByGeneratedClass = invertModuleClassMaps(moduleClassMaps)
   let order = 0
 
@@ -315,6 +328,7 @@ export async function loadStudioStyles(
    * understands, so mapping one would let a save silently corrupt it.
    */
   const mergeParsedCss = (cssText: string, sourceFile?: string): void => {
+    authoredCssParts.push(cssText)
     const parsed = cssToStyleRules(cssText, { sheetConstructor: SheetCtor })
     for (const condition of parsed.conditions) conditionsById.set(condition.id, condition)
     warnings.push(...parsed.warnings)
@@ -365,7 +379,14 @@ export async function loadStudioStyles(
     console.warn(`[studioCss] ${warnings.length} CSS parse warning(s) across this project's stylesheets`)
   }
 
-  return { styleRules, conditions: [...conditionsById.values()], classIdsByName, sources, warnings }
+  return {
+    styleRules,
+    conditions: [...conditionsById.values()],
+    classIdsByName,
+    sources,
+    warnings,
+    authoredCss: authoredCssParts.join('\n\n'),
+  }
 }
 
 function readStylesheet(sheet: PageStylesheet): string | undefined {

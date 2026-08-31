@@ -19,7 +19,7 @@ export const translations = {
       travellersClass: 'Travellers & class',
       searchFlights: 'Search flights',
       skipTheTaxiQueue: 'Skip the taxi queue',
-      bookAnAirportTransferAnd: 'Book an airport transfer and arrive stress-free',
+      bookAnAirportTransferAnd: 'asdasdasda',
       bookATransfer: 'Book a transfer',
       dubaiDxb: 'Dubai (DXB)',
       jeddahJed: 'Jeddah (JED)',

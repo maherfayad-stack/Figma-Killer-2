@@ -1,11 +1,16 @@
 /**
  * CommentComposer — the write field shared by "start a thread" and "reply".
  *
- * Submit is ⌘/Ctrl+Enter, not bare Enter. A review comment routinely runs to
- * several sentences and people press Enter for a paragraph break; making that
- * post the comment mid-thought is the single most annoying thing a comment box
- * can do. Escape cancels, which is what makes an abandoned draft pin discard
- * itself rather than becoming a permanent empty marker.
+ * Enter submits; Shift+Enter makes a newline. This started the other way round
+ * — bare Enter inserted a paragraph break, on the theory that a review comment
+ * runs long and posting mid-thought is the worst thing a comment box can do.
+ * That theory lost to what people actually do: every tool this box competes
+ * with in muscle memory (Figma, Slack, Linear) posts on Enter, so holding the
+ * line just made the box feel broken. Shift+Enter keeps the multi-paragraph
+ * case one keystroke away, and ⌘/Ctrl+Enter still submits too.
+ *
+ * Escape cancels, which is what makes an abandoned draft pin discard itself
+ * rather than becoming a permanent empty marker.
  *
  * TWO LAYOUTS, ONE COMPONENT
  * ──────────────────────────
@@ -69,7 +74,10 @@ export function CommentComposer({
   }
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+    if (event.key === 'Enter') {
+      // Shift+Enter is the newline. ⌘/Ctrl+Enter also submits — it is what the
+      // box used to require, and it costs nothing to keep honouring it.
+      if (event.shiftKey) return
       event.preventDefault()
       void submit()
       return
@@ -103,11 +111,23 @@ export function CommentComposer({
       />
       <div className={cn(styles.actions, inline && styles.inlineActions)}>
         {onCancel ? (
-          <Button variant="ghost" size="sm" onClick={onCancel} disabled={busy}>
+          <Button
+            variant="ghost"
+            size="sm"
+            data-testid="comment-composer-cancel"
+            onClick={onCancel}
+            disabled={busy}
+          >
             Cancel
           </Button>
         ) : null}
-        <Button variant="primary" size="sm" onClick={() => void submit()} disabled={!canSubmit}>
+        <Button
+          variant="primary"
+          size="sm"
+          data-testid="comment-composer-submit"
+          onClick={() => void submit()}
+          disabled={!canSubmit}
+        >
           {submitLabel}
         </Button>
       </div>

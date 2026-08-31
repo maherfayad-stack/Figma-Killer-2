@@ -1,5 +1,4 @@
 import {
-  useEffect,
   useRef,
   type CSSProperties,
   type HTMLAttributes,
@@ -15,7 +14,7 @@ import {
   type FloatingSide,
   type ResolvedFloatingSide,
 } from '@ui/lib/floatingPosition'
-import { collectSameOriginDocuments, isNode } from '@ui/lib/sameOriginDocuments'
+import { useOutsidePointerDismiss } from '@ui/lib/useOutsidePointerDismiss'
 import { useDeferredClose } from './useDeferredClose'
 import { useAnchorPosition } from './useAnchorPosition'
 import { usePointPosition } from './usePointPosition'
@@ -233,41 +232,15 @@ export function ContextMenu({
     ...(measuring ? { visibility: 'hidden' as const } : null),
   } as CSSProperties
 
-  // Non-modal dismiss: any mouse down / contextmenu outside the menu,
-  // explicit triggerRef (if set), and anchor element (if set) closes the
-  // menu. The event is not cancelled, so the same click still reaches the
-  // element underneath. The anchor is included so anchored dropdowns don't
-  // re-close themselves when the user clicks the trigger that just opened
-  // them.
-  useEffect(() => {
-    function handlePointerDown(event: MouseEvent) {
-      const target = event.target
-      // Use a cross-realm-safe Node check: events forwarded from an iframe
-      // document carry targets from the iframe realm, for which the parent
-      // realm's `instanceof Node` is false. `isNode` checks structurally.
-      if (!isNode(target)) return
-      if (menuRef.current?.contains(target)) return
-      if (triggerRef?.current?.contains(target)) return
-      if (anchorRef?.current?.contains(target)) return
-      beginClose()
-    }
-    // Attach to the editor document AND every same-origin iframe document
-    // (the canvas renders its preview inside per-breakpoint iframes). Without
-    // the iframe documents, a click inside the canvas fires on the iframe's
-    // own document and never reaches this listener, leaving the menu stuck
-    // open until the user clicks the surrounding editor chrome.
-    const docs = collectSameOriginDocuments()
-    for (const doc of docs) {
-      doc.addEventListener('mousedown', handlePointerDown, true)
-      doc.addEventListener('contextmenu', handlePointerDown, true)
-    }
-    return () => {
-      for (const doc of docs) {
-        doc.removeEventListener('mousedown', handlePointerDown, true)
-        doc.removeEventListener('contextmenu', handlePointerDown, true)
-      }
-    }
-  }, [beginClose, triggerRef, anchorRef])
+  // Non-modal dismiss: any mouse down / contextmenu outside the menu, its
+  // explicit trigger, and its anchor closes the menu. The anchor and trigger
+  // count as "inside" so an anchored dropdown doesn't re-close itself when the
+  // user clicks the very control that opened it. The shared hook owns the
+  // same-origin-iframe and cross-realm details — see its module doc.
+  useOutsidePointerDismiss({
+    onDismiss: beginClose,
+    ignore: [menuRef, triggerRef, anchorRef],
+  })
 
   function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     if (event.key === 'Escape') {

@@ -124,6 +124,19 @@ export interface ModuleComponentProps<
   /** Already-rendered child module React nodes */
   children?: ReactNode
   /**
+   * Names of props whose value in the user's source is CODE, not a literal —
+   * `PageNode.codeProps`, passed straight through.
+   *
+   * A module needs this when an affordance is gated on a prop it can never
+   * receive. A design-system sheet renders its close button only when given an
+   * `onClose` handler; the parser cannot hand a function to the canvas, so the
+   * prop is absent and the button silently disappears from a design that
+   * plainly has one. Knowing the source DID supply it lets the module stand in
+   * a no-op and draw the affordance. Absent for a node with no code-valued
+   * props, which is most of them.
+   */
+  codeProps?: readonly string[]
+  /**
    * Space-separated CSS class string derived from node.classIds
    * (e.g. "hero_title cta_button"). Module editor components must apply this
    * directly to their root JSX element so CSS class rules target the

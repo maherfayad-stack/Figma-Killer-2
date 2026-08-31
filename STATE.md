@@ -8,6 +8,169 @@ Entry ids are `<area>-<nn>`. Areas in use: `parser`, `canvas`, `store`, `panel`,
 
 ---
 
+### comment-01 — Review comments, end to end, including the agent loop
+
+Shipped `.studio/comments.json`: pinned review threads on the board, a Comments
+panel, and three MCP tools that let the agent read a thread, act, reply and
+resolve. Full design in [`docs/features/studio-comments.md`](docs/features/studio-comments.md).
+
+**The one thing to read before touching this: `src/core/studio-comments/anchorResolve.ts`.**
+Studio node ids are `relFile:line:col`, so the element a comment names stops
+resolving as soon as anything above it in the file changes. Selection can be
+dropped on a re-parse (`lifecycleActions.ts` already does). A comment cannot. So
+an anchor is layered — frame-local `(dx, dy)` is where the comment IS,
+`anchor.node` is what it is ABOUT — and the hint is re-resolved on every load
+into one of five confidences. `isAgentActionable` is the single predicate; do
+not inline a looser copy.
+
+**Landmine, caught by a test rather than by reasoning.** `detached` was first
+made to cover both "lost its target" and "never had one". That silently made
+every free-floating pin un-resolvable by the agent (the gate refuses `detached`)
+and gave each one a stale badge it had not earned. Fixed by adding a fifth
+state, `unanchored`, which `isAgentActionable` passes. If you ever collapse
+those two again, `commentTools.test.ts` will catch it.
+
+**Second landmine, and this one shipped — caught only by dogfooding.**
+`selectVisibleThreads` filtered inside the selector, so
+`useEditorStore(selectVisibleThreads)` handed React a new array on every
+`useSyncExternalStore` snapshot read: re-render, read again, new array, loop,
+until React bailed with "Maximum update depth exceeded" and took down the whole
+`site-editor-body` boundary (surfaced to the user as "Editor chunk failed to
+load"). It needed one comment to exist in the project to fire, so `bun test`,
+`bun run build` and `bun run lint` were all green while the editor was
+unusable. The filtered list is now `visibleThreads(threads, filter, search)`,
+a plain function called in the panel's body; every `select*` in
+`commentSelectors.ts` returns a stored reference or a primitive, and
+`comment-selector-stability.test.ts` gates both the source rule and the
+behaviour. **This is the general rule for the whole editor store, not a
+comments quirk** — `boardSelectors.ts` follows it, with the same stable-EMPTY
+discipline.
+
+**Third landmine, and the nastiest: a zero-sized element made a `> 0` guard
+lie.** Comment placement recovered the canvas zoom as
+`rect.width / layer.offsetWidth`. The canvas transform layer's `offsetWidth` is
+**0** — every board frame is `position: absolute`, so it has no in-flow content
+— so the guard fell through to `zoom = 1` while the real zoom was `0.5`, and
+every pin was stored twice as far from its frame's corner as the user clicked.
+Now `canvasZoom.ts`, which reads the computed transform matrix: the thing
+actually on screen cannot disagree with what was clicked. **The general lesson
+is the guard, not the ratio** — a fallback that returns a plausible number
+instead of failing turns a measurable bug into a mysterious one. The same ratio
+IS correct for a frame's iframe (a replaced element with real intrinsic size),
+which is why it looked safe.
+
+**UI shape, after dogfooding:** the popovers flip sides near the canvas edge
+(`usePopoverFlip`, shared by draft and committed so submitting never moves the
+box), per-comment and per-thread actions are behind one ⋯ `CommentKebab` rather
+than inline buttons, the reply box and its button share a line, and clicking
+outside closes the thread (`@ui/lib/useOutsidePointerDismiss`, extracted from
+`ContextMenu` rather than copied — it carries both iframe subtleties). The panel
+row needs `.rowShell .row` to out-specify `Button`'s `size="sm"` fixed
+`height: 26px` + `white-space: nowrap`, which clip a two-line row.
+
+**The worst bug of the lot, and the one tests could never have found:
+`@use-gesture` was eating every click in the canvas.** `CanvasRoot` binds its
+drag with `filterTaps: true`, which suppresses the click following anything
+use-gesture classified as a drag — it calls `stopPropagation()` during React's
+dispatch at the ROOT container, so nothing below ever sees the click. The
+comment popover swallowed `pointerdown` with `stopPropagation` (to "protect the
+canvas"), so use-gesture never saw the press, its tap state stayed stale from
+the last real pan, and it then suppressed EVERY later click inside the canvas.
+Reply, Resolve, Cancel, Delete and the kebab were all dead to a real mouse
+**while still working for a synthetic `element.click()`** — which is exactly why
+unit tests, and a browser check that drives the UI with `el.click()`, both
+passed. Only a genuine pointer sequence reproduces it.
+
+The swallow was never needed: `handleCanvasClick` already ignores any target
+that is not the canvas root or transform layer, and `useMarqueeSelection`
+already ignores any target but the canvas root. **Guard by target, never by
+stopping pointerdown.** `canvas-overlay-pointerdown.test.ts` is the gate; it
+allowlists three PRE-EXISTING instances (frame rename input, ladder row, doc
+block) that are latent rather than visibly broken because each swallows on the
+single control you are clicking. Fixing those properly means guarding the shared
+pan/drag plumbing by target — its own pass, not done here.
+
+**Why the agent gate is not optional.** `studio_resolve_comment` re-resolves the
+anchor and refuses on `drifted`/`detached`, posting the reason INTO the thread
+rather than only into a tool result the user never sees. An agent acting on a
+rotten anchor edits the wrong element in the user's real source and then reports
+success — worse than not acting at all.
+
+**Four decisions that look inconsistent and are deliberate. Do not "fix" them
+without re-measuring:**
+
+1. **POST carries one op, not the whole file** — unlike the sibling `/boards`
+   route. Board geometry has one writer (the person dragging); comments are
+   multi-writer by definition, and whole-file semantics silently drop one of two
+   concurrent replies.
+2. **`useStudioCommentsLoad` lives in `AdminCanvasEditorBody`, not
+   `AdminCanvasLayout`.** It was in the shell first and pushed `SitePage-*.js`
+   over its bundle budget. That budget's own note says to audit rather than
+   raise, and the audit was short: comments need a board to pin them on, and the
+   board is in the lazy body. Budget now passes with no cap raised.
+3. **`reloadComments` is imported statically there.** The dynamic form bought no
+   splitting (everything it reaches was already in that graph) and cost ~600 B
+   of Vite preload manifest. Measured, not assumed.
+4. **The comments list lives in the RIGHT sidebar with no rail button.** It was
+   a left-rail panel first. Entry points are all on the canvas (`C`, the tool
+   button, a pin), so the pane carries its own close button instead. Comments
+   beat properties when both would show — clicking a pin does not clear the
+   node selection, so without a winner you get one thing's properties beside
+   another thing's comment.
+5. **`T` / `F` / `C` insert immediately; they are not draw tools.** Figma arms a
+   tool you drag a rectangle with because its document is absolutely-positioned
+   shapes. Studio's document is a React tree — a new node's position comes from
+   its parent's layout, so there is no rectangle to drag. They insert at
+   `useInsertModule`'s resolved location, the same one the picker and
+   right-click use.
+6. **`studioLiveReload.ts` reaches comments through `commentsApi`, never
+   `commentActions`.** That module is reachable from `store.ts`
+   (store → agent/index → agentSliceConfig.site → executor → here) and
+   `commentActions` imports the store, so either edge — static OR dynamic; the
+   cycle checker counts both — closes a loop. `commentsApi` is pure HTTP. Same
+   reason `reloadStudioBoards` uses `boardsApi`.
+
+**New shared primitive: `--canvas-zoom`,** republished by
+`useCanvas.applyTransformToDOM` on every rAF tick, so canvas overlays can
+counter-scale in pure CSS and stay a constant on-screen size. It cannot come
+from the store: `zoom` is committed 100 ms AFTER the last gesture event, so a
+subscribed counter-scale lags a pinch and then snaps. Default lives in
+`CanvasTransformLayer.module.css`, not in a `var()` fallback.
+
+**Also landed, incidentally:** `CanvasRoot` was at 698/700 lines and every canvas
+change has to touch it. The two untransformed studio chrome pieces now sit behind
+one lazy boundary (`StudioCanvasChrome` + `LazyStudioCanvasChrome`), and the
+`board.selectAllFrames` listener moved into `useBoardSelectAllShortcut.ts` beside
+its three siblings (`useCanvasSelectionKeyboard`, `useBoardAnnotationKeyboard`,
+`useCanvasToolShortcuts` — all the same shape: one document-level keydown scoped
+by intent, not focus). `CanvasRoot` is now **668**, with real headroom, and
+`BoardNotesToolbar` — previously eager — is out of the route chunk.
+
+**`ContextMenu`'s outside-click dismiss is now `@ui/lib/useOutsidePointerDismiss`.**
+The comment popover needed the same behaviour, including both iframe subtleties
+(listen on every same-origin document; check targets with the cross-realm-safe
+`isNode`) — exactly the pair a second copy gets wrong later. Extracted rather
+than duplicated. It uses `useEffectEvent` so the effect depends on `enabled`
+alone: subscribing walks every reachable iframe document, so one subscribe per
+open/close beats one per render.
+
+**`T` / `F` / `C` go through the keybindings registry.** `C` originally shipped
+as a private `window` keydown listener inside `CommentToolButton` with its own
+hand-rolled typing guard — the drift `keybindings-registry-single-source.test.ts`
+exists to stop, which it did not catch because it only greps for combos carrying
+a meta/ctrl modifier. `tool-shortcuts-registered.test.ts` is the missing half:
+bare-letter tool keys must be registered, must reject all four modifiers, and
+must set `ignoreInEditableField`.
+
+**Gate exception added:** BTN-3 §8.5 (canvas coordinate affordances) for
+`CommentPin.tsx`. Its map-pin radius and zoom counter-scale live on its own root
+element, which `Button` owns.
+
+**Not built, deliberately:** mentions, per-user unread state, live SSE sync
+between sessions. Each is additive to the file format.
+
+---
+
 ### perf-02 — Studio's lag was three unrelated bottlenecks, and the biggest one was invisible on every test fixture
 
 A five-surface scan (canvas, store, panels, server, bundle) found the "laggy"
@@ -1373,6 +1536,154 @@ M2 is now in progress: WS-2.1/WS-2.2 (styles) landed, see `style-01` below.
 WS-2.3 (package CSS injection) and WS-2.4 (computed-`className` variant probe)
 are the remaining WS-2 items, not yet dispatched. See
 `STUDIO-IMPORT-V2-PLAN.md`'s workstreams 2–9 for other M2 candidates.
+
+### board-27c — canvas silently drops `color-mix()`, system colours, slash-alpha `rgb()` from a project's own CSS
+- **Agent:** studio-architect
+- **Stage:** design — **implemented, see `board-27e` below (this entry's design shipped unchanged from what's written here).**
+- **Updated:** 2026-08-31
+- **Goal:** a project's own `.css` (plus WS-2.1's compiled Tailwind/Sass/PostCSS/CSS-Modules output) renders on the canvas byte-faithful to what a real browser/build would produce — no declaration happy-dom's CSSOM can't parse (`color-mix()`, `Canvas`/`CanvasText` system colours, `rgb(0 0 0 / .2)`) silently vanishes.
+- **Scope:** `server/handlers/studioCss.ts`, `server/handlers/studioPageLoad.ts`, `server/handlers/studio.ts`, `src/admin/pages/site/studio/{studioLoadStreamSchema.ts,fsCodemodAdapter.ts,styleRuleWriteback.ts}`, `src/admin/pages/site/canvas/{canvasClassCss.ts,IframeFrameSurface.tsx}`, new `src/admin/pages/site/canvas/AuthoredCssInjector.tsx`, new `src/core/page-tree/styleRuleOrigin.ts`. Deliberately does **not** touch `ClassStyleInjector.tsx`/`ProjectCssInjector.tsx`/`UserStylesheetInjector.tsx` — those are mid-edit by another agent right now (confirmed live: `ClassStyleInjector.tsx` changed on disk mid-research, adding an `isStudioMode` import); the filtering this design needs lives one level down, in `canvasClassCss.ts`'s `buildCanvasClassCSS`, specifically so it does not collide with that work.
+- **Done so far:** full design only, written up below and in the assistant's final response of this session. No files created or edited except this entry.
+- **Next step:** hand the work order below to `parser-surgeon` (server half: `studioCss.ts`/`studioPageLoad.ts`/`studio.ts`) and `canvas-engineer` (client half: the new injector + `canvasClassCss.ts` filter + `IframeFrameSurface.tsx` mount). Start with `src/core/page-tree/styleRuleOrigin.ts` (step 1 below) — it has no dependents yet and unblocks both halves.
+- **Decisions:**
+  - **Render from raw text; keep `StyleRule` for editing.** `UserStylesheetInjector.tsx` already proves the exact pattern needed (raw CSS string → `resolveViewportUnitsForCanvas` → `rewritePrefersColorScheme` → `@layer user-authored`) — this is not a new mechanism, it's applying an existing, working one to a new CSS source.
+  - **The overlay renders only session-edited rules, not the full registry**, using a NEW shared predicate (`styleRuleNeedsCanvasOverlay`) built from two signals already in the codebase: the `sc-` id prefix (`styleRuleId()` in `studioCss.ts`, already independently reimplemented once in `styleRuleWriteback.ts`'s `isEditorAuthoredRuleId` — this change gives both a single shared source) and `updatedAt > 0` (already bumped by every edit action on an existing rule — verified across `propertyActions.ts`, `conditionActions.ts`, `crudActions.ts`). Full-registry overlay was considered and rejected: it would double the CSS payload for Tailwind-heavy `extraCss` and re-adds the exact CSSOM-loss risk for *unedited* rules that this fix exists to remove.
+  - **Verified safe against every existing test fixture** — grepped all 14 `updatedAt: 0` `StyleRule` fixtures under `src/__tests__/canvas/`; none use an `sc-`-prefixed id, so the new filter (`!isImportedStyleRuleId(id) || updatedAt > 0`) changes nothing for any of them. This is why the id-prefix check is first in the OR, not the timestamp alone.
+- **Landmines:**
+  - `studioCss.ts`'s own doc comment ("Fixed at 0, the same value `parseTimestamp` falls back to") is **stale/wrong** — `parseTimestamp` (`src/core/page-tree/parseHelpers.ts:78`) falls back to `Date.now()`, not `0`. Harmless today (nothing reads it that way), but fix the comment while touching this file's `IMPORTED_RULE_TIMESTAMP` constant anyway (step 2).
+  - Deleting an **imported, `kind: 'ambient'` rule** (`deleteClasses` — `src/admin/pages/site/store/slices/styleRule/registryActions.ts:168`) removes it from `site.styleRules`, but its selector's declarations are still sitting in the raw sheet (loaded once at page load) — the overlay can no longer suppress it because the rule object is gone. Named as a real, narrow gap in the RISKS section below, not fixed by the steps in this order (mitigation sketched, not required for the primary fix).
+  - `canvasClassCss.ts` and `IframeFrameSurface.tsx` are shared, high-traffic files — re-diff against latest before starting; the concurrent `ClassStyleInjector.tsx` work may have touched adjacent code.
+- **Verification:** design only — not run. Gate tests specified below; run `bun test`, `bun run build`, `bun run lint` once the implementer's steps land.
+- **Human action needed:** none yet — dogfood note will be needed once implemented (open a project with a `color-mix()`/system-colour/slash-alpha rule and confirm it renders on canvas).
+
+### board-27d — the CMS publisher reset was silently restyling every Studio canvas frame; scoped it to CMS pages only
+
+- **Agent:** canvas-engineer
+- **Stage:** shipped
+- **Updated:** 2026-08-31
+- **Goal:** `PUBLISHER_RESET_CSS` (`src/core/publisher/reset.ts`) was injected into EVERY canvas iframe by `ClassStyleInjector.tsx`, unconditionally, at `@layer reset`. It's the right baseline for a CMS-authored page (module engine, no stylesheet of its own — `render.ts`'s publish path still gets it unconditionally, untouched). It's wrong for a Studio-parsed page: "the repository is the document" means the project's own CSS, or the genuine absence of one, is the whole truth. The reset made unstyled elements — a bare `<ul>`, an unclassed heading, a table, a link — render *better* than a real browser would (UA bullets/margins/underlines silently swapped for the reset's zero-margin, no-bullet look), invisibly, for every project.
+- **The discriminator:** `isStudioMode()` (`src/admin/pages/site/studio/studioMode.ts`) — read directly inside `ClassStyleInjector`'s injection effect, exactly like `BreakpointSelectionOverlay.tsx` already does. Its own doc calls it out as "the single source of truth ... used by every gate ... so they can never disagree", and it's what already decides which canvas mounts at all (`CanvasTransformLayer`: `activeBoard` truthy → `StudioBoardLayers`/multi-frame board, else → CMS breakpoint frames via `BreakpointFrame` directly) — so it's not a second, parallel signal, it's the same one everything else already reads. I considered `selectActiveBoard`/`activeBoardId !== null` (the hint in the work order) and rejected it: it's derived from `isStudioMode()` (boards only ever get loaded via `studioLiveReload.ts` once Studio mode is entered) but races it during the load window (`activeBoardId` starts `null` even inside an already-Studio-mode session, until `loadBoards()` resolves), and it's one more hop from the thing that's actually authoritative. `isStudioMode()` is a plain, non-reactive read of URL + sticky `localStorage`, same as every other studio-vs-CMS gate in this codebase (`componentizeEligibility.ts`, `PropertiesPanel.tsx`, `useModuleInsertionContext.ts`, …) — fine here because entering/leaving Studio mode is a mount-time decision (different persistence adapter, different canvas), not something that flips mid-session without a nav.
+- **The fix:** `ClassStyleInjector.tsx`'s injection effect now builds `resetBlock` as `''` when `isStudioMode()`, otherwise the same `@layer ${RESET_LAYER} { ${PUBLISHER_RESET_CSS} }` as before. `CANVAS_CSS_LAYER_ORDER` (`@layer reset, vendor, user-authored;`) still opens the stylesheet either way — layer order stays pinned even with zero rules in `@layer reset`. `ProjectCssInjector` (vendor CSS) and `UserStylesheetInjector` (the project's own stylesheets) are untouched — exactly what should render in Studio mode. `src/core/publisher/reset.ts` was **not edited** — the CMS publish path (`render.ts`) still injects the same reset unconditionally into real published HTML.
+- **Files touched:** `src/admin/pages/site/canvas/ClassStyleInjector.tsx` (the gate), `src/__tests__/canvas/canvasCssLayerOrder.test.tsx` (3 new tests: reset omitted under `?studio=1` and sticky `localStorage`, reset still present under `?studio=0`), `docs/agent-refs/canvas-internals.md` (frame-anatomy diagram + a new paragraph under the reset's cascade-layer explanation), `docs/features/canvas-iframe-per-frame.md` (TL;DR bullet, frame diagram, injector table row, new "The publisher reset is CMS-only" subsection).
+- **Verification — real browser, not just tests** (dogfood instruction below is what to re-run, not just what I ran): logged into `http://127.0.0.1:5173/admin/login` with the local smoke account (reset its password/lockout first — see the `local-admin-login-blocked` memory), then measured computed styles via `browse js` inside the canvas iframes of the `untitled-2`/`__canonical-fixture` Studio project (`?studio=1`) and a CMS site (`?studio=0`), before and after the fix (toggled with `git stash`/`git stash pop` on just `ClassStyleInjector.tsx`, reloading between):
+  - **Studio, before (bug reproduced):** `mc-classes` contained `@layer reset {`; unstyled `<body>` computed `font-family: system-ui, …` and `line-height: 24px`; a freshly-appended unstyled `<ul><li>` computed `list-style: none`.
+  - **Studio, after (fixed):** `mc-classes` has NO `@layer reset {` block; unstyled `<body>` computed `font-family: Times` and `line-height: normal` (real UA defaults); a freshly-appended `<ul><li>` computed `list-style: disc`, `padding-left: 40px`; a freshly-appended `<a>` computed `color: rgb(158, 158, 255)` (UA default link blue, this project previews dark) and `text-decoration-line: underline` — i.e. genuinely unstyled, matching what a real browser renders.
+  - **CMS (`?studio=0`), unchanged both before and after:** `mc-classes` still contains `@layer reset {`; body still `system-ui`/`24px`/`margin: 0`; a freshly-appended `<ul><li>` still computes `list-style: none`, `margin/padding: 0px` — the reset is fully intact for CMS pages.
+- **Test/build gates:** `bun test src/__tests__/canvas/canvasCssLayerOrder.test.tsx` (7 pass), `bun test src/__tests__/canvas` (648 pass / 10 fail — the 10 failures are byte-identical on `git stash` of just my file, confirmed pre-existing: `visualComponentRefInlineBody.test.tsx`, the B3 NodeRenderer lock-down suite, `boardFrameVariantSelection`-style selection-leak tests, `canvasScrollUnrollPinInteraction.test.tsx` (named pre-existing in the work order), a canvas body context-menu test — none touch `ClassStyleInjector`/reset/layers), `npx tsc -b` clean on my files (one unrelated pre-existing error in `server/handlers/studioCss.ts`, explicitly off-limits — `board-27c` above is mid-editing that file), `npx eslint` clean on both touched source/test files.
+- **Landmine for the next person touching this area:** the reset gate and `board-27c`'s planned `AuthoredCssInjector.tsx` sit right next to each other conceptually (both decide what CSS a Studio canvas frame legitimately shows) but are orthogonal — this fix decides whether the *synthetic baseline* renders at all; `board-27c` decides whether *the project's own* declarations survive happy-dom's CSSOM. Don't fold them into one gate. Also: `isStudioMode()` is a plain function, not reactive — if a future change makes Studio mode togglable WITHOUT a navigation/remount (it currently always requires one — `studioMode.ts`'s own doc), `ClassStyleInjector`'s effect deps would need `isStudioMode()`'s result added explicitly (it isn't a dependency today, matching every other non-reactive call site of this function) or the reset would go stale until some unrelated dep changed.
+- **Human/dogfood action:** open `http://127.0.0.1:5173/admin/site?studio=1&project=untitled-2` (or `__canonical-fixture`) at any zoom, any of its 6 frames. Confirm: a plain `<ul>`/`<ol>` renders with real bullets/numbers if the project doesn't style it away, links render blue+underlined unless styled, and body text is NOT forced to `system-ui`/1.5 line-height (compare to a real Vite/CRA dev server for the same project — the canvas should now match it for anything the project doesn't touch). Then open a CMS page at `?studio=0` and confirm nothing changed there — no bullets, no underlines, `system-ui`, tight zero margins, same as before this change.
+
+### board-27e — canvas silently dropped `color-mix()`/system colours/slash-alpha declarations from a project's own CSS; fixed by injecting the raw text alongside the (lossy) StyleRule registry
+
+- **Agent:** studio-implementer
+- **Stage:** done
+- **Updated:** 2026-08-31
+- **Goal:** `board-27c`'s work order, landed steps 1-9 together (as instructed — the order warned a partial landing between 7 and 8 ships a transient doubled-CSS-payload state).
+- **Done so far (all 9 steps landed in one change):**
+  1. New `src/core/page-tree/styleRuleOrigin.ts` — `IMPORTED_RULE_ID_PREFIX` (`'sc-'`), `IMPORTED_RULE_TIMESTAMP` (`0`, with the doc-comment fix the work order named: it is NOT the same value `parseTimestamp` falls back to — that's `Date.now()`), `isImportedStyleRuleId()`. Barrel-exported from `src/core/page-tree/index.ts`. `server/handlers/studioCss.ts`'s `styleRuleId` and `src/admin/pages/site/studio/styleRuleWriteback.ts`'s `isEditorAuthoredRuleId` both switched to it — no more independent `'sc-'` literals.
+  2. `server/handlers/studioCss.ts`: `loadStudioStyles` now accumulates `authoredCssParts` inside `mergeParsedCss` (pushed before parsing, so extraCss-first/sheet-cascade-order is preserved for free) and returns `authoredCss: authoredCssParts.join('\n\n')` on `StudioStyles`.
+  3. `server/handlers/studioPageLoad.ts`: `StudioLoadResult.authoredCss` added; both `loadStudioPages` return points (empty-pages-dir early return and the normal path) thread it through.
+  4. `server/handlers/studio.ts`: the `GET /admin/api/studio/load` handler destructures `authoredCss` off `loaded` and includes it in BOTH the `?stream=1` NDJSON meta line and the buffered JSON body.
+  5. `src/admin/pages/site/studio/studioLoadStreamSchema.ts`: `authoredCss: Type.String()` added to the `kind: 'meta'` line schema (required field).
+  6. New `src/admin/pages/site/studio/studioRawCssStores.ts` — the `vendorCss`/`authoredCss` tiny external-store trios (mirrors `studioProjectTrust.ts`'s pattern). **Extracted this out of `fsCodemodAdapter.ts` rather than adding the trio inline** — inline would have pushed that file to 707 lines, past the 700-line `module-size-budgets` ceiling (it had already graduated off the grandfathered ledger; not adding a new entry there). `fsCodemodAdapter.ts` re-exports both pairs verbatim (`getStudioVendorCss`/`subscribeStudioVendorCss`/`getStudioAuthoredCss`/`subscribeStudioAuthoredCss`), so `ProjectCssInjector`/`AuthoredCssInjector` and every existing test import from `fsCodemodAdapter.ts` unchanged. `loadSite()` now also calls `setStudioAuthoredCss(loadedAuthoredCss)`.
+  7. New `src/admin/pages/site/canvas/AuthoredCssInjector.tsx` — `UserStylesheetInjector`'s RAW pattern (`useSyncExternalStore` → `resolveViewportUnitsForCanvas` → `rewritePrefersColorScheme` → `@layer user-authored`), `id="mc-authored"`, always `insertBefore(head.firstChild)` (`ProjectCssInjector`'s prepend pattern) so it precedes `mc-classes` regardless of mount order. Mounted in `IframeFrameSurface.tsx` between `ProjectCssInjector` and `ClassStyleInjector` (the concurrent agent's files there were NOT touched).
+  8. `src/admin/pages/site/canvas/canvasClassCss.ts`: new `styleRuleNeedsCanvasOverlay(rule)` predicate (`!isImportedStyleRuleId(rule.id) || rule.updatedAt > 0`), applied inside `buildCanvasClassCSS` by filtering `classes` before calling `generateClassCSS` — `mc-classes` now renders only editor-authored rules and session-edited imported rules. The existing 8-input identity memo (`createCanvasClassCssMemo`) already gates this — no second memo added, per the constraint.
+  9. Docs: `docs/agent-refs/canvas-internals.md` (frame-anatomy diagram now lists `AuthoredCssInjector`; new paragraph "A Studio project's own CSS renders from TWO sources"), `docs/features/studio-import.md` (new "happy-dom's CSSOM is lossy" subsection under "CSSOM in Bun"; "Stable ids" section points at the shared `styleRuleOrigin.ts`). `docs/agent-refs/path-index.md` also updated (new files + `ClassStyleInjector`/`studioCss.ts` entries) even though not explicitly named in the work order — it's the "where does X live" index and would otherwise silently omit three new files.
+  - **Not touched, as instructed:** `canvasScrollUnroll.ts`, `CanvasScrollUnrollInjector.tsx`, `iframeBodyReset.ts`, `ClassStyleInjector.tsx`, `src/core/publisher/reset.ts`, anything under `src/core/page-parser/`. Re-diffed `IframeFrameSurface.tsx`/`canvasClassCss.ts` before starting — both were still at the state the work order described.
+- **The named risk (deleting an imported ambient rule leaves stale raw CSS until reload): left as a documented follow-up, not fixed.** `AuthoredCssInjector.tsx`'s own doc comment has a "Known gap" section, `canvas-internals.md`'s new paragraph names it too. Reasoning matches the work order's own framing ("mitigation sketched, not required for the primary fix") — closing it needs `deleteClasses` (`registryActions.ts`) to somehow edit the raw snapshot's text, which is a different, riskier kind of change (mutating injected CSS text rather than replacing it wholesale) than this pass's scope.
+- **Also not touched (explicit scope, flagging for whoever picks it up next):** `docs/features/canvas-iframe-per-frame.md` — the deeper architecture doc for this same frame-anatomy area (injector table, "Vendor vs. user-authored ordering" section) still does not mention `AuthoredCssInjector` or the raw/overlay split. The work order named only `canvas-internals.md` + `studio-import.md`; left this one stale rather than silently expanding scope. Worth a follow-up pass — `board-27d`'s entry above already updated it for the reset-gating change, so it's actively maintained by others.
+- **Gate tests built (the four):**
+  1. `server/handlers/__tests__/studioCss.test.ts` — new `describe('studioCss — authoredCss (board-27, byte-fidelity against happy-dom CSSOM loss)')`. The load-bearing one: a fixture with `color-mix()`, a system colour (`Canvas`), and slash-alpha `hsl(0 0% 0% / .2)` — asserts all three survive byte-for-byte into `authoredCss` (`toBe(rawSource)` plus substring checks) and that the SAME three are absent from the parsed `StyleRule.styles` (only `padding` survives). **Landmine found while building this:** the classic example in the work order, `rgb(0 0 0 / .2)`, is empirically NOT dropped by the happy-dom version this repo currently vendors (20.9.0) — verified directly against `CSSStyleSheet.replaceSync` with several probes. `hsl(0 0% 0% / .2)` (identical slash-alpha syntax, different function) IS still dropped, so it stands in as the same class of bug without pinning the test to a happy-dom quirk. Documented in the test's own doc comment so this doesn't look like a typo later.
+  2. `src/core/page-tree/__tests__/styleRuleOrigin.test.ts` — new file, `isImportedStyleRuleId`/`IMPORTED_RULE_TIMESTAMP` unit coverage.
+  3. `src/__tests__/canvas/classStyleInjector.test.ts` — new `describe('generateCanvasClassCSS — board-27 overlay filter')`: an unedited imported rule (`sc-` id, `updatedAt: 0`) is dropped entirely; a session-edited imported rule (`updatedAt > 0`) is kept; an editor-authored rule (no `sc-` prefix) is always kept even unedited; mixed registries filter per-rule.
+  4. `src/__tests__/canvas/authoredCssInjector.test.tsx` — new file, mirrors `projectCssInjector.test.tsx`'s pattern exactly (stub the NDJSON `/admin/api/studio/load?stream=1` meta line, assert `<style id="mc-authored">`, layer wrapper, byte-fidelity, reactivity, unmount cleanup) plus one DOM-order test asserting `mc-authored` precedes `mc-classes` regardless of which injector mounts first.
+  - Fixing these schema/shape changes broke 5 existing test fixtures that hand-build the NDJSON meta line (now missing the newly-required `authoredCss` field) — all fixed in the same change: `src/__tests__/canvas/projectCssInjector.test.tsx`, `src/admin/pages/site/studio/__tests__/{studioSaveRequests,localizedPageWriteback,originBackedPropWriteback,fsCodemodAdapter}.test.ts`. `fsCodemodAdapter.test.ts`'s central flat→NDJSON translation helper now defaults `authoredCss: ''` alongside its existing `styleRuleSources: {}` default, so individual test call sites don't all need the field named.
+- **Verification:**
+  - `bun test src/__tests__/canvas server/handlers/__tests__` → **1353 pass / 10 fail / 5 errors** (unchanged before/after my change — all 10 confirmed pre-existing/resource-contention: `boardFrameVariantSelection`, `nodeRendererLockdown`, `bodyContextMenu`, `visualComponentRefInlineBody` all pass individually in isolation; `canvasScrollUnrollPinInteraction.test.tsx`'s 2 MutationObserver failures match the explicitly-named pre-existing issue).
+  - `bun test src/core/page-tree src/admin/pages/site/studio/__tests__ src/__tests__/studio` → 233 pass / 0 fail.
+  - `npx tsc -b` → clean.
+  - `npx eslint` on all 22 touched/new files → 0 errors, 0 warnings.
+  - `bun test src/__tests__/architecture/module-size-budgets.test.ts src/__tests__/architecture/no-core-barrel-deep-imports.test.ts` → 6 pass (confirms `fsCodemodAdapter.ts` extraction kept it at 667 lines, `IframeFrameSurface.tsx` at exactly 700 — the ceiling, not over it — and no deep-barrel-import violations).
+- **Browser proof (gstack `browse`, `http://localhost:5173/admin/site?studio` — project "Untitled 2" (`untitled-2`), 5 frames):**
+  - **(a)** `browse js` against the first frame's `contentDocument.head` confirmed `mc-authored` exists and precedes `mc-classes` in child order (`["mc-authored","mc-vendor","studio-editor-chrome",...,"mc-classes","mc-user-styles"]`).
+  - **(b)** Edited `studio-workspace/untitled-2/pages/Home.module.css`'s `.page` rule to `background: color-mix(in srgb, red 50%, blue 50%)`, reloaded. Computed style on the real element: `background-color: color(srgb 0.5 0 0.5)` — the correctly-mixed colour, computed by the actual browser hosting the iframe. Cross-checked that `mc-classes` did NOT contain `.Home_page__d9569`/`color-mix` at all (confirms the unedited-imported-rule filter is excluding it from the overlay, as designed) while `mc-authored` did contain it. **Reverted the probe edit immediately after** — `git diff studio-workspace/untitled-2/pages/Home.module.css` confirmed clean, reload confirmed the canvas returned to its original white background and unchanged screenshot.
+- **Landmines:**
+  - The repo is under heavy concurrent-agent git churn right now (see `board-27b`'s entry above — HEAD moved and uncommitted work was silently wiped twice in one session). Re-verified my own files were still intact (grep for my own markers) immediately before writing this handoff, and re-ran the full test/tsc/lint pass one final time after that check — all still green. Did not commit (no instruction to).
+  - `module-size-budgets`' ceiling is exact, not "under 700 with room" — `IframeFrameSurface.tsx` landed at precisely 700 lines after trimming comment prose to fit the one new import + one new JSX line. If the next change to that file adds even one more line without removing one, it will fail the gate; it is NOT on the grandfathered ledger (already graduated once).
+- **Human action needed:** none required — this is a canvas-fidelity fix with no new UI surface. Optional dogfood: open any Studio project with hand-authored CSS using `color-mix()`/system colours/`light-dark()`/`oklch()`, confirm it now renders the real colour instead of transparent/unstyled.
+
+### board-27a — scroll-unroll was overriding `overflow`/`min-height` on every element, not just scroll regions; narrowed it to a confirmed signal
+- **Agent:** canvas-engineer
+- **Stage:** shipped
+- **Updated:** 2026-08-31
+- **Goal:** `CanvasScrollUnrollInjector`'s stylesheet forced `overflow: visible !important` and (after `board-24`'s floor fix) `min-height: auto !important` on the universal `*` selector in every design frame. Make the canvas's computed CSS honestly reflect what the author wrote, without losing the reason the pass exists (making a clipped scroll region visible on the board instead of scrollable).
+- **Scope:** `src/admin/pages/site/canvas/{canvasScrollUnroll.ts,CanvasScrollUnrollInjector.tsx,iframeBodyReset.ts}`, tests `src/__tests__/canvas/{canvasScrollUnroll.test.ts,canvasScrollUnrollInjector.test.tsx}`.
+- **The defect, evidence-first.** A parallel read-only audit measured a live board (`untitled-2`, 5 frames): disabled the four Studio chrome stylesheets, cleared body's inline sizing, reflowed, diffed computed styles against the same read with chrome re-enabled. 87 elements diverged. Of the `overflow-y` overrides, **59 were `hidden` vs. 2 `auto`** — the blanket rule was hitting a clip mask or `text-overflow: ellipsis` container ~30x more often than an actual scroll region. Confirmed on the current `untitled-2` project: `.marketing-card--solid`, `.marketing-card__image-section`, `.seg-control--ios`, `.toggle__track` (rounded-corner clips) and `.navbar__title-text`, `.marketing-card__title/__subtitle`, `.seg-control__label` (ellipsis) all lost their clip/truncation on the canvas — visible on the Home screen today, not hypothetical. Separately, `.bottom-sheet__panel` (the alm design system's fullscreen sheet shell — `flex: 1; min-height: 0; overflow: hidden`, NOT itself the scroll region; `.bottom-sheet__content` nested inside it is) computed `min-height: auto` on canvas against an authored `0` — the exact opposite of what was written, because `authoredMinHeightFloor` only ever preserved *positive* values and treated `0` as "nothing to restore," with no check on whether the element was a scroll region at all.
+- **The fix: one signal decides both.** `SCROLL_UNROLL_ORIGINAL_OVERFLOW_ATTR` already recorded every element's pre-override `overflow-y` (for `collectScrollDeficits`). `buildScrollUnrollRules`'s `overflow`/`min-height` override now only matches `[data-studio-unroll-overflow-y="auto"], [...="scroll"]` — never the universal `*` selector, which now carries only `scroll-behavior: auto !important` (no rendering-correctness cost to leaving that one blanket). `snapshotAuthoredStyles` (`CanvasScrollUnrollInjector.tsx`) gates the min-height floor recording behind the same `auto`/`scroll` check — an element that isn't a scroll region is never touched by ANY of this machinery, so its authored `min-height` (`0` included) simply computes as written; nothing to snapshot, nothing to restore. This incidentally also fixes the `.bottom-sheet__panel` `min-height: 0` lie **for free** — it's gated out entirely now, not special-cased.
+- **`authoredMinHeightFloor` kept its name and its `0`/`auto`-return-null behaviour** — rewrote its doc instead of its logic. It is *only ever consulted* for an element already confirmed to be a scroll region (the caller's gate), and *within* that scope `0`/`auto` really are "let the automatic content-based minimum take over," which is the whole mechanism this pass exists to invoke (CSS Flexbox §4.5: automatic min-size is content-based only when the item's own overflow is visible). A positive value on a genuine scroll region (e.g. `min-height: 300px; overflow-y: auto`) still survives — unchanged from `board-24`.
+- **Two things audited, decided, and documented rather than changed (explicit ask: think it through, don't reflexively "fix"):**
+  - **`position: fixed` → `position: absolute`** (`[data-studio-unroll="fixed"]`) stays. Argued both ways in the module doc now: a genuinely-`fixed` element WOULD stay faithful to the iframe's own viewport, but that viewport is not stable on a design frame — `useIframeFrameAutoHeight` grows the iframe element itself to the unrolled document's full height, so real `fixed` chrome would end up pinned to the bottom of a several-thousand-px page, nowhere near the device-screen chrome it overlays. Rewriting to `absolute` against `body` (pinned at `CANVAS_VIEWPORT_HEIGHT`, the same representative device height `resolveViewportUnits.ts` resolves `vh` against) keeps it anchored to that same representative screen instead.
+  - **`explicit-height` stretching a clipping panel to its full `scrollHeight`** stays, and doesn't depend on the new overflow gate — `scrollHeight` reports an element's true content extent regardless of its own `overflow` value (only `overflow: visible` collapses it to `clientHeight`), verified against spec, so this JS-measured fallback correctly catches deficits on `overflow: hidden` elements the CSS-only scroll-region rule above deliberately leaves alone. Named, not fixed, one theoretical risk: a fixed-height `overflow: hidden` crop frame around an oversized `<img>` with no `object-fit: cover` would also present a real `scrollDeficit` and get incorrectly stretched. No live instance found — the audited project's own image-crop containers all use `object-fit: cover`, which does not inflate `scrollHeight`. Documented as a known limitation in `buildScrollUnrollRules`'s doc, with the fix shape named (scope this tag by authored overflow too) if a future project ever hits it.
+- **`iframeBodyReset.ts` audit: nothing relaxed.** Went through all six `CANVAS_BODY_RESET_PROPERTIES` (`height`/`min-height`/`overflow`/`overflow-x`/`overflow-y`/`position`) against the two opposing height requirements `resolveViewportUnits.ts` documents. All six are load-bearing for one or the other and cannot be handed back to authored body CSS. `position: relative` specifically confirmed correct (not just assumed) by the same live-board measurement: every frame computes `position: relative` on canvas against `position: static` in source — it's the containing block both an app's own `position: absolute; inset: 0` overlay root AND this fix's `fixed`→`absolute` rewrite resolve against. Documentation-only change to this file; no behaviour changed.
+- **Landmines:**
+  - **The override is now frame-later for a genuine scroll region too**, same timing model `fixed`/`explicit-height` tags already use: the gate needs `snapshotAuthoredStyles` to have run once (it has to read the value BEFORE this file's own stylesheet can override it, so it cannot run any earlier than the injector's own rAF-scheduled pass). A scroll region therefore stays clipped for one settle before unrolling on mount/insert. `useIframeFrameAutoHeight`'s `ResizeObserver` (watches body's rendered size, not which mutation caused it) already picks this up for `explicit-height`/`fixed`, tested — same mechanism, not a new risk class, but if you ever see one frame of clipped content flash on a freshly-inserted scroll region, this is why, and it is expected.
+  - **happy-dom's disabled-stylesheet quirk (`styleSheet.disabled === true` while still applying its rules to `getComputedStyle`) still makes the floor/overflow-snapshot pass untestable at the DOM level** — same as `board-24` found. Did not add a DOM test for the new gating; extended the pure-function/stylesheet-text tests in `canvasScrollUnroll.test.ts` instead (new: "does NOT force overflow/min-height on the universal `*` rule", "scopes overflow-visible + min-height-auto to a CONFIRMED scroll region only"). `canvasScrollUnrollInjector.test.tsx`'s existing comment explaining why already covers this; left as-is, still accurate.
+  - **Do not try to make the overflow/min-height scope CSS-only again** (no JS tag) — a selector cannot ask "what would this element's `overflow-y` have computed to before any of OUR rules ran," which is exactly the question needed to tell a scroll region from a clip mask. This was tried in spirit by the old universal-`*` design and is the root cause this whole entry fixes.
+- **Verification:** `bun test src/__tests__/canvas` → 649 pass / 10 fail, all 10 pre-existing and unrelated to these three files (selection-leak overlay tests, B3 NodeRenderer lock-down suite, a canvas body context-menu test, `visualComponentRefInlineBody`, and `canvasScrollUnrollPinInteraction.test.tsx`'s two known-flaky MutationObserver tests — reran that file standalone 3x, 1-2 failures each run, confirmed pre-existing flake, not a regression). `npx tsc -b` clean. `npx eslint` clean on all touched files. Did not run repo-wide `bun run build`/`bun run lint` — out of scope per the work order (files-only verification) and the repo has unrelated in-flight parallel work.
+- **Human/dogfood action:** open `http://127.0.0.1:5173/admin/site?studio` on `untitled-2` (or any project using the alm design system), any zoom, the frame containing `Sheet2`/a fullscreen bottom sheet. Confirm the sheet's panel background fills all the way down behind its content (no undersized/mismatched background band), and separately confirm any card with rounded corners (`marketing-card`) still clips its image to those corners on canvas — it was square-cornered before this fix. A real scroll region (a tall list inside a `flex:1; overflow-y:auto` container) should still show fully unrolled with no internal scrollbar, same as before.
+
+### board-27b — an unresolvable prop/style/text expression vanished with no trace at all; that used to be a write-safety hole, not just a cosmetic one
+- **Agent:** parser-surgeon
+- **Stage:** shipped
+- **Updated:** 2026-08-31
+- **Goal:** audit every JSX attribute shape `extractProps` can meet and classify it: resolves -> `props` (already worked), a function -> `codeProps` (a recent narrow fix), everything else -> was DROPPED SILENTLY (no `props` entry, no `codeProps` entry, nothing). Close that for every shape it's honestly closeable for, and say clearly where it isn't.
+- **Scope:** `src/core/page-parser/{jsxAttributeReaders,parsePageFile,types,canonicalCheck}.ts`, test `src/core/page-parser/__tests__/codeValueTracing.test.ts` (new), doc `docs/features/studio-import.md`.
+
+**The bug was worse than "the panel looks empty."** `isPropWritableToSource` (`src/core/page-tree/sourceWritability.ts`) reads an ABSENT `codeProps` entry as "writable." `setJsxProp` (`src/core/ast-codemods/setJsxProp.ts`) has **no guard** against replacing a non-literal attribute's initializer — `existingAttribute.setInitializer(initializerText)`, unconditional. So `<Icon size={dynamicSize}/>` with `size` silently dropped looked, to the panel, like an ordinary empty numeric field. Type a value, save, and the store would happily route the edit through `updateNodeProps` -> `setJsxProp`, baking a literal straight over `{dynamicSize}` and deleting the binding — an actual instance of the "never bake a resolved value into the JSX" invariant breaking, reachable from the ordinary properties panel, not a theoretical edge case. Confirmed the panel's own gate (`propLockReason` in `PropertyControlRenderer.tsx`) has no independent check here — it trusts `codeProps` completely. The one thing that already made TEXT safe from the identical hole is `setJsxText`'s own `assertTextOnlyChildren`, which fails closed on any non-text-leaf shape regardless of what `isPropWritableToSource` says — ordinary props have no equivalent codemod-level guard, which is exactly why this was live, not latent.
+
+**The fix — one catch-all per reader, each gated on `ctx.eval`:**
+
+| Shape | Before | After | Locks node? | codeProps? | origin? | Panel |
+|---|---|---|---|---|---|---|
+| Literal (string/number/bool) | `props` | unchanged | no | no | — | ordinary control |
+| Resolves via §7 (Tier A/B/C) | `props` + `codeProps` | unchanged | no (lock-01) | yes | if a literal was read through | `CodeValueControl` unless origin |
+| Function (`onClick={fn}`) | `codeProps`, no value (pre-existing narrow fix) | unchanged | no | yes | no | `CodeValueControl` |
+| Identifier / member chain the evaluator can't walk (hook state, prop off an undestructured param) | **dropped, no trace** | `codeProps`, no value | no | **yes (new)** | no | `CodeValueControl` |
+| Template literal, unresolvable interpolation — **`className` included** | **dropped, no trace** (canonicalCheck's own doc called this "the one shape `static-class-name` cannot see at all") | `codeProps`, no value | no | **yes (new)** | no | `CodeValueControl`; `static-class-name` (advisory) now fires on it |
+| Ternary/`&&`/`\|\|`/`??`, condition not statically decidable | **dropped, no trace** | `codeProps`, no value | no | **yes (new)** | no | `CodeValueControl` |
+| Call outside Tier C's whitelist | **dropped, no trace** | `codeProps`, no value | no | **yes (new)** | no | `CodeValueControl` |
+| JSX-valued prop on an HTML element (nonsensical but real) | **dropped, no trace** | `codeProps`, no value | no | **yes (new)** | no | `CodeValueControl` |
+| JSX element/fragment value on a COMPONENT prop | materialized as a slot child (WS-3.4, pre-existing) | unchanged — my catch-all explicitly SKIPS this shape to avoid a duplicate `codeProps` entry `captureSlotProps` already adds one level up | slot child is locked (`SLOT_LOCK_REASON`) | yes (via slot capture, unchanged) | no | slot child renders as a real, if locked, node |
+| JSX element reached through an ARRAY/ternary on a component prop (`tabs={[<Tab/>]}`, `icon={cond ? <A/> : <B/>}`) | **dropped, no trace** | `codeProps`, no value (still not materialized — neither `iconPropFromJsx` nor `captureSlotProps` guesses an array index or an undecidable branch) | no | **yes (new)** | no | `CodeValueControl` |
+| `{...spread}` JSX attribute | node structurally locked (`SPREAD_LOCK_REASON`), value genuinely unrepresentable (keys unknown) | **unchanged, deliberately** — structural lock already IS the trace | **yes (unchanged)** | n/a (no name to record) | n/a | `SourceConstraintNotice`'s structural reason |
+| Inline-style property, unresolvable or resolves to a `boolean` (never a usable CSS value) | **dropped, no trace** | `style:<property>` in `codeProps`, no `inlineStyles` entry | no | **yes (new)** | no | style row would need `CodeValueControl` (panel-designer's surface, not built here) |
+| Inline-style SHORTHAND property (`{ color }`) | **silently skipped as if it were a spread** (the `!Node.isPropertyAssignment` filter caught shorthand too) | now resolves through the same identifier path as `{ color: accent }`; unresolvable case gets the trace above | no | conditionally | if resolved through a literal | ordinary control if resolved, else `CodeValueControl` |
+| Spread element INSIDE `style={{...base, color:'red'}}` | **dropped, no trace, no lock either** | **unchanged, deliberately** — genuinely unrepresentable (keys unknown) AND, unlike attribute spread, sets no structural lock (a value-only gap inside one attribute says nothing about the element's own move/delete safety) | no | n/a | n/a | siblings resolve independently |
+| Sole text-child expression, unresolvable (`<span>{value}</span>` off hook state) | **dropped, no trace** — indistinguishable from an element with genuinely no text (`<span className="icon"/>`) | `extractSingleText` returns `hasCodeText: true`, still no `text`; `processElement` folds it into `codeText` (same field a RESOLVED text value already sets) | no | via `codeText` -> studio-sync fold (see gap below) | no | **KNOWN GAP, see below** |
+| Mixed text-and-element children (`<p>Price: {price}<strong>USD</strong> today</p>`) | **dropped, no trace** — only `<strong>USD</strong>` survives | **NOT FIXED** — confirmed by direct repro, documented, out of this change's reach | n/a | n/a | n/a | nothing; see Landmines |
+
+**Decisions, the four questions, per new resolution:**
+1. **Locks?** Never. Every one of these is a VALUE fact, not a structural one — `withResolution`'s rule (structure decided by the JSX shape alone) is untouched. The only lock in this table (`{...spread}`) is pre-existing and structural for an unrelated reason.
+2. **codeProps?** Yes, for every shape with a nameable attribute/property — that is the entire fix. No for the two genuinely-unrepresentable shapes (attribute spread's resulting keys; a spread inside a style object).
+3. **origin?** Never — `origin` is attached only where a LITERAL is read (per the four-question rubric in the parser-surgeon brief); every shape here is either a computation or a read that failed, neither of which has a literal behind it.
+4. **Panel?** `CodeValueControl` for every new `codeProps` entry, generically — no new panel code was needed because `codeProps`/`isPropWritableToSource` is already the single predicate `PropertyControlRenderer` asks. The one exception is the unresolved-text case; see below.
+
+**`checkLiteralProps`/`static-class-name` (canonicalCheck.ts) needed no tier change.** Both are already `tier: 'advisory'` (their own doc explains why: the underlying signal can't tell "resolved from a permitted module-scope const" from "resolved from hook state," so it was never meant to gate `isCanonical`). Widening `codeProps` makes both fire MORE on a real, non-canonical screen — which is correct, that's the rule's job — without ever turning an advisory into a violation. Verified against the committed `__canonical-fixture` corpus: `CanonicalScreen.tsx`'s `literal-props`/`static-class-name` expectations are unchanged (every prop in that fixture already fully resolves; the catch-all only fires on shapes that don't). Also restored a pre-existing `on*`-handler exclusion in `checkLiteralProps` that the mid-session revert below had wiped along with everything else — a handler prop was already being pushed to `codeProps` by the earlier narrow fix, and without the exclusion it would fire `literal-props` on every button in every real screen.
+
+**Known gap, not closed — needs a `studio-sync` change, out of my file scope.** `codeText`'s new UNRESOLVED case (`hasCodeText`, no `text`) is set correctly at the page-parser level, but `parsedPageToSitePage.ts`'s fold into `PageNode.codeProps` (`else if (node.codeText) codeProps.push(textProp)`) only runs inside `if (node.text !== undefined) { ... }` — so with `text` absent, the fold never executes and the trace never reaches `PageNode.codeProps`. **Not a write-safety hole** — `setJsxText`'s `assertTextOnlyChildren` independently fails closed on this shape regardless of what `isPropWritableToSource` says, so no destructive write is reachable — but the panel still shows an empty, apparently-editable text field for it today. The needed change: in `parsedPageToSitePage.ts`, add an `else if (node.codeText) { const textProp = opts.resolveTextProp(moduleId); if (textProp !== null && !codeProps.includes(textProp)) codeProps.push(textProp) }` branch alongside the existing `if (node.text !== undefined)` one. **`studio-scribe`/whoever owns `src/core/studio-sync/` next: this is the top of the queue for this thread.**
+
+**Confirmed, not fixed, out of page-parser's reach — mixed text-and-element children.** `<p>Price: {price}<strong>USD</strong> today</p>` parses to a `<p>` with exactly ONE child (`<strong>USD</strong>`); "Price: ", `{price}`, and " today" vanish completely — no `text`, no `codeText`, no `codeProps`, nothing. Root cause: `extractSingleText` only ever inspects the SOLE child (`children.length !== 1` bails immediately), and `processChildren` walks every OTHER child looking for JSX descendants only — a bare `JsxText` node or a scalar `JsxExpression` with no JSX inside it is invisible to that walk. This is a real, common React pattern (inline-formatted copy) with zero representation today. A genuine fix needs a new "text run" child-node kind with actual canvas rendering support — `resolveModuleId` (`server/handlers/studioPageLoad.ts`) and `NodeRenderer` both live outside `src/core/page-parser`, and this task's brief explicitly reserves canvas injectors for `canvas-engineer`. Documented in `docs/features/studio-import.md`'s "What still does not import" table and demonstrated by direct repro (see this entry's own investigation) rather than attempted half-fixed.
+
+**Also confirmed, same family, smaller and already noted in the doc:** a component prop whose JSX value is reached through a TERNARY (`icon={cond ? <A/> : <B/>}`) is neither materialized by `captureSlotProps` nor resolved by `iconPropFromJsx` — both require the expression to BE the JSX element directly, not to CONTAIN one behind a branch. `selectJsxBranch` already solves exactly this for JSX CHILDREN; extending it to a component PROP's own value is the natural next step but is a second, separate change (touches `slotCapture.ts`, not just `jsxAttributeReaders.ts`) — named, not built.
+
+**Landmines the 578-line doc didn't already say (told `studio-scribe` via this entry — the doc itself is updated in this change too, see Scope):**
+- The mixed-text-and-element-children gap above — genuinely new information, not previously documented anywhere.
+- The ternary-component-prop gap above.
+- The `studio-sync` one-line follow-up above.
+- **This session hit real, repeated data loss from concurrent git operations.** Partway through this task, `HEAD` moved forward out from under me (a parallel agent's commits — `feat(i18n)`, `feat: implement comments feature`, reflog shows `reset: moving to HEAD` entries) and every uncommitted edit I had made was silently wiped, TWICE, mid-session. Confirmed via `git show HEAD:<file> | diff - <file>` showing an exact match to a reverted, pre-edit state. Recovered by re-applying the same edits and immediately re-verifying (`grep` for my own markers) rather than trusting the Edit tool's success return alone. **If you are working in this repo and your own edits vanish mid-task, this is why — it is not you, and re-reading + reapplying is the only recovery.** Also recovered, as a byproduct: `board-23`'s `origin`-on-`Resolution` work (`nodeResolution.ts`) and the `on*`-handler `literal-props` exclusion — both pre-existing, uncommitted, uninvolved with this change — turned out to still be present in the working tree despite the resets and needed no action from me, but were at real risk of the same loss. **Whoever runs `/ship` or a final commit pass on this branch should verify `git status --short` against STATE.md's recent `board-*` entries before assuming the working tree matches what's documented as landed** — right now it plausibly does not match any single commit in history.
+- **Not investigated:** whether `docs/reference/canonical-jsx.md` itself needs an update alongside `canonicalCheck.ts`'s doc-comment changes — `canonicalCheck.test.ts`'s doc-parity gate only checks the ten rules' title/description/tier against that file verbatim, and none of those three fields changed, so the gate stayed green without me touching that file. If a future change to `static-class-name`'s RULE TEXT (not just this doc comment) is made, check that file too.
+
+**Verification:** `bun test src/core/page-parser src/core/ast-codemods src/__tests__/studio` → 613 pass / 0 fail (up from the pre-existing suite by one new file, `codeValueTracing.test.ts`, 15 new tests). `npx tsc -b` clean (one transient, non-reproducing error in `server/handlers/studioCss.ts` observed once mid-session while another agent was actively editing that file concurrently — reran clean twice after). `npx eslint` clean on all four touched `src/core/page-parser` files plus the new test file. Did not run repo-wide `bun run build`/`bun run lint` — out of scope per this task's own VERIFY section, and the repo has extensive unrelated in-flight parallel work (see the git-churn landmine above).
 
 ---
 
@@ -11005,3 +11316,174 @@ Every board from 14 to 20 verified with TARGETED suites (`src/__tests__/{studio,
 **Triage of the remaining 19 failures: not mine, and mostly not real.** All canvas/NodeRenderer/breakpoint/frame-mounting, and they PASS in isolation. Cause: I ran `bun test src/__tests__` directly, without the `--parallel=4` that lives in `package.json`'s `test` script — which `bunfig.toml` documents at length as producing exactly this (a shared module-scoped Zustand store and live observers not torn down per file; measured there as 9621/35 shared vs 9728/8 parallel). **Use `bun run test`, or pass `--parallel=4`; a bare `bun test` over the whole suite reports failures that are an artefact of the runner.** Those files are also the parallel session's active `boardSlice`/`boardSelectors` refactor, which `tsc -b` independently shows mid-flight (`selectActiveBoard` not yet exported).
 
 **Files:** `src/admin/pages/site/sidebars/LeftSidebar/LeftSidebar.tsx`, `src/__tests__/layout/editorLayoutPersistence.test.tsx`.
+
+### board-22 — property-panel affordances, and the padlocks my own extraction created
+- **Agent:** coordinator (direct)
+- **Stage:** three of four built and verified. `tsc -b` clean; full `--parallel=4` suite 6665 pass / 3 fail, the 3 being the parallel session's canvas files (stable across runs, unrelated to these files). The fourth is diagnosed with a confirmed root cause and NOT built.
+- **Updated:** 2026-08-31
+
+**1. Removed "— no content in this slot".** The Add button already is the empty state; a sentence restating it is noise in a narrow panel.
+
+**2. Enum props that rendered as text boxes.** Measured rather than guessed: exactly THREE props in the whole 317-prop manifest are enum-shaped with no options, and all three are on the component in the user's screenshot (`MarketingCard.buttonSize`, `buttonVariant`, `imageSize`). Every documented pipe-list is already parsed correctly — verified by re-scanning the package's `CLAUDE.md` for `// a | b | c` comments the manifest had missed: **zero**. So the gap is props the docs describe WITHOUT listing options, and there are two such shapes, both now recovered from the package's own artefacts:
+
+- **Forwarded** (`buttonVariant="primary" // forwarded to the inner Button`) — the options are documented once, on the component that owns them. `inheritForwardedEnums` links them by name (`<component><Prop>`), and fires only when the owning component exists, the target prop exists, AND it already has a documented enum: three confirmations from the package's docs, not an inference about what a name might mean.
+- **Templated class** (`imageSize="small" // (marketing-card--img-{size})`) — the comment names the options exactly, it just does not list them. `inheritTemplatedClassEnums` reads the actual `marketing-card--img-*` classes out of the shipped stylesheet. Not a guess: a value with no rule behind it does nothing and a rule with no value is unreachable, so the class list IS the option list.
+
+**3. `src` props now take uploads.** A new `PropSpecKind: 'image'` routes them to the existing image control, which has an upload affordance and still accepts a URL — a strict superset of the text box. Matched by name SUFFIX; an earlier "anywhere in the name" version classified `AdBanner.imageActionLabel` (a label) as an image. Audited the final list: 8 props, all genuine.
+
+**4. NOT BUILT — the padlocks, and they are mine.** Confirmed by parsing the real `Home.tsx`: `MarketingCard.codeProps = ["title","subtitle","actionLabel"]` — exactly the three padlocked rows in the user's screenshot, and exactly the three `board-16` extracted. `title={t.home.skipTheTaxiQueue}` is a JSX *expression*, so the parser marks it unwritable at the call site and `propLockReason` locks the row. **The i18n feature made the copy it moved uneditable from the properties panel.**
+
+That lock is correct for a general expression and WRONG for a dictionary lookup: the value is editable, just in the dictionary rather than at the call site. The fix is write-through — the parser records which key backs the value, and the row edits that key via `writeTranslationEntry` (the same path the Content panel uses), rather than refusing. Deliberately not rushed in at the end of a long turn: it adds a write path into the user's dictionary from a second surface, and it needs the parser change, the panel change, and its own gate. **This is the top of the next queue.**
+
+**Files:** `src/admin/pages/site/property-controls/SlotControl.tsx`, `src/core/design-system-manifest/buildDesignSystemManifest.ts`, `src/core/component-manifest/types.ts`, `src/modules/alm/register.tsx`, `src/modules/alm/manifest.generated.json`, test `src/__tests__/property-controls/SlotControl.test.tsx`.
+
+### board-23 — the padlocks, lifted at the honest target
+- **Agent:** coordinator (direct)
+- **Stage:** built and tested. `tsc -b` and `eslint` clean; full `--parallel=4` over `src/__tests__ src/admin src/core` = 7885 pass / 2 fail, both the parallel session's canvas files (identical across every run this session).
+- **Updated:** 2026-08-31
+
+`board-22` diagnosed this and deferred it. Built now.
+
+**The machinery already existed and was one field short.** `ValueOrigin`'s own doc has described this exact case since parser-05 — *"`{c.hotelsTag}` cannot be written back at the JSX (that would replace the i18n binding with a baked string), but the value it resolves to IS a plain string literal one hop away … and THAT can be rewritten in place"* — and `PageNode.textOrigin` + the `kind: 'literal'` edit already implement it for a node's TEXT. What was missing was the same thing per PROP.
+
+`ParsedNode.resolvedProps` was already per-prop (`{source, note}`); it now also carries `origin`. That placement matters: `textOrigin`'s doc explains it was deliberately scoped to one value because `resolution` (singular) keeps only the first, so an origin hung there could point at a DIFFERENT prop's literal. **That objection does not apply to a map that is already keyed by prop** — each origin belongs to exactly the prop it is filed under.
+
+Verified against the real project: `MarketingCard`'s `title`/`subtitle`/`actionLabel` now carry `origin: { rel: 'i18n/translations.ts', line: 21|22|23 }` — the exact literals.
+
+**Both halves, because one without the other is destructive.** `isPropWritableToSource` unlocks a `codeProps` entry that has an origin — and `fsCodemodAdapter.saveSite` gained a branch, BEFORE the ordinary prop write, that emits `kind: 'literal'` at that origin. If that branch is ever removed the predicate starts authorising exactly the write it exists to prevent (baking `title="…"` over `title={t.home.…}`, during an autosave nobody asked for). `originBackedPropWriteback.test.ts` asserts the negative — *no* `kind: 'prop'` edit — rather than just asserting the literal edit happened.
+
+**Two deliberate limits, one found by a gate.** `codeProps.test.ts` asserted `style={{ color: ACCENT }}` stays locked, and it was right to: a style entry resolves through a module-scope const far more often than a per-element string, and repainting every element reading `ACCENT` because someone touched one colour picker is not what they asked for. So `style:*` keeps the strict rule. The other limit is inherent and is documented rather than fixed: **a shared literal is edited everywhere it is used.** For a dictionary that is what the user means. **The panel should say where the edit lands instead of pretending it is local — that affordance is not built.** Next.
+
+The prop-position half of that gate DID move with the rule (`title={copy.hotelsTag}` is now writable), and the test now pins the new fact plus the old one it was really protecting: one resolved attribute must not take its siblings with it.
+
+**Also:** `fsCodemodAdapter.ts` crossed the 700-line ceiling, so `StudioEditPayload` — the browser/server wire-shape mirror, genuinely its own reason to change — moved to `studioEditPayload.ts` (679 lines now). Extracted, not comment-trimmed.
+
+**Files:** `src/core/page-parser/{nodeResolution,jsxAttributeReaders,types}.ts`, `src/core/page-tree/{sourceWritability,pageNode,editConstraint}.ts`, `src/admin/pages/site/studio/{fsCodemodAdapter,studioEditPayload}.ts`, tests `src/__tests__/core/originBackedProps.test.ts` + `src/admin/pages/site/studio/__tests__/originBackedPropWriteback.test.ts` + `src/core/studio-sync/__tests__/codeProps.test.ts`.
+
+### board-24 — pages come in four shapes now, and the first version of them was styled with CSS Studio cannot parse
+- **Agent:** coordinator (direct)
+- **Stage:** built, tested, and dogfooded in a browser. `tsc -p tsconfig.node.json` and `eslint` clean; 141 tests green across the four affected files; the four kinds verified end to end through the real HTTP route AND on a real board.
+- **Updated:** 2026-08-31
+
+Ask: *"I want to add different types of pages/frames — popup, bottom sheet small, bottom sheet big"*, pointed at `maherfayad-stack/travel-essentials` and the `almosafer-prototype` skill as the source of truth.
+
+**Shipped:** `PageKind` (`@core/studio-board/pageKinds.ts`) = `screen | popup | sheet-small | sheet-large`, a kind menu on `NewPageButton`, `kind` on `POST /admin/api/studio/page` and on the `studio_create_page` MCP tool, and a template per kind in `server/handlers/studio/pageTemplates.ts`.
+
+**A kind is a creation-time choice, never persisted state.** It picks the starter files and the auto-name base and is then gone. A `kind` in `.studio/meta.json` would be a second source of truth that drifts the moment someone edits the file — the exact failure "the repository is the document" exists to prevent. No migration, no schema change, nothing downstream to teach.
+
+**Every kind gets a screen-sized frame.** Both sources draw an overlay over its host at full phone size — the skill's canvas doc says "a sheet floating on nothing is not what the design shows", and `travel-essentials`' `canvasFrames.jsx` renders every sheet frame as `<HostScreen/> + <Sheet open/>`. The scrim above the panel is not padding; it is how much screen the sheet leaves showing, which is the whole difference between the small sheet and the big one.
+
+---
+
+### The two traps this work walked into. Both were invisible to every gate.
+
+**1. Studio's CSSOM silently drops modern colour syntax.** The first version of these templates used `Canvas`/`CanvasText` (CSS system colours) and `rgb(0 0 0 / 0.2)` because they follow light/dark with no project setup. Every one of those declarations was **dropped without a warning anywhere** — the sheets rendered with no panel background, no scrim and no grabber, and the user's screenshot was the first anyone knew. Measured against the real pipeline (`loadStudioPages` → `styleRules`):
+
+| Written in a project's CSS | Survives? |
+|---|---|
+| `Canvas` / `CanvasText` | **no — takes the whole rule with it** |
+| `rgb(0 0 0 / 0.2)` (space + slash-alpha) | **no** |
+| `color-mix(in srgb, …)` | **no** |
+| `rgba(0, 0, 0, 0.2)`, `#fff`, `#0003`, `white` | yes |
+| `var(--x)`, a `--x:` declaration, `@media (prefers-color-scheme: dark)` | yes |
+
+This is **not** specific to these templates — it applies to any user project's CSS. `vendorCss` (121 KB for the ALM package) bypasses the CSSOM entirely as raw text, which is why installed design systems render correctly and hand-written CSS quietly loses declarations. `pageTemplates.test.ts` now gates the three banned forms; the module doc carries the table.
+
+**2. The scroll-unroll pass flattens every authored `min-height`, not just the ones it means to.** `canvasScrollUnroll.ts`'s `buildScrollUnrollRules()` injects into every canvas frame:
+
+```css
+*, *::before, *::after { overflow: visible !important; min-height: auto !important; }
+```
+
+Its own comment says the `min-height` half exists to override "an authored `min-height: 0` on a `flex: 1` scroll region". But written on `*` it also destroys a **designed floor**. Measured live in the board: the design system's `.bottom-sheet--small .bottom-sheet__panel { min-height: 200px; max-height: 50vh }` renders with `min-height: auto` and a 64px panel — `max-height` from that same rule survives at 500px, so the rule matched; only the floor was clobbered. Every bottom sheet in every project is affected, including the eSIM corpus, not just a scaffolded one.
+
+**Fixed, and deliberately in the least invasive shape available.** The obvious fix — drop `min-height` from the blanket `*` rule and tag only the zeros — would have changed WHEN the reset applies (blanket CSS is immediate; a tag lands a frame later, and the frame-fit observer does not watch attributes), which is a real ordering risk in the most scarred mechanism in the canvas. So the blanket rule is **untouched** and the floor is handed back per element instead:
+
+- `snapshotOriginalOverflow` already recovers the author's true computed value by disabling this injector's own stylesheet for one synchronous, paint-free read. It is now `snapshotAuthoredStyles` and records `min-height` in the same pass.
+- `authoredMinHeightFloor(computed)` (pure, in `canvasScrollUnroll.ts`) keeps a POSITIVE floor and returns `null` for `auto`/`0` — exactly the two values the blanket reset exists for, so their behaviour is bit-for-bit unchanged.
+- A positive floor is written to `--studio-unroll-authored-min-height` inline plus a `data-studio-unroll-floor` marker; a new rule gives it back. Placed BEFORE the `explicit-height` rule so that rule still wins on an element carrying both (its floor is the true content extent, the stronger claim) — equal specificity and both `!important`, so source order is the whole tie-break, and there is a test pinning it.
+- The marker and its value are recorded once and NOT cleared by `clearUnrollTags`: they record what the AUTHOR wrote, not what a pass decided — the same contract `SCROLL_UNROLL_ORIGINAL_OVERFLOW_ATTR` has.
+
+Net effect: elements with `min-height: 0`/`auto` behave exactly as before; only a designed floor changes, and only by being restored.
+
+**Measured on a real board, before and after:** small sheet panel `min-height: auto` / 64px → `200px` / 200px; big sheet → `400px` / 400px.
+
+**Testing note worth keeping:** the floor pass CANNOT be tested at the DOM level under happy-dom — it reports `styleSheet.disabled === true` while still applying that sheet's rules to `getComputedStyle`, so the "read the author's value with our sheet off" trick is a no-op there and a DOM test would pass because the marker is never written. That is why neither this nor the pre-existing `overflow-y` snapshot has a DOM test. The decision is covered exhaustively as a pure function, the stylesheet rule and its ordering are asserted, and the end-to-end behaviour was verified in a browser.
+
+---
+
+**Two kits, because a hand-rolled sheet is never as good as the real one.** `detectPageTemplateKit` reads the project's own `package.json`: with `@alm-design/design-system` installed, overlays scaffold the real `BottomSheet`/`Dialog` — verified to resolve to `alm.BottomSheet` / `alm.Dialog` with all-literal, panel-editable props (`open: true, platform: "ios", size: "small", title: …`). `register.tsx` is explicit that those components are hidden from the INSERT palette only and that "being awkward to insert by hand is not a reason to refuse to render existing usage" — a scaffolded page IS existing usage. Everything else gets the plain kit. Same posture as `detectPageFileExtension`: continue the project's convention, don't impose one.
+
+Notes on the alm kit: `open` must be present (`.bottom-sheet` is `opacity: 0` until `.bottom-sheet--open`, so a sheet without it renders **invisible**); `Dialog` has no `open` at all; `size` maps big → `medium`, not `fullscreen`, which is a different object. `Dialog`'s `primaryAction`/`secondaryAction` are `{label, onClick}` objects, so those two props are code-valued and not panel-editable — accepted, because a popup with no buttons is not a popup and `title`/`description` stay literal.
+
+**Canonical by construction, all four kinds, both kits** — 0 `checkCanonicalJsx` violations, not just the screen the old gate covered.
+
+**Refactors done in passing:** `starterPage` left `studioProjects.ts` (a module about project *paths*, already 452 lines) for `studio/pageTemplates.ts`; `nextPageName` gained a `base` so an unnamed sheet lands as `Sheet`/`Sheet2`; `ALM_DESIGN_PACKAGE_SPECIFIER` moved from `studioPageLoad.ts` into `designSystemDetect.ts` — the module named for that question — so the two server callers share one copy (the browser copy in `register.tsx` stays; client and server may not import each other).
+
+**Process note:** I ran a bare `git stash` mid-session to check whether a failure was pre-existing. It swept up this work AND a parallel session's uncommitted comments feature. Recovered in full with `git stash pop`, nothing lost — but with another session live in this tree, triage by file ownership (`git status -s` on the specific files), never by stashing.
+
+**Pre-existing flake found while triaging this, worth knowing before anyone blames a canvas change for it:** `canvasScrollUnrollPinInteraction.test.tsx`'s two MutationObserver-driven tests are unreliable on `main` as it stands — "a mutation that triggers unroll tagging does not collapse the body pin" fails 4/4 runs, and "…explicit-height tagging…" fails ~2/4. Measured by reverting only the two unroll source files (they carry no other session's edits) and re-running: baseline and this change fail identically, so neither is caused by the floor fix. Triage them as timing, not behaviour.
+
+**Still open (not mine to fix here):** the canvas pins every document to `CANVAS_VIEWPORT_HEIGHT = 800`, but the mobile platform preset's frame is 852 tall, so an overlay anchored to `body` stops ~52px short of the frame's bottom edge — visible as a white band under the scrim on every overlay frame.
+
+**Files:** new `src/core/studio-board/pageKinds.ts`, `server/handlers/studio/pageTemplates.ts`, `src/admin/pages/site/canvas/BoardFramesLayer/NewPageButton.module.css`; changed `src/admin/pages/site/canvas/{canvasScrollUnroll.ts,CanvasScrollUnrollInjector.tsx}` (+ their two test files), `server/handlers/studio/{pageScaffold,projectRoutes,designSystemDetect}.ts`, `server/handlers/{studioProjects,studioPageLoad}.ts`, `server/ai/mcp/tools/studio/projectTools.ts`, `src/admin/pages/site/studio/studioSaveRequests.ts`, `NewPageButton.tsx`, `src/core/studio-board/index.ts`; tests `server/handlers/studio/__tests__/pageTemplates.test.ts`, `src/core/studio-board/__tests__/pageKinds.test.ts`, `pageScaffold.test.ts`; docs `PROJECT-BRIEF.md`, `docs/agent-refs/path-index.md`.
+
+### board-25 — the sheets had no close button and no content, and both were Studio dropping things on the floor
+- **Agent:** coordinator (direct)
+- **Stage:** built, tested, dogfooded. `tsc -b` and `eslint` clean; 9827 pass, 2 unique failures both proven pre-existing.
+- **Updated:** 2026-08-31
+
+Follow-up to `board-24`. Ask: *"still where is the close button in the sheets, and the big sheet should be full screen basically"*. Three defects under those two sentences, and two of them were Studio silently discarding what the source said.
+
+**1. `canHaveChildren: false` on every ALM component, so a sheet could hold nothing.** `<BottomSheet><p>…</p></BottomSheet>` parsed into a real child node, listed it in the layer tree, and rendered an EMPTY `.bottom-sheet__content` — content not lost, just invisible, which is the worst of both. Two separate causes: `makeComponent` never forwarded `children` to the design-system component at all (the generic `pkg.*` path in `registerProjectModules.ts` already did — the hardcoded `alm.*` path was the odd one out), and every module declared `canHaveChildren: false`. Children are now forwarded unconditionally (a component that takes its text through `label` ignores them, exactly as in the user's own source), and `canHaveChildren` is driven by `CHILD_ACCEPTING_COMPONENTS` — `BottomSheet`/`Dialog`/`ActionSheet`, the package's own overlay shells. **Do not flip it on wholesale:** `Button`/`Tag`/`Chip` explicitly do not render children, so allowing a drop into one would silently swallow the dropped node.
+
+**2. A handler prop vanished without trace, taking a visible affordance with it.** The package draws a sheet's leading glass ✕ only when given `onClose` (its own docs: "renders the leading close button when provided"). `extractProps` pushes to `codeProps` **only when `tryResolveExpression` succeeds** — a function resolves to nothing, so `onClose={() => {}}` was dropped entirely: no prop, no `codeProps` entry, no record anywhere. The affordance disappeared from a design that plainly has one.
+
+Fixed along the whole path, narrowly:
+- `jsxAttributeReaders.ts` records an arrow-function/function-expression prop in `codeProps` (no value — there isn't one). **Deliberately narrow:** it does NOT record every unresolvable expression; a dynamic `className` interpolation still vanishes, exactly as `canonicalCheck.ts`'s own doc describes. A function is the one shape whose absence of a value is total and expected rather than a failed evaluation.
+- `canonicalCheck.ts`'s `literal-props` now ignores `on*` props alongside `className`/`svg`. A handler can never BE a literal, so flagging one says nothing about canonicality and would fire on every button in every real screen.
+- `ModuleComponentProps` gained `codeProps`, passed by `NodeRenderer` from the node.
+- `register.tsx` stands in a no-op for each manifest `kind: 'handler'` prop that appears in `codeProps`. **Conditional on that, never blanket** — defaulting every handler on would draw a trailing action button on every sheet ever scaffolded, inventing an affordance the design does not have.
+
+**3. "Big" was the wrong object.** `sheet-large` scaffolded `size="medium"` — a tall floating card. The package's `fullscreen` is what "basically full screen" means: the panel starts below a 54px strip of the presenting screen (`--bottom-sheet-top-inset`), runs to the bottom edge, top corners only. The plain kit's big sheet got the same geometry, and both plain sheets gained a leading close button (the alm kit gets it from `onClose`; the plain kit has to draw it).
+
+**Measured on a real board:** small sheet 200px with a `glass-btn--type-x` in the toolbar's leading slot and its body text rendering; big sheet 746px (800 − 54) with the same.
+
+**Also:** adding one line to `NodeRenderer.tsx` pushed it from 700 to 701 lines, over the ceiling. Extracted `canvasEventTargets.ts` — the eight DOM target-classification predicates, a genuinely separate reason to change (whose event is this: the editor's or the authored page's). The one impure piece, the `latestSuppressedPointerTarget` latch, stayed behind because only this component's handlers write it.
+
+**Files:** `src/modules/alm/register.tsx`, `src/core/module-engine/types.ts`, `src/admin/pages/site/canvas/NodeRenderer.tsx` + new `canvasEventTargets.ts`, `src/core/page-parser/{jsxAttributeReaders,canonicalCheck}.ts`, `server/handlers/studio/pageTemplates.ts`, test `server/handlers/studio/__tests__/pageTemplates.test.ts`.
+
+### board-26 — a 16px spacing floor in the starter every later screen is copied from
+- **Agent:** coordinator (direct)
+- **Stage:** built, gated, measured in a browser. `tsc -b` and `eslint` clean over the two touched files; `pageTemplates.test.ts` 45 pass.
+- **Updated:** 2026-08-31
+
+Ask: *"also make the smallest margin/padding in it to be 16px"*. Applied to `pageTemplates.ts`, which is the only place in this workstream that authors spacing at all — the `alm` kit writes no CSS by design (the package draws its overlays), so the floor lands entirely on the `plain` kit.
+
+**What moved.** `.dialog` gap `0.625rem`→`1rem` and padding `0.875rem`→`1rem`; `.actions` gap `0.625rem`→`1rem`; `.copy` gap `0.625rem`→`1rem` and its `0.5rem 0.5rem 1.5rem` padding **deleted** rather than raised — the dialog's own `1rem` is already the floor, and two 16px insets stacked inside a 300px-wide alert leave a column of text too narrow to read; `.sheet` float inset `0 6px 6px`→`0 1rem 1rem`; `.grabber` `5px auto 0`→`1rem auto 0`. Zero stays zero everywhere (`.content`'s `padding: 0 1rem 1.5rem`, `.close`'s `padding: 0`, every `margin: 0` reset) — a reset is the absence of spacing, not a small amount of it.
+
+**Sizes are not spacing and were left alone**: the 36×5 grabber, the 44px toolbar, the 28px close button, the 300px dialog, the 34px radius, the 54px top inset. Those are quoted design-system geometry, not a scale anyone is meant to continue.
+
+**Why a floor at all, given the design system floats its small sheet on 6px and is right to.** This file is the most copied code in any Studio project — an agent asked for a new screen reads an existing page and continues whatever scale it finds (`board-24` recorded a generated screen coming back with `width: 375px` hardcoded for exactly this reason). A starter carrying 5px, 8px and 10px next to 16px and 24px teaches a scale with no floor. The floor is a rule about what gets copied, not a claim that 6px is wrong in a shipped sheet.
+
+**Gated:** `pageTemplates.test.ts` → *"never ships a margin, padding or gap smaller than 16px"* walks every plain kind's CSS, strips comments first (they quote the very numbers the rule rules out — the same trap the colour gate hit in `board-24`), and fails on any non-zero `margin*`/`padding*`/`gap` under 16px, naming the offending declaration. Verified it fails by reverting `.grabber` to `5px` — reported `sheet-small: margin: 5px`.
+
+**Measured** by rendering each plain template standalone at 393×800 in headless Chromium: popup 300×264 with every internal gap exactly 16 and a 16px inset all round; small sheet 361×200 floated 16/16/16 with the close button 28×28 at a 16px lead; big sheet 393×746 flush to three edges, grabber 16px down.
+
+**Trap for the next person, cost me a wrong measurement:** converting these templates' JSX to standalone HTML by regex, `<div className={styles.grabber} />` is self-closing in JSX but **not** in HTML — the browser nests everything after it inside the grabber, and the header then measures 36px wide. If a measurement looks impossible, check the scaffolded markup before suspecting the CSS.
+
+**Correction, same session — the floor was invisible on the user's own board.** Their reply was a screenshot of three alm-kit frames and *"I don't see that"*, and they were right: `untitled-2` depends on the design system, so all of the above touched nothing they could see. The real defect was in the alm kit, which I had documented as needing no CSS at all.
+
+`.bottom-sheet__content` is `flex: 1; min-height: 0; overflow-y: auto` and **no padding** — by design. The package's own reference is `<BottomSheet …>{/* sheet content */}</BottomSheet>`: the content slot belongs to the consumer, so padding it is the consumer's job. The scaffold's bare `<p>` therefore rendered flush against the panel edge. The alm sheet template now wraps its blurb in `<div className={styles.content}>` with a two-rule module: `padding: var(--space)` (**the package's own 16px base step on `:root`** — follows the package instead of pinning a copy of today's value) and `.blurb { margin: 0 }` (the browser's default `1em` block margin would otherwise stack on the padding and put the first line 32px down).
+
+**The wrapper, not the paragraph.** Padding the `<p>` alone would be one line shorter and teach "pad each text node" — anything added beside it lands flush to the edge.
+
+**Not extended to the package's internals.** The alm `Dialog` puts an 8px `--space-sm` gap between its two buttons. A scaffold reaching in to override that would be a starter fighting the design system it exists to demonstrate. The floor covers what these templates AUTHOR.
+
+**Bug this uncovered:** `starterPage` prepended the stylesheet import blindly, which was invisible while no template had an import of its own. The alm sheet has one, so the output was the local CSS import ABOVE the package import with a blank line wedged between — the first thing anyone would copy. `withStylesImport` now splices it at the end of the import block. Gated.
+
+`untitled-2`'s `Sheet.tsx` and `Sheet2.tsx` were regenerated (both were byte-for-byte unedited scaffold output; `Popup.tsx` is unaffected). **Measured on the real board at :5173:** both sheets' content `padding: 16px`, text 16px from the left and top edge of the content slot, `p` margin 0.
+
+**The 16px gate now runs over both kits.** Note its one blind spot, stated in the test: a `var(--…)` value carries no length to read, so `padding: var(--space)` passes unchecked. The gate's job is catching a literal below the floor, which is the only way one gets written by hand.
+
+**Files:** `server/handlers/studio/pageTemplates.ts`, `server/handlers/studio/__tests__/pageTemplates.test.ts`, regenerated `studio-workspace/untitled-2/pages/{Sheet,Sheet2}.{tsx,module.css}`.

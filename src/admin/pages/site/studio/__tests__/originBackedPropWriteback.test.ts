@@ -32,6 +32,7 @@ function stubFetch(saveCalls: Array<{ body: unknown }>) {
         styleRuleSources: {},
         conditions: [],
         vendorCss: '',
+        authoredCss: '',
         trust: 'static',
         paletteHiddenModuleIds: [],
         pageCount: 0,

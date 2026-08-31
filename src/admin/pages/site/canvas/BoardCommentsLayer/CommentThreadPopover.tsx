@@ -94,10 +94,18 @@ export function CommentThreadPopover({ thread }: CommentThreadPopoverProps) {
       role="dialog"
       aria-label={`Comment ${thread.seq}`}
       data-testid={`comment-thread-${thread.seq}`}
-      // Every pointer event inside the thread is for the thread. Without this
-      // the canvas beneath treats a click on the reply box as "deselect and
-      // maybe place a new pin".
-      onPointerDown={(event) => event.stopPropagation()}
+      // NO `onPointerDown` stopPropagation here, and that is load-bearing.
+      // The canvas root binds `@use-gesture`'s drag for the space+primary and
+      // middle-button pan, with `filterTaps: true` — which suppresses the
+      // click that follows anything it classified as a drag. Swallowing
+      // `pointerdown` means use-gesture never sees the press, so its tap state
+      // stays stale from the last real drag and it stops EVERY later click
+      // inside the canvas during React's dispatch. That is not theoretical: it
+      // shipped, and it made Reply, Resolve, Cancel and the kebab completely
+      // dead to a real mouse while still working for a synthetic `.click()`.
+      // Nothing needed the swallow — `handleCanvasClick` already ignores
+      // anything that is not the canvas root or transform layer, and
+      // `useMarqueeSelection` already ignores any target but the canvas root.
       onClick={(event) => event.stopPropagation()}
     >
       <header className={styles.header}>

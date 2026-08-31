@@ -11,6 +11,7 @@
  * (`'@alm-design/design-system'`) that a consumer would actually import
  * from — not a filesystem path.
  */
+import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -132,6 +133,30 @@ function classifyPropValue(propName: string, rawValue: string): PropSpecKind | u
 /** A prop whose node value is an ICON rather than arbitrary content — it gets the icon picker instead of a generic slot row. */
 const ICON_PROP_NAME_RE = /(^|[a-z])icon([A-Z0-9]|$)/i
 
+/**
+ * A string prop naming an IMAGE the user supplies: `imageSrc`,
+ * `partnerLogoSrc`, `cardArt`, `avatarUrl`.
+ *
+ * These are documented as plain strings (`imageSrc="/transfer.jpg"`), so the
+ * value-form pass classifies them `'string'` and the panel renders a text box
+ * — asking a designer to type a path to a file they have not uploaded
+ * anywhere. The image control has an upload affordance AND still accepts a
+ * URL, so it is a strict superset of what the text box could do.
+ *
+ * Matched on the name because that is the only signal the docs carry: a URL
+ * and a label are the same shape. The image word must END the name — an
+ * earlier version matched it anywhere and classified `imageActionLabel` (a
+ * LABEL) as an image. `iconSrc` is deliberately excluded: an icon prop
+ * already has its own richer picker.
+ */
+const IMAGE_PROP_NAME_RE = /(src|image|logo|photo|avatar|thumbnail|poster|banner|art)$/i
+
+/** Whether `propName` names an image source — see {@link IMAGE_PROP_NAME_RE}. */
+function isImageProp(propName: string): boolean {
+  if (ICON_PROP_NAME_RE.test(propName)) return false
+  return IMAGE_PROP_NAME_RE.test(propName)
+}
+
 /** Prop name -> raw documented value, from the first fenced JSX block. Same block `parseEnumValues` reads. */
 function parsePropValues(doc: string | null): Map<string, string> {
   const values = new Map<string, string>()
@@ -178,10 +203,90 @@ function buildProps(name: string, catalog: DesignSystemCatalog): PropSpec[] {
     // An enum beats the value form: `bg="default" // default | primary | dim`
     // reads as a plain string by shape, and the comment is what says it is a
     // closed set. Everything else takes the form's answer.
-    const kind = values ? 'enum' : classifyPropValue(propName, propValues.get(propName) ?? '')
+    let kind = values ? 'enum' : classifyPropValue(propName, propValues.get(propName) ?? '')
+    // A documented string that names an image is an image, not free text.
+    if (kind === 'string' && isImageProp(propName)) kind = 'image'
     if (kind) spec.kind = kind
     return spec
   })
+}
+
+/**
+ * Fills in `enumValues` for a prop the docs describe only by where it GOES:
+ * `buttonVariant="primary"  // forwarded to the inner Button`.
+ *
+ * The options for such a prop are documented once, on the component that
+ * actually owns it, and the forwarding site gets a prose comment with no pipe
+ * list — so the value-form pass reads a plain string and the panel renders a
+ * text box you have to know the vocabulary to fill in. The NAME is the link:
+ * `<component><Prop>` in camelCase, where `<component>` is a real component in
+ * this same manifest and `<Prop>` is one of its documented enum props.
+ *
+ * Deliberately narrow. It fires only when the owning component exists, the
+ * target prop exists on it, and that prop already has a documented enum —
+ * three independent confirmations from the package's own docs, not an
+ * inference about what a name might mean. A prop that matches the shape but
+ * fails any of them keeps its text box.
+ */
+function inheritForwardedEnums(components: ComponentSpec[]): void {
+  const byLowerName = new Map(components.map((component) => [component.name.toLowerCase(), component]))
+
+  for (const component of components) {
+    for (const prop of component.props) {
+      if (prop.enumValues) continue
+      const parts = /^([a-z]+)([A-Z]\w*)$/.exec(prop.name)
+      if (!parts) continue
+      const owner = byLowerName.get(parts[1]!)
+      if (!owner || owner === component) continue
+      const targetName = parts[2]!.charAt(0).toLowerCase() + parts[2]!.slice(1)
+      const target = owner.props.find((candidate) => candidate.name === targetName)
+      if (!target?.enumValues) continue
+      prop.enumValues = [...target.enumValues]
+      prop.kind = 'enum'
+    }
+  }
+}
+
+/**
+ * Fills in `enumValues` from the package's own STYLESHEET, for a prop the docs
+ * describe by the class it produces: `imageSize="small" // sizes the image
+ * section (marketing-card--img-{size})`.
+ *
+ * That comment names the options exactly — they are whichever
+ * `marketing-card--img-*` classes the shipped CSS defines — it just does not
+ * list them. Reading them out of the stylesheet is a lookup in the package's
+ * own build output, not a guess: a value with no rule behind it does nothing,
+ * and a rule with no value is unreachable, so the class list IS the option
+ * list.
+ */
+function inheritTemplatedClassEnums(components: ComponentSpec[], css: string, docFor: (name: string) => string | null): void {
+  for (const component of components) {
+    const doc = docFor(component.name)
+    if (!doc) continue
+    for (const prop of component.props) {
+      if (prop.enumValues) continue
+      // `imageSize="small" // … (marketing-card--img-{size})`
+      const line = new RegExp(`^\\s*${prop.name}\\s*=.*\\(([a-z-]+--[a-z-]*)\\{\\w+\\}\\)`, 'm').exec(doc)
+      if (!line) continue
+      const prefix = line[1]!
+      const found = new Set<string>()
+      for (const match of css.matchAll(new RegExp(`\\.${prefix}([a-z0-9]+)(?![a-z0-9-])`, 'g'))) {
+        found.add(match[1]!)
+      }
+      if (found.size < 2) continue
+      prop.enumValues = [...found].sort()
+      prop.kind = 'enum'
+    }
+  }
+}
+
+/** The package's shipped stylesheet, or `''` when it has none — a missing stylesheet costs the templated-class pass, nothing else. */
+function readPackageCss(pkgRoot: string): string {
+  try {
+    return readFileSync(join(pkgRoot, 'dist/index.css'), 'utf8')
+  } catch {
+    return ''
+  }
 }
 
 export async function buildDesignSystemManifest(): Promise<ComponentManifest> {
@@ -196,6 +301,18 @@ export async function buildDesignSystemManifest(): Promise<ComponentManifest> {
     isDefaultExport: false,
     props: buildProps(name, catalog),
   }))
+
+  // Two recovery passes for props the docs describe without listing their
+  // options. Both run AFTER every component is built, because both need to
+  // read something outside the prop's own documentation line.
+  inheritForwardedEnums(components)
+  inheritTemplatedClassEnums(components, readPackageCss(pkgRoot), (name) => {
+    try {
+      return catalog.apiDoc(name)
+    } catch {
+      return null
+    }
+  })
 
   return { components }
 }

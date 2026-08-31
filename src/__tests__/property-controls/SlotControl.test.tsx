@@ -90,10 +90,14 @@ describe('SlotControl', () => {
     expect(useEditorStore.getState().selectedNodeId).toBe(nodeId)
   })
 
-  it('shows an empty state (not a broken button) for a non-sentinel value', () => {
+  it('offers Add and nothing else for a non-sentinel value', () => {
     render(<SlotControl propKey="icon" value={undefined} label="Icon" onChange={() => {}} />)
-    expect(screen.getByTestId('slot-control-icon-empty').textContent).toContain('no content in this slot')
+    // No "Edit contents" and no "Replace" — there is nothing to edit or
+    // replace. The Add button is the empty state; a sentence saying the slot
+    // is empty only repeats what the absent buttons already say.
     expect(screen.queryByTestId('slot-control-icon')).toBeNull()
+    expect(screen.queryByTestId('slot-control-icon-replace')).toBeNull()
+    expect(screen.getByTestId('slot-control-icon-add')).toBeTruthy()
   })
 
   it('disables Add when there is no owner node to resolve', () => {

@@ -36,6 +36,11 @@
 export interface SourceWritableNode {
   lockReason?: string
   codeProps?: string[]
+  /**
+   * Per-prop resolution, read for one thing only: an `origin`, which LIFTS the
+   * `codeProps` refusal for that prop. See {@link isPropWritableToSource}.
+   */
+  resolvedProps?: Record<string, { origin?: { rel: string; line: number; col: number } }>
 }
 
 /** The `codeProps` entry naming an inline-style property. */
@@ -52,10 +57,52 @@ function isSourceBackedNode(node: SourceWritableNode): boolean {
   return node.lockReason !== undefined || node.codeProps !== undefined
 }
 
-/** True when `prop`'s value can be written back to source. */
+/**
+ * True when `prop`'s value can be written back to source.
+ *
+ * A `codeProps` entry means the JSX attribute is an EXPRESSION, so the call
+ * site is not a writeback target — baking a literal over `title={t.home.x}`
+ * would destroy the binding. That is the whole rule, and for most expressions
+ * it is the end of it.
+ *
+ * The exception is an expression the evaluator followed all the way down to a
+ * single string literal inside the workspace, which it records as
+ * `resolvedProps[prop].origin`. Then there IS an honest target — not the JSX,
+ * but the literal one hop away — and refusing the edit is wrong: it tells a
+ * user that copy they can see on the canvas is uneditable when the string
+ * behind it is an ordinary source string. `PageNode.textOrigin` has made
+ * exactly this trade for a node's TEXT since parser-05; this is the same trade
+ * per prop, which is what an i18n'd design-system component needs (`title`,
+ * `subtitle` and `actionLabel` are all expressions on one `<MarketingCard>`).
+ *
+ * The write path must honour the distinction — `fsCodemodAdapter.saveSite`
+ * emits a `kind: 'literal'` edit aimed at the origin for these, never a
+ * `kind: 'prop'` at the call site. If that branch is ever removed, this
+ * predicate starts authorising exactly the destructive write it exists to
+ * prevent.
+ *
+ * ## Two deliberate limits
+ *
+ * **Inline styles are excluded.** A `style:<property>` entry resolves through
+ * a module-scope const far more often than through a per-element string
+ * (`color: ACCENT`), and editing one element's colour in the inspector must
+ * not silently repaint every other element reading that same const. Styles
+ * also already have their own editing surface (`StyleSurface`'s class
+ * workflow) that does not need this.
+ *
+ * **A shared literal is edited everywhere it is used**, and that is inherent,
+ * not a bug to fix here: two call sites reading `t.home.bookATransfer` share
+ * one string, so changing it changes both. For a DICTIONARY that is exactly
+ * what the user means — it is what a dictionary is for. The panel should say
+ * where the edit lands rather than pretend the edit is local; that affordance
+ * is not built yet.
+ */
 export function isPropWritableToSource(node: SourceWritableNode, prop: string): boolean {
   if (!isSourceBackedNode(node)) return true
-  return !(node.codeProps ?? []).includes(prop)
+  if (!(node.codeProps ?? []).includes(prop)) return true
+  // Inline styles keep the strict rule — see the doc above.
+  if (prop.startsWith('style:')) return false
+  return node.resolvedProps?.[prop]?.origin !== undefined
 }
 
 /** True when `property`'s inline-style value can be written back to source. */
@@ -73,8 +120,7 @@ export function isStyleWritableToSource(node: SourceWritableNode, property: stri
  */
 export function isPropPatchWritableToSource(node: SourceWritableNode, patch: Record<string, unknown>): boolean {
   if (!isSourceBackedNode(node)) return true
-  const code = new Set(node.codeProps ?? [])
-  return Object.keys(patch).every((key) => !code.has(key))
+  return Object.keys(patch).every((key) => isPropWritableToSource(node, key))
 }
 
 /** `isPropPatchWritableToSource` for an inline-style patch. */

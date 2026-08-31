@@ -31,11 +31,12 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { Type } from '@core/utils/typeboxHelpers'
-import { DEFAULT_PROJECT_PLATFORM, frameDefaultsForPlatform } from '@core/studio-board'
+import { DEFAULT_PAGE_KIND, DEFAULT_PROJECT_PLATFORM, frameDefaultsForPlatform, PageKindSchema } from '@core/studio-board'
 import { badRequest, jsonResponse, readValidatedBody } from '../../http'
 import { applyProjectSeed } from './projectSeed'
 import { generateStudioProjectGuide } from './projectGuide'
 import { createScaffoldedPage } from './pageScaffold'
+import { detectPageTemplateKit, starterPage } from './pageTemplates'
 import {
   discoverPageFiles,
   listStudioProjects,
@@ -45,7 +46,6 @@ import {
   renameProjectDisplayName,
   resolveProjectDir,
   safeProjectFolderName,
-  starterPage,
   writeProjectMeta,
   type StudioProjectSummary,
 } from '../studioProjects'
@@ -74,12 +74,19 @@ const RenameProjectBodySchema = Type.Object({
 
 /**
  * Body of POST /admin/api/studio/page — scaffold a new page in a project.
- * `name` is optional: when omitted (the one-click "New page" action) the server
- * auto-names it `Page`, `Page2`, ….
+ *
+ * `name` is optional: when omitted (the "New page" action) the server auto-names
+ * it from the kind's own base — `Page`, `Page2`, … for a screen, `Sheet`,
+ * `Sheet2`, … for a bottom sheet.
+ *
+ * `kind` is optional too, so a scripted or older client that omits it still
+ * creates a working page; it then gets `DEFAULT_PAGE_KIND` — an ordinary
+ * screen, which is what this route has always produced.
  */
 const CreatePageBodySchema = Type.Object({
   dir: Type.Optional(Type.String()),
   name: Type.Optional(Type.String()),
+  kind: Type.Optional(PageKindSchema),
 })
 
 export async function tryServeStudioProjectRoutes(
@@ -119,9 +126,14 @@ export async function tryServeStudioProjectRoutes(
       }
       const pagesDir = projectPagesDir(dir)
       mkdirSync(pagesDir, { recursive: true })
-      const home = starterPage('Home')
+      // A brand-new folder has no `package.json` yet (the seed lands further
+      // down), so this is always the plain kit — which is what a screen
+      // scaffolds as under either one.
+      const home = starterPage('Home', DEFAULT_PAGE_KIND, detectPageTemplateKit(dir))
       writeFileSync(join(pagesDir, 'Home.tsx'), home.component)
-      writeFileSync(join(pagesDir, home.stylesFileName), home.styles)
+      if (home.styles !== undefined && home.stylesFileName !== undefined) {
+        writeFileSync(join(pagesDir, home.stylesFileName), home.styles)
+      }
       // The chosen form factor, and the frame size it implies. `frameDefaults`
       // is the field the board actually reads (`boardSlice`'s `addFrame`, and
       // `pageScaffold.ts` server-side), so every page added to this project
@@ -178,7 +190,7 @@ export async function tryServeStudioProjectRoutes(
     try {
       const body = await readValidatedBody(req, CreatePageBodySchema)
       if (!body) return badRequest('invalid page body')
-      const result = createScaffoldedPage(resolveProjectDir(body.dir), body.name ?? '')
+      const result = createScaffoldedPage(resolveProjectDir(body.dir), body.name ?? '', body.kind ?? DEFAULT_PAGE_KIND)
       if (!result.ok) return jsonResponse({ error: result.conflict }, { status: 409 })
       return jsonResponse(result)
     } catch (err) {

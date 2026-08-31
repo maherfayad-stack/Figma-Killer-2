@@ -107,8 +107,15 @@ describe('a prop resolved from an expression', () => {
 
     const span = byName(nodes, 'Hi')!
     expect(span.props.title).toBe('Exclusive rates')
-    expect(isPropWritableToSource(span, 'title')).toBe(false)
-    // The whole point: one resolved attribute must not take the others with it.
+    // Still a `codeProps` entry — the JSX is NOT the writeback target...
+    expect(span.codeProps).toContain('title')
+    // ...but the evaluator located the literal behind it, so the prop IS
+    // editable — at that literal. This is what makes i18n'd copy editable
+    // instead of padlocked; see `isPropWritableToSource`.
+    expect(span.resolvedProps?.title?.origin).toBeDefined()
+    expect(isPropWritableToSource(span, 'title')).toBe(true)
+    // The original point of this test, unchanged: one resolved attribute must
+    // not take the others with it.
     expect(isPropWritableToSource(span, 'lang')).toBe(true)
     expect(isPropWritableToSource(span, 'text')).toBe(true)
   })

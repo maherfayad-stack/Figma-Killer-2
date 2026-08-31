@@ -288,6 +288,46 @@ export const KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
     ignoreInEditableField: true,
   },
 
+  // ── Tools (bare-letter tool switches — Figma's own T / F / C) ───────────
+  // Bare letters, no modifier: these are the muscle-memory keys every design
+  // tool binds, and the cost of getting them wrong is high (a stray `c` while
+  // typing must never arm a canvas tool). Two guards, both enforced by
+  // `useCanvasToolShortcuts`: `ignoreInEditableField` stands them down inside
+  // any input/textarea/contenteditable — which covers the reply box, every
+  // inspector field, the agent prompt, and canvas inline text editing — and
+  // each `match` rejects every modifier, so ⌘C stays copy and ⌘T stays "new
+  // browser tab". Virtual ids: inserting at the selection is a canvas gesture,
+  // not a palette action, so `displayName` is the help-screen label.
+  {
+    commandId: 'tools.text',
+    displayName: 'Insert text',
+    shortcut: { mac: 'T', win: 'T' },
+    ariaKeyshortcuts: 'T',
+    match: (e) => !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 't',
+    scope: 'canvas',
+    ignoreInEditableField: true,
+  },
+
+  {
+    commandId: 'tools.frame',
+    displayName: 'Insert container',
+    shortcut: { mac: 'F', win: 'F' },
+    ariaKeyshortcuts: 'F',
+    match: (e) => !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'f',
+    scope: 'canvas',
+    ignoreInEditableField: true,
+  },
+
+  {
+    commandId: 'tools.comment',
+    displayName: 'Comment',
+    shortcut: { mac: 'C', win: 'C' },
+    ariaKeyshortcuts: 'C',
+    match: (e) => !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'c',
+    scope: 'canvas',
+    ignoreInEditableField: true,
+  },
+
   // ── Board (studio frame multi-select — WS-7.1) ──────────────────────────
   // Virtual id: no matching spotlight Command (frame selection isn't a
   // palette action) — `displayName` is the help-screen fallback title, same

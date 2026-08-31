@@ -19,6 +19,7 @@ import { createInlineEditSlice } from './slices/inlineEditSlice'
 import { createLayoutsSlice } from './slices/layoutsSlice'
 import { createSaveTrackingSlice } from './slices/saveTrackingSlice'
 import { createBoardSlice } from './slices/boardSlice'
+import { createCommentsSlice } from './slices/commentsSlice'
 import { selectActiveBoard } from './slices/boardSelectors'
 import { createLocalizedPageSlice, localizedPageKey } from './slices/localizedPageSlice'
 import { bindPluginRuntimeStoreApi } from '@core/plugins/runtime'
@@ -45,6 +46,7 @@ import { restoreStoredSiteEditorLayout } from '@site/layout/siteEditorLayoutPers
  *   - layoutsSlice:        user-saved layouts (save / insert / rename / delete)
  *   - saveTrackingSlice:   unsaved-changes flag + patch-derived save-dirty accumulator
  *   - boardSlice:          studio-mode sticky-notes board overlay (Increment 1A)
+ *   - commentsSlice:       studio-mode review threads (.studio/comments.json)
  *
  * The combined `EditorStore` type lives in `./types` so each slice can import
  * it without going through this module — that's how the historical
@@ -82,6 +84,7 @@ export const useEditorStore = create<EditorStore>()(
         ...createLayoutsSlice(...args),
         ...createSaveTrackingSlice(...args),
         ...createBoardSlice(...args),
+        ...createCommentsSlice(...args),
         ...createLocalizedPageSlice(...args),
       }),
       { enableAutoFreeze: true },

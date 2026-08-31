@@ -22,6 +22,7 @@ import { studioMeasureReferenceMcpTools } from './measureReference'
 import { studioExtractReferenceAssetMcpTools } from './extractReferenceAsset'
 import { studioQualityCheckMcpTools } from './qualityCheck'
 import { studioTypecheckMcpTools } from './typecheck'
+import { studioCommentMcpTools } from './commentTools'
 
 export const studioMcpTools: AiTool[] = [
   studioScreenshotTool,
@@ -44,4 +45,5 @@ export const studioMcpTools: AiTool[] = [
   ...studioComponentCatalogMcpTools,
   ...studioFigmaBindingMcpTools,
   ...studioRemoteAssetMcpTools,
+  ...studioCommentMcpTools,
 ]

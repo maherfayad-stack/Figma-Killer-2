@@ -67,9 +67,16 @@
  *     resolved prop), so the finding is accurate, just not disqualifying —
  *     which is exactly what its `'advisory'` tier means.
  *   - A className that fails to resolve AT ALL (a genuinely dynamic
- *     interpolation with no static path) is silently DROPPED by
- *     `extractProps` — no prop, no `codeProps` entry — so this is the one
- *     shape `static-class-name` cannot see at all, in either direction.
+ *     interpolation with no static path) still carries no VALUE — `extractProps`
+ *     writes no `className` into `props`, so the canvas renders no class from
+ *     it — but it is no longer invisible: `extractProps`' catch-all now names
+ *     it in `codeProps` regardless (board-27b), so `static-class-name` DOES
+ *     see this shape now, same as every other unresolvable className. Before
+ *     that fix this was the one shape neither `props` nor `codeProps` recorded
+ *     at all, which meant `isPropWritableToSource` read it as ordinarily
+ *     writable and a panel edit would have `setJsxProp` a baked literal
+ *     straight over the interpolation — the same destructive-write hole the
+ *     fix closed for every other unresolvable prop.
  *   - `static-svg`'s signal (`DYNAMIC_SVG_LOCK_REASON`) is reachable, for a
  *     JSX-authored `<svg>`, ONLY when the serialized markup exceeds
  *     `MAX_MARKUP_LENGTH` (64 KB) — `serializeInlineSvg` omits an
@@ -331,7 +338,12 @@ function checkSingleReturn(page: ParsedPage, out: CanonicalFinding[]): void {
 function checkLiteralProps(page: ParsedPage, out: CanonicalFinding[]): void {
   for (const node of Object.values(page.nodes)) {
     if (isLoopDerivedNode(node.id)) continue
-    const violating = (node.codeProps ?? []).filter((p) => p !== 'className' && p !== 'svg')
+    // `on*` handlers are excluded alongside `className`/`svg`: a handler can
+    // never BE a literal, so reporting one says nothing about whether the file
+    // is canonical — it would fire on every button in every real screen.
+    const violating = (node.codeProps ?? []).filter(
+      (p) => p !== 'className' && p !== 'svg' && !/^on[A-Z]/.test(p),
+    )
     if (violating.length === 0) continue
     out.push(finding('literal-props', node, `${violating.join(', ')} resolved from a non-literal expression.`))
   }

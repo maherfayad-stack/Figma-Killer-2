@@ -321,7 +321,7 @@ export function extractProps(
       if (resolved) {
         result[name] = resolved.value
         resolutions.push({ source: expression.getText(), note: resolved.note })
-        resolutionsByKey[name] = { source: expression.getText(), note: resolved.note }
+        resolutionsByKey[name] = { source: expression.getText(), note: resolved.note, origin: resolved.origin }
         // The value shown is what the expression evaluates to; the source holds
         // the expression. Writing an edit here would replace the binding with a
         // baked literal, so this one prop is not a writeback target — UNLESS
@@ -357,6 +357,30 @@ export function extractProps(
       // plus a `codeProps` entry, keeping `withResolution`'s invariant that
       // every resolution recorded here has a matching code-valued prop: the
       // value does come from code, and no scalar may be written over it.
+      // A prop whose value is a FUNCTION written in the source — `onClose={fn}`,
+      // `onClick={() => …}`. It has no value the canvas can hold, so it is not
+      // a resolvable expression and used to vanish here without a trace.
+      //
+      // The trace matters: several design-system components gate a VISIBLE
+      // affordance on being handed a handler (a `BottomSheet` draws its leading
+      // close button only when given `onClose`), so a dropped handler silently
+      // deletes an affordance from the rendered design. Recording it in
+      // `codeProps` — with no value, because there isn't one — lets a module
+      // stand in a no-op and draw what the source actually asked for
+      // (`src/modules/alm/register.tsx`).
+      //
+      // This USED to be deliberately narrow — only a function's absence of a
+      // value was recorded, reasoning that every OTHER unresolvable expression
+      // (a dynamic `className` interpolation included) could just vanish. That
+      // narrowness was itself a silent-drop bug of the identical shape this
+      // comment describes for a handler: the catch-all a few lines down now
+      // records every remaining unresolvable shape the same way, so a function
+      // is no longer special-cased for "leaves a trace" — only for "there is
+      // definitely no value at all, so don't even try `tryResolveExpression`".
+      if (Node.isArrowFunction(expression) || Node.isFunctionExpression(expression)) {
+        codeProps.push(name)
+        continue
+      }
       if (Node.isIdentifier(expression)) {
         const refusal = packagedImageImportRefusal(expression.getSourceFile(), expression.getText())
         if (refusal !== undefined) {
@@ -382,8 +406,44 @@ export function extractProps(
         if (structured !== undefined) {
           result[name] = structured
           codeProps.push(name)
+          continue
+        }
+        // A bare JSX element/self-closing element/fragment value is
+        // `captureSlotProps`'s job (`./slotCapture.ts`, WS-3.4/E2.3) — it
+        // materializes the markup as a real (locked) child node ONE LEVEL UP
+        // in `processElement`, and records the prop in `codeProps` itself.
+        // Recording it again here would be a harmless duplicate, but skipping
+        // it is the honest choice: this function is done with the prop before
+        // slot capture even runs, and claiming "code-valued, no value" for a
+        // prop that is about to gain a real (if locked) node representation
+        // would undersell what actually happens to it.
+        if (Node.isJsxElement(expression) || Node.isJsxSelfClosingElement(expression) || Node.isJsxFragment(expression)) {
+          continue
         }
       }
+      // Every other shape reaching this point could not be resolved by any of
+      // the paths above: an identifier bound to hook state or an unresolvable
+      // const, a member/element-access chain the evaluator couldn't walk, a
+      // template literal with an unresolvable interpolation (`className={
+      // \`esb esb--${tone}\`}` included — this is deliberately no longer a
+      // special case; see `canonicalCheck.ts`'s `static-class-name` rule,
+      // which can now see this shape for the first time), a ternary/`&&`/`||`/
+      // `??` whose condition isn't statically decidable, a call outside Tier
+      // C's whitelist, or — on an HTML element, which stays scalar-only — a
+      // JSX-valued prop, an array, or an object.
+      //
+      // None of these carry a representable VALUE, and that is fine — that is
+      // exactly what "could not resolve" means. What is not fine is leaving no
+      // trace at all: `isPropWritableToSource` treats an ABSENT `codeProps`
+      // entry as "writable", so a prop the parser silently dropped used to
+      // look editable in the panel, and `setJsxProp` has NO guard against
+      // replacing a non-literal attribute's initializer — an edit would bake a
+      // literal straight over an expression the user never even saw, deleting
+      // the binding. Gated on `ctx.eval`: with the evaluator off, nothing here
+      // was actually attempted (every existing caller/test that omits
+      // `evalOptions` keeps its pre-§7 behaviour exactly, per this module's
+      // own header comment), so there is nothing to report failing.
+      if (ctx.eval) codeProps.push(name)
     }
   }
 
@@ -431,7 +491,12 @@ export function extractInlineStyles(
   const resolutionsByKey: ResolutionMap = {}
   const codeStyles: string[] = []
   for (const property of expression.getProperties()) {
-    if (!Node.isPropertyAssignment(property)) continue // skip shorthand / spread / methods
+    // A spread element (`{ ...base, color: 'red' }`) can introduce ANY key —
+    // there is no name to file a trace under, the same "genuinely cannot be
+    // represented" gap `extractProps` accepts for a JSX attribute spread. A
+    // method-valued property is never a usable style value either way. Both
+    // are skipped with no trace, deliberately — everything else below is not.
+    if (!Node.isPropertyAssignment(property) && !Node.isShorthandPropertyAssignment(property)) continue
     const nameNode = property.getNameNode()
     const key = Node.isIdentifier(nameNode)
       ? nameNode.getText()
@@ -439,7 +504,11 @@ export function extractInlineStyles(
         ? nameNode.getLiteralValue()
         : null
     if (key === null) continue // computed keys are not statically known
-    const valueNode = property.getInitializer()
+    // `{ color }` shorthand — the value IS the name node, an identifier bound
+    // to some local. Resolving it is the same "member/identifier chain" job
+    // `tryResolveExpression` already does for `{ color: accent }`; only the
+    // syntax differs.
+    const valueNode = Node.isShorthandPropertyAssignment(property) ? nameNode : property.getInitializer()
     if (valueNode === undefined) continue
     if (Node.isStringLiteral(valueNode)) {
       styles[key] = valueNode.getLiteralValue()
@@ -457,9 +526,21 @@ export function extractInlineStyles(
     if (resolved && typeof resolved.value !== 'boolean') {
       styles[key] = resolved.value
       resolutions.push({ source: valueNode.getText(), note: resolved.note })
-      resolutionsByKey[styleValueKey(key)] = { source: valueNode.getText(), note: resolved.note }
+      resolutionsByKey[styleValueKey(key)] = { source: valueNode.getText(), note: resolved.note, origin: resolved.origin }
       codeStyles.push(key)
+      continue
     }
+    // Same trace-not-value fix as `extractProps`' catch-all, one attribute
+    // over: a style property whose value could not be resolved at all (hook
+    // state, an unresolvable call/template), or that resolved to a boolean
+    // (never a usable CSS value), used to vanish from BOTH `styles` and
+    // `codeStyles` — leaving `style:<property>` out of `codeProps` entirely,
+    // which `isStyleWritableToSource` reads as "writable". `setJsxProp` has no
+    // guard against replacing a non-literal `style={{…}}` property's value
+    // with a baked one, so this was the identical destructive-write hole.
+    // Gated on `ctx.eval` for the same "off = unchanged pre-§7 behaviour"
+    // reason `extractProps` gates its own catch-all.
+    if (ctx.eval) codeStyles.push(key)
   }
 
   return { styles: Object.keys(styles).length > 0 ? styles : undefined, resolutions, resolutionsByKey, codeStyles }
@@ -473,7 +554,8 @@ export function extractInlineStyles(
  * `` {`${pct}%`} ``, …). Elements with element children, more than one
  * meaningful child, or an unresolvable expression get no `text` (their
  * `children` are still walked structurally by `processChildren` instead,
- * exactly as before this capture existed).
+ * exactly as before this capture existed) — but see `hasCodeText` below for
+ * why "no `text`" no longer means "nothing to say about this node".
  *
  * Mirrors `assertTextOnlyChildren` in `../ast-codemods/setJsxText` — a
  * captured `text` is always a shape that codemod is willing to overwrite
@@ -485,7 +567,25 @@ export function extractInlineStyles(
 export function extractSingleText(
   children: Node[],
   ctx: ParseContext,
-): { text: string | undefined; resolution?: Resolution; origin?: ValueOrigin } {
+): {
+  text: string | undefined
+  resolution?: Resolution
+  origin?: ValueOrigin
+  /**
+   * True when the sole child WAS a non-literal expression — the source
+   * genuinely computes this node's text — but §7 could not resolve it to any
+   * value at all (hook state, an unresolvable call, a template with no static
+   * path). Distinct from an ABSENT expression (`<span className="icon" />`,
+   * no children at all): both leave `text: undefined`, but only one of them is
+   * a real, different fact about the source that a "this node has no text"
+   * reading silently erased. `processElement` folds this into `codeText` the
+   * same way a RESOLVED text value already does — see that field's doc
+   * comment in `./types` — so the panel can tell "code, unresolved" apart from
+   * "genuinely nothing here" instead of rendering both as an empty, freely
+   * editable field.
+   */
+  hasCodeText?: boolean
+} {
   if (children.length !== 1) return { text: undefined }
   const only = children[0]!
 
@@ -510,6 +610,10 @@ export function extractSingleText(
           origin: resolved.origin,
         }
       }
+      // Gated on `ctx.eval` for the same "off = unchanged pre-§7 behaviour"
+      // reason `extractProps`/`extractInlineStyles` gate their own catch-alls
+      // — with the evaluator off, `tryResolveExpression` never actually tried.
+      if (ctx.eval) return { text: undefined, hasCodeText: true }
     }
   }
 

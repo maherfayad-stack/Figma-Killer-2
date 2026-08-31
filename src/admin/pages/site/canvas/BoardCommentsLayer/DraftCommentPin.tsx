@@ -45,7 +45,9 @@ export function DraftCommentPin({ draft, frames }: DraftCommentPinProps) {
         role="dialog"
         aria-label="New comment"
         data-testid="comment-draft-popover"
-        onPointerDown={(event) => event.stopPropagation()}
+        // See `CommentThreadPopover` for why there is no `onPointerDown`
+        // stopPropagation here — it blinds `@use-gesture`'s tap detection and
+        // kills every click inside the popover.
         onClick={(event) => event.stopPropagation()}
       >
         <CommentComposer

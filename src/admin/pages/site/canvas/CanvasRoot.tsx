@@ -48,14 +48,16 @@ import { CanvasSelectionContext, CanvasViewportActionsContext } from './CanvasCo
 // stopgap before the iframe cut-over. See
 // `docs/features/canvas-iframe-per-frame.md`.
 import { PluginCanvasOverlayLayer } from './PluginCanvasOverlayLayer'
-import { BoardNotesToolbar } from './BoardNotesLayer'
+import { LazyStudioCanvasChrome } from './LazyStudioCanvasChrome'
 import { CanvasRenameDialog } from './CanvasRenameDialog'
 import { useCanvasRenameDialog } from './useCanvasRenameDialog'
 import { CanvasLayerContextMenu } from './CanvasLayerContextMenu'
 import { useCanvasLayerContextMenu } from './useCanvasLayerContextMenu'
-import { useCanvasKeyboardShortcuts, isTextInputTarget } from './useCanvasKeyboardShortcuts'
+import { useCanvasKeyboardShortcuts } from './useCanvasKeyboardShortcuts'
 import { useCanvasSelectionKeyboard } from './useCanvasSelectionKeyboard'
 import { useBoardAnnotationKeyboard } from './useBoardAnnotationKeyboard'
+import { useCanvasToolShortcuts } from './useCanvasToolShortcuts'
+import { useBoardSelectAllShortcut } from './useBoardSelectAllShortcut'
 import { clientPointToEditorDoc } from './canvasDomGeometry'
 import { useConfirmDelete } from '@admin/shared/dialogs/ConfirmDeleteDialog'
 import { useEditorPreference, readEditorSelectPreference } from '@site/preferences/editorPreferences'
@@ -417,41 +419,8 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
     return () => document.removeEventListener('keydown', onKeyDown)
   }, [editable, isLive])
 
-  // ─── ⌘/Ctrl+A — select every frame on the active studio board ─────────────
-  //
-  // `board-02`: this was previously handled inside `useCanvasKeyboardShortcuts`,
-  // a React `onKeyDown` on the canvas div — which only fires while a
-  // descendant of the canvas holds DOM focus. The moment the user touches any
-  // panel, focus moves there and this handler never sees the key, so the
-  // browser's native select-all ran instead (the reported bug: "ctrl A
-  // selects text in the canvas panels not in the canvas itself"). Fixed by
-  // scoping on INTENT instead of focus, mirroring the `layers.delete`
-  // document-level listener above: a document-level listener that fires
-  // regardless of which panel currently holds focus, and only stands down
-  // for an editable field (`isTextInputTarget` — input/textarea/
-  // contenteditable, which covers a panel text field, the DOM tree's rename
-  // input, and a code editor's contenteditable surface alike) or while a
-  // node is already selected (node selection has no "select all" of its own,
-  // WS-7.1 — this only ever competes with the browser's native select-all).
-  useEffect(() => {
-    if (isLive || !editable) return
-    const selectAllBinding = getKeybindingForCommand('board.selectAllFrames')
-    if (!selectAllBinding) return
-
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented) return
-      if (useEditorStore.getState().activeInlineEdit) return
-      if (!selectAllBinding.match(event)) return
-      if (isTextInputTarget(event.target)) return
-      if (useEditorStore.getState().selectedNodeId) return
-
-      event.preventDefault()
-      useEditorStore.getState().selectAllFrames()
-    }
-
-    document.addEventListener('keydown', onKeyDown)
-    return () => document.removeEventListener('keydown', onKeyDown)
-  }, [editable, isLive])
+  // ⌘/Ctrl+A selects every frame on the active board (board-02).
+  useBoardSelectAllShortcut(editable, isLive)
 
   // ─── Enter / Escape: the whole selection ladder ────────────────────────────
   // Enter steps into a `studio.instance` (instance-ui-01); Escape steps back
@@ -462,6 +431,9 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
 
   // Sticky notes + doc cards: delete / duplicate / copy-paste / nudge.
   useBoardAnnotationKeyboard(editable, isLive)
+
+  // Bare-letter tool keys: T (text), F (container), C (comment mode).
+  useCanvasToolShortcuts(editable, isLive)
 
   // ─── Canvas background click → deselect ───────────────────────────────────
   //
@@ -650,10 +622,8 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
         */}
           {!isLive && editable && <PluginCanvasOverlayLayer />}
 
-          {/* Studio-mode "+ Sticky note" button — untransformed canvas chrome,
-              a sibling of the transform layer so it never scales with pan/zoom.
-              Self-gates on active board (no-op outside studio mode). */}
-          {!isLive && editable && <BoardNotesToolbar />}
+          {/* Studio-mode untransformed chrome: notes/comment toolbar + the armed comment tool. */}
+          {!isLive && editable && <LazyStudioCanvasChrome transformLayerRef={transformLayerRef} />}
 
           {!isLive && editable && contextMenu.position && (
             <CanvasLayerContextMenu

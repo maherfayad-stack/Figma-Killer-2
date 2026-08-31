@@ -7,7 +7,7 @@ import {
 } from '@core/publisher'
 import { filterReemittableColorTokens, generateFrameworkRootCss } from '@core/framework'
 import { generateFontsCss } from '@core/fonts'
-import { styleRuleSelector } from '@core/page-tree'
+import { isImportedStyleRuleId, styleRuleSelector } from '@core/page-tree'
 import type { StyleRule, ConditionDef } from '@core/page-tree'
 import type { SiteFontsSettings } from '@core/fonts'
 import type {
@@ -19,6 +19,31 @@ import type {
 
 interface CanvasResponsiveCssOptions extends ResponsiveCssOptions {
   mediaSignature?: string
+}
+
+/**
+ * `board-27` — true when a `StyleRule` needs to render through the canvas's
+ * class-registry OVERLAY (`mc-classes`, `ClassStyleInjector`) rather than
+ * being left to render from `AuthoredCssInjector`'s raw, on-disk `mc-authored`
+ * text alone.
+ *
+ * An EDITOR-AUTHORED rule (no `sc-` prefix — created in the CSS Classes
+ * panel) always needs the overlay: it was never on disk to begin with, so
+ * there is no raw text for it anywhere else in the document. An IMPORTED
+ * rule only needs it once a SESSION EDIT has actually touched it
+ * (`updatedAt > 0` — every edit action on an existing rule bumps this; see
+ * `propertyActions.ts`/`conditionActions.ts`/`crudActions.ts`) — until then
+ * its declarations render faithfully from the raw `.css` text
+ * `AuthoredCssInjector` injects, which (unlike this registry) survived
+ * happy-dom's lossy CSSOM parse intact.
+ *
+ * Re-emitting an UNEDITED imported rule here too would double its CSS
+ * payload for a Tailwind-heavy `extraCss` blob and reintroduce the exact
+ * CSSOM-loss risk `AuthoredCssInjector` exists to remove — see that
+ * module's own doc, and `docs/agent-refs/canvas-internals.md`.
+ */
+function styleRuleNeedsCanvasOverlay(rule: StyleRule): boolean {
+  return !isImportedStyleRuleId(rule.id) || rule.updatedAt > 0
 }
 
 function buildCanvasClassCSS(
@@ -62,8 +87,13 @@ function buildCanvasClassCSS(
   // The registry CSS is the publisher's own generator — the canvas ships the
   // exact bytes a publish would (rule order, condition/viewport cascade, and
   // sanitized raw @keyframes rules included), so the preview cannot drift
-  // from the published output.
-  const classCss = generateClassCSS(classes, breakpoints, conditions, responsiveOptions)
+  // from the published output. `board-27` — filtered to just the rules that
+  // NEED the overlay (see `styleRuleNeedsCanvasOverlay`); an unedited
+  // imported rule renders from `AuthoredCssInjector`'s raw text instead.
+  const overlayClasses = Object.fromEntries(
+    Object.entries(classes).filter(([, rule]) => styleRuleNeedsCanvasOverlay(rule)),
+  )
+  const classCss = generateClassCSS(overlayClasses, breakpoints, conditions, responsiveOptions)
   if (classCss) blocks.push(classCss)
 
   return blocks.join('\n\n')

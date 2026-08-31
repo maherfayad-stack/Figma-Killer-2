@@ -2,6 +2,7 @@ import { useSyncExternalStore, type CSSProperties } from 'react'
 import { useEditorStore } from '@site/store/store'
 import type { LeftSidebarPanelId } from '@site/store/slices/uiSlice'
 import type { IconComponent } from 'pixel-art-icons/types'
+import { CommentBubbleIcon } from '@ui/components/InspectorIcons'
 import { AiSettingsSolidIcon } from 'pixel-art-icons/icons/ai-settings-solid'
 import { DatabaseSolidIcon } from 'pixel-art-icons/icons/database-solid'
 import { PaintBucketSolidIcon } from 'pixel-art-icons/icons/paint-bucket-solid'
@@ -101,6 +102,8 @@ export function PanelRail({
   const inspectOpen = useEditorStore((s) => s.inspectPanelOpen)
   const contentOpen = useEditorStore((s) => s.contentPanelOpen)
   const agentOpen = useEditorStore((s) => s.isAgentOpen)
+  const commentsPaneOpen = useEditorStore((s) => s.commentsPaneOpen)
+  const setCommentsPaneOpen = useEditorStore((s) => s.setCommentsPaneOpen)
   const activePluginPanelId = useEditorStore((s) => s.activePluginPanelId)
 
   const toggleLeftSidebarPanel = useEditorStore((s) => s.toggleLeftSidebarPanel)
@@ -195,6 +198,35 @@ export function PanelRail({
     toRailItem(item, globalAccents[index] ?? 'mint')
   ))
 
+  /**
+   * Comments sits in the global group with the AI assistant rather than in the
+   * primary one, because like the assistant it is NOT a left-sidebar panel:
+   * its surface is the RIGHT sidebar, beside Properties, where you inspect the
+   * thing you just clicked. That is also why it cannot ride
+   * `toggleLeftSidebarPanel` and carries its own toggle.
+   *
+   * It exists because the canvas entry points (`C`, the Comment tool button,
+   * clicking a pin) are not discoverable from the chrome — the first thing
+   * reported after the pane moved was that comments looked "removed". Outside
+   * the `editable` gate on purpose: the Client role (`site.content.edit` only)
+   * is the reviewer this feature exists for, and commenting is not a
+   * structural edit.
+   */
+  const commentsItem: RailItem = {
+    id: 'comments',
+    label: 'Comments',
+    // Hand-drawn (`@ui/components/InspectorIcons`): the vendored
+    // pixel-art-icons subset has no speech bubble and adding one needs the
+    // private upstream checkout. Gate 3 of `icon-catalog-integrity` exempts
+    // `src/ui/` for exactly this.
+    icon: CommentBubbleIcon,
+    iconName: 'comment-bubble',
+    accent: 'lilac',
+    open: commentsPaneOpen,
+    onToggle: () => setCommentsPaneOpen(!commentsPaneOpen),
+  }
+  const globalStackItems: RailItem[] = [commentsItem, ...globalItems]
+
   // Plugin panels show up after the primary group when editing. Panels with an
   // explicit accent keep it; the rest get deterministic identity colors with
   // repeat avoidance within the plugin rail group.
@@ -242,9 +274,9 @@ export function PanelRail({
           </div>
         )}
       </div>
-      {globalItems.length > 0 && (
+      {globalStackItems.length > 0 && (
         <div className={styles.globalGroup} data-testid="panel-rail-global">
-          {globalItems.map((item) => (
+          {globalStackItems.map((item) => (
             <RailButton key={item.id} item={item} />
           ))}
         </div>

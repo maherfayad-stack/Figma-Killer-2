@@ -34,17 +34,15 @@
  *    the React tree (not the DOM tree), so click/hover/keyboard handlers
  *    attached in NodeRenderer still fire — the React fiber sees these as
  *    same-tree events.
- *  - `ClassStyleInjector` and `UserStylesheetInjector` are mounted with
- *    `targetDocument={iframeDoc}` so the class registry CSS and user
- *    stylesheets land in the iframe's `<head>`.
+ *  - `AuthoredCssInjector`, `ClassStyleInjector` and `UserStylesheetInjector`
+ *    mount with `targetDocument={iframeDoc}` so raw/registry/user CSS lands in the iframe's `<head>`.
  *  - `data-breakpoint-id` is set on the iframe's `<body>` so the
  *    per-breakpoint class CSS (which uses `[data-breakpoint-id="..."]
  *    .myClass` selectors) matches inside the iframe.
  *
  * What's NOT in this component (yet):
- *  - Per-iframe `getComputedStyle` for code outside the iframe that
- *    measures elements (selection overlay handles its own iframe-rect
- *    translation; other callers may need updates).
+ *  - Per-iframe `getComputedStyle` for code outside the iframe that measures
+ *    elements (selection overlay handles its own iframe-rect translation).
  *
  * Cross-iframe drag relay
  * ────────────────────────────────────────
@@ -74,6 +72,7 @@ import { cn } from '@ui/cn'
 import { ClassStyleInjector } from './ClassStyleInjector'
 import { UserStylesheetInjector } from './UserStylesheetInjector'
 import { ProjectCssInjector } from './ProjectCssInjector'
+import { AuthoredCssInjector } from './AuthoredCssInjector'
 import { CanvasAnimationInjector } from './CanvasAnimationInjector'
 import { CanvasScrollUnrollInjector } from './CanvasScrollUnrollInjector'
 import { CanvasSelectionOverlayInjector } from './CanvasSelectionOverlayInjector'
@@ -684,7 +683,8 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
                   screen is visible instead of a scrollable box. Live mode
                   scrolls natively and keeps the app's own clipping. */}
               {!isLive && <CanvasScrollUnrollInjector targetDocument={iframeDoc} />}
-              {/* Author CSS — both wrapped in @layer user-authored inside the injectors */}
+              {/* Author CSS — @layer user-authored (board-27's raw AuthoredCssInjector always precedes mc-classes; see its own doc) */}
+              <AuthoredCssInjector targetDocument={iframeDoc} viewport={viewport} />
               <ClassStyleInjector targetDocument={iframeDoc} viewport={viewport} />
               <UserStylesheetInjector targetDocument={iframeDoc} viewport={viewport} />
               {children}

@@ -24,6 +24,7 @@ import { aiToolOk, type AiToolOutput } from '@core/ai'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import type { EditorStore } from '@site/store/types'
 import { fetchBoards } from '../studio/boardsApi'
+import { fetchComments } from '../studio/commentsApi'
 import { studioWriteDir } from '../studio/studioSaveRequests'
 import { fetchStudioPagesById } from '../studio/studioLiveReloadFetch'
 import { getAgentStoreApi } from './storeRef'
@@ -41,6 +42,12 @@ export const StudioLiveReloadInputSchema = Type.Object({
   dir: Type.String(),
   pageIds: Type.Array(Type.String()),
   boardsChanged: Type.Boolean(),
+  /*
+   * Optional so an older push (or a test fixture) that predates review
+   * comments still validates — the server always sends it now. Absent is
+   * read as false by the handler below.
+   */
+  commentsChanged: Type.Optional(Type.Boolean()),
 })
 export type StudioLiveReloadInput = Static<typeof StudioLiveReloadInputSchema>
 
@@ -61,6 +68,24 @@ async function reloadStudioBoards(dir: string): Promise<void> {
   if (previousActiveBoardId && file.boards.some((b) => b.id === previousActiveBoardId)) {
     getStoreState().setActiveBoard(previousActiveBoardId)
   }
+}
+
+/**
+ * Re-read `.studio/comments.json`. An agent's reply touches no page source, so
+ * nothing on the canvas needs to re-parse — without this the reply would sit
+ * unseen in a thread the reviewer already has open.
+ *
+ * Goes through `commentsApi` + `getStoreState()` rather than reusing
+ * `commentActions.reloadComments`, for the same structural reason
+ * `reloadStudioBoards` above uses `boardsApi` instead of a UI action: this
+ * module is reachable from `store.ts` (store → agent/index →
+ * agentSliceConfig.site → executor → here), and `commentActions` imports the
+ * store, so either edge — static OR dynamic — closes a loop that
+ * `no-circular-dependencies` fails on. `commentsApi` is pure HTTP and imports
+ * no store, which is exactly why the agent-side modules talk to it directly.
+ */
+async function reloadStudioComments(dir: string): Promise<void> {
+  getStoreState().loadComments(await fetchComments(dir))
 }
 
 export async function runStudioLiveReload(input: StudioLiveReloadInput): Promise<AiToolOutput> {
@@ -88,6 +113,14 @@ export async function runStudioLiveReload(input: StudioLiveReloadInput): Promise
     } catch (err) {
       console.error('[studioLiveReload] board reload failed — frame geometry may be stale:', err)
       failed.push('boards')
+    }
+  }
+  if (input.commentsChanged) {
+    try {
+      await reloadStudioComments(input.dir)
+    } catch (err) {
+      console.error('[studioLiveReload] comment reload failed — threads may be stale:', err)
+      failed.push('comments')
     }
   }
   return aiToolOk({ applied: true, failed })

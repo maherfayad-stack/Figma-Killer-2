@@ -69,6 +69,7 @@ import {
   type NodeValueBump,
 } from './loadedValuesBaseline'
 import { collectClassNameEdits } from './classNameWriteback'
+import type { StudioEditPayload } from './studioEditPayload'
 import {
   collectStyleRuleEdits,
   commitBaseline as commitStyleRuleBaseline,
@@ -80,6 +81,7 @@ import {
   resetLocalizedTextBaseline,
   watchLocalizedPagesForBaseline,
 } from './localizedPageWriteback'
+import { setStudioVendorCss, setStudioAuthoredCss } from './studioRawCssStores'
 
 export type { ComponentSource } from './studioLoadStreamSchema'
 
@@ -142,38 +144,23 @@ export function getStudioPaletteHiddenModuleIds(): readonly string[] {
 }
 
 /**
- * WS-2.3 — vendor package CSS from the last load (`StudioLoadStreamLineSchema`'s
- * meta-line `vendorCss` — see its doc). Read-only, concatenated raw bytes; lives OUTSIDE
- * `SiteDocument` for the same reason `componentSources` does above: it is
- * ephemeral, server-derived, per-load state, not part of the
+ * WS-2.3/`board-27` — vendor package CSS and the project's own authored CSS
+ * from the last load (`StudioLoadStreamLineSchema`'s meta-line `vendorCss`/
+ * `authoredCss` — see their docs). Both are read-only, concatenated raw
+ * bytes living OUTSIDE `SiteDocument` for the same reason `componentSources`
+ * does above: ephemeral, server-derived, per-load state, not part of the
  * persisted/published document shape `SiteDocument` also serves for the CMS
- * half of this fork.
- *
- * A tiny external store (not a Zustand slice) rather than a module-level
- * variable read imperatively: `ProjectCssInjector` needs to know when a fresh
- * value has actually landed so it can re-inject, and `useSyncExternalStore`
- * gives it that without subscribing to `site` itself — a `site` reference
- * changes on every unrelated node edit (Mutative mints a new root object per
- * mutation), which would re-run the injector's DOM work far more often than
- * vendor CSS actually changes (once per project load).
+ * half of this fork. Implementation lives in `studioRawCssStores.ts` (kept
+ * this file under the 700-line module-size ceiling); re-exported here
+ * verbatim so `ProjectCssInjector`/`AuthoredCssInjector` keep importing from
+ * this file, same as every other per-load external store in this folder.
  */
-let vendorCss = ''
-const vendorCssListeners = new Set<() => void>()
-
-export function getStudioVendorCss(): string {
-  return vendorCss
-}
-
-export function subscribeStudioVendorCss(listener: () => void): () => void {
-  vendorCssListeners.add(listener)
-  return () => vendorCssListeners.delete(listener)
-}
-
-function setStudioVendorCss(next: string): void {
-  if (next === vendorCss) return
-  vendorCss = next
-  for (const listener of vendorCssListeners) listener()
-}
+export {
+  getStudioVendorCss,
+  subscribeStudioVendorCss,
+  getStudioAuthoredCss,
+  subscribeStudioAuthoredCss,
+} from './studioRawCssStores'
 
 /**
  * `tokens-01` — re-runs server-side token extraction for the CURRENTLY
@@ -208,38 +195,6 @@ export async function refreshExtractedTokens(): Promise<TokenExtractionStatus> {
  * save queueing up before the previous one lands.
  */
 export const STUDIO_AUTOSAVE_DELAY_MS = 2_000
-
-/**
- * One studio edit — mirrors the discriminated union `server/handlers/studio.ts`
- * validates (`SaveBodySchema`/`StudioEdit`). Kept as a local mirror rather than
- * a shared import: this file runs in the browser, the server file runs in
- * Node/ts-morph, and the two sides only need to agree on the JSON wire shape.
- *
- * Track B1 — the `css` variant is now three ops (`studioCssWriteback.ts`'s
- * `CssEditSchema`): `set`, `insert` (one editable stylesheet exists),
- * `create` (none do, but the server can invent a co-located one). Widened
- * here only because `collectStyleRuleEdits`'s return type includes all
- * three. `create`'s "which file was created" surfacing is wired: `saveSite`
- * calls `notifyCreatedStylesheets` (`studioSaveRequests.ts`) once the save
- * response arrives, alongside the `unexplainedSkips` handling.
- *
- * Track B2 — `class` (`server/handlers/studioEditSchemas.ts`'s
- * `ClassEditSchema`, matching `classNameWriteback.ts`'s `ClassNameEditPayload`)
- * replaces Phase 0 item 0.6's honesty-only stopgap: a `node.classIds` add/
- * remove now reaches disk via `setJsxClassName` instead of only ever warning
- * that it couldn't.
- */
-type StudioEditPayload =
-  | { kind: 'prop'; nodeId: string; prop: string; value: string | number | boolean }
-  | { kind: 'text'; nodeId: string; text: string }
-  | { kind: 'style'; nodeId: string; style: Record<string, string | number> }
-  | { kind: 'class'; nodeId: string; add: string[]; remove: string[] }
-  | { kind: 'literal'; nodeId: string; text: string }
-  | { kind: 'tag'; nodeId: string; tag: string }
-  | { kind: 'asset'; nodeId: string; assetPath: string }
-  | { kind: 'css'; op: 'set'; nodeId: string; file: string; selector: string; property: string; value: string }
-  | { kind: 'css'; op: 'insert'; nodeId: string; file: string; selector: string; declarations: Record<string, string>; atMedia?: string }
-  | { kind: 'css'; op: 'create'; nodeId: string; pageFile: string; selector: string; declarations: Record<string, string>; atMedia?: string }
 
 /**
  * The HTML tag an element node renders as, or `undefined` when the module has no
@@ -289,6 +244,7 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
       styleRuleSources: loadedStyleRuleSources,
       conditions,
       vendorCss: loadedVendorCss,
+      authoredCss: loadedAuthoredCss,
       trust,
       paletteHiddenModuleIds: loadedPaletteHiddenModuleIds,
     } = meta
@@ -296,6 +252,7 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
     componentSources = sources
     paletteHiddenModuleIds = loadedPaletteHiddenModuleIds
     setStudioVendorCss(loadedVendorCss)
+    setStudioAuthoredCss(loadedAuthoredCss)
     setStudioTrustTier(trust)
     // Baseline for the save-time diff — see `loadedValuesBaseline.ts`.
     resetLoadedValues(pages)
@@ -450,6 +407,23 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
           // — silently destroying the binding. `setJsxText` refuses that on
           // the text path, but `setJsxProp` will happily do it.
           if (baseline && Object.is(baseline[prop], value)) continue
+          // A code-valued prop the evaluator traced to a real literal
+          // (`title={t.home.skipTheTaxiQueue}` -> `skipTheTaxiQueue: '…'` in
+          // `i18n/translations.ts`) is editable — but ONLY at that literal.
+          // `isPropWritableToSource` authorises it on exactly this promise;
+          // falling through to the `kind: 'prop'` write below would bake a
+          // string over the binding, which is the thing the whole rule exists
+          // to prevent. Same shape as the `textOrigin` branch above.
+          const propOrigin = node.resolvedProps?.[prop]?.origin
+          if (propOrigin) {
+            edits.push({
+              kind: 'literal',
+              nodeId: `${propOrigin.rel}:${propOrigin.line}:${propOrigin.col}`,
+              text: String(value),
+            })
+            bumps.push({ nodeId: node.id, key: prop, value })
+            continue
+          }
           // Second gate on the same rule the store applies, here because THIS is
           // the boundary that writes files: `updateNodeProps` refuses a
           // code-valued prop, but a tree can also arrive from an agent or a

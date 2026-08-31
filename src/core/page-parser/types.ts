@@ -88,15 +88,26 @@ export interface ParsedNode {
   /**
    * Literal attributes, plus whatever §7's evaluator resolved. Scalars for
    * every element; a COMPONENT may also carry an array/object value — see
-   * `ParsedPropValue`. An expression that does not resolve is skipped.
+   * `ParsedPropValue`. An expression that does not resolve has no VALUE here
+   * — there genuinely isn't one to show — but its NAME still lands in
+   * `codeProps` below (with the sole exception of a JSX-attribute `{...spread}`,
+   * whose set of resulting keys is unknowable and so has no name to record).
+   * "Not in `props`" therefore no longer means "the source has nothing here";
+   * check `codeProps` before assuming that.
    */
   props: Record<string, ParsedPropValue>
   /**
    * The element's `style={{ … }}` object-literal attribute, flattened to its
    * literal (string/number) entries so the canvas can render the real
-   * inline styles authored in source. Non-literal values (identifiers, calls,
-   * spreads) inside the object are skipped. Absent when the element has no
-   * `style` attribute or none of its entries are literals.
+   * inline styles authored in source. A non-literal value (an identifier, a
+   * call, a template, …) inside the object has no entry here either, but its
+   * property name still lands in `codeProps` as `style:<property>` — the same
+   * "no value, but a name" rule `props` follows above, for the identical
+   * write-safety reason (see `codeProps`'s own doc comment). A property set
+   * by a SPREAD element inside the object (`{ ...base, color: 'red' }`) is the
+   * one exception: its keys are unknowable, so nothing can be named. Absent
+   * entirely when the element has no `style` attribute or it isn't a plain
+   * object literal.
    */
   inlineStyles?: Record<string, string | number>
   /** Child node ids, in source order. */
@@ -136,19 +147,48 @@ export interface ParsedNode {
    * attributes that `setJsxProp` can rewrite precisely.
    *
    * A prop is code-valued when §7's evaluator had to resolve it
-   * (`title={c.sheetTitle}`), or when it holds a structured/JSX value that has
-   * no scalar source form at all (`actions={[…]}`, `icon={<Icon/>}`).
+   * (`title={c.sheetTitle}`), when it holds a structured/JSX value that has no
+   * scalar source form at all (`actions={[…]}`, `icon={<Icon/>}`), OR — the
+   * catch-all `extractProps`/`extractInlineStyles` fall through to when
+   * NOTHING above could resolve the expression at all (an identifier bound to
+   * hook state, a member/element-access chain, an unresolvable template/
+   * ternary/call, a JSX-valued prop on an HTML element). That third case
+   * carries no value in `props`/`inlineStyles` either — there genuinely isn't
+   * one — but the NAME is recorded regardless, because an absent `codeProps`
+   * entry reads as "writable" to `isPropWritableToSource`, and `setJsxProp`
+   * has no guard against baking a literal straight over a non-literal
+   * attribute it was never shown. The one shape with no name to record at all
+   * is a `{...spread}` attribute (or a spread element inside a `style={{…}}`
+   * object): its resulting keys are unknowable, so there is nothing to file a
+   * trace under — that gap is real, not an oversight, and is covered instead
+   * by the node's structural `lockReason`/`locked` (a spread attribute always
+   * sets one; a spread INSIDE a style object does not, since it says nothing
+   * about whether the ELEMENT itself has a single honest position to write
+   * to).
    *
    * The node's TEXT is included here, under the module's own text prop name,
    * only once `studio-sync` maps it — and only when it has no writable
-   * `textOrigin`. See `parsedPageToSitePage`.
+   * `textOrigin`. See `parsedPageToSitePage`. `codeText` below is the
+   * page-parser-level signal that feeds that mapping.
    */
   codeProps?: string[]
   /**
-   * True when the element's `text` came from an expression rather than a literal
-   * JSX child. Consumed by `studio-sync`, which knows the module's text prop
-   * name and folds this into `PageNode.codeProps` — unless `textOrigin` gives
-   * the edit somewhere honest to land.
+   * True when the element's sole child WAS an expression rather than a
+   * literal JSX child — regardless of whether §7 could resolve it to a value.
+   * Set for BOTH cases: a resolution that produced `text` (`{c.heading}`) and
+   * one that produced nothing at all (`{formatMessage(id)}`, `{user.name}` off
+   * unresolvable hook state — see `extractSingleText`'s `hasCodeText`). The
+   * two are NOT the same fact downstream — only the first also carries a
+   * `text` value for the canvas to show — but they share this one field
+   * because `studio-sync` needs to know "code decided this, at all" before it
+   * can decide whether it also has something to display: it knows the
+   * module's text prop name and folds this into `PageNode.codeProps` — unless
+   * `textOrigin` gives the edit somewhere honest to land. **KNOWN GAP:**
+   * `parsedPageToSitePage`'s fold currently only fires when `node.text !==
+   * undefined`, so the unresolved case (`text` absent, `codeText` true) does
+   * not yet reach `PageNode.codeProps` — the trace exists at THIS layer, but
+   * needs a companion change in `studio-sync` to fully surface in the panel.
+   * See STATE.md `board-27b`.
    */
   codeText?: boolean
   /**
@@ -201,7 +241,7 @@ export interface ParsedNode {
    * itself (`isPropWritableToSource`/`isStyleWritableToSource` still own that
    * decision, unchanged). Built by `shortenResolutionMap` in `./nodeResolution`.
    */
-  resolvedProps?: Record<string, { source: string; note?: string }>
+  resolvedProps?: Record<string, { source: string; note?: string; origin?: ValueOrigin }>
   /**
    * Present on the node the parser SELECTED when a component had more than
    * one JSX-bearing `return`, or a JSX child was a ternary/`&&` — see

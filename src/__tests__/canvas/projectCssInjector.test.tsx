@@ -35,7 +35,7 @@ function stubLoad(vendorCss: string): void {
     const metaLine = JSON.stringify({
       kind: 'meta',
       dir: '/tmp/studio-test', projectName: 'studio-test', componentSources: {},
-      styleRules: {}, styleRuleSources: {}, conditions: [], vendorCss, trust: 'static', paletteHiddenModuleIds: [],
+      styleRules: {}, styleRuleSources: {}, conditions: [], vendorCss, authoredCss: '', trust: 'static', paletteHiddenModuleIds: [],
       pageCount: 0,
     })
     return new Response(`${metaLine}\n`, { status: 200, headers: { 'content-type': 'application/x-ndjson' } })

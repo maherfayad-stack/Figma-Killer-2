@@ -259,6 +259,13 @@ Two implementation notes worth keeping:
   author and preview. Same move as `.nodeViewSwitcher .nodeViewButton`, and the
   reason it is a descendant selector rather than `!important`.
 
+- **Neither popover stops `pointerdown`.** `CanvasRoot`'s `@use-gesture` drag
+  runs with `filterTaps: true`, which suppresses the click after a drag by
+  calling `stopPropagation()` at React's root container. An overlay that
+  swallows `pointerdown` hides the press from use-gesture, leaving its tap
+  state stale so it kills every later click in the canvas. Guard by target
+  instead — the canvas's own handlers already do.
+
 The placement surface sits at `z-index: 52` — above the portaled selection/hover
 rings (51) so a click on a selected element places a comment instead of
 re-grabbing selection chrome, and below the notes toolbar (53) so the button that

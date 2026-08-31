@@ -18,6 +18,9 @@
  *   §8.4 Toggle switch hit areas — ToggleControl, PreferencesSection
  *         (role="switch", custom 44×44 WCAG 2.5.5 hit area not achievable via
  *         Button's fixed size tokens)
+ *   §8.5 Canvas coordinate affordances — CommentPin (a marker positioned at an
+ *         exact board coordinate: asymmetric map-pin radius whose corner is the
+ *         tip, plus a zoom counter-scale transform on its own root element)
  *
  * @see Contribution #667 — Button Design System Phase 2 spec (parent: this task)
  * @see Task #462 — Button Design System Phase 2 (37-file migration)
@@ -83,6 +86,25 @@ const ALLOWLIST = new Set([
   // not fit Button's token-driven size system.
   'admin/pages/site/property-controls/ToggleControl.tsx',
   'admin/modals/Settings/sections/PreferencesSection.tsx',
+
+  // ── §8.5 Canvas coordinate affordances ──────────────────────────────────
+  // A review comment pin is a marker at an exact BOARD COORDINATE, not a
+  // control in a layout. Three things about it are load-bearing and none is
+  // expressible through Button's token-driven sizing:
+  //   * an asymmetric map-pin radius (13px 13px 13px 2px) whose bottom-left
+  //     corner IS the tip that must land on the anchored point;
+  //   * `transform: scale(calc(1 / var(--canvas-zoom))) translate(-50%, -100%)`
+  //     with `transform-origin: 0 0` — the counter-scale that keeps the pin a
+  //     constant on-screen size at any zoom, and the offset that puts its tip
+  //     on the coordinate. Button owns its own root element and applies its
+  //     variant/size classes there, so this geometry cannot be layered on
+  //     without fighting rules whose CSS-Modules order is not guaranteed;
+  //   * a canvas-affordance background (--canvas-comment-pin), which is not a
+  //     Button variant and should not become one — it belongs to the same
+  //     family as the selection and hover rings, not to editor chrome.
+  // Keyboard reachability, focus-visible styling and the accessible name are
+  // all still provided explicitly (see CommentPin.tsx).
+  'admin/pages/site/canvas/BoardCommentsLayer/CommentPin.tsx',
 
   // ── §8.6 ARIA tablist tabs ──────────────────────────────────────────────
   // role="tab" buttons inside role="tablist" need a custom tab layout

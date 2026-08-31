@@ -185,6 +185,16 @@ export function useCanvas({ canvasRootRef, transformLayerRef, enabled }: UseCanv
     // setProperty avoids the same property-assignment lint trip as above.
     el.style.setProperty('transform', `translate(${t.panX}px, ${t.panY}px) scale(${t.zoom})`)
 
+    // The live zoom, published as an inheriting custom property so overlay
+    // children can counter-scale in pure CSS (`scale(calc(1 / var(--canvas-zoom)))`)
+    // and stay a constant on-screen size at any zoom — comment pins do exactly
+    // this. It has to be written HERE, next to the transform, rather than read
+    // from the store: `scheduleStoreCommit` lands `zoom` 100 ms AFTER the last
+    // gesture event, so a React-subscribed counter-scale would visibly lag a
+    // pinch and then snap. The default lives in `CanvasTransformLayer.module.css`,
+    // not in a `var()` fallback (CLAUDE.md's no-fallback rule).
+    el.style.setProperty('--canvas-zoom', String(t.zoom))
+
     // WS-5.4 — promote to a GPU-composited layer for the duration of the
     // gesture, then release. `el.style.willChange` reads back the resolved
     // value, so this check is a no-op skip on every write but the first of a

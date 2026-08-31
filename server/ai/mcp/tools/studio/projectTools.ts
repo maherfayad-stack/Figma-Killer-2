@@ -45,6 +45,7 @@ import { resolveProjectProfile } from '../../../../handlers/studio/projectProbe'
 import { startInstallJob, getInstallJob, probeInstallStatus } from '../../../../handlers/studio/installDeps'
 import { loadStudioPages } from '../../../../handlers/studioPageLoad'
 import { createScaffoldedPage } from '../../../../handlers/studio/pageScaffold'
+import { DEFAULT_PAGE_KIND, PageKindSchema, type PageKind } from '@core/studio-board'
 import { readTextCapped } from '../../../../handlers/studio/cappedFileRead'
 import { canonicalSummaryForFile } from '../../../../handlers/studio/canonicalPageCheck'
 import { isRealpathContainedAllowingMissing } from '../../../../handlers/studio/workspacePackageResolve'
@@ -377,7 +378,13 @@ const CreatePageInputSchema = Type.Object(
     name: Type.Optional(
       Type.String({
         description:
-          'Component/file name, turned into a PascalCase identifier (e.g. "order summary" -> OrderSummary.tsx). Omit to auto-name Page, Page2, ... — collisions with an existing name return a conflict rather than overwriting it.',
+          'Component/file name, turned into a PascalCase identifier (e.g. "order summary" -> OrderSummary.tsx). Omit to auto-name from the kind: Page/Page2 for a screen, Popup, Sheet/Sheet2 for a sheet. Collisions with an existing name return a conflict rather than overwriting it.',
+      }),
+    ),
+    kind: Type.Optional(
+      Type.Union(PageKindSchema.anyOf, {
+        description:
+          'What SHAPE of page to scaffold. "screen" (the default) is a full page. "popup" is a centred dialog over a dimmed screen. "sheet-small" and "sheet-large" are bottom sheets — a panel on the bottom edge with the screen showing above it, short and tall respectively. Every kind writes a screen-sized board frame: an overlay is drawn over the screen presenting it, so the scrim above the panel IS part of the design.',
       }),
     ),
   },
@@ -391,12 +398,12 @@ const createPageTool: AiTool = {
   mutates: true,
   requiredCapabilities: ['studio.write'],
   description:
-    'Scaffold a new page/screen: writes a canonical-by-construction .tsx (or .jsx, matching the project\'s own convention) file, auto-places its board frame at the next free grid slot so it is immediately visible, and returns { relPath, pageId, title, rootNodeId }. This is the ONLY way to create a screen — there is no other tool and no raw-file-write path. rootNodeId is read back by actually parsing the file just written (never invented) — pass it to studio_apply_edits\' insert edits as the container to compose structure into. Returns { ok:false, conflict } instead of overwriting when the name is already taken. If the caller has the project open in a browser tab, its canvas is nudged to pick up the new page and its board frame (best-effort — nothing to do if no browser is open). Requires studio.write.',
+    'Scaffold a new page/screen/popup/bottom sheet (see `kind`): writes a canonical-by-construction .tsx (or .jsx, matching the project\'s own convention) file, auto-places its board frame at the next free grid slot so it is immediately visible, and returns { relPath, pageId, title, rootNodeId }. This is the ONLY way to create a screen — there is no other tool and no raw-file-write path. rootNodeId is read back by actually parsing the file just written (never invented) — pass it to studio_apply_edits\' insert edits as the container to compose structure into. Returns { ok:false, conflict } instead of overwriting when the name is already taken. If the caller has the project open in a browser tab, its canvas is nudged to pick up the new page and its board frame (best-effort — nothing to do if no browser is open). Requires studio.write.',
   inputSchema: CreatePageInputSchema,
   handler: async (input, ctx: ToolContext) => {
-    const { dir: dirInput, name } = input as { dir?: string; name?: string }
+    const { dir: dirInput, name, kind } = input as { dir?: string; name?: string; kind?: PageKind }
     const dir = resolveToolProjectDir(dirInput, ctx)
-    const result = createScaffoldedPage(dir, name ?? '')
+    const result = createScaffoldedPage(dir, name ?? '', kind ?? DEFAULT_PAGE_KIND)
     if (!result.ok) return { ok: false, error: result.conflict }
     // A scaffolded page always writes BOTH a new page file AND a new board
     // frame (`autoPlaceBoardFrame`, `pageScaffold.ts`'s own doc) — never one

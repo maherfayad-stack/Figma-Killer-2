@@ -115,6 +115,16 @@ the shipped `@core/ast-codemods`, plus the WS-4 instance-model verbs
 out the write surface with the one operation none of these three cover:
 scaffolding a brand-new page file.
 
+**Review comments** — `studio_list_comments` (read, ungated),
+`studio_reply_comment` and `studio_resolve_comment` (both `studio.write`). These
+let an agent close a human review thread end to end: read what is outstanding,
+edit, reply in the thread, resolve. `studio_resolve_comment` carries an extra
+gate none of the other write tools need — it re-resolves the comment's anchor
+against the live source and REFUSES on `drifted`/`detached`, because a Studio
+node id is a source position and an agent acting on a rotten one edits the wrong
+element in the user's real file. See
+[`studio-comments.md`](studio-comments.md#the-agent-loop).
+
 **The live-reload bridge** (mcp-tooling) — the piece that makes these four
 writes actually visible on an open canvas without a manual reload.
 `studio_apply_edits`/`studio_codemod` map every file they touched back to a

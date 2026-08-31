@@ -36,6 +36,42 @@ export type IframeInteraction = 'canvas' | 'live' | 'capture'
  * body styles still publish normally and apply in live mode, but these fields
  * cannot replace the design iframe's grow-to-content/scrollbar reset after it
  * has mounted.
+ *
+ * Audited (this set, this file's `applyIframeBodyReset` writes, and the two
+ * opposing height requirements `resolveViewportUnits.ts`'s own module doc
+ * lays out) for anything that could be relaxed to let more authored body CSS
+ * through honestly. Conclusion: none of the six can be — each is load-bearing
+ * for a DIFFERENT one of the two requirements in tension (grow-to-content vs.
+ * a definite `%`-chain basis), not redundant caution:
+ *
+ * - `height`/`min-height`: the definite pin itself. This is the ONE property
+ *   pair genuinely irreconcilable with "authored CSS renders as authored" —
+ *   an app shell needs body's height to be a NUMBER for its `%` chain to
+ *   resolve, and the canvas needs that number to be DERIVED from content, not
+ *   fixed — so it can never simply be handed back to whatever the author's
+ *   own `body` rule says (`auto`, `100vh`, or nothing).
+ * - `overflow`/`overflow-x`/`overflow-y`: forced `visible`, never relaxed to
+ *   an authored `hidden`/`clip`. Unlike `CanvasScrollUnrollInjector`'s own
+ *   overflow override (scoped to a confirmed scroll region — see
+ *   `canvasScrollUnroll.ts`), body itself is not optional here: an authored
+ *   `overflow: hidden` on body would clip everything past its CURRENT pinned
+ *   height, which is exactly the frame-growth signal
+ *   (`useIframeFrameAutoHeight` watches `body.scrollHeight`) this whole
+ *   mechanism depends on staying visible and unclipped.
+ * - `position: relative`: the containing block every absolutely-positioned
+ *   overlay (an app screen's `position: absolute; inset: 0` root, and this
+ *   file's own `overflow: hidden` → `visible` scroll-unroll's `fixed` →
+ *   `absolute` rewrite, see `canvasScrollUnroll.ts`'s `buildScrollUnrollRules`
+ *   doc) resolves against. Authoring `body { position: static }` would hand
+ *   both back to the INITIAL containing block (the iframe viewport) instead —
+ *   for the app-overlay case, reopening the frame-growth loop this file's
+ *   long comment below describes (the eSIM sheet that rode it to
+ *   100342px); for the scroll-unroll case, breaking the SAME representative-
+ *   device-height anchor `resolveViewportUnits.ts`'s `CANVAS_VIEWPORT_HEIGHT`
+ *   already uses for `vh`. Confirmed correct, not just assumed: measured live
+ *   against a real project, every frame computes `position: relative` on the
+ *   canvas against `position: static` in source, on every page — exactly as
+ *   intended, not a stray divergence.
  */
 export const CANVAS_BODY_RESET_PROPERTIES = new Set([
   'height',

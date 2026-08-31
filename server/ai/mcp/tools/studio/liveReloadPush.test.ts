@@ -37,7 +37,7 @@ describe('pushStudioLiveReload', () => {
     expect(() => pushStudioLiveReload(userId, { dir: '/tmp/proj', pageIds: ['home'] })).not.toThrow()
   })
 
-  it('is a no-op even WITH an open bridge when there is nothing to push (empty pageIds, boardsChanged false)', async () => {
+  it('is a no-op even WITH an open bridge when there is nothing to push (no pageIds, no changed flags)', async () => {
     const userId = `u_noop_${Math.floor(performance.now())}`
     const ctrl = new AbortController()
     const reader = createEditorBridgeStream(userId, 'site', ctrl.signal).getReader()
@@ -69,7 +69,7 @@ describe('pushStudioLiveReload', () => {
 
     const toolRequest = await readUntil(reader, (e) => e.type === 'toolRequest')
     expect(toolRequest.toolName).toBe(STUDIO_LIVE_RELOAD_TOOL_NAME)
-    expect(toolRequest.input).toEqual({ dir: '/tmp/proj', pageIds: ['home', 'about'], boardsChanged: true })
+    expect(toolRequest.input).toEqual({ dir: '/tmp/proj', pageIds: ['home', 'about'], boardsChanged: true, commentsChanged: false })
 
     // Resolve it like the browser would — proves the push is a real,
     // completable round trip, not a fire-into-the-void with no receiver.
@@ -81,7 +81,32 @@ describe('pushStudioLiveReload', () => {
     await reader.read().catch(() => {})
   })
 
-  it('defaults boardsChanged to false and omits it from the pageIds-only case implicitly', async () => {
+  it('pushes on a comments-only change, with no pages to re-parse', async () => {
+    // An agent replying in a review thread touches no page source. Without a
+    // flag of its own the push would be dropped by the "nothing to do" guard,
+    // and the reply would sit unseen in a thread the reviewer already has open.
+    const userId = `u_comments_${Math.floor(performance.now())}`
+    const ctrl = new AbortController()
+    const reader = createEditorBridgeStream(userId, 'site', ctrl.signal).getReader()
+    const ready = await readUntil(reader, (e) => e.type === 'bridgeReady')
+    const bridgeId = ready.bridgeId as string
+
+    pushStudioLiveReload(userId, { dir: '/tmp/proj', commentsChanged: true })
+
+    const toolRequest = await readUntil(reader, (e) => e.type === 'toolRequest')
+    expect(toolRequest.input).toEqual({
+      dir: '/tmp/proj',
+      pageIds: [],
+      boardsChanged: false,
+      commentsChanged: true,
+    })
+    resolveBridgeToolResult(bridgeId, toolRequest.requestId as string, { ok: true, data: null })
+
+    ctrl.abort()
+    await reader.read().catch(() => {})
+  })
+
+  it('defaults both changed-flags to false in the pageIds-only case', async () => {
     const userId = `u_default_${Math.floor(performance.now())}`
     const ctrl = new AbortController()
     const reader = createEditorBridgeStream(userId, 'site', ctrl.signal).getReader()
@@ -91,7 +116,7 @@ describe('pushStudioLiveReload', () => {
     pushStudioLiveReload(userId, { dir: '/tmp/proj', pageIds: ['home'] })
 
     const toolRequest = await readUntil(reader, (e) => e.type === 'toolRequest')
-    expect(toolRequest.input).toEqual({ dir: '/tmp/proj', pageIds: ['home'], boardsChanged: false })
+    expect(toolRequest.input).toEqual({ dir: '/tmp/proj', pageIds: ['home'], boardsChanged: false, commentsChanged: false })
     resolveBridgeToolResult(bridgeId, toolRequest.requestId as string, { ok: true, data: null })
 
     ctrl.abort()

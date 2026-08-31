@@ -31,6 +31,30 @@ import type { DesignSystemRef } from './projectProfileSchema'
 const IMPORTED_DESIGN_SYSTEMS_DIR = 'styles/imported'
 
 /**
+ * The one design-system package Studio has first-class, hand-manifested
+ * knowledge of.
+ *
+ * `@alm-design/design-system` keeps resolving to `alm.<Name>` (WS-3's
+ * hardcoded, build-time-manifested path) rather than the generic
+ * `pkg.<sanitized>.<Name>` scheme every other package gets. `standing-07`
+ * (STATE.md): the generic pipeline is not yet PROVEN to render the eSIM board
+ * — the one real corpus that actually uses this package — visually
+ * equivalently to the hardcoded `alm.*` registration in
+ * `src/modules/alm/register.tsx`. Routing this one specifier through the new
+ * scheme before that dogfood pass would regress the only corpus that
+ * currently renders correctly. Revisit only once `standing-07`'s five
+ * preconditions all hold — see the `pkg-01` STATE.md entry.
+ *
+ * Lives HERE, in the module named for "where does this project's design system
+ * live", because two server callers need it and neither owns the other:
+ * `studioPageLoad.ts` (which module id a component gets) and
+ * `pageTemplates.ts` (whether a scaffolded overlay can use the real
+ * `BottomSheet`). `src/modules/alm/register.tsx` carries the browser-side copy
+ * — client and server may not import each other, so that one stays.
+ */
+export const ALM_DESIGN_PACKAGE_SPECIFIER = '@alm-design/design-system'
+
+/**
  * Every immediate subdirectory of `<root>/styles/imported/` — one per
  * "Import design tokens" wizard run, since `designImport.ts`'s `copy-css`
  * route always lands its files at `styles/imported/<slug>/`. Never throws: an

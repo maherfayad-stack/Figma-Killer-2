@@ -79,6 +79,9 @@ export default function Home() {
           actionLabel={t.home.bookATransfer} buttonDisabled={false}
         />
       </section>
+      <p>Add your text here.</p>
+      <p>Add your text here.</p>
+      <p>Add your text here.</p>
     </main>
   )
 }

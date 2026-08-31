@@ -66,6 +66,7 @@ import { parsedPageToSitePage } from '@core/studio-sync/parsedPageToSitePage'
 import { classIdsForClassName, loadStudioStyles, type StyleRuleSource } from './studioCss'
 import { probeProject } from './studio/projectProbe'
 import { getCachedRouteParse, hashWorkspaceConfig, setCachedRouteParse } from './studio/pageParseCache'
+import { ALM_DESIGN_PACKAGE_SPECIFIER } from './studio/designSystemDetect'
 import { compileProjectStyles } from './studio/styleCompile'
 import { readStudioMeta } from './studio/studioMeta'
 import {
@@ -84,20 +85,6 @@ import {
 const CONTAINER_TAGS: ReadonlySet<string> = new Set([
   'div', 'section', 'main', 'header', 'footer', 'nav', 'article', 'aside',
 ])
-
-/**
- * `@alm-design/design-system` keeps resolving to `alm.<Name>` (WS-3's
- * hardcoded, build-time-manifested path) rather than the generic
- * `pkg.<sanitized>.<Name>` scheme every other package gets. `standing-07`
- * (STATE.md): the generic pipeline is not yet PROVEN to render the eSIM
- * board — the one real corpus that actually uses this package — visually
- * equivalently to the hardcoded `alm.*` registration in
- * `src/modules/alm/register.tsx`. Routing this one specifier through the new
- * scheme before that dogfood pass would regress the only corpus that
- * currently renders correctly. Revisit only once `standing-07`'s five
- * preconditions all hold — see the `pkg-01` STATE.md entry.
- */
-const ALM_DESIGN_PACKAGE_SPECIFIER = '@alm-design/design-system'
 
 /**
  * Map a parsed node to an Studio moduleId (design-system → alm.* / pkg.*, host
@@ -280,6 +267,17 @@ export interface StudioLoadResult {
    * (`ProjectCssInjector`).
    */
   vendorCss: string
+  /**
+   * `board-27` — `studioCss.ts`'s `StudioStyles.authoredCss`: every
+   * stylesheet this load read, concatenated RAW (extraCss, then each page's
+   * own `.css`, in cascade order). The client injects this verbatim
+   * (`AuthoredCssInjector`) so the canvas renders exactly what the project's
+   * own CSS says, including declarations happy-dom's CSSOM parser silently
+   * drops when building `styleRules` above (`color-mix()`,
+   * `Canvas`/`CanvasText` system colours, slash-alpha `rgb()`) — see
+   * `studioCss.ts`'s "CSSOM in Bun" doc.
+   */
+  authoredCss: string
 }
 
 /** One route's worth of parsed content, whatever framework produced it — the common shape `loadStudioPages`'s style-collection + convert tail operates over. */
@@ -486,7 +484,7 @@ function buildAppRouterPageEntries(
 export async function loadStudioPages(dir: string): Promise<StudioLoadResult> {
   const pagesDir = projectPagesDir(dir)
   if (!existsSync(pagesDir)) {
-    return { pages: [], componentSources: {}, styleRules: {}, styleRuleSources: {}, conditions: [], vendorCss: '' }
+    return { pages: [], componentSources: {}, styleRules: {}, styleRuleSources: {}, conditions: [], vendorCss: '', authoredCss: '' }
   }
 
   // One shared, workspace-wide ts-morph Project so a page's local
@@ -526,7 +524,7 @@ export async function loadStudioPages(dir: string): Promise<StudioLoadResult> {
 
   // §6 — read every stylesheet the pages import, in cascade order, plus the
   // WS-2.1 compiled blob (Tailwind/Sass/PostCSS output, rewritten CSS Modules).
-  const { styleRules, conditions, classIdsByName, sources: styleRuleSources } = await loadStudioStyles(
+  const { styleRules, conditions, classIdsByName, sources: styleRuleSources, authoredCss } = await loadStudioStyles(
     routeEntries.map(({ expanded, relFile }) => ({ parsed: expanded, relFile })),
     project,
     dir,
@@ -557,7 +555,7 @@ export async function loadStudioPages(dir: string): Promise<StudioLoadResult> {
     return page
   })
 
-  return { pages, componentSources, styleRules, styleRuleSources, conditions, vendorCss: compiledStyles.vendorCss }
+  return { pages, componentSources, styleRules, styleRuleSources, conditions, vendorCss: compiledStyles.vendorCss, authoredCss }
 }
 
 /**

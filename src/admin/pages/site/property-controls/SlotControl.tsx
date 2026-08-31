@@ -138,11 +138,7 @@ export function SlotControl({ propKey, value, label, isOverride, layout, disable
             <CursorClickSolidIcon size={12} aria-hidden="true" />
             Edit contents
           </Button>
-        ) : (
-          <span className={styles.codeValue} data-testid={`slot-control-${propKey}-empty`}>
-            — <span className={styles.codeValueHint}>no content in this slot</span>
-          </span>
-        )}
+        ) : null}
         {slotNodeId && (
           <Button
             variant="ghost"

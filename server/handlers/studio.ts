@@ -185,6 +185,15 @@
  *       doc for exactly when a single-file reload is sufficient and when it
  *       widens.
  *
+ *   GET/POST /admin/api/studio/comments        → `studio/commentsRoutes.ts`
+ *       Review threads pinned to the board (`.studio/comments.json`). POST
+ *       carries ONE `CommentOp`, not the whole file, because comments are
+ *       multi-writer where board geometry is not. The only studio route that
+ *       requires a session: a comment has a byline, and the server is the
+ *       only party that can honestly supply one. Called outside the
+ *       sub-router loop below because it is the only one needing the
+ *       `DbClient`.
+ *
  * This module is the HTTP routing layer only — request wiring, body
  * validation, and error-envelope mapping. The actual page-parser/ast-codemods
  * work (Node/ts-morph, never the browser) lives in sibling modules by
@@ -230,6 +239,8 @@ import { tryServeStudioTranslations } from './studio/translations'
 import { tryServeStudioI18nSetup } from './studio/i18nSetup'
 import { tryServeStudioProjectRoutes } from './studio/projectRoutes'
 import { tryServeStudioReloadScope } from './studio/reloadScope'
+import { tryServeStudioComments } from './studio/commentsRoutes'
+import type { DbClient } from '../db/client'
 
 /**
  * Sub-routers for the newer studio namespaces, each owning one concern and its
@@ -330,7 +341,7 @@ const GithubImportBodySchema = Type.Object({
 
 export async function tryServeStudio(
   req: Request,
-  _runtime: unknown,
+  runtime: { db: DbClient },
   url: URL,
   pathname: string,
 ): Promise<Response | null> {
@@ -339,6 +350,12 @@ export async function tryServeStudio(
     if (response) return response
   }
 
+  // Called outside the loop above because it needs the `DbClient` to resolve
+  // the session into a comment's byline — the one studio route that has an
+  // author. See `studio/commentsRoutes.ts`'s module doc.
+  const commentsResponse = await tryServeStudioComments(req, runtime, url, pathname)
+  if (commentsResponse) return commentsResponse
+
   if (pathname === '/admin/api/studio/load' && req.method === 'GET') {
     try {
       const dir = resolveProjectDir(url.searchParams.get('dir'))
@@ -346,7 +363,7 @@ export async function tryServeStudio(
       const pageIdsParam = parseStudioLoadPageIdsParam(url.searchParams.get('pageIds')) // see studioLoadResponse.ts
       if (pageIdsParam === null) return badRequest('invalid pageIds query param')
       const loaded = await loadStudioPages(dir) // always full — meta is project-wide, filtered below
-      const { componentSources, styleRules, styleRuleSources, conditions, vendorCss } = loaded
+      const { componentSources, styleRules, styleRuleSources, conditions, vendorCss, authoredCss } = loaded
       const { pages, missingPageIds } = filterStudioLoadPages(loaded.pages, pageIdsParam)
       // WS-3.3 — the client needs the CURRENT trust tier to decide whether an
       // unregistered `pkg.*` node should fetch a component bundle (Tier ≥ 1)
@@ -372,7 +389,7 @@ export async function tryServeStudio(
       // does not attempt.
       if (url.searchParams.get('stream') === '1') {
         return ndjsonResponse(studioLoadStreamLines({
-          dir, projectName, componentSources, styleRules, styleRuleSources, conditions, vendorCss, trust, paletteHiddenModuleIds, pages, missingPageIds,
+          dir, projectName, componentSources, styleRules, styleRuleSources, conditions, vendorCss, authoredCss, trust, paletteHiddenModuleIds, pages, missingPageIds,
         }))
       }
 
@@ -385,6 +402,7 @@ export async function tryServeStudio(
         styleRuleSources,
         conditions,
         vendorCss,
+        authoredCss,
         trust,
         paletteHiddenModuleIds,
         missingPageIds,

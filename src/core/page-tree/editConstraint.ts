@@ -192,7 +192,7 @@ export interface EditConstraint {
 export interface ConstraintPropSource extends SourceWritableNode {
   id?: string
   /** R2 — `PageNode.resolvedProps`, keyed like `codeProps`. See `nodeResolution.ts`. */
-  resolvedProps?: Record<string, { source: string; note?: string }>
+  resolvedProps?: Record<string, { source: string; note?: string; origin?: { rel: string; line: number; col: number } }>
 }
 
 /**

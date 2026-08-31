@@ -99,6 +99,41 @@ describe('CANVAS_CSS_LAYER_ORDER pre-declaration', () => {
     expect(css).toContain('/* no user stylesheets */')
   })
 
+  describe('publisher reset is CMS-only', () => {
+    const originalSearch = window.location.search
+
+    afterEach(() => {
+      window.history.replaceState(null, '', `${window.location.pathname}${originalSearch}`)
+      window.localStorage.removeItem('studio:studio')
+    })
+
+    it('omits the reset block entirely in Studio mode (URL param)', () => {
+      window.history.replaceState(null, '', `${window.location.pathname}?studio=1`)
+      render(<ClassStyleInjector targetDocument={document} />)
+      const css = document.getElementById('mc-classes')?.textContent ?? ''
+      // Layer order stays pinned even with no rules in the reset layer.
+      expect(css.startsWith(CANVAS_CSS_LAYER_ORDER)).toBe(true)
+      expect(css).not.toContain(`@layer ${RESET_LAYER} {`)
+      expect(css).not.toContain(':where(*) { margin: 0; padding: 0; }')
+    })
+
+    it('omits the reset block entirely in Studio mode (sticky localStorage)', () => {
+      window.history.replaceState(null, '', window.location.pathname)
+      window.localStorage.setItem('studio:studio', '1')
+      render(<ClassStyleInjector targetDocument={document} />)
+      const css = document.getElementById('mc-classes')?.textContent ?? ''
+      expect(css).not.toContain(`@layer ${RESET_LAYER} {`)
+    })
+
+    it('still emits the reset block outside Studio mode', () => {
+      window.history.replaceState(null, '', `${window.location.pathname}?studio=0`)
+      render(<ClassStyleInjector targetDocument={document} />)
+      const css = document.getElementById('mc-classes')?.textContent ?? ''
+      expect(css).toContain(`@layer ${RESET_LAYER} {`)
+      expect(css).toContain(':where(*) { margin: 0; padding: 0; }')
+    })
+  })
+
   it('wraps real class-registry CSS in @layer user-authored, after the pre-declaration', () => {
     useEditorStore.setState({
       site: {

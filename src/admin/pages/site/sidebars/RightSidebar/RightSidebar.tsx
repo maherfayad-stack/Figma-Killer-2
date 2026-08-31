@@ -1,6 +1,7 @@
 import { useRef, type CSSProperties } from 'react'
 import { selectRightSidebarExpanded, useEditorStore } from '@site/store/store'
 import { PropertiesPanel } from '@site/panels/PropertiesPanel'
+import { CommentsPanel } from '@site/panels/CommentsPanel'
 import { SidebarResizeHandle } from '@admin/shared/SidebarResizeHandle'
 import styles from './RightSidebar.module.css'
 
@@ -9,11 +10,20 @@ import styles from './RightSidebar.module.css'
  * permissions. Decouples the sidebar's expanded/collapsed state from the
  * (async) availability of its `contentPanel`:
  *
- * - `site`     — Site editor. Width follows `sitePropertiesExpanded`
+ * - `site`     — Site editor. Shows the COMMENTS panel whenever the user is
+ *                working on comments (`commentsPaneOpen` — set by opening a
+ *                thread or arming the `C` tool), and the Properties panel
+ *                otherwise, with width following `sitePropertiesExpanded`
  *                (open iff a node/class is selected AND docked AND not
- *                collapsed). When expanded and no `contentPanel` is
- *                provided, falls back to the docked default
- *                `<PropertiesPanel>`.
+ *                collapsed).
+ *
+ *                Comments WIN over properties when both would show, because
+ *                clicking a comment pin does not clear the node selection —
+ *                without a winner the pane would keep showing the properties
+ *                of whatever happened to be selected before, next to a comment
+ *                the user just opened. The comments pane is also independent
+ *                of `propertiesPanelMode`: it is not the properties panel, so
+ *                undocking or collapsing that one must not take it away.
  * - `hidden`   — Site viewer (no `pages.draft.save` capability). Always
  *                closed; renders nothing inside.
  */
@@ -31,6 +41,8 @@ export function RightSidebar({ mode }: RightSidebarProps) {
 
   const isDocked = propertiesPanelMode === 'docked'
   const sitePropertiesExpanded = useEditorStore(selectRightSidebarExpanded)
+  const commentsPaneOpen = useEditorStore((s) => s.commentsPaneOpen)
+  const showComments = mode === 'site' && commentsPaneOpen
 
   // Width is derived purely from synchronous state — same model the
   // left sidebar uses. No dependence on the async `contentPanel` prop
@@ -38,7 +50,7 @@ export function RightSidebar({ mode }: RightSidebarProps) {
   // stays there, only changing when the user explicitly toggles
   // open/close (which the CSS transition in RightSidebar.module.css
   // animates smoothly).
-  const isExpanded = mode === 'site' ? sitePropertiesExpanded : false
+  const isExpanded = showComments || (mode === 'site' ? sitePropertiesExpanded : false)
 
   const panelWidth = isExpanded ? propertiesPanel.width : 0
 
@@ -68,14 +80,21 @@ export function RightSidebar({ mode }: RightSidebarProps) {
         />
       )}
 
-      {mode === 'site' && isDocked && (
-        <div
-          className={styles.panelSlot}
-          data-testid="right-sidebar-panel-slot"
-          inert={isExpanded ? undefined : true}
-        >
-          <PropertiesPanel variant="docked" />
+      {showComments ? (
+        <div className={styles.panelSlot} data-testid="right-sidebar-panel-slot">
+          <CommentsPanel />
         </div>
+      ) : (
+        mode === 'site' &&
+        isDocked && (
+          <div
+            className={styles.panelSlot}
+            data-testid="right-sidebar-panel-slot"
+            inert={isExpanded ? undefined : true}
+          >
+            <PropertiesPanel variant="docked" />
+          </div>
+        )
       )}
     </aside>
   )

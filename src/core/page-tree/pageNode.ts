@@ -53,11 +53,26 @@ export const PageNodeSchema = Type.Object({
    * showed one real source and a generic "set in code" fallback for the
    * other. Keyed exactly like `codeProps`: a prop name, a `style:<property>`
    * inline-style entry, or `callSiteProps:<name>` on a `studio.instance`.
-   * Every key here has a matching `codeProps` entry — this map only ever
-   * EXPLAINS a refusal; `codeProps` still decides it. See
+   * Every key here has a matching `codeProps` entry — this map EXPLAINS a
+   * refusal, and, when it carries an `origin`, LIFTS it. See
    * `ParsedNode.resolvedProps` in `@core/page-parser`.
    */
-  resolvedProps: Type.Optional(Type.Record(Type.String(), Type.Object({ source: Type.String(), note: Type.Optional(Type.String()) }))),
+  resolvedProps: Type.Optional(
+    Type.Record(
+      Type.String(),
+      Type.Object({
+        source: Type.String(),
+        note: Type.Optional(Type.String()),
+        /**
+         * Where the literal behind this prop lives, when the expression
+         * bottomed out in a single string in the workspace. Same shape and
+         * same purpose as `textOrigin` below — the JSX cannot be written, the
+         * literal one hop away can. See `Resolution.origin`.
+         */
+        origin: Type.Optional(Type.Object({ rel: Type.String(), line: Type.Number(), col: Type.Number() })),
+      }),
+    ),
+  ),
   /**
    * Studio import (parser-06) — present on the node the parser SELECTED when
    * a component had more than one JSX-bearing `return`, or a JSX child was a

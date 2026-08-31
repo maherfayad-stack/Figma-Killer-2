@@ -20,6 +20,25 @@ export interface PageEvalContext {
 export interface Resolution {
   source: string
   note?: string
+  /**
+   * Where the literal this prop resolved THROUGH physically lives, when the
+   * expression bottomed out in a single string in the workspace:
+   * `title={t.home.skipTheTaxiQueue}` -> `skipTheTaxiQueue: 'Skip the taxi
+   * queue'` in `i18n/translations.ts`.
+   *
+   * This is what makes such a prop editable again. The JSX is NOT a writeback
+   * target — baking a string over `{t.home.…}` would destroy the binding — but
+   * the literal it reads is an ordinary string at a known location, and
+   * rewriting THAT is exactly what editing this copy means.
+   *
+   * `PageNode.textOrigin` is the same idea for a node's TEXT, and its doc
+   * explains why it was deliberately scoped to one value: `resolution`
+   * (singular) keeps only the first, so an origin hung there could point at a
+   * DIFFERENT prop's literal. That objection does not apply here — this map is
+   * already per prop, so each origin belongs to exactly the prop it is filed
+   * under.
+   */
+  origin?: ValueOrigin
 }
 
 /**
@@ -204,7 +223,11 @@ export function shortenResolutionMap(resolutions: ResolutionMap): ResolutionMap 
   const shortened: ResolutionMap = {}
   for (const key of keys) {
     const entry = resolutions[key]!
-    shortened[key] = { source: shortenSource(entry.source), ...(entry.note ? { note: entry.note } : {}) }
+    shortened[key] = {
+      source: shortenSource(entry.source),
+      ...(entry.note ? { note: entry.note } : {}),
+      ...(entry.origin ? { origin: entry.origin } : {}),
+    }
   }
   return shortened
 }

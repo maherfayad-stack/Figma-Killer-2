@@ -3,7 +3,7 @@
 .panel {
     display: flex;
     flex-direction: column;
-    gap: var(--space-s);
+    gap: var(--space-2xs);
     /* min-height:0 lets .list actually scroll instead of the panel growing —
        the same flex-child trap the properties panel hit. */
     min-height: 0;
@@ -39,6 +39,10 @@
     padding: 0;
     min-height: 0;
     overflow-y: auto;
+    /* The list scrolls vertically only. A row that reports a wider intrinsic
+       width than the panel (a long unbroken word in a preview) must wrap, not
+       add a horizontal scrollbar under the whole queue. */
+    overflow-x: hidden;
     list-style: none;
 }
 
@@ -66,7 +70,7 @@
     display: flex;
     align-items: center;
     gap: var(--space-2xs);
-    padding: 0 var(--space-xs);
+    padding: 0 var(--space-2xs);
     color: var(--text-subtle);
     font-size: var(--text-2xs);
     cursor: pointer;
@@ -77,12 +81,15 @@
     display: flex;
     align-items: center;
     gap: var(--space-2xs);
+    /* Both are needed: `min-width: 0` lets the row shrink below its content's
+       intrinsic width, and without it the row's `flex: 1` basis pushed the
+       shell wider than the panel and put a scrollbar under the list. */
     min-width: 0;
+    max-width: 100%;
 }
 
 .rowCheck {
     flex: 0 0 auto;
-    margin-inline-start: var(--space-2xs);
 }
 
 /* One thread. A Button primitive, so keyboard reachability and focus styling
@@ -95,11 +102,19 @@
 .rowShell .row {
     display: flex;
     align-items: flex-start;
-    gap: var(--space-s);
-    width: 100%;
+    gap: var(--space-2xs);
+    /* `flex: 1 1 auto` + `min-width: 0`, NOT `width: 100%` — 100% of the shell
+       PLUS the checkbox beside it overflows the panel by the checkbox's width,
+       which is what put a horizontal scrollbar under the list. */
+    flex: 1 1 auto;
+    min-width: 0;
     height: auto;
     min-height: 0;
-    padding: var(--space-2xs) var(--space-xs);
+    padding: var(--space-2xs);
+    /* `Button` centres its children; a list row reads left-to-right. Without
+       this the pin badge and author float in the middle of the row with a
+       ragged gap after the checkbox. */
+    justify-content: flex-start;
     white-space: normal;
     text-align: left;
 }

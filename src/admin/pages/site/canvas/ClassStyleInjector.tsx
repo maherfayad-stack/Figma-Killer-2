@@ -65,6 +65,7 @@ import { styleRuleSelector, type ConditionDef, type StyleRule } from '@core/page
 import { collectBackgroundImagePaths, PUBLISHER_RESET_CSS } from '@core/publisher'
 import { useResponsiveEditorMediaAssets } from '@admin/shared/media/hooks/useResponsiveBackgroundStyle'
 import { selectorStatePseudo } from '@site/cssStatePseudo'
+import { isStudioMode } from '@site/studio/studioMode'
 import { registryBackgroundImagePaths } from './canvasBackgroundImagePaths'
 import { generateCanvasClassCSS, generateForcedStateCSS, generatePreviewClassCSS } from './canvasClassCss'
 import { resolveViewportUnitsForCanvas, type CanvasViewport } from './resolveViewportUnits'
@@ -176,11 +177,27 @@ export function ClassStyleInjector({ targetDocument, viewport }: ClassStyleInjec
     // all three regardless of specificity. The `CANVAS_CSS_LAYER_ORDER` prelude
     // pins the relative order no matter which stylesheet's rule body the
     // browser encounters first.
+    //
+    // `PUBLISHER_RESET_CSS` is CMS-only. It is the correct baseline for a
+    // CMS-authored page built from the module engine, which genuinely ships
+    // no stylesheet of its own — but a Studio-parsed page IS a real React
+    // project's own `.tsx`, and "the repository is the document" means the
+    // project's own CSS (or the complete absence of one) is the whole truth.
+    // Injecting a modern reset there makes every element the project hasn't
+    // styled — a bare `<ul>`, an unclassed heading, a table, a link — look
+    // BETTER than what a real browser renders (UA bullets/margins/underlines
+    // silently replaced by the reset's zero-margin, no-bullet look), which is
+    // exactly the "did I actually style this" case a user is most likely to
+    // be checking. `isStudioMode()` is the same single-source-of-truth gate
+    // every other studio-vs-CMS canvas decision reads (`studioMode.ts`) — it
+    // is what selects the multi-frame board canvas over CMS breakpoint
+    // frames in the first place, so it is the honest discriminator here too,
+    // not a second, parallel signal. See `docs/agent-refs/canvas-internals.md`.
     const css = rewritePrefersColorScheme(forCanvas(generated))
-    const resetBlock = `@layer ${RESET_LAYER} {\n${PUBLISHER_RESET_CSS}\n}`
+    const resetBlock = isStudioMode() ? '' : `@layer ${RESET_LAYER} {\n${PUBLISHER_RESET_CSS}\n}\n`
     styleEl.textContent = css
-      ? `${CANVAS_CSS_LAYER_ORDER}\n${resetBlock}\n@layer ${USER_AUTHORED_LAYER} {\n${css}\n}`
-      : `${CANVAS_CSS_LAYER_ORDER}\n${resetBlock}\n/* no classes */`
+      ? `${CANVAS_CSS_LAYER_ORDER}\n${resetBlock}@layer ${USER_AUTHORED_LAYER} {\n${css}\n}`
+      : `${CANVAS_CSS_LAYER_ORDER}\n${resetBlock}/* no classes */`
   }, [
     targetDocument,
     viewport,

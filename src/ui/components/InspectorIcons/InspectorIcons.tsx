@@ -270,3 +270,27 @@ export function CornerRadiusIcon(props: IconProps) {
     />
   )
 }
+
+// ---------------------------------------------------------------------------
+// Review comments. The vendored catalogue has no speech bubble, and adding one
+// needs a checkout of the private upstream repo (`bun run icons:sync`,
+// `PIXEL_ART_ICONS_SRC`), so it is drawn here under the same Gate 3 exemption
+// as everything above.
+// ---------------------------------------------------------------------------
+
+/**
+ * A speech bubble with two lines of text and a tail stepping down-left.
+ *
+ * The two inner bars are what separate "comment" from a bare chat bubble — an
+ * empty outline reads as a generic message icon in a rail that already has
+ * several. The tail is a two-step staircase rather than a diagonal, matching
+ * the vendored set's pixel grid.
+ */
+export function CommentBubbleIcon(props: IconProps) {
+  return (
+    <Glyph
+      {...props}
+      d="M3 4h18v2H3V4Zm0 2h2v10H3V6Zm16 0h2v10h-2V6ZM3 16h18v2H3v-2Zm4 2h4v2H7v-2Zm0 2h2v2H7v-2ZM7 9h10v2H7V9Zm0 3h6v2H7v-2Z"
+    />
+  )
+}

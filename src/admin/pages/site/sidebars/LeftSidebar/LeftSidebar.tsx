@@ -39,6 +39,9 @@ const ContentPanel = lazy(() =>
   import('@site/panels/ContentPanel').then((module) => ({ default: module.ContentPanel })),
 )
 
+// Comments — lazy for the same reason as its neighbours above, and
+// hidden-but-mounted once loaded so a half-typed search survives a tab switch.
+
 function selectActiveLeftSidebarPanel(state: ReturnType<typeof useEditorStore.getState>): LeftSidebarPanelId | null {
   // A plugin panel takes precedence over the built-in `*PanelOpen` flags;
   // the LeftSidebar reads `activePluginPanelId` separately and shows the
@@ -77,7 +80,10 @@ interface LeftSidebarProps {
  * navigational / view surfaces. Anything not in this set is editing-only
  * and is dropped from the rail (and its panel mount) when `editable=false`.
  */
-const READ_ONLY_RAIL_IDS: ReadonlySet<LeftSidebarPanelId> = new Set(['explorer', 'inspect'])
+const READ_ONLY_RAIL_IDS: ReadonlySet<LeftSidebarPanelId> = new Set([
+  'explorer',
+  'inspect',
+])
 
 export function LeftSidebar({
   railOnly = false,

@@ -18,6 +18,7 @@
  * response schema, the active workspace dir, and the reload-on-success rule.
  */
 import type { StyleRule } from '@core/page-tree'
+import type { PageKind } from '@core/studio-board'
 import { apiRequest } from '@core/http'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { dispatchCmsSitePagesPatch, requestCmsSiteReload } from '@admin/state/adminEvents'
@@ -191,15 +192,22 @@ export type CreatedStudioPage = Static<typeof StudioCreatePageResponseSchema>
  * server has already placed it on the board (D5 §11.3), so there is nothing
  * else for the caller to do besides reload. Targets the SAME `dir` every
  * other studio call uses, so the file lands in the project the canvas is
- * currently showing. `name` is optional — omit it and the server auto-names
- * the page `Page`, `Page2`, …. Throws `ApiError` on failure (e.g. a name
- * collision → 409) so the caller can toast the message. The caller reloads
- * the workspace afterwards (`requestCmsSiteReload`) to render it.
+ * currently showing.
+ *
+ * `name` is optional — omit it and the server auto-names the page from its
+ * kind (`Page`, `Page2`, … for a screen; `Sheet`, `Sheet2`, … for a bottom
+ * sheet). `kind` is optional too and defaults, server-side, to an ordinary
+ * screen.
+ *
+ * Throws `ApiError` on failure (e.g. a name collision → 409) so the caller can
+ * toast the message. The caller reloads the workspace afterwards
+ * (`requestCmsSiteReload`) to render it.
  */
-export function createStudioPage(name?: string): Promise<CreatedStudioPage> {
+export function createStudioPage(name?: string, kind?: PageKind): Promise<CreatedStudioPage> {
   const overrideDir = getStudioWorkspaceDir()
-  const body: { name?: string; dir?: string } = {}
+  const body: { name?: string; dir?: string; kind?: PageKind } = {}
   if (name) body.name = name
+  if (kind) body.kind = kind
   if (overrideDir) body.dir = overrideDir
   return apiRequest('/admin/api/studio/page', {
     method: 'POST',

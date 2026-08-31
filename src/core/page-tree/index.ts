@@ -242,6 +242,12 @@ export {
   generatedClassKindLabel,
 } from './classUtils'
 
+export {
+  IMPORTED_RULE_ID_PREFIX,
+  IMPORTED_RULE_TIMESTAMP,
+  isImportedStyleRuleId,
+} from './styleRuleOrigin'
+
 export { getNodeDisplayName, getNodeHtmlTag, getNodeClassNames } from './nodeDisplayName'
 
 export { resolvePageTreeDropTarget } from './dnd'

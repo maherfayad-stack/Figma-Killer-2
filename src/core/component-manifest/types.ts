@@ -20,6 +20,8 @@ export type PropSpecKind =
   | 'enum'
   | 'node'
   | 'icon'
+  /** A URL pointing at an image the user should be able to upload or pick, not type. */
+  | 'image'
   | 'handler'
   | 'unknown'
 

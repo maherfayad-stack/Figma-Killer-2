@@ -6,9 +6,12 @@
  * authored or GitHub-imported — they all live in the same place). This module
  * owns the pure(ish) filesystem helpers: enumerating projects, resolving the
  * directory a request operates on, page discovery/counting, and the name
- * slugging + starter page used when scaffolding a new one. Kept separate from
- * `studio.ts` (the HTTP endpoint layer) so that file stays focused on request
- * wiring rather than growing into a god-module.
+ * slugging used when scaffolding a new one. The starter FILES a scaffold
+ * writes live in `./studio/pageTemplates.ts` — there is one per page kind
+ * now, which is more template than a module about project paths should hold.
+ *
+ * Kept separate from `studio.ts` (the HTTP endpoint layer) so that file stays
+ * focused on request wiring rather than growing into a god-module.
  */
 import { existsSync, readdirSync, statSync } from 'node:fs'
 import { basename, join, resolve, sep } from 'node:path'
@@ -357,96 +360,30 @@ export function pageComponentNameFromInput(name: string): string {
 }
 
 /**
- * Next available auto page name for a project's `pages/` dir: `Page`, then
- * `Page2`, `Page3`, … — the first whose `<name><ext>` file doesn't already
+ * Next available auto name for a project's `pages/` dir: `<base>`, then
+ * `<base>2`, `<base>3`, … — the first whose `<name><ext>` file doesn't already
  * exist. Used when a page is created without a user-supplied name (the
- * one-click "New page" action). `ext` defaults to `.tsx` (D5's scaffold
- * default) but MUST be the extension the caller is about to write — passing
- * the wrong one checks for collisions against files that were never going to
- * exist (e.g. checking `.tsx` in an all-`.jsx` project always finds nothing
- * free, and a real `Page.jsx` collision goes undetected until the write
- * itself 409s). The loop is bounded defensively; in practice it returns
- * within the first few iterations.
+ * "New page" action).
+ *
+ * `ext` defaults to `.tsx` (D5's scaffold default) but MUST be the extension
+ * the caller is about to write — passing the wrong one checks for collisions
+ * against files that were never going to exist (e.g. checking `.tsx` in an
+ * all-`.jsx` project always finds nothing free, and a real `Page.jsx`
+ * collision goes undetected until the write itself 409s).
+ *
+ * `base` is the page KIND's own name base (`pageNameBase`, `./studio/
+ * pageTemplates.ts`), so an unnamed bottom sheet lands as `Sheet`/`Sheet2`
+ * rather than `Page7`. It defaults to `Page` because that is genuinely what an
+ * ordinary screen is called, not as a shim for callers that forgot to pass it.
+ *
+ * The loop is bounded defensively; in practice it returns within the first few
+ * iterations.
  */
-export function nextPageName(pagesDir: string, ext: '.tsx' | '.jsx' = '.tsx'): string {
+export function nextPageName(pagesDir: string, ext: '.tsx' | '.jsx' = '.tsx', base = 'Page'): string {
   for (let n = 1; n < 100_000; n++) {
-    const name = n === 1 ? 'Page' : `Page${n}`
+    const name = n === 1 ? base : `${base}${n}`
     if (!existsSync(join(pagesDir, `${name}${ext}`))) return name
   }
   // Unreachable in practice — a project with 100k pages is not a real case.
-  return `Page${Date.now()}`
-}
-
-/** The `.tsx`/`.jsx` source and its co-located CSS module, written together. */
-export interface StarterPageFiles {
-  readonly component: string
-  readonly styles: string
-  readonly stylesFileName: string
-}
-
-/**
- * Starter page written into a freshly-created page/project so its canvas isn't
- * empty. `componentName` is both the default-export function name and the
- * heading text.
- *
- * **This template is the single most copied code in any Studio project**, and
- * that is the whole reason it looks like this. An agent asked to build a screen
- * reads the existing page first and continues whatever pattern it finds, so a
- * starter that used inline `style={{…}}`, a hardcoded `#666`, and fixed pixel
- * padding taught exactly those three habits to every screen generated
- * afterwards — observed directly: a generated screen came back with
- * `width: 375px` hardcoded on its root and not one media query in 233 lines.
- *
- * So the starter ships the habits we want copied instead:
- *   - a co-located CSS module, never inline styles
- *   - fluid width with a readability cap, never a device-width constant
- *   - no literal colour — `currentColor` inherits whatever the project uses
- *
- * Deliberately NOT token-based: a brand-new project has no token scale yet,
- * and referencing `var(--…)` names that don't exist would teach a habit that
- * renders wrong. `clamp()` needs no project setup to be correct.
- */
-export function starterPage(componentName: string): StarterPageFiles {
-  const stylesFileName = `${componentName}.module.css`
-  const component = `import styles from './${stylesFileName}'
-
-export default function ${componentName}() {
-  return (
-    <main className={styles.page}>
-      <h1 className={styles.title}>${componentName}</h1>
-      <p className={styles.subtitle}>Start editing this page in Studio.</p>
-    </main>
-  )
-}
-`
-  const styles = `/* Fluid by default: fills the frame it is placed in and caps for
-   readability on wide viewports. Never a fixed width — a screen pinned to one
-   device size stops being a design and becomes a screenshot. */
-.page {
-  box-sizing: border-box;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 1.5rem;
-  width: 100%;
-  max-width: 60rem;
-  margin-inline: auto;
-  padding: clamp(1.5rem, 5vw, 4rem);
-}
-
-.title {
-  margin: 0;
-  font-size: clamp(1.5rem, 4vw, 2rem);
-  font-weight: 700;
-}
-
-/* currentColor rather than a literal: inherits whatever the project already
-   uses, so the starter never introduces an off-palette hex. */
-.subtitle {
-  margin: 0;
-  color: currentColor;
-  opacity: 0.65;
-}
-`
-  return { component, styles, stylesFileName }
+  return `${base}${Date.now()}`
 }

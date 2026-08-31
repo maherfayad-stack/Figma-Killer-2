@@ -48,6 +48,15 @@ export const StudioLoadStreamLineSchema = Type.Union([
     styleRuleSources: Type.Record(Type.String(), StyleRuleSourceSchema),
     conditions: Type.Array(ConditionDefSchema),
     vendorCss: Type.String(),
+    /**
+     * `board-27` — the project's own stylesheets, read RAW and concatenated
+     * in cascade order. `styleRules`/`StyleRuleSchema` above lost fidelity
+     * going through happy-dom's CSSOM (`color-mix()`, system colours,
+     * slash-alpha `rgb()` all silently dropped) — `AuthoredCssInjector`
+     * renders THIS text instead, so the canvas matches what a real browser
+     * would render. See `server/handlers/studioCss.ts`'s "CSSOM in Bun" doc.
+     */
+    authoredCss: Type.String(),
     trust: TrustTierSchema,
     paletteHiddenModuleIds: Type.Array(Type.String()),
     pageCount: Type.Number(),

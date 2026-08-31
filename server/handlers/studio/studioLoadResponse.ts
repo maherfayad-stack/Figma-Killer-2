@@ -20,8 +20,8 @@
  * reasons that's the right split, not a missed optimization:
  *
  * 1. **Meta correctness.** `componentSources`, `styleRules`,
- *    `styleRuleSources`, `conditions`, and `vendorCss` are genuinely
- *    PROJECT-WIDE, not per-page — `loadStudioStyles` builds the style
+ *    `styleRuleSources`, `conditions`, `vendorCss`, and `authoredCss` are
+ *    genuinely PROJECT-WIDE, not per-page — `loadStudioStyles` builds the style
  *    registry from every page's imported stylesheets together (shared CSS
  *    files, cascade order), and `componentSources` is merged across every
  *    route. The very edit that triggered a targeted reload can change any of

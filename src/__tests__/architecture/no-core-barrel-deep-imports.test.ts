@@ -11,6 +11,7 @@
  *   - `@core/framework-schema`
  *   - `@core/fonts`
  *   - `@core/design-tokens`
+ *   - `@core/studio-comments`
  *
  * Per the barrel convention (CLAUDE.md → "Barrel imports"): everything OUTSIDE
  * a module imports through its barrel; files INSIDE the module import each
@@ -38,6 +39,11 @@ const BARRELLED_MODULES = [
   'framework-schema',
   'fonts',
   'design-tokens',
+  // Studio review comments. Its `anchorResolve.ts` is the one place that
+  // decides whether a comment still points at anything, and the agent's write
+  // gate depends on that single answer — a deep import past the barrel is how
+  // a second, looser copy of that decision gets made.
+  'studio-comments',
 ]
 
 // Scan production + test sources in both the app and the server.

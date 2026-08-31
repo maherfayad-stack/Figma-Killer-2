@@ -294,6 +294,20 @@
        node-name badge (WS-5.1) sits on --canvas-selection-ring-color, which
        is too bright for --text-bright to read against. */
     --canvas-node-badge-text: #08110a;
+    /* Review comments (studio). A third canvas affordance alongside the
+       selection and hover rings, and deliberately a different hue from both:
+       a pin has to be findable on a board that is already wearing green
+       selection and magenta hover, at any zoom, over arbitrary page content.
+       Amber is the only remaining slot that reads as "attention" without
+       colliding with --danger's meaning. */
+    --canvas-comment-pin: #ffb020;
+    --canvas-comment-pin-text: #1a1200;
+    /* A resolved pin is drawn, not hidden — the filter owns visibility, this
+       token owns "finished". Achromatic so open pins keep the only colour. */
+    --canvas-comment-pin-resolved: #6b6b6b;
+    /* The dot on a pin whose anchored element no longer resolves. Shares
+       --warning's meaning: not broken, but do not trust it. */
+    --canvas-comment-pin-stale: #ff5c5c;
     --tree-drop-line: #5eead4;
     --tree-drop-line-shadow: rgba(94, 234, 212, 0.18);
     --tree-drop-inside-bg: rgba(94, 234, 212, 0.08);

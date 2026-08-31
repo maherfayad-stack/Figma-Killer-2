@@ -174,10 +174,14 @@ never silently no-ops.
   *and* its `import` into the `.tsx`, then re-reads the board — so the new node
   is a real parsed node, not a canvas-minted one). Everything else refuses out
   loud (`refuseStructuralEdit`)
-- Creating a new page: the `+` button (`NewPageButton.tsx`) or MCP
-  `studio_create_page` writes a canonical starter component + stylesheet and
-  auto-places its board frame, end to end — `server/handlers/studio/
-  pageScaffold.ts` (`createScaffoldedPage`)
+- Creating a new page, in four shapes: the `+` button (`NewPageButton.tsx`)
+  offers **Screen**, **Popup**, **Bottom sheet — small** and **Bottom sheet —
+  big** (MCP `studio_create_page` takes the same `kind`). Each writes a
+  canonical starter component + stylesheet and auto-places its board frame, end
+  to end — `server/handlers/studio/pageScaffold.ts` (`createScaffoldedPage`),
+  templates in `pageTemplates.ts`, the shared vocabulary in
+  `@core/studio-board`'s `pageKinds.ts`. A kind is a creation-time choice only:
+  nothing persists it, because the `.tsx` on disk IS the answer
 - MCP server with a live editor bridge + `studio_import_project`
 
 ### What does NOT work today (the roadmap)

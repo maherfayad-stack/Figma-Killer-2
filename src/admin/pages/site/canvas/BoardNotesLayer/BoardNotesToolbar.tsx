@@ -9,12 +9,19 @@
  * Self-gates on `selectActiveBoard`: renders nothing outside studio mode or
  * before boards have loaded.
  *
- * One toolbar hosts both affordances rather than mounting a second one for
- * doc blocks — keeps this floating chrome to a single compact strip.
+ * One toolbar hosts all three affordances rather than mounting a second one
+ * per kind — keeps this floating chrome to a single compact strip.
+ *
+ * The comment tool sits here with the note and doc buttons because from the
+ * reviewer's side they are the same gesture: put something on the board that
+ * is not part of the design. It differs in being MODAL — it arms a tool rather
+ * than immediately creating something — which is why it owns its own pressed
+ * state and the `C` shortcut (`CommentToolButton`).
  */
 import { useEditorStore } from '@site/store/store'
 import { selectActiveBoard } from '@site/store/slices/boardSelectors'
 import { Button } from '@ui/components/Button'
+import { CommentToolButton } from '../BoardCommentsLayer/CommentToolButton'
 import styles from './BoardNotesToolbar.module.css'
 
 /** New notes/docs cascade diagonally so repeated adds don't stack exactly on top of each other. */
@@ -46,6 +53,7 @@ export function BoardNotesToolbar() {
       <Button variant="secondary" size="sm" onClick={handleAddDoc}>
         + Doc
       </Button>
+      <CommentToolButton />
     </div>
   )
 }

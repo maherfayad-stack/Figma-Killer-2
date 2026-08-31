@@ -40,6 +40,15 @@ export interface StudioReloadPush {
   pageIds?: readonly string[]
   /** True when `.studio/boards.json` itself changed (a new frame placed, a frame resized). */
   boardsChanged?: boolean
+  /**
+   * True when `.studio/comments.json` changed — the agent replied in a review
+   * thread or resolved one. Kept as its own flag rather than folded into
+   * `boardsChanged` because the browser handler reacts differently: comments
+   * re-fetch their own file and touch NO page source, so nothing on the canvas
+   * needs to re-parse. Without this, an agent's reply would sit unseen in a
+   * thread the reviewer already has open on screen.
+   */
+  commentsChanged?: boolean
 }
 
 /**
@@ -56,11 +65,12 @@ export interface StudioReloadPush {
 export async function awaitStudioLiveReload(userId: string, push: StudioReloadPush): Promise<void> {
   const pageIds = push.pageIds ?? []
   const boardsChanged = push.boardsChanged ?? false
-  if (pageIds.length === 0 && !boardsChanged) return
+  const commentsChanged = push.commentsChanged ?? false
+  if (pageIds.length === 0 && !boardsChanged && !commentsChanged) return
   const bridge = hasEditorBridge(userId, 'site') ? getEditorBridgeForUser(userId, 'site') : null
   if (!bridge) return
   try {
-    await bridge.callBrowser(STUDIO_LIVE_RELOAD_TOOL_NAME, { dir: push.dir, pageIds: [...pageIds], boardsChanged })
+    await bridge.callBrowser(STUDIO_LIVE_RELOAD_TOOL_NAME, { dir: push.dir, pageIds: [...pageIds], boardsChanged, commentsChanged })
   } catch (err) {
     console.error('[studio:mcp] live-reload push failed — the capture may show stale content:', err)
   }
@@ -69,13 +79,14 @@ export async function awaitStudioLiveReload(userId: string, push: StudioReloadPu
 export function pushStudioLiveReload(userId: string, push: StudioReloadPush): void {
   const pageIds = push.pageIds ?? []
   const boardsChanged = push.boardsChanged ?? false
-  if (pageIds.length === 0 && !boardsChanged) return
+  const commentsChanged = push.commentsChanged ?? false
+  if (pageIds.length === 0 && !boardsChanged && !commentsChanged) return
   if (!hasEditorBridge(userId, 'site')) return // no open board — normal for a headless MCP connector, never an error
 
   const bridge = getEditorBridgeForUser(userId, 'site')
   if (!bridge) return
   bridge
-    .callBrowser(STUDIO_LIVE_RELOAD_TOOL_NAME, { dir: push.dir, pageIds: [...pageIds], boardsChanged })
+    .callBrowser(STUDIO_LIVE_RELOAD_TOOL_NAME, { dir: push.dir, pageIds: [...pageIds], boardsChanged, commentsChanged })
     .catch((err: unknown) => {
       console.error(
         '[studio:mcp] live-reload push failed — canvas stays stale until the next manual reload:',

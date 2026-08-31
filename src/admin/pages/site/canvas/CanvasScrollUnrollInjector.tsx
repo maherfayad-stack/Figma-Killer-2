@@ -16,10 +16,17 @@
  * into a tall, whole screen.
  *
  * The stylesheet half (see `canvasScrollUnroll.ts` → `buildScrollUnrollRules`)
- * handles the common case: an `overflow: auto` flex region with an authored
- * `min-height: 0` (how authors make a `flex: 1` region shrinkable/scrollable
- * in the first place) becomes content-sized once overflow is visible and its
- * automatic minimum size is restored.
+ * handles the common case: an `overflow-y: auto`/`scroll` flex region with an
+ * authored `min-height: 0` (how authors make a `flex: 1` region
+ * shrinkable/scrollable in the first place) becomes content-sized once
+ * overflow is visible and its automatic minimum size is restored. That
+ * override is SCOPED to elements this file's own `snapshotAuthoredStyles`
+ * has recorded as authoring `overflow-y: auto`/`scroll` — never a universal
+ * `*` rule. An element authoring `overflow-y: hidden` (a rounded-corner clip
+ * mask, a `text-overflow: ellipsis` container) is not a scroll region and is
+ * never touched: forcing it visible would break the clip/ellipsis it exists
+ * for, not "unroll" anything. See `buildScrollUnrollRules`'s doc for the
+ * measured evidence and the full rationale.
  *
  * Two things a stylesheet alone cannot do, so they're the JS half:
  *
@@ -79,13 +86,23 @@
  *
  * What this does NOT handle
  * ──────────────────────────
+ * - A genuine scroll region (authored `overflow-y: auto`/`scroll`) is not
+ *   unrolled until `snapshotAuthoredStyles` has recorded it once — it cannot
+ *   run any earlier, since it exists specifically to read the value BEFORE
+ *   this file's own stylesheet can override it (see that function's doc). So
+ *   on first mount, and for any element inserted after, the region stays
+ *   clipped for one settle pass, then unrolls. Same frame-later timing
+ *   `fixed`/`explicit-height` tagging already has below, and picked up the
+ *   same way: `useIframeFrameAutoHeight`'s `ResizeObserver` reacts to body's
+ *   rendered size changing, not to which mutation caused it.
  * - Elements whose `position: fixed` (or clipping height) is applied by a
  *   class/style-attribute toggle on an EXISTING element, with no node
  *   inserted or removed, won't be re-tagged until some LATER DOM edit
  *   triggers a settle pass — this mirrors `useIframeFrameAutoHeight`'s own
  *   `MutationObserver`, which also only watches `childList`/`characterData`,
  *   not `style`/`class` attribute changes (watching `style` here specifically
- *   would also self-trigger on this injector's own tagging writes).
+ *   would also self-trigger on this injector's own tagging writes). The same
+ *   applies to an element's `overflow-y` changing via such a toggle.
  * - A deeply-nested chain of plain (non-flex-item) `height: 100%` blocks,
  *   more levels than `MAX_UNROLL_PASSES`, may need a further DOM settle to
  *   fully converge.
@@ -103,10 +120,13 @@
 
 import { useEffect } from 'react'
 import {
+  authoredMinHeightFloor,
   buildScrollUnrollRules,
   classifyUnrollElement,
   MAX_UNROLL_PASSES,
   SCROLL_UNROLL_ATTR,
+  SCROLL_UNROLL_AUTHORED_MIN_HEIGHT_VAR,
+  SCROLL_UNROLL_FLOOR_ATTR,
   SCROLL_UNROLL_MIN_HEIGHT_VAR,
   SCROLL_UNROLL_ORIGINAL_OVERFLOW_ATTR,
 } from './canvasScrollUnroll'
@@ -215,7 +235,7 @@ export function CanvasScrollUnrollInjector({
  * never mid-convergence.
  */
 function runUnrollPasses(doc: Document): void {
-  snapshotOriginalOverflow(doc)
+  snapshotAuthoredStyles(doc)
   clearUnrollTags(doc)
   for (let pass = 0; pass < MAX_UNROLL_PASSES; pass += 1) {
     const changed = runUnrollPass(doc)
@@ -224,25 +244,44 @@ function runUnrollPasses(doc: Document): void {
 }
 
 /**
- * Records each element's TRUE pre-unroll `overflow-y` onto
- * `SCROLL_UNROLL_ORIGINAL_OVERFLOW_ATTR` before `collectScrollDeficits`
- * (`resolveFrameFitHeight.ts`) ever needs to read it. By the time this pass
- * runs, this component's OWN blanket stylesheet (mounted in the effect
- * above, in the same commit) has already forced every element's computed
- * `overflow-y` to `visible` — so a plain `getComputedStyle` read here would
- * see the very override we're trying to see past. Disabling the stylesheet
- * for the duration of one synchronous batch read (no paint happens between
- * the two toggles — this is all inside one JS task) recovers what the
- * author's own CSS, plus every OTHER injector, actually computes.
+ * Records what the AUTHOR's own CSS says, before this injector's overrides
+ * hide it — two values, read in the same pass because both need the same
+ * trick to be readable at all.
+ *
+ * `overflow-y` goes onto `SCROLL_UNROLL_ORIGINAL_OVERFLOW_ATTR` for TWO
+ * consumers: `collectScrollDeficits` (`resolveFrameFitHeight.ts`), and
+ * `buildScrollUnrollRules`'s own scoped selector — this is the ONLY signal
+ * that decides whether an element is a genuine scroll region (`auto`/
+ * `scroll`) eligible for the overflow/min-height override at all, as opposed
+ * to a clip mask or ellipsis container (`hidden`) that must be left alone.
+ * See that function's doc for the full rationale and the measured evidence.
+ *
+ * A positive `min-height` — but ONLY for an element already confirmed to be
+ * a scroll region — goes onto `SCROLL_UNROLL_FLOOR_ATTR` + its custom
+ * property, so the stylesheet can hand back a floor the scroll-region
+ * `min-height: auto` rule would otherwise flatten (see
+ * `authoredMinHeightFloor`). An element that is NOT a scroll region never has
+ * its `min-height` touched by any rule in the first place, so it is never
+ * even considered here — nothing to record, nothing to restore.
+ *
+ * By the time this pass runs, this component's OWN scoped stylesheet
+ * (mounted in the effect above, in the same commit) may already be
+ * overriding a PREVIOUSLY-tagged element's computed `overflow-y`/`min-height`
+ * — so a plain `getComputedStyle` read here would see this injector's own
+ * override instead of the author's value. Disabling the stylesheet for the
+ * duration of one synchronous batch read (no paint happens between the two
+ * toggles — this is all inside one JS task) recovers what the author's own
+ * CSS, plus every OTHER injector, actually computes.
  *
  * Idempotent per element (skips anything already recorded) rather than
  * re-derived every settle like the tag attributes below: the AUTHOR's CSS
  * doesn't change between settles just because our own fix ran, so the
  * recorded value stays correct — only brand-new elements from a later DOM
  * edit need a first recording, which the `hasAttribute` guard picks up on
- * the next settle this same function runs for.
+ * the next settle this same function runs for. That is also why
+ * `clearUnrollTags` leaves both of these alone.
  */
-function snapshotOriginalOverflow(doc: Document): void {
+function snapshotAuthoredStyles(doc: Document): void {
   const view = doc.defaultView
   const body = doc.body
   if (!view || !body) return
@@ -251,7 +290,22 @@ function snapshotOriginalOverflow(doc: Document): void {
   if (styleEl) styleEl.disabled = true
   for (const el of body.querySelectorAll<HTMLElement>('*')) {
     if (el.hasAttribute(SCROLL_UNROLL_ORIGINAL_OVERFLOW_ATTR)) continue
-    el.setAttribute(SCROLL_UNROLL_ORIGINAL_OVERFLOW_ATTR, view.getComputedStyle(el).overflowY)
+    const computed = view.getComputedStyle(el)
+    const overflowY = computed.overflowY
+    el.setAttribute(SCROLL_UNROLL_ORIGINAL_OVERFLOW_ATTR, overflowY)
+    // Only a genuine scroll region (see buildScrollUnrollRules's scoped
+    // selector) is ever eligible to have its min-height touched at all — an
+    // element authoring overflow-y: hidden/clip/visible keeps its authored
+    // min-height untouched by any rule, so there is nothing to snapshot or
+    // restore for it here.
+    if (overflowY !== 'auto' && overflowY !== 'scroll') continue
+    const floor = authoredMinHeightFloor(computed.minHeight)
+    if (floor === null) continue
+    // Value first, then the marker: the rule keyed off the marker reads the
+    // property, so setting them the other way round would resolve `var()`
+    // against an ancestor's inherited value for one frame.
+    el.style.setProperty(SCROLL_UNROLL_AUTHORED_MIN_HEIGHT_VAR, floor)
+    el.setAttribute(SCROLL_UNROLL_FLOOR_ATTR, '')
   }
   if (styleEl) styleEl.disabled = wasDisabled
 }

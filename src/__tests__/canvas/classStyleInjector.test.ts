@@ -376,3 +376,65 @@ describe('generateForcedStateCSS', () => {
     expect(css).toContain('[data-node-id="a\\"b"]')
   })
 })
+
+/**
+ * `board-27` — `generateCanvasClassCSS` filters its registry through
+ * `styleRuleNeedsCanvasOverlay` (not exported — asserted indirectly through
+ * its effect on the generated CSS, same posture as every other test in this
+ * file) before handing it to the publisher's `generateClassCSS`. An unedited
+ * IMPORTED rule (`sc-` id, `updatedAt: 0`) must render from
+ * `AuthoredCssInjector`'s raw text alone, never re-emitted here — doing so
+ * would double its payload and reintroduce the exact CSSOM-loss risk
+ * `AuthoredCssInjector` exists to remove.
+ */
+describe('generateCanvasClassCSS — board-27 overlay filter', () => {
+  function importedRule(id: string, styles: StyleRule['styles'], updatedAt = 0): StyleRule {
+    return {
+      id,
+      name: id,
+      kind: 'class',
+      selector: classKindSelector(id),
+      order: 0,
+      styles,
+      contextStyles: {},
+      createdAt: 0,
+      updatedAt,
+    }
+  }
+
+  it('drops an unedited imported rule (sc- id, updatedAt: 0) from the overlay entirely', () => {
+    const css = generateCanvasClassCSS(
+      { 'sc-unedited': importedRule('sc-unedited', { color: 'red' }) },
+      [],
+    )
+    expect(css).not.toContain('color: red')
+  })
+
+  it('keeps an imported rule the session has edited (updatedAt > 0)', () => {
+    const css = generateCanvasClassCSS(
+      { 'sc-edited': importedRule('sc-edited', { color: 'blue' }, Date.now()) },
+      [],
+    )
+    expect(css).toContain('color: blue')
+  })
+
+  it('always keeps an editor-authored rule (no sc- prefix), even unedited', () => {
+    const css = generateCanvasClassCSS(
+      { 'V1StGXR8IZ5jdHi6B-myT': importedRule('V1StGXR8IZ5jdHi6B-myT', { color: 'green' }) },
+      [],
+    )
+    expect(css).toContain('color: green')
+  })
+
+  it('is a per-rule decision — an unedited imported rule and an editor-authored rule can coexist in the same registry', () => {
+    const css = generateCanvasClassCSS(
+      {
+        'sc-raw': importedRule('sc-raw', { color: 'red' }),
+        'authored': importedRule('authored', { color: 'green' }),
+      },
+      [],
+    )
+    expect(css).not.toContain('color: red')
+    expect(css).toContain('color: green')
+  })
+})

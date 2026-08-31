@@ -30,6 +30,19 @@ afterEach(() => {
   }
 })
 
+/**
+ * NOT covered here: the authored-`min-height` floor pass (and, for the same
+ * reason, the pre-unroll `overflow-y` snapshot beside it). Both recover the
+ * AUTHOR's computed value by disabling this injector's own stylesheet for one
+ * synchronous read — and happy-dom reports `styleSheet.disabled === true`
+ * while still applying the sheet's rules to `getComputedStyle`, so the
+ * scenario cannot be expressed here at all. A DOM test would pass because the
+ * marker is never written, not because the logic is right, which is worse
+ * than no test. The decision itself is covered exhaustively in
+ * `canvasScrollUnroll.test.ts` (`authoredMinHeightFloor`), the stylesheet rule
+ * that consumes it is asserted there too, and the end-to-end behaviour was
+ * verified against a real board.
+ */
 describe('CanvasScrollUnrollInjector — stylesheet', () => {
   it('injects a stylesheet by default (enabled defaults on)', () => {
     render(<CanvasScrollUnrollInjector targetDocument={document} />)

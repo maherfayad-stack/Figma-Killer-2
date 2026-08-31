@@ -13,7 +13,7 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { autoPlaceBoardFrame, detectPageFileExtension, scaffoldedPageRootNodeId, syncBoardFramesFromDisk } from '../pageScaffold'
-import { starterPage } from '../../studioProjects'
+import { starterPage } from '../pageTemplates'
 import { writeStudioMeta } from '../studioMeta'
 
 let tmpDir: string
@@ -135,7 +135,7 @@ describe('scaffoldedPageRootNodeId', () => {
     const pagesDir = path.join(tmpDir, 'pages')
     fs.mkdirSync(pagesDir, { recursive: true })
     const file = path.join(pagesDir, 'Home.tsx')
-    const starter = starterPage('Home')
+    const starter = starterPage('Home', 'screen')
     fs.writeFileSync(file, starter.component)
     fs.writeFileSync(path.join(pagesDir, starter.stylesFileName), starter.styles)
     const rootNodeId = scaffoldedPageRootNodeId(tmpDir, file)

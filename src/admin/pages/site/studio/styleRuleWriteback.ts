@@ -130,7 +130,7 @@
  * load regardless (the server's newly-created file gets picked up like any
  * other `.css` file the next time `studioCss.ts` parses the workspace).
  */
-import { decodeSourceNodeId, isGeneratedClass, type StyleRule } from '@core/page-tree'
+import { decodeSourceNodeId, isGeneratedClass, isImportedStyleRuleId, type StyleRule } from '@core/page-tree'
 import { camelToKebabCssProperty, classifyStylesheetEditability } from '@core/css-codemods'
 import { Type } from '@core/utils/typeboxHelpers'
 
@@ -243,13 +243,14 @@ let styleRuleSources: Record<string, StyleRuleSource> = {}
 /**
  * True for a rule the user created IN THE EDITOR (`createClass`/
  * `applyCssRules`, `nanoid()` ids) — never one an import parsed (always the
- * deterministic `sc-` prefix, see `studioCss.ts`'s "Stable ids"). Only an
- * editor-authored rule is a Track B1 insert candidate: an unmapped IMPORTED
- * rule (Tailwind/Sass/PostCSS output, a non-`.css` module) has a real reason
- * to stay unmapped, and must never silently gain a fabricated write target.
+ * deterministic `sc-` prefix, see `@core/page-tree`'s `styleRuleOrigin.ts`).
+ * Only an editor-authored rule is a Track B1 insert candidate: an unmapped
+ * IMPORTED rule (Tailwind/Sass/PostCSS output, a non-`.css` module) has a
+ * real reason to stay unmapped, and must never silently gain a fabricated
+ * write target.
  */
 function isEditorAuthoredRuleId(ruleId: string): boolean {
-  return !ruleId.startsWith('sc-')
+  return !isImportedStyleRuleId(ruleId)
 }
 
 /**

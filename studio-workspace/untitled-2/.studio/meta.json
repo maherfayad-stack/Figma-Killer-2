@@ -60,7 +60,7 @@
   },
   "previewAxes": {
     "direction": "ltr",
-    "colorScheme": "dark",
+    "colorScheme": "light",
     "locale": "en"
   }
 }

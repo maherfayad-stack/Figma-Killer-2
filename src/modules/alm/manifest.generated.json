@@ -174,7 +174,7 @@
           "name": "imageSrc",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "image"
         },
         {
           "name": "layout",
@@ -196,7 +196,7 @@
           "name": "logoSrc",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "image"
         },
         {
           "name": "onAction",
@@ -578,7 +578,7 @@
           "name": "cardArt",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "image"
         },
         {
           "name": "cardLast4",
@@ -1158,7 +1158,7 @@
           "name": "awardsSrc",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "image"
         },
         {
           "name": "badges",
@@ -1169,7 +1169,7 @@
           "name": "barcodeSrc",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "image"
         },
         {
           "name": "columns",
@@ -1512,13 +1512,32 @@
           "name": "buttonSize",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "enum",
+          "enumValues": [
+            "default",
+            "medium",
+            "small"
+          ]
         },
         {
           "name": "buttonVariant",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "enum",
+          "enumValues": [
+            "primary",
+            "primary-inverted",
+            "secondary",
+            "secondary-inverted",
+            "destructive",
+            "payment",
+            "apple-pay",
+            "gpay-card",
+            "gpay-personalized",
+            "gpay-pay-with",
+            "gpay-checkout-with",
+            "skeleton"
+          ]
         },
         {
           "name": "centerTitle",
@@ -1536,19 +1555,24 @@
           "name": "imageSize",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "enum",
+          "enumValues": [
+            "large",
+            "medium",
+            "small"
+          ]
         },
         {
           "name": "imageSrc",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "image"
         },
         {
           "name": "partnerLogoSrc",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "image"
         },
         {
           "name": "skeleton",
@@ -2435,7 +2459,7 @@
           "name": "imageSrc",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "image"
         },
         {
           "name": "onAction",

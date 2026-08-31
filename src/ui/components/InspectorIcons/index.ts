@@ -24,4 +24,5 @@ export {
   GapIcon,
   StrokeWeightIcon,
   CornerRadiusIcon,
+  CommentBubbleIcon,
 } from './InspectorIcons'

@@ -232,6 +232,82 @@ describe('studioCss — styleRuleSources (WS-6.3 write-back mapping)', () => {
   })
 })
 
+/**
+ * `board-27` — the load-bearing gate: happy-dom's CSSOM (`cssToStyleRules`,
+ * used to build `styleRules`) silently drops declarations it cannot parse,
+ * so the canvas cannot render byte-faithfully from `styleRules` alone.
+ * `authoredCss` is the fix — the SAME stylesheet, read raw, never round-
+ * tripped through the CSSOM.
+ *
+ * Fixture note: the classic "slash-alpha" example is `rgb(0 0 0 / .2)`, but
+ * the happy-dom version this repo currently vendors (20.9.0) happens to
+ * parse a LITERAL numeric alpha in `rgb()` correctly — verified directly
+ * against `CSSStyleSheet.replaceSync`. `hsl(0 0% 0% / .2)`, the identical
+ * slash-alpha syntax on a different color function, is still dropped by the
+ * same CSSOM, so it stands in here as the same class of bug without pinning
+ * the test to a happy-dom quirk that could flip silently on the next bump.
+ */
+describe('studioCss — authoredCss (board-27, byte-fidelity against happy-dom CSSOM loss)', () => {
+  it('keeps color-mix(), a system colour, and slash-alpha hsl() byte-for-byte, while the CSSOM-parsed StyleRule drops all three', async () => {
+    const cssomLossCss = [
+      '.hero {',
+      '  background: color-mix(in srgb, red 50%, blue 50%);',
+      '  border-color: Canvas;',
+      '  color: hsl(0 0% 0% / .2);',
+      '  padding: 8px;',
+      '}',
+      '',
+    ].join('\n')
+    write('pages/Home.css', cssomLossCss)
+    write(
+      'pages/Home.tsx',
+      ["import './Home.css'", 'export default function Home() {', '  return <div className="hero" />', '}', ''].join('\n'),
+    )
+
+    const { authoredCss, styleRules } = await loadStudioPages(tmpDir)
+
+    // The raw text survives completely unparsed — no selector rewriting, no
+    // dropped declarations, no re-serialization.
+    expect(authoredCss).toBe(cssomLossCss)
+    expect(authoredCss).toContain('color-mix(in srgb, red 50%, blue 50%)')
+    expect(authoredCss).toContain('border-color: Canvas')
+    expect(authoredCss).toContain('hsl(0 0% 0% / .2)')
+
+    // Documenting the premise: the SAME three declarations, read through
+    // happy-dom's CSSOM into the StyleRule registry, are gone. Only the
+    // property happy-dom's parser accepts (`padding`) survives.
+    const hero = Object.values(styleRules).find((r) => r.name === 'hero')
+    expect(hero).toBeDefined()
+    expect(hero!.styles).not.toHaveProperty('background')
+    expect(hero!.styles).not.toHaveProperty('borderColor')
+    expect(hero!.styles).not.toHaveProperty('color')
+    expect(hero!.styles).toMatchObject({ paddingTop: '8px' })
+  })
+
+  it('concatenates extraCss (compiled Tailwind/Sass/PostCSS/CSS-Modules output) before every plain .css file, in cascade order', async () => {
+    write('pages/Home.css', '.hero { color: red }\n')
+    write(
+      'pages/Home.tsx',
+      ["import './Home.css'", 'export default function Home() {', '  return <div className="hero" />', '}', ''].join('\n'),
+    )
+
+    const { authoredCss } = await loadStudioPages(tmpDir)
+
+    // No extraCss in this fixture (no Tailwind/Sass config), so authoredCss
+    // is just the one plain .css file's text.
+    expect(authoredCss).toContain('.hero { color: red }')
+  })
+
+  it('returns an empty authoredCss alongside an empty styleRules registry', async () => {
+    write('pages/Home.tsx', ['export default function Home() {', '  return <div className="hero" />', '}', ''].join('\n'))
+
+    const { authoredCss, styleRules } = await loadStudioPages(tmpDir)
+
+    expect(authoredCss).toBe('')
+    expect(styleRules).toEqual({})
+  })
+})
+
 describe('classIdsForClassName', () => {
   const map = { hero: 'sc-aaa', badge: 'sc-bbb' }
 
