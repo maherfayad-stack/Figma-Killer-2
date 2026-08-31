@@ -1,0 +1,29 @@
+/*
+ * The comments overlay. Sits inside CanvasTransformLayer, so children position
+ * in BOARD coordinates and inherit pan/zoom without any math here.
+ *
+ * The layer itself is click-through (`pointer-events: none`); pins and
+ * popovers opt back in. Without that, an invisible full-board rectangle would
+ * swallow every canvas click — selection, drag, the comment tool itself.
+ */
+
+.layer {
+    position: absolute;
+    top: 0;
+    left: 0;
+    pointer-events: none;
+    /* Above every other board layer: a pin is the topmost thing on the board. */
+    z-index: 6;
+}
+
+/*
+ * One thread's anchor point. Zero-sized on purpose — it marks a COORDINATE,
+ * and its children hang off that point via their own transforms rather than
+ * being laid out inside a box.
+ */
+.anchored {
+    position: absolute;
+    width: 0;
+    height: 0;
+    pointer-events: none;
+}

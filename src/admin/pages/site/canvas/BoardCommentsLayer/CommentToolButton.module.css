@@ -1,0 +1,13 @@
+/* Open-thread count, inline in the tool button. Present only when non-zero —
+   a "0" badge is noise that trains people to stop reading the number. */
+
+.count {
+    margin-left: var(--space-2xs);
+    padding: 0 var(--space-3xs);
+    border-radius: var(--radius-sm);
+    background: var(--canvas-comment-pin);
+    color: var(--canvas-comment-pin-text);
+    font-size: var(--text-2xs);
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}

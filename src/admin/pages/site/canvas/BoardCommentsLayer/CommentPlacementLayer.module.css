@@ -1,0 +1,27 @@
+/*
+ * The armed comment tool's capture surface.
+ *
+ * Covers the whole canvas so the tool is genuinely modal: while it is mounted,
+ * nothing underneath — selection, frame drag, marquee, the notes toolbar —
+ * ever receives the pointer. It is mounted only while the tool is armed, so at
+ * rest it costs nothing.
+ *
+ * Transparent, with only the cursor to say the mode is on. A visible tint
+ * would fight the very thing the reviewer is trying to look at while deciding
+ * where to put the comment.
+ */
+
+.capture {
+    position: absolute;
+    inset: 0;
+    /*
+     * Above the selection ring / hover ring / selection toolbar that are
+     * portaled into the canvas root at z-index 51 — while the tool is armed,
+     * clicking a selected element must place a comment on it, not re-grab the
+     * selection chrome. Below the notes toolbar at 53, so the Comment button
+     * that armed the tool stays clickable to disarm it.
+     */
+    z-index: 52;
+    background: transparent;
+    cursor: crosshair;
+}

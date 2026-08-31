@@ -1,0 +1,98 @@
+/*
+ * The pin marker.
+ *
+ * `scale(calc(1 / var(--canvas-zoom)))` is what keeps a pin the same size on
+ * screen at every zoom. The parent transform layer scales by `--canvas-zoom`,
+ * so scaling by its reciprocal cancels out exactly. It has to be CSS rather
+ * than a React subscription: the store's `zoom` is committed 100ms after the
+ * last gesture event, so a subscribed counter-scale would lag a pinch and then
+ * snap. `useCanvas.applyTransformToDOM` republishes the property every rAF.
+ *
+ * With `transform-origin: 0 0`, the functions compose so that the element's
+ * bottom-centre lands exactly on the anchor coordinate — the tip of a
+ * map-style pin, which is the point the reviewer actually clicked.
+ */
+
+.pin {
+    position: absolute;
+    top: 0;
+    left: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-3xs);
+    box-sizing: border-box;
+    min-width: 26px;
+    height: 26px;
+    padding: 0 var(--space-2xs);
+    border: none;
+    border-radius: 13px 13px 13px 2px;
+    background: var(--canvas-comment-pin);
+    box-shadow: var(--canvas-chrome-shadow);
+    color: var(--canvas-comment-pin-text);
+    font-size: var(--text-2xs);
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+    cursor: pointer;
+    pointer-events: auto;
+    transform-origin: 0 0;
+    transform: scale(calc(1 / var(--canvas-zoom))) translate(-50%, -100%);
+}
+
+.pin:hover {
+    filter: brightness(1.08);
+}
+
+.pin:focus-visible {
+    outline: 2px solid var(--canvas-selection-ring-color);
+    outline-offset: 2px;
+}
+
+.active {
+    outline: 2px solid var(--canvas-comment-pin-text);
+    outline-offset: 1px;
+}
+
+/* Finished, not gone. Achromatic so the open pins keep the only colour on the
+   board — which is the whole point of a review pass. */
+.resolved {
+    background: var(--canvas-comment-pin-resolved);
+    color: var(--text-bright);
+}
+
+/* An uncommitted pin: placed, waiting for its first sentence. Hollow, because
+   it is not yet a thread and must not read as one. */
+.draft {
+    background: var(--bg-surface);
+    box-shadow: var(--canvas-chrome-shadow), inset 0 0 0 2px var(--canvas-comment-pin);
+    pointer-events: none;
+}
+
+.seq {
+    display: block;
+}
+
+/* Reply count. Reads as "there is more here than the first line". */
+.replies {
+    display: block;
+    padding-left: var(--space-3xs);
+    border-left: 1px solid var(--overlay-20);
+    opacity: 0.75;
+    font-weight: 500;
+}
+
+/* The anchored element no longer resolves — see anchorResolve.ts. The dot is
+   redundant with the popover's own notice on purpose: the pin has to carry
+   the warning too, or a reviewer scanning a board sees nothing wrong until
+   they open each thread one at a time. */
+.detached {
+    position: absolute;
+    top: -2px;
+    right: -2px;
+    width: 8px;
+    height: 8px;
+    border: 1px solid var(--canvas-comment-pin-text);
+    border-radius: 50%;
+    background: var(--canvas-comment-pin-stale);
+}
