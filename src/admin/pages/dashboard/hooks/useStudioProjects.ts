@@ -4,10 +4,9 @@
  * Fetches `GET /admin/api/studio/projects`, which lists every on-disk
  * studio project: one entry per immediate subfolder of `studio-workspace/`,
  * whether hand-authored or GitHub-imported (Phase 7B) — they all live there.
- * Lives in its own hook (rather than folding into `useDashboardStats.ts`)
- * because it hits a `/admin/api/studio/*` endpoint, not the
- * `/admin/api/cms/dashboard/<domain>` family the other per-widget hooks
- * share.
+ * Lives in its own hook because it hits a `/admin/api/studio/*` endpoint,
+ * not the `/admin/api/cms/dashboard/<domain>` family the (now-removed)
+ * dormant CMS dashboard widgets used.
  *
  * Validation: the response is checked at the JSON boundary against
  * `StudioProjectsResponseSchema` via the canonical `apiRequest` (`@core/http`).

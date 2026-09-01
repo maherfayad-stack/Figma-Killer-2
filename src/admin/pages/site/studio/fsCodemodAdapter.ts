@@ -27,9 +27,9 @@
  *               node prop/text/style changes) still needs to persist, so this
  *               does NOT gate on there being any node edits in the batch.
  *
- * Wired in only when the editor is opened with `?studio` (see AdminCanvasLayout);
- * the normal DB-backed editor is untouched. This is the filesystem-as-truth
- * path — Studio's autosave (debounce / Cmd+S) is the commit-on-idle trigger.
+ * Wired in unconditionally by `AdminCanvasLayout` — Studio is the only editor
+ * mode. This is the filesystem-as-truth path — Studio's autosave (debounce /
+ * Cmd+S) is the commit-on-idle trigger.
  *
  * Paths live under /admin/api so the Vite dev proxy forwards them to the :3001
  * server (same-origin in prod behind Caddy).

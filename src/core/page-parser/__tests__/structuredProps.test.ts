@@ -131,6 +131,82 @@ describe('structured component props', () => {
     expect(sheet.props.actions).toEqual([{ label: 'Pick' }])
   })
 
+  it('a function entry LITERALLY written in the object is dropped but its PATH is traced', () => {
+    write(
+      'pages/Nav.jsx',
+      [
+        'export default function Nav() {',
+        '  return <Navbar toolbar={{ variant: "default", title: "Account", onBack: () => {} }} surface="default" />',
+        '}',
+        '',
+      ].join('\n'),
+    )
+
+    // `onPick` above was an identifier bound to an undestructured param
+    // (`unresolved`, not `{kind:'fn'}`) — a literal `() => {}` written INSIDE
+    // the object is what a design-system component actually gates a visible
+    // affordance on (`<Navbar>` draws its leading back button only when
+    // `toolbar.onBack` is present). The value is still dropped, exactly like
+    // the array case above, but the PATH survives so a module can stand a
+    // no-op back up at exactly that key.
+    const navbar = named(loadNodes('pages/Nav.jsx', evalOptions()), 'Navbar')
+    expect(navbar.props.toolbar).toEqual({ variant: 'default', title: 'Account' })
+    expect(navbar.codeFunctionPaths).toEqual(['toolbar.onBack'])
+    expect(navbar.codeProps).toContain('toolbar')
+  })
+
+  it('traces a function path inside an ARRAY item too, and does not lock the node', () => {
+    write(
+      'pages/Sheet.jsx',
+      [
+        'export default function Sheet() {',
+        '  return <ActionSheet actions={[{ label: "Pick", onClick: () => {} }]} />',
+        '}',
+        '',
+      ].join('\n'),
+    )
+
+    const sheet = named(loadNodes('pages/Sheet.jsx', evalOptions()), 'ActionSheet')
+    expect(sheet.props.actions).toEqual([{ label: 'Pick' }])
+    expect(sheet.codeFunctionPaths).toEqual(['actions[0].onClick'])
+    // Same rule as every other resolution: a VALUE fact, never a structural one.
+    expect(sheet.locked).toBe(false)
+  })
+
+  it('still traces the function path even when the object has NOTHING else to keep', () => {
+    write(
+      'pages/Nav.jsx',
+      [
+        'export default function Nav() {',
+        '  return <Navbar toolbar={{ onBack: () => {} }} />',
+        '}',
+        '',
+      ].join('\n'),
+    )
+
+    // `staticValueToPropValue`'s "empty object declines" rule still applies to
+    // the VALUE — there is nothing else to show — but the function's location
+    // is a separate fact about the same expression and must survive regardless.
+    const navbar = named(loadNodes('pages/Nav.jsx', evalOptions()), 'Navbar')
+    expect(navbar.props.toolbar).toBeUndefined()
+    expect(navbar.codeFunctionPaths).toEqual(['toolbar.onBack'])
+    expect(navbar.codeProps).toContain('toolbar')
+  })
+
+  it('captures no function paths when the evaluator is off', () => {
+    write(
+      'pages/Nav.jsx',
+      [
+        'export default function Nav() {',
+        '  return <Navbar toolbar={{ title: "Account", onBack: () => {} }} />',
+        '}',
+        '',
+      ].join('\n'),
+    )
+
+    expect(named(loadNodes('pages/Nav.jsx', undefined), 'Navbar').codeFunctionPaths).toBeUndefined()
+  })
+
   it('declines the whole array when one item does not resolve', () => {
     write(
       'pages/Mixed.jsx',

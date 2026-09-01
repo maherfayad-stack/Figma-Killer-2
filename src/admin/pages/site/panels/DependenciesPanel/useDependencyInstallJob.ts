@@ -19,17 +19,14 @@
  * user happened to switch projects or promote. This is the actual
  * install → register seam, not just an assumption that a reload implies it.
  *
- * No-op outside Studio mode (the CMS half's classic dependency UI has no
- * on-disk project to install into) — callers should still update their own
- * in-memory `packageJson` mirror via `setDependency`/`removeDependency`
- * unconditionally; this hook only ever adds the REAL, on-disk half of that
- * action.
+ * Callers should still update their own in-memory `packageJson` mirror via
+ * `setDependency`/`removeDependency` unconditionally; this hook only ever
+ * adds the REAL, on-disk half of that action.
  */
 import { useEffect, useRef, useState } from 'react'
 import { pushToast } from '@ui/components/Toast'
 import { getErrorMessage } from '@core/utils/errorMessage'
 import { requestCmsSiteReload } from '@admin/state/adminEvents'
-import { isStudioMode } from '@site/studio/studioMode'
 import { getStudioWorkspaceDir } from '@site/studio/studioWorkspaceDir'
 import { resyncActiveProjectModules } from '@site/studio/registerProjectModules'
 import { invalidateLocalComponentCatalog } from '@site/studio/componentCatalog'
@@ -119,13 +116,13 @@ export function useDependencyInstallJob() {
       })
   }
 
-  /** Starts a Studio install/remove job for `mutation` and begins polling it — no-op outside Studio mode or while one is already in flight. */
+  /** Starts a Studio install/remove job for `mutation` and begins polling it — no-op while one is already in flight. */
   function runDependencyMutation(
     kind: 'add' | 'remove',
     name: string,
     mutation: Parameters<typeof startDependencyInstall>[1],
   ) {
-    if (!isStudioMode() || installState) return
+    if (installState) return
     setInstallState({ kind, name })
     startDependencyInstall(getStudioWorkspaceDir(), mutation)
       .then((jobId) => {

@@ -15,7 +15,7 @@
  *
  * Editor Overlay Layout (Guideline #410 — motion-editor style):
  *   ┌─────────────────────────────── Toolbar ──────────────────────────────────┐  z-60
- *   │ [SiteName] [Undo/Redo] [+ Add] ─────── [Zoom] [Save] [Publish] [⚙] [✦] │
+ *   │ [SiteName] [Undo/Redo] [+ Add] ────────── [Zoom] [Studio actions] [⚙] [✦] │
  *   ├──────────────────────────── Canvas (full-bleed) ─────────────────────────┤
  *   │  [DOM Tree Panel ▓]     canvas          [Properties Panel ▓]            │
  *   │  position: absolute overlays (z-50)     [AI Panel ▓] (bottom-right)     │
@@ -25,12 +25,12 @@
  * - DomPanel (Layers) — top-left
  * - PropertiesPanel — top-right
  * - AgentPanel (AI) — bottom-right, independent visibility
- * - Site explorer panel — site concepts: pages, components, styles, scripts
+ * - Explorer panel — Boards + all-pages Layers tree (`StudioExplorer`)
  * - CodeEditorPanel (Task #432) — center-stage, code editing
  *
- * J12: usePersistence handles CMS draft load on mount, preference-gated
- * auto-save (default 30s; Studio mode overrides to a fixed 2s cadence — see
- * STUDIO_AUTOSAVE_DELAY_MS), toolbar Save, and Cmd+S immediate save.
+ * J12: usePersistence loads/saves via `fsCodemodAdapter` (the filesystem-as-
+ * truth adapter) on mount, a fixed 2s idle-commit autosave cadence
+ * (`STUDIO_AUTOSAVE_DELAY_MS`), and Cmd+S immediate save.
  *
  * Agent Panel: Phase D AI assistant — self-contained floating panel (Guideline #410).
  * Authenticates via ambient Claude Code credentials through the local Bun server.
@@ -38,15 +38,12 @@
  */
 import { Toolbar } from '@admin/pages/site/toolbar/Toolbar'
 import { ZoomControls } from '@admin/pages/site/toolbar/ZoomControls'
-import { PublishButton } from '@admin/pages/site/toolbar/PublishButton'
 import { useEditorAppearancePreferences } from '@admin/pages/site/preferences/editorPreferences'
 import { usePersistence } from '@admin/pages/site/hooks/usePersistence'
 import { useSiteEditorUrlSync } from '@admin/pages/site/hooks/useSiteEditorUrlSync'
 import { useEditorLayoutPersistence } from '@admin/pages/site/hooks/useEditorLayoutPersistence'
 import { useEditorStore } from '@admin/pages/site/store/store'
-import { cmsAdapter } from '@core/persistence/cms'
 import { fsCodemodAdapter, STUDIO_AUTOSAVE_DELAY_MS } from '@site/studio/fsCodemodAdapter'
-import { syncStudioModeFromUrl } from '@site/studio/studioMode'
 import { getStudioWorkspaceDir } from '@site/studio/studioWorkspaceDir'
 import { selectActiveBoard } from '@site/store/slices/boardSelectors'
 import { shouldSeedDefaultBoard } from './studioDefaultBoardSeed'
@@ -55,8 +52,6 @@ import { pushToast } from '@ui/components/Toast'
 import { getErrorMessage } from '@core/utils/errorMessage'
 import { useAdminUi } from '@admin/state/adminUi'
 import { CMS_SITE_RELOAD_EVENT } from '@admin/state/adminEvents'
-import { useInstalledEditorPlugins } from '@admin/pages/plugins/hooks/useInstalledEditorPlugins'
-import { usePluginEventBridge } from '@admin/pages/plugins/hooks/usePluginEventBridge'
 import {
   CanvasFrameSkeletonFrame,
   DEFAULT_CANVAS_FRAME_SKELETON_BREAKPOINTS,
@@ -73,7 +68,6 @@ import {
   canSaveDraftSite,
   canRunPluginBackgroundWork,
   canUseAiChat,
-  hasCapability,
 } from '@admin/access'
 import { EditorPermissionsProvider } from '@site/EditorPermissionsProvider'
 import type { EditorPermissions } from '@site/editorPermissionsContext'
@@ -110,16 +104,26 @@ const PreviewOverlay = lazy(() =>
   })),
 )
 
-// Studio-only toolbar actions — only rendered when `?studio` is present
-// (see `studioMode` below). lazy() keeps ImportProjectButton/DownloadCodeButton
+// Studio toolbar actions. lazy() keeps ImportProjectButton/DownloadCodeButton
 // (plus their `downloadStudioCode.ts` client) out of the eager SitePage route
-// chunk for the (default) non-studio CMS editor. Bundled behind ONE lazy
-// boundary (`StudioToolbarActions`) rather than two, so the SitePage shell
-// only pays for a single dynamic-import preload map.
+// chunk until the toolbar actually mounts. Bundled behind ONE lazy boundary
+// (`StudioToolbarActions`) rather than several, so the SitePage shell only
+// pays for a single dynamic-import preload map.
 const StudioToolbarActions = lazy(() =>
   import('@admin/pages/site/toolbar/StudioToolbarActions').then((m) => ({
     default: m.StudioToolbarActions,
   })),
+)
+
+// Editor-plugin runtime — Studio doesn't consume editor plugins on the
+// canvas itself, so it's mounted only while Settings → Plugins is open
+// (install/enable/disable can still activate a plugin's editor entrypoint
+// there). lazy() + the `pluginRuntimeNeeded` gate below keep a bare mount
+// from firing the `GET /admin/api/cms/plugins` round trip and downloading
+// the plugin runtime's dependency graph until it's actually needed. See
+// `PluginRuntimeBridge.tsx`.
+const PluginRuntimeBridge = lazy(() =>
+  import('./PluginRuntimeBridge').then((m) => ({ default: m.PluginRuntimeBridge })),
 )
 
 /**
@@ -139,6 +143,7 @@ export function AdminCanvasLayout() {
   // editor's `settingsSlice.openSettings` mirrors into it, and the admin
   // shell reads from it too.
   const settingsOpen = useAdminUi((s) => s.settingsOpen)
+  const settingsSection = useAdminUi((s) => s.settingsSection)
   const publishSiteSummary = useAdminUi((s) => s.setSiteSummary)
   const currentUser = useCurrentAdminUser()
   const pluginBackgroundWorkEnabled = canRunPluginBackgroundWork(currentUser)
@@ -170,7 +175,6 @@ export function AdminCanvasLayout() {
   // overlays). Content-only callers still get the canvas in read-mostly mode
   // with content controls live.
   const canEditDraftSite = canEditStructureFlag
-  const canPublishPages = !currentUser || hasCapability(currentUser, 'pages.publish')
 
   const permissions: EditorPermissions = {
     canEditStructure: canEditStructureFlag,
@@ -178,21 +182,17 @@ export function AdminCanvasLayout() {
     canEditStyle: canEditStyleFlag,
   }
   // J12 — wire persistence: load, auto-save, toolbar Save, Cmd+S.
-  // `?studio` opts into the filesystem-as-truth adapter (loads/saves a real
-  // .tsx via /admin/api/studio); without it, the normal CMS/DB adapter is used.
-  // Resolved once on mount (a lazy initializer, not memoization): it also
-  // persists `?studio` intent so a later param-less navigation/refresh doesn't
-  // silently drop back to the CMS adapter. See `studioMode.ts`.
-  const [studioMode] = useState(() => syncStudioModeFromUrl())
-  const persistence = usePersistence('default', studioMode ? fsCodemodAdapter : cmsAdapter, {
+  // Studio always loads/saves a real .tsx via the filesystem-as-truth
+  // adapter (/admin/api/studio).
+  const persistence = usePersistence('default', fsCodemodAdapter, {
     markNewSiteUnsaved: true,
     enabled: true,
     // Studio bypasses the CMS's user-configurable (default 30s) autosave
     // delay in favor of a fixed, snappy cadence — see STUDIO_AUTOSAVE_DELAY_MS.
-    autoSaveDelayMs: studioMode ? STUDIO_AUTOSAVE_DELAY_MS : undefined,
+    autoSaveDelayMs: STUDIO_AUTOSAVE_DELAY_MS,
   })
-  useStudioBoardsPersistence(studioMode)
-  useStudioDefaultBoardSeed(studioMode)
+  useStudioBoardsPersistence()
+  useStudioDefaultBoardSeed()
   // Keep the open page in lockstep with the URL: consume `?page=<slug>` on
   // load, and mirror the active page's slug back into the address bar so it's
   // directly linkable.
@@ -201,11 +201,11 @@ export function AdminCanvasLayout() {
     loaded: persistence.saveStatus.state !== 'loading',
   })
   useEditorLayoutPersistence()
-  useInstalledEditorPlugins(pluginBackgroundWorkEnabled)
-  // Mount the SSE bridge ONCE per admin tab — gives toasts on plugin
-  // crashes from any route, drives the red dot on the Plugins nav link,
-  // and keeps the open Plugins page list refreshed.
-  usePluginEventBridge(pluginBackgroundWorkEnabled)
+  // Studio doesn't use editor plugins on the canvas itself — mount the
+  // runtime on demand, while Settings → Plugins is the open section, so
+  // install/enable/disable there can still activate a plugin's editor
+  // entrypoint. See `PluginRuntimeBridge.tsx`.
+  const pluginRuntimeNeeded = settingsOpen && settingsSection === 'plugins'
 
   // Appearance preferences — data attributes on the editor root drive CSS
   // variables consumed by tree rows, toolbar buttons, text scale, and the
@@ -249,25 +249,14 @@ export function AdminCanvasLayout() {
           rightSlot={(
             <>
               <ZoomControls />
-              {/* Publish targets the CMS publish pipeline (static-artefact
-                  bake + publish-version bump) — meaningless in Studio, whose
-                  source of truth is the on-disk .tsx. Hide the whole action
-                  group (Publish + Save draft + status pill) rather than leave
-                  a dangling CMS affordance. Studio's own commit-on-idle
+              {/* Studio's source of truth is the on-disk .tsx — there is no
+                  CMS publish pipeline to target. Studio's own commit-on-idle
                   autosave (STUDIO_AUTOSAVE_DELAY_MS) keeps source in sync
-                  without a manual save button; its own export story is
-                  DownloadCodeButton below (Phase 6D). */}
-              {studioMode ? (
-                <Suspense fallback={null}>
-                  <StudioToolbarActions />
-                </Suspense>
-              ) : (
-                <PublishButton
-                  enabled={canPublishPages}
-                  onSave={canSaveSite ? persistence.saveSite : undefined}
-                  saveStatus={persistence.saveStatus}
-                />
-              )}
+                  without a manual save button; its export story is
+                  DownloadCodeButton (Phase 6D). */}
+              <Suspense fallback={null}>
+                <StudioToolbarActions />
+              </Suspense>
             </>
           )}
         />
@@ -290,6 +279,16 @@ export function AdminCanvasLayout() {
           <AdminCanvasEditorBodyLoading />
         )}
 
+        {/* Editor-plugin runtime, headless. Mounted on demand while
+            Settings → Plugins is open, so install/enable/disable there still
+            activates a plugin's editor entrypoint. `enabled` stays the
+            capability check the hooks always received. */}
+        {pluginRuntimeNeeded && (
+          <Suspense fallback={null}>
+            <PluginRuntimeBridge enabled={pluginBackgroundWorkEnabled} />
+          </Suspense>
+        )}
+
         {/* Settings Modal (portal-rendered, listens to adminUi.settingsOpen).
             Lazy + conditional render — the 1300-line modal + its six section
             subtree stays out of the eager graph until the user opens settings. */}
@@ -308,17 +307,17 @@ export function AdminCanvasLayout() {
 const BOARDS_AUTOSAVE_DEBOUNCE_MS = 800
 
 /**
- * Studio-mode sticky-notes board persistence.
+ * Studio sticky-notes board persistence.
  *
- * Load: on mount when `studioMode` is true, and again every time
- * `CMS_SITE_RELOAD_EVENT` fires — fetches `.studio/boards.json` for the
- * ACTIVE workspace dir (`getStudioWorkspaceDir()`; `undefined` = server
- * default) and hydrates `boardSlice` via `loadBoards`. Re-running on the
- * reload event matters for GitHub import (Phase 7B): importing switches the
- * active dir and fires this same event so the page tree reloads
- * (`fsCodemodAdapter`) — boards must follow to the new dir too, or the next
- * auto-save below would silently write board data into the PREVIOUS
- * workspace's `.studio/boards.json`.
+ * Load: on mount, and again every time `CMS_SITE_RELOAD_EVENT` fires —
+ * fetches `.studio/boards.json` for the ACTIVE workspace dir
+ * (`getStudioWorkspaceDir()`; `undefined` = server default) and hydrates
+ * `boardSlice` via `loadBoards`. Re-running on the reload event matters for
+ * GitHub import (Phase 7B): importing switches the active dir and fires
+ * this same event so the page tree reloads (`fsCodemodAdapter`) — boards
+ * must follow to the new dir too, or the next auto-save below would
+ * silently write board data into the PREVIOUS workspace's
+ * `.studio/boards.json`.
  *
  * Auto-save: subscribes to `boardsDirty` and, ~800ms after it flips to `true`,
  * saves the current `boards` back to the server and clears the flag. A ref
@@ -326,10 +325,8 @@ const BOARDS_AUTOSAVE_DEBOUNCE_MS = 800
  * for this MVP because a save always reads the latest `boards` at fire time,
  * so a save that starts while another is in flight still lands the freshest
  * state on its own next tick.
- *
- * Entirely inert outside studio mode — the CMS flow never touches this slice.
  */
-function useStudioBoardsPersistence(studioMode: boolean): void {
+function useStudioBoardsPersistence(): void {
   const savingRef = useRef(false)
   // The known-good frame-id set as of the last load or save that we KNOW
   // reflects the real on-disk file — the baseline `boardsSaveGuard.ts`
@@ -341,8 +338,6 @@ function useStudioBoardsPersistence(studioMode: boolean): void {
   const warnedAboutRefusalRef = useRef(false)
 
   useEffect(() => {
-    if (!studioMode) return undefined
-
     let cancelled = false
     // Store-02's landmine names "a stale project switch" as a way the
     // in-memory `boards` can end up NOT reflecting the real on-disk file: two
@@ -359,9 +354,8 @@ function useStudioBoardsPersistence(studioMode: boolean): void {
       const thisLoadToken = ++loadToken
       const isStale = () => cancelled || thisLoadToken !== loadToken
 
-      // Dynamic import: `boardsApi` is only relevant in Studio mode (this
-      // whole effect early-returns above when it's off), so keep its client
-      // out of the eager SitePage route chunk for the default CMS editor.
+      // Dynamic import: keeps `boardsApi`'s client out of the eager SitePage
+      // route chunk until this effect actually needs it.
       import('@site/studio/boardsApi')
         .then(({ fetchBoards }) => fetchBoards(getStudioWorkspaceDir()))
         .then((file) => {
@@ -424,11 +418,9 @@ function useStudioBoardsPersistence(studioMode: boolean): void {
       cancelled = true
       window.removeEventListener(CMS_SITE_RELOAD_EVENT, load)
     }
-  }, [studioMode])
+  }, [])
 
   useEffect(() => {
-    if (!studioMode) return undefined
-
     let timer: ReturnType<typeof setTimeout> | undefined
 
     const runSave = () => {
@@ -516,7 +508,7 @@ function useStudioBoardsPersistence(studioMode: boolean): void {
       unsubscribe()
       clearTimeout(timer)
     }
-  }, [studioMode])
+  }, [])
 }
 
 /**
@@ -547,7 +539,7 @@ function useStudioBoardsPersistence(studioMode: boolean): void {
  * doc (`studioDefaultBoardSeed.ts`) for the `boards-fetch-race-01` regression
  * this guards against.
  */
-function useStudioDefaultBoardSeed(studioMode: boolean): void {
+function useStudioDefaultBoardSeed(): void {
   const boardsLoaded = useEditorStore((s) => s.boardsLoaded)
   const boardsLoadFailed = useEditorStore((s) => s.boardsLoadFailed)
   const boardCount = useEditorStore((s) => s.boards.boards.length)
@@ -557,13 +549,13 @@ function useStudioDefaultBoardSeed(studioMode: boolean): void {
   const frameDefaultsSettled = useEditorStore((s) => s.frameDefaultsSettled)
 
   useEffect(() => {
-    if (!shouldSeedDefaultBoard({ studioMode, boardsLoaded, boardsLoadFailed, boardCount, activeBoardFrameCount, pageCount, frameDefaultsSettled })) return
+    if (!shouldSeedDefaultBoard({ boardsLoaded, boardsLoadFailed, boardCount, activeBoardFrameCount, pageCount, frameDefaultsSettled })) return
 
     const sitePages = useEditorStore.getState().site?.pages
     const pageIds = sitePages ? sitePages.map((p) => p.id) : []
     if (pageIds.length === 0) return
     useEditorStore.getState().seedFramesForActiveBoard(pageIds)
-  }, [studioMode, boardsLoaded, boardsLoadFailed, boardCount, activeBoardFrameCount, pageCount, frameDefaultsSettled])
+  }, [boardsLoaded, boardsLoadFailed, boardCount, activeBoardFrameCount, pageCount, frameDefaultsSettled])
 }
 
 function usePostPaintEditorBodyGate(): boolean {

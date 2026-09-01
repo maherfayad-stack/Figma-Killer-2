@@ -118,6 +118,13 @@
     --scrim-80: rgba(0, 0, 0, 0.8);
     --scrim-90: rgba(0, 0, 0, 0.9);
 
+    /* Live-mode device mockup (phone / tablet chrome around the preview).
+       Achromatic on purpose: the bezel is physical context, never identity or
+       state, and any tint here would read as part of the user's design. */
+    --device-bezel-fill: #101010;
+    --device-furniture: #000000;
+    --device-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+
     /* Identity accents. Each accent has one standard 10% surface tint. */
     --accent-1: #8ee6c8;
     --accent-1-10: rgba(142, 230, 200, 0.1);
@@ -302,6 +309,12 @@
        colliding with --danger's meaning. */
     --canvas-comment-pin: #ffb020;
     --canvas-comment-pin-text: #1a1200;
+    /* The ring drawn around a pin. Fixed white, and deliberately NOT a surface
+       token: a pin floats over the USER'S rendered page, whose colours have
+       nothing to do with the editor's theme. The ring exists to separate the
+       marker from whatever is behind it — amber on an amber hero is otherwise
+       invisible — so it must stay constant while the editor theme changes. */
+    --canvas-comment-pin-ring: #ffffff;
     /* A resolved pin is drawn, not hidden — the filter owns visibility, this
        token owns "finished". Achromatic so open pins keep the only colour. */
     --canvas-comment-pin-resolved: #6b6b6b;

@@ -51,9 +51,9 @@ import { readStorageStats } from './storage'
 import type { DashboardRequestContext } from './types'
 
 // Re-export the on-the-wire types so callers that need to type the
-// JSON response (currently `src/admin/pages/dashboard/hooks/
-// useDashboardStats.ts` mirrors them by hand) can import from the
-// folder barrel rather than reaching into the types file directly.
+// JSON response can import from the folder barrel rather than reaching
+// into the types file directly. (The former in-tree consumer,
+// `useDashboardStats.ts`, was deleted with the dormant widget-grid.)
 
 
 type DashboardReader = (

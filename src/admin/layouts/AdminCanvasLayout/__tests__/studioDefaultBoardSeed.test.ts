@@ -20,7 +20,6 @@ import { describe, it, expect } from 'bun:test'
 import { shouldSeedDefaultBoard, type StudioDefaultBoardSeedInputs } from '../studioDefaultBoardSeed'
 
 const BASE: StudioDefaultBoardSeedInputs = {
-  studioMode: true,
   boardsLoaded: true,
   boardsLoadFailed: false,
   boardCount: 1,
@@ -44,10 +43,6 @@ describe('shouldSeedDefaultBoard', () => {
 
   it('refuses when boardsLoadFailed is true — the boards-fetch-race-01 regression', () => {
     expect(shouldSeedDefaultBoard({ ...BASE, boardsLoadFailed: true })).toBe(false)
-  })
-
-  it('refuses outside studio mode', () => {
-    expect(shouldSeedDefaultBoard({ ...BASE, studioMode: false })).toBe(false)
   })
 
   it('refuses before boards have loaded', () => {

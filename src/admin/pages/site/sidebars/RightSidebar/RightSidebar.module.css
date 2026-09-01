@@ -21,12 +21,30 @@
         width 180ms ease;
 }
 
-.panelSlot {
+/*
+ * The absolutely-positioned column that holds the tab strip and the active
+ * panel.
+ *
+ * The absolute positioning is what keeps the PANEL at its full layout width
+ * while the sidebar's own width animates open and closed — it used to live on
+ * `.panelSlot` itself, which is why a tab strip added as a flex sibling simply
+ * drew on top of the panel. One positioned container, its children in normal
+ * flow, and the two stack.
+ */
+.stack {
     position: absolute;
     top: 0;
     right: 0;
     bottom: 0;
+    display: flex;
+    flex-direction: column;
     width: var(--right-sidebar-panel-render-layout-width);
+    min-height: 0;
+    overflow: hidden;
+}
+
+.panelSlot {
+    flex: 1 1 auto;
     min-height: 0;
     overflow: hidden;
 }
@@ -44,4 +62,15 @@
         right: 0;
         bottom: 0;
     }
+}
+
+/*
+ * The Properties / Comments switch, shown only when both panels are available.
+ * Sits above the slot rather than inside either panel: it belongs to the
+ * sidebar, and a panel that drew its own tab strip would be describing its
+ * sibling's existence.
+ */
+.tabs {
+    flex: 0 0 auto;
+    padding: var(--space-2xs) var(--space-s) 0;
 }

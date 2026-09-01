@@ -108,6 +108,40 @@ studio_resolve_comment → mark it done
 | `studio_reply_comment` | `mutates` + `studio.write` |
 | `studio_resolve_comment` | `mutates` + `studio.write` **+ the anchor gate** |
 
+### Every id is resolved before the agent sees it
+
+A stored thread is five ids — `boardId`, `anchor.frameId`, `anchor.pageId`,
+`anchor.node.nodeId`, plus `dx`/`dy` — and not one of them describes anywhere.
+`26cc49cd…` is not a board, `pages/Home.tsx:5:6` is not an element, and `dx: 86`
+is not a place without the frame it is relative to. An agent handed those either
+asks three follow-up questions or guesses which element was meant, and guessing
+edits the wrong source.
+
+`buildCommentLocation` in `@core/studio-comments/location.ts` resolves them once
+into a `CommentLocation`: named board, named page, **the page's source file**,
+the pin's position in frame-local pixels *and* as a share of the frame, the
+element's module and text, and its **trail** — the labels from the page root
+down to it, so the element is findable by structure when its positional id has
+gone stale.
+
+Both doors into the review loop use it, and that is the point of the module
+existing:
+
+| Door | Shape |
+|---|---|
+| `studio_list_comments` | the record verbatim, under `location` |
+| the panel's **Send to AI** button | `describeCommentLocation`, the same record as prose |
+
+They were describing a thread differently and incompletely before — the button
+named the page and module id, the tool named the page and node id, neither named
+the board, the frame, the coordinates or the surrounding structure. A thread
+must not be well-described through one door and badly through the other.
+
+`checkAnchor: false` is how a caller says *"I did not parse the project on this
+call"*. It yields `confidence: null`, never the `detached` a missing tree would
+otherwise produce: **"I did not look" and "it is gone" must never render as the
+same sentence** in a briefing an agent acts on.
+
 ### The anchor gate
 
 `studio_resolve_comment` re-resolves the anchor against the live tree and
@@ -174,11 +208,73 @@ leaves threads open forever once they move on, and it is reversible.
 | Piece | Where |
 |---|---|
 | Pins + thread popovers | `canvas/BoardCommentsLayer/` — last layer in `StudioBoardLayers` |
+| Author face on pin + row | `studio/commentAvatarUser.ts` → `@admin/shared/UserAvatar` |
 | The armed tool (`C`) | `canvas/BoardCommentsLayer/CommentPlacementLayer.tsx` |
+| Point → anchor (place **and** drag) | `canvas/BoardCommentsLayer/commentAnchorAtPoint.ts` |
 | Tool button | `CommentToolButton`, in `BoardNotesToolbar` |
 | Per-comment / per-thread actions | `CommentKebab` — one ⋯ menu, not inline buttons |
-| Work queue | `panels/CommentsPanel/` — **right sidebar**, mode `comments` |
+| Work queue | `panels/CommentsPanel/` — **right sidebar**, mode `comments`, shared `PanelHeader` |
 | Bulk delete / send-to-agent | `studio/commentBulkActions.ts` |
+
+### A pin wears its author's face, not its number
+
+The marker shows the thread STARTER's avatar. Mid-review the useful question at
+a glance is *who is asking*, not *which number is this* — the number only becomes
+useful once you are already talking about one thread, by which point you are in
+the panel or the popover.
+
+`seq` has not stopped being the thread's name. It is stable for the life of the
+project and never reused, so "look at 3" still resolves — it stays in the pin's
+accessible name, the hover peek, the panel row's meta line (`#3`), and every MCP
+payload. What changed is only what the 26px marker spends its space on.
+
+The picture is the real uploaded avatar (or Gravatar identicon) when the author
+is the signed-in user, and `UserAvatar`'s initials circle for everyone else and
+for the agent. That asymmetry is deliberate: `.studio/comments.json` stores a
+denormalized author snapshot (`userId`, `displayName`, `kind`) and **no image URL
+or email hash**. The file is committed to the user's repository, and an
+email-derived Gravatar hash sitting in it is a disclosure this feature does not
+need to make. `commentAvatarUser` is shared by the pin and the panel row so one
+author cannot wear two different faces in the two places showing the same thread.
+
+### A pin can be dragged, and the drop re-anchors it
+
+Press a pin, move more than 3px, and it follows the cursor; below that the press
+is a click and opens the thread. The drop calls **`commentAnchorAtPoint`** — the
+same function that places a new pin — so it resolves the landing point from
+scratch: new frame, new frame-local offset, new node hint.
+
+That is deliberate, and it is what makes the gesture worth having. A pin dragged
+onto a different element now points at that element, which means dragging is the
+**repair path**: a `detached` thread becomes `exact` again by being dropped where
+it belongs, and a comment placed a few pixels off can be nudged onto its real
+subject. A drag that only moved coordinates would leave the thread still pointing
+at whatever it pointed at before — cosmetic, and quietly wrong.
+
+Three implementation points, each of which was a bug waiting to happen:
+
+- **Pointer capture is required, not defensive.** The board is a field of
+  iframes. Without capture the parent document stops receiving `pointermove` the
+  instant the cursor crosses into a frame, and the pin freezes mid-drag. The
+  capture call is wrapped and non-fatal, and comes *after* the window listeners
+  are attached, so a throw degrades the drag instead of stranding them.
+- **The preview offset goes AFTER the counter-scale, and the order is the whole
+  of it.** Transform functions compose left to right, so the leftmost one applies
+  in the pin's *parent* space — inside `CanvasTransformLayer`, already multiplied
+  by `--canvas-zoom`. Written there (it was, first), a 100px cursor delta moved
+  the pin 50px at 50% zoom and the pin visibly lagged the cursor. Placed after
+  `scale(1 / --canvas-zoom)` it lands in a space divided by the zoom and then
+  multiplied by it again on the way to the screen, so the two cancel and the
+  offset IS the cursor delta at every zoom. Only the drop converts to board
+  coordinates, once.
+- **The offset is cleared after the write settles, not on pointer-up.** The move
+  is a server round trip; clearing early snaps the pin back to its old spot for a
+  frame before it jumps to the new one. On failure that same clear restores the
+  original position, which is right — the toast says why.
+
+Escape cancels a drag in flight. The trailing `click` is swallowed by a ref that
+is set when the threshold is crossed and cleared by the *next* press — not on
+pointer-up, because the click arrives after that.
 
 ### The pane lives on the right, and has no rail button
 
@@ -189,11 +285,54 @@ both would show, because clicking a pin does not clear the node selection —
 without a winner the pane would show the properties of whatever was selected
 before, beside a comment the user just opened.
 
-`commentsSlice` owns the interlocks so no call site can forget them: opening a
-thread or arming the `C` tool opens the pane; closing the pane clears the bulk
-working set (a selection that outlived the surface showing it would let a later
-"Delete selected" act on threads the user has no memory of choosing) but does
-NOT close the open thread (the pane is a list, the popover is a conversation).
+**Properties and Comments are TABS in that one slot, not a winner and a loser.**
+Comments used to win outright whenever both would show, on the reasoning that
+clicking a pin does not clear the node selection — so without a winner the pane
+would show stale properties beside a freshly-opened comment. That was right about
+the conflict and wrong about the remedy: it made the inspector *unreachable*
+during a review. Selecting an element with the comments pane open did nothing
+visible at all; Properties was not behind the comments, it was not rendered.
+
+The arbitration is now `rightSidebarTab` (in `uiSlice`) plus a strip shown ONLY
+when both panels are genuinely available, and it follows the surface the user
+last acted on: a selection switches to Properties (an effect in `RightSidebar`),
+opening a thread or arming the tool switches to Comments (`commentsSlice`). The
+stale-properties case the old rule feared cannot arise, because a selection is
+what puts the sidebar on Properties in the first place.
+
+The tab strip and the panel live in one absolutely-positioned `.stack` column.
+That positioning is what holds the panel at its full layout width while the
+sidebar's own width animates — it used to sit on `.panelSlot` itself, which is
+why a tab strip added as a flex sibling simply drew on top of the panel.
+
+**Arming the tool opens the pane, disarming closes it; clicking a pin does
+neither.** The line is between
+"I am doing a review pass" (the `C` key or the Comment button — bring the queue)
+and "what does this one say" (a pin — just the thread). Opening the right
+sidebar shrinks the canvas viewport, so when a pin click opened the pane it
+reflowed the board and shoved the very pin you had just clicked out from under
+the cursor, while the popover flipped sides to dodge the pane that had appeared.
+Reading one comment must not re-lay-out the editor; entering a review pass may.
+
+Leaving comment mode — a second `C`, the Comment button again, or `Escape` —
+takes the queue with it, so the round trip returns the editor to where it
+started instead of leaving a pane behind to close by hand. That hangs off
+`setCommentToolActive`, NOT off `commentToolActive` going false: placing a pin
+also disarms the tool, and it does so by writing the field directly in
+`beginDraftPin` precisely so committing a comment does not yank the queue out
+from under the composer that is still open.
+
+Closing the pane clears the bulk working set (a selection that outlived the
+surface showing it would let a later "Delete selected" act on threads the user
+has no memory of choosing) but does NOT close an open thread — the pane is a
+list, the popover is a conversation.
+
+It **swaps with** the Properties panel in one slot; it is not drawn over it, and
+it shares the sidebar's width and resize handle. It also shares the standard
+`PanelHeader` — same 36px bar, same icon close button, same `panel-close-<id>`
+hook as every other editor panel. It did not, at first: a hand-rolled `<h2>` and
+a literal `✕` glyph inset by the panel's own padding made a swap read as an
+unrelated card appearing on top of the sidebar.
 
 Entry points are all on the canvas — `C`, the Comment tool button, or a pin —
 so the pane carries its own close button. The Client role reaches it through
@@ -201,10 +340,23 @@ all three; the board notes toolbar is not gated on editability.
 
 ### Bulk actions act on a selection, never on the filter
 
-Checkboxes per row plus a select-all. Select-all fills the working set from the
-**currently visible** rows, so filter + search + select-all is still the fast
-path — it just goes through a state the user can see. A destructive action that
-silently followed the filter would delete things the user was only looking at.
+Checkboxes per row. Select-all fills the working set from the **currently
+visible** rows, so filter + search + select-all is still the fast path — it just
+goes through a state the user can see. A destructive action that silently
+followed the filter would delete things the user was only looking at.
+
+Selection is a mode, and every control for it is conditional on being in it.
+Ticking the first row is what enters the mode; until then there is no action bar
+and no select-all row, because a select-all with nothing selected is a control
+for a mode you are not in. Leaving is the inverse — clearing the last checkbox —
+so there is no Cancel button, and no "N selected" readout either, since the
+select-all row directly below the bar already carries the count. Both were
+restating what the checkboxes already showed.
+
+The select-all row and a thread row share one two-column shape (a checkbox
+gutter, then content inset by the row button's padding), declared in a single
+grouped ruleset in `CommentsPanel.module.css`. Splitting them is how the header
+tick and the row ticks drift out of alignment.
 
 `Send to AI` sends outright rather than prefilling the composer: the composer's
 draft is local component state, and a user who picked threads and pressed a
@@ -213,6 +365,13 @@ reply and resolve, so it meets the same anchor gate as `studio_resolve_comment`.
 
 Two implementation notes worth keeping:
 
+- **A pin wears a white ring** (`--canvas-comment-pin-ring`, a spread
+  `box-shadow` rather than a border, so it sits outside the 26px marker instead
+  of eating 2px of the badge). The token is fixed white and deliberately not a
+  surface token: a pin floats over the *user's* rendered page, whose colours
+  have nothing to do with the editor theme, and amber on an amber hero is
+  otherwise invisible. `.active`'s outline steps out to `outline-offset: 2px` to
+  clear it.
 - **Pins do not scale with zoom.** They counter-scale via
   `scale(calc(1 / var(--canvas-zoom)))`. That custom property is republished by
   `useCanvas.applyTransformToDOM` on every rAF tick — it cannot come from the
@@ -247,6 +406,12 @@ Two implementation notes worth keeping:
   `commentSelectors.ts` returns a stored reference or a primitive, and
   `comment-selector-stability.test.ts` enforces both halves of that rule.
 
+- **Hovering a pin peeks at the thread's LATEST comment**, not its first. On a
+  board of a dozen pins the question you are asking as you sweep the cursor is
+  "what is the current answer here"; the opening comment is the one part you can
+  usually already remember. It is a peek and not a popover — `pointer-events:
+  none`, no actions, and suppressed for the thread that is already open, whose
+  real popover is saying more.
 - **Both popovers flip to the left of their pin near the canvas edge**
   (`usePopoverFlip`, shared by the draft and the committed thread so a comment
   does not jump sides the moment it is submitted). The decision measures the
@@ -278,6 +443,7 @@ armed the tool stays clickable to disarm it.
 | Path | Role |
 |---|---|
 | `src/core/studio-comments/` | schemas, tolerant serializer, pure transforms, **`anchorResolve.ts`** |
+| `src/core/studio-comments/location.ts` | ids → a described location, for both agent doors |
 | `server/handlers/studio/commentsStore.ts` | disk IO, the op layer, ownership, `authorFromSession` |
 | `server/handlers/studio/commentsRoutes.ts` | the two HTTP routes |
 | `server/ai/mcp/tools/studio/commentTools.ts` | the three MCP tools + the anchor gate |

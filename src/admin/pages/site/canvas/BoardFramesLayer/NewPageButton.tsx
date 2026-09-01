@@ -13,9 +13,9 @@
  * the common case one keystroke away while making the other three findable at
  * the moment someone wants one.
  *
- * Flow: pick a kind → `createStudioPage(undefined, kind)` writes the starter
- * files (server picks the next free name for that kind) and auto-places the
- * page on the project's board SERVER-SIDE (WS-13 step 4, D5 §11.3 — the same
+ * Flow: pick a kind → `createStudioPage(undefined, kind, board.id)` writes the
+ * starter files (server picks the next free name for that kind) and auto-places
+ * the page on the board THIS BUTTON IS RENDERED ON, server-side (WS-13 step 4, D5 §11.3 — the same
  * write path an MCP/agent caller with no browser tab open goes through) →
  * `requestCmsSiteReload()` re-parses the workspace AND re-fetches
  * `.studio/boards.json` (`useStudioBoardsPersistence` in
@@ -24,6 +24,11 @@
  * call — the server's placement is the one source of truth, so a page created
  * here and one created by the agent land identically instead of two
  * independent grid-slot computations racing to be the last write.
+ *
+ * `board.id` is passed explicitly because the server cannot infer it: it used
+ * to place every scaffolded page on `boards[0]`, so asking for a page while
+ * looking at any other board put the screen somewhere the author was not
+ * looking and left the board they were building showing its empty-state card.
  *
  * Self-gates on `selectActiveBoard`, like `AddFramePicker`: renders nothing
  * outside studio board mode.
@@ -39,7 +44,6 @@ import { getErrorMessage } from '@core/utils/errorMessage'
 import { requestCmsSiteReload } from '@admin/state/adminEvents'
 import { createStudioPage } from '@site/studio/studioSaveRequests'
 import { FilePlusSolidIcon } from 'pixel-art-icons/icons/file-plus-solid'
-import styles from './NewPageButton.module.css'
 
 interface NewPageButtonProps {
   label?: string
@@ -64,11 +68,15 @@ export function NewPageButton({
 
   if (!board) return null
 
+  // Captured after the guard: `create` is a hoisted function declaration, so
+  // TypeScript will not carry the null-narrowing on `board` into it.
+  const boardId = board.id
+
   async function create(kind: PageKind) {
     if (busy) return
     setBusy(true)
     try {
-      await createStudioPage(undefined, kind)
+      await createStudioPage(undefined, kind, boardId)
       // The server already placed the frame (see module doc) — reload picks
       // up the page in `site.pages` AND the board frame that now references it.
       requestCmsSiteReload()
@@ -109,8 +117,12 @@ export function NewPageButton({
           anchorRef={triggerRef}
           side="bottom"
           align="start"
-          width={260}
+          minWidth={168}
         >
+          {/* Label only, one line per row. `minWidth` rather than a fixed
+              `width`: the menu was pinned to 260px to fit a description line
+              that no longer exists, and a four-item list of short labels in a
+              260px box is mostly empty space. */}
           {PAGE_KINDS.map((preset) => (
             <ContextMenuItem
               key={preset.kind}
@@ -119,10 +131,7 @@ export function NewPageButton({
                 void create(preset.kind)
               }}
             >
-              <span className={styles.kind}>
-                <span className={styles.kindLabel}>{preset.label}</span>
-                <span className={styles.kindDescription}>{preset.description}</span>
-              </span>
+              {preset.label}
             </ContextMenuItem>
           ))}
         </ContextMenu>

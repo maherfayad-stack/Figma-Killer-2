@@ -35,6 +35,7 @@
  * rounded up to "done".
  */
 import { Type, type Static } from '@core/utils/typeboxHelpers'
+import { isUntranslated } from '@core/i18n'
 import { badRequest, jsonResponse, readValidatedBody } from '../../http'
 import { requireCapability } from '../../auth/authz'
 import type { DbClient } from '../../db/client'
@@ -109,7 +110,10 @@ export function selectPendingEntries(
     if (requested && !requested.has(entry.key)) return false
     const source = entry.values[options.sourceLocale]
     if (!source || source.trim() === '') return false
-    return requested ? true : (entry.values[options.targetLocale] ?? '').trim() === ''
+    // Explicit keys mean "translate exactly these", so they bypass the check.
+    // Otherwise: anything still untranslated, which INCLUDES a target value
+    // that is just the source string handed back — see `isUntranslated`.
+    return requested ? true : isUntranslated(source, entry.values[options.targetLocale])
   })
 }
 

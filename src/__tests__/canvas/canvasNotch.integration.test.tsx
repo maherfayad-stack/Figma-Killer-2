@@ -5,6 +5,7 @@ import { useEditorStore } from '@site/store/store'
 import { CanvasNotch } from '@site/canvas/CanvasNotch'
 import { __resetModuleInserterPreferenceForTests } from '@site/module-picker/useModuleInserterPreference'
 import '@modules/base/index'
+import '@modules/alm/register'
 
 const originalFetch = globalThis.fetch
 
@@ -78,22 +79,30 @@ describe('CanvasNotch insertion events', () => {
   })
 
   it('renders server favorite modules as notch shortcuts', async () => {
+    // A design-system component (`alm.Button`) — not a `base.*` module.
+    // `moduleAvailability`'s intrinsic-element gate hides every `base.*`
+    // module from every picker (including notch favorites) except
+    // `base.container`/`base.text`, and THOSE are deliberately filtered out
+    // of the favorites bar because they're already the fixed Div/Text
+    // primitives (`PRIMITIVE_MODULE_IDS`) — so a design-system component is
+    // the only kind of module that can appear here at all now that Studio
+    // is the only editor mode.
     globalThis.fetch = mock(async () =>
       jsonResponse({
-        value: { favorites: [{ kind: 'module', id: 'base.list' }] },
+        value: { favorites: [{ kind: 'module', id: 'alm.Button' }] },
       }),
     ) as typeof fetch
     const user = userEvent.setup()
     renderInsideCanvasClickBoundary()
 
-    await user.click(await screen.findByTestId('canvas-notch-list-btn'))
+    await user.click(await screen.findByTestId('canvas-notch-button-btn'))
 
     const state = useEditorStore.getState()
     const page = state.site?.pages.find((item) => item.id === state.activePageId)
-    const listNodes = page
-      ? Object.values(page.nodes).filter((node) => node.moduleId === 'base.list')
+    const buttonNodes = page
+      ? Object.values(page.nodes).filter((node) => node.moduleId === 'alm.Button')
       : []
-    expect(listNodes).toHaveLength(1)
+    expect(buttonNodes).toHaveLength(1)
     expect(state.propertiesPanel.collapsed).toBe(false)
   })
 })

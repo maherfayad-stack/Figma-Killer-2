@@ -77,7 +77,6 @@ import { useCanvasReorderDrag } from './useCanvasReorderDrag'
 import { useCanvasTreeLadderOverlay } from './CanvasTreeLadderOverlay'
 import { CanvasNodeElementCache } from './canvasNodeLookup'
 import { InPlaceInspector } from './InPlaceInspector'
-import { isStudioMode } from '@site/studio/studioMode'
 import {
   createCanvasOverlayMeasureSession,
   measureIframeLocalRect,
@@ -295,7 +294,7 @@ export function BreakpointSelectionOverlay({
     selectedNodeIds.length > 0 &&
     activeBreakpointId === breakpointId
 
-  // In-place mini-inspector (Phase 2): studio-only, single-select only. Unlike
+  // In-place mini-inspector (Phase 2): single-select only. Unlike
   // `showToolbar` above, this deliberately does NOT gate on
   // `activeBreakpointId === breakpointId` — every studio board frame shares
   // the same synthetic 'studio' breakpoint id (see BoardFramesLayer's KNOWN
@@ -303,7 +302,7 @@ export function BreakpointSelectionOverlay({
   // frame's iframe actually contains the selected node's element (checked via
   // the measured rect in the RAF tick below) is the one that renders it — the
   // same per-frame resolution the selection ring already relies on.
-  const showInspector = isStudioMode() && selectedNodeIds.length === 1
+  const showInspector = selectedNodeIds.length === 1
   const inspectorNodeId = showInspector ? selectedNodeIds[0] : null
 
   // Pan/zoom "commit" signal for the anchor recompute below — `zoom`/`panX`/

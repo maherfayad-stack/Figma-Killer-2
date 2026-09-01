@@ -333,10 +333,17 @@ function runUnrollPass(doc: Document): boolean {
     // either metric after `setAttribute` is wrong.
     const clientHeight = el.clientHeight
     const scrollHeight = el.scrollHeight
+    // Always present by the time this runs — `snapshotAuthoredStyles` sets it
+    // unconditionally for every element, once, before `runUnrollPasses`'s own
+    // pass loop (this function) ever starts. See `classifyUnrollElement`'s
+    // doc for why an authored `overflow-y: visible` must never reach
+    // `'explicit-height'`.
+    const originalOverflowY = el.getAttribute(SCROLL_UNROLL_ORIGINAL_OVERFLOW_ATTR) ?? ''
     const tag = classifyUnrollElement({
       position: computed.position,
       scrollDeficit: scrollHeight - clientHeight,
       clientHeight,
+      originalOverflowY,
     })
     if (tag === null) continue
     el.setAttribute(SCROLL_UNROLL_ATTR, tag)

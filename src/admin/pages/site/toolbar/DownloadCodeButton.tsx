@@ -1,12 +1,11 @@
 /**
  * DownloadCodeButton — Studio's "export" story (Phase 6D — "Download the
- * code"). Studio mode has no Publish button (its source of truth is the
+ * code"). Studio has no CMS publish pipeline (its source of truth is the
  * on-disk `.tsx`, kept in sync by the idle-commit autosave); this is the
  * closest equivalent action: package the real workspace source into a zip
  * and hand it to the browser's native download flow.
  *
- * Mounted only in Studio mode — see `AdminCanvasLayout`'s `rightSlot`, which
- * gates it alongside (in place of) `PublishButton`.
+ * Mounted via `StudioToolbarActions` — see `AdminCanvasLayout`'s `rightSlot`.
  */
 import { useState } from 'react'
 import { ArrowBarDownIcon } from 'pixel-art-icons/icons/arrow-bar-down'

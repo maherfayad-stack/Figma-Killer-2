@@ -7,9 +7,11 @@
  * forwarded as a `data-span` attribute so the grid stylesheet can place
  * the card with `grid-column: span N`.
  *
- * First-party and plugin-registered widgets both compose this primitive
- * directly — `src/admin/pages/dashboard/widgets/*` and any plugin's
- * `editor/index.ts` that calls `api.dashboard.widgets.register(...)`.
+ * Plugin-registered widgets compose this primitive directly — any plugin's
+ * `editor/index.ts` that calls `api.dashboard.widgets.register(...)`. The
+ * first-party widget set that also used it was deleted with the dormant
+ * dashboard widget-grid; this primitive now exists solely for the plugin SDK
+ * surface (`@studio/host-ui`).
  * The registry's metadata (name, icon, tint, defaultSize) is authoritative
  * only for the block picker; the widget body owns whatever it wants in
  * the title row (range tabs, plus buttons, etc.).

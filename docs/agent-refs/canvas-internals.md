@@ -98,13 +98,10 @@ page — a real project's own `.tsx`, where "the repository is the document"
 means the project's own CSS (or the genuine absence of one) is the whole
 truth. A reset there makes an unstyled `<ul>`/heading/table/link look BETTER
 than a real browser would render it, exactly in the "did I actually style
-this" case someone is most likely checking. `ClassStyleInjector` gates the
-`@layer reset { … }` block on `isStudioMode()`
-(`src/admin/pages/site/studio/studioMode.ts`) — the same read every other
-studio-vs-CMS canvas decision uses, including which canvas
-(`CanvasTransformLayer`) mounts in the first place. See
-`docs/features/canvas-iframe-per-frame.md`'s "The publisher reset is
-CMS-only".
+this" case someone is most likely checking. `ClassStyleInjector` never emits
+the `@layer reset { … }` block's contents — Studio is the only editor mode,
+so this is unconditional. See `docs/features/canvas-iframe-per-frame.md`'s
+"The publisher reset is CMS-only".
 
 **A design frame must be a still, whole screen — two injectors, both design-
 frame-only, both `!isLive` in `IframeFrameSurface`, neither ever reaches the
@@ -121,7 +118,14 @@ stylesheet handles the common flex-region case, and a bounded (one settle per
 handles `position: fixed` chrome (→ `position: absolute`, tagged
 `data-studio-unroll="fixed"`) and explicit clipping heights (→ `height: auto`
 floored at the measured original, tagged
-`data-studio-unroll="explicit-height"`). It **never writes `body`'s or
+`data-studio-unroll="explicit-height"`) — but only when the element's own
+AUTHORED `overflow-y` was something other than the CSS default `visible`
+(`board-27f`): a fixed-size flex icon frame around an intrinsically larger,
+un-scaled child (an SVG icon bigger than its box) reports a real, positive
+`scrollHeight - clientHeight` deficit in an ordinary browser even though
+nothing is clipped — `overflow-y: visible` never hid anything, so there is
+nothing to "unroll." See `classifyUnrollElement` in `canvasScrollUnroll.ts`
+for the exact gate. It **never writes `body`'s or
 `html`'s `height`** — see "Height, and the feedback loop" below for why that
 specific boundary is load-bearing.
 

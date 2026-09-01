@@ -73,6 +73,7 @@ beforeEach(() => {
     commentSearch: '',
     commentsPaneOpen: false,
     selectedThreadIds: [],
+    rightSidebarTab: 'properties',
   })
 })
 
@@ -112,17 +113,78 @@ describe('mode interlocks', () => {
     expect(useEditorStore.getState().activeThreadId).toBe('t1')
   })
 
-  it('arming the tool opens the comments pane — one gesture, one mode', () => {
+  it('opening a thread does NOT open the pane', () => {
+    // Opening the right sidebar shrinks the canvas, which reflows the board
+    // and shoves the pin that was just clicked out from under the cursor.
+    // Reading one comment is not a request to re-lay-out the editor.
+    useEditorStore.getState().setActiveCommentThread('t1')
+    expect(useEditorStore.getState().commentsPaneOpen).toBe(false)
+    expect(useEditorStore.getState().activeThreadId).toBe('t1')
+  })
+
+  it('opening a thread DOES claim the sidebar tab', () => {
+    // Distinct from opening the pane: this only decides which panel shows if
+    // the sidebar is already open. Reading a thread while it sits on
+    // Properties should bring the queue forward, not leave the two surfaces
+    // disagreeing about what is being looked at.
+    useEditorStore.getState().setActiveCommentThread('t1')
+    expect(useEditorStore.getState().rightSidebarTab).toBe('comments')
+  })
+
+  it('arming the tool and opening the pane both claim the tab', () => {
+    useEditorStore.getState().setCommentToolActive(true)
+    expect(useEditorStore.getState().rightSidebarTab).toBe('comments')
+
+    useEditorStore.setState({ rightSidebarTab: 'properties' })
+    useEditorStore.getState().setCommentsPaneOpen(true)
+    expect(useEditorStore.getState().rightSidebarTab).toBe('comments')
+  })
+
+  it('closing the pane leaves the tab alone', () => {
+    // The tab only matters while both panels are available. Rewriting it on
+    // close would fight `RightSidebar`'s selection effect, which is the thing
+    // that actually owns "a selection means Properties".
+    useEditorStore.setState({ rightSidebarTab: 'comments' })
+    useEditorStore.getState().setCommentsPaneOpen(false)
+    expect(useEditorStore.getState().rightSidebarTab).toBe('comments')
+  })
+
+  it('arming the tool DOES open the pane — that gesture is "I am reviewing now"', () => {
     useEditorStore.getState().setCommentToolActive(true)
     expect(useEditorStore.getState().commentsPaneOpen).toBe(true)
   })
 
-  it('opening a thread opens the pane, and closing the pane does not close the thread', () => {
+  it('disarming the tool closes the pane again', () => {
+    // The exact inverse of arming, so `C` `C` puts the editor back where it
+    // started rather than leaving a pane the user has to close by hand.
+    useEditorStore.getState().setCommentToolActive(true)
+    useEditorStore.getState().setCommentToolActive(false)
+    expect(useEditorStore.getState().commentsPaneOpen).toBe(false)
+  })
+
+  it('placing a pin does NOT close the pane, even though it disarms the tool', () => {
+    // `beginDraftPin` disarms by writing the field directly, precisely so the
+    // queue is not yanked away from under a composer that is still open.
+    useEditorStore.getState().setCommentToolActive(true)
+    useEditorStore.getState().beginDraftPin({ boardId: 'b1', anchor: anchor() })
+    expect(useEditorStore.getState().commentToolActive).toBe(false)
+    expect(useEditorStore.getState().commentsPaneOpen).toBe(true)
+  })
+
+  it('disarming leaves an open thread open', () => {
+    // Closing the list is not closing the conversation.
+    useEditorStore.getState().setCommentToolActive(true)
+    useEditorStore.getState().setActiveCommentThread('t1')
+    useEditorStore.getState().setCommentToolActive(false)
+    expect(useEditorStore.getState().commentsPaneOpen).toBe(false)
+    expect(useEditorStore.getState().activeThreadId).toBe('t1')
+  })
+
+  it('closing the pane leaves an open thread open', () => {
     // The pane is a list; the popover is a conversation. Closing the list must
     // not throw away the conversation the user is mid-reply in.
+    useEditorStore.setState({ commentsPaneOpen: true })
     useEditorStore.getState().setActiveCommentThread('t1')
-    expect(useEditorStore.getState().commentsPaneOpen).toBe(true)
-
     useEditorStore.getState().setCommentsPaneOpen(false)
     expect(useEditorStore.getState().activeThreadId).toBe('t1')
   })

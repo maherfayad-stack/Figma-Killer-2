@@ -2,9 +2,7 @@
  * Response shapes for every dashboard widget endpoint.
  *
  * Each interface is the on-the-wire JSON payload one `/admin/api/cms/
- * dashboard/<segment>` endpoint returns. The client-side mirrors live in
- * `src/admin/pages/dashboard/hooks/useDashboardStats.ts` — keep them in
- * sync when you change a shape here.
+ * dashboard/<segment>` endpoint returns.
  */
 import type { AuditAction } from '../../../repositories/audit'
 

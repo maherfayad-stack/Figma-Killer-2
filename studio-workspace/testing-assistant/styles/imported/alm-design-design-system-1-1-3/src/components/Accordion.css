@@ -1,0 +1,123 @@
+.accordion {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  background: var(--background-base-default);
+  /* bottom separator sits under whichever element is last (header when
+     collapsed, panel when expanded) */
+  border-bottom: 1px solid var(--border-base-default);
+}
+
+.accordion__header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  width: 100%;
+  min-height: 56px;
+  padding: var(--space);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: start;
+}
+
+.accordion__header:hover,
+.accordion__header:active {
+  background: var(--background-base-hover);
+}
+
+.accordion__header--skeleton {
+  cursor: default;
+  pointer-events: none;
+}
+
+.accordion__title {
+  flex: 1 0 0;
+  min-width: 0;
+  word-break: break-word;
+  color: var(--text-base-default);
+  font-family: var(--font-body);
+  font-size: var(--type-body-size);
+  font-weight: var(--type-body-semibold-weight);
+  line-height: var(--type-body-lh);
+}
+
+.accordion__icon-box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  color: var(--icon-secondary-default);
+}
+
+.accordion__icon {
+  width: 16px;
+  height: 16px;
+  stroke-width: 1.5;
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.accordion__icon--expanded {
+  transform: rotate(180deg);
+}
+
+/* Smooth height animation: the grid track animates 0fr -> 1fr, which
+   resolves to the panel's natural height without measuring it in JS. */
+.accordion__panel-wrap {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.accordion__panel-wrap--open {
+  grid-template-rows: 1fr;
+}
+
+.accordion__panel-inner {
+  overflow: hidden;
+  min-height: 0;
+}
+
+.accordion__panel {
+  padding: 0 var(--space-lg) var(--space-lg) var(--space);
+  color: var(--text-base-default);
+  font-family: var(--font-body);
+  font-size: var(--type-body-size);
+  font-weight: var(--type-body-regular-weight);
+  line-height: var(--type-body-lh);
+  white-space: pre-wrap;
+}
+
+[dir='rtl'] .accordion__panel {
+  padding: 0 var(--space) var(--space-lg) var(--space-lg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .accordion__icon,
+  .accordion__panel-wrap {
+    transition: none;
+  }
+}
+
+/* ── skeleton ── */
+.accordion__skeleton {
+  flex: 1 0 0;
+  max-width: 275px;
+  height: 14px;
+  border-radius: var(--rounded-xs);
+  background: linear-gradient(
+    90deg,
+    var(--color-gainsboro) 25%,
+    var(--color-alice)     50%,
+    var(--color-gainsboro) 75%
+  );
+  background-size: 200% 100%;
+  animation: accordion-shimmer 1.5s ease-in-out infinite;
+}
+
+@keyframes accordion-shimmer {
+  0%   { background-position:  200% 0; }
+  100% { background-position: -200% 0; }
+}

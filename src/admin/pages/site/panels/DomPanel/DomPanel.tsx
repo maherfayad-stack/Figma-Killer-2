@@ -1,26 +1,11 @@
 /**
- * DomPanel — the Layers tab of the consolidated `ExplorerPanel`.
- *
- * Renders the full node tree of the active page. In CMS mode it is mounted
- * as a tab body inside `ExplorerPanel`, which owns the panel shell (header +
- * segmented tabs + close button) and controls visibility. DomPanel therefore
- * has no chrome of its own — no draggable header, no collapse toggle, no
- * width persistence; it fills the sidebar slot it is given.
- *
- * In Studio mode (`isStudioMode()`) this same component is embedded once per
- * expanded active-page row inside `StudioPagesTree` — see that component's
- * doc. Two things change there, both gated on `isStudioMode()` below rather
- * than stripped out (the CMS Layers tab needs the pre-existing behavior
- * unchanged):
- *   - The search field + insert-module button row is dropped — at that
- *     scale a raised toolbar surface is clutter. The `searchQuery`/
- *     search-mode branch stays fully live for CMS.
- *   - The root/tree-area no longer fill/scroll their own box (`height: 100%`
- *     + `overflow-y: auto`, the CMS tab's fill-the-sidebar behavior).
- *     Embedded in a page ROW, DomPanel must size to its own content instead
- *     — `StudioPagesTree`'s page list is the single scroll container; a
- *     second nested scroller (or a box stretching to fill leftover panel
- *     height) would push every following page row to the bottom.
+ * DomPanel — the Layers tree, embedded once per expanded active-page row
+ * inside `StudioPagesTree` (see that component's doc). Content-sized rather
+ * than filling a panel: `StudioPagesTree`'s page list is the single scroll
+ * container, so DomPanel has no chrome, no own scroller, and no fill/grow
+ * behavior of its own — a second nested scroller (or a box stretching to
+ * fill leftover height) would push every following page row toward the
+ * bottom.
  *
  * Guideline #357 (Compact UI Density):
  * - Row height: 28px (WCAG touch target NOT required for editor chrome)
@@ -33,7 +18,6 @@
  *
  * Guideline #321 (Phase 3 Architecture):
  * - DndContext wraps the whole tree; SortableContexts are per-parent group
- * - Search: flat filtered list bypasses tree rendering when query is active
  * - Ancestor auto-expand + scroll-to-selected on canvas selection change
  *
  * Accessibility:
@@ -51,16 +35,9 @@ import {
   type DragEndEvent,
 } from '@dnd-kit/core'
 import { createPortal } from 'react-dom'
-import { cn } from '@ui/cn'
 import { useEditorStore, selectActiveCanvasPage } from '@site/store/store'
 import { flattenSubtree } from '@core/page-tree'
 import { getAncestorIds } from '@site/hooks/useTreeWalkOrder'
-import { registry } from '@core/module-engine'
-import {
-  getNodeDisplayName,
-  getNodeHtmlTag,
-  getNodeClassNames,
-} from '@core/page-tree'
 import { TreeNode } from './TreeNode'
 import { TreeBackgroundContextMenu } from './TreeBackgroundContextMenu'
 import { useExpansionStore } from './DomTreeContext'
@@ -68,17 +45,8 @@ import { DomTreeProvider } from './DomTreeProvider'
 import { DomPanelDndContext } from './DomPanelDndContext'
 import { useDomPanelDnd } from './useDomPanelDnd'
 import { TreeContainer, TreeIconSlot, TreeLabel, TreeRow } from '@site/ui/Tree'
-import { TagPill } from '@ui/components/TagPill'
 import { useEditorPreference } from '@site/preferences/editorPreferences'
-import { isNarrowEditorChromeViewport } from '@site/layout/responsiveChrome'
-import { isStudioMode } from '@site/studio/studioMode'
-import { SearchBar } from '@ui/components/SearchBar'
 import { SkeletonTree } from '@ui/components/Skeleton'
-import { Button } from '@ui/components/Button'
-import { LazyModuleInserterDialog } from '@site/module-picker/LazyModuleInserterDialog'
-import { preloadModuleInserterDialog } from '@site/module-picker/preloadModuleInserterDialog'
-import { useInsertInserterItem } from '@site/hooks/useInsertInserterItem'
-import { AppGridPlusGlyphIcon } from 'pixel-art-icons/icons/app-grid-plus-glyph'
 import type { IconComponent } from 'pixel-art-icons/types'
 import { LayoutSolidIcon } from 'pixel-art-icons/icons/layout-solid'
 import { TextStartTIcon } from 'pixel-art-icons/icons/text-start-t'
@@ -90,118 +58,22 @@ import { FileTextSolidIcon } from 'pixel-art-icons/icons/file-text-solid'
 import { VideoSolidIcon } from 'pixel-art-icons/icons/video-solid'
 import styles from './DomPanel.module.css'
 
-// ─── Search results (flat filtered list) ─────────────────────────────────────
-
-interface SearchRow {
-  nodeId: string
-  displayName: string
-  moduleId: string
-  htmlTag: string | null
-  classChip: string | null
-}
-
-interface SearchResultsProps {
-  rows: SearchRow[]
-  showTag: boolean
-  showClasses: boolean
-  onSelect: (nodeId: string) => void
-}
-
-function SearchResults({ rows, showTag, showClasses, onSelect }: SearchResultsProps) {
-  if (rows.length === 0) {
-    return (
-      <div className={styles.noMatchMsg}>
-        No elements match
-      </div>
-    )
-  }
-  return (
-    <>
-      {rows.map(({ nodeId, displayName, moduleId, htmlTag, classChip }) => (
-        <TreeRow
-          key={nodeId}
-          depth={0}
-          role="treeitem"
-          aria-selected={false}
-          tabIndex={0}
-          onClick={() => onSelect(nodeId)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault()
-              onSelect(nodeId)
-            }
-          }}
-        >
-          <TreeIconSlot icon={getModuleIcon(moduleId)} iconSize={11} />
-          {showTag && htmlTag && (
-            <TagPill
-              label={htmlTag}
-              size="xs"
-              monospace
-              aria-hidden="true"
-              className={styles.searchTagPill}
-            />
-          )}
-          <TreeLabel>{displayName}</TreeLabel>
-          {showClasses && classChip && (
-            <TagPill
-              label={classChip}
-              size="xs"
-              monospace
-              aria-hidden="true"
-              className={styles.searchClassChip}
-            />
-          )}
-        </TreeRow>
-      ))}
-    </>
-  )
-}
-
 // ─── Inner panel (needs context from DomTreeProvider) ─────────────────────────
 
 function DomPanelInner({ editable = true }: { editable?: boolean }) {
-  // Studio embeds this component once per expanded active-page row inside
-  // `StudioPagesTree`, content-sized rather than filling a panel — see the
-  // module doc's "In Studio mode" note for what that changes below.
-  const embedded = isStudioMode()
   const page = useEditorStore(selectActiveCanvasPage)
   const activeDocument = useEditorStore((s) => s.activeDocument)
   const setFocusedPanel = useEditorStore((s) => s.setFocusedPanel)
   const focusedPanel = useEditorStore((s) => s.focusedPanel)
   // Per-node selector — only this ref updates when selection changes (Guideline #318)
   const selectedNodeId = useEditorStore((s) => s.selectedNodeId)
-  // Subscribe to the class registry + visualComponents so search results stay
-  // accurate when classes are renamed or VCs are renamed (those affect the
-  // searchable haystack and the chip text shown in results).
-  const classes = useEditorStore((s) => s.site?.styleRules)
-  const visualComponents = useEditorStore((s) => s.site?.visualComponents)
 
-  // Tag / class display preferences. The SEARCH FILTER itself always considers
-  // tag and class names regardless of these prefs — toggling visibility of
-  // the chips should not silently change which rows match. The chips are
-  // hidden in the results list when their pref is off so the search view
-  // mirrors the live tree.
-  const showTag = useEditorPreference('layersShowTag')
-  const showClasses = useEditorPreference('layersShowClasses')
   // Behavioural prefs for the tree's reaction to canvas selection.
   const autoExpandSelected = useEditorPreference('layersAutoExpandSelected')
   const smoothScroll = useEditorPreference('layersSmoothScroll')
 
   const treeRef = useRef<HTMLDivElement>(null)
-  const searchInputRef = useRef<HTMLInputElement>(null)
-  const insertTriggerRef = useRef<HTMLButtonElement>(null)
   const store = useExpansionStore()
-
-  const [searchQuery, setSearchQuery] = useState('')
-
-  // Module-insert affordance next to the search field. Reuses the exact same
-  // command surface (ModuleInserterDialog) and target resolution
-  // (useInsertInserterItem → resolveInsertLocation from the current selection)
-  // as the canvas "+" and toolbar "+ Add" buttons, so all three entry points
-  // insert identically.
-  const [insertOpen, setInsertOpen] = useState(false)
-  const handleInsertItem = useInsertInserterItem()
 
   // Right-click on the empty background of the tree area opens a small
   // context menu with Paste + Insert module options targeting the page root.
@@ -270,11 +142,10 @@ function DomPanelInner({ editable = true }: { editable?: boolean }) {
   // ─── Focus management: F6 moves focus into panel ──────────────────────────
   // The panel landmark is the landing target when the user cycles focus into
   // the DOM panel via F6. We must NOT pull focus to it when the
-  // user has already clicked something inside the panel (e.g. the search
-  // input on first interaction after page reload) — `focusedPanel` is
-  // persisted, so this effect fires on every mount with `'domTree'` as the
-  // default and races the user's click. The `panelRef.contains()` guard
-  // prevents the steal.
+  // user has already clicked something inside the panel on first interaction
+  // after page reload — `focusedPanel` is persisted, so this effect fires on
+  // every mount with `'domTree'` as the default and races the user's click.
+  // The `panelRef.contains()` guard prevents the steal.
   useEffect(() => {
     if (focusedPanel !== 'domTree') return
     const panel = panelRef.current
@@ -299,22 +170,15 @@ function DomPanelInner({ editable = true }: { editable?: boolean }) {
         e.preventDefault()
         store.collapseAll()
       }
-      // Ctrl+F = focus search
-      if (e.key === 'f') {
-        e.preventDefault()
-        searchInputRef.current?.focus()
-      }
     }
   }
 
   // ─── Background right-click → tree-background context menu ───────────────
   // Fires only for clicks on the empty padding/space of the tree area —
   // TreeNode's onContextMenu calls e.stopPropagation() so per-row right-clicks
-  // don't reach this handler. Skipped while search is active because the
-  // tree-mode UI (with its root anchor) isn't what's on screen.
+  // don't reach this handler.
   const handleBackgroundContextMenu = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!editable) return
-    if (searchQuery.trim()) return
     if (!page) return
     e.preventDefault()
     e.stopPropagation()
@@ -336,57 +200,6 @@ function DomPanelInner({ editable = true }: { editable?: boolean }) {
       console.warn('[DomPanel] Ignored stale drag/drop target:', err)
     }
   }
-
-  // ─── Search: flat filtered list of matching nodes ─────────────────────────
-  // Matches against the node's display name, its HTML tag (with optional `<>`
-  // brackets the user might type), and any assigned class names (with optional
-  // `.` prefix). Examples:
-  //   "header"      → containers tagged <header> + nodes with class "header"
-  //   "<div>"       → div containers and text/divs
-  //   ".container"  → nodes with class "container" specifically
-  //   "padding-m"   → nodes with class "padding-m"
-  const searchRows: SearchRow[] = (() => {
-    const rawQuery = searchQuery.trim().toLowerCase()
-    if (!rawQuery || !page) return []
-
-    // Normalize the query: strip a leading `<` / trailing `>` so users can
-    // type "<div>" and still match the haystack which stores the bare tag.
-    // Strip a leading `.` so ".container" matches "container" in class names.
-    const query = rawQuery
-      .replace(/^[<.]/, '')
-      .replace(/>$/, '')
-
-    return flattenSubtree(page, page.rootNodeId)
-      .flatMap((nodeId) => {
-        if (hideStructuralRoot && nodeId === page.rootNodeId) return []
-
-        const node = page.nodes[nodeId]
-        if (!node) return []
-        const def = registry.get(node.moduleId)
-        const displayName = getNodeDisplayName(node, def, visualComponents)
-        const htmlTag = getNodeHtmlTag(node, def)
-        const classNames = getNodeClassNames(node, classes)
-        const classChip = classNames.length > 0 ? `.${classNames.join('.')}` : null
-
-        // Build the searchable haystack from every visible piece of metadata.
-        // Joined with spaces so substring matching works across fields without
-        // accidentally matching across boundaries (e.g. "headerfooter").
-        const haystackParts: string[] = [displayName.toLowerCase()]
-        if (htmlTag) haystackParts.push(htmlTag)
-        for (const name of classNames) haystackParts.push(name.toLowerCase())
-        const haystack = haystackParts.join(' ')
-
-        if (!haystack.includes(query)) return []
-
-        return [{
-          nodeId,
-          displayName,
-          moduleId: node.moduleId,
-          htmlTag,
-          classChip,
-        } satisfies SearchRow]
-      })
-  })()
 
   const dragOverlay = (
     <DragOverlay dropAnimation={null}>
@@ -418,127 +231,64 @@ function DomPanelInner({ editable = true }: { editable?: boolean }) {
       onKeyDown={handlePanelKeyDown}
       onFocus={() => setFocusedPanel('domTree')}
       onClick={(e) => e.stopPropagation()}
-      className={cn(styles.panel, embedded && styles.panelEmbedded)}
+      className={styles.panel}
     >
-      {/* ─── Panel content. The ExplorerPanel shell owns the header + tabs +
-          close button, so this body renders chrome-free. ────────────────── */}
-      <>
-        {/* Studio mode drops this row entirely — the Studio Pages/Layers tree
-            embeds this same DomPanel per expanded page row, and a search
-            field + insert button + raised toolbar surface reads as clutter
-            at that scale (studio has no search-across-one-page need; the
-            CMS Layers tab still does, unchanged). The underlying
-            `searchQuery`/`insertOpen` state and the tree-mode/search-mode
-            branch below stay shared — gating the RENDER, not stranding the
-            logic, keeps this one component correct for both modes. */}
-        {!embedded && (
-          <div className={styles.searchRow}>
-            <SearchBar
-              ref={searchInputRef}
-              data-testid="dom-tree-search"
-              value={searchQuery}
-              onValueChange={setSearchQuery}
-              placeholder="Search layers…"
-              aria-label="Search layers"
-              className={styles.searchFill}
-            />
-            {editable && (
-              <Button
-                ref={insertTriggerRef}
-                variant="secondary"
-                size="sm"
-                iconOnly
-                aria-label="Insert module"
-                aria-haspopup="dialog"
-                aria-expanded={insertOpen}
-                tooltip="Insert module"
-                data-testid="dom-tree-insert-module"
-                onClick={() => setInsertOpen(true)}
-                onPointerEnter={preloadModuleInserterDialog}
-                onFocus={preloadModuleInserterDialog}
+      {/* onContextMenu fires only for right-clicks on EMPTY space inside this
+          area; TreeNode rows stop propagation so they keep their per-row
+          context menu. */}
+      <div
+        ref={treeAreaRef}
+        className={styles.treeArea}
+        onContextMenu={handleBackgroundContextMenu}
+      >
+        {!page ? (
+          <SkeletonTree ariaLabel="Loading layers" />
+        ) : (
+          <DndContext
+            sensors={sensors}
+            // dnd-kit's built-in auto-scroll is disabled: `useDomPanelDnd`
+            // (`runAutoScroll`, AUTO_SCROLL_EDGE_PX) already implements
+            // auto-scroll for this tree, and re-measures row rects
+            // (`measureRows`) + re-resolves the drop target on every scroll
+            // tick. Running BOTH scrolled the list at ~double speed near an
+            // edge, and dnd-kit's own scroll happened without a matching
+            // `measureRows()` — so cached row rects went stale under the
+            // pointer and no drop target ever resolved near a scroll edge
+            // (STUDIO-FIGMA-PARITY-PLAN.md 0.9 / STATE.md standing note;
+            // audit docs/audits/2026-08-06/07-drag-and-drop.md G11).
+            autoScroll={false}
+            onDragStart={editable ? dnd.handleDragStart : undefined}
+            onDragMove={editable ? dnd.handleDragMove : undefined}
+            onDragEnd={handleDragEnd}
+            onDragCancel={editable ? dnd.handleDragCancel : undefined}
+          >
+            <DomPanelDndContext.Provider value={dnd.contextValue}>
+              <TreeContainer
+                ariaLabel="Page element tree"
+                testId="dom-panel-tree"
+                containerRef={treeRef}
+                data-studio-layer-tree="true"
               >
-                <AppGridPlusGlyphIcon size={13} aria-hidden="true" />
-              </Button>
-            )}
-          </div>
+                {/*
+                  Page mode shows the `base.body` root because it represents
+                  the document body and anchors page-level insertion.
+                  Component mode hides that same structural wrapper and
+                  promotes its children to top-level rows so the panel shows
+                  authored component content instead of an implementation
+                  anchor. Background insert/paste still targets the hidden
+                  root through TreeBackgroundContextMenu.
+                */}
+                {visibleRootNodeIds.map((nodeId) => (
+                  <TreeNode key={nodeId} nodeId={nodeId} depth={0} editable={editable} />
+                ))}
+              </TreeContainer>
+            </DomPanelDndContext.Provider>
+            {typeof document === 'undefined'
+              ? dragOverlay
+              : createPortal(dragOverlay, document.body)}
+          </DndContext>
         )}
-
-        {/* ── Tree / search results — scrollable area ─────────────────────
-            onContextMenu fires only for right-clicks on EMPTY space inside
-            this scrollable area; TreeNode rows stop propagation so they
-            keep their per-row context menu. */}
-        <div
-          ref={treeAreaRef}
-          className={cn(styles.treeArea, embedded && styles.treeAreaEmbedded)}
-          onContextMenu={handleBackgroundContextMenu}
-        >
-          {!page ? (
-            <SkeletonTree ariaLabel="Loading layers" />
-          ) : searchQuery.trim() ? (
-            /* ── Search results mode: flat filtered list ── */
-            <TreeContainer
-              ariaLabel="Page element tree"
-              testId="dom-panel-tree"
-              data-studio-layer-tree="true"
-            >
-              <SearchResults
-                rows={searchRows}
-                showTag={showTag}
-                showClasses={showClasses}
-                onSelect={(nodeId) =>
-                  useEditorStore.getState().selectNode(nodeId, undefined, {
-                    preservePropertiesPanelCollapse: isNarrowEditorChromeViewport(),
-                  })}
-              />
-            </TreeContainer>
-          ) : (
-            /* ── Normal tree mode ── */
-            <DndContext
-              sensors={sensors}
-              // dnd-kit's built-in auto-scroll is disabled: `useDomPanelDnd`
-              // (`runAutoScroll`, AUTO_SCROLL_EDGE_PX) already implements
-              // auto-scroll for this tree, and re-measures row rects
-              // (`measureRows`) + re-resolves the drop target on every scroll
-              // tick. Running BOTH scrolled the list at ~double speed near an
-              // edge, and dnd-kit's own scroll happened without a matching
-              // `measureRows()` — so cached row rects went stale under the
-              // pointer and no drop target ever resolved near a scroll edge
-              // (STUDIO-FIGMA-PARITY-PLAN.md 0.9 / STATE.md standing note;
-              // audit docs/audits/2026-08-06/07-drag-and-drop.md G11).
-              autoScroll={false}
-              onDragStart={editable ? dnd.handleDragStart : undefined}
-              onDragMove={editable ? dnd.handleDragMove : undefined}
-              onDragEnd={handleDragEnd}
-              onDragCancel={editable ? dnd.handleDragCancel : undefined}
-            >
-              <DomPanelDndContext.Provider value={dnd.contextValue}>
-                <TreeContainer
-                  ariaLabel="Page element tree"
-                  testId="dom-panel-tree"
-                  containerRef={treeRef}
-                  data-studio-layer-tree="true"
-                >
-                  {/*
-                    Page mode shows the `base.body` root because it represents
-                    the document body and anchors page-level insertion.
-                    Component mode hides that same structural wrapper and
-                    promotes its children to top-level rows so the panel shows
-                    authored component content instead of an implementation
-                    anchor. Background insert/paste still targets the hidden
-                    root through TreeBackgroundContextMenu.
-                  */}
-                  {visibleRootNodeIds.map((nodeId) => (
-                    <TreeNode key={nodeId} nodeId={nodeId} depth={0} editable={editable} />
-                  ))}
-                </TreeContainer>
-              </DomPanelDndContext.Provider>
-              {typeof document === 'undefined'
-                ? dragOverlay
-                : createPortal(dragOverlay, document.body)}
-            </DndContext>
-          )}
-        </div>
-      </>
+      </div>
 
       {/* Tree-background context menu — rendered via portal at document.body
           to escape the panel's transform: translateZ(0) stacking context.
@@ -551,19 +301,6 @@ function DomPanelInner({ editable = true }: { editable?: boolean }) {
           onClose={() => setBgContextMenu(null)}
         />,
         document.body,
-      )}
-
-      {/* Module inserter — same command surface + target resolution as the
-          canvas "+" and toolbar "+ Add". */}
-      {editable && (
-        <LazyModuleInserterDialog
-          open={insertOpen}
-          onClose={() => {
-            setInsertOpen(false)
-            insertTriggerRef.current?.focus()
-          }}
-          onInsertItem={handleInsertItem}
-        />
       )}
     </div>
   )

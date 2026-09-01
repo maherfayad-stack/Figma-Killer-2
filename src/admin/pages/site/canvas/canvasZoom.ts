@@ -51,3 +51,16 @@ export function canvasZoomOf(element: HTMLElement): number {
     return 1
   }
 }
+
+/**
+ * The canvas transform layer `element` lives inside, or `null`.
+ *
+ * A gesture that starts on board furniture (a comment pin, say) has to measure
+ * against the transform layer, but only holds a ref to its own element. The
+ * marker attribute is on `CanvasTransformLayer` for exactly this — a `testid`
+ * would work as a selector, but a production code path must not depend on a
+ * hook that exists for tests and is fair game to rename.
+ */
+export function canvasTransformLayerOf(element: HTMLElement): HTMLElement | null {
+  return element.closest<HTMLElement>('[data-canvas-transform-layer]')
+}

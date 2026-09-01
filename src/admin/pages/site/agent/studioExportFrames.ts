@@ -128,7 +128,7 @@ async function exportFrames(input: StudioExportFramesInput): Promise<AiToolOutpu
   const board = selectActiveBoard(store)
   if (!board) {
     return aiToolError(
-      'No Studio board is open. Open the project at /admin/site?studio (as the connector owner) and try again.',
+      'No Studio board is open. Open the project at /admin/site (as the connector owner) and try again.',
     )
   }
 

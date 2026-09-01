@@ -31,9 +31,14 @@
  *
  * - **No dictionary** — setting one up, or, if that was refused, the reason
  *   plus the copy that is still inline and therefore still untranslatable.
- * - **A dictionary with no Arabic for a key** — the cell is empty and marked
- *   untranslated. This is the normal starting state and what the filter and
- *   the translate action both target.
+ * - **A key still untranslated** — either the cell is empty (the normal
+ *   starting state) or it holds the SOURCE string handed back unchanged, which
+ *   a model routinely does for a bare product-ish noun. Both are what the
+ *   filter and the translate action target; `isUntranslated` (`@core/i18n`) is
+ *   the single rule they share, so a row the panel counts is always a row the
+ *   action can clear. Counting only empty cells hid four keys on a real
+ *   project behind "Missing ar (0)" while an Arabic sheet rendered a Latin
+ *   `Sheet2` at the top of it.
  * - **A value that is code** — the write refuses with the reason from the
  *   server (`"holds an expression, not a plain string"`), surfaced as a toast.
  *   The panel never silently drops an edit.
@@ -57,6 +62,7 @@ import {
   writeTranslation,
   type ContentSnapshot,
 } from '@site/studio/translationCatalogClient'
+import { isUntranslated } from '@core/i18n'
 import { Button } from '@ui/components/Button'
 import { SearchBar } from '@ui/components/SearchBar'
 import { Input } from '@ui/components/Input'
@@ -224,16 +230,23 @@ export function ContentPanel() {
   }
 
   const locales = catalog.capability.keys
+  // The dictionary's own default locale is the source the AI translates FROM,
+  // so it is also what an untranslated cell is compared against — see
+  // `isUntranslated`. Falling back to the first declared locale mirrors the
+  // server's own resolution in `translateContent.ts`.
+  const sourceLocale = catalog.capability.defaultKey ?? catalog.capability.keys[0]
+  const needsTranslating = (entry: { values: Record<string, string> }) =>
+    isUntranslated(sourceLocale ? entry.values[sourceLocale] : undefined, entry.values[TARGET_LOCALE])
   const needle = query.trim().toLowerCase()
   const rows = catalog.entries.filter((entry) => {
-    if (untranslatedOnly && (entry.values[TARGET_LOCALE] ?? '').trim() !== '') return false
+    if (untranslatedOnly && !needsTranslating(entry)) return false
     if (!needle) return true
     return (
       entry.key.toLowerCase().includes(needle) ||
       Object.values(entry.values).some((value) => value.toLowerCase().includes(needle))
     )
   })
-  const missing = catalog.entries.filter((e) => (e.values[TARGET_LOCALE] ?? '').trim() === '').length
+  const missing = catalog.entries.filter(needsTranslating).length
 
   // The column template is data-driven — a project may declare more than two
   // locales — so it is set as a custom property the stylesheet reads back,
@@ -258,7 +271,7 @@ export function ContentPanel() {
             variant="primary"
             size="sm"
             disabled={missing === 0 || translating}
-            tooltip={missing === 0 ? `Every key already has ${TARGET_LOCALE}.` : `Fill in the ${missing} missing ${TARGET_LOCALE} strings with AI.`}
+            tooltip={missing === 0 ? `Every key already has ${TARGET_LOCALE}.` : `Fill in the ${missing} untranslated ${TARGET_LOCALE} strings with AI.`}
             onClick={() => void runTranslate()}
             data-testid="content-panel-translate"
           >
@@ -272,7 +285,10 @@ export function ContentPanel() {
             onClick={() => setUntranslatedOnly((v) => !v)}
             data-testid="content-panel-filter-untranslated"
           >
-            Missing {TARGET_LOCALE} ({missing})
+            {/* "Untranslated", not "Missing": a cell holding the English word
+                back is not missing, and calling it that is how four keys stayed
+                invisible. */}
+            Untranslated {TARGET_LOCALE} ({missing})
           </Button>
           <p className={styles.source}>
             {catalog.entries.length} keys · {catalog.capability.source}

@@ -76,6 +76,7 @@ export function createScaffoldedPage(
   dir: string,
   nameInput: string,
   kind: PageKind = DEFAULT_PAGE_KIND,
+  boardId?: string,
 ): ScaffoldPageResult {
   const pagesDir = projectPagesDir(dir)
   const ext = detectPageFileExtension(pagesDir)
@@ -102,7 +103,9 @@ export function createScaffoldedPage(
   }
   const pageId = pageIdFromRelPath(relPath)
   // D5 §11.3 — a scaffolded screen the user cannot see is not a screen.
-  autoPlaceBoardFrame(dir, pageId)
+  // `boardId` is which board the author was LOOKING AT when they asked; absent
+  // for a headless caller, which has no board open to mean.
+  autoPlaceBoardFrame(dir, pageId, boardId)
   // Node ids are source locations (trap #2) — read the root by parsing the
   // file just written, never constructed from the name/path.
   return { ok: true, relPath, pageId, title: componentName, rootNodeId: scaffoldedPageRootNodeId(dir, file) }
@@ -151,10 +154,19 @@ function boardsFilePath(dir: string): string {
  * or re-positioned — a scaffolded screen gets exactly one frame, never a
  * second "variant" of itself.
  */
-export function autoPlaceBoardFrame(dir: string, pageId: string): void {
+export function autoPlaceBoardFrame(dir: string, pageId: string, boardId?: string): void {
   const file = boardsFilePath(dir)
   const existing: BoardsFile = existsSync(file) ? parseBoardsFile(readFileSync(file, 'utf8')) : createBoardsFile()
-  const board = existing.boards[0] ?? createBoard(crypto.randomUUID(), 'Board 1')
+  // The board the author had OPEN wins over "the first one". Boards curate
+  // subsets of the project's pages on purpose, so a page created while looking
+  // at a given board belongs on THAT board; placing it on `boards[0]` instead
+  // put the new screen somewhere the author was not looking and left the board
+  // they were building on its empty-state card. Falls back to the first board
+  // for a caller that named none (the MCP tool, an agent with no browser open)
+  // and for an id that no longer resolves (a board deleted in another tab),
+  // because a frame on the wrong board still beats a screen on no board at all.
+  const requested = boardId ? existing.boards.find((b) => b.id === boardId) : undefined
+  const board = requested ?? existing.boards[0] ?? createBoard(crypto.randomUUID(), 'Board 1')
   if (board.frames.some((f) => f.pageId === pageId)) return
 
   const { x, y } = defaultFramePosition(board.frames.length)

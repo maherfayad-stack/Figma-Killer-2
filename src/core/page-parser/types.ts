@@ -173,6 +173,36 @@ export interface ParsedNode {
    */
   codeProps?: string[]
   /**
+   * Paths to a FUNCTION found nested inside a resolved object/array prop
+   * value — a dot for an object key, `[N]` for an array index, prefixed with
+   * the prop's own name: `<Navbar toolbar={{ title, onBack: () => {} }}/>`
+   * yields `['toolbar.onBack']`.
+   *
+   * `props`/`codeProps` already tell the truth about the OBJECT itself
+   * (`toolbar` lands in `codeProps` because it is a structured, non-scalar
+   * value with no writeback target — see `codeProps`'s own doc above) — this
+   * field is a narrower, different fact: WHERE inside that object a function
+   * was written, which `staticValueToPropValue` correctly drops from the JSON
+   * value (there is no JSON form for `() => {}`) but which several
+   * design-system components gate a visible affordance on. A `BottomSheet`
+   * draws its close button when handed a top-level `onClose`; a `Navbar`
+   * draws its leading back button when handed a NESTED `toolbar.onBack` — the
+   * parser can hand over neither function, but it can say exactly where one
+   * was written, so `src/modules/alm/register.tsx` can stand a no-op back up
+   * at precisely that path (never anywhere the source did not write one — see
+   * that module's own doc comment).
+   *
+   * Deliberately a COMPANION field, not folded into `codeProps`. Every entry
+   * here sits under a prop name already present in `codeProps` (the whole
+   * object is never writable regardless of what is nested inside it), so a
+   * nested path answers no writability question `isPropWritableToSource`
+   * doesn't already answer at the top level — it exists purely so a module can
+   * reconstruct a render-time no-op, and folding it into `codeProps` would
+   * only double-report the same prop to `canonicalCheck.ts`'s `literal-props`
+   * advisory for no new information.
+   */
+  codeFunctionPaths?: string[]
+  /**
    * True when the element's sole child WAS an expression rather than a
    * literal JSX child — regardless of whether §7 could resolve it to a value.
    * Set for BOTH cases: a resolution that produced `text` (`{c.heading}`) and

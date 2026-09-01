@@ -4,8 +4,8 @@
  * One `<Panel>` shell hosting a top SegmentedControl that switches between a
  * Home overview and the Colors / Typography / Space editing tabs (the
  * extracted ColorsPanelBody and the chrome-free scale bodies). Header actions:
- * "Import design tokens" (studio-only — fetches colors/typography/spacing +
- * CSS from a GitHub repo or npm package, see `studio/designImport/`) and
+ * "Import design tokens" (fetches colors/typography/spacing + CSS from a
+ * GitHub repo or npm package, see `studio/designImport/`) and
  * "Manage framework", which opens the Manage Core Framework dialog
  * (import / remove / prune the built-in preset), mounted once via
  * FrameworkManagerHost.
@@ -19,7 +19,6 @@ import { ColorsPanelBody } from '@site/panels/ColorsPanel'
 import { TypographyTab } from '@site/panels/TypographyPanel'
 import { SpacingTab } from '@site/panels/SpacingPanel'
 import type { FrameworkPanelTab } from '@site/store/slices/uiSlice'
-import { isStudioMode } from '@site/studio/studioMode'
 import { ImportDesignTokensButton } from '@site/studio/designImport/ImportDesignTokensButton'
 import { FrameworkHome } from './FrameworkHome'
 import { FrameworkManagerHost } from './FrameworkManagerHost'
@@ -47,9 +46,9 @@ export function FrameworkPanel() {
       headerActions={
         <>
           {/* Import design tokens (colors/typography/spacing + CSS) from a
-              GitHub repo or npm package. Studio-only: it writes fetched CSS
-              into a project directory, which only exists in studio mode. */}
-          {isStudioMode() && <ImportDesignTokensButton />}
+              GitHub repo or npm package — writes fetched CSS into the
+              project directory. */}
+          <ImportDesignTokensButton />
           <Button
             variant="ghost"
             size="xs"

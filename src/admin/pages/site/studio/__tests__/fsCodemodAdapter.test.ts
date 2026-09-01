@@ -823,13 +823,6 @@ describe('fsCodemodAdapter — write-loop safety + framework sync', () => {
       return latest
     }
 
-    function setStudioUrlParam(value: string | null) {
-      const url = new URL(window.location.href)
-      if (value === null) url.searchParams.delete('studio')
-      else url.searchParams.set('studio', value)
-      window.history.replaceState(null, '', url.toString())
-    }
-
     // `#2` marks this as a `.map` iteration — `hasWritableSourceLocation`
     // reports `false` for it (one piece of source JSX renders every row), so
     // there is genuinely nowhere honest for `setJsxClassName` to write.
@@ -846,13 +839,7 @@ describe('fsCodemodAdapter — write-loop safety + framework sync', () => {
       })
     }
 
-    afterEach(() => {
-      setStudioUrlParam(null)
-      window.localStorage.removeItem('studio:studio')
-    })
-
     it('assigning a class produces exactly ONE warning toast naming the node and class, and sends no edit', async () => {
-      setStudioUrlParam('1')
       stubFetch()
       await loadThenResetCalls()
 
@@ -868,7 +855,6 @@ describe('fsCodemodAdapter — write-loop safety + framework sync', () => {
     })
 
     it('does NOT re-toast on the next save tick when nothing further changed', async () => {
-      setStudioUrlParam('1')
       stubFetch()
       await loadThenResetCalls()
 
@@ -883,14 +869,6 @@ describe('fsCodemodAdapter — write-loop safety + framework sync', () => {
 
       // Autosave fires again 2s later with the SAME classIds — the baseline
       // advanced after the first save, so this must be silent.
-      await fsCodemodAdapter.saveSite(siteWithUnwritableClassIds(['class-1']))
-      expect(collectToasts()).toHaveLength(0)
-    })
-
-    it('produces no toast outside Studio mode', async () => {
-      setStudioUrlParam('0')
-      stubFetch()
-      await loadThenResetCalls()
       await fsCodemodAdapter.saveSite(siteWithUnwritableClassIds(['class-1']))
       expect(collectToasts()).toHaveLength(0)
     })

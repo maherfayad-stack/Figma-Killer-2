@@ -32,9 +32,66 @@ import { join, extname } from 'node:path'
 
 const CANVAS_ROOT = join(import.meta.dir, '../../admin/pages/site/canvas')
 
-/** `onPointerDown={(e) => e.stopPropagation()}` and near-identical spellings. */
-const SWALLOWS_POINTERDOWN =
-  /onPointerDown=\{\s*\(\s*(\w+)\s*\)\s*=>\s*\1\.stopPropagation\(\)\s*\}/
+/**
+ * THREE SPELLINGS, BECAUSE THIS GATE HAS BEEN BLIND TWICE
+ * ──────────────────────────────────────────────────────
+ * `onPointerDown={(e) => e.stopPropagation()}`, the block-bodied form
+ * `onPointerDown={(e) => { /* … *\/ e.stopPropagation() }}`, and the named form
+ * `onPointerDown={handlePress}`.
+ *
+ * The first version matched only the concise body — and the very bug it was
+ * written for was still live in `CommentPin`, whose handler had a block body
+ * with an explanatory comment in it. The second version still could not see a
+ * handler hoisted into a named function, which is what `CommentPin`'s drag
+ * gesture needed it to be. Each time, the gate reported green over exactly the
+ * code it exists to watch. A gate that matches one spelling of a hazard is
+ * worse than no gate.
+ *
+ * So: find the handler however it is spelled, resolve a named one to its
+ * declaration in the same file, and look for the call anywhere in that body.
+ */
+const POINTERDOWN_INLINE = /onPointerDown=\{\s*\(?\s*(\w+)[^)]*\)?\s*=>\s*(\{[\s\S]*?\n\s*\}|[^\n]*)\}/g
+const POINTERDOWN_NAMED = /onPointerDown=\{\s*(\w+)\s*\}/g
+
+/** The `{ … }` block starting at or after `from`, brace-matched. */
+function blockAt(source: string, from: number): string | null {
+  const open = source.indexOf('{', from)
+  if (open === -1) return null
+  let depth = 0
+  for (let i = open; i < source.length; i += 1) {
+    if (source[i] === '{') depth += 1
+    else if (source[i] === '}') {
+      depth -= 1
+      if (depth === 0) return source.slice(open, i + 1)
+    }
+  }
+  return null
+}
+
+/**
+ * The body and first parameter name of `const <name> = (<param>…) => {…}` or
+ * `function <name>(<param>…) {…}`, declared anywhere in the same file.
+ */
+function namedHandler(source: string, name: string): { param: string; body: string } | null {
+  const decl = new RegExp(
+    `(?:const\\s+${name}\\s*=\\s*(?:async\\s*)?\\(|function\\s+${name}\\s*\\()\\s*(\\w+)`,
+  ).exec(source)
+  if (!decl) return null
+  const body = blockAt(source, decl.index + decl[0].length)
+  return body ? { param: decl[1] ?? '', body } : null
+}
+
+function swallowsPointerDown(source: string): boolean {
+  for (const match of source.matchAll(POINTERDOWN_INLINE)) {
+    const [, param, body] = match
+    if (body?.includes(`${param}.stopPropagation()`)) return true
+  }
+  for (const match of source.matchAll(POINTERDOWN_NAMED)) {
+    const handler = namedHandler(source, match[1] ?? '')
+    if (handler?.param && handler.body.includes(`${handler.param}.stopPropagation()`)) return true
+  }
+  return false
+}
 
 /**
  * PRE-EXISTING, NOT ENDORSED.
@@ -69,11 +126,41 @@ function tsxFiles(dir: string): string[] {
   return out
 }
 
+describe('the detector itself', () => {
+  // Twice now, this gate has passed while the hazard was live in the tree.
+  // These fixtures are the cheapest way to keep the third spelling honest.
+  it('catches every spelling of the swallow', () => {
+    expect(swallowsPointerDown('onPointerDown={(e) => e.stopPropagation()}')).toBe(true)
+    expect(
+      swallowsPointerDown('onPointerDown={(event) => {\n  // why\n  event.stopPropagation()\n}}'),
+    ).toBe(true)
+    expect(
+      swallowsPointerDown(
+        'const press = (event: ReactPointerEvent) => {\n  event.stopPropagation()\n}\nonPointerDown={press}',
+      ),
+    ).toBe(true)
+    expect(
+      swallowsPointerDown(
+        'function press(event) {\n  event.stopPropagation()\n}\nonPointerDown={press}',
+      ),
+    ).toBe(true)
+  })
+
+  it('does not flag a handler that only stops the click', () => {
+    expect(
+      swallowsPointerDown(
+        'const press = (event) => {\n  setDragging(true)\n}\nonPointerDown={press}',
+      ),
+    ).toBe(false)
+    expect(swallowsPointerDown('onClick={(e) => e.stopPropagation()}')).toBe(false)
+  })
+})
+
 describe('canvas overlays do not swallow pointerdown', () => {
   it('no overlay stops pointerdown propagation', () => {
     const offenders = tsxFiles(CANVAS_ROOT)
       .filter((file) => ![...ALLOWLIST].some((allowed) => file.endsWith(allowed)))
-      .filter((file) => SWALLOWS_POINTERDOWN.test(readFileSync(file, 'utf8')))
+      .filter((file) => swallowsPointerDown(readFileSync(file, 'utf8')))
       .map((file) => file.slice(file.indexOf('src/')))
 
     expect(offenders).toEqual([])

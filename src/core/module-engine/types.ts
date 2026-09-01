@@ -137,6 +137,21 @@ export interface ModuleComponentProps<
    */
   codeProps?: readonly string[]
   /**
+   * Paths to a FUNCTION nested inside a resolved object/array prop, prefixed
+   * with the prop's own name (`toolbar.onBack`, `actions[0].onClick`) —
+   * `PageNode.codeFunctionPaths`, passed straight through.
+   *
+   * The nested counterpart of `codeProps` above: a design-system component
+   * routinely gates a visible affordance on a handler BURIED inside an object
+   * prop, not just a top-level one — a `Navbar` draws its leading back button
+   * only when `toolbar.onBack` is present — and the parser cannot hand a
+   * function to the canvas either way. This says exactly where inside the
+   * prop's structure the source wrote one, so a module can reconstruct a
+   * no-op at that precise path instead of leaving the object with a hole
+   * where a handler-gated affordance should be.
+   */
+  codeFunctionPaths?: readonly string[]
+  /**
    * Space-separated CSS class string derived from node.classIds
    * (e.g. "hero_title cta_button"). Module editor components must apply this
    * directly to their root JSX element so CSS class rules target the

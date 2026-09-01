@@ -31,6 +31,27 @@ function seedProject(pageSource: string): void {
   mkdirSync(join(dir, '.studio'), { recursive: true })
 }
 
+/**
+ * A board carrying the frame the fixture anchors point at, so `location` can
+ * name the board and turn `dx`/`dy` into a share of the frame.
+ */
+function seedBoards(): void {
+  mkdirSync(join(dir, '.studio'), { recursive: true })
+  writeFileSync(
+    join(dir, '.studio', 'boards.json'),
+    JSON.stringify({
+      version: 1,
+      boards: [
+        {
+          id: 'b1',
+          name: 'Board 1',
+          frames: [{ id: 'f1', pageId: 'home', x: 0, y: 0, width: 400, height: 800 }],
+        },
+      ],
+    }),
+  )
+}
+
 function seedThread(anchor: CommentAnchor, body = 'Use the display face here'): void {
   const result = applyCommentOp(
     createCommentsFile(),
@@ -117,13 +138,66 @@ describe('studio_list_comments', () => {
     seedThread(STALE_ANCHOR)
 
     const out = (await listTool.handler({ dir }, ctx())) as {
-      threads: Array<{ anchorConfidence: string; agentActionable: boolean; nodeText: string | null }>
+      threads: Array<{
+        anchorConfidence: string
+        agentActionable: boolean
+        location: { element: { text: string } | null }
+      }>
     }
     expect(out.threads[0]?.anchorConfidence).toBe('detached')
     expect(out.threads[0]?.agentActionable).toBe(false)
     // The words survive even when the id does not — often enough for the agent
     // to find the element by hand.
-    expect(out.threads[0]?.nodeText).toBe('Long gone')
+    expect(out.threads[0]?.location.element?.text).toBe('Long gone')
+  })
+
+  it('says where the comment is, with nothing left as a bare id', async () => {
+    // An agent handed only ids either asks three follow-up questions or
+    // guesses which element was meant — and guessing edits the wrong source.
+    seedProject('export default function Home() { return <div>Hi</div> }')
+    seedBoards()
+    seedThread(STALE_ANCHOR)
+
+    const out = (await listTool.handler({ dir }, ctx())) as {
+      threads: Array<{
+        location: {
+          boardId: string
+          boardName: string | null
+          frameId: string | null
+          pageId: string | null
+          pageTitle: string | null
+          pageFile: string | null
+          dx: number
+          dy: number
+          xPercent: number | null
+          yPercent: number | null
+        }
+      }>
+    }
+    expect(out.threads[0]?.location).toMatchObject({
+      boardId: 'b1',
+      boardName: 'Board 1',
+      frameId: 'f1',
+      pageId: 'home',
+      pageTitle: 'Home',
+      pageFile: 'pages/Home.tsx',
+      dx: 10,
+      dy: 20,
+      // The frame is 400×800, so the pin sits near its top-left corner.
+      xPercent: 3,
+      yPercent: 3,
+    })
+  })
+
+  it('reports an unchecked anchor as unknown, never as "gone"', async () => {
+    seedProject('export default function Home() { return <div>Hi</div> }')
+    seedBoards()
+    seedThread(STALE_ANCHOR)
+
+    const out = (await listTool.handler({ dir, resolveAnchors: false }, ctx())) as {
+      threads: Array<{ location: { confidence: string | null } }>
+    }
+    expect(out.threads[0]?.location.confidence).toBeNull()
   })
 
   it('filters by status', async () => {

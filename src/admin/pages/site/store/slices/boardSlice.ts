@@ -4,8 +4,7 @@
  * Owns the editor-side view of `<workspace>/.studio/boards.json`: the parsed
  * `BoardsFile`, which board is currently active, and a dirty flag the
  * auto-save effect in `AdminCanvasLayout` watches to persist changes back to
- * the server. Only meaningful in studio mode (`?studio`) — the CMS flow never
- * touches this slice.
+ * the server.
  *
  * Frames: `board.frames` is the source of truth for which pages are curated
  * onto a board — `BoardFramesLayer` renders exactly this list (resolved
@@ -433,12 +432,22 @@ export const createBoardSlice: EditorStoreSliceCreator<BoardSlice> = (set, get) 
 
   loadBoards: (file) => {
     if (file.boards.length > 0) {
+      // Keep the board the author has OPEN when the reloaded file still has
+      // it, and only fall back to the first one when it is genuinely gone
+      // (deleted in another tab, or a project switch). `load()` runs on every
+      // `CMS_SITE_RELOAD_EVENT` — after creating a page, after a project
+      // reload — so resetting to `boards[0]` unconditionally silently yanked
+      // the author off the board they were building onto the first one. Same
+      // "keep the open thing if it still exists" rule `lifecycleActions.ts`
+      // already applies to `activePageId`.
+      const openBoardId = get().activeBoardId
+      const openBoardStillExists = openBoardId !== null && file.boards.some((b) => b.id === openBoardId)
       set({
         boards: file,
         boardsLoaded: true,
         boardsDirty: false,
         boardsLoadFailed: false,
-        activeBoardId: file.boards[0].id,
+        activeBoardId: openBoardStillExists ? openBoardId : file.boards[0].id,
       })
       return
     }

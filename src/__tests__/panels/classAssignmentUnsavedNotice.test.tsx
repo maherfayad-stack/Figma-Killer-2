@@ -12,16 +12,9 @@
  * toast naming every affected node/class — replacing the interim per-action
  * toast that used to fire directly from `ClassPicker` on every click.
  */
-import { describe, it, expect, afterEach } from 'bun:test'
+import { describe, it, expect } from 'bun:test'
 import { __resetToastBusForTests, subscribeToasts, type Toast } from '@ui/components/Toast/toastBus'
 import { notifyClassAssignmentUnsaved } from '@site/panels/classAssignmentUnsavedNotice'
-
-function setStudioUrlParam(value: string | null) {
-  const url = new URL(window.location.href)
-  if (value === null) url.searchParams.delete('studio')
-  else url.searchParams.set('studio', value)
-  window.history.replaceState(null, '', url.toString())
-}
 
 function collectToasts(): Toast[] {
   let latest: Toast[] = []
@@ -31,28 +24,13 @@ function collectToasts(): Toast[] {
   return latest
 }
 
-afterEach(() => {
-  setStudioUrlParam(null)
-  window.localStorage.removeItem('studio:studio')
-})
-
 describe('notifyClassAssignmentUnsaved', () => {
   it('does nothing for an empty drift list', () => {
-    setStudioUrlParam('1')
     notifyClassAssignmentUnsaved([])
     expect(collectToasts()).toHaveLength(0)
   })
 
-  it('does nothing outside Studio mode', () => {
-    setStudioUrlParam('0')
-    notifyClassAssignmentUnsaved([
-      { nodeLabel: 'Header', addedClassNames: ['card'], removedClassNames: [], reordered: false },
-    ])
-    expect(collectToasts()).toHaveLength(0)
-  })
-
-  it('warns, naming the node and the class, in Studio mode', () => {
-    setStudioUrlParam('1')
+  it('warns, naming the node and the class', () => {
     notifyClassAssignmentUnsaved([
       { nodeLabel: 'Header', addedClassNames: ['card'], removedClassNames: [], reordered: false },
     ])
@@ -71,7 +49,6 @@ describe('notifyClassAssignmentUnsaved', () => {
   })
 
   it('describes a removal and a reorder distinctly from an addition', () => {
-    setStudioUrlParam('1')
     notifyClassAssignmentUnsaved([
       { nodeLabel: 'Header', addedClassNames: [], removedClassNames: ['card'], reordered: false },
     ])
@@ -89,7 +66,6 @@ describe('notifyClassAssignmentUnsaved', () => {
   })
 
   it('names up to 3 nodes and folds the rest into "and N more"', () => {
-    setStudioUrlParam('1')
     notifyClassAssignmentUnsaved([
       { nodeLabel: 'A', addedClassNames: ['x'], removedClassNames: [], reordered: false },
       { nodeLabel: 'B', addedClassNames: ['x'], removedClassNames: [], reordered: false },

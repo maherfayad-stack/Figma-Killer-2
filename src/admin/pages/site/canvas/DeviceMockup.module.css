@@ -1,0 +1,88 @@
+/**
+ * DeviceMockup — bezel, screen radius and device furniture for live mode.
+ *
+ * All colors come from globals.css design tokens — see CLAUDE.md.
+ *
+ * The bezel is a `box-shadow` spread rather than padding or a border: it is
+ * painted outside the screen box, so the page inside keeps its exact
+ * breakpoint width. `--device-bezel` is set from `DEVICE_BEZEL_PX` in
+ * `deviceMockup.ts`, which is the single source of truth — `CanvasLiveSurface`
+ * subtracts the same number when fitting the whole mockup into the surface.
+ *
+ * `aspect-ratio` gives the screen a device shape instead of a full-height
+ * strip. `max-height: 100%` wins over it on a short window, so the phone
+ * renders shorter than a real one rather than overflowing — the width, which
+ * is what responsive layout actually depends on, is never traded away for it.
+ */
+
+.device {
+    position: relative;
+    flex: 1 1 auto;
+    min-width: 0;
+    align-self: center;
+    max-height: 100%;
+    border-radius: var(--device-screen-radius);
+    background: var(--device-bezel-fill);
+    box-shadow:
+        0 0 0 var(--device-bezel) var(--device-bezel-fill),
+        var(--device-shadow);
+}
+
+/* `--device-bezel` is set inline from `DEVICE_BEZEL_PX` (see DeviceMockup.tsx)
+   because the fitting math in `CanvasLiveSurface` needs the same number. Radius
+   and aspect ratio are pure presentation and stay here. */
+.device[data-device='phone'] {
+    --device-screen-radius: 40px;
+    aspect-ratio: 375 / 812;
+}
+
+.device[data-device='tablet'] {
+    --device-screen-radius: 20px;
+    aspect-ratio: 768 / 1024;
+}
+
+/* The screen itself. The viewport element is `CanvasLiveSurface`'s, passed in
+   as children — this only rounds and clips it, exactly as the hardware does to
+   the pixels at the corners. */
+.device > :first-child {
+    height: 100%;
+    border-radius: var(--device-screen-radius);
+    overflow: hidden;
+}
+
+/* Dynamic island — a real iPhone occludes the top of the screen, and a header
+   that collides with it is a bug worth seeing. Never interactive: live mode is
+   editable and a click here belongs to the node underneath. */
+.island {
+    position: absolute;
+    top: var(--space-s);
+    left: 50%;
+    transform: translateX(-50%);
+    width: 30%;
+    height: 22px;
+    border-radius: 999px;
+    background: var(--device-furniture);
+    pointer-events: none;
+}
+
+/* Home indicator — the bar every modern iOS/iPadOS screen reserves space for.
+   Drawn over the page for the same reason as the island: content that runs
+   underneath it is content a real device makes hard to tap. */
+.homeIndicator {
+    position: absolute;
+    bottom: var(--space-s);
+    left: 50%;
+    transform: translateX(-50%);
+    width: 34%;
+    height: 4px;
+    border-radius: 999px;
+    background: var(--device-furniture);
+    opacity: 0.55;
+    pointer-events: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+    .device {
+        transition: aspect-ratio 120ms ease;
+    }
+}

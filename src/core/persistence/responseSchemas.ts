@@ -8,7 +8,7 @@
  * undefined-access TypeError deep in callers.
  *
  * Strategy:
- *   - Shallow domain types (CmsMediaAsset, CmsPublishStatus, …) are
+ *   - Shallow domain types (CmsMediaAsset, CmsSession, …) are
  *     validated fully — the schemas double as the source of truth.
  *   - Deep domain types that already own a canonical TypeBox schema in
  *     their module (FontEntry → @core/fonts; SiteDependencyLock,
@@ -160,26 +160,6 @@ export const CmsMediaFolderListResponseSchema = Type.Object(
 export const CmsMediaFolderEnvelopeSchema = Type.Object({
   folder: CmsMediaFolderSchema,
 })
-
-// ---------------------------------------------------------------------------
-// cmsPublish.ts
-// ---------------------------------------------------------------------------
-
-export const CmsPublishResultSchema = Type.Object({
-  publishedPages: Type.Number(),
-})
-
-export type CmsPublishResult = Static<typeof CmsPublishResultSchema>
-
-export const CmsPublishStatusSchema = Type.Object({
-  hasPublishedVersion: Type.Boolean(),
-  draftMatchesPublished: Type.Boolean(),
-  draftPages: Type.Number(),
-  publishedPages: Type.Number(),
-  lastPublishedAt: Type.Optional(Type.String()),
-})
-
-export type CmsPublishStatus = Static<typeof CmsPublishStatusSchema>
 
 // ---------------------------------------------------------------------------
 // cmsRuntime.ts — fully validated against the @core/site-runtime schemas

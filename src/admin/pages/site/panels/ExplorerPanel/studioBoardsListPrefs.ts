@@ -2,8 +2,8 @@
  * studioBoardsListPrefs — sticky UI preferences for the Studio explorer's
  * "Boards" section: whether it's collapsed, and how tall the list renders.
  *
- * Local to this browser (localStorage), same pattern as `studioWorkspaceDir` /
- * `studioMode` — this is layout chrome, not something that belongs in
+ * Local to this browser (localStorage), same pattern as `studioWorkspaceDir`
+ * — this is layout chrome, not something that belongs in
  * `.studio/boards.json` (which is spatial board content: frames/notes/docs)
  * or the server-backed dashboard layout (which is a different panel
  * entirely). A fresh tab keeps the user's last collapse/height choice instead

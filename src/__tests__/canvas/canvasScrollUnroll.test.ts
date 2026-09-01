@@ -21,44 +21,67 @@ import {
 describe('classifyUnrollElement', () => {
   it('tags a position:fixed element "fixed", regardless of deficit', () => {
     expect(
-      classifyUnrollElement({ position: 'fixed', scrollDeficit: 0, clientHeight: 100 }),
+      classifyUnrollElement({ position: 'fixed', scrollDeficit: 0, clientHeight: 100, originalOverflowY: 'hidden' }),
     ).toBe('fixed')
     expect(
-      classifyUnrollElement({ position: 'fixed', scrollDeficit: 500, clientHeight: 100 }),
+      classifyUnrollElement({ position: 'fixed', scrollDeficit: 500, clientHeight: 100, originalOverflowY: 'hidden' }),
     ).toBe('fixed')
   })
 
   it('tags a clipping non-fixed element "explicit-height"', () => {
     expect(
-      classifyUnrollElement({ position: 'static', scrollDeficit: 400, clientHeight: 812 }),
+      classifyUnrollElement({ position: 'static', scrollDeficit: 400, clientHeight: 812, originalOverflowY: 'hidden' }),
     ).toBe('explicit-height')
   })
 
   it('does not tag an element with no meaningful deficit', () => {
     expect(
-      classifyUnrollElement({ position: 'static', scrollDeficit: 0, clientHeight: 812 }),
+      classifyUnrollElement({ position: 'static', scrollDeficit: 0, clientHeight: 812, originalOverflowY: 'hidden' }),
     ).toBeNull()
   })
 
   it('treats a sub-pixel deficit as rounding noise, not real clipping', () => {
     // Matches resolveFrameFitHeight's own `<= 1` tolerance.
     expect(
-      classifyUnrollElement({ position: 'static', scrollDeficit: 1, clientHeight: 812 }),
+      classifyUnrollElement({ position: 'static', scrollDeficit: 1, clientHeight: 812, originalOverflowY: 'hidden' }),
     ).toBeNull()
     expect(
-      classifyUnrollElement({ position: 'static', scrollDeficit: 1.0001, clientHeight: 812 }),
+      classifyUnrollElement({ position: 'static', scrollDeficit: 1.0001, clientHeight: 812, originalOverflowY: 'hidden' }),
     ).toBe('explicit-height')
   })
 
   it('"fixed" wins over "explicit-height" for an element that is somehow both', () => {
     expect(
-      classifyUnrollElement({ position: 'fixed', scrollDeficit: 400, clientHeight: 100 }),
+      classifyUnrollElement({ position: 'fixed', scrollDeficit: 400, clientHeight: 100, originalOverflowY: 'hidden' }),
     ).toBe('fixed')
   })
 
   it('relative/absolute/sticky positioning is not "fixed"', () => {
     for (const position of ['relative', 'absolute', 'sticky', 'static']) {
-      expect(classifyUnrollElement({ position, scrollDeficit: 0, clientHeight: 100 })).toBeNull()
+      expect(
+        classifyUnrollElement({ position, scrollDeficit: 0, clientHeight: 100, originalOverflowY: 'hidden' }),
+      ).toBeNull()
+    }
+  })
+
+  // board-27f — an authored `overflow-y: visible` never hid anything, so a
+  // deficit measured against it is not "content this injector should reveal".
+  it('never tags "explicit-height" when the AUTHORED overflow-y is visible, however large the deficit', () => {
+    expect(
+      classifyUnrollElement({ position: 'static', scrollDeficit: 400, clientHeight: 24, originalOverflowY: 'visible' }),
+    ).toBeNull()
+    // Reproduces the measured board-27f repro almost exactly: a 24px-tall
+    // flex icon frame around an intrinsically 40px SVG.
+    expect(
+      classifyUnrollElement({ position: 'static', scrollDeficit: 8, clientHeight: 24, originalOverflowY: 'visible' }),
+    ).toBeNull()
+  })
+
+  it('still tags "explicit-height" for every overflow-y value that could have hidden content — hidden, clip, auto, scroll', () => {
+    for (const originalOverflowY of ['hidden', 'clip', 'auto', 'scroll']) {
+      expect(
+        classifyUnrollElement({ position: 'static', scrollDeficit: 400, clientHeight: 812, originalOverflowY }),
+      ).toBe('explicit-height')
     }
   })
 })

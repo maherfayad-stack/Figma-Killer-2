@@ -261,6 +261,12 @@ export function extractProps(
   /** R2 — same facts as `resolutions`, keyed by the prop NAME they explain. See `ParsedNode.resolvedProps`. */
   resolutionsByKey: ResolutionMap
   codeProps: string[]
+  /**
+   * Dotted/bracketed paths to a FUNCTION nested inside a resolved object/array
+   * prop value, each prefixed with the prop's own name (`toolbar.onBack`,
+   * `actions[0].onClick`) — see `ParsedNode.codeFunctionPaths`.
+   */
+  codeFunctionPaths: string[]
   assetOrigin?: ValueOrigin
 } {
   const result: Record<string, ParsedPropValue> = {}
@@ -268,6 +274,8 @@ export function extractProps(
   const resolutionsByKey: ResolutionMap = {}
   /** Names whose value came from code, not a literal attribute — see `ParsedNode.codeProps`. */
   const codeProps: string[] = []
+  /** See the `codeFunctionPaths` field on this function's own return type, above. */
+  const codeFunctionPaths: string[] = []
   // First resolved import-backed asset value wins — mirrors `textOrigin`'s
   // "only the first" scoping (see its doc comment in `./types`): a node
   // rarely has more than one image-shaped prop, and picking one honest target
@@ -403,9 +411,26 @@ export function extractProps(
           continue
         }
         const structured = tryResolvePropValue(expression, ctx.eval)
-        if (structured !== undefined) {
-          result[name] = structured
+        // `structured.value` is the resolvable half of the object/array (per
+        // `tryResolvePropValue`'s own doc); `structured.functionPaths` is a
+        // SEPARATE fact about the same expression and survives even when the
+        // value collapsed to nothing (`toolbar={{ onBack: () => {} }}` alone).
+        // A design-system component routinely gates a visible affordance on a
+        // handler nested INSIDE an object prop, not just a top-level one — a
+        // `Navbar` draws its leading back button only when `toolbar.onBack` is
+        // present — and the parser cannot hand a function to the canvas either
+        // way. Recording where inside the prop it was written (never a value —
+        // there isn't one) is what lets `register.tsx` stand a no-op back up at
+        // exactly that nested key, the same rule the top-level handler case
+        // already follows one level shallower.
+        if (structured !== undefined && (structured.value !== undefined || structured.functionPaths.length > 0)) {
+          if (structured.value !== undefined) result[name] = structured.value
           codeProps.push(name)
+          for (const fnPath of structured.functionPaths) {
+            // No dot before a `[N]` array-index segment — `actions[0].onClick`,
+            // never `actions.[0].onClick`.
+            codeFunctionPaths.push(fnPath.startsWith('[') ? `${name}${fnPath}` : `${name}.${fnPath}`)
+          }
           continue
         }
         // A bare JSX element/self-closing element/fragment value is
@@ -447,7 +472,7 @@ export function extractProps(
     }
   }
 
-  return { props: result, resolutions, resolutionsByKey, codeProps, ...(assetOrigin ? { assetOrigin } : {}) }
+  return { props: result, resolutions, resolutionsByKey, codeProps, codeFunctionPaths, ...(assetOrigin ? { assetOrigin } : {}) }
 }
 
 /**

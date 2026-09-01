@@ -1,9 +1,8 @@
 /**
  * ImportDesignTokensButton — "Import design tokens" entry point in
  * `FrameworkPanel`'s header. Opens `DesignImportDialog` on click; the dialog
- * owns the fetch/preview/apply flow. Studio-only: "copy CSS into the project"
- * needs a project directory, which only exists in studio mode (see
- * `FrameworkPanel.tsx`'s `isStudioMode()` gate around this component).
+ * owns the fetch/preview/apply flow, including copying fetched CSS into the
+ * project's on-disk workspace directory.
  *
  * Lazy-loaded — same pattern as `ImportProjectButton`/`SettingsModal`: pulls in
  * the `Dialog` primitive + the import client, closed 99% of the time, kept

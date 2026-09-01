@@ -65,17 +65,24 @@ function loadTemplateSite() {
 beforeEach(resetStore)
 
 describe('SiteExplorerPanel templates', () => {
-  it('shows pages and templates in separate sections', () => {
+  // `SiteExplorerPanel` is a CMS-only surface, currently unreachable from
+  // `ExplorerPanel` (Studio always renders `StudioExplorer` instead) — see
+  // `TEMPLATES_AND_COMPONENTS_AVAILABLE` in `SiteExplorerPanelSections.tsx`.
+  // Templates/Components have no filesystem-truth counterpart, so this was
+  // already the real behavior any time this panel WAS reachable in Studio
+  // mode, before Studio became the only mode. A page whose `template.enabled`
+  // is already `true` (as loaded here) therefore has no visible "Templates"
+  // section to appear in — it stays out of both lists.
+  it('hides the Templates section — no filesystem-truth counterpart in Studio', () => {
     loadTemplateSite()
     render(<SiteExplorerPanel sectionGroup="site" />)
 
     const panel = screen.getByTestId('site-explorer-panel')
     const pagesSection = within(panel).getByRole('heading', { name: 'Pages' }).closest('section')!
-    const templatesSection = within(panel).getByRole('heading', { name: 'Templates' }).closest('section')!
 
     expect(within(pagesSection).getByRole('button', { name: /open page home/i })).toBeDefined()
-    expect(within(pagesSection).queryByRole('button', { name: /open template post template/i })).toBeNull()
-    expect(within(templatesSection).getByRole('button', { name: /open template post template/i })).toBeDefined()
+    expect(within(panel).queryByRole('heading', { name: 'Templates' })).toBeNull()
+    expect(within(panel).queryByRole('button', { name: /open template post template/i })).toBeNull()
   })
 
   it('converts a page to a template from the context menu', () => {
@@ -182,18 +189,4 @@ describe('SiteExplorerPanel templates', () => {
     expect(page?.template?.target).toEqual({ kind: 'postTypes', tableSlugs: ['projects'] })
   })
 
-  it('converts a template back to a page and drops bindings', () => {
-    loadTemplateSite()
-    render(<SiteExplorerPanel sectionGroup="site" />)
-
-    fireEvent.contextMenu(screen.getByRole('button', { name: /open template post template/i }), {
-      clientX: 100,
-      clientY: 120,
-    })
-    fireEvent.click(screen.getByRole('menuitem', { name: /convert to page/i }))
-
-    const page = useEditorStore.getState().site?.pages.find((candidate) => candidate.id === 'page-template')
-    expect(page?.template).toBeUndefined()
-    expect(page?.nodes['root-template'].dynamicBindings).toBeUndefined()
-  })
 })

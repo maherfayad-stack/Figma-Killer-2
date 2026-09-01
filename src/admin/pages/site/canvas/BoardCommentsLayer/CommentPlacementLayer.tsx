@@ -15,83 +15,20 @@
  *
  * WHAT A CLICK RESOLVES TO
  * ────────────────────────
- * Three things, in order, each degrading cleanly to the next:
- *
- *   1. Board coordinates, from the transform layer's own client rect. Using
- *      the element's measured rect rather than reconstructing it from
- *      pan/zoom/offsets means the maths cannot drift out of sync with the
- *      layer's CSS (which carries `top: 80px; left: 80px`).
- *   2. The frame under the cursor, by hit-testing `[data-frame-id]`, and the
- *      frame-local offset within it. This is the coordinate of record — it is
- *      what makes a pin follow its frame when the frame is dragged.
- *   3. The node under the cursor, by hit-testing INSIDE that frame's iframe.
- *      Best-effort: a cross-origin or not-yet-loaded iframe simply yields no
- *      node, and the comment becomes coordinate-only rather than failing.
- *
- * Step 3 is the one that gives a comment meaning rather than just a position,
- * and it is captured HERE, at drop time, because it is the only moment the
- * tree and the cursor are both available. See `captureNodeHint`.
+ * `commentAnchorAtPoint` — board coordinates, then the frame under the cursor
+ * and the offset within it, then the node inside that frame's iframe. Dragging
+ * an existing pin asks the same question, so the answer lives in its own module
+ * rather than here; see its doc for why each step degrades the way it does.
  */
 import { useEffect, type RefObject } from 'react'
 import { useEditorStore } from '@site/store/store'
 import { selectActiveBoard } from '@site/store/slices/boardSelectors'
-import { captureNodeHint, type CommentAnchor } from '@core/studio-comments'
-import { canvasZoomOf } from '../canvasZoom'
+import { commentAnchorAtPoint } from './commentAnchorAtPoint'
 import styles from './CommentPlacementLayer.module.css'
 
 interface CommentPlacementLayerProps {
   /** The transformed layer — its client rect IS the board's screen origin. */
   transformLayerRef: RefObject<HTMLDivElement | null>
-}
-
-/**
- * Screen point → board point, measured off the transform layer itself.
- *
- * Using the element's measured rect for the ORIGIN means the maths cannot
- * drift out of sync with the layer's CSS (which carries `top: 80px;
- * left: 80px`). The SCALE has to come from `canvasZoomOf` rather than from
- * that same rect — the layer's `offsetWidth` is 0, so the usual
- * `rect.width / offsetWidth` ratio silently yields 1. See `canvasZoom.ts`.
- */
-function toBoardPoint(
-  layer: HTMLElement,
-  clientX: number,
-  clientY: number,
-): { x: number; y: number; zoom: number } {
-  const rect = layer.getBoundingClientRect()
-  const zoom = canvasZoomOf(layer)
-  return {
-    x: (clientX - rect.left) / zoom,
-    y: (clientY - rect.top) / zoom,
-    zoom,
-  }
-}
-
-/**
- * The node id under a point inside a board frame, or `null`.
- *
- * Reads through the frame's iframe, which is same-origin (`srcdoc`), so
- * `contentDocument` is reachable. Everything here is wrapped because a frame
- * that is still booting has no document yet, and a comment placed a moment
- * too early must land as a coordinate-only pin, not an exception.
- */
-function nodeIdAtPoint(frameEl: HTMLElement, clientX: number, clientY: number): string | null {
-  try {
-    const iframe = frameEl.querySelector('iframe')
-    const doc = iframe?.contentDocument
-    if (!iframe || !doc) return null
-    const iframeRect = iframe.getBoundingClientRect()
-    const scale = iframe.offsetWidth > 0 ? iframeRect.width / iframe.offsetWidth : 1
-    if (scale === 0) return null
-    const innerX = (clientX - iframeRect.left) / scale
-    const innerY = (clientY - iframeRect.top) / scale
-    const hit = doc.elementFromPoint(innerX, innerY)
-    return hit?.closest('[data-node-id]')?.getAttribute('data-node-id') ?? null
-  } catch {
-    // A frame whose document is not reachable is not an error condition here
-    // — it just means this pin has coordinates and no subject.
-    return null
-  }
 }
 
 export function CommentPlacementLayer({ transformLayerRef }: CommentPlacementLayerProps) {
@@ -119,45 +56,7 @@ export function CommentPlacementLayer({ transformLayerRef }: CommentPlacementLay
   const place = (clientX: number, clientY: number) => {
     const layer = transformLayerRef.current
     if (!layer) return
-
-    const board_ = toBoardPoint(layer, clientX, clientY)
-
-    // Hit-test through the capture surface — it is the topmost element at the
-    // cursor, so `elementFromPoint` would return the surface itself.
-    const beneath = document
-      .elementsFromPoint(clientX, clientY)
-      .find((el) => el instanceof HTMLElement && el.closest('[data-frame-id]'))
-    const frameEl =
-      beneath instanceof HTMLElement ? beneath.closest<HTMLElement>('[data-frame-id]') : null
-
-    let anchor: CommentAnchor = {
-      frameId: null,
-      pageId: null,
-      dx: board_.x,
-      dy: board_.y,
-      node: null,
-    }
-
-    if (frameEl) {
-      const frameRect = frameEl.getBoundingClientRect()
-      const pageId = frameEl.getAttribute('data-page-id')
-      const nodeId = nodeIdAtPoint(frameEl, clientX, clientY)
-      const page = pageId
-        ? useEditorStore.getState().site?.pages.find((candidate) => candidate.id === pageId)
-        : undefined
-
-      anchor = {
-        frameId: frameEl.getAttribute('data-frame-id'),
-        pageId,
-        // Frame-LOCAL, so the pin travels with the frame. Divided by the live
-        // zoom because the measured rect is already scaled.
-        dx: (clientX - frameRect.left) / board_.zoom,
-        dy: (clientY - frameRect.top) / board_.zoom,
-        node: nodeId && page ? captureNodeHint(page, nodeId) : null,
-      }
-    }
-
-    beginDraftPin({ boardId: board.id, anchor })
+    beginDraftPin({ boardId: board.id, anchor: commentAnchorAtPoint(layer, clientX, clientY) })
   }
 
   return (
@@ -169,8 +68,16 @@ export function CommentPlacementLayer({ transformLayerRef }: CommentPlacementLay
         // Left button only — a right-click here should not silently place a
         // comment the user cannot see themselves having asked for.
         if (event.button !== 0) return
+        // `preventDefault` only, never `stopPropagation` — this surface being
+        // modal comes from covering the canvas, not from cutting the event
+        // off. Stopping it would hide the press from `@use-gesture`, leaving
+        // its `filterTaps` state stale so that the NEXT click — the "Comment"
+        // button in the draft popover this very press is about to open — gets
+        // suppressed. Letting it through costs nothing: every canvas handler
+        // beneath is target-guarded (`handleCanvasClick`,
+        // `useMarqueeSelection`) and the pan only runs for middle-button or
+        // space+primary.
         event.preventDefault()
-        event.stopPropagation()
         place(event.clientX, event.clientY)
       }}
     />

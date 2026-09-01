@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "boards": [
+    {
+      "id": "d3024260-aab9-4321-b279-dfadf7a7cfa6",
+      "name": "Board 1",
+      "frames": [
+        {
+          "id": "6a0861ec-9f37-446e-b97e-d561159acc5f",
+          "pageId": "home",
+          "x": 0,
+          "y": 0,
+          "width": 393,
+          "height": 852
+        }
+      ],
+      "notes": [],
+      "docs": [],
+      "guides": []
+    }
+  ]
+}

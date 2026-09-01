@@ -122,14 +122,6 @@ export interface ModuleInsertionContext {
   isTemplate: boolean
   /** The active document tree already contains a `base.outlet`. */
   hasOutlet: boolean
-  /**
-   * Studio (filesystem-as-truth) mode. In studio the only insertable palette
-   * entries are the code-backed design-system components (category
-   * `'Design System'`); Studio's built-in `base.*` block modules stay
-   * registered as renderers for host HTML in the parsed source, but are hidden
-   * from every picker surface so authors compose only with real components.
-   */
-  isStudio: boolean
 }
 
 /** Category assigned to every code-backed design-system module (see `src/modules/alm/register.tsx`). */
@@ -165,16 +157,12 @@ export function moduleAvailability(
   // heuristic plus `.studio/meta.json`'s `paletteHiddenModuleIds` override,
   // computed per project by `registerProjectModules.ts`.
   if (getPaletteHiddenPackageModuleIds().has(mod.id)) return { kind: 'hidden' }
-  // Studio mode: a module is insertable only if it has an honest spelling in
-  // the user's source — a design-system component (imported), or an intrinsic
-  // element (`sourceIntrinsic`: `base.container` is a `<div>`, `base.text` a
-  // `<p>`). Everything else is an editor construct with no JSX to write, and
-  // stays hidden rather than offering an insert that can only be refused.
-  if (
-    context.isStudio &&
-    mod.category !== DESIGN_SYSTEM_CATEGORY &&
-    mod.sourceIntrinsic === undefined
-  ) {
+  // A module is insertable only if it has an honest spelling in the user's
+  // source — a design-system component (imported), or an intrinsic element
+  // (`sourceIntrinsic`: `base.container` is a `<div>`, `base.text` a `<p>`).
+  // Everything else is an editor construct with no JSX to write, and stays
+  // hidden rather than offering an insert that can only be refused.
+  if (mod.category !== DESIGN_SYSTEM_CATEGORY && mod.sourceIntrinsic === undefined) {
     return { kind: 'hidden' }
   }
   if (mod.id === 'base.slot-outlet' && !context.isVCMode) return { kind: 'hidden' }

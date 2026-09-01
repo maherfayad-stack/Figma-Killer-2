@@ -150,6 +150,18 @@ export interface UnrollElementMetrics {
   scrollDeficit: number
   /** `el.clientHeight` — the box's current (pre-override) height, in px. */
   clientHeight: number
+  /**
+   * The element's AUTHORED `overflow-y` — `getComputedStyle` read before this
+   * injector's own stylesheet (or any earlier tag's) can touch it, same
+   * value `snapshotAuthoredStyles` records onto `SCROLL_UNROLL_ORIGINAL_OVERFLOW_ATTR`
+   * and the one `runUnrollPass` reads back off that attribute for this same
+   * element (it runs after `snapshotAuthoredStyles` every pass — see
+   * `runUnrollPasses`).
+   *
+   * `'visible'` (the CSS default) excludes `'explicit-height'` below — see
+   * that branch's own comment for why.
+   */
+  originalOverflowY: string
 }
 
 /**
@@ -163,10 +175,34 @@ export interface UnrollElementMetrics {
  * Sub-pixel deficits are rounding noise from a fractional layout, not hidden
  * content worth acting on — matches the same `<= 1` tolerance
  * `resolveFrameFitHeight` uses for the same reason.
+ *
+ * `'explicit-height'` additionally requires the element's AUTHORED
+ * `overflow-y` to be something OTHER than `'visible'`. `board-27f`'s finding:
+ * a `display: flex; width: 24px; height: 24px` icon frame around an
+ * intrinsically larger, un-scaled SVG (`overflow-y` never set — the CSS
+ * default, `visible`) reports a real, positive `scrollHeight - clientHeight`
+ * deficit in a real browser (a flex container's `scrollHeight` reflects an
+ * oversized flex item even though nothing is clipped), and used to get
+ * `height: auto; min-height: <its full content extent>` forced onto it —
+ * growing a box that was never clipping anything, on the canvas only, to a
+ * size no real browser ever shows (measured: a `.cell__visual--icon`
+ * genuinely 24×24 everywhere real rendered [24,44] on the canvas).
+ *
+ * An element authoring `overflow-y: visible` was never hiding content in the
+ * first place — there is nothing this injector's whole *purpose* ("reveal
+ * content a fixed/clipping box would otherwise hide") applies to. `hidden`/
+ * `clip`/`auto`/`scroll` all stay eligible: `buildScrollUnrollRules`'s own
+ * doc comment names the accepted case this must NOT exclude — a fixed-height
+ * `overflow: hidden` panel genuinely clipping its own taller content (the
+ * shape `explicit-height` exists for) authors `hidden`, not `visible`, so
+ * this gate leaves it untouched. This is the scoping that comment's "known,
+ * accepted limitation" paragraph named as the fix, generalized from the
+ * SVG-icon case that surfaced it to any oversized-child-in-a-`visible`-box
+ * shape.
  */
 export function classifyUnrollElement(metrics: UnrollElementMetrics): ScrollUnrollTag | null {
   if (metrics.position === 'fixed') return 'fixed'
-  if (metrics.scrollDeficit > 1) return 'explicit-height'
+  if (metrics.scrollDeficit > 1 && metrics.originalOverflowY !== 'visible') return 'explicit-height'
   return null
 }
 
@@ -314,25 +350,28 @@ export function buildScrollUnrollRules(): string {
    the JS half measures the panel's original box height into the custom
    property below before releasing \`height\`, so nothing shrinks, only grows.
 
-   Verified this does not depend on the scroll-region scope above:
-   \`scrollHeight\` reports an element's TRUE content extent (including
-   content clipped by \`overflow: hidden\`) regardless of that element's own
-   overflow value — only \`overflow: visible\` collapses \`scrollHeight\` to
-   \`clientHeight\`. So this tag correctly measures and grows a clipping
-   \`overflow: hidden\` panel exactly as it does an \`overflow: auto\` one.
+   This rule fires only for an element the JS half already classified
+   \`'explicit-height'\` — \`classifyUnrollElement\` (below in this file) is
+   where the actual scoping lives, not a CSS selector here, because the
+   decision needs the element's AUTHORED \`overflow-y\`, which by the time this
+   stylesheet could match anything is already this injector's own override.
 
-   Known, accepted limitation, not fixed here: this rule cannot distinguish
-   "a panel clipping its OWN overflow content" (the case it exists for) from
-   "an intentionally undersized crop frame around oversized, non-
-   \`object-fit\`-scaled media" (e.g. a fixed-height \`overflow: hidden\` image
-   container holding a taller-than-container \`<img>\` with no
-   \`object-fit: cover\`) — both present as a real \`scrollDeficit\` and both
-   get stretched to their full content height. No live case of the second
-   shape was found on the audited project (its image-crop containers use
-   \`object-fit: cover\`, which does not inflate \`scrollHeight\` since the
-   image's OWN box still matches its container). If a future project hits
-   this, the fix is scoping THIS tag by authored overflow the same way the
-   rule above was, not reverting this rule. */
+   \`board-27f\` correction to a claim this comment used to make: \`scrollHeight\`
+   is NOT reliably equal to \`clientHeight\` for an \`overflow: visible\`
+   element — measured directly, a \`display: flex\` container with a fixed
+   \`height\` and an intrinsically larger flex item (no \`object-fit\`/scaling
+   at all, e.g. an SVG icon authored bigger than its frame) reports a real,
+   positive deficit in an ordinary browser even though NOTHING is being
+   clipped — the oversized child simply renders past the box's edge,
+   visibly, exactly as authored. Forcing \`height: auto\` on that box grows
+   it to a size no real render ever shows. \`classifyUnrollElement\`
+   therefore requires the authored \`overflow-y\` to be something other than
+   \`'visible'\` before this tag is ever applied. A \`hidden\`/\`clip\`
+   authored value still stays eligible: the "intentionally undersized crop
+   frame" case below is real, but its author still had to write
+   \`overflow: hidden\` to get the crop at all, so it survives this gate. See
+   that function's own doc for the full reasoning and
+   \`canvasScrollUnroll.test.ts\`'s coverage of both directions. */
 [${SCROLL_UNROLL_ATTR}="explicit-height"] {
   height: auto !important;
   min-height: var(${SCROLL_UNROLL_MIN_HEIGHT_VAR}) !important;

@@ -106,10 +106,6 @@ const SELECT_ACTIVE_PAGE_ALLOWLIST = new Set<string>([
   //   slug; the preview concept is inherently page-mode-only.
   'admin/pages/site/preview/PreviewOverlay.tsx',
 
-  // §A.5 — publish button: publishes the active page. Purely page-mode — publishing
-  //   a standalone VC is not a supported workflow (VCs are embedded in pages).
-  'admin/pages/site/toolbar/PublishButton.tsx',
-
   // §A.6 — store.ts is the module that DEFINES both selectActivePage and
   //   selectActiveCanvasPage; it is not a consumer. selectActiveCanvasPage's
   //   own implementation legitimately calls selectActivePage(s) as its
@@ -122,9 +118,9 @@ const SELECT_ACTIVE_PAGE_ALLOWLIST = new Set<string>([
 
   // §A.7 — useActiveLivePath: resolves the toolbar's "Open live page" deep
   //   link. A Visual Component is never independently routable/publishable
-  //   (no slug, no permalink — see PublishButton's §A.5 and PreviewOverlay's
-  //   §A.4, the same "VCs are embedded in pages, not standalone routes"
-  //   reasoning). `activePageId` is deliberately NOT cleared when entering VC
+  //   (no slug, no permalink — see PreviewOverlay's §A.4, the same "VCs are
+  //   embedded in pages, not standalone routes" reasoning). `activePageId`
+  //   is deliberately NOT cleared when entering VC
   //   edit mode (see uiSlice.ts's `setActiveDocument`/`previousActivePageId`),
   //   so `selectActivePage` here keeps resolving the underlying page the
   //   author was on before opening the VC — exactly the fallback this hook's

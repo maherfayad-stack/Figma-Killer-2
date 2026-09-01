@@ -291,6 +291,44 @@ function mergeClassNames(a: unknown, b: string | undefined): string | undefined 
 }
 
 /**
+ * Tokenizes a `codeFunctionPaths` entry (`'toolbar.onBack'`,
+ * `'actions[0].onClick'`) into its object-key / array-index segments. The
+ * FIRST segment is always the top-level prop name (`extractProps` prefixes
+ * every path with it) — see `PageNode.codeFunctionPaths`.
+ */
+const CODE_FUNCTION_PATH_TOKEN_RE = /[^[.\]]+|\[(\d+)\]/g
+
+function parseCodeFunctionPath(path: string): (string | number)[] {
+  const segments: (string | number)[] = []
+  for (const match of path.matchAll(CODE_FUNCTION_PATH_TOKEN_RE)) {
+    segments.push(match[1] !== undefined ? Number(match[1]) : match[0])
+  }
+  return segments
+}
+
+/**
+ * Rebuilds `root` with `value` set at `segments`, cloning only the objects/
+ * arrays ALONG the path — everything else in `root` is shared, not copied.
+ * Used to stand a no-op function back up at a nested key the parser could
+ * only record the LOCATION of (`ParsedNode.codeFunctionPaths` has no value to
+ * give here — a function has no JSON form) without mutating the node's own
+ * `props`, which other renders of the same node still read.
+ */
+function withValueAtPath(root: unknown, segments: readonly (string | number)[], value: unknown): unknown {
+  if (segments.length === 0) return value
+  const [head, ...rest] = segments
+  if (typeof head === 'number') {
+    const next = Array.isArray(root) ? [...root] : []
+    next[head] = withValueAtPath(next[head], rest, value)
+    return next
+  }
+  const next: Record<string, unknown> =
+    root !== null && typeof root === 'object' && !Array.isArray(root) ? { ...(root as Record<string, unknown>) } : {}
+  next[head] = withValueAtPath(next[head], rest, value)
+  return next
+}
+
+/**
  * `handlerProps` are the prop names this component's manifest marks
  * `kind: 'handler'`. Several design-system components gate a visible
  * affordance on being given one — a `BottomSheet` draws its leading close
@@ -303,6 +341,11 @@ function mergeClassNames(a: unknown, b: string | undefined): string | undefined 
  * be stood up with a no-op. Conditional on that, never blanket: defaulting
  * every handler on would draw a trailing action button on every sheet ever
  * scaffolded, inventing an affordance the design does not have.
+ *
+ * A handler nested INSIDE an object/array prop (`toolbar={{ …, onBack: () =>
+ * {} }}`) is the same fact one level deeper, driven off `codeFunctionPaths`
+ * instead — see the render body below and `parseCodeFunctionPath`/
+ * `withValueAtPath` above.
  */
 function makeComponent(name: string, handlerProps: readonly string[]): React.FC<ModuleComponentProps> {
   const Comp = (DS as Record<string, unknown>)[name] as React.ComponentType<Record<string, unknown>> | undefined
@@ -310,7 +353,14 @@ function makeComponent(name: string, handlerProps: readonly string[]): React.FC<
   // receive. One identity per component definition, not per render — a fresh
   // arrow each pass would change the design-system component's props every time.
   const noopHandler = (): void => {}
-  const AlmEditor: React.FC<ModuleComponentProps> = ({ props, nodeWrapperProps, mcClassName, children, codeProps }) => {
+  const AlmEditor: React.FC<ModuleComponentProps> = ({
+    props,
+    nodeWrapperProps,
+    mcClassName,
+    children,
+    codeProps,
+    codeFunctionPaths,
+  }) => {
     // The direction of the FRAME this component is rendered into (a "duplicate
     // as variant" frame can preview RTL beside an LTR board), fed to the
     // design system's own provider — see `DesignSystemProviderProps`.
@@ -328,16 +378,41 @@ function makeComponent(name: string, handlerProps: readonly string[]): React.FC<
     for (const prop of handlerProps) {
       if (codeProps?.includes(prop)) dsProps[prop] = noopHandler
     }
+    // The nested counterpart of the loop above — a handler the source wrote
+    // INSIDE an object/array prop (`toolbar={{ …, onBack: () => {} }}`),
+    // which the parser can trace the LOCATION of but never a value for. Same
+    // rule as `handlerProps`: only ever stands one up where `codeFunctionPaths`
+    // says the source actually wrote one, never invented. See
+    // `ParsedNode.codeFunctionPaths` for why this can't be driven off the
+    // manifest the way `handlerProps` is — a nested key has no manifest entry
+    // of its own to classify.
+    for (const path of codeFunctionPaths ?? []) {
+      const [propName, ...rest] = parseCodeFunctionPath(path)
+      if (typeof propName !== 'string') continue
+      dsProps[propName] = rest.length === 0 ? noopHandler : withValueAtPath(dsProps[propName], rest, noopHandler)
+    }
     // The node's CSS classes go on the design-system component, where the source
     // wrote them — applying them to the host as well double-applied every
     // padding and margin in the rule.
     const className = mergeClassNames(dsProps.className, mcClassName)
     // The canvas has always rendered this node's child modules and handed
     // them in; nothing here ever passed them on, so a container component's
-    // slot rendered empty. Forwarded unconditionally — a component that takes
-    // its text through a `label` prop simply ignores them, exactly as it does
-    // in the user's own source. `canHaveChildren` (below) is the separate
-    // question of whether the EDITOR offers it as a drop target.
+    // slot rendered empty. A component that takes its text through a `label`
+    // prop simply ignores them, exactly as it does in the user's own source.
+    // `canHaveChildren` (below) is the separate question of whether the EDITOR
+    // offers it as a drop target.
+    //
+    // Passed ONLY when there is at least one child, never as an empty list.
+    // `createElement(C, props, children)` sets `props.children` to whatever it
+    // is given, and an empty array is TRUTHY — so a component that renders an
+    // optional wrapper with `children && <div className="…__slot">` emits that
+    // wrapper for a node with no children at all. Measured: a self-closing
+    // `<Dialog />` grew a phantom `.ios-dialog__slot`, and because
+    // `.ios-dialog__content` is a flex column with `gap: 10px`, the empty
+    // zero-height child made the canvas dialog 284px where the same source
+    // renders 274px in a real browser. Omitting the argument entirely leaves
+    // `props.children` undefined, which is what the source actually says.
+    const childArgs = React.Children.count(children) > 0 ? [children] : []
     const inner = Comp
       ? React.createElement(
           Comp,
@@ -346,7 +421,7 @@ function makeComponent(name: string, handlerProps: readonly string[]): React.FC<
             ...(className !== undefined ? { className } : {}),
             ...(nodeStyle ? { style: nodeStyle } : {}),
           },
-          children,
+          ...childArgs,
         )
       : React.createElement('span', null, name)
     const provided = Provider ? React.createElement(Provider, { dir: direction }, inner) : inner

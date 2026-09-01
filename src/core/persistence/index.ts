@@ -1,5 +1,4 @@
 export { cmsAdapter } from './cms'
-export { getCmsPublishStatus, publishCmsDraft } from './cmsPublish'
 export { listCmsMediaAssets } from './cmsMedia'
 export type { CmsMediaAsset } from './cmsMedia'
 export {

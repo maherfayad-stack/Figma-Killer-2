@@ -201,7 +201,12 @@ describe('LayerNodeContextMenu — Insert module here', () => {
 })
 
 describe('LayerNodeContextMenu — Componentize', () => {
-  it('opens the Properties panel and focuses the component name input', async () => {
+  // Componentize mints a Visual Component via `mutateSiteState` — a
+  // persistence path Studio's filesystem adapter doesn't implement, so
+  // `canComponentizeNode` always refuses now that Studio is the only editor
+  // mode (`componentizeEligibility.ts`). The layer-tree context menu never
+  // offers the action.
+  it('does not offer Componentize — Studio has no persistence path for it', () => {
     resetStore()
     useEditorStore.setState({
       selectedNodeId: null,
@@ -229,14 +234,7 @@ describe('LayerNodeContextMenu — Componentize', () => {
       </>,
     )
 
-    fireEvent.click(screen.getByRole('menuitem', { name: /componentize/i }))
-
-    expect(useEditorStore.getState().propertiesPanel.collapsed).toBe(false)
-    expect(useEditorStore.getState().selectedSelectorClassIds).toEqual([])
-    const input = await screen.findByRole('textbox', { name: /component name/i })
-    await waitFor(() => {
-      expect(document.activeElement).toBe(input)
-    })
+    expect(screen.queryByRole('menuitem', { name: /componentize/i })).toBeNull()
   })
 })
 
@@ -520,16 +518,20 @@ describe('LayerNodeContextMenu — "Insert module here" sibling fallback on leaf
     fireEvent.mouseEnter(trigger)
 
     const submenu = screen.getByRole('menu', { name: 'Insert module here' })
-    const buttonOption = within(submenu).getAllByRole('menuitem').find(
-      (el) => el.getAttribute('data-module-id') === 'base.button',
+    // `base.container` — not `base.button` (no `sourceIntrinsic` of its
+    // own, so `moduleAvailability`'s intrinsic-element gate hides it from
+    // every picker now that Studio is the only editor mode; only
+    // `base.container`/`base.text` declare one).
+    const containerOption = within(submenu).getAllByRole('menuitem').find(
+      (el) => el.getAttribute('data-module-id') === 'base.container',
     )
-    expect(buttonOption).toBeDefined()
-    fireEvent.click(buttonOption!)
+    expect(containerOption).toBeDefined()
+    fireEvent.click(containerOption!)
 
     const state = useEditorStore.getState()
     const page = state.site?.pages.find((p) => p.id === 'page-mixed')
     // root.children was [ctr, txt, btn]; right-clicking txt and inserting a
-    // base.button should land the new node at index 2 (right after txt),
+    // base.container should land the new node at index 2 (right after txt),
     // shifting the original btn to index 3.
     const root = page?.nodes['root']
     expect(root?.children.length).toBe(4)
@@ -537,7 +539,7 @@ describe('LayerNodeContextMenu — "Insert module here" sibling fallback on leaf
     expect(root?.children[1]).toBe('txt')
     const insertedId = root?.children[2]
     expect(insertedId).toBeDefined()
-    expect(page?.nodes[insertedId!]?.moduleId).toBe('base.button')
+    expect(page?.nodes[insertedId!]?.moduleId).toBe('base.container')
     expect(root?.children[3]).toBe('btn')
   })
 

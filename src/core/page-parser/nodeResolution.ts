@@ -142,6 +142,41 @@ function staticValueToPropValue(value: StaticValue): ParsedPropValue | undefined
 }
 
 /**
+ * Walks a resolved `StaticValue` for every FUNCTION entry buried inside its
+ * object/array structure, recording each one's location as a path relative to
+ * the top of the structure — a dot for an object key, `[N]` for an array
+ * index (`toolbar: { onBack: fn }` -> `'onBack'`; `actions: [{ onClick: fn }]`
+ * -> `'actions[0].onClick'`).
+ *
+ * `staticValueToPropValue` already drops a function entry from the JSON value
+ * — correctly, there is no JSON form for `() => {}` — but dropping it left no
+ * trace of WHERE it was. Several design-system components gate a visible
+ * affordance on a handler nested inside an object prop, not just a top-level
+ * one: `<Navbar toolbar={{ title, onBack: () => {} }}/>` draws its leading
+ * back button only when `toolbar.onBack` is present, and the parser cannot
+ * hand a function to the canvas either way. Recording the PATH (not a value —
+ * there isn't one) is what lets `ParsedNode.codeFunctionPaths` tell a module
+ * exactly where inside the resolved object it may honestly stand a no-op back
+ * up, same reasoning as the top-level `codeProps`-driven no-op (`onClose={fn}`
+ * at the top level of a prop), one level deeper.
+ */
+function collectFunctionPaths(value: StaticValue, prefix: string, out: string[]): void {
+  if (value.kind === 'fn') {
+    out.push(prefix)
+    return
+  }
+  if (value.kind === 'object') {
+    for (const [key, entry] of value.entries) {
+      collectFunctionPaths(entry, prefix ? `${prefix}.${key}` : key, out)
+    }
+    return
+  }
+  if (value.kind === 'array') {
+    value.items.forEach((item, index) => collectFunctionPaths(item, `${prefix}[${index}]`, out))
+  }
+}
+
+/**
  * `tryResolveExpression`'s structured sibling: also accepts an array/object
  * result. Used only for COMPONENT props (see `extractProps`) — an HTML
  * attribute is a string, so a structured value there is meaningless.
@@ -152,13 +187,24 @@ function staticValueToPropValue(value: StaticValue): ParsedPropValue | undefined
  * target in the first place (`setJsxProp` only takes scalars, and the studio
  * save path filters to scalars before it gets there). Its read-only-ness is
  * already recorded per-prop in `codeProps` by the caller.
+ *
+ * Returns `undefined` only when the caller opted out (`evalCtx` absent) — with
+ * it present, always returns a `{value, functionPaths}` pair, even when
+ * `value` itself is `undefined` (an object that resolved to nothing but DOES
+ * carry a function somewhere inside it, e.g. `toolbar={{ onBack: () => {} }}`
+ * with no other entries — `staticValueToPropValue`'s "empty object declines"
+ * rule still applies to `value`, but `functionPaths` is a separate, honest
+ * fact about the same expression and must not be thrown away with it).
  */
 export function tryResolvePropValue(
   expr: Node,
   evalCtx: PageEvalContext | undefined,
-): ParsedPropValue | undefined {
+): { value: ParsedPropValue | undefined; functionPaths: string[] } | undefined {
   if (!evalCtx) return undefined
-  return staticValueToPropValue(evaluateExpression(expr, evalCtx.scope, evalCtx.options))
+  const evaluated = evaluateExpression(expr, evalCtx.scope, evalCtx.options)
+  const functionPaths: string[] = []
+  collectFunctionPaths(evaluated, '', functionPaths)
+  return { value: staticValueToPropValue(evaluated), functionPaths }
 }
 
 /**

@@ -1,9 +1,10 @@
 /**
  * Dashboard widget registry — single in-memory map keyed by widget id.
  *
- * First-party widgets self-register at admin boot time (see
- * `src/admin/pages/dashboard/widgets/index.ts`). Plugins register additional
- * widgets via `api.dashboard.widgets.register(...)` (plugin SDK).
+ * Plugins register widgets via `api.dashboard.widgets.register(...)` (plugin
+ * SDK). There are no first-party widgets any more — the dashboard widget-grid
+ * they self-registered into was deleted, so nothing in-tree renders what this
+ * registry holds. Retiring the capability is a separate product decision.
  *
  * Subscribe-style observers (`useSyncExternalStore`) are exposed for the
  * DashboardPage so newly-installed plugins surface their widgets without

@@ -96,7 +96,7 @@ describe('orderScoredByVisualGroup', () => {
       mkScored('pages.delete', 'pages', 275),
       mkScored('editor.save', 'editor', 250),
       mkScored('pages.duplicate', 'pages', 275),
-      mkScored('editor.publish', 'editor', 250),
+      mkScored('editor.redo', 'editor', 250),
       mkScored('pages.rename', 'pages', 275),
     ]
 

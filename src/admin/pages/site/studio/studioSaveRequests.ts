@@ -203,11 +203,18 @@ export type CreatedStudioPage = Static<typeof StudioCreatePageResponseSchema>
  * toast the message. The caller reloads the workspace afterwards
  * (`requestCmsSiteReload`) to render it.
  */
-export function createStudioPage(name?: string, kind?: PageKind): Promise<CreatedStudioPage> {
+export function createStudioPage(
+  name?: string,
+  kind?: PageKind,
+  boardId?: string,
+): Promise<CreatedStudioPage> {
   const overrideDir = getStudioWorkspaceDir()
-  const body: { name?: string; dir?: string; kind?: PageKind } = {}
+  const body: { name?: string; dir?: string; kind?: PageKind; boardId?: string } = {}
   if (name) body.name = name
   if (kind) body.kind = kind
+  // The server places the frame (D5 §11.3); without this it placed it on the
+  // FIRST board regardless of which one the author had open.
+  if (boardId) body.boardId = boardId
   if (overrideDir) body.dir = overrideDir
   return apiRequest('/admin/api/studio/page', {
     method: 'POST',

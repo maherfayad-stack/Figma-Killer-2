@@ -79,7 +79,7 @@ export function DashboardPage() {
     // short-circuiting on a previous project's still-mounted `existingSite`.
     requestCmsSiteReload()
     setStudioWorkspaceDir(project.dir)
-    navigate('/admin/site?studio')
+    navigate('/admin/site')
   }
 
   async function handleCreate(options: { name?: string; platform: ProjectPlatform }) {

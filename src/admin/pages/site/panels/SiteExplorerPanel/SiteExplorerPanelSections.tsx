@@ -2,7 +2,6 @@ import type { KeyboardEvent, MouseEvent } from 'react'
 import { FilePlusSolidIcon } from 'pixel-art-icons/icons/file-plus-solid'
 import { PaintBucketSolidIcon } from 'pixel-art-icons/icons/paint-bucket-solid'
 import { CodeIcon } from 'pixel-art-icons/icons/code'
-import { isStudioMode } from '@site/studio/studioMode'
 import type { SiteExplorerSectionId } from '@core/page-tree'
 import { SiteExplorerTreeSection, type SiteExplorerInlineRenameTarget } from './SiteExplorerTreeSection'
 import type { SiteExplorerDndState } from './SiteExplorerDndScope'
@@ -13,6 +12,17 @@ import type {
   SiteExplorerTreeSectionModel,
 } from './siteExplorerModel'
 import type { SiteExplorerContextTarget, SiteExplorerAnySectionModel, SiteExplorerSectionGroup } from './siteExplorerPanelTypes'
+
+/**
+ * Templates and Components are CMS document types with no filesystem-truth
+ * counterpart — Studio is the only editor mode now, so this is permanently
+ * `false`. `SiteExplorerPanel` itself is currently unreachable from
+ * `ExplorerPanel` (Studio always renders `StudioExplorer` instead), kept
+ * only because this file is still directly unit-tested and nothing else in
+ * this diff owns the decision to delete the whole Site/Code/Media tab
+ * subsystem — see the two call sites below.
+ */
+const TEMPLATES_AND_COMPONENTS_AVAILABLE = false
 
 interface SiteExplorerPanelSectionsProps {
   /** Which group of sections to render — `site` (pages/templates/components)
@@ -129,11 +139,11 @@ export function SiteExplorerPanelSections({
           `site.visualComponents`) with no filesystem-truth counterpart in
           Studio — `fsCodemodAdapter` never populates either, and creating
           one here wouldn't write back to any `.tsx` on disk (only
-          source-backed `relFile:line:col` nodes round-trip). Hiding both
-          sections avoids a dangling "create" affordance that silently loses
-          its work; "Pages" stays — it's the only way to see/rename/delete
-          the workspace's pages by name, board membership aside. */}
-      {sectionGroup === 'site' && templateTreeModel && !isStudioMode() && (
+          source-backed `relFile:line:col` nodes round-trip). "Pages" stays —
+          it's the only way to see/rename/delete the workspace's pages by
+          name, board membership aside. See TEMPLATES_AND_COMPONENTS_AVAILABLE
+          above for why this is unconditionally false. */}
+      {sectionGroup === 'site' && templateTreeModel && TEMPLATES_AND_COMPONENTS_AVAILABLE && (
         <SiteExplorerTreeSection
           title="Templates"
           count={templatePageCount}
@@ -157,7 +167,7 @@ export function SiteExplorerPanelSections({
         />
       )}
 
-      {sectionGroup === 'site' && componentTreeModel && !isStudioMode() && (
+      {sectionGroup === 'site' && componentTreeModel && TEMPLATES_AND_COMPONENTS_AVAILABLE && (
         <SiteExplorerTreeSection
           title="Components"
           count={componentCount}

@@ -45,6 +45,7 @@ import { randomUUID } from 'node:crypto'
 import { Type } from '@core/utils/typeboxHelpers'
 import {
   addReply,
+  buildCommentLocation,
   findThread,
   isAgentActionable,
   explainAnchorRefusal,
@@ -56,8 +57,10 @@ import {
   type CommentsFile,
 } from '@core/studio-comments'
 import type { Page } from '@core/page-tree'
+import type { BoardsFile } from '@core/studio-board'
 import type { AiTool, ToolContext } from '../../../runtime/types'
 import { readCommentsFile, writeCommentsFile } from '../../../../handlers/studio/commentsStore'
+import { readBoardsFileOrEmpty } from '../../../../handlers/studio/boardGeometry'
 import { loadStudioPages } from '../../../../handlers/studioPageLoad'
 import { resolveToolProjectDir } from './resolveToolProjectDir'
 import { pushStudioLiveReload } from './liveReloadPush'
@@ -111,19 +114,46 @@ function confidenceFor(thread: CommentThread, pages: Map<string, Page>): AnchorC
   return resolveCommentAnchor(thread.anchor.node, pages.get(pageId) ?? null).confidence
 }
 
-function threadSummary(thread: CommentThread, confidence: AnchorConfidence | null) {
+/**
+ * One thread as the agent sees it: the gate fields at the top level, and
+ * everything about WHERE it is under `location`.
+ *
+ * `location` is `buildCommentLocation`'s record verbatim — the same one the
+ * editor's "Send to AI" button renders as prose. It exists because the ids on
+ * a stored thread do not, on their own, describe anywhere: the board and page
+ * are UUIDs and slugs, the element is a `relFile:line:col` position, and the
+ * pin's `dx/dy` mean nothing without the frame they are relative to. An agent
+ * given only those either asks three follow-up questions or guesses, and
+ * guessing here means editing the wrong element in the user's real source.
+ */
+function threadSummary(
+  thread: CommentThread,
+  confidence: AnchorConfidence | null,
+  boards: BoardsFile,
+  pages: Map<string, Page>,
+) {
+  const board = boards.boards.find((candidate) => candidate.id === thread.boardId) ?? null
+  const frame = board?.frames.find((candidate) => candidate.id === thread.anchor.frameId) ?? null
+  const page = thread.anchor.pageId ? (pages.get(thread.anchor.pageId) ?? null) : null
+
   return {
     seq: thread.seq,
     threadId: thread.id,
     resolved: thread.resolved,
-    pageId: thread.anchor.pageId,
-    nodeId: thread.anchor.node?.nodeId ?? null,
-    // What the comment is ABOUT, in words, for a thread whose node id has
-    // gone stale — often enough for the agent to find the element by hand.
-    nodeText: thread.anchor.node?.textSnippet ?? null,
     ...(confidence
       ? { anchorConfidence: confidence, agentActionable: isAgentActionable(confidence) }
       : {}),
+    location: buildCommentLocation(thread, {
+      boardName: board?.name ?? null,
+      pageTitle: page?.title ?? null,
+      tree: page,
+      frameWidth: frame?.width ?? null,
+      frameHeight: frame?.height ?? null,
+      // `pages` is empty when the caller opted out of the parse. Without this
+      // the missing tree would read as `detached` — "it is gone" — when the
+      // truth is only that nothing looked.
+      checkAnchor: confidence !== null,
+    }),
     comments: thread.comments.map((comment) => ({
       author: comment.author.displayName,
       kind: comment.author.kind,
@@ -167,7 +197,7 @@ const studioListCommentsTool: AiTool = {
   // only reads a file the caller's own workspace already exposes. The two
   // write tools below are gated on `studio.write` like their siblings.
   description:
-    'List review comment threads pinned to the Studio board (.studio/comments.json) — the human feedback on this design, as a work queue. Returns { ok, dir, threads:[{ seq, threadId, resolved, pageId, nodeId, nodeText, anchorConfidence, agentActionable, comments:[{author,kind,body,createdAt}] }] }. `seq` is the number shown on the pin and in the UI — use it when talking to the user ("comment 3"). CRITICAL: `anchorConfidence` says whether the element the comment points at still exists — "exact"/"moved" mean yes (agentActionable: true), "drifted" means it was edited since the comment was written, "detached" means it is gone. Only act on threads with agentActionable: true; studio_resolve_comment refuses the others. Filter with status ("open" default, "resolved", "all") and pageId. ',
+    'List review comment threads pinned to the Studio board (.studio/comments.json) — the human feedback on this design, as a work queue. Returns { ok, dir, threads:[{ seq, threadId, resolved, anchorConfidence, agentActionable, location, comments:[{author,kind,body,createdAt}] }] }. `seq` is the number shown on the pin and in the UI — use it when talking to the user ("comment 3"). `location` tells you exactly where the comment is, so you never have to guess which element was meant: { boardId, boardName, frameId, pageId, pageTitle, pageFile, dx, dy, xPercent, yPercent, element:{ nodeId, moduleId, text, trail }, confidence }. `pageFile` is the source file to edit; `dx`/`dy` are the pin\'s position in frame-local pixels from the frame\'s top-left (with xPercent/yPercent as the same point relative to the frame\'s size); `element.trail` is the path of labels from the page root down to the element, so you can find it by structure when the id has gone stale; `element` is null for a pin dropped on empty canvas, where the coordinates are the whole location. CRITICAL: `anchorConfidence` says whether the element the comment points at still exists — "exact"/"moved" mean yes (agentActionable: true), "drifted" means it was edited since the comment was written, "detached" means it is gone and `element` is the stale stored hint. Only act on threads with agentActionable: true; studio_resolve_comment refuses the others. Filter with status ("open" default, "resolved", "all") and pageId. ',
   inputSchema: ListInputSchema,
   handler: async (input, ctx: ToolContext) => {
     const { dir: dirInput, status = 'open', pageId, resolveAnchors = true } = input as {
@@ -187,13 +217,16 @@ const studioListCommentsTool: AiTool = {
     })
 
     const pages = resolveAnchors ? await pagesForThreads(dir, threads) : new Map<string, Page>()
+    // One read for the whole call — every thread names a board, and most name
+    // the same one.
+    const boards = readBoardsFileOrEmpty(dir)
 
     return {
       ok: true,
       dir,
       status,
       threads: threads.map((thread) =>
-        threadSummary(thread, resolveAnchors ? confidenceFor(thread, pages) : null),
+        threadSummary(thread, resolveAnchors ? confidenceFor(thread, pages) : null, boards, pages),
       ),
     }
   },

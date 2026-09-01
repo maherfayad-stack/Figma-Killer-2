@@ -247,12 +247,12 @@ export default function AuthenticatedAdmin({ section, currentUser }: Authenticat
   return (
     <AdminSessionProvider user={currentUser}>
       {/* StepUpProvider wraps SpotlightRoot so spotlight commands can
-          consume `useStepUp()` — required by step-up-gated actions invoked
-          from the palette (e.g. `editor.publish`). Both providers stay
-          inside AdminSessionProvider (the palette's CommandContext reads
-          the authenticated user) and above the workspace switch so the
-          palette and the step-up dialog are available across every
-          workspace. */}
+          consume `useStepUp()` — required by any step-up-gated action a
+          command invokes via `ctx.runStepUp` (see CommandRunContext).
+          Both providers stay inside AdminSessionProvider (the palette's
+          CommandContext reads the authenticated user) and above the
+          workspace switch so the palette and the step-up dialog are
+          available across every workspace. */}
       <StepUpProvider>
         <SpotlightRoot>
           {/* Suspense catches:

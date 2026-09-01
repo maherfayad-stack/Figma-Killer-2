@@ -33,7 +33,6 @@ import type { RegisteredPluginToolbarButton } from '@core/plugin-sdk'
 import { AccountMenuButton } from '@admin/shared/AccountMenuButton'
 import { OpenLivePageButton } from '@admin/shared/OpenLivePageButton'
 import { SettingsButton } from './SettingsButton'
-import { isStudioMode } from '@site/studio/studioMode'
 import { Link } from '@admin/lib/routing'
 import { Button } from '@ui/components/Button'
 import { Skeleton } from '@ui/components/Skeleton'
@@ -278,7 +277,7 @@ export function Toolbar({
           </Link>
         )}
 
-        {section === 'site' && isStudioMode() && <StudioProjectLabel />}
+        {section === 'site' && <StudioProjectLabel />}
 
         <div className={styles.workspaceToolbarItems}>
           {pluginButtons.map((button) => {
@@ -336,10 +335,10 @@ export function Toolbar({
           {/* "Open live page" jumps to the CMS's published static output —
               meaningless in Studio (its pages are never run through the
               publish pipeline; that's the future "Download code" story,
-              Phase 6D). Scoped to `section === 'site'` so the sticky studio
-              flag never hides this link on Content / Data / Media / other
-              admin routes, where it's a normal CMS affordance. */}
-          {!(section === 'site' && isStudioMode()) && <OpenLivePageButton />}
+              Phase 6D). Scoped to `section === 'site'` so it still shows on
+              Content / Data / Media / other admin routes, where it's a
+              normal CMS affordance. */}
+          {section !== 'site' && <OpenLivePageButton />}
           <AccountMenuButton />
         </div>
       </header>

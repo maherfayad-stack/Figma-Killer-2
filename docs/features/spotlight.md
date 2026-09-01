@@ -69,8 +69,8 @@ src/admin/spotlight/
 
 ```ts
 interface Command {
-  id:             CommandId          // 'editor.publish', 'site.add-page'
-  title:          string             // "Publish site" — primary row label
+  id:             CommandId          // 'editor.save', 'site.add-page'
+  title:          string             // "Save" — primary row label
   subtitle?:      string             // shown under the label
   group:          CommandGroup       // 'editor' | 'site' | 'content' | 'media' | 'pages' | …
 
@@ -152,7 +152,7 @@ The subscription is **dropped on close** to avoid spurious re-renders.
 
 | Group              | Examples                                                             |
 |--------------------|----------------------------------------------------------------------|
-| `editor`           | Publish, Save, Undo, Redo, Wrap in container, Toggle preview         |
+| `editor`           | Save, Undo, Redo, Wrap in container, Toggle preview                  |
 | `pages`            | Add page, Open page settings                                         |
 | `content`          | New post, Edit post                                                  |
 | `navigation`       | Go to dashboard, Go to site, Go to media, Go to plugins, …           |

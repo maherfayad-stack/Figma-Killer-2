@@ -159,7 +159,7 @@ export function ModulePicker({
         />
       </div>
 
-      <PackageBundleNotice isStudio={insertionContext.isStudio} stopPropagationOnInteraction />
+      <PackageBundleNotice stopPropagationOnInteraction />
 
       {isEmpty && (
         <ContextMenuItem disabled aria-disabled="true">

@@ -18,7 +18,6 @@ import { StepUpProvider } from '@admin/shared/StepUp'
 import { useEditorStore } from '@site/store/store'
 import { makeNode, makePage, makeSite } from '../fixtures'
 import type { CmsCurrentUser } from '@core/persistence'
-import { pageToCells } from '@core/data/pageFromRow'
 import '@modules/base/index'
 
 const LAYOUT_STORAGE_KEY = 'studio-editor-layout-v2'
@@ -27,55 +26,51 @@ const SRC_ROOT = join(import.meta.dir, '../..')
 const originalFetch = globalThis.fetch
 
 /**
- * AdminCanvasLayout's mount fires `/admin/api/cms/plugins` and
- * `/admin/api/cms/site` through usePluginEventBridge / usePersistence. Most
- * tests in this file don't care about the result — they only care about
- * layout/panel behaviour — so provide a default fetch that answers those
- * endpoints with safe empty values. Tests that need bespoke responses still
- * override `globalThis.fetch` directly.
+ * AdminCanvasLayout's mount fires several `/admin/api/studio/*` requests
+ * (via `usePersistence`'s `fsCodemodAdapter`, `useStudioBoardsPersistence`,
+ * `useStudioCommentsLoad` — all unconditional now that Studio is the only
+ * editor mode) plus `/admin/api/cms/plugins` (only while Settings → Plugins
+ * is open). Most tests in this file don't care about the result — they only
+ * care about layout/panel behaviour — so provide a default fetch that
+ * answers those endpoints with safe empty values. Tests that need bespoke
+ * responses still override `globalThis.fetch` directly.
  */
 function installAmbientFetch() {
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     const url = String(input)
-    if (url.endsWith('/admin/api/cms/plugins')) {
+    if (url.includes('/admin/api/cms/plugins')) {
       return new Response(JSON.stringify({ plugins: [], adminPages: [] }), {
         status: 200,
         headers: { 'content-type': 'application/json' },
       })
     }
-    if (url.endsWith('/admin/api/cms/site')) {
-      return new Response(JSON.stringify({ error: 'no draft site' }), { status: 404 })
-    }
-    if (url.endsWith('/admin/api/cms/pages')) {
-      return new Response(JSON.stringify({ rows: [] }), {
+    // `useStudioBoardsPersistence` — an empty, successful boards file. A
+    // legitimately-empty `boards: []` auto-creates one default board with
+    // zero frames (`boardSlice.loadBoards`); `useStudioDefaultBoardSeed`
+    // then seeds it with a frame per `site.pages` once frame defaults have
+    // also settled, so the site's pages stay visible in `StudioPagesTree`.
+    // A FAILED fetch instead marks `boardsLoadFailed` and renders an empty
+    // placeholder board with no frames at all — real Studio behaviour, but
+    // wrong for tests that just want the page list to render.
+    if (url.includes('/admin/api/studio/boards')) {
+      return new Response(JSON.stringify({ dir: '/tmp/studio-test', boards: { version: 1, boards: [] } }), {
         status: 200,
         headers: { 'content-type': 'application/json' },
       })
     }
-    if (url.endsWith('/admin/api/cms/layouts')) {
-      return new Response(JSON.stringify({ rows: [] }), {
+    if (url.includes('/admin/api/studio/frame-defaults')) {
+      return new Response(JSON.stringify({ dir: '/tmp/studio-test', frameDefaults: {} }), {
         status: 200,
         headers: { 'content-type': 'application/json' },
       })
     }
-    if (url.endsWith('/admin/api/cms/publish/status')) {
-      return new Response(JSON.stringify({
-        hasPublishedVersion: false,
-        draftMatchesPublished: false,
-        draftPages: 0,
-        publishedPages: 0,
-      }), {
+    if (url.includes('/admin/api/studio/comments')) {
+      return new Response(JSON.stringify({ dir: '/tmp/studio-test', comments: { version: 1, threads: [] } }), {
         status: 200,
         headers: { 'content-type': 'application/json' },
       })
     }
-    if (url.endsWith('/admin/api/cms/me/preferences/module-inserter')) {
-      return new Response(JSON.stringify({ value: null }), {
-        status: 200,
-        headers: { 'content-type': 'application/json' },
-      })
-    }
-    if (url.endsWith('/admin/api/ai/defaults')) {
+    if (url.includes('/admin/api/ai/defaults')) {
       return new Response(JSON.stringify({ defaults: {} }), {
         status: 200,
         headers: { 'content-type': 'application/json' },
@@ -229,44 +224,50 @@ beforeEach(() => {
   installAmbientFetch()
 })
 
-describe('AdminCanvasLayout — CMS site hydration gate', () => {
-  it('keeps the editor shell mounted while the CMS site hydrates', async () => {
-    const loaded = makeSite({ name: 'Hydrated Site' })
+describe('AdminCanvasLayout — Studio site hydration gate', () => {
+  it('keeps the editor shell mounted while the Studio site hydrates', async () => {
+    const page = makePage({ id: 'page-1', slug: 'index' })
     const originalFetch = globalThis.fetch
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
-      const { pages, ...shell } = loaded
-      if (url.includes('/admin/api/cms/pages')) {
-        const rows = pages.map((page) => ({
-          id: page.id,
-          tableId: 'pages',
-          cells: pageToCells(page),
-          slug: page.slug,
-          status: 'draft',
-          authorUserId: null,
-          createdByUserId: null,
-          updatedByUserId: null,
-          publishedByUserId: null,
-          author: null,
-          createdBy: null,
-          updatedBy: null,
-          publishedBy: null,
-          createdAt: '2026-01-01T00:00:00.000Z',
-          updatedAt: '2026-01-01T00:00:00.000Z',
-          publishedAt: null,
-          scheduledPublishAt: null,
-          deletedAt: null,
-        }))
-        return new Response(JSON.stringify({ rows }), { status: 200 })
+      // `fsCodemodAdapter.loadSite` reads `/admin/api/studio/load?stream=1`
+      // as NDJSON (WS-5.5) — a `kind: 'meta'` line, then a `kind: 'page'`
+      // line per page. `projectName` (not `site.name`, which the adapter
+      // always sets to the fixed "Studio" wordmark) is what proves the
+      // stream actually got consumed — it surfaces via `StudioProjectLabel`
+      // in the toolbar.
+      if (url.includes('/admin/api/studio/load')) {
+        const metaLine = JSON.stringify({
+          kind: 'meta',
+          dir: '/tmp/studio-test',
+          projectName: 'Hydrated Project',
+          componentSources: {},
+          styleRules: {},
+          styleRuleSources: {},
+          conditions: [],
+          vendorCss: '',
+          authoredCss: '',
+          trust: 'static',
+          paletteHiddenModuleIds: [],
+          pageCount: 1,
+        })
+        const pageLine = JSON.stringify({ kind: 'page', page })
+        return new Response(`${metaLine}\n${pageLine}\n`, {
+          status: 200,
+          headers: { 'content-type': 'application/x-ndjson' },
+        })
       }
-      if (url.includes('/admin/api/cms/components')) {
-        return new Response(JSON.stringify({ rows: [] }), { status: 200 })
+      if (url.includes('/admin/api/studio/framework')) {
+        return new Response(JSON.stringify({ framework: null }), { status: 200 })
       }
-      if (url.includes('/admin/api/cms/layouts')) {
-        return new Response(JSON.stringify({ rows: [] }), { status: 200 })
+      if (url.includes('/admin/api/studio/boards')) {
+        return new Response(JSON.stringify({ dir: '/tmp/studio-test', boards: { version: 1, boards: [] } }), { status: 200 })
       }
-      if (url.includes('/admin/api/cms/site')) {
-        return new Response(JSON.stringify({ site: shell }), { status: 200 })
+      if (url.includes('/admin/api/studio/frame-defaults')) {
+        return new Response(JSON.stringify({ dir: '/tmp/studio-test', frameDefaults: {} }), { status: 200 })
+      }
+      if (url.includes('/admin/api/studio/comments')) {
+        return new Response(JSON.stringify({ dir: '/tmp/studio-test', comments: { version: 1, threads: [] } }), { status: 200 })
       }
       return originalFetch(input, init)
     }) as typeof fetch
@@ -287,7 +288,7 @@ describe('AdminCanvasLayout — CMS site hydration gate', () => {
       expect(screen.queryByTestId('admin-site-loading-canvas')).toBeNull()
       expect(screen.queryByTestId('admin-site-loading-right-panel')).toBeNull()
 
-      expect(await screen.findByText('Hydrated Site')).toBeDefined()
+      expect(await screen.findByText('Hydrated Project')).toBeDefined()
       expect(screen.queryByRole('status', { name: /loading site editor/i })).toBeNull()
       expect(screen.queryByText(/loading site/i)).toBeNull()
     } finally {
@@ -305,9 +306,19 @@ describe('AdminCanvasLayout — CMS site hydration gate', () => {
     let siteFetchCalls = 0
     const originalFetch = globalThis.fetch
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-      if (String(input).includes('/admin/api/cms/site')) {
+      const url = String(input)
+      if (url.includes('/admin/api/studio/load')) {
         siteFetchCalls += 1
-        return new Response(JSON.stringify({ error: 'draft site not found' }), { status: 404 })
+        return new Response(JSON.stringify({ error: 'not found' }), { status: 404 })
+      }
+      if (url.includes('/admin/api/studio/boards')) {
+        return new Response(JSON.stringify({ dir: '/tmp/studio-test', boards: { version: 1, boards: [] } }), { status: 200 })
+      }
+      if (url.includes('/admin/api/studio/frame-defaults')) {
+        return new Response(JSON.stringify({ dir: '/tmp/studio-test', frameDefaults: {} }), { status: 200 })
+      }
+      if (url.includes('/admin/api/studio/comments')) {
+        return new Response(JSON.stringify({ dir: '/tmp/studio-test', comments: { version: 1, threads: [] } }), { status: 200 })
       }
       return originalFetch(input, init)
     }) as typeof fetch

@@ -148,7 +148,22 @@ const BUDGETS: ChunkBudget[] = [
     // Audited: no new code entered this chunk — `dataRowSchema-<hash>.js` is
     // simply a longer generated filename than `schemas-<hash>.js` was in the
     // one import specifier this chunk references it by. Measured 36,021 B.
-    maxBytes: 36_100,
+    //
+    // Raised 36,100 -> 36,700 B when the editor-plugin runtime moved behind
+    // `PluginRuntimeBridge`'s lazy boundary (Studio never used editor plugins
+    // but paid for them on every mount: a `GET /admin/api/cms/plugins` DB
+    // round trip plus the runtime's whole dependency graph).
+    // The note above says to AUDIT rather than raise a third time, so:
+    // audited by grepping the built chunk. `useInstalledEditorPlugins`,
+    // `activateInstalledEditorPlugins` and `listCmsPlugins` now occur ZERO
+    // times in `SitePage-*.js` — the runtime genuinely left the shell. The
+    // +547 B is entirely the `__vite__mapDeps` table and rolldown glue for the
+    // new `import()`, the same boundary cost the 30->34 KB note describes; no
+    // new component code entered this chunk. It buys 57,537 B of plugin
+    // chunks (`plugin-sdk`, `plugin-host-ui`, `usePluginEventBridge`,
+    // `pluginRuntimeBootstrap`, `plugin-host-hooks`) that a Studio session no
+    // longer downloads — a ~105:1 trade. Measured 36,647 B.
+    maxBytes: 36_700,
     rationale:
       'site route shell (current ~34 KB raw / ~12 KB gzipped). Must not ' +
       'pull the visual editor body, DnD, canvas, first-party modules, or ' +

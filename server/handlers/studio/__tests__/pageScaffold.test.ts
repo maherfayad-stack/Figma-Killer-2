@@ -193,3 +193,72 @@ describe('syncBoardFramesFromDisk', () => {
     expect(syncBoardFramesFromDisk(tmpDir)).toEqual([])
   })
 })
+
+describe('autoPlaceBoardFrame — which board a new page lands on', () => {
+  /**
+   * The bug: a page created while looking at any board but the first one was
+   * placed on `boards[0]`. Reproduced in a browser on a two-board project —
+   * "New page" from Board 2's own empty-state card put the screen on Board 1
+   * and left Board 2 showing "No screens on this board yet". Boards curate
+   * subsets of the project's pages on purpose, so "the first board" is never a
+   * safe stand-in for "the board the author is looking at".
+   */
+  function writeBoards(boards: { id: string; name: string; frames: unknown[] }[]): void {
+    fs.mkdirSync(path.join(tmpDir, '.studio'), { recursive: true })
+    fs.writeFileSync(
+      path.join(tmpDir, '.studio', 'boards.json'),
+      JSON.stringify({ version: 1, boards: boards.map((b) => ({ notes: [], docs: [], guides: [], ...b })) }),
+    )
+  }
+
+  function framesByBoard(): Record<string, string[]> {
+    const file = JSON.parse(fs.readFileSync(path.join(tmpDir, '.studio', 'boards.json'), 'utf8'))
+    return Object.fromEntries(
+      file.boards.map((b: { name: string; frames: { pageId: string }[] }) => [b.name, b.frames.map((f) => f.pageId)]),
+    )
+  }
+
+  it('places the page on the board the author named, not the first one', () => {
+    writeBoards([
+      { id: 'board-1', name: 'Board 1', frames: [] },
+      { id: 'board-2', name: 'Board 2', frames: [] },
+    ])
+
+    autoPlaceBoardFrame(tmpDir, 'checkout', 'board-2')
+
+    expect(framesByBoard()).toEqual({ 'Board 1': [], 'Board 2': ['checkout'] })
+  })
+
+  it('falls back to the first board when no board is named', () => {
+    // The headless path: the MCP tool and any agent caller have no board open,
+    // so there is nothing to mean by "the board I am looking at".
+    writeBoards([
+      { id: 'board-1', name: 'Board 1', frames: [] },
+      { id: 'board-2', name: 'Board 2', frames: [] },
+    ])
+
+    autoPlaceBoardFrame(tmpDir, 'checkout')
+
+    expect(framesByBoard()).toEqual({ 'Board 1': ['checkout'], 'Board 2': [] })
+  })
+
+  it('falls back to the first board when the named board is gone', () => {
+    // Deleted in another tab between opening the menu and picking a kind. A
+    // frame on the wrong board still beats a screen on no board at all.
+    writeBoards([{ id: 'board-1', name: 'Board 1', frames: [] }])
+
+    autoPlaceBoardFrame(tmpDir, 'checkout', 'board-deleted')
+
+    expect(framesByBoard()).toEqual({ 'Board 1': ['checkout'] })
+  })
+
+  it('creates the first board for a project that has no boards.json yet', () => {
+    // A named board cannot exist here, so the id is simply ignored rather than
+    // being minted as an empty board the author never asked for.
+    autoPlaceBoardFrame(tmpDir, 'checkout', 'board-2')
+
+    const file = JSON.parse(fs.readFileSync(path.join(tmpDir, '.studio', 'boards.json'), 'utf8'))
+    expect(file.boards).toHaveLength(1)
+    expect(file.boards[0].frames.map((f: { pageId: string }) => f.pageId)).toEqual(['checkout'])
+  })
+})

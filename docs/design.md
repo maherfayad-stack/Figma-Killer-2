@@ -75,7 +75,7 @@ Parent surface  ── --bg-surface
                    (no border, just a sliver of the parent showing through)
 ```
 
-This is implemented by `Widget` (`src/ui/components/Widget/`) and `DashboardGrid` (`src/admin/pages/dashboard/components/DashboardGrid.module.css`). Use the same pattern for any equivalent tile surface.
+This is implemented by `Widget` (`src/ui/components/Widget/Widget.module.css`). Use the same pattern for any equivalent tile surface.
 
 ### 5. Inputs wear their borders. Cards don't.
 
@@ -670,7 +670,7 @@ If you find yourself reaching for `!important`, the cascade is wrong — fix the
 
 ### Reduced motion
 
-`@media (prefers-reduced-motion: reduce)` in `globals.css` zeroes animation / transition durations and disables smooth scroll. Every animated component must respect this — see `Widget.module.css`, `DashboardGrid.module.css`, and `PanelRail.module.css` for the pattern. Non-negotiable (Constraint #189).
+`@media (prefers-reduced-motion: reduce)` in `globals.css` zeroes animation / transition durations and disables smooth scroll. Every animated component must respect this — see `Widget.module.css` and `PanelRail.module.css` for the pattern. Non-negotiable (Constraint #189).
 
 ### Focus
 
@@ -751,8 +751,7 @@ The HTML `title` attribute is banned for hover hints — gated by `no-native-tit
   - `src/ui/components/` — all primitives
   - `src/ui/cn.ts` — class composition helper
   - `src/ui/railAccent.ts` — rail accent assignment helpers (`railAccent`, `assignRailAccents`, `railTintVar`, `RAIL_ACCENTS`, `RailAccent`)
-  - `src/ui/components/Widget/Widget.module.css` — canonical tile-card implementation
-  - `src/admin/pages/dashboard/components/DashboardGrid.module.css` — canonical 1px-gap grid
+  - `src/ui/components/Widget/Widget.module.css` — canonical tile-card + 1px-gap grid implementation
   - `src/admin/pages/site/sidebars/PanelRail/PanelRail.module.css` — canonical tinted rail CSS
   - `vendor/pixel-art-icons/` — vendored icon set
 - Gate tests:

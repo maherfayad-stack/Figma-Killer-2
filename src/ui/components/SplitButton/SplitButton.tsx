@@ -7,8 +7,7 @@
  * variant and size and render as one seam-joined control (inner corners squared,
  * a 1px divider between them). The menu is portalled above editor panels.
  *
- * Used by the editor's Publish control (PublishActionGroup) and the Typography
- * panel's add-font control (FontsSection).
+ * Used by the Typography panel's add-font control (FontsSection).
  */
 import { useId, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'

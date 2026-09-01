@@ -15,13 +15,23 @@
  *
  * BULK ACTIONS
  * ────────────
- * A checkbox per row plus a select-all in the header. The two bulk actions are
- * Delete and Send to the AI assistant, and they are gated behind an explicit
- * selection rather than acting on "everything currently filtered": a filter is
- * a view, and a destructive action that silently follows the view deletes
- * things the user was only looking at. Select-all fills the working set from
- * the CURRENTLY VISIBLE rows, so filter + search + select-all is still the
- * fast path — it just goes through a state the user can see and undo.
+ * A checkbox per row. The two bulk actions are Delete and Send to the AI
+ * assistant, and they are gated behind an explicit selection rather than
+ * acting on "everything currently filtered": a filter is a view, and a
+ * destructive action that silently follows the view deletes things the user
+ * was only looking at.
+ *
+ * Everything else about selection is CONDITIONAL on there being a selection.
+ * Ticking the first row is what puts the panel into selection mode; until then
+ * neither the action bar nor the select-all row exists, because a select-all
+ * with nothing selected is a control for a mode you are not in. Select-all
+ * then fills the working set from the CURRENTLY VISIBLE rows, so filter +
+ * search + select-all is still the fast path.
+ *
+ * There is no Cancel button and no "N selected" readout. Clearing the last
+ * checkbox already leaves selection mode — that IS the cancel — and the count
+ * is on the select-all row a few pixels below. Both were saying a second time
+ * what the checkboxes say.
  */
 import { useEditorStore } from '@site/store/store'
 import {
@@ -30,6 +40,10 @@ import {
 } from '@site/store/slices/commentSelectors'
 import type { CommentFilter } from '@site/store/slices/commentsSlice'
 import type { CommentThread } from '@core/studio-comments'
+import { PanelHeader } from '@admin/shared/PanelHeader'
+import { UserAvatar } from '@admin/shared/UserAvatar'
+import { useCurrentAdminUser } from '@admin/sessionContext'
+import { commentAvatarUser } from '@site/studio/commentAvatarUser'
 import { SearchBar } from '@ui/components/SearchBar'
 import { SegmentedControl } from '@ui/components/SegmentedControl'
 import { EmptyState } from '@ui/components/EmptyState'
@@ -52,6 +66,7 @@ function CommentRow({ thread }: { thread: CommentThread }) {
   const confidence = useEditorStore((s) => selectThreadAnchorConfidence(s, thread))
   const selected = useEditorStore((s) => s.selectedThreadIds.includes(thread.id))
   const toggleThreadSelected = useEditorStore((s) => s.toggleThreadSelected)
+  const currentUser = useCurrentAdminUser()
   const first = thread.comments[0]
   const replies = thread.comments.length - 1
 
@@ -75,7 +90,16 @@ function CommentRow({ thread }: { thread: CommentThread }) {
           setActiveCommentThread(thread.id)
         }}
       >
-        <span className={cn(styles.seq, thread.resolved && styles.seqResolved)}>{thread.seq}</span>
+        {/*
+          The author's face, matching the pin on the canvas. The row already
+          spells the name out beside it, so the avatar is decorative here.
+        */}
+        <UserAvatar
+          user={commentAvatarUser(first?.author, currentUser)}
+          size={20}
+          alt={null}
+          className={cn(styles.avatar, thread.resolved && styles.avatarResolved)}
+        />
         <span className={styles.rowBody}>
           <span className={styles.rowHead}>
             <span className={styles.author}>{first?.author.displayName ?? 'Unknown'}</span>
@@ -85,11 +109,17 @@ function CommentRow({ thread }: { thread: CommentThread }) {
             ) : null}
           </span>
           <span className={styles.preview}>{first?.body ?? ''}</span>
-          {replies > 0 ? (
-            <span className={styles.meta}>
-              {replies} {replies === 1 ? 'reply' : 'replies'}
-            </span>
-          ) : null}
+          {/*
+            `seq` moved off the badge and into the muted meta line. It is still
+            the thread's NAME — what the user says out loud, what the panel and
+            the MCP tools address a thread by — so dropping it from the UI
+            entirely would break "look at comment 3". It just no longer competes
+            with the author for the row's leading slot.
+          */}
+          <span className={styles.meta}>
+            #{thread.seq}
+            {replies > 0 ? ` · ${replies} ${replies === 1 ? 'reply' : 'replies'}` : ''}
+          </span>
         </span>
       </Button>
     </li>
@@ -99,25 +129,26 @@ function CommentRow({ thread }: { thread: CommentThread }) {
 /** The bar that replaces the filter row while a selection exists. */
 function BulkActionBar({ threads }: { threads: readonly CommentThread[] }) {
   const selectedIds = useEditorStore((s) => s.selectedThreadIds)
-  const clearSelectedThreads = useEditorStore((s) => s.clearSelectedThreads)
   const selected = threads.filter((thread) => selectedIds.includes(thread.id))
 
   return (
     <div className={styles.bulkBar} role="group" aria-label="Bulk comment actions">
-      <span className={styles.bulkCount}>{selected.length} selected</span>
-      <Button variant="secondary" size="sm" onClick={() => void sendThreadsToAgent(selected)}>
+      <Button
+        variant="secondary"
+        size="sm"
+        className={styles.bulkButton}
+        onClick={() => void sendThreadsToAgent(selected)}
+      >
         Send to AI
       </Button>
       <Button
         variant="secondary"
         size="sm"
         tone="danger"
+        className={styles.bulkButton}
         onClick={() => void deleteThreadsById(selected.map((thread) => thread.id))}
       >
         Delete
-      </Button>
-      <Button variant="ghost" size="sm" onClick={clearSelectedThreads}>
-        Cancel
       </Button>
     </div>
   )
@@ -145,20 +176,22 @@ export function CommentsPanel() {
   return (
     <div className={styles.panel} data-testid="comments-panel">
       {/*
+        The SHARED panel header, not a bespoke one. This pane occupies the same
+        right-sidebar slot as the Properties panel and swaps with it, so a
+        hand-rolled `<h2>` + a literal `✕` glyph read as a different, unrelated
+        surface appearing over the one that was there — which is exactly how it
+        was reported. `PanelHeader` is what every other editor panel uses: the
+        same 36px height, the same title treatment, the same icon close button
+        with its `panel-close-<id>` hook.
+
         The pane has no rail button — it is entered from the canvas (`C`, the
-        Comment tool, or a pin) — so it has to carry its own way out.
+        Comment tool, or a pin) — so it does need to carry its own way out.
       */}
-      <header className={styles.panelHead}>
-        <h2 className={styles.panelTitle}>Comments</h2>
-        <Button
-          variant="ghost"
-          size="sm"
-          aria-label="Close comments"
-          onClick={() => setCommentsPaneOpen(false)}
-        >
-          ✕
-        </Button>
-      </header>
+      <PanelHeader
+        panelId="comments"
+        title="Comments"
+        onClose={() => setCommentsPaneOpen(false)}
+      />
 
       <div className={styles.controls}>
         <SearchBar
@@ -194,16 +227,19 @@ export function CommentsPanel() {
         />
       ) : (
         <>
-          <label className={styles.selectAll}>
-            <Checkbox
-              boxSize="sm"
-              checked={allVisibleSelected}
-              onCheckedChange={(next) =>
-                next ? setSelectedThreads(threads.map((t) => t.id)) : clearSelectedThreads()
-              }
-            />
-            <span>Select all {threads.length}</span>
-          </label>
+          {selectedIds.length > 0 ? (
+            <label className={styles.selectAll}>
+              <Checkbox
+                boxSize="sm"
+                className={styles.selectAllCheck}
+                checked={allVisibleSelected}
+                onCheckedChange={(next) =>
+                  next ? setSelectedThreads(threads.map((t) => t.id)) : clearSelectedThreads()
+                }
+              />
+              <span className={styles.selectAllLabel}>Select all {threads.length}</span>
+            </label>
+          ) : null}
           <ol className={styles.list}>
             {threads.map((thread) => (
               <CommentRow key={thread.id} thread={thread} />

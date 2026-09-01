@@ -21,14 +21,13 @@
  * from being editable without touching the panel shell.
  */
 import { PropertyControlRenderer } from '@site/property-controls/PropertyControlRenderer'
-import { evaluateCondition, isPropWritableToSource } from '@core/page-tree'
+import { evaluateCondition, hasWritableSourceLocation, isPropWritableToSource } from '@core/page-tree'
 import type {
   AnyModuleDefinition,
   PropertyControl,
 } from '@core/module-engine'
 import type { Page, PageNode } from '@core/page-tree'
 import type { ActiveDocument } from '../../store/slices/uiSlice'
-import { isStudioMode } from '@site/studio/studioMode'
 import { LoopPropertiesView } from './LoopPropertiesView'
 import { InstanceCallSiteView } from './InstanceCallSiteView'
 import { propLockReason } from './propLockReason'
@@ -104,11 +103,18 @@ export function renderModuleTabContent(args: ModuleTabContentArgs): React.ReactN
   // literal `src`. A node this control can do nothing for (locked, no traced
   // origin) falls through to the schema loop's existing `CodeValueControl`
   // below unchanged.
+  //
+  // `hasWritableSourceLocation` — not just `isPropWritableToSource` — gates
+  // this: a node with no source location at all (no `relFile:line:col` id)
+  // trivially passes `isPropWritableToSource` ("these rules must not narrow
+  // what the ordinary editor can do to it" — see that predicate's own doc),
+  // which would otherwise route a non-source-backed node into a picker whose
+  // whole job is writing to a real workspace file.
   const imageEditProp = definition.imageEdit?.prop
   const showImageSource =
-    isStudioMode() &&
     imageEditProp !== undefined &&
-    (selectedNode.assetOrigin !== undefined || isPropWritableToSource(selectedNode, imageEditProp))
+    (selectedNode.assetOrigin !== undefined ||
+      (hasWritableSourceLocation(selectedNode.id) && isPropWritableToSource(selectedNode, imageEditProp)))
 
   return (
     <>

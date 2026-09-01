@@ -74,7 +74,12 @@ describe('ModuleInserterDialog favorites', () => {
       ).toBeTruthy()
     })
 
-    for (const name of ['Container', 'Loop', 'Text', 'List', 'Content Outlet', 'Image']) {
+    // Only `base.container` ("Container") and `base.text` ("Text") declare
+    // a `sourceIntrinsic` — every other base module (Loop, List, Content
+    // Outlet, Image, …) has no honest spelling in the user's source, so
+    // `moduleAvailability`'s intrinsic-element gate hides them from every
+    // picker now that Studio is the only editor mode.
+    for (const name of ['Container', 'Text']) {
       const toggle = screen.getByRole('button', {
         name: `Add ${name} to notch favorites`,
       })

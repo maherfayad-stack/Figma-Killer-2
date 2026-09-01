@@ -33,7 +33,6 @@
  * in-memory state instead of disk.
  */
 export interface StudioDefaultBoardSeedInputs {
-  studioMode: boolean
   boardsLoaded: boolean
   boardsLoadFailed: boolean
   boardCount: number
@@ -53,7 +52,6 @@ export interface StudioDefaultBoardSeedInputs {
 }
 
 export function shouldSeedDefaultBoard(inputs: StudioDefaultBoardSeedInputs): boolean {
-  if (!inputs.studioMode) return false
   if (!inputs.boardsLoaded) return false
   if (inputs.boardsLoadFailed) return false
   if (inputs.boardCount !== 1) return false

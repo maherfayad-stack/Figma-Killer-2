@@ -13,7 +13,7 @@
  * Shared by both picker surfaces (`ModulePicker.tsx`'s compact context-menu
  * flow and `ModuleInserterDialog.tsx`'s toolbar "+ Add to canvas" dialog) so
  * the message and the promote action are defined once, not drifted twice.
- * Returns `null` outside Studio mode, or when there is nothing to report.
+ * Returns `null` when there is nothing to report.
  */
 import { useState, useSyncExternalStore } from 'react'
 import { useAdminUi } from '@admin/state/adminUi'
@@ -29,8 +29,6 @@ import {
 import styles from './PackageBundleNotice.module.css'
 
 interface PackageBundleNoticeProps {
-  /** Only shown inside Studio mode — pass `insertionContext.isStudio`. */
-  isStudio: boolean
   /**
    * Clicks inside a `ContextMenuSubmenu` must not bubble to the panel-level
    * dismiss handler (`ModulePicker.tsx`'s own `searchHeader` does the same).
@@ -42,7 +40,6 @@ interface PackageBundleNoticeProps {
 }
 
 export function PackageBundleNotice({
-  isStudio,
   stopPropagationOnInteraction = false,
   size = 'compact',
 }: PackageBundleNoticeProps) {
@@ -54,7 +51,7 @@ export function PackageBundleNotice({
   const projectDir = useAdminUi((s) => s.studioProject?.dir ?? null)
   const [promoting, setPromoting] = useState(false)
 
-  if (!isStudio || !bundleStatus || bundleStatus.ok) return null
+  if (!bundleStatus || bundleStatus.ok) return null
 
   const handlePromote = async () => {
     if (!projectDir || promoting) return

@@ -49,7 +49,7 @@
  * a non-active page's `PageLayerSubtree` start their own tree at depth 0, so
  * the visual nesting comes from this wrapper instead. `flex: 0 0 auto` keeps
  * it (and the DomPanel/PageLayerSubtree it holds — see DomPanel's
- * `.panelEmbedded`) sized to its own content: `.pageRow`'s column flex must
+ * `.panel`) sized to its own content: `.pageRow`'s column flex must
  * never stretch an expanded subtree to fill leftover space, or every
  * following page row gets pushed toward the bottom of the list. */
 .pageSubtree {

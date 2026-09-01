@@ -239,7 +239,15 @@ describe('tryServeStudioComponentBundle', () => {
     expect(fs.existsSync(path.join(wsDir, '.studio', 'cache'))).toBe(false)
   })
 
-  it('refuses when the workspace declares no react dependency', async () => {
+  it('proceeds when the workspace names no react anywhere', async () => {
+    // This used to refuse with `react-not-declared`, which made an absence of
+    // evidence into evidence of a problem and blocked EVERY project Studio
+    // itself creates (`projectSeed.ts` writes a package.json declaring only
+    // the design system). React is in `EXTERNAL_SPECIFIERS`, so the bundle
+    // carries no React of its own and the components run on the editor's —
+    // a project with no React of its own is the case with the LEAST risk of
+    // the duplicate-React "Invalid hook call" this gate exists to prevent,
+    // not the most.
     forceComponentPackageDemand(['acme-ui'])
     mergeStudioMeta(wsDir, { trust: 'render-packages' })
     writePackageJson({}) // no react dependency at all
@@ -247,8 +255,39 @@ describe('tryServeStudioComponentBundle', () => {
     const { req, url, pathname } = makeRequest('/admin/api/studio/component-bundle', postBody({ dir: wsDir }))
     const res = await tryServeStudioComponentBundle(req, url, pathname)
     const body = (await res!.json()) as { ok: boolean; code?: string }
+    // Got PAST the react gate — it fails later, on the fixture having no real
+    // package to extract components from, which is a different refusal.
+    expect(body.code).not.toBe('react-not-declared')
+    expect(body.code).toBe('no-components-found')
+  })
+
+  it('reads react from peerDependencies, which is where a library declares it', async () => {
+    forceComponentPackageDemand(['acme-ui'])
+    mergeStudioMeta(wsDir, { trust: 'render-packages' })
+    writePackageJson({ peerDependencies: { react: '^18.2.0' } })
+
+    const { req, url, pathname } = makeRequest('/admin/api/studio/component-bundle', postBody({ dir: wsDir }))
+    const res = await tryServeStudioComponentBundle(req, url, pathname)
+    const body = (await res!.json()) as { ok: boolean; code?: string }
+    // Host is React 19, so a peer-declared 18 is a real, known mismatch.
     expect(body.ok).toBe(false)
-    expect(body.code).toBe('react-not-declared')
+    expect(body.code).toBe('react-version-mismatch')
+  })
+
+  it('falls back to the INSTALLED react when nothing is declared', async () => {
+    // "Declared nowhere, installed anyway" is the normal shape for a
+    // transitive install. The installed copy is real evidence, so a mismatch
+    // there must still refuse rather than sail through as "unknown".
+    forceComponentPackageDemand(['acme-ui'])
+    mergeStudioMeta(wsDir, { trust: 'render-packages' })
+    writePackageJson({})
+    write(wsDir, 'node_modules/react/package.json', JSON.stringify({ name: 'react', version: '18.3.1' }))
+
+    const { req, url, pathname } = makeRequest('/admin/api/studio/component-bundle', postBody({ dir: wsDir }))
+    const res = await tryServeStudioComponentBundle(req, url, pathname)
+    const body = (await res!.json()) as { ok: boolean; code?: string }
+    expect(body.ok).toBe(false)
+    expect(body.code).toBe('react-version-mismatch')
   })
 
   it('approot-01 — reads the react-version check from a NESTED app root, not the project directory', async () => {
@@ -262,9 +301,10 @@ describe('tryServeStudioComponentBundle', () => {
     const { req, url, pathname } = makeRequest('/admin/api/studio/component-bundle', postBody({ dir: wsDir }))
     const res = await tryServeStudioComponentBundle(req, url, pathname)
     const body = (await res!.json()) as { ok: boolean; code?: string; message?: string }
-    // A project-root read would find NO package.json at all and refuse with
-    // `react-not-declared` instead — this specific refusal proves the
-    // NESTED package.json's react@18 was actually read and compared.
+    // A project-root read would find NO package.json at all, know nothing
+    // about React, and sail straight past the version gate — this refusal is
+    // only reachable if the NESTED package.json's react@18 was actually read
+    // and compared against the host's 19.
     expect(body.ok).toBe(false)
     expect(body.code).toBe('react-version-mismatch')
   })

@@ -15,8 +15,8 @@
  * since a stray `saveBoards()` call would otherwise overwrite the WRONG
  * project's `.studio/boards.json`.
  *
- * Persisted (sticky) the same way `studioMode`'s flag is: a refresh keeps
- * browsing the same project instead of reverting to the first one.
+ * Persisted (sticky) via localStorage: a refresh keeps browsing the same
+ * project instead of reverting to the first one.
  */
 const STUDIO_WORKSPACE_DIR_STORAGE_KEY = 'studio:studio:dir'
 

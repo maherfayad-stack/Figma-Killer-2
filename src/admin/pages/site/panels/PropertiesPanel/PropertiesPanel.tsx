@@ -50,7 +50,6 @@ import { MultiSelectorHeader } from './MultiSelectorInspector'
 import { type ClassPickerHandle } from './ClassPicker'
 import { useEditorStore } from '@site/store/store'
 import { selectActiveBoard } from '@site/store/slices/boardSelectors'
-import { isStudioMode } from '@site/studio/studioMode'
 import { PanelHeader } from '@admin/shared/PanelHeader'
 import { useDraggablePanel } from '@admin/shared/FloatingWindow'
 import { Button } from '@ui/components/Button'
@@ -90,12 +89,12 @@ export function PropertiesPanel({ variant = 'floating' }: PropertiesPanelProps) 
   const activeBoard = useEditorStore(selectActiveBoard)
   const activePageId = useEditorStore((s) => s.activePageId)
   const isActiveBoardFrame =
-    isStudioMode() && !!activeBoard && activeBoard.frames.some((f) => f.pageId === activePageId)
+    !!activeBoard && activeBoard.frames.some((f) => f.pageId === activePageId)
   // WS-7.1/7.2 — a bulk frame selection (distinct from `isActiveBoardFrame`
   // above, which tracks the single EDITING target, not a multi-select set)
   // also keeps the panel open and swaps its body for `FrameBulkInspector`.
   const selectedFrameIds = useEditorStore((s) => s.selectedFrameIds)
-  const isFrameMultiSelect = isStudioMode() && selectedFrameIds.length > 0
+  const isFrameMultiSelect = selectedFrameIds.length > 0
 
   // ── ClassPicker ref — for the locked-state 'Add class' CTA ────────────────
   const classPickerRef = useRef<ClassPickerHandle>(null)

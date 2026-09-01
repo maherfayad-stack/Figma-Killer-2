@@ -138,6 +138,17 @@ export function parsedPageToSitePage(parsed: ParsedPage, opts: ParsedPageToSiteP
       ? (node.codeProps ?? []).map((name) => `callSiteProps:${name}`)
       : (node.codeProps ?? []).filter((name) => name !== 'className')
 
+    // Companion to `codeProps` above — see `ParsedNode.codeFunctionPaths`.
+    // Remapped the exact same way `codeProps` just was: an instance's paths
+    // move into the `callSiteProps:<name>` namespace so a module reading
+    // `PageNode.codeFunctionPaths` for a `studio.instance` node finds them
+    // under the same prefix its `codeProps`/`resolvedProps` entries already
+    // use. `className` never carries a nested function, so no filter is
+    // needed for the non-instance case.
+    const codeFunctionPaths = node.instanceOf
+      ? (node.codeFunctionPaths ?? []).map((path) => `callSiteProps:${path}`)
+      : (node.codeFunctionPaths ?? [])
+
     // R2 — `node.resolvedProps` remapped the exact same way `codeProps` just
     // was, so a key here always lines up with a key in `codeProps`: an
     // instance's keys move into the `callSiteProps:<name>` namespace,
@@ -248,6 +259,7 @@ export function parsedPageToSitePage(parsed: ParsedPage, opts: ParsedPageToSiteP
       // separate from the structural lock above because the two answer different
       // questions — see `PageNode.codeProps`.
       ...(codeProps.length > 0 ? { codeProps } : {}),
+      ...(codeFunctionPaths.length > 0 ? { codeFunctionPaths } : {}),
       // Carry the source `style={{…}}` through so the canvas renders the real
       // inline styles (`NodeRenderer` reads `node.inlineStyles`). Without this
       // an authored flex/gap/etc. layout is invisible on the board.

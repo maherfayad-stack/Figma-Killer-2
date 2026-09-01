@@ -24,14 +24,19 @@
  * then shows exactly what was sent — which a silently-populated text box does
  * not.
  *
- * The agent gets each thread's `#seq`, page, anchored element and full
- * conversation, plus the standing instruction to resolve what it fixes. That
- * mirrors what `studio_resolve_comment` does for a single thread, so the agent
- * meets the same anchor gate either way — see `commentTools.ts`.
+ * The agent gets each thread's `#seq`, its LOCATION (board, frame, page and
+ * source file, the pin's position within the frame, the anchored element and
+ * its path down from the page root, and how far that anchor can still be
+ * trusted) and the full conversation, plus the standing instruction to resolve
+ * what it fixes. `describeCommentLocation` in `@core/studio-comments` builds
+ * that block, and `studio_list_comments` returns the same record structurally,
+ * so an agent reached through the button and an agent reached through MCP are
+ * told the same things about the same thread — see `location.ts`.
  */
 import { useEditorStore } from '@site/store/store'
 import { pushToast } from '@ui/components/Toast'
-import type { CommentThread } from '@core/studio-comments'
+import { buildCommentLocation, describeCommentLocation, type CommentThread } from '@core/studio-comments'
+import type { EditorStore } from '@site/store/types'
 import { deleteThreadById } from './commentActions'
 
 /**
@@ -52,20 +57,39 @@ export async function deleteThreadsById(threadIds: readonly string[]): Promise<n
   return deleted
 }
 
-/** One thread, rendered for the agent. */
-function formatThread(thread: CommentThread): string {
-  const lines = [
-    `### Comment #${thread.seq}${thread.resolved ? ' (resolved)' : ''}`,
-    thread.anchor.pageId ? `- Page: ${thread.anchor.pageId}` : null,
-    thread.anchor.node
-      ? `- Element: ${thread.anchor.node.moduleId} at ${thread.anchor.node.nodeId}`
-      : '- Not anchored to an element (free-floating pin on the board)',
+/**
+ * One thread, rendered for the agent: where it is, then what was said.
+ *
+ * The location half is resolved against the store the user is looking at, so
+ * the board and page are the NAMES on their screen and the anchor confidence
+ * is computed from the tree as it is right now — not as it was when the
+ * comment was written.
+ */
+function formatThread(thread: CommentThread, store: EditorStore): string {
+  const board = store.boards.boards.find((candidate) => candidate.id === thread.boardId) ?? null
+  const page = thread.anchor.pageId
+    ? (store.site?.pages.find((candidate) => candidate.id === thread.anchor.pageId) ?? null)
+    : null
+  const frame = board?.frames.find((candidate) => candidate.id === thread.anchor.frameId) ?? null
+
+  const location = describeCommentLocation(
+    buildCommentLocation(thread, {
+      boardName: board?.name ?? null,
+      pageTitle: page?.title ?? null,
+      tree: page,
+      frameWidth: frame?.width ?? null,
+      frameHeight: frame?.height ?? null,
+    }),
+  )
+
+  return [
+    location,
     '',
     ...thread.comments.map(
-      (comment) => `${comment.author.displayName}: ${comment.body}`,
+      (comment) =>
+        `${comment.author.displayName}${comment.author.kind === 'agent' ? ' (AI)' : ''}: ${comment.body}`,
     ),
-  ]
-  return lines.filter((line) => line !== null).join('\n')
+  ].join('\n')
 }
 
 /**
@@ -85,7 +109,7 @@ export async function sendThreadsToAgent(threads: readonly CommentThread[]): Pro
     'you did, and resolve it. If a comment’s anchor no longer resolves, do not',
     'guess — reply explaining why you cannot act on it and leave it open.',
     '',
-    ...threads.map(formatThread),
+    ...threads.map((thread) => formatThread(thread, store)),
   ].join('\n')
 
   store.openAgent()

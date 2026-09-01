@@ -94,6 +94,7 @@ import { badRequest, jsonResponse, readValidatedBody } from '../../http'
 import { serveStaticFile } from '../../static'
 import { projectsRootDir, resolveProjectDir } from '../studioProjects'
 import { resolveAppRoot } from './appRoot'
+import { ALM_DESIGN_PACKAGE_SPECIFIER } from './designSystemDetect'
 import { buildPackageManifest, resolvePackageDtsEntry, resolvePackageTsxEntry } from './packageManifest'
 import type { ComponentSpec } from './packageManifestSchema'
 import { resolveProjectProfile } from './projectProbe'
@@ -126,7 +127,21 @@ export type BundledComponentSpec = ComponentSpec & { pkg: string }
 
 function componentPackageDemand(dir: string): string[] {
   const profile = resolveProjectProfile(dir)
-  return [...profile.componentPackages].sort()
+  // ALM is served by the BUILT-IN module pack, so this route must not be asked
+  // for it. `studioPageLoad.ts` (its `ALM_DESIGN_PACKAGE_SPECIFIER` carve-out)
+  // never assigns a `pkg.*` module id to a component from that package — they
+  // resolve to `alm.<Name>` and are registered by `src/modules/alm/register.tsx`
+  // from a committed, build-time manifest that already carries every component
+  // with real prop names.
+  //
+  // Leaving it in the demand list meant bundling a package whose output nothing
+  // consumes, and — because the published tarball ships no `.d.ts`, a MINIFIED
+  // `dist/index.js`, and a `src/index.js` whose `./components/*` re-export
+  // targets are not published at all — the extraction could only ever come back
+  // empty. That produced a `no-components-found` refusal, surfaced to the
+  // author as a warning, about a design system that was in fact fully
+  // available on the canvas the whole time.
+  return [...profile.componentPackages].filter((pkg) => pkg !== ALM_DESIGN_PACKAGE_SPECIFIER).sort()
 }
 
 // ---------------------------------------------------------------------------
@@ -137,6 +152,7 @@ const PackageJsonReactFieldsSchema = Type.Object({
   version: Type.Optional(Type.String()),
   dependencies: Type.Optional(Type.Record(Type.String(), Type.String())),
   devDependencies: Type.Optional(Type.Record(Type.String(), Type.String())),
+  peerDependencies: Type.Optional(Type.Record(Type.String(), Type.String())),
 })
 
 function readPackageJsonFields(absPath: string) {
@@ -163,11 +179,30 @@ function hostReactMajor(): number | undefined {
   return version ? majorFromVersion(version) : undefined
 }
 
-/** The workspace's DECLARED react dependency major, read from `package.json` — per WS-3.2's own spec ("detect the workspace's React major from its package.json"), not the installed `node_modules` copy. `appRootAbs` (`approot-01`) — a nested app's own `package.json` is not necessarily at the project directory. */
+/**
+ * The workspace's React major, or `undefined` when the project says nothing
+ * about React anywhere.
+ *
+ * `appRootAbs` (`approot-01`) — a nested app's own `package.json` is not
+ * necessarily at the project directory.
+ *
+ * Four sources, declaration first (WS-3.2's spec: "detect the workspace's
+ * React major from its package.json"), then the INSTALLED copy as a fallback.
+ * `peerDependencies` counts because a project that is itself a library
+ * declares React there and nowhere else; the installed copy counts because
+ * "declared nowhere, installed anyway" is the normal shape for a transitive
+ * install and is strictly better evidence than nothing. The fallback can only
+ * turn "unknown" into "known" — it never overrides an explicit declaration.
+ */
 function workspaceReactMajor(appRootAbs: string): number | undefined {
   const fields = readPackageJsonFields(join(appRootAbs, 'package.json'))
-  const spec = fields?.dependencies?.react ?? fields?.devDependencies?.react
-  return spec ? majorFromVersion(spec) : undefined
+  const declared = fields?.dependencies?.react ?? fields?.devDependencies?.react ?? fields?.peerDependencies?.react
+  if (declared) {
+    const major = majorFromVersion(declared)
+    if (major !== undefined) return major
+  }
+  const installed = readPackageJsonFields(join(appRootAbs, 'node_modules', 'react', 'package.json'))?.version
+  return installed ? majorFromVersion(installed) : undefined
 }
 
 // ---------------------------------------------------------------------------
@@ -342,14 +377,21 @@ export async function tryServeStudioComponentBundle(req: Request, url: URL, path
 
       const hostMajor = hostReactMajor()
       const wsMajor = workspaceReactMajor(appRootAbs)
-      if (wsMajor === undefined) {
-        return jsonResponse({
-          ok: false,
-          code: 'react-not-declared',
-          message: "The workspace's package.json declares no react dependency, so its React version can't be confirmed compatible with the editor's own.",
-        })
-      }
-      if (hostMajor !== undefined && wsMajor !== hostMajor) {
+      // Only a KNOWN mismatch refuses. A project that names no React at all
+      // used to be refused here, which turned an absence of evidence into
+      // evidence of a problem — and refused every project Studio itself
+      // creates, since `projectSeed.ts` writes a package.json declaring only
+      // the design system.
+      //
+      // Nothing is actually at risk in that case: react, react-dom and both
+      // jsx runtimes are in `EXTERNAL_SPECIFIERS`, so the bundle never carries
+      // a React of its own and the components run on the EDITOR's React. The
+      // failure this gate exists to prevent ("Invalid hook call") needs a
+      // SECOND, different React — which is exactly what a project declaring
+      // none does not have. A declared major that disagrees with the host
+      // still refuses below, because there the project has told us its code
+      // expects a React the editor is not going to hand it.
+      if (hostMajor !== undefined && wsMajor !== undefined && wsMajor !== hostMajor) {
         return jsonResponse({
           ok: false,
           code: 'react-version-mismatch',

@@ -22,11 +22,9 @@ topology below first.
   `NodeRenderer.tsx`'s only pointer hook is `onPointerDownCapture` for
   selection, not `useDraggable`.
 - `@dnd-kit/core` genuinely IS used — but only on surfaces that never cross
-  an iframe: the **DOM panel / layer tree** (`DomPanel.tsx`'s `<DndContext>`),
-  the **Site Explorer** (`useSiteExplorerDnd.ts`, its own separate
-  `<DndContext>`), and the **dormant CMS dashboard** (`DashboardGrid.tsx` /
-  `BlockLibrary.tsx`, a third, unrelated `<DndContext>` — frozen, not built
-  on). `CanvasRoot.tsx` mounts no `<DndContext>` at all.
+  an iframe: the **DOM panel / layer tree** (`DomPanel.tsx`'s `<DndContext>`)
+  and the **Site Explorer** (`useSiteExplorerDnd.ts`, its own separate
+  `<DndContext>`). `CanvasRoot.tsx` mounts no `<DndContext>` at all.
   `src/__tests__/architecture/single-drag-mechanism.test.ts` contains
   `@dnd-kit/core` (and native HTML5 `dataTransfer`) to an explicit allowlist
   of exactly these files — a new surface reaching for either fails that gate.

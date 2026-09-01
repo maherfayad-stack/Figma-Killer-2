@@ -52,8 +52,13 @@ function GuideLine({ guide }: { guide: BoardGuide }) {
     // through untouched to `onContextMenu` below, exactly as the board
     // frame's own drag header does (`BoardFramesLayer.tsx`'s module doc).
     if (event.button !== 0) return
+    // `preventDefault` only, never `stopPropagation`. Swallowing pointerdown
+    // hides the press from `@use-gesture`, whose `filterTaps` click suppressor
+    // then eats the NEXT click anywhere in the canvas — see
+    // `canvas-overlay-pointerdown.test.ts`. Nothing needed it: the marquee's
+    // own pointerdown returns unless `e.target` IS the canvas root, and the pan
+    // only runs for middle-button or space+primary.
     event.preventDefault()
-    event.stopPropagation()
     const { canvasRootRef, transformRef } = viewportActions
 
     const onMove = (e: PointerEvent) => {

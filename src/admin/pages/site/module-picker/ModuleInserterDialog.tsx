@@ -489,7 +489,7 @@ export function ModuleInserterDialog({
               />
             </div>
 
-            <PackageBundleNotice isStudio={insertionContext.isStudio} size="roomy" />
+            <PackageBundleNotice size="roomy" />
           </div>
 
           <div ref={scrollRef} className={styles.scroller}>

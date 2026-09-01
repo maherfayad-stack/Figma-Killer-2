@@ -27,7 +27,6 @@ Catalog of every `localStorage` / `sessionStorage` key the admin app writes, and
 | `studio-media-page-view-mode`                 | Media workspace view mode (grid / list / large thumbs)                | `src/admin/pages/media/components/MediaCanvas/MediaCanvas.tsx`   |
 | `studio-media-explorer-view-mode`             | Media Explorer panel view mode (site workspace)                       | `src/admin/pages/site/panels/MediaExplorerPanel/mediaExplorerUtils.ts` → `VIEW_MODE_STORAGE_KEY` |
 | `studio-module-inserter-v1`                   | Module inserter view mode and recent inserts | `src/admin/pages/site/module-picker/moduleInserterPrefs.ts`      |
-| `studio-onboarding-dismissed`                 | Dashboard onboarding panel: dismissed / open per-device              | `src/admin/pages/dashboard/hooks/useOnboardingState.ts`         |
 | `spotlight:recent-commands`               | Spotlight recents — last N executed command ids                       | `src/admin/spotlight/recentStore.ts`                            |
 | `spotlight:telemetry:v1`                  | Local Spotlight telemetry (command frequency)                         | `src/admin/spotlight/telemetry.ts`                              |
 
@@ -53,7 +52,7 @@ Stored in the `user_preferences` table — one row per `(user_id, key)`. Keys ar
 
 | Key                                       | Owner                                                                 | Source-of-truth file                                            |
 |-------------------------------------------|-----------------------------------------------------------------------|-----------------------------------------------------------------|
-| `dashboard-layout`                        | Dashboard widget positions / sizes                                     | `src/admin/pages/dashboard/hooks/useDashboardLayout.ts`         |
+| `dashboard-layout`                        | Orphaned: schema still whitelisted, but its only consumer (the dormant CMS dashboard widget-grid) was deleted. No code reads or writes this key. | `src/core/persistence/userPreferences.ts` → `USER_PREFERENCE_SCHEMAS['dashboard-layout']` |
 | `module-inserter`                         | Module inserter notch favorites: ordered `{ kind, id }` refs for modules, layouts, and Visual Components | `src/admin/pages/site/module-picker/useModuleInserterPreference.ts` |
 
 ### Endpoint

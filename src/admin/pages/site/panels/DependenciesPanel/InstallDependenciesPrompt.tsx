@@ -6,10 +6,9 @@
  * job (never a blocking request — a real install runs 30s-3min) and reloads
  * the workspace once it lands so package-backed features light up.
  *
- * Studio-only: the install targets a real on-disk project directory, which
- * only exists in Studio (filesystem-as-truth) mode — see `isStudioMode`.
- * Renders nothing outside Studio mode, and nothing once `node_modules`
- * already exists or the project has no dependencies to install.
+ * The install targets a real on-disk project directory (the filesystem-as-
+ * truth adapter). Renders nothing once `node_modules` already exists or the
+ * project has no dependencies to install.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from '@ui/components/Button'
@@ -18,7 +17,6 @@ import { pushToast } from '@ui/components/Toast'
 import { getErrorMessage } from '@core/utils/errorMessage'
 import { requestCmsSiteReload } from '@admin/state/adminEvents'
 import { PackageSolidIcon } from 'pixel-art-icons/icons/package-solid'
-import { isStudioMode } from '@site/studio/studioMode'
 import { getStudioWorkspaceDir } from '@site/studio/studioWorkspaceDir'
 import {
   getDependencyInstallJob,
@@ -157,7 +155,6 @@ export function InstallDependenciesPrompt() {
       .finally(() => setStarting(false))
   }
 
-  if (!isStudioMode()) return null
   if (!probe) return null
 
   const jobRunning = job?.status === 'running'

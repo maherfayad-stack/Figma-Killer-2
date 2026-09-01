@@ -43,13 +43,13 @@ const SCAN_ROOT = join(SRC_ROOT, 'admin')
 // ─── Allowlists ──────────────────────────────────────────────────────────────
 
 /**
- * Files permitted to import from `@dnd-kit/core`. Three surfaces, all
- * pre-existing: the layer tree (DOM panel), the site explorer tree, and the
- * dormant CMS dashboard (block library + grid). D2's proposed fix removes
- * `@dnd-kit/core` entirely (it cannot cross the iframe boundary, which is
- * exactly why the canvas's OWN pointer-based reorder drag was hand-rolled in
- * the first place) — deferred out of this pass; see this task's own handoff
- * (`scratchpad/phase0/handoff-d2-d3-dnd.md`) for the precise remaining work.
+ * Files permitted to import from `@dnd-kit/core`. Two surfaces, both
+ * pre-existing: the layer tree (DOM panel) and the site explorer tree.
+ * D2's proposed fix removes `@dnd-kit/core` entirely (it cannot cross the
+ * iframe boundary, which is exactly why the canvas's OWN pointer-based
+ * reorder drag was hand-rolled in the first place) — deferred out of this
+ * pass; see this task's own handoff (`scratchpad/phase0/handoff-d2-d3-dnd.md`)
+ * for the precise remaining work.
  */
 const DND_KIT_ALLOWLIST: ReadonlySet<string> = new Set([
   // Outer `<DndContext>` mount point for the whole editor body.
@@ -63,10 +63,6 @@ const DND_KIT_ALLOWLIST: ReadonlySet<string> = new Set([
   'admin/pages/site/panels/SiteExplorerPanel/SiteExplorerTreeRows.tsx',
   'admin/pages/site/panels/SiteExplorerPanel/SiteExplorerTreeSection.tsx',
   'admin/pages/site/panels/SiteExplorerPanel/SiteExplorerDndScope.tsx',
-  // Dormant CMS dashboard grid + block library — frozen, not built on;
-  // see D2's own "Recommended landing order" step 7.
-  'admin/pages/dashboard/components/DashboardGrid.tsx',
-  'admin/pages/dashboard/components/BlockLibrary.tsx',
   // Pointer-math helper shared by the dnd-kit hooks above (type-only import
   // of `DragMoveEvent`/`DragEndEvent` — reconstructs a live pointer position
   // from dnd-kit's activator-event + delta shape).

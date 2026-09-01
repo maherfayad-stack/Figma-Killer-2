@@ -113,7 +113,6 @@ Examples in the codebase:
 
 - `MediaLibraryControl` (`src/admin/pages/site/property-controls/MediaLibraryControl.tsx`) — assets list is mutated by `handlePickFromModal` (prepends) and `viewerEditor` (`onAssetChanged` / `onAssetRemoved`). The tag-autocomplete palette derives from the live list.
 - `useContentMediaPicker` (`src/admin/pages/content/`) — same mutable-list pattern.
-- `MediaWidget` (`src/admin/pages/dashboard/widgets/`) — same.
 
 ### Multi-fetch orchestrators with shared error channels
 
@@ -142,7 +141,7 @@ Examples: `useInstalledEditorPlugins`, `AdminSectionNavigation`, `SpotlightRoot`
 
 rAF loops, debounced builders, dynamic module imports, boot orchestration, preference sync with debounced save, or a status poll that seeds an action state machine.
 
-Examples: `BreakpointSelectionOverlay` (rAF loop), `useRuntimeScriptBuild` (debounced bundler), `PluginPageRenderer` (dynamic module import), `useAdminBoot` (`flushSync` paint timing), `useDashboardLayout` (pref-sync), `PublishButton` (status-→-action state machine).
+Examples: `BreakpointSelectionOverlay` (rAF loop), `useRuntimeScriptBuild` (debounced bundler), `PluginPageRenderer` (dynamic module import), `useAdminBoot` (`flushSync` paint timing).
 
 ---
 

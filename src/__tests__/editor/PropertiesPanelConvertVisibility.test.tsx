@@ -2,17 +2,22 @@
  * PropertiesPanelConvertVisibility — ConvertToComponentButton visibility smoke tests
  *
  * These tests verify that `ConvertToComponentButton` is shown / hidden according
- * to the gating conditions in PropertiesPanel.tsx:
+ * to the gating conditions in PropertiesPanel.tsx, layered on top of
+ * `canComponentizeNode` (`componentization/componentizeEligibility.ts`), which
+ * always refuses — Studio's filesystem adapter has no persistence path for
+ * Componentize, and Studio is the only editor mode now:
  *
  *   activeDocument?.kind !== 'visualComponent'   &&
  *   selectedNode.moduleId !== 'base.body'         &&
- *   selectedNode.moduleId !== 'base.visual-component-ref'
+ *   selectedNode.moduleId !== 'base.visual-component-ref'  &&
+ *   canComponentizeNode(...)  // always false
  *
  * PPVC-1  No selection → button NOT in document
  * PPVC-2  Selected node is base.body → button NOT in document
  * PPVC-3  Selected node is base.visual-component-ref → button NOT in document
  * PPVC-4  Active document is a VC (kind === 'visualComponent') → button NOT in document
- * PPVC-5  Selected non-root, non-ref node on a page → button IS in document
+ * PPVC-5  Selected non-root, non-ref node on a page → button still NOT in document
+ *         (canComponentizeNode's own unconditional refusal)
  *
  * @see src/editor/components/PropertiesPanel/PropertiesPanel.tsx
  * @see src/editor/components/PropertiesPanel/ConvertToComponentButton.tsx
@@ -210,8 +215,8 @@ describe('PPVC-4 — VC canvas mode → Convert button not present', () => {
 // PPVC-5 — non-root, non-ref node on a page → button IS in document
 // ---------------------------------------------------------------------------
 
-describe('PPVC-5 — regular node on page → Convert button present', () => {
-  it('button IS present for a non-root, non-ref node when in page canvas mode', () => {
+describe('PPVC-5 — regular node on page → Convert button still absent (canComponentizeNode always refuses)', () => {
+  it('button is absent for a non-root, non-ref node in page canvas mode', () => {
     const rootId = 'root-1'
     const nodeId = 'text-1'
     const rootNode = makeNode({ id: rootId, moduleId: 'base.body', children: [nodeId] })
@@ -239,7 +244,7 @@ describe('PPVC-5 — regular node on page → Convert button present', () => {
     render(<PropertiesPanel />)
 
     expect(
-      screen.getByRole('button', { name: /Componentize/i }),
-    ).toBeDefined()
+      screen.queryByRole('button', { name: /Componentize/i }),
+    ).toBeNull()
   })
 })

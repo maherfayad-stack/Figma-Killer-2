@@ -18,9 +18,9 @@
  *      Non-CSS token files (JSON/JS/TS) are scanned but never copied — only
  *      their extracted tokens carry through.
  *
- * Studio-only: the "copy CSS into the project" step needs a project
- * directory, which only exists in studio mode — see the entry button's
- * `isStudioMode()` gate in `FrameworkPanel.tsx`.
+ * The "copy CSS into the project" step needs a project directory — the
+ * on-disk workspace `FrameworkPanel.tsx`'s `ImportDesignTokensButton` opens
+ * this from.
  */
 import { useId, useState, type CSSProperties, type FormEvent } from 'react'
 import { useEditorStore } from '@site/store/store'

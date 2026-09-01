@@ -59,6 +59,14 @@ instead of failing turns a measurable bug into a mysterious one. The same ratio
 IS correct for a frame's iframe (a replaced element with real intrinsic size),
 which is why it looked safe.
 
+**Arming the tool opens the pane; clicking a pin does not.** Clicking a pin used
+to force the pane open, which shrank the canvas, reflowed the board and moved
+the pin out from under the cursor mid-click. The `C` key and the Comment button
+still open it — that gesture means "review pass", and it is what makes the pane
+discoverable from the canvas. Hovering a pin shows its LATEST comment as a
+`pointer-events: none` peek, which is the cheap read that auto-opening the pane
+was badly approximating.
+
 **UI shape, after dogfooding:** the popovers flip sides near the canvas edge
 (`usePopoverFlip`, shared by draft and committed so submitting never moves the
 box), per-comment and per-thread actions are behind one ⋯ `CommentKebab` rather
@@ -84,11 +92,62 @@ passed. Only a genuine pointer sequence reproduces it.
 The swallow was never needed: `handleCanvasClick` already ignores any target
 that is not the canvas root or transform layer, and `useMarqueeSelection`
 already ignores any target but the canvas root. **Guard by target, never by
-stopping pointerdown.** `canvas-overlay-pointerdown.test.ts` is the gate; it
+stopping pointerdown.**
+
+It took THREE passes to clear, which is the part worth remembering. The popover
+was fixed first; `CommentPin` and `CommentPlacementLayer` still swallowed, so
+pins stayed dead — and the gate written to catch exactly this reported green,
+because its regex only matched the concise arrow body `(e) => e.stopPropagation()`
+and both survivors used a block body with an explanatory comment inside. **A gate
+that matches one spelling of a hazard is worse than no gate**: it certifies the
+thing it exists to catch. It now matches the handler and then looks for the call
+anywhere in its body. The suppression is also stale-state dependent, so it
+presents as intermittent — a pin click works right after a click on empty canvas
+and dies after any pan. `canvas-overlay-pointerdown.test.ts` is the gate; it
 allowlists three PRE-EXISTING instances (frame rename input, ladder row, doc
 block) that are latent rather than visibly broken because each swallows on the
 single control you are clicking. Fixing those properly means guarding the shared
 pan/drag plumbing by target — its own pass, not done here.
+
+**The gate was blind a SECOND time, and again it was found by adding code rather
+than by reading it.** Widening it to named handlers (`onPointerDown={beginDrag}`,
+which is what the pin's drag gesture needed) immediately turned up a fourth live
+instance nobody knew about: `RulerGuidesLayer`'s guide-line drag. That one is now
+fixed rather than allowlisted — `useMarqueeSelection` returns unless `e.target`
+IS the canvas root, so nothing needed the swallow. The gate now matches three
+spellings (concise arrow, block arrow, named function, resolved to its
+declaration in the same file) **and has fixtures for its own detector**, because
+twice now it has certified the exact hazard it exists to catch. If you add a
+fourth spelling of a handler, add it to the detector in the same change.
+
+**Pins are draggable, and the drop RE-ANCHORS.** `commentAnchorAtPoint.ts` — the
+point→anchor resolution — was extracted out of `CommentPlacementLayer` so
+placing a new pin and dropping a dragged one are literally the same function.
+Two copies would be the bug `pinPosition.ts` was extracted to prevent, one level
+up. Because the drop re-resolves frame, offset and node hint from scratch,
+dragging is the repair path for a `detached` thread: drop it where it belongs and
+it is `exact` again. Details (pointer capture over iframes, why the preview is a
+screen-pixel offset outside the counter-scale, why the offset is cleared after
+the write settles) are in the feature doc.
+
+**The drag preview was in the wrong coordinate space, and the transform order is
+the whole fix.** `translate(--pin-drag-x, …)` was written leftmost in the pin's
+transform chain, which puts it in the pin's PARENT space — inside
+`CanvasTransformLayer`, already multiplied by `--canvas-zoom`. So the pin
+tracked the cursor at `zoom`× speed and lagged visibly at anything below 100%.
+It is now after `scale(1 / --canvas-zoom)`, where the two cancel exactly.
+Measured 1:1 at zoom 0.5 and 1.0. The committed position was always right —
+only the live preview lagged — which is why a drop-and-check test passed over it.
+
+**What an agent is told about a comment.** `location.ts` in
+`@core/studio-comments` resolves a thread's five stored ids into a described
+location — named board, named page, source file, position in pixels AND as a
+share of the frame, the element's module/text, and its label trail from the page
+root. `studio_list_comments` returns the record; the panel's Send-to-AI button
+renders the same record as prose. One builder, because a thread must not be
+well-described through one door and badly through the other. `checkAnchor: false`
+yields `confidence: null`, never `detached` — "I did not look" and "it is gone"
+must never render as the same sentence to something that acts on them.
 
 **Why the agent gate is not optional.** `studio_resolve_comment` re-resolves the
 anchor and refuses on `drifted`/`detached`, posting the reason INTO the thread
@@ -1632,6 +1691,16 @@ are the remaining WS-2 items, not yet dispatched. See
 - **Verification:** `bun test src/__tests__/canvas` → 649 pass / 10 fail, all 10 pre-existing and unrelated to these three files (selection-leak overlay tests, B3 NodeRenderer lock-down suite, a canvas body context-menu test, `visualComponentRefInlineBody`, and `canvasScrollUnrollPinInteraction.test.tsx`'s two known-flaky MutationObserver tests — reran that file standalone 3x, 1-2 failures each run, confirmed pre-existing flake, not a regression). `npx tsc -b` clean. `npx eslint` clean on all touched files. Did not run repo-wide `bun run build`/`bun run lint` — out of scope per the work order (files-only verification) and the repo has unrelated in-flight parallel work.
 - **Human/dogfood action:** open `http://127.0.0.1:5173/admin/site?studio` on `untitled-2` (or any project using the alm design system), any zoom, the frame containing `Sheet2`/a fullscreen bottom sheet. Confirm the sheet's panel background fills all the way down behind its content (no undersized/mismatched background band), and separately confirm any card with rounded corners (`marketing-card`) still clips its image to those corners on canvas — it was square-cornered before this fix. A real scroll region (a tall list inside a `flex:1; overflow-y:auto` container) should still show fully unrolled with no internal scrollbar, same as before.
 
+- **Addendum — a coordinator re-check flagged a possible regression in this same test file; investigated, disproven, both flaky tests now documented instead of one.** Reported symptom: `canvasScrollUnrollPinInteraction.test.tsx`'s **"a mutation that triggers explicit-height tagging does not collapse the body pin"** — a DIFFERENT test from the already-known-flaky "unroll tagging" one — measured 0/4 on the pre-fix files (`git checkout --` on the four touched files) vs 2/4 on mine, with a specific hypothesis: the `overflowY !== 'auto' && overflowY !== 'scroll'` gate added to `snapshotAuthoredStyles` short-circuits the same loop the `fixed`/`explicit-height` classification runs in.
+  - **Hypothesis checked and disproven by code inspection first:** `snapshotAuthoredStyles` (records `SCROLL_UNROLL_ORIGINAL_OVERFLOW_ATTR` + the min-height floor) and `runUnrollPass` (does the actual `fixed`/`explicit-height` classification via `classifyUnrollElement`) are two separate functions with two separate `body.querySelectorAll('*')` loops, called in sequence from `runUnrollPasses`. The new `continue` only skips the floor-recording lines within its OWN loop; it cannot reach the classification loop at all. Also confirmed `SCROLL_UNROLL_ORIGINAL_OVERFLOW_ATTR` is written BEFORE the gate's `continue` on every element, unconditionally — unchanged behaviour for `collectScrollDeficits`.
+  - **Then checked empirically, not just by inspection**, since intuition has been wrong before in this file's history: instrumented both functions (timing + a per-effect-instance id logged at mount/schedule/rAF-fire/MutationObserver-fire/`observer.observe()` success) and ran until a failure was captured. In every failing capture, `observer.observe()` **succeeded** (no throw) for the frame under test, but its `MutationObserver` callback **never fired** after `doc.body.appendChild(panel)` — confirmed via a temporary log in the test itself that the append landed on the exact live `doc.body` the observer was watching (`panel.parentElement === doc.body: true`, `doc.body.children.length: 3`). No exception, no stale document, no stale body reference — happy-dom's `MutationObserver` occasionally just does not deliver the record.
+  - **Bisected the two candidate causes directly, both by running 15-30 reps each:** (1) shrank `buildScrollUnrollRules()`'s CSS text from ~4.9 KB to ~570 B, same selectors, same logic — **still failed at the same rate**, ruling out "bigger stylesheet, slower disable/enable toggle, timing shifted." (2) Removed the `overflowY` gate from `snapshotAuthoredStyles` entirely (the coordinator's specific hypothesis) — **still failed at the same rate**, directly disproving it.
+  - **Then measured the actual baseline, at a sample size the original 4-run comparison didn't have:** `git show fb4821b:<file>` (the true pre-`board-27a` ancestor, since `git checkout --` on this branch resolves to a later commit that already contains other sessions' unrelated work) into the four files, ran the isolated test file repeatedly. **7/30 failures (23%), then a second clean run 2/20 (10%)** — the "explicit-height tagging" test is flaky ON THE BASELINE TOO, at a rate a 4-run sample has roughly a 1-in-3 to 1-in-8 chance of reading as "0/4" purely by chance (binomial: `0.90^4 ≈ 0.66`, `0.77^4 ≈ 0.35`). Then re-ran the SAME clean 20-rep measurement on the current (fixed) files: **2/20 (10%)** — statistically indistinguishable from baseline. Also reproduced the coordinator's exact 4-run method once more on the current files and got 2/4, matching their report exactly — the small sample was real, just not evidence of a regression.
+  - **Root cause, to the extent it can be pinned without instrumenting happy-dom itself:** this is the same class of pre-existing flake as its sibling "unroll tagging" test (already documented in `board-24` and this file's original task brief as known-flaky) — both depend on a `MutationObserver` callback firing after a synchronous `appendChild` in happy-dom, and happy-dom's delivery of that callback is not 100% reliable under this test's timing. Not something my change introduced, narrowed, or widened.
+  - **Process note for whoever measures a small-sample "before vs. after" on this file again:** 4 runs is not enough to distinguish a real regression from a ~10-20% pre-existing flake in either of this file's two MutationObserver-dependent tests. Use ≥20 reps per side, from the SAME git state read via `git show <commit>:<path>` (not `git checkout --`, which on a shared branch may resolve to a commit already carrying unrelated later work — it did here: the "baseline" `git checkout --` in the original report actually landed on a commit with other sessions' changes already in it, though for these specific four files that happened not to matter).
+  - **`canvasScrollUnrollPinInteraction.test.tsx` now has TWO known-flaky tests, not one** — "a mutation that triggers unroll tagging does not collapse the body pin" (pre-existing, `board-24`) and "a mutation that triggers explicit-height tagging does not collapse the body pin" (pre-existing, confirmed by this addendum, previously undocumented because nobody had run it at high-N before). Neither was touched, weakened, or timeout-extended — per instruction, and because both are genuinely catching a real happy-dom limitation, just not one introduced here.
+  - **No code changed as a result of this addendum** — `canvasScrollUnroll.ts`, `CanvasScrollUnrollInjector.tsx`, `iframeBodyReset.ts`, `canvasScrollUnroll.test.ts` are byte-identical to what `board-27a` above already shipped (re-verified: `diff <(git show HEAD:<file>) <file>` empty for all four, post-investigation). All debug instrumentation added during this investigation was fully reverted (verified against pre-investigation backups, byte-identical) before finishing.
+
 ### board-27b — an unresolvable prop/style/text expression vanished with no trace at all; that used to be a write-safety hole, not just a cosmetic one
 - **Agent:** parser-surgeon
 - **Stage:** shipped
@@ -1684,6 +1753,61 @@ are the remaining WS-2 items, not yet dispatched. See
 - **Not investigated:** whether `docs/reference/canonical-jsx.md` itself needs an update alongside `canonicalCheck.ts`'s doc-comment changes — `canonicalCheck.test.ts`'s doc-parity gate only checks the ten rules' title/description/tier against that file verbatim, and none of those three fields changed, so the gate stayed green without me touching that file. If a future change to `static-class-name`'s RULE TEXT (not just this doc comment) is made, check that file too.
 
 **Verification:** `bun test src/core/page-parser src/core/ast-codemods src/__tests__/studio` → 613 pass / 0 fail (up from the pre-existing suite by one new file, `codeValueTracing.test.ts`, 15 new tests). `npx tsc -b` clean (one transient, non-reproducing error in `server/handlers/studioCss.ts` observed once mid-session while another agent was actively editing that file concurrently — reran clean twice after). `npx eslint` clean on all four touched `src/core/page-parser` files plus the new test file. Did not run repo-wide `bun run build`/`bun run lint` — out of scope per this task's own VERIFY section, and the repo has extensive unrelated in-flight parallel work (see the git-churn landmine above).
+
+### board-27f — a handler NESTED inside an object-valued prop still vanished with no trace — `toolbar.onBack` deleted a real Navbar back button, one level deeper than `board-25`'s top-level fix
+
+- **Agent:** parser-surgeon
+- **Stage:** shipped, dogfooded against the reference-render harness.
+- **Updated:** 2026-08-31
+
+Ask: `pages/Page.tsx`'s `<Navbar toolbar={{ variant: 'default', title: t.page.account, onBack: () => {} }} surface="default"/>` rendered `.glass-btn--type-back` in a plain Vite+React render of the real source, but not on the Studio canvas — `title` resolved fine, `onBack` (a function has no JSON form) was correctly dropped from the VALUE, but nothing recorded *where* it had been, so nothing could stand a no-op back up the way `board-25` already does for a TOP-LEVEL handler prop (`onClose={fn}` → `codeProps`, no value → `register.tsx` substitutes a no-op when the manifest marks that prop `kind: 'handler'`). The `@alm-design/design-system` package draws its leading `.glass-btn--type-back` only when `toolbar.onBack` is truthy — same gate class, one object level deeper, and the manifest has no per-nested-key classification to drive it from (`toolbar` itself is `tsType: 'unknown'`, no `kind` at all).
+
+**Fix, both halves:**
+
+- **Parser half.** `nodeResolution.ts`'s `tryResolvePropValue` now walks the resolved `StaticValue` tree (the SAME evaluation `staticValueToPropValue` already converts to JSON) with a new `collectFunctionPaths`, recording every `{kind:'fn'}` entry's location as a path relative to the top of the structure — dot for an object key, `[N]` for an array index (`'onBack'`, `'actions[0].onClick'`). `extractProps` (`jsxAttributeReaders.ts`) prefixes each with the prop's own name and files it in a **new, separate** `ParsedNode.codeFunctionPaths: string[]` field, threaded through unchanged by `parsePageFile.ts`'s three node-construction branches (plain node, `<svg>` node, `dangerouslySetInnerHTML` node — matches how `codeProps` itself is threaded).
+- **Render half.** `register.tsx`'s `makeComponent` now also reads `ModuleComponentProps.codeFunctionPaths` (new field, passed straight through by `NodeRenderer`) and, for each recorded path, rebuilds ONLY the objects/arrays along that path (`withValueAtPath` — clone-on-write, never mutates the node's shared `props`) with a no-op function at the end. Same refusal discipline as the top-level case: a no-op is stood up **only** where the path says the source actually wrote one — a `Navbar` with no `onBack` at all still renders with no back button (tested).
+
+**Companion field, deliberately not folded into `codeProps`.** Answered all four questions from this brief:
+1. **Locks?** No — same as every other `codeProps`/resolution fact, this is a VALUE, not a structural fact.
+2. **`codeProps`?** No, a SEPARATE field. Every path already sits under a prop name (`toolbar`) that `codeProps` already refuses wholesale — the whole object is never a writeback target regardless of what's nested inside it, so a nested path answers no NEW writability question `isPropWritableToSource` doesn't already answer. Folding it in would only double-report the same prop name to `canonicalCheck.ts`'s `literal-props` advisory (`"toolbar, toolbar.onBack resolved from…"`) for zero new information — so **`literal-props`/`static-class-name` needed no change at all**, tiering intact as instructed.
+3. **`origin`?** No — never; a dropped function has no literal behind it to point at.
+4. **Panel?** None needed — `codeFunctionPaths` never reaches `PropertyControlRenderer`; it's a render-time-only hint consumed exclusively by the module layer. The panel still shows `toolbar` as an ordinary `CodeValueControl` via `codeProps`, unchanged.
+
+**`tryResolvePropValue`'s return shape changed** (`ParsedPropValue | undefined` → `{value, functionPaths} | undefined`, still `undefined` only when the caller opted out of §7). The important subtlety: `structured.value` can be `undefined` while `structured.functionPaths` is non-empty (`toolbar={{ onBack: () => {} }}` alone — `staticValueToPropValue`'s "empty object declines" rule still drops the VALUE, but the function's location is a separate fact about the same expression and must survive regardless) — tested directly (`structuredProps.test.ts`).
+
+**`studio.instance` (local-component call sites) remap `codeFunctionPaths` into the `callSiteProps:<name>` namespace** exactly the way `codeProps`/`resolvedProps` already do (`parsedPageToSitePage.ts`) — for the one-shared-prefix reason, not because anything currently consumes it there; `inlineLocalComponents.ts` needed no change since it spreads `callSiteNode` wholesale onto the instance node, which already carries the new field through.
+
+**Schema:** `PageNodeSchema.codeFunctionPaths: Type.Optional(Type.Array(Type.String()))` in `pageNode.ts`, `Static<>`-derived (no parallel interface), tolerant-parsed the same way as `codeProps` (`parseCodeFunctionPaths` = `parseCodeProps` verbatim, same per-entry tolerance).
+
+**Verified against the reference-render harness, not just tests** — this bug class is invisible to unit tests that don't render a real design-system component:
+- `nav.js` (scratchpad) against the live Studio canvas on `untitled-2`: `{"backBtn":true,"navbarTitle":"Account", …}` — was `false` before this fix (confirmed via the reference app at `:5199/?page=Page`, which also reports `backBtn:true`).
+- Five-page structural diff (tag-name multiset, ref render vs. canvas render, CSS-module hash-agnostic): **zero tags present in the reference render and absent on canvas, for all five pages** (Home, Page, Popup, Sheet, Sheet2) — the DONE WHEN bar. Every canvas-side "extra" is a wrapper `div`/`span` (Studio's own selection/hover chrome, `display:contents` host divs — expected, pre-existing, unrelated to this fix): Home +9 div/+1 span, Page +12 div/+3 span, Popup/Sheet/Sheet2 +1 div each (the outer `NodeWrapper`). Matches the task's stated pre-fix baseline exactly (Popup/Sheet/Sheet2 unchanged, Home's 1-extra-span unchanged) with Page's previously-missing back button now present.
+- New render-level test suite `src/__tests__/canvas/almNestedHandlerAffordance.test.tsx` (3 tests, `@testing-library/react` against the real registered `alm.Navbar` module): draws the button when `codeFunctionPaths` names it, draws NO button when it's absent (the refusal case), and proves the standâ€‘up never mutates the node's own shared `props.toolbar` object (a second render, or a second node sharing the resolved reference, must not leak a function onto it).
+
+**Landmine for the next person extending `codeProps`/nested-value tracing (not already in the 578-line doc — telling `studio-scribe`):** `staticValueToPropValue`'s three rules (drop functions, decline on one bad array item, decline an empty object) all operate on the SAME converted value a sibling function now also walks for function paths — if a future change adds a FOURTH kind that needs similar side-channel tracing (e.g. an unresolved nested member expression), don't add a third parallel walk; generalize `collectFunctionPaths` into a `collect<Predicate>Paths` or make `staticValueToPropValue` itself return `{value, notes}` so there's one traversal, not N.
+
+**Files:** `src/core/page-parser/{nodeResolution,jsxAttributeReaders,parsePageFile,types}.ts`, `src/core/page-tree/pageNode.ts`, `src/core/studio-sync/parsedPageToSitePage.ts`, `src/core/module-engine/types.ts`, `src/admin/pages/site/canvas/NodeRenderer.tsx`, `src/modules/alm/register.tsx`, tests `src/core/page-parser/__tests__/structuredProps.test.ts` (5 new cases) + new `src/__tests__/canvas/almNestedHandlerAffordance.test.tsx` (3 tests), doc `docs/features/studio-import.md` ("A function NESTED inside a structured prop" section, new).
+
+**Verification:** `bun test src/core/page-parser src/core/ast-codemods src/__tests__/studio` → 617 pass / 0 fail. `bun test src/__tests__/canvas src/core/studio-sync` → 703 pass / 11 fail, all 11 the documented pre-existing set (selection-leak x2, B3 NodeRenderer lock-down x5, scroll-unroll pin/unroll MutationObserver x2, canvas body context menu x1, `visualComponentRefInlineBody` x1 — matches `board-27d`'s and this file's own prior entries verbatim, none touch a file in this change's scope). `npx tsc -b` clean repo-wide. `npx eslint` clean on every touched/new file. `module-size-budgets` architecture gate green (largest touched file 664 lines). Did not run repo-wide `bun run build`/`bun run lint` as a second pass — `tsc -b` (which `build` also runs) and per-file `eslint` already came back clean, and the repo has unrelated in-flight parallel work on `STATE.md` itself (see `board-27a`'s addendum, added by another agent between my read and my write of this file — left untouched, only appended to).
+
+### Addendum — two more findings the coordinator's own re-diff surfaced once the back button stopped hiding them. Finding 1 (extra icon wrapper + a co-located scroll-unroll misclassification) FIXED and verified. Finding 2 (a literal `className` with no matching `StyleRule` is dropped from the DOM) confirmed, root-caused, deliberately handed back rather than half-landed.
+
+**Finding 1 — `.cell__visual--icon` cells 20px taller on canvas, `[24,44]` instead of `[24,24]`. TWO independent, co-located causes, both fixed:**
+
+1. **`base.svg`'s own editor (`SvgEditor.tsx`) wrapped its markup in a plain `<span>` with no `display` override.** A raw `<svg width="40" height="40" …/>` reached through a JSX-element icon prop (`icon={<svg …/>}`, or the same shape nested one level inside a fragment slot) is NOT the one-level `{svg}` shortcut `iconPropFromJsx` recovers — it materializes as a real `base.svg` node instead, rendered by `SvgEditor`. That component's wrapping `<span {...nodeWrapperProps} dangerouslySetInnerHTML>` (needed to carry selection/hover identity onto markup React itself never sees as children) defaulted to `display: inline`, and an inline element's line box is taller than a same-height block child sized purely by content — the classic "extra space under an inline image" effect, compounding across nested icon spans. Fixed: `display: contents` on the span, merged with (never replacing) the node's own `nodeWrapperProps.style` — same pattern `src/modules/alm/register.tsx`'s design-system host div already uses, and `nodeVisualRect`'s box-less-node fallback (already generic, already covers that host div) picks this shape up for free — no selection/hover-geometry change needed. Measured improvement alone: `[24,44]` -> `[24,40]` — the wrapper really was contributing, just not the whole 20px.
+2. **The remaining `[24,40]` (not `[24,24]`) was a SEPARATE, pre-existing, previously-documented-as-accepted `CanvasScrollUnrollInjector` limitation, not a new bug.** `classifyUnrollElement`'s `'explicit-height'` branch fired on ANY element with a positive `scrollHeight - clientHeight` deficit, with NO regard for the element's own authored `overflow-y` — unlike the sibling `auto`/`scroll`-only rule right next to it in the same file. Measured directly in a real (non-Studio) browser: a `display: flex; width: 24px; height: 24px` icon frame (`.cell__visual--icon`, `overflow-y` never set — the CSS default, `visible`) around an intrinsically-40px, un-scaled SVG reports `scrollHeight: 32, clientHeight: 24` in the REFERENCE render too — Chromium's flex layout lets an oversized flex item inflate `scrollHeight` even though nothing is actually clipped (only *visible* overflow, which never generates a scrollable region). This measurement directly falsifies a claim `buildScrollUnrollRules`'s own doc comment used to make ("only `overflow: visible` collapses `scrollHeight` to `clientHeight`") — corrected in the same change. The injector then forced `height: auto; min-height: 32px` on the box; with `height: auto` an `overflow: visible` flex container auto-sizes to its tallest item (`40px`, not the `32px` floor), which is where the observed `40` comes from. **This is exactly the "known, accepted limitation" that same doc comment already named** ("an intentionally undersized crop frame around oversized… media… both present as a real `scrollDeficit`… If a future project hits this, the fix is scoping THIS tag by authored overflow the same way the rule above was") — this session hit it and built that named fix: `classifyUnrollElement` now takes `originalOverflowY` and requires it be something other than `'visible'` before tagging `'explicit-height'`. `hidden`/`clip`/`auto`/`scroll` all stay eligible (an `overflow: hidden` crop-frame panel — the case this tag exists for — is unaffected), because only `'visible'` means "never hid anything in the first place." Doc comments in `canvasScrollUnroll.ts` and `docs/agent-refs/canvas-internals.md` updated to match.
+
+**Verified end to end:** all seven `.cell__visual--icon` cells on `pages/Page.tsx` now measure `[24,24]` on the live canvas, matching the reference render exactly (was `[24,44]`/`[24,44]` on the two affected cells). Cross-checked with a SECOND, independent measurement script (`diverge.js` — disables Studio's own chrome stylesheets and re-measures) — no `height`/`minHeight` divergence appears for either cell any more. **No regression to the existing clean baseline**, re-measured after this fix: five-page tag-presence structural diff (Home/Page/Popup/Sheet/Sheet2) still shows **zero** tags present in the reference render and missing on canvas, same wrapper-chrome "extra" counts as before this addendum; `.bottom-sheet__content`'s genuine `overflow-y: auto` unroll on Sheet/Sheet2 is untouched — still exactly the same 3 property diffs (`overflowX`/`overflowY`/`minHeight`) on exactly that one element, nothing more, nothing less. `canvasScrollUnroll.test.ts` gained two new tests (24 pass, up from 18): one pinning the `'visible'`-excludes-`'explicit-height'` behaviour at the exact measured repro's numbers, one pinning that `hidden`/`clip`/`auto`/`scroll` all still tag normally. `canvasScrollUnrollPinInteraction.test.tsx`'s two MutationObserver tests (named pre-existing/flaky in this task's own brief) were re-measured 5 reps against the pre-this-addendum baseline (`git stash` of just the two touched scroll-unroll files) alongside 3 reps with the fix in place — fail rate statistically indistinguishable both ways (baseline: 1,2,1,1,1 of 5; with fix: 1,2,1 of 3) — not a regression, matches the documented 10-23% intrinsic flake rate.
+
+**Finding 2 — a literal `className="text-background-base-hover"` (`pages/Page.tsx:35`) renders `class=""` on canvas. Coordinator's hypothesis CONFIRMED, root-caused precisely, deliberately NOT fixed — handed back per this task's own explicit scope-call instruction rather than half-landing a change to a foundational, safety-adjacent path.**
+
+Verified directly against the live iframe DOM (`class` attribute literally empty on the canvas `<p>`) and traced the exact mechanism: `parsedPageToSitePage.ts` unconditionally deletes `props.className` and replaces it with `classIds` via `resolveClassIds` -> `classIdsForClassName` (`server/handlers/studioCss.ts`), which **by design** ("a dangling id would point at a rule the editor can't show or edit") drops any space-separated name with no matching `StyleRule` in the registry — and the original literal STRING is gone at that point; nothing downstream ever sees it again. One correction to the coordinator's own framing: `text-background-base-hover` isn't "defined only in the package's vendor CSS" — grepped the ENTIRE installed `@alm-design/design-system` bundle and the project's own CSS; the class is defined **nowhere at all**, almost certainly an AI-hallucinated utility-class name from page generation (matches this project's own documented pattern of an agent inventing a plausible-looking token it never verified). So this SPECIFIC instance is genuinely harmless — a real browser applies no rule to it either, matching the coordinator's own "visually harmless here" read. The MECHANISM is real and general, though: it would silently drop styling for any GENUINE hand-authored vendor/utility class the parser's `cssToStyleRules` engine can't flatten into a `StyleRule` (pseudo-class-only rules with no unqualified base selector, `@media`-only declarations, unsupported combinators, …) — even though the raw vendor CSS text is ALREADY injected into the frame (`AuthoredCssInjector`, WS-2.3/`board-27e`) and would style the element correctly the moment the class name actually reached the DOM.
+
+**Why handed back instead of fixed:** a correct fix needs the LITERAL className string preserved somewhere past the point `parsedPageToSitePage.ts` currently discards it (a new `PageNode` field, schema change), threaded through `NodeRenderer`/`getCanvasNodeClassName` as an unconditional passthrough, and — the part that isn't just plumbing — a real, unresolved precedence decision: when a name IS matched into `classIds` (and so already gets the editor's own generated class for that rule), does the literal name render ADDITIONALLY alongside it (safe on its own, but risks the raw vendor declaration's specificity/cascade order fighting a value the user edited through the panel), or does it get excluded once matched (needs `classIdsForClassName` to expose the matched/unmatched SPLIT it currently collapses into one `string[]`, a behavior change to a function three other things already depend on)? This is exactly the "structure vs values" conflation this codebase names as its single biggest historical bug source (`classIds` was serving two jobs — "what can the editor edit" and "what actually renders" — and this finding is that same disease, one layer over from where `codeProps`/`locked` already had it). Getting the precedence question wrong risks a WORSE bug than the one being fixed (a canvas that renders styling the save path can't reproduce, or a styled edit that silently reverts to the vendor default). Documented in full in `docs/features/studio-import.md`'s "What still does not import" table (new `—` row) plus a full writeup bullet immediately after the "Computed `className`" bullet it sits beside — next agent picking this up should start there, not from this STATE.md summary.
+
+**Files (this addendum only):** `src/modules/base/svg/SvgEditor.tsx`, `src/admin/pages/site/canvas/{canvasScrollUnroll,CanvasScrollUnrollInjector}.tsx`, test `src/__tests__/canvas/canvasScrollUnroll.test.ts` (+6 tests, 24 total), docs `docs/features/studio-import.md` + `docs/agent-refs/canvas-internals.md`. Finding 2: investigation only, **no source files changed** for it.
+
+**Verification (this addendum):** `bun test src/core/page-parser src/core/ast-codemods src/__tests__/studio src/__tests__/base-modules.test.ts src/__tests__/canvas src/core/studio-sync` → 1447 pass / 9 fail, all 9 the same documented pre-existing set as `board-27f`'s own first verification pass (the 2 MutationObserver flake tests happened not to fire this particular run — see the flake-rate comparison above for why that is not informative on its own). `npx tsc -b` clean repo-wide. `npx eslint` clean on every touched file. `fidelityCodes.test.ts` (gates the "What still does not import" table/registry parity) still 4/4 pass — the new `—`-coded row needed no registry entry. Line budgets: `SvgEditor.tsx` 68, `canvasScrollUnroll.ts` 380, `CanvasScrollUnrollInjector.tsx` 387 — all well under 700.
 
 ---
 
@@ -11487,3 +11611,54 @@ Ask: *"also make the smallest margin/padding in it to be 16px"*. Applied to `pag
 **The 16px gate now runs over both kits.** Note its one blind spot, stated in the test: a `var(--…)` value carries no length to read, so `padding: var(--space)` passes unchecked. The gate's job is catching a literal below the floor, which is the only way one gets written by hand.
 
 **Files:** `server/handlers/studio/pageTemplates.ts`, `server/handlers/studio/__tests__/pageTemplates.test.ts`, regenerated `studio-workspace/untitled-2/pages/{Sheet,Sheet2}.{tsx,module.css}`.
+
+### board-28 — live mode draws the device, and stopped lying about the width
+- **Agent:** coordinator (direct)
+- **Stage:** built, gated, dogfooded in a browser. `tsc -b` + `eslint` clean; canvas + architecture suites at the documented 10 pre-existing failures, none new.
+- **Updated:** 2026-09-01
+
+Ask: *"when I open live mode have a mobile iphone mockup … for tablet the same, for desktop leave it with no mockup"*.
+
+**New:** `deviceKind.ts` (pure `resolveDeviceKind` + `DEVICE_BEZEL_PX`), `DeviceMockup.tsx` + module CSS, three `--device-*` tokens in `globals.css`. Wired into `CanvasLiveSurface`; `kind === null` renders children with **no wrapper element at all**, so desktop and fluid are byte-identical to before.
+
+**The device is chosen by the breakpoint's `icon`, not its `id`.** `Breakpoint.icon` (`smartphone`/`tablet`/`monitor`) is already an explicit, user-set device statement from Settings → Viewport contexts. Width is only the fallback for an icon that names no device, since `icon` is a free-form pixel-art-icons name. Matching on `id` would have worked for the three seeded ids and silently drawn nothing on every custom context — the common case in a real project. `monitor` is an ANSWER, not a gap: it must not fall through to the width rule, or a 375px context iconed `monitor` becomes a phone. Gated both directions in `deviceKind.test.ts`.
+
+**Three invariants, enforced by construction, not by care:**
+- *Exact breakpoint width.* The bezel is a `box-shadow` spread painted outside the screen box — zero layout width. `DEVICE_BEZEL_PX` is the one source of truth (stylesheet reads it as the inline `--device-bezel`; `computeNaturalWidth` subtracts the same number so the bezel is not clipped by the surface overflow).
+- *Still editable.* All chrome is `pointer-events: none`. Verified in the browser: `elementFromPoint` at the island's centre returns the **iframe**, not the island.
+- *Selection geometry.* The wrapper wraps the viewport element `CanvasLiveSurface` owns and adds no padding, so `BreakpointSelectionOverlay` measures the same rect.
+
+**Pre-existing bug found and fixed while verifying — this one matters.** The two `LiveResizeHandle`s were in-flow flex children at `flex: 0 0 8px`, so they ate 16px off the frame: a 375px context rendered the page at **359px** while the badge read `375px`. Measured `iframe.contentWindow.innerWidth === 359`. A `(max-width: 375px)` media query therefore answered differently in live mode than on a real phone — the one thing live mode exists to get right, and invisible because the badge reported the intended number rather than the real one. Handles are now absolutely positioned just outside the frame. After: Mobile 375, Tablet 768, both exact.
+
+**Measured after the fix:** Mobile → phone, screen 375×812. Tablet → tablet, 768×964 (height capped by the window; `aspect-ratio` yields to `max-height: 100%` so the silhouette shortens rather than the width being traded away). Desktop → no mockup, page 1238 (container-clamped), DOM identical to before.
+
+**Trap:** `deviceKind.ts` was first written as `deviceMockup.ts` and collided with `DeviceMockup.tsx` on macOS's case-insensitive filesystem (TS1149/TS1261). Keep the pure module's name distinct from its component. Also: **do not run `npx prettier` on this repo** — there is no prettier config, so it reformats to prettier defaults (double quotes, semicolons) and turned a 35-line change into a 264-line diff.
+
+**Files:** `src/admin/pages/site/canvas/{deviceKind.ts,DeviceMockup.tsx,DeviceMockup.module.css,CanvasLiveSurface.tsx,CanvasLiveSurface.module.css}`, `src/styles/globals.css`, `src/__tests__/canvas/deviceKind.test.ts`, `docs/features/canvas-iframe-per-frame.md`.
+
+**Addendum to board-28 — scrollbars hidden inside the device.** Follow-up ask: *"but in mobile and tablet remove the scroll bar"*. New `DeviceScrollbarInjector.tsx` injects `scrollbar-width: none` + a zero-size `::-webkit-scrollbar` into the live iframe's document while a device mockup is drawn, and REMOVES the element when the author switches to desktop/fluid (where the scrollbar is what a visitor actually sees). Mounted from `CanvasLiveSurface` — NOT from `IframeFrameSurface`, which sits exactly at the 700-line ceiling; the iframe's document is already published on `IframeFrameSurfaceHandle.contentDocument`, so the feature that owns the device also owns reaching into it.
+
+Deliberate choices worth not re-litigating: the rule is **unscoped**, not root-only, because a real iOS/iPadOS device paints no persistent scrollbar on any scroll container; and it hides rather than disables — `overflow: hidden` would remove the scrollbar by making a tall page unreachable. Gated in `deviceScrollbarInjector.test.tsx`, including an explicit assertion that the emitted CSS contains no `overflow`.
+
+Measured in the browser on `untitled-2`: Mobile/Tablet → style present, computed `scrollbar-width: none`, page still scrolls (`scrollTo(0,200)` lands at 200), and a screenshot taken mid-scroll shows no track. Desktop → no style element, `scrollbar-width: auto`. Layout unmoved (`innerWidth === clientWidth === 375`, gutter 0) — on a classic-scrollbar platform this would reclaim ~15px rather than cost any.
+
+### board-29 — "Missing ar (0)" was false: a translation identical to the source counted as done
+- **Agent:** coordinator (direct)
+- **Stage:** built, gated, verified in the browser on `untitled-2`.
+- **Updated:** 2026-09-01
+
+Ask: *"the words popup and sheet2 don't appear in the content panel where I translate the text for different languages"*.
+
+**Diagnosis (the first three hypotheses were all wrong, so record the evidence).** The rows were NOT missing: `findHardcodedStrings` returns 0 for this project because the strings are already extracted (`title={t.sheet2.sheet2}`), the dictionary HAS `popup.popup` / `sheet.sheet` / `sheet2.sheet2`, `readTranslationCatalog` returns them, the panel renders them, and search finds them. What was missing was any indication that they still need work: their `ar` values are `"Popup"`, `"Sheet"`, `"Sheet2"` — **the English words**, because a model asked to translate a bare product-ish noun hands it back verbatim.
+
+Both the count and the AI action tested `(value ?? '').trim() === ''`, so all four scored as translated: the panel read **"Missing ar (0)"**, the Translate button sat DISABLED with "Every key already has ar", and the Arabic canvas kept rendering a Latin `Sheet2` at the top of a fully Arabic sheet. The strings were not merely untranslated, they were **unreachable** — no filter surfaced them, no action targeted them.
+
+**Fix:** new `@core/i18n`'s `isUntranslated(source, target)` — the ONE rule now shared by the panel's filter, its count, its tooltip and the server's candidate selection in `translateContent.ts`. Those were four independent copies of the same test; a rule that decides both "is there work" and "what gets worked on" must not be able to drift between them. Explicit `keys` still bypass it (that means "translate exactly these").
+
+**Digits and punctuation are exempt.** `"9:41"`, `"—"`, `"2025"` are correct as-is in every locale, so an identical value only counts as untranslated when it contains `\p{L}` — `\p{L}`, not a-z, because the source may itself be non-Latin and an echoed Cyrillic/CJK string is the same failure.
+
+**Accepted cost, stated in the module doc:** a legitimately identical string (a brand name, `OK`) will now flag and keep flagging, since nothing in the data separates "deliberately the same" from "silently skipped". A false positive is visible and costs a glance with both values side by side; a false negative is invisible and permanent. On this project the rule produced 4 true positives and 0 false ones.
+
+**Verified in the browser:** filter chip now reads **"Untranslated ar (4)"** (was "Missing ar (0)"), Translate button enabled (was disabled), and the filter lists exactly `page2.page2`, `popup.popup`, `sheet.sheet`, `sheet2.sheet2`. The dictionary was NOT rewritten — running the translate action writes to the user's repo and costs a model call, so that stays their click.
+
+**Files:** `src/core/i18n/{translationState.ts,index.ts,__tests__/translationState.test.ts}`, `src/admin/pages/site/panels/ContentPanel/ContentPanel.tsx`, `server/ai/handlers/translateContent.ts`.

@@ -69,6 +69,9 @@ export function CanvasTransformLayer({
     <div
       ref={ref}
       data-testid="canvas-transform-layer"
+      // The marker `canvasTransformLayerOf` finds, for gestures that start on
+      // board furniture and need to measure against the board's own origin.
+      data-canvas-transform-layer=""
       // GPU promotion (will-change) is applied imperatively + transiently by
       // useCanvas during active gestures — not permanently — to avoid wrapping
       // the whole subtree into one oversized layer backing that leaves content

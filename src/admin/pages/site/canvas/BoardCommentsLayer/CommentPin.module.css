@@ -20,24 +20,44 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: var(--space-3xs);
     box-sizing: border-box;
-    min-width: 26px;
+    width: 26px;
     height: 26px;
-    padding: 0 var(--space-2xs);
+    padding: 0;
     border: none;
     border-radius: 13px 13px 13px 2px;
     background: var(--canvas-comment-pin);
-    box-shadow: var(--canvas-chrome-shadow);
+    /* The white ring, drawn as a spread shadow rather than a border so it sits
+       OUTSIDE the 26px marker: a border would eat 2px of the badge and shrink
+       the number. It is the first shadow in the list so the drop shadow falls
+       from the ring's edge, not the pin's. */
+    box-shadow:
+        0 0 0 2px var(--canvas-comment-pin-ring),
+        var(--canvas-chrome-shadow);
     color: var(--canvas-comment-pin-text);
     font-size: var(--text-2xs);
     font-weight: 700;
     font-variant-numeric: tabular-nums;
     line-height: 1;
-    cursor: pointer;
+    cursor: grab;
     pointer-events: auto;
     transform-origin: 0 0;
-    transform: scale(calc(1 / var(--canvas-zoom))) translate(-50%, -100%);
+    /*
+     * The drag offset sits AFTER the counter-scale, and the order is the whole
+     * of it. Transform functions compose left to right, so the leftmost one
+     * applies in the pin's PARENT space — which is inside CanvasTransformLayer
+     * and therefore already multiplied by --canvas-zoom. Written there, a
+     * cursor delta of 100px moved the pin 50px at 50% zoom, and the pin visibly
+     * lagged the cursor.
+     *
+     * Placed after `scale(1 / --canvas-zoom)` it lands in a space that is
+     * divided by the zoom and then multiplied by it again on the way to the
+     * screen, so the two cancel and the offset IS the cursor delta, at every
+     * zoom. Defaults are set inline on the element rather than as `var()`
+     * fallbacks, which the token policy bans.
+     */
+    transform: scale(calc(1 / var(--canvas-zoom)))
+        translate(var(--pin-drag-x), var(--pin-drag-y)) translate(-50%, -100%);
 }
 
 .pin:hover {
@@ -49,9 +69,21 @@
     outline-offset: 2px;
 }
 
+/* Clears the 2px ring, so the open thread's marker reads as ring-then-outline
+   rather than one thick smudge. */
 .active {
     outline: 2px solid var(--canvas-comment-pin-text);
-    outline-offset: 1px;
+    outline-offset: 2px;
+}
+
+/*
+ * Mid-drag. No transition on `transform` anywhere on this element — the offset
+ * is written every pointermove, and easing it would leave the pin trailing the
+ * cursor. The raised z-index keeps the pin above the frames it is crossing.
+ */
+.dragging {
+    z-index: 3;
+    cursor: grabbing;
 }
 
 /* Finished, not gone. Achromatic so the open pins keep the only colour on the
@@ -61,25 +93,34 @@
     color: var(--text-bright);
 }
 
+/*
+ * The author's face, filling the pin inside its identity ring.
+ *
+ * Two classes deep to out-specify `UserAvatar`'s own `.root`, which carries a
+ * 1px border and a surface background of its own — correct in a toolbar, a
+ * third ring here. Same move `.rowShell .row` makes in the comments panel.
+ */
+.pin .avatar {
+    box-sizing: border-box;
+    /* The white ring that separates the face from the pin's identity colour —
+       the same token as the pin's own outer ring, for the same reason: it has
+       to hold against a photo of any colour, not against the editor theme. */
+    border: 2px solid var(--canvas-comment-pin-ring);
+    /* `UserAvatar`'s own surface is kept, not overridden to transparent: an
+       initials circle with the pin's amber showing through reads as a letter
+       stamped on the marker, where the identicon beside it reads as a contained
+       face. Both cases have to be the same disc. */
+}
+
 /* An uncommitted pin: placed, waiting for its first sentence. Hollow, because
    it is not yet a thread and must not read as one. */
 .draft {
     background: var(--bg-surface);
-    box-shadow: var(--canvas-chrome-shadow), inset 0 0 0 2px var(--canvas-comment-pin);
+    box-shadow:
+        0 0 0 2px var(--canvas-comment-pin-ring),
+        var(--canvas-chrome-shadow),
+        inset 0 0 0 2px var(--canvas-comment-pin);
     pointer-events: none;
-}
-
-.seq {
-    display: block;
-}
-
-/* Reply count. Reads as "there is more here than the first line". */
-.replies {
-    display: block;
-    padding-left: var(--space-3xs);
-    border-left: 1px solid var(--overlay-20);
-    opacity: 0.75;
-    font-weight: 500;
 }
 
 /* The anchored element no longer resolves — see anchorResolve.ts. The dot is
@@ -95,4 +136,68 @@
     border: 1px solid var(--canvas-comment-pin-text);
     border-radius: 50%;
     background: var(--canvas-comment-pin-stale);
+}
+
+/*
+ * Hover peek: the thread's latest comment, shown beside its pin.
+ *
+ * Same counter-scale and origin as the pin, so it stays a constant on-screen
+ * size at any zoom. The translate puts it to the RIGHT of the pin and level
+ * with its tip: the pin itself is drawn up-and-left of the anchor
+ * (`translate(-50%, -100%)`), so starting at +14px clears the marker without
+ * overlapping the element the comment is about.
+ *
+ * `pointer-events: none` is the important line. This is a peek, not a
+ * surface — it must never swallow the click that opens the thread, and it
+ * must never be the thing the cursor is over when the pin's `pointerleave`
+ * decides whether to keep showing it.
+ */
+.peek {
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 2;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3xs);
+    box-sizing: border-box;
+    width: 220px;
+    padding: var(--space-2xs) var(--space-xs);
+    border-radius: var(--radius);
+    background: var(--bg-surface);
+    box-shadow: var(--canvas-chrome-shadow);
+    color: var(--text);
+    text-align: left;
+    pointer-events: none;
+    transform-origin: 0 0;
+    transform: scale(calc(1 / var(--canvas-zoom))) translate(14px, -100%);
+}
+
+.peekAuthor {
+    overflow: hidden;
+    color: var(--text-bright);
+    font-size: var(--text-2xs);
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.peekMeta {
+    color: var(--text-subtle);
+    font-weight: 400;
+}
+
+/* Three lines, then ellipsis. A peek that can grow without bound stops being
+   a peek and starts covering the design it is commenting on. */
+.peekBody {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+    color: var(--text-muted);
+    font-size: var(--text-2xs);
+    font-weight: 400;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
 }

@@ -35,10 +35,9 @@ function intrinsicMod(id: string, category: string, name = id): RegistryModuleFo
   return { ...mod(id, category, name), sourceIntrinsic: () => ({ tag: 'div' }) }
 }
 
-const PAGE_CTX: ModuleInsertionContext = { isVCMode: false, activeVcId: null, isTemplate: false, hasOutlet: false, isStudio: false }
-const TEMPLATE_CTX: ModuleInsertionContext = { isVCMode: false, activeVcId: null, isTemplate: true, hasOutlet: false, isStudio: false }
-const VC_CTX: ModuleInsertionContext = { isVCMode: true, activeVcId: 'vc-1', isTemplate: false, hasOutlet: false, isStudio: false }
-const STUDIO_CTX: ModuleInsertionContext = { isVCMode: false, activeVcId: null, isTemplate: false, hasOutlet: false, isStudio: true }
+const PAGE_CTX: ModuleInsertionContext = { isVCMode: false, activeVcId: null, isTemplate: false, hasOutlet: false }
+const TEMPLATE_CTX: ModuleInsertionContext = { isVCMode: false, activeVcId: null, isTemplate: true, hasOutlet: false }
+const VC_CTX: ModuleInsertionContext = { isVCMode: true, activeVcId: 'vc-1', isTemplate: false, hasOutlet: false }
 
 beforeEach(() => {
   localStorage.clear()
@@ -46,34 +45,21 @@ beforeEach(() => {
 })
 
 describe('module inserter model', () => {
-  it('filters registry modules using the editor insertion rules', () => {
-    const modules = [
-      mod('base.body', 'Layout'),
-      mod('base.container', 'Layout', 'Container'),
-      mod('base.visual-component-ref', 'Components'),
-      mod('base.slot-instance', 'Components'),
-      mod('base.slot-outlet', 'Components', 'Slot'),
-      mod('base.text', 'Typography', 'Text'),
-    ]
-
-    const pageModeIds = getVisibleModuleItems(modules, PAGE_CTX).map((item) => item.id)
-    expect(pageModeIds).toEqual(['base.container', 'base.text'])
-
-    const vcModeIds = getVisibleModuleItems(modules, VC_CTX).map((item) => item.id)
-    expect(vcModeIds).toEqual(['base.container', 'base.slot-outlet', 'base.text'])
-  })
-
-  // In studio mode the rule is "does this have an honest spelling in the user's
-  // source?", not "is this a design-system component". A component answers yes
-  // by being imported; `base.container` and `base.text` answer yes by being
+  // The rule is "does this have an honest spelling in the user's source?",
+  // not "is this a design-system component". A component answers yes by
+  // being imported; `base.container` and `base.text` answer yes by being
   // intrinsic elements (`sourceIntrinsic`) — a `<div>` and a `<p>` need no
   // import, which is exactly what `insertJsxElement` writes when
-  // `importSpecifier` is omitted. Everything else really is an editor construct
-  // with no JSX to write, and stays hidden rather than offering an insert that
-  // could only be refused.
-  it('in studio mode shows design-system components AND intrinsic elements, hiding editor-only blocks', () => {
+  // `importSpecifier` is omitted. Everything else really is an editor
+  // construct with no JSX to write, and stays hidden rather than offering an
+  // insert that could only be refused. This rule is unconditional — Studio is
+  // the only editor mode.
+  it('shows design-system components AND intrinsic elements, hides editor-only blocks', () => {
     const modules = [
+      mod('base.body', 'Layout'),
       intrinsicMod('base.container', 'Layout', 'Container'),
+      mod('base.visual-component-ref', 'Components'),
+      mod('base.slot-instance', 'Components'),
       intrinsicMod('base.text', 'Typography', 'Text'),
       mod('base.button', 'Interactive', 'Button'),
       mod('base.loop', 'Layout', 'Loop'),
@@ -81,16 +67,26 @@ describe('module inserter model', () => {
       mod('alm.Chip', 'Design System', 'Chip'),
     ]
 
-    const studioIds = getVisibleModuleItems(modules, STUDIO_CTX).map((item) => item.id)
-    expect(studioIds).toEqual(['base.container', 'base.text', 'alm.Button', 'alm.Chip'])
+    const pageModeIds = getVisibleModuleItems(modules, PAGE_CTX).map((item) => item.id)
+    expect(pageModeIds).toEqual(['base.container', 'base.text', 'alm.Button', 'alm.Chip'])
+  })
 
-    // The same base modules remain insertable in ordinary (CMS) page mode.
-    const pageIds = getVisibleModuleItems(modules, PAGE_CTX).map((item) => item.id)
-    expect(pageIds).toEqual(['base.container', 'base.text', 'base.button', 'base.loop', 'alm.Button', 'alm.Chip'])
+  // `base.slot-outlet` has no `sourceIntrinsic` of its own (it's an editor
+  // construct, not a real JSX element), so the intrinsic-element gate above
+  // hides it before its VC-mode-specific rule ever runs — even in VC mode.
+  // Current, real production behavior; not something this test invents.
+  it('hides base.slot-outlet even in VC mode — it has no honest source spelling', () => {
+    const modules = [mod('base.slot-outlet', 'Components', 'Slot')]
+    expect(getVisibleModuleItems(modules, VC_CTX)).toHaveLength(0)
   })
 
   it('keeps the content outlet visible but disabled outside an insertable template context', () => {
-    const outlet = mod('base.outlet', 'CMS', 'Content Outlet')
+    // `base.outlet` itself has no `sourceIntrinsic` either, so it would be
+    // fully hidden before ever reaching its own rule below (real production
+    // behavior — content outlets are a CMS/template concept Studio doesn't
+    // currently expose a picker entry for). Stub it as intrinsic here to
+    // isolate and test the outlet-specific rule on its own terms.
+    const outlet = intrinsicMod('base.outlet', 'CMS', 'Content Outlet')
 
     // Regular page: visible, disabled, reason explains the template requirement.
     const onPage = moduleAvailability(outlet, PAGE_CTX)
@@ -141,9 +137,9 @@ describe('module inserter model', () => {
 
   it('resolves favorite refs against insertable items and skips missing refs', () => {
     const items = getVisibleModuleItems([
-      mod('base.container', 'Layout', 'Container'),
-      mod('base.text', 'Typography', 'Text'),
-      mod('base.image', 'Media', 'Image'),
+      intrinsicMod('base.container', 'Layout', 'Container'),
+      intrinsicMod('base.text', 'Typography', 'Text'),
+      intrinsicMod('base.image', 'Media', 'Image'),
     ], PAGE_CTX)
 
     const resolved = resolveInserterRefs([

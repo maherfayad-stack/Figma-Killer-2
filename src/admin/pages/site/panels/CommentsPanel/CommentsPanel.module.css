@@ -8,21 +8,17 @@
        the same flex-child trap the properties panel hit. */
     min-height: 0;
     height: 100%;
-    padding: var(--space-s);
+    /* No padding at the top: `PanelHeader` is a full-bleed bar with its own
+       inset, and the sidebar's other panel hangs it off the very top edge.
+       Insetting it here is what made this pane look like a card sitting ON the
+       sidebar rather than being it. */
+    padding: 0 var(--space-s) var(--space-s);
 }
 
-.panelHead {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-2xs);
-}
-
-.panelTitle {
-    margin: 0;
-    color: var(--text-bright);
-    font-size: var(--text-xs);
-    font-weight: 600;
+/* Undo the panel's own horizontal padding for the full-bleed header bar. */
+.panel > header,
+.panel > [role='toolbar'] {
+    margin: 0 calc(-1 * var(--space-s));
 }
 
 .controls {
@@ -58,28 +54,29 @@
     gap: var(--space-2xs);
 }
 
-.bulkCount {
-    flex: 1 1 auto;
+/* The two actions split the bar evenly, so it occupies exactly the width the
+   filter control it replaced did and the list below does not reflow. */
+.bulkButton {
+    flex: 1 1 0;
     min-width: 0;
-    color: var(--text-muted);
-    font-size: var(--text-2xs);
-    font-variant-numeric: tabular-nums;
 }
 
-.selectAll {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2xs);
-    padding: 0 var(--space-2xs);
-    color: var(--text-subtle);
-    font-size: var(--text-2xs);
-    cursor: pointer;
-}
-
-/* Checkbox and row sit side by side, so ticking is never a mis-click on open. */
+/*
+ * The select-all header and a thread row are the same two-column shape: a
+ * checkbox gutter, then content indented by the row Button's own padding.
+ * They are declared together because the whole point is that the header's tick
+ * sits directly above the rows' ticks and its label directly above the pin
+ * badges — split them into two rulesets and they drift apart the next time one
+ * side's padding changes.
+ */
+.selectAll,
 .rowShell {
     display: flex;
-    align-items: center;
+    /* Not `center`: a row is two or three lines tall, and a centred checkbox
+       floats down beside the preview text instead of beside the pin badge it
+       belongs to. Both columns start at the top and the checkbox is nudged
+       down onto the first line by `.rowCheck`. */
+    align-items: flex-start;
     gap: var(--space-2xs);
     /* Both are needed: `min-width: 0` lets the row shrink below its content's
        intrinsic width, and without it the row's `flex: 1` basis pushed the
@@ -88,8 +85,47 @@
     max-width: 100%;
 }
 
-.rowCheck {
+.selectAll {
+    color: var(--text-subtle);
+    font-size: var(--text-2xs);
+    cursor: pointer;
+}
+
+/* Matches `.rowShell .row`'s padding so the label lands on the same x as a
+   row's pin badge. */
+.selectAllLabel {
+    padding: var(--space-2xs);
+}
+
+/*
+ * The checkbox is nudged down onto the first line of the content beside it.
+ *
+ * `--space-2xs` is that content column's own top padding; the rest centres the
+ * checkbox against whatever leads the line. Written as arithmetic over the two
+ * heights rather than as a tuned constant, because it HAS been retuned once
+ * already: the rows led with a 14px pin badge, then with a 20px avatar, and the
+ * old hardcoded `+1px` silently left every checkbox 3px high.
+ */
+.rowCheck,
+.selectAllCheck {
     flex: 0 0 auto;
+    /* The `sm` Checkbox's own box — see `Checkbox.module.css`. Named rather
+       than inlined so the margin declaration itself carries no raw pixels,
+       which the admin spacing-token gate (correctly) refuses. */
+    --comment-check-height: 12px;
+    margin-top: calc(
+        var(--space-2xs) + (var(--comment-lead-height) - var(--comment-check-height)) / 2
+    );
+}
+
+/* Led by the author's 20px avatar. */
+.rowCheck {
+    --comment-lead-height: 20px;
+}
+
+/* Led by one line of `--text-2xs` label text. */
+.selectAllCheck {
+    --comment-lead-height: 14px;
 }
 
 /* One thread. A Button primitive, so keyboard reachability and focus styling
@@ -123,24 +159,21 @@
     background: var(--overlay-10);
 }
 
-/* The pin number, so the panel and the canvas agree about a thread's name. */
-.seq {
+/*
+ * The author's face, the same one their pin wears on the canvas.
+ *
+ * Two classes deep to out-specify `UserAvatar`'s own `.root` border, the same
+ * move `.rowShell .row` makes below.
+ */
+.rowShell .avatar {
     flex: 0 0 auto;
-    box-sizing: border-box;
-    min-width: 18px;
-    padding: var(--space-px) var(--space-3xs);
-    border-radius: var(--radius-sm);
-    background: var(--canvas-comment-pin);
-    color: var(--canvas-comment-pin-text);
-    font-size: var(--text-2xs);
-    font-weight: 700;
-    font-variant-numeric: tabular-nums;
-    text-align: center;
+    border: 0;
 }
 
-.seqResolved {
-    background: var(--canvas-comment-pin-resolved);
-    color: var(--text-bright);
+/* A finished thread's author fades with it, so the open rows stay the ones the
+   eye lands on — the panel is a work queue. */
+.rowShell .avatarResolved {
+    opacity: 0.55;
 }
 
 .rowBody {

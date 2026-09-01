@@ -133,6 +133,19 @@ export const PageNodeSchema = Type.Object({
    */
   codeProps: Type.Optional(Type.Array(Type.String())),
   /**
+   * Studio import — dotted/bracketed paths to a FUNCTION nested inside a
+   * resolved object/array prop, prefixed with the prop's own name
+   * (`toolbar.onBack`, `actions[0].onClick`). A companion to `codeProps`
+   * above, not a writability fact: every path here sits under a prop name
+   * `codeProps` already refuses (the whole object is never a writeback
+   * target regardless of what is nested inside it) — this only tells a
+   * module WHERE to reconstruct a render-time no-op for an affordance the
+   * design gates on a handler it can never receive, one level deeper than
+   * `codeProps` alone can say. See `ParsedNode.codeFunctionPaths` in
+   * `@core/page-parser`.
+   */
+  codeFunctionPaths: Type.Optional(Type.Array(Type.String())),
+  /**
    * Studio import (§2) — the local component this node was inlined out of
    * (`'SheetHeader'`). Provenance, not a lock: the node is editable and its
    * writeback target is that component's own source location.
@@ -208,6 +221,11 @@ function parseCodeProps(raw: unknown): string[] | undefined {
   return names.length > 0 ? names : undefined
 }
 
+/** Parse a raw `codeFunctionPaths` field — same shape and tolerance as `codeProps`. */
+function parseCodeFunctionPaths(raw: unknown): string[] | undefined {
+  return parseCodeProps(raw)
+}
+
 /**
  * Parse a single PageNode, throwing `Error('<nodePath>.<field>: <message>')` on
  * required-field failures so parsePage/parseSiteDocument can report the exact
@@ -240,6 +258,7 @@ export function parsePageNode(raw: unknown, nodePath: string): PageNode {
   const textOrigin = parseTextOrigin(r.textOrigin)
   const assetOrigin = parseAssetOrigin(r.assetOrigin)
   const codeProps = parseCodeProps(r.codeProps)
+  const codeFunctionPaths = parseCodeFunctionPaths(r.codeFunctionPaths)
 
   return {
     ...base,
@@ -250,6 +269,7 @@ export function parsePageNode(raw: unknown, nodePath: string): PageNode {
     ...(textOrigin !== undefined ? { textOrigin } : {}),
     ...(assetOrigin !== undefined ? { assetOrigin } : {}),
     ...(codeProps !== undefined ? { codeProps } : {}),
+    ...(codeFunctionPaths !== undefined ? { codeFunctionPaths } : {}),
     ...(typeof r.fromComponent === 'string' && r.fromComponent.length > 0
       ? { fromComponent: r.fromComponent }
       : {}),

@@ -76,10 +76,26 @@ export type LayoutNameDialogRequest =
   | { mode: 'rename'; layoutId: string }
 
 
+/**
+ * Which panel the right sidebar is showing when both could claim it.
+ *
+ * The sidebar holds ONE slot, and Properties and Comments both want it: a node
+ * is selected AND a review is in progress. It used to be arbitrated by a hard
+ * rule — comments win — which meant that with the comments pane open, selecting
+ * an element on the canvas did nothing visible at all. The inspector was not
+ * hidden behind the comments pane; it was not rendered.
+ *
+ * So the arbitration is now a tab the user can see and click, defaulting to
+ * whichever surface they last acted on: selecting something means Properties,
+ * opening a thread or arming the comment tool means Comments.
+ */
+export type RightSidebarTab = 'properties' | 'comments'
+
 interface UiSlice {
   // Panel visibility / layout
   propertiesPanel: PanelState
   propertiesPanelMode: PropertiesPanelMode
+  rightSidebarTab: RightSidebarTab
   propertiesPanelAutoOpenSuppressed: boolean
   leftSidebarWidth: number
   focusedPanel: FocusedPanel
@@ -151,6 +167,7 @@ interface UiSlice {
   setPropertiesPanel: (state: Partial<PanelState>) => void
   consumePropertiesPanelAutoOpenSuppression: () => boolean
   setPropertiesPanelMode: (mode: PropertiesPanelMode) => void
+  setRightSidebarTab: (tab: RightSidebarTab) => void
   setLeftSidebarWidth: (width: number) => void
   togglePropertiesPanel: () => void
   setFocusedPanel: (panel: FocusedPanel) => void
@@ -310,6 +327,7 @@ declare module '@site/store/types' {
 export const createUiSlice: EditorStoreSliceCreator<UiSlice> = (set, get) => ({
   propertiesPanel: DEFAULT_PROPERTIES_PANEL,
   propertiesPanelMode: 'docked',
+  rightSidebarTab: 'properties',
   propertiesPanelAutoOpenSuppressed: false,
   leftSidebarWidth: LEFT_SIDEBAR_DEFAULT_WIDTH,
   focusedPanel: 'canvas',
@@ -363,6 +381,11 @@ export const createUiSlice: EditorStoreSliceCreator<UiSlice> = (set, get) => ({
     const suppressed = get().propertiesPanelAutoOpenSuppressed
     if (suppressed) set({ propertiesPanelAutoOpenSuppressed: false })
     return suppressed
+  },
+
+  setRightSidebarTab: (tab) => {
+    if (Object.is(get().rightSidebarTab, tab)) return
+    set({ rightSidebarTab: tab })
   },
 
   setPropertiesPanelMode: (mode) => {

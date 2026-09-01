@@ -87,6 +87,13 @@ const CreatePageBodySchema = Type.Object({
   dir: Type.Optional(Type.String()),
   name: Type.Optional(Type.String()),
   kind: Type.Optional(PageKindSchema),
+  /**
+   * Which board the author is looking at, so the new page's frame lands there
+   * rather than on whichever board happens to be first in the file. Optional:
+   * a headless caller has no board open, and gets the first-board fallback
+   * `autoPlaceBoardFrame` has always applied.
+   */
+  boardId: Type.Optional(Type.String()),
 })
 
 export async function tryServeStudioProjectRoutes(
@@ -190,7 +197,7 @@ export async function tryServeStudioProjectRoutes(
     try {
       const body = await readValidatedBody(req, CreatePageBodySchema)
       if (!body) return badRequest('invalid page body')
-      const result = createScaffoldedPage(resolveProjectDir(body.dir), body.name ?? '', body.kind ?? DEFAULT_PAGE_KIND)
+      const result = createScaffoldedPage(resolveProjectDir(body.dir), body.name ?? '', body.kind ?? DEFAULT_PAGE_KIND, body.boardId)
       if (!result.ok) return jsonResponse({ error: result.conflict }, { status: 409 })
       return jsonResponse(result)
     } catch (err) {

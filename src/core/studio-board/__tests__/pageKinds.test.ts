@@ -36,14 +36,25 @@ describe('PAGE_KINDS', () => {
     expect(PAGE_KINDS[0]!.kind).toBe('screen')
   })
 
-  it('gives every kind a label and a description that says what the frame contains', () => {
+  it('gives every kind a label and a usable name base', () => {
     for (const preset of PAGE_KINDS) {
       expect(preset.label.length).toBeGreaterThan(0)
-      expect(preset.description.length).toBeGreaterThan(0)
       // The name base becomes a component/file name, so it has to be a valid
-      // JS identifier — `nextPageName` appends a digit to it and the result is
+      // JS identifier: `nextPageName` appends a digit to it and the result is
       // written straight into `export default function <name>()`.
       expect(preset.nameBase).toMatch(/^[A-Za-z_$][A-Za-z0-9_$]*$/)
+    }
+  })
+
+  it('keeps typographic punctuation out of every label', () => {
+    // The two sheets used to read "Bottom sheet — small"/"— big". An em dash
+    // in a menu label is a character nobody can type, so it is unsearchable
+    // and unspeakable, and at menu size it is hard to tell from a hyphen or a
+    // minus. Whatever distinguishes two rows has to survive being read aloud.
+    // En dash and the smart quotes are here for the same reason, not because
+    // they have appeared yet.
+    for (const preset of PAGE_KINDS) {
+      expect(preset.label).not.toMatch(/[\u2013\u2014\u2018\u2019\u201c\u201d]/)
     }
   })
 

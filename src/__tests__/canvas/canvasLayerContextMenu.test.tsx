@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import React, { useState } from 'react'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, render, screen } from '@testing-library/react'
 import { CanvasLayerContextMenu } from '@site/canvas/CanvasLayerContextMenu'
 import { PropertiesPanel } from '@site/panels/PropertiesPanel/PropertiesPanel'
 import { useEditorStore } from '@site/store/store'
@@ -70,16 +70,14 @@ function CanvasContextMenuHarness() {
 beforeEach(() => resetStore())
 
 describe('CanvasLayerContextMenu', () => {
-  it('keeps the componentize editor open when a canvas menu item is clicked', async () => {
+  // Componentize mints a Visual Component via `mutateSiteState` — a
+  // persistence path Studio's filesystem adapter doesn't implement, so
+  // `canComponentizeNode` always refuses now that Studio is the only editor
+  // mode (`componentizeEligibility.ts`). The canvas context menu never
+  // offers the action.
+  it('does not offer Componentize — Studio has no persistence path for it', () => {
     render(<CanvasContextMenuHarness />)
 
-    fireEvent.click(screen.getByRole('menuitem', { name: /componentize/i }))
-
-    expect(useEditorStore.getState().selectedNodeId).toBe('container-node')
-    expect(useEditorStore.getState().propertiesPanel.collapsed).toBe(false)
-    const input = await screen.findByRole('textbox', { name: /component name/i })
-    await waitFor(() => {
-      expect(document.activeElement).toBe(input)
-    })
+    expect(screen.queryByRole('menuitem', { name: /componentize/i })).toBeNull()
   })
 })

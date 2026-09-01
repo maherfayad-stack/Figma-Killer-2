@@ -1,6 +1,5 @@
 import { isTemplatePage, treeHasOutlet } from '@core/templates'
 import { selectActiveCanvasPage, useEditorStore } from '@site/store/store'
-import { isStudioMode } from '@site/studio/studioMode'
 import type { ModuleInsertionContext } from './moduleInserterModel'
 
 /**
@@ -12,12 +11,10 @@ export function useModuleInsertionContext(): ModuleInsertionContext {
   const activeDocument = useEditorStore((s) => s.activeDocument)
   const canvasPage = useEditorStore(selectActiveCanvasPage)
   const isVCMode = activeDocument?.kind === 'visualComponent'
-  const isStudio = isStudioMode()
   return {
     isVCMode,
     activeVcId: activeDocument?.kind === 'visualComponent' ? activeDocument.vcId : null,
     isTemplate: !isVCMode && canvasPage !== null && isTemplatePage(canvasPage),
     hasOutlet: canvasPage !== null && treeHasOutlet(canvasPage),
-    isStudio,
   }
 }

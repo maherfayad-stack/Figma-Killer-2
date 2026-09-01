@@ -269,14 +269,17 @@ describe('ModulePickerDropdown — Visual Components', () => {
     render(<ModulePickerDropdown />)
     const dialog = await openInserter()
 
-    const loopItem = dialog.querySelector('[data-module-id="base.loop"]') as HTMLElement
+    // `base.container`/`base.text` — not `base.loop` (an editor-only
+    // construct with no `sourceIntrinsic`, permanently hidden from every
+    // picker now that Studio is the only editor mode).
+    const containerItem = dialog.querySelector('[data-module-id="base.container"]') as HTMLElement
     const textItem = dialog.querySelector('[data-module-id="base.text"]') as HTMLElement
-    fireEvent.focus(loopItem)
-    await waitFor(() => expect(loopItem?.getAttribute('data-selected')).toBe('true'))
+    fireEvent.focus(containerItem)
+    await waitFor(() => expect(containerItem?.getAttribute('data-selected')).toBe('true'))
 
     fireEvent.mouseEnter(textItem)
 
-    expect(loopItem?.getAttribute('data-selected')).toBe('true')
+    expect(containerItem?.getAttribute('data-selected')).toBe('true')
     expect(textItem?.getAttribute('data-selected')).toBeNull()
   })
 
@@ -285,15 +288,15 @@ describe('ModulePickerDropdown — Visual Components', () => {
     render(<ModulePickerDropdown />)
     const dialog = await openInserter()
 
-    const loopItem = dialog.querySelector('[data-module-id="base.loop"]') as HTMLElement
+    const containerItem = dialog.querySelector('[data-module-id="base.container"]') as HTMLElement
     const textItem = dialog.querySelector('[data-module-id="base.text"]') as HTMLElement
-    fireEvent.focus(loopItem)
-    await waitFor(() => expect(loopItem?.getAttribute('data-selected')).toBe('true'))
+    fireEvent.focus(containerItem)
+    await waitFor(() => expect(containerItem?.getAttribute('data-selected')).toBe('true'))
 
     fireEvent.pointerMove(textItem, { clientX: 120, clientY: 120 })
 
     expect(textItem?.getAttribute('data-selected')).toBe('true')
-    expect(loopItem?.getAttribute('data-selected')).toBeNull()
+    expect(containerItem?.getAttribute('data-selected')).toBeNull()
   })
 
   it('hides base.visual-component-ref from the picker in page mode', async () => {
@@ -320,17 +323,21 @@ describe('ModulePickerDropdown — Visual Components', () => {
     expect(slotItem).toBeUndefined()
   })
 
-  it('shows base.slot-outlet in VC edit mode', async () => {
+  it('hides base.slot-outlet in VC edit mode too — no honest source spelling', async () => {
+    // `base.slot-outlet` has no `sourceIntrinsic` of its own (it's an editor
+    // construct, not a real JSX element), so the intrinsic-element gate
+    // (`moduleAvailability`) hides it before its VC-mode-specific unhide rule
+    // ever runs — even in VC mode. Real production behaviour, not a gap this
+    // test invents; see `moduleInserterModel.test.ts`'s matching gate test.
     const vc = makeVC('vc-1', 'HeroCard', 0)
     loadSite([vc], { kind: 'visualComponent', vcId: vc.id })
     render(<ModulePickerDropdown />)
     const dialog = await openInserter()
 
-    // base.slot-outlet (display name: "Slot") should be visible in VC mode
     const slotItem = within(dialog).queryAllByRole('button').find(
       (el) => el.getAttribute('data-module-id') === 'base.slot-outlet',
     )
-    expect(slotItem).toBeDefined()
+    expect(slotItem).toBeUndefined()
   })
 
   it('hides base.slot-instance in page mode (auto-materialized only)', async () => {

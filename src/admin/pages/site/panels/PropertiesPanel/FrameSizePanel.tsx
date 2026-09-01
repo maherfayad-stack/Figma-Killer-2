@@ -3,11 +3,8 @@
  * the TOP of the design tab (above `PropertiesPanelBody`) whenever the
  * active page is a board frame on the active studio board.
  *
- * Studio-only: gated on `isStudioMode()` — the CMS canvas has no boards, so
- * a page there never resolves to a `BoardFrame`. Also gates on there being a
- * frame at all: a page that's open in the canvas but not curated onto the
- * active board (or a CMS page while `?studio` happens to be sticky) renders
- * nothing here.
+ * Gates on there being a frame at all: a page that's open in the canvas but
+ * not curated onto the active board renders nothing here.
  *
  * Size resolution mirrors `BoardFramesLayer`'s own fallback — a frame
  * without a saved `width`/`height` reads as the shared `FRAME_WIDTH`/
@@ -26,7 +23,6 @@
 import { useState } from 'react'
 import { useEditorStore } from '@site/store/store'
 import { selectActiveBoard } from '@site/store/slices/boardSelectors'
-import { isStudioMode } from '@site/studio/studioMode'
 import { DEVICE_PRESETS, findMatchingPreset, FRAME_WIDTH, FRAME_HEIGHT, MIN_FRAME_SIZE, type DevicePreset } from '@core/studio-board'
 import { Select } from '@ui/components/Select'
 import { Input } from '@ui/components/Input'
@@ -61,7 +57,7 @@ export function FrameSizePanel() {
   const activePageId = useEditorStore((s) => s.activePageId)
   const setFrameSize = useEditorStore((s) => s.setFrameSize)
 
-  if (!isStudioMode() || !board || !activePageId) return null
+  if (!board || !activePageId) return null
   const frame = board.frames.find((f) => f.pageId === activePageId)
   if (!frame) return null
 

@@ -17,11 +17,9 @@
  * of the list rather than being distributed between rows. Expanding a page
  * reveals its node tree:
  *   - the ACTIVE page renders the full `DomPanel` (drag-and-drop reordering,
- *     background context menu, keyboard nav — everything the old
- *     single-page Layers tab gave you, minus the search/insert row it drops
- *     in studio mode), in its content-height "embedded" mode
- *     (`DomPanel.module.css`'s `.panelEmbedded`/`.treeAreaEmbedded`) so it
- *     composes into this stacked list instead of stretching to fill it.
+ *     background context menu, keyboard nav) in its content-height
+ *     mode (`DomPanel.module.css`'s `.panel`/`.treeArea`) so it composes
+ *     into this stacked list instead of stretching to fill it.
  *   - every OTHER page renders `PageLayerSubtree` — the same `TreeNode`
  *     rendering, lazily mounted only while expanded, without a live DnD
  *     context (see that component's doc for why dragging is inert there).

@@ -521,6 +521,7 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
           mcClassName={mcClassName}
           nodeWrapperProps={effectiveWrapperProps}
           codeProps={node.codeProps}
+          codeFunctionPaths={node.codeFunctionPaths}
           inlineEdit={inlineEditBinding}
         >
           {isInlineEditing ? undefined : children}

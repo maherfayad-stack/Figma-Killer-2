@@ -80,12 +80,14 @@ describe('Toolbar — Open live page icon button', () => {
 
     try {
       // The "Open live page" icon button is rendered by the Toolbar
-      // itself (not the layout-supplied rightSlot) so every admin route
-      // gets it without per-layout wiring. We render the Toolbar with no
-      // rightSlot here — the icon must still appear.
+      // itself (not the layout-supplied rightSlot) so every non-Site-editor
+      // admin route gets it without per-layout wiring — `section="site"`
+      // hides it (see the dedicated test below): Studio's source of truth
+      // is the on-disk .tsx, never run through a publish pipeline, so there
+      // is no live page to open from there.
       render(
         <Wrapper>
-          <Toolbar />
+          <Toolbar section="dashboard" />
         </Wrapper>,
       )
 
@@ -112,7 +114,7 @@ describe('Toolbar — Open live page icon button', () => {
     try {
       render(
         <Wrapper>
-          <Toolbar />
+          <Toolbar section="dashboard" />
         </Wrapper>,
       )
 
@@ -142,7 +144,7 @@ describe('Toolbar — Open live page icon button', () => {
     try {
       render(
         <Wrapper>
-          <Toolbar />
+          <Toolbar section="dashboard" />
         </Wrapper>,
       )
 
@@ -171,7 +173,7 @@ describe('Toolbar — Open live page icon button', () => {
     try {
       render(
         <Wrapper>
-          <Toolbar />
+          <Toolbar section="dashboard" />
         </Wrapper>,
       )
 
@@ -182,5 +184,18 @@ describe('Toolbar — Open live page icon button', () => {
     } finally {
       window.open = originalOpen
     }
+  })
+
+  it('is hidden on the Site editor toolbar — Studio has no publish pipeline to open a live page from', () => {
+    useAdminUi.setState({ activeLivePath: '/pricing' })
+
+    render(
+      <Wrapper>
+        <Toolbar section="site" />
+      </Wrapper>,
+    )
+
+    const toolbar = screen.getByTestId('toolbar')
+    expect(within(toolbar).queryByTestId('toolbar-open-live-page-btn')).toBeNull()
   })
 })

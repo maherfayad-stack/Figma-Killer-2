@@ -113,9 +113,29 @@ Source: `src/admin/pages/site/canvas/CanvasLiveSurface.tsx`
 
 `CanvasRoot` renders `CanvasLiveSurface` when `canvasView === 'live'`. It shows one `IframeFrameSurface` in `interaction='live'` mode:
 
-- **Fluid + presets.** The frame fills available width by default. Selecting a narrower viewport context in the toggle clamps the frame to `min(breakpoint.width, containerWidth)`.
-- **Side handle resizing.** Left and right `LiveResizeHandle` divs let the author drag the frame width continuously between 240 px and the selected viewport context's natural width. Switching viewport contexts invalidates any active override — the frame snaps to the new context width automatically.
+- **Fluid + presets.** The frame fills available width by default. Selecting a narrower viewport context in the toggle clamps the frame to `min(breakpoint.width, containerWidth - bezel)` (the bezel term is 0 when no device mockup is drawn — see below).
+- **Side handle resizing.** Left and right `LiveResizeHandle` divs let the author drag the frame width continuously between 240 px and the selected viewport context's natural width. Switching viewport contexts invalidates any active override — the frame snaps to the new context width automatically. The handles are **absolutely positioned just outside the frame** so they cost no layout width: as in-flow flex children they ate 8 px each, so a 375 px context rendered the page at 359 px while the badge still read `375px`, and a media query at the boundary answered differently here than on a real device.
 - **Width badge.** A small `{N}px` indicator updates live while dragging.
+
+### Device mockups
+
+Source: `src/admin/pages/site/canvas/DeviceMockup.tsx`, `deviceKind.ts`
+
+Live mode draws physical device chrome around the frame — a phone or tablet bezel with rounded screen corners, a dynamic island and a home indicator. Desktop draws nothing: a monitor bezel carries no information a desktop page has to survive, and the browser chrome it really sits in is the one the author is already looking at.
+
+`resolveDeviceKind(breakpoint)` picks the chrome from the viewport context's **`icon`** (`smartphone` → phone, `tablet` → tablet, `monitor` → none), falling back to width (≤480 phone, ≤1024 tablet) only when the icon names no device. The icon is already an explicit, user-controlled device statement set in Settings → Viewport contexts, so a renamed or custom context gets the right chrome with nothing new to keep in sync — matching on breakpoint `id` would have worked only for the three seeded ids. `monitor` is an answer ("not a device"), not a gap, so it does **not** fall through to the width rule. A `null` breakpoint (fluid, or still hydrating) draws nothing rather than guessing.
+
+Three invariants the mockup must not break, all enforced by construction:
+
+- **The page keeps its exact breakpoint width.** The bezel is a `box-shadow` spread, painted outside the screen box, so it costs zero layout width. `DEVICE_BEZEL_PX` in `deviceKind.ts` is the single source of truth — the stylesheet reads it as the inline `--device-bezel` custom property, and `computeNaturalWidth` subtracts the same number so a wide mockup is not clipped by the surface's `overflow: hidden`.
+- **Live mode stays editable.** Every piece of chrome is `pointer-events: none`. The island sits visibly over the top of the page (which is the point — a header colliding with it is a real bug a bare 375 px strip never shows), but a click there reaches the node underneath.
+- **Selection geometry is unaffected.** `DeviceMockup` wraps the viewport element `CanvasLiveSurface` owns and passes as `children`, adding no padding, so the rect `BreakpointSelectionOverlay` measures is unchanged.
+
+`aspect-ratio` gives the screen a device shape (375/812 phone, 768/1024 tablet). `max-height: 100%` wins on a short window, so the device renders shorter than the real hardware rather than overflowing — width, which is what responsive layout depends on, is never traded away for the silhouette.
+
+**Scrollbars are hidden inside a device** (`DeviceScrollbarInjector.tsx`): a phone has no scrollbar track down the side of its screen, and one inside the bezel is both the detail that most breaks the illusion and a strip of chrome the design will never sit next to. The injector adds `scrollbar-width: none` plus a zero-size `::-webkit-scrollbar` to the live iframe's document while a device is drawn, and **removes** the element when the author switches to desktop or fluid — where the scrollbar is what a visitor genuinely sees.
+
+The rule is unscoped rather than root-only because a real iOS/iPadOS device paints no persistent scrollbar on *any* scroll container, inner ones included. This is a deliberate, mockup-only departure from "the canvas renders what the code renders": against a desktop browser the scrollbars are missing; against the phone being imitated they are correctly absent. It never reaches design mode, desktop live mode, or the publisher. Scrolling itself is untouched — `overflow: hidden` would have removed the scrollbar by making a tall page unreachable, which is a different and much worse thing. On overlay-scrollbar platforms the track already consumed no layout width (measured `innerWidth === clientWidth === 375`); on a classic-scrollbar platform hiding it *reclaims* the ~15px the track was taking, moving the page closer to its true breakpoint width.
 
 Pan/zoom gestures are disabled in live mode (`useCanvas({ enabled: !isLive })`). The `CanvasModeToggle` shows an inline viewport icon row when live is active.
 
@@ -159,7 +179,7 @@ The fix: `ProjectCssInjector`'s content lives in its own named layer, `@layer ve
 
 The canvas iframe is a different case for a **Studio-parsed** page: it's a real React project's own `.tsx`, and "the repository is the document" means the project's own CSS — or the genuine absence of one — is the whole truth the user is checking the canvas against. Injecting a reset there makes every element the project hasn't styled (a bare `<ul>`, an unclassed heading, a table, a link) look *better* than what a real browser renders: UA bullets/margins/underlines get silently swapped for the reset's zero-margin, no-bullet look. Because the reset is written entirely in `:where(...)` (zero specificity), it only wins where the project styles nothing else for that property — exactly the "have I actually styled this yet" case someone is most likely to be eyeballing, which is why the drift went unnoticed.
 
-`ClassStyleInjector` therefore gates the `@layer reset` block on `isStudioMode()` (`src/admin/pages/site/studio/studioMode.ts`) — the same single-source-of-truth read every other studio-vs-CMS canvas decision uses (it's what selects the multi-frame board canvas over CMS breakpoint frames in `CanvasTransformLayer` in the first place, so it's not a second, parallel signal). In Studio mode the `mc-classes` `<style>` tag omits the `@layer reset { … }` block entirely; the `@layer reset, vendor, user-authored;` pre-declaration (`CANVAS_CSS_LAYER_ORDER`) still opens the stylesheet either way, so layer order stays pinned even when the reset layer carries no rules. `ProjectCssInjector` (vendor CSS) and `UserStylesheetInjector` are untouched — a Studio project's own package CSS and its own stylesheets are exactly what should render.
+`ClassStyleInjector` therefore never populates the `@layer reset` block — Studio is the only editor mode now, so this is unconditional. The `mc-classes` `<style>` tag always omits the `@layer reset { … }` block's contents; the `@layer reset, vendor, user-authored;` pre-declaration (`CANVAS_CSS_LAYER_ORDER`) still opens the stylesheet, so layer order stays pinned even when the reset layer carries no rules — see `canvasCssLayers.ts`'s own doc for why the (empty) layer name stays declared. `ProjectCssInjector` (vendor CSS) and `UserStylesheetInjector` are untouched — a Studio project's own package CSS and its own stylesheets are exactly what should render.
 
 ### Vendor CSS and the preview axes
 

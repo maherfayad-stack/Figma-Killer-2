@@ -19,7 +19,6 @@
  * stopgap) and §5 Track B2 (the write this module now sits downstream of).
  */
 import { pushToast } from '@ui/components/Toast'
-import { isStudioMode } from '@site/studio/studioMode'
 
 /** One node's resolved class drift, ready to render — ids already turned into display names by the caller (`classNameWriteback.ts`'s `collectClassNameEdits`), which has the registry and `site.styleRules` in scope. */
 export interface ClassAssignmentDriftDetail {
@@ -41,14 +40,11 @@ const MAX_NAMED = 3
 
 /**
  * Warn that class assignment drift on one or more nodes has NO writable
- * source location at all, so it cannot survive a save + reload in Studio
- * mode no matter what `setJsxClassName` can write elsewhere. No-ops outside
- * Studio mode (where `classIds` DOES persist, as a `data_rows` CMS record)
- * and on an empty list — mirrors every other refusal/skip toast in this
- * codebase.
+ * source location at all, so it cannot survive a save + reload no matter
+ * what `setJsxClassName` can write elsewhere. No-ops on an empty list —
+ * mirrors every other refusal/skip toast in this codebase.
  */
 export function notifyClassAssignmentUnsaved(drifts: readonly ClassAssignmentDriftDetail[]): void {
-  if (!isStudioMode()) return
   if (drifts.length === 0) return
 
   const named = drifts.slice(0, MAX_NAMED).map(describeDrift)

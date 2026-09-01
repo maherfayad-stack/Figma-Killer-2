@@ -43,9 +43,8 @@
  *   - **Non-fetch effects** — rAF loops (`BreakpointSelectionOverlay`),
  *     debounced builders (`useRuntimeScriptBuild`), dynamic module imports
  *     (`PluginPageRenderer`), boot orchestration with `flushSync` paint timing
- *     (`useAdminBoot`), preference-sync-with-debounced-save
- *     (`useDashboardLayout`), or a status fetch that seeds an action state
- *     machine (`PublishButton`).
+ *     (`useAdminBoot`), or preference-sync-with-debounced-save
+ *     (preference-backed panel state).
  */
 import { useCallback, useEffect, useEffectEvent, useState, type DependencyList } from 'react'
 import { isAbortError } from '@core/http'

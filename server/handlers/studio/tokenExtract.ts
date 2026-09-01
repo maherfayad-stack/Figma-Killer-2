@@ -114,6 +114,8 @@ import { classifyCssText, hasAnyTokens, type ClassifiedTokens } from './tokenExt
 import { extractTailwindThemeTokens } from './tokenExtractTailwind'
 import { extractScssVariableTokens, findScssFileCandidates } from './tokenExtractScss'
 import { extractJsThemeTokens, findJsThemeFileCandidates } from './tokenExtractJsTheme'
+import { readInstalledPackageCss } from './tokenExtractPackageCss'
+import { resolveAppRoot } from './appRoot'
 import { buildFrameworkSettings, type ExtractedColorOrigin } from './tokenExtractBuild'
 
 export type { ClassifiedTokens } from './tokenExtractCssScan'
@@ -202,6 +204,28 @@ export async function extractProjectTokens(dir: string, profile: ProjectProfile)
       if (hasAnyTokens(jsTokens)) {
         tokens = jsTokens
         source = 'js-theme'
+      }
+    }
+  }
+
+  // Last resort: the design system this project DEPENDS ON, read straight out
+  // of `node_modules` even though no stylesheet from it is imported yet. A
+  // freshly scaffolded project is exactly this shape — it declares and installs
+  // a design system, and imports none of its CSS until someone writes the
+  // import — so every source above legitimately found nothing while the whole
+  // token set sat installed on disk. Tried last because anything the project
+  // actually imports is a stronger statement of intent than something merely
+  // present in `node_modules`.
+  if (!hasAnyTokens(tokens) && profile.componentPackages.length > 0) {
+    const installedCss = readInstalledPackageCss(resolveAppRoot(dir), profile.componentPackages)
+    if (installedCss) {
+      const installedTokens = classifyCssText(installedCss)
+      if (hasAnyTokens(installedTokens)) {
+        tokens = installedTokens
+        // Same provenance the imported-vendor path reports: the Framework
+        // panel renders this as "an installed design-system package", which is
+        // precisely where these came from.
+        source = 'vendor-css'
       }
     }
   }

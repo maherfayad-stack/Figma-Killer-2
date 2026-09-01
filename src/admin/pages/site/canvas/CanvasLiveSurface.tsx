@@ -42,6 +42,9 @@ import { CanvasComposedTree } from './CanvasComposedTree'
 import { BreakpointSelectionOverlay } from './BreakpointSelectionOverlay'
 import { CanvasBreakpointContext, CanvasTemplateContext } from './CanvasContexts'
 import { IframeFrameSurface, type IframeFrameSurfaceHandle } from './IframeFrameSurface'
+import { DeviceMockup } from './DeviceMockup'
+import { DeviceScrollbarInjector } from './DeviceScrollbarInjector'
+import { DEVICE_BEZEL_PX, resolveDeviceKind, type DeviceKind } from './deviceKind'
 import type { InjectableRuntimeScript } from './useRuntimeScriptBuild'
 import { CanvasFrameSkeleton } from '@admin/shared/CanvasFrameSkeleton'
 import styles from './CanvasLiveSurface.module.css'
@@ -89,6 +92,10 @@ export function CanvasLiveSurface({
   // it for positioning context, and queries the iframe element for node rects.
   const viewportRef = useRef<HTMLDivElement | null>(null)
   const [iframeEl, setIframeEl] = useState<HTMLIFrameElement | null>(null)
+  // The iframe's own document, tracked so the device chrome can reach inside
+  // it (scrollbar hiding). Published by the handle, so it updates when the
+  // iframe finishes loading rather than staying null from the first render.
+  const [iframeDoc, setIframeDoc] = useState<Document | null>(null)
   // Always `null` here in practice — `CanvasSelectionOverlayInjector` is
   // design-mode only (WS-5.1), so a live-interaction `IframeFrameSurface`
   // never creates one. Tracked (rather than passing a literal `null`) so this
@@ -110,7 +117,8 @@ export function CanvasLiveSurface({
     return () => observer.disconnect()
   }, [])
 
-  const naturalWidth = computeNaturalWidth(activeBreakpoint, containerWidth)
+  const deviceKind = resolveDeviceKind(activeBreakpoint)
+  const naturalWidth = computeNaturalWidth(activeBreakpoint, containerWidth, deviceKind)
   const effectiveMaxWidth = naturalWidth ?? containerWidth ?? null
   const effectiveWidth =
     activeBreakpoint && widthOverride?.breakpointId === activeBreakpoint.id
@@ -152,6 +160,7 @@ export function CanvasLiveSurface({
   const handleIframeRef = (handle: IframeFrameSurfaceHandle | null) => {
     setIframeEl(handle?.iframeElement ?? null)
     setOverlayRoot(handle?.contentOverlayRoot ?? null)
+    setIframeDoc(handle?.contentDocument ?? null)
   }
 
   return (
@@ -169,11 +178,12 @@ export function CanvasLiveSurface({
             onPointerCancel={finishDrag}
           />
 
-          <div
-            ref={viewportRef}
-            data-breakpoint-id={activeBreakpoint.id}
-            className={styles.iframeViewport}
-          >
+          <DeviceMockup kind={deviceKind}>
+            <div
+              ref={viewportRef}
+              data-breakpoint-id={activeBreakpoint.id}
+              className={styles.iframeViewport}
+            >
             <IframeFrameSurface
               ref={handleIframeRef}
               interaction="live"
@@ -188,13 +198,16 @@ export function CanvasLiveSurface({
               </CanvasTemplateContext.Provider>
             </IframeFrameSurface>
 
-            <BreakpointSelectionOverlay
-              breakpointId={activeBreakpoint.id}
-              viewportRef={viewportRef}
-              iframeElement={iframeEl}
-              overlayRoot={overlayRoot}
-            />
-          </div>
+              <BreakpointSelectionOverlay
+                breakpointId={activeBreakpoint.id}
+                viewportRef={viewportRef}
+                iframeElement={iframeEl}
+                overlayRoot={overlayRoot}
+              />
+            </div>
+          </DeviceMockup>
+
+          <DeviceScrollbarInjector targetDocument={iframeDoc} hidden={deviceKind !== null} />
 
           <LiveResizeHandle
             side="right"
@@ -229,10 +242,25 @@ export function CanvasLiveSurface({
   )
 }
 
-function computeNaturalWidth(breakpoint: Breakpoint | null, containerWidth: number | null): number | null {
+/**
+ * The frame's width before any user resize.
+ *
+ * `deviceKind` shrinks the space available to the SCREEN, because a mockup's
+ * bezel is painted outside the screen box (see `DeviceMockup`) and the surface
+ * clips its overflow. Without this the bezel is sliced off on exactly the
+ * narrow windows where a tablet mockup comes closest to the container width.
+ * The page still gets its full breakpoint width whenever it fits — this only
+ * bites when the container was already the binding constraint.
+ */
+function computeNaturalWidth(
+  breakpoint: Breakpoint | null,
+  containerWidth: number | null,
+  deviceKind: DeviceKind | null,
+): number | null {
   if (!breakpoint) return null
   if (containerWidth === null) return breakpoint.width
-  return Math.min(breakpoint.width, containerWidth)
+  const bezel = deviceKind ? DEVICE_BEZEL_PX[deviceKind] * 2 : 0
+  return Math.min(breakpoint.width, Math.max(LIVE_MIN_WIDTH, containerWidth - bezel))
 }
 
 function computeResizedWidth(drag: ResizeDragState, clientX: number, max: number): number {

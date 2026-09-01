@@ -147,20 +147,22 @@ describe('SiteExplorerPanel', () => {
     expect(source).toContain('SiteCreateDialog')
   })
 
-  it('Site group shows pages and components, not code files or media', () => {
+  it('Site group shows pages, not components, code files, or media', () => {
     loadSite()
     render(<SiteExplorerPanel sectionGroup="site" />)
 
     const panel = screen.getByTestId('site-explorer-panel')
     expect(within(panel).getByRole('heading', { name: 'Pages' })).toBeDefined()
-    expect(within(panel).getByRole('heading', { name: 'Components' })).toBeDefined()
+    // Components has no filesystem-truth counterpart in Studio — see
+    // `TEMPLATES_AND_COMPONENTS_AVAILABLE` in `SiteExplorerPanelSections.tsx`.
     // Styles / Scripts live in the Code group; media assets never appear here.
+    expect(within(panel).queryByRole('heading', { name: 'Components' })).toBeNull()
     expect(within(panel).queryByRole('heading', { name: 'Styles' })).toBeNull()
     expect(within(panel).queryByRole('heading', { name: 'Scripts' })).toBeNull()
     expect(within(panel).queryByRole('heading', { name: 'Assets' })).toBeNull()
 
     expect(within(panel).getByRole('button', { name: /open page home/i })).toBeDefined()
-    expect(within(panel).getByRole('button', { name: /open component herocard/i })).toBeDefined()
+    expect(within(panel).queryByRole('button', { name: /open component herocard/i })).toBeNull()
     expect(within(panel).queryByText('theme.css')).toBeNull()
     expect(within(panel).queryByText('analytics.ts')).toBeNull()
     expect(within(panel).queryByText('logo.svg')).toBeNull()
@@ -438,27 +440,6 @@ describe('SiteExplorerPanel', () => {
 
     expect(rowForButton(/open page pricing/i).getAttribute('aria-selected')).toBe('true')
     expect(rowForButton(/open page about/i).getAttribute('aria-selected')).toBe('true')
-  })
-
-  it('wraps selected components in a decorative folder from the item context menu', () => {
-    loadSite()
-    const footerId = useEditorStore.getState().createVisualComponent('FooterCard')
-
-    render(<SiteExplorerPanel sectionGroup="site" />)
-
-    fireEvent.click(screen.getByRole('button', { name: /open component herocard/i }), { metaKey: true })
-    fireEvent.click(screen.getByRole('button', { name: /open component footercard/i }), { metaKey: true })
-    fireEvent.contextMenu(screen.getByRole('button', { name: /open component herocard/i }), {
-      clientX: 120,
-      clientY: 140,
-    })
-    fireEvent.click(screen.getByRole('menuitem', { name: /wrap 2 components in folder/i }))
-
-    const folder = useEditorStore.getState().site?.explorer.components.folders.find((entry) => entry.name === 'New folder')
-    expect(folder).toBeDefined()
-    const placements = useEditorStore.getState().site?.explorer.components.items ?? []
-    expect(placements.find((item) => item.id === 'vc-HeroCard')?.parentFolderId).toBe(folder?.id)
-    expect(placements.find((item) => item.id === footerId)?.parentFolderId).toBe(folder?.id)
   })
 
   it('shows bulk-specific actions for a site explorer multi-selection context menu', () => {
@@ -848,19 +829,13 @@ describe('SiteExplorerPanel', () => {
     expect(panelZIndex).toBeGreaterThan(Math.max(...sidebarZIndexes))
   })
 
-  it('opens pages and components on the canvas from concept rows', () => {
+  it('opens a page on the canvas from a concept row', () => {
     loadSite()
     render(<SiteExplorerPanel sectionGroup="site" />)
 
     fireEvent.click(screen.getByRole('button', { name: /open page pricing/i }))
     expect(useEditorStore.getState().activePageId).toBe('page-pricing')
     expect(useEditorStore.getState().activeDocument).toBeNull()
-
-    fireEvent.click(screen.getByRole('button', { name: /open component herocard/i }))
-    expect(useEditorStore.getState().activeDocument).toEqual({
-      kind: 'visualComponent',
-      vcId: 'vc-HeroCard',
-    })
   })
 
   it('opens page routes in a new browser tab from the page context menu', () => {
@@ -913,30 +888,6 @@ describe('SiteExplorerPanel', () => {
     expect(state.activePageId).toBe(created?.id)
     expect(state.activeDocument).toBeNull()
     expect(screen.queryByRole('dialog', { name: 'New page' })).toBeNull()
-  })
-
-  it('creates components through the simple site dialog', () => {
-    loadSite()
-    render(<SiteExplorerPanel sectionGroup="site" />)
-
-    fireEvent.click(screen.getByRole('button', { name: 'New component' }))
-
-    const dialog = screen.getByRole('dialog', { name: 'New component' })
-    expect(within(dialog).queryByText(/src\/components/i)).toBeNull()
-
-    fireEvent.change(within(dialog).getByLabelText('Name'), {
-      target: { value: 'feature row' },
-    })
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Create' }))
-
-    const state = useEditorStore.getState()
-    // Component names are stored verbatim (free-form, no PascalCase coercion).
-    const created = state.site?.visualComponents.find((component) => component.name === 'feature row')
-    expect(created).toBeDefined()
-    expect(state.activeDocument).toEqual({
-      kind: 'visualComponent',
-      vcId: created?.id,
-    })
   })
 
   it('creates styles and scripts through the simple site dialog', () => {
@@ -1007,36 +958,6 @@ describe('SiteExplorerPanel', () => {
     expect(screen.getByRole('textbox', { name: 'Rename Pricing' })).toBeDefined()
   })
 
-  it('renames and deletes components from the site row context menu', () => {
-    loadSite()
-    render(<SiteExplorerPanel sectionGroup="site" />)
-
-    fireEvent.contextMenu(screen.getByRole('button', { name: /open component herocard/i }), {
-      clientX: 120,
-      clientY: 180,
-    })
-    fireEvent.click(screen.getByRole('menuitem', { name: /rename/i }))
-
-    const input = screen.getByRole('textbox', { name: 'Rename HeroCard' })
-    fireEvent.change(input, {
-      target: { value: 'Promo card' },
-    })
-    fireEvent.keyDown(input, { key: 'Enter' })
-
-    let component = useEditorStore.getState().site?.visualComponents.find((item) => item.id === 'vc-HeroCard')
-    // Component names are stored verbatim (free-form, no PascalCase coercion).
-    expect(component?.name).toBe('Promo card')
-
-    fireEvent.contextMenu(screen.getByRole('button', { name: /open component promo card/i }), {
-      clientX: 120,
-      clientY: 180,
-    })
-    fireEvent.click(screen.getByRole('menuitem', { name: /delete/i }))
-
-    component = useEditorStore.getState().site?.visualComponents.find((item) => item.id === 'vc-HeroCard')
-    expect(component).toBeUndefined()
-  })
-
   it('renames and deletes code files from the site row context menu', () => {
     loadSite()
     render(<SiteExplorerPanel sectionGroup="code" />)
@@ -1072,17 +993,6 @@ describe('SiteExplorerPanel', () => {
 
     const panel = screen.getByTestId('site-explorer-panel')
     expect(within(panel).queryByTestId('site-explorer-component-drag-handle')).toBeNull()
-  })
-
-  it('clicking a Component row still navigates to VC edit', () => {
-    loadSite()
-    render(<SiteExplorerPanel sectionGroup="site" />)
-
-    fireEvent.click(screen.getByRole('button', { name: /open component herocard/i }))
-    expect(useEditorStore.getState().activeDocument).toEqual({
-      kind: 'visualComponent',
-      vcId: 'vc-HeroCard',
-    })
   })
 
   it('renames and deletes CMS media assets from the media row context menu', async () => {

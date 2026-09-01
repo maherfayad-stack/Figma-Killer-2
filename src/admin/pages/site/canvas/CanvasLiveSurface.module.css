@@ -38,10 +38,18 @@
     overflow: hidden;
 }
 
-/* Side resize handle — slim vertical strip flush with the frame edge. */
+/* Side resize handle — slim vertical strip flush with the frame edge.
+
+   Positioned ABSOLUTELY, just outside the frame, so it costs no layout width.
+   As in-flow flex children the two handles ate 8px each off the frame, so a
+   375px breakpoint rendered the page at 359px while the badge still read
+   "375px" — a media query at the boundary answered differently here than on a
+   real device, which is the one thing live mode exists to get right. */
 .resizeHandle {
-    flex: 0 0 8px;
-    align-self: stretch;
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 8px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -49,6 +57,14 @@
     background: transparent;
     transition: background-color 120ms ease;
     touch-action: none;
+}
+
+.resizeHandle[data-side='left'] {
+    left: -8px;
+}
+
+.resizeHandle[data-side='right'] {
+    right: -8px;
 }
 
 .resizeHandle:hover,

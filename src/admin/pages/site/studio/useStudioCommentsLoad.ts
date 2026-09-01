@@ -30,10 +30,8 @@ import { useEffect } from 'react'
 import { CMS_SITE_RELOAD_EVENT } from '@admin/state/adminEvents'
 import { reloadComments } from './commentActions'
 
-export function useStudioCommentsLoad(studioMode: boolean): void {
+export function useStudioCommentsLoad(): void {
   useEffect(() => {
-    if (!studioMode) return undefined
-
     function load() {
       void reloadComments()
     }
@@ -43,5 +41,5 @@ export function useStudioCommentsLoad(studioMode: boolean): void {
     return () => {
       window.removeEventListener(CMS_SITE_RELOAD_EVENT, load)
     }
-  }, [studioMode])
+  }, [])
 }

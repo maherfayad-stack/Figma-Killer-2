@@ -21,6 +21,28 @@
  * immediately and the server's response REPLACES local state wholesale. That
  * replacement is not a formality: the returned file may carry a comment this
  * client had never seen, from a reviewer in another session.
+ *
+ * READING ONE COMMENT vs. ENTERING COMMENT MODE
+ * ──────────────────────────────────────────────
+ * `commentsPaneOpen` says the Comments pane is available in the right sidebar;
+ * `rightSidebarTab` (in `uiSlice`) says which of Comments and Properties is
+ * showing when both are. The line runs
+ * between those two intentions:
+ *
+ *   - Arming the `C` tool (the key or the Comment button) OPENS the pane, and
+ *     DISARMING it closes the pane again. That gesture means "I am doing a
+ *     review pass now" / "I am done", and the queue belongs to that mode. It
+ *     is also what makes the pane discoverable from the canvas.
+ *   - Clicking a pin does NOT. It means "what does this one say".
+ *
+ * The distinction is not cosmetic. Opening the right sidebar SHRINKS the canvas
+ * viewport, so when a pin click opened the pane it reflowed the whole board and
+ * shoved the very pin you had just clicked out from under the cursor, while the
+ * popover flipped sides to dodge the pane that had appeared. Reading one comment
+ * must not re-lay-out the editor. Entering a review pass may.
+ *
+ * Closing the pane still clears the bulk working set, so a stale selection can
+ * never act on threads the user can no longer see.
  */
 import type { EditorStoreSliceCreator } from '@site/store/types'
 import { createCommentsFile, type CommentAnchor, type CommentsFile } from '@core/studio-comments'
@@ -84,7 +106,7 @@ declare module '@site/store/types' {
   interface EditorStore extends CommentsSlice {}
 }
 
-export const createCommentsSlice: EditorStoreSliceCreator<CommentsSlice> = (set) => ({
+export const createCommentsSlice: EditorStoreSliceCreator<CommentsSlice> = (set, get) => ({
   comments: createCommentsFile(),
   commentsLoaded: false,
   commentsLoadFailed: false,
@@ -129,11 +151,25 @@ export const createCommentsSlice: EditorStoreSliceCreator<CommentsSlice> = (set)
       if (active) {
         s.activeThreadId = null
         s.draftPin = null
-        // `C` is one gesture meaning "comments now": arm the tool AND show the
-        // list, the way pressing C in Figma does.
+        // Arming the tool IS "I am reviewing now" — bring the queue with it,
+        // and put the sidebar on it. Clicking a single pin deliberately does
+        // not open the pane; see the module doc.
         s.commentsPaneOpen = true
+        s.rightSidebarTab = 'comments'
       }
     })
+
+    // Leaving comment mode takes the queue with it — the exact inverse of
+    // arming, so `C` `C` returns the editor to where it started instead of
+    // leaving a pane behind that the user now has to close by hand.
+    //
+    // Routed through `setCommentsPaneOpen` rather than written inline so the
+    // bulk working set is dropped by the one implementation that owns that
+    // rule. And it is safe to hang off THIS action: the automatic disarm when
+    // a pin is placed writes `commentToolActive` directly in `beginDraftPin`,
+    // so committing a comment does not yank the queue out from under the
+    // composer that is still open.
+    if (!active) get().setCommentsPaneOpen(false)
   },
 
   setActiveCommentThread: (threadId) => {
@@ -143,7 +179,12 @@ export const createCommentsSlice: EditorStoreSliceCreator<CommentsSlice> = (set)
       // discard rule as clicking the canvas.
       if (threadId !== null) {
         s.draftPin = null
-        s.commentsPaneOpen = true
+        // Does NOT open the pane (that would reflow the board and move the pin
+        // out from under the cursor). It only decides which tab the sidebar
+        // shows if it is ALREADY open — reading a thread while the sidebar sits
+        // on Properties should bring the queue forward, not leave the two
+        // disagreeing about what is being looked at.
+        s.rightSidebarTab = 'comments'
       }
     })
   },
@@ -180,6 +221,7 @@ export const createCommentsSlice: EditorStoreSliceCreator<CommentsSlice> = (set)
   setCommentsPaneOpen: (open) => {
     set((s) => {
       s.commentsPaneOpen = open
+      if (open) s.rightSidebarTab = 'comments'
       // Closing the pane ends the bulk session. A working set that outlived
       // the surface showing it would let a later "Delete selected" act on
       // threads the user has no memory of choosing.

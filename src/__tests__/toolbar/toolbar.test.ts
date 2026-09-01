@@ -9,8 +9,7 @@
  *      admin pages.
  *   2. ZoomControls — zoom percentage rendering, correct store subscriptions.
  *   3. ModulePickerDropdown — search filter pure logic.
- *   4. PublishButton — state machine (idle → publishing → published / error).
- *   5. Toolbar — overall structure (role, testid, always-rendered sub-components).
+ *   4. Toolbar — overall structure (role, testid, always-rendered sub-components).
  *
  * React component rendering tests use renderToStaticMarkup (same pattern as
  * canvas/accessibility.test.tsx) so no JSDOM or browser is needed.
@@ -300,111 +299,7 @@ describe('ModulePickerDropdown — search filter', () => {
 })
 
 // ---------------------------------------------------------------------------
-// 4 — PublishButton — state machine
-// ---------------------------------------------------------------------------
-
-describe('PublishButton — publish state machine', () => {
-  it('transitions: idle → publishing → published on success', () => {
-    type State = 'idle' | 'publishing' | 'published' | 'error'
-    // Simulate the state transitions
-    let state: State = 'idle'
-
-    // Start publish
-    state = 'publishing'
-    expect(state).toBe('publishing')
-
-    // Publish succeeds
-    state = 'published'
-    expect(state).toBe('published')
-  })
-
-  it('transitions: idle → publishing → error on failure', () => {
-    type State = 'idle' | 'publishing' | 'published' | 'error'
-    let state: State = 'idle'
-
-    state = 'publishing'
-    state = 'error'
-    expect(state).toBe('error')
-  })
-
-  it('source emits role="alert" for error messages (Guideline #224)', () => {
-    const { readFileSync } = require('fs')
-    const src = readFileSync(
-      new URL('../../admin/pages/site/toolbar/PublishActionGroup.tsx', import.meta.url),
-      'utf-8',
-    )
-    // Error must be surfaced via role="alert" — not silently swallowed
-    expect(src).toContain("role={toast.tone === 'alert' ? 'alert' : 'status'}")
-  })
-
-  it('source drives aria-busy during publish (via SplitButton busy prop)', () => {
-    const { readFileSync } = require('fs')
-    const src = readFileSync(
-      new URL('../../admin/pages/site/toolbar/PublishActionGroup.tsx', import.meta.url),
-      'utf-8',
-    )
-    // SplitButton applies aria-busy to the primary button from its `busy` prop.
-    expect(src).toContain('busy={publishBusy}')
-  })
-
-  it('publish button has data-testid for Playwright targeting (via SplitButton)', () => {
-    const { readFileSync } = require('fs')
-    const src = readFileSync(
-      new URL('../../admin/pages/site/toolbar/PublishActionGroup.tsx', import.meta.url),
-      'utf-8',
-    )
-    // SplitButton renders data-testid="toolbar-publish-btn" on the primary button.
-    expect(src).toContain('primaryTestId="toolbar-publish-btn"')
-  })
-
-  it('saves the current draft before calling the CMS publish endpoint', () => {
-    const { readFileSync } = require('fs')
-    const src = readFileSync(
-      new URL('../../admin/pages/site/toolbar/PublishButton.tsx', import.meta.url),
-      'utf-8',
-    )
-    // The publish call is wrapped in `runStepUp(() => publishCmsDraft())`
-    // so the StepUpProvider can intercept `step_up_required` and re-auth.
-    // We assert that save runs before that wrapped call lands.
-    const savePosition = src.indexOf('await onSave?.()')
-    const publishPosition = src.indexOf('publishCmsDraft()')
-    expect(savePosition).toBeGreaterThan(-1)
-    expect(publishPosition).toBeGreaterThan(savePosition)
-  })
-
-  it('loads persisted publish status when the toolbar mounts', () => {
-    const { readFileSync } = require('fs')
-    const src = readFileSync(
-      new URL('../../admin/pages/site/toolbar/PublishButton.tsx', import.meta.url),
-      'utf-8',
-    )
-    expect(src).toContain('getCmsPublishStatus')
-    expect(src).toContain('draftMatchesPublished')
-  })
-
-  it('returns from Published to Publish when the draft has unsaved changes', () => {
-    const { readFileSync } = require('fs')
-    const src = readFileSync(
-      new URL('../../admin/pages/site/toolbar/PublishButton.tsx', import.meta.url),
-      'utf-8',
-    )
-    expect(src).toContain('hasUnsavedChanges')
-    expect(src).toContain("setState('idle')")
-  })
-
-  it('does not import old static export pipelines', () => {
-    const { readFileSync } = require('fs')
-    const src = readFileSync(
-      new URL('../../admin/pages/site/toolbar/PublishButton.tsx', import.meta.url),
-      'utf-8',
-    )
-    expect(src).not.toContain('@core/publisher')
-    expect(src).not.toContain('@core/react-publisher')
-  })
-})
-
-// ---------------------------------------------------------------------------
-// 5 — Toolbar shell structure
+// 4 — Toolbar shell structure
 // ---------------------------------------------------------------------------
 
 describe('Toolbar — structural requirements', () => {
@@ -434,10 +329,10 @@ describe('Toolbar — structural requirements', () => {
     // reads the tiny `adminUi` store, so hosting it in the shell does NOT drag
     // the editor store into non-editor bundles.
     //
-    // EDITOR-only sub-components (ZoomControls / PublishButton / save status)
-    // stay out of the shell — they are passed in via the `rightSlot` prop by
-    // AdminCanvasLayout, which keeps the toolbar shareable with the lightweight
-    // layouts.
+    // EDITOR-only sub-components (ZoomControls / StudioToolbarActions / save
+    // status) stay out of the shell — they are passed in via the `rightSlot`
+    // prop by AdminCanvasLayout, which keeps the toolbar shareable with the
+    // lightweight layouts.
     const { readFileSync } = require('fs')
     const toolbarSrc = readFileSync(
       new URL('../../admin/pages/site/toolbar/Toolbar.tsx', import.meta.url),
@@ -449,7 +344,7 @@ describe('Toolbar — structural requirements', () => {
     expect(toolbarSrc).not.toContain('ExportButton')
     expect(toolbarSrc).not.toContain('SaveIndicator')
     expect(toolbarSrc).not.toContain("from './ZoomControls'")
-    expect(toolbarSrc).not.toContain("from './PublishButton'")
+    expect(toolbarSrc).not.toContain("from './StudioToolbarActions'")
     expect(toolbarSrc).not.toContain('saveStatus={saveStatus}')
     // The global trailer — including the settings cog — IS owned by the shell.
     expect(toolbarSrc).toContain("from './SettingsButton'")
@@ -462,9 +357,9 @@ describe('Toolbar — structural requirements', () => {
       'utf-8',
     )
     expect(layoutSrc).toContain('ZoomControls')
-    expect(layoutSrc).toContain('PublishButton')
+    expect(layoutSrc).toContain('StudioToolbarActions')
     expect(layoutSrc).not.toContain('SettingsButton')
-    expect(layoutSrc).toContain('saveStatus={persistence.saveStatus}')
+    expect(layoutSrc).toContain('persistence.saveStatus')
   })
 
   it('module picker trigger has data-testid for Playwright', () => {
@@ -520,14 +415,6 @@ describe('Toolbar — structural requirements', () => {
       new URL('../../admin/pages/site/toolbar/ZoomControls.tsx', import.meta.url), 'utf-8',
     )
     expect(zoomSrc).toContain('data-testid="toolbar-zoom-controls"')
-
-    // Publishing split-button testids — passed to SplitButton, which renders
-    // them as data-testid on the chevron trigger and the menu.
-    const publishingSrc = readFileSync(
-      new URL('../../admin/pages/site/toolbar/PublishActionGroup.tsx', import.meta.url), 'utf-8',
-    )
-    expect(publishingSrc).toContain('menuTriggerTestId="toolbar-publish-actions-trigger"')
-    expect(publishingSrc).toContain('menuTestId="toolbar-publish-actions-menu"')
   })
 
   it('ModulePicker uses ContextMenu primitives (role="menu" + role="menuitem")', () => {
@@ -562,59 +449,6 @@ describe('Toolbar — structural requirements', () => {
     expect(hasCssModuleFocus).toBe(true)
   })
 
-  it('PublishButton uses ref to track status timer (no useState leak on unmount)', () => {
-    const { readFileSync } = require('fs')
-    const src = readFileSync(
-      new URL('../../admin/pages/site/toolbar/PublishButton.tsx', import.meta.url), 'utf-8',
-    )
-    // Timer must be stored in a ref and cleared in a cleanup effect
-    expect(src).toContain('statusTimerRef')
-    expect(src).toContain('clearTimeout')
-    expect(src).toContain('useEffect')
-  })
-
-  it('PublishButton uses one split publishing control with explicit draft actions', () => {
-    const { readFileSync } = require('fs')
-    const src = readFileSync(
-      new URL('../../admin/pages/site/toolbar/PublishButton.tsx', import.meta.url),
-      'utf-8',
-    )
-    expect(src).toContain('PublishActionGroup')
-    expect(src).toContain('Draft saved')
-    expect(src).toContain('Unsaved draft')
-    expect(src).toContain("state === 'published' ? 'Published'")
-    expect(src).toContain('state === \'published\' ? CheckIcon')
-    expect(src).toContain("statusLabel={state === 'published' ? null : status.label}")
-    expect(src).toContain('publishDisabled={disabled || state === \'published\'}')
-    expect(src).toContain('Save draft')
-    expect(src).toContain('Preview page')
-    // "Open live page" used to live in this menu — it's now a dedicated
-    // icon button (OpenLivePageButton) next to the avatar in the Toolbar
-    // shell so it's reachable from every admin route, not just the Site
-    // editor. Asserting it's gone from the menu keeps the two surfaces
-    // from drifting back into a duplicate action.
-    expect(src).not.toContain("label: 'Open live page'")
-    expect(src).not.toContain("'toolbar-open-page-new-tab-action'")
-    expect(src).toContain("'Retry publish'")
-    expect(src).not.toContain("label: 'Live'")
-    expect(src).not.toContain("'Publish failed'")
-  })
-
-  it('PublishActionGroup keeps the status pill and delegates its split control to the shared SplitButton', () => {
-    const { readFileSync } = require('fs')
-    const src = readFileSync(
-      new URL('../../admin/pages/site/toolbar/PublishActionGroup.tsx', import.meta.url),
-      'utf-8',
-    )
-    // The optional status pill stays owned by PublishActionGroup.
-    expect(src).toContain('statusLabel?: string | null')
-    expect(src).toContain('{statusLabel && (')
-    // The split button + dropdown mechanics now live in the shared primitive.
-    expect(src).toContain('@ui/components/SplitButton')
-    expect(src).toContain('<SplitButton')
-    expect(src).toContain('menuItems={menuItems}')
-  })
-
   it('SplitButton exposes a menu trigger and portals the menu above editor panels', () => {
     const { readFileSync } = require('fs')
     const src = readFileSync(
@@ -639,23 +473,20 @@ describe('Toolbar — structural requirements', () => {
     expect(src).toContain("import { Toolbar }")
     expect(src).toContain('const persistence = usePersistence(')
     expect(src).toContain("'default'")
-    expect(src).toContain('cmsAdapter')
-    // PublishButton's `enabled` prop carries the publish gating now
-    // (the old `publishEnabled` toolbar prop was dropped when Toolbar
-    // became prop-driven — AdminCanvasLayout mounts PublishButton itself
-    // inside the toolbar's rightSlot).
-    expect(src).toContain('<PublishButton')
-    expect(src).toContain('enabled={canPublishPages}')
+    expect(src).toContain('fsCodemodAdapter')
+    // Studio is the only editor mode — the toolbar's right slot always
+    // mounts StudioToolbarActions inside the toolbar's rightSlot.
+    expect(src).toContain('<StudioToolbarActions')
   })
 
-  it('AdminCanvasLayout keeps zoom and publishing controls adjacent without a divider', () => {
+  it('AdminCanvasLayout keeps zoom and Studio toolbar actions adjacent without a divider', () => {
     const { readFileSync } = require('fs')
     const src = readFileSync(
       new URL('../../admin/layouts/AdminCanvasLayout/AdminCanvasLayout.tsx', import.meta.url),
       'utf-8',
     )
     expect(src).toContain('<ZoomControls />')
-    expect(src).toContain('<PublishButton')
+    expect(src).toContain('<StudioToolbarActions')
     expect(src).not.toContain('ToolbarDivider')
   })
 
@@ -667,8 +498,6 @@ describe('Toolbar — structural requirements', () => {
     // styling, not the toolbar shared CSS — covered by canvasNotch.test.ts.
     const files = [
       'ZoomControls.tsx',
-      'PublishButton.tsx',
-      'PublishActionGroup.tsx',
       'SettingsButton.tsx',
     ]
     const { readFileSync } = require('fs')
