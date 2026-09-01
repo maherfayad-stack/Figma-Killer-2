@@ -313,8 +313,16 @@ async function handleAiChat(
         await registerTurnDesignReferences(validatedWorkspaceDir, preflight.imageBytes, activePageId)
       }
 
+      // Plain text of THIS turn's own message — threaded through to the live
+      // digest's Figma-URL nudge (verification-gate item 4) only; never
+      // persisted anywhere beyond that regex check.
+      const userMessageText = userContent
+        .filter((block): block is Extract<AiContentBlock, { kind: 'text' }> => block.kind === 'text')
+        .map((block) => block.text)
+        .join('\n')
+
       const systemPrompt = validatedWorkspaceDir
-        ? await buildStudioProjectSystemPrompt(validatedWorkspaceDir, snapshot, conversation.id, tools)
+        ? await buildStudioProjectSystemPrompt(validatedWorkspaceDir, snapshot, conversation.id, tools, undefined, userMessageText)
         : buildCmsSiteSystemPrompt(snapshot)
 
       // Capture totals reported by the persister so the audit row can hold

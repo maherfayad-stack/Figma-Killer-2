@@ -383,3 +383,72 @@ test('§4.3: a promoted <ul> carries its tag via the built-in select option, not
   expect(ulNode.props.tag).toBe('ul')
   expect(ulNode.props.customTag).toBeUndefined()
 })
+
+// ---------------------------------------------------------------------------
+// base.svg host tag — `<span dangerouslySetInnerHTML={{__html: rawIcon}} />`,
+// the shape every repo uses to inline a `?raw` icon. The span is the AUTHOR's:
+// its class carries the icon's box (`.icon { width: 24px }`, paired with
+// `.icon svg { width: 100% }`). Losing which element the source actually wrote
+// is what made the module substitute a box-less host and render every icon at
+// its flex container's width.
+// ---------------------------------------------------------------------------
+
+/** Mirrors `studioPageLoad.ts`'s real resolver for the two ways `base.svg` is reached. */
+function resolveModuleIdWithRawSvg({
+  kind,
+  name,
+  props,
+}: {
+  kind: 'element' | 'component'
+  name: string
+  props?: Record<string, unknown>
+}): string {
+  if (kind === 'component') return `alm.${name}`
+  if (typeof props?.svg === 'string' && props.svg.length > 0) return 'base.svg'
+  if (name.toLowerCase() === 'svg') return 'base.svg'
+  return 'base.container'
+}
+
+function svgPage(name: string, props: Record<string, unknown>): ParsedPage {
+  const id = 'Home.tsx:20:6'
+  return {
+    rootIds: [id],
+    nodes: {
+      [id]: {
+        id,
+        kind: 'element',
+        name,
+        props,
+        children: [],
+        loc: { file: 'Home.tsx', line: 20, col: 6 },
+        locked: false,
+      },
+    },
+  }
+}
+
+function svgNodeProps(name: string, props: Record<string, unknown>) {
+  const result = parsedPageToSitePage(svgPage(name, props), {
+    pageId: 'home',
+    slug: 'home',
+    title: 'Home',
+    resolveModuleId: resolveModuleIdWithRawSvg,
+    resolveTextProp: resolveTextPropReal,
+    resolveClassIds: (className) => className.split(/\s+/).filter(Boolean),
+  })
+  return result.nodes['Home.tsx:20:6']
+}
+
+test('parsedPageToSitePage records the authored host element of an inlined raw icon', () => {
+  const node = svgNodeProps('span', { svg: '<svg><path d="M0 0"/></svg>', className: 'icon' })
+  expect(node.moduleId).toBe('base.svg')
+  expect(node.props.tag).toBe('span')
+  // The class is still translated to classIds — it is what sizes the icon.
+  expect(node.classIds).toContain('icon')
+})
+
+test('parsedPageToSitePage records no host element for a bare <svg>', () => {
+  const node = svgNodeProps('svg', { svg: '<svg><path d="M0 0"/></svg>' })
+  expect(node.moduleId).toBe('base.svg')
+  expect(node.props.tag).toBeUndefined()
+})

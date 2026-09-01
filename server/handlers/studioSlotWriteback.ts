@@ -56,9 +56,10 @@
  * `no-jsx-parent`/`unsupported-params`/`unsupported-props-type`/
  * `prop-name-taken` stay codemod-only refusals — `refuseStructuralEdit` has
  * no vocabulary for them, the same way `deleteJsxElement`'s own
- * `orphans-import`/`no-jsx-parent` stay AST-only residuals in `struct-01`.
+ * `no-jsx-parent` stays an AST-only residual in `struct-01`.
  */
 import { insertJsxIntoSlotProp, extractSubtreeToComponent, addSlotPropToComponent, type ComponentCallSite } from '@core/ast-codemods'
+import { JsonDataValueSchema } from './studioStructuralWriteback'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 
 /**
@@ -72,7 +73,7 @@ const SlotJsxNodeSchema = Type.Recursive((Self) =>
   Type.Object({
     name: Type.String(),
     importSpecifier: Type.Optional(Type.String()),
-    props: Type.Optional(Type.Record(Type.String(), Type.Union([Type.String(), Type.Number(), Type.Boolean()]))),
+    props: Type.Optional(Type.Record(Type.String(), JsonDataValueSchema)),
     children: Type.Optional(Type.Union([Type.String(), Type.Array(Self)])),
   }),
 )

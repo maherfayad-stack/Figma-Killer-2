@@ -236,8 +236,10 @@ describe('collectStyleRuleEdits — Track B1 insert for an editor-authored rule 
       },
       {},
     )
-    // Even a node-scoped rule (a real page to co-locate with) must NOT create
-    // a third file when the ambiguity is about which EXISTING file to use.
+    // Node-scoped, but NEITHER candidate is co-located with the rule's page:
+    // the page is `src/pages/Home.tsx` and the stylesheets live in `pages/`.
+    // With no per-page answer available, the ambiguity is real and refusing is
+    // right — and this must still never create a third file.
     const edited = newRule({
       scope: { type: 'node', nodeId: 'src/pages/Home.tsx:12:5', role: 'module-style' },
       contextStyles: { [STUDIO_BREAKPOINT_ID]: { color: 'red' } },
@@ -249,6 +251,65 @@ describe('collectStyleRuleEdits — Track B1 insert for an editor-authored rule 
     expect(plan.unmapped[0]).toContain('.new-class')
     expect(plan.unmapped[0]).toContain('pages/Home.css')
     expect(plan.unmapped[0]).toContain('pages/Other.css')
+  })
+
+  it('writes into the stylesheet co-located with the rule\'s own page instead of refusing', () => {
+    /**
+     * THE BUG: the ambiguity check counted stylesheets across the WHOLE
+     * workspace, so a project whose pages each own a `*.module.css` refused
+     * EVERY new class. Reported from a project with exactly this shape:
+     * "Studio found 4 candidate stylesheets in this project
+     * (pages/Home.module.css, pages/Onboarding.module.css,
+     * pages/SMS.module.css, pages/SignUp.module.css)". Nothing was ambiguous
+     * — the node being styled was on Home — and `pageFileForRule` could
+     * recover that page the whole time; it was simply consulted only after
+     * the refusal had already returned.
+     */
+    setStudioStyleRuleSources(
+      {
+        a: { file: 'pages/Home.module.css', selector: '.a' },
+        b: { file: 'pages/Onboarding.module.css', selector: '.b' },
+        c: { file: 'pages/SMS.module.css', selector: '.c' },
+        d: { file: 'pages/SignUp.module.css', selector: '.d' },
+      },
+      {},
+    )
+    const onHome = newRule({
+      scope: { type: 'node', nodeId: 'pages/Home.tsx:12:5', role: 'module-style' },
+      contextStyles: { [STUDIO_BREAKPOINT_ID]: { color: 'red' } },
+    })
+
+    expect(resolveCssInsertDestination(onHome)).toEqual({
+      ok: true,
+      kind: 'existing',
+      file: 'pages/Home.module.css',
+    })
+
+    // …and the same registry resolves a DIFFERENT page to its own stylesheet,
+    // which is what makes this a destination rather than a lucky first hit.
+    const onSignUp = newRule({
+      scope: { type: 'node', nodeId: 'pages/SignUp.tsx:3:1', role: 'module-style' },
+      contextStyles: { [STUDIO_BREAKPOINT_ID]: { color: 'red' } },
+    })
+    expect(resolveCssInsertDestination(onSignUp)).toMatchObject({ file: 'pages/SignUp.module.css' })
+  })
+
+  it('still refuses when the rule\'s page has no stylesheet of its own', () => {
+    // The co-location step must not become a licence to pick any file: a page
+    // Studio has never seen a stylesheet for leaves the ambiguity intact.
+    setStudioStyleRuleSources(
+      {
+        a: { file: 'pages/Home.module.css', selector: '.a' },
+        b: { file: 'pages/SignUp.module.css', selector: '.b' },
+      },
+      {},
+    )
+    const onOrphanPage = newRule({
+      scope: { type: 'node', nodeId: 'pages/Checkout.tsx:4:2', role: 'module-style' },
+      contextStyles: { [STUDIO_BREAKPOINT_ID]: { color: 'red' } },
+    })
+
+    expect(resolveCssInsertDestination(onOrphanPage)).toMatchObject({ reason: 'ambiguous-stylesheet' })
   })
 
   it('does NOT insert-candidate an IMPORTED rule even with no source (sc- prefix stays unmapped)', () => {

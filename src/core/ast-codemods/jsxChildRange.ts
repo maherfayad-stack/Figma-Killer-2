@@ -100,24 +100,58 @@ export function resolveJsxChildRange(sourceFile: SourceFile, line: number, col: 
         }
   }
 
-  const full = sourceFile.getFullText()
-  const start = element.getStart()
-  const end = element.getEnd()
+  const owned = ownedTextRange(sourceFile.getFullText(), element.getStart(), element.getEnd())
 
-  const lineStart = full.lastIndexOf('\n', start - 1) + 1
-  const newlineAfter = full.indexOf('\n', end)
-  const lineEnd = newlineAfter === -1 ? full.length : newlineAfter + 1
+  return { ok: true, range: { opening, element, parent, ...owned } }
+}
 
-  const leadIsBlank = full.slice(lineStart, start).trim() === ''
-  const tailIsBlank = full.slice(end, lineEnd).trim() === ''
-  const wholeLine = leadIsBlank && tailIsBlank
+/**
+ * The bytes a node exclusively owns: itself, plus its indentation and trailing
+ * newline when it sits alone on its own line(s).
+ *
+ * Shared by the two things a structural edit removes — a JSX child, and an
+ * import declaration the removal orphaned — because the question is the same
+ * one in both places: cutting a node that owned its whole line without taking
+ * the line leaves a ragged blank where it used to be.
+ */
+export function ownedTextRange(
+  text: string,
+  start: number,
+  end: number,
+): { start: number; end: number; wholeLine: boolean } {
+  const lineStart = text.lastIndexOf('\n', start - 1) + 1
+  const newlineAfter = text.indexOf('\n', end)
+  const lineEnd = newlineAfter === -1 ? text.length : newlineAfter + 1
 
-  return {
-    ok: true,
-    range: wholeLine
-      ? { opening, element, parent, start: lineStart, end: lineEnd, wholeLine: true }
-      : { opening, element, parent, start, end, wholeLine: false },
+  const wholeLine = text.slice(lineStart, start).trim() === '' && text.slice(end, lineEnd).trim() === ''
+  return wholeLine ? { start: lineStart, end: lineEnd, wholeLine: true } : { start, end, wholeLine: false }
+}
+
+/** A byte range in the original text and what replaces it. An insert is a range of length zero; a removal is empty `text`. */
+export interface TextEdit {
+  start: number
+  end: number
+  text: string
+}
+
+/**
+ * Apply every edit to `text`, LAST FIRST.
+ *
+ * Every offset a codemod computes is measured against the ORIGINAL text, so
+ * applying them in source order would shift the ground under each later edit —
+ * the classic way a codemod cuts a file in the wrong place. Sorting descending
+ * is what lets a single write span two distant regions (a JSX element and the
+ * import block above it) without either one knowing the other's arithmetic.
+ *
+ * Ranges must not overlap; every producer here derives them from distinct AST
+ * nodes, which cannot.
+ */
+export function applyTextEdits(text: string, edits: readonly TextEdit[]): string {
+  let out = text
+  for (const edit of [...edits].sort((a, b) => b.start - a.start)) {
+    out = out.slice(0, edit.start) + edit.text + out.slice(edit.end)
   }
+  return out
 }
 
 /**

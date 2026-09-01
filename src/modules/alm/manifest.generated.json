@@ -10,25 +10,29 @@
           "name": "background",
           "tsType": "unknown",
           "required": false,
-          "kind": "boolean"
+          "kind": "boolean",
+          "example": false
         },
         {
           "name": "dir",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "ltr"
         },
         {
           "name": "icon",
           "tsType": "unknown",
           "required": false,
-          "kind": "boolean"
+          "kind": "boolean",
+          "example": true
         },
         {
           "name": "label",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "Top rated for cleanliness"
         },
         {
           "name": "size",
@@ -62,19 +66,22 @@
           "name": "expanded",
           "tsType": "unknown",
           "required": false,
-          "kind": "boolean"
+          "kind": "boolean",
+          "example": false
         },
         {
           "name": "skeleton",
           "tsType": "unknown",
           "required": false,
-          "kind": "boolean"
+          "kind": "boolean",
+          "example": false
         },
         {
           "name": "title",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "Accordion Item"
         }
       ]
     },
@@ -87,25 +94,29 @@
         {
           "name": "actions",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "collection"
         },
         {
           "name": "description",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "A description should be a short, complete sentence."
         },
         {
           "name": "dir",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "ltr"
         },
         {
           "name": "dismissOnScrim",
           "tsType": "unknown",
           "required": false,
-          "kind": "boolean"
+          "kind": "boolean",
+          "example": true
         },
         {
           "name": "items",
@@ -132,7 +143,8 @@
           "name": "title",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "A Short Title Is Best"
         }
       ]
     },
@@ -146,13 +158,15 @@
           "name": "actionLabel",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "Label"
         },
         {
           "name": "chevron",
           "tsType": "unknown",
           "required": false,
-          "kind": "boolean"
+          "kind": "boolean",
+          "example": true
         },
         {
           "name": "dir",
@@ -168,7 +182,8 @@
           "name": "imageActionLabel",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "Book now"
         },
         {
           "name": "imageSrc",
@@ -220,26 +235,29 @@
           "name": "showAction",
           "tsType": "unknown",
           "required": false,
-          "kind": "boolean"
+          "kind": "boolean",
+          "example": false
         },
         {
           "name": "showImageAction",
           "tsType": "unknown",
           "required": false,
-          "kind": "boolean"
+          "kind": "boolean",
+          "example": false
         },
         {
           "name": "showSponsored",
           "tsType": "unknown",
           "required": false,
-          "kind": "boolean"
+          "kind": "boolean",
+          "example": true
         },
         {
           "name": "size",
           "tsType": "unknown",
           "required": false,
           "enumValues": [
-            "mobile",
+            "small",
             "medium",
             "large"
           ],
@@ -249,25 +267,29 @@
           "name": "skeleton",
           "tsType": "unknown",
           "required": false,
-          "kind": "boolean"
+          "kind": "boolean",
+          "example": false
         },
         {
           "name": "sponsoredLabel",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "Sponsored"
         },
         {
           "name": "subtitle",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "Sub-copy"
         },
         {
           "name": "title",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "Ad title"
         }
       ]
     },
@@ -312,7 +334,8 @@
           "name": "width",
           "tsType": "unknown",
           "required": false,
-          "kind": "number"
+          "kind": "number",
+          "example": 132
         }
       ]
     },
@@ -325,17 +348,23 @@
         {
           "name": "count",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "number",
+          "example": 5
         },
         {
           "name": "max",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "number",
+          "example": 99
         },
         {
           "name": "variant",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string",
+          "example": "alert"
         }
       ]
     },
@@ -349,13 +378,15 @@
           "name": "codeLabel",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "Use code"
         },
         {
           "name": "codeText",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "CODE"
         },
         {
           "name": "color",
@@ -373,7 +404,8 @@
           "name": "dir",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "ltr"
         },
         {
           "name": "iconSrc",
@@ -391,31 +423,36 @@
           "name": "showAction",
           "tsType": "unknown",
           "required": false,
-          "kind": "boolean"
+          "kind": "boolean",
+          "example": true
         },
         {
           "name": "showDismiss",
           "tsType": "unknown",
           "required": false,
-          "kind": "boolean"
+          "kind": "boolean",
+          "example": true
         },
         {
           "name": "showVisual",
           "tsType": "unknown",
           "required": false,
-          "kind": "boolean"
+          "kind": "boolean",
+          "example": true
         },
         {
           "name": "subtitle",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "Short description"
         },
         {
           "name": "title",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "Title"
         }
       ]
     },
@@ -429,19 +466,22 @@
           "name": "actionLabel",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "Book now"
         },
         {
           "name": "bookingDetailsLabel",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "Booking details"
         },
         {
           "name": "fromLabel",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "Starting from"
         },
         {
           "name": "onAction",
@@ -459,7 +499,8 @@
           "name": "originalPrice",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "$1,500"
         },
         {
           "name": "paymentLogo",
@@ -471,13 +512,15 @@
           "name": "paymentMethod",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "Apple Pay"
         },
         {
           "name": "price",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "$1,215"
         },
         {
           "name": "type",
@@ -508,7 +551,8 @@
           "name": "dir",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "ltr"
         },
         {
           "name": "onAction",
@@ -558,13 +602,15 @@
           "name": "subtitle",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "Optional subtitle"
         },
         {
           "name": "title",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "Select seat"
         }
       ]
     },
@@ -584,7 +630,8 @@
           "name": "cardLast4",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "1394"
         },
         {
           "name": "dir",
@@ -600,7 +647,8 @@
           "name": "label",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "Label"
         },
         {
           "name": "leadingIcon",
@@ -657,19 +705,22 @@
           "name": "dir",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "ltr"
         },
         {
           "name": "icon",
           "tsType": "unknown",
           "required": false,
-          "kind": "boolean"
+          "kind": "boolean",
+          "example": true
         },
         {
           "name": "label",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "Cheapest for your dates"
         },
         {
           "name": "size",
@@ -715,7 +766,8 @@
           "name": "label",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "Label text"
         },
         {
           "name": "onStepperChange",
@@ -733,13 +785,15 @@
           "name": "selected",
           "tsType": "unknown",
           "required": false,
-          "kind": "boolean"
+          "kind": "boolean",
+          "example": false
         },
         {
           "name": "showSeparator",
           "tsType": "unknown",
           "required": false,
-          "kind": "boolean"
+          "kind": "boolean",
+          "example": true
         },
         {
           "name": "sideIcon",
@@ -757,43 +811,50 @@
           "name": "stepperMax",
           "tsType": "unknown",
           "required": false,
-          "kind": "number"
+          "kind": "number",
+          "example": 9
         },
         {
           "name": "stepperMin",
           "tsType": "unknown",
           "required": false,
-          "kind": "number"
+          "kind": "number",
+          "example": 0
         },
         {
           "name": "stepperValue",
           "tsType": "unknown",
           "required": false,
-          "kind": "number"
+          "kind": "number",
+          "example": 1
         },
         {
           "name": "subtext",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "Caption"
         },
         {
           "name": "tag",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "New"
         },
         {
           "name": "title",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "Caption"
         },
         {
           "name": "toggleChecked",
           "tsType": "unknown",
           "required": false,
-          "kind": "boolean"
+          "kind": "boolean",
+          "example": false
         },
         {
           "name": "trailing",
@@ -811,7 +872,8 @@
           "name": "value",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "Value text"
         },
         {
           "name": "visual",
@@ -837,7 +899,8 @@
           "name": "checked",
           "tsType": "unknown",
           "required": false,
-          "kind": "boolean"
+          "kind": "boolean",
+          "example": false
         },
         {
           "name": "dir",
@@ -853,19 +916,22 @@
           "name": "disabled",
           "tsType": "unknown",
           "required": false,
-          "kind": "boolean"
+          "kind": "boolean",
+          "example": false
         },
         {
           "name": "error",
           "tsType": "unknown",
           "required": false,
-          "kind": "boolean"
+          "kind": "boolean",
+          "example": false
         },
         {
           "name": "id",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "terms"
         },
         {
           "name": "onChange",
@@ -877,7 +943,8 @@
           "name": "skeleton",
           "tsType": "unknown",
           "required": false,
-          "kind": "boolean"
+          "kind": "boolean",
+          "example": false
         }
       ]
     },
@@ -901,7 +968,8 @@
           "name": "dropdown",
           "tsType": "unknown",
           "required": false,
-          "kind": "boolean"
+          "kind": "boolean",
+          "example": false
         },
         {
           "name": "icon",
@@ -913,19 +981,22 @@
           "name": "label",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "Label"
         },
         {
           "name": "selected",
           "tsType": "unknown",
           "required": false,
-          "kind": "boolean"
+          "kind": "boolean",
+          "example": false
         },
         {
           "name": "skeleton",
           "tsType": "unknown",
           "required": false,
-          "kind": "boolean"
+          "kind": "boolean",
+          "example": false
         },
         {
           "name": "state",
@@ -959,7 +1030,8 @@
           "name": "label",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "Loading results…"
         },
         {
           "name": "platform",
@@ -1003,12 +1075,17 @@
           "name": "description",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "A description should be a short, complete sentence."
         },
         {
           "name": "destructiveAction",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "collection",
+          "example": {
+            "label": "Delete"
+          }
         },
         {
           "name": "dir",
@@ -1024,13 +1101,13 @@
           "name": "dismissOnScrim",
           "tsType": "unknown",
           "required": false,
-          "kind": "boolean"
+          "kind": "boolean",
+          "example": true
         },
         {
           "name": "icon",
           "tsType": "unknown",
-          "required": false,
-          "kind": "icon"
+          "required": false
         },
         {
           "name": "layout",
@@ -1061,18 +1138,27 @@
         {
           "name": "primaryAction",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "collection",
+          "example": {
+            "label": "Primary"
+          }
         },
         {
           "name": "secondaryAction",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "collection",
+          "example": {
+            "label": "Secondary"
+          }
         },
         {
           "name": "title",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "A short title is best"
         }
       ]
     },
@@ -1086,7 +1172,8 @@
           "name": "collapsedLabel",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "See all 12"
         },
         {
           "name": "dir",
@@ -1102,13 +1189,15 @@
           "name": "expanded",
           "tsType": "unknown",
           "required": false,
-          "kind": "boolean"
+          "kind": "boolean",
+          "example": false
         },
         {
           "name": "expandedLabel",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "See less"
         },
         {
           "name": "onChange",
@@ -1128,13 +1217,15 @@
           "name": "appCtaLabel",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "Get the app"
         },
         {
           "name": "appDescription",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "Our app has all your hotel needs covered: …"
         },
         {
           "name": "appLogo",
@@ -1146,13 +1237,15 @@
           "name": "appTagline",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "Join 11M+ users across MENA"
         },
         {
           "name": "appTitle",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "Get the Almosafer app!"
         },
         {
           "name": "awardsSrc",
@@ -1163,7 +1256,15 @@
         {
           "name": "badges",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "collection",
+          "example": [
+            {
+              "src": "/appstore.png",
+              "alt": "App Store",
+              "href": "#"
+            }
+          ]
         },
         {
           "name": "barcodeSrc",
@@ -1174,24 +1275,57 @@
         {
           "name": "columns",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "collection",
+          "example": [
+            {
+              "title": "Corporate",
+              "links": [
+                {
+                  "label": "About us",
+                  "href": "#"
+                }
+              ]
+            },
+            {
+              "title": "Social media",
+              "links": [
+                {
+                  "label": "Facebook",
+                  "href": "#"
+                }
+              ]
+            },
+            {
+              "title": "Countries",
+              "links": [
+                {
+                  "label": "Saudi Arabia",
+                  "href": "#"
+                }
+              ]
+            }
+          ]
         },
         {
           "name": "contactHeading",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "Get in touch with us:"
         },
         {
           "name": "contacts",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "collection"
         },
         {
           "name": "copyright",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "Copyright © 2026 Almosafer"
         },
         {
           "name": "dir",
@@ -1206,7 +1340,14 @@
         {
           "name": "licenses",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "collection",
+          "example": [
+            {
+              "label": "Tourism Services License",
+              "value": "432873354"
+            }
+          ]
         },
         {
           "name": "onAppCta",
@@ -1217,7 +1358,14 @@
         {
           "name": "paymentLogos",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "collection",
+          "example": [
+            {
+              "src": "/mada.svg",
+              "alt": "mada"
+            }
+          ]
         },
         {
           "name": "platform",
@@ -1232,27 +1380,57 @@
         {
           "name": "ratings",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "collection",
+          "example": [
+            {
+              "score": "4.7",
+              "store": "App Store"
+            },
+            {
+              "score": "4.8",
+              "store": "Google Play"
+            }
+          ]
         },
         {
           "name": "stats",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "collection",
+          "example": [
+            {
+              "value": "11 Million+",
+              "label": "App Downloads"
+            },
+            {
+              "value": "400K+",
+              "label": "Reviews"
+            }
+          ]
         },
         {
           "name": "taglines",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "collection",
+          "example": [
+            "Leading Online Travel Agency"
+          ]
         },
         {
           "name": "type",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "string",
+          "example": "applogo"
         },
         {
           "name": "width",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "number",
+          "example": 56
         }
       ]
     },
@@ -1299,7 +1477,8 @@
           "name": "label",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "Label"
         },
         {
           "name": "onClick",
@@ -1390,7 +1569,8 @@
           "name": "value",
           "tsType": "unknown",
           "required": false,
-          "kind": "number"
+          "kind": "number",
+          "example": 40
         }
       ]
     },
@@ -1404,19 +1584,22 @@
           "name": "dir",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "ltr"
         },
         {
           "name": "disabled",
           "tsType": "unknown",
           "required": false,
-          "kind": "boolean"
+          "kind": "boolean",
+          "example": false
         },
         {
           "name": "error",
           "tsType": "unknown",
           "required": false,
-          "kind": "boolean"
+          "kind": "boolean",
+          "example": false
         },
         {
           "name": "icon",
@@ -1428,25 +1611,29 @@
           "name": "id",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "opt-1"
         },
         {
           "name": "keyValue",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "Key-value"
         },
         {
           "name": "label",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "Label"
         },
         {
           "name": "name",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "group"
         },
         {
           "name": "onChange",
@@ -1458,19 +1645,22 @@
           "name": "selected",
           "tsType": "unknown",
           "required": false,
-          "kind": "boolean"
+          "kind": "boolean",
+          "example": false
         },
         {
           "name": "skeleton",
           "tsType": "unknown",
           "required": false,
-          "kind": "boolean"
+          "kind": "boolean",
+          "example": false
         },
         {
           "name": "tag",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "New"
         },
         {
           "name": "type",
@@ -1495,24 +1685,28 @@
           "name": "actionLabel",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "Book a transfer"
         },
         {
           "name": "buttonDisabled",
           "tsType": "unknown",
           "required": false,
-          "kind": "boolean"
+          "kind": "boolean",
+          "example": false
         },
         {
           "name": "buttonProps",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "collection"
         },
         {
           "name": "buttonSize",
           "tsType": "unknown",
           "required": false,
           "kind": "enum",
+          "example": "small",
           "enumValues": [
             "default",
             "medium",
@@ -1524,6 +1718,7 @@
           "tsType": "unknown",
           "required": false,
           "kind": "enum",
+          "example": "primary",
           "enumValues": [
             "primary",
             "primary-inverted",
@@ -1542,20 +1737,21 @@
         {
           "name": "centerTitle",
           "tsType": "unknown",
-          "required": false,
-          "kind": "string"
+          "required": false
         },
         {
           "name": "dir",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "ltr"
         },
         {
           "name": "imageSize",
           "tsType": "unknown",
           "required": false,
           "kind": "enum",
+          "example": "small",
           "enumValues": [
             "large",
             "medium",
@@ -1578,37 +1774,43 @@
           "name": "skeleton",
           "tsType": "unknown",
           "required": false,
-          "kind": "boolean"
+          "kind": "boolean",
+          "example": false
         },
         {
           "name": "subtitle",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "Book a transfer and arrive stress-free"
         },
         {
           "name": "tag1Label",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "Popular"
         },
         {
           "name": "tag2Label",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "New"
         },
         {
           "name": "tagCount",
           "tsType": "unknown",
           "required": false,
-          "kind": "number"
+          "kind": "number",
+          "example": 2
         },
         {
           "name": "title",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "Skip the taxi queue"
         },
         {
           "name": "type",
@@ -1632,7 +1834,15 @@
         {
           "name": "chips",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "collection",
+          "example": [
+            {
+              "label": "Dates",
+              "dropdown": true,
+              "selected": false
+            }
+          ]
         },
         {
           "name": "dir",
@@ -1657,7 +1867,15 @@
         {
           "name": "segmentedControl",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "collection",
+          "example": {
+            "items": [
+              "Flights",
+              "Stays"
+            ],
+            "value": 0
+          }
         },
         {
           "name": "surface",
@@ -1673,7 +1891,8 @@
         {
           "name": "toolbar",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "collection"
         }
       ]
     },
@@ -1687,13 +1906,15 @@
           "name": "currentStep",
           "tsType": "unknown",
           "required": false,
-          "kind": "number"
+          "kind": "number",
+          "example": 2
         },
         {
           "name": "steps",
           "tsType": "unknown",
           "required": false,
-          "kind": "number"
+          "kind": "number",
+          "example": 5
         }
       ]
     },
@@ -1707,7 +1928,8 @@
           "name": "checked",
           "tsType": "unknown",
           "required": false,
-          "kind": "boolean"
+          "kind": "boolean",
+          "example": false
         },
         {
           "name": "dir",
@@ -1723,25 +1945,29 @@
           "name": "disabled",
           "tsType": "unknown",
           "required": false,
-          "kind": "boolean"
+          "kind": "boolean",
+          "example": false
         },
         {
           "name": "error",
           "tsType": "unknown",
           "required": false,
-          "kind": "boolean"
+          "kind": "boolean",
+          "example": false
         },
         {
           "name": "id",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "plan-a"
         },
         {
           "name": "name",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "plan"
         },
         {
           "name": "onChange",
@@ -1753,7 +1979,8 @@
           "name": "skeleton",
           "tsType": "unknown",
           "required": false,
-          "kind": "boolean"
+          "kind": "boolean",
+          "example": false
         }
       ]
     },
@@ -1777,7 +2004,8 @@
           "name": "label",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "Search Term"
         },
         {
           "name": "onChange",
@@ -1801,7 +2029,8 @@
           "name": "placeholder",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "Search"
         },
         {
           "name": "platform",
@@ -1817,7 +2046,8 @@
           "name": "showClose",
           "tsType": "unknown",
           "required": false,
-          "kind": "boolean"
+          "kind": "boolean",
+          "example": false
         },
         {
           "name": "value",
@@ -1845,7 +2075,13 @@
         {
           "name": "items",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "collection",
+          "example": [
+            "Flights",
+            "Hotels",
+            "Cars"
+          ]
         },
         {
           "name": "onChange",
@@ -1867,7 +2103,9 @@
           "name": "value",
           "tsType": "unknown",
           "required": false,
-          "kind": "number"
+          "kind": "number",
+          "example": 0,
+          "indexesCollection": "items"
         }
       ]
     },
@@ -1891,15 +2129,16 @@
           "name": "label",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "OR"
         },
         {
           "name": "type",
           "tsType": "unknown",
           "required": false,
           "enumValues": [
-            "cell",
-            "section"
+            "cell separator",
+            "section separator"
           ],
           "kind": "enum"
         },
@@ -1936,13 +2175,15 @@
           "name": "max",
           "tsType": "unknown",
           "required": false,
-          "kind": "number"
+          "kind": "number",
+          "example": 100
         },
         {
           "name": "min",
           "tsType": "unknown",
           "required": false,
-          "kind": "number"
+          "kind": "number",
+          "example": 0
         },
         {
           "name": "onChange",
@@ -1954,19 +2195,22 @@
           "name": "step",
           "tsType": "unknown",
           "required": false,
-          "kind": "number"
+          "kind": "number",
+          "example": 1
         },
         {
           "name": "ticks",
           "tsType": "unknown",
           "required": false,
-          "kind": "number"
+          "kind": "number",
+          "example": 5
         },
         {
           "name": "value",
           "tsType": "unknown",
           "required": false,
-          "kind": "number"
+          "kind": "number",
+          "example": 40
         }
       ]
     },
@@ -1980,19 +2224,22 @@
           "name": "dir",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "ltr"
         },
         {
           "name": "duration",
           "tsType": "unknown",
           "required": false,
-          "kind": "number"
+          "kind": "number",
+          "example": 3000
         },
         {
           "name": "message",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "Seat preference saved"
         },
         {
           "name": "onClose",
@@ -2027,13 +2274,15 @@
           "name": "max",
           "tsType": "unknown",
           "required": false,
-          "kind": "number"
+          "kind": "number",
+          "example": 9
         },
         {
           "name": "min",
           "tsType": "unknown",
           "required": false,
-          "kind": "number"
+          "kind": "number",
+          "example": 0
         },
         {
           "name": "onChange",
@@ -2045,7 +2294,8 @@
           "name": "value",
           "tsType": "unknown",
           "required": false,
-          "kind": "number"
+          "kind": "number",
+          "example": 1
         }
       ]
     },
@@ -2059,13 +2309,15 @@
           "name": "actionLabel",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "Label"
         },
         {
           "name": "description",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "Book with free cancellation and get full refund."
         },
         {
           "name": "dir",
@@ -2081,7 +2333,8 @@
           "name": "icon",
           "tsType": "unknown",
           "required": false,
-          "kind": "boolean"
+          "kind": "boolean",
+          "example": true
         },
         {
           "name": "onAction",
@@ -2103,19 +2356,22 @@
           "name": "skeleton",
           "tsType": "unknown",
           "required": false,
-          "kind": "boolean"
+          "kind": "boolean",
+          "example": false
         },
         {
           "name": "tag",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "Ends in 2 days"
         },
         {
           "name": "title",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "Title"
         },
         {
           "name": "type",
@@ -2151,7 +2407,19 @@
         {
           "name": "items",
           "tsType": "unknown",
-          "required": false
+          "required": false,
+          "kind": "collection",
+          "example": [
+            {
+              "label": "Home"
+            },
+            {
+              "label": "Explore"
+            },
+            {
+              "label": "My Trips"
+            }
+          ]
         },
         {
           "name": "onChange",
@@ -2173,7 +2441,9 @@
           "name": "value",
           "tsType": "unknown",
           "required": false,
-          "kind": "number"
+          "kind": "number",
+          "example": 0,
+          "indexesCollection": "items"
         }
       ]
     },
@@ -2187,7 +2457,8 @@
           "name": "label",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "Label"
         },
         {
           "name": "leadingIcon",
@@ -2199,7 +2470,8 @@
           "name": "skeleton",
           "tsType": "unknown",
           "required": false,
-          "kind": "boolean"
+          "kind": "boolean",
+          "example": false
         },
         {
           "name": "style",
@@ -2252,31 +2524,36 @@
           "name": "disabled",
           "tsType": "unknown",
           "required": false,
-          "kind": "boolean"
+          "kind": "boolean",
+          "example": false
         },
         {
           "name": "dropdown",
           "tsType": "unknown",
           "required": false,
-          "kind": "boolean"
+          "kind": "boolean",
+          "example": false
         },
         {
           "name": "errorText",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "Error message"
         },
         {
           "name": "helperText",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "Helper text"
         },
         {
           "name": "label",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "Label"
         },
         {
           "name": "leadingIcon",
@@ -2288,7 +2565,8 @@
           "name": "multiline",
           "tsType": "unknown",
           "required": false,
-          "kind": "boolean"
+          "kind": "boolean",
+          "example": false
         },
         {
           "name": "onChange",
@@ -2306,19 +2584,22 @@
           "name": "password",
           "tsType": "unknown",
           "required": false,
-          "kind": "boolean"
+          "kind": "boolean",
+          "example": false
         },
         {
           "name": "required",
           "tsType": "unknown",
           "required": false,
-          "kind": "boolean"
+          "kind": "boolean",
+          "example": false
         },
         {
           "name": "skeleton",
           "tsType": "unknown",
           "required": false,
-          "kind": "boolean"
+          "kind": "boolean",
+          "example": false
         },
         {
           "name": "trailingIcon",
@@ -2343,7 +2624,8 @@
           "name": "checked",
           "tsType": "unknown",
           "required": false,
-          "kind": "boolean"
+          "kind": "boolean",
+          "example": false
         },
         {
           "name": "dir",
@@ -2359,7 +2641,8 @@
           "name": "label",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "Label"
         },
         {
           "name": "onChange",
@@ -2411,13 +2694,15 @@
           "name": "content",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "Tooltip text"
         },
         {
           "name": "dir",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "ltr"
         },
         {
           "name": "position",
@@ -2441,19 +2726,22 @@
           "name": "accentColor",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "#008f8d"
         },
         {
           "name": "actionLabel",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "Book now"
         },
         {
           "name": "dir",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "ltr"
         },
         {
           "name": "imageSrc",
@@ -2477,25 +2765,29 @@
           "name": "priceLabel",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "From"
         },
         {
           "name": "priceValue",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "SAR 499"
         },
         {
           "name": "showBottomBar",
           "tsType": "unknown",
           "required": false,
-          "kind": "boolean"
+          "kind": "boolean",
+          "example": true
         },
         {
           "name": "showDismiss",
           "tsType": "unknown",
           "required": false,
-          "kind": "boolean"
+          "kind": "boolean",
+          "example": true
         },
         {
           "name": "size",
@@ -2511,13 +2803,15 @@
           "name": "subtitle",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "Short description"
         },
         {
           "name": "title",
           "tsType": "unknown",
           "required": false,
-          "kind": "string"
+          "kind": "string",
+          "example": "Title"
         }
       ]
     }

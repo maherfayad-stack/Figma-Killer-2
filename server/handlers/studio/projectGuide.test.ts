@@ -41,6 +41,34 @@ describe('generateStudioProjectGuide', () => {
     expect(existsSync(join(dir, 'CLAUDE.md'))).toBe(true)
   })
 
+  describe('.claude/settings.local.json — the Stop-hook write-verification gate', () => {
+    it('wires a PostToolUse(Write|Edit) hook and a Stop hook, invoked as [bun, <absolute script path>]', () => {
+      const result = generateStudioProjectGuide(dir)
+      expect(result.written).toContain('.claude/settings.local.json')
+
+      const settings = JSON.parse(read(dir, '.claude/settings.local.json')) as {
+        hooks: { PostToolUse: Array<{ matcher: string; hooks: Array<{ command: string }> }>; Stop: Array<{ hooks: Array<{ command: string }> }> }
+      }
+      const postToolUse = settings.hooks.PostToolUse[0]!
+      expect(postToolUse.matcher).toBe('Write|Edit')
+      expect(postToolUse.hooks[0]!.command).toContain(process.execPath)
+      expect(postToolUse.hooks[0]!.command).toContain('recordToolWrite.ts')
+
+      const stop = settings.hooks.Stop[0]!
+      expect(stop.hooks[0]!.command).toContain(process.execPath)
+      expect(stop.hooks[0]!.command).toContain('stopGateCheck.ts')
+    })
+
+    it('never overwrites a hand-edited settings.local.json — same never-clobber manifest as CLAUDE.md', () => {
+      generateStudioProjectGuide(dir)
+      write(dir, '.claude/settings.local.json', JSON.stringify({ hooks: { UserPromptSubmit: [] } }, null, 2))
+
+      const result = generateStudioProjectGuide(dir)
+      expect(result.skipped).toContain('.claude/settings.local.json')
+      expect(read(dir, '.claude/settings.local.json')).toContain('UserPromptSubmit')
+    })
+  })
+
   describe('legacy artefact sweep', () => {
     it('deletes guides a previous generator version wrote and this one does not', () => {
       // The CLI loads EVERY file under `.claude/` from its cwd, so leaving

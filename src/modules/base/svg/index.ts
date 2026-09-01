@@ -16,6 +16,7 @@ import type { ModuleDefinition } from '@core/module-engine'
 import { ImageSolidIcon } from 'pixel-art-icons/icons/image-solid'
 import { Value } from '@core/utils/typeboxHelpers'
 import { SvgEditor } from './SvgEditor'
+import { resolveSvgHostTag } from './hostTag'
 import { SvgPropsSchema, type SvgStoredProps } from './props'
 
 export const SvgModule: ModuleDefinition<SvgStoredProps> = {
@@ -48,7 +49,11 @@ export const SvgModule: ModuleDefinition<SvgStoredProps> = {
 
   component: SvgEditor,
 
-  htmlTag: 'svg',
+  // The element this node actually IS in the source: the graphic itself for a
+  // literal `<svg>`, or the wrapper the author wrote around a `?raw` icon.
+  // Drives the tree-ladder badge, which would otherwise label an authored
+  // `<span>` as an `<svg>`.
+  htmlTag: (props) => resolveSvgHostTag(props.tag) ?? 'svg',
 
   render: (props) => {
     // `props.svg` was already sanitised at the escapeProps boundary; this is
@@ -58,15 +63,20 @@ export const SvgModule: ModuleDefinition<SvgStoredProps> = {
     if (!markup.trim()) return { html: '' }
 
     const label = String(props.title ?? '').trim()
-    if (label) {
-      // Inject role/aria-label onto the opening <svg> tag.
-      const withLabel = markup.replace(
-        /^(\s*<svg\b)/i,
-        `$1 role="img" aria-label="${label}"`,
-      )
-      return { html: withLabel }
-    }
-    return { html: markup }
+    // Inject role/aria-label onto the opening <svg> tag.
+    const graphic = label
+      ? markup.replace(/^(\s*<svg\b)/i, `$1 role="img" aria-label="${label}"`)
+      : markup
+
+    // Re-emit the element the source wrote around the graphic. Without it the
+    // node's classIds land on the `<svg>` itself, so the `.icon svg { … }` half
+    // of the standard icon-sizing pair matches nothing and the published page
+    // disagrees with both the canvas and the project's own dev build.
+    // `resolveSvgHostTag` returns only safe, non-void lowercase tag names, so
+    // this is already escape-safe to interpolate.
+    const hostTag = resolveSvgHostTag(props.tag)
+    if (hostTag) return { html: `<${hostTag}>${graphic}</${hostTag}>` }
+    return { html: graphic }
   },
 }
 

@@ -38,6 +38,7 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { studioSnapshotStaleness, STALE_NODE_IDS_WARNING, type StalenessTracker } from './staleness'
 import type { StudioAgentSnapshot } from './snapshot'
+import { computePageWriteVerification, type PageWriteVerificationEntry } from '../../../handlers/studio/pageWriteVerification'
 
 export interface StudioLiveDigest {
   readonly board: { readonly activeBoardId: string | null; readonly frames: ReadonlyArray<{ pageId: string; title: string; x: number; y: number; width?: number; height?: number }> }
@@ -78,6 +79,30 @@ export interface StudioLiveDigest {
    * `systemPrompt.ts`).
    */
   readonly capabilities: StudioCapabilityDigest
+  /**
+   * Per-page write/verify status for every page the LAST completed turn
+   * wrote — `pageWriteVerification.ts`'s shared computation, the SAME one the
+   * Stop hook gate (`hooks/stopGateCheck.ts`) enforces at the end of that
+   * turn. Built here from the turn-write log that turn left behind (reset
+   * only once THIS turn's `streamClaudeCli` spawn happens, which is after
+   * this digest is built — see `turnWriteLog.ts`'s "turn boundary" note), so
+   * this is deliberately "what you just did and never verified", surfaced at
+   * the START of the next turn rather than mid-turn (nothing rebuilds this
+   * digest between tool calls). `[]` when the prior turn wrote nothing, or
+   * wrote pages that already passed a compare postdating the write — the
+   * quiet, common case renders no line at all (see `buildLiveDigestLines`).
+   */
+  readonly pageWriteVerification: readonly PageWriteVerificationEntry[]
+  /**
+   * `true` when the user's latest message names a Figma URL AND a Figma
+   * connector is configured AND the active page has no reference armed yet —
+   * the one case `systemPrompt.ts` turns into an explicit "register a
+   * reference before building" line (verification-gate item 4). Never inferred
+   * from anything else; a Studio server has no way to fetch Figma itself, so
+   * this can only ever be a NUDGE to call the agent's own connector, never a
+   * pre-armed reference.
+   */
+  readonly figmaReferenceNudge: { readonly pageId: string; readonly pageTitle: string } | null
 }
 
 /**
@@ -230,17 +255,27 @@ export interface BuildStudioLiveDigestOptions {
   readonly staleness?: StalenessTracker
 }
 
+/** A figma.com URL anywhere in the user's latest message — the one signal `registerTurnDesignReferences` (a transient chat IMAGE attachment) can't catch, because a pasted Figma LINK carries no bytes for it to register. */
+const FIGMA_URL_RE = /https?:\/\/(?:www\.)?figma\.com\/\S+/i
+
 /**
  * Never throws: any resolution failure (page not found, file unreadable)
  * degrades that ONE field to its honest-absence value rather than aborting
  * the whole digest — a partial digest is still useful; a crashed prompt
  * build is not.
+ *
+ * `userMessageText` is this turn's own latest user message (plain text,
+ * already available to `chatSystemPrompt.ts`'s caller) — consulted ONLY for
+ * `FIGMA_URL_RE`, never persisted, never sent anywhere. `undefined` (the
+ * default) simply means the nudge below can never fire, which is the honest
+ * degrade for any caller that hasn't threaded it through yet.
  */
 export async function buildStudioLiveDigest(
   dir: string,
   snapshot: StudioAgentSnapshot,
   conversationId: string,
   options: BuildStudioLiveDigestOptions = {},
+  userMessageText?: string,
 ): Promise<StudioLiveDigest> {
   const staleness = options.staleness ?? studioSnapshotStaleness
   const { pages } = await loadStudioPages(dir)
@@ -296,6 +331,27 @@ export async function buildStudioLiveDigest(
     if (staleness.checkAndRecord(conversationId, absFile)) staleWarning = STALE_NODE_IDS_WARNING
   }
 
+  const capabilities = buildStudioCapabilityDigest(dir)
+
+  let pageWriteVerification: readonly PageWriteVerificationEntry[] = []
+  try {
+    pageWriteVerification = computePageWriteVerification(dir, pages)
+  } catch (err) {
+    console.error('[ai/liveDigest] page write verification failed — continuing without it:', err)
+  }
+
+  const references = listDesignReferences(dir, undefined, undefined).references
+  let figmaReferenceNudge: StudioLiveDigest['figmaReferenceNudge'] = null
+  if (
+    activePage
+    && userMessageText
+    && capabilities.figma.status === 'configured'
+    && FIGMA_URL_RE.test(userMessageText)
+    && !references.some((r) => r.pageId === activePage.id)
+  ) {
+    figmaReferenceNudge = { pageId: activePage.id, pageTitle: activePage.title }
+  }
+
   return {
     board: { activeBoardId: snapshot.activeBoardId, frames },
     activePage: activePage ? { id: activePage.id, file: activePageFile, rootNodeId: activePage.rootNodeId } : null,
@@ -307,7 +363,7 @@ export async function buildStudioLiveDigest(
       dependencyCount: install.dependencyCount,
     },
     axes: snapshot.axes,
-    designReferences: listDesignReferences(dir, undefined, undefined).references.map((r) => ({
+    designReferences: references.map((r) => ({
       id: r.id,
       width: r.width,
       height: r.height,
@@ -315,7 +371,9 @@ export async function buildStudioLiveDigest(
       ...(r.label ? { label: r.label } : {}),
     })),
     staleWarning,
-    capabilities: buildStudioCapabilityDigest(dir),
+    capabilities,
+    pageWriteVerification,
+    figmaReferenceNudge,
   }
 }
 

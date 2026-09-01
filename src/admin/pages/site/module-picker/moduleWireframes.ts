@@ -1,80 +1,9 @@
 import type { NodeTree, PageNode } from '@core/page-tree'
+import { registry } from '@core/module-engine'
+import { archetypeWire } from './moduleArchetype'
+import { box, button, check, col, dot, field, icon, image, lines, radio, row, type WireNode } from './wireNode'
 
-type WireNodeKind =
-  | 'box'
-  | 'button'
-  | 'check'
-  | 'col'
-  | 'dot'
-  | 'field'
-  | 'gap'
-  | 'icon'
-  | 'image'
-  | 'lines'
-  | 'pill'
-  | 'radio'
-  | 'row'
-  | 'rule'
-
-export interface WireNode {
-  kind: WireNodeKind
-  children?: WireNode[]
-  count?: number
-  width?: number
-  height?: number
-  flex?: number
-  gap?: number
-  pad?: number
-  align?: 'start' | 'center' | 'end'
-  avatar?: boolean
-  bar?: boolean
-  big?: boolean
-  card?: boolean
-  caret?: boolean
-  center?: boolean
-  code?: boolean
-  dashed?: boolean
-  link?: boolean
-  logo?: boolean
-  message?: boolean
-  mono?: boolean
-  play?: boolean
-  solid?: boolean
-  tip?: boolean
-  vertical?: boolean
-}
-
-const row = (children: WireNode[], node: Partial<WireNode> = {}): WireNode => ({
-  kind: 'row',
-  children,
-  ...node,
-})
-
-const col = (children: WireNode[], node: Partial<WireNode> = {}): WireNode => ({
-  kind: 'col',
-  children,
-  ...node,
-})
-
-const box = (children: WireNode[] = [], node: Partial<WireNode> = {}): WireNode => ({
-  kind: 'box',
-  children,
-  ...node,
-})
-
-const lines = (count = 3, node: Partial<WireNode> = {}): WireNode => ({
-  kind: 'lines',
-  count,
-  ...node,
-})
-
-const field = (node: Partial<WireNode> = {}): WireNode => ({ kind: 'field', ...node })
-const image = (node: Partial<WireNode> = {}): WireNode => ({ kind: 'image', ...node })
-const button = (node: Partial<WireNode> = {}): WireNode => ({ kind: 'button', ...node })
-const icon = (node: Partial<WireNode> = {}): WireNode => ({ kind: 'icon', ...node })
-const dot = (node: Partial<WireNode> = {}): WireNode => ({ kind: 'dot', ...node })
-const check = (node: Partial<WireNode> = {}): WireNode => ({ kind: 'check', ...node })
-const radio = (node: Partial<WireNode> = {}): WireNode => ({ kind: 'radio', ...node })
+export type { WireNode } from './wireNode'
 
 export const MODULE_WIRES: Readonly<Record<string, WireNode>> = {
   'base.body': box([], { dashed: true, height: 52 }),
@@ -120,9 +49,31 @@ export const MODULE_WIRES: Readonly<Record<string, WireNode>> = {
 }
 
 
+/**
+ * The wireframe for a module id.
+ *
+ * Hand-drawn entry first, then a shape DERIVED from the module's own
+ * declaration (`./moduleArchetype`), then the category guess.
+ *
+ * The derivation step is what makes this work for a real project. `MODULE_WIRES`
+ * only ever covered the 25 `base.*` ids, and a design-system project's picker is
+ * ~44 package components out of 46 — every one of which used to fall through to
+ * `base.container`'s empty dashed box, so Badge, Banner, Button and
+ * BottomActionBar were pixel-identical thumbnails. The module registry already
+ * holds each one's real `schema`, so the shape is derivable instead of authored,
+ * for any package rather than one hardcoded design system.
+ *
+ * The registry lookup is why this stayed a single-argument function instead of
+ * taking the definition: `wireFromTree` below resolves ids out of a node tree
+ * and has no definition in hand, so both callers get the improvement from one
+ * change.
+ */
 export function moduleWireForId(moduleId: string, category?: string): WireNode {
   const known = MODULE_WIRES[moduleId]
   if (known) return known
+
+  const definition = registry.get(moduleId)
+  if (definition) return archetypeWire({ name: definition.name, schema: definition.schema })
 
   if (category === 'Forms') return MODULE_WIRES['base.form']
   if (category === 'Media') return MODULE_WIRES['base.image']

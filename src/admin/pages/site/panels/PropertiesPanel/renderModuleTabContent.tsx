@@ -170,6 +170,9 @@ export function renderModuleTabContent(args: ModuleTabContentArgs): React.ReactN
             value={resolvedPropsForBreakpoint[key]}
             onChange={updateModuleProp}
             isOverride={overrideKeys.has(key)}
+            // Only `collection-index` reads this: `TabBar.value` names one entry
+            // of the sibling `items`, so its options are the node's own data.
+            siblingProps={resolvedPropsForBreakpoint}
             sourceLockReason={propLockReason(selectedNode, key)}
             // E2.5 — only `SlotControl` reads this: a package/design-system
             // component's own `node`-kind prop is filled directly on ITS OWN

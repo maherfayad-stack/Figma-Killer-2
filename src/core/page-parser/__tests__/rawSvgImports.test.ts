@@ -23,6 +23,7 @@ import {
   inlineLocalComponents,
   parsePageFile,
   resolveComponentSources,
+  unresolvedRawTextImports,
   type ParsedNode,
   type StaticEvalOptions,
 } from '@core/page-parser'
@@ -464,5 +465,53 @@ describe('?raw SVG through an unevaluatable transform', () => {
     // arbitrary strings into `base.svg`.
     const span = loadNodes('pages/Text.jsx', evalOptions()).find((n) => n.name === 'span')
     expect(span?.props.svg).toBeUndefined()
+  })
+})
+
+/**
+ * The failure mode that has no other signal: an import that names an icon file
+ * which is not there. The page parses, the node keeps its class and its box,
+ * and the icon is simply absent — and `tsc` agrees the file is fine, because a
+ * project with `vite/client` types declares `*.svg?raw` ambiently regardless of
+ * what is behind the specifier.
+ */
+describe('unresolvedRawTextImports', () => {
+  it('reports a ?raw import whose file is missing, and nothing else', () => {
+    write('icons/sms.svg', SVG)
+    const pageFile = write(
+      'pages/Screen.tsx',
+      [
+        "import smsIcon from '../icons/sms.svg?raw'",
+        "import chartIcon from '../icons/chartLineDown.svg?raw'",
+        "import styles from './Screen.module.css'",
+        'export default function Screen() {',
+        '  return (',
+        '    <div className={styles.row}>',
+        '      <span dangerouslySetInnerHTML={{ __html: smsIcon }} />',
+        '      <span dangerouslySetInnerHTML={{ __html: chartIcon }} />',
+        '    </div>',
+        '  )',
+        '}',
+        '',
+      ].join('\n'),
+    )
+    const project = createWorkspaceProject(tmpDir)
+    const sourceFile = project.addSourceFileAtPath(pageFile)
+
+    const unresolved = unresolvedRawTextImports(sourceFile, tmpDir)
+
+    expect(unresolved).toHaveLength(1)
+    expect(unresolved[0]!.localName).toBe('chartIcon')
+    expect(unresolved[0]!.specifier).toBe('../icons/chartLineDown.svg?raw')
+    expect(unresolved[0]!.line).toBe(2)
+  })
+
+  it('reports nothing without a workspace root — resolution never touches disk unbounded', () => {
+    const pageFile = write(
+      'pages/Screen.tsx',
+      ["import chartIcon from '../icons/missing.svg?raw'", 'export default () => <span>{chartIcon}</span>', ''].join('\n'),
+    )
+    const project = createWorkspaceProject(tmpDir)
+    expect(unresolvedRawTextImports(project.addSourceFileAtPath(pageFile), undefined)).toHaveLength(0)
   })
 })

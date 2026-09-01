@@ -56,27 +56,8 @@ import { pruneCanvasSelectionDraft } from '../selectionSlice'
 import { indexStyleRulesByName, linkImportedClassNames, mergeImportedStyleRules } from './importLinking'
 import type { SiteSlice, SiteSliceHelpers } from './types'
 import { coalesceKeyForPatch } from '../../historyCoalesce'
+import { insertableJsxProps } from './insertablePropValues'
 
-/**
- * The subset of a module's defaults that has an unambiguous JSX spelling, for
- * an insert that is written to the user's source.
- *
- * A design-system module's `propsSchema` is `Unknown` for every prop (see
- * `registerProjectModules.ts`) precisely because the real shapes are unknown,
- * so the defaults bag can hold a handler, an object, an array, or a slot
- * sentinel. Those are dropped rather than serialized: writing a guess into
- * someone's repository is worse than writing nothing, and the component's own
- * default applies to a prop that is simply absent.
- */
-function literalJsxProps(props: Record<string, unknown>): Record<string, string | number | boolean> {
-  const literals: Record<string, string | number | boolean> = {}
-  for (const [key, value] of Object.entries(props)) {
-    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
-      literals[key] = value
-    }
-  }
-  return literals
-}
 
 type NodeActions = Pick<
   SiteSlice,
@@ -180,7 +161,7 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
         ...plan.commit,
         name: sourceImport.name,
         importSpecifier: sourceImport.specifier,
-        props: literalJsxProps(props),
+        props: insertableJsxProps(props),
       })
       return true
     }

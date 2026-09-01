@@ -38,7 +38,7 @@ import { pushToast } from '@ui/components/Toast'
 import { UploadIcon } from 'pixel-art-icons/icons/upload'
 import type { LocalComponentSpec } from './componentPropKind'
 import { isIconProp, slotCandidatesFor, type SlotCandidate } from './slotCandidates'
-import { svgToJsxNode } from './svgToJsxNode'
+import { svgToJsxNode } from '@site/studio/svgToJsxNode'
 import styles from './controls.module.css'
 
 /** How many candidates render at once. A design system's icon set runs to several hundred; the search box is how you reach the rest. */

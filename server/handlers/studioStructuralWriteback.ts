@@ -48,8 +48,10 @@ const MoveEditSchema = Type.Object({
 
 /**
  * One element removal (`struct-01`) — `deleteJsxElement`. Like `detach`/`swap`
- * this can REFUSE with a specific reason (it is the component's root return,
- * it would orphan an import) rather than simply "no writable location".
+ * this can REFUSE with a specific reason (it is the component's root return)
+ * rather than simply "no writable location". It is not refused for orphaning
+ * an import: the codemod removes any binding the deleted markup alone was
+ * using, the same way `insert` adds the ones it needs.
  */
 const DeleteEditSchema = Type.Object({
   kind: Type.Literal('delete'),
@@ -68,9 +70,10 @@ const DeleteEditSchema = Type.Object({
  * for the same reason `move` uses an anchor rather than an index; without them
  * the element is appended as the last child.
  *
- * `props` carries only the three value shapes with an unambiguous JSX spelling.
- * Anything richer (a handler, a node slot, an object) is dropped by the client
- * before it gets here rather than guessed at.
+ * `props` carries any JSON value, because a design system's content often IS
+ * one: `<TabBar items={[{ label: 'Home' }]}/>`. What has no JSON form at all —
+ * a handler, a React element, a slot sentinel — is dropped by the client before
+ * it gets here rather than guessed at.
  *
  * `importSpecifier` is OPTIONAL, and its presence is what picks between the
  * two things this edit can write: with it, `name` is a component and the
@@ -79,10 +82,54 @@ const DeleteEditSchema = Type.Object({
  * "COMPONENTS AND INTRINSIC TAGS" — an agent composing a screen needs the
  * layout elements, not only the design-system components that sit inside them.
  */
-const InsertPropsSchema = Type.Record(
-  Type.String(),
-  Type.Union([Type.String(), Type.Number(), Type.Boolean()]),
+/**
+ * Any JSON value — `insertJsxElement`'s `JsonDataValue`, which it renders as a
+ * JSX expression (`items={[{ label: "Home" }]}`).
+ *
+ * Recursive rather than the flat scalar union it was, because that union was
+ * silently costing every structured default its trip to disk: a TabBar inserted
+ * with the package's own documented `items` was written as `<TabBar
+ * platform="ios" value={0}/>` and reloaded from source as an empty bar.
+ */
+export const JsonDataValueSchema = Type.Recursive((Self) =>
+  Type.Union([Type.String(), Type.Number(), Type.Boolean(), Type.Null(), Type.Array(Self), Type.Record(Type.String(), Self)]),
 )
+
+/**
+ * A React element in PROP position — `insertJsxElement`'s `JsxPropElement`.
+ *
+ * `<TabBar items={[{ icon: <svg…/>, label: 'Home' }]}/>` is the documented shape
+ * of a tab bar, and an icon that cannot be written is an empty icon slot on
+ * every tab. The element arrives as a VALIDATED TREE, never as source text, and
+ * goes through the same `validateSubtree` tag-safety refusal every child
+ * element already does — so this widens what can be written, not what can be
+ * injected.
+ *
+ * Intrinsic tags with scalar props only — see `JsxPropElementNode`. A prop
+ * element is a glyph, not a scene, and the missing `importSpecifier` is what
+ * makes `validateSubtree` refuse a capitalised tag here.
+ */
+const JsxPropElementNodeSchema = Type.Recursive((Self) =>
+  Type.Object({
+    name: Type.String(),
+    props: Type.Optional(Type.Record(Type.String(), JsonDataValueSchema)),
+    children: Type.Optional(Type.Union([Type.String(), Type.Array(Self)])),
+  }),
+)
+
+const JsxPropValueSchema = Type.Recursive((Self) =>
+  Type.Union([
+    Type.String(),
+    Type.Number(),
+    Type.Boolean(),
+    Type.Null(),
+    Type.Object({ __jsx: JsxPropElementNodeSchema }),
+    Type.Array(Self),
+    Type.Record(Type.String(), Self),
+  ]),
+)
+
+const InsertPropsSchema = Type.Record(Type.String(), JsxPropValueSchema)
 
 /**
  * One element in an insert's subtree. Recursive through `children`, which is

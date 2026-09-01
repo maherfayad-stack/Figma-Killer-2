@@ -235,3 +235,55 @@ describe('findHardcodedStrings', () => {
     expect(found.map((f) => f.text)).toEqual(['Dates', '11 – 28 Aug'])
   })
 })
+
+describe('a TabBar inserted with its icons', () => {
+  /**
+   * The shape Studio itself writes: five `{ icon: <svg…/>, label: '…' }` items,
+   * each icon a full inline SVG document of path data.
+   *
+   * Two things must hold at once, and they pull in opposite directions. The
+   * five LABELS are copy and have to reach the Content panel — a tab bar whose
+   * labels cannot be translated is a tab bar that is English forever. The path
+   * data around them is geometry and must not: `d="M11.8 3.1L11.5 2.7…"` is not
+   * a string anybody translates, and five of them would bury the labels they
+   * sit beside.
+   */
+  const ICON = '<svg viewBox="0 0 24 24"><path d="M11.8281 3.17381L11.5564 2.75411Z" fill="currentColor" /></svg>'
+  const tab = (label: string) => `{ icon: ${ICON.replace(/^/, '')}, label: "${label}" }`
+
+  beforeEach(() => {
+    write(
+      'pages/Home.tsx',
+      [
+        'export default function Home() {',
+        '  return (',
+        `    <TabBar items={[${['Home', 'Explore', 'My Trips', 'Top offers', 'Profile'].map(tab).join(', ')}]} value={0} />`,
+        '  )',
+        '}',
+        '',
+      ].join('\n'),
+    )
+  })
+
+  it('offers every tab label for translation', () => {
+    const found = findHardcodedStrings(dir).map((s) => s.text)
+    expect(found).toContain('Home')
+    expect(found).toContain('Explore')
+    expect(found).toContain('My Trips')
+    expect(found).toContain('Top offers')
+    expect(found).toContain('Profile')
+  })
+
+  it('offers no SVG path data', () => {
+    for (const found of findHardcodedStrings(dir)) {
+      expect(found.text).not.toContain('M11.8281')
+      expect(found.text).not.toBe('currentColor')
+      expect(found.text).not.toBe('0 0 24 24')
+    }
+  })
+
+  it('names the prop the label sits under, so the panel can group it', () => {
+    const home = findHardcodedStrings(dir).find((s) => s.text === 'Home')
+    expect(home?.prop).toBe('items.label')
+  })
+})

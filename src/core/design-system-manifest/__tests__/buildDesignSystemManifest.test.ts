@@ -84,6 +84,103 @@ describe('buildDesignSystemManifest', () => {
     expect(visualProp?.enumValues).toContain('null')
   })
 
+  it('keeps a multi-word enum value whole', async () => {
+    // `Separator`'s `type="cell separator"  // cell separator (default) |
+    // section separator`. The cleaner used to cut at the first whitespace,
+    // which is identical for every single-word value and wrong here: the panel
+    // offered `cell` / `section`, two values the component does not accept, and
+    // an insert wrote one of them into the user's source.
+    const manifest = await buildDesignSystemManifest()
+    const separator = manifest.components.find((c) => c.name === 'Separator')
+    expect(separator!.props.find((p) => p.name === 'type')?.enumValues).toEqual([
+      'cell separator',
+      'section separator',
+    ])
+  })
+
+  it('drops a scope prefix in front of an option list', async () => {
+    // `AdBanner`'s `size="small"  // mobile only: small (row) | medium | large`
+    // — the prose names which layout the list applies to; the first option is
+    // `small`, not `mobile`.
+    const manifest = await buildDesignSystemManifest()
+    const adBanner = manifest.components.find((c) => c.name === 'AdBanner')
+    expect(adBanner!.props.find((p) => p.name === 'size')?.enumValues).toEqual(['small', 'medium', 'large'])
+  })
+
+  it("carries the package's documented example for a scalar prop, not just a collection", async () => {
+    // This ran for collections only, on the reasoning that every other kind
+    // already has an editable control. A component's CONTENT lives in its
+    // scalars, so the result was that inserting one drew an empty shell.
+    const manifest = await buildDesignSystemManifest()
+    const byName = new Map(manifest.components.map((c) => [c.name, c]))
+    const exampleOf = (component: string, prop: string) =>
+      byName.get(component)?.props.find((p) => p.name === prop)?.example
+
+    expect(exampleOf('SystemBanner', 'title')).toBe('Title')
+    expect(exampleOf('Snackbar', 'message')).toBe('Seat preference saved')
+    expect(exampleOf('Tooltip', 'content')).toBe('Tooltip text')
+    expect(exampleOf('Accordion', 'title')).toBe('Accordion Item')
+    expect(exampleOf('LinearProgressIndicator', 'value')).toBe(40)
+    expect(exampleOf('ProgressStepper', 'steps')).toBe(5)
+    expect(exampleOf('ProgressStepper', 'currentStep')).toBe(2)
+  })
+
+  it('reads props written several to a line', async () => {
+    // `<Badge variant="alert" count={5} max={99} />`. The line-based pass needs
+    // one prop per line — it is anchored at both ends so the trailing enum
+    // comment is not swallowed into the value — so a one-line example yielded
+    // nothing at all: all three props unclassified (a text box each) and
+    // unseeded, and an inserted Badge was an empty pip forever.
+    const manifest = await buildDesignSystemManifest()
+    const badge = manifest.components.find((c) => c.name === 'Badge')
+    const prop = (name: string) => badge!.props.find((p) => p.name === name)
+    expect(prop('variant')?.kind).toBe('string')
+    expect(prop('variant')?.example).toBe('alert')
+    expect(prop('count')?.kind).toBe('number')
+    expect(prop('count')?.example).toBe(5)
+    expect(prop('max')?.example).toBe(99)
+  })
+
+  it('reads only the FIRST usage example when a fence holds several', async () => {
+    // `Dialog` documents an iOS call (`primaryAction`/`destructiveAction`/
+    // `secondaryAction`) and then an Android one (`action1`/`action2`) in one
+    // fence. They are alternatives: reading the whole fence seeded all five, so
+    // an inserted iOS dialog arrived carrying two Android-only buttons.
+    const manifest = await buildDesignSystemManifest()
+    const dialog = manifest.components.find((c) => c.name === 'Dialog')
+    const example = (name: string) => dialog!.props.find((p) => p.name === name)?.example
+    expect(example('primaryAction')).toEqual({ label: 'Primary' })
+    expect(example('secondaryAction')).toEqual({ label: 'Secondary' })
+    expect(example('action1')).toBeUndefined()
+    expect(example('action2')).toBeUndefined()
+  })
+
+  it('does not truncate a multi-line example at a blank line inside it', async () => {
+    // `Navbar`'s single example is full of blank lines and section comments
+    // INSIDE its `toolbar={{ … }}` object. A blank-line cut left it with three
+    // props and cost the component its `chips` and `segmentedControl` — an
+    // empty bar, the exact defect the first-example rule was added to prevent.
+    const manifest = await buildDesignSystemManifest()
+    const navbar = manifest.components.find((c) => c.name === 'Navbar')
+    const chips = navbar!.props.find((p) => p.name === 'chips')?.example
+    expect(Array.isArray(chips)).toBe(true)
+    expect((chips as unknown[]).length).toBeGreaterThan(0)
+  })
+
+  it('records no example for an asset path or a React node', async () => {
+    // `imageSrc="/photo.jpg"` names a file the user's project does not have,
+    // and `icon={<SvgIcon/>}` has no JSON form at all.
+    const manifest = await buildDesignSystemManifest()
+    const byName = new Map(manifest.components.map((c) => [c.name, c]))
+    const exampleOf = (component: string, prop: string) =>
+      byName.get(component)?.props.find((p) => p.name === prop)?.example
+
+    expect(exampleOf('VisualCard', 'imageSrc')).toBeUndefined()
+    expect(exampleOf('Banner', 'iconSrc')).toBeUndefined()
+    expect(exampleOf('Cell', 'sideIconSrc')).toBeUndefined()
+    expect(exampleOf('IconButton', 'icon')).toBeUndefined()
+  })
+
   it("sets every component's file to the package import specifier", async () => {
     const manifest: ComponentManifest = await buildDesignSystemManifest()
     expect(manifest.components.length).toBeGreaterThan(0)

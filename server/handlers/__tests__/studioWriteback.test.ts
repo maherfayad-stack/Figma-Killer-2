@@ -1073,3 +1073,77 @@ describe('applyStudioEdit — the add-slot-prop kind (E2.2)', () => {
     expect(isSharedSourceNodeId('src/Card.tsx:5:8', 'add-slot-prop')).toBe(true)
   })
 })
+
+/**
+ * Deleting an element leaves its import unused, which under `noUnusedLocals`
+ * is a build failure — so the batch retires the binding too. It has to happen
+ * HERE, once per file after every edit has landed, and not inside
+ * `deleteJsxElement`: an import sits at the top of the file, so cutting its
+ * line mid-batch would shift the pending `line:col` of every edit still queued
+ * below it, which is exactly what `orderStudioEditsForApply` exists to prevent.
+ *
+ * The multi-delete case is also the one a per-edit check answers WRONG — a
+ * binding used by two elements being deleted together is orphaned by neither
+ * one alone — so both tests below assert the whole file.
+ */
+describe('applyStudioEditBatch — imports orphaned by a delete', () => {
+  const PAGE = `import { Screen, TabBar, ChevronUpIcon } from '@ds'
+
+export default function Page() {
+  return (
+    <Screen>
+      <TabBar />
+      <ChevronUpIcon />
+    </Screen>
+  )
+}
+`
+
+  it('retires the binding a deleted element alone was using', () => {
+    write('pages/Page.tsx', PAGE)
+
+    const result = applyStudioEditBatch(tmpDir, [{ kind: 'delete', nodeId: 'pages/Page.tsx:6:8' }])
+
+    expect(result.written).toBe(1)
+    expect(result.refusals).toEqual([])
+    expect(read('pages/Page.tsx')).toBe(
+      PAGE.replace('{ Screen, TabBar, ChevronUpIcon }', '{ Screen, ChevronUpIcon }').replace('      <TabBar />\n', ''),
+    )
+  })
+
+  it('deletes two elements in one batch and retires both their bindings', () => {
+    write('pages/Page.tsx', PAGE)
+
+    const result = applyStudioEditBatch(tmpDir, [
+      { kind: 'delete', nodeId: 'pages/Page.tsx:6:8' },
+      { kind: 'delete', nodeId: 'pages/Page.tsx:7:8' },
+    ])
+
+    expect(result.written).toBe(2)
+    expect(result.refusals).toEqual([])
+    expect(read('pages/Page.tsx')).toBe(
+      PAGE.replace('{ Screen, TabBar, ChevronUpIcon }', '{ Screen }')
+        .replace('      <TabBar />\n', '')
+        .replace('      <ChevronUpIcon />\n', ''),
+    )
+  })
+
+  it('leaves a binding the rest of the file still uses', () => {
+    const source = `import { Card } from './Card'
+
+export default function Page() {
+  return (
+    <section>
+      <Card id="a" />
+      <Card id="b" />
+    </section>
+  )
+}
+`
+    write('pages/Page.tsx', source)
+
+    applyStudioEditBatch(tmpDir, [{ kind: 'delete', nodeId: 'pages/Page.tsx:6:8' }])
+
+    expect(read('pages/Page.tsx')).toBe(source.replace('      <Card id="a" />\n', ''))
+  })
+})

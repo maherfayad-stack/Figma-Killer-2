@@ -549,6 +549,19 @@ The module layer turns it back into an element: `reviveIconProps` in `src/module
 
 `base.svg`'s own editor component (`SvgEditor.tsx`) mounts that markup on a `<span {...nodeWrapperProps} dangerouslySetInnerHTML>` — needed to carry the node's identity/selection wiring, since a `dangerouslySetInnerHTML`'d span has no children React itself renders onto. That span used to have no `display` override, i.e. the default `inline` — and an inline element's line box is taller than a same-height block child sized purely by its own content, so every design in the wild that reaches this shape (a design-system `Cell`'s icon slot filled with a hand-inlined `<svg>` bigger than the surrounding icon frame) rendered visibly taller on the canvas than in a real browser (`board-27f`: two `.cell__visual--icon` cells measured `[24,44]` instead of `[24,24]`). Fixed the same way the design-system host below is: `display: contents` on the span, merged with (never replacing) any inline style the node itself carries — `nodeVisualRect`'s box-less fallback already covers this shape generically (see "The design-system host carries no layout" just below), so selection/hover geometry is unaffected.
 
+#### …but only when the span is Studio's own
+
+`display: contents` is right for the shape above, where the source wrote a bare `<svg>` and the span exists only because Studio needs somewhere to hang selection wiring. It is flatly wrong for the OTHER way a node reaches `base.svg`: `<span className={styles.icon} dangerouslySetInnerHTML={{ __html: rawIcon }} />`, the shape every real repo uses to inline a `?raw` icon. There the span is the **author's**, and its class is what sizes and colours the graphic — the near-universal pairing being
+
+```css
+.icon      { width: 24px; height: 24px; display: inline-flex }
+.icon svg  { width: 100%;  height: 100% }
+```
+
+`display: contents` deletes that box while leaving the element in the DOM tree, so `.icon`'s `width`/`height` stop applying but the descendant rule still matches — and `100%` resolves against the **grandparent**. Every `?raw` icon on the board rendered at its flex container's width: a 24px chat bubble drawn 200px wide reads as a scribble, not an icon. `processElement`'s own comment had said the right thing all along ("the element keeps its own tag, classes, and inline styles — they size and colour the icon"); the renderer was substituting its own host anyway.
+
+`parsedPageToSitePage` now records the authored host in `props.tag`, the same "keep rendering as its real host tag" convention `base.container` and `base.text` already use — set only when the element's tag is not itself `svg`, which is exactly the discriminator between the two cases. `resolveSvgHostTag` (`src/modules/base/svg/hostTag.ts`) resolves it back to a tag safe to emit (rejecting unsafe, void, malformed, and non-lowercase names), and both `SvgEditor` and the module's `render()` re-emit it — so the canvas, the published HTML, and the project's own Vite build agree about which element the classes land on. No authored host means no `tag`, and the box-less span above is used unchanged.
+
 **A second, unrelated cause was co-located on the same element and is a *pre-existing, documented* canvas-fidelity limitation, not new:** `CanvasScrollUnrollInjector`'s `explicit-height` tag used to fire on ANY element with a positive `scrollHeight - clientHeight` deficit, with no regard for whether that element's own `overflow-y` was ever something that could hide content. A fixed-size `display: flex` icon frame around an intrinsically larger, un-scaled SVG reports exactly such a deficit in an ordinary browser — Chromium's flex layout lets `scrollHeight` reflect an oversized flex item even though `overflow-y: visible` (the CSS default, and what this shape authors) never clipped anything — so the injector forced `height: auto`, growing the box to a size no real render ever shows. `classifyUnrollElement` (`canvasScrollUnroll.ts`) now requires the element's AUTHORED `overflow-y` to be something other than `'visible'` before tagging `'explicit-height'` — the exact scoping `buildScrollUnrollRules`'s own doc comment had already named as the accepted-limitation's fix. A genuine clipping panel (`overflow: hidden`/`clip`/`auto`/`scroll`) is unaffected; only the `overflow-y: visible` case — which never hid anything to begin with — stops being (mis)treated as a scroll region. See `docs/agent-refs/canvas-internals.md`'s `CanvasScrollUnrollInjector` paragraph.
 
 ### The design-system host carries no layout
@@ -577,6 +590,25 @@ Two consequences worth knowing:
 ### Installed-package specifiers
 
 A bare specifier (`@alm-design/design-system/src/icons/line-icons/headset.svg?raw`) resolves by walking `node_modules` up from the importing file, **stopping at the workspace root** — Node's own algorithm, narrowed to one file. ~23 of the eSIM corpus's icons are imported exactly this way and resolved to nothing before it.
+
+### An icon file that is not there
+
+An import whose file does not exist is the quietest failure in this whole
+pipeline. `resolveRawTextImport` hands back `unresolved`, the node loses its
+`svg` prop, and the canvas draws a correctly-classed, correctly-sized, **empty**
+element — which reads as a layout bug, not a missing file. `tsc` agrees the code
+is fine, because a project with `vite/client` types declares `*.svg?raw`
+ambiently regardless of what sits behind the specifier. An agent inventing a
+plausible-but-wrong icon filename therefore gets no signal from anything.
+
+`unresolvedRawTextImports` (`assetImports.ts`) asks the same
+`resolveImportedFile` the evaluator used which `?raw` specifiers came back
+empty, so it can never disagree with what the canvas actually did, and
+`studio_quality_check` reports each one as `unresolved-asset-import`.
+Deliberately scoped to `?raw` text imports: an IMAGE import can fail for a
+second, unrelated reason — it came from an installed package, which
+`resolveImageAssetImport` refuses on purpose — and `packagedImageImportRefusal`
+already explains that one in its own words.
 
 **Containment is checked on the real path, after following symlinks.** A workspace can arrive from `/import-github` and git stores symlinks, so a `node_modules` entry is untrusted input: a textual containment check would happily read `~/.ssh/id_rsa` through a link that merely *looks* like it sits under the workspace. An absolute specifier is never read at all.
 
@@ -620,7 +652,7 @@ The alternative was keeping the interior as real nodes with `base.container` car
 | `kind: 'component'` | `alm.<Name>` |
 | `div`, `section`, `main`, `header`, `footer`, `nav`, `article`, `aside` | `base.container` |
 | `img` / `a` | `base.image` / `base.link` |
-| an element carrying resolved SVG markup (`svg` prop), whatever its tag | `base.svg` |
+| an element carrying resolved SVG markup (`svg` prop), whatever its tag | `base.svg`, re-emitting that tag as its host — see "…but only when the span is Studio's own" |
 | `svg` | `base.svg`, its subtree serialised into markup — see "An `<svg>` written as JSX elements" |
 | any other tag **with element children**, or **with no text** | `base.container` |
 | `button` with text, no children | `base.button` |
@@ -797,7 +829,11 @@ Until `struct-01` the `StudioEdit` union carried value kinds only, and `saveSite
 
 `src/core/ast-codemods/moveJsxElement.ts` relocates a JSX child to sit immediately before or after a named sibling. **An anchor, not an index** — the editor's child list and the JSX child list are not the same list (one `{items.map(…)}` child contributes N canvas nodes, `{cond && <X/>}` contributes one of two, whitespace contributes none), so an index computed on the canvas does not name a position in the source, while "immediately after that element" does under every one of those shapes.
 
-`src/core/ast-codemods/deleteJsxElement.ts` removes a JSX child and the line it owned. It **refuses `orphans-import`** when every remaining reference to some imported binding lived inside the deleted subtree: leaving the import behind fails the user's own `noUnusedLocals` build, and removing it too would make one edit touch a second, unrelated place in the file. It also tidies up nothing else — no collapsing an emptied parent, no reformatting the gap.
+`src/core/ast-codemods/deleteJsxElement.ts` removes a JSX child and the line it owned. It tidies up nothing else — no collapsing an emptied parent, no reformatting the gap.
+
+`src/core/ast-codemods/pruneOrphanedImports.ts` is the other half of a delete, and the reason it is a separate pass is worth knowing before you move it. Removing markup can be the last use of an imported binding, and leaving that import behind fails the user's own `noUnusedLocals` build — so it has to go. This used to be a REFUSAL (`orphans-import`, "remove the element and its import together in the file"), which meant Studio could insert an element it was then unable to remove: `insertJsxElement` writes the import it needs, so the asymmetry was the bug, not the missing refusal. The import's only reason to exist WAS the element — one fact in two places, the second derived mechanically rather than guessed.
+
+It cannot live inside `deleteJsxElement`, for two reasons that both come from the batch. **Line arithmetic:** `orderStudioEditsForApply` applies a batch bottom-to-top precisely so one edit can never move another's pending `line:col`, and an import sits at the TOP of the file — cutting its line mid-batch reintroduces that exact hazard from above. **Correctness:** a binding used by two elements deleted in the same batch is orphaned by neither one alone, so asked per edit each looks at the other's still-present markup and concludes the import is live. So `applyStudioEditBatch` snapshots which bindings each delete-touched file references BEFORE anything is written, and prunes the ones that stopped being referenced after everything has landed. A binding that was ALREADY unused is left exactly where the user left it — that line is theirs, not something this edit created.
 
 Both share `jsxChildRange.ts`, which is where the byte-exactness lives: **the AST only LOCATES; the write is a splice of the original bytes**, and it refuses outright (`stale-source`) if the text on disk is not the text ts-morph parsed. A whole-line element moves with its indentation and trailing newline; an element sharing a line moves alone; mixing the two refuses (`mixed-indentation`) rather than reformatting code the user did not touch. Their AST-only refusals: `not-siblings`, `expression-child` (the element is produced by `{cond && <X/>}` — `parser-06` leaves those nodes unlocked, correctly, because their VALUES are editable, so this is the check that keeps their POSITION honest), `no-jsx-parent` (it is what the component returns; deleting it leaves `return ;`).
 
@@ -815,11 +851,11 @@ Structural edits are **one-shot commits** (`commitStudioMove` / `commitStudioDel
 | `shared-component` | 382 (48.5%) | 382 (48.5%) |
 | `list-row` | 117 (14.9%) | 117 (14.9%) |
 | `no-sibling-anchor` | 55 (7.0%) | — |
-| `orphans-import` | — | 137 (17.4%) |
+| `orphans-import` (since removed — these now write) | — | 137 (17.4%) |
 | `no-jsx-parent` | — | 12 (1.5%) |
 | `expression-child` | 6 (0.8%) | 5 (0.6%) |
 
-`shared-component` dominates because this corpus composes heavily out of local components. The clearest follow-ups, in order of how many nodes they would unlock: deleting an element **together with** the import it orphans (137 nodes), and reordering inside a component's own file with an explicit "this changes every instance" confirmation (382).
+`shared-component` dominates because this corpus composes heavily out of local components. The measurement predates `pruneOrphanedImports`: the 137 `orphans-import` nodes (17.4%) now write, taking delete from 17.0% to roughly 34% of this corpus. The remaining follow-up is reordering inside a component's own file with an explicit "this changes every instance" confirmation (382).
 
 ### Compiled styles — Tailwind, Sass, PostCSS, CSS Modules (WS-2.1/2.2)
 

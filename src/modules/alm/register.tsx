@@ -34,6 +34,7 @@ import { useFramePreviewAxes } from '@site/canvas/previewAxesFrameEffect'
 import { CursorClickSolidIcon } from 'pixel-art-icons/icons/cursor-click-solid'
 import type { ComponentManifest, ComponentSpec, PropSpec } from '@core/component-manifest'
 import manifestJson from './manifest.generated.json'
+import { CURATED_DEFAULTS } from './curatedDefaults'
 
 // The manifest's own types, not a hand-copied structural twin: this file
 // consumes exactly what `buildDesignSystemManifest` writes, `PropSpec.kind`
@@ -101,13 +102,17 @@ class AlmErrorBoundary extends React.Component<
   React.PropsWithChildren<{ name: string }>,
   { failed: boolean }
 > {
-  state = { failed: false }
-  static getDerivedStateFromError() {
-    return { failed: true }
+  state: { failed: boolean; message?: string } = { failed: false }
+  static getDerivedStateFromError(error: unknown) {
+    // Carry the reason. A bare "(render error)" named the component and
+    // nothing else, so the only way to find out which prop broke it was to
+    // delete props one at a time.
+    return { failed: true, message: error instanceof Error ? error.message : undefined }
   }
   render() {
     if (this.state.failed) {
-      return React.createElement('span', null, `${this.props.name} (render error)`)
+      const detail = this.state.message ? `: ${this.state.message}` : ''
+      return React.createElement('span', null, `${this.props.name} (render error${detail})`)
     }
     return this.props.children
   }
@@ -153,10 +158,17 @@ function propKindFor(p: PropSpec): PropKind {
   switch (p.kind) {
     case 'handler':
       return { kind: 'handler' }
+    case 'collection':
+      return { kind: 'collection' }
+    case 'number':
+      // A number the docs call an index into a sibling list gets that list's
+      // own entries to choose from instead of a bare number box — see
+      // `PropSpec.indexesCollection`.
+      return p.indexesCollection === undefined
+        ? { kind: 'number' }
+        : { kind: 'collectionIndex', collection: p.indexesCollection }
     case 'boolean':
       return { kind: 'boolean' }
-    case 'number':
-      return { kind: 'number' }
     case 'icon':
     case 'node':
       return { kind: 'node' }
@@ -203,15 +215,77 @@ function buildPropsSchema(props: PropSpec[]) {
   return Type.Object(shape)
 }
 
+/**
+ * What an inserted component starts out holding.
+ *
+ * **A component inserted with no content is not a component, it is a blank
+ * box.** This used to seed three things — `label` (from the component's own
+ * name), a collection's documented example, and an enum's first option — and
+ * every content-bearing prop outside those three got nothing. So inserting a
+ * `SystemBanner` drew a bare tinted row, a `Snackbar` drew an empty capsule, a
+ * `LinearProgressIndicator` drew a grey track at 0%, a `ProgressStepper` drew
+ * nothing at all, and an `Accordion` drew an untitled header. The author was
+ * handed an empty shell and no clue which of eleven props would make it
+ * visible. That is the same defect `TabBar.items` was fixed for, and this is
+ * the same fix generalised: `PropSpec.example` now carries the package's own
+ * documented value for EVERY prop whose docs show one, so a component arrives
+ * looking like the thing its own documentation says it is.
+ *
+ * Everything seeded here is a real, editable prop written into the user's
+ * source on insert — placeholder copy to replace, not a canvas-only illusion.
+ * Three kinds never reach a manifest `example` at all (`documentedExample`): an
+ * asset path (it names a file their project does not have), a React node or
+ * icon (no JSON form, and inventing a glyph would put design in their source
+ * their docs never asked for), and a handler (never a value). Two more are
+ * recorded in the manifest — which is a record of what the docs SAY — and
+ * declined here, which is the separate question of what an insert should WRITE:
+ * see `isSeedableDefault`.
+ *
+ * The documented example beats the component's own name for `label` — `Callout`
+ * documents `label="Cheapest for your dates"`, which shows what the component
+ * is FOR; the bare word "Callout" only repeats what the layer tree already
+ * says. The name stays as the fallback for a `label` the docs leave unshown.
+ */
 function buildDefaults(spec: ComponentSpec): Record<string, unknown> {
   const defaults: Record<string, unknown> = {}
   for (const p of spec.props) {
     // `dir` is the canvas's, not the node's — see `CANVAS_DRIVEN_PROPS`.
     if (isCanvasDrivenProp(p.name)) continue
-    if (p.name === 'label') defaults[p.name] = spec.name
+    if (p.example !== undefined && isSeedableDefault(p)) defaults[p.name] = p.example
+    else if (p.name === 'label') defaults[p.name] = spec.name
     else if (p.enumValues?.length) defaults[p.name] = p.enumValues[0]
   }
-  return defaults
+  // Last, so a curated value beats the docs' own — that is the whole point of
+  // an entry existing. See `CURATED_DEFAULTS`.
+  return { ...defaults, ...CURATED_DEFAULTS[spec.name] }
+}
+
+/**
+ * Whether a documented example is worth WRITING into the user's source on
+ * insert. Content, yes; the component's own defaults and its failure states, no.
+ *
+ * **Booleans are declined wholesale.** A boolean is never a component's content
+ * — it is a mode — and this package documents each one at the value the
+ * component already uses (`skeleton={false}`, `dismissOnScrim={true}`,
+ * `showBottomBar={true}  // defaults to true`). Writing them back changes
+ * nothing on the canvas and costs an inserted `<TextInput>` five redundant
+ * attributes (`disabled={false} required={false} skeleton={false}
+ * multiline={false} password={false}`) in a file a human reads. The panel's
+ * toggle still shows and sets every one of them.
+ *
+ * **`errorText` and friends are declined by name**, the one place here that
+ * reads a name rather than a form. TextInput's own docs are explicit that "the
+ * error state is derived from `errorText` being non-empty" — so seeding the
+ * documented `"Error message"` does not illustrate the field, it puts every
+ * newly inserted field into its failure state, red border and all. A component
+ * arriving broken is worse than one arriving blank, which is the whole reason
+ * this function exists.
+ */
+const ERROR_STATE_PROP_RE = /^error/i
+
+function isSeedableDefault(p: PropSpec): boolean {
+  if (p.kind === 'boolean' || typeof p.example === 'boolean') return false
+  return !ERROR_STATE_PROP_RE.test(p.name)
 }
 
 /**
@@ -244,25 +318,64 @@ function buildDefaults(spec: ComponentSpec): Record<string, unknown> {
 function reviveIconProps(props: Record<string, unknown>): Record<string, unknown> {
   let revived: Record<string, unknown> | undefined
   for (const [key, value] of Object.entries(props)) {
-    const slotNodeId = studioSlotNodeId(value)
-    if (slotNodeId !== undefined) {
-      revived ??= { ...props }
-      revived[key] = React.createElement(NodeRenderer, { key: slotNodeId, nodeId: slotNodeId })
-      continue
-    }
-    if (typeof value !== 'object' || value === null || Array.isArray(value)) continue
-    const entries = Object.entries(value as Record<string, unknown>)
-    const svg = entries.length === 1 && entries[0]![0] === 'svg' ? entries[0]![1] : undefined
-    if (typeof svg !== 'string') continue
-    const markup = sanitizeSvg(svg)
-    if (!markup) continue
+    const converted = reviveValue(value, key)
+    if (converted === value) continue
     revived ??= { ...props }
-    revived[key] = React.createElement('span', {
+    revived[key] = converted
+  }
+  return revived ?? props
+}
+
+/**
+ * One prop value, with every slot sentinel and every `{ svg }` inside it turned
+ * back into a React element — at ANY depth, not only at the top.
+ *
+ * Depth is the whole point. A design system's list content carries its own
+ * icons: `items={[{ icon: <svg…/>, label: 'Home' }]}` is the documented shape
+ * of a `TabBar`, and the parser now captures those nested elements as
+ * `{ svg: markup }` the same way it always captured a top-level one. This used
+ * to look only at the top level, so those five icons arrived as plain objects,
+ * were handed to the component as objects, and rendered as nothing — five empty
+ * icon slots above five correct labels.
+ *
+ * Returns the value UNCHANGED (by identity) when nothing inside it needed
+ * reviving, so the caller can keep the original props object and the
+ * design-system component's props stay referentially stable between renders.
+ */
+function reviveValue(value: unknown, key: string): unknown {
+  const slotNodeId = studioSlotNodeId(value)
+  if (slotNodeId !== undefined) return React.createElement(NodeRenderer, { key: slotNodeId, nodeId: slotNodeId })
+  if (typeof value !== 'object' || value === null) return value
+  if (Array.isArray(value)) {
+    let changed = false
+    const items = value.map((item, index) => {
+      const converted = reviveValue(item, `${key}-${index}`)
+      if (converted !== item) changed = true
+      return converted
+    })
+    return changed ? items : value
+  }
+  const entries = Object.entries(value as Record<string, unknown>)
+  const svg = entries.length === 1 && entries[0]![0] === 'svg' ? entries[0]![1] : undefined
+  if (typeof svg === 'string') {
+    // Sanitised here for the same reason `SvgEditor` sanitises: never trust
+    // that an upstream layer did.
+    const markup = sanitizeSvg(svg)
+    if (!markup) return value
+    return React.createElement('span', {
+      key,
       style: { display: 'inline-flex' },
       dangerouslySetInnerHTML: { __html: markup },
     })
   }
-  return revived ?? props
+  let changed = false
+  const out: Record<string, unknown> = {}
+  for (const [entryKey, entryValue] of entries) {
+    const converted = reviveValue(entryValue, `${key}-${entryKey}`)
+    if (converted !== entryValue) changed = true
+    out[entryKey] = converted
+  }
+  return changed ? out : value
 }
 
 /**
@@ -347,7 +460,35 @@ function withValueAtPath(root: unknown, segments: readonly (string | number)[], 
  * instead — see the render body below and `parseCodeFunctionPath`/
  * `withValueAtPath` above.
  */
-function makeComponent(name: string, handlerProps: readonly string[]): React.FC<ModuleComponentProps> {
+/**
+ * A prop the package documents as a structured value (`items={[{ icon, label }]}`)
+ * holding something that is not one.
+ *
+ * This is a CONTRADICTION, not a guess: the manifest read the shape off the
+ * package's own usage docs, so a scalar there cannot be a legitimate value.
+ * Studio itself wrote these — the panel used to render a text box for any prop
+ * it could not classify, and typing `5` into `TabBar.items` reached
+ * `items.map(...)` and put a bare "TabBar (render error)" on the canvas.
+ * `componentPropKind.ts` no longer offers that control, but sources already
+ * carry the damage, and an agent or a hand edit can still write it.
+ *
+ * Reported rather than repaired. Dropping the bad prop would render a healthy
+ * TabBar over source that genuinely breaks in a real browser, and a canvas that
+ * is more forgiving than reality is the one thing this canvas must never be.
+ */
+function badCollectionProps(props: Record<string, unknown>, collectionProps: readonly string[]): string[] {
+  return collectionProps.filter((prop) => {
+    const value = props[prop]
+    if (value === undefined || value === null) return false // absent is fine — the component's own default applies
+    return typeof value !== 'object'
+  })
+}
+
+function makeComponent(
+  name: string,
+  handlerProps: readonly string[],
+  collectionProps: readonly string[] = [],
+): React.FC<ModuleComponentProps> {
   const Comp = (DS as Record<string, unknown>)[name] as React.ComponentType<Record<string, unknown>> | undefined
   // Stands in for a handler the source supplied but the canvas can never
   // receive. One identity per component definition, not per render — a fresh
@@ -412,6 +553,19 @@ function makeComponent(name: string, handlerProps: readonly string[]): React.FC<
     // zero-height child made the canvas dialog 284px where the same source
     // renders 274px in a real browser. Omitting the argument entirely leaves
     // `props.children` undefined, which is what the source actually says.
+    // Say WHICH prop is wrong and what it holds, instead of letting the
+    // component throw into a boundary that can only report "(render error)".
+    const invalid = badCollectionProps(dsProps, collectionProps)
+    if (invalid.length > 0) {
+      const detail = invalid
+        .map((prop) => `${prop} expects a list, found ${JSON.stringify(dsProps[prop])}`)
+        .join('; ')
+      return React.createElement(
+        'div',
+        { ...editorProps, style: TRANSPARENT_HOST_STYLE },
+        React.createElement('span', null, `${name} — ${detail}`),
+      )
+    }
     const childArgs = React.Children.count(children) > 0 ? [children] : []
     const inner = Comp
       ? React.createElement(
@@ -439,6 +593,7 @@ let registered = 0
 for (const spec of manifest.components) {
   const propsSchema = buildPropsSchema(spec.props)
   const handlerProps = spec.props.filter((prop) => prop.kind === 'handler').map((prop) => prop.name)
+  const collectionProps = spec.props.filter((prop) => prop.kind === 'collection').map((prop) => prop.name)
   const mod = {
     id: `alm.${spec.name}`,
     name: spec.name,
@@ -452,7 +607,7 @@ for (const spec of manifest.components) {
     propsSchema,
     defaults: buildDefaults(spec),
     sourceImport: { specifier: ALM_PACKAGE_SPECIFIER, name: spec.name },
-    component: makeComponent(spec.name, handlerProps),
+    component: makeComponent(spec.name, handlerProps, collectionProps),
     // Publish (HTML) path is a later step — the canvas uses `component` above.
     render: () => ({ html: '' }),
   } as unknown as ModuleDefinition<Record<string, unknown>>

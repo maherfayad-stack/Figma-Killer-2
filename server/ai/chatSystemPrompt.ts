@@ -83,6 +83,8 @@ export async function buildStudioProjectSystemPrompt(
    * cross-test pollution `claudeCli.test.ts`'s roster tests hit once already.
    */
   liveDigestOptions?: Parameters<typeof buildStudioLiveDigest>[3],
+  /** This turn's own latest user message, plain text — threaded straight through to `buildStudioLiveDigest`'s Figma-URL nudge (verification-gate item 4). `undefined` when the caller has no text to offer (an image-only turn), which simply means the nudge can never fire. */
+  userMessageText?: string,
 ): Promise<string[]> {
   let ctx: ReturnType<typeof studioPromptContextFromProfile>
   try {
@@ -99,7 +101,7 @@ export async function buildStudioProjectSystemPrompt(
   const parsedSnapshot = safeParseValue(StudioAgentSnapshotSchema, snapshot)
   if (parsedSnapshot.ok) {
     try {
-      live = await buildStudioLiveDigest(dir, parsedSnapshot.value, conversationId, liveDigestOptions)
+      live = await buildStudioLiveDigest(dir, parsedSnapshot.value, conversationId, liveDigestOptions, userMessageText)
     } catch (err) {
       console.error('[ai/chat] failed to build the studio live digest, continuing without it:', err)
     }

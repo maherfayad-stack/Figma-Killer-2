@@ -76,17 +76,15 @@
  */
 import { Node, QuoteKind, SyntaxKind, type JsxAttribute, type JsxFragment, type Project, type SourceFile } from 'ts-morph'
 import { createProject, findJsxElementAtLocation, loadSourceFile } from './locateJsxElement'
+import { conflictingBinding, indentUnit, insertJsxElement } from './insertJsxElement'
 import {
   collectSubtreeImports,
-  conflictingBinding,
-  indentUnit,
-  insertJsxElement,
   renderJsxNode,
   validateSubtree,
   type InsertJsxChildren,
   type InsertJsxRefusalReason,
   type InsertableJsxPropValue,
-} from './insertJsxElement'
+} from './jsxSubtree'
 
 /** The subtree written into the slot — identical shape to `insertJsxElement`'s own `InsertJsxNode`. */
 export interface InsertJsxIntoSlotPropNode {
@@ -320,15 +318,19 @@ function referencedIdentifiers(node: Node): ReadonlySet<string> {
  * every lint setup that checks it — Studio would be handing the user a file
  * that no longer builds.
  *
- * `deleteJsxElement` REFUSES on the same situation ("remove the element and
- * its import together in the file") and that is right for a structural delete,
- * where the user asked to remove one thing and the codemod has no mandate to
- * touch another. A slot replace is the opposite: the user asked to SWAP this
- * value, so retiring the binding it alone was using is part of the write they
- * requested, not a side effect — and it is checked, never assumed. Only a name
+ * `deleteJsxElement` does the same thing for the same reason: retiring a
+ * binding the removed markup alone was using is part of the write the user
+ * asked for, not a side effect — and it is checked, never assumed. Only a name
  * with zero remaining non-import references is removed, and a declaration is
  * only deleted once emptied by this function, so a side-effect import
  * (`import './styles.css'`) is untouched.
+ *
+ * The two implementations are separate on purpose, and the difference is the
+ * substrate, not the policy: `deleteJsxElement` is held to byte-exactness and
+ * splices text ranges, while this module already rebuilds whitespace through
+ * the ts-morph printer (see this file's own doc), so it prunes by AST mutation.
+ * Making either adopt the other's constraint would be a bigger change than the
+ * duplication costs.
  */
 function pruneImportsOrphanedBy(sourceFile: SourceFile, replacedNames: ReadonlySet<string>): void {
   if (replacedNames.size === 0) return

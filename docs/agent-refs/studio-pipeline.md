@@ -200,8 +200,11 @@ from the node id and `lockReason` alone:
 The AST adds the refusals only it can answer: `not-siblings`,
 `expression-child` (the element comes out of `{cond && <X/>}`, so its position
 is decided at runtime), `mixed-indentation`, `no-jsx-parent` (it is what the
-component returns), `orphans-import` (deleting it would leave an import unused,
-which fails the user's own build), `stale-source`.
+component returns), `stale-source`.
+
+A delete is NOT refused for orphaning an import. `pruneOrphanedImports` retires
+any binding the removed markup alone was using, once per file after the whole
+batch has landed — see `studio-import.md`, "The two codemods".
 
 **A reorder is written against an ANCHOR, never an index.** The editor's child
 list and the JSX child list are different lists. `planSourceMove` simulates the

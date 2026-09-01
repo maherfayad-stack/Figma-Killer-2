@@ -84,7 +84,7 @@ describe('studio_quality_check', () => {
     expect(page.findings.every((f) => f.file === 'pages/Checkout.module.css' && f.line > 0)).toBe(true)
   })
 
-  it('reports no findings to scan when the page imports no stylesheet', async () => {
+  it('still scans the page source (finding nothing) when the page imports no stylesheet', async () => {
     write(
       dir,
       'pages/Bare.tsx',
@@ -98,9 +98,114 @@ describe('studio_quality_check', () => {
 
     expect(result.ok).toBe(true)
     const page = result.results[0]!
-    expect(page.filesScanned).toEqual([])
+    // No stylesheet, but the .tsx itself was still read and scanned.
+    expect(page.filesScanned).toEqual(['pages/Bare.tsx'])
     expect(page.findings).toEqual([])
     expect(page.note).toBeDefined()
+  })
+
+  it('flags a hand-authored <svg><path> in the page source', async () => {
+    write(
+      dir,
+      'pages/Social.tsx',
+      [
+        'export default function Social() {',
+        '  return (',
+        '    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">',
+        '      <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47" />',
+        '    </svg>',
+        '  )',
+        '}',
+        '',
+      ].join('\n'),
+    )
+
+    const result = (await tool('studio_quality_check').handler!(
+      { dir, pages: ['Social'] },
+      {} as never,
+    )) as { ok: boolean; results: PageResult[] }
+
+    expect(result.ok).toBe(true)
+    const page = result.results[0]!
+    const finding = page.findings.find((f) => f.code === 'hand-authored-vector-path')
+    expect(finding).toBeDefined()
+    expect(finding!.file).toBe('pages/Social.tsx')
+    expect(finding!.line).toBeGreaterThan(0)
+  })
+
+  it('flags a hardcoded inline sizing patch but not a dynamic custom-property style', async () => {
+    write(
+      dir,
+      'pages/Sized.tsx',
+      [
+        "import styles from './Sized.module.css'",
+        'export default function Sized({ progress }: { progress: number }) {',
+        '  return (',
+        '    <div>',
+        '      <span className={styles.icon} style={{ width: 24, height: 24 }} />',
+        "      <div className={styles.bar} style={{ '--progress': `${progress}%` }} />",
+        '    </div>',
+        '  )',
+        '}',
+        '',
+      ].join('\n'),
+    )
+    write(dir, 'pages/Sized.module.css', '.icon {}\n.bar {}\n')
+
+    const result = (await tool('studio_quality_check').handler!(
+      { dir, pages: ['Sized'] },
+      {} as never,
+    )) as { ok: boolean; results: PageResult[] }
+
+    expect(result.ok).toBe(true)
+    const page = result.results[0]!
+    const sizing = page.findings.filter((f) => f.code === 'hardcoded-inline-sizing')
+    expect(sizing).toHaveLength(2)
+    expect(sizing.every((f) => f.file === 'pages/Sized.tsx')).toBe(true)
+  })
+
+  it('flags a page that imports nothing from an installed, detectable design system', async () => {
+    write(dir, 'package.json', JSON.stringify({ dependencies: { 'acme-ui': '1.0.0' } }))
+    write(dir, 'node_modules/acme-ui/package.json', JSON.stringify({ name: 'acme-ui', version: '1.0.0', types: 'index.d.ts' }))
+    write(dir, 'node_modules/acme-ui/index.d.ts', 'export declare const Button: React.FC<{ label: string }>;\n')
+    write(
+      dir,
+      'pages/Plain.tsx',
+      ['export default function Plain() {', '  return <div>Hello</div>', '}', ''].join('\n'),
+    )
+    write(
+      dir,
+      'pages/Adopted.tsx',
+      ["import { Button } from 'acme-ui'", 'export default function Adopted() {', '  return <Button label="Go" />', '}', ''].join('\n'),
+    )
+
+    const result = (await tool('studio_quality_check').handler!(
+      { dir, pages: ['Plain', 'Adopted'] },
+      {} as never,
+    )) as { ok: boolean; results: PageResult[] }
+
+    expect(result.ok).toBe(true)
+    const plain = result.results.find((r) => r.page.title === 'Plain')!
+    const adopted = result.results.find((r) => r.page.title === 'Adopted')!
+    expect(plain.findings.some((f) => f.code === 'design-system-unused')).toBe(true)
+    expect(adopted.findings.filter((f) => f.code === 'design-system-unused')).toEqual([])
+  })
+
+  it('does not flag design-system-unused when the project has no component package installed', async () => {
+    write(
+      dir,
+      'pages/Plain.tsx',
+      ['export default function Plain() {', '  return <div>Hello</div>', '}', ''].join('\n'),
+    )
+
+    const result = (await tool('studio_quality_check').handler!(
+      { dir, pages: ['Plain'] },
+      {} as never,
+    )) as { ok: boolean; results: PageResult[] }
+
+    expect(result.ok).toBe(true)
+    const page = result.results[0]!
+    expect(page.findings.filter((f) => f.code === 'design-system-unused')).toEqual([])
   })
 
   it('errors clearly when no screen matches the name', async () => {

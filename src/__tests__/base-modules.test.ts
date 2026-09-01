@@ -20,6 +20,7 @@ import './matchers'  // Register toBeCleanHTML
 
 import { runModuleConformanceSuite, renderModule, withBannedGlobals } from './helpers'
 import { escapeProps } from '@core/publisher'
+import { resolveHtmlTagBadge } from '@core/module-engine'
 import { CanvasDocumentContext } from '@site/canvas/CanvasContexts'
 
 // ---------------------------------------------------------------------------
@@ -854,7 +855,11 @@ describe('base.svg — render() specifics', () => {
   it('has only inline markup and accessible-label settings', () => {
     expect(Object.keys(SvgModule.schema).sort()).toEqual(['svg', 'title'])
     expect(SvgModule.canHaveChildren).toBe(false)
-    expect(SvgModule.htmlTag).toBe('svg')
+    // `htmlTag` is a function, not the literal 'svg': the node is only an
+    // `<svg>` when the source wrote one. An authored icon wrapper reports its
+    // own tag so the tree-ladder badge stops mislabelling it.
+    expect(resolveHtmlTagBadge(SvgModule, { tag: '' })).toBe('svg')
+    expect(resolveHtmlTagBadge(SvgModule, { tag: 'span' })).toBe('span')
   })
 
   it('returns empty html when svg markup is empty', () => {
@@ -928,6 +933,68 @@ describe('base.svg — render() specifics', () => {
         SvgModule.render(SvgModule.defaults, [])
       )
     ).not.toThrow()
+  })
+
+  // -------------------------------------------------------------------------
+  // The authored icon wrapper. `<span className={styles.icon}
+  // dangerouslySetInnerHTML={{__html: rawIcon}} />` is how a real repo inlines
+  // a `?raw` icon, and that span is the author's, not Studio's: its class
+  // carries the icon's box. Rendering it as a `display: contents` host removed
+  // that box while leaving the element in the DOM tree, so the standard
+  // `.icon { width: 24px }` + `.icon svg { width: 100% }` pairing resolved the
+  // graphic against the GRANDPARENT and every icon rendered at container width.
+  // -------------------------------------------------------------------------
+
+  it('re-emits the authored host element around the graphic', () => {
+    const { html } = renderModule(SvgModule, {
+      svg: '<svg viewBox="0 0 24 24"><path d="M1 1h22"/></svg>',
+      tag: 'span',
+    })
+    expect(html.startsWith('<span>')).toBe(true)
+    expect(html.endsWith('</span>')).toBe(true)
+    expect(html).toContain('<svg')
+  })
+
+  it('emits no wrapper when the source wrote a bare <svg>', () => {
+    for (const tag of ['', 'svg', undefined]) {
+      const { html } = renderModule(SvgModule, {
+        svg: '<svg viewBox="0 0 24 24"><path d="M1 1h22"/></svg>',
+        ...(tag === undefined ? {} : { tag }),
+      })
+      expect(html.trim().startsWith('<svg')).toBe(true)
+    }
+  })
+
+  it('refuses a host tag that is unsafe, malformed, or cannot hold markup', () => {
+    for (const tag of ['script', 'iframe', 'br', 'img', 'Div', '<span', 'a b']) {
+      const { html } = renderModule(SvgModule, {
+        svg: '<svg viewBox="0 0 24 24"><path d="M1 1h22"/></svg>',
+        tag,
+      })
+      expect(html.trim().startsWith('<svg')).toBe(true)
+    }
+  })
+
+  it('keeps the authored host element (and its box) in the editor preview', () => {
+    const { container } = renderReact(
+      React.createElement(SvgModule.component, {
+        props: {
+          svg: '<svg viewBox="0 0 10 10"><path d="M0 0"/></svg>',
+          title: '',
+          tag: 'span',
+        },
+        nodeId: 'icon-node',
+        isSelected: false,
+        mcClassName: 'ist-icon',
+        nodeWrapperProps: { 'data-node-id': 'icon-node', 'data-module-id': 'base.svg', tabIndex: 0 },
+      } as never),
+    )
+
+    const host = container.querySelector('span.ist-icon')
+    expect(host).not.toBeNull()
+    // The class sizes the icon — a `display: contents` host would delete its box.
+    expect((host as HTMLElement).style.display).toBe('')
+    expect(host?.querySelector('svg')).not.toBeNull()
   })
 })
 

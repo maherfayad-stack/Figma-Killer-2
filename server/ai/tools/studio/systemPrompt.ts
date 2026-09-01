@@ -90,6 +90,7 @@ import type { TrustTier } from '../../../handlers/studio/studioMeta'
 import { SYSTEM_PROMPT_DYNAMIC_BOUNDARY } from '../../runtime/types'
 import type { AiTool } from '../types'
 import type { StudioLiveDigest } from './liveDigest'
+import { describePageForDigest } from '../../../handlers/studio/pageWriteVerification'
 
 // ---------------------------------------------------------------------------
 // Static prefix
@@ -375,6 +376,25 @@ function buildLiveDigestLines(live: StudioLiveDigest): string[] {
         )}`
       : 'Design references registered: (none) — nothing to measure against yet, so do not report a match you cannot measure. Arm one yourself before you build: download the design export to disk (a connected Figma connector\'s asset-download tool writes real files) and pass studio_register_design_reference its path. An image the user attaches to chat is registered automatically and also lands on this line.',
   )
+  // What the LAST turn wrote and whether it was ever measured — see
+  // `StudioLiveDigest.pageWriteVerification`'s own doc for why this is "last
+  // turn", not "this turn". Absent entirely when nothing was written (the
+  // common case): stating "nothing to report" a thousand times over a long
+  // conversation is the exact waste this whole digest is built to avoid.
+  const figmaConfigured = live.capabilities.figma.status === 'configured'
+  for (const entry of live.pageWriteVerification) {
+    lines.push(describePageForDigest(entry, figmaConfigured))
+  }
+  // verification-gate item 4 — the user named a Figma design for THIS page and
+  // nothing is armed yet. Phrased as a precondition, not a suggestion: the
+  // Stop-hook gate (`hooks/stopGateCheck.ts`) will demand exactly this the
+  // moment the page gets written, so saying it up front saves a whole
+  // build-then-block round trip.
+  if (live.figmaReferenceNudge) {
+    lines.push(
+      `Figma link in this message, and "${live.figmaReferenceNudge.pageTitle}" has no design reference armed yet — register one (export via the Figma connector, then studio_register_design_reference with pageId:"${live.figmaReferenceNudge.pageId}") before you build, not after.`,
+    )
+  }
   lines.push(
     `Deps: ${live.install.hasNodeModules ? 'installed' : live.install.hasPackageJson ? 'not installed' : 'no package.json'} (${live.install.dependencyCount} declared)`,
   )

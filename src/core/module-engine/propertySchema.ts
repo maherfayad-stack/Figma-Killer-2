@@ -130,6 +130,28 @@ export const PropertyControlSchema = Type.Recursive((Self) => Type.Union([
     },
     { additionalProperties: false },
   ),
+  /**
+   * "Which item of that list is the current one" — a select whose options are
+   * the SIBLING collection prop's own entries, resolved from the node at render
+   * time, writing back the chosen INDEX.
+   *
+   * The alternative was a bare number box, which is what `TabBar.value` was: a
+   * field labelled `value` holding `0`, with nothing anywhere saying it meant
+   * "which tab is selected". An edit you can make and cannot understand is not
+   * an edit. Options cannot live in the schema because they are the node's own
+   * data — five tabs today, three tomorrow — which is exactly why this is its
+   * own control type rather than a `select` with baked options that would go
+   * stale the moment the list changed.
+   */
+  Type.Object(
+    {
+      ...PropertyControlBaseSchema,
+      type: Type.Literal('collection-index'),
+      /** The sibling prop holding the list — `items` for a `TabBar`. */
+      collection: Type.String(),
+    },
+    { additionalProperties: false },
+  ),
   Type.Object(
     { ...PropertyControlBaseSchema, type: Type.Literal('toggle') },
     { additionalProperties: false },

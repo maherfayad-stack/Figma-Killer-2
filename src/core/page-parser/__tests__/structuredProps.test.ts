@@ -509,3 +509,212 @@ describe('E2.3 — fragment-valued slots (studio.slot)', () => {
     expect(headerNode?.children.length).toBe(2)
   })
 })
+
+describe('a JSX icon NESTED inside a structured prop', () => {
+  /**
+   * `items={[{ icon: <svg…/>, label: 'Home' }]}` is the documented shape of a
+   * `TabBar`, and the readers only ever looked at the TOP of an attribute. The
+   * evaluator reached the nested element, had no kind for a React element, and
+   * dropped the entry — an object that loses one key is still an object — so
+   * the canvas drew correct labels above five empty icon slots.
+   *
+   * `{ svg: markup }` is the same shape a top-level icon prop is captured as
+   * (`ICON_PROP_SVG_KEY`), read at one more level of depth rather than being a
+   * second convention.
+   */
+  it('captures an inline <svg> element as { svg }', () => {
+    write(
+      'pages/Home.jsx',
+      [
+        'export default function Home() {',
+        '  return (',
+        '    <TabBar',
+        '      items={[',
+        '        { icon: <svg viewBox="0 0 24 24"><path d="M4 12L9 17" /></svg>, label: "Home" },',
+        '        { icon: <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /></svg>, label: "Explore" },',
+        '      ]}',
+        '      value={0}',
+        '    />',
+        '  )',
+        '}',
+        '',
+      ].join('\n'),
+    )
+
+    const tabBar = named(loadNodes('pages/Home.jsx', evalOptions()), 'TabBar')
+    const items = tabBar.props?.items as { icon?: { svg?: string }; label?: string }[]
+    expect(items).toHaveLength(2)
+    expect(items[0]?.label).toBe('Home')
+    expect(items[0]?.icon?.svg).toContain('<svg')
+    expect(items[0]?.icon?.svg).toContain('M4 12L9 17')
+    expect(items[1]?.label).toBe('Explore')
+    expect(items[1]?.icon?.svg).toContain('<circle')
+  })
+
+  it('captures the wrapper shapes a real project writes', () => {
+    // `<span dangerouslySetInnerHTML={{ __html: raw }}/>` is what the package's
+    // own icon reference tells an agent to write for a `?raw` SVG import, and
+    // `<Icon svg={…}/>` is the corpus's other form. Both already worked at the
+    // top of a prop; neither did one level down.
+    write(
+      'pages/Home.jsx',
+      [
+        'const homeIcon = \'<svg viewBox="0 0 24 24"><path d="M1 2" /></svg>\'',
+        'export default function Home() {',
+        '  return (',
+        '    <TabBar',
+        '      items={[{ icon: <span dangerouslySetInnerHTML={{ __html: homeIcon }} />, label: "Home" }]}',
+        '    />',
+        '  )',
+        '}',
+        '',
+      ].join('\n'),
+    )
+
+    const items = named(loadNodes('pages/Home.jsx', evalOptions()), 'TabBar').props?.items as {
+      icon?: { svg?: string }
+      label?: string
+    }[]
+    expect(items[0]?.icon?.svg).toContain('M1 2')
+    expect(items[0]?.label).toBe('Home')
+  })
+
+  it('leaves an item whose icon is not resolvable exactly as it was', () => {
+    // A component element that only materializes after inlining carries no
+    // markup here. The LABEL must still survive — a tab with no icon beats no
+    // tab at all — and nothing may be invented in the icon's place.
+    write(
+      'pages/Home.jsx',
+      [
+        'export default function Home() {',
+        '  return <TabBar items={[{ icon: <SomeIcon />, label: "Home" }]} />',
+        '}',
+        '',
+      ].join('\n'),
+    )
+
+    const items = named(loadNodes('pages/Home.jsx', evalOptions()), 'TabBar').props?.items as Record<
+      string,
+      unknown
+    >[]
+    expect(items[0]?.label).toBe('Home')
+    expect(items[0]?.icon).toBeUndefined()
+  })
+
+  it('declines the whole prop rather than misplacing an icon when the array cannot be read', () => {
+    // The walk matches the AST to the resolved value BY POSITION, so a
+    // mismatched length must never shift one tab's icon onto another. Today an
+    // array holding a spread declines outright one layer down (an unresolved
+    // ITEM declines the array — `staticValueToPropValue`'s own rule), so the
+    // length guard in `withNestedIconValues` never fires for this input. It
+    // stays because that rule is not this walk's to depend on: if the evaluator
+    // ever learns to flatten a spread, the counts diverge and the guard is what
+    // keeps every icon on its own tab.
+    write(
+      'pages/Home.jsx',
+      [
+        'const extra = [{ label: "Trips" }, { label: "Profile" }]',
+        'export default function Home() {',
+        '  return (',
+        '    <TabBar items={[{ icon: <svg viewBox="0 0 24 24"><path d="M9 9" /></svg>, label: "Home" }, ...extra]} />',
+        '  )',
+        '}',
+        '',
+      ].join('\n'),
+    )
+
+    const items = named(loadNodes('pages/Home.jsx', evalOptions()), 'TabBar').props?.items
+    // Nothing invented: either the prop is absent, or every icon sits on the
+    // item that was written with one.
+    if (items !== undefined) {
+      for (const [index, item] of (items as Record<string, unknown>[]).entries()) {
+        if (item.icon !== undefined) expect(index).toBe(0)
+      }
+    }
+    expect(items).toBeUndefined()
+  })
+})
+
+describe('a translated label inside a structured prop', () => {
+  /**
+   * The state a tab bar ends up in after the Content panel extracts its copy:
+   * `label` is no longer a literal, it is `t.tabs.home`. If the evaluator
+   * cannot follow that INSIDE the array, extracting the labels — the thing that
+   * makes the bar translatable — is what empties it, and the author is punished
+   * for doing the right thing.
+   *
+   * The `t.x.y` resolution itself is Tier B and already gated in
+   * `staticEval.test.ts`; what is gated here is that it survives one level down,
+   * beside an icon the same walk had to leave alone.
+   */
+  function writeLanguageContext(): void {
+    write(
+      'translations.ts',
+      "export const translations = { en: { tabs: { home: 'Home', explore: 'Explore' } }, ar: { tabs: { home: 'الرئيسية', explore: 'استكشف' } } }",
+    )
+    write(
+      'LanguageContext.tsx',
+      [
+        "import { createContext, useContext, useMemo, useState } from 'react'",
+        "import { translations } from './translations'",
+        'const LanguageContext = createContext(null)',
+        'export function LanguageProvider({ children }) {',
+        "  const [lang, setLang] = useState('en')",
+        '  const value = useMemo(() => ({ lang, t: translations[lang] }), [lang])',
+        '  return <LanguageContext.Provider value={value}>{children}</LanguageContext.Provider>',
+        '}',
+        'export function useLanguage() {',
+        '  const ctx = useContext(LanguageContext)',
+        "  if (!ctx) throw new Error('useLanguage must be used within a LanguageProvider')",
+        '  return ctx',
+        '}',
+      ].join('\n'),
+    )
+  }
+
+  function writeTabBarPage(): void {
+    write(
+      'pages/Home.jsx',
+      [
+        "import { useLanguage } from '../LanguageContext'",
+        'export default function Home() {',
+        '  const { t } = useLanguage()',
+        '  return (',
+        '    <TabBar',
+        '      items={[',
+        '        { icon: <svg viewBox="0 0 24 24"><path d="M4 12L9 17" /></svg>, label: t.tabs.home },',
+        '        { icon: <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /></svg>, label: t.tabs.explore },',
+        '      ]}',
+        '      value={0}',
+        '    />',
+        '  )',
+        '}',
+        '',
+      ].join('\n'),
+    )
+  }
+
+  it('renders the translated label, and keeps the icon beside it', () => {
+    writeLanguageContext()
+    writeTabBarPage()
+    const items = named(loadNodes('pages/Home.jsx', evalOptions()), 'TabBar').props?.items as {
+      icon?: { svg?: string }
+      label?: string
+    }[]
+    expect(items.map((item) => item.label)).toEqual(['Home', 'Explore'])
+    expect(items[0]?.icon?.svg).toContain('<svg')
+    expect(items[1]?.icon?.svg).toContain('<circle')
+  })
+
+  it('follows the previewed locale', () => {
+    // The board's AR toggle has to reach a label one level inside a prop, or an
+    // Arabic frame renders a Latin tab bar over an Arabic screen.
+    writeLanguageContext()
+    writeTabBarPage()
+    const items = named(
+      loadNodes('pages/Home.jsx', { ...evalOptions(), preferredKey: 'ar' }),
+      'TabBar',
+    ).props?.items as { label?: string }[]
+    expect(items.map((item) => item.label)).toEqual(['الرئيسية', 'استكشف'])
+  })
+})

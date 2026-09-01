@@ -293,29 +293,57 @@ function pageFileForRule(rule: StyleRule): string | null {
  * declarations written. Resolution order — see this module's "Creating a
  * NEW stylesheet" doc above for the full design:
  *
- *   1. The one stylesheet this project already knows how to write to: every
- *      DISTINCT, hand-editable (`classifyStylesheetEditability` ===
+ *   1. The stylesheet CO-LOCATED WITH THE RULE'S OWN PAGE, when the rule is
+ *      node-scoped and such a file is already a known write target
+ *      (`pages/Home.tsx` -> `pages/Home.module.css`). This is not a guess
+ *      among equals: a class created while styling a node on Home belongs in
+ *      Home's stylesheet, and `pageFileForRule` already recovers that page
+ *      from the rule's own scope.
+ *
+ *      This step did not exist, and its absence was not a rare edge: the
+ *      ambiguity check below counted stylesheets across the WHOLE workspace,
+ *      so any project whose pages each own a `*.module.css` — four of them in
+ *      the project this was reported from (Home, Onboarding, SMS, SignUp) —
+ *      refused EVERY new class with "Studio found 4 candidate stylesheets".
+ *      The per-page answer was reachable the entire time and was only
+ *      consulted in step 4, which `files.size > 1` returned before.
+ *   2. Else, the one stylesheet this project already knows how to write to:
+ *      every DISTINCT, hand-editable (`classifyStylesheetEditability` ===
  *      'plain-css') `.css` file already named in `styleRuleSources`, IF
- *      there is exactly one. This module has no per-page context (see its
- *      own "Baseline discipline" — `collectStyleRuleEdits` runs over the
- *      whole `site.styleRules` registry, not one page's), so "the
- *      stylesheet the page imports" narrows here to "the one this
- *      workspace's already-parsed rules point at" — an honest, documented
- *      approximation that is exact for the common single-stylesheet
- *      project and refuses rather than guesses for anything less clear.
- *   2. Else, if the count was MORE than one, refuse with
+ *      there is exactly one.
+ *   3. Else, if the count was MORE than one, refuse with
  *      `ambiguous-stylesheet`, naming every candidate — Studio will not
  *      guess which file a new class belongs in. This branch NEVER creates:
  *      the ambiguity is about multiple EXISTING choices, not about needing
  *      a new one.
- *   3. Else (zero candidates) — try to name the rule's PAGE
+ *   4. Else (zero candidates) — try to name the rule's PAGE
  *      (`pageFileForRule`). If one resolves, offer `kind: 'create'`. If not,
  *      refuse with `no-editable-stylesheet`.
  */
+/**
+ * `pages/Home.tsx` and `pages/Home.module.css` — same directory, same basename
+ * up to the first dot. The convention this project scaffolds every page with
+ * (`starterPage`'s `stylesFileName`), and the only pairing precise enough to
+ * call a destination rather than a guess.
+ */
+function isCoLocatedStylesheet(pageFile: string, cssFile: string): boolean {
+  const dirOf = (path: string) => path.slice(0, path.lastIndexOf('/') + 1)
+  if (dirOf(pageFile) !== dirOf(cssFile)) return false
+  const stemOf = (path: string) => path.slice(path.lastIndexOf('/') + 1).split('.')[0]
+  return stemOf(pageFile) === stemOf(cssFile)
+}
+
 export function resolveCssInsertDestination(rule: StyleRule): CssInsertDestination {
   const files = new Set<string>()
   for (const source of Object.values(styleRuleSources)) {
     if (classifyStylesheetEditability(source.file).kind === 'plain-css') files.add(source.file)
+  }
+
+  // The rule's own page answers this before any counting does.
+  const rulePageFile = pageFileForRule(rule)
+  if (rulePageFile) {
+    const coLocated = [...files].sort().find((file) => isCoLocatedStylesheet(rulePageFile, file))
+    if (coLocated) return { ok: true, kind: 'existing', file: coLocated }
   }
 
   if (files.size === 1) return { ok: true, kind: 'existing', file: [...files][0]! }
@@ -330,8 +358,7 @@ export function resolveCssInsertDestination(rule: StyleRule): CssInsertDestinati
     }
   }
 
-  const pageFile = pageFileForRule(rule)
-  if (pageFile) return { ok: true, kind: 'create', pageFile }
+  if (rulePageFile) return { ok: true, kind: 'create', pageFile: rulePageFile }
 
   return {
     ok: false,

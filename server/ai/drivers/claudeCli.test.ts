@@ -364,6 +364,75 @@ describe('streamClaudeCli — project guide generation', () => {
   })
 })
 
+describe('streamClaudeCli — dynamic system-prompt suffix + turn write log (the write-verification gate)', () => {
+  it('forwards ONLY the dynamic suffix via --append-system-prompt, never the static prefix', async () => {
+    let capturedArgv: string[] = []
+    const spawn = fakeCliSpawn({
+      stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
+      onSpawn: (argv) => { capturedArgv = argv },
+    })
+    await collect(
+      baseRequest({
+        workspaceDir: projectDir,
+        systemPrompt: ['STATIC PREFIX TEXT', '__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__', 'DYNAMIC SUFFIX TEXT'],
+      }),
+      testOptions({ spawn }),
+    )
+    const flagIndex = capturedArgv.indexOf('--append-system-prompt')
+    expect(flagIndex).toBeGreaterThan(-1)
+    expect(capturedArgv[flagIndex + 1]).toBe('DYNAMIC SUFFIX TEXT')
+    expect(capturedArgv).not.toContain('STATIC PREFIX TEXT')
+  })
+
+  it('omits --append-system-prompt entirely when systemPrompt has no boundary marker', async () => {
+    let capturedArgv: string[] = []
+    const spawn = fakeCliSpawn({
+      stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
+      onSpawn: (argv) => { capturedArgv = argv },
+    })
+    await collect(baseRequest({ workspaceDir: projectDir }), testOptions({ spawn }))
+    expect(capturedArgv).not.toContain('--append-system-prompt')
+  })
+
+  it('omits --append-system-prompt when no workspace is open, even with a boundary marker present', async () => {
+    let capturedArgv: string[] = []
+    const spawn = fakeCliSpawn({
+      stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
+      onSpawn: (argv) => { capturedArgv = argv },
+    })
+    await collect(
+      baseRequest({ systemPrompt: ['prefix', '__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__', 'suffix'] }),
+      testOptions({ spawn }),
+    )
+    expect(capturedArgv).not.toContain('--append-system-prompt')
+  })
+
+  it('resets the turn write log before spawning, so a stale entry from a previous turn never leaks into this one\'s Stop-hook gate', async () => {
+    const { mkdirSync, writeFileSync, readFileSync } = await import('node:fs')
+    const { join } = await import('node:path')
+    const logPath = join(projectDir, '.studio', 'cache', 'turnWrites.json')
+    mkdirSync(join(projectDir, '.studio', 'cache'), { recursive: true })
+    writeFileSync(logPath, JSON.stringify([{ file: 'pages/Stale.tsx', atMs: 1 }]))
+
+    const spawn = fakeCliSpawn({
+      stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
+    })
+    await collect(baseRequest({ workspaceDir: projectDir }), testOptions({ spawn }))
+    expect(JSON.parse(readFileSync(logPath, 'utf8'))).toEqual([])
+  })
+
+  it('never touches the turn write log when no workspace is open', async () => {
+    const spawn = fakeCliSpawn({
+      stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
+    })
+    await collect(baseRequest(), testOptions({ spawn }))
+    // The config-dir fallback (`dataRoot/<userId>`) has no `.studio/` at all —
+    // a `resetTurnWriteLog` call there would `mkdirSync` one, which is what
+    // this asserts against.
+    expect(existsSync(join(dataRoot, 'user-1', '.studio'))).toBe(false)
+  })
+})
+
 describe('streamClaudeCli — session continuity (WS-11 step 2, extended for session_epoch)', () => {
   /**
    * Writes an empty transcript at the exact path `shouldEstablishClaudeCliSession`

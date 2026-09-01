@@ -105,6 +105,8 @@ function baseLiveDigest(capabilities: StudioLiveDigest['capabilities']): StudioL
     designReferences: [],
     staleWarning: null,
     capabilities,
+    pageWriteVerification: [],
+    figmaReferenceNudge: null,
   }
 }
 
@@ -183,5 +185,83 @@ describe('Studio system prompt — capability digest (mcp-tooling task)', () => 
     const [, , suffix] = buildStudioAgentSystemPrompt(FIXTURE_CTX, studioAgentTools, null)
     expect(suffix).not.toContain('Figma MCP connector')
     expect(suffix).not.toContain('studio_typecheck: unavailable')
+  })
+})
+
+/**
+ * Per-page write/verify digest lines + the Figma nudge (the write-verification
+ * gate, items 1/3/4). The required silent case — an armed, passing, non-thrashing
+ * page — gets its own test: a gate a model can learn to ignore because it
+ * never actually goes quiet is not a gate.
+ */
+describe('Studio system prompt — page write verification + Figma nudge (the write-verification gate)', () => {
+  const configuredCapabilities: StudioLiveDigest['capabilities'] = {
+    figma: { status: 'configured', loopbackAssetFetchBlocked: false },
+    typecheck: { available: true },
+  }
+
+  it('an armed, passing, non-thrashing page renders as a single quiet word — the gate stays silent', () => {
+    const live: StudioLiveDigest = {
+      ...baseLiveDigest(configuredCapabilities),
+      pageWriteVerification: [
+        {
+          pageId: 'onboarding',
+          title: 'Onboarding',
+          writeCount: 1,
+          lastWrittenAtMs: 1000,
+          hasReference: true,
+          referenceId: 'ref-1',
+          passingCompareAtMs: 2000,
+          verifiedSinceWrite: true,
+        },
+      ],
+    }
+    const [, , suffix] = buildStudioAgentSystemPrompt(FIXTURE_CTX, studioAgentTools, live)
+    expect(suffix).toContain('"Onboarding": verified.')
+    expect(suffix).not.toContain('has NO design reference')
+    expect(suffix).not.toContain('call studio_compare(')
+  })
+
+  it('an unverified page names the exact next call', () => {
+    const live: StudioLiveDigest = {
+      ...baseLiveDigest(configuredCapabilities),
+      pageWriteVerification: [
+        {
+          pageId: 'onboarding',
+          title: 'Onboarding',
+          writeCount: 2,
+          lastWrittenAtMs: 1000,
+          hasReference: false,
+          verifiedSinceWrite: false,
+        },
+      ],
+    }
+    const [, , suffix] = buildStudioAgentSystemPrompt(FIXTURE_CTX, studioAgentTools, live)
+    expect(suffix).toContain('Onboarding')
+    expect(suffix).toContain('studio_register_design_reference')
+  })
+
+  it('nothing written this turn: the digest carries no write-verification line at all', () => {
+    const live: StudioLiveDigest = { ...baseLiveDigest(configuredCapabilities), pageWriteVerification: [] }
+    const [, , suffix] = buildStudioAgentSystemPrompt(FIXTURE_CTX, studioAgentTools, live)
+    expect(suffix).not.toContain('verified.')
+    expect(suffix).not.toContain('has NO design reference')
+  })
+
+  it('the Figma nudge names the page and the exact registration call', () => {
+    const live: StudioLiveDigest = {
+      ...baseLiveDigest(configuredCapabilities),
+      figmaReferenceNudge: { pageId: 'onboarding', pageTitle: 'Onboarding' },
+    }
+    const [, , suffix] = buildStudioAgentSystemPrompt(FIXTURE_CTX, studioAgentTools, live)
+    expect(suffix).toContain('Figma link in this message')
+    expect(suffix).toContain('"Onboarding"')
+    expect(suffix).toContain('studio_register_design_reference')
+  })
+
+  it('no nudge, no line', () => {
+    const live: StudioLiveDigest = { ...baseLiveDigest(configuredCapabilities), figmaReferenceNudge: null }
+    const [, , suffix] = buildStudioAgentSystemPrompt(FIXTURE_CTX, studioAgentTools, live)
+    expect(suffix).not.toContain('Figma link in this message')
   })
 })

@@ -190,9 +190,11 @@ export function parsedPageToSitePage(parsed: ParsedPage, opts: ParsedPageToSiteP
 
     // Every tag-bearing module must keep rendering as its real host tag, or a
     // module default silently rewrites the element: `base.container` would turn
-    // an `<h1>`/`<li>`/`<section>` into a `<div>`, and `base.text` would turn a
-    // `<span>` into a block `<p>`, which visibly breaks inline layout. Each
-    // module's own default tag needs no override.
+    // an `<h1>`/`<li>`/`<section>` into a `<div>`, `base.text` would turn a
+    // `<span>` into a block `<p>` (which visibly breaks inline layout), and
+    // `base.svg` would replace an authored icon wrapper with a box-less host
+    // (which strips the class box that sizes the icon). Each module's own
+    // default tag needs no override.
     //
     // `tag`/`customTag` are SYNTHESIZED from the element's name rather than read
     // off an attribute, so they do not write back through `setJsxProp` — the save
@@ -211,6 +213,16 @@ export function parsedPageToSitePage(parsed: ParsedPage, opts: ParsedPageToSiteP
       } else if (moduleId === 'base.text' && tag !== 'p') {
         // `resolveModuleId` only picks `base.text` for a tag it can render, so
         // there is no custom-tag fallback to reach here.
+        props.tag = tag
+      } else if (moduleId === 'base.svg' && tag !== 'svg') {
+        // `base.svg` is reached two ways, and only ONE of them names a real
+        // element: a literal `<svg>` in source (tag === 'svg', no wrapper —
+        // skipped by the guard above), or the `<span className={styles.icon}
+        // dangerouslySetInnerHTML={{__html: icon}} />` shape every repo uses to
+        // inline a `?raw` icon, where the span IS authored and its class is
+        // what sizes and colours the graphic. Record which, so the module
+        // renders the author's element instead of substituting a box-less host
+        // of its own — see `resolveSvgHostTag`.
         props.tag = tag
       }
     }

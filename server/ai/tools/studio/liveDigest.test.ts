@@ -218,3 +218,104 @@ describe('buildStudioLiveDigest — capabilities', () => {
     expect(digest.capabilities.typecheck).toEqual({ available: true })
   })
 })
+
+/**
+ * `pageWriteVerification`/`figmaReferenceNudge` (verification-gate item 1/4) —
+ * exercised against a real scaffolded page, a real turn-write log, and a
+ * real registered reference, the same fixtures `pageWriteVerification.test.ts`
+ * uses, so this proves the WIRING into the digest rather than re-testing the
+ * shared computation itself.
+ */
+describe('buildStudioLiveDigest — page write verification + Figma nudge', () => {
+  let dir: string
+  const baseSnapshot: StudioAgentSnapshot = {
+    activeBoardId: 'board-1',
+    frames: [],
+    activePageId: null,
+    selectedNodeId: null,
+    axes: { direction: 'ltr', colorScheme: 'light' },
+  }
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'studio-livedigest-writes-'))
+    mkdirSync(join(dir, 'pages'), { recursive: true })
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'fixture', dependencies: { react: '^18.0.0' } }))
+  })
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('is empty when nothing was written since the last reset', async () => {
+    const { createScaffoldedPage } = await import('../../../handlers/studio/pageScaffold')
+    createScaffoldedPage(dir, 'Onboarding')
+    const digest = await buildStudioLiveDigest(dir, baseSnapshot, 'conv-writes-empty', { staleness: createStalenessTracker() })
+    expect(digest.pageWriteVerification).toEqual([])
+  })
+
+  it('reports a page written since the last turn boundary, unverified', async () => {
+    const { createScaffoldedPage } = await import('../../../handlers/studio/pageScaffold')
+    const { resolvePageSourceFile } = await import('../../../handlers/studio/pageSourceFile')
+    const { appendTurnWrite } = await import('../../../handlers/studio/turnWriteLog')
+    const { loadStudioPages } = await import('../../../handlers/studioPageLoad')
+
+    const scaffolded = createScaffoldedPage(dir, 'Onboarding')
+    if (!scaffolded.ok) throw new Error(scaffolded.conflict)
+    const { pages } = await loadStudioPages(dir)
+    const page = pages.find((p) => p.id === scaffolded.pageId)!
+    const rel = resolvePageSourceFile(page)!
+    appendTurnWrite(dir, join(dir, ...rel.split('/')))
+
+    const digest = await buildStudioLiveDigest(dir, baseSnapshot, 'conv-writes-unverified', { staleness: createStalenessTracker() })
+    expect(digest.pageWriteVerification).toHaveLength(1)
+    expect(digest.pageWriteVerification[0]!.pageId).toBe(scaffolded.pageId)
+    expect(digest.pageWriteVerification[0]!.verifiedSinceWrite).toBe(false)
+  })
+
+  it('the Figma nudge fires only for the ACTIVE page, only with a URL in the message, and only when unarmed', async () => {
+    const { createScaffoldedPage } = await import('../../../handlers/studio/pageScaffold')
+    const scaffolded = createScaffoldedPage(dir, 'Onboarding')
+    if (!scaffolded.ok) throw new Error(scaffolded.conflict)
+    const snapshot: StudioAgentSnapshot = { ...baseSnapshot, activePageId: scaffolded.pageId }
+
+    const withUrl = await buildStudioLiveDigest(
+      dir,
+      snapshot,
+      'conv-figma-nudge-1',
+      { staleness: createStalenessTracker() },
+      'match this: https://www.figma.com/file/abc123/Onboarding',
+    )
+    expect(withUrl.figmaReferenceNudge).toEqual({ pageId: scaffolded.pageId, pageTitle: 'Onboarding' })
+
+    const withoutUrl = await buildStudioLiveDigest(
+      dir,
+      snapshot,
+      'conv-figma-nudge-2',
+      { staleness: createStalenessTracker() },
+      'just build a signup screen',
+    )
+    expect(withoutUrl.figmaReferenceNudge).toBeNull()
+  })
+
+  it('the Figma nudge stays silent once a reference is armed for the active page', async () => {
+    const { createScaffoldedPage } = await import('../../../handlers/studio/pageScaffold')
+    const { registerDesignReference } = await import('../../../handlers/studio/designReferenceStore')
+    const scaffolded = createScaffoldedPage(dir, 'Onboarding')
+    if (!scaffolded.ok) throw new Error(scaffolded.conflict)
+    const onePixelPng = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      'base64',
+    )
+    const registered = await registerDesignReference(dir, onePixelPng, { pageId: scaffolded.pageId })
+    if (!registered.ok) throw new Error(registered.error)
+
+    const snapshot: StudioAgentSnapshot = { ...baseSnapshot, activePageId: scaffolded.pageId }
+    const digest = await buildStudioLiveDigest(
+      dir,
+      snapshot,
+      'conv-figma-nudge-armed',
+      { staleness: createStalenessTracker() },
+      'match this: https://www.figma.com/file/abc123/Onboarding',
+    )
+    expect(digest.figmaReferenceNudge).toBeNull()
+  })
+})

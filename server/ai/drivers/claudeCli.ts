@@ -68,21 +68,31 @@
  * not a replayed `AiMessage[]` log the way every HTTP driver in this
  * directory does it.
  *
- * ## `req.systemPrompt` is NOT forwarded — and that is not an oversight
+ * ## `req.systemPrompt`'s STATIC PREFIX is not forwarded — its DYNAMIC
+ * SUFFIX is (the write-verification gate)
  *
  * For the same reason `req.tools` is not: the CLI is an agent, not a raw
- * model. It supplies its own operating instructions, and Studio's chat system
- * prompt describes a tool surface this driver never hands it. What this driver
- * gives the CLI instead is the project's own generated `CLAUDE.md`, loaded for
- * free from the subprocess `cwd` (see the guide generation below).
+ * model. It supplies its own operating instructions, and the static half of
+ * Studio's chat system prompt (`systemPrompt.ts`'s `buildStaticPromptPrefix`
+ * — role, workflow, failure examples) describes a tool surface this driver
+ * never hands it; the project's own generated `CLAUDE.md`, loaded for free
+ * from the subprocess `cwd` (see the guide generation below), covers the same
+ * ground in this driver's own vocabulary instead.
  *
- * The consequence is easy to trip over and has: **a caller whose instructions
- * live only in `systemPrompt` reaches this model with none of them.** That is
- * what `server/ai/oneShot.ts` composes around — read its module doc before
- * adding another non-chat caller. Making this driver honour `systemPrompt`
- * (`--append-system-prompt`) is a real option, but it would change what the
- * main chat sends on every turn, so it is a deliberate change with its own
- * validation, not a drive-by fix.
+ * The DYNAMIC SUFFIX (`SYSTEM_PROMPT_DYNAMIC_BOUNDARY` onward — board state,
+ * armed design references, per-page write/verify status, capability facts)
+ * is different in kind: it is per-turn, per-project LIVE STATE that cannot
+ * live in `CLAUDE.md` without busting that file's own turn-to-turn stability
+ * (and the prompt-cache reuse that stability buys — WS-11 §4.0's $0.168
+ * warning). This was the exact gap a real, measured session fell into: the
+ * digest that states plainly whether a just-written page has a passing
+ * `studio_compare` was computed on every turn and never reached this driver
+ * at all, so an agent authoring files natively through this driver had no
+ * live signal that anything was unverified — only the Stop-hook gate below
+ * caught it, after the fact. `--append-system-prompt` below forwards ONLY
+ * this suffix (never the static prefix CLAUDE.md already covers) — small,
+ * appended after the CLI's own base prompt and `CLAUDE.md`, so it costs a
+ * few hundred uncached tokens per turn rather than perturbing what IS cached.
  *
  * Whether THIS turn establishes or resumes is decided by
  * `shouldEstablishClaudeCliSession`: does the CLI already have a transcript
@@ -97,7 +107,7 @@
  * `--tools` below is a hard ceiling on native built-ins — at most `Task`/`Read`, never `Bash`/`Write`/`Edit`/`Glob`/`Grep`/`WebFetch`. Reasoning: `resolveNativeToolAllowlist`'s own doc comment (`claudeCliToolSurface.ts`).
  */
 
-import type { AiAuthMode, AiContentBlock, AiProviderId, AiStreamEvent } from '../runtime/types'
+import { SYSTEM_PROMPT_DYNAMIC_BOUNDARY, type AiAuthMode, type AiContentBlock, type AiProviderId, type AiStreamEvent } from '../runtime/types'
 import type { AiProvider, AiProviderCapabilities, AiProviderModel, AiResolvedCredential, AiStreamRequest } from './types'
 import { minimalSubprocessEnv, type SubprocessSpawnFn } from '../../handlers/studio/subprocessRunner'
 import { assertLooksLikeSetupToken, verifyClaudeCliCredential } from './claudeCliVerify'
@@ -128,6 +138,7 @@ import { approvedProjectMcpServers, type ProjectMcpServerDefinition } from './pr
 import { resolvedApprovedRegisteredMcpServers } from './registeredMcpServers'
 import { readServerConfig } from '../../config'
 import { generateStudioProjectGuide } from '../../handlers/studio/projectGuide'
+import { resetTurnWriteLog } from '../../handlers/studio/turnWriteLog'
 import { stageAttachments, cleanupAttachments, describeAttachmentsForPrompt } from './claudeCliAttachments'
 import { writeMcpConfigFile, cleanupMcpConfigFile, type McpConfigFile } from './claudeCliMcpConfigFile'
 
@@ -352,6 +363,13 @@ export async function* streamClaudeCli(
     } catch (err) {
       console.error('[ai/claudeCli] failed to generate the project guide — continuing without one:', err)
     }
+    // verification-gate item 2/3 — a fresh turn-write log for THIS turn. The
+    // project's generated `.claude/settings.local.json` (part of the guide
+    // just above) wires a `PostToolUse` hook that appends to this log on
+    // every native `Write`/`Edit`, and a `Stop` hook that reads it back — see
+    // `turnWriteLog.ts`'s "turn boundary" note for why the reset has to
+    // happen HERE, right before spawn, and not inside either hook.
+    resetTurnWriteLog(workspaceCwd)
   }
 
   const env = minimalSubprocessEnv([], {
@@ -486,6 +504,10 @@ export async function* streamClaudeCli(
     // project's .mcp.json and connects to whatever it finds there. Studio
     // ships exactly the toolset it intends and no more.
     '--strict-mcp-config',
+    // The write-verification gate — ONLY the dynamic suffix (never the static
+    // prefix CLAUDE.md already covers), and only when a real project is open. See
+    // this file's own doc comment, "req.systemPrompt's STATIC PREFIX...".
+    ...(workspaceCwd ? appendSystemPromptArgs(req.systemPrompt) : []),
     sessionFlag,
     sessionId,
   ]
@@ -593,6 +615,27 @@ function buildMcpConfig(
       },
     },
   }
+}
+
+/**
+ * `['--append-system-prompt', suffix]`, or `[]` when `systemPrompt` carries no
+ * dynamic suffix worth sending (no boundary marker found, or the suffix is
+ * empty/whitespace — the "project profile unavailable" degrade in
+ * `buildStudioAgentSystemPrompt` is still real text, so this only skips a
+ * GENUINELY empty suffix, never that fallback message).
+ *
+ * `systemPrompt` is `[staticPrefix, SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
+ * dynamicSuffix]` for every REAL Studio-project turn (`buildStudioAgentSystemPrompt`'s
+ * own contract) — this driver only ever calls this when `workspaceCwd` is
+ * set, which is exactly when the caller (`chat.ts` via `buildStudioProjectSystemPrompt`)
+ * built it that way, so the boundary marker is always expected to be present
+ * in practice; a missing marker degrades to `[]` rather than guessing.
+ */
+function appendSystemPromptArgs(systemPrompt: readonly string[]): string[] {
+  const boundaryIndex = systemPrompt.indexOf(SYSTEM_PROMPT_DYNAMIC_BOUNDARY)
+  if (boundaryIndex === -1) return []
+  const suffix = systemPrompt.slice(boundaryIndex + 1).join('\n\n').trim()
+  return suffix.length > 0 ? ['--append-system-prompt', suffix] : []
 }
 
 // ---------------------------------------------------------------------------

@@ -326,3 +326,65 @@ export function resolveCssModuleImport(
   const classMap = moduleClassMaps[file.rel]
   return classMap ? { ...classMap } : undefined
 }
+
+/**
+ * One asset-shaped default import whose file is NOT on disk.
+ *
+ * `<span dangerouslySetInnerHTML={{ __html: chartIcon }} />` fed by
+ * `import chartIcon from '@pkg/icons/chartLineDown.svg?raw'` — where that file
+ * does not exist — is not a parse failure and not a type error. The evaluator
+ * hands back `unresolved`, the node loses its `svg` prop, and the canvas draws
+ * a correctly-classed, correctly-sized, EMPTY span. The icon is simply absent,
+ * with nothing anywhere saying why, and `tsc` agrees the code is fine: a
+ * project with `vite/client` types declares `*.svg?raw` ambiently, so the
+ * specifier typechecks whether or not the file behind it exists.
+ *
+ * An agent inventing a plausible-but-wrong icon filename is a routine failure
+ * (it happened on the real board this was written for, one row out of four),
+ * and every downstream signal says "fine". This is what makes it sayable.
+ */
+export interface UnresolvedAssetImport {
+  /** The import specifier exactly as written. */
+  readonly specifier: string
+  /** The local binding it was imported as — what to grep for at the use site. */
+  readonly localName: string
+  /** 1-based line of the import declaration. */
+  readonly line: number
+}
+
+/**
+ * Every `?raw` text import in `sourceFile` that names a file which is not
+ * there (or sits outside `workspaceRoot`).
+ *
+ * Deliberately scoped to `?raw` text imports. An IMAGE import can fail to
+ * resolve for a second, entirely different reason — it came from an installed
+ * package, which `resolveImageAssetImport` refuses on purpose because the asset
+ * endpoint will not serve out of `node_modules` — and
+ * {@link packagedImageImportRefusal} already explains that one in its own
+ * words. Reporting it here as "the file is missing" would be a lie, so this
+ * asks only the question it can answer honestly.
+ *
+ * Resolution goes through the same `resolveImportedFile` the evaluator itself
+ * used, so this can never disagree with what the canvas actually did.
+ */
+export function unresolvedRawTextImports(
+  sourceFile: SourceFile,
+  workspaceRoot: string | undefined,
+): readonly UnresolvedAssetImport[] {
+  if (!workspaceRoot) return []
+  const unresolved: UnresolvedAssetImport[] = []
+  for (const decl of sourceFile.getImportDeclarations()) {
+    const defaultImport = decl.getDefaultImport()
+    if (!defaultImport) continue
+    const specifier = decl.getModuleSpecifierValue()
+    if (!RAW_TEXT_SPECIFIER_RE.test(specifier)) continue
+    const localName = defaultImport.getText()
+    if (resolveImportedFile(sourceFile, localName, workspaceRoot, RAW_TEXT_SPECIFIER_RE, true)) continue
+    unresolved.push({
+      specifier,
+      localName,
+      line: sourceFile.getLineAndColumnAtPos(decl.getStart()).line,
+    })
+  }
+  return unresolved
+}

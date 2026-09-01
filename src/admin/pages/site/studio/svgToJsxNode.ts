@@ -39,7 +39,7 @@
  * skipped during it.
  */
 import { sanitizeSvg } from '@core/sanitize'
-import type { SlotJsxNode } from '@site/studio/studioSaveRequests'
+import type { SlotJsxNode } from './studioSaveRequests'
 
 /**
  * Caps on what one icon may become. An icon is a glyph, not a scene: the

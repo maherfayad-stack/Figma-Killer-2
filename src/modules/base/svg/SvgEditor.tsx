@@ -13,6 +13,7 @@ import type { ModuleComponentProps } from '@core/module-engine'
 import { sanitizeSvg } from '@core/sanitize'
 import { CanvasModulePlaceholder } from '@ui/components/CanvasModulePlaceholder'
 import { ImageSolidIcon } from 'pixel-art-icons/icons/image-solid'
+import { resolveSvgHostTag } from './hostTag'
 import type { SvgStoredProps } from './props'
 
 export const SvgEditor: React.FC<ModuleComponentProps<SvgStoredProps>> = ({
@@ -33,10 +34,33 @@ export const SvgEditor: React.FC<ModuleComponentProps<SvgStoredProps>> = ({
     )
   }
 
-  // `style` is pulled OUT of the wrapper bag and merged with `display:
-  // contents` rather than replaced — the node's own inline styles
-  // (`node.inlineStyles`, e.g. a `color` a source SVG's `currentColor`
-  // fill reads) still need to land on this element.
+  // `style` is pulled OUT of the wrapper bag rather than replaced — the node's
+  // own inline styles (`node.inlineStyles`, e.g. a `color` a source SVG's
+  // `currentColor` fill reads) still need to land on this element.
+  const { style: nodeStyle, ...editorProps } = nodeWrapperProps ?? {}
+  const label = String(props.title ?? '').trim()
+  const labelProps = label ? { role: 'img', 'aria-label': label } : {}
+
+  // The source wrote this element itself — `<span className={styles.icon}
+  // dangerouslySetInnerHTML={{__html: icon}} />`, the standard way a real repo
+  // inlines a `?raw` icon. Render it as its real tag with its real box: the
+  // class on it is what sizes and colours the icon, and the near-universal
+  // pairing (`.icon { width: 24px }` + `.icon svg { width: 100% }`) resolves
+  // the inner graphic against THIS element. See `resolveSvgHostTag` for what
+  // went wrong when this element was collapsed into the box-less host below.
+  const hostTag = resolveSvgHostTag(props.tag)
+  if (hostTag) {
+    return React.createElement(hostTag, {
+      ...editorProps,
+      ...(nodeStyle ? { style: nodeStyle } : {}),
+      className: mcClassName,
+      ...labelProps,
+      dangerouslySetInnerHTML: { __html: markup },
+    })
+  }
+
+  // No authored wrapper: the source wrote a bare `<svg>`, so this span is
+  // Studio's own, mounted only to carry selection/hover wiring.
   //
   // `display: contents` because a raw `<svg>` reached through an inline
   // JSX-element prop (`<Cell icon={<svg .../>}/>`, and the identical case
@@ -52,16 +76,13 @@ export const SvgEditor: React.FC<ModuleComponentProps<SvgStoredProps>> = ({
   // of a box-less node's children for exactly this shape (the design-system
   // host div in `src/modules/alm/register.tsx` uses the identical pattern),
   // so selection/hover geometry is unaffected.
-  const { style: nodeStyle, ...editorProps } = nodeWrapperProps ?? {}
   const style: React.CSSProperties = { ...nodeStyle, display: 'contents' }
-
-  const label = String(props.title ?? '').trim()
   return (
     <span
       {...editorProps}
       style={style}
       className={mcClassName}
-      {...(label ? { role: 'img', 'aria-label': label } : {})}
+      {...labelProps}
       dangerouslySetInnerHTML={{ __html: markup }}
     />
   )

@@ -38,6 +38,8 @@ export const PropKindSchema = Type.Union([
   Type.Object({ kind: Type.Literal('image') }),
   Type.Object({ kind: Type.Literal('node') }),
   Type.Object({ kind: Type.Literal('handler') }),
+  Type.Object({ kind: Type.Literal('collection') }),
+  Type.Object({ kind: Type.Literal('collectionIndex'), collection: Type.String() }),
   Type.Object({ kind: Type.Literal('unknown') }),
 ])
 export type PropKind = Static<typeof PropKindSchema>
@@ -170,6 +172,13 @@ export function controlForPropKind(name: string, kind: PropKind): PropertyContro
   switch (kind.kind) {
     case 'handler':
       return undefined
+    case 'collection':
+      // Same answer as a handler, for the same reason: there is no scalar edit
+      // that lands honestly. A text box on `items={[{ icon, label }]}` accepts
+      // any value and every value it accepts breaks the component — typing `5`
+      // reached `items.map(...)` and put "TabBar (render error)" on the canvas.
+      // Declining the control is the refusal CLAUDE.md asks for.
+      return undefined
     case 'enum':
       return kind.values.length >= 2
         ? { type: 'select', label: name, options: kind.values.map((v) => ({ label: v, value: v })) }
@@ -182,6 +191,11 @@ export function controlForPropKind(name: string, kind: PropKind): PropertyContro
       return { type: 'toggle', label: name }
     case 'number':
       return { type: 'number', label: name }
+    case 'collectionIndex':
+      // A number that names one entry of a sibling list. See the
+      // `collection-index` control in `propertySchema.ts` for why the options
+      // cannot be baked into the schema.
+      return { type: 'collection-index', label: name, collection: kind.collection }
     case 'node':
       // WS-6.5/E2.5 — the sentinel value is meaningless in a scalar control,
       // but the slot IS a real, editable node (WS-3.4's materialized child,

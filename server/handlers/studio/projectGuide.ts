@@ -77,6 +77,16 @@ const GUIDE_PATH = 'CLAUDE.md'
 const COMPONENTS_PATH = `${CLAUDE_DIR}/design-system-components.md`
 const ICONS_PATH = `${CLAUDE_DIR}/design-system-icons.md`
 const TOKENS_PATH = `${CLAUDE_DIR}/design-system.md`
+/**
+ * `.claude/settings.local.json`, never `.claude/settings.json` — the SAME
+ * "not committed" project-personal tier Claude Code's own docs describe
+ * (`.claude/settings.local.json` — "Local project settings (not committed)").
+ * `.claude/settings.json` is the project's own, more likely to be
+ * intentionally authored and shared by the user; Studio owns a `local`
+ * file the same way it owns `CLAUDE.md`, generated fresh and skipped the
+ * moment it is hand-edited (see `generateStudioProjectGuide`'s manifest).
+ */
+const HOOKS_SETTINGS_PATH = `${CLAUDE_DIR}/settings.local.json`
 
 interface GuideFile {
   readonly relPath: string
@@ -330,6 +340,57 @@ function buildGuide(dir: string, profile: ProjectProfile, ds: DesignSystemGuide 
 }
 
 // ---------------------------------------------------------------------------
+// .claude/settings.local.json — the Stop-hook write-verification gate
+// ---------------------------------------------------------------------------
+
+/**
+ * Wraps `value` in single quotes for a POSIX shell command string, escaping
+ * any embedded `'`. Every value passed through this is a filesystem path
+ * this SERVER computed (`import.meta.dir`/`process.execPath`), never
+ * caller-supplied input — this exists for correctness on a path containing a
+ * space (this repo's own checkout does: "Figma Killer 2"), not for defending
+ * against adversarial content.
+ */
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`
+}
+
+/**
+ * The `PostToolUse`(`Write|Edit`)/`Stop` hooks that make "a screen written
+ * this turn with no passing compare" a gate the CLI itself enforces, instead
+ * of a rule living only in prose the model can talk its way past under
+ * pressure (this feature's whole reason for existing — see
+ * `hooks/stopGateCheck.ts`'s own doc for the verified hook contract and
+ * `hooks/recordToolWrite.ts` for what feeds it).
+ *
+ * Both hook bodies are invoked as `<bun> <absolute-script-path>` — the exact
+ * `[process.execPath, WORKER_SCRIPT_PATH]` shape `styleCompileTier1.ts`
+ * already spawns a sibling Studio-internal script with, proven to resolve
+ * `@core/*`/`@ai/*` path aliases correctly regardless of the process's own
+ * `cwd` (which here is the USER's project, not this repo). No secret of any
+ * kind is embedded — both hooks read purely from the project's own
+ * filesystem (`.studio/cache/*`), so unlike `--mcp-config` this file carries
+ * nothing that would matter if the user later committed it by hand.
+ */
+function buildHooksSettings(): string {
+  const bun = shellQuote(process.execPath)
+  const recordScript = shellQuote(join(import.meta.dir, 'hooks', 'recordToolWrite.ts'))
+  const gateScript = shellQuote(join(import.meta.dir, 'hooks', 'stopGateCheck.ts'))
+  return `${JSON.stringify(
+    {
+      hooks: {
+        PostToolUse: [
+          { matcher: 'Write|Edit', hooks: [{ type: 'command', command: `${bun} ${recordScript}` }] },
+        ],
+        Stop: [{ hooks: [{ type: 'command', command: `${bun} ${gateScript}` }] }],
+      },
+    },
+    null,
+    2,
+  )}\n`
+}
+
+// ---------------------------------------------------------------------------
 // Assembly
 // ---------------------------------------------------------------------------
 
@@ -438,6 +499,7 @@ function buildGuideFiles(dir: string, profile: ProjectProfile): GuideFile[] {
     ...(ds ? [{ relPath: COMPONENTS_PATH, content: renderComponentReference(ds) }] : []),
     ...(iconReference !== undefined ? [{ relPath: ICONS_PATH, content: iconReference }] : []),
     ...(tokenDigest !== undefined ? [{ relPath: TOKENS_PATH, content: tokenDigest }] : []),
+    { relPath: HOOKS_SETTINGS_PATH, content: buildHooksSettings() },
   ]
 }
 

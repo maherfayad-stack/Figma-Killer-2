@@ -288,6 +288,54 @@ describe('studio_compare — dpr selection + purpose threading', () => {
     expect(passing.ok).toBe(true)
     expect(passing.data.results[0]!.pass).toBe(true)
   })
+
+  it('records a passing verdict durably (the write-verification gate) — the Stop-hook gate reads this back from a completely separate process', async () => {
+    const pageId = scaffoldPageAt('Onboarding', 100, 100)
+    const registered = await registerDesignReference(dir, new Uint8Array(solidPng(100, 100)), { pageId })
+    if (!registered.ok) throw new Error(registered.error)
+
+    bridgeImpl = async () => ({
+      ok: true,
+      data: { frames: [{ pageId, ok: true, width: 100, height: 100, imageIndex: 0, nodeRects: [], imageScale: 1, warnings: [] }] },
+      images: [{ mimeType: 'image/png', data: solidPng(100, 100).toString('base64') }],
+    })
+
+    const before = Date.now()
+    const result = (await studioCompareTool.handler!({ dir, pages: ['Onboarding'], includeImages: false }, ctx())) as {
+      ok: boolean
+      data: CompareData
+    }
+    expect(result.ok).toBe(true)
+    expect(result.data.results[0]!.pass).toBe(true)
+
+    const { readPassingCompare } = await import('../../../../handlers/studio/pageVerificationStore')
+    const recorded = readPassingCompare(dir, pageId)
+    expect(recorded).not.toBeNull()
+    expect(recorded!.referenceId).toBe(registered.reference.id)
+    expect(recorded!.passedAtMs).toBeGreaterThanOrEqual(before)
+  })
+
+  it('does NOT record a failing verdict — absence is the honest "unverified" signal', async () => {
+    const pageId = scaffoldPageAt('Onboarding', 100, 100)
+    const registered = await registerDesignReference(dir, new Uint8Array(solidPng(100, 100)), { pageId })
+    if (!registered.ok) throw new Error(registered.error)
+
+    bridgeImpl = async () => ({
+      ok: true,
+      data: { frames: [{ pageId, ok: true, width: 100, height: 100, imageIndex: 0, nodeRects: [], imageScale: 1, warnings: [] }] },
+      images: [{ mimeType: 'image/png', data: pngWithBlock(100, 100, { x: 10, y: 10, w: 40, h: 40 }).toString('base64') }],
+    })
+
+    const result = (await studioCompareTool.handler!({ dir, pages: ['Onboarding'], includeImages: false }, ctx())) as {
+      ok: boolean
+      data: CompareData
+    }
+    expect(result.ok).toBe(true)
+    expect(result.data.results[0]!.pass).toBe(false)
+
+    const { readPassingCompare } = await import('../../../../handlers/studio/pageVerificationStore')
+    expect(readPassingCompare(dir, pageId)).toBeNull()
+  })
 })
 
 describe('studio_compare — batching (CHANGE A)', () => {

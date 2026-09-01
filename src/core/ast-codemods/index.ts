@@ -24,6 +24,8 @@ export type { SetJsxTagNameParams } from './setJsxTagName'
 export { moveJsxElement } from './moveJsxElement'
 export type { MoveJsxElementParams, MoveJsxElementResult, MoveJsxRefusal, MoveJsxRefusalReason } from './moveJsxElement'
 export { deleteJsxElement } from './deleteJsxElement'
+export { createImportPruneSession, isPrunableSourceFile } from './pruneOrphanedImports'
+export type { ImportPruneSession } from './pruneOrphanedImports'
 export type {
   DeleteJsxElementParams,
   DeleteJsxElementResult,
@@ -31,15 +33,14 @@ export type {
   DeleteJsxRefusalReason,
 } from './deleteJsxElement'
 export { insertJsxElement } from './insertJsxElement'
+export type { InsertJsxElementParams, InsertJsxElementResult } from './insertJsxElement'
 export type {
   InsertJsxChildren,
-  InsertJsxElementParams,
-  InsertJsxElementResult,
   InsertJsxNode,
   InsertJsxRefusal,
   InsertJsxRefusalReason,
   InsertableJsxPropValue,
-} from './insertJsxElement'
+} from './jsxSubtree'
 export { insertJsxIntoSlotProp } from './insertJsxIntoSlotProp'
 export type {
   InsertJsxIntoSlotPropNode,

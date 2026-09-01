@@ -3,26 +3,40 @@
  * the board. Removes the JSX child element at a `line:col`, along with the
  * indentation and newline it owned, and writes the file back.
  *
- * FAILS CLOSED, and says why. Two refusals are its own, and both are about
- * leaving the user's repository in a state their toolchain accepts:
+ * ## It no longer refuses over imports
+ *
+ * This used to REFUSE when every remaining reference to an imported binding
+ * lived inside the deleted subtree — `<TabBar/>` was the only `TabBar` — on
+ * the grounds that removing the import too would make the edit touch a second,
+ * unrelated place in the file. That was the wrong reading of "one honest
+ * target". The import's only reason to exist WAS the element; the two are one
+ * fact written in two places, and the second is derived mechanically, not
+ * guessed. `insertJsxElement` had the symmetric half right all along —
+ * inserting `<Button/>` writes the `Button` import — so the asymmetry meant
+ * Studio could add an element it was then unable to remove, and told the user
+ * to go finish the job by hand.
+ *
+ * The import is retired by `pruneOrphanedImports`, which the save batch runs
+ * ONCE PER FILE after every edit has landed. That module's doc explains why it
+ * cannot live here: an import sits at the top of the file, so deleting its
+ * line mid-batch shifts the pending `line:col` of every edit still queued
+ * below it — the exact hazard `orderStudioEditsForApply` exists to prevent —
+ * and a binding shared by two elements being deleted together is orphaned by
+ * neither one alone, so asked per edit the answer is wrong anyway.
+ *
+ * ## One refusal remains, and it is not about imports
  *
  *  - **`no-jsx-parent`** (from `resolveJsxChildRange`) — the element is the
  *    outermost thing the component returns. Deleting it leaves `return ;`, a
  *    file that no longer parses.
- *  - **`orphans-import`** — every remaining reference to some imported binding
- *    lived inside the deleted subtree (`<Card/>` was the only `Card`,
- *    `src={hero}` the only `hero`). Removing the element without removing the
- *    import leaves an unused import, which under `noUnusedLocals` is a build
- *    failure in the user's own project; removing the import as well would make
- *    this edit touch a second, unrelated place in the file. Neither is one
- *    honest target, so it refuses and names the binding.
  *
- * Deliberately does NOT tidy up after itself. A codemod that "helpfully"
- * deletes an import, collapses a now-empty parent, or reformats the gap it
- * left is a codemod that changes bytes the user never pointed at. What is left
- * behind is exactly the file minus one element.
+ * ## Deliberately does NOT tidy up after itself
+ *
+ * A codemod that collapses a now-empty parent or reformats the gap it left is
+ * a codemod that changes bytes the user never pointed at. What is left behind
+ * is exactly the file minus one element.
  */
-import { Project, SyntaxKind, type SourceFile } from 'ts-morph'
+import { type Project } from 'ts-morph'
 import { createProject, loadSourceFile } from './locateJsxElement'
 import {
   resolveJsxChildRange,
@@ -40,7 +54,7 @@ export interface DeleteJsxElementParams {
   project?: Project
 }
 
-export type DeleteJsxRefusalReason = JsxChildRangeReason | 'orphans-import'
+export type DeleteJsxRefusalReason = JsxChildRangeReason
 
 export interface DeleteJsxRefusal {
   reason: DeleteJsxRefusalReason
@@ -58,17 +72,6 @@ export function deleteJsxElement(params: DeleteJsxElementParams): DeleteJsxEleme
   const target = resolveJsxChildRange(sourceFile, line, col)
   if (!target.ok) return { ok: false, refusal: { reason: target.reason, message: target.message } }
 
-  const orphaned = importOrphanedByRemoval(sourceFile, target.range.start, target.range.end)
-  if (orphaned) {
-    return {
-      ok: false,
-      refusal: {
-        reason: 'orphans-import',
-        message: `Deleting this would leave the "${orphaned}" import unused, which breaks the project's own build. Remove the element and its import together in the file.`,
-      },
-    }
-  }
-
   const verbatim = verbatimSourceText(sourceFile, file)
   if (verbatim === null) {
     return {
@@ -82,42 +85,4 @@ export function deleteJsxElement(params: DeleteJsxElementParams): DeleteJsxEleme
 
   writeVerbatimSource(sourceFile, file, verbatim.slice(0, target.range.start) + verbatim.slice(target.range.end))
   return { ok: true }
-}
-
-/**
- * The name of an imported binding whose every use sits inside `[start, end)`,
- * or `undefined` when removing that range orphans nothing.
- *
- * Counts identifier references outside import declarations only — the import
- * clause names the binding, it does not use it — and requires at least one use
- * INSIDE the range, so an import that was already unused before this edit is
- * not blamed on it.
- */
-function importOrphanedByRemoval(sourceFile: SourceFile, start: number, end: number): string | undefined {
-  const imported = new Set<string>()
-  for (const declaration of sourceFile.getImportDeclarations()) {
-    const defaultImport = declaration.getDefaultImport()
-    if (defaultImport) imported.add(defaultImport.getText())
-    const namespaceImport = declaration.getNamespaceImport()
-    if (namespaceImport) imported.add(namespaceImport.getText())
-    for (const named of declaration.getNamedImports()) {
-      imported.add((named.getAliasNode() ?? named.getNameNode()).getText())
-    }
-  }
-  if (imported.size === 0) return undefined
-
-  const inside = new Set<string>()
-  const outside = new Set<string>()
-  for (const identifier of sourceFile.getDescendantsOfKind(SyntaxKind.Identifier)) {
-    const name = identifier.getText()
-    if (!imported.has(name)) continue
-    if (identifier.getFirstAncestorByKind(SyntaxKind.ImportDeclaration)) continue
-    const at = identifier.getStart()
-    if (at >= start && at < end) inside.add(name)
-    else outside.add(name)
-  }
-  for (const name of inside) {
-    if (!outside.has(name)) return name
-  }
-  return undefined
 }

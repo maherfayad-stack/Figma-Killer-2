@@ -6,6 +6,121 @@ before stopping.** Format and rules: [`docs/agent-refs/handoff-protocol.md`](doc
 Entry ids are `<area>-<nn>`. Areas in use: `parser`, `canvas`, `store`, `panel`,
 `server`, `mcp`, `perf`, `sec`, `test`, `docs`, `meta`, `style`, `asset`, `struct`.
 
+
+
+---
+
+### struct-03 — "Delete refused: this would leave the TabBar import unused" — it now removes the import instead
+
+**Symptom:** deleting a design-system element on the board refused, and told the
+user to go finish the job by hand in the file.
+
+**Why it was wrong.** The refusal reasoned that removing the import too would
+make one edit touch a second, unrelated place in the file. But the import's only
+reason to exist WAS the element — one fact in two places, and the second derived
+mechanically rather than guessed. `insertJsxElement` had the symmetric half
+right all along (inserting `<Button/>` writes the `Button` import), and
+`insertJsxIntoSlotProp` already pruned orphans on a slot swap, so the asymmetry
+meant Studio could add an element it was then unable to remove. Measured on the
+eSIM corpus this was 17.4% of all delete attempts — the single largest
+addressable refusal, and `studio-import.md` had already named it as the top
+follow-up.
+
+**Where the fix had to go, and why NOT in the codemod.** The first version
+removed the import inside `deleteJsxElement`. That is a correctness regression,
+and it is not obvious:
+
+1. `orderStudioEditsForApply` applies a batch bottom-to-top *precisely* so one
+   edit can never move another's pending `line:col`. An import lives at the TOP
+   of the file — cutting its line mid-batch shifts every edit still queued
+   below it, reintroducing that exact hazard from above. `commitStudioDelete`
+   sends a multi-select as ONE batch, so this fires on the very case that was
+   reported (the screenshot showed two refusals).
+2. A binding used by two elements deleted together is orphaned by neither one
+   alone. Asked per edit, each sees the other's still-present markup, concludes
+   the import is live, and prunes nothing — so the build breaks anyway.
+
+So it is `src/core/ast-codemods/pruneOrphanedImports.ts`, run by
+`applyStudioEditBatch` once per file AFTER every edit lands: snapshot which
+bindings a delete-touched file references before anything is written, prune the
+ones that stopped being referenced. Scoped to batches that contain a `delete`,
+because the pass costs two extra parses per file and every other kind either
+cannot drop a last reference or already retires its own.
+
+**Two invariants it deliberately keeps.** An import that was ALREADY unused
+before the batch is left alone — that line is the user's, not something this
+edit created; hence the before/after snapshot rather than a plain "remove unused
+imports" sweep. And reference counting is conservative: any same-named
+identifier outside an import declaration counts as a use, so the failure mode is
+a leftover import, never a deleted one that was still needed.
+
+**If you touch the removal arithmetic, keep the byte-exact tests.** Commas
+belong to the list, not to any one specifier, so a partial removal cuts per
+contiguous RUN of dead specifiers — forward to the next survivor, or backward
+from the previous one when the run reaches the end of the list. The
+multi-line-with-trailing-comma case (what a real design-system import looks
+like) exercises both branches. Verified against the real reported file,
+`test-assistant-2/pages/Sms.tsx`: deleting `<ChevronUpIcon/>` + `<TabBar/>`
+together leaves `import { ChevronLeftIcon } from '@alm-design/design-system'`,
+0 refusals.
+
+**Note for whoever unifies this:** `insertJsxIntoSlotProp` has its own orphan
+prune by ts-morph AST mutation. Kept separate on purpose — that module already
+opts out of byte-exactness and rebuilds whitespace through the printer, while
+this one splices text ranges. Same policy, different substrate.
+---
+
+### canvas-12 — `?raw` icons rendered at container width; `base.svg` was substituting its own host
+
+**Symptom:** every design-system icon inlined the standard way came out as a
+giant scribble on the board — a 24px chat bubble drawn ~200px wide. The user's
+source was correct and the icon file was correct; only the canvas was wrong.
+
+**Cause.** `base.svg` is reached two ways that look identical once the markup is
+on the `svg` prop, and only one of them names a real element:
+
+- a literal `<svg>` in source — no wrapper, so the `<span>` `SvgEditor` mounts is
+  Studio's own and must generate no box (`display: contents` — see
+  `docs/features/studio-import.md`, "A raw `<svg>` element reached through a JSX-element prop");
+- `<span className={styles.icon} dangerouslySetInnerHTML={{ __html: rawIcon }}/>`
+  — the wrapper is the **author's**, and its class is what sizes the icon.
+
+`SvgEditor` applied `display: contents` to both. That deletes the author's box
+while leaving the element in the DOM tree, so `.icon { width: 24px }` stops
+applying but `.icon svg { width: 100% }` still matches — and resolves against the
+**grandparent**. `processElement`'s own comment had said the right thing all
+along ("the element keeps its own tag, classes, and inline styles — they size
+and colour the icon"); the renderer overrode it anyway.
+
+**Fix.** `parsedPageToSitePage` records the authored host in `props.tag` — the
+same "keep rendering as its real host tag" convention `base.container` and
+`base.text` already use — set only when the tag is not itself `svg`, which IS the
+discriminator. `resolveSvgHostTag` (`src/modules/base/svg/hostTag.ts`) validates
+it; `SvgEditor` and the module's `render()` both re-emit it, so canvas, published
+HTML and the project's own Vite build agree on which element the classes land on.
+`htmlTag` became a function for the same reason — the tree-ladder badge was
+labelling an authored `<span>` as `<svg>`.
+
+**The lesson, if you touch this file again:** `display: contents` is not a
+neutral default. It is a claim that the element is Studio's invention. Before
+applying it to a node, know whether the user wrote that element.
+
+**Second, quieter defect found in the same screen and also fixed.** One row had
+no icon at all: the agent had imported `chartLineDown.svg?raw`, a file that does
+not exist. Nothing reports this — the evaluator returns `unresolved`, the node
+keeps its class and its box and renders EMPTY (reads as a layout bug), and `tsc`
+passes because `vite/client` declares `*.svg?raw` ambiently no matter what is
+behind it. `unresolvedRawTextImports` (`assetImports.ts`) asks the parser's own
+`resolveImportedFile` which specifiers came back empty, and
+`studio_quality_check` reports them as `unresolved-asset-import`. Verified
+against `studio-workspace/testing-assistant`: exactly one hit, on the one dead
+import, with zero false positives across the other 12 `?raw` imports on those
+three pages.
+
+**Still open:** nothing forces the agent to RUN `studio_quality_check`. The Stop
+gate (`stopGateCheck.ts`) blocks on an unverified write, not on a quality
+finding. A dead icon import is zero-judgement — the file exists or it does not —
+so it is the strongest candidate if that gate is ever widened.
 ---
 
 ### comment-01 — Review comments, end to end, including the agent loop
@@ -11662,3 +11777,62 @@ Both the count and the AI action tested `(value ?? '').trim() === ''`, so all fo
 **Verified in the browser:** filter chip now reads **"Untranslated ar (4)"** (was "Missing ar (0)"), Translate button enabled (was disabled), and the filter lists exactly `page2.page2`, `popup.popup`, `sheet.sheet`, `sheet2.sheet2`. The dictionary was NOT rewritten — running the translate action writes to the user's repo and costs a model call, so that stays their click.
 
 **Files:** `src/core/i18n/{translationState.ts,index.ts,__tests__/translationState.test.ts}`, `src/admin/pages/site/panels/ContentPanel/ContentPanel.tsx`, `server/ai/handlers/translateContent.ts`.
+
+### board-30 — every design-system component was inserted empty; the seeded content never reached disk
+- **Agent:** coordinator (direct)
+- **Stage:** built, gated, verified in the browser on the canonical fixture.
+- **Updated:** 2026-09-01
+
+Ask: *"same exact issue I want you to not stop until this is fixed here and in all components test them one by one to make sure this never happen"*, on a screenshot of the scaffolded `Page` with an empty grey bar under it. The previous round had fixed `TabBar.items` and the same report came straight back.
+
+**It was never a TabBar bug, and there were TWO independent defects stacked.**
+
+**Defect 1 — almost nothing was seeded.** `buildDefaults` seeded exactly three things: a `label` from the component's own name, a collection's documented example, an enum's first option. Every other content-bearing prop got nothing, so a whole class arrived as blank shells: `SystemBanner` (a bare tinted row), `Snackbar` (an empty capsule), `Tooltip` (an empty bubble), `Accordion` (an untitled header), `ProgressStepper` (nothing at all), `LinearProgressIndicator` (a grey track at 0%), `Badge` (an empty pip, all three props unclassified because its docs are a one-liner). The author was handed a blank box and no clue which of eleven props would make it visible.
+
+`documentedExample` now carries the package's own value for every prop whose docs show one — 176 across 39 components. Four extraction fixes were needed to get there, each with its own gate: read props written **several to a line** (`<Badge variant="alert" count={5} max={99}/>`); read only the **first** usage example in a fence (`Dialog` documents an iOS call and then an Android one — reading both seeded five mutually exclusive action buttons); cut that first example at the end of the first **top-level element**, not at a blank line (`Navbar`'s single example is full of blank lines inside its `toolbar={{…}}`, and a blank-line rule cost it `chips` + `segmentedControl`); and keep a **multi-word enum value** whole (`Separator`'s `type="cell separator"` was being cut at the first space to `cell`, a value the component does not accept — the panel offered it and an insert wrote it into the user's source).
+
+Seeding policy lives in `register.tsx`'s `isSeedableDefault`, separate from what the manifest RECORDS. Declined: booleans (a mode, not content; the docs write each at the value the component already uses, so writing it back changes nothing and costs an inserted `<TextInput>` five redundant attributes), anything named `error*` (TextInput's docs: "the error state is derived from `errorText` being non-empty" — seeding the documented `"Error message"` put every new field into its failure state), asset paths, React nodes, handlers.
+
+**Defect 2 — and this is why round one appeared to do nothing.** `literalJsxProps` in `nodeActions.ts` dropped **every array and object** on the way to disk. So `items` was seeded, reached that filter, and was discarded: the source grew `<TabBar platform="ios" value={0}/>`, the canvas re-read exactly that, and drew an empty bar. The same silence cost `SegmentedControl.items`, `Dialog`'s action objects, `Navbar`'s `toolbar`/`chips`, every `Footer` column. Its comment — "writing a guess into someone's repository is worse than writing nothing" — was right about guesses and wrong about this: a JSON value the caller already holds has exactly one JSX spelling.
+
+`renderJsxNode` now writes structured values as real JSX expressions with bare keys and spaced braces (`items={[{ label: "Home" }]}`, not `{"label":"Home"}` — this is the user's own file, the first thing they read after inserting). The wire schema (`JsonDataValueSchema`) and both writeback handlers accept JSON. `asJsonDataValue` (new leaf `@core/utils/jsonData`) is the gate, and it is **recursive on purpose**: `[{ label: 'Book', onClick: fn }]` is dropped WHOLE, because writing the writable half puts a button in the user's screen that does nothing when tapped.
+
+**`insertJsxElement.ts` was split** — it crossed the 700-line ceiling, and the subtree half was never its alone: `insertJsxIntoSlotProp.ts` already imported three of the four new exports. `jsxSubtree.ts` owns the subtree's shape, rendering, and refusals; the two codemods keep only their PLACEMENT.
+
+**One component still draws nothing, correctly:** `IconButton`, whose entire content is `icon={<SvgIcon/>}` — a React element has no JSON form, inventing a glyph would write design into the user's source their docs never asked for, and an iconless IconButton is an empty pill in a real browser too. Allowlisted in the gate with that reasoning, plus a test that FAILS if it ever starts drawing content, so the allowlist cannot go stale.
+
+**Gates.** `almInsertedRender.test.ts` renders all 49 registered modules with the defaults an insert would write and fails on any that comes out empty — "not empty" means visible text, or a glyph/control, or internal structure its props drove, because `ProgressStepper` (five bare divs) and `LinearProgressIndicator` (track + fill) are correct and textless. Fixing one component at a time is what produced the second bug report; this file exists so that stops being possible.
+
+**Verified in the browser** on the exact page from the screenshot: inserting TabBar wrote `<TabBar items={[{ label: "Home" }, { label: "Explore" }, { label: "My Trips" }]} platform="ios" value={0} />` into the real `.tsx`, and the canvas frame rendered three real tabs with Home selected. The fixture edit was reverted afterwards.
+
+**Files:** `src/core/design-system-manifest/{buildDesignSystemManifest.ts,__tests__/buildDesignSystemManifest.test.ts}`, `src/modules/alm/{register.tsx,manifest.generated.json}`, `src/core/ast-codemods/{jsxSubtree.ts,insertJsxElement.ts,insertJsxIntoSlotProp.ts,index.ts,__tests__/insertJsxElement.test.ts}`, `src/core/utils/jsonData.ts`, `src/admin/pages/site/store/slices/site/nodeActions.ts`, `src/admin/pages/site/studio/studioSaveRequests.ts`, `server/handlers/{studioStructuralWriteback.ts,studioSlotWriteback.ts}`, `src/__tests__/modules/almInsertedRender.test.ts`, `src/__tests__/core/jsonData.test.ts`, `docs/agent-refs/path-index.md`.
+
+**Trap for the next agent:** after editing `buildDesignSystemManifest.ts` you MUST run `bun scripts/gen-alm-manifest.mjs` — `manifest.generated.json` is committed and nothing gates its freshness.
+
+### board-31 — the inserted TabBar had no icons, no way to pick the active tab, and three tabs instead of five
+- **Agent:** coordinator (direct)
+- **Stage:** built, gated, verified in the browser on the canonical fixture (LTR + RTL).
+- **Updated:** 2026-09-01
+
+Follow-up to board-30, against a screenshot of a real inserted tab bar: *"icons didn't load and I can't choose which tab is the current, and it's 5 tabs not 3"*. Three symptoms, three separate causes, and one of them was two layers deep.
+
+**Icons — the parser could not read them, and the insert could not write them.** The docs write `icon: <HomeIcon />` inside the `items` example; a React element has no JSON form, so `exampleFromLiteral` dropped it and every tab arrived as a label above an empty 24px slot. Fixing the seed alone would not have helped, because BOTH ends were missing:
+
+- *Read.* `iconPropFromJsx` only ever looked at the TOP of a prop. The evaluator reached the nested element, had no kind for it, and dropped the entry (`staticValueToPropValue` keeps an object that loses one key). New `iconPropValues.ts` walks the ORIGINAL expression in parallel with the RESOLVED value — the resolved half is already right for everything that is not an element, and the AST is the only place the element survives. Positions are matched conservatively; a length mismatch declines rather than moving one tab's icon onto another.
+- *Write.* `InsertJsxNode` props were JSON-only. They now accept a tagged `{ __jsx }` element (`JsxPropElement`), which arrives as a VALIDATED TREE — never source text — and goes through the same `validateSubtree` tag-safety refusal every child element already does. It is deliberately narrower than a full node: no `importSpecifier`, so a prop element cannot smuggle in a component, and the type stays self-recursive instead of mutually recursive with the node holding it (which TypeBox could not express as one schema).
+- *Shape.* Icons live in the page tree as `{ svg: markup }` (`ICON_PROP_SVG_KEY`) and are converted to a real `<svg>` on the way to disk by `insertablePropValues.ts`, via the same `svgToJsxNode` the icon picker uses. **`{ svg }` must never reach a user's file** — `icon={{ svg: "…" }}` renders on the canvas and throws "Objects are not valid as a React child" in their actual app.
+- *Format.* `jsxExpressionLiteral` breaks a structured value across lines once it contains a newline or exceeds 72 chars. Five inline SVGs on one line is a 12 KB attribute in the user's own page file.
+
+**The active tab.** `value` was a number box labelled `value` holding `0`, with nothing saying what it meant — an edit you can make and cannot understand. New `collection-index` control: a select whose options are the SIBLING collection's own entries, resolved from the node at render time (they cannot live in the schema — five tabs today, three tomorrow), writing back the index. The link is read off the docs, not hardcoded: a `number` prop whose own comment calls it an index, on a component with exactly ONE collection prop. Exactly two props in the package qualify, `TabBar.value` and `SegmentedControl.value`, and both index `items`.
+
+**Five tabs, not three.** `CURATED_DEFAULTS` (`src/modules/alm/curatedDefaults.ts`) — the one place allowed to say the package docs are incomplete. The doc snippet shows three tabs while the same section says 3–5 destinations and names five filled icons; the labels (Home · Explore · My Trips · Top offers · Profile) came from the product owner, since `design.md`'s content rules say what SHAPE a label takes and cannot say what it is. Icons are `?raw` imports of the package's own SVGs, so they track the installed version. **Keep this list short** — an entry is a default that stops updating when the package does.
+
+**RTL and translation were the explicit follow-up ask, and both already held once the icons did.** Measured in the browser: with the board in RTL the tab bar's DOM order is unchanged and the visual order mirrors (Home at x=769, Profile at x=84), driven by the frame direction through `withCanvasDrivenProps`. Translation is gated at both ends — `findHardcodedStrings` reports all five labels as `items.label` and reports NO SVG path data (`insideSvg` already excluded geometry, which is what makes five inline icons survivable), and `structuredProps.test.ts` proves a label extracted to `t.tabs.home` still renders one level inside the array, in the previewed locale (`الرئيسية`).
+
+**Three modules crossed the 700-line ceiling and were split rather than grandfathered:** `iconPropValues.ts` out of `jsxAttributeReaders.ts` (which reads ATTRIBUTES; this answers "is this an icon"), `insertablePropValues.ts` out of `nodeActions.ts` (the one place deciding how a canvas value is spelled in someone's source), and `curatedDefaults.ts` out of `register.tsx`.
+
+**Verified end to end in the browser:** inserting a TabBar wrote five `{ icon: <svg…/>, label }` items into the real `.tsx`, the canvas drew five tabs with five icons, and choosing "My Trips" from the new dropdown wrote `value={2}`. The fixture edit was reverted afterwards.
+
+**Files:** `src/core/page-parser/{iconPropValues.ts,jsxAttributeReaders.ts,parsePageFile.ts,__tests__/structuredProps.test.ts}`, `src/core/ast-codemods/{jsxSubtree.ts,__tests__/insertJsxElement.test.ts}`, `src/core/{component-manifest/types.ts,design-system-manifest/buildDesignSystemManifest.ts,module-engine/propertySchema.ts}`, `src/modules/alm/{curatedDefaults.ts,register.tsx,manifest.generated.json}`, `src/admin/pages/site/{store/slices/site/insertablePropValues.ts,store/slices/site/nodeActions.ts,studio/svgToJsxNode.ts,studio/studioSaveRequests.ts,property-controls/{PropertyControlRenderer.tsx,componentPropKind.ts,SlotPicker.tsx},panels/PropertiesPanel/renderModuleTabContent.tsx}`, `server/handlers/studioStructuralWriteback.ts`, `src/__tests__/{modules/almInsertedRender.test.ts,studio/hardcodedStrings.test.ts,studio/svgToJsxNode.test.ts}`, `docs/agent-refs/path-index.md`.
+
+**Trap:** `svgToJsxNode.ts` moved from `property-controls/` to `studio/` — the store needs it now, and it already depended on `studio/studioSaveRequests`, so the old location was a backwards edge.

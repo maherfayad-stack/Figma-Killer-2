@@ -48,7 +48,9 @@ import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import { EXCLUDED_WORKSPACE_DIR_NAMES, INLINE_ID_SEPARATOR } from '@core/page-parser'
 import { isInlinedNodeId, isRouteChromeNodeId } from '@core/page-tree'
 import {
+  createImportPruneSession,
   detachComponentInstance,
+  isPrunableSourceFile,
   setImportSpecifier,
   setJsxClassName,
   setJsxProp,
@@ -561,6 +563,32 @@ export function applyStudioEditBatch(dir: string, edits: readonly StudioEdit[]):
     lineCountBefore.set(file, existsSync(file) ? readFileSync(file, 'utf8').split('\n').length : 0)
   }
 
+  // Which import bindings each file a DELETE touches references before anything
+  // is written. Removing markup can be the last use of an import, and under
+  // `noUnusedLocals` leaving that behind is a build failure — so the binding
+  // has to go too. Snapshotted here, and pruned after the loop, because an
+  // import lives at the TOP of a file: cutting its line mid-batch would shift
+  // the pending `line:col` of every edit still queued below it, which is the
+  // exact hazard `orderStudioEditsForApply` exists to prevent. Waiting also
+  // makes the question answerable at all — a binding used by two elements
+  // deleted in the same batch is orphaned by neither one alone.
+  //
+  // Scoped to batches that actually delete something, and to the files those
+  // deletes name. Every other kind either cannot drop the last reference to a
+  // binding or already retires its own (`swap`/`detach`, and
+  // `insertJsxIntoSlotProp` for a slot replace), and this pass costs two extra
+  // parses per file — not something to spend on every keystroke-driven save.
+  const importPrune = createImportPruneSession()
+  const referencedBefore = new Map<string, ReadonlySet<string>>()
+  for (const edit of ordered) {
+    if (edit.kind !== 'delete') continue
+    const file = studioEditFile(dir, edit.nodeId)
+    if (!file || referencedBefore.has(file)) continue
+    if (isPrunableSourceFile(file) && existsSync(file)) {
+      referencedBefore.set(file, importPrune.snapshot(file))
+    }
+  }
+
   let written = 0
   let skipped = 0
   const refusals: StudioEditRefusal[] = []
@@ -595,6 +623,12 @@ export function applyStudioEditBatch(dir: string, edits: readonly StudioEdit[]):
       }
       skipped += 1
     }
+  }
+
+  // Only a binding that was live BEFORE and is dead AFTER — an import the user
+  // had already left unused is their line, not something this batch created.
+  for (const [file, wasReferenced] of referencedBefore) {
+    if (existsSync(file)) importPrune.prune(file, wasReferenced)
   }
 
   let shifted = false

@@ -247,35 +247,19 @@ describe('deleteJsxElement', () => {
     expect(fs.readFileSync(file, 'utf8')).toBe(PAGE.replace('      <p className="second">Second</p>\n', ''))
   })
 
-  it('refuses when the deletion would orphan an import the project still declares', () => {
+  // Deleting an element whose import nothing else uses used to REFUSE, which
+  // left the user to go finish the job by hand. It no longer does: the element
+  // goes here, and the binding it alone was using is retired by
+  // `pruneOrphanedImports` once the whole batch has landed (see that module,
+  // and `pruneOrphanedImports.test.ts`, for why the two are separate).
+  it('deletes an element whose import nothing else uses, leaving the import for the batch pass', () => {
     const file = writeFixture(PAGE)
     const third = locateTag(PAGE, 'Third')
 
-    const result = deleteJsxElement({ file, line: third.line, col: third.col })
-    expect(result.ok).toBe(false)
-    if (result.ok) throw new Error('unreachable')
-    expect(result.refusal.reason).toBe('orphans-import')
-    expect(result.refusal.message).toContain('Third')
-    expect(fs.readFileSync(file, 'utf8')).toBe(PAGE)
-  })
-
-  it('allows deleting one of several uses of the same import', () => {
-    const source = `import { Card } from './Card'
-
-export default function Page() {
-  return (
-    <section>
-      <Card id="a" />
-      <Card id="b" />
-    </section>
-  )
-}
-`
-    const file = writeFixture(source)
-    const first = locateTag(source, 'Card', 1)
-
-    expect(deleteJsxElement({ file, line: first.line, col: first.col })).toEqual({ ok: true })
-    expect(fs.readFileSync(file, 'utf8')).toBe(source.replace('      <Card id="a" />\n', ''))
+    expect(deleteJsxElement({ file, line: third.line, col: third.col })).toEqual({ ok: true })
+    expect(fs.readFileSync(file, 'utf8')).toBe(
+      PAGE.replace('      <Third\n        label="third"\n      />\n', ''),
+    )
   })
 
   it('refuses to delete the component root', () => {

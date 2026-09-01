@@ -6,8 +6,8 @@ export {
   parsePageFile,
 } from './parsePageFile'
 export type { ReturnedJsx } from './parsePageFile'
-export { IMAGE_SPECIFIER_RE, STUDIO_ASSET_SENTINEL } from './assetImports'
-export type { ImportSpecifierLocation } from './assetImports'
+export { IMAGE_SPECIFIER_RE, STUDIO_ASSET_SENTINEL, unresolvedRawTextImports } from './assetImports'
+export type { ImportSpecifierLocation, UnresolvedAssetImport } from './assetImports'
 export type { BranchAlternative, FunctionLike, NodeLoc, ParsedNode, ParsedPage, ParsedPropValue } from './types'
 export {
   EXCLUDED_WORKSPACE_DIR_NAMES,

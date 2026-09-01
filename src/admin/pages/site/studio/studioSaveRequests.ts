@@ -18,6 +18,7 @@
  * response schema, the active workspace dir, and the reload-on-success rule.
  */
 import type { StyleRule } from '@core/page-tree'
+import type { JsonDataValue } from '@core/utils/jsonData'
 import type { PageKind } from '@core/studio-board'
 import { apiRequest } from '@core/http'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
@@ -350,7 +351,7 @@ export async function commitStudioInsert(insert: {
    * component, which is imported from this specifier.
    */
   importSpecifier?: string
-  props: Record<string, string | number | boolean>
+  props: Record<string, InsertPropValue>
   /** Literal text written as the element's only child, e.g. `<p>Heading</p>`. */
   children?: string
 }): Promise<void> {
@@ -576,6 +577,26 @@ export async function swapInstance(
 }
 
 /**
+ * One prop value an insert can write — the browser's mirror of
+ * `studioStructuralWriteback.ts`'s `JsxPropValueSchema`, declared here rather
+ * than imported from `@core/ast-codemods` for the same reason `SlotJsxNode`
+ * below is: that module pulls in ts-morph, which must never reach the browser.
+ *
+ * The `{ __jsx }` member is a React ELEMENT in prop position —
+ * `<TabBar items={[{ icon: <svg…/>, label: 'Home' }]}/>`, the documented shape
+ * of a tab bar. It carries a validated element tree, never source text, and the
+ * server runs it through the same tag-safety refusal every child element gets.
+ */
+export type InsertPropValue =
+  | string
+  | number
+  | boolean
+  | null
+  | { __jsx: SlotJsxNode }
+  | InsertPropValue[]
+  | { [key: string]: InsertPropValue }
+
+/**
  * One element written into a slot — the browser's mirror of
  * `studioSlotWriteback.ts`'s `SlotJsxNodeSchema`, which is what actually
  * validates it on arrival (and is itself `insertJsxElement`'s own
@@ -590,7 +611,7 @@ export async function swapInstance(
 export interface SlotJsxNode {
   name: string
   importSpecifier?: string
-  props?: Record<string, string | number | boolean>
+  props?: Record<string, JsonDataValue>
   children?: string | SlotJsxNode[]
 }
 

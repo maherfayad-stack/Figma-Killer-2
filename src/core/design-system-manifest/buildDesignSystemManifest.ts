@@ -38,6 +38,21 @@ interface DesignSystemCatalog {
 const ENUM_COMMENT_LINE = /^([A-Za-z_$][A-Za-z0-9_$]*)=.*?\/\/\s*(.+)$/
 
 /**
+ * See the call site in {@link parseEnumValues} for why this is not "everything
+ * before the first space".
+ *
+ * The leading `scope:` strip handles `AdBanner`'s `// mobile only: small (row) |
+ * medium | large` — the first option is `small`, and the prose in front of it
+ * names which layout the whole list applies to.
+ */
+function stripEnumAnnotation(token: string): string {
+  const scoped = token.replace(/^[^:]*:\s*/, '')
+  const value = scoped.split(/[(—–;]/)[0]!.trim()
+  const words = value.split(/\s+/)
+  return words.length > 3 ? words[0]! : value
+}
+
+/**
  * Best-effort extraction of enum values per prop from a component's API doc.
  * Parses the first fenced code block (the JSX usage example) line by line;
  * for any line matching `propName=... // a | b | c`, splits the comment on
@@ -61,12 +76,18 @@ function parseEnumValues(doc: string | null): Map<string, string[]> {
       .split('|')
       .map((token) => token.trim())
       .filter((token) => token.length > 0)
-      // Reduce each token to just its value: the substring before the first
-      // whitespace or `(`. Drops trailing prose/annotations (e.g. "default
-      // (48px)" -> "default", "rtl — via useDir; ..." -> "rtl") while
-      // leaving hyphenated values with no space/paren intact (e.g.
-      // "primary-inverted", "gpay-pay-with").
-      .map((token) => token.split(/[\s(]/)[0])
+      // Reduce each token to just its value by stripping the ANNOTATION forms
+      // this package writes — a parenthetical, and anything after an em/en dash
+      // or a semicolon: "default (48px)" -> "default", "rtl — via useDir; …" ->
+      // "rtl". It used to cut at the first whitespace instead, which is the
+      // same thing for every single-word value and wrong for a multi-word one:
+      // `Separator`'s `type="cell separator" // cell separator (default) |
+      // section separator` became `cell` / `section`, so the panel offered two
+      // values the component does not accept and an insert wrote one of them
+      // into the user's source. Falls back to the first word for a token that
+      // still reads as prose (>3 words), which is what the old rule was
+      // defending against.
+      .map((token) => stripEnumAnnotation(token))
       .filter((token) => token.length > 0)
 
     // Drop duplicate tokens (can arise after cleaning, e.g. two prose
@@ -127,6 +148,13 @@ function classifyPropValue(propName: string, rawValue: string): PropSpecKind | u
   if (/^\{(fn|\(\)\s*=>|\w*[Hh]andler\b|on[A-Z])/.test(value) || /^on[A-Z]/.test(propName)) return 'handler'
   if (/^\{\s*</.test(value)) return ICON_PROP_NAME_RE.test(propName) ? 'icon' : 'node'
   if (/^["']/.test(value)) return 'string'
+  // A structured `{[…]}` / `{{…}}` value. This used to return `undefined` and
+  // fall through to a text box, which the module doc above called the honest
+  // failure mode — and it is not. A text box on `items={[{ icon, label }]}`
+  // accepts anything and every value it accepts is wrong: typing `5` reached
+  // `items.map(...)` and rendered "TabBar (render error)". Naming the shape
+  // lets the panel decline the edit instead of inviting a broken one.
+  if (/^\{\s*[[{]/.test(value)) return 'collection'
   return undefined
 }
 
@@ -157,19 +185,258 @@ function isImageProp(propName: string): boolean {
   return IMAGE_PROP_NAME_RE.test(propName)
 }
 
+/**
+ * The FIRST usage example in a component's fenced doc block.
+ *
+ * Several components document more than one usage in a single fence, and the
+ * examples are ALTERNATIVES, not one combined call. `Dialog` writes an iOS
+ * example (`primaryAction`/`destructiveAction`/`secondaryAction`) followed by an
+ * Android one (`action1`/`action2`); reading the whole fence seeded all five,
+ * so an inserted iOS dialog arrived carrying two Android-only buttons. `Badge`
+ * documents `variant="alert" count={5}` and then `variant="new"`, which
+ * contradict each other outright.
+ *
+ * Cut at the end of the first top-level element rather than at a blank line:
+ * `Navbar`'s single example is full of blank lines and section comments INSIDE
+ * its `toolbar={{ … }}` object, and a blank-line rule truncated it to three
+ * props — which cost the component its `chips` and `segmentedControl` and drew
+ * an empty bar, the exact defect this pass exists to end. Brace/bracket depth is
+ * what distinguishes "still inside the call" from "a second example".
+ */
+function firstUsageExample(block: string): string {
+  const open = /<([A-Z][\w]*)/.exec(block)
+  if (!open) return block
+  const name = open[1]!
+  let depth = 0
+  let quote = ''
+  for (let i = open.index + open[0].length; i < block.length; i++) {
+    const ch = block[i]!
+    if (quote) {
+      if (ch === quote) quote = ''
+      continue
+    }
+    if (ch === '"' || ch === "'") quote = ch
+    else if (ch === '{' || ch === '[') depth++
+    else if (ch === '}' || ch === ']') depth--
+    else if (ch === '>' && depth === 0) {
+      // `<Badge … />` ends here; `<Dialog …>` continues to its closing tag.
+      if (block[i - 1] === '/') return block.slice(0, i + 1)
+      const close = block.indexOf(`</${name}>`, i)
+      return close === -1 ? block : block.slice(0, close + name.length + 3)
+    }
+  }
+  return block
+}
+
+/**
+ * Prop name -> the trailing `//` comment on its documented line.
+ *
+ * The same comment {@link parseEnumValues} reads for a pipe list, kept whole
+ * here because it also carries prose facts about the prop —
+ * `value={0}  // active tab index (0-based, controlled)` is what says `value`
+ * indexes a collection rather than being a free number.
+ */
+function parsePropComments(doc: string | null): Map<string, string> {
+  const comments = new Map<string, string>()
+  if (!doc) return comments
+  const block = /```[a-z]*\n([\s\S]*?)```/i.exec(doc)
+  if (!block) return comments
+  for (const rawLine of firstUsageExample(block[1]!).split('\n')) {
+    const match = ENUM_COMMENT_LINE.exec(rawLine.trim())
+    if (match && !comments.has(match[1]!)) comments.set(match[1]!, match[2]!)
+  }
+  return comments
+}
+
+/**
+ * A prop written inline among others on one line: `variant="alert" count={5}`.
+ * Values are non-greedy and brace-flat on purpose — this pass exists for the
+ * short scalar forms {@link PROP_VALUE_LINE} cannot reach, and a nested
+ * structure is {@link parsePropLiterals}' job.
+ */
+const INLINE_PROP_VALUE = /\b([A-Za-z_$][\w$]*)=("[^"]*"|'[^']*'|\{[^{}\n]*\})/g
+
 /** Prop name -> raw documented value, from the first fenced JSX block. Same block `parseEnumValues` reads. */
 function parsePropValues(doc: string | null): Map<string, string> {
   const values = new Map<string, string>()
   if (!doc) return values
   const block = /```[a-z]*\n([\s\S]*?)```/i.exec(doc)
   if (!block) return values
-  for (const rawLine of block[1].split('\n')) {
+  const example = firstUsageExample(block[1]!)
+  for (const rawLine of example.split('\n')) {
     const match = PROP_VALUE_LINE.exec(rawLine.trim())
     if (!match) continue
     const [, propName, rawValue] = match
     if (!values.has(propName)) values.set(propName, rawValue)
   }
+  // Gap-fill from props written INLINE, several to a line. The line pass above
+  // needs one prop per line — its regex is anchored at both ends so the trailing
+  // `//` comment carrying the enum list is not swallowed into the value — so a
+  // component documented as a one-liner yielded NO values at all. Measured:
+  // `<Badge variant="alert" count={5} max={99} />` left all three props
+  // unclassified (a text box each) and unseeded, so an inserted Badge was an
+  // empty pip forever. Gap-fill rather than replace: where the line pass found
+  // a value it is the better one, because it alone spans a multi-line literal.
+  for (const [, propName, rawValue] of example.matchAll(INLINE_PROP_VALUE)) {
+    if (!values.has(propName!)) values.set(propName!, rawValue!)
+  }
   return values
+}
+
+/**
+ * The BALANCED text of every `prop={…}` value in the component's usage example.
+ *
+ * `parsePropValues` above is line-based, which is right for the scalars it was
+ * written for but truncates a multi-line `items={[…]}` to the two characters
+ * `{[`. That was enough to CLASSIFY the prop as a collection and stop the panel
+ * offering a text box for it, and not enough to do anything useful with the
+ * value — so an inserted `<TabBar/>` rendered an empty pill that nothing in the
+ * UI could fill. This reads the whole literal.
+ */
+function parsePropLiterals(doc: string | null): Map<string, string> {
+  const out = new Map<string, string>()
+  if (!doc) return out
+  const block = /```[a-z]*\n([\s\S]*?)```/i.exec(doc)
+  if (!block) return out
+  const text = firstUsageExample(block[1]!)
+  const opener = /([A-Za-z_$][\w$]*)=\{/g
+  let match: RegExpExecArray | null
+  while ((match = opener.exec(text))) {
+    let depth = 1
+    let i = match.index + match[0].length
+    for (; i < text.length && depth > 0; i++) {
+      const ch = text[i]
+      if (ch === '{' || ch === '[') depth++
+      else if (ch === '}' || ch === ']') depth--
+    }
+    if (depth === 0 && !out.has(match[1]!)) out.set(match[1]!, text.slice(match.index + match[0].length, i - 1).trim())
+  }
+  return out
+}
+
+/**
+ * A documented JS literal turned into a plain JSON value, or `undefined` when
+ * it cannot be turned into one honestly.
+ *
+ * The docs are written for humans, so the literals carry things JSON has no
+ * room for: `onClick: fn` placeholders, `<HomeIcon />` elements, `/* … *\/`
+ * elisions. Each is DROPPED rather than guessed at — a tab keeps its `label`
+ * and loses its `icon`, which renders a real, labelled tab bar instead of
+ * nothing. Anything left unparseable yields `undefined` and the prop simply
+ * gets no default, exactly as before.
+ */
+function exampleFromLiteral(raw: string): unknown {
+  const cleaned = raw
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/\/\/[^\n]*/g, '')
+    // `icon: <HomeIcon />` and bare `<img … />` — a React element cannot survive
+    // into JSON, and inventing a stand-in would put a glyph in the user's source
+    // that their own docs never asked for.
+    .replace(/[A-Za-z_$][\w$]*\s*:\s*<[^<>]*?\/>\s*,?/g, '')
+    .replace(/<[^<>]*?\/>\s*,?/g, '')
+    // `onClick: fn` — the docs' placeholder for a callback.
+    .replace(/([{,]\s*)[A-Za-z_$][\w$]*\s*:\s*(?!true\b|false\b|null\b)[A-Za-z_$][\w$]*\s*(?=[,}])/g, '$1')
+    .replace(/…/g, '')
+    .replace(/([{,]\s*)([A-Za-z_$][\w$]*)\s*:/g, '$1"$2":')
+    .replace(/'([^']*)'/g, '"$1"')
+    .replace(/,(\s*[}\]])/g, '$1')
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(cleaned)
+  } catch {
+    return undefined
+  }
+  return withContent(parsed)
+}
+
+/** Strips what stripping the un-JSON-able parts left behind: an example is only worth seeding if something survived. */
+function withContent(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    const kept = value.filter((item) => withContent(item) !== undefined)
+    return kept.length > 0 ? kept : undefined
+  }
+  if (value !== null && typeof value === 'object') {
+    return Object.keys(value).length > 0 ? value : undefined
+  }
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return value
+  return undefined
+}
+
+/**
+ * A single-line documented scalar literal (`title="Title"`, `value={40}`,
+ * `icon={true}`) as a plain JSON value.
+ *
+ * The counterpart to {@link exampleFromLiteral}, which reads the balanced
+ * multi-line `{[…]}` forms. Split because the two are parsed from different
+ * passes — `parsePropValues` is line-based and right for scalars,
+ * `parsePropLiterals` is brace-balanced and right for structures.
+ *
+ * `image` is deliberately absent even though the docs write one
+ * (`imageSrc="/transfer.jpg"`): that path names an asset the user's project
+ * does not have, so seeding it would put a guaranteed-broken `src` into their
+ * source. A blank image slot is the honest state. `icon`/`node` cannot survive
+ * into JSON at all, `handler` must never be a value, and `enum` is already
+ * seeded from its documented option list.
+ */
+function documentedScalarExample(
+  propName: string,
+  kind: PropSpecKind | undefined,
+  rawValue: string | undefined,
+): unknown {
+  if (rawValue === undefined) return undefined
+  // Every asset path in these docs (`imageSrc="/photo.jpg"`, `iconSrc="/icon.png"`)
+  // names a file the user's project does not have. Matched by NAME rather than
+  // by `kind`, because `isImageProp` deliberately hands the icon-named ones to
+  // the icon picker instead — which leaves them `kind: 'string'`, and seeding a
+  // string is exactly how `/icon.png` would reach their source.
+  if (IMAGE_PROP_NAME_RE.test(propName)) return undefined
+  const value = rawValue.trim()
+  switch (kind) {
+    case 'string': {
+      const quoted = /^(["'])([\s\S]*)\1$/.exec(value)
+      return quoted?.[2] === undefined || quoted[2] === '' ? undefined : quoted[2]
+    }
+    case 'number': {
+      const braced = /^\{\s*(-?\d+(?:\.\d+)?)\s*\}$/.exec(value)
+      return braced ? Number(braced[1]) : undefined
+    }
+    case 'boolean': {
+      const braced = /^\{\s*(true|false)\s*\}$/.exec(value)
+      return braced ? braced[1] === 'true' : undefined
+    }
+    default:
+      return undefined
+  }
+}
+
+/**
+ * The value this package's own docs show for `propName`, in whatever form the
+ * prop's kind is written in — or `undefined` when the docs show nothing that
+ * can honestly become JSON.
+ *
+ * This used to run for COLLECTIONS ONLY, on the reasoning that "every other
+ * kind already has an editable control, so a default from the docs would
+ * silently overwrite what the panel offers." That reasoning was measured wrong.
+ * A component's content lives in its scalar props — `SystemBanner`'s `title`
+ * and `description`, `Snackbar`'s `message`, `Tooltip`'s `content`,
+ * `LinearProgressIndicator`'s `value`, `ProgressStepper`'s `steps` — and
+ * seeding none of them meant inserting the component drew an EMPTY shell: a
+ * bare tinted row, a grey track, a pill with nothing in it. Nothing was
+ * overwritten, because there was nothing there; the author was handed a blank
+ * box and no clue which of eleven props would make it visible.
+ *
+ * It is the same defect `TabBar.items` was fixed for and the same fix: the
+ * package's own documented example is the honest value to start from, and it
+ * stays fully editable in the panel afterwards.
+ */
+function documentedExample(
+  propName: string,
+  kind: PropSpecKind | undefined,
+  rawValue: string | undefined,
+  literal: string | undefined,
+): unknown {
+  if (kind === 'collection') return literal === undefined ? undefined : exampleFromLiteral(literal)
+  return documentedScalarExample(propName, kind, rawValue)
 }
 
 function buildProps(name: string, catalog: DesignSystemCatalog): PropSpec[] {
@@ -189,8 +456,11 @@ function buildProps(name: string, catalog: DesignSystemCatalog): PropSpec[] {
 
   const enumValues = parseEnumValues(doc)
   const propValues = parsePropValues(doc)
+  const propLiterals = parsePropLiterals(doc)
 
-  return (propNames ?? []).map((propName): PropSpec => {
+  const propComments = parsePropComments(doc)
+
+  const specs = (propNames ?? []).map((propName): PropSpec => {
     const spec: PropSpec = {
       name: propName,
       tsType: 'unknown',
@@ -207,8 +477,37 @@ function buildProps(name: string, catalog: DesignSystemCatalog): PropSpec[] {
     // A documented string that names an image is an image, not free text.
     if (kind === 'string' && isImageProp(propName)) kind = 'image'
     if (kind) spec.kind = kind
+    const example = documentedExample(propName, kind, propValues.get(propName), propLiterals.get(propName))
+    if (example !== undefined) spec.example = example
     return spec
   })
+
+  return withCollectionIndexLinks(specs, propComments)
+}
+
+/**
+ * Links a number prop the docs call an INDEX to the collection it indexes.
+ *
+ * `TabBar`'s `value={0}  // active tab index (0-based, controlled)` is the whole
+ * of "which tab is currently selected", and the panel rendered it as a text
+ * field labelled `value` holding `0` — an edit you could make and had no way to
+ * understand. Naming the collection lets the panel offer the tabs themselves.
+ *
+ * Two conditions, both required, because a wrong link is worse than none: the
+ * prop's own doc comment must call it an index, and the component must have
+ * exactly ONE collection prop — with two, nothing in the docs says which one is
+ * meant, and picking either would be a guess.
+ */
+function withCollectionIndexLinks(specs: PropSpec[], propComments: Map<string, string>): PropSpec[] {
+  const collections = specs.filter((spec) => spec.kind === 'collection')
+  if (collections.length !== 1) return specs
+  const collection = collections[0]!.name
+  for (const spec of specs) {
+    if (spec.kind !== 'number') continue
+    if (!/\bindex\b/i.test(propComments.get(spec.name) ?? '')) continue
+    spec.indexesCollection = collection
+  }
+  return specs
 }
 
 /**

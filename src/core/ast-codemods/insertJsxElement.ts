@@ -55,42 +55,18 @@
  * keeps its own style and no unrelated line is reformatted.
  */
 import { Node, Project, type JsxElement, type JsxSelfClosingElement, type SourceFile } from 'ts-morph'
-import { isSafeIntrinsicTagName, VOID_HTML_ELEMENTS } from '@core/utils/htmlTags'
 import { createProject, findJsxElementAtLocation, loadSourceFile } from './locateJsxElement'
+import { applyTextEdits, resolveJsxChildRange, verbatimSourceText, writeVerbatimSource, type TextEdit } from './jsxChildRange'
 import {
-  resolveJsxChildRange,
-  verbatimSourceText,
-  writeVerbatimSource,
-  type JsxChildRangeReason,
-} from './jsxChildRange'
-
-/** A prop written onto the new element. Only these three shapes have an unambiguous JSX spelling. */
-export type InsertableJsxPropValue = string | number | boolean
-
-/**
- * One element in a subtree an insert writes. Identical in shape to the insert
- * itself minus the placement fields, and recursive through `children`.
- */
-export interface InsertJsxNode {
-  /** A component (`Button`) with an `importSpecifier`, an intrinsic tag (`div`) without one. */
-  name: string
-  props?: Record<string, InsertableJsxPropValue | undefined>
-  importSpecifier?: string
-  children?: InsertJsxChildren
-}
-
-/**
- * An element's content: literal text, or a list of nested elements.
- *
- * Text and elements are deliberately EXCLUSIVE rather than an interleaved
- * list. A leaf carries a label; a container carries elements. Mixed content
- * (`<p>Hello <b>you</b></p>`) is the one JSX shape whose text nodes have no
- * stable identity for the parser to hand back an editable node id for — the
- * same reason `setJsxText` refuses a mixed-content target
- * (`JsxTextTargetError`). Allowing it here would let an insert manufacture
- * source this pipeline cannot then edit.
- */
-export type InsertJsxChildren = string | InsertJsxNode[]
+  collectSubtreeImports,
+  indentBlock,
+  refuse,
+  renderJsxNode,
+  validateSubtree,
+  type InsertJsxChildren,
+  type InsertJsxRefusal,
+  type InsertableJsxPropValue,
+} from './jsxSubtree'
 
 export interface InsertJsxElementParams {
   file: string
@@ -133,20 +109,6 @@ export interface InsertJsxElementParams {
   children?: InsertJsxChildren
   /** Optional pre-existing project to reuse. */
   project?: Project
-}
-
-export type InsertJsxRefusalReason =
-  | JsxChildRangeReason
-  | 'not-a-container'
-  | 'not-siblings'
-  | 'binding-conflict'
-  | 'unsafe-tag'
-  | 'void-element-children'
-
-export interface InsertJsxRefusal {
-  reason: InsertJsxRefusalReason
-  /** Human-readable, suitable for a toast. */
-  message: string
 }
 
 export type InsertJsxElementResult = { ok: true } | { ok: false; refusal: InsertJsxRefusal }
@@ -199,30 +161,11 @@ export function insertJsxElement(params: InsertJsxElementParams): InsertJsxEleme
 
   const importEdits = resolveImportEdits(sourceFile, verbatim, imports)
 
-  // Every splice is computed against the ORIGINAL text, so the later ones are
-  // applied first — otherwise an earlier insert shifts the offset a later one
-  // was measured at. Imports live at the top of a file and the JSX below them,
-  // but the codemod does not rely on that: it sorts.
-  const edits = [placement.edit, ...importEdits].sort((a, b) => b.start - a.start)
-  let text = verbatim
-  for (const edit of edits) text = text.slice(0, edit.start) + edit.text + text.slice(edit.end)
-
-  writeVerbatimSource(sourceFile, file, text)
+  writeVerbatimSource(sourceFile, file, applyTextEdits(verbatim, [placement.edit, ...importEdits]))
   return { ok: true }
 }
 
-/** A byte range in the original text and what replaces it. An insert is a range of length zero. */
-interface TextEdit {
-  start: number
-  end: number
-  text: string
-}
-
 type PlacementResult = { ok: true; edit: TextEdit } | { ok: false; refusal: InsertJsxRefusal }
-
-function refuse(reason: InsertJsxRefusalReason, message: string): { ok: false; refusal: InsertJsxRefusal } {
-  return { ok: false, refusal: { reason, message } }
-}
 
 /**
  * Where the new element's bytes go, and with what surrounding whitespace.
@@ -380,11 +323,6 @@ function tagLocation(sourceFile: SourceFile, element: JsxElement | JsxSelfClosin
  */
 type RenderJsx = (indent: string, unit: string) => string
 
-/** Prefix every line after the first with `indent`, aligning a rendered block under its placement. */
-function indentBlock(block: string, indent: string): string {
-  return indent.length === 0 ? block : block.split('\n').join(`\n${indent}`)
-}
-
 /**
  * `<Name a="1" b={2} c />` — a tag plus its literal props; `<Name>text</Name>`
  * for a text child; and a multi-line block for a nested subtree.
@@ -399,110 +337,6 @@ function indentBlock(block: string, indent: string): string {
  * subtree shape into a component PROP instead of a JSX child list and has no
  * reason to re-implement this rendering.
  */
-export function renderJsxNode(node: InsertJsxNode, unit: string): string {
-  const parts: string[] = []
-  for (const [key, value] of Object.entries(node.props ?? {})) {
-    if (value === undefined) continue
-    if (typeof value === 'boolean') {
-      // `<Button disabled />` for true; a false prop is simply not written,
-      // which is what the absence of the attribute already means.
-      if (value) parts.push(key)
-      continue
-    }
-    parts.push(typeof value === 'number' ? `${key}={${value}}` : `${key}=${JSON.stringify(value)}`)
-  }
-  const attrs = parts.length > 0 ? ` ${parts.join(' ')}` : ''
-  const { name, children } = node
-
-  if (children === undefined) return `<${name}${attrs} />`
-  if (typeof children === 'string') return `<${name}${attrs}>${escapeJsxText(children)}</${name}>`
-  // An empty array is an explicitly childless element — same output as no
-  // `children` at all, rather than an empty paired tag nothing needs.
-  if (children.length === 0) return `<${name}${attrs} />`
-
-  const inner = children.map((child) => `${unit}${indentBlock(renderJsxNode(child, unit), unit)}`)
-  return [`<${name}${attrs}>`, ...inner, `</${name}>`].join('\n')
-}
-
-/** Depth-first walk of a subtree, root included. */
-function* walkSubtree(node: InsertJsxNode): Generator<InsertJsxNode> {
-  yield node
-  const { children } = node
-  if (children === undefined || typeof children === 'string') return
-  for (const child of children) yield* walkSubtree(child)
-}
-
-/**
- * Every `(componentName, importSpecifier)` the subtree needs in scope,
- * deduplicated. Intrinsic tags contribute nothing.
- *
- * Exported for `insertJsxIntoSlotProp.ts` — a slot fill needs the identical
- * "what imports does this subtree require" answer.
- */
-export function collectSubtreeImports(root: InsertJsxNode): Map<string, string> {
-  const required = new Map<string, string>()
-  for (const node of walkSubtree(root)) {
-    if (node.importSpecifier !== undefined) required.set(node.name, node.importSpecifier)
-  }
-  return required
-}
-
-/**
- * The first refusal anywhere in the subtree, or `undefined` when all of it is
- * writable. Runs before any byte is written so a bad grandchild cannot leave a
- * half-built element behind.
- *
- * Exported for `insertJsxIntoSlotProp.ts` — the tag-name/void-element rules
- * are exactly the same for a subtree written into a prop as for one written
- * into a child list; only the PLACEMENT differs between the two codemods.
- */
-export function validateSubtree(root: InsertJsxNode): { ok: false; refusal: InsertJsxRefusal } | undefined {
-  for (const node of walkSubtree(root)) {
-    const { name, importSpecifier, children } = node
-
-    // An intrinsic tag is the no-import case, so its name gets no validation
-    // from an import resolving or failing to resolve — it has to be checked
-    // here or not at all. See this module's "COMPONENTS AND INTRINSIC TAGS".
-    if (importSpecifier === undefined && !isSafeIntrinsicTagName(name)) {
-      return refuse(
-        'unsafe-tag',
-        /^[A-Z]/.test(name)
-          ? `"${name}" starts with a capital letter, so JSX reads it as a component, not an HTML tag — pass importSpecifier to say where it is imported from.`
-          : `"${name}" is not a tag Studio will write: it must be a well-formed HTML element name and must not be one that executes script or loads external resources.`,
-      )
-    }
-
-    const hasContent = children !== undefined && (typeof children === 'string' || children.length > 0)
-    if (hasContent && VOID_HTML_ELEMENTS.has(name.toLowerCase())) {
-      return refuse(
-        'void-element-children',
-        `<${name}> is a void element and cannot hold children, so there is nowhere to write this content.`,
-      )
-    }
-  }
-  return undefined
-}
-
-/**
- * Make `text` safe to sit between two JSX tags.
- *
- * Only four characters can leave JSX text mode, and each is escaped as the
- * HTML entity React renders back to the original character, so the element's
- * rendered text is exactly what the caller asked for:
- *   - `<` would open a tag, `>` is invalid in JSX text
- *   - `{` `}` would open an expression container
- * A newline is not escaped but IS rejected upstream of nothing — it would
- * merely reflow, which JSX collapses to a single space, so it is left alone.
- */
-function escapeJsxText(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/\{/g, '&#123;')
-    .replace(/\}/g, '&#125;')
-}
-
 /**
  * The edits that put every `(name → specifier)` in `required` in scope.
  *

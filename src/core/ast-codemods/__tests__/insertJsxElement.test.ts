@@ -720,3 +720,173 @@ export default function Page() {
     expect(written.match(/^\s+<div>$/gm)).toHaveLength(3)
   })
 })
+
+describe('insertJsxElement — structured prop values', () => {
+  /**
+   * A design system's CONTENT is often an array or an object, not a string:
+   * `<TabBar items={[{ label: 'Home' }]}/>` — `items` is the entire content of
+   * a tab bar. Every one of these used to be dropped on the way to disk, one
+   * layer above this codemod, so an inserted TabBar was written as `<TabBar
+   * platform="ios" value={0}/>` and the canvas — which reloads from source, as
+   * it must — drew an empty bar. That was the whole of "the tab bar renders
+   * with nothing in it", and it survived two rounds of fixes upstream because
+   * the seeded value never reached the file.
+   */
+  it('writes an array of objects as a JSX expression', () => {
+    const file = writeFixture(PAGE)
+    const at = locateTag(PAGE, 'section')
+
+    const result = insertJsxElement({
+      file,
+      ...at,
+      name: 'TabBar',
+      props: { platform: 'ios', value: 0, items: [{ label: 'Home' }, { label: 'Explore' }] },
+      importSpecifier: DS,
+    })
+
+    expect(result).toEqual({ ok: true })
+    // Bare keys and spaced braces: this lands in the user's own repository and
+    // is the first thing they read after inserting, so `{"label":"Home"}` —
+    // which is what a plain `JSON.stringify` would have written — is not good
+    // enough, even though it parses.
+    expect(fs.readFileSync(file, 'utf8')).toContain(
+      '<TabBar platform="ios" value={0} items={[{ label: "Home" }, { label: "Explore" }]} />',
+    )
+  })
+
+  it('writes a nested object prop', () => {
+    const file = writeFixture(PAGE)
+    const at = locateTag(PAGE, 'section')
+
+    insertJsxElement({
+      file,
+      ...at,
+      name: 'Dialog',
+      props: { primaryAction: { label: 'Primary' }, dismissOnScrim: true },
+      importSpecifier: DS,
+    })
+
+    const written = fs.readFileSync(file, 'utf8')
+    expect(written).toContain('primaryAction={{ label: "Primary" }}')
+    // A `true` boolean is still the bare-attribute shorthand.
+    expect(written).toContain('dismissOnScrim ')
+  })
+
+  it('quotes a key that is not a plain identifier', () => {
+    const file = writeFixture(PAGE)
+    const at = locateTag(PAGE, 'section')
+
+    insertJsxElement({
+      file,
+      ...at,
+      name: 'IconButton',
+      props: { action: { 'aria-label': 'Share' } },
+      importSpecifier: DS,
+    })
+
+    expect(fs.readFileSync(file, 'utf8')).toContain('action={{ "aria-label": "Share" }}')
+  })
+
+  it('escapes a string inside a structured value the same way JSON does', () => {
+    const file = writeFixture(PAGE)
+    const at = locateTag(PAGE, 'section')
+
+    insertJsxElement({
+      file,
+      ...at,
+      name: 'TabBar',
+      props: { items: [{ label: 'He said "go"' }] },
+      importSpecifier: DS,
+    })
+
+    expect(fs.readFileSync(file, 'utf8')).toContain('items={[{ label: "He said \\"go\\"" }]}')
+  })
+
+  it('writes an empty array and an empty object without inventing content', () => {
+    const file = writeFixture(PAGE)
+    const at = locateTag(PAGE, 'section')
+
+    insertJsxElement({ file, ...at, name: 'TabBar', props: { items: [], meta: {} }, importSpecifier: DS })
+
+    expect(fs.readFileSync(file, 'utf8')).toContain('items={[]} meta={{}}')
+  })
+
+  it('writes null as an expression, not the string "null"', () => {
+    const file = writeFixture(PAGE)
+    const at = locateTag(PAGE, 'section')
+
+    insertJsxElement({ file, ...at, name: 'Cell', props: { visual: null }, importSpecifier: DS })
+
+    expect(fs.readFileSync(file, 'utf8')).toContain('visual={null}')
+  })
+})
+
+describe('insertJsxElement — a React element inside a prop', () => {
+  /**
+   * `<TabBar items={[{ icon: <svg…/>, label: 'Home' }]}/>` is the documented
+   * shape of a tab bar, and an icon that cannot be written is an empty icon
+   * slot on every tab. The element arrives as a validated TREE, never as source
+   * text, and goes through the same `validateSubtree` tag-safety refusal every
+   * child element already does.
+   */
+  const HOME_ICON = {
+    __jsx: {
+      name: 'svg',
+      props: { viewBox: '0 0 24 24', fill: 'none' },
+      children: [{ name: 'path', props: { d: 'M4 12L9 17' } }],
+    },
+  }
+
+  it('writes it as a real element, not as data', () => {
+    const file = writeFixture(PAGE)
+    const at = locateTag(PAGE, 'section')
+
+    const result = insertJsxElement({
+      file,
+      ...at,
+      name: 'TabBar',
+      props: { items: [{ icon: HOME_ICON, label: 'Home' }] },
+      importSpecifier: DS,
+    })
+
+    expect(result).toEqual({ ok: true })
+    const written = fs.readFileSync(file, 'utf8')
+    expect(written).toContain('<svg viewBox="0 0 24 24" fill="none">')
+    expect(written).toContain('<path d="M4 12L9 17" />')
+    // The marker is plumbing and must never reach the user's file.
+    expect(written).not.toContain('__jsx')
+  })
+
+  it('refuses a prop element with an unsafe tag, leaving the file untouched', () => {
+    // The same gate that protects the child list. A prop element carries no
+    // `importSpecifier`, so a capitalised tag is refused here too.
+    const file = writeFixture(PAGE)
+    const at = locateTag(PAGE, 'section')
+
+    const result = insertJsxElement({
+      file,
+      ...at,
+      name: 'TabBar',
+      // The TAG is what is refused, so the payload is irrelevant — and kept
+      // innocuous on purpose: `no-native-browser-dialogs.test.ts` text-scans
+      // this repo for `alert(`, and a realistic-looking one here would trip it.
+      props: { items: [{ icon: { __jsx: { name: 'script', children: 'boom' } } }] },
+      importSpecifier: DS,
+    })
+
+    expect(result).toEqual({ ok: false, refusal: expect.objectContaining({ reason: 'unsafe-tag' }) })
+    expect(fs.readFileSync(file, 'utf8')).toBe(PAGE)
+  })
+
+  it('writes no import for an intrinsic prop element', () => {
+    const file = writeFixture(PAGE)
+    const at = locateTag(PAGE, 'section')
+
+    insertJsxElement({ file, ...at, name: 'TabBar', props: { items: [{ icon: HOME_ICON }] }, importSpecifier: DS })
+
+    // `TabBar` is imported; `svg` and `path` are host tags and are not.
+    const written = fs.readFileSync(file, 'utf8')
+    expect(written).toContain("import { Chip, TabBar } from '@alm-design/design-system'")
+    expect(written).not.toContain('svg }')
+  })
+})

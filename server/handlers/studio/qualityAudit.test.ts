@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { auditStylesheetQuality } from './qualityAudit'
+import { auditPageSourceQuality, auditStylesheetQuality } from './qualityAudit'
 import { buildProjectTokenIndex } from './projectTokenIndex'
 
 const TOKENS_CSS = `:root {
@@ -82,5 +82,138 @@ describe('auditStylesheetQuality', () => {
   it('never throws on malformed CSS text', () => {
     expect(() => auditStylesheetQuality('this is not { valid css at all', 'x.css', tokens)).not.toThrow()
     expect(() => auditStylesheetQuality('', 'x.css', tokens)).not.toThrow()
+  })
+})
+
+describe('auditPageSourceQuality', () => {
+  it('flags a literal <svg><path d="…"> as hand-authored, and never a raw-import icon', () => {
+    const tsx = [
+      "import { ChevronLeftIcon } from '@acme/ds'",
+      "import smsIconSvg from '@acme/ds/icons/sms.svg?raw'",
+      'export default function Screen() {',
+      '  return (',
+      '    <>',
+      '      <ChevronLeftIcon />',
+      '      <span dangerouslySetInnerHTML={{ __html: smsIconSvg }} />',
+      '      <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">',
+      '        <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47" />',
+      '      </svg>',
+      '    </>',
+      '  )',
+      '}',
+      '',
+    ].join('\n')
+    const { findings } = auditPageSourceQuality(tsx, 'pages/Screen.tsx', [])
+    const vector = findings.filter((f) => f.code === 'hand-authored-vector-path')
+    expect(vector).toHaveLength(1)
+    expect(vector[0]!.file).toBe('pages/Screen.tsx')
+    expect(vector[0]!.line).toBeGreaterThan(0)
+  })
+
+  it('flags a ?raw import whose file is not on disk', () => {
+    const tsx = [
+      "import chartIcon from '@pkg/icons/chartLineDown.svg?raw'",
+      'export default function Screen() {',
+      '  return <span className="icon" dangerouslySetInnerHTML={{ __html: chartIcon }} />',
+      '}',
+      '',
+    ].join('\n')
+    const { findings } = auditPageSourceQuality(tsx, 'pages/Screen.tsx', [], [
+      { specifier: '@pkg/icons/chartLineDown.svg?raw', localName: 'chartIcon', line: 1 },
+    ])
+    const dead = findings.filter((f) => f.code === 'unresolved-asset-import')
+    expect(dead).toHaveLength(1)
+    expect(dead[0]!.line).toBe(1)
+    expect(dead[0]!.selector).toBe('chartIcon')
+    expect(dead[0]!.message).toContain('chartLineDown.svg?raw')
+  })
+
+  it('reports nothing about imports when every asset import resolves', () => {
+    const tsx = [
+      "import smsIcon from '@pkg/icons/sms.svg?raw'",
+      'export default function Screen() {',
+      '  return <span dangerouslySetInnerHTML={{ __html: smsIcon }} />',
+      '}',
+      '',
+    ].join('\n')
+    const { findings } = auditPageSourceQuality(tsx, 'pages/Screen.tsx', [], [])
+    expect(findings.filter((f) => f.code === 'unresolved-asset-import')).toHaveLength(0)
+  })
+
+  it('flags multiple hand-drawn <path> elements inside one <svg> as a single finding', () => {
+    const tsx = [
+      'export default function Screen() {',
+      '  return (',
+      '    <svg viewBox="0 0 24 24" aria-hidden="true">',
+      '      <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12" />',
+      '      <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66" />',
+      '    </svg>',
+      '  )',
+      '}',
+      '',
+    ].join('\n')
+    const { findings } = auditPageSourceQuality(tsx, 'pages/Screen.tsx', [])
+    const vector = findings.filter((f) => f.code === 'hand-authored-vector-path')
+    expect(vector).toHaveLength(1)
+    expect(vector[0]!.message).toContain('2 hand-written')
+  })
+
+  it('flags a literal number/px value hardcoding layout inline', () => {
+    const tsx = [
+      "import styles from './Screen.module.css'",
+      'export default function Screen() {',
+      '  return <span className={styles.icon} style={{ width: 24, height: \'24px\' }} />',
+      '}',
+      '',
+    ].join('\n')
+    const { findings } = auditPageSourceQuality(tsx, 'pages/Screen.tsx', [])
+    const sizing = findings.filter((f) => f.code === 'hardcoded-inline-sizing')
+    expect(sizing).toHaveLength(2)
+    expect(sizing.every((f) => f.file === 'pages/Screen.tsx' && f.line > 0)).toBe(true)
+  })
+
+  it('does not flag a CSS-custom-property style object or a genuinely dynamic value', () => {
+    const tsx = [
+      'export default function Screen({ progress, computedWidth }: { progress: number; computedWidth: number }) {',
+      '  return (',
+      '    <>',
+      "      <div style={{ '--progress': `${progress}%` }} />",
+      '      <div style={{ width: computedWidth }} />',
+      '    </>',
+      '  )',
+      '}',
+      '',
+    ].join('\n')
+    const { findings } = auditPageSourceQuality(tsx, 'pages/Screen.tsx', [])
+    expect(findings.filter((f) => f.code === 'hardcoded-inline-sizing')).toEqual([])
+  })
+
+  it('does not flag a hardcoded non-layout style value (e.g. opacity)', () => {
+    const tsx = "export default function Screen() { return <div style={{ opacity: 0.5 }} /> }\n"
+    const { findings } = auditPageSourceQuality(tsx, 'pages/Screen.tsx', [])
+    expect(findings.filter((f) => f.code === 'hardcoded-inline-sizing')).toEqual([])
+  })
+
+  it('flags a page that imports nothing from the configured design system', () => {
+    const tsx = "export default function Screen() { return <div>Hi</div> }\n"
+    const { findings } = auditPageSourceQuality(tsx, 'pages/Screen.tsx', ['@acme/ds'])
+    expect(findings.some((f) => f.code === 'design-system-unused')).toBe(true)
+  })
+
+  it('does not flag design-system-unused when the page imports the package, even via a subpath', () => {
+    const tsx = "import '@acme/ds/dist/index.css'\nexport default function Screen() { return <div>Hi</div> }\n"
+    const { findings } = auditPageSourceQuality(tsx, 'pages/Screen.tsx', ['@acme/ds'])
+    expect(findings.filter((f) => f.code === 'design-system-unused')).toEqual([])
+  })
+
+  it('does not flag design-system-unused when no design system is configured', () => {
+    const tsx = "export default function Screen() { return <div>Hi</div> }\n"
+    const { findings } = auditPageSourceQuality(tsx, 'pages/Screen.tsx', [])
+    expect(findings.filter((f) => f.code === 'design-system-unused')).toEqual([])
+  })
+
+  it('never throws on malformed .tsx text', () => {
+    expect(() => auditPageSourceQuality('this is not { valid tsx at all <svg', 'x.tsx', [])).not.toThrow()
+    expect(() => auditPageSourceQuality('', 'x.tsx', [])).not.toThrow()
   })
 })

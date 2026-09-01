@@ -38,13 +38,13 @@ import { studioSlotValue } from '@core/utils/studioSlotSentinel'
 import {
   extractInlineStyles,
   extractProps,
-  extractRawSvgMarkup,
   extractSingleText,
   LOOP_ID_SEPARATOR,
   type ParseContext,
 } from './jsxAttributeReaders'
 import { iterationEvalContext, loopCallbackBody, readStaticLoop } from './staticLoopExpansion'
 import { serializeInlineSvg } from './inlineSvg'
+import { extractRawSvgMarkup } from './iconPropValues'
 import { captureSlotProps } from './slotCapture'
 
 // Re-exported so every existing `from './parsePageFile'` import (`index.ts`,
@@ -412,7 +412,7 @@ function processElement(
   // inline styles (they size and colour the icon); the resolved markup rides
   // along on `svg`, which `resolveModuleId` uses to pick `base.svg`. Children
   // are irrelevant here — React ignores them when this prop is set.
-  const rawSvg = extractRawSvgMarkup(attributes, ctx)
+  const rawSvg = extractRawSvgMarkup(attributes, ctx.eval)
   if (rawSvg !== undefined) {
     const rawLock = withResolution(locked, lockReason, [...propsResult.resolutions, ...styleResult.resolutions])
     // R2 — per-prop counterpart of `rawLock.resolution`, see `ParsedNode.resolvedProps`.

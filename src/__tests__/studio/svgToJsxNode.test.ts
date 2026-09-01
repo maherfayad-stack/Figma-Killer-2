@@ -14,7 +14,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { insertJsxIntoSlotProp } from '@core/ast-codemods'
-import { svgToJsxNode } from '@site/property-controls/svgToJsxNode'
+import { svgToJsxNode } from '@site/studio/svgToJsxNode'
 
 const ALM_ICON = 'node_modules/@alm-design/design-system/src/icons/line-icons/chevronRight.svg'
 

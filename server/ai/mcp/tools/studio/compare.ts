@@ -109,6 +109,7 @@ import { syncBoardFramesFromDisk } from '../../../../handlers/studio/pageScaffol
 import { loadStudioPages } from '../../../../handlers/studioPageLoad'
 import { authoredFrameWidth } from '../../../../handlers/studio/boardGeometry'
 import { readDesignReferenceBytes } from '../../../../handlers/studio/designReferenceStore'
+import { recordPassingCompare } from '../../../../handlers/studio/pageVerificationStore'
 import type { DesignReference } from '../../../../handlers/studio/designReferenceSchema'
 import { resolvePageSourceFile } from '../../../../handlers/studio/pageSourceFile'
 import { resolveDesignReference } from './referenceResolve'
@@ -527,6 +528,18 @@ export const studioCompareTool: AiTool = {
           images: { screenBase64: capturedImage.data, referenceBase64, referenceMimeType: ref.mimeType, diffBase64 },
         })
       }
+    }
+
+    // verification-gate item 2 — durably record every PASSING result, cache
+    // hit or fresh capture alike (a cache hit still means the page's CURRENT
+    // on-disk bytes pass: `compareVerdictCache`'s own validity check already
+    // requires every tracked file's mtime to be unchanged since the verdict
+    // was computed). This is what lets a completely separate process — the
+    // Stop hook's checker script, spawned by the `claude` CLI with no access
+    // to this server's memory — answer "has this page been verified since it
+    // was last written" without re-running a capture.
+    for (const result of results) {
+      if (result.ok && result.pass) recordPassingCompare(dir, result.page.id, result.reference.id)
     }
 
     const passCount = results.filter((r) => r.ok && r.pass).length

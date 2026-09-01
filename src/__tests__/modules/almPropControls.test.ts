@@ -17,6 +17,8 @@
  * the 33 of 39 components that document a `dir` prop.
  */
 import { describe, expect, it } from 'bun:test'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
 import { registry } from '@core/module-engine'
 import manifestJson from '@modules/alm/manifest.generated.json'
 import type { ComponentManifest } from '@core/component-manifest'
@@ -77,3 +79,89 @@ describe('alm module prop controls', () => {
     }
   })
 })
+
+describe('structured props offer no control', () => {
+  /**
+   * THE BUG: `items={[{ icon: <HomeIcon/>, label: 'Home' }]}` was classified
+   * `undefined` by the docs pass and fell through to a TEXT BOX. The module
+   * doc called that "the honest failure mode"; it is not. Every value the box
+   * accepts is wrong — typing `5` reached `items.map(...)` inside the real
+   * component and put "TabBar (render error)" on the canvas. A write with no
+   * honest target is one the editor is supposed to REFUSE, which for a
+   * property row means not offering the row.
+   */
+  const manifest = manifestJson as ComponentManifest
+
+  it('classifies a documented array literal as a collection', () => {
+    const tabBar = manifest.components.find((c) => c.name === 'TabBar')
+    expect(tabBar?.props.find((p) => p.name === 'items')?.kind).toBe('collection')
+  })
+
+  it('offers no property row for any collection prop', () => {
+    const offenders: string[] = []
+    for (const component of manifest.components) {
+      const mod = registry.get(`alm.${component.name}`)
+      if (!mod) continue
+      for (const prop of component.props) {
+        if (prop.kind !== 'collection') continue
+        if (prop.name in mod.schema) offenders.push(`${component.name}.${prop.name}`)
+      }
+    }
+    expect(offenders).toEqual([])
+  })
+
+  it('still finds collection props at all, so the classifier cannot silently stop working', () => {
+    // 21 across 12 components when this landed. A drop to zero would mean the
+    // docs pass regressed and every one of them is a text box again.
+    const total = manifest.components.reduce(
+      (count, c) => count + c.props.filter((p) => p.kind === 'collection').length,
+      0,
+    )
+    expect(total).toBeGreaterThan(10)
+  })
+
+  it('leaves scalar props alone', () => {
+    // The refusal must be narrow: TabBar's other props are still editable.
+    const tabBar = registry.get('alm.TabBar')
+    expect(tabBar && 'platform' in tabBar.schema).toBe(true)
+    expect(tabBar && 'value' in tabBar.schema).toBe(true)
+  })
+})
+
+describe('a structured prop holding a scalar is reported, not rendered', () => {
+  /**
+   * The state Studio's own text box created and left behind in real sources:
+   * `<TabBar platform="ios" items="5" />`. `items.map(...)` threw and the
+   * boundary could only say "TabBar (render error)" — the component's name and
+   * nothing else, so finding the cause meant deleting props one at a time.
+   *
+   * The node is deliberately still NOT rendered. Dropping the bad prop would
+   * show a healthy TabBar over source that genuinely breaks in a real browser,
+   * and a canvas more forgiving than reality is the one thing it must not be.
+   */
+  function renderAlm(name: string, props: Record<string, unknown>): string {
+    const mod = registry.get(`alm.${name}`)
+    if (!mod?.component) return ''
+    return renderToStaticMarkup(createElement(mod.component as never, { props } as never))
+  }
+
+  it('names the offending prop and the value it found', () => {
+    const html = renderAlm('TabBar', { platform: 'ios', items: '5' })
+    expect(html).toContain('items')
+    expect(html).toContain('5')
+    expect(html).not.toContain('render error')
+  })
+
+  it('renders normally when the structured prop is absent', () => {
+    // `<TabBar platform="ios" />` is valid — the component supplies its own
+    // default, so this must not be dragged into the refusal.
+    const html = renderAlm('TabBar', { platform: 'ios' })
+    expect(html).not.toContain('expects a list')
+  })
+
+  it('accepts a real list', () => {
+    const html = renderAlm('TabBar', { platform: 'ios', items: [{ label: 'Home' }] })
+    expect(html).not.toContain('expects a list')
+  })
+})
+

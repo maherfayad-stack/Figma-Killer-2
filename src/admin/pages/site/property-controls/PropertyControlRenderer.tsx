@@ -55,6 +55,12 @@ interface RenderControlOptions {
   sourceLockReason?: string
   /** E2.5 — forwarded to `SlotControl` only; see `ControlProps.ownerNodeId`. */
   ownerNodeId?: string
+  /**
+   * The selected node's other resolved props, for a control whose OPTIONS are
+   * another prop's value — `collection-index`, where `TabBar.value` names one
+   * entry of `items`. Only that control reads it.
+   */
+  siblingProps?: Record<string, unknown>
 }
 
 /**
@@ -94,6 +100,32 @@ function isStructuredValue(control: PropertyControl, value: unknown): value is r
 }
 
 /**
+ * The sibling collection's entries as select options, labelled the way a person
+ * would name them.
+ *
+ * A design system's list entries are objects (`{ icon, label }`) or bare strings
+ * (`SegmentedControl`'s `items={['Flights', 'Stays']}`), so both are read. An
+ * entry with no readable name still gets a row — dropping it would shift every
+ * index after it and silently select the wrong tab.
+ */
+function collectionIndexOptions(collection: unknown): { label: string; value: string }[] {
+  if (!Array.isArray(collection)) return []
+  return collection.map((item, index) => ({ label: collectionEntryLabel(item, index), value: String(index) }))
+}
+
+/** One entry's display name: its own label/title, the string it is, or its position. */
+function collectionEntryLabel(item: unknown, index: number): string {
+  if (typeof item === 'string' && item.trim() !== '') return item
+  if (typeof item === 'object' && item !== null) {
+    for (const key of ['label', 'title', 'name', 'text']) {
+      const value = (item as Record<string, unknown>)[key]
+      if (typeof value === 'string' && value.trim() !== '') return value
+    }
+  }
+  return `Item ${index + 1}`
+}
+
+/**
  * Render a single property control wrapped in the test/accessibility shell.
  * Returns null for unknown or unimplemented control types.
  */
@@ -106,6 +138,7 @@ export function PropertyControlRenderer({
   disabled = false,
   sourceLockReason,
   ownerNodeId,
+  siblingProps,
 }: RenderControlOptions) {
   const layout = resolveControlLayout(control)
 
@@ -205,6 +238,27 @@ export function PropertyControlRenderer({
     case 'select':
       inner = <SelectControl {...shared} options={control.options} />
       break
+
+    case 'collection-index': {
+      // Options are the sibling list's OWN entries, read from the node rather
+      // than from the schema — five tabs today, three tomorrow. The control
+      // shows names and writes back the index the component actually takes.
+      const options = collectionIndexOptions(siblingProps?.[control.collection])
+      inner =
+        options.length === 0 ? (
+          // Nothing to choose between yet. A select with no options is a dead
+          // control; the number is at least honest about what the prop holds.
+          <NumberControl {...shared} value={Number(value ?? 0)} min={0} />
+        ) : (
+          <SelectControl
+            {...shared}
+            value={String(Number(value ?? 0))}
+            options={options}
+            onChange={(key, next) => onChange(key, Number(next))}
+          />
+        )
+      break
+    }
 
     case 'toggle':
       inner = <ToggleControl {...shared} value={Boolean(value)} />
