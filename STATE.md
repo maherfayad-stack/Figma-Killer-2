@@ -12329,3 +12329,81 @@ pins it: `studioLiveReloadFetch.test.ts` (the meta line is applied) and
 `patchPages.test.ts`'s "project-wide registries" block.
 
 **Files:** `src/admin/pages/site/studio/{studioLiveReloadFetch.ts,studioSaveRequests.ts}`, `src/admin/pages/site/studio/__tests__/studioLiveReloadFetch.test.ts`, `src/admin/pages/site/agent/studioLiveReload.ts`, `src/admin/pages/site/store/slices/site/{types.ts,lifecycleActions.ts}`, `src/admin/pages/site/hooks/usePersistence.ts`, `src/admin/state/adminEvents.ts`, `src/__tests__/editor-store/patchPages.test.ts`, `docs/agent-refs/editor-store.md`.
+
+---
+
+## prototype-1 — prototype mode, end to end
+
+- **Status:** shipped (Phases 1–7)
+- **Branch:** `feat/prototype-mode`
+- **Updated:** 2026-09-02
+
+Ask: click interactions between screens, Figma-style connector lines on the
+board, a Design/Prototype switch, a prototype-only inspector, and drag-from-`+`
+to author a link. Planned in a session on 2026-09-01 that never wrote the plan
+down; this task recovered it, corrected three things in it, and built all of it.
+
+**Plan + phase log:** `STUDIO-PROTOTYPE-PLAN.md`. **Feature doc:**
+`docs/features/prototype-mode.md`.
+
+**The decision:** a link is a DESIGN LAYER in `.studio/prototype.json`, never a
+write into the user's `.tsx`. "Make a sheet slide up from here" has no single
+honest target in arbitrary React, and Studio refuses writes without one.
+
+**Three durable facts a future agent should not rediscover:**
+
+1. **`@core/studio-anchor` is now the one way anything on disk points at an
+   element.** Studio node ids are `relFile:line:col` and rot on nearly every
+   edit, so a persisted reference stores a `NodeHint` (`nodeId` + `indexPath` +
+   `moduleId` + `textSnippet`) and re-resolves it. It was extracted out of
+   `studio-comments`, whose `anchorResolve.ts` NO LONGER EXISTS — comments kept
+   only their policy half as `agentGate.ts`. **Policy is deliberately not
+   shared:** a comment refuses on `drifted` (the comment is about the text that
+   changed), a prototype link follows it (relabelling a button does not change
+   where it goes).
+2. **Everything about connectors is in BOARD space, and that is load-bearing.**
+   Board-space endpoints are invariant under pan and zoom, so neither
+   re-measures anything. A frame's rect is store data; the only DOM read is
+   where an element sits inside its frame, driven by a `ResizeObserver` on the
+   source frame's document. An element's rect inside its iframe is already
+   unscaled — the transform scales the `<iframe>` element, not the CSS pixels
+   inside it. Measuring per RAF instead re-reads two iframes per connector on
+   every wheel tick.
+3. **A derived (`origin: 'code'`) link is a claim about the user's source**, so
+   the parser's navigation reader is bounded and literal-only. A wrong derived
+   link tells the user their app does something it does not; a missing one costs
+   them drawing a link by hand. Nine of its twelve tests are refusals.
+
+**Gates that bit, and the fix each time:**
+
+- `single-drag-mechanism.test.ts` fired on `BoardPrototypeLayer` because the
+  module doc NAMED the banned API in prose. Reworded. (Same class as the
+  icon-guide test that matched its own warning text.)
+- `module-size-budgets` fired twice: `uiSlice.ts` (so `boardMode` moved to
+  `canvasSlice`, where it belonged anyway) and `CanvasRoot.tsx` (so the playback
+  derivation became `usePrototypePlayback.ts`).
+- `no-circular-dependencies` fired on `store → siteSlice → pageActions →
+  prototypeActions → store`. **A slice must not import an action module that
+  reads the store** — call the API module directly and `get()` the adopt action,
+  the way `commitStudioPageDeletion` talks to `studioPageRequests`.
+- `button-primitive-usage` — the `+` handle is a §8.5 canvas coordinate
+  affordance, listed with the same justification `CommentPin` carries.
+
+**PARALLEL-SESSION HAZARD, observed twice in this task.** Another session's
+automation (a) committed my in-flight files inside its own unrelated commit
+(`86ff4ce`, "Add ALM 2.0 design tokens…", which contains `prototypeStore.ts`
+and `prototypeRoutes.ts`), and (b) REVERTED uncommitted edits to seven files I
+had already changed, including its own earlier edit to
+`button-primitive-usage.test.ts`. Nothing was lost because the edits were
+reconstructible, but **commit early and check `git status` before assuming an
+edit survived.** See the `workers-self-commit` memory note.
+
+**Known limits (all in the plan's §8):** only the incoming screen animates;
+`indexPath` reads a wrapped section as `detached`; one trigger (`click`);
+derived links are `navigate` only.
+
+**Not mine, still failing at handoff:** `StudioTrashList.tsx` (bare button +
+two missing exports from `adminEvents`) and `server/handlers/studio/prototypeShell/shellFiles.ts`
+(syntax error + 770 lines) — both untracked/in-flight from a parallel session.
+Canvas tests also fail nondeterministically in large batch runs and pass
+per-file; the count moved 11 → 10 across two runs of an unchanged tree.

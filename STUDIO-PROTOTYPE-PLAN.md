@@ -1,6 +1,6 @@
 # Studio Prototype Mode — plan
 
-**Status:** Phase 1 in progress · **Branch:** `feat/prototype-mode` · **Opened:** 2026-09-02
+**Status:** Phases 1-7 shipped · **Branch:** `feat/prototype-mode` · **Opened:** 2026-09-02
 
 The ask: click interactions between screens, with a transition (dissolve, popup,
 sheet, slide/push left/right), a back action, Figma-style connector lines drawn
@@ -105,32 +105,59 @@ only prototype stuff" — the right panel's body swaps in prototype mode, the wa
 Figma's Design/Prototype tabs work. A left-rail Flows panel is additive and can
 follow.
 
-## 6. Phases
+## 6. Phases — all shipped
 
-- **1a — `@core/studio-anchor` (S).** Extract the node-hint + resolution
-  primitive out of `studio-comments`; re-point its 12 callers. No behaviour change.
-- **1b — `@core/studio-prototype` model + serializer (S/M).** TypeBox schemas,
-  tolerant parse, `prototypeModel` add/update/remove/prune. Gates: round-trip,
-  unknown-action/transition coercion, pruning links whose target page is gone.
-- **2 — Server store + routes (S/M).** `server/handlers/studio/prototypeStore.ts`
-  and `prototypeRoutes.ts`, mirroring `commentsStore`/`commentsRoutes`. One op per
-  POST, not the whole file.
-- **3 — Prototype mode + inspector (M).** `boardMode` in `uiSlice`, the pill, the
-  right-panel swap, design chrome suppressed while wiring.
-- **4 — Connectors and the `+` drag (M/L — the hard one).** A
-  `BoardPrototypeLayer` in `StudioBoardLayers`, alongside `BoardCommentsLayer`.
-  Constraint: selection rings are portaled *into* each iframe to dodge coordinate
-  conversion, but a connector spans two iframes, so it must live in the parent and
-  use the zoom-converting math. Saving grace: board-space endpoints are pan/zoom
-  invariant (the transform layer moves them for free), so measurement runs on
-  frame move, frame resize and content reflow only — never per RAF. Getting that
-  wrong is how this feature becomes a stutter machine.
-- **5 — Play in live mode (M/L).** History stack, transition runtime, back/close,
-  scrim dismiss, reset. Risk: a transition needs both frames mounted at once, so
-  the incoming frame must be prewarmed or the first navigation to each screen
-  stutters.
-- **6 — Code-derived connectors (M).** The differentiator in §1.
-- **7 — Docs + `STATE.md`.**
+- **1a ✅ `@core/studio-anchor`.** Node-hint + resolution primitive extracted out
+  of `studio-comments`; 12 callers re-pointed. No behaviour change. Comments kept
+  their policy half as `agentGate.ts`.
+- **1b ✅ `@core/studio-prototype` model + serializer.** Schemas, tolerant parse,
+  link operations. The serializer repairs what is derivable and drops only what
+  would mean inventing a flow.
+- **2 ✅ Server store + routes.** `prototypeStore.ts` + `prototypeRoutes.ts`,
+  op-shaped (`upsert`/`remove`/`prune`). An empty `prune` is refused rather than
+  obeyed.
+- **3 ✅ Prototype mode + inspector.** `boardMode` landed in `canvasSlice`, NOT
+  `uiSlice` as planned — see §9. The right sidebar replaces the inspector.
+- **4 ✅ Connectors and the `+` drag.** `BoardPrototypeLayer`, all geometry in
+  board space, measurement driven by a `ResizeObserver` on the source frame's
+  document and by nothing else.
+- **5 ✅ Play in live mode.** Stack machine in `playback.ts`, overlay + scrim,
+  CSS entrance transitions. Known limit below.
+- **6 ✅ Code-derived connectors.** Bounded, literal-only navigation reading in
+  the parser; derived links are never persisted.
+- **7 ✅ Docs.** [`docs/features/prototype-mode.md`](docs/features/prototype-mode.md),
+  `docs/README.md`, `docs/agent-refs/path-index.md`.
+
+## 7. What changed from this plan while building it
+
+Three things the plan got wrong, all caught by recon or by a gate:
+
+1. **Branch base.** The plan said "off `main`". `main` was 171 commits behind
+   this line of work; branching there would have discarded the custom camera
+   engine, comments, i18n and the framework rem fix.
+2. **Storage.** The first sketch put links on `BoardsFile`. `studio-comments`
+   shipped in between and its own doc argues the opposite, for reasons that apply
+   exactly. Moved to `.studio/prototype.json`.
+3. **Anchoring.** The plan anchored at `(pageId, nodeId)`. Node ids are
+   `relFile:line:col` and rot, so every link would have broken silently. Hence
+   Phase 1a, which was not in the original plan at all.
+
+And one the gates corrected: `boardMode` was written into `uiSlice`, which pushed
+that file past the 700-line god-file ceiling. It belongs in `canvasSlice` beside
+`canvasView` anyway — both answer "how is the canvas being used".
+
+## 8. Known limits, accepted for v1
+
+- **Only the incoming screen animates.** A true `push` moves the outgoing screen
+  too, which needs both mounted at once and would double frame mounts on every
+  navigation.
+- **`indexPath` is structural**, so wrapping a section in a new element shifts
+  every descendant's path and reads as `detached`. Fails toward "I don't know",
+  which is the safe direction.
+- **One trigger.** `click` only; `hover` and `drag` are additive.
+- **Derived links are `navigate` only.** A handler that opens a sheet in local
+  state is indistinguishable from one that replaces the screen without knowing
+  the component, and guessing would attribute a design decision to the source.
 
 ## 7. Architecture gates on this feature's path
 
