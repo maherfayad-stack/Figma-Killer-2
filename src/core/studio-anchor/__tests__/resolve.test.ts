@@ -1,23 +1,22 @@
 /**
  * The five anchor confidences, driven off a real tree shape.
  *
- * These are the tests that matter most in the comments feature: every one of
- * them describes a way a comment could end up pointing at the wrong element in
- * a user's source file, and the agent's write path refuses on exactly the two
- * outcomes asserted here as un-actionable.
+ * These are the tests that matter most in anything that points at an element
+ * across a re-parse: every one of them describes a way a stored reference could
+ * end up naming the WRONG element in a user's source file. Both consumers —
+ * review comments and prototype links — refuse on the outcomes asserted here as
+ * un-actionable.
  */
 import { describe, it, expect } from 'bun:test'
 import type { BaseNode, NodeTree } from '@core/page-tree'
 import {
   captureNodeHint,
-  explainAnchorRefusal,
   indexPathForNode,
-  isAgentActionable,
   nodeAtIndexPath,
   nodeTextSnippet,
-  resolveCommentAnchor,
-} from '../anchorResolve'
-import { TEXT_SNIPPET_MAX, type CommentNodeHint } from '../types'
+  resolveNodeAnchor,
+} from '../resolve'
+import { TEXT_SNIPPET_MAX, type NodeHint } from '../types'
 
 function node(id: string, moduleId: string, children: string[] = [], props: Record<string, unknown> = {}): BaseNode {
   return { id, moduleId, props, breakpointOverrides: {}, children }
@@ -92,11 +91,11 @@ describe('nodeTextSnippet', () => {
   })
 })
 
-describe('resolveCommentAnchor', () => {
+describe('resolveNodeAnchor', () => {
   it('exact — the stored id still resolves', () => {
     const t = tree()
     const hint = captureNodeHint(t, 'title')!
-    expect(resolveCommentAnchor(hint, t)).toEqual({ confidence: 'exact', nodeId: 'title' })
+    expect(resolveNodeAnchor(hint, t)).toEqual({ confidence: 'exact', nodeId: 'title' })
   })
 
   it('moved — the id went stale but the structure and text still match', () => {
@@ -112,7 +111,7 @@ describe('resolveCommentAnchor', () => {
     })
     delete after.nodes.title
 
-    expect(resolveCommentAnchor(hint, after)).toEqual({ confidence: 'moved', nodeId: 'title@newline' })
+    expect(resolveNodeAnchor(hint, after)).toEqual({ confidence: 'moved', nodeId: 'title@newline' })
   })
 
   it('drifted — same place, same module, different text', () => {
@@ -125,7 +124,7 @@ describe('resolveCommentAnchor', () => {
     })
     delete after.nodes.title
 
-    expect(resolveCommentAnchor(hint, after)).toEqual({ confidence: 'drifted', nodeId: 'title@newline' })
+    expect(resolveNodeAnchor(hint, after)).toEqual({ confidence: 'drifted', nodeId: 'title@newline' })
   })
 
   it('detached — a different KIND of node took the same address', () => {
@@ -140,7 +139,7 @@ describe('resolveCommentAnchor', () => {
     })
     delete after.nodes.title
 
-    expect(resolveCommentAnchor(hint, after)).toEqual({ confidence: 'detached', nodeId: null })
+    expect(resolveNodeAnchor(hint, after)).toEqual({ confidence: 'detached', nodeId: null })
   })
 
   it('detached — the element is gone entirely', () => {
@@ -150,22 +149,22 @@ describe('resolveCommentAnchor', () => {
     const after = tree({ body: node('body', 'base.container', ['lede']) })
     delete after.nodes.cta
 
-    expect(resolveCommentAnchor(hint, after).confidence).toBe('detached')
+    expect(resolveNodeAnchor(hint, after).confidence).toBe('detached')
   })
 
   it('unanchored — a pin dropped on empty canvas, which is NOT the same as detached', () => {
     // The distinction is load-bearing, not cosmetic. Collapsing these two made
     // every free-floating comment permanently un-resolvable by the agent (the
     // gate refuses `detached`) and made every one of them wear a stale badge
-    // it had not earned. Caught by `commentTools.test.ts`, fixed here.
-    expect(resolveCommentAnchor(null, tree())).toEqual({ confidence: 'unanchored', nodeId: null })
-    expect(isAgentActionable('unanchored')).toBe(true)
-    expect(explainAnchorRefusal('unanchored')).toBeNull()
+    // it had not earned. That the gate PASSES `unanchored` is asserted in
+    // `@core/studio-comments`'s `agentGate.test.ts` — this file only has to
+    // keep the two confidences distinct.
+    expect(resolveNodeAnchor(null, tree())).toEqual({ confidence: 'unanchored', nodeId: null })
   })
 
   it('detached — no tree at all (page not loaded)', () => {
     const hint = captureNodeHint(tree(), 'title')!
-    expect(resolveCommentAnchor(hint, null).confidence).toBe('detached')
+    expect(resolveNodeAnchor(hint, null).confidence).toBe('detached')
   })
 
   it('prefers the live id over the index path when both would resolve', () => {
@@ -176,35 +175,16 @@ describe('resolveCommentAnchor', () => {
       header: node('header', 'base.container', ['lede2', 'title']),
       lede2: node('lede2', 'base.text', [], { text: 'Inserted above' }),
     })
-    const hint: CommentNodeHint = {
+    const hint: NodeHint = {
       nodeId: 'title',
       indexPath: [0, 0], // now resolves to `lede2`, not `title`
       moduleId: 'base.text',
       textSnippet: 'Get started',
     }
-    expect(resolveCommentAnchor(hint, t)).toEqual({ confidence: 'exact', nodeId: 'title' })
+    expect(resolveNodeAnchor(hint, t)).toEqual({ confidence: 'exact', nodeId: 'title' })
   })
 })
 
-describe('the agent gate', () => {
-  it('lets the agent act only on an anchor it is sure about', () => {
-    expect(isAgentActionable('exact')).toBe(true)
-    expect(isAgentActionable('moved')).toBe(true)
-    // Nothing could have gone stale on a pin that never named an element.
-    expect(isAgentActionable('unanchored')).toBe(true)
-    // These two are the whole reason the gate exists: acting here edits the
-    // wrong element in the user's real source.
-    expect(isAgentActionable('drifted')).toBe(false)
-    expect(isAgentActionable('detached')).toBe(false)
-  })
-
-  it('has a reason to post for every refusal, and none for a pass', () => {
-    expect(explainAnchorRefusal('exact')).toBeNull()
-    expect(explainAnchorRefusal('moved')).toBeNull()
-    expect(explainAnchorRefusal('drifted')).toContain('edited')
-    expect(explainAnchorRefusal('detached')).toContain('no longer exists')
-  })
-})
 
 describe('captureNodeHint', () => {
   it('captures everything the resolver needs', () => {

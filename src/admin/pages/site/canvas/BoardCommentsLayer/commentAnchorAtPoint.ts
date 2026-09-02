@@ -27,7 +27,8 @@
  * disagreeing about where the same cursor position is.
  */
 import { useEditorStore } from '@site/store/store'
-import { captureNodeHint, type CommentAnchor } from '@core/studio-comments'
+import { captureNodeHint } from '@core/studio-anchor'
+import type { CommentAnchor } from '@core/studio-comments'
 import { canvasZoomOf } from '../canvasZoom'
 
 /**

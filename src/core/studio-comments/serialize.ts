@@ -13,7 +13,8 @@
  * duplicate number, and `seq` is the name humans and agents use to refer to a
  * thread. Recomputing it as `max(seq) + 1` on read makes that self-healing.
  */
-import { createCommentsFile, type Comment, type CommentAnchor, type CommentAuthor, type CommentNodeHint, type CommentThread, type CommentsFile } from './types'
+import type { NodeHint } from '@core/studio-anchor'
+import { createCommentsFile, type Comment, type CommentAnchor, type CommentAuthor, type CommentThread, type CommentsFile } from './types'
 
 export function serializeCommentsFile(file: CommentsFile): string {
   return `${JSON.stringify(file, null, 2)}\n`
@@ -47,7 +48,7 @@ function coerceAuthor(raw: unknown): CommentAuthor {
   }
 }
 
-function coerceNodeHint(raw: unknown): CommentNodeHint | null {
+function coerceNodeHint(raw: unknown): NodeHint | null {
   if (!isPlainObject(raw)) return null
   const nodeId = str(raw.nodeId)
   if (nodeId.length === 0) return null

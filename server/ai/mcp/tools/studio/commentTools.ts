@@ -49,13 +49,12 @@ import {
   findThread,
   isAgentActionable,
   explainAnchorRefusal,
-  resolveCommentAnchor,
   setThreadResolved,
-  type AnchorConfidence,
   type CommentAuthor,
   type CommentThread,
   type CommentsFile,
 } from '@core/studio-comments'
+import { resolveNodeAnchor, type AnchorConfidence } from '@core/studio-anchor'
 import type { Page } from '@core/page-tree'
 import type { BoardsFile } from '@core/studio-board'
 import type { AiTool, ToolContext } from '../../../runtime/types'
@@ -111,7 +110,7 @@ async function pagesForThreads(
 function confidenceFor(thread: CommentThread, pages: Map<string, Page>): AnchorConfidence {
   const pageId = thread.anchor.pageId
   if (!thread.anchor.node || !pageId) return 'unanchored'
-  return resolveCommentAnchor(thread.anchor.node, pages.get(pageId) ?? null).confidence
+  return resolveNodeAnchor(thread.anchor.node, pages.get(pageId) ?? null).confidence
 }
 
 /**

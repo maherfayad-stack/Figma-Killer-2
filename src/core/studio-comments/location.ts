@@ -33,8 +33,8 @@
  * render as the same sentence in a briefing an agent acts on.
  */
 import { getChildren, type BaseNode, type NodeTree } from '@core/page-tree'
-import { indexPathForNode, nodeTextSnippet, resolveCommentAnchor } from './anchorResolve'
-import type { AnchorConfidence, CommentThread } from './types'
+import { indexPathForNode, nodeTextSnippet, resolveNodeAnchor, type AnchorConfidence } from '@core/studio-anchor'
+import type { CommentThread } from './types'
 
 /** The element a thread points at, described rather than merely identified. */
 export interface CommentElementContext {
@@ -139,7 +139,7 @@ export function buildCommentLocation(
 ): CommentLocation {
   const { tree, checkAnchor = true } = sources
   const hint = thread.anchor.node
-  const resolved = checkAnchor ? resolveCommentAnchor(hint, tree) : null
+  const resolved = checkAnchor ? resolveNodeAnchor(hint, tree) : null
 
   // Prefer the node the anchor resolves to NOW; fall back to the stored hint,
   // which still tells the agent what the comment was written about.

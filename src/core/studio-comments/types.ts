@@ -24,70 +24,11 @@
  *     denormalized precisely so removing a frame from a board does not orphan
  *     the conversation about it.
  *
- * See `anchorResolve.ts` for the part that actually matters — what a comment
+ * See `@core/studio-anchor` for the part that actually matters — what a comment
  * points AT, given that Studio node ids are source positions and therefore rot.
  */
 import { Type, type Static, withFallback } from '@core/utils/typeboxHelpers'
-
-/**
- * How much the stored node hint can still be trusted, recomputed on every load
- * and every re-parse by `resolveCommentAnchor`. Never persisted — a stored
- * confidence would be a claim about a tree that has since changed.
- *
- *   - `exact`      — the stored `nodeId` still resolves. Nothing moved.
- *   - `moved`      — the file shifted but the structure and text still match
- *                    at the same index path. The hint is rewritten.
- *   - `drifted`    — same place, same module, DIFFERENT text. Someone edited
- *                    the very thing under discussion.
- *   - `detached`   — the comment named an element, and it is gone.
- *   - `unanchored` — the comment never named an element: a pin dropped on
- *                    empty canvas, which is a legitimate permanent state.
- *
- * `unanchored` exists because `detached` was doing two jobs and getting both
- * wrong. Folding "never had a target" into "lost its target" made every
- * free-floating pin wear a stale badge it had not earned, and — far worse —
- * made every one of them permanently un-resolvable by the agent, since the
- * gate below refuses `detached`. A caught regression, not a hypothetical:
- * `commentTools.test.ts` asserts the distinction directly.
- *
- * `drifted` and `detached` are the two the agent must refuse to act on — see
- * `anchorResolve.ts`'s `isAgentActionable`.
- */
-export const AnchorConfidenceSchema = Type.Union([
-  Type.Literal('exact'),
-  Type.Literal('moved'),
-  Type.Literal('drifted'),
-  Type.Literal('detached'),
-  Type.Literal('unanchored'),
-])
-export type AnchorConfidence = Static<typeof AnchorConfidenceSchema>
-
-/**
- * The node a pin was dropped on, as it looked at authoring time.
- *
- * Every field here is a HINT, not a fact. Studio node ids are
- * `relFile:line:col` (`docs/features/studio-import.md` → "Composite node ids"),
- * so `nodeId` stops resolving as soon as anything above it in the file changes
- * — which is most edits. The other three fields exist to re-find the node when
- * that happens:
- *
- *   - `indexPath` survives edits ABOVE the node (adding a line, renaming an
- *     import) because it is structural, not positional.
- *   - `moduleId` rejects a match that landed on a different KIND of node.
- *   - `textSnippet` is the tiebreaker that separates "this moved" from "this
- *     was replaced by something else at the same address".
- */
-export const CommentNodeHintSchema = Type.Object({
-  /** `relFile:line:col` as of authoring. Expect it to be stale. */
-  nodeId: Type.String(),
-  /** Child-index path from the page root, e.g. `[0, 2, 1]`. */
-  indexPath: Type.Array(Type.Number()),
-  /** The node's module at authoring time — `base.text`, `studio.instance`, … */
-  moduleId: Type.String(),
-  /** First `TEXT_SNIPPET_MAX` chars of its text, or `''` for a non-text node. */
-  textSnippet: Type.String(),
-})
-export type CommentNodeHint = Static<typeof CommentNodeHintSchema>
+import { NodeHintSchema } from '@core/studio-anchor'
 
 /**
  * Where a thread lives.
@@ -111,7 +52,7 @@ export const CommentAnchorSchema = Type.Object({
   /** Frame-local y, in px. */
   dy: Type.Number(),
   /** The element under the cursor at drop time, or `null` for an empty spot. */
-  node: Type.Union([CommentNodeHintSchema, Type.Null()]),
+  node: Type.Union([NodeHintSchema, Type.Null()]),
 })
 export type CommentAnchor = Static<typeof CommentAnchorSchema>
 
@@ -178,9 +119,6 @@ export const CommentsFileSchema = Type.Object({
   threads: withFallback(Type.Array(CommentThreadSchema), []),
 })
 export type CommentsFile = Static<typeof CommentsFileSchema>
-
-/** How much of a node's text is kept as the re-anchoring tiebreaker. */
-export const TEXT_SNIPPET_MAX = 80
 
 export function createCommentsFile(): CommentsFile {
   return { version: 1, nextSeq: 1, threads: [] }

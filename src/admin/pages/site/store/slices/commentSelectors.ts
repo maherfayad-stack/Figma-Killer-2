@@ -23,7 +23,8 @@
  * `comment-selector-stability.test.ts` is the gate.
  */
 import type { EditorStore } from '@site/store/types'
-import { resolveCommentAnchor, type AnchorConfidence, type CommentThread } from '@core/studio-comments'
+import { resolveNodeAnchor, type AnchorConfidence } from '@core/studio-anchor'
+import type { CommentThread } from '@core/studio-comments'
 import type { CommentFilter } from './commentsSlice'
 
 /** Stable "nothing here" reference — an inline `[]` would defeat every narrow selector below. */
@@ -100,7 +101,7 @@ export function visibleThreads(
  *
  * A thread that never named an element resolves `unanchored`, NOT `detached`
  * — a pin dropped on empty canvas has lost nothing and must not wear a stale
- * badge. `resolveCommentAnchor` draws that line; this function must not
+ * badge. `resolveNodeAnchor` draws that line; this function must not
  * short-circuit around it.
  */
 export function selectThreadAnchorConfidence(s: EditorStore, thread: CommentThread): AnchorConfidence {
@@ -108,5 +109,5 @@ export function selectThreadAnchorConfidence(s: EditorStore, thread: CommentThre
   if (!thread.anchor.node) return 'unanchored'
   if (!pageId) return 'unanchored'
   const page = s.site?.pages.find((candidate) => candidate.id === pageId)
-  return resolveCommentAnchor(thread.anchor.node, page ?? null).confidence
+  return resolveNodeAnchor(thread.anchor.node, page ?? null).confidence
 }
