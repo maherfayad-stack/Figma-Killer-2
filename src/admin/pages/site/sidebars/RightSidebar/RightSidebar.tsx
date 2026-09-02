@@ -1,6 +1,7 @@
 import { useEffect, useRef, type CSSProperties } from 'react'
 import { selectRightSidebarExpanded, useEditorStore } from '@site/store/store'
 import { PropertiesPanel } from '@site/panels/PropertiesPanel'
+import { PrototypePanel } from '@site/panels/PrototypePanel'
 import { CommentsPanel } from '@site/panels/CommentsPanel'
 import { SidebarResizeHandle } from '@admin/shared/SidebarResizeHandle'
 import { SegmentedControl } from '@ui/components/SegmentedControl'
@@ -9,6 +10,16 @@ import styles from './RightSidebar.module.css'
 
 const TABS: ReadonlyArray<{ value: RightSidebarTab; label: string }> = [
   { value: 'properties', label: 'Properties' },
+  { value: 'comments', label: 'Comments' },
+]
+
+/**
+ * The same two slots while the board is in prototype mode. The left tab is the
+ * inspector, whatever the inspector currently is — a separate `prototype` tab
+ * value would be a third state for a choice that only ever has two.
+ */
+const PROTOTYPE_TABS: ReadonlyArray<{ value: RightSidebarTab; label: string }> = [
+  { value: 'properties', label: 'Prototype' },
   { value: 'comments', label: 'Comments' },
 ]
 
@@ -66,13 +77,22 @@ export function RightSidebar({ mode }: RightSidebarProps) {
   const selectedNodeId = useEditorStore((s) => s.selectedNodeId)
   const selectedSelectorClassId = useEditorStore((s) => s.selectedSelectorClassId)
   const hasFrameSelection = useEditorStore((s) => s.selectedFrameIds.length > 0)
+  const boardMode = useEditorStore((s) => s.boardMode)
 
+  /**
+   * Prototype mode REPLACES the inspector rather than adding a third tab, the
+   * way Figma's Design/Prototype tabs do. It is also always available while the
+   * mode is on — unlike Properties, which needs a selection — because "what
+   * links leave this screen" is a useful answer with nothing selected at all.
+   */
+  const prototypeAvailable = mode === 'site' && boardMode === 'prototype'
   const commentsAvailable = mode === 'site' && commentsPaneOpen
-  const propertiesAvailable = mode === 'site' && isDocked && sitePropertiesExpanded
-  const bothAvailable = commentsAvailable && propertiesAvailable
+  const propertiesAvailable = mode === 'site' && !prototypeAvailable && isDocked && sitePropertiesExpanded
+  const bothAvailable = commentsAvailable && (propertiesAvailable || prototypeAvailable)
   // A tab can only be active if its panel is there at all, so a stale
   // `rightSidebarTab` can never blank the sidebar.
-  const showComments = commentsAvailable && (!propertiesAvailable || rightSidebarTab === 'comments')
+  const showComments =
+    commentsAvailable && ((!propertiesAvailable && !prototypeAvailable) || rightSidebarTab === 'comments')
 
   /**
    * Selecting something on the canvas puts the sidebar on Properties.
@@ -93,7 +113,7 @@ export function RightSidebar({ mode }: RightSidebarProps) {
   // stays there, only changing when the user explicitly toggles
   // open/close (which the CSS transition in RightSidebar.module.css
   // animates smoothly).
-  const isExpanded = commentsAvailable || (mode === 'site' ? sitePropertiesExpanded : false)
+  const isExpanded = commentsAvailable || prototypeAvailable || (mode === 'site' ? sitePropertiesExpanded : false)
 
   const panelWidth = isExpanded ? propertiesPanel.width : 0
 
@@ -132,7 +152,7 @@ export function RightSidebar({ mode }: RightSidebarProps) {
           <div className={styles.tabs} data-testid="right-sidebar-tabs">
             <SegmentedControl<RightSidebarTab>
               value={showComments ? 'comments' : 'properties'}
-              options={TABS}
+              options={prototypeAvailable ? PROTOTYPE_TABS : TABS}
               onChange={setRightSidebarTab}
               fullWidth
               aria-label="Right sidebar panel"
@@ -143,6 +163,10 @@ export function RightSidebar({ mode }: RightSidebarProps) {
         {showComments ? (
           <div className={styles.panelSlot} data-testid="right-sidebar-panel-slot">
             <CommentsPanel />
+          </div>
+        ) : prototypeAvailable ? (
+          <div className={styles.panelSlot} data-testid="right-sidebar-panel-slot">
+            <PrototypePanel />
           </div>
         ) : (
           mode === 'site' &&

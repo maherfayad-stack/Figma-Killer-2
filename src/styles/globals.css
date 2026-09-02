@@ -321,6 +321,21 @@
     /* The dot on a pin whose anchored element no longer resolves. Shares
        --warning's meaning: not broken, but do not trust it. */
     --canvas-comment-pin-stale: #ff5c5c;
+    /* Prototype connectors (prototype mode only — design mode never draws one,
+       and the publisher never sees one). A fifth canvas identity, deliberately
+       distinct from the green selection ring, magenta hover ring, amber comment
+       pin and orange selector ring: a board can be wearing all of them at once,
+       and a flow line has to stay readable across arbitrary page content at any
+       zoom. Electric blue is the remaining slot that reads as "connection"
+       rather than "attention". */
+    --canvas-prototype-link: #38bdf8;
+    /* A link Studio READ OUT OF the user's real navigation code, rather than
+       one the designer drew. Desaturated on purpose: it is not editable on the
+       board, and it must not look like something you can drag. */
+    --canvas-prototype-link-code: #7d8fa3;
+    /* The rubber band mid-drag. Same hue as a committed link, dimmer, because
+       it is not a link yet and abandoning the drag must leave nothing behind. */
+    --canvas-prototype-link-draft: #7dd3fc;
     --tree-drop-line: #5eead4;
     --tree-drop-line-shadow: rgba(94, 234, 212, 0.18);
     --tree-drop-inside-bg: rgba(94, 234, 212, 0.08);

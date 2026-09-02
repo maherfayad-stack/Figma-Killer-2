@@ -35,6 +35,9 @@ interface AgentSnapshotCaptureRequest {
  */
 type CanvasView = 'design' | 'live'
 
+/** What the board is for. See `boardMode` below. */
+export type BoardMode = 'design' | 'prototype'
+
 interface CanvasSlice {
   zoom: number
   panX: number
@@ -61,6 +64,22 @@ interface CanvasSlice {
   canvasMode: CanvasMode
   /** Current canvas render mode — 'design' (multi-breakpoint canvas) or 'live' (single real-size editable frame) */
   canvasView: CanvasView
+  /**
+   * What the board is FOR right now — the EDITING mode, orthogonal to
+   * `canvasView` above, which is the PLAYER (where frames render and at what
+   * size).
+   *
+   *   - `design`    — everything as it has always been. Prototype connectors
+   *                   are not drawn and nothing on the board is about them.
+   *   - `prototype` — connectors are drawn, the inspector shows link
+   *                   properties instead of styles, and dragging from an
+   *                   element's `+` authors a link.
+   *
+   * Two modes rather than a checkbox because the gestures genuinely collide:
+   * in prototype mode a drag from an element means "link this to that", which
+   * in design mode means "move this".
+   */
+  boardMode: BoardMode
   /**
    * When true, the site's runtime scripts are bundled and injected into the
    * editable canvas iframes (both 'design' and 'live' views), so authored
@@ -103,6 +122,7 @@ interface CanvasSlice {
   setActivePage: (pageId: string) => void
   setCanvasMode: (mode: CanvasMode) => void
   setCanvasView: (view: CanvasView) => void
+  setBoardMode: (mode: BoardMode) => void
   /** Toggle (or set) whether runtime scripts run inside the editable iframes. */
   setRunScripts: (run: boolean) => void
   /** Toggle whether a breakpoint's design-canvas frame is collapsed to its slim header. */
@@ -146,6 +166,7 @@ export const createCanvasSlice: EditorStoreSliceCreator<CanvasSlice> = (set, get
   previousActivePageId: null,
   canvasMode: 'select',
   canvasView: 'design',
+  boardMode: 'design',
   runScripts: false,
   collapsedBreakpointIds: [],
   agentSnapshotCaptureRequest: null,
@@ -172,6 +193,16 @@ export const createCanvasSlice: EditorStoreSliceCreator<CanvasSlice> = (set, get
   setCanvasMode: (mode) => set({ canvasMode: mode }),
 
   setCanvasView: (view) => set({ canvasView: view }),
+
+  setBoardMode: (mode) => {
+    if (Object.is(get().boardMode, mode)) return
+    set((s) => {
+      s.boardMode = mode
+      // The inspector is per-mode, so arriving in prototype mode should put the
+      // user on the panel they came for rather than leaving them on Comments.
+      if (mode === 'prototype') s.rightSidebarTab = 'properties'
+    })
+  },
 
   setRunScripts: (run) => set({ runScripts: run }),
 

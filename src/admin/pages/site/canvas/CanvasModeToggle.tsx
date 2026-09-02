@@ -20,6 +20,8 @@ import { useEditorStore } from '@site/store/store'
 import type { Breakpoint } from '@core/page-tree'
 import type { RuntimeScriptStatus } from './useRuntimeScriptBuild'
 import { CursorMinimalSolidIcon } from 'pixel-art-icons/icons/cursor-minimal-solid'
+import { CursorClickSolidIcon } from 'pixel-art-icons/icons/cursor-click-solid'
+import { LinkIcon } from 'pixel-art-icons/icons/link'
 import { EyeSolidIcon } from 'pixel-art-icons/icons/eye-solid'
 import { CodeIcon } from 'pixel-art-icons/icons/code'
 import { ReloadIcon } from 'pixel-art-icons/icons/reload'
@@ -56,6 +58,10 @@ export function CanvasModeToggle({ scriptStatus, onRefreshScripts, peek = false 
   const setActiveBreakpoint = useEditorStore((s) => s.setActiveBreakpoint)
   const runScripts = useEditorStore((s) => s.runScripts)
   const setRunScripts = useEditorStore((s) => s.setRunScripts)
+  const boardMode = useEditorStore((s) => s.boardMode)
+  const setBoardMode = useEditorStore((s) => s.setBoardMode)
+  const playMode = useEditorStore((s) => s.playMode)
+  const setPlayMode = useEditorStore((s) => s.setPlayMode)
 
   // The toggle lives inside the canvas surface, which has its own click /
   // keyboard handlers (deselect, shortcuts, etc.). Stop propagation so the
@@ -103,6 +109,48 @@ export function CanvasModeToggle({ scriptStatus, onRefreshScripts, peek = false 
           </button>
         </Tooltip>
       </div>
+
+      {/* Prototype mode — a BOARD mode, orthogonal to the Design/Live view
+          above. Only offered on the board: connectors run between frames, and
+          live mode shows one frame. */}
+      {view === 'design' && (
+        <>
+          <span className={styles.divider} aria-hidden="true" />
+          <Tooltip content="Prototype mode (draw links between screens)">
+            <button
+              type="button"
+              aria-pressed={boardMode === 'prototype'}
+              aria-label="Prototype"
+              data-testid="canvas-prototype-toggle"
+              className={cn(styles.tab, boardMode === 'prototype' && styles.tabActive)}
+              onClick={() => setBoardMode(boardMode === 'prototype' ? 'design' : 'prototype')}
+            >
+              <LinkIcon size={14} aria-hidden="true" />
+            </button>
+          </Tooltip>
+        </>
+      )}
+
+      {/* Play — ARMS the player in live mode. Without this, a click in live mode
+          would mean both "select this node" and "follow this link", which is not
+          resolvable. Disarmed, live mode stays exactly as editable as before. */}
+      {view === 'live' && (
+        <>
+          <span className={styles.divider} aria-hidden="true" />
+          <Tooltip content="Play (clicks follow prototype links instead of selecting)">
+            <button
+              type="button"
+              aria-pressed={playMode}
+              aria-label="Play"
+              data-testid="canvas-play-toggle"
+              className={cn(styles.tab, playMode && styles.tabActive)}
+              onClick={() => setPlayMode(!playMode)}
+            >
+              <CursorClickSolidIcon size={14} aria-hidden="true" />
+            </button>
+          </Tooltip>
+        </>
+      )}
 
       {/* Run scripts toggle — injects the site's bundled runtime scripts into
           the editable frames so authored behaviour runs while editing. */}

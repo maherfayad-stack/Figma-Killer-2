@@ -20,6 +20,7 @@ import { createLayoutsSlice } from './slices/layoutsSlice'
 import { createSaveTrackingSlice } from './slices/saveTrackingSlice'
 import { createBoardSlice } from './slices/boardSlice'
 import { createCommentsSlice } from './slices/commentsSlice'
+import { createPrototypeSlice } from './slices/prototypeSlice'
 import { selectActiveBoard } from './slices/boardSelectors'
 import { createLocalizedPageSlice, localizedPageKey } from './slices/localizedPageSlice'
 import { bindPluginRuntimeStoreApi } from '@core/plugins/runtime'
@@ -85,6 +86,7 @@ export const useEditorStore = create<EditorStore>()(
         ...createSaveTrackingSlice(...args),
         ...createBoardSlice(...args),
         ...createCommentsSlice(...args),
+        ...createPrototypeSlice(...args),
         ...createLocalizedPageSlice(...args),
       }),
       { enableAutoFreeze: true },
