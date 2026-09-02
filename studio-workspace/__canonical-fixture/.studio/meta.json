@@ -11,5 +11,8 @@
   },
   "approvedMcpServers": [
     "design-system"
+  ],
+  "approvedRegisteredMcpServers": [
+    "figma"
   ]
 }

@@ -226,7 +226,7 @@ export function createLifecycleActions({
     // always has; it only wipes when replaying the stack against the new
     // tree would silently no-op or mint a phantom key, matching `loadSite`'s
     // own reasoning file-for-file (`historyPreservation.ts`).
-    patchPages: ({ pages, removedPageIds = [] }) => {
+    patchPages: ({ pages, removedPageIds = [], styleRules, conditions }) => {
       const { site } = get()
       if (!site) return
       if (pages.length === 0 && removedPageIds.length === 0) return
@@ -269,7 +269,21 @@ export function createLifecycleActions({
 
       if (upsertedIds.size === 0 && actuallyRemovedIds.size === 0) return
 
-      const nextSite: SiteDocument = { ...site, pages: nextPages }
+      // The project-wide registries the same reload recomputed. A re-parsed
+      // page's `classIds` name rules from the registry computed WITH it, so
+      // carrying the previous one forward resolves those nodes to no class at
+      // all (`NodeRenderer`'s `getCanvasNodeClassName`) — the page renders
+      // unstyled and collapsed, which is what "the canvas breaks until I
+      // refresh" was. Replaced wholesale, not merged: the server's answer is a
+      // full recompute from disk, and a merge would resurrect rules the edit
+      // deleted. Absent means the caller had nothing fresher — keep what's
+      // there rather than blanking a working registry.
+      const nextSite: SiteDocument = {
+        ...site,
+        pages: nextPages,
+        ...(styleRules ? { styleRules } : {}),
+        ...(conditions ? { conditions } : {}),
+      }
       reconcileSiteExplorerInPlace(nextSite)
       // Track C5 — computed against the POST-patch site, pure, before `set()`,
       // same ordering `loadSite` uses. See this method's own doc for why a

@@ -14,7 +14,7 @@
  * reintroduce the bundling concern above — it is erased at compile time;
  * the concern is VALUE imports of heavy modules like `usePersistence` itself.
  */
-import type { Page } from '@core/page-tree'
+import type { ConditionDef, Page, StyleRule } from '@core/page-tree'
 
 /**
  * Fired on `window` after the editor reloads the site document (manual
@@ -78,6 +78,10 @@ export const CMS_SITE_PAGES_PATCH_EVENT = 'cms-site-pages-patch'
 export interface CmsSitePagesPatchDetail {
   pages: Page[]
   removedPageIds: string[]
+  /** The project-wide style registry from the same reload — forwarded to `patchPages`, which needs it to render the new pages against the stylesheet they were parsed with. */
+  styleRules?: Record<string, StyleRule>
+  /** The project-wide condition set from the same reload. */
+  conditions?: ConditionDef[]
 }
 
 /** Dispatches `CMS_SITE_PAGES_PATCH_EVENT`. No-op (and nothing retained) outside a browser or when nothing is listening — see this event's own doc for why, unlike `requestCmsSiteReload`, there is no "pending" fallback. */

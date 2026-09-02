@@ -232,7 +232,11 @@ describe('setJsxClassName', () => {
   })
 
   describe('CSS Modules binding — className={styles.card}', () => {
-    it('refuses css-module-binding when the identifier is a default import from a *.module.css file', () => {
+    // ADD used to refuse here too. That was over-application of a rule about
+    // DECLARATIONS to a question about ATTACHMENT, and it made every element
+    // on an agent-authored page (which is every element — the agent writes
+    // `.module.css` for everything) unable to take a class at all.
+    it('ADDS a token by wrapping the binding in a template literal', () => {
       const source = [
         "import styles from './Card.module.css'",
         'export function Card() {',
@@ -245,8 +249,59 @@ describe('setJsxClassName', () => {
 
       const result = setJsxClassName({ file, line, col, add: ['x'], remove: [] })
 
+      expect(result.ok).toBe(true)
+      expect(fs.readFileSync(file, 'utf8')).toContain('className={`${styles.card} x`}')
+    })
+
+    it('adds several tokens at once, and never introduces a newline', () => {
+      const source = [
+        "import styles from './Card.module.css'",
+        'export function Card() {',
+        '  return <div className={styles.card}>Hi</div>',
+        '}',
+        '',
+      ].join('\n')
+      const file = writeFixture('css-module-multi.tsx', source)
+      const { line, col } = locateTag(source, 'div')
+
+      expect(setJsxClassName({ file, line, col, add: ['x', 'y'], remove: [] }).ok).toBe(true)
+      const written = fs.readFileSync(file, 'utf8')
+      expect(written).toContain('className={`${styles.card} x y`}')
+      // Node ids are `rel:line:col`; a newline here would shift every node
+      // below this one in the same file.
+      expect(written.split('\n').length).toBe(source.split('\n').length)
+    })
+
+    it('still refuses to REMOVE a token the module produces', () => {
+      const source = [
+        "import styles from './Card.module.css'",
+        'export function Card() {',
+        '  return <div className={styles.card}>Hi</div>',
+        '}',
+        '',
+      ].join('\n')
+      const file = writeFixture('css-module-remove.tsx', source)
+      const { line, col } = locateTag(source, 'div')
+
+      const result = setJsxClassName({ file, line, col, add: [], remove: ['card'] })
+
       expect(result.ok).toBe(false)
       if (!result.ok) expect(result.refusal.reason).toBe('css-module-binding')
+      expect(fs.readFileSync(file, 'utf8')).toBe(source)
+    })
+
+    it('is a no-op when there is nothing to add or remove', () => {
+      const source = [
+        "import styles from './Card.module.css'",
+        'export function Card() {',
+        '  return <div className={styles.card}>Hi</div>',
+        '}',
+        '',
+      ].join('\n')
+      const file = writeFixture('css-module-noop.tsx', source)
+      const { line, col } = locateTag(source, 'div')
+
+      expect(setJsxClassName({ file, line, col, add: [], remove: [] }).ok).toBe(true)
       expect(fs.readFileSync(file, 'utf8')).toBe(source)
     })
 

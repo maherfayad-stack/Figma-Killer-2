@@ -11,7 +11,7 @@
  */
 import { useRef, useState } from 'react'
 import { SearchBar } from '@ui/components/SearchBar'
-import { isGeneratedClassLocked, styleRuleSelector } from '@core/page-tree'
+import { isGeneratedClassLocked, styleRuleDisplaySelector } from '@core/page-tree'
 import type { StyleRule } from '@core/page-tree'
 import { StyleRuleComposer } from './StyleRuleComposer'
 import { StyleCategoryRail } from './StyleCategoryRail'
@@ -35,7 +35,7 @@ export function SelectorInspector({ cls, activeBreakpointId }: SelectorInspector
   const scrollRef = useRef<HTMLDivElement>(null)
   const [styleQuery, setStyleQuery] = useState('')
   const clearStyleQuery = () => setStyleQuery('')
-  const selectorLabel = styleRuleSelector(cls)
+  const selectorLabel = styleRuleDisplaySelector(cls)
 
   // Active section + click-to-scroll behaviour (shared with StyleSurface).
   const { activeId: activeAnchorId, scrollTo: handleSectionClick } = useScrollSpy(scrollRef, {

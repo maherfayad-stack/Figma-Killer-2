@@ -1,5 +1,5 @@
 import { useId, useState, type FormEvent } from 'react'
-import { styleRuleSelector, type StyleRule } from '@core/page-tree'
+import { styleRuleDisplaySelector, type StyleRule } from '@core/page-tree'
 import { Button } from '@ui/components/Button'
 import { Dialog } from '@ui/components/Dialog'
 import { Input } from '@ui/components/Input'
@@ -122,7 +122,7 @@ export function DeleteSelectorDialog({
   onCancel: () => void
   onDelete: () => void
 }) {
-  const selectorLabel = styleRuleSelector(cls)
+  const selectorLabel = styleRuleDisplaySelector(cls)
   const isAmbient = cls.kind === 'ambient'
   const noun = isAmbient ? 'selector' : 'class'
 

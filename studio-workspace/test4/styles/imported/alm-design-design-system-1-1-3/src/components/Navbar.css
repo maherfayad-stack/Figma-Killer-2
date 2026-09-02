@@ -1,0 +1,403 @@
+/* ── root ── */
+.navbar {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* shared icon sizing for raw line-icons */
+.navbar__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+}
+.navbar__icon svg { width: 100%; height: 100%; display: block; }
+
+/* ── surfaces ── */
+/* iOS default — the "scroll edge effect": a frosted blur layer that is opaque
+   under the status bar/toolbar and fades to transparent at the bottom, so
+   content scrolls cleanly out from under it. Rendered behind the content. */
+.navbar--ios.navbar--default { position: relative; }
+.navbar--ios.navbar--default > * { position: relative; z-index: 1; }
+.navbar--ios.navbar--default::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 -8% 0;
+  z-index: 0;
+  pointer-events: none;
+  background: var(--overlay-navbar);
+  backdrop-filter: blur(20px) saturate(1.8);
+  -webkit-backdrop-filter: blur(20px) saturate(1.8);
+  -webkit-mask-image: linear-gradient(180deg, #000 0%, #000 55%, transparent 100%);
+  mask-image: linear-gradient(180deg, #000 0%, #000 55%, transparent 100%);
+}
+.navbar--android.navbar--default {
+  background: var(--background-base-default);
+  border-bottom: 1px solid var(--border-base-subtle);
+  padding-bottom: var(--space-sm);
+}
+.navbar--gradient {
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.4) 0%, rgba(0, 0, 0, 0) 100%);
+}
+.navbar--overlay {
+  background: var(--overlay-default);
+}
+
+/* ── status bar ── */
+.navbar__status {
+  display: flex;
+  align-items: center;
+  color: var(--text-base-default);
+}
+.navbar__status--inverted { color: var(--text-base-inverted-static); }
+
+.navbar__status-time {
+  font-family: var(--type-subtitle-family);
+  font-size: var(--type-subtitle-size);
+  font-weight: var(--type-subtitle-bold-weight);
+  line-height: var(--type-subtitle-lh);
+  white-space: nowrap;
+}
+.navbar__status-levels { display: flex; align-items: center; gap: var(--space-xs); }
+.navbar__status-levels svg { display: block; }
+
+/* iOS — time left, dynamic island centre, levels right */
+.navbar__status--ios {
+  justify-content: space-between;
+  gap: var(--space-sm);
+  padding: var(--space-md) var(--space) var(--space-sm);
+}
+.navbar__status--ios .navbar__status-time { flex: 1; }
+.navbar__status--ios .navbar__status-levels { flex: 1; justify-content: flex-end; }
+.navbar__status-island {
+  width: 125px;
+  height: 30px;
+  border-radius: var(--rounded-full);
+  background: var(--icon-base-default-static);
+  flex-shrink: 0;
+}
+.navbar__status--ios.navbar__status--inverted .navbar__status-island { background: rgba(0, 0, 0, 0.5); }
+
+/* Android — right-aligned cluster */
+.navbar__status--android {
+  justify-content: flex-end;
+  gap: var(--space-sm);
+  height: 24px;
+  padding: var(--space-xs) var(--space) 0;
+}
+.navbar__status--android .navbar__status-time {
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-lh);
+}
+
+/* ── toolbar ── */
+.navbar__toolbar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  box-sizing: border-box;
+}
+.navbar__toolbar--ios { height: 44px; padding: 0 var(--space); }
+.navbar__toolbar--android { height: 56px; padding: 0 var(--space); }
+
+.navbar__toolbar-lhs,
+.navbar__toolbar-rhs {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-shrink: 0;
+  z-index: 1;
+}
+.navbar__toolbar-rhs { margin-inline-start: auto; }
+
+/* centred title — absolutely positioned so it stays centred regardless of side widths */
+.navbar__title {
+  position: absolute;
+  left: 68px;
+  right: 68px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+.navbar__title-text {
+  font-family: var(--type-body-semibold-family);
+  font-size: var(--type-body-size);
+  font-weight: var(--type-body-semibold-weight);
+  line-height: var(--type-body-lh);
+  color: var(--text-base-default);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.navbar__subtitle-text {
+  font-family: var(--type-caption-regular-family);
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-regular-weight);
+  line-height: var(--type-caption-lh);
+  color: var(--text-base-subtext);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.navbar__title--inverted .navbar__title-text,
+.navbar__title--inverted .navbar__subtitle-text { color: var(--text-base-inverted-static); }
+
+/* ── iOS toolbar variants ── */
+
+/* Large — compact bar above an expanded headline */
+.navbar__toolbar--large {
+  flex-direction: column;
+  align-items: stretch;
+  height: auto;
+  gap: var(--space);
+  padding-top: var(--space-sm);
+  padding-bottom: var(--space-sm);
+}
+.navbar__toolbar-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 44px;
+}
+.navbar__large-title {
+  margin: 0;
+  font-family: var(--type-headline-family);
+  font-size: var(--type-headline-size);
+  font-weight: var(--type-headline-weight);
+  line-height: var(--type-headline-lh);
+  letter-spacing: var(--type-headline-ls);
+  color: var(--text-base-default);
+}
+.navbar__large-title--inverted { color: var(--text-base-inverted-static); }
+
+/* Flights / Stays — back · itinerary pill · trailing actions */
+.navbar__toolbar--itinerary { gap: var(--space-sm); }
+
+.navbar__itinerary {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  height: 44px;
+  padding: 0 var(--space-md);
+  border: none;
+  border-radius: var(--rounded-full);
+  cursor: pointer;
+  box-sizing: border-box;
+  transition: background 0.12s ease;
+}
+.navbar__itinerary--default {
+  background: var(--liquid-glass-bg);
+  backdrop-filter: var(--liquid-glass-filter);
+  -webkit-backdrop-filter: var(--liquid-glass-filter);
+  box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.8), 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+.navbar__itinerary--dim {
+  background: rgba(0, 0, 0, 0.35);
+  backdrop-filter: var(--liquid-glass-filter);
+  -webkit-backdrop-filter: var(--liquid-glass-filter);
+}
+
+.navbar__itin-route,
+.navbar__itin-sub,
+.navbar__itin-pax {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  max-width: 100%;
+}
+.navbar__itin-sub { gap: var(--space-xs); }
+.navbar__itin-pax { gap: 2px; }
+.navbar__itin-route .navbar__icon { width: 12px; height: 12px; }
+.navbar__itin-pax .navbar__icon { width: 12px; height: 12px; }
+
+.navbar__itin-code,
+.navbar__itin-title {
+  font-family: var(--type-body-semibold-family);
+  font-size: var(--type-body-size);
+  font-weight: var(--type-body-semibold-weight);
+  line-height: var(--type-body-lh);
+  color: var(--text-base-default);
+  white-space: nowrap;
+}
+.navbar__itin-sub {
+  font-family: var(--type-caption-regular-family);
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-regular-weight);
+  line-height: var(--type-caption-lh);
+  color: var(--text-base-subtext);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.navbar__itin-dot { color: var(--text-base-subtext); }
+
+.navbar__itinerary--dim .navbar__itin-code,
+.navbar__itinerary--dim .navbar__itin-title { color: var(--text-base-inverted-static); }
+.navbar__itinerary--dim .navbar__itin-sub,
+.navbar__itinerary--dim .navbar__itin-dot { color: var(--text-base-inverted-static); }
+
+/* Segmented control — back · full-width segmented control · close, 8px gaps */
+.navbar__toolbar--segmented { gap: var(--space-sm); }
+.navbar__toolbar--segmented .navbar__toolbar-center {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+}
+.navbar__toolbar--segmented .navbar__toolbar-center > * {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Search — full-width search field row */
+.navbar__toolbar--search {
+  height: auto;
+  padding-top: var(--space-sm);
+  padding-bottom: var(--space-sm);
+}
+
+/* ── Android toolbar variants ── */
+
+/* Large — back · headline title (fills) · trailing actions, single row */
+.navbar__toolbar--android-large { gap: var(--space-md); }
+.navbar__android-large-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-family: var(--type-headline-family);
+  font-size: var(--type-headline-size);
+  font-weight: var(--type-headline-weight);
+  line-height: var(--type-headline-lh);
+  letter-spacing: var(--type-headline-ls);
+  color: var(--text-base-default);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Flights / Stays — centred itinerary text (no glass pill) */
+.navbar__android-itin-btn {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+.navbar__android-itin {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-width: 0;
+  max-width: 100%;
+}
+.navbar__itin-caret { display: flex; width: 16px; height: 16px; flex-shrink: 0; }
+.navbar__itin-caret .navbar__icon { width: 16px; height: 16px; }
+
+/* android plain icon button */
+.navbar__icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--icon-base-default);
+  border-radius: var(--rounded-full);
+}
+.navbar--gradient .navbar__icon-btn,
+.navbar--overlay .navbar__icon-btn { color: var(--icon-base-inverted-static); }
+
+/* ── chip row ── */
+.navbar__chips {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+.navbar__chips::-webkit-scrollbar { display: none; }
+
+/* iOS glass chip */
+.navbar__glass-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  height: 32px;
+  min-width: 32px;
+  padding: 0 var(--space-sm);
+  border: none;
+  border-radius: var(--rounded-full);
+  cursor: pointer;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  transition: background 0.12s ease;
+}
+.navbar__glass-chip--icon-only { padding: 0; width: 32px; }
+
+.navbar__glass-chip-icon { display: flex; width: 16px; height: 16px; flex-shrink: 0; }
+.navbar__glass-chip-icon svg,
+.navbar__glass-chip-chevron svg { width: 100%; height: 100%; display: block; }
+.navbar__glass-chip-chevron { display: flex; width: 16px; height: 16px; flex-shrink: 0; }
+.navbar__glass-chip-label {
+  font-family: var(--type-caption-semibold-family);
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-semibold-weight);
+  line-height: var(--type-caption-lh);
+  white-space: nowrap;
+}
+
+.navbar__glass-chip--default {
+  background: var(--liquid-glass-bg);
+  backdrop-filter: var(--liquid-glass-filter);
+  -webkit-backdrop-filter: var(--liquid-glass-filter);
+  box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.8), 0 1px 3px rgba(0, 0, 0, 0.05);
+  color: var(--icon-base-default);
+}
+.navbar__glass-chip--default .navbar__glass-chip-label { color: var(--text-base-default); }
+.navbar__glass-chip--default:active { background: rgba(255, 255, 255, 0.65); }
+
+.navbar__glass-chip--dim {
+  background: rgba(0, 0, 0, 0.35);
+  backdrop-filter: var(--liquid-glass-filter);
+  -webkit-backdrop-filter: var(--liquid-glass-filter);
+  color: var(--icon-base-inverted-static);
+}
+.navbar__glass-chip--dim .navbar__glass-chip-label { color: var(--text-base-inverted-static); }
+.navbar__glass-chip--dim:active { background: rgba(0, 0, 0, 0.5); }
+
+.navbar__glass-chip--selected.navbar__glass-chip--default { background: var(--background-base-default); }
+
+/* ── segmented control ── */
+.navbar__segmented { padding: var(--space-sm) var(--space); }
+
+/* ── dark mode ── */
+@media (prefers-color-scheme: dark) {
+  .navbar__glass-chip--default:active { background: rgba(255, 255, 255, 0.18); }
+}
+:root[data-theme='dark'] .navbar__glass-chip--default:active { background: rgba(255, 255, 255, 0.18); }
+
+/* ── reduced motion ── */
+@media (prefers-reduced-motion: reduce) {
+  .navbar__glass-chip { transition: none; }
+}

@@ -7,31 +7,32 @@
  * own doc comment) — so this trigger is safe to show regardless of which
  * provider the active conversation is using.
  *
- * **All four modes are real, including Bypass** — resolved from an earlier,
- * mistaken refusal (see `claudeCli.ts`'s `resolvePermissionMode` doc
- * comment): a user deliberately selecting Bypass IS the consent WS-12's
- * "never inject a bypassing flag on its own" rule protects, not something
- * that rule forbids. D5 §11.5's three guard rails on Bypass, each owned by
- * exactly one piece of code:
+ * **Bypass is the DEFAULT mode**, not an escalation from one — see
+ * `agentSessionControls.ts`'s initializer for the reasoning and for the
+ * boundaries it does not move. That retires D5 §11.5's rail 1
+ * ("non-persisting"), which existed to stop Studio arriving at Bypass without
+ * the user; it is now where the user is put deliberately. The other two rails
+ * survive, one of them altered:
  *
- *   1. **Non-persisting** — `agentSessionControls.ts` initializes
- *      `agentPermissionMode` to `'acceptEdits'` at store creation (covers
- *      reload); this component resets it to that same mode on every live
- *      Studio-project switch (covers switching without a remount). Nothing
- *      anywhere reads it from or writes it to storage. The rail is "the initial
- *      value is never Bypass", which holds for any non-Bypass default.
- *   2. **Visibly indicated while active** — the trigger itself switches to
- *      the `danger` tone (foreground text/icon, never a filled block — the
- *      earlier banner design was rejected for reading like a settings form
- *      bolted onto the composer) and carries a warning glyph + a descriptive
- *      accessible name, for as long as `agentPermissionMode ===
- *      'bypassPermissions'`. Sits in the composer's own control row (not the
- *      scrollable message thread), so it can't scroll out of view, and it's
- *      permanent — not a one-time toast.
- *   3. **Still trust-tier-bound** — owned entirely server-side
+ *   1. **Visibly indicated** — the trigger carries a warning glyph and a
+ *      descriptive accessible name whenever the mode is Bypass, in the
+ *      composer's own control row (not the scrollable thread), so it cannot
+ *      scroll out of view. The `danger` TONE was dropped when Bypass became
+ *      the default: a red that is on every session for every user is not an
+ *      indication, it is wallpaper, and it drains the colour of meaning
+ *      everywhere else it is used. The trigger's own label already reads
+ *      "Bypass"; the glyph marks it as the loosest of the four. The menu ITEM
+ *      keeps `danger`, where it is still doing real work — distinguishing the
+ *      options from each other at the moment of choosing.
+ *   2. **Still trust-tier-bound** — owned entirely server-side
  *      (`studio_install_deps`'s trust check in `projectTools.ts`, which has
  *      no permission-mode parameter to read in the first place); nothing in
  *      this component or in Bypass mode itself can touch it.
+ *
+ * What has NOT changed, and must not: the server still never resolves to
+ * Bypass on its own (`claudeCliPermissionMode.ts`'s
+ * `assertBypassCameFromRequest`). It reaches argv only because this client
+ * sent it.
  *
  * Also renders `RestartSessionButton` — a second, unrelated composer-row
  * control that happens to share this file because it is likewise a
@@ -46,7 +47,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useAdminUi } from '@admin/state/adminUi'
 import { useAgentStore } from '@admin/ai/useAgentStore'
-import type { AgentSlice } from '@site/agent'
+import { agentSessionControlsInitialState, type AgentSlice } from '@site/agent'
 import { restartAgentSession } from '@admin/ai/api'
 import { ApiError, isAbortError } from '@core/http'
 import { getErrorMessage } from '@core/utils/errorMessage'
@@ -91,12 +92,11 @@ export function AgentSessionControls({ hasCredentials }: AgentSessionControlsPro
   useEffect(() => {
     if (lastProjectDirRef.current !== studioProjectDir) {
       lastProjectDirRef.current = studioProjectDir
-      // D5 §11.5, rail 1 — Bypass never survives a project switch. Resets to
-      // the same 'acceptEdits' the store initializes with (see
-      // `agentSessionControlsInitialState`), so switching projects lands in the
-      // ordinary working mode rather than silently tightening to per-edit
-      // prompts; what the rail requires is only that Bypass does not carry over.
-      setAgentPermissionMode('acceptEdits')
+      // Switching projects lands in the default working mode, whatever that
+      // is — the point is that a mode chosen for one project does not silently
+      // carry into another, in EITHER direction. Reads the initializer rather
+      // than repeating a literal, so this can never drift from it.
+      setAgentPermissionMode(agentSessionControlsInitialState().agentPermissionMode)
     }
   }, [studioProjectDir, setAgentPermissionMode])
 
@@ -119,7 +119,6 @@ export function AgentSessionControls({ hasCredentials }: AgentSessionControlsPro
         type="button"
         variant="ghost"
         size="xs"
-        tone={isBypass ? 'danger' : 'default'}
         className={styles.trigger}
         aria-haspopup="menu"
         aria-expanded={open}

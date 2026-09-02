@@ -60,10 +60,45 @@ import {
   registerDesignReference,
   removeDesignReference,
 } from '../../../../handlers/studio/designReferenceStore'
+import { CHAT_ATTACHMENT_REFERENCE_SOURCE } from '../../../../handlers/studio/turnDesignReferences'
 
 // ---------------------------------------------------------------------------
 // studio_register_design_reference
 // ---------------------------------------------------------------------------
+
+/**
+ * The refusal for a path outside the project — which, in practice, is almost
+ * always ONE specific mistake worth answering rather than merely blocking.
+ *
+ * An image the user attaches to chat is staged by the driver to an
+ * `os.tmpdir()` directory (`claudeCliAttachments.ts` — turn-scoped working
+ * data, deliberately not project content) and its absolute path is handed to
+ * the model in the prompt. The very same bytes were ALREADY registered as a
+ * durable reference before the turn started (`registerTurnDesignReferences`).
+ * So the model reads the one path it was given, tries to register it, and is
+ * told it is outside the project — a correct policy answer to a question that
+ * did not need asking, and the third-most-common wasted tool call in a turn
+ * that begins with a pasted design.
+ *
+ * When a chat-attached reference exists, say so and name its id. Containment
+ * is unchanged: nothing outside the project is read, opened, or hashed here —
+ * the manifest that answers the question is already inside it.
+ */
+function outsideProjectMessage(dir: string, filePath: string): string {
+  const attached = listDesignReferences(dir, undefined, undefined).references.filter(
+    (r) => r.source === CHAT_ATTACHMENT_REFERENCE_SOURCE,
+  )
+  const base = `"${filePath}" resolves outside this project. A design reference must be read from a file inside the project directory.`
+  if (attached.length === 0) return base
+
+  const newest = attached[attached.length - 1]!
+  return (
+    `${base} If this is the image attached to this conversation, you do not need to register it — ` +
+    `an attached image is registered automatically before the turn starts. It is already stored as ` +
+    `"${newest.id}"${newest.pageId ? ` (page "${newest.pageId}")` : ''}, ${newest.width}x${newest.height}. ` +
+    `Measure against it with studio_compare instead of registering it again.`
+  )
+}
 
 /**
  * Read an image the agent already downloaded into the project.
@@ -102,7 +137,7 @@ async function readProjectImageBytes(
   try {
     assertPathWithin(realRoot, realTarget)
   } catch {
-    return { ok: false, error: `"${filePath}" resolves outside this project. A design reference must be read from a file inside the project directory.` }
+    return { ok: false, error: outsideProjectMessage(dir, filePath) }
   }
 
   const info = await stat(realTarget)

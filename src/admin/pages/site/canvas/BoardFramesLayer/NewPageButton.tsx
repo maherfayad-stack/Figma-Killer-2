@@ -42,7 +42,7 @@ import { ContextMenu, ContextMenuItem } from '@ui/components/ContextMenu'
 import { pushToast } from '@ui/components/Toast'
 import { getErrorMessage } from '@core/utils/errorMessage'
 import { requestCmsSiteReload } from '@admin/state/adminEvents'
-import { createStudioPage } from '@site/studio/studioSaveRequests'
+import { createStudioPage } from '@site/studio/studioPageRequests'
 import { FilePlusSolidIcon } from 'pixel-art-icons/icons/file-plus-solid'
 
 interface NewPageButtonProps {

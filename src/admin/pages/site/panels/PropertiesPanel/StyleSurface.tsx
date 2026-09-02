@@ -59,7 +59,7 @@ import { useState, useRef, type ReactNode } from 'react'
 import { useEditorStore } from '@site/store/store'
 import type { AnyModuleDefinition } from '@core/module-engine'
 import type { StyleRule, CSSPropertyBag } from '@core/page-tree'
-import { canWriteInlineStyleForModule, isGeneratedClassLocked, styleRuleSelector } from '@core/page-tree'
+import { canWriteInlineStyleForModule, isGeneratedClassLocked, styleRuleSelector, styleRuleDisplayName } from '@core/page-tree'
 import { classifyStylesheetEditability } from '@core/css-codemods'
 import { getStudioStyleRuleSources, resolveCssInsertDestination } from '@site/studio/styleRuleWriteback'
 import { Button } from '@ui/components/Button'
@@ -578,7 +578,7 @@ function GeneratedUtilityLockedState({ cls }: { cls: StyleRule }) {
     <div className={styles.generatedUtilityState}>
       <div className={styles.generatedUtilityHeader}>
         <span className={styles.generatedUtilityKicker}>Generated utility</span>
-        <span className={styles.generatedUtilityName}>.{cls.name}</span>
+        <span className={styles.generatedUtilityName}>.{styleRuleDisplayName(cls)}</span>
       </div>
       <p className={styles.generatedUtilityCopy}>
         This is a utility class. Utility classes have a single purpose and aren&apos;t meant to be

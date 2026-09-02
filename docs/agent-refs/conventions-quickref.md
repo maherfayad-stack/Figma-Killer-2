@@ -150,6 +150,11 @@ Studio reads and writes the user's repo. Every path is untrusted.
   controls). Timeout + capped stdout/stderr via the same module's
   `runCappedSubprocess`/`captureSubprocess` — reuse it, don't re-roll the
   spawn/timeout/cap mechanics per caller.
+  Do **not** trim `BASE_SUBPROCESS_ENV_KEYS` to make the set smaller: `USER`
+  is load-bearing (the Claude CLI keys its stored credentials by the OS
+  account name, and without it a signed-in MCP server silently reports
+  `! Needs authentication` and a turn gets zero of its tools). Pinned by
+  `subprocessRunner.test.ts`; the story is `mcp-16` in `STATE.md`.
 
 ---
 

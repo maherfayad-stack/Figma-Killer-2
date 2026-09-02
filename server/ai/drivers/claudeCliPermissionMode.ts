@@ -4,15 +4,23 @@
  * (`module-size-budgets.test.ts`), the same extraction pattern already used
  * for `claudeCliToolSurface.ts`, `claudeCliVerify.ts`, and
  * `claudeCliAttachments.ts`. One cohesive concern: which mode reaches argv,
- * and the guard rail that keeps `bypassPermissions` a deliberate per-turn
- * user choice rather than something Studio can arrive at on its own.
+ * and the guard rail that keeps `bypassPermissions` something the CLIENT
+ * asked for rather than something this driver can arrive at on its own.
  */
 
 export type ClaudeCliPermissionMode = 'default' | 'acceptEdits' | 'plan' | 'bypassPermissions'
 
 /**
- * `--permission-mode` fallback when the request names none. Never a bypass
- * value in either branch.
+ * `--permission-mode` fallback when the request names none. **Never a bypass
+ * value in either branch, and that is deliberate even though Bypass is now
+ * the Studio panel's default.**
+ *
+ * The two are not in tension. The panel sends `bypassPermissions` explicitly
+ * on every turn (`agentSessionControlsInitialState`), so this fallback is only
+ * ever reached by a caller that named no mode at all — an external MCP client,
+ * a script, a future driver. Silence from such a caller is not a person
+ * choosing Bypass, and inventing it for them is exactly the "Studio must never
+ * inject a bypassing flag on its own" rule this module exists to hold.
  *
  * With a project open, the agent's whole job is editing files in that project
  * — it holds `Write`/`Edit` scoped to the project `cwd`
@@ -21,10 +29,7 @@ export type ClaudeCliPermissionMode = 'default' | 'acceptEdits' | 'plan' | 'bypa
  * Allow/Deny card: a dozen identical questions to author one screen, each one
  * asking permission to do the thing the user just asked for. `acceptEdits`
  * auto-accepts file edits *inside the working directory* and nothing beyond
- * it, which is exactly the consent the user already gave by opening the
- * project and asking for a screen. Every other permission-bearing tool still
- * prompts, and trust tiers are untouched (`studio_install_deps` reads
- * `.studio/meta.json`, never the permission mode).
+ * it, which is exactly the consent a caller gave by naming a project.
  *
  * With no project open there is nothing scoped to accept edits into, so the
  * conservative `'default'` stands.
@@ -37,18 +42,23 @@ const DEFAULT_PROJECT_PERMISSION_MODE = 'acceptEdits'
  * `auto`/`dontAsk`, confirmed via `--help` but not part of the user-facing
  * four) — a 1:1 mapping, no translation layer.
  *
- * **`bypassPermissions` is allowed, but ONLY as an explicit per-turn user
- * choice — never a default, never inferred, never persisted.** An earlier
- * version of this function refused it outright, reading this driver's "never
- * pass a permission-bypassing flag" hard rule as covering any occurrence of
- * the literal value. The coordinator who set that rule resolved the
- * contradiction directly: the rule means *Studio must never inject a
- * bypassing flag on its own* — no silent default, no working around a
- * prompt the user would otherwise see. It does not mean refusing a mode the
- * user deliberately selected; a user choosing Bypass IS the consent, not
- * something bypassing it. WS-12 §5.2 (and the user's own words specifying
- * this feature — "the mode is it auto, bypass, or ask before edits or just
- * plan") name Bypass as one of exactly four modes the user controls.
+ * **`bypassPermissions` is allowed, but only when the REQUEST carried it.**
+ * An earlier version of this function refused it outright, reading this
+ * driver's "never pass a permission-bypassing flag" hard rule as covering any
+ * occurrence of the literal value. The coordinator who set that rule resolved
+ * the contradiction directly: the rule means *Studio must never inject a
+ * bypassing flag on its own* — no silent server-side default, no working
+ * around a prompt the caller would otherwise see. It does not mean refusing a
+ * mode the client deliberately sent.
+ *
+ * Bypass is now the Studio panel's own default
+ * (`agentSessionControlsInitialState`), which retires the older, stronger
+ * claim that it was "never a default, never persisted". What is left is the
+ * half that still means something and is still enforced HERE: this driver
+ * never resolves to Bypass from silence. Read that initializer before changing
+ * anything in this file — it carries the reasoning, and the specific note that
+ * permission mode governs PROMPTING for an already-available tool and never
+ * widens which tools exist.
  *
  * What stays permanently forbidden, unconditionally: `--dangerously-skip-
  * permissions` / `--allow-dangerously-skip-permissions` — a different,
@@ -56,23 +66,22 @@ const DEFAULT_PROJECT_PERMISSION_MODE = 'acceptEdits'
  * `--permission-mode bypassPermissions` is the CLI's own documented mode,
  * distinct from that flag, and is the one this function resolves.
  *
- * The three D5 §11.5 guard rails on Bypass are enforced OUTSIDE this
- * function, each independently:
- *   1. Non-persisting — `agentSlice.ts` initializes `agentPermissionMode:
- *      'default'` at store creation (covers reload) and nothing anywhere
- *      reads it from storage; `AgentSessionControls.tsx` also resets it on
- *      a live project switch (no remount needed).
- *   2. Visibly indicated — `AgentSessionControls.tsx`'s composer trigger
- *      switches to `tone="danger"` with a warning icon, and stays that way
- *      the entire time `agentPermissionMode === 'bypassPermissions'`. The
- *      indication is permanent and non-dismissible, not a one-time toast;
- *      it lives on the control that sets the mode rather than in a separate
- *      banner, so it cannot drift out of sync with the actual state.
- *   3. Still trust-tier-bound — Bypass has NO effect on tool-level
+ * What still holds around Bypass, enforced OUTSIDE this function:
+ *   1. Visibly indicated — `AgentSessionControls.tsx`'s composer trigger
+ *      carries a warning glyph and a descriptive accessible name whenever the
+ *      mode is Bypass, on the control that sets it rather than in a separate
+ *      banner, so it cannot drift out of sync with the actual state. (Its
+ *      `tone="danger"` was dropped when Bypass became the default — a red on
+ *      every session is wallpaper, not an indication.)
+ *   2. Still trust-tier-bound — Bypass has NO effect on tool-level
  *      authorization at all. `studio_install_deps`'s trust check
  *      (`projectTools.ts`) reads only `.studio/meta.json`'s own `trust`
  *      field; it has no parameter for permission mode to influence, tested
  *      explicitly in `projectTools.test.ts`.
+ *   3. No wider tool surface — `--tools` (`claudeCliToolSurface.ts`) is a hard
+ *      availability list the CLI evaluates independently of and prior to
+ *      `--permission-mode`, so `Bash`/`Task` stay withheld under Bypass, and a
+ *      native write stays bounded by the subprocess `cwd`.
  */
 export function resolvePermissionMode(
   requested: string | undefined,
@@ -88,18 +97,23 @@ export function resolvePermissionMode(
 
 /**
  * Belt-and-braces: `bypassPermissions` may only ever reach argv when
- * `req.permissionMode` itself carried that exact literal — i.e. a user
- * selected it THIS turn. `default` is what every other path (no selection,
- * an unrecognised value already refused above, a stale/reset session)
- * resolves to, so this assertion is really "the resolved mode came from the
- * request, not from a default" — cheap to state, cheap to keep true.
+ * `req.permissionMode` itself carried that exact literal.
+ *
+ * Renamed from `assertBypassOnlyFromExplicitRequest` when Bypass became the
+ * Studio panel's default, because that name had stopped being true — the
+ * request now carries Bypass because a default put it there, not because
+ * someone selected it this turn, and a guard whose name overstates what it
+ * checks is worse than no guard. What it does check is still worth checking
+ * and is unchanged: the resolved mode came from the REQUEST, never from this
+ * driver's own fallback. A caller that names no mode can never be given
+ * Bypass by inference.
  */
-export function assertBypassOnlyFromExplicitRequest(
+export function assertBypassCameFromRequest(
   mode: ClaudeCliPermissionMode,
   requestedMode: string | undefined,
 ): string {
   if (mode === 'bypassPermissions' && requestedMode !== 'bypassPermissions') {
-    throw new Error('[ai/claudeCli] refused to construct --permission-mode bypassPermissions without an explicit per-turn request — this must never be a default or inferred value.')
+    throw new Error('[ai/claudeCli] refused to construct --permission-mode bypassPermissions from a server-side default — it may only ever come from the request.')
   }
   return mode
 }

@@ -180,7 +180,20 @@ export function describeAttachmentsForPrompt(staging: AttachmentStaging): string
   if (staging.files.length > 0) {
     const images = staging.files.filter((f) => f.kind === 'image').map((f) => f.path)
     const otherFiles = staging.files.filter((f) => f.kind === 'file').map((f) => f.path)
-    if (images.length > 0) lines.push(`Attached image file(s), read them with your own file tools before answering: ${images.join(', ')}`)
+    if (images.length > 0) {
+      lines.push(`Attached image file(s), read them with your own file tools before answering: ${images.join(', ')}`)
+      // These paths are in os.tmpdir() by design (see this module's doc
+      // comment), and `studio_register_design_reference` requires a path
+      // INSIDE the project — so handing the model a path and nothing else
+      // reliably produced one wasted call and one alarming-looking refusal
+      // per pasted design. It never needed to make that call: with a Studio
+      // project open, `registerTurnDesignReferences` already registered these
+      // exact bytes before this prompt was built, and the live digest's
+      // "Design references registered" line names the result.
+      lines.push(
+        'These are staged working copies outside the project — do NOT pass their paths to studio_register_design_reference, it will refuse them. With a Studio project open an attached image is ALREADY registered as a design reference; find its id on the "Design references registered" line and measure against it with studio_compare.',
+      )
+    }
     if (otherFiles.length > 0) lines.push(`Attached file(s), read them with your own file tools before answering: ${otherFiles.join(', ')}`)
   }
   if (staging.refused.length > 0) {

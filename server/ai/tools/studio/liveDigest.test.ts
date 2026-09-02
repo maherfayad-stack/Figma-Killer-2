@@ -135,17 +135,27 @@ describe('buildStudioLiveDigest — capabilities', () => {
     else process.env.STUDIO_ALLOW_LOOPBACK_ASSET_FETCH = previousLoopbackEnv
   })
 
-  it('figma: self-approving built-in reports "configured" on a fresh project with no .studio/meta.json at all', async () => {
+  it('figma: the shipped REMOTE built-in reports "needs-approval" until a human approves it', async () => {
+    // It is declared in every project, but it carries a credential, so it is
+    // listed unapproved and cannot reach a turn. "Declared but unusable" is
+    // not configured, and saying otherwise would be the digest claiming a
+    // capability the agent does not have.
     const digest = await buildStudioLiveDigest(dir, emptySnapshot, 'conv-figma-default', { staleness: createStalenessTracker() })
-    expect(digest.capabilities.figma.status).toBe('configured')
-    // The built-in is loopback (http://127.0.0.1:3845/mcp) and the env var
-    // was deleted above, so asset fetch from it is blocked.
-    expect(digest.capabilities.figma.loopbackAssetFetchBlocked).toBe(true)
+    expect(digest.capabilities.figma.status).toBe('needs-approval')
+    expect(digest.capabilities.figma.loopbackAssetFetchBlocked).toBe(false)
   })
 
-  it('figma: reports "configured" with asset fetch NOT blocked when STUDIO_ALLOW_LOOPBACK_ASSET_FETCH is set', async () => {
-    process.env.STUDIO_ALLOW_LOOPBACK_ASSET_FETCH = '1'
-    const digest = await buildStudioLiveDigest(dir, emptySnapshot, 'conv-figma-loopback-allowed', { staleness: createStalenessTracker() })
+  it('figma: an approved remote built-in is "configured", and its assets are never loopback-blocked', async () => {
+    // The side benefit of moving off the desktop server: its asset URLs were
+    // loopback (`http://localhost:3845/assets/...`) and the SSRF guard
+    // refused them unless STUDIO_ALLOW_LOOPBACK_ASSET_FETCH was set. The
+    // remote server hands out ordinary figma.com URLs, so that whole
+    // exception stops applying — asserted with the env var explicitly
+    // deleted (the afterEach above restores it).
+    delete process.env.STUDIO_ALLOW_LOOPBACK_ASSET_FETCH
+    mkdirSync(join(dir, '.studio'), { recursive: true })
+    writeFileSync(join(dir, '.studio', 'meta.json'), JSON.stringify({ approvedRegisteredMcpServers: ['figma'] }))
+    const digest = await buildStudioLiveDigest(dir, emptySnapshot, 'conv-figma-approved', { staleness: createStalenessTracker() })
     expect(digest.capabilities.figma.status).toBe('configured')
     expect(digest.capabilities.figma.loopbackAssetFetchBlocked).toBe(false)
   })
@@ -276,6 +286,10 @@ describe('buildStudioLiveDigest — page write verification + Figma nudge', () =
     const scaffolded = createScaffoldedPage(dir, 'Onboarding')
     if (!scaffolded.ok) throw new Error(scaffolded.conflict)
     const snapshot: StudioAgentSnapshot = { ...baseSnapshot, activePageId: scaffolded.pageId }
+    // The nudge points at the Figma connector, so it only fires when there IS
+    // one — the shipped built-in ships unapproved, so approve it here.
+    mkdirSync(join(dir, '.studio'), { recursive: true })
+    writeFileSync(join(dir, '.studio', 'meta.json'), JSON.stringify({ approvedRegisteredMcpServers: ['figma'] }))
 
     const withUrl = await buildStudioLiveDigest(
       dir,

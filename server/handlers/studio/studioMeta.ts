@@ -189,6 +189,21 @@ export const StudioMetaSchema = Type.Object({
    * the built-in, so a user is never stuck with a server Studio ships.
    */
   disabledBuiltInMcpServers: Type.Optional(Type.Array(Type.String())),
+  /**
+   * Names of servers whose authorization server REFUSED to register Studio as
+   * an OAuth client — a closed allow-list, not a transient failure (see
+   * `../../ai/credentials/mcpOAuth.ts`'s `McpClientRegistrationClosedError`).
+   *
+   * Recorded because the answer never changes and rediscovering it costs the
+   * user a click on a button that cannot work. With it, the Settings row can
+   * open straight into the CLI sign-in route — the one that does work —
+   * instead of hiding it behind a failed attempt once per session.
+   *
+   * NOT consent and NOT a credential: purely a cached fact about the remote
+   * provider. A server that later opens registration simply keeps a stale
+   * entry until it is signed in through the CLI or the entry is removed.
+   */
+  mcpOAuthRegistrationClosed: Type.Optional(Type.Array(Type.String())),
 })
 export type StudioMeta = Static<typeof StudioMetaSchema>
 

@@ -100,8 +100,13 @@ export async function runStudioLiveReload(input: StudioLiveReloadInput): Promise
   const failed: string[] = []
   if (input.pageIds.length > 0) {
     try {
-      const { pages, missingPageIds } = await fetchStudioPagesById(input.pageIds)
-      getStoreState().patchPages({ pages, removedPageIds: missingPageIds })
+      // `styleRules`/`conditions` ride along deliberately: they are the
+      // project-wide registry the SAME reload recomputed, and applying the
+      // pages without them renders freshly-parsed nodes against the previous
+      // stylesheet — see `studioLiveReloadFetch.ts`'s doc for what that looks
+      // like on screen.
+      const { pages, missingPageIds, styleRules, conditions } = await fetchStudioPagesById(input.pageIds)
+      getStoreState().patchPages({ pages, removedPageIds: missingPageIds, styleRules, conditions })
     } catch (err) {
       console.error('[studioLiveReload] page reload failed — canvas may be stale for the touched page(s):', err)
       failed.push('pages')

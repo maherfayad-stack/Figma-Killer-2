@@ -226,7 +226,7 @@ describe('streamClaudeCli — happy path', () => {
       '--permission-mode', 'acceptEdits',
       // A real project is open, no attachment on this turn: the file tools
       // (subagent dispatch) only, never Read/Bash/Write/Edit.
-      '--tools', 'Read,Write,Edit,Glob,Grep',
+      '--tools', 'Read,Write,Edit,Glob,Grep,Task',
       '--mcp-config', '<mcp-config-path>',
       // Headless, the CLI has no TTY to prompt in; this routes a permission
       // request to the open chat instead of it being silently refused.
@@ -241,22 +241,20 @@ describe('streamClaudeCli — happy path', () => {
     // would leak the connector token to any local process.
     expect(mcpConfigPath).not.toContain('Bearer')
     expect(mcpConfigPath).not.toContain('fake-session-token')
-    // A default project gets TWO entries: Studio's own, and the loopback
-    // `figma` built-in Studio now ships everywhere (`BUILT_IN_MCP_SERVERS`).
-    // Asserted here rather than opted out of, because "what a plain turn
-    // actually sends" is exactly what this happy-path test is for — and the
-    // built-in carrying no headers is the property that lets it be a default
-    // at all.
+    // A default project sends exactly ONE entry: Studio's own. The `figma`
+    // built-in (`BUILT_IN_MCP_SERVERS`) is Figma's REMOTE server, which
+    // carries a personal access token and therefore ships unapproved — so it
+    // is declared for the project but reaches no turn until a human approves
+    // it and sets the token. Asserted here rather than opted out of, because
+    // "what a plain turn actually sends" is exactly what this happy-path test
+    // is for, and a credentialed server appearing here without a human having
+    // approved it is the failure this pins.
     expect(mcpConfigFileContent).toEqual({
       mcpServers: {
         studio: {
           type: 'http',
           url: 'http://127.0.0.1:3001/_studio/mcp',
           headers: { Authorization: 'Bearer fake-session-token' },
-        },
-        figma: {
-          type: 'http',
-          url: 'http://127.0.0.1:3845/mcp',
         },
       },
     })
@@ -605,10 +603,11 @@ describe('streamClaudeCli — session controls (WS-12 §5)', () => {
 // native built-ins, present on EVERY real turn (see `claudeCliToolSurface.ts`).
 // With a real project open the agent authors files directly, so it holds
 // Read/Write/Edit/Glob/Grep — bounded by the subprocess cwd, which is the
-// containment-checked project directory. `Bash` and `Task` are never granted
+// containment-checked project directory — plus `Task`, so independent screens
+// are built in parallel instead of one after another. `Bash` is never granted
 // on any turn, at any trust tier, in any permission mode.
 describe('streamClaudeCli — native tool surface', () => {
-  const WORKSPACE_TOOLS = 'Read,Write,Edit,Glob,Grep'
+  const WORKSPACE_TOOLS = 'Read,Write,Edit,Glob,Grep,Task'
 
   function imageMessage(mimeType: string, data = 'ZmFrZQ=='): AiMessage {
     return { role: 'user', content: [{ kind: 'text', text: 'look at this' }, { kind: 'image', mimeType, data }] }
@@ -685,12 +684,14 @@ describe('streamClaudeCli — native tool surface', () => {
     expect(capturedArgv[capturedArgv.indexOf('--tools') + 1]).toBe('')
   })
 
-  it('never grants Bash or Task on any turn shape exercised in this suite', async () => {
-    // Bash is the one tool whose blast radius is not bounded by cwd. Task is
-    // withheld because the CLI silently substitutes its own general-purpose
-    // agent for an unknown subagent_type and reports success it cannot back
-    // up — see `claudeCliToolSurface.ts`.
-    const forbidden = ['Bash', 'Task', 'WebFetch', 'WebSearch', 'NotebookEdit']
+  it('never grants Bash on any turn shape exercised in this suite', async () => {
+    // Bash is the one tool whose blast radius is not bounded by cwd — never
+    // granted at any trust tier in any permission mode. `Task` is deliberately
+    // NOT in this list any more: parallel screen building needs it, and the
+    // fabrication that got it withheld came from an invented `subagent_type`,
+    // which the prompt now forbids by naming the one built-in that cannot fall
+    // back. See `claudeCliToolSurface.ts`.
+    const forbidden = ['Bash', 'WebFetch', 'WebSearch', 'NotebookEdit']
     const scenarios: Array<Partial<AiStreamRequest>> = [
       {},
       { workspaceDir: projectDir },

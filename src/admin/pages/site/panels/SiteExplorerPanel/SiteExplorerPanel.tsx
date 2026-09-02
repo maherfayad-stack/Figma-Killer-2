@@ -25,7 +25,7 @@ import {
 } from './siteExplorerModel'
 import type { SiteExplorerInlineRenameTarget } from './SiteExplorerTreeSection'
 import { SiteExplorerDndScope, type SiteExplorerDndState } from './SiteExplorerDndScope'
-import { bulkDeleteConfirmDescription, bulkDeleteConfirmLabel, bulkDeleteConfirmTitle, bulkWrapLabel, fileName, groupSiteFiles, keyboardMenuPosition, pathFromRenameInput } from './siteExplorerPanelUtils'
+import { bulkDeleteConfirmDescription, bulkDeleteConfirmLabel, bulkDeleteConfirmTitle, bulkWrapLabel, fileName, groupSiteFiles, keyboardMenuPosition, pageDeleteConfirmDescription, pathFromRenameInput } from './siteExplorerPanelUtils'
 import { useSiteExplorerSelection, type SiteExplorerMenuSelection } from './siteExplorerSelection'
 import { SiteExplorerContextMenu, type SiteExplorerContextMenuState } from './SiteExplorerContextMenu'
 import { SiteExplorerPathConfirmDialog } from './SiteExplorerPathConfirmDialog'
@@ -271,7 +271,7 @@ export function SiteExplorerPanel({
     if (target.kind === 'page') {
       confirmDelete({
         title: 'Delete page?',
-        description: `This will remove "${target.title}" from the site tree.`,
+        description: pageDeleteConfirmDescription(site, target.id, target.title),
         confirmLabel: 'Delete page',
         alwaysConfirm: true,
         commit: () => deletePage(target.id),
@@ -319,7 +319,7 @@ export function SiteExplorerPanel({
     setContextMenu(null)
     confirmDelete({
       title: bulkDeleteConfirmTitle(selection.sectionId, selection.itemIds.length),
-      description: bulkDeleteConfirmDescription(selection.sectionId, selection.itemIds.length),
+      description: bulkDeleteConfirmDescription(selection.sectionId, selection.itemIds.length, site),
       confirmLabel: bulkDeleteConfirmLabel(selection.sectionId, selection.itemIds.length),
       commit: () => {
         if (menu.target.kind === 'page') {

@@ -19,7 +19,7 @@
  *   | `className={"a b"}` / `` className={`a b`} `` (static expression) | same, token add/remove |
  *   | `` className={`a ${x}`} `` (dynamic template) | ADD appends to the STATIC HEAD only; any REMOVE refuses `template-dynamic` — a token that might live in the interpolated part can never be safely deleted from source text alone |
  *   | `className={cn('a', x)}` / `clsx`/`classNames`/`classnames` | ADD merges into (or appends) a literal string argument; REMOVE strips a token from every literal string argument it appears in (best-effort — a token produced only by a non-literal argument is left alone, matching every other Tier A/B/C path's "never guess" degrade) |
- *   | `className={styles.card}` (a CSS Modules default-import member access) | refuses `css-module-binding` — the honest edit is the class DECLARATION, not this binding |
+ *   | `className={styles.card}` (a CSS Modules default-import member access) | ADD rewrites it to `` className={`${styles.card} added`} `` — attaching a class is not editing a declaration; any REMOVE refuses `css-module-binding`, because that token is produced by the module and deleting it here would not delete it |
  *   | `className={...spread}`                      | refuses `spread-attribute` |
  *   | any other expression (identifier, ternary, an unrecognized call, …) | refuses `unsupported-expression` / `unsupported-call` |
  *
@@ -301,19 +301,39 @@ export function setJsxClassName(params: SetJsxClassNameParams): SetJsxClassNameR
     return { ok: true }
   }
 
-  // `className={styles.card}` — the one shape with a NAMED, more specific
-  // refusal than the generic catch-all below, because there IS an honest
-  // edit for it: the class's own declaration in the `.module.css` file.
+  // `className={styles.card}`.
+  //
+  // REMOVE still refuses, and for the reason the refusal always named: the
+  // token the caller wants gone is produced by the module binding, and the
+  // honest edit for it is the class's own declaration in the `.module.css`,
+  // not this expression.
+  //
+  // ADD does not have that problem, and refusing it was over-application.
+  // Attaching a class is not editing a declaration — it is putting one more
+  // token on this one element, which is exactly what
+  // `` className={`${styles.card} sc-abc`} `` says. The blanket refusal
+  // mattered little while pages were mostly plain strings; it stopped
+  // mattering little the moment the agent began authoring every element as a
+  // CSS Module binding, at which point NO element on an agent-authored page
+  // could take a class at all. The rewrite is single-line (no newline is
+  // introduced), so it shifts no other node's `line:col`, same as every other
+  // path here.
   if (Node.isPropertyAccessExpression(expr) && isCssModuleBinding(expr, sourceFile)) {
-    return {
-      ok: false,
-      refusal: {
-        reason: 'css-module-binding',
-        message:
-          `className is bound to a CSS Modules import ("${expr.getText()}") — edit the class's own declaration ` +
-          'in the stylesheet instead of the binding here.',
-      },
+    if (remove.length > 0) {
+      return {
+        ok: false,
+        refusal: {
+          reason: 'css-module-binding',
+          message:
+            `className is bound to a CSS Modules import ("${expr.getText()}") — that token comes from the module, so ` +
+            "removing it here would not remove it. Edit the class's own declaration in the stylesheet instead.",
+        },
+      }
     }
+    if (add.length === 0) return { ok: true }
+    expr.replaceWithText(`\`\${${expr.getText()}} ${add.join(' ')}\``)
+    sourceFile.saveSync()
+    return { ok: true }
   }
 
   return {

@@ -19,7 +19,7 @@
  * COMMAND on the next chat turn — the consent copy says so plainly, every
  * time, never just once on first use.
  */
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { useAdminUi } from '@admin/state/adminUi'
 import { useAsyncResource } from '@admin/lib/useAsyncResource'
 import { Button } from '@ui/components/Button'
@@ -32,6 +32,7 @@ import { TrashSolidIcon } from 'pixel-art-icons/icons/trash-solid'
 import { PlugSolidIcon } from 'pixel-art-icons/icons/plug-solid'
 import { ExternalLinkSolidIcon } from 'pixel-art-icons/icons/external-link-solid'
 import { getErrorMessage } from '@core/utils/errorMessage'
+import { ApiError } from '@core/http'
 import { cn } from '@ui/cn'
 import type { ProjectMcpServerView, RegisteredMcpServerDefinition } from '@core/ai'
 import {
@@ -39,7 +40,10 @@ import {
   addRegisteredMcpServer,
   removeRegisteredMcpServer,
   setMcpServerApproval,
-  checkMcpServerAuth,
+  getMcpOAuthStatus,
+  getMcpCliConnection,
+  startMcpOAuth,
+  signOutMcpOAuth,
 } from '../../../ai/api'
 import dialogStyles from '../../../shared/dialogs/SiteCreateDialog/SiteCreateDialog.module.css'
 import s from './McpServersSection.module.css'
@@ -51,6 +55,50 @@ const TRANSPORT_OPTIONS: Array<{ value: Transport; label: string }> = [
   { value: 'http', label: 'HTTP' },
   { value: 'sse', label: 'SSE' },
 ]
+
+/** The host, for prose. Falls back to the raw string rather than throwing on a summary this component could not parse. */
+function safeHost(url: string): string {
+  try {
+    return new URL(url).host
+  } catch {
+    return url
+  }
+}
+
+/**
+ * The exact commands for a one-time CLI sign-in against Studio's own
+ * `CLAUDE_CONFIG_DIR`.
+ *
+ * Needed because some providers run a closed client allow-list behind an
+ * advertised registration endpoint — Figma's docs say only clients in its MCP
+ * Catalog (Claude Code, VS Code, Cursor) may connect. Studio cannot register;
+ * the CLI it already spawns is on the list, and its credential is scoped to
+ * the config directory Studio points it at, so the sign-in has to happen
+ * there and not in the user's ordinary `~/.claude`.
+ *
+ * Printed rather than executed: launching a terminal is unavailable on macOS
+ * (`claudeCliPlatformSupport`) and the interactive `/mcp` step needs a real
+ * TTY regardless, so a command the user can read and paste is the honest
+ * affordance — not a button that works on one platform.
+ *
+ * **`-s user` is load-bearing, not a style choice.** Without it `claude mcp
+ * add` writes a LOCAL-scope entry keyed to whatever directory it was run in,
+ * and the CLI resolves servers — and their OAuth state — per directory.
+ * Measured against one config dir and one endpoint, back to back: a
+ * local-scope registration made at the repo root reported `! Needs
+ * authentication` there while a user-scope one reported `✔ Connected` from
+ * both an empty directory and a studio-workspace project. A credential that
+ * exists to serve every project belongs at user scope, and it is also the only
+ * scope `cliMcpConnectionProbe` (which runs in a neutral empty directory, so
+ * it cannot execute a project's own `.mcp.json` servers) can see.
+ */
+function cliSignInCommands(configDir: string): string[] {
+  // ONE command. Studio already ran the `claude mcp add -s user …` half itself
+  // (`ensureCliMcpServerRegistered`) — it is non-interactive and idempotent, so
+  // making a human paste it was pure ceremony. What remains is the only step
+  // that cannot be automated: a TTY and a browser consent screen.
+  return [`CLAUDE_CONFIG_DIR="${configDir}" claude`]
+}
 
 function transportOf(server: ProjectMcpServerView): Transport | 'unknown' {
   if (server.summary.startsWith('runs:')) return 'stdio'
@@ -149,6 +197,7 @@ export function McpServersSection() {
           {servers.map((server) => (
             <ServerRow
               key={`${server.source}:${server.name}`}
+              dir={dir}
               server={server}
               busy={busyNames.has(server.name)}
               onApprove={() => void handleApprove(server)}
@@ -174,12 +223,14 @@ export function McpServersSection() {
 }
 
 function ServerRow({
+  dir,
   server,
   busy,
   onApprove,
   onRevoke,
   onRemove,
 }: {
+  dir: string
   server: ProjectMcpServerView
   busy: boolean
   onApprove: () => void
@@ -187,28 +238,127 @@ function ServerRow({
   onRemove?: () => void
 }) {
   const transport = transportOf(server)
-  const [authLink, setAuthLink] = useState<string | null | undefined>(undefined)
-  const [checkingAuth, setCheckingAuth] = useState(false)
+  const isRemote = transport === 'http' || transport === 'sse'
+  const serverUrl = server.summary.replace(/^(HTTP|SSE)\s+/, '')
+  const serverHost = safeHost(serverUrl)
+  const [signingIn, setSigningIn] = useState(false)
+  const [awaitingReturn, setAwaitingReturn] = useState(false)
+  // This attempt's own refusal, before the status refetch that persists it
+  // catches up. The stored answer below is the durable one — a provider's
+  // allow-list does not reopen between two clicks.
+  const [refusedThisAttempt, setRefusedThisAttempt] = useState(false)
+  const [copiedCommand, setCopiedCommand] = useState<string | null>(null)
 
-  async function handleCheckAuth() {
-    const url = server.summary.replace(/^(HTTP|SSE)\s+/, '')
-    setCheckingAuth(true)
+  const {
+    data: oauth,
+    refresh: refreshOAuth,
+  } = useAsyncResource(
+    (signal) => (isRemote ? getMcpOAuthStatus(dir, server.name, signal) : Promise.resolve(null)),
+    [dir, server.name, isRemote],
+    { fallbackError: 'Failed to read sign-in status.' },
+  )
+
+  // Asked separately, and only when Studio holds no session of its own: the
+  // answer costs a live health check, and it is the ONLY way to see a sign-in
+  // that landed in the CLI's keychain rather than Studio's token store — which
+  // is the only place it CAN land for a provider that refuses to register
+  // Studio as a client. Without this the badge could never flip.
+  const needsCliCheck = isRemote && oauth?.supportsOAuth === true && oauth.connected === false
+  const { data: cli, loading: cliLoading, refresh: refreshCli } = useAsyncResource(
+    (signal) => (needsCliCheck ? getMcpCliConnection(dir, server.name, signal) : Promise.resolve(null)),
+    [dir, server.name, needsCliCheck],
+    { fallbackError: 'Failed to read the CLI sign-in state.' },
+  )
+  const signedInViaCli = cli?.state === 'connected'
+
+  // Learned once, on this project, the first time the provider refused —
+  // `registrationClosed` in the status. Before that record exists (or before
+  // the refetch lands) this attempt's own 403 stands in. Either way the panel
+  // opens on the route that works instead of making the user prove again that
+  // the other one does not.
+  const registrationClosed = refusedThisAttempt || oauth?.registrationClosed === true
+
+  // The probe answers `unknown` for a missing binary, a timeout, or a server
+  // simply absent from the listing — none of which is "not signed in". Left
+  // unsaid, a probe that could not run looks exactly like a definitive
+  // negative, which is how a working sign-in reads as a broken one.
+  const cliUnknown = cli !== null && cli.state === 'unknown'
+
+  // The sign-in happens in another tab, so nothing in this one can observe it
+  // finishing. Coming BACK to this tab is the signal — cheaper and more
+  // reliable than polling, and it is exactly when the answer is about to be
+  // looked at. Armed only while a sign-in is actually outstanding.
+  useEffect(() => {
+    if (!awaitingReturn) return
+    const onFocus = () => {
+      setAwaitingReturn(false)
+      refreshOAuth()
+      refreshCli()
+    }
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, [awaitingReturn, refreshOAuth, refreshCli])
+
+  async function handleSignIn() {
+    // Opened synchronously, BEFORE the await: a popup opened after an async
+    // hop is no longer attributable to the click and gets blocked. The tab
+    // starts blank and is pointed at the authorization URL once Studio has
+    // discovered it and registered a client.
+    const popup = window.open('', '_blank', 'noopener,noreferrer')
+    setSigningIn(true)
     try {
-      const result = await checkMcpServerAuth(url)
-      setAuthLink(result.authorizationUrl)
-      if (!result.authorizationUrl) {
-        pushToast({
-          kind: 'error',
-          title: 'No sign-in link found',
-          body: result.requiresAuth
-            ? 'The server requires authorization but did not publish a discoverable sign-in link.'
-            : 'This server did not report an authorization requirement.',
-        })
+      const authorizeUrl = await startMcpOAuth(dir, server.name)
+      if (popup) {
+        popup.location.href = authorizeUrl
+        setAwaitingReturn(true)
+      } else {
+        // Popup blocked outright — navigating this tab still completes the
+        // flow, since the callback redirects back into Studio.
+        window.location.href = authorizeUrl
       }
     } catch (err) {
-      pushToast({ kind: 'error', title: 'Could not check authorization', body: getErrorMessage(err, 'Unknown error.') })
+      popup?.close()
+      // 403 is the server saying the PROVIDER forbade Studio — a closed client
+      // allow-list, which no retry can change and which the status endpoint
+      // now remembers. Swap the control for the route that does work instead
+      // of toasting a failure the user cannot act on; every other status is a
+      // real error and still toasts.
+      if (err instanceof ApiError && err.status === 403) {
+        setRefusedThisAttempt(true)
+        refreshOAuth()
+      } else {
+        pushToast({ kind: 'error', title: 'Could not start sign-in', body: getErrorMessage(err, 'Unknown error.') })
+      }
     } finally {
-      setCheckingAuth(false)
+      setSigningIn(false)
+    }
+  }
+
+  async function copyCommand(command: string) {
+    try {
+      await navigator.clipboard.writeText(command)
+      setCopiedCommand(command)
+      // Copying this command IS the "I am going to the terminal now" signal,
+      // and coming back to this tab is the only observable end of a sign-in
+      // that happens in another process. Arms the same focus re-probe the
+      // browser flow arms — without it the panel keeps saying "Not signed in"
+      // after a sign-in that worked, until Settings is closed and reopened.
+      setAwaitingReturn(true)
+    } catch (err) {
+      // A denied clipboard permission is not a failure the user can act on —
+      // the command is on screen and selectable either way.
+      console.error('[McpServersSection] could not copy the sign-in command:', err)
+      pushToast({ kind: 'error', title: 'Could not copy', body: 'Select the command and copy it manually.' })
+    }
+  }
+
+  async function handleSignOut() {
+    try {
+      await signOutMcpOAuth(dir, server.name)
+      refreshOAuth()
+      refreshCli()
+    } catch (err) {
+      pushToast({ kind: 'error', title: 'Could not sign out', body: getErrorMessage(err, 'Unknown error.') })
     }
   }
 
@@ -242,16 +392,92 @@ function ServerRow({
             ))}
           </div>
         )}
-        {(transport === 'http' || transport === 'sse') && (
+        {isRemote && oauth?.supportsOAuth && (
           <div className={s.secretRow}>
-            <Button type="button" variant="ghost" size="sm" onClick={() => void handleCheckAuth()} disabled={checkingAuth}>
-              <span>{checkingAuth ? 'Checking…' : 'Check for sign-in link'}</span>
-            </Button>
-            {authLink && (
-              <a href={authLink} target="_blank" rel="noreferrer noopener" className={s.authLink}>
-                <ExternalLinkSolidIcon size={12} aria-hidden="true" />
-                <span>Sign in to this server</span>
-              </a>
+            {oauth.connected ? (
+              <>
+                <span className={cn(s.badge, s.approved)}>Signed in</span>
+                <Button type="button" variant="ghost" size="sm" onClick={() => void handleSignOut()}>
+                  <span>Sign out</span>
+                </Button>
+              </>
+            ) : cliLoading ? (
+              <span className={s.badge}>Checking sign-in…</span>
+            ) : signedInViaCli ? (
+              // Studio holds no session and never will for this provider — the
+              // credential is the CLI's. Offering a Sign in button here would
+              // be offering a button that cannot work, next to tools that
+              // already do.
+              <>
+                <span className={cn(s.badge, s.approved)}>Signed in via the Claude CLI</span>
+                <span className={s.cliHint}>Studio doesn&apos;t hold this credential; the CLI does.</span>
+              </>
+            ) : registrationClosed ? (
+              // The provider's allow-list has already refused Studio once, and
+              // that answer does not change on a retry. Keeping the button here
+              // would contradict the panel below it, which says exactly that
+              // and hands over the route that does work.
+              <>
+                <span className={cn(s.badge, s.unapproved)}>Not signed in</span>
+                {cliUnknown && <span className={s.cliHint}>Studio could not ask the Claude CLI, so a sign-in there would not show up here.</span>}
+              </>
+            ) : (
+              <>
+                <span className={cn(s.badge, s.unapproved)}>Not signed in</span>
+                <Button type="button" variant="primary" size="sm" onClick={() => void handleSignIn()} disabled={signingIn}>
+                  <ExternalLinkSolidIcon size={12} aria-hidden="true" />
+                  <span>{signingIn ? 'Opening…' : 'Sign in'}</span>
+                </Button>
+              </>
+            )}
+          </div>
+        )}
+        {isRemote && oauth?.supportsOAuth && !oauth.connected && !signedInViaCli && !cliLoading && server.approved && !registrationClosed && (
+          <p className={s.consentNote}>
+            This server needs a sign-in before the agent has any of its tools. Until then it connects
+            with nothing and every call reports &ldquo;no such tool available&rdquo;.
+          </p>
+        )}
+        {registrationClosed && !signedInViaCli && (
+          <div className={s.cliSignIn} role="status">
+            <p>
+              {serverHost} only accepts sign-ins from MCP clients on its own approved list — Studio
+              cannot register itself, and no amount of retrying will change that. The Claude CLI
+              <em> is </em> on that list, and Studio already runs it against your own config
+              directory, so signing in there once is inherited by every later turn.
+            </p>
+            {oauth?.cliConfigDir ? (
+              <>
+                <p>
+                  Studio has registered the server with the CLI already. One step is left, and it
+                  needs a terminal because it opens a browser consent screen:
+                </p>
+                <ol className={s.cliCommandList}>
+                  {cliSignInCommands(oauth.cliConfigDir).map((command) => (
+                    <li key={command} className={s.cliCommandRow}>
+                      <code className={s.cliCommand}>{command}</code>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => void copyCommand(command)}
+                        aria-label={`Copy command: ${command}`}
+                      >
+                        <span>{copiedCommand === command ? 'Copied' : 'Copy'}</span>
+                      </Button>
+                    </li>
+                  ))}
+                </ol>
+                <p className={s.cliHint}>
+                  In the session that opens, type <code>/mcp</code> and authenticate{' '}
+                  <code>{server.name}</code>, then close it.
+                </p>
+              </>
+            ) : (
+              <p>
+                This host cannot give each user their own CLI config directory, so there is no
+                sign-in instruction Studio can honestly print here.
+              </p>
             )}
           </div>
         )}

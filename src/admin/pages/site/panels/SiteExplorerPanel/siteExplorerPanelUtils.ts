@@ -1,5 +1,5 @@
 import type { SiteFile } from '@core/files/schemas'
-import type { SiteExplorerSectionId } from '@core/page-tree'
+import { isStudioPageRootId, type SiteDocument, type SiteExplorerSectionId } from '@core/page-tree'
 
 type FileBucket = 'styles' | 'scripts'
 
@@ -73,9 +73,35 @@ export function bulkDeleteConfirmLabel(sectionId: SiteExplorerSectionId, count: 
   return `Delete ${sectionItemLabel(sectionId, count)}`
 }
 
-export function bulkDeleteConfirmDescription(sectionId: SiteExplorerSectionId, count: number) {
+export function bulkDeleteConfirmDescription(
+  sectionId: SiteExplorerSectionId,
+  count: number,
+  site?: SiteDocument | null,
+) {
   if (sectionId === 'components') {
     return 'This will remove the selected components and every reference to them.'
   }
+  if (sectionId === 'pages' && site?.pages.some((page) => isStudioPageRootId(page.rootNodeId))) {
+    return 'This deletes the selected pages from your project — their source files, a stylesheet nothing else imports, and their board frames. It cannot be undone.'
+  }
   return `This will remove the selected ${sectionItemLabel(sectionId, count)}.`
+}
+
+/**
+ * What deleting THIS page actually does, which differs by where the page
+ * lives. A CMS page is a row in the in-memory document and comes back with an
+ * undo; a Studio page IS a file on disk, and deleting it removes that file —
+ * telling the user "removed from the site tree" for the second case would be
+ * a promise the operation does not keep in either direction.
+ */
+export function pageDeleteConfirmDescription(
+  site: SiteDocument | null | undefined,
+  pageId: string,
+  title: string,
+) {
+  const page = site?.pages.find((candidate) => candidate.id === pageId)
+  if (page && isStudioPageRootId(page.rootNodeId)) {
+    return `This deletes "${title}" from your project — its source file, a stylesheet nothing else imports, and its board frames. It cannot be undone.`
+  }
+  return `This will remove "${title}" from the site tree.`
 }

@@ -1,0 +1,143 @@
+.page {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  min-height: 100vh;
+  padding-bottom: var(--space-lg);
+  background: var(--background-base-default);
+}
+
+/* ── layout ── */
+.body {
+  box-sizing: border-box;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space);
+  align-items: center;
+  width: 100%;
+  padding-inline: var(--space);
+}
+
+.top {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-sm);
+  align-items: center;
+  width: 100%;
+}
+
+.hero {
+  display: block;
+  width: 100%;
+  max-width: 353px;
+  height: 280px;
+  object-fit: cover;
+}
+
+.copy {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 20px;
+  width: 100%;
+}
+
+.title {
+  margin: 0;
+  font-family: var(--type-display-family);
+  font-size: var(--type-display-size);
+  font-weight: 700;
+  line-height: 42px;
+  letter-spacing: -1.5px;
+  color: var(--text-base-default);
+}
+
+/* ── feature list ── */
+.features {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.feature {
+  display: flex;
+  gap: var(--space-md);
+  align-items: center;
+}
+
+.icon {
+  display: flex;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  color: var(--icon-base-default);
+}
+
+.icon svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.featureText {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--type-body-regular-family);
+  font-size: var(--type-body-size);
+  font-weight: var(--type-body-regular-weight);
+  line-height: var(--type-body-lh);
+  color: var(--text-base-default);
+}
+
+/* ── footer ── */
+.footer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  justify-content: flex-end;
+  width: 100%;
+}
+
+.cta {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
+/* Lands on the design-system button itself — it accepts `className`. */
+.ctaButton {
+  width: 100%;
+}
+
+.legal {
+  margin: 0;
+  font-family: var(--type-caption-regular-family);
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-regular-weight);
+  line-height: var(--type-caption-lh);
+  text-align: center;
+  color: var(--text-base-subtext);
+}
+
+.link {
+  color: var(--text-link-default);
+}
+
+.linkSpaced {
+  color: var(--text-link-default);
+}
+
+/* Each run is its own element so it stays individually editable; the word gaps
+   between them are drawn as margin rather than left as bare whitespace between
+   JSX nodes, which the canvas trims away. */
+.legalRun,
+.linkSpaced {
+  margin-inline-end: 0.28em;
+}

@@ -8,6 +8,215 @@ Entry ids are `<area>-<nn>`. Areas in use: `parser`, `canvas`, `store`, `panel`,
 
 
 
+
+
+---
+
+### struct-04 — deleting a page only ever deleted it from memory, so the next reload parsed it straight back in
+
+**What was wrong.** `deletePage` (`store/slices/site/pageActions.ts`) spliced the
+page out of `site.pages` and stopped. In Studio the repository IS the document,
+so the `.tsx` stayed on disk, its board frame stayed in `.studio/boards.json`,
+and the next reload — an agent turn, a page switch, a shifted save — brought the
+page back. Same shape as the refused-structural-edit divergence
+(`studioSaveRequests.ts`'s audit finding E3), except here nothing was even
+attempted: there was no server route to attempt.
+
+**What landed.**
+
+- `DELETE /admin/api/studio/page` (`server/handlers/studio/pageDelete.ts`),
+  wired in `projectRoutes.ts` beside its POST sibling. Body is `{ dir?, pageId }`
+  — a page id, never a path. The id is resolved back to a file by re-running the
+  loader's OWN assignment (`assignPageIds` / `assignAppRouterPageIds`), which is
+  the only honest inverse: `pageIdFromRelPath` is not injective, which is why
+  `assignPageIds` dedupes across the whole discovered set in the first place.
+  Nothing client-supplied ever reaches a path.
+- It removes: the page file; a stylesheet the page imported that no remaining
+  workspace file references (a scaffolded page is a `.tsx` + its own
+  `.module.css`, so deleting half of that pair orphans a file every time); every
+  board frame of the page on EVERY board; and any directory those leave empty,
+  never walking past the pages/app root.
+- It deliberately does NOT touch assets, shared components, or the dictionary.
+  Those are shared by construction — a page is usually the last thing to
+  reference one, not the only thing.
+- `server/handlers/studio/boardFrames.ts` is new: every server-side write to
+  `.studio/boards.json` in one module (`autoPlaceBoardFrame`,
+  `removeBoardFramesForPage`, `syncBoardFramesFromDisk`), moved out of
+  `pageScaffold.ts`. A removal function has no honest home in a module named
+  "scaffold", and `pageScaffold.ts` had grown two reasons to change.
+- `src/admin/pages/site/studio/studioPageRequests.ts` is new: the page-lifecycle
+  wire contract (`createStudioPage` moved here, `deleteStudioPage` added).
+  `studioSaveRequests.ts` was at 674 of its 700-line ceiling, and page existence
+  is a different reason to change than page content.
+- The store commits it, not the callers — same precedent `deleteNodesAction.ts`
+  set. It is the chokepoint the explorer context menu, its bulk delete,
+  spotlight and the agent executor all already run through, so one commit there
+  is one commit for all four.
+
+**Two things worth knowing before you touch this.**
+
+1. **A failed delete reloads.** The tree mutation is optimistic, so if the
+   server refuses, leaving the canvas showing the page gone would put the board
+   in exactly the E3 "shows something the files do not say" state. The reload
+   puts the page back where the user can see it.
+2. **The confirm dialog now tells the truth per page kind**
+   (`pageDeleteConfirmDescription`). A CMS page is a row in a document; a Studio
+   page is a file. "Removed from the site tree" was a promise the operation did
+   not keep in either direction.
+
+**Still open, NOT fixed here** (see `studioDefaultBoardSeed.ts`):
+`shouldSeedDefaultBoard` re-seeds a frame for every page whenever the sole board
+has zero frames, and its own doc's idempotence claim ("frames.length is no
+longer 0, so the condition is false on every subsequent run") only holds in one
+direction — `removeFrameById` takes the count back to zero. Deleting the last
+frame on a single-board project therefore resurrects every page's frame, and the
+autosave persists it. `boardsPendingExplicitRemoval` already exists and is the
+right signal, but only `boardsSaveGuard.ts` reads it; guarding the seeder on it
+is not enough on its own, because `markBoardsClean` clears the flag ~800ms later
+and the effect would re-fire. The durable fix is to persist "this board has been
+seeded" on the board itself. Left out of this change on purpose — it is a
+`boards.json` shape change and a different reason to change than page deletion.
+
+**Pre-existing, not mine:** `server/handlers/studio/projectMcpApprovals.test.ts`
+imports `./agentRosterMcpTools`, which does not exist in the tree. It is the one
+failure in a `bun test server/handlers/studio` run.
+
+---
+
+### agent-12 — Bypass is the assistant's default permission mode
+
+`agentSessionControlsInitialState` now starts at `'bypassPermissions'` instead
+of `'acceptEdits'`. Product decision, taken deliberately, and it retires D5
+§11.5's rail 1 ("Bypass never persists") — that rail existed to stop Studio
+arriving at Bypass without the user, and Bypass is now where the user is put on
+purpose.
+
+**Read this before you get alarmed, and before you widen anything on the
+strength of it.** Permission mode governs PROMPTING for an already-available
+tool. It does not widen the tool surface, and the reason that is guaranteed
+rather than hoped is `--tools`: the CLI evaluates it independently of and PRIOR
+to `--permission-mode`, so `Bash` and `Task` stay withheld under Bypass exactly
+as under any other mode, a native write stays bounded by the subprocess `cwd`,
+Studio's own tools stay gated by the minted connector's capabilities, and
+`studio_install_deps` reads `.studio/meta.json`'s trust tier with no
+permission-mode parameter to read. What changed is that MCP tool calls stopped
+raising an Allow/Deny card mid-build — `acceptEdits` had only ever silenced the
+file-edit half.
+
+**The server still never invents it, and that half of the invariant is the one
+that still means something.** `resolvePermissionMode` falls back to
+`acceptEdits`/`default`, never Bypass: a caller that names no mode (external
+MCP client, script, future driver) is not a person choosing it. The argv-site
+guard was RENAMED `assertBypassOnlyFromExplicitRequest` →
+`assertBypassCameFromRequest`, because "explicit request" stopped being true the
+moment a default put the value in the request. A guard whose name overstates
+what it checks is worse than no guard — if you change this area, keep the name
+matching the check.
+
+**Two consequences I made a call on; push back if you disagree.**
+
+1. The trigger's `tone="danger"` is gone. A red on every session for every user
+   is not an indication, it is wallpaper, and it drains the colour of meaning
+   everywhere else it is used. The warning glyph, the descriptive accessible
+   name, and the literal "Bypass" label all stay, as does `danger` on the menu
+   ITEM (still doing real work when telling the four options apart).
+2. Nothing reads the mode from storage, so a user who deliberately switches to a
+   SAFER mode is back in Bypass after a reload. Under the old default the reset
+   direction was always toward safety; now it is away from it. I did not add
+   persistence for it — but if that trade stops being acceptable, persist the
+   user's explicit choice rather than moving the default back and forth.
+---
+
+### mcp-10 — the built-in Figma server is now Figma's REMOTE MCP, not the desktop app's
+
+Studio shipped `figma` as `http://127.0.0.1:3845/mcp` (the desktop app's Dev
+Mode server) because loopback-with-no-secret is the one shape
+`isSelfApprovingBuiltIn` lets through — genuinely zero-config, and genuinely
+dependent on the user having the Figma desktop app open on the SAME MACHINE as
+the Studio server. Now `https://mcp.figma.com/mcp`.
+
+**Being shipped buys visibility, not trust, and that check was not relaxed.**
+The remote entry has a non-loopback host, so it fails `isSelfApprovingBuiltIn`
+and is listed in Settings unapproved until a human turns it on. If you are ever
+tempted to widen that predicate so a built-in can self-approve off-machine —
+don't. It is the single place approval happens without a human, and the whole
+reason this change was safe is that the new entry lands on the correct side of
+it. Its positive branch is now unreachable through the shipped list, so it is
+exported and unit-tested directly, both branches.
+
+**It carries NO credential, and the first revision of this entry got that
+wrong.** I claimed a personal access token in `X-Figma-Token` would
+authenticate, reasoning from the endpoint's `Vary: X-Figma-Token` response
+header. That is Figma's generic API-gateway header, not an MCP auth path. The
+authoritative sources both say OAuth-only:
+`https://api.figma.com/.well-known/oauth-authorization-server` advertises a DCR
+`registration_endpoint`, PKCE `S256`, `require_state_parameter` and
+`bearer_methods_supported: ["header"]`, and Figma's docs say you sign in through
+the OAuth flow. Measured: a PAT in `X-Figma-Token` and in
+`Authorization: Bearer` both return the same 401 as no header at all. **Do not
+add a secret field back to this entry** — Studio holds no Figma credential and
+has none to prompt for.
+
+**The OAuth is the CLI's, and that is why this is workable at all.** Claude Code
+is one of the clients Figma's MCP catalog admits, and it stores the credential
+keyed to its `CLAUDE_CONFIG_DIR` — which `claudeCli.ts` already sets per user.
+So the handshake happens once, interactively, against that config dir, and
+headless turns reuse it. A `-p` turn can neither open a browser nor receive a
+redirect. **Still open:** Studio has no UI for that one-time sign-in. The
+precedent to copy is `claudeCliTerminalLaunch.ts`, which already opens a real
+visible terminal on the server host with `CLAUDE_CONFIG_DIR` set for
+`claude auth login`; the same mechanism pointed at an interactive `claude` +
+`/mcp` would close this. Until it exists, an approved-but-unauthorised server is
+simply dropped for the turn. Note also that visiting
+`https://www.figma.com/oauth/mcp` by hand returns "Parameter client_id is
+required" — that endpoint means nothing without a registered client's
+DCR-issued parameters, so it is never a link to hand a user.
+
+**The regression this change would have caused, and the guard added for it.**
+Every project used to get Figma for free; now every project gets nothing until a
+human approves it. An agent handed a Figma URL with no connector would have gone
+silent — the exact flailing this whole line of work is trying to stop. So
+`FigmaConnectorStatus` gained **`'needs-approval'`** as a state distinct from
+`'not-configured'`: "no Figma tools this turn" is now the DEFAULT rather than a
+sign the user never wanted one, and the prompt says which, with the fix. Do not
+collapse those two states back together.
+
+**Side benefit worth knowing before you debug an asset fetch.** The desktop
+server handed out `http://localhost:3845/assets/…` URLs that the SSRF guard in
+`remoteAssetFetch.ts` refused unless `STUDIO_ALLOW_LOOPBACK_ASSET_FETCH` was
+set. The remote server hands out ordinary `figma.com` URLs, so that exception
+stops applying and `studio_fetch_remote_asset` works out of the box. The
+loopback exception stays in the code — it is still correct for anyone who
+registers the desktop server back under the name `figma`, which a project's own
+entry is allowed to do and which is the documented escape hatch.
+
+---
+
+### mcp-11 — the in-canvas agent could not resolve a comment, because it had no comment tool
+
+`studio_list_comments` / `studio_reply_comment` / `studio_resolve_comment` have
+existed and been documented since `comment-01`. None of them were in
+`STUDIO_AGENT_TOOL_NAMES`, so the agent in the panel could not call any of them.
+
+This was not a missing nicety. The panel's own "address these comments" prompt
+says, verbatim, *"reply in the thread saying what you did, and resolve it"* —
+the agent was being asked for something its tool surface made impossible, and
+nothing anywhere said so. Measured on the real session
+(`.studio/comments.json` in `test-3`): 6 threads, 5 open, **zero agent
+replies**, every source edit landed. From the user's side that is
+indistinguishable from being ignored.
+
+Added, with a "Review comments" section in the system prompt and a parity-matrix
+row. `studio_resolve_comment` re-resolves the anchor against the live tree and
+refuses a drifted or detached one, so the honest-target rule is enforced by the
+tool rather than by prompt text.
+
+**The general lesson, and it is not about comments.** `STUDIO_AGENT_TOOL_NAMES`
+is deliberately an explicit list so that adding an MCP tool never silently
+widens the agent — that is right, and it also means a tool can be built,
+documented, tested and shipped while being unreachable by the only caller that
+matters. When you add a tool the panel's own prompts will ask for, add it here
+in the same change.
 ---
 
 ### struct-03 — "Delete refused: this would leave the TabBar import unused" — it now removes the import instead
@@ -11836,3 +12045,287 @@ Follow-up to board-30, against a screenshot of a real inserted tab bar: *"icons 
 **Files:** `src/core/page-parser/{iconPropValues.ts,jsxAttributeReaders.ts,parsePageFile.ts,__tests__/structuredProps.test.ts}`, `src/core/ast-codemods/{jsxSubtree.ts,__tests__/insertJsxElement.test.ts}`, `src/core/{component-manifest/types.ts,design-system-manifest/buildDesignSystemManifest.ts,module-engine/propertySchema.ts}`, `src/modules/alm/{curatedDefaults.ts,register.tsx,manifest.generated.json}`, `src/admin/pages/site/{store/slices/site/insertablePropValues.ts,store/slices/site/nodeActions.ts,studio/svgToJsxNode.ts,studio/studioSaveRequests.ts,property-controls/{PropertyControlRenderer.tsx,componentPropKind.ts,SlotPicker.tsx},panels/PropertiesPanel/renderModuleTabContent.tsx}`, `server/handlers/studioStructuralWriteback.ts`, `src/__tests__/{modules/almInsertedRender.test.ts,studio/hardcodedStrings.test.ts,studio/svgToJsxNode.test.ts}`, `docs/agent-refs/path-index.md`.
 
 **Trap:** `svgToJsxNode.ts` moved from `property-controls/` to `studio/` — the store needs it now, and it already depended on `studio/studioSaveRequests`, so the old location was a backwards edge.
+
+### mcp-12 — Studio performs the Figma OAuth itself; attachments no longer trigger a phantom "register" refusal
+- **Agent:** coordinator (direct)
+- **Stage:** built, `bun run build` clean, 1191 tests green across `server/ai` + `src/__tests__/architecture`. **Not yet dogfooded in a browser** — the OAuth round trip against Figma's live endpoints has not been driven end to end.
+- **Updated:** 2026-09-02
+
+Three failures in one screenshot, three unrelated causes, diagnosed from disk rather than inferred.
+
+**1. `studio_register_design_reference` refused a path outside the project — and the call never needed to happen.** `test-3/.studio/references/manifest.json` shows the attached JPEG already registered (`0a6600ae…`, `pageId: "sign-up"`, `source: "chat-attachment"`) at the exact minute of the failing turn: `chat.ts:313` arms every attached image *before* the prompt is built. Two modules each individually correct and never introduced — `claudeCliAttachments.ts` stages to `os.tmpdir()` on purpose, `designReferenceTools.ts` requires a path inside the project on purpose — so the model was handed the one path the tool cannot accept. Fixed at both ends: the prompt line now says the staged copies are outside the project, must not be passed to that tool, and are already registered; and the refusal itself, when a `chat-attachment` reference exists, names its id and dimensions. **Containment is unchanged** — nothing outside the project is read or hashed; the manifest that answers the question is already inside it.
+
+**2/3. Figma tools reported `No such tool available`, and the model invented an `authenticate` tool.** `figma` *was* approved (`approvedRegisteredMcpServers: ["figma"]`), so it went into the config and the CLI dialled `https://mcp.figma.com/mcp`. The CLI's own bookkeeping records the rest: `.data/claude-cli/smoke-local-test/mcp-needs-auth-cache.json` = `{"figma":{"timestamp":1788337533282}}` (11:25 that morning). OAuth-only, no credential, 401, **zero tools registered** — so the tool names genuinely do not exist and the error names nothing actionable.
+
+**The previous design could not have worked.** It delegated the sign-in to the CLI, which under `-p` can neither open a browser nor receive a redirect — it could only ever *inherit* a credential from an interactive TTY sign-in against a `CLAUDE_CONFIG_DIR` the user does not know Studio owns. **Studio now performs the OAuth itself.** It does not need to *be* the MCP client to hold the credential: the `--mcp-config` file already carries a `headers` object per http server, and `bearer_methods_supported: ["header"]` is how the resource expects to be called. New `credentials/mcpOAuth.ts` (discovery/DCR/PKCE/grants — protocol only, no state) + `credentials/mcpOAuthStore.ts` (session encrypted as one reserved field in the EXISTING `mcpServerSecretStore`, so it inherits the master key, rotation detection, file modes, and delete-with-server for free; refresh happens **on read**, 60 s ahead of the deadline) + `mcp/handlers/oauth.ts` (start/callback/status/sign-out).
+
+**Judgment calls a future agent may want to revisit:**
+- **`authProbe.ts` is deleted, not kept alongside.** Its whole output was a bare `authorization_endpoint` for the user to open by hand — which is *exactly* the URL that answers "Parameter client_id is required", the error the user hit. It could not have worked; keeping it beside a flow that does would be two ways of doing one thing.
+- **Approval and sign-in stay two separate human actions.** `isSelfApprovingBuiltIn` was NOT relaxed — the remote entry still fails it on the host check. Tempting to collapse them into one button; don't. Approval is "Studio may talk to this server"; sign-in is "here is my Figma account".
+- **A failed refresh keeps the session** and resolves to `null` for that turn. Deleting on a network blip would turn a hiccup into a re-authorisation.
+- **The PKCE verifier lives in a process-local TTL map.** A restart invalidates in-flight sign-ins, which needs no cleanup path and is the correct outcome — but it does mean `bun --watch` reloading mid-consent forces a retry.
+
+**`FigmaConnectorStatus` gained `'needs-auth'`**, threaded via a new `BuildStudioLiveDigestOptions.userId` (an OAuth session is per-user, so the question is unanswerable without it; absent, it degrades to the old `'configured'` rather than claiming the opposite). The prompt branch tells the agent explicitly that `No such tool available` means *not signed in*, so it stops retrying with invented names.
+
+**Trap:** `.data/claude-cli/<user>/.claude.json` on this machine holds a hand-added `figma` stdio entry with a **plaintext Figma PAT in argv**. `--strict-mcp-config` means the CLI ignores that file entirely, so it played no part in any of this — but it is on disk and lands in `ps` output whenever run outside Studio. Flagged to the user for rotation; not touched here.
+
+**Files:** `server/ai/credentials/{mcpOAuth.ts,mcpOAuthStore.ts,mcpServerSecretStore.ts,mcpOAuth.test.ts,mcpOAuthStore.test.ts}`, `server/ai/mcp/handlers/{oauth.ts,registeredServers.ts,registeredServers.test.ts}`, `server/ai/mcp/authProbe.ts` (deleted), `server/ai/drivers/{registeredMcpServers.ts,registeredMcpServers.test.ts,claudeCliAttachments.ts}`, `server/ai/tools/studio/{liveDigest.ts,systemPrompt.ts}`, `server/ai/handlers/{chat.ts,index.ts}`, `server/ai/mcp/tools/studio/designReferenceTools.ts`, `src/core/ai/projectMcpServerSchemas.ts`, `src/admin/ai/api.ts`, `src/admin/modals/Settings/sections/McpServersSection.tsx`, `docs/features/agent.md`.
+
+### canvas-13 — CSS Modules pages were half-editable on the canvas, and the panel showed hashed build artefacts as class names
+- **Agent:** coordinator (direct)
+- **Stage:** built, `bun run build` + `bun run lint` clean, 2225 tests green across `server/ai`, `src/core`, `src/__tests__/architecture`. **Not dogfooded in a browser.**
+- **Updated:** 2026-09-02
+
+User report: *"the classes, and the stuff the agent does is not editable that well in the canvas."* Two distinct causes, both downstream of one earlier decision — `claudeCliToolSurface.ts` now tells the agent to author real `.tsx` + `.module.css`, so **every element on an agent-authored page is `className={styles.x}`**. Two behaviours that were fine when that shape was rare became the common case.
+
+**1. Every class chip showed the compiled name.** A CSS Modules rule reaches the registry under its COMPILED name (`SignUp_socialBtn__a1b2c`) because that is what the DOM carries and what `classIds` must match. `cssModuleSource` already un-hashes the selector for the WRITE path, but nothing un-hashed it for the reader — so the CSS panel, the class picker, the selector inspector and the section menu all displayed a build artefact as if the user had named it that. `StyleRule` gained an optional **`displayName`** (the local name as written), set in `studioCss.ts` and spent by two new display-only helpers, `styleRuleDisplaySelector`/`styleRuleDisplayName`. **`name` and `selector` are untouched** — everything that renders, cascades, matches or emits still uses the compiled name; get this backwards and the CSS silently stops matching. `parseStyleRule` had to be taught the field explicitly (it picks fields, it does not spread).
+
+**2. No element could take a class at all.** `setJsxClassName` refused `css-module-binding` for BOTH add and remove. The refusal's stated reason — "the honest edit is the class DECLARATION, not this binding" — is right about *editing a declaration* and wrong about *attaching a class*, and applying it to `add` meant no element on an agent-authored page could be given a class. ADD now rewrites `className={styles.card}` → `` className={`${styles.card} x`} `` (single line, so no `line:col` shifts, same discipline as every other path there). REMOVE still refuses, with a sharper message: that token comes from the module, so deleting it here would not delete it.
+
+**Left deliberately unfixed, and worth knowing:** editing a shared module class edits every element using it (change `.socialBtn`, both social buttons move). That is CSS Modules working correctly, not a bug — but it *is* the other half of "works in a strange way", and the honest fix is a panel affordance that says "3 elements use this class" before the edit, not a behaviour change.
+
+### agent-13 — screens are built in parallel again; `Task` is back with a contract instead of a ban
+- **Agent:** coordinator (direct)
+- **Stage:** built and gated. **Never exercised end to end** — no real multi-screen fan-out has been run since granting it.
+- **Updated:** 2026-09-02
+
+User ask: *"I want the agent no matter what to spawn multiple agents to finish the work faster and split it into different agents that don't collide."*
+
+`Task` was withheld after a genuine fabrication: an invented `subagent_type`, a silent CLI fallback to `general-purpose`, and ten files reported written in detail that were all untouched scaffolds. Removing the tool made that unreachable — and made every board sequential (three screens, 45 min, 154 turns, for work sharing no file).
+
+**The cause was the invented name, not delegation.** So: `Task` is granted (only with a project open), and the prompt's new **Parallel work** section pins `subagent_type` to `'general-purpose'` — the one value that cannot silently fall back, because it *is* the fallback — and requires self-contained delegated prompts, since the subagent sees only the text it is sent.
+
+**Non-collision is structural, not a lock.** One agent per page; a page owns exactly `pages/<Name>.tsx` + `pages/<Name>.module.css`, which nothing else touches, so the partition is disjoint by construction. Every shared file (i18n dictionary, shared components, `package.json`, `.studio/boards.json`) is the orchestrator's alone — before the fan-out and after it. The i18n dictionary is the one that would actually bite: two agents appending keys to it destroy each other's work and the loser is silent.
+
+**Judgment calls to revisit:**
+- **No generated agent roster came back.** The old eleven-file roster is still in `LEGACY_GUIDE_ARTEFACTS` and still swept. A roster would let a subagent carry a role prompt, but it also re-creates the name a model can mistype. Using only the built-in name is the cheaper safe answer; revisit if role-specialised subagents prove worth it.
+- **Enforcement is prompt-level.** Nothing stops two subagents writing one file. A real guard would need per-file ownership in the writeback path (or a `PostToolUse` hook that knows the agent identity, which it currently does not). Disjoint-by-page makes the common case safe; a user asking for two variants of ONE screen in parallel would defeat it.
+- The `--tools` gate `studio-agent-no-subagents.test.ts` was **replaced** by `studio-agent-subagent-contract.test.ts` — same file, inverted intent, per CLAUDE.md's "when your change drifts a structural rule, fix the rule's gate in the same change".
+
+**Files:** `server/ai/drivers/{claudeCliToolSurface.ts,claudeCli.test.ts}`, `server/ai/tools/studio/systemPrompt.ts`, `src/__tests__/architecture/studio-agent-subagent-contract.test.ts` (replaces `studio-agent-no-subagents.test.ts`), `src/core/page-tree/{styleRule.ts,classNames.ts,index.ts,__tests__/styleRuleDisplayName.test.ts}`, `src/core/ast-codemods/{setJsxClassName.ts,__tests__/setJsxClassName.test.ts}`, `server/handlers/{studioCss.ts,__tests__/studioCss.test.ts}`, `src/admin/pages/site/panels/**` (five display sites), `docs/features/agent.md`.
+
+### mcp-13 — CORRECTION to mcp-12: Studio cannot sign in to Figma, and no code change can make it
+- **Agent:** coordinator (direct)
+- **Stage:** corrected, built, gated. Verified against Figma's live endpoints with curl.
+- **Updated:** 2026-09-02
+
+`mcp-12` (written hours earlier, same session) claims **"Studio performs that OAuth itself"** for Figma. **That is wrong.** The flow it describes is real and works for a remote MCP server with open dynamic client registration; Figma is not one, and Figma is the connector Studio ships.
+
+**The evidence.** `POST https://api.figma.com/v1/oauth/mcp/register` returns a bare `403 Forbidden` (9-byte JSON string, `x-figma-rest-api-request-id` present, so it is Figma's own REST layer and not a CDN block). Identical for: the exact body Studio sends, a minimal body, an https redirect URI, a loopback redirect URI, `token_endpoint_auth_method: none`, a browser user-agent, and `Origin: https://www.figma.com`. `GET` on the same path is 404, so the route exists and is refusing the caller rather than validating the request. Figma's own docs say it outright: *"Only clients listed in the Figma MCP Catalog like VS Code, Cursor, or Claude Code can connect to the Figma MCP Server"*, with a waitlist for new ones.
+
+Its metadata still advertises `registration_endpoint`, which per RFC 7591 means "you may register here" — so **discovery gives no warning at all**; the 403 at registration time is the first and only signal. That is what makes this worth writing down: the design read as sound right up to the moment it was run.
+
+**What changed as a result:**
+- `registerOAuthClient` maps a 401/403 from a registration endpoint to a named message (`closedRegistrationMessage`) instead of "answered 403: Forbidden", which reads to a user as their own mistake. Three tests pin it, including that a 500 is left alone.
+- The Settings row detects that message and **replaces the dead Sign-in button** with the exact `CLAUDE_CONFIG_DIR=… claude mcp add …` / `claude` commands, using the real per-user config dir (new `cliConfigDir` on the status response — path computation only, no network).
+- Commands are **printed, not launched**: `claudeCliPlatformSupport()` disables terminal launching on macOS (the reporting user's platform), and the interactive `/mcp` step needs a TTY regardless.
+- The `needs-auth` prompt branch was re-worded. It used to assert "you have no Figma tools this turn". After a CLI-side sign-in that is FALSE and Studio cannot see the difference, so it now states only what is known — Studio holds no sign-in of its own — and tells the agent what a `No such tool available` result means if it hits one.
+
+**The generic OAuth flow was NOT removed.** It is not dead code: the Settings panel lets a user register any http/sse MCP server, and one with open DCR (Sentry, per the CLI's own documented example) signs in from Settings in one click. Figma is the exception, and it is now the exception the code says out loud.
+
+**RESOLVED — the CLI route works.** The user performed the sign-in and `mcp__figma__whoami` returns their account inside an ordinary Studio chat turn. `--strict-mcp-config` restricts which server DEFINITIONS the CLI loads; it does NOT isolate a stored credential for an endpoint Studio's own `--mcp-config` names. Figma is usable today.
+
+**Follow-up, same session:** the printed commands first rendered in a `<pre>` with `overflow-x: auto`, so an absolute config-dir path clipped them behind a horizontal scrollbar — unreadable and un-selectable, which defeats the entire point of printing them. They now WRAP (`pre-wrap` + `break-all`, since the overflow is inside a quoted path with no spaces) and each line has its own Copy button. Two lines, two buttons: the second launches an interactive session, so they are not one paste.
+
+**Also fixed on the way past:** `eslint.config.js` did not ignore `.data/`. That is Studio's git-ignored runtime data root, and the Claude CLI downloads third-party marketplace plugin source into it — 24 lint errors from someone else's `server.ts` were failing `bun run lint` for changes that never touched it. Added to `globalIgnores` with the same reasoning `studio-workspace` already carries.
+
+**Trap:** the macOS keychain on this machine holds many `Claude Code-credentials-<hash>` entries. The hash suffix implies the CLI DOES scope credentials per config dir on macOS — which contradicts `MACOS_UNSUPPORTED_REASON` in `claudeCliEnv.ts` ("CLAUDE_CONFIG_DIR does not relocate the Keychain"). That reason may simply be out of date; it currently disables the whole `claudeCli` provider on macOS behind an env override. Worth re-testing before anyone builds on either claim.
+
+### mcp-14 — the sign-in badge read the one place a CLI sign-in never lands
+- **Agent:** coordinator (direct)
+- **Stage:** built, verified against the real CLI, `bun run build`/`lint` clean, 685 `server/ai` tests green.
+- **Updated:** 2026-09-02
+
+Reported with proof: `claude mcp list` said `figma … ✔ Connected`, `mcp__figma__whoami` returned the account in a live turn, and the Settings panel still said **Not signed in** next to a Sign in button that cannot work.
+
+**The bug was structural, not a stale read.** `handleStatus` derived `connected` from `readMcpOAuthSession` — Studio's own store, written only by Studio's own OAuth callback. The CLI keeps its MCP credential in the OS keychain. For a provider that refuses to register Studio as a client (Figma), the CLI is the ONLY place a sign-in can land, so that badge could never flip for the one connector Studio ships.
+
+**Fix:** `credentials/cliMcpConnectionProbe.ts` runs `claude mcp list` against the user's `CLAUDE_CONFIG_DIR` and parses it (no `--json` for that subcommand — the text is the contract, pinned in tests against verbatim captured output). New `GET /admin/api/ai/mcp/oauth/cli-status`; the row now has a third state, "Signed in via the Claude CLI", and hides the sign-in affordance behind it.
+
+**Two properties of the probe are the design, and both were measured:**
+- **cwd is a fresh EMPTY directory.** `claude mcp list` health-checks approved `.mcp.json` stdio servers; probing inside a user's project would execute commands from their repo to render a badge, on a consent record Studio does not own (`projectMcpServers.ts` exists precisely to stop that). An empty dir also returns the same answer as the project dir, so safety costs nothing.
+- **~10 SECONDS, so it is never on the turn path.** Cached 60 s per config dir; the live probe is reachable only from an explicit HTTP request; `liveDigest` uses a cache-only read that never spawns. Cold cache → the digest still says "Studio holds no sign-in of its own", which is true either way.
+
+**Directory-scoped OAuth state — the finding that cost the most to establish.** The CLI resolves servers AND their auth state per working directory. One config dir, one endpoint, back to back: empty tmp dir `✔ Connected`; `studio-workspace/test-3` `✔ Connected`; the Studio repo root `! Needs authentication`. So the printed sign-in command now uses **`-s user`** — without it `claude mcp add` writes a local-scope entry keyed to the cwd it was run in, which is invisible from anywhere else and invisible to the probe.
+
+**Changes made to the user's CLI config (backed up first to the session scratchpad, `claude.json.before-figma-cleanup`):**
+- Removed the user-scope stdio `figma` entry carrying a plaintext `figd_…` PAT on its command line. Not merely dead: the CLI itself reported `[Conflicting scopes] … OAuth tokens are stored per endpoint`, and it was why the repo root reported "Needs authentication".
+- Added `figma` at user scope pointing at `https://mcp.figma.com/mcp`, and removed the redundant local-scope duplicate.
+- **The PAT should still be rotated** — it sat in argv, visible to `ps` for any local process, for as long as that entry existed.
+
+**Known residue:** the Studio repo root still reports `! Needs authentication` for figma even with no local entry and no `.mcp.json` — some per-project record in `.claude.json`'s `projects[…]`. Cosmetic: Studio never spawns turns there, and both the empty dir and the project dir report Connected. Not chased further.
+
+**Unfixed, and a real limit:** `mcp-needs-auth-cache.json` is STALE — it still lists `figma` after a successful sign-in. It looked like a free signal and is not one; do not build on it.
+
+**Files:** `server/ai/credentials/{cliMcpConnectionProbe.ts,cliMcpConnectionProbe.test.ts}`, `server/ai/mcp/handlers/oauth.ts`, `server/ai/tools/studio/liveDigest.ts`, `src/core/ai/projectMcpServerSchemas.ts`, `src/admin/ai/api.ts`, `src/admin/modals/Settings/sections/McpServersSection.tsx`, `docs/features/agent.md`.
+
+
+### mcp-15 — "open Studio and Figma is running": everything that could be automated, was
+- **Agent:** coordinator (direct)
+- **Stage:** built, gated, and PRIMED on this machine (every existing project approved, sign-in remembered). Build/lint clean, 1215 tests green.
+- **Updated:** 2026-09-02
+
+After `mcp-14` the connector worked but still cost, per project: an Approve click, plus two pasted terminal commands. Three of those four steps are gone.
+
+**1. Studio registers the server with the CLI itself.** `ensureCliMcpServerRegistered` runs `claude mcp add -s user --transport http figma https://mcp.figma.com/mcp` — non-interactive, idempotent (an existing entry answers "already exists", exit 0), and it writes a DEFINITION Studio already ships, never a credential. Making a human paste that was ceremony. The printed instructions are now **one** command.
+
+**2. A completed sign-in IS the approval.** `recordBuiltInSignIn` (`registeredMcpServers.ts`) approves a SHIPPED BUILT-IN once the user has authenticated it. The argument, which is the whole justification: **without a sign-in the server is inert** — Figma registers zero tools for an unauthenticated client, so an unapproved built-in and an unauthenticated one are the same thing — and **with a sign-in the user already consented, to Figma, in Figma's own OAuth screen, naming their account and scope.** A Studio checkbox asking the same question afterwards is a weaker signal collected second. Blast radius is exactly: a server Studio ships, at a URL Studio fixed (a project entry of the same name REPLACES the built-in and follows ordinary rules), that the user personally authenticated. Four guards, each unit-tested: never without a sign-in, never for a non-built-in, never over a project's own entry of that name, never over an explicit opt-out.
+
+**3. The signal is remembered on disk.** `rememberCliSignIn`/`recallCliSignIns` write server NAMES (no credential — Studio holds none) to `studio-mcp-signin.json` inside Studio's own 0700 per-user CLI data dir, removed wholesale by `deleteClaudeCliConfigDir`. This is what makes a project created next week work on its FIRST turn: the alternative was a 10-second health check on the turn path, or a connector that worked only when a 60-second cache happened to be warm — both worse than a note on disk. **Deliberately one-way: there is no forget function.** A probe that fails, times out, or runs offline must never read as "signed out" and silently revoke a working connector; a real sign-out is revoking the approval in Settings, which is a human action with intent behind it.
+
+**Primed on this machine, not just enabled in code:** `studio-mcp-signin.json` written, and `figma` approved in all seven existing projects (skipping any that had their own entry or an opt-out). Opening Studio now finds the connector live.
+
+**What is left for a human, permanently:** the interactive `/mcp` authorization. It needs a TTY and a browser consent screen; nothing Studio does can stand in for it, and pretending otherwise is what the last three entries were about.
+
+**Files:** `server/ai/credentials/{cliMcpConnectionProbe.ts,cliMcpConnectionProbe.test.ts}`, `server/ai/drivers/{registeredMcpServers.ts,recordBuiltInSignIn.test.ts}`, `server/ai/mcp/handlers/oauth.ts`, `server/ai/tools/studio/liveDigest.ts`, `src/admin/modals/Settings/sections/McpServersSection.tsx`.
+
+---
+
+### mcp-16 — the sign-in worked and the turns still had no Figma tools: the CLI's own needs-auth cache
+- **Agent:** coordinator (direct)
+- **Stage:** built, gated, and verified against the real CLI on this machine. Build/lint clean, 1919 tests green across `server/ai`, `server/handlers/__tests__`, `src/__tests__/architecture`.
+- **Updated:** 2026-09-02
+
+`mcp-13/14/15` got the route right and still left the connector dead. The missing
+piece is a file none of those entries knew about:
+`<CLAUDE_CONFIG_DIR>/mcp-needs-auth-cache.json`. The CLI writes a server into it
+when that server answers a turn unauthenticated, **a headless (`-p`) turn then
+trusts the file instead of the server**, and nothing invalidates it when the
+sign-in finally happens. `claude mcp list` health-checks live and ignores it. So
+the two disagree permanently, in the direction that hurts.
+
+Measured on this machine, one config dir, one endpoint, minutes apart, after a
+completed `/mcp` sign-in:
+
+| asked | answer |
+|---|---|
+| `claude mcp list` | `figma: ✔ Connected` |
+| headless turn `system/init` | `{"name":"figma","status":"needs-auth"}`, zero `mcp__figma__*` tools |
+
+Deleting the `figma` key from that file — nothing else, no re-authentication —
+flipped the same headless turn to `connected` with the full tool surface. That is
+`mcp-14`'s badge bug in reverse: Settings tells the truth, the turn does not.
+
+It is **self-perpetuating**, which is why nobody could exit it by trying again:
+one turn taken before the sign-in poisons the file, and no later turn re-checks.
+The entry has no TTL worth relying on. So the manual step Studio asks for bought
+the user nothing, and `mcp-15`'s "verified" claim in `docs/features/agent.md` was
+true only for a config dir that had never run a pre-sign-in turn.
+
+**Fix:** `clearCliNeedsAuthCache(configDir, names)` in `cliMcpConnectionProbe.ts`,
+called from two places — the Settings probe the moment it observes a live
+`connected`, and `claudeCli.ts` immediately before **every** spawn for each name
+in `recallCliSignIns`. Name-scoped on purpose: only servers with positive
+evidence of a sign-in are pruned, so a genuinely unauthenticated server keeps its
+fast, honest `needs-auth` answer. It is a cache of a verdict — not a credential,
+not consent — in a directory Studio creates, owns, and deletes wholesale, and
+the worst case of a wrong prune is one extra connection attempt.
+
+**Second fix, same panel:** the closed-registration verdict is now durable.
+`registerOAuthClient` throws a typed `McpClientRegistrationClosedError` for a
+401/403; `POST /start` answers **403** and records the name in
+`.studio/meta.json`'s `mcpOAuthRegistrationClosed`; `GET /status` reports it as
+`registrationClosed`. The panel keys on that instead of substring-matching the
+error message, so the row opens straight into the CLI instructions rather than
+making the user re-prove once per session that the Sign in button cannot work —
+and that button is no longer rendered in that state at all. Copying a command
+arms the same window-focus re-probe the browser flow arms.
+
+**Third fix, and the one that was actually keeping Figma dark: `USER`.** Every
+Studio subprocess gets an explicit minimal environment (`minimalSubprocessEnv`,
+`sec-01`) so a workspace build script cannot see `STUDIO_SECRET_KEY` or a
+provider key. `USER` was not on that allowlist — and **the Claude CLI keys its
+stored credentials by the OS account name.** Without it the CLI looks up a
+different account, finds nothing, and reports a signed-in server as `! Needs
+authentication`. Bisected, one config dir, one endpoint, needs-auth cache
+cleared before each run:
+
+| environment | `claude mcp list` says |
+|---|---|
+| `env -i HOME PATH CLAUDE_CONFIG_DIR` | `! Needs authentication` |
+| the same, plus `USER` | `✔ Connected` |
+| the same, plus `LOGNAME` instead | `! Needs authentication` — no substitute |
+
+This is why every earlier entry's reasoning was sound and the connector still
+did not work: Studio's probe and Studio's turns BOTH ran in that environment,
+so they agreed with each other and disagreed with every check anyone ran by
+hand in a terminal. `USER`/`USERNAME` are now in `BASE_SUBPROCESS_ENV_KEYS` —
+one place, fixes probe, turn, login, verify — and pinned by
+`subprocessRunner.test.ts`. It leaks nothing the allowlist protects: the child
+already runs AS that user with `HOME` set to their home directory. **Do not
+trim that list to "tighten" the environment.**
+
+**Verified end to end** from the poisoned state on this machine, with Studio's
+exact spawn env and flags: `system/init` → `{"name":"figma","status":"connected"}`
+and 41 `mcp__figma__*` tools. The Settings probe likewise now returns
+`figma: connected` (and, with the account finally identifiable, the user's
+claude.ai connectors alongside it).
+
+**Do not "fix" the disagreement by trusting `claude mcp list` harder.** The probe
+was already right. The turn path was reading a different, staler source, and the
+only durable answer is to invalidate it where Studio has evidence.
+
+**Files:** `server/ai/credentials/{cliMcpConnectionProbe.ts,cliMcpConnectionProbe.test.ts,mcpOAuth.ts,mcpOAuth.test.ts}`, `server/ai/drivers/claudeCli.ts`, `server/ai/mcp/handlers/oauth.ts`, `server/handlers/studio/{studioMeta.ts,subprocessRunner.ts}`, `server/handlers/__tests__/subprocessRunner.test.ts`, `docs/agent-refs/conventions-quickref.md`, `src/core/ai/projectMcpServerSchemas.ts`, `src/admin/modals/Settings/sections/McpServersSection.tsx`, `docs/features/agent.md`.
+
+---
+
+### canvas-14 — every agent turn broke the canvas until a manual refresh: the reload applied pages against the PREVIOUS stylesheet
+- **Agent:** coordinator (direct)
+- **Stage:** built and gated. Build/lint clean; editor-store, studio and architecture suites green.
+- **Updated:** 2026-09-02
+
+Reported as "why does it look like this until I refresh?" — frames rendering
+unstyled and collapsed after an agent turn, stacks of "Empty container"
+placeholders, correct again the moment the page is reloaded.
+
+**The targeted reload threw away the half of the response that matters.**
+`GET /admin/api/studio/load?stream=1&pageIds=` answers with a `meta` line then
+one line per page, and `studioLoadResponse.ts` is explicit that the meta line
+is **always a full, fresh recompute, filtered or not** — because `styleRules`,
+`conditions`, `styleRuleSources`, `vendorCss` and `authoredCss` are
+PROJECT-wide and the very edit that triggered the reload can change any of
+them. It even names the failure: "a filtered load that skipped this and
+returned stale `styleRules` would render the edited page WRONG."
+
+`fetchStudioPagesById` read `missingPageIds` off that line and discarded
+everything else. So the server paid for a full recompute, and the client
+applied the new page trees against the OLD registry.
+
+**Why that renders as an empty box.** `NodeRenderer` resolves a node's class
+through `getCanvasNodeClassName(classIds, …, site.styleRules)`. A node whose
+`classIds` name a rule the stale registry has never seen resolves to NO class
+name; the element renders unstyled, the layout collapses, and
+`ContainerEditor`'s `showPlaceholder` (no children AND no class AND no inline
+style) draws "Empty container". A page that is perfectly fine on disk, drawn
+against last minute's stylesheet. A manual refresh runs `loadSite`, which
+applies the meta — hence "it works after I refresh".
+
+This hit BOTH callers: the MCP live-reload bridge (`studioLiveReload.ts`) and
+the user's own structural commits (`reloadStructuralScope` in
+`studioSaveRequests.ts`).
+
+**Fix.** `fetchStudioPagesById` now applies the meta line the way `loadSite`
+does — `setStudioVendorCss`, `setStudioAuthoredCss`, `setStudioTrustTier`,
+`setStudioStyleRuleSources` (all store-free leaves, so this module stays
+store-agnostic and the import cycle it was split out to avoid stays open) —
+and RETURNS `styleRules`/`conditions`, which live in the `SiteDocument`.
+`PatchPagesInput` gained both; `patchPages` replaces them wholesale (never
+merges — a merge would resurrect a rule the edit deleted), and keeps the
+current registry when a caller has nothing fresher. Both callers, plus the
+`CmsSitePagesPatchDetail` event and its `usePersistence` listener, forward
+them.
+
+**Deliberately NOT applied:** `componentSources` (no reader today) and
+`paletteHiddenModuleIds` (read once by `registerProjectModules`, which a live
+reload does not re-run). Both live inside the store-importing
+`fsCodemodAdapter.ts`; reaching them from the store-agnostic fetch module
+would close the exact cycle that module was extracted to avoid, to refresh
+values nothing reads before the next full load replaces them. Documented in
+`studioLiveReloadFetch.ts` rather than left to be rediscovered.
+
+**If you add a field to the load stream's `meta` line, apply it here too.**
+The bug was not a missing feature; it was a response half-consumed. A gate now
+pins it: `studioLiveReloadFetch.test.ts` (the meta line is applied) and
+`patchPages.test.ts`'s "project-wide registries" block.
+
+**Files:** `src/admin/pages/site/studio/{studioLiveReloadFetch.ts,studioSaveRequests.ts}`, `src/admin/pages/site/studio/__tests__/studioLiveReloadFetch.test.ts`, `src/admin/pages/site/agent/studioLiveReload.ts`, `src/admin/pages/site/store/slices/site/{types.ts,lifecycleActions.ts}`, `src/admin/pages/site/hooks/usePersistence.ts`, `src/admin/state/adminEvents.ts`, `src/__tests__/editor-store/patchPages.test.ts`, `docs/agent-refs/editor-store.md`.

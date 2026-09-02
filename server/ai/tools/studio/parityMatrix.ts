@@ -103,6 +103,10 @@ export const STUDIO_CANVAS_PARITY_MATRIX: readonly ParityRow[] = [
     action: "Record a design's own declared variable table so a measurement resolves by lookup instead of by pixel inference",
     status: { kind: 'tool', toolNames: ['studio_ingest_design_variables', 'studio_list_design_variables', 'studio_read_design_variable_set'] },
   },
+  {
+    action: 'Read the board\'s review comment threads, reply in one, and resolve it',
+    status: { kind: 'tool', toolNames: ['studio_list_comments', 'studio_reply_comment', 'studio_resolve_comment'] },
+  },
 
   // ── Deliberately withheld — by design, not by oversight.
   {

@@ -23,11 +23,9 @@
  *        approval list ('project' -> `.mcp.json`-declared, 'registered' ->
  *        Studio-registered) so a name shared between the two can never be
  *        approved on the wrong list.
- *   POST   /admin/api/ai/mcp/project-servers/check-auth { url }
- *     -> best-effort OAuth-discovery probe (`authProbe.ts`) for an http/sse
- *        server URL — surfaces whatever authorization link the server itself
- *        hands back, never one Studio invents. See that module's doc comment
- *        for why Studio never attempts the OAuth flow itself.
+ * OAuth sign-in for a remote server is NOT here — it is its own handler
+ * (`oauth.ts`), because it owns a multi-request flow with pending state and a
+ * browser redirect target rather than a single request/response.
  *
  * Every route is gated by `ai.providers.manage` — the same capability that
  * already governs the MCP Connectors tab (managing MCP integrations, inbound
@@ -37,7 +35,6 @@
  */
 import {
   AddRegisteredMcpServerBodySchema,
-  CheckMcpServerAuthBodySchema,
   SetMcpServerApprovalBodySchema,
   type ProjectMcpServerView,
 } from '@core/ai'
@@ -57,10 +54,8 @@ import {
   ReservedMcpServerNameError,
 } from '../../drivers/registeredMcpServers'
 import { hasMcpServerSecret, setMcpServerSecret } from '../../credentials/mcpServerSecretStore'
-import { probeMcpServerAuthorization } from '../authProbe'
 
 const BASE = '/admin/api/ai/mcp/project-servers'
-const CHECK_AUTH_PATH = `${BASE}/check-auth`
 
 export function tryHandleAiMcpProjectServers(
   req: Request,
@@ -81,11 +76,6 @@ function resolveContainedDir(dirParam: string | null): { ok: true; dir: string }
 }
 
 async function handle(req: Request, db: DbClient, url: URL, pathname: string): Promise<Response> {
-  if (pathname === CHECK_AUTH_PATH) {
-    if (req.method !== 'POST') return jsonResponse({ error: 'Method not allowed' }, { status: 405 })
-    return handleCheckAuth(req, db)
-  }
-
   if (pathname === BASE) {
     if (req.method === 'GET') return handleList(req, db, url)
     if (req.method === 'POST') return handleAdd(req, db)
@@ -198,13 +188,3 @@ async function handleSetApproval(req: Request, db: DbClient, name: string, appro
   return jsonResponse({ ok: true, name, approved: approve })
 }
 
-async function handleCheckAuth(req: Request, db: DbClient): Promise<Response> {
-  const userOrResponse = await requireCapability(req, db, 'ai.providers.manage')
-  if (userOrResponse instanceof Response) return userOrResponse
-
-  const body = await readValidatedBody(req, CheckMcpServerAuthBodySchema)
-  if (!body) return badRequest('Invalid request body.')
-
-  const result = await probeMcpServerAuthorization(body.url)
-  return jsonResponse(result)
-}

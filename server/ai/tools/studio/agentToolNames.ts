@@ -87,6 +87,19 @@ export const STUDIO_AGENT_TOOL_NAMES: readonly string[] = [
   'studio_set_frames',
   'studio_set_frame_axes',
   'studio_duplicate_frame_as_variant',
+  // The user's own feedback on the board, as a work queue — and the two writes
+  // that close a thread out. Absent until now, which made a routine request
+  // impossible to satisfy rather than merely awkward: the panel's own
+  // "address these comments" prompt says in as many words "reply in the thread
+  // saying what you did, and resolve it", and the agent had no tool that could
+  // do either. Measured on a real session (6 threads, 5 open): every edit
+  // landed, not one thread was replied to or resolved, and nothing anywhere
+  // told the user why. `studio_resolve_comment` re-resolves the anchor against
+  // the live tree and refuses a thread whose element has drifted or gone, so
+  // the honest-target rule is enforced by the tool, not by the prompt.
+  'studio_list_comments',
+  'studio_reply_comment',
+  'studio_resolve_comment',
   // Orientation the filesystem cannot answer as cheaply or as truthfully.
   'studio_project_profile',
   'studio_list_pages',

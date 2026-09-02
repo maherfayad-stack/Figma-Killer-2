@@ -8,7 +8,7 @@ import {
 } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { selectSelectedNode, useEditorStore } from '@site/store/store'
-import { classifySelectorCreateInput, styleRuleSelector } from '@core/page-tree'
+import { classifySelectorCreateInput, styleRuleSelector, styleRuleDisplaySelector } from '@core/page-tree'
 import { generatedClassKindLabel, isGeneratedClass, isGeneratedClassLocked } from '@core/page-tree'
 import type { StyleRule } from '@core/page-tree'
 import { Button } from '@ui/components/Button'
@@ -437,7 +437,7 @@ export function SelectorsPanel({ variant = 'docked' }: SelectorsPanelProps) {
           title={renameTarget.kind === 'ambient' ? 'Rename selector' : 'Rename class'}
           initialValue={
             renameTarget.kind === 'ambient'
-              ? styleRuleSelector(renameTarget)
+              ? styleRuleDisplaySelector(renameTarget)
               : renameTarget.name
           }
           submitLabel="Save"
@@ -494,7 +494,7 @@ function SelectorRow({
   // Display the rule's full selector. For class-kind rules this resolves to
   // `.<escaped-name>`; for ambient rules it is whatever selector the user or
   // CSS importer wrote (e.g. `h1 > span`, `.hero .title`, `a:hover`).
-  const selectorLabel = styleRuleSelector(cls)
+  const selectorLabel = styleRuleDisplaySelector(cls)
   const isAmbient = cls.kind === 'ambient'
   const kindLabel = isAmbient
     ? 'Ambient'

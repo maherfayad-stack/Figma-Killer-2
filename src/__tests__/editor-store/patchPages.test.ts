@@ -22,6 +22,7 @@
  */
 import { beforeEach, describe, expect, it } from 'bun:test'
 import { useEditorStore } from '@site/store/store'
+import type { StyleRule } from '@core/page-tree'
 import { makeNode, makePage, makeSite } from '../fixtures'
 import { subscribeToasts, __resetToastBusForTests } from '@ui/components/Toast/toastBus'
 import '@modules/base/index'
@@ -103,6 +104,45 @@ describe('patchPages — upsert', () => {
     useEditorStore.getState().patchPages({ pages: [] })
 
     expect(useEditorStore.getState().site).toBe(before)
+  })
+})
+
+/**
+ * The project-wide registries a targeted reload recomputes. A freshly-parsed
+ * page's `classIds` name rules from the registry computed WITH it; applying
+ * the page and keeping the PREVIOUS registry resolves those nodes to no class
+ * name at all (`NodeRenderer`'s `getCanvasNodeClassName`), which renders as an
+ * unstyled, collapsed page that only a manual refresh fixes.
+ */
+describe('patchPages — project-wide registries', () => {
+  const rule = (name: string): StyleRule => ({
+    id: name, name, kind: 'class', selector: `.${name}`, order: 0, styles: {}, contextStyles: {}, createdAt: 0, updatedAt: 0,
+  })
+
+  it('replaces styleRules and conditions wholesale when the reload carried them', () => {
+    useEditorStore.getState().loadSite(twoPageSite())
+    useEditorStore.setState((s) => ({ site: { ...s.site!, styleRules: { stale: rule('stale') } } }))
+
+    const fresh = makePage({ id: 'home', slug: 'index', title: 'Home' })
+    useEditorStore.getState().patchPages({
+      pages: [fresh],
+      styleRules: { fresh: rule('fresh') },
+      conditions: [],
+    })
+
+    const { site } = useEditorStore.getState()
+    // Wholesale, not merged: the server recomputes the registry from disk, so
+    // a merge would resurrect a rule the edit deleted.
+    expect(Object.keys(site!.styleRules)).toEqual(['fresh'])
+  })
+
+  it('keeps the current registry when the caller had nothing fresher', () => {
+    useEditorStore.getState().loadSite(twoPageSite())
+    useEditorStore.setState((s) => ({ site: { ...s.site!, styleRules: { kept: rule('kept') } } }))
+
+    useEditorStore.getState().patchPages({ pages: [makePage({ id: 'home', slug: 'index', title: 'Home' })] })
+
+    expect(Object.keys(useEditorStore.getState().site!.styleRules)).toEqual(['kept'])
   })
 })
 

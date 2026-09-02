@@ -77,7 +77,8 @@
  *   GET  /admin/api/studio/projects
  *   POST /admin/api/studio/create   body: { name? }
  *   POST /admin/api/studio/rename   body: { dir?, name }
- *   POST /admin/api/studio/page     body: { dir?, name? }
+ *   POST   /admin/api/studio/page   body: { dir?, name? }
+ *   DELETE /admin/api/studio/page   body: { dir?, pageId }
  *
  *   GET  /admin/api/studio/framework?dir=<abs>
  *       Reads the project's `.studio/framework.json` sidecar (colors/
@@ -240,6 +241,7 @@ import { tryServeStudioI18nSetup } from './studio/i18nSetup'
 import { tryServeStudioProjectRoutes } from './studio/projectRoutes'
 import { tryServeStudioReloadScope } from './studio/reloadScope'
 import { tryServeStudioComments } from './studio/commentsRoutes'
+import { tryServeStudioPrototype } from './studio/prototypeRoutes'
 import type { DbClient } from '../db/client'
 
 /**
@@ -271,6 +273,7 @@ const STUDIO_SUB_ROUTERS = [
   tryServeStudioI18nSetup,
   tryServeStudioProjectRoutes,
   tryServeStudioReloadScope,
+  tryServeStudioPrototype,
 ] as const
 
 /** Body of POST /admin/api/studio/save — a batch of typed source writebacks. */

@@ -1,27 +1,36 @@
 /**
  * The agent's initial permission mode.
  *
- * "Auto" (`acceptEdits`) is the working default: Studio exists for the agent to
- * edit the user's source, so a per-edit prompt asks a question whose answer is
- * always yes and turns a multi-edit build into a click-through.
+ * **Bypass is the default.** Studio exists for the agent to edit the user's
+ * source and drive Studio's own tools; every prompt on that path asks a
+ * question whose answer is always yes, and `acceptEdits` only silenced the
+ * file-edit half — every MCP tool call still raised an Allow/Deny card
+ * mid-build.
  *
- * The test that actually protects something is the second one. D5 §11.5 rail 1
- * says Bypass must never persist, and the mechanism is entirely "the initial
- * value is not Bypass, and nothing reads the mode from storage." That rail used
- * to be enforced only by the literal `'default'` sitting in the initializer —
- * so moving the default at all could have quietly broken it. Pin the invariant
- * itself, not the incidental value it used to have.
+ * The second test is the one that protects something. It is easy to read
+ * "Bypass by default" as "the agent can now do more", and that is exactly what
+ * is NOT true: permission mode governs PROMPTING for an already-available
+ * tool. What bounds the agent is `--tools` (a hard availability list the CLI
+ * evaluates before `--permission-mode`), the subprocess `cwd`, the minted
+ * connector's capabilities, and `.studio/meta.json`'s trust tier — none of
+ * which this value can reach. So the invariant worth pinning is no longer
+ * "never Bypass"; it is "the mode is one the driver will accept, and the
+ * server still never invents it from silence" (`claudeCliPermissionMode.ts`).
  */
 import { describe, expect, it } from 'bun:test'
 import { agentSessionControlsInitialState } from './agentSessionControls'
 
 describe('agentSessionControlsInitialState', () => {
-  it('starts in Auto so the agent is not gated on a prompt per edit', () => {
-    expect(agentSessionControlsInitialState().agentPermissionMode).toBe('acceptEdits')
+  it('starts in Bypass so neither an edit nor a tool call is gated on a prompt', () => {
+    expect(agentSessionControlsInitialState().agentPermissionMode).toBe('bypassPermissions')
   })
 
-  it('never starts in bypassPermissions — D5 §11.5 rail 1', () => {
-    expect(agentSessionControlsInitialState().agentPermissionMode).not.toBe('bypassPermissions')
+  it('starts in a mode the driver actually accepts', () => {
+    // `resolvePermissionMode` refuses anything outside these four, and a
+    // default it refuses would make the panel unusable on the first message.
+    expect(['default', 'acceptEdits', 'plan', 'bypassPermissions']).toContain(
+      agentSessionControlsInitialState().agentPermissionMode,
+    )
   })
 
   it('leaves effort unset so the server default applies', () => {

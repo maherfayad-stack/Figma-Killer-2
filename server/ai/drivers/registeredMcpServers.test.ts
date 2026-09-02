@@ -10,9 +10,11 @@ import {
   revokeRegisteredMcpServer,
   resolvedApprovedRegisteredMcpServers,
   registeredMcpServerProjectKey,
+  isSelfApprovingBuiltIn,
   ReservedMcpServerNameError,
 } from './registeredMcpServers'
 import { setMcpServerSecret, getMcpServerSecret } from '../credentials/mcpServerSecretStore'
+import { buildMcpOAuthSession, writeMcpOAuthSession } from '../credentials/mcpOAuthStore'
 import { readStudioMeta, mergeStudioMeta } from '../../handlers/studio/studioMeta'
 
 /**
@@ -42,20 +44,62 @@ describe('registeredMcpServers', () => {
   })
 
   it('lists only the built-ins for a project that has registered nothing of its own', () => {
-    // Was `toEqual([])` before built-in servers existed. Studio now ships
-    // `figma` (the desktop app's loopback Dev Mode server) into every
-    // project, so "registered nothing" no longer means "sees nothing".
+    // Was `toEqual([])` before built-in servers existed. Studio ships `figma`
+    // — Figma's REMOTE MCP server — into every project, so "registered
+    // nothing" no longer means "sees nothing".
     const listed = listRegisteredMcpServers(projectDir)
     expect(listed.map((s) => s.name)).toEqual(['figma'])
-    expect(listed[0]!.definition).toEqual({ transport: 'http', url: 'http://127.0.0.1:3845/mcp' })
+    expect(listed[0]!.definition).toEqual({ transport: 'http', url: 'https://mcp.figma.com/mcp' })
+    // No secret FIELD: the remote server is OAuth-only, so there is no token
+    // to prompt anyone to paste. The credential Studio does hold for it comes
+    // from the browser sign-in flow and is stored out of band
+    // (`credentials/mcpOAuthStore.ts`), never as a declared secret header.
     expect(listed[0]!.secretFieldNames).toEqual([])
   })
 
   describe('built-in servers', () => {
-    it('self-approves a loopback, secret-free built-in without any human action', () => {
-      // The ONE case where approval is granted without a person: nothing to
-      // leak, nowhere off this machine.
-      expect(listRegisteredMcpServers(projectDir)[0]!.approved).toBe(true)
+    // The built-in Figma server is REMOTE, so being shipped buys it visibility
+    // and nothing else. This is the property that matters: a server that
+    // leaves this machine must never reach a turn on Studio's say-so.
+    it('does NOT self-approve the shipped Figma server — it is not loopback', () => {
+      const listed = listRegisteredMcpServers(projectDir)
+      expect(listed[0]!.approved).toBe(false)
+    })
+
+    // Tested directly rather than through the shipped list: no entry in it
+    // passes this gate any more, and the gate is what any FUTURE built-in has
+    // to clear, so its positive branch still needs to be pinned.
+    it('self-approval requires loopback AND no secret AND no headers, and nothing else', () => {
+      expect(isSelfApprovingBuiltIn({ transport: 'http', url: 'http://127.0.0.1:3845/mcp' })).toBe(true)
+      expect(isSelfApprovingBuiltIn({ transport: 'http', url: 'http://localhost:9/mcp' })).toBe(true)
+      // Remote host — the shipped Figma entry's own case.
+      expect(isSelfApprovingBuiltIn({ transport: 'http', url: 'https://mcp.figma.com/mcp' })).toBe(false)
+      // A name that merely LOOKS local. The check is set membership on the
+      // parsed hostname, never a prefix or suffix test.
+      expect(isSelfApprovingBuiltIn({ transport: 'http', url: 'http://localhost.evil.com/mcp' })).toBe(false)
+      // Loopback, but carries a credential either way it can.
+      expect(
+        isSelfApprovingBuiltIn({ transport: 'http', url: 'http://127.0.0.1:3845/mcp', secretHeaderNames: ['X-Token'] }),
+      ).toBe(false)
+      expect(
+        isSelfApprovingBuiltIn({ transport: 'http', url: 'http://127.0.0.1:3845/mcp', headers: { 'X-A': 'b' } }),
+      ).toBe(false)
+      // stdio is a command line — arbitrary code, never self-approved.
+      expect(isSelfApprovingBuiltIn({ transport: 'stdio', command: 'npx' })).toBe(false)
+    })
+
+    // The escape hatch for anyone who wants the desktop app's Dev Mode server
+    // back: register it yourself under the same name. Loopback and secret-free,
+    // so it needs no token — but as a project entry it still takes an approval.
+    it('lets a project put the loopback desktop server back under the same name', () => {
+      addRegisteredMcpServer(projectDir, {
+        name: 'figma',
+        definition: { transport: 'http', url: 'http://127.0.0.1:3845/mcp' },
+      })
+      const listed = listRegisteredMcpServers(projectDir)
+      expect(listed).toHaveLength(1)
+      expect(listed[0]!.definition).toMatchObject({ url: 'http://127.0.0.1:3845/mcp' })
+      expect(listed[0]!.secretFieldNames).toEqual([])
     })
 
     it('lets a project turn a built-in off, and the opt-out beats the built-in', () => {
@@ -64,27 +108,87 @@ describe('registeredMcpServers', () => {
     })
 
     it('a project\'s own entry of the same name REPLACES the built-in and does NOT inherit its approval', () => {
-      // The trap this pins: registering the Figma CLOUD endpoint (which
-      // carries a personal access token) under the same name must not
-      // silently ride the loopback built-in's self-approval.
       addRegisteredMcpServer(projectDir, {
         name: 'figma',
         definition: {
           transport: 'http',
-          url: 'https://mcp.figma.com/mcp',
+          url: 'https://figma.example.internal/mcp',
           secretHeaderNames: ['X-Figma-Token'],
         },
       })
       const listed = listRegisteredMcpServers(projectDir)
       expect(listed).toHaveLength(1)
-      expect(listed[0]!.definition).toMatchObject({ url: 'https://mcp.figma.com/mcp' })
+      expect(listed[0]!.definition).toMatchObject({ url: 'https://figma.example.internal/mcp' })
       expect(listed[0]!.approved).toBe(false)
       expect(listed[0]!.secretFieldNames).toEqual(['X-Figma-Token'])
     })
 
-    it('resolves an approved built-in into a turn with no headers at all', async () => {
+    it('resolves the shipped Figma server into a turn only once approved, and unauthenticated until signed in', async () => {
+      // Unapproved: absent entirely.
+      expect(await resolvedApprovedRegisteredMcpServers('user-1', projectDir, secretsRoot)).toEqual({})
+
+      // Approved but not signed in: a bare URL with NO Authorization header.
+      // This is the state that produced "No such tool available:
+      // mcp__figma__get_screenshot" — the server connects and registers
+      // nothing. Pinned so the two halves stay distinguishable: approval is
+      // not authentication.
+      approveRegisteredMcpServer(projectDir, 'figma')
+      const unauthenticated = await resolvedApprovedRegisteredMcpServers('user-1', projectDir, secretsRoot)
+      expect(unauthenticated.figma).toEqual({ type: 'http', url: 'https://mcp.figma.com/mcp' })
+    })
+
+    it('attaches the Bearer header once an OAuth session exists for that user', async () => {
+      approveRegisteredMcpServer(projectDir, 'figma')
+      await writeMcpOAuthSession(
+        { userId: 'user-1', projectKey: registeredMcpServerProjectKey(projectDir), serverName: 'figma', dataRoot: secretsRoot },
+        buildMcpOAuthSession({
+          serverUrl: 'https://mcp.figma.com/mcp',
+          metadata: {
+            resource: 'https://mcp.figma.com/mcp',
+            issuer: 'https://api.figma.com',
+            authorizationEndpoint: 'https://www.figma.com/oauth/mcp',
+            tokenEndpoint: 'https://api.figma.com/v1/oauth/token',
+            registrationEndpoint: 'https://api.figma.com/v1/oauth/mcp/register',
+            scope: 'mcp:connect',
+          },
+          clientId: 'cid-1',
+          clientSecret: null,
+          redirectUri: 'http://localhost:5173/admin/api/ai/mcp/oauth/callback',
+          tokens: { accessToken: 'at-live', refreshToken: 'rt-1', expiresAt: Date.now() + 3_600_000, scope: 'mcp:connect' },
+        }),
+      )
+
       const resolved = await resolvedApprovedRegisteredMcpServers('user-1', projectDir, secretsRoot)
-      expect(resolved.figma).toEqual({ type: 'http', url: 'http://127.0.0.1:3845/mcp' })
+      expect(resolved.figma).toEqual({
+        type: 'http',
+        url: 'https://mcp.figma.com/mcp',
+        headers: { Authorization: 'Bearer at-live' },
+      })
+    })
+
+    it('does not lend one user\'s session to another user\'s turn', async () => {
+      approveRegisteredMcpServer(projectDir, 'figma')
+      await writeMcpOAuthSession(
+        { userId: 'user-1', projectKey: registeredMcpServerProjectKey(projectDir), serverName: 'figma', dataRoot: secretsRoot },
+        buildMcpOAuthSession({
+          serverUrl: 'https://mcp.figma.com/mcp',
+          metadata: {
+            resource: 'https://mcp.figma.com/mcp',
+            issuer: 'https://api.figma.com',
+            authorizationEndpoint: 'https://www.figma.com/oauth/mcp',
+            tokenEndpoint: 'https://api.figma.com/v1/oauth/token',
+            registrationEndpoint: null,
+            scope: 'mcp:connect',
+          },
+          clientId: 'cid-1',
+          clientSecret: null,
+          redirectUri: 'http://localhost/cb',
+          tokens: { accessToken: 'at-live', refreshToken: null, expiresAt: Date.now() + 3_600_000, scope: null },
+        }),
+      )
+
+      const other = await resolvedApprovedRegisteredMcpServers('user-2', projectDir, secretsRoot)
+      expect(other.figma).toEqual({ type: 'http', url: 'https://mcp.figma.com/mcp' })
     })
   })
 
@@ -209,7 +313,10 @@ describe('registeredMcpServers', () => {
     // is that the server whose secret is absent is dropped rather than
     // throwing and taking the whole turn's MCP config down with it.
     expect(resolved['acme-design']).toBeUndefined()
-    expect(Object.keys(resolved)).toEqual(['figma'])
+    // The built-in Figma server is unapproved here, so it is absent too —
+    // what matters is that the missing secret dropped ONE server rather than
+    // throwing and taking the whole turn's MCP config down.
+    expect(Object.keys(resolved)).toEqual([])
   })
 
   it('resolvedApprovedRegisteredMcpServers resolves http secret headers too', async () => {

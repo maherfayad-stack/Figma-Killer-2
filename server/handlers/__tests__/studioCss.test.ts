@@ -187,6 +187,31 @@ describe('studioCss — styleRuleSources (WS-6.3 write-back mapping)', () => {
     expect(moduleSources).toEqual([{ file: 'pages/Home.module.css', selector: '.title' }])
   })
 
+  it('carries the pre-hash local name as the rule\'s displayName, leaving name/selector compiled', async () => {
+    write('pages/Home.module.css', '.title { color: red }\n')
+    write(
+      'pages/Home.tsx',
+      [
+        "import styles from './Home.module.css'",
+        'export default function Home() {',
+        '  return <h1 className={styles.title}>Hi</h1>',
+        '}',
+        '',
+      ].join('\n'),
+    )
+
+    const { styleRules } = await loadStudioPages(tmpDir)
+    const rule = Object.values(styleRules).find((r) => r.name.includes('title'))
+
+    // What the browser matches stays compiled...
+    expect(rule!.name).toMatch(/^Home_title__/)
+    expect(rule!.selector).toMatch(/^\.Home_title__/)
+    // ...and what a person reads is the name they actually wrote. Without
+    // this the CSS Classes panel showed `.Home_title__a1b2c` on every element
+    // of every agent-authored page.
+    expect(rule!.displayName).toBe('title')
+  })
+
   it('two REAL .css files defining the same class name each get their own id and source (Track B1 fix, S3d)', async () => {
     write('pages/Home.css', '.hero { color: red }\n')
     write('pages/Override.css', '.hero { color: blue }\n')

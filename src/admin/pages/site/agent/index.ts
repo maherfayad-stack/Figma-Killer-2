@@ -40,6 +40,10 @@ export { renderMarkdownToHtml } from './markdown'
 // Store handle wiring.
 export { setAgentStoreApi } from './storeRef'
 
+// Session controls — the composer's permission-mode trigger reads the initial
+// state back so its project-switch reset can never drift from the initializer.
+export { agentSessionControlsInitialState } from './agentSessionControls'
+
 
 // Shared message/wire/context types and network path constants.
 export * from './types'

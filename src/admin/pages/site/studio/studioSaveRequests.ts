@@ -19,7 +19,6 @@
  */
 import type { StyleRule } from '@core/page-tree'
 import type { JsonDataValue } from '@core/utils/jsonData'
-import type { PageKind } from '@core/studio-board'
 import { apiRequest } from '@core/http'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { dispatchCmsSitePagesPatch, requestCmsSiteReload } from '@admin/state/adminEvents'
@@ -168,62 +167,6 @@ export function studioWriteDir(): string | null {
   return getStudioWorkspaceDir() ?? loadedDir
 }
 
-/** POST /admin/api/studio/page response — the newly scaffolded page. */
-const StudioCreatePageResponseSchema = Type.Object({
-  ok: Type.Boolean(),
-  relPath: Type.String(),
-  /** Kebab id derived from the file path — the value a board frame references. */
-  pageId: Type.String(),
-  title: Type.String(),
-  /**
-   * WS-13 step 4 — the scaffolded root element's node id, read by the server
-   * actually parsing the file it just wrote (never constructed). Absent only
-   * on an unexpected parse failure; the browser doesn't need it (the reload
-   * re-parses the whole workspace and the canvas selects by clicking), but an
-   * MCP/agent caller (`studio_create_page`, WS-12 §3) needs it to address the
-   * new screen's root before any reload.
-   */
-  rootNodeId: Type.Optional(Type.String()),
-})
-export type CreatedStudioPage = Static<typeof StudioCreatePageResponseSchema>
-
-/**
- * Creates a new page (a canonical starter component, WS-13 step 4) in the
- * active project and resolves to its `{ pageId, title, rootNodeId }` — the
- * server has already placed it on the board (D5 §11.3), so there is nothing
- * else for the caller to do besides reload. Targets the SAME `dir` every
- * other studio call uses, so the file lands in the project the canvas is
- * currently showing.
- *
- * `name` is optional — omit it and the server auto-names the page from its
- * kind (`Page`, `Page2`, … for a screen; `Sheet`, `Sheet2`, … for a bottom
- * sheet). `kind` is optional too and defaults, server-side, to an ordinary
- * screen.
- *
- * Throws `ApiError` on failure (e.g. a name collision → 409) so the caller can
- * toast the message. The caller reloads the workspace afterwards
- * (`requestCmsSiteReload`) to render it.
- */
-export function createStudioPage(
-  name?: string,
-  kind?: PageKind,
-  boardId?: string,
-): Promise<CreatedStudioPage> {
-  const overrideDir = getStudioWorkspaceDir()
-  const body: { name?: string; dir?: string; kind?: PageKind; boardId?: string } = {}
-  if (name) body.name = name
-  if (kind) body.kind = kind
-  // The server places the frame (D5 §11.3); without this it placed it on the
-  // FIRST board regardless of which one the author had open.
-  if (boardId) body.boardId = boardId
-  if (overrideDir) body.dir = overrideDir
-  return apiRequest('/admin/api/studio/page', {
-    method: 'POST',
-    body,
-    schema: StudioCreatePageResponseSchema,
-  })
-}
-
 /** Post one edit to `/save` and return the parsed response. The shared body of every one-shot commit below. */
 function postOneEdit(edit: Record<string, unknown>): Promise<StudioSaveResponse> {
   return postEdits([edit])
@@ -274,8 +217,8 @@ async function reloadStructuralScope(touchedFiles: readonly string[]): Promise<v
       schema: StudioReloadScopeResponseSchema,
     })
     if (scope.narrow && scope.pageIds.length > 0) {
-      const { pages, missingPageIds } = await fetchStudioPagesById(scope.pageIds)
-      dispatchCmsSitePagesPatch({ pages, removedPageIds: missingPageIds })
+      const { pages, missingPageIds, styleRules, conditions } = await fetchStudioPagesById(scope.pageIds)
+      dispatchCmsSitePagesPatch({ pages, removedPageIds: missingPageIds, styleRules, conditions })
       return
     }
   } catch (err) {

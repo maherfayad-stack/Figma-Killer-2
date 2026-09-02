@@ -1,0 +1,7 @@
+.probe {
+  box-sizing: border-box;
+  display: flex;
+  width: 100%;
+  min-height: 200px;
+  background: var(--background-warning-default);
+}

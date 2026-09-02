@@ -1,0 +1,125 @@
+/* ── root: a standalone 20×20 radio button ── */
+.radio {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  box-sizing: border-box;
+  vertical-align: middle;
+}
+
+/* ── native input overlays the circle so it's the hit target ── */
+.radio__input {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+  z-index: 1;
+}
+
+/* ── circle (border) ── */
+.radio__circle {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border-base-inverted);
+  border-radius: var(--rounded-full);
+  background: transparent;
+  box-sizing: border-box;
+  transition: border-color 0.15s ease;
+}
+
+/* ── center dot (hidden until checked) ── */
+.radio__dot {
+  width: 10px;
+  height: 10px;
+  border-radius: var(--rounded-full);
+  background: transparent;
+  transition: background-color 0.15s ease;
+}
+
+/* ── unselected: hover / pressed ── */
+.radio:not(.radio--checked):not(.radio--disabled):not(.radio--error):hover .radio__circle {
+  border-color: var(--border-base-hover);
+}
+
+.radio:not(.radio--checked):not(.radio--disabled):not(.radio--error):active .radio__circle {
+  border-color: var(--border-base-pressed);
+}
+
+/* ── selected ── */
+.radio--checked .radio__circle {
+  border-color: var(--border-secondary-default);
+}
+
+.radio--checked .radio__dot {
+  background: var(--background-primary-default);
+}
+
+.radio--checked:not(.radio--disabled):not(.radio--error):hover .radio__circle {
+  border-color: var(--border-secondary-hover);
+}
+
+.radio--checked:not(.radio--disabled):not(.radio--error):hover .radio__dot {
+  background: var(--background-primary-hover);
+}
+
+.radio--checked:not(.radio--disabled):not(.radio--error):active .radio__circle {
+  border-color: var(--border-secondary-pressed);
+}
+
+.radio--checked:not(.radio--disabled):not(.radio--error):active .radio__dot {
+  background: var(--background-primary-pressed);
+}
+
+/* ── error (border coral in both states; dot coral when selected) ── */
+.radio--error .radio__circle {
+  border-color: var(--border-primary-default);
+}
+
+.radio--error.radio--checked .radio__dot {
+  background: var(--background-warning-default);
+}
+
+/* ── focus ring (keyboard navigation) ── */
+.radio__input:focus-visible ~ .radio__circle {
+  outline: 2px solid var(--border-base-focused);
+  outline-offset: 2px;
+}
+
+/* ── disabled (must win over checked/error — kept last) ── */
+.radio--disabled .radio__input {
+  cursor: default;
+}
+
+.radio--disabled .radio__circle {
+  border-color: var(--border-base-disabled);
+}
+
+.radio--disabled.radio--checked .radio__dot {
+  background: var(--background-neutral-subtle);
+}
+
+/* ── skeleton ── */
+.radio--skeleton {
+  border-radius: var(--rounded-full);
+  background: linear-gradient(
+    90deg,
+    var(--background-base-active) 25%,
+    var(--background-neutral-default) 50%,
+    var(--background-base-active) 75%
+  );
+  background-size: 200% 100%;
+  animation: radio-shimmer 1.5s ease-in-out infinite;
+}
+
+@keyframes radio-shimmer {
+  0%   { background-position:  200% 0; }
+  100% { background-position: -200% 0; }
+}

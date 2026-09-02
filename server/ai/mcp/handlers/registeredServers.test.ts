@@ -56,7 +56,6 @@ describe('tryHandleAiMcpProjectServers — every route requires ai.providers.man
     ['DELETE', '/admin/api/ai/mcp/project-servers/figma?dir=%2Ftmp%2Fx'],
     ['POST', '/admin/api/ai/mcp/project-servers/figma/approve', { dir: '/tmp/x', source: 'registered' }],
     ['POST', '/admin/api/ai/mcp/project-servers/figma/revoke', { dir: '/tmp/x', source: 'registered' }],
-    ['POST', '/admin/api/ai/mcp/project-servers/check-auth', { url: 'https://example.com/mcp' }],
   ]
 
   for (const [method, path, body] of cases) {

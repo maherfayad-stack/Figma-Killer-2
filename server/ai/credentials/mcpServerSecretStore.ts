@@ -203,6 +203,30 @@ export function hasMcpServerSecret(
   return fieldName in readSecretFile(path)
 }
 
+/**
+ * Delete ONE stored field, leaving the server's other secrets intact — what
+ * signing out of an OAuth session does (`mcpOAuthStore.ts`), as opposed to
+ * removing the server itself. Removes the file entirely once its last field
+ * is gone, so a signed-out server leaves no empty ciphertext envelope behind.
+ * Never throws if the field or the file was never there.
+ */
+export function deleteMcpServerSecretField(
+  userId: string,
+  projectKey: string,
+  serverName: string,
+  fieldName: string,
+  dataRoot: string = resolveMcpServerSecretsRoot(),
+): void {
+  assertSafeSegment(fieldName, 'fieldName')
+  const path = secretFilePath(dataRoot, userId, projectKey, serverName)
+  if (!existsSync(path)) return
+  const file = readSecretFile(path)
+  if (!(fieldName in file)) return
+  delete file[fieldName]
+  if (Object.keys(file).length === 0) rmSync(path)
+  else writeSecretFile(path, file)
+}
+
 /** Delete every stored secret for one server — called when the server itself is removed from the registry, so no orphaned ciphertext lingers on disk. Never throws if nothing was stored. */
 export function deleteMcpServerSecrets(
   userId: string,

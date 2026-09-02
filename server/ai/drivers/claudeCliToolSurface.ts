@@ -36,10 +36,11 @@
  * mechanism `claudeCliVerify.ts`'s `--tools ''` uses to strip a verification
  * turn to nothing) is a hard AVAILABILITY list, evaluated independently of and
  * prior to `--permission-mode` — a tool that isn't in this list doesn't exist
- * for the session to be granted permission to, so it is honoured even under a
- * user-selected `bypassPermissions` (see `assertBypassOnlyFromExplicitRequest`'s
- * doc comment in `claudeCli.ts`: permission mode only ever affects PROMPTING
- * for an already-available tool, never widens which tools exist).
+ * for the session to be granted permission to, so it holds under
+ * `bypassPermissions` — which is now the Studio panel's DEFAULT. This is what
+ * makes that default defensible: permission mode only ever affects PROMPTING
+ * for an already-available tool, and never widens which tools exist. See
+ * `assertBypassCameFromRequest`'s doc comment in `claudeCliPermissionMode.ts`.
  *
  * ## Still withheld, deliberately
  *
@@ -49,18 +50,6 @@
  *     reached for here already has a gated tool: `studio_install_deps` for
  *     dependencies, `studio_screenshot` for verification. Never granted, at
  *     any trust tier, in any permission mode.
- *   - **`Task`** — subagents. Removed outright, not narrowed. The CLI does not
- *     error on an unknown `subagent_type`: it silently falls back to its own
- *     built-in `general-purpose` agent and returns as if the work had
- *     happened. Observed exactly that way — the agent delegated screen
- *     authoring to an invented name, reported ten files written in detail, and
- *     every one was still an untouched scaffold. With native file tools in
- *     hand there is nothing a screen-building subagent can do that the main
- *     agent cannot do in one `Write`, and a delegation round-trip is pure
- *     latency, so the fix is to remove the failure mode rather than to keep
- *     describing it in the prompt. What the generated roster used to carry as
- *     agent prompts now lives in the project's generated `CLAUDE.md`
- *     (`server/handlers/studio/projectGuide.ts`), which the CLI loads for free.
  *   - `WebFetch`, `WebSearch`, `NotebookEdit` — no Studio flow needs them;
  *     `studio_fetch_remote_asset` covers the one real remote-read case
  *     (pulling a referenced image into the project) with a containment check.
@@ -77,8 +66,36 @@
  * reads, no MCP round trip, and `Read` additionally reaches `node_modules`,
  * which `studio_read_file` refuses by design); `Write`/`Edit` are the
  * authoring path.
+ *
+ * ## `Task` — withheld once, and why it is back
+ *
+ * `Task` was removed outright after a real failure: the agent delegated screen
+ * authoring to an INVENTED `subagent_type`, the CLI silently fell back to its
+ * built-in `general-purpose` agent rather than erroring, and the turn reported
+ * ten files written in detail while every one was still an untouched scaffold.
+ * The conclusion drawn then — "there is nothing a screen-building subagent can
+ * do that the main agent cannot do in one `Write`" — is true per screen and
+ * false per BOARD. Three screens took 45 minutes and 154 sequential turns, and
+ * the reason is not that any one screen is slow: it is that three independent
+ * screens were built one after another.
+ *
+ * What actually caused the fabrication was the invented name, not delegation.
+ * So the fix is to remove the invention, not the capability: the prompt's
+ * "Parallel work" section mandates `subagent_type: 'general-purpose'` — the
+ * CLI's own built-in, the one name that cannot fall back to something else
+ * because it IS the fallback — and requires each delegated prompt to be
+ * self-contained, so a subagent that receives it has everything it needs
+ * rather than a reference to a workflow only the orchestrator can see.
+ *
+ * Collisions are prevented STRUCTURALLY rather than by a lock: a Studio screen
+ * is a page, and a page owns exactly two files nothing else touches
+ * (`pages/<Name>.tsx` and `pages/<Name>.module.css`). One agent per page is
+ * therefore disjoint by construction. Every genuinely shared file — the i18n
+ * dictionary, shared components, `package.json`, `.studio/boards.json` — stays
+ * the orchestrator's alone, before and after the fan-out. See the prompt
+ * section for the contract as the agent receives it.
  */
-const WORKSPACE_NATIVE_TOOLS = ['Read', 'Write', 'Edit', 'Glob', 'Grep'] as const
+const WORKSPACE_NATIVE_TOOLS = ['Read', 'Write', 'Edit', 'Glob', 'Grep', 'Task'] as const
 
 export function resolveNativeToolAllowlist(workspaceCwd: string | null, hasAttachments: boolean): string {
   if (workspaceCwd) return WORKSPACE_NATIVE_TOOLS.join(',')

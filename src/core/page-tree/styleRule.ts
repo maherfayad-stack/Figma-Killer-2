@@ -65,6 +65,21 @@ export type CSSDeclarationPriorityBag = Static<typeof CSSDeclarationPriorityBagS
 export const StyleRuleSchema = Type.Object({
   id: Type.String(),
   name: Type.String(),
+  /**
+   * What a HUMAN should see instead of `name`, when the two differ.
+   *
+   * Set only for a rule read out of a CSS Modules file, where `name` is the
+   * compiled, hashed class the DOM actually carries (`SignUp_socialBtn__a1b2c`)
+   * and this is the local name as WRITTEN in the source
+   * (`socialBtn`). Everything that renders, cascades, matches a node's
+   * `classIds`, or is emitted into a stylesheet keeps using `name`/`selector`;
+   * this exists purely so the panels stop showing a build artefact as if the
+   * user had named it that.
+   *
+   * Absent for every hand-authored `.css` rule and every rule created in the
+   * editor, where `name` is already the honest answer.
+   */
+  displayName: Type.Optional(Type.String()),
   /** Discriminator for class-attached vs selector-attached rules. */
   kind: StyleRuleKindSchema,
   /**
@@ -238,6 +253,7 @@ export function parseStyleRule(raw: unknown): StyleRule | null {
   return {
     id: r.id,
     name: r.name,
+    ...(typeof r.displayName === 'string' && r.displayName ? { displayName: r.displayName } : {}),
     kind: r.kind,
     selector: r.selector,
     order: r.order,

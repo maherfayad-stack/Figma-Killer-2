@@ -23,6 +23,21 @@
 const BASE_SUBPROCESS_ENV_KEYS = [
   'PATH',
   'HOME',
+  // The OS account name, and it is LOAD-BEARING on macOS, not decoration.
+  // The Claude CLI keys its stored credentials by it, so a child spawned
+  // without `USER` looks up a different account and finds nothing — it does
+  // not fail, it reports "! Needs authentication" for a server that is signed
+  // in, and a chat turn then registers zero tools for it. Measured against one
+  // config dir, one endpoint, with the needs-auth cache cleared before each
+  // run: `env -i HOME PATH CLAUDE_CONFIG_DIR` → needs authentication;
+  // the same command plus `USER` → ✔ Connected. `LOGNAME` alone does NOT
+  // substitute for it. `USERNAME` is the Windows spelling, alongside the
+  // `USERPROFILE`/`HOMEDRIVE`/`HOMEPATH` entries already here.
+  //
+  // It leaks nothing: the child already runs AS that user with `HOME` pointing
+  // at their home directory, so the name is not a secret this list was keeping.
+  'USER',
+  'USERNAME',
   'USERPROFILE',
   'HOMEDRIVE',
   'HOMEPATH',

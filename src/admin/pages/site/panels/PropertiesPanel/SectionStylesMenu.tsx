@@ -31,7 +31,7 @@
  */
 
 import { useRef, useState, type CSSProperties } from 'react'
-import type { StyleRule } from '@core/page-tree'
+import { styleRuleDisplayName, type StyleRule } from '@core/page-tree'
 import type { IconComponent } from 'pixel-art-icons/types'
 import type { FrameworkColorUtilityType } from '@core/framework-schema'
 import { generateFrameworkColorVariableSets } from '@core/framework'
@@ -205,7 +205,7 @@ function collectFamilyStyles(
   const needle = query.trim().toLowerCase()
 
   for (const rule of Object.values(styleRules ?? {})) {
-    if (needle && !rule.name.toLowerCase().includes(needle)) continue
+    if (needle && !styleRuleDisplayName(rule).toLowerCase().includes(needle)) continue
 
     // Classified by what the rule DECLARES, not by where it came from. This
     // used to require `generated.origin === 'framework'`, which on a real
@@ -391,7 +391,7 @@ function StyleFamilyMenu({ family, nodeId, assignedClassIds }: StyleFamilyMenuPr
                     ) : (
                       <span className={styles.typeMark} aria-hidden="true">Ag</span>
                     )}
-                    <span className={styles.name}>{rule.name}</span>
+                    <span className={styles.name}>{styleRuleDisplayName(rule)}</span>
                     {hint !== null && <span className={styles.hint}>{hint}</span>}
                   </span>
                 </ContextMenuItem>

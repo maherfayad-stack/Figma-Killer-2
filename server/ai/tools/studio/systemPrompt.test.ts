@@ -111,6 +111,23 @@ function baseLiveDigest(capabilities: StudioLiveDigest['capabilities']): StudioL
 }
 
 describe('Studio system prompt — capability digest (mcp-tooling task)', () => {
+  it('needs-approval: says the connector is one human action away, never that it is missing', () => {
+    // The default state of every fresh project now that Studio ships the
+    // REMOTE Figma server unapproved. Telling the agent "not configured for
+    // this project" here would be false and would make it give up, when the
+    // one thing that can surface the fix is the agent saying so.
+    const live = baseLiveDigest({
+      figma: { status: 'needs-approval', loopbackAssetFetchBlocked: false },
+      typecheck: { available: true },
+    })
+    const [, , suffix] = buildStudioAgentSystemPrompt(FIXTURE_CTX, studioAgentTools, live)
+
+    expect(suffix).toContain('declared for this project but NOT approved')
+    expect(suffix).toContain('Settings')
+    expect(suffix).toContain('OAuth-only')
+    expect(suffix).not.toContain('not configured for this project')
+  })
+
   it('all-available: emits no "unavailable"/"not configured" wording, and the figma line stays terse', () => {
     const live = baseLiveDigest({
       figma: { status: 'configured', loopbackAssetFetchBlocked: false },
@@ -125,7 +142,7 @@ describe('Studio system prompt — capability digest (mcp-tooling task)', () => 
 
     // Figma is configured with nothing blocking it: one short, non-actionable
     // line, not the longer "not configured" fallback instructions.
-    expect(suffix).toContain('Figma MCP connector: configured (desktop app must be running to respond).')
+    expect(suffix).toContain('Figma MCP connector: configured.')
     expect(suffix).not.toContain('not configured for this project')
     expect(suffix).not.toContain('asset downloads from it are blocked')
   })

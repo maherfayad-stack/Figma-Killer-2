@@ -120,7 +120,7 @@ import {
 } from '../../handlers/studio/claudeCliEnv'
 import { spawnClaudeCliNdjson, ClaudeCliSpawnError } from './claudeCliSpawn'
 import { resolveNativeToolAllowlist } from './claudeCliToolSurface'
-import { assertBypassOnlyFromExplicitRequest, resolvePermissionMode } from './claudeCliPermissionMode'
+import { assertBypassCameFromRequest, resolvePermissionMode } from './claudeCliPermissionMode'
 import { createClaudeCliTurnState, parseClaudeCliLineValue, translateClaudeCliLine } from './claudeCliEvents'
 import { claudeCliSessionId, shouldEstablishClaudeCliSession } from './claudeCliSession'
 import {
@@ -141,6 +141,7 @@ import { generateStudioProjectGuide } from '../../handlers/studio/projectGuide'
 import { resetTurnWriteLog } from '../../handlers/studio/turnWriteLog'
 import { stageAttachments, cleanupAttachments, describeAttachmentsForPrompt } from './claudeCliAttachments'
 import { writeMcpConfigFile, cleanupMcpConfigFile, type McpConfigFile } from './claudeCliMcpConfigFile'
+import { clearCliNeedsAuthCache, recallCliSignIns } from '../credentials/cliMcpConnectionProbe'
 
 const SUPPORTED_AUTH_MODES: AiAuthMode[] = ['apiKey']
 
@@ -372,6 +373,15 @@ export async function* streamClaudeCli(
     resetTurnWriteLog(workspaceCwd)
   }
 
+  // The CLI caches "this server needs authentication" per config dir and a
+  // headless turn believes that cache over the server itself — so one turn
+  // taken before the sign-in disables the connector for every turn after it,
+  // sign-in or no sign-in. Drop the entry for each server this user has
+  // actually been observed signed in to, right before the spawn that would
+  // otherwise read it. Two small file operations, no subprocess, fail-soft.
+  // See `cliMcpConnectionProbe.ts`'s `clearCliNeedsAuthCache`.
+  clearCliNeedsAuthCache(configDir, recallCliSignIns(configDir))
+
   const env = minimalSubprocessEnv([], {
     CLAUDE_CONFIG_DIR: configDir,
     ...(req.credentials.apiKey ? { CLAUDE_CODE_OAUTH_TOKEN: req.credentials.apiKey } : {}),
@@ -468,8 +478,8 @@ export async function* streamClaudeCli(
     effort,
     '--permission-mode',
     // Belt-and-braces at the point of maximum consequence — see
-    // `assertBypassOnlyFromExplicitRequest`'s own doc comment.
-    assertBypassOnlyFromExplicitRequest(resolvedMode.mode, req.permissionMode),
+    // `assertBypassCameFromRequest`'s own doc comment.
+    assertBypassCameFromRequest(resolvedMode.mode, req.permissionMode),
     // sec-XX (see "Native tool surface" above) — `files.length`, since a refusal-only staging result stages nothing on disk.
     '--tools',
     resolveNativeToolAllowlist(workspaceCwd, (attachmentStaging?.files.length ?? 0) > 0),

@@ -33,6 +33,38 @@ export function styleRuleSelector(cls: Pick<StyleRule, 'selector'>): string {
   return cls.selector
 }
 
+/**
+ * The selector to SHOW a human — identical to {@link styleRuleSelector} for
+ * everything except a CSS Modules rule, whose `selector`/`name` are the
+ * compiled hashed class.
+ *
+ * A page authored as `.module.css` (which is now every page the agent writes,
+ * and every page `studio_create_page` scaffolds) reached the panels as
+ * `.SignUp_socialBtn__a1b2c`: a build artefact shown as if the user had named
+ * it that, un-searchable, and impossible to match against the file they are
+ * looking at. `displayName` carries the local name and this is the one place
+ * that spends it.
+ *
+ * NEVER use this to emit CSS, to build a `class=` attribute, or to match a
+ * node's `classIds` — the compiled name is the real one everywhere the browser
+ * is involved. Display only.
+ */
+/**
+ * The class NAME to show a human — `displayName` when a compiled name is
+ * standing in for it, otherwise `name`. The bare-name counterpart to
+ * {@link styleRuleDisplaySelector}; same display-only rule applies.
+ */
+export function styleRuleDisplayName(cls: Pick<StyleRule, 'name' | 'displayName'>): string {
+  return cls.displayName ?? cls.name
+}
+
+export function styleRuleDisplaySelector(cls: Pick<StyleRule, 'selector' | 'name' | 'kind' | 'displayName'>): string {
+  if (!cls.displayName || cls.kind !== 'class') return cls.selector
+  // `selector` for a class rule is `.<escaped-name>`; swapping the whole
+  // thing (rather than substringing) keeps escaping decisions in one place.
+  return `.${cls.displayName}`
+}
+
 function classNameForClassId(
   classes: StyleRuleRegistry,
   classId: string,

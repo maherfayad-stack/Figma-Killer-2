@@ -373,7 +373,15 @@ export function usePersistence(
 
     function handlePagesPatch(evt: Event) {
       const detail = (evt as CustomEvent<CmsSitePagesPatchDetail>).detail
-      useEditorStore.getState().patchPages({ pages: detail.pages, removedPageIds: detail.removedPageIds })
+      // Forwarded whole rather than field-by-field: the registries travel with
+      // the pages they were parsed alongside, and dropping them here is the
+      // bug this listener's sender exists to avoid.
+      useEditorStore.getState().patchPages({
+        pages: detail.pages,
+        removedPageIds: detail.removedPageIds,
+        styleRules: detail.styleRules,
+        conditions: detail.conditions,
+      })
     }
 
     window.addEventListener(CMS_SITE_PAGES_PATCH_EVENT, handlePagesPatch)

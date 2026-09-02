@@ -322,7 +322,7 @@ async function handleAiChat(
         .join('\n')
 
       const systemPrompt = validatedWorkspaceDir
-        ? await buildStudioProjectSystemPrompt(validatedWorkspaceDir, snapshot, conversation.id, tools, undefined, userMessageText)
+        ? await buildStudioProjectSystemPrompt(validatedWorkspaceDir, snapshot, conversation.id, tools, { userId: user.id }, userMessageText)
         : buildCmsSiteSystemPrompt(snapshot)
 
       // Capture totals reported by the persister so the audit row can hold

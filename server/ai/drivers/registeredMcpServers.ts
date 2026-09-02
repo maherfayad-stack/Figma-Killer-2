@@ -41,6 +41,7 @@ import {
   resolveMcpServerSecretsRoot,
   McpServerSecretKeyMismatchError,
 } from '../credentials/mcpServerSecretStore'
+import { resolveMcpOAuthHeader } from '../credentials/mcpOAuthStore'
 
 export type { RegisteredMcpServerDefinition, RegisteredMcpServerEntry }
 
@@ -111,22 +112,68 @@ function describeRegisteredServer(definition: RegisteredMcpServerDefinition): st
  * is no credential to leak, no remote party, and nothing a project or a
  * prompt can point somewhere else.
  *
- * `figma` is the Figma desktop app's Dev Mode MCP server. It needs no token
- * at all, which is exactly why it can be a default when the cloud endpoint
- * (`https://mcp.figma.com/mcp`, personal access token in an `X-Figma-Token`
- * header) could not: that one carries a live credential and stays a
- * deliberate, per-project human decision.
+ * `figma` is Figma's REMOTE MCP server. It replaced the desktop app's Dev Mode
+ * server at `http://127.0.0.1:3845/mcp`, which used to sit here because it
+ * needs no token and therefore self-approved — genuinely zero-config, and
+ * genuinely dependent on the user having the desktop app open on the same
+ * machine as the Studio server. That is a bad bargain for a hosted Studio and
+ * a worse one for a headless turn: the design is in the cloud, the file key is
+ * in the URL the user pasted, and requiring a local application to be running
+ * to read it is a failure mode with no error message the agent can act on.
  *
- * Reachability is NOT checked here. When the desktop app is closed the URL
- * simply refuses connections, the CLI drops that server for the turn, and
- * everything else proceeds — the same fail-soft posture the rest of this
- * module already takes. Probing on every turn would add latency to buy a
- * guess that is stale the moment it is made.
+ * The remote server is OAuth-only. Its `.well-known/oauth-authorization-
+ * server` advertises a DCR `registration_endpoint`, PKCE `S256`,
+ * `require_state_parameter`, and `bearer_methods_supported: ["header"]`, and
+ * Figma's own docs say in as many words that you sign in through the OAuth
+ * flow. There is NO personal-access-token path — an earlier revision of this
+ * comment claimed one, reasoning from the endpoint's `Vary: X-Figma-Token`
+ * response header. That is Figma's generic API-gateway header, not an MCP auth
+ * path: a PAT in either `X-Figma-Token` or `Authorization: Bearer` gets the
+ * same 401 as sending no header at all.
+ *
+ * **Studio cannot perform that OAuth for Figma, and this is an external
+ * constraint, not a gap.** Studio has a generic browser OAuth flow
+ * (`../credentials/mcpOAuth.ts` + `mcpOAuthStore.ts`), and
+ * `resolveOneDefinition` below turns any resulting session into an
+ * `Authorization` header — it works for a remote server with open dynamic
+ * client registration. Figma is not one: its docs state that "only clients
+ * listed in the Figma MCP Catalog like VS Code, Cursor, or Claude Code can
+ * connect", and `POST https://api.figma.com/v1/oauth/mcp/register` answers a
+ * bare `403 Forbidden` to every body and header combination — a minimal body,
+ * an https redirect URI, a public-client registration, a browser user-agent.
+ * It is refusing the caller, not validating the request, and there is no
+ * request Studio can construct that changes it.
+ *
+ * The CLI Studio already spawns IS on that catalog. Its MCP credential is
+ * scoped to the `CLAUDE_CONFIG_DIR` `claudeCli.ts` sets per user, so a
+ * one-time interactive sign-in performed against THAT directory is inherited
+ * by every later headless turn. The Settings row prints the exact commands
+ * when its own flow is refused; see `McpServersSection.tsx`'s
+ * `cliSignInCommands`. Until that sign-in happens, `figma` reaches a turn as a
+ * bare URL, connects, registers ZERO tools, and every call comes back `No such
+ * tool available: mcp__figma__…` — which is what the `needs-auth` digest
+ * status exists to say out loud.
+ *
+ * Being in this list therefore buys VISIBILITY, not trust:
+ * {@link isSelfApprovingBuiltIn} rejects it on the host check (non-loopback),
+ * so it is listed in Settings unapproved and a human still turns it on.
+ * Nothing about the consent boundary moves — the only thing that changes is
+ * that they no longer type the URL themselves.
+ *
+ * Anyone who wants the desktop app's Dev Mode server instead registers `figma`
+ * themselves at `http://127.0.0.1:3845/mcp` — a project's own entry of that
+ * name wins over this one (see `listRegisteredMcpServers`), and being
+ * loopback-with-no-secret it self-approves.
+ *
+ * Reachability is NOT checked here. An unapproved or unreachable server is
+ * simply dropped for the turn and everything else proceeds — the same
+ * fail-soft posture the rest of this module already takes. Probing on every
+ * turn would add latency to buy a guess that is stale the moment it is made.
  */
 const BUILT_IN_MCP_SERVERS: readonly RegisteredMcpServerEntry[] = [
   {
     name: 'figma',
-    definition: { transport: 'http', url: 'http://127.0.0.1:3845/mcp' },
+    definition: { transport: 'http', url: 'https://mcp.figma.com/mcp' },
   },
 ]
 
@@ -148,12 +195,16 @@ const LOOPBACK_HOSTNAMES = new Set(['127.0.0.1', 'localhost', '::1', '[::1]'])
  *     that needed a credential would be a built-in that could leak one.
  *
  * User- and agent-registered servers never reach this function; it is applied
- * only to {@link BUILT_IN_MCP_SERVERS}. The invariant in this module's doc
+ * only to {@link BUILT_IN_MCP_SERVERS} — where, since `figma` moved to the
+ * remote endpoint, NO shipped entry passes it. That is the correct outcome,
+ * not a reason to relax the test: this stays as the gate any future built-in
+ * has to clear, and it is unit-tested directly (both branches) rather than
+ * through whatever happens to be in the list today. The invariant in this module's doc
  * comment — that nothing here, and nothing the agent tool calls, can approve
  * a server a human did not — is therefore intact: the agent cannot add to
  * that list, and a definition that would need trusting cannot pass this test.
  */
-function isSelfApprovingBuiltIn(definition: RegisteredMcpServerDefinition): boolean {
+export function isSelfApprovingBuiltIn(definition: RegisteredMcpServerDefinition): boolean {
   if (definition.transport === 'stdio') return false
   if ((definition.secretHeaderNames?.length ?? 0) > 0) return false
   if (Object.keys(definition.headers ?? {}).length > 0) return false
@@ -164,6 +215,52 @@ function isSelfApprovingBuiltIn(definition: RegisteredMcpServerDefinition): bool
     return false
   }
   return LOOPBACK_HOSTNAMES.has(hostname)
+}
+
+/**
+ * Record approval for a SHIPPED BUILT-IN the user has personally signed in to.
+ *
+ * ## Why a sign-in is the stronger consent, not a shortcut past it
+ *
+ * Approval exists to answer "may Studio talk to this server on your behalf".
+ * For {@link BUILT_IN_MCP_SERVERS} that question is already settled, twice
+ * over, by the time this can fire:
+ *
+ *   - **Without a sign-in the server is inert.** Figma's remote MCP registers
+ *     ZERO tools for an unauthenticated client — it cannot read a file, cannot
+ *     be sent anything, and cannot act. An unapproved built-in and an
+ *     unauthenticated one are the same thing in practice.
+ *   - **With a sign-in the user has already consented, to Figma, in Figma's
+ *     own OAuth screen**, naming the account and the scope. A checkbox in
+ *     Studio asking the same question afterwards is a weaker signal collected
+ *     second.
+ *
+ * The URL is Studio's own and a project cannot change it — a project entry of
+ * the same name REPLACES the built-in and then follows the ordinary consent
+ * rules (see `listRegisteredMcpServers`). So the blast radius here is exactly:
+ * a server Studio ships, at a URL Studio fixed, that the user has personally
+ * authenticated. Nothing a project or a prompt can reach.
+ *
+ * It is PERSISTED rather than computed on the fly, deliberately. The CLI's
+ * sign-in state costs a ~10 second health check, so a computed answer would
+ * depend on whether a cache happened to be warm — the connector would work on
+ * some turns and not others, which is worse than either answer consistently.
+ * Writing it once means the turn path reads an ordinary approval.
+ *
+ * A user who does not want this revokes it in Settings like any other, and
+ * `signedIn: false` never revokes anything — signing out of Figma is not a
+ * statement about what Studio may connect to.
+ */
+export function recordBuiltInSignIn(dir: string, name: string, signedIn: boolean): void {
+  if (!signedIn) return
+  if (!BUILT_IN_MCP_SERVERS.some((b) => b.name === name)) return
+  const meta = readStudioMeta(dir)
+  // A project that REPLACED this built-in with its own entry, or explicitly
+  // disabled it, has made a decision this must not overwrite.
+  if ((meta.registeredMcpServers ?? []).some((e) => e.name === name)) return
+  if ((meta.disabledBuiltInMcpServers ?? []).includes(name)) return
+  if ((meta.approvedRegisteredMcpServers ?? []).includes(name)) return
+  approveRegisteredMcpServer(dir, name)
 }
 
 /** Every server the project has registered in Studio, each flagged with whether it is approved. Never throws — a malformed `.studio/meta.json` degrades to `[]` via `readStudioMeta`'s own fallback. */
@@ -326,6 +423,26 @@ async function resolveOneDefinition(
   for (const fieldName of definition.secretHeaderNames ?? []) {
     headers[fieldName] = await requireSecret(userId, projectKey, serverName, fieldName, dataRoot)
   }
+
+  // An OAuth session Studio completed in the browser (`credentials/
+  // mcpOAuthStore.ts`) becomes the `Authorization` header the CLI's own MCP
+  // client sends — `bearer_methods_supported: ["header"]` is exactly how a
+  // remote resource expects to be called, so Studio holding the credential
+  // and the subprocess spending it is not a workaround, it is the mechanism.
+  // Refreshed here if it is expired or nearly so, since this is the last
+  // moment before the config file is written.
+  //
+  // An explicitly-configured header always wins: someone who typed their own
+  // `Authorization` into the registration form meant it, and silently
+  // overwriting it with a stale browser session would be the worse surprise.
+  if (!('Authorization' in headers)) {
+    const bearer = await resolveMcpOAuthHeader(
+      { userId, projectKey, serverName, dataRoot },
+      definition.url,
+    )
+    if (bearer) headers.Authorization = bearer
+  }
+
   return {
     type: definition.transport,
     url: definition.url,

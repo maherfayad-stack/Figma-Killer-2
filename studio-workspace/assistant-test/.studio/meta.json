@@ -55,5 +55,8 @@
       }
     ]
   },
-  "trust": "render-packages"
+  "trust": "render-packages",
+  "approvedRegisteredMcpServers": [
+    "figma"
+  ]
 }

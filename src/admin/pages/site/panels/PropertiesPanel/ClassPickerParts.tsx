@@ -11,7 +11,7 @@ import { TagPill } from '@ui/components/TagPill'
 import {
   classKindSelector,
   generatedClassKindLabel,
-  styleRuleSelector,
+  styleRuleDisplaySelector,
   type StyleRule,
 } from '@core/page-tree'
 import type { SelectorPillItem, SelectorSuggestionItem } from './selectorPickerModel'
@@ -36,7 +36,7 @@ function AssignedClassPill({
   onKeyboardContextMenu,
   onRemove,
 }: AssignedClassPillProps) {
-  const selectorLabel = styleRuleSelector(cls)
+  const selectorLabel = styleRuleDisplaySelector(cls)
   const handleKeyDown = (e: KeyboardEvent<HTMLElement>) => {
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault()
@@ -70,7 +70,7 @@ function AmbientSelectorPill({
   pill: SelectorPillItem
   onToggle: () => void
 }) {
-  const selectorLabel = styleRuleSelector(pill.rule)
+  const selectorLabel = styleRuleDisplaySelector(pill.rule)
   const handleKeyDown = (e: KeyboardEvent<HTMLElement>) => {
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault()
@@ -331,7 +331,7 @@ function RankedSuggestionsList({
             onMouseLeave={() => clearPreviewClass(cls.id)}
             onBlur={() => clearPreviewClass(cls.id)}
           >
-            <span className={styles.suggestionLabel}>{styleRuleSelector(cls)}</span>
+            <span className={styles.suggestionLabel}>{styleRuleDisplaySelector(cls)}</span>
             {generatedClassKindLabel(cls) && (
               <span className={styles.utilityBadge}>{generatedClassKindLabel(cls)}</span>
             )}
@@ -555,7 +555,7 @@ function ClassSuggestionSections({
         onMouseLeave={() => clearPreviewClass(cls.id)}
         onBlur={() => clearPreviewClass(cls.id)}
       >
-        <span className={styles.suggestionLabel}>{styleRuleSelector(cls)}</span>
+        <span className={styles.suggestionLabel}>{styleRuleDisplaySelector(cls)}</span>
         {generatedClassKindLabel(cls) && (
           <span className={styles.utilityBadge}>{generatedClassKindLabel(cls)}</span>
         )}
@@ -626,7 +626,7 @@ function SelectorSuggestionRows({
   return (
     <>
       {items.map((item) => {
-        const label = styleRuleSelector(item.rule)
+        const label = styleRuleDisplaySelector(item.rule)
         const isHighlighted = highlightedSelectorId === item.rule.id
         return (
           <ContextMenuItem

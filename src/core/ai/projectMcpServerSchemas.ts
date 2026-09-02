@@ -97,13 +97,76 @@ export const SetMcpServerApprovalBodySchema = Type.Object({
 })
 export type SetMcpServerApprovalBody = Static<typeof SetMcpServerApprovalBodySchema>
 
-export const McpServerAuthProbeResultSchema = Type.Object({
-  requiresAuth: Type.Boolean(),
-  authorizationUrl: Type.Union([Type.String(), Type.Null()]),
-})
-export type McpServerAuthProbeResultWire = Static<typeof McpServerAuthProbeResultSchema>
 
-export const CheckMcpServerAuthBodySchema = Type.Object({
-  url: Type.String({ minLength: 1 }),
+// ---------------------------------------------------------------------------
+// OAuth sign-in — POST/GET/DELETE /admin/api/ai/mcp/oauth[/start|/callback]
+// ---------------------------------------------------------------------------
+
+/** POST body — begin the browser OAuth flow for one registered http/sse server. Carries no secret: the credential is minted by the authorization server and never passes through the client. */
+export const StartMcpOAuthBodySchema = Type.Object({
+  dir: Type.Optional(Type.String()),
+  name: Type.String({ minLength: 1 }),
 })
-export type CheckMcpServerAuthBody = Static<typeof CheckMcpServerAuthBodySchema>
+export type StartMcpOAuthBody = Static<typeof StartMcpOAuthBodySchema>
+
+/** The authorization URL to send the user's browser to. Studio builds it from the server's OWN published metadata — never a per-vendor hardcoded link. */
+export const StartMcpOAuthResultSchema = Type.Object({
+  authorizeUrl: Type.String(),
+})
+export type StartMcpOAuthResult = Static<typeof StartMcpOAuthResultSchema>
+
+/** Whether one server currently holds a usable OAuth session. `expiresAt`/`scope` describe the session; the access token itself is never sent to the client. */
+export const McpOAuthStatusSchema = Type.Object({
+  /** True when the server's metadata says it needs OAuth at all — a plain unauthenticated http server reports false and shows no sign-in control. */
+  supportsOAuth: Type.Boolean(),
+  connected: Type.Boolean(),
+  expiresAt: Type.Union([Type.Number(), Type.Null()]),
+  scope: Type.Union([Type.String(), Type.Null()]),
+  /**
+   * The `CLAUDE_CONFIG_DIR` a manual CLI sign-in must target, for the servers
+   * Studio cannot register with itself.
+   *
+   * Some providers advertise dynamic client registration but operate a closed
+   * allow-list of approved applications — Figma's docs say only clients in its
+   * MCP Catalog (Claude Code, VS Code, Cursor) may connect, and its
+   * registration endpoint answers a bare 403 to everyone else. Studio is not
+   * on that list and cannot get on it by trying harder. The Claude CLI IS, and
+   * Studio already spawns it against a per-user config directory, so a
+   * one-time sign-in performed THERE is inherited by every later headless
+   * turn. This is the path to that.
+   *
+   * `null` when the host cannot give each user their own CLI config
+   * directory, in which case there is no honest instruction to print.
+   */
+  cliConfigDir: Type.Union([Type.String(), Type.Null()]),
+  /**
+   * True once this server's authorization server has refused to register
+   * Studio as an OAuth client — Figma's closed MCP Catalog allow-list being
+   * the case Studio ships.
+   *
+   * The refusal is a policy answer that no retry changes, so it is recorded
+   * the first time it happens and reported here from then on. The panel reads
+   * it as "do not offer a sign-in button; offer the CLI route instead", which
+   * is what `cliConfigDir` above is for.
+   */
+  registrationClosed: Type.Boolean(),
+})
+export type McpOAuthStatus = Static<typeof McpOAuthStatusSchema>
+
+/**
+ * What the Claude CLI — not Studio — reports about one server, asked
+ * separately because the answer costs a ~10s live health check.
+ *
+ * `connected` here means the sign-in landed somewhere Studio's own token store
+ * cannot see (the CLI keeps MCP credentials in the OS keychain), which is the
+ * ONLY possible outcome for a provider whose client allow-list refuses Studio.
+ * Reporting it is the difference between a badge that reads "Not signed in"
+ * forever while the tools work, and one that tells the truth.
+ *
+ * `unknown` covers every failure mode — no CLI on PATH, a timeout, output this
+ * Studio version cannot parse — and must never be rendered as "not connected".
+ */
+export const McpCliConnectionSchema = Type.Object({
+  state: Type.Union([Type.Literal('connected'), Type.Literal('needs-auth'), Type.Literal('unknown')]),
+})
+export type McpCliConnection = Static<typeof McpCliConnectionSchema>

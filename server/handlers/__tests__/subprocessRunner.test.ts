@@ -150,6 +150,23 @@ describe('minimalSubprocessEnv', () => {
     }
   })
 
+  // Not cosmetic and not portable politeness: the Claude CLI keys its stored
+  // credentials by the OS account name, so a child spawned without `USER`
+  // silently reports a signed-in MCP server as "! Needs authentication" and
+  // the turn registers zero tools for it. Measured both ways against one
+  // config dir and one endpoint. Dropping it from the allowlist to "tighten"
+  // the environment would break the Figma connector with no error anywhere.
+  it('forwards USER, which the Claude CLI needs to find its own stored credentials', () => {
+    const original = process.env.USER
+    process.env.USER = 'test-account'
+    try {
+      expect(minimalSubprocessEnv().USER).toBe('test-account')
+    } finally {
+      if (original === undefined) delete process.env.USER
+      else process.env.USER = original
+    }
+  })
+
   it('forwards only the requested extra keys, not the whole environment', () => {
     const original = process.env.SOME_RANDOM_TEST_VAR
     process.env.SOME_RANDOM_TEST_VAR = 'should-not-leak'

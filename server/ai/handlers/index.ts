@@ -23,6 +23,7 @@ import { tryHandleAiClaudeCliLoginTerminal } from './claudeCliLoginTerminal'
 import { tryHandleAiStudioAgentSession } from './studioAgentSession'
 import { tryHandleAiMcpConnectors } from '../mcp/handlers/connectors'
 import { tryHandleAiMcpProjectServers } from '../mcp/handlers/registeredServers'
+import { tryHandleAiMcpOAuth } from '../mcp/handlers/oauth'
 import { tryHandleAiEditorBridge } from '../mcp/handlers/editorBridge'
 
 export function tryHandleAi(
@@ -45,6 +46,7 @@ export function tryHandleAi(
   // handler so the order is handled there.
   return (
     tryHandleAiMcpConnectors(req, db, pathname) ??
+    tryHandleAiMcpOAuth(req, db, url, pathname) ??
     tryHandleAiMcpProjectServers(req, db, url, pathname) ??
     tryHandleAiEditorBridge(req, db, pathname) ??
     tryHandleAiAudit(req, db, url, pathname) ??

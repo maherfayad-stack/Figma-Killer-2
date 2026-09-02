@@ -112,6 +112,20 @@ A page that had local (unsaved) edits and also got overwritten toasts
 `'Local edits overwritten'` — the "merge: reload only touched pages" policy's
 one explicit data-loss case.
 
+`input.styleRules`/`input.conditions` carry the PROJECT-WIDE registries the
+same reload recomputed, and are replaced wholesale (never merged — the server
+recomputes them from disk, so a merge would resurrect a rule the edit
+deleted). They are not optional-because-nice-to-have: a re-parsed page's
+`classIds` name rules from the registry computed WITH it, and rendering it
+against the previous one resolves those nodes to no class name at all
+(`NodeRenderer`'s `getCanvasNodeClassName`), so the page draws unstyled and
+collapsed — bare containers falling back to the "Empty container" placeholder
+— until a manual refresh. Omit them only when the caller genuinely has nothing
+fresher (a test, or a patch that never re-read the project). `?pageIds=`
+callers get them from `fetchStudioPagesById`, which also applies the meta
+line's store-free halves (`authoredCss`, `vendorCss`, `styleRuleSources`,
+`trust`) itself.
+
 **`saveSite`** collects dirty nodes into a `StudioEdit[]` batch:
 - `tag`/`customTag` collapse into one `effectiveTag`, diffed against the load
   baseline, emitted as `kind: 'tag'`;

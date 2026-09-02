@@ -18,14 +18,17 @@ import {
   McpConnectorListSchema,
   CreateMcpConnectorResultSchema,
   ListProjectMcpServersResultSchema,
-  McpServerAuthProbeResultSchema,
+  McpOAuthStatusSchema,
+  McpCliConnectionSchema,
+  StartMcpOAuthResultSchema,
   type McpConnectorView,
   type CreateMcpConnectorBody,
   type CreateMcpConnectorResult,
   type ProjectMcpServerView,
   type RegisteredMcpServerDefinition,
   type McpServerSource,
-  type McpServerAuthProbeResultWire,
+  type McpOAuthStatus,
+  type McpCliConnection,
 } from '@core/ai'
 
 // ---------------------------------------------------------------------------
@@ -566,11 +569,59 @@ export async function setMcpServerApproval(
   })
 }
 
-/** Best-effort OAuth-discovery probe for an http/sse server URL — see `authProbe.ts`'s doc comment for exactly what this does and does not do. */
-export async function checkMcpServerAuth(url: string): Promise<McpServerAuthProbeResultWire> {
-  return apiRequest(`${PROJECT_MCP_SERVERS_BASE}/check-auth`, {
-    method: 'POST',
-    body: { url },
-    schema: McpServerAuthProbeResultSchema,
+
+const MCP_OAUTH_BASE = '/admin/api/ai/mcp/oauth'
+
+/**
+ * Whether one registered server needs an OAuth sign-in, and whether Studio
+ * currently holds a session for it. The access token itself never crosses this
+ * boundary — only the fact of a session, its scope, and its deadline.
+ */
+export async function getMcpOAuthStatus(
+  dir: string,
+  name: string,
+  signal?: AbortSignal,
+): Promise<McpOAuthStatus> {
+  return apiRequest(`${MCP_OAUTH_BASE}/status`, {
+    query: { dir, name },
+    schema: McpOAuthStatusSchema,
+    signal,
   })
+}
+
+/** Begin the browser OAuth flow and return the authorization URL to open. Studio derives it from the server's own published metadata — never a hardcoded per-vendor link. */
+export async function startMcpOAuth(dir: string, name: string): Promise<string> {
+  const body = await apiRequest(`${MCP_OAUTH_BASE}/start`, {
+    method: 'POST',
+    body: { dir, name },
+    schema: StartMcpOAuthResultSchema,
+  })
+  return body.authorizeUrl
+}
+
+/**
+ * What the Claude CLI reports about this server, which is a DIFFERENT question
+ * from {@link getMcpOAuthStatus}: for a provider whose client allow-list
+ * refuses Studio, the sign-in can only have landed in the CLI's own keychain,
+ * where Studio's token store cannot see it.
+ *
+ * Separate call because it costs a live health check (~10s server-side, cached
+ * for a minute) — the card renders on the fast status first, then resolves
+ * this.
+ */
+export async function getMcpCliConnection(
+  dir: string,
+  name: string,
+  signal?: AbortSignal,
+): Promise<McpCliConnection> {
+  return apiRequest(`${MCP_OAUTH_BASE}/cli-status`, {
+    query: { dir, name },
+    schema: McpCliConnectionSchema,
+    signal,
+  })
+}
+
+/** Sign out of one server, leaving its other stored secrets untouched. */
+export async function signOutMcpOAuth(dir: string, name: string): Promise<void> {
+  await apiRequest(MCP_OAUTH_BASE, { method: 'DELETE', query: { dir, name } })
 }

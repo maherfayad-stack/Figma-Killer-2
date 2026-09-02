@@ -231,6 +231,8 @@ export {
 export {
   assertValidCssClassName,
   styleRuleSelector,
+  styleRuleDisplaySelector,
+  styleRuleDisplayName,
   classNamesForClassIds,
 } from './classNames'
 export type { StyleRuleRegistry } from './classNames'

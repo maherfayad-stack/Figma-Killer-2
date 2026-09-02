@@ -30,7 +30,15 @@ export default defineConfig([
   // happens to be `.jsx`, which this app's `**/*.{ts,tsx}` file matcher already
   // skips; excluding the whole tree makes that accidental exemption explicit
   // instead of leaving a `.ts`/`.tsx` file the one shape that would trip it.
-  globalIgnores(['dist', '.worktrees', '.claude', 'design-system', 'studio-workspace']),
+  //
+  // `.data/` is Studio's own git-ignored RUNTIME data root — per-user
+  // `CLAUDE_CONFIG_DIR`s, encrypted MCP secrets, and whatever the Claude CLI
+  // writes into them. It is not source: the CLI downloads third-party
+  // marketplace plugin code there, and 24 lint errors from someone else's
+  // `server.ts` failed `bun run lint` for a change that never touched it.
+  // Same reasoning as `studio-workspace` above — Studio does not author,
+  // build, or lint what lives there.
+  globalIgnores(['dist', '.worktrees', '.claude', '.data', 'design-system', 'studio-workspace']),
   {
     files: ['**/*.{ts,tsx}'],
     extends: [

@@ -351,7 +351,20 @@ export async function loadStudioStyles(
       // this only fires for genuine same-file re-parses / `extraCss`
       // duplicates now, since two DIFFERENT files no longer share an id.
       // `order` still advances so relative sort position is preserved.
-      styleRules[id] = { ...rule, id, order: order++, createdAt: IMPORTED_RULE_TIMESTAMP, updatedAt: IMPORTED_RULE_TIMESTAMP }
+      // A CSS Modules rule's `name` is the COMPILED class the DOM carries
+      // (`SignUp_socialBtn__a1b2c`). That is the right thing to render,
+      // cascade, and match `classIds` with — and exactly the wrong thing to
+      // show a person, who is looking at `.socialBtn` in the file. Display
+      // only; nothing downstream keys off it. See `styleRuleDisplaySelector`.
+      const localName = rule.kind === 'class' ? moduleSourceByGeneratedClass.get(rule.name)?.local : undefined
+      styleRules[id] = {
+        ...rule,
+        id,
+        ...(localName && localName !== rule.name ? { displayName: localName } : {}),
+        order: order++,
+        createdAt: IMPORTED_RULE_TIMESTAMP,
+        updatedAt: IMPORTED_RULE_TIMESTAMP,
+      }
       // `classIdsByName` still resolves one NAME to exactly one id — the
       // LATEST file wins, matching cascade order for canvas rendering
       // purposes (same accepted approximation as before this change; see

@@ -65,5 +65,8 @@
   },
   "previewAxes": {
     "direction": "rtl"
-  }
+  },
+  "approvedRegisteredMcpServers": [
+    "figma"
+  ]
 }

@@ -33,7 +33,10 @@ import { readStudioMeta } from '../../../handlers/studio/studioMeta'
 import { resolveProjectTscPath } from '../../../handlers/studio/typecheck'
 import { loopbackAssetFetchEnabled } from '../../../handlers/studio/remoteAssetFetch'
 import { listProjectMcpServers } from '../../drivers/projectMcpServers'
-import { listRegisteredMcpServers } from '../../drivers/registeredMcpServers'
+import { listRegisteredMcpServers, recordBuiltInSignIn, registeredMcpServerProjectKey } from '../../drivers/registeredMcpServers'
+import { hasMcpOAuthSession } from '../../credentials/mcpOAuthStore'
+import { readCachedCliMcpConnections, recallCliSignIns } from '../../credentials/cliMcpConnectionProbe'
+import { claudeCliPlatformSupport, resolveClaudeCliConfigDir, resolveClaudeCliDataRoot } from '../../../handlers/studio/claudeCliEnv'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { studioSnapshotStaleness, STALE_NODE_IDS_WARNING, type StalenessTracker } from './staleness'
@@ -111,8 +114,17 @@ export interface StudioLiveDigest {
  * honest degrade when the cheap, synchronous probes below throw (they are
  * documented never to, but this field still never claims a status it did not
  * actually check — see the module's "Honest" design goal).
+ *
+ * `'needs-approval'` is its own state rather than being folded into
+ * `'not-configured'`, and the distinction is the whole reason it exists.
+ * Studio ships the remote Figma server into every project unapproved
+ * (`registeredMcpServers.ts` — it carries a token, so it cannot self-approve),
+ * so "no Figma tools this turn" is now the DEFAULT rather than a sign the user
+ * never wanted one. Collapsing the two would tell the agent to give up and
+ * measure from a reference, when the real answer is one human action away and
+ * the agent is the only thing in the loop that can say so.
  */
-export type FigmaConnectorStatus = 'configured' | 'not-configured' | 'unknown'
+export type FigmaConnectorStatus = 'configured' | 'needs-auth' | 'needs-approval' | 'not-configured' | 'unknown'
 
 /**
  * Why `studio_typecheck` would refuse or fail before even running `tsc` —
@@ -188,13 +200,53 @@ function isLoopbackUrl(raw: string): boolean {
   }
 }
 
+
+/**
+ * Whether the Claude CLI is signed in to `figma`, read from
+ * `cliMcpConnectionProbe`'s CACHE ONLY — this never spawns anything.
+ *
+ * Studio's own token store cannot hold a Figma credential (that provider only
+ * registers clients on its own allow-list), so "no Studio session" is true of
+ * a fully working connector and, on its own, would report `needs-auth` on
+ * every single turn forever. The CLI knows the truth, but asking it costs a
+ * ~10 second live health check — precisely the "latency for a guess that is
+ * stale the moment it is made" this module's own doc rejects.
+ *
+ * So the cache is consulted and never filled here: warm (someone opened
+ * Settings within the minute) upgrades the answer, cold leaves it alone. A
+ * cold cache therefore still reports `needs-auth`, which the prompt words as
+ * "Studio holds no sign-in of its own, the tools may still be there" rather
+ * than as a claim the tools are missing.
+ */
+function cliHoldsFigmaSignIn(userId: string): boolean {
+  if (!claudeCliPlatformSupport().supported) return false
+  try {
+    const configDir = resolveClaudeCliConfigDir(resolveClaudeCliDataRoot(), userId)
+    // The remembered note first: it is a file read, it survives restarts, and
+    // it is what makes a freshly-created project work on its very first turn
+    // instead of on the first turn after someone opened Settings.
+    if (recallCliSignIns(configDir).includes('figma')) return true
+    return readCachedCliMcpConnections(configDir)?.get('figma') === 'connected'
+  } catch {
+    return false
+  }
+}
+
 /**
  * Never throws (wrapped defensively even though every function it calls is
  * separately documented never to) — a probe failure degrades to `'unknown'`
  * rather than aborting the digest or the turn.
  */
-function probeFigmaConnectorStatus(dir: string): StudioCapabilityDigest['figma'] {
+function probeFigmaConnectorStatus(dir: string, userId?: string): StudioCapabilityDigest['figma'] {
   try {
+    // A user who has signed in to Figma has consented to Figma, in Figma's own
+    // OAuth screen, naming their account. Recording that as this project's
+    // approval is what makes a connector the user already authorised work in a
+    // project they just created, without a second checkbox asking the same
+    // question. Idempotent, and it never fires for a project that replaced or
+    // disabled the built-in — see `recordBuiltInSignIn`.
+    if (userId && cliHoldsFigmaSignIn(userId)) recordBuiltInSignIn(dir, 'figma', true)
+
     const projectDeclared = listProjectMcpServers(dir).find((s) => s.name === 'figma')
     const registered = listRegisteredMcpServers(dir).find((s) => s.name === 'figma')
     // Registered (built-in or a user override of the same name) wins on a
@@ -203,9 +255,33 @@ function probeFigmaConnectorStatus(dir: string): StudioCapabilityDigest['figma']
     // registered servers spread after, so registered overwrites on a name
     // collision).
     const approved = registered?.approved ? registered : projectDeclared?.approved ? projectDeclared : null
-    if (!approved) return { status: 'not-configured', loopbackAssetFetchBlocked: false }
+    if (!approved) {
+      // Declared but not approved — including Studio's own shipped remote
+      // built-in, which is every fresh project. Distinguishable, and worth
+      // distinguishing: see `FigmaConnectorStatus`.
+      const declared = registered ?? projectDeclared
+      return {
+        status: declared ? 'needs-approval' : 'not-configured',
+        loopbackAssetFetchBlocked: false,
+      }
+    }
     const url = 'url' in approved.definition ? approved.definition.url : null
     const loopback = url !== null && isLoopbackUrl(url)
+
+    // Approved is not the same as usable. A remote connector that needs OAuth
+    // and has no session connects with ZERO tools registered, so every call
+    // comes back "No such tool available: mcp__figma__…" — an error that tells
+    // the agent nothing it can act on, and which it answers by inventing
+    // plausible tool names. Reporting it here costs one filesystem stat and
+    // turns a dead end into a sentence the user can act on.
+    if (url !== null && !loopback && userId && !hasMcpOAuthSession({
+      userId,
+      projectKey: registeredMcpServerProjectKey(dir),
+      serverName: 'figma',
+    }) && !cliHoldsFigmaSignIn(userId)) {
+      return { status: 'needs-auth', loopbackAssetFetchBlocked: false }
+    }
+
     return { status: 'configured', loopbackAssetFetchBlocked: loopback && !loopbackAssetFetchEnabled() }
   } catch (err) {
     console.error('[ai/liveDigest] figma connector probe failed — degrading to unknown:', err)
@@ -243,9 +319,9 @@ function probeTypecheckAvailability(dir: string): TypecheckAvailability {
  * the 'unknown' degrade below) would otherwise never reach this function at
  * all under the full pipeline.
  */
-export function buildStudioCapabilityDigest(dir: string): StudioCapabilityDigest {
+export function buildStudioCapabilityDigest(dir: string, userId?: string): StudioCapabilityDigest {
   return {
-    figma: probeFigmaConnectorStatus(dir),
+    figma: probeFigmaConnectorStatus(dir, userId),
     typecheck: probeTypecheckAvailability(dir),
   }
 }
@@ -253,6 +329,15 @@ export function buildStudioCapabilityDigest(dir: string): StudioCapabilityDigest
 export interface BuildStudioLiveDigestOptions {
   /** Test seam — defaults to the shared production tracker. */
   readonly staleness?: StalenessTracker
+  /**
+   * The authenticated user this turn belongs to, threaded in so the Figma
+   * line can distinguish "approved but nobody has signed in" from "ready".
+   * An OAuth session is stored per (user, project, server), so without this
+   * the question is unanswerable and the status degrades to `'configured'`
+   * — the pre-existing behaviour, never a wrong claim in the other
+   * direction.
+   */
+  readonly userId?: string
 }
 
 /** A figma.com URL anywhere in the user's latest message — the one signal `registerTurnDesignReferences` (a transient chat IMAGE attachment) can't catch, because a pasted Figma LINK carries no bytes for it to register. */
@@ -331,7 +416,7 @@ export async function buildStudioLiveDigest(
     if (staleness.checkAndRecord(conversationId, absFile)) staleWarning = STALE_NODE_IDS_WARNING
   }
 
-  const capabilities = buildStudioCapabilityDigest(dir)
+  const capabilities = buildStudioCapabilityDigest(dir, options.userId)
 
   let pageWriteVerification: readonly PageWriteVerificationEntry[] = []
   try {
