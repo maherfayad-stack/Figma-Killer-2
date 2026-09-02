@@ -1,0 +1,89 @@
+/* The prototype inspector — link properties, or the flows leaving a screen. */
+
+.panel {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2xs);
+    /* min-height:0 lets .list scroll instead of the panel growing — the same
+       flex-child trap the properties and comments panels both hit. */
+    min-height: 0;
+    height: 100%;
+    /* No top padding: `PanelHeader` is a full-bleed bar with its own inset. */
+    padding: 0 var(--space-s) var(--space-s);
+}
+
+.panel > header {
+    margin: 0 calc(-1 * var(--space-s));
+}
+
+.body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+    min-height: 0;
+}
+
+.list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3xs);
+    margin: 0;
+    padding: 0;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    list-style: none;
+}
+
+/* Layout only — the Button primitive owns surface, radius, focus and hover. */
+.row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-4xs);
+    width: 100%;
+    height: auto;
+    padding: var(--space-2xs) var(--space-xs);
+    text-align: left;
+}
+
+.rowAction {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+}
+
+.rowTarget {
+    font-size: var(--text-s);
+}
+
+/* A broken link is listed, not hidden — it is the visible cost of an edit. */
+.rowBroken {
+    font-size: var(--text-xs);
+    color: var(--danger-text);
+}
+
+.warning {
+    margin: 0;
+    padding: var(--space-2xs) var(--space-xs);
+    border-radius: var(--radius);
+    background: var(--bg-surface-2);
+    color: var(--danger-text);
+    font-size: var(--text-xs);
+}
+
+.field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4xs);
+}
+
+.fieldLabel {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+}
+
+.actions {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-2xs);
+    margin-top: var(--space-2xs);
+}

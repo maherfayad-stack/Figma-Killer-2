@@ -1,0 +1,199 @@
+/**
+ * PrototypePanel — the inspector while the board is in prototype mode.
+ *
+ * It REPLACES the Properties panel rather than joining it as a third tab, the
+ * way Figma's Design/Prototype tabs do. In prototype mode the user is not
+ * editing styles, and leaving a full style inspector on screen invites edits
+ * they did not mean to make with a gesture that now means something else.
+ *
+ * Two states, and the empty one is the more important:
+ *
+ *   - A link is selected → its properties, and nothing else.
+ *   - Nothing is selected → the flows leaving the selected page, so the panel
+ *     answers "what does this screen do" without requiring the user to hunt a
+ *     connector line first.
+ *
+ * Broken links are listed, never hidden. A link whose source element was
+ * deleted is the visible cost of an edit; silently dropping it is how a
+ * prototype rots without anyone noticing.
+ */
+import { useEditorStore } from '@site/store/store'
+import { selectLinkSource, selectSelectedLink } from '@site/store/slices/prototypeSelectors'
+import { transitionsForAction, type PrototypeAction, type PrototypeLink, type PrototypeTransition } from '@core/studio-prototype'
+import { deleteLink, updateLink } from '@site/studio/prototypeActions'
+import { PanelHeader } from '@admin/shared/PanelHeader'
+import { Select } from '@ui/components/Select'
+import { Button } from '@ui/components/Button'
+import { EmptyState } from '@ui/components/EmptyState'
+import { LinkIcon } from 'pixel-art-icons/icons/link'
+import styles from './PrototypePanel.module.css'
+
+const ACTION_LABELS: Record<PrototypeAction, string> = {
+  navigate: 'Navigate to',
+  overlay: 'Open over',
+  back: 'Go back',
+  close: 'Close overlay',
+}
+
+const TRANSITION_LABELS: Record<PrototypeTransition, string> = {
+  instant: 'Instant',
+  dissolve: 'Dissolve',
+  'slide-left': 'Slide left',
+  'slide-right': 'Slide right',
+  'push-left': 'Push left',
+  'push-right': 'Push right',
+  popup: 'Popup',
+  sheet: 'Bottom sheet',
+}
+
+export function PrototypePanel() {
+  const setBoardMode = useEditorStore((s) => s.setBoardMode)
+  const selected = useEditorStore(selectSelectedLink)
+  const links = useEditorStore((s) => s.prototype.links)
+  const pages = useEditorStore((s) => s.site?.pages)
+  const setSelectedLink = useEditorStore((s) => s.setSelectedLink)
+
+  const pageName = (pageId: string | null): string => {
+    if (!pageId) return '—'
+    return pages?.find((p) => p.id === pageId)?.title ?? 'Deleted page'
+  }
+
+  return (
+    <div className={styles.panel}>
+      <PanelHeader title="Prototype" panelId="prototype" onClose={() => setBoardMode('design')} />
+
+      {selected ? (
+        <LinkInspector link={selected} pageOptions={pages ?? []} />
+      ) : (
+        <div className={styles.body}>
+          {links.length === 0 ? (
+            <EmptyState
+              icon={<LinkIcon size={16} />}
+              title="No links yet."
+              description="Drag from an element's + handle onto another screen to connect them."
+            />
+          ) : (
+            <ul className={styles.list}>
+              {links.map((link) => (
+                <LinkRow key={link.id} link={link} label={pageName(link.targetPageId)} onSelect={setSelectedLink} />
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function LinkRow({
+  link,
+  label,
+  onSelect,
+}: {
+  link: PrototypeLink
+  label: string
+  onSelect: (id: string) => void
+}) {
+  const source = useEditorStore((s) => selectLinkSource(s, link))
+
+  return (
+    <li>
+      <Button
+        variant="secondary"
+        size="sm"
+        className={styles.row}
+        onClick={() => onSelect(link.id)}
+        data-broken={source.live ? undefined : 'true'}
+      >
+        <span className={styles.rowAction}>{ACTION_LABELS[link.action]}</span>
+        <span className={styles.rowTarget}>{label}</span>
+        {!source.live && <span className={styles.rowBroken}>Source element is gone</span>}
+      </Button>
+    </li>
+  )
+}
+
+function LinkInspector({ link, pageOptions }: { link: PrototypeLink; pageOptions: ReadonlyArray<{ id: string; title: string }> }) {
+  const setSelectedLink = useEditorStore((s) => s.setSelectedLink)
+  const source = useEditorStore((s) => selectLinkSource(s, link))
+  const transitions = transitionsForAction(link.action)
+
+  /**
+   * Changing the action can strand the transition — `sheet` is meaningless once
+   * the link navigates. Re-derive it here rather than storing an illegal pair
+   * and relying on the reader to repair it.
+   */
+  const changeAction = (action: PrototypeAction) => {
+    const legal = transitionsForAction(action)
+    void updateLink({
+      ...link,
+      action,
+      targetPageId: action === 'back' || action === 'close' ? null : link.targetPageId,
+      ...(legal.length > 0
+        ? { transition: legal.includes(link.transition as PrototypeTransition) ? link.transition : legal[0] }
+        : { transition: undefined }),
+    })
+  }
+
+  return (
+    <div className={styles.body}>
+      {!source.live && (
+        <p className={styles.warning} role="status">
+          The element this link starts from no longer exists on the page.
+        </p>
+      )}
+
+      <label className={styles.field}>
+        <span className={styles.fieldLabel}>On click</span>
+        <Select value={link.action} onChange={(e) => changeAction(e.target.value as PrototypeAction)}>
+          {(Object.keys(ACTION_LABELS) as PrototypeAction[]).map((action) => (
+            <option key={action} value={action}>
+              {ACTION_LABELS[action]}
+            </option>
+          ))}
+        </Select>
+      </label>
+
+      {link.targetPageId !== null && (
+        <label className={styles.field}>
+          <span className={styles.fieldLabel}>Screen</span>
+          <Select
+            value={link.targetPageId}
+            onChange={(e) => void updateLink({ ...link, targetPageId: e.target.value })}
+          >
+            {pageOptions.map((page) => (
+              <option key={page.id} value={page.id}>
+                {page.title}
+              </option>
+            ))}
+          </Select>
+        </label>
+      )}
+
+      {transitions.length > 0 && (
+        <label className={styles.field}>
+          <span className={styles.fieldLabel}>Animation</span>
+          <Select
+            value={link.transition ?? transitions[0]}
+            onChange={(e) => void updateLink({ ...link, transition: e.target.value as PrototypeTransition })}
+          >
+            {transitions.map((transition) => (
+              <option key={transition} value={transition}>
+                {TRANSITION_LABELS[transition]}
+              </option>
+            ))}
+          </Select>
+        </label>
+      )}
+
+      <div className={styles.actions}>
+        <Button variant="ghost" onClick={() => setSelectedLink(null)}>
+          Done
+        </Button>
+        <Button variant="destructive" onClick={() => void deleteLink(link.id)}>
+          Delete link
+        </Button>
+      </div>
+    </div>
+  )
+}

@@ -20,7 +20,9 @@
  *         Button's fixed size tokens)
  *   §8.5 Canvas coordinate affordances — CommentPin (a marker positioned at an
  *         exact board coordinate: asymmetric map-pin radius whose corner is the
- *         tip, plus a zoom counter-scale transform on its own root element)
+ *         tip, plus a zoom counter-scale transform on its own root element) and
+ *         the prototype link handle (a circle at an exact board coordinate,
+ *         sized in board units, that starts a raw pointer drag)
  *
  * @see Contribution #667 — Button Design System Phase 2 spec (parent: this task)
  * @see Task #462 — Button Design System Phase 2 (37-file migration)
@@ -105,6 +107,20 @@ const ALLOWLIST = new Set([
   // Keyboard reachability, focus-visible styling and the accessible name are
   // all still provided explicitly (see CommentPin.tsx).
   'admin/pages/site/canvas/BoardCommentsLayer/CommentPin.tsx',
+
+  // §8.5 — the prototype `+` handle. Same family as CommentPin above, for the
+  // same two reasons:
+  //   * it is positioned at an exact BOARD coordinate and sized in board units
+  //     (it scales with the canvas), which Button's token-driven sizing cannot
+  //     express without fighting rules whose CSS-Modules order is not
+  //     guaranteed;
+  //   * its background is a canvas-affordance token (--canvas-prototype-link),
+  //     which is not a Button variant and should not become one — it belongs
+  //     with the selection and hover rings, not with editor chrome.
+  // It is a drag SOURCE, not a click target: its entire behaviour is a raw
+  // pointerdown that never resolves into a click. Accessible name and keyboard
+  // reachability are still provided explicitly.
+  'admin/pages/site/canvas/BoardPrototypeLayer/BoardPrototypeLayer.tsx',
 
   // ── §8.6 ARIA tablist tabs ──────────────────────────────────────────────
   // role="tab" buttons inside role="tablist" need a custom tab layout

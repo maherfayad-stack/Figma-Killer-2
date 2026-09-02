@@ -1,0 +1,117 @@
+/*
+ * Prototype connectors and the `+` handle.
+ *
+ * Absolutely positioned at the transform layer's origin, same as
+ * BoardGuidesLayer/BoardNotesLayer, so every coordinate below is a plain board
+ * unit and pan/zoom is handled by the ancestor transform for free.
+ */
+.layer {
+    position: absolute;
+    top: 0;
+    left: 0;
+    /* The layer itself is not a target — only the connectors and the handle
+       are, and they opt back in below. Without this, an invisible box over the
+       board would swallow clicks meant for frames. */
+    pointer-events: none;
+}
+
+/*
+ * One SVG for every connector, sized and offset to the bounding box of the
+ * curves (`routesBounds`). The viewBox is set to the same board rect in the
+ * component, so path coordinates are board units with no translation.
+ */
+.canvas {
+    /* Defaults for the JS-driven properties, so no `var()` here needs a
+       fallback and a missing one is visible rather than silently absorbed. */
+    --connector-x: 0px;
+    --connector-y: 0px;
+    --connector-w: 0px;
+    --connector-h: 0px;
+    position: absolute;
+    left: var(--connector-x);
+    top: var(--connector-y);
+    width: var(--connector-w);
+    height: var(--connector-h);
+    overflow: visible;
+    pointer-events: none;
+}
+
+.line {
+    fill: none;
+    stroke: var(--canvas-prototype-link);
+    stroke-width: 2;
+    stroke-linecap: round;
+}
+
+/* A link derived from the user's real code is read-only on the board. */
+.line[data-origin='code'] {
+    stroke: var(--canvas-prototype-link-code);
+    stroke-dasharray: 6 4;
+}
+
+/* A 2px curve is a 2px hit target. This invisible fat stroke is what makes a
+   connector clickable without making it look thick. */
+.hitArea {
+    fill: none;
+    stroke: transparent;
+    stroke-width: 14;
+    pointer-events: stroke;
+    cursor: pointer;
+}
+
+.endpoint {
+    fill: var(--canvas-prototype-link);
+    pointer-events: none;
+}
+
+.connector[data-selected='true'] .line {
+    stroke-width: 3;
+}
+
+.connector[data-selected='true'] .endpoint {
+    r: 7;
+}
+
+.draftLine {
+    fill: none;
+    stroke: var(--canvas-prototype-link-draft);
+    stroke-width: 2;
+    stroke-dasharray: 5 5;
+    stroke-linecap: round;
+    pointer-events: none;
+}
+
+/*
+ * The `+` beside the selected element. Sized in board units so it scales with
+ * the canvas like everything else on the board — a handle that stayed 20px on
+ * screen would drift away from its element at every zoom level.
+ */
+.handle {
+    --handle-x: 0px;
+    --handle-y: 0px;
+    position: absolute;
+    left: var(--handle-x);
+    top: var(--handle-y);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    /* Centre on the board point with a transform rather than a negative
+       margin: half of 20px is not a spacing-scale value and never will be —
+       it is geometry tied to the handle's own size, not rhythm. */
+    transform: translate(-50%, -50%);
+    border: 1px solid var(--canvas-comment-pin-ring);
+    border-radius: 50%;
+    background: var(--canvas-prototype-link);
+    color: var(--canvas-comment-pin-text);
+    font-size: var(--text-s);
+    line-height: 1;
+    cursor: crosshair;
+    pointer-events: auto;
+}
+
+.handle:hover {
+    background: var(--canvas-prototype-link-draft);
+}
