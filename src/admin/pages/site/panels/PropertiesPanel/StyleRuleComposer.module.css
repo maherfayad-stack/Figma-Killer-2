@@ -1,0 +1,72 @@
+/* StyleRuleComposer — CSS property section content. */
+
+.styleSections {
+    display: grid;
+    align-content: start;
+    min-width: 0;
+    gap: var(--space-px);
+    padding-bottom: var(--space-2xl);
+}
+
+/*
+ * Each section sits in its own grid item, and a grid item's default
+ * `min-width: auto` means it refuses to shrink below its widest child. One
+ * long class name in a section header was therefore enough to push the whole
+ * track wider than the panel — the scroll container clips overflow on the x
+ * axis, so the result was silently amputated controls on the right edge
+ * (a clear button with no left half, a truncated "Assign class") rather than
+ * anything that announced itself as broken.
+ *
+ * Measured at a 300px panel before this line: content column 257px, scroll
+ * width 326px. It was there at 360px too, just 60px further out of sight.
+ */
+.styleSections > * {
+    min-width: 0;
+}
+
+.noStyleMatches {
+    padding: var(--space-l) var(--space-xl);
+    color: var(--text-subtle);
+    font-size: var(--text-xs);
+    line-height: 1.4;
+}
+
+/* ── Advanced disclosure (border shorthand rows) ─────────────────────────── */
+
+.advanced {
+    margin-top: var(--space-s);
+    padding-top: var(--space-s);
+    border-top: 1px solid var(--overlay-20);
+}
+
+.advancedSummary {
+    cursor: pointer;
+    list-style: none;
+    color: var(--text-disabled);
+    font-size: var(--text-xs);
+    font-weight: 620;
+    padding: var(--space-4xs) 0;
+    user-select: none;
+}
+
+.advancedSummary::-webkit-details-marker {
+    display: none;
+}
+
+.advancedSummary::before {
+    content: "▸";
+    display: inline-block;
+    margin-right: var(--space-xs);
+    font-size: var(--text-3xs);
+    transition: transform 120ms ease;
+}
+
+.advanced[open] > .advancedSummary::before {
+    transform: rotate(90deg);
+}
+
+.advancedBody {
+    display: grid;
+    gap: var(--space-3xs);
+    padding-top: var(--space-xs);
+}

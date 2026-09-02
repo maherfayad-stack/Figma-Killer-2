@@ -1,21 +1,149 @@
-design-system/
-node_modules/
-dist/
-.turbo/
+# Logs
+logs
 *.log
-.DS_Store
-files/
-coverage/
-.vite/
-playwright-report/
-test-results/
-.env
-.env.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
 
-# sync-daemon runtime coordination file (ports/pids only, no design state —
-# playbook §4/P1 step 7, ADR-0012). Rooted so it only matches the studio
-# project's own root .studio/, not templates/file-app/.studio/ (a tracked
-# template file) or files/**/.studio/ (already covered by `files/` above).
-/.studio/
+node_modules
+dist
+!vendor/pixel-art-icons/dist/
+!vendor/pixel-art-icons/dist/**
+dist-ssr
+.worktrees/
+.superpowers/
+# Claude Code harness. The agent roster, skills, slash commands, hooks, and the
+# shared project settings are source — they define how agents work on this repo
+# and must travel with it. Everything else under `.claude/` is per-user local
+# state (`settings.local.json`, caches, transcripts) and stays ignored.
+.claude/*
+!.claude/agents/
+!.claude/skills/
+!.claude/commands/
+!.claude/hooks/
+!.claude/settings.json
+.tmp/
+.tmp-lint/
+# Per-user Claude CLI config roots (`resolveClaudeCliDataRoot`, default
+# `.data/claude-cli/<userId>/`). After an L1 terminal login this holds the
+# CLI's own `.credentials.json` — a live OAuth token. Never committable.
+.data/
+.coverage/
+coverage/
+.matrix/
+*.local
+
+# Local SQLite dev databases — runtime state, never source
+data/*.db
+data/*.db-shm
+data/*.db-wal
+
+# Generated audit reports
+/studio-audit-report.html
+/studio-audit-report.json
+
+# Environment variable files — never commit secrets
+# *.local already covers .env.local / .env.development.local etc.
+# These explicit entries cover bare .env and non-local variants.
+.env
+.env.*
+!.env.example
+!.env.production.example
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.agents/*
+!.agents/skills/
+.agents/skills/*
+!.agents/skills/agent-browser/
+!.agents/skills/agent-browser/**
+!.agents/skills/skill-creator/
+!.agents/skills/skill-creator/**
+!.agents/skills/studio-user-e2e/
+!.agents/skills/studio-user-e2e/**
+.skills/
+
+# User uploads — runtime data, never commit
+# (real user media has PII risk; plugin/font runtime artifacts are not source)
+uploads/*
+!uploads/.gitkeep
+
+# E2E test run artifacts — generated, not source
+docs/e2e/runs
+
+# Agent implementation plans — local planning artifacts, never source
+docs/plans/
+docs/superpowers/
+
+# Plugin build artifacts — generated from source plugin directories
+*.plugin.zip
+
+# Loose smoke-test screenshots dropped at the repo root by agent-browser runs.
+# Persisted captures belong under docs/ or marketing/assets/, not the root.
+/*.png
+
+# AI coding-tool scratch/config dirs — local tooling, never source
+.factory/
+.trae/
+.windsurf/
 .gstack/
 .playwright-mcp/
+.turbo/
+# Per-project Studio sidecars. `**/` is load-bearing: every real `.studio/`
+# lives at `studio-workspace/<project>/.studio/`, and a pattern containing a
+# slash is anchored to THIS file's directory — so the bare `.studio/…` forms
+# these replace matched only a root-level dir that never exists, silently
+# leaving every one of these files tracked.
+**/.studio/daemon.json
+**/.studio/vite/
+# Install-job durability sidecar: per-machine operational state (absolute app-root
+# path + pid of the process that spawned the install), rewritten on every install.
+# Same class as daemon.json above — it must survive a server restart, not a clone.
+**/.studio/install-job.json
+# Compiled-style cache: `styles-<hash>.{css,json}`, keyed on a content hash of
+# the inputs (server/handlers/studio/styleCompile.ts). Pure derived output —
+# regenerated on demand, and committing it only produces churn in every diff.
+**/.studio/cache/
+# Design references (server/handlers/studio/designReferenceStore.ts) —
+# durable, addressable-by-id copies of a design comp (typically a Figma
+# export) an agent measures a Studio frame against. Unlike every OTHER entry
+# in this section, these are NOT disposable/regenerable output — losing one
+# means the user has to re-supply the exact file. They are excluded anyway,
+# for a different reason: a multi-megabyte PNG is a real, ongoing cost to
+# carry in a git history, and this repo's own studio-workspace/* dev fixtures
+# would otherwise accumulate them on every session that exercises this
+# feature. Durability here means "survives across chat turns/restarts on the
+# running server's disk", not "survives a git clone" — see the store's own
+# module doc for the full reasoning.
+**/.studio/references/
+# Design variables (server/handlers/studio/designVariableStore.ts) — an
+# ingested design's OWN declared variable table (typically read by the agent
+# via a connected Figma MCP server's get_variable_defs and handed to Studio
+# to persist), so studio_measure_reference can answer a measurement by
+# lookup instead of pixel inference. Same durability class and exclusion
+# reasoning as .studio/references/ just above: user-supplied intent, not
+# disposable, but cheap enough to lose that "survives on the running
+# server's disk" is the durability guarantee, not "survives a git clone" —
+# the agent re-fetches it from the design tool on request.
+**/.studio/variables/
+# The per-project guide Studio writes into a workspace project on every chat
+# turn (`server/handlers/studio/projectGuide.ts`, tracked by
+# `.claude/.studio-generated.json`). Generated output, not source — distinct
+# from THIS repo's own `.claude/` harness and root `CLAUDE.md`, both tracked
+# above. In a user's OWN project these files are theirs to commit; here they
+# are regenerated dev-fixture noise.
+studio-workspace/*/.claude/
+studio-workspace/*/CLAUDE.md
+
+# Playwright/E2E run output — generated, not source
+test-results/

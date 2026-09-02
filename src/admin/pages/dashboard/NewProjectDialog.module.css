@@ -1,0 +1,135 @@
+.form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-6xl);
+}
+
+.platformField {
+    border: 0;
+    margin: 0;
+    padding: 0;
+    min-inline-size: 0;
+}
+
+.legend {
+    padding: 0;
+    font-size: var(--text-s);
+    font-weight: 600;
+    color: var(--text);
+}
+
+.legendHint {
+    margin: var(--space-3xs) 0 var(--space-l);
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+}
+
+.options {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-l);
+}
+
+/*
+ * A card-shaped radio. The `<label>` is the card and the `<input>` is an
+ * invisible overlay on it (see `.radio`), so the whole card is the hit target
+ * and the control keeps native radio semantics and arrow-key navigation.
+ */
+.option {
+    position: relative;
+    display: grid;
+    /* One column: preview stage, then title row, then description. The meta
+       (dimensions) rides on the title's baseline. */
+    grid-template-columns: 1fr auto;
+    grid-template-areas:
+        "stage stage"
+        "label meta"
+        "description description";
+    align-items: baseline;
+    column-gap: var(--space-s);
+    row-gap: var(--space-3xs);
+    padding: var(--space-2xl);
+    background: var(--bg-surface-2);
+    border: 1px solid transparent;
+    border-radius: var(--panel-radius);
+    color: var(--text);
+    cursor: pointer;
+    transition: background 120ms ease, border-color 120ms ease;
+}
+
+.option:hover {
+    background: var(--bg-surface-3);
+}
+
+/* Selected border is plain white, not the canvas selection green: green is
+   the canvas's "this node is selected" signal, and this is a form choice in a
+   dialog — borrowing the canvas vocabulary here says something it doesn't
+   mean. */
+.option[data-selected='true'] {
+    background: var(--bg-surface-3);
+    border-color: var(--text-bright);
+}
+
+/*
+ * The real radio input, made invisible rather than removed: `display: none` or
+ * `visibility: hidden` would take it out of the tab order and off the
+ * accessibility tree, which is the entire reason for using one.
+ */
+.radio {
+    position: absolute;
+    inset: 0;
+    margin: 0;
+    opacity: 0;
+    cursor: pointer;
+}
+
+.option:focus-within {
+    box-shadow: var(--focus-ring);
+}
+
+/* A fixed-height stage, so the tall phone and the wide desktop drawing leave
+   the label on the same line in both cards. Ranged to the inline start, on the
+   same axis as the label and description below it — centred, each drawing sat
+   on its own axis and the two cards read as unrelated. */
+.stage {
+    grid-area: stage;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    block-size: 56px;
+    margin-block-end: var(--space-l);
+}
+
+/*
+ * The device drawings are pure `currentColor` (see the SVG components in
+ * NewProjectDialog.tsx), so the card tints them by setting `color` alone.
+ * Selection is stated once — by the card's border — and the drawing only firms
+ * up from subtle to full-strength ink so the chosen card reads first.
+ */
+.illustration {
+    display: block;
+    color: var(--text-subtle);
+}
+
+.option[data-selected='true'] .illustration {
+    color: var(--text);
+}
+
+.optionLabel {
+    grid-area: label;
+    font-size: var(--text-m);
+    font-weight: 600;
+}
+
+.optionMeta {
+    grid-area: meta;
+    font-size: var(--text-2xs);
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted);
+}
+
+.optionDescription {
+    grid-area: description;
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+}

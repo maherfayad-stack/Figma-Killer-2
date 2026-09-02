@@ -1,0 +1,76 @@
+.sidebar {
+    position: relative;
+    z-index: 85;
+    display: flex;
+    --right-sidebar-panel-width: 0px;
+    --right-sidebar-panel-layout-width: var(--right-sidebar-panel-width);
+    --right-sidebar-panel-render-width: min(var(--right-sidebar-panel-width), 100vw);
+    --right-sidebar-panel-render-layout-width: min(var(--right-sidebar-panel-layout-width), 100vw);
+    flex: 0 0 var(--right-sidebar-panel-render-width);
+    width: var(--right-sidebar-panel-render-width);
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+    background: var(--bg-body);
+    /* Width transition for user-driven open/close — same model as the
+       left sidebar. The transition only fires when the user toggles
+       collapsed/expanded; it does NOT fire on page load because the
+       sidebar's width is derived from synchronous site editor state. */
+    transition:
+        flex-basis 180ms ease,
+        width 180ms ease;
+}
+
+/*
+ * The absolutely-positioned column that holds the tab strip and the active
+ * panel.
+ *
+ * The absolute positioning is what keeps the PANEL at its full layout width
+ * while the sidebar's own width animates open and closed — it used to live on
+ * `.panelSlot` itself, which is why a tab strip added as a flex sibling simply
+ * drew on top of the panel. One positioned container, its children in normal
+ * flow, and the two stack.
+ */
+.stack {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    flex-direction: column;
+    width: var(--right-sidebar-panel-render-layout-width);
+    min-height: 0;
+    overflow: hidden;
+}
+
+.panelSlot {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .sidebar {
+        transition: none;
+    }
+}
+
+@media (max-width: 760px) {
+    .sidebar {
+        position: absolute;
+        top: 0;
+        right: 0;
+        bottom: 0;
+    }
+}
+
+/*
+ * The Properties / Comments switch, shown only when both panels are available.
+ * Sits above the slot rather than inside either panel: it belongs to the
+ * sidebar, and a panel that drew its own tab strip would be describing its
+ * sibling's existence.
+ */
+.tabs {
+    flex: 0 0 auto;
+    padding: var(--space-2xs) var(--space-s) 0;
+}

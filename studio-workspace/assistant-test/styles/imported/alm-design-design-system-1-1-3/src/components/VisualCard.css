@@ -1,0 +1,185 @@
+/* ── VisualCard ── */
+.visual-card {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--rounded-lg);
+  width: 100%;
+  max-width: 362px;
+  box-sizing: border-box;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  background-color: var(--background-base-subtle);
+}
+
+.visual-card__image-wrap {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.visual-card__image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.visual-card__gradient {
+  position: absolute;
+  inset: 0;
+  --vc-accent: var(--visual-card-accent-color, var(--background-primary-default));
+  --vc-s: var(--visual-card-fade-start, 30%);
+  --vc-e: var(--visual-card-fade-end, 85%);
+  /* Eased (smoothstep) fade — alpha ramps in/out on a curve so there are no
+     hard edges at the start of the ramp or the landing into the solid plateau. */
+  background-image: linear-gradient(
+    to bottom,
+    rgb(from var(--vc-accent) r g b / 0)    var(--vc-s),
+    rgb(from var(--vc-accent) r g b / 0.16) calc(var(--vc-s) + (var(--vc-e) - var(--vc-s)) * 0.25),
+    rgb(from var(--vc-accent) r g b / 0.5)  calc(var(--vc-s) + (var(--vc-e) - var(--vc-s)) * 0.5),
+    rgb(from var(--vc-accent) r g b / 0.84) calc(var(--vc-s) + (var(--vc-e) - var(--vc-s)) * 0.75),
+    var(--vc-accent) var(--vc-e)
+  );
+  pointer-events: none;
+}
+
+/* Large is a taller card with more image area, so start the fade lower. */
+.visual-card--large { --visual-card-fade-start: 45%; }
+
+/* No bottom bar: a soft, gradual fade that runs all the way to the bottom,
+   bottom-weighted behind the title/description (no hard solid band). */
+.visual-card--no-bar {
+  --visual-card-fade-start: 45%;
+  --visual-card-fade-end: 80%;
+}
+.visual-card--no-bar.visual-card--large {
+  --visual-card-fade-start: 58%;
+}
+
+.visual-card__media-body {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  flex-shrink: 0;
+}
+
+.visual-card--medium .visual-card__media-body { padding-top: 166px; }
+.visual-card--large  .visual-card__media-body { padding-top: 321px; }
+
+.visual-card__media-text {
+  display: flex;
+  flex-direction: column;
+  padding: 0 var(--space) var(--space);
+  color: var(--color-white-static);
+  text-align: start;
+}
+
+.visual-card--large .visual-card__media-text {
+  padding-bottom: var(--space-lg);
+}
+
+.visual-card__headline {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: var(--type-headline-weight);
+  color: var(--color-white-static);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.visual-card--medium .visual-card__headline {
+  font-size: var(--type-headline-size);
+  line-height: var(--type-headline-lh);
+  letter-spacing: var(--type-headline-ls);
+}
+
+.visual-card--large .visual-card__headline {
+  font-size: var(--type-display-size);
+  line-height: var(--type-display-lh);
+  letter-spacing: var(--type-display-ls);
+}
+
+.visual-card__body {
+  margin: 0;
+  font-family: var(--font-body);
+  font-size: var(--type-body-size);
+  font-weight: var(--type-body-regular-weight);
+  line-height: var(--type-body-lh);
+  color: var(--color-white-static);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Bottom bar ── */
+.visual-card__bar {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space);
+  padding: var(--space);
+  background-color: rgba(0, 0, 0, 0.1);
+  backdrop-filter: var(--liquid-glass-filter);
+  -webkit-backdrop-filter: var(--liquid-glass-filter);
+  border-bottom-left-radius: var(--rounded-lg);
+  border-bottom-right-radius: var(--rounded-lg);
+  overflow: hidden;
+}
+
+.visual-card__price-info {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  flex: 1 0 0;
+  min-width: 0;
+  text-align: start;
+}
+
+.visual-card__eyebrow {
+  font-family: var(--font-body);
+  font-size: var(--type-eyebrow-size);
+  font-weight: var(--type-eyebrow-weight);
+  line-height: var(--type-eyebrow-lh);
+  letter-spacing: var(--type-eyebrow-ls);
+  text-transform: uppercase;
+  color: var(--color-white-static);
+  width: 100%;
+}
+
+.visual-card__price-value {
+  font-family: var(--font-body);
+  font-size: var(--type-subtitle-size);
+  font-weight: var(--type-subtitle-weight);
+  line-height: var(--type-subtitle-lh);
+  color: var(--color-white-static);
+}
+
+/* The CTA is the shared DS Button (secondary-inverted) — it owns its appearance/states.
+   Only pin it so it doesn't shrink within the bar's flex row. */
+.visual-card__cta {
+  flex-shrink: 0;
+}
+
+/* ── Dismiss button ── */
+.visual-card__dismiss {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  top: var(--space);
+  border-radius: var(--rounded-full);
+  background: rgba(255, 255, 255, 0.5);
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  color: var(--color-metal-static);
+}
+
+.visual-card:not([dir='rtl']) .visual-card__dismiss { right: var(--space); }
+.visual-card[dir='rtl'] .visual-card__dismiss        { left: var(--space); }

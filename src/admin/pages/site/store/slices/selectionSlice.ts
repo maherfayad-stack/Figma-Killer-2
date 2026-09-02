@@ -1,0 +1,663 @@
+import type { Draft } from 'mutative'
+import type { EditorStore, EditorStoreSliceCreator } from '@site/store/types'
+import { isUserVisibleClass } from '@core/page-tree'
+import type { BaseNode } from '@core/page-tree'
+import type { NodeTree } from '@core/page-tree'
+import type { PageNode } from '@core/page-tree'
+import { flattenSubtree, getParent } from '@core/page-tree'
+import { selectActiveBoard } from './boardSelectors'
+
+/**
+ * Selection mode for `selectNode`:
+ * - `replace` (default) — clear current selection and select only `id`
+ * - `toggle` — Cmd/Ctrl-click semantics: add `id` if absent, remove if present
+ * - `range` — Shift-click semantics: select every node from current anchor to
+ *   `id` along the active tree's depth-first walk order. Cross-parent ranges
+ *   are allowed (matches Figma).
+ */
+type SelectionMode = 'replace' | 'toggle' | 'range'
+
+interface SelectNodeOptions {
+  preservePropertiesPanelCollapse?: boolean
+  /**
+   * WS-10 Phase 2 — the `BoardFrame.id` this selection originated from, or
+   * `null`/omitted for a selection that isn't frame-scoped (every CMS/VC
+   * canvas click, and anywhere selection is driven from outside the canvas —
+   * the DOM panel, Spotlight, an agent tool). See `selectedNodeFrameId`'s doc.
+   */
+  frameId?: string | null
+}
+
+interface SelectionSlice {
+  /**
+   * The full multi-selection set, ordered. The LAST entry is the "anchor"
+   * (= `selectedNodeId`). Empty array when nothing is selected.
+   */
+  selectedNodeIds: string[]
+  /**
+   * Anchor of the multi-selection — the most recently added node. Mirrors
+   * `selectedNodeIds[selectedNodeIds.length - 1] ?? null`. Most call sites
+   * (Properties panel header, drag origin, agent context) want this single
+   * value; multi-aware sites (per-row `isSelected`, multi-actions) read
+   * `selectedNodeIds` instead.
+   */
+  selectedNodeId: string | null
+  /**
+   * WS-10 Phase 2 — the `BoardFrame.id` the CURRENT selection originated
+   * from, or `null` for an unscoped selection (every CMS/VC selection, and
+   * every board selection made before "duplicate as variant" exists). Read
+   * by `NodeRenderer.tsx`/`BreakpointSelectionOverlay.tsx` so selecting a
+   * node in one variant frame does not also ring it in a sibling frame of
+   * the same page (trap #2 — the two frames legitimately share the node id).
+   * One value for the whole multi-selection, mirroring `hoveredBreakpointId`'s
+   * "single origin" shape — multi-select happens within one frame.
+   */
+  selectedNodeFrameId: string | null
+  /** Hovered node ID — null if no hover */
+  hoveredNodeId: string | null
+  /** Breakpoint frame that owns the current canvas hover; null means global hover */
+  hoveredBreakpointId: string | null
+  /**
+   * WS-10 Phase 2 — the `BoardFrame.id` that owns the current canvas hover;
+   * `null` means global (every CMS/VC frame, and every board frame before
+   * "duplicate as variant" ever produces a second frame of the same page).
+   * A SEPARATE dimension from `hoveredBreakpointId` — every board frame
+   * shares the synthetic `'studio'` breakpoint id (CSS write-back needs that
+   * literal), so breakpoint-scoping alone can't tell two variant frames of
+   * the same page apart. See `CanvasFrameContext`'s doc.
+   */
+  hoveredFrameId: string | null
+
+  /**
+   * instance-ui-01 — Figma's nesting model for `studio.instance` fragment
+   * nodes (WS-4.2, `parser-05`). A stack of currently-"entered" instance node
+   * ids, outermost first. Clicking inside a `studio.instance` subtree selects
+   * the NEAREST ancestor instance not present in this stack (see
+   * `findEnclosingInstance` in `canvas/canvasSelectionUtils.ts`) instead of
+   * the specific descendant — same redirect shape as the existing VC
+   * lock-down (`findEnclosingComponentRef`), but driven by the real page
+   * tree (an instance's children are ordinary tree nodes) instead of an
+   * in-memory `_owningRefId` annotation. Entering a NESTED instance (one
+   * inside an already-entered instance) appends; `exitInstance` pops one
+   * level, matching Figma's "Esc steps back out one level at a time".
+   */
+  enteredInstanceIds: string[]
+
+  /**
+   * Select a node.
+   * - `replace` (default): clears selection, selects only `id`. Pass `null` to clear.
+   * - `toggle`: add or remove `id` from the selection set.
+   * - `range`: select every node between the current anchor and `id` (DFS order).
+   *
+   * Modifier-aware callers pass `mode` based on `e.metaKey || e.ctrlKey` (toggle)
+   * or `e.shiftKey` (range).
+   */
+  selectNode: (id: string | null, mode?: SelectionMode, options?: SelectNodeOptions) => void
+  /** Replace the current selection with the given set. */
+  selectMany: (ids: string[]) => void
+  /** Add a node to the selection set (no-op if already present). */
+  addToSelection: (id: string) => void
+  /** Remove a node from the selection set (no-op if absent). */
+  removeFromSelection: (id: string) => void
+  hoverNode: (id: string | null, breakpointId?: string | null, frameId?: string | null) => void
+  clearSelection: () => void
+
+  /**
+   * Push `nodeId` (a `studio.instance` node) onto the entered-instance
+   * stack — a no-op if it's already entered. Pure "enter" — deliberately
+   * does not change the selection; callers decide what becomes selectable
+   * next (the double-clicked descendant for a mouse gesture, the hovered/
+   * first-child descendant for the keyboard path via `enterSelectedInstance`).
+   */
+  enterInstance: (nodeId: string) => void
+  /**
+   * Pop the innermost entered instance and re-select it (Figma: Esc steps
+   * back OUT to the instance boundary, not to nothing). Returns `false`
+   * (no-op) when nothing is entered, so a caller can fall through to a
+   * plain "clear selection" Escape.
+   */
+  exitInstance: () => boolean
+  /**
+   * Keyboard "Enter enters the instance" — only acts when the current
+   * selection is a `studio.instance` node. Enters it, then selects the
+   * hovered descendant if the cursor is already over one (mirrors "the
+   * inner node under the cursor" for a mouse-driven double-click), else the
+   * instance's first child. Returns `false` when the current selection
+   * isn't an instance.
+   */
+  enterSelectedInstance: () => boolean
+}
+
+// Contribute this slice's fields to the combined `EditorStore` type via TS
+// module augmentation. See `../types.ts` for why we use this pattern.
+declare module '@site/store/types' {
+  interface EditorStore extends SelectionSlice {}
+}
+
+export const createSelectionSlice: EditorStoreSliceCreator<SelectionSlice> = (set, get) => ({
+  selectedNodeIds: [],
+  selectedNodeId: null,
+  selectedNodeFrameId: null,
+  hoveredNodeId: null,
+  hoveredBreakpointId: null,
+  hoveredFrameId: null,
+  enteredInstanceIds: [],
+
+  selectNode: (id, mode = 'replace', options) => {
+    const current = get()
+
+    // Clearing — only valid in 'replace' mode (toggle/range need a target id).
+    if (id === null) {
+      if (current.selectedNodeIds.length === 0) return
+      const shouldCollapseProperties = !current.selectedSelectorClassId
+      set((state) => {
+        state.selectedNodeIds = []
+        state.selectedNodeId = null
+        state.selectedNodeFrameId = null
+        state.activeClassId = null
+        state.inlineStyleEditing = false
+        state.propertiesPanel.collapsed = shouldCollapseProperties
+      })
+      return
+    }
+
+    // Compute the next selection set based on mode.
+    let nextIds: string[]
+
+    if (mode === 'toggle') {
+      const filtered = filterMultiSelectableIds(current, [id])
+      if (filtered.length === 0) {
+        // Toggle target rejected (root, locked slot-instance, cross-tree) →
+        // fall back to replace-select (matches Figma: cmd-click on root selects it).
+        nextIds = [id]
+      } else if (current.selectedNodeIds.includes(id)) {
+        nextIds = current.selectedNodeIds.filter((existing) => existing !== id)
+      } else {
+        // Adding to an existing selection: enforce same-tree by clearing the
+        // selection if the new id is from a different tree than the anchor.
+        nextIds = sameTree(current, current.selectedNodeIds, id)
+          ? [...current.selectedNodeIds, id]
+          : [id]
+      }
+    } else if (mode === 'range') {
+      const anchor = current.selectedNodeId
+      if (!anchor || anchor === id) {
+        nextIds = [id]
+      } else {
+        const range = computeRangeIds(current, anchor, id)
+        if (range.length === 0) {
+          nextIds = [id]
+        } else {
+          // Anchor stays the anchor (last in the list). Place range nodes
+          // before it, then push the freshly clicked id last so it becomes
+          // the new anchor (matches Figma: shift-click moves the anchor).
+          const filtered = filterMultiSelectableIds(current, range).filter(
+            (rangeId) => rangeId !== id,
+          )
+          nextIds = [...filtered, id]
+        }
+      }
+    } else {
+      // 'replace'
+      nextIds = [id]
+    }
+
+    applySelection(set, current, nextIds, options)
+  },
+
+  selectMany: (ids) => {
+    const current = get()
+    const filtered = filterMultiSelectableIds(current, ids)
+    applySelection(set, current, filtered)
+  },
+
+  addToSelection: (id) => {
+    get().selectNode(id, 'toggle')
+    // If toggle removed it, re-add — `addToSelection` is idempotent.
+    const after = get()
+    if (!after.selectedNodeIds.includes(id)) {
+      const next = sameTree(after, after.selectedNodeIds, id)
+        ? [...after.selectedNodeIds, id]
+        : [id]
+      applySelection(set, after, next)
+    }
+  },
+
+  removeFromSelection: (id) => {
+    const current = get()
+    if (!current.selectedNodeIds.includes(id)) return
+    const next = current.selectedNodeIds.filter((existing) => existing !== id)
+    applySelection(set, current, next)
+  },
+
+  hoverNode: (id, breakpointId = null, frameId = null) => set({
+    hoveredNodeId: id,
+    hoveredBreakpointId: id ? breakpointId : null,
+    hoveredFrameId: id ? frameId : null,
+  }),
+
+  clearSelection: () => set({
+    selectedNodeIds: [],
+    selectedNodeId: null,
+    selectedNodeFrameId: null,
+    hoveredNodeId: null,
+    hoveredBreakpointId: null,
+    hoveredFrameId: null,
+    activeClassId: null,
+    inlineStyleEditing: false,
+    componentizeEditorRequest: null,
+    enteredInstanceIds: [],
+  }),
+
+  enterInstance: (nodeId) => {
+    const state = get()
+    if (state.enteredInstanceIds.includes(nodeId)) return
+    set((s) => {
+      s.enteredInstanceIds.push(nodeId)
+    })
+  },
+
+  exitInstance: () => {
+    const state = get()
+    const stack = state.enteredInstanceIds
+    if (stack.length === 0) return false
+    const exitedId = stack[stack.length - 1]!
+    set((s) => {
+      s.enteredInstanceIds.pop()
+    })
+    get().selectNode(exitedId)
+    return true
+  },
+
+  enterSelectedInstance: () => {
+    const state = get()
+    const selectedId = state.selectedNodeId
+    if (!selectedId) return false
+    const resolved = resolveSelectableNode(state, selectedId)
+    if (!resolved || resolved.node.moduleId !== 'studio.instance') return false
+    if (state.enteredInstanceIds.includes(selectedId)) return false
+
+    const { node, tree } = resolved
+    const hovered = state.hoveredNodeId
+    const target =
+      hovered && hovered !== selectedId && isDescendantInTree(tree, selectedId, hovered)
+        ? hovered
+        : (node.children[0] ?? null)
+
+    set((s) => {
+      s.enteredInstanceIds.push(selectedId)
+    })
+    if (target) get().selectNode(target)
+    return true
+  },
+})
+
+// ---------------------------------------------------------------------------
+// Mutation helpers for use inside Mutative recipes
+// ---------------------------------------------------------------------------
+
+/**
+ * Clear canvas selection + hover from a Mutative draft.
+ *
+ * Use this from any mutation that switches the active document (page swap,
+ * VC mode entry/exit, site reload, node deletion) — anywhere a previously
+ * valid selection becomes stale because the underlying nodes either no
+ * longer exist in the active tree or live in a different tree entirely.
+ *
+ * Why a helper exists: `selectedNodeIds` is the source of truth (the
+ * `BreakpointSelectionOverlay` subscribes to it via `useShallow`) and
+ * `selectedNodeId` is the anchor mirror (= last item of the array). Forgetting
+ * to clear the array — a recurring bug — left phantom selection rings on the
+ * canvas after every page swap. Funnel all "drop stale selection" paths
+ * through this helper so they stay in lock-step.
+ */
+export function clearCanvasSelectionDraft(state: EditorStore): void {
+  state.selectedNodeIds = []
+  state.selectedNodeId = null
+  state.selectedNodeFrameId = null
+  state.hoveredNodeId = null
+  state.hoveredBreakpointId = null
+  state.hoveredFrameId = null
+  state.activeClassId = null
+  // A document/page switch invalidates any inline text-edit session — the
+  // node it points at is no longer on the canvas. Live keystrokes already
+  // committed; clearing here is the spec's "force-close without committing".
+  state.activeInlineEdit = null
+  // instance-ui-01 — an entered `studio.instance` id only means something
+  // relative to the tree that was just left; a document/page switch drops it
+  // the same way it drops the rest of the selection.
+  state.enteredInstanceIds = []
+}
+
+/**
+ * Drop only the ids that no longer exist in the active tree, keeping surviving
+ * selections intact and re-syncing the `selectedNodeId` anchor (= last item of
+ * the array).
+ *
+ * Use after a node deletion. Unlike `clearCanvasSelectionDraft` (which drops
+ * the whole selection), this preserves still-valid selections and removes just
+ * the deleted nodes — including descendants swept away with a deleted subtree,
+ * since those are pruned by tree-membership, not by id list. This is what stops
+ * a context-menu delete from leaving a phantom selection ring on the canvas.
+ */
+export function pruneCanvasSelectionDraft(state: EditorStore): void {
+  const tree = getActiveTree(state)
+  // Inline edit prunes by tree-membership too — the edited node may be a
+  // descendant swept away with a deleted subtree, and it may not be part of
+  // the selection at all, so this must run before the early return below.
+  if (state.activeInlineEdit && !tree?.nodes[state.activeInlineEdit.nodeId]) {
+    state.activeInlineEdit = null
+  }
+  const surviving = tree
+    ? state.selectedNodeIds.filter((id) => Boolean(tree.nodes[id]))
+    : []
+  // instance-ui-01 — drop any entered instance id whose node was deleted
+  // along with the pruned selection (e.g. detach/swap removes the call site
+  // that was entered). Filtered independently of `selectedNodeIds` sharing
+  // the survivor check: nothing else invalidates this stack on a prune.
+  const survivingEntered = tree
+    ? state.enteredInstanceIds.filter((id) => Boolean(tree.nodes[id]))
+    : []
+  if (survivingEntered.length !== state.enteredInstanceIds.length) {
+    state.enteredInstanceIds = survivingEntered
+  }
+  if (surviving.length === state.selectedNodeIds.length) return
+  state.selectedNodeIds = surviving
+  state.selectedNodeId = surviving.length > 0 ? surviving[surviving.length - 1] : null
+  if (surviving.length === 0) {
+    state.selectedNodeFrameId = null
+    state.hoveredNodeId = null
+    state.hoveredBreakpointId = null
+    state.hoveredFrameId = null
+    state.activeClassId = null
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Apply a fully-resolved next-selection set to the store. Handles:
+ * - syncing `selectedNodeId` (= last item of `selectedNodeIds`)
+ * - deriving `activeClassId` from the new anchor (preserving the existing
+ *   class if the anchor still has it assigned)
+ * - collapsing the Properties panel iff selection becomes empty AND no
+ *   selector class is active
+ */
+function applySelection(
+  set: (updater: (state: Draft<EditorStore>) => void) => void,
+  current: EditorStore,
+  nextIds: string[],
+  options: SelectNodeOptions = {},
+): void {
+  const nextAnchor = nextIds.length > 0 ? nextIds[nextIds.length - 1] : null
+  const nextActiveClassId = getSelectionActiveClassId(current, nextAnchor)
+  // Track F1 / S6 — `activeClassId` and `inlineStyleEditing` are no longer
+  // mutually exclusive (see `uiStateActions.ts`'s `setActiveClass`/
+  // `setInlineStyleEditing`), so seeding inline-edit mode no longer depends
+  // on whether the anchor also has a class: a node with BOTH a class and its
+  // own inline styles opens with both sections visible.
+  const nextInlineEditing = nodeHasInlineStyles(current, nextAnchor)
+  const shouldPreservePropertiesCollapse =
+    options.preservePropertiesPanelCollapse &&
+    current.propertiesPanel.collapsed &&
+    nextAnchor !== null
+  const shouldCollapseProperties =
+    shouldPreservePropertiesCollapse || (!nextAnchor && !current.selectedSelectorClassId)
+
+  const idsChanged = !arraysEqual(current.selectedNodeIds, nextIds)
+  const anchorChanged = !Object.is(current.selectedNodeId, nextAnchor)
+  // WS-10 Phase 2 — re-clicking the SAME node id from a DIFFERENT board frame
+  // (the "duplicate as variant" case: two frames legitimately share every
+  // node id) must still move the ring — `nextIds`/`nextAnchor` are unchanged,
+  // so this has to be its own change signal or the early-return below would
+  // silently keep the ring on the frame that was selected first.
+  const nextFrameId = options.frameId ?? null
+  const frameIdChanged = !Object.is(current.selectedNodeFrameId, nextFrameId)
+  // Re-selecting the same node when the panel was manually collapsed must
+  // re-open it (matches the J7+J8 user flow). The check is symmetric:
+  // collapse on empty selection, expand on any selection — even the same one.
+  const panelChanged = !Object.is(
+    current.propertiesPanel.collapsed,
+    shouldCollapseProperties,
+  )
+  const activeClassChanged = !Object.is(current.activeClassId, nextActiveClassId)
+  const inlineEditingChanged =
+    anchorChanged && !Object.is(current.inlineStyleEditing, nextInlineEditing)
+
+  if (!idsChanged && !anchorChanged && !frameIdChanged && !panelChanged && !activeClassChanged && !inlineEditingChanged) return
+
+  set((state) => {
+    state.selectedNodeIds = nextIds
+    state.selectedNodeId = nextAnchor
+    state.selectedNodeFrameId = nextAnchor ? nextFrameId : null
+    if (nextAnchor) state.selectedSelectorClassId = null
+    state.activeClassId = nextActiveClassId
+    if (shouldPreservePropertiesCollapse) {
+      state.propertiesPanelAutoOpenSuppressed = true
+    }
+    // Each new selection seeds its own edit target — inline mode for an
+    // inline-only node, otherwise class/empty — never carrying a prior node's
+    // inline-editing mode across.
+    if (anchorChanged) state.inlineStyleEditing = nextInlineEditing
+    if (panelChanged) state.propertiesPanel.collapsed = shouldCollapseProperties
+    if (current.componentizeEditorRequest?.nodeId !== nextAnchor) {
+      state.componentizeEditorRequest = null
+    }
+  })
+}
+
+/**
+ * Resolve a node id to its node + owning tree, WS-7.3-aware: on a studio
+ * board, a multi-selection may span any of the board's OWN curated frames
+ * (`selectActiveBoard(state).frames`), not just the single active page —
+ * `_nodeIdToPageIds` (WS-5.2) finds every page that carries `id` and this
+ * picks the first one that's actually a frame on the active board. Outside
+ * board mode (CMS editing, VC canvas) this is exactly `getActiveTree`'s own
+ * lookup — unchanged behaviour.
+ */
+function resolveSelectableNode(
+  state: EditorStore,
+  id: string,
+): { node: BaseNode; tree: NodeTree<PageNode> } | null {
+  const board = selectActiveBoard(state)
+  if (board) {
+    const framePageIds = new Set(board.frames.map((f) => f.pageId))
+    for (const pageId of state._nodeIdToPageIds.get(id) ?? []) {
+      if (!framePageIds.has(pageId)) continue
+      const page = state.site?.pages.find((p) => p.id === pageId)
+      const node = page?.nodes[id]
+      if (page && node) return { node, tree: page }
+    }
+    return null
+  }
+  const tree = getActiveTree(state)
+  const node = tree?.nodes[id]
+  return tree && node ? { node, tree } : null
+}
+
+/**
+ * Filter ids to only those that may legally participate in a multi-selection.
+ * Rules:
+ * - The page/VC tree root cannot be part of a multi-selection (only solo).
+ * - A `base.slot-instance` whose parent is a `base.visual-component-ref` is
+ *   structural (managed by syncSlotInstances) and may not be multi-selected.
+ * - Every id must resolve via `resolveSelectableNode` — the active
+ *   document's tree normally, or (WS-7.3) any page curated as a frame on the
+ *   active studio board.
+ *
+ * Returned ids preserve input order.
+ */
+function filterMultiSelectableIds(state: EditorStore, ids: string[]): string[] {
+  const result: string[] = []
+  for (const id of ids) {
+    const resolved = resolveSelectableNode(state, id)
+    if (!resolved) continue
+    const { node, tree } = resolved
+    if (id === tree.rootNodeId) continue
+    if (node.moduleId === 'base.slot-instance') {
+      const parent = getParent(tree, id)
+      if (parent?.moduleId === 'base.visual-component-ref') continue
+    }
+    result.push(id)
+  }
+  return result
+}
+
+/**
+ * Compute the set of node ids between `anchorId` and `targetId` along the
+ * active tree's depth-first pre-order. Inclusive of both endpoints. Returns
+ * an empty array when either id is absent from the active tree, OR when they
+ * resolve to different trees (WS-7.3: a shift-click range spanning two board
+ * frames has no single depth-first order to walk — it falls back to
+ * `selectNode`'s own "range collapsed to replace-select" branch instead).
+ */
+function computeRangeIds(
+  state: EditorStore,
+  anchorId: string,
+  targetId: string,
+): string[] {
+  const anchorResolved = resolveSelectableNode(state, anchorId)
+  const targetResolved = resolveSelectableNode(state, targetId)
+  if (!anchorResolved || !targetResolved) return []
+  if (anchorResolved.tree !== targetResolved.tree) return []
+
+  const tree = targetResolved.tree
+  const flat = flattenSubtree(tree, tree.rootNodeId)
+  const a = flat.indexOf(anchorId)
+  const b = flat.indexOf(targetId)
+  if (a === -1 || b === -1) return []
+  const [start, end] = a <= b ? [a, b] : [b, a]
+  return flat.slice(start, end + 1)
+}
+
+/**
+ * Whether `id` may join the existing multi-selection. Empty selections are
+ * always eligible. WS-7.3: on a studio board this is "does `id` resolve to
+ * some frame on the active board", the same board-wide scope
+ * `resolveSelectableNode` uses — NOT "is `id` on the same single page as the
+ * anchor". Outside board mode this is exactly the old same-tree check.
+ */
+function sameTree(state: EditorStore, existingIds: string[], id: string): boolean {
+  if (existingIds.length === 0) return true
+  const anchor = existingIds[existingIds.length - 1]!
+  return resolveSelectableNode(state, id) !== null && resolveSelectableNode(state, anchor) !== null
+}
+
+/**
+ * True when `nodeId` is `ancestorId` itself or a descendant of it, walking up
+ * via `getParent` with a cycle guard. Used by `enterSelectedInstance` to
+ * decide whether the hovered node is actually "under the cursor" inside the
+ * instance being entered (vs. a stale hover left over from elsewhere on the
+ * board), and by `findEnclosingInstance` (canvas/canvasSelectionUtils.ts, the
+ * click-routing counterpart) for the analogous walk-up-from-a-click question.
+ */
+function isDescendantInTree(tree: NodeTree<PageNode>, ancestorId: string, nodeId: string): boolean {
+  const visited = new Set<string>()
+  let current: PageNode | undefined = tree.nodes[nodeId]
+  while (current) {
+    if (visited.has(current.id)) return false
+    visited.add(current.id)
+    if (current.id === ancestorId) return true
+    current = getParent(tree, current.id)
+  }
+  return false
+}
+
+/**
+ * Resolve the active tree (page or VC) without going through the store-level
+ * `selectActiveCanvasPage` selector. Importing that selector would create a
+ * `selectionSlice ↔ store` cycle. The returned shape is `NodeTree<PageNode>`
+ * so the slice's helpers can use the page-tree selectors uniformly.
+ * Also consumed by `inlineEditSlice` (same no-cycle rationale).
+ */
+export function getActiveTree(state: EditorStore): NodeTree<PageNode> | null {
+  if (!state.site) return null
+  const activeDocument = state.activeDocument
+  if (activeDocument?.kind === 'visualComponent') {
+    const vc = state.site.visualComponents?.find((v) => v.id === activeDocument.vcId)
+    return vc ? (vc.tree as NodeTree<PageNode>) : null
+  }
+  const page = state.site.pages.find((p) => p.id === state.activePageId)
+  return page ?? null
+}
+
+function arraysEqual(a: string[], b: string[]): boolean {
+  if (a === b) return true
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false
+  }
+  return true
+}
+
+function getSelectionActiveClassId(state: EditorStore, nodeId: string | null): string | null {
+  if (!nodeId) return null
+
+  const node = findSelectableNode(state, nodeId)
+  if (!node?.classIds?.length || !state.site) return null
+
+  const visibleClassIds = node.classIds.filter((classId) => {
+    const cls = state.site?.styleRules[classId]
+    return cls && isUserVisibleClass(cls)
+  })
+
+  if (visibleClassIds.length === 0) return null
+  if (state.activeClassId && visibleClassIds.includes(state.activeClassId)) {
+    return state.activeClassId
+  }
+  return visibleClassIds[0]
+}
+
+/**
+ * Whether a node carries inline styles. Used to seed `inlineStyleEditing` on
+ * selection so a node with inline styles but no class opens straight into the
+ * inline-style editor (the flag is then the single source of truth for which
+ * target the Properties panel edits).
+ */
+function nodeHasInlineStyles(state: EditorStore, nodeId: string | null): boolean {
+  if (!nodeId) return false
+  const node = findSelectableNode(state, nodeId)
+  const inline = (node as { inlineStyles?: Record<string, unknown> } | null)?.inlineStyles
+  return !!inline && Object.keys(inline).length > 0
+}
+
+/**
+ * Resolve a node by id across the whole site — `STUDIO-FIGMA-PARITY-PLAN.md`
+ * C4 / audit E10. Used to be an O(pages) `for (const page of state.site.pages)`
+ * scan on every `applySelection` (every click); now reads `_nodeIdToPageIds`
+ * (WS-5.2) instead, mirroring `canvas/InPlaceInspector/findNodeById.ts`'s
+ * exact idiom (not imported directly — a store-slice file importing FROM
+ * `canvas/` would invert this codebase's dependency direction) so the two
+ * don't silently drift apart the way this one already had from
+ * `resolveSelectableNode`, a few lines above in this same file.
+ *
+ * A node id is NOT unique across pages (a composed Next.js `layout.tsx` node
+ * shares one id across every route beneath it — `STATE.md` -> `meta-05`), so
+ * `_nodeIdToPageIds` is many-valued; prefer the id's copy on the ACTIVE page
+ * when it has one there, since the canvas is showing that copy — this is a
+ * genuine improvement over the old code's "whichever page happened to be
+ * first in the array," not just a perf-neutral rewrite, and matches
+ * `findNodeById.ts`'s own documented reasoning for the identical tie-break.
+ */
+function findSelectableNode(state: EditorStore, nodeId: string): BaseNode | null {
+  if (!state.site) return null
+
+  const pageIds = state._nodeIdToPageIds.get(nodeId)
+  if (pageIds && pageIds.length > 0) {
+    const preferredPageId = pageIds.includes(state.activePageId ?? '') ? state.activePageId : pageIds[0]
+    const page = state.site.pages.find((p) => p.id === preferredPageId)
+    const node = page?.nodes[nodeId]
+    if (node) return node
+  }
+
+  const activeDocument = state.activeDocument
+  if (activeDocument?.kind === 'visualComponent') {
+    const component = state.site.visualComponents?.find((vc) => vc.id === activeDocument.vcId)
+    const node = component?.tree.nodes[nodeId]
+    if (node) return node
+  }
+
+  return null
+}

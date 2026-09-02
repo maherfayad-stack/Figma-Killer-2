@@ -1,0 +1,74 @@
+/**
+ * Core token set — light default, dark via `@media (prefers-color-scheme:
+ * dark)` with a `[data-theme]` override for forcing a theme (same pattern
+ * documented in the real Almosafer DS's CLAUDE.md "Dark mode" section).
+ * Shape mirrors ./design-system/src/tokens/*.css (raw palette + semantic
+ * aliases as CSS custom properties) rather than a DTCG tokens.json — see
+ * the CHANGE-REQUEST note in ../index.ts.
+ */
+
+:root {
+  /* raw palette (light) */
+  --color-metal: #1c1c1c;
+  --color-light: #ffffff;
+  --color-aqua-100: #0c9ab0;
+  --color-aqua-200: #008296;
+  --color-coral-100: #ef4550;
+  --color-border: #d8dce0;
+
+  /* semantic aliases */
+  --background-base-default: var(--color-light);
+  --background-primary-default: var(--color-aqua-100);
+  --background-primary-hover: var(--color-aqua-200);
+  --text-base-default: var(--color-metal);
+  --text-link-default: var(--color-aqua-200);
+  --border-base-default: var(--color-border);
+
+  /* spacing — 8px base unit */
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 12px;
+  --space: 16px;
+  --space-lg: 24px;
+
+  /* radius */
+  --rounded-sm: 8px;
+  --rounded: 12px;
+  --rounded-full: 100px;
+
+  /* elevation */
+  --elevation-raised: 0px 8px 24px rgba(0, 0, 0, 0.12);
+
+  /* typography */
+  --type-body-size: 14px;
+  --type-body-lh: 20px;
+  --type-body-regular-family: 'Open Sans', system-ui, sans-serif;
+  --type-body-regular-weight: 400;
+  --type-body-semibold-weight: 600;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-metal: #f8f9f9;
+    --color-light: #1c1c1c;
+    --color-aqua-100: #07acc5;
+    --color-aqua-200: #0394aa;
+    --color-border: #3c4244;
+  }
+}
+
+:root[data-theme='dark'] {
+  --color-metal: #f8f9f9;
+  --color-light: #1c1c1c;
+  --color-aqua-100: #07acc5;
+  --color-aqua-200: #0394aa;
+  --color-border: #3c4244;
+}
+
+:root[data-theme='light'] {
+  --color-metal: #1c1c1c;
+  --color-light: #ffffff;
+  --color-aqua-100: #0c9ab0;
+  --color-aqua-200: #008296;
+  --color-border: #d8dce0;
+}

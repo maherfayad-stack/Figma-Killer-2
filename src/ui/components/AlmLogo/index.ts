@@ -1,0 +1,1 @@
+export { AlmLogo } from './AlmLogo'

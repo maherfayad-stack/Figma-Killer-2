@@ -1,0 +1,26 @@
+/* ModelEffortPicker — only the bits that don't already live in the shared
+   ModelPicker/ContextMenu primitives: the "Effort ›" submenu row's own
+   label layout and its explanatory intro line. */
+
+/* Submenu trigger row content — "Effort" left, current value right, before
+   the chevron ContextMenuSubmenu renders itself. */
+.submenuLabel {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    gap: var(--space-s);
+}
+
+.submenuValue {
+    color: var(--text-subtle);
+    font-weight: 400;
+}
+
+.effortIntro {
+    margin: 0;
+    padding: var(--space-2xs) var(--space-m) var(--space-xs);
+    color: var(--text-subtle);
+    font-size: var(--text-2xs);
+    line-height: 1.4;
+}

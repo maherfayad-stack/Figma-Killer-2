@@ -1,0 +1,285 @@
+/**
+ * BoardFramesLayer — positioning root for studio-mode page frames.
+ *
+ * Mirrors BoardNotesLayer's pattern: an absolutely-positioned layer at the
+ * transform layer's origin so every frame's `--frame-x`/`--frame-y` (set
+ * inline by BoardFramesLayer.tsx) is a plain board coordinate. Unlike the
+ * notes layer, frames need pointer interaction at the layer level too (drag
+ * handle, activate-on-click), so this layer does not disable pointer-events.
+ */
+.layer {
+    position: absolute;
+    top: 0;
+    left: 0;
+}
+
+.frame {
+    position: absolute;
+    left: var(--frame-x);
+    top: var(--frame-y);
+    display: flex;
+    flex-direction: column;
+    width: max-content;
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-panel-drop);
+}
+
+/* Sized to the frame's OWN width/height (`--frame-w`/`--frame-h`, Phase
+   6E) — a real "device box" for both the live iframe and the offscreen
+   placeholder, driving `.frame`'s own `max-content` width.
+
+   `hidden`, never `auto`: a frame is an artboard, and an artboard CLIPS. A
+   scrollbar inside a frame on an infinite canvas is a second, nested scroll
+   surface competing with the canvas's own pan — you cannot tell which one a
+   wheel gesture will move, and the bar itself is a piece of browser chrome
+   painted over the design being reviewed. A frame reaches this fixed-box state
+   only when the author has dragged a horizontal edge; until then it hugs its
+   content (see the auto-height rule below), and double-clicking the bottom
+   edge or the frame's "Fit height to content" menu item puts it back. */
+.frameBody {
+    width: var(--frame-w);
+    height: var(--frame-h);
+    overflow: hidden;
+    border-radius: 0 0 var(--radius) var(--radius);
+}
+
+/* canvas-04 — a frame the author has never manually resized (BoardFramesLayer.tsx's
+   `hasManualHeight` is false) grows to wrap its content instead of clipping
+   it inside the fixed `--frame-h` device box above. The iframe INSIDE this
+   box already sizes itself correctly to its own content
+   (`useIframeFrameAutoHeight`/`resolveFrameFitHeight.ts` grow the iframe
+   element's own CSS height to match) — this box only needs to stop being
+   SMALLER than that already-correct child. `--frame-h` still floors it via
+   `min-height` so a frame whose iframe hasn't measured yet doesn't flash to
+   near-zero height. A frame the author HAS dragged to a specific size keeps
+   the fixed, scrolls-internally behaviour above by deliberate design (the
+   configured device size stays true regardless of page content length). */
+.frameBody[data-frame-auto-height='true'] {
+    height: auto;
+    min-height: var(--frame-h);
+    overflow: visible;
+}
+
+.header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+    padding: var(--space-2xs) var(--space-s);
+    background: var(--bg-surface-2);
+    border-radius: var(--radius) var(--radius) 0 0;
+    cursor: grab;
+    user-select: none;
+}
+
+.header:active {
+    cursor: grabbing;
+}
+
+/* The ACTIVE frame — the page an edit routes into (`activePageId`). This is
+   plumbing, not a selection: it is set by a capture-phase click anywhere in a
+   frame and never cleared, so it must not wear the selection ring. It used to,
+   which made the last-touched frame look permanently selected with no way to
+   dismiss it. A raised header tone is enough to say "edits land here"; the
+   Explorer's page tree carries the same signal in its own row highlight. */
+.frame[data-active='true'] .header {
+    background: var(--bg-surface-4);
+}
+
+/* Frame multi-selection (WS-7.1) — distinct from `data-active` (the edit
+   target): a frame can be bulk-selected without being active, and vice
+   versa. Outlines the WHOLE frame box (header + body), not just the header,
+   so a selected-but-inactive frame still reads clearly against its
+   neighbors. */
+.frame[data-selected='true'] {
+    outline: 2px solid var(--canvas-selection-ring-color);
+    outline-offset: 2px;
+}
+
+/* One bounding box around the whole multi-selection, rendered as a sibling
+   of the frames inside the same transformed layer (board-space units, so it
+   pans/zooms with the frames it encloses). Dashed to read as a computed
+   summary rather than a real frame. */
+.selectionBoundingBox {
+    position: absolute;
+    left: var(--box-x);
+    top: var(--box-y);
+    width: var(--box-w);
+    height: var(--box-h);
+    border: 1px dashed var(--canvas-selection-ring-color);
+    border-radius: var(--radius);
+    pointer-events: none;
+}
+
+/* Marquee drag rectangle — portaled OUTSIDE the transformed layer (see
+   BoardFramesLayer.tsx), so its coordinates are plain screen pixels relative
+   to the canvas root, not board units. */
+.marquee {
+    position: absolute;
+    left: var(--marquee-x);
+    top: var(--marquee-y);
+    width: var(--marquee-w);
+    height: var(--marquee-h);
+    background: color-mix(in srgb, var(--canvas-selection-ring-color) 12%, transparent);
+    border: 1px solid var(--canvas-selection-ring-color);
+    pointer-events: none;
+    z-index: 51;
+}
+
+.title {
+    font-size: var(--text-s);
+    font-weight: 600;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.titleInput {
+    flex: 1;
+}
+
+/* Static stand-in for an offscreen frame's body — no iframe, no animation.
+   Fills its `.frameBody` parent (already sized to the frame's board
+   dimensions) so the frame's footprint on the board doesn't visibly change
+   when the real iframe mounts/unmounts as it crosses the viewport margin. */
+.offscreenPlaceholder {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+    background: var(--bg-surface);
+    border-radius: 0 0 var(--radius) var(--radius);
+}
+
+.offscreenPlaceholderTitle {
+    font-size: var(--text-s);
+    color: var(--text-subtle);
+}
+
+/* WS-5.3 frozen poster — a rasterized PNG of the frame's last-settled
+   content, shown instead of `.offscreenPlaceholder` once one has been
+   captured (`useFramePosterCapture.ts`). Same footprint as the live iframe
+   it stands in for, top-aligned since a taller-than-box page was scrolled
+   at capture time and the poster itself doesn't scroll. */
+.offscreenPlaceholderImage {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: top;
+    border-radius: 0 0 var(--radius) var(--radius);
+}
+
+/* Resize handles — active frame only. `.resizeHandles` overlays the whole
+   `.frame` box (header + frameBody) without contributing to layout, since
+   `.frame` (position: absolute) is already its containing block. Each
+   `.resizeHandle` is a small square anchored to a corner/edge via
+   `[data-handle]`; cursor-per-handle is CSS, not a JS inline style. */
+.resizeHandles {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+}
+
+.resizeHandle {
+    position: absolute;
+    pointer-events: auto;
+    width: 10px;
+    height: 10px;
+    background: var(--canvas-selection-ring-color);
+    border-radius: var(--radius-sm);
+    box-shadow: 0 0 0 1px var(--bg-surface);
+}
+
+.resizeHandle[data-handle='nw'] {
+    top: -5px;
+    left: -5px;
+    cursor: nwse-resize;
+}
+
+.resizeHandle[data-handle='ne'] {
+    top: -5px;
+    right: -5px;
+    cursor: nesw-resize;
+}
+
+.resizeHandle[data-handle='sw'] {
+    bottom: -5px;
+    left: -5px;
+    cursor: nesw-resize;
+}
+
+.resizeHandle[data-handle='se'] {
+    bottom: -5px;
+    right: -5px;
+    cursor: nwse-resize;
+}
+
+.resizeHandle[data-handle='n'] {
+    top: -5px;
+    left: 50%;
+    width: 24px;
+    transform: translateX(-50%);
+    cursor: ns-resize;
+}
+
+.resizeHandle[data-handle='s'] {
+    bottom: -5px;
+    left: 50%;
+    width: 24px;
+    transform: translateX(-50%);
+    cursor: ns-resize;
+}
+
+.resizeHandle[data-handle='e'] {
+    top: 50%;
+    right: -5px;
+    height: 24px;
+    transform: translateY(-50%);
+    cursor: ew-resize;
+}
+
+.resizeHandle[data-handle='w'] {
+    top: 50%;
+    left: -5px;
+    height: 24px;
+    transform: translateY(-50%);
+    cursor: ew-resize;
+}
+
+/* Rendered in place of frames when the active board has zero. Sits at the
+   layer's origin — a plain child of the transformed layer, so it pans/zooms
+   with the board like a frame would, instead of viewport-fixed chrome. */
+.emptyState {
+    position: absolute;
+    left: 0;
+    top: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-l);
+    width: 360px;
+    padding: var(--space-6xl);
+    text-align: center;
+    background: var(--bg-surface-2);
+    border-radius: var(--panel-radius);
+    box-shadow: var(--shadow-panel-drop);
+}
+
+.emptyStateActions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-s);
+}
+
+.emptyStateTitle {
+    font-size: var(--text-l);
+    font-weight: 600;
+    color: var(--text);
+}
+
+.emptyStateBody {
+    font-size: var(--text-s);
+    color: var(--text-muted);
+}

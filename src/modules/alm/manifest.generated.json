@@ -1,0 +1,2819 @@
+{
+  "components": [
+    {
+      "name": "Accolade",
+      "file": "@alm-design/design-system",
+      "exportName": "Accolade",
+      "isDefaultExport": false,
+      "props": [
+        {
+          "name": "background",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "boolean",
+          "example": false
+        },
+        {
+          "name": "dir",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "ltr"
+        },
+        {
+          "name": "icon",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "boolean",
+          "example": true
+        },
+        {
+          "name": "label",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "Top rated for cleanliness"
+        },
+        {
+          "name": "size",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "regular",
+            "small"
+          ],
+          "kind": "enum"
+        }
+      ]
+    },
+    {
+      "name": "Accordion",
+      "file": "@alm-design/design-system",
+      "exportName": "Accordion",
+      "isDefaultExport": false,
+      "props": [
+        {
+          "name": "dir",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "ltr",
+            "rtl"
+          ],
+          "kind": "enum"
+        },
+        {
+          "name": "expanded",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "boolean",
+          "example": false
+        },
+        {
+          "name": "skeleton",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "boolean",
+          "example": false
+        },
+        {
+          "name": "title",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "Accordion Item"
+        }
+      ]
+    },
+    {
+      "name": "ActionSheet",
+      "file": "@alm-design/design-system",
+      "exportName": "ActionSheet",
+      "isDefaultExport": false,
+      "props": [
+        {
+          "name": "actions",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "collection"
+        },
+        {
+          "name": "description",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "A description should be a short, complete sentence."
+        },
+        {
+          "name": "dir",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "ltr"
+        },
+        {
+          "name": "dismissOnScrim",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "boolean",
+          "example": true
+        },
+        {
+          "name": "items",
+          "tsType": "unknown",
+          "required": false
+        },
+        {
+          "name": "onClose",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "handler"
+        },
+        {
+          "name": "platform",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "ios",
+            "android"
+          ],
+          "kind": "enum"
+        },
+        {
+          "name": "title",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "A Short Title Is Best"
+        }
+      ]
+    },
+    {
+      "name": "AdBanner",
+      "file": "@alm-design/design-system",
+      "exportName": "AdBanner",
+      "isDefaultExport": false,
+      "props": [
+        {
+          "name": "actionLabel",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "Label"
+        },
+        {
+          "name": "chevron",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "boolean",
+          "example": true
+        },
+        {
+          "name": "dir",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "ltr",
+            "rtl"
+          ],
+          "kind": "enum"
+        },
+        {
+          "name": "imageActionLabel",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "Book now"
+        },
+        {
+          "name": "imageSrc",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "image"
+        },
+        {
+          "name": "layout",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "mobile",
+            "desktop"
+          ],
+          "kind": "enum"
+        },
+        {
+          "name": "logo",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "node"
+        },
+        {
+          "name": "logoSrc",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "image"
+        },
+        {
+          "name": "onAction",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "handler"
+        },
+        {
+          "name": "onClick",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "handler"
+        },
+        {
+          "name": "onImageAction",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "handler"
+        },
+        {
+          "name": "showAction",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "boolean",
+          "example": false
+        },
+        {
+          "name": "showImageAction",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "boolean",
+          "example": false
+        },
+        {
+          "name": "showSponsored",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "boolean",
+          "example": true
+        },
+        {
+          "name": "size",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "small",
+            "medium",
+            "large"
+          ],
+          "kind": "enum"
+        },
+        {
+          "name": "skeleton",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "boolean",
+          "example": false
+        },
+        {
+          "name": "sponsoredLabel",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "Sponsored"
+        },
+        {
+          "name": "subtitle",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "Sub-copy"
+        },
+        {
+          "name": "title",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "Ad title"
+        }
+      ]
+    },
+    {
+      "name": "AlmosaferLogo",
+      "file": "@alm-design/design-system",
+      "exportName": "AlmosaferLogo",
+      "isDefaultExport": false,
+      "props": [
+        {
+          "name": "lang",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "en",
+            "ar"
+          ],
+          "kind": "enum"
+        },
+        {
+          "name": "type",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "wordmark",
+            "logomark",
+            "applogo"
+          ],
+          "kind": "enum"
+        },
+        {
+          "name": "variant",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "colour",
+            "white"
+          ],
+          "kind": "enum"
+        },
+        {
+          "name": "width",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "number",
+          "example": 132
+        }
+      ]
+    },
+    {
+      "name": "Badge",
+      "file": "@alm-design/design-system",
+      "exportName": "Badge",
+      "isDefaultExport": false,
+      "props": [
+        {
+          "name": "count",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "number",
+          "example": 5
+        },
+        {
+          "name": "max",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "number",
+          "example": 99
+        },
+        {
+          "name": "variant",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "alert"
+        }
+      ]
+    },
+    {
+      "name": "Banner",
+      "file": "@alm-design/design-system",
+      "exportName": "Banner",
+      "isDefaultExport": false,
+      "props": [
+        {
+          "name": "codeLabel",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "Use code"
+        },
+        {
+          "name": "codeText",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "CODE"
+        },
+        {
+          "name": "color",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "neutral",
+            "info",
+            "promo",
+            "featured"
+          ],
+          "kind": "enum"
+        },
+        {
+          "name": "dir",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "ltr"
+        },
+        {
+          "name": "iconSrc",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string"
+        },
+        {
+          "name": "onClose",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "handler"
+        },
+        {
+          "name": "showAction",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "boolean",
+          "example": true
+        },
+        {
+          "name": "showDismiss",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "boolean",
+          "example": true
+        },
+        {
+          "name": "showVisual",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "boolean",
+          "example": true
+        },
+        {
+          "name": "subtitle",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "Short description"
+        },
+        {
+          "name": "title",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "Title"
+        }
+      ]
+    },
+    {
+      "name": "BottomActionBar",
+      "file": "@alm-design/design-system",
+      "exportName": "BottomActionBar",
+      "isDefaultExport": false,
+      "props": [
+        {
+          "name": "actionLabel",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "Book now"
+        },
+        {
+          "name": "bookingDetailsLabel",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "Booking details"
+        },
+        {
+          "name": "fromLabel",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "Starting from"
+        },
+        {
+          "name": "onAction",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "handler"
+        },
+        {
+          "name": "onBack",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "handler"
+        },
+        {
+          "name": "originalPrice",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "$1,500"
+        },
+        {
+          "name": "paymentLogo",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "node"
+        },
+        {
+          "name": "paymentMethod",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "Apple Pay"
+        },
+        {
+          "name": "price",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "$1,215"
+        },
+        {
+          "name": "type",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "starting-price",
+            "funnel",
+            "payment"
+          ],
+          "kind": "enum"
+        }
+      ]
+    },
+    {
+      "name": "BottomSheet",
+      "file": "@alm-design/design-system",
+      "exportName": "BottomSheet",
+      "isDefaultExport": false,
+      "props": [
+        {
+          "name": "actionIcon",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "icon"
+        },
+        {
+          "name": "dir",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "ltr"
+        },
+        {
+          "name": "onAction",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "handler"
+        },
+        {
+          "name": "onClose",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "handler"
+        },
+        {
+          "name": "open",
+          "tsType": "unknown",
+          "required": false
+        },
+        {
+          "name": "platform",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "ios",
+            "android"
+          ],
+          "kind": "enum"
+        },
+        {
+          "name": "search",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "node"
+        },
+        {
+          "name": "size",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "medium",
+            "small",
+            "fullscreen"
+          ],
+          "kind": "enum"
+        },
+        {
+          "name": "subtitle",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "Optional subtitle"
+        },
+        {
+          "name": "title",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "Select seat"
+        }
+      ]
+    },
+    {
+      "name": "Button",
+      "file": "@alm-design/design-system",
+      "exportName": "Button",
+      "isDefaultExport": false,
+      "props": [
+        {
+          "name": "cardArt",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "image"
+        },
+        {
+          "name": "cardLast4",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "1394"
+        },
+        {
+          "name": "dir",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "ltr",
+            "rtl"
+          ],
+          "kind": "enum"
+        },
+        {
+          "name": "label",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "Label"
+        },
+        {
+          "name": "leadingIcon",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "icon"
+        },
+        {
+          "name": "size",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "default",
+            "medium",
+            "small"
+          ],
+          "kind": "enum"
+        },
+        {
+          "name": "trailingIcon",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "icon"
+        },
+        {
+          "name": "variant",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "primary",
+            "primary-inverted",
+            "secondary",
+            "secondary-inverted",
+            "destructive",
+            "payment",
+            "apple-pay",
+            "gpay-card",
+            "gpay-personalized",
+            "gpay-pay-with",
+            "gpay-checkout-with",
+            "skeleton"
+          ],
+          "kind": "enum"
+        }
+      ]
+    },
+    {
+      "name": "Callout",
+      "file": "@alm-design/design-system",
+      "exportName": "Callout",
+      "isDefaultExport": false,
+      "props": [
+        {
+          "name": "dir",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "ltr"
+        },
+        {
+          "name": "icon",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "boolean",
+          "example": true
+        },
+        {
+          "name": "label",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "Cheapest for your dates"
+        },
+        {
+          "name": "size",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "regular",
+            "small"
+          ],
+          "kind": "enum"
+        }
+      ]
+    },
+    {
+      "name": "Cell",
+      "file": "@alm-design/design-system",
+      "exportName": "Cell",
+      "isDefaultExport": false,
+      "props": [
+        {
+          "name": "dir",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "ltr",
+            "rtl"
+          ],
+          "kind": "enum"
+        },
+        {
+          "name": "icon",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "icon"
+        },
+        {
+          "name": "iconSrc",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string"
+        },
+        {
+          "name": "label",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "Label text"
+        },
+        {
+          "name": "onStepperChange",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "handler"
+        },
+        {
+          "name": "onToggleChange",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "handler"
+        },
+        {
+          "name": "selected",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "boolean",
+          "example": false
+        },
+        {
+          "name": "showSeparator",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "boolean",
+          "example": true
+        },
+        {
+          "name": "sideIcon",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "icon"
+        },
+        {
+          "name": "sideIconSrc",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string"
+        },
+        {
+          "name": "stepperMax",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "number",
+          "example": 9
+        },
+        {
+          "name": "stepperMin",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "number",
+          "example": 0
+        },
+        {
+          "name": "stepperValue",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "number",
+          "example": 1
+        },
+        {
+          "name": "subtext",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "Caption"
+        },
+        {
+          "name": "tag",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "New"
+        },
+        {
+          "name": "title",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "Caption"
+        },
+        {
+          "name": "toggleChecked",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "boolean",
+          "example": false
+        },
+        {
+          "name": "trailing",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "chevron",
+            "toggle",
+            "stepper",
+            "none"
+          ],
+          "kind": "enum"
+        },
+        {
+          "name": "value",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "Value text"
+        },
+        {
+          "name": "visual",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "icon",
+            "3d-icon",
+            "image",
+            "null"
+          ],
+          "kind": "enum"
+        }
+      ]
+    },
+    {
+      "name": "Checkbox",
+      "file": "@alm-design/design-system",
+      "exportName": "Checkbox",
+      "isDefaultExport": false,
+      "props": [
+        {
+          "name": "checked",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "boolean",
+          "example": false
+        },
+        {
+          "name": "dir",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "ltr",
+            "rtl"
+          ],
+          "kind": "enum"
+        },
+        {
+          "name": "disabled",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "boolean",
+          "example": false
+        },
+        {
+          "name": "error",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "boolean",
+          "example": false
+        },
+        {
+          "name": "id",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "terms"
+        },
+        {
+          "name": "onChange",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "handler"
+        },
+        {
+          "name": "skeleton",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "boolean",
+          "example": false
+        }
+      ]
+    },
+    {
+      "name": "Chip",
+      "file": "@alm-design/design-system",
+      "exportName": "Chip",
+      "isDefaultExport": false,
+      "props": [
+        {
+          "name": "dir",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "ltr",
+            "rtl"
+          ],
+          "kind": "enum"
+        },
+        {
+          "name": "dropdown",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "boolean",
+          "example": false
+        },
+        {
+          "name": "icon",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "icon"
+        },
+        {
+          "name": "label",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "Label"
+        },
+        {
+          "name": "selected",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "boolean",
+          "example": false
+        },
+        {
+          "name": "skeleton",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "boolean",
+          "example": false
+        },
+        {
+          "name": "state",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "default",
+            "error"
+          ],
+          "kind": "enum"
+        }
+      ]
+    },
+    {
+      "name": "CircularProgressIndicator",
+      "file": "@alm-design/design-system",
+      "exportName": "CircularProgressIndicator",
+      "isDefaultExport": false,
+      "props": [
+        {
+          "name": "dir",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "ltr",
+            "rtl"
+          ],
+          "kind": "enum"
+        },
+        {
+          "name": "label",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "Loading results…"
+        },
+        {
+          "name": "platform",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "ios",
+            "android"
+          ],
+          "kind": "enum"
+        },
+        {
+          "name": "size",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "default",
+            "large"
+          ],
+          "kind": "enum"
+        }
+      ]
+    },
+    {
+      "name": "Dialog",
+      "file": "@alm-design/design-system",
+      "exportName": "Dialog",
+      "isDefaultExport": false,
+      "props": [
+        {
+          "name": "action1",
+          "tsType": "unknown",
+          "required": false
+        },
+        {
+          "name": "action2",
+          "tsType": "unknown",
+          "required": false
+        },
+        {
+          "name": "description",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "A description should be a short, complete sentence."
+        },
+        {
+          "name": "destructiveAction",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "collection",
+          "example": {
+            "label": "Delete"
+          }
+        },
+        {
+          "name": "dir",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "ltr",
+            "rtl"
+          ],
+          "kind": "enum"
+        },
+        {
+          "name": "dismissOnScrim",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "boolean",
+          "example": true
+        },
+        {
+          "name": "icon",
+          "tsType": "unknown",
+          "required": false
+        },
+        {
+          "name": "layout",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "stacked",
+            "side-by-side"
+          ],
+          "kind": "enum"
+        },
+        {
+          "name": "onClose",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "handler"
+        },
+        {
+          "name": "platform",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "ios",
+            "android"
+          ],
+          "kind": "enum"
+        },
+        {
+          "name": "primaryAction",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "collection",
+          "example": {
+            "label": "Primary"
+          }
+        },
+        {
+          "name": "secondaryAction",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "collection",
+          "example": {
+            "label": "Secondary"
+          }
+        },
+        {
+          "name": "title",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "A short title is best"
+        }
+      ]
+    },
+    {
+      "name": "Expander",
+      "file": "@alm-design/design-system",
+      "exportName": "Expander",
+      "isDefaultExport": false,
+      "props": [
+        {
+          "name": "collapsedLabel",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "See all 12"
+        },
+        {
+          "name": "dir",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "ltr",
+            "rtl"
+          ],
+          "kind": "enum"
+        },
+        {
+          "name": "expanded",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "boolean",
+          "example": false
+        },
+        {
+          "name": "expandedLabel",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "See less"
+        },
+        {
+          "name": "onChange",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "handler"
+        }
+      ]
+    },
+    {
+      "name": "Footer",
+      "file": "@alm-design/design-system",
+      "exportName": "Footer",
+      "isDefaultExport": false,
+      "props": [
+        {
+          "name": "appCtaLabel",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "Get the app"
+        },
+        {
+          "name": "appDescription",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "Our app has all your hotel needs covered: …"
+        },
+        {
+          "name": "appLogo",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "node"
+        },
+        {
+          "name": "appTagline",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "Join 11M+ users across MENA"
+        },
+        {
+          "name": "appTitle",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "Get the Almosafer app!"
+        },
+        {
+          "name": "awardsSrc",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "image"
+        },
+        {
+          "name": "badges",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "collection",
+          "example": [
+            {
+              "src": "/appstore.png",
+              "alt": "App Store",
+              "href": "#"
+            }
+          ]
+        },
+        {
+          "name": "barcodeSrc",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "image"
+        },
+        {
+          "name": "columns",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "collection",
+          "example": [
+            {
+              "title": "Corporate",
+              "links": [
+                {
+                  "label": "About us",
+                  "href": "#"
+                }
+              ]
+            },
+            {
+              "title": "Social media",
+              "links": [
+                {
+                  "label": "Facebook",
+                  "href": "#"
+                }
+              ]
+            },
+            {
+              "title": "Countries",
+              "links": [
+                {
+                  "label": "Saudi Arabia",
+                  "href": "#"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "contactHeading",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "Get in touch with us:"
+        },
+        {
+          "name": "contacts",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "collection"
+        },
+        {
+          "name": "copyright",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "Copyright © 2026 Almosafer"
+        },
+        {
+          "name": "dir",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "ltr",
+            "rtl"
+          ],
+          "kind": "enum"
+        },
+        {
+          "name": "licenses",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "collection",
+          "example": [
+            {
+              "label": "Tourism Services License",
+              "value": "432873354"
+            }
+          ]
+        },
+        {
+          "name": "onAppCta",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "handler"
+        },
+        {
+          "name": "paymentLogos",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "collection",
+          "example": [
+            {
+              "src": "/mada.svg",
+              "alt": "mada"
+            }
+          ]
+        },
+        {
+          "name": "platform",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "desktop",
+            "pwa"
+          ],
+          "kind": "enum"
+        },
+        {
+          "name": "ratings",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "collection",
+          "example": [
+            {
+              "score": "4.7",
+              "store": "App Store"
+            },
+            {
+              "score": "4.8",
+              "store": "Google Play"
+            }
+          ]
+        },
+        {
+          "name": "stats",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "collection",
+          "example": [
+            {
+              "value": "11 Million+",
+              "label": "App Downloads"
+            },
+            {
+              "value": "400K+",
+              "label": "Reviews"
+            }
+          ]
+        },
+        {
+          "name": "taglines",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "collection",
+          "example": [
+            "Leading Online Travel Agency"
+          ]
+        },
+        {
+          "name": "type",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "applogo"
+        },
+        {
+          "name": "width",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "number",
+          "example": 56
+        }
+      ]
+    },
+    {
+      "name": "GlassButton",
+      "file": "@alm-design/design-system",
+      "exportName": "GlassButton",
+      "isDefaultExport": false,
+      "props": [
+        {
+          "name": "bg",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "default",
+            "primary",
+            "dim"
+          ],
+          "kind": "enum"
+        },
+        {
+          "name": "dir",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "ltr",
+            "rtl"
+          ],
+          "kind": "enum"
+        },
+        {
+          "name": "icon1",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "icon"
+        },
+        {
+          "name": "icon2",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "icon"
+        },
+        {
+          "name": "label",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "Label"
+        },
+        {
+          "name": "onClick",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "handler"
+        },
+        {
+          "name": "type",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "back",
+            "label",
+            "back-label",
+            "1-icon",
+            "2-icons",
+            "x"
+          ],
+          "kind": "enum"
+        }
+      ]
+    },
+    {
+      "name": "IconButton",
+      "file": "@alm-design/design-system",
+      "exportName": "IconButton",
+      "isDefaultExport": false,
+      "props": [
+        {
+          "name": "icon",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "icon"
+        },
+        {
+          "name": "size",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "default",
+            "medium",
+            "small"
+          ],
+          "kind": "enum"
+        },
+        {
+          "name": "variant",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "primary",
+            "secondary",
+            "overlay",
+            "grey"
+          ],
+          "kind": "enum"
+        }
+      ]
+    },
+    {
+      "name": "LinearProgressIndicator",
+      "file": "@alm-design/design-system",
+      "exportName": "LinearProgressIndicator",
+      "isDefaultExport": false,
+      "props": [
+        {
+          "name": "dir",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "ltr",
+            "rtl"
+          ],
+          "kind": "enum"
+        },
+        {
+          "name": "platform",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "ios",
+            "android"
+          ],
+          "kind": "enum"
+        },
+        {
+          "name": "value",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "number",
+          "example": 40
+        }
+      ]
+    },
+    {
+      "name": "ListItem",
+      "file": "@alm-design/design-system",
+      "exportName": "ListItem",
+      "isDefaultExport": false,
+      "props": [
+        {
+          "name": "dir",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "ltr"
+        },
+        {
+          "name": "disabled",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "boolean",
+          "example": false
+        },
+        {
+          "name": "error",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "boolean",
+          "example": false
+        },
+        {
+          "name": "icon",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "icon"
+        },
+        {
+          "name": "id",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "opt-1"
+        },
+        {
+          "name": "keyValue",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "Key-value"
+        },
+        {
+          "name": "label",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "Label"
+        },
+        {
+          "name": "name",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "group"
+        },
+        {
+          "name": "onChange",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "handler"
+        },
+        {
+          "name": "selected",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "boolean",
+          "example": false
+        },
+        {
+          "name": "skeleton",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "boolean",
+          "example": false
+        },
+        {
+          "name": "tag",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "New"
+        },
+        {
+          "name": "type",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "icon",
+            "radio",
+            "checkbox"
+          ],
+          "kind": "enum"
+        }
+      ]
+    },
+    {
+      "name": "MarketingCard",
+      "file": "@alm-design/design-system",
+      "exportName": "MarketingCard",
+      "isDefaultExport": false,
+      "props": [
+        {
+          "name": "actionLabel",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "Book a transfer"
+        },
+        {
+          "name": "buttonDisabled",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "boolean",
+          "example": false
+        },
+        {
+          "name": "buttonProps",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "collection"
+        },
+        {
+          "name": "buttonSize",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "enum",
+          "example": "small",
+          "enumValues": [
+            "default",
+            "medium",
+            "small"
+          ]
+        },
+        {
+          "name": "buttonVariant",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "enum",
+          "example": "primary",
+          "enumValues": [
+            "primary",
+            "primary-inverted",
+            "secondary",
+            "secondary-inverted",
+            "destructive",
+            "payment",
+            "apple-pay",
+            "gpay-card",
+            "gpay-personalized",
+            "gpay-pay-with",
+            "gpay-checkout-with",
+            "skeleton"
+          ]
+        },
+        {
+          "name": "centerTitle",
+          "tsType": "unknown",
+          "required": false
+        },
+        {
+          "name": "dir",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "ltr"
+        },
+        {
+          "name": "imageSize",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "enum",
+          "example": "small",
+          "enumValues": [
+            "large",
+            "medium",
+            "small"
+          ]
+        },
+        {
+          "name": "imageSrc",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "image"
+        },
+        {
+          "name": "partnerLogoSrc",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "image"
+        },
+        {
+          "name": "skeleton",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "boolean",
+          "example": false
+        },
+        {
+          "name": "subtitle",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "Book a transfer and arrive stress-free"
+        },
+        {
+          "name": "tag1Label",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "Popular"
+        },
+        {
+          "name": "tag2Label",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "New"
+        },
+        {
+          "name": "tagCount",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "number",
+          "example": 2
+        },
+        {
+          "name": "title",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "Skip the taxi queue"
+        },
+        {
+          "name": "type",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "solid",
+            "gradient-small",
+            "gradient-large"
+          ],
+          "kind": "enum"
+        }
+      ]
+    },
+    {
+      "name": "Navbar",
+      "file": "@alm-design/design-system",
+      "exportName": "Navbar",
+      "isDefaultExport": false,
+      "props": [
+        {
+          "name": "chips",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "collection",
+          "example": [
+            {
+              "label": "Dates",
+              "dropdown": true,
+              "selected": false
+            }
+          ]
+        },
+        {
+          "name": "dir",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "ltr",
+            "rtl"
+          ],
+          "kind": "enum"
+        },
+        {
+          "name": "platform",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "ios",
+            "android"
+          ],
+          "kind": "enum"
+        },
+        {
+          "name": "segmentedControl",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "collection",
+          "example": {
+            "items": [
+              "Flights",
+              "Stays"
+            ],
+            "value": 0
+          }
+        },
+        {
+          "name": "surface",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "default",
+            "gradient",
+            "overlay"
+          ],
+          "kind": "enum"
+        },
+        {
+          "name": "toolbar",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "collection"
+        }
+      ]
+    },
+    {
+      "name": "ProgressStepper",
+      "file": "@alm-design/design-system",
+      "exportName": "ProgressStepper",
+      "isDefaultExport": false,
+      "props": [
+        {
+          "name": "currentStep",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "number",
+          "example": 2
+        },
+        {
+          "name": "steps",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "number",
+          "example": 5
+        }
+      ]
+    },
+    {
+      "name": "Radio",
+      "file": "@alm-design/design-system",
+      "exportName": "Radio",
+      "isDefaultExport": false,
+      "props": [
+        {
+          "name": "checked",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "boolean",
+          "example": false
+        },
+        {
+          "name": "dir",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "ltr",
+            "rtl"
+          ],
+          "kind": "enum"
+        },
+        {
+          "name": "disabled",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "boolean",
+          "example": false
+        },
+        {
+          "name": "error",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "boolean",
+          "example": false
+        },
+        {
+          "name": "id",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "plan-a"
+        },
+        {
+          "name": "name",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "plan"
+        },
+        {
+          "name": "onChange",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "handler"
+        },
+        {
+          "name": "skeleton",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "boolean",
+          "example": false
+        }
+      ]
+    },
+    {
+      "name": "Search",
+      "file": "@alm-design/design-system",
+      "exportName": "Search",
+      "isDefaultExport": false,
+      "props": [
+        {
+          "name": "dir",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "ltr",
+            "rtl"
+          ],
+          "kind": "enum"
+        },
+        {
+          "name": "label",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "Search Term"
+        },
+        {
+          "name": "onChange",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "handler"
+        },
+        {
+          "name": "onClear",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "handler"
+        },
+        {
+          "name": "onClose",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "handler"
+        },
+        {
+          "name": "placeholder",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "Search"
+        },
+        {
+          "name": "platform",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "ios",
+            "android"
+          ],
+          "kind": "enum"
+        },
+        {
+          "name": "showClose",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "boolean",
+          "example": false
+        },
+        {
+          "name": "value",
+          "tsType": "unknown",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "SegmentedControl",
+      "file": "@alm-design/design-system",
+      "exportName": "SegmentedControl",
+      "isDefaultExport": false,
+      "props": [
+        {
+          "name": "dir",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "ltr",
+            "rtl"
+          ],
+          "kind": "enum"
+        },
+        {
+          "name": "items",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "collection",
+          "example": [
+            "Flights",
+            "Hotels",
+            "Cars"
+          ]
+        },
+        {
+          "name": "onChange",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "handler"
+        },
+        {
+          "name": "platform",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "ios",
+            "android"
+          ],
+          "kind": "enum"
+        },
+        {
+          "name": "value",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "number",
+          "example": 0,
+          "indexesCollection": "items"
+        }
+      ]
+    },
+    {
+      "name": "Separator",
+      "file": "@alm-design/design-system",
+      "exportName": "Separator",
+      "isDefaultExport": false,
+      "props": [
+        {
+          "name": "dir",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "ltr",
+            "rtl"
+          ],
+          "kind": "enum"
+        },
+        {
+          "name": "label",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "OR"
+        },
+        {
+          "name": "type",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "cell separator",
+            "section separator"
+          ],
+          "kind": "enum"
+        },
+        {
+          "name": "variant",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "simple",
+            "or",
+            "dashed"
+          ],
+          "kind": "enum"
+        }
+      ]
+    },
+    {
+      "name": "Slider",
+      "file": "@alm-design/design-system",
+      "exportName": "Slider",
+      "isDefaultExport": false,
+      "props": [
+        {
+          "name": "dir",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "ltr",
+            "rtl"
+          ],
+          "kind": "enum"
+        },
+        {
+          "name": "max",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "number",
+          "example": 100
+        },
+        {
+          "name": "min",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "number",
+          "example": 0
+        },
+        {
+          "name": "onChange",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "handler"
+        },
+        {
+          "name": "step",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "number",
+          "example": 1
+        },
+        {
+          "name": "ticks",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "number",
+          "example": 5
+        },
+        {
+          "name": "value",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "number",
+          "example": 40
+        }
+      ]
+    },
+    {
+      "name": "Snackbar",
+      "file": "@alm-design/design-system",
+      "exportName": "Snackbar",
+      "isDefaultExport": false,
+      "props": [
+        {
+          "name": "dir",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "ltr"
+        },
+        {
+          "name": "duration",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "number",
+          "example": 3000
+        },
+        {
+          "name": "message",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "Seat preference saved"
+        },
+        {
+          "name": "onClose",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "handler"
+        },
+        {
+          "name": "show",
+          "tsType": "unknown",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "Stepper",
+      "file": "@alm-design/design-system",
+      "exportName": "Stepper",
+      "isDefaultExport": false,
+      "props": [
+        {
+          "name": "dir",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "ltr",
+            "rtl"
+          ],
+          "kind": "enum"
+        },
+        {
+          "name": "max",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "number",
+          "example": 9
+        },
+        {
+          "name": "min",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "number",
+          "example": 0
+        },
+        {
+          "name": "onChange",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "handler"
+        },
+        {
+          "name": "value",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "number",
+          "example": 1
+        }
+      ]
+    },
+    {
+      "name": "SystemBanner",
+      "file": "@alm-design/design-system",
+      "exportName": "SystemBanner",
+      "isDefaultExport": false,
+      "props": [
+        {
+          "name": "actionLabel",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "Label"
+        },
+        {
+          "name": "description",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "Book with free cancellation and get full refund."
+        },
+        {
+          "name": "dir",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "ltr",
+            "rtl"
+          ],
+          "kind": "enum"
+        },
+        {
+          "name": "icon",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "boolean",
+          "example": true
+        },
+        {
+          "name": "onAction",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "handler"
+        },
+        {
+          "name": "platform",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "mobile",
+            "desktop"
+          ],
+          "kind": "enum"
+        },
+        {
+          "name": "skeleton",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "boolean",
+          "example": false
+        },
+        {
+          "name": "tag",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "Ends in 2 days"
+        },
+        {
+          "name": "title",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "Title"
+        },
+        {
+          "name": "type",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "visual",
+            "neutral",
+            "success",
+            "caution",
+            "error"
+          ],
+          "kind": "enum"
+        }
+      ]
+    },
+    {
+      "name": "TabBar",
+      "file": "@alm-design/design-system",
+      "exportName": "TabBar",
+      "isDefaultExport": false,
+      "props": [
+        {
+          "name": "dir",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "ltr",
+            "rtl"
+          ],
+          "kind": "enum"
+        },
+        {
+          "name": "items",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "collection",
+          "example": [
+            {
+              "label": "Home"
+            },
+            {
+              "label": "Explore"
+            },
+            {
+              "label": "My Trips"
+            }
+          ]
+        },
+        {
+          "name": "onChange",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "handler"
+        },
+        {
+          "name": "platform",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "ios",
+            "android"
+          ],
+          "kind": "enum"
+        },
+        {
+          "name": "value",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "number",
+          "example": 0,
+          "indexesCollection": "items"
+        }
+      ]
+    },
+    {
+      "name": "Tag",
+      "file": "@alm-design/design-system",
+      "exportName": "Tag",
+      "isDefaultExport": false,
+      "props": [
+        {
+          "name": "label",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "Label"
+        },
+        {
+          "name": "leadingIcon",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "icon"
+        },
+        {
+          "name": "skeleton",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "boolean",
+          "example": false
+        },
+        {
+          "name": "style",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "tinted",
+            "filled"
+          ],
+          "kind": "enum"
+        },
+        {
+          "name": "trailingIcon",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "icon"
+        },
+        {
+          "name": "variant",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "default",
+            "warning",
+            "caution",
+            "success",
+            "neutral"
+          ],
+          "kind": "enum"
+        }
+      ]
+    },
+    {
+      "name": "TextInput",
+      "file": "@alm-design/design-system",
+      "exportName": "TextInput",
+      "isDefaultExport": false,
+      "props": [
+        {
+          "name": "dir",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "ltr",
+            "rtl"
+          ],
+          "kind": "enum"
+        },
+        {
+          "name": "disabled",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "boolean",
+          "example": false
+        },
+        {
+          "name": "dropdown",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "boolean",
+          "example": false
+        },
+        {
+          "name": "errorText",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "Error message"
+        },
+        {
+          "name": "helperText",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "Helper text"
+        },
+        {
+          "name": "label",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "Label"
+        },
+        {
+          "name": "leadingIcon",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "icon"
+        },
+        {
+          "name": "multiline",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "boolean",
+          "example": false
+        },
+        {
+          "name": "onChange",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "handler"
+        },
+        {
+          "name": "onClear",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "handler"
+        },
+        {
+          "name": "password",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "boolean",
+          "example": false
+        },
+        {
+          "name": "required",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "boolean",
+          "example": false
+        },
+        {
+          "name": "skeleton",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "boolean",
+          "example": false
+        },
+        {
+          "name": "trailingIcon",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "icon"
+        },
+        {
+          "name": "value",
+          "tsType": "unknown",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "Toggle",
+      "file": "@alm-design/design-system",
+      "exportName": "Toggle",
+      "isDefaultExport": false,
+      "props": [
+        {
+          "name": "checked",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "boolean",
+          "example": false
+        },
+        {
+          "name": "dir",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "ltr",
+            "rtl"
+          ],
+          "kind": "enum"
+        },
+        {
+          "name": "label",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "Label"
+        },
+        {
+          "name": "onChange",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "handler"
+        },
+        {
+          "name": "platform",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "ios",
+            "android"
+          ],
+          "kind": "enum"
+        },
+        {
+          "name": "state",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "default",
+            "disabled",
+            "skeleton"
+          ],
+          "kind": "enum"
+        }
+      ]
+    },
+    {
+      "name": "Tooltip",
+      "file": "@alm-design/design-system",
+      "exportName": "Tooltip",
+      "isDefaultExport": false,
+      "props": [
+        {
+          "name": "arrowAlign",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "center",
+            "start",
+            "end"
+          ],
+          "kind": "enum"
+        },
+        {
+          "name": "content",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "Tooltip text"
+        },
+        {
+          "name": "dir",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "ltr"
+        },
+        {
+          "name": "position",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "top",
+            "bottom"
+          ],
+          "kind": "enum"
+        }
+      ]
+    },
+    {
+      "name": "VisualCard",
+      "file": "@alm-design/design-system",
+      "exportName": "VisualCard",
+      "isDefaultExport": false,
+      "props": [
+        {
+          "name": "accentColor",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "#008f8d"
+        },
+        {
+          "name": "actionLabel",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "Book now"
+        },
+        {
+          "name": "dir",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "ltr"
+        },
+        {
+          "name": "imageSrc",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "image"
+        },
+        {
+          "name": "onAction",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "handler"
+        },
+        {
+          "name": "onClose",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "handler"
+        },
+        {
+          "name": "priceLabel",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "From"
+        },
+        {
+          "name": "priceValue",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "SAR 499"
+        },
+        {
+          "name": "showBottomBar",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "boolean",
+          "example": true
+        },
+        {
+          "name": "showDismiss",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "boolean",
+          "example": true
+        },
+        {
+          "name": "size",
+          "tsType": "unknown",
+          "required": false,
+          "enumValues": [
+            "medium",
+            "large"
+          ],
+          "kind": "enum"
+        },
+        {
+          "name": "subtitle",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "Short description"
+        },
+        {
+          "name": "title",
+          "tsType": "unknown",
+          "required": false,
+          "kind": "string",
+          "example": "Title"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,77 @@
+/**
+ * The shared drag-to-canvas overlay: the rectangle showing where the element
+ * will land, and the ghost that follows the cursor.
+ *
+ * `--drop-*` and `--ghost-*` are written inline per frame by the drag hook's
+ * consumer (dynamic geometry — the project's one sanctioned inline-style use).
+ * `position: fixed` because they are viewport coordinates: the preview has to
+ * be able to sit over an iframe's contents, which no element inside the canvas
+ * transform layer can do.
+ */
+.dropPreview {
+    position: fixed;
+    left: var(--drop-left);
+    top: var(--drop-top);
+    width: var(--drop-width);
+    height: var(--drop-height);
+    z-index: var(--tooltip-z-index);
+    pointer-events: none;
+    border: 1px solid var(--canvas-selection-ring-color);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--canvas-selection-ring-color) 32%, transparent);
+}
+
+/*
+ * A drop BETWEEN two elements is a line, not a box — the box would claim the
+ * sibling's area and read as "replace this" rather than "insert here".
+ */
+.dropPreview[data-position="before"],
+.dropPreview[data-position="after"] {
+    height: 2px;
+    min-height: 2px;
+    background: var(--canvas-selection-ring-color);
+}
+
+.dropPreview[data-position="after"] {
+    top: calc(var(--drop-top) + var(--drop-height));
+}
+
+/* Names the target, so a drop into a nested element is unambiguous. */
+.dropTag {
+    position: absolute;
+    left: 10px;
+    top: -28px;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-xs);
+    padding: var(--space-2xs) var(--space-s);
+    border-radius: var(--input-radius);
+    background: var(--bg-surface);
+    color: var(--text);
+    box-shadow: var(--shadow-panel);
+    font-size: var(--text-xs);
+    white-space: nowrap;
+}
+
+/*
+ * Offset from the cursor rather than centred on it: centred, the ghost covers
+ * the very element you are aiming at.
+ */
+.ghost {
+    position: fixed;
+    left: 0;
+    top: 0;
+    z-index: var(--tooltip-z-index);
+    pointer-events: none;
+    transform: translate(calc(var(--ghost-x) + 14px), calc(var(--ghost-y) + 14px));
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-xs);
+    padding: var(--space-2xs) var(--space-s);
+    border: 1px solid var(--overlay-10);
+    border-radius: var(--input-radius);
+    background: var(--bg-surface);
+    color: var(--text);
+    box-shadow: var(--shadow-panel);
+    font-size: var(--text-xs);
+    white-space: nowrap;
+}

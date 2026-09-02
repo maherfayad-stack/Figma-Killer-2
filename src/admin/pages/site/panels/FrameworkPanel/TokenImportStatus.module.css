@@ -1,0 +1,38 @@
+/* TokenImportStatus — the token-extraction result banner shown above the
+   Colors/Typography/Space cards. Two color variants, same layout: `.success`
+   for "tokens were imported," `.info` for "nothing found (yet)" — same
+   token pair (`--success-text`/`--info-text`) `InstallDependenciesPrompt`'s
+   status chip uses, for a consistent look across Studio's import surfaces. */
+
+.success,
+.info {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-s);
+    padding: var(--space-xs) var(--space-s);
+    border-radius: 6px;
+}
+
+.success {
+    border: 1px solid color-mix(in srgb, var(--success-text) 22%, transparent);
+    background: color-mix(in srgb, var(--success-text) 8%, transparent);
+}
+
+.info {
+    border: 1px solid color-mix(in srgb, var(--info-text) 22%, transparent);
+    background: color-mix(in srgb, var(--info-text) 8%, transparent);
+}
+
+.text {
+    font-size: var(--text-2xs);
+    line-height: 1.4;
+}
+
+.success .text {
+    color: var(--success-text);
+}
+
+.info .text {
+    color: var(--info-text);
+}

@@ -1,0 +1,150 @@
+/* ClassPropertyRow — unified CSS property row (Phase 3 / Task #464 / Spec #671).
+   Wraps existing PropertyControl components so the row anatomy is byte-identical
+   to module property rows (PP-18). Only adds the remove-button overlay. */
+
+/* ── Outer wrapper (position:relative for the remove button overlay) ──────── */
+.propertyRowWrap {
+    position: relative;
+    color: var(--text);
+    /* Anchors for the hover-revealed remove button. Derived from the shared
+       control-row geometry rather than restated as literals — this file used
+       to carry its own `100px`, which had to be kept in step by hand with the
+       two other copies in ControlRow and LayoutSection. */
+    --class-remove-label-column: var(--control-label-w);
+    --class-remove-row-center: calc(var(--control-row-h) / 2);
+    --class-remove-button-size: 20px;
+    --class-remove-fade-width: 36px;
+    --class-remove-row-bg: var(--bg-body);
+}
+.propertyRowWrap label {
+    color: var(--text);
+}
+
+.propertyRowWrap[data-state="set"] {
+    box-sizing: border-box;
+}
+
+.propertyRowWrap[data-state="set"]::after {
+    position: absolute;
+    top: calc(
+        var(--class-remove-row-center) - (var(--class-remove-button-size) / 2)
+    );
+    left: calc(
+        var(--class-remove-label-column) - var(--class-remove-fade-width)
+    );
+    z-index: 1;
+    width: var(--class-remove-fade-width);
+    height: var(--class-remove-button-size);
+    background: linear-gradient(
+        90deg,
+        transparent 0%,
+        var(--class-remove-row-bg) 48%,
+        var(--class-remove-row-bg) 100%
+    );
+    content: "";
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 100ms ease;
+}
+
+.propertyRowUnset {
+    --class-row-label-color: var(--text-subtle);
+}
+
+.propertyRowUnset :global(label) {
+    color: var(--class-row-label-color);
+}
+
+/* ── Remove button — overlays the fixed label column, leaving controls full-width ───── */
+/* Hidden by default; revealed on row hover or keyboard focus-within (WCAG 2.1.1) */
+.removeBtn {
+    position: absolute;
+    top: calc(
+        var(--class-remove-row-center) - (var(--class-remove-button-size) / 2)
+    );
+    left: calc(
+        var(--class-remove-label-column) - var(--class-remove-button-size) - 4px
+    );
+    z-index: 2;
+    opacity: 0;
+    pointer-events: none;
+    transition:
+        opacity 100ms ease,
+        background-color 100ms ease,
+        color 100ms ease;
+}
+
+.removeBtn.removeBtn {
+    width: var(--class-remove-button-size);
+    height: var(--class-remove-button-size);
+    border-radius: 10px;
+    background: transparent;
+    color: var(--text-muted);
+    background: var(--bg-body);
+    border: 1px solid var(--border-muted);
+}
+
+.removeBtn.removeBtn:hover,
+.removeBtn.removeBtn:focus-visible {
+    color: var(--text);
+}
+
+.propertyRowWrap:hover .removeBtn,
+.propertyRowWrap:focus-within .removeBtn {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.propertyRowWrap:hover::after,
+.propertyRowWrap:focus-within::after {
+    opacity: 1;
+}
+
+/* ── Stacked layout (label above control) ─────────────────────────────────
+   The remove button's default anchor is the inline label column, which
+   doesn't exist in stacked cells. Re-anchor it to the row's top-right corner
+   (over the trailing end of the label line) and drop the label-column fade. */
+.propertyRowWrapStacked .removeBtn {
+    top: 0;
+    left: auto;
+    right: 0;
+}
+
+.propertyRowWrapStacked[data-state="set"]::after {
+    display: none;
+}
+
+/* A row whose control carries its own clear affordance — an icon toggle group
+   (click the pressed segment), an empty-to-clear field — gets no overlay
+   button. In a 24px bare cell it would sit on top of the value it removes,
+   and it would be the second way to do the same thing. */
+.propertyRowWrapBare .removeBtn {
+    display: none;
+}
+
+/* ── Track F1 — provenance strip ────────────────────────────────────────
+   Shadowed declarations render struck-through rather than hidden; seeing
+   WHY a value lost is the entire point. Sits below the control, full row
+   width, wraps rather than overflowing the fixed label column. */
+.provenanceStrip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3xs);
+    color: var(--text-subtle);
+    font-size: var(--text-3xs);
+}
+
+.provenanceLoser {
+    display: inline-flex;
+    align-items: baseline;
+    gap: var(--space-4xs);
+}
+
+.provenanceLoserLabel {
+    color: var(--text-subtle);
+}
+
+.provenanceLoserValue {
+    color: var(--text-muted);
+    text-decoration: line-through;
+}

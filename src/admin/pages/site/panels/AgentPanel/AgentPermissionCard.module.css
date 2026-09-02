@@ -1,0 +1,49 @@
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+  padding: var(--space-s);
+  margin: var(--space-3xs) 0;
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface-2);
+  border-left: var(--space-px) solid var(--warning-text);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2xs);
+}
+
+.icon {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--warning-text);
+}
+
+.title {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--text-bright);
+}
+
+/* The specific path or command being asked about. Long absolute paths and shell
+   commands are the norm here, so it scrolls on its own rather than making the
+   whole panel scroll sideways. */
+.detail {
+  margin: 0;
+  padding: var(--space-2xs) var(--space-xs);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+  line-height: 1.5;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.actions {
+  display: flex;
+  gap: var(--space-2xs);
+}

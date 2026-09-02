@@ -1,0 +1,246 @@
+.page {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  width: 100%;
+  max-width: 393px;
+  min-height: 100vh;
+  margin-inline: auto;
+  background: var(--background-base-default);
+}
+
+.page *,
+.page *::before,
+.page *::after {
+  box-sizing: border-box;
+}
+
+.topBar {
+  display: flex;
+  align-items: center;
+  padding: 12px 16px;
+  min-height: 44px;
+}
+
+.backBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  width: 32px;
+  height: 32px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--icon-base-default);
+}
+
+.iconSm {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  min-height: 24px;
+  overflow: hidden;
+  flex-shrink: 0;
+  line-height: 0;
+}
+
+.iconSm > svg,
+.iconSm > * {
+  display: block;
+  width: 24px;
+  height: 24px;
+}
+
+.wrapper {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 100%;
+  align-self: stretch;
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 16px 24px;
+  width: 100%;
+  flex: 1 0 auto;
+  min-height: 100%;
+}
+
+.top {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+}
+
+.header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+}
+
+.socialLabel {
+  display: inline-block;
+}
+
+.bottom {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+  margin-top: auto;
+}
+
+.title {
+  margin: 0;
+  color: var(--text-base-default);
+  font-family: 'Open Sans', sans-serif;
+  font-size: 26px;
+  font-weight: 600;
+  line-height: 36px;
+  letter-spacing: -0.5px;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 24px;
+  width: 100%;
+}
+
+.primaryGroup {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 16px;
+  width: 100%;
+}
+
+.mobileRow {
+  display: flex;
+  align-items: stretch;
+  width: 100%;
+  gap: 0;
+}
+
+.codeField {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 101px;
+  padding: 8px 12px;
+  background: var(--background-base-default);
+  border: 1px solid var(--border-base-default);
+  border-radius: 4px 0 0 4px;
+}
+
+.codeInner {
+  display: flex;
+  flex-direction: column;
+  flex: 1 0 0;
+  min-width: 0;
+  gap: 0;
+}
+
+.codeLabel {
+  color: var(--text-base-subtext);
+  font-family: 'Open Sans', sans-serif;
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.codeValue {
+  color: var(--text-base-default);
+  font-family: 'Open Sans', sans-serif;
+  font-size: 16px;
+  line-height: 24px;
+}
+
+.numberField {
+  display: flex;
+  align-items: center;
+  flex: 1 0 0;
+  min-width: 0;
+  padding: 16px;
+  background: var(--background-base-default);
+  border: 1px solid var(--border-base-default);
+  border-left: none;
+  border-radius: 0 4px 4px 0;
+}
+
+.numberPlaceholder {
+  color: var(--text-base-subtext);
+  font-family: 'Open Sans', sans-serif;
+  font-size: 16px;
+  line-height: 24px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.required {
+  color: var(--text-link-default);
+}
+
+.registerBusiness {
+  margin: 0;
+  color: var(--text-link-default);
+  font-family: 'Open Sans', sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
+  text-align: center;
+  width: 100%;
+}
+
+.orSeparator {
+  width: 100%;
+}
+
+.socialGroup {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 16px;
+  width: 100%;
+}
+
+.socialBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 24px;
+  width: 100%;
+  border-radius: 100px;
+  background: var(--background-base-default);
+  font-family: 'Open Sans', sans-serif;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 20px;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+
+.socialBtnApple {
+  border: 1px solid var(--text-base-default);
+  color: var(--text-base-default);
+}
+
+.socialBtnGoogle {
+  border: 1px solid var(--text-link-default);
+  color: var(--text-link-default);
+}

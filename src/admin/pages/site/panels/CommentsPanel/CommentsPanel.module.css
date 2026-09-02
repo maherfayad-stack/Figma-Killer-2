@@ -1,0 +1,241 @@
+/* The comments work queue. */
+
+.panel {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2xs);
+    /* min-height:0 lets .list actually scroll instead of the panel growing —
+       the same flex-child trap the properties panel hit. */
+    min-height: 0;
+    height: 100%;
+    /* No padding at the top: `PanelHeader` is a full-bleed bar with its own
+       inset, and the sidebar's other panel hangs it off the very top edge.
+       Insetting it here is what made this pane look like a card sitting ON the
+       sidebar rather than being it. */
+    padding: 0 var(--space-s) var(--space-s);
+}
+
+/* Undo the panel's own horizontal padding for the full-bleed header bar. */
+.panel > header,
+.panel > [role='toolbar'] {
+    margin: 0 calc(-1 * var(--space-s));
+}
+
+.controls {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2xs);
+}
+
+.list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3xs);
+    margin: 0;
+    padding: 0;
+    min-height: 0;
+    overflow-y: auto;
+    /* The list scrolls vertically only. A row that reports a wider intrinsic
+       width than the panel (a long unbroken word in a preview) must wrap, not
+       add a horizontal scrollbar under the whole queue. */
+    overflow-x: hidden;
+    list-style: none;
+}
+
+/*
+ * Bulk actions replace the filter control in place rather than stacking above
+ * it: while a selection is live, filtering is not what the user is doing, and
+ * a panel that grows a row when you tick a checkbox shifts the list under the
+ * cursor mid-selection.
+ */
+.bulkBar {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2xs);
+}
+
+/* The two actions split the bar evenly, so it occupies exactly the width the
+   filter control it replaced did and the list below does not reflow. */
+.bulkButton {
+    flex: 1 1 0;
+    min-width: 0;
+}
+
+/*
+ * The select-all header and a thread row are the same two-column shape: a
+ * checkbox gutter, then content indented by the row Button's own padding.
+ * They are declared together because the whole point is that the header's tick
+ * sits directly above the rows' ticks and its label directly above the pin
+ * badges — split them into two rulesets and they drift apart the next time one
+ * side's padding changes.
+ */
+.selectAll,
+.rowShell {
+    display: flex;
+    /* Not `center`: a row is two or three lines tall, and a centred checkbox
+       floats down beside the preview text instead of beside the pin badge it
+       belongs to. Both columns start at the top and the checkbox is nudged
+       down onto the first line by `.rowCheck`. */
+    align-items: flex-start;
+    gap: var(--space-2xs);
+    /* Both are needed: `min-width: 0` lets the row shrink below its content's
+       intrinsic width, and without it the row's `flex: 1` basis pushed the
+       shell wider than the panel and put a scrollbar under the list. */
+    min-width: 0;
+    max-width: 100%;
+}
+
+.selectAll {
+    color: var(--text-subtle);
+    font-size: var(--text-2xs);
+    cursor: pointer;
+}
+
+/* Matches `.rowShell .row`'s padding so the label lands on the same x as a
+   row's pin badge. */
+.selectAllLabel {
+    padding: var(--space-2xs);
+}
+
+/*
+ * The checkbox is nudged down onto the first line of the content beside it.
+ *
+ * `--space-2xs` is that content column's own top padding; the rest centres the
+ * checkbox against whatever leads the line. Written as arithmetic over the two
+ * heights rather than as a tuned constant, because it HAS been retuned once
+ * already: the rows led with a 14px pin badge, then with a 20px avatar, and the
+ * old hardcoded `+1px` silently left every checkbox 3px high.
+ */
+.rowCheck,
+.selectAllCheck {
+    flex: 0 0 auto;
+    /* The `sm` Checkbox's own box — see `Checkbox.module.css`. Named rather
+       than inlined so the margin declaration itself carries no raw pixels,
+       which the admin spacing-token gate (correctly) refuses. */
+    --comment-check-height: 12px;
+    margin-top: calc(
+        var(--space-2xs) + (var(--comment-lead-height) - var(--comment-check-height)) / 2
+    );
+}
+
+/* Led by the author's 20px avatar. */
+.rowCheck {
+    --comment-lead-height: 20px;
+}
+
+/* Led by one line of `--text-2xs` label text. */
+.selectAllCheck {
+    --comment-lead-height: 14px;
+}
+
+/* One thread. A Button primitive, so keyboard reachability and focus styling
+   come from the same place as every other control in the editor.
+   Two classes deep on purpose: `Button`'s `size="sm"` sets a fixed `height:
+   26px` and `white-space: nowrap`, which clips a row whose whole point is two
+   lines of author + preview. A descendant selector out-specifies that single
+   class without reaching for `!important` — the same move
+   `PropertiesPanel.module.css`'s `.nodeViewSwitcher .nodeViewButton` makes. */
+.rowShell .row {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-2xs);
+    /* `flex: 1 1 auto` + `min-width: 0`, NOT `width: 100%` — 100% of the shell
+       PLUS the checkbox beside it overflows the panel by the checkbox's width,
+       which is what put a horizontal scrollbar under the list. */
+    flex: 1 1 auto;
+    min-width: 0;
+    height: auto;
+    min-height: 0;
+    padding: var(--space-2xs);
+    /* `Button` centres its children; a list row reads left-to-right. Without
+       this the pin badge and author float in the middle of the row with a
+       ragged gap after the checkbox. */
+    justify-content: flex-start;
+    white-space: normal;
+    text-align: left;
+}
+
+.rowActive {
+    background: var(--overlay-10);
+}
+
+/*
+ * The author's face, the same one their pin wears on the canvas.
+ *
+ * Two classes deep to out-specify `UserAvatar`'s own `.root` border, the same
+ * move `.rowShell .row` makes below.
+ */
+.rowShell .avatar {
+    flex: 0 0 auto;
+    border: 0;
+}
+
+/* A finished thread's author fades with it, so the open rows stay the ones the
+   eye lands on — the panel is a work queue. */
+.rowShell .avatarResolved {
+    opacity: 0.55;
+}
+
+.rowBody {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-px);
+    /* Without this the preview's long text sets the flex basis and the row
+       overflows the panel horizontally. */
+    min-width: 0;
+}
+
+.rowHead {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-2xs);
+    min-width: 0;
+}
+
+.author {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-bright);
+    font-size: var(--text-2xs);
+    font-weight: 600;
+}
+
+.agentTag {
+    padding: 0 var(--space-3xs);
+    border-radius: var(--radius-sm);
+    background: var(--overlay-10);
+    color: var(--info-text);
+    font-size: var(--text-2xs);
+    font-weight: 700;
+}
+
+/* The anchored element has changed or gone — the panel's echo of the pin's
+   dot and the popover's notice. A reviewer scanning the queue has to be able
+   to see which threads may no longer describe anything. */
+.stale {
+    padding: 0 var(--space-3xs);
+    border-radius: var(--radius-sm);
+    background: var(--warning-10);
+    color: var(--warning-text);
+    font-size: var(--text-2xs);
+}
+
+/* Two lines of the opening comment, then ellipsis — enough to recognise the
+   thread, not so much that the queue becomes a wall of prose. */
+.preview {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    color: var(--text-muted);
+    font-size: var(--text-2xs);
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+}
+
+.meta {
+    color: var(--text-subtle);
+    font-size: var(--text-2xs);
+}

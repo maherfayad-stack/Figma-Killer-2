@@ -1,0 +1,348 @@
+/**
+ * Toolbar — fixed top bar shared by every admin route.
+ *
+ * Layout (left → right):
+ *   [Site brand] [admin nav]
+ *   [Plugin buttons] [spacer→] [right slot]    [Account menu]
+ *
+ * Undo/Redo lives inside the canvas notch (CanvasNotch), not the toolbar —
+ * those controls only operate on the visual editor's page tree, so they have
+ * no meaning on admin pages outside the canvas (Content, Plugins, …).
+ *
+ * Composition contract:
+ *   - `siteName` / `faviconUrl` are PROPS, NOT a store subscription. That
+ *     keeps the toolbar usable from `AdminPageLayout` (Plugins / Users /
+ *     Account / plugin admin pages) without pulling the editor store into
+ *     the non-editor admin bundle.
+ *   - The editor-specific overlay (preview iframe) is passed in by the canvas
+ *     layout via `overlay`. AdminPageLayout passes no overlay and the toolbar
+ *     shows nothing in that position.
+ *   - The `rightSlot` is owned by the caller — `AdminCanvasLayout` builds
+ *     zoom / publish / settings buttons; `AdminPageLayout` builds its own
+ *     toolbar right slot + settings button.
+ *
+ * Accessibility (WCAG 2.1 AA):
+ * - native <header> banner landmark for the top-level toolbar
+ * - aria-label on the nav region
+ * - All interactive children have 44×44px minimum touch targets
+ */
+
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { pluginRuntime } from '@core/plugins/runtime'
+import type { RegisteredPluginToolbarButton } from '@core/plugin-sdk'
+import { AccountMenuButton } from '@admin/shared/AccountMenuButton'
+import { OpenLivePageButton } from '@admin/shared/OpenLivePageButton'
+import { SettingsButton } from './SettingsButton'
+import { Link } from '@admin/lib/routing'
+import { Button } from '@ui/components/Button'
+import { Skeleton } from '@ui/components/Skeleton'
+import { Tooltip } from '@ui/components/Tooltip'
+import { cn } from '@ui/cn'
+import type { AdminWorkspace } from '@admin/workspace'
+import styles from './Toolbar.module.css'
+import { getErrorMessage } from '@core/utils/errorMessage'
+import { useAdminUi } from '@admin/state/adminUi'
+import { renameStudioProject } from '@admin/pages/dashboard/hooks/useStudioProjects'
+import { pushToast } from '@ui/components/Toast'
+
+interface ToolbarProps {
+  /** Site name shown in the brand position. Null renders the loading skeleton. */
+  siteName?: string | null
+  /** Optional site favicon URL. When set, renders instead of the site-name text. */
+  faviconUrl?: string | null
+  /** Active admin section — the studio-only shell uses it to decide whether
+   *  to show the "Open live page" link (CMS-only). */
+  section?: AdminWorkspace
+  /**
+   * Full-screen overlay siblings rendered before the toolbar header. Used by
+   * AdminCanvasLayout to mount the preview overlay (also editor-only and
+   * lazy-loaded). The overlay is a sibling rather than a child so it can
+   * cover the whole viewport instead of being clipped by the toolbar's
+   * stacking context.
+   */
+  overlay?: ReactNode
+  /**
+   * Content rendered immediately before the account menu. Both layouts
+   * own this region: AdminCanvasLayout fills it with zoom / publish /
+   * settings; AdminPageLayout passes any page-specific toolbar items
+   * followed by the SettingsButton.
+   */
+  rightSlot?: ReactNode
+}
+
+type PluginButtonStatus = {
+  state: 'running' | 'success' | 'error'
+  message: string
+}
+
+function pluginButtonKey(button: RegisteredPluginToolbarButton): string {
+  return `${button.pluginId}:${button.id}`
+}
+
+/**
+ * Studio-only subordinate label next to the brand, showing the active
+ * project's DISPLAY name (from `.studio/meta.json` — never the "Studio"
+ * product wordmark `siteName` carries). Double-click swaps in an inline
+ * `<input>`; Enter/blur commits via `renameStudioProject`, Escape reverts.
+ * Renders nothing until `fsCodemodAdapter.loadSite` has populated
+ * `adminUi.studioProject`.
+ */
+function StudioProjectLabel() {
+  const project = useAdminUi((s) => s.studioProject)
+  const setStudioProject = useAdminUi((s) => s.setStudioProject)
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
+  const committingRef = useRef(false)
+
+  if (!project) return null
+
+  function startEditing() {
+    setDraft(project!.name)
+    committingRef.current = false
+    setEditing(true)
+  }
+
+  async function commit() {
+    if (committingRef.current) return
+    committingRef.current = true
+    setEditing(false)
+    const previous = project!
+    const name = draft.trim()
+    if (!name || name === previous.name) return
+    setStudioProject({ dir: previous.dir, name })
+    try {
+      const updated = await renameStudioProject(previous.dir, name)
+      setStudioProject({ dir: updated.dir, name: updated.name })
+    } catch (err) {
+      console.error('[Toolbar] rename project failed:', err)
+      setStudioProject(previous)
+      pushToast({
+        kind: 'error',
+        title: 'Could not rename project',
+        body: getErrorMessage(err, 'Unknown project error'),
+      })
+    }
+  }
+
+  if (editing) {
+    return (
+      <input
+        autoFocus
+        className={styles.studioProjectNameInput}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onFocus={(e) => e.currentTarget.select()}
+        onBlur={() => void commit()}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') e.currentTarget.blur()
+          else if (e.key === 'Escape') {
+            committingRef.current = true
+            setEditing(false)
+          }
+        }}
+        aria-label="Project name"
+      />
+    )
+  }
+
+  return (
+    <span
+      className={styles.studioProjectName}
+      onDoubleClick={startEditing}
+      title="Double-click to rename"
+    >
+      {project.name}
+    </span>
+  )
+}
+
+export function Toolbar({
+  siteName = null,
+  faviconUrl = null,
+  section = 'site',
+  overlay,
+  rightSlot,
+}: ToolbarProps) {
+  const [pluginButtons, setPluginButtons] = useState<RegisteredPluginToolbarButton[]>(() =>
+    pluginRuntime.getToolbarButtons(),
+  )
+  const [pluginStatuses, setPluginStatuses] = useState<Record<string, PluginButtonStatus>>({})
+  const [statusTimers] = useState(() => new Map<string, ReturnType<typeof setTimeout>>())
+  const configuredFaviconUrl = faviconUrl?.trim()
+
+  useEffect(() => {
+    return pluginRuntime.subscribe(() => {
+      setPluginButtons(pluginRuntime.getToolbarButtons())
+    })
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      for (const timer of statusTimers.values()) clearTimeout(timer)
+      statusTimers.clear()
+    }
+  }, [statusTimers])
+
+  function setPluginStatus(key: string, status: PluginButtonStatus): void {
+    const currentTimer = statusTimers.get(key)
+    if (currentTimer) {
+      clearTimeout(currentTimer)
+      statusTimers.delete(key)
+    }
+
+    setPluginStatuses((current) => ({ ...current, [key]: status }))
+
+    if (status.state !== 'running') {
+      const timer = setTimeout(() => {
+        setPluginStatuses((current) => {
+          const next = { ...current }
+          delete next[key]
+          return next
+        })
+        statusTimers.delete(key)
+      }, 4000)
+      statusTimers.set(key, timer)
+    }
+  }
+
+  async function runPluginButtonCommand(button: RegisteredPluginToolbarButton): Promise<void> {
+    const key = pluginButtonKey(button)
+    setPluginStatus(key, {
+      state: 'running',
+      message: `${button.label} running`,
+    })
+
+    try {
+      const result = await pluginRuntime.runCommand(button.command)
+      setPluginStatus(key, {
+        state: 'success',
+        message: result && typeof result === 'object' && result.message
+          ? result.message
+          : `${button.label} complete`,
+      })
+    } catch (err) {
+      console.error('[plugin-runtime] command failed:', err)
+      setPluginStatus(key, {
+        state: 'error',
+        message: getErrorMessage(err, `${button.label} failed`),
+      })
+    }
+  }
+
+  return (
+    <>
+      {overlay}
+      <header
+        aria-label="Editor toolbar"
+        data-testid="toolbar"
+        className={styles.header}
+      >
+        {/* ── Left section ────────────────────────────────────────────────── */}
+
+        {/* Brand doubles as the Overview link — clicking the logo returns to
+            the studio project launcher (`/admin/dashboard`). The old top-nav
+            tab row (Site / Content / Data / Media / Plugins / Users) is gone:
+            the app is a studio-first launcher now. */}
+        {siteName === null ? (
+          <span
+            className={styles.siteNameSkeleton}
+            data-testid="toolbar-site-brand"
+            aria-hidden="true"
+          >
+            <Skeleton width={76} height={12} radius={999} />
+          </span>
+        ) : (
+          <Link to="/admin/dashboard" className={styles.brandLink} aria-label="Overview">
+            {configuredFaviconUrl ? (
+              <Tooltip content={siteName} side="bottom">
+                <img
+                  className={styles.siteFavicon}
+                  data-testid="toolbar-site-brand"
+                  src={configuredFaviconUrl}
+                  alt={`Site: ${siteName}`}
+                  draggable={false}
+                />
+              </Tooltip>
+            ) : (
+              <Tooltip content={siteName} side="bottom">
+                <span
+                  className={styles.siteName}
+                  data-testid="toolbar-site-brand"
+                  aria-label={`Site: ${siteName}`}
+                >
+                  {siteName}
+                </span>
+              </Tooltip>
+            )}
+          </Link>
+        )}
+
+        {section === 'site' && <StudioProjectLabel />}
+
+        <div className={styles.workspaceToolbarItems}>
+          {pluginButtons.map((button) => {
+            const key = pluginButtonKey(button)
+            const status = pluginStatuses[key]
+            const statusId = `plugin-command-status-${button.pluginId}-${button.id}`
+            return (
+              <div key={key} className={styles.pluginButtonWrapper}>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className={styles.pluginButton}
+                  aria-describedby={status ? statusId : undefined}
+                  data-state={status?.state}
+                  disabled={status?.state === 'running'}
+                  onClick={() => {
+                    void runPluginButtonCommand(button)
+                  }}
+                >
+                  <span>{status?.state === 'running' ? `${button.label}...` : button.label}</span>
+                </Button>
+                {status && (
+                  <output
+                    id={statusId}
+                    aria-live="polite"
+                    className={cn(
+                      styles.pluginToast,
+                      status.state === 'error' && styles.pluginToastError,
+                    )}
+                  >
+                    {status.message}
+                  </output>
+                )}
+              </div>
+            )
+          })}
+
+          {/* ── Spacer ──────────────────────────────────────────────────────── */}
+          <div className={styles.spacer} aria-hidden="true" />
+
+          {/* ── Right section — caller-owned ─────────────────────────────── */}
+          {rightSlot}
+          {/* SettingsButton + OpenLivePageButton + AccountMenuButton are the
+              global toolbar trailer — always rendered regardless of `rightSlot`
+              or which layout mounted the toolbar. SettingsButton opens the
+              global Settings modal (it reads the tiny `adminUi` store, so it
+              never drags the editor toolchain into non-editor bundles);
+              OpenLivePageButton jumps to the live site in a new tab
+              (deep-linking to the active page when one is open in the canvas,
+              the site root elsewhere); AccountMenuButton is the account /
+              sign-out entry point. All three are reachable from every admin
+              route (Site / Content / Data / Media / Plugins / Users / …), so
+              they live in the toolbar shell, not in any layout's right slot. */}
+          <SettingsButton />
+          {/* "Open live page" jumps to the CMS's published static output —
+              meaningless in Studio (its pages are never run through the
+              publish pipeline; that's the future "Download code" story,
+              Phase 6D). Scoped to `section === 'site'` so it still shows on
+              Content / Data / Media / other admin routes, where it's a
+              normal CMS affordance. */}
+          {section !== 'site' && <OpenLivePageButton />}
+          <AccountMenuButton />
+        </div>
+      </header>
+    </>
+  )
+}
+

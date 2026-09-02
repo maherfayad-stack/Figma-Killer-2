@@ -1,0 +1,17 @@
+/* FrameSizePanel — compact header strip at the top of the design tab
+   (Phase 6E). A preset select + two number inputs; deliberately small, not a
+   redesign of the panel around it. */
+
+.panel {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+    padding: var(--space-m) var(--space-xl);
+    border-bottom: 1px solid var(--overlay-10);
+}
+
+.dimensions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-s);
+}

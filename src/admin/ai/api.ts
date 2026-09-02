@@ -1,0 +1,627 @@
+/**
+ * Thin client-side API wrappers for the AI runtime HTTP surface.
+ *
+ * Every function goes through the canonical `apiRequest` (`@core/http`),
+ * which POSTs/GETs the wire shapes defined in `server/ai/handlers/*`,
+ * validates the response with TypeBox, and throws an `ApiError` (carrying
+ * the server status + message) on failure — pages render these via
+ * `role="alert"` panels.
+ *
+ * Constraint #272 — every untyped boundary (HTTP response) is validated
+ * against a TypeBox schema before reaching React state.
+ */
+
+import { Type, type Static } from '@core/utils/typeboxHelpers'
+import { apiRequest, ApiError } from '@core/http'
+import {
+  AiContentViewBlockSchema,
+  McpConnectorListSchema,
+  CreateMcpConnectorResultSchema,
+  ListProjectMcpServersResultSchema,
+  McpOAuthStatusSchema,
+  McpCliConnectionSchema,
+  StartMcpOAuthResultSchema,
+  type McpConnectorView,
+  type CreateMcpConnectorBody,
+  type CreateMcpConnectorResult,
+  type ProjectMcpServerView,
+  type RegisteredMcpServerDefinition,
+  type McpServerSource,
+  type McpOAuthStatus,
+  type McpCliConnection,
+} from '@core/ai'
+
+// ---------------------------------------------------------------------------
+// Wire schemas — match server projections in:
+//   server/ai/credentials/types.ts → CredentialView
+//   server/ai/conversations/types.ts → ConversationView
+//   server/ai/defaults/store.ts → DefaultRecord
+// ---------------------------------------------------------------------------
+
+const ProviderId = Type.Union([
+  Type.Literal('anthropic'),
+  Type.Literal('openai'),
+  Type.Literal('ollama'),
+  Type.Literal('openrouter'),
+  Type.Literal('openai-compatible'),
+  Type.Literal('claudeCli'),
+])
+
+const AuthMode = Type.Union([
+  Type.Literal('apiKey'),
+  Type.Literal('baseUrl'),
+])
+
+const CredentialViewSchema = Type.Object({
+  id: Type.String(),
+  providerId: ProviderId,
+  authMode: AuthMode,
+  displayLabel: Type.String(),
+  baseUrl: Type.Union([Type.String(), Type.Null()]),
+  keyFingerprintCurrent: Type.Boolean(),
+  createdAt: Type.String(),
+  lastUsedAt: Type.Union([Type.String(), Type.Null()]),
+  /** Set only for `claudeCli` L2 (setup-token) credentials — see server's `CredentialView`. */
+  expiresAt: Type.Union([Type.String(), Type.Null()]),
+})
+
+export type CredentialView = Static<typeof CredentialViewSchema>
+
+const CredentialListResponseSchema = Type.Object({
+  credentials: Type.Array(CredentialViewSchema),
+})
+
+const CredentialItemResponseSchema = Type.Object({
+  credential: CredentialViewSchema,
+})
+
+const TestResponseSchema = Type.Object({
+  ok: Type.Boolean(),
+  modelCount: Type.Optional(Type.Number()),
+  error: Type.Optional(Type.String()),
+})
+
+// ---------------------------------------------------------------------------
+// Claude CLI availability status — see server/ai/handlers/claudeCliStatus.ts.
+// ---------------------------------------------------------------------------
+
+/** Whether THIS request can use the one-click "Log in with Claude" terminal launch — see `claudeCliTerminalLaunch.ts`'s `resolveTerminalLaunchSupport`. */
+const TerminalLoginSupportSchema = Type.Object({
+  available: Type.Boolean(),
+  reason: Type.Optional(Type.String()),
+})
+
+const ClaudeCliStatusResponseSchema = Type.Object({
+  availability: Type.Union([
+    Type.Literal('logged-in'),
+    Type.Literal('logged-out'),
+    Type.Literal('not-installed'),
+    Type.Literal('unsupported'),
+    Type.Literal('probe-failed'),
+  ]),
+  reason: Type.Optional(Type.String()),
+  loginCommand: Type.Optional(Type.String()),
+  subscriptionType: Type.Optional(Type.String()),
+  terminalLogin: TerminalLoginSupportSchema,
+})
+export type ClaudeCliStatus = Static<typeof ClaudeCliStatusResponseSchema>
+
+/**
+ * Zero-cost `claude auth status --json` probe, surfaced for the "disabled
+ * with the reason shown" provider picker state (WS-11 step 2) and for the
+ * Add-credential dialog's poll after "Log in with Claude" is clicked. Never
+ * throws for a normal unavailable state — every case in {@link ClaudeCliStatus}
+ * carries its own `availability` + `reason`; only a genuine transport/auth
+ * failure (network, session expiry) throws via `apiRequest`'s `ApiError`.
+ */
+export async function getClaudeCliStatus(signal?: AbortSignal): Promise<ClaudeCliStatus> {
+  return apiRequest('/admin/api/ai/providers/claude-cli/status', {
+    schema: ClaudeCliStatusResponseSchema,
+    signal,
+  })
+}
+
+const LaunchClaudeCliLoginTerminalResponseSchema = Type.Object({
+  ok: Type.Boolean(),
+  reason: Type.Optional(Type.String()),
+})
+export type LaunchClaudeCliLoginTerminalResult = Static<typeof LaunchClaudeCliLoginTerminalResponseSchema>
+
+/**
+ * Ask the server to open a detached terminal window, on the SAME machine the
+ * server is running on, running `claude auth login` with this user's own
+ * `CLAUDE_CONFIG_DIR` already set. Always resolves — never throws for an
+ * "expected" unavailability (remote session, unsupported platform, no
+ * terminal emulator found); those come back as `{ ok: false, reason }` for
+ * the dialog to render inline, same pattern as {@link testCredential}.
+ */
+export async function launchClaudeCliLoginTerminal(
+  signal?: AbortSignal,
+): Promise<LaunchClaudeCliLoginTerminalResult> {
+  return apiRequest('/admin/api/ai/providers/claude-cli/login-terminal', {
+    method: 'POST',
+    schema: LaunchClaudeCliLoginTerminalResponseSchema,
+    signal,
+  })
+}
+
+const ModelSchema = Type.Object({
+  id: Type.String(),
+  label: Type.String(),
+  capabilities: Type.Object({
+    toolCalling: Type.Boolean(),
+    visionInput: Type.Boolean(),
+    toolResultImages: Type.Boolean(),
+    promptCache: Type.Boolean(),
+    streaming: Type.Boolean(),
+  }),
+  tier: Type.Optional(Type.String()),
+  /** Per-million-token list prices, shown inline in the picker. */
+  pricing: Type.Optional(Type.Object({
+    inputPerMTok: Type.Number(),
+    outputPerMTok: Type.Number(),
+  })),
+  /** Max context window (total tokens) — feeds the composer context meter. */
+  contextWindow: Type.Optional(Type.Number()),
+  /** Whether the server returned a live provider model or a local fallback hint. */
+  catalogueSource: Type.Optional(Type.Union([Type.Literal('live'), Type.Literal('fallback')])),
+})
+export type AiModel = Static<typeof ModelSchema>
+
+const ModelListResponseSchema = Type.Object({
+  models: Type.Array(ModelSchema),
+})
+
+const DefaultEntrySchema = Type.Object({
+  credentialId: Type.String(),
+  modelId: Type.String(),
+})
+const DefaultResponseSchema = Type.Object({
+  default: Type.Union([DefaultEntrySchema, Type.Null()]),
+})
+export type AiDefault = Static<typeof DefaultResponseSchema>['default']
+
+const ConversationViewSchema = Type.Object({
+  id: Type.String(),
+  title: Type.String(),
+  credentialId: Type.Union([Type.String(), Type.Null()]),
+  modelId: Type.String(),
+  promptTokensTotal: Type.Number(),
+  completionTokensTotal: Type.Number(),
+  costUsdTotal: Type.Number(),
+  cacheReadTokensTotal: Type.Number(),
+  cacheCreationTokensTotal: Type.Number(),
+  /** Current-context snapshot for the composer meter (latest turn). */
+  contextTokens: Type.Number(),
+  createdAt: Type.String(),
+  updatedAt: Type.String(),
+})
+export type ConversationView = Static<typeof ConversationViewSchema>
+
+const ConversationListResponseSchema = Type.Object({
+  conversations: Type.Array(ConversationViewSchema),
+})
+
+const ConversationItemResponseSchema = Type.Object({
+  conversation: ConversationViewSchema,
+})
+
+const MessageViewSchema = Type.Object({
+  id: Type.String(),
+  position: Type.Number(),
+  role: Type.Union([Type.Literal('user'), Type.Literal('assistant'), Type.Literal('tool')]),
+  // The conversation-view vocabulary is owned by `@core/ai`: non-image blocks
+  // match persistence, while image bytes are projected to authenticated URLs.
+  content: Type.Array(AiContentViewBlockSchema),
+  toolCallId: Type.Union([Type.String(), Type.Null()]),
+  toolName: Type.Union([Type.String(), Type.Null()]),
+  createdAt: Type.String(),
+})
+
+export const ConversationDetailViewSchema = Type.Composite([
+  ConversationViewSchema,
+  Type.Object({
+    messages: Type.Array(MessageViewSchema),
+  }),
+])
+export type ConversationDetail = Static<typeof ConversationDetailViewSchema>
+
+const ConversationDetailResponseSchema = Type.Object({
+  conversation: ConversationDetailViewSchema,
+})
+
+// ---------------------------------------------------------------------------
+// Endpoints — credentials
+//
+// Every call goes through the canonical `apiRequest` (`@core/http`): it sets
+// credentials, validates the success body with TypeBox, and throws a single
+// `ApiError` (carrying the HTTP status) on failure. UI branches on
+// `err instanceof ApiError && err.status === …`.
+// ---------------------------------------------------------------------------
+
+export async function listCredentials(signal?: AbortSignal): Promise<CredentialView[]> {
+  const body = await apiRequest('/admin/api/ai/credentials', { schema: CredentialListResponseSchema, signal })
+  return body.credentials
+}
+
+export type CreateCredentialBody =
+  | {
+      providerId: 'anthropic' | 'openai' | 'ollama' | 'openrouter' | 'openai-compatible' | 'claudeCli'
+      authMode: 'apiKey'
+      displayLabel: string
+      apiKey: string
+    }
+  | {
+      providerId: 'anthropic' | 'openai' | 'ollama' | 'openrouter' | 'openai-compatible' | 'claudeCli'
+      authMode: 'baseUrl'
+      displayLabel: string
+      baseUrl: string
+      apiKey?: string
+    }
+
+export async function createCredential(body: CreateCredentialBody): Promise<CredentialView> {
+  const parsed = await apiRequest('/admin/api/ai/credentials', {
+    method: 'POST',
+    body,
+    schema: CredentialItemResponseSchema,
+  })
+  return parsed.credential
+}
+
+export async function deleteCredential(id: string): Promise<void> {
+  await apiRequest(`/admin/api/ai/credentials/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  clearModelListCache(id)
+}
+
+export interface TestResult {
+  ok: boolean
+  modelCount?: number
+  error?: string
+}
+
+export async function testCredential(id: string): Promise<TestResult> {
+  // The test endpoint returns 200 even on auth failure (the body carries
+  // `{ ok: false, error }`) so callers can render the error inline. A 404
+  // means the credential row is gone — surface a friendly message.
+  try {
+    return await apiRequest(`/admin/api/ai/credentials/${encodeURIComponent(id)}/test`, {
+      method: 'POST',
+      schema: TestResponseSchema,
+    })
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) {
+      throw new ApiError('Credential not found.', 404)
+    }
+    throw err
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Endpoints — models
+// ---------------------------------------------------------------------------
+
+const MODEL_LIST_TIMEOUT_MS = 10_000
+const MODEL_LIST_CACHE_TTL_MS = 5 * 60_000
+const modelListRequests = new Map<string, Promise<AiModel[]>>()
+const modelListCache = new Map<string, { expiresAt: number; models: AiModel[] }>()
+
+/** Invalidate model catalogues after a credential mutation (or between tests). */
+export function clearModelListCache(credentialId?: string): void {
+  if (!credentialId) {
+    modelListCache.clear()
+    return
+  }
+  for (const key of modelListCache.keys()) {
+    if (key.endsWith(`\0${credentialId}`)) modelListCache.delete(key)
+  }
+}
+
+export async function listModels(
+  providerId: 'anthropic' | 'openai' | 'ollama' | 'openrouter' | 'openai-compatible' | 'claudeCli',
+  credentialId?: string,
+): Promise<AiModel[]> {
+  const key = `${providerId}\0${credentialId ?? ''}`
+  const cached = modelListCache.get(key)
+  if (cached && cached.expiresAt > Date.now()) return cached.models
+  if (cached) modelListCache.delete(key)
+  const pending = modelListRequests.get(key)
+  if (pending) return pending
+
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), MODEL_LIST_TIMEOUT_MS)
+  const request = apiRequest(`/admin/api/ai/providers/${providerId}/models`, {
+    query: { credentialId },
+    schema: ModelListResponseSchema,
+    signal: controller.signal,
+  }).then((body) => {
+    modelListCache.set(key, {
+      expiresAt: Date.now() + MODEL_LIST_CACHE_TTL_MS,
+      models: body.models,
+    })
+    return body.models
+  })
+  modelListRequests.set(key, request)
+  try {
+    return await request
+  } finally {
+    clearTimeout(timeoutId)
+    if (modelListRequests.get(key) === request) modelListRequests.delete(key)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Endpoints — defaults
+// ---------------------------------------------------------------------------
+
+export async function listDefaults(): Promise<AiDefault> {
+  const body = await apiRequest('/admin/api/ai/defaults', { schema: DefaultResponseSchema })
+  return body.default
+}
+
+export async function setDefault(
+  body: { credentialId: string; modelId: string },
+): Promise<void> {
+  await apiRequest('/admin/api/ai/defaults', { method: 'PUT', body })
+}
+
+export async function clearDefault(): Promise<void> {
+  await apiRequest('/admin/api/ai/defaults', { method: 'DELETE' })
+}
+
+// ---------------------------------------------------------------------------
+// Endpoints — conversations
+// ---------------------------------------------------------------------------
+
+export async function listConversations(): Promise<ConversationView[]> {
+  const body = await apiRequest('/admin/api/ai/conversations', {
+    schema: ConversationListResponseSchema,
+  })
+  return body.conversations
+}
+
+export async function getConversation(
+  id: string,
+  signal?: AbortSignal,
+): Promise<ConversationDetail> {
+  const body = await apiRequest(`/admin/api/ai/conversations/${encodeURIComponent(id)}`, {
+    schema: ConversationDetailResponseSchema,
+    signal,
+  })
+  return body.conversation
+}
+
+export async function deleteConversation(id: string): Promise<void> {
+  await apiRequest(`/admin/api/ai/conversations/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
+export async function updateConversationProvider(
+  id: string,
+  credentialId: string,
+  modelId: string,
+  signal?: AbortSignal,
+): Promise<ConversationView> {
+  const body = await apiRequest(`/admin/api/ai/conversations/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    body: { credentialId, modelId },
+    schema: ConversationItemResponseSchema,
+    signal,
+  })
+  return body.conversation
+}
+
+const RestartSessionResponseSchema = Type.Object({ ok: Type.Boolean() })
+
+/**
+ * "Restart agent session" — bumps the conversation's `session_epoch`
+ * server-side (migration 021) so the next turn's `claudeCli` session id
+ * derives to a brand-new UUID, forcing a genuinely fresh CLI session that
+ * re-reads newly-approved MCP servers and other per-spawn config. The
+ * conversation row, its messages, and this transcript are all untouched —
+ * only the CLI's OWN session state resets. A no-op for every other provider.
+ */
+export async function restartAgentSession(id: string): Promise<void> {
+  await apiRequest(`/admin/api/ai/conversations/${encodeURIComponent(id)}/restart-session`, {
+    method: 'POST',
+    schema: RestartSessionResponseSchema,
+    fallbackMessage: 'Could not restart the agent session.',
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Endpoints — audit
+// ---------------------------------------------------------------------------
+
+const UsageRowSchema = Type.Object({
+  promptTokens: Type.Number(),
+  completionTokens: Type.Number(),
+  costUsd: Type.Number(),
+  chatCount: Type.Number(),
+  cacheReadTokens: Type.Number(),
+  cacheCreationTokens: Type.Number(),
+})
+
+const UsageByUserRowSchema = Type.Composite([
+  UsageRowSchema,
+  Type.Object({
+    userId: Type.String(),
+    userLabel: Type.String(),
+  }),
+])
+
+const UsageByDayRowSchema = Type.Composite([
+  UsageRowSchema,
+  Type.Object({
+    day: Type.String(),
+  }),
+])
+
+const UsageByModelRowSchema = Type.Composite([
+  UsageRowSchema,
+  Type.Object({
+    // Server may report 'unknown' for conversations whose credential was
+    // deleted mid-window — keep this loose enough to accept that.
+    providerId: Type.String(),
+    modelId: Type.String(),
+  }),
+])
+
+const AuditResponseSchema = Type.Object({
+  since: Type.String(),
+  totals: UsageRowSchema,
+  byUser: Type.Array(UsageByUserRowSchema),
+  byModel: Type.Array(UsageByModelRowSchema),
+  byDay: Type.Array(UsageByDayRowSchema),
+})
+
+export type AiUsageByUserRow = Static<typeof UsageByUserRowSchema>
+export type AiUsageByDayRow = Static<typeof UsageByDayRowSchema>
+export type AiUsageByModelRow = Static<typeof UsageByModelRowSchema>
+export type AiAuditResponse = Static<typeof AuditResponseSchema>
+
+/**
+ * Fetch the AI usage rollups. `since` is an ISO date the server interprets
+ * as "include any message at or after this instant". Omit to default to the
+ * server's 30-day window. `timeZone` is an IANA zone the server uses to bucket
+ * the daily rollup into the viewer's calendar day (falls back to UTC server-side
+ * when omitted or invalid).
+ */
+export async function listAiAudit(
+  since?: string,
+  timeZone?: string,
+): Promise<AiAuditResponse> {
+  return apiRequest('/admin/api/ai/audit', {
+    query: { since, tz: timeZone },
+    schema: AuditResponseSchema,
+  })
+}
+
+// ---------------------------------------------------------------------------
+// MCP connectors — `/admin/api/ai/mcp/connectors`. Wire shapes are the shared
+// TypeBox schemas from `@core/ai`; the plaintext token is returned only by
+// `createMcpConnector` and is never persisted client-side.
+// ---------------------------------------------------------------------------
+
+const MCP_CONNECTORS_BASE = '/admin/api/ai/mcp/connectors'
+
+export async function listMcpConnectors(signal?: AbortSignal): Promise<McpConnectorView[]> {
+  const body = await apiRequest(MCP_CONNECTORS_BASE, { schema: McpConnectorListSchema, signal })
+  return body.connectors
+}
+
+export async function createMcpConnector(body: CreateMcpConnectorBody): Promise<CreateMcpConnectorResult> {
+  return apiRequest(MCP_CONNECTORS_BASE, {
+    method: 'POST',
+    body,
+    schema: CreateMcpConnectorResultSchema,
+  })
+}
+
+export async function revokeMcpConnector(id: string): Promise<void> {
+  await apiRequest(`${MCP_CONNECTORS_BASE}/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
+// ---------------------------------------------------------------------------
+// Project MCP servers — `/admin/api/ai/mcp/project-servers`. The OTHER
+// direction from the connectors above: these point Studio's OWN agent OUT at
+// a project's MCP servers (declared in `.mcp.json`, or registered directly in
+// Studio for a server that needs a secret `.mcp.json` cannot safely hold).
+// Server: `server/ai/mcp/handlers/registeredServers.ts`.
+// ---------------------------------------------------------------------------
+
+const PROJECT_MCP_SERVERS_BASE = '/admin/api/ai/mcp/project-servers'
+
+export async function listProjectMcpServers(dir: string, signal?: AbortSignal): Promise<ProjectMcpServerView[]> {
+  const body = await apiRequest(PROJECT_MCP_SERVERS_BASE, {
+    query: { dir },
+    schema: ListProjectMcpServersResultSchema,
+    signal,
+  })
+  return body.servers
+}
+
+/** Register (or redefine) a Studio-owned MCP server. `secrets`, when present, is encrypted server-side and never echoed back — see `mcpServerSecretStore.ts`. */
+export async function addRegisteredMcpServer(input: {
+  dir: string
+  name: string
+  definition: RegisteredMcpServerDefinition
+  secrets?: Record<string, string>
+}): Promise<void> {
+  await apiRequest(PROJECT_MCP_SERVERS_BASE, { method: 'POST', body: input })
+}
+
+export async function removeRegisteredMcpServer(dir: string, name: string): Promise<void> {
+  await apiRequest(`${PROJECT_MCP_SERVERS_BASE}/${encodeURIComponent(name)}`, {
+    method: 'DELETE',
+    query: { dir },
+  })
+}
+
+/** Grant/revoke consent for one server, by name. `source` picks which list (`.mcp.json`-declared vs. Studio-registered) so a shared name can never be approved on the wrong one. */
+export async function setMcpServerApproval(
+  dir: string,
+  name: string,
+  source: McpServerSource,
+  approve: boolean,
+): Promise<void> {
+  await apiRequest(`${PROJECT_MCP_SERVERS_BASE}/${encodeURIComponent(name)}/${approve ? 'approve' : 'revoke'}`, {
+    method: 'POST',
+    body: { dir, source },
+  })
+}
+
+
+const MCP_OAUTH_BASE = '/admin/api/ai/mcp/oauth'
+
+/**
+ * Whether one registered server needs an OAuth sign-in, and whether Studio
+ * currently holds a session for it. The access token itself never crosses this
+ * boundary — only the fact of a session, its scope, and its deadline.
+ */
+export async function getMcpOAuthStatus(
+  dir: string,
+  name: string,
+  signal?: AbortSignal,
+): Promise<McpOAuthStatus> {
+  return apiRequest(`${MCP_OAUTH_BASE}/status`, {
+    query: { dir, name },
+    schema: McpOAuthStatusSchema,
+    signal,
+  })
+}
+
+/** Begin the browser OAuth flow and return the authorization URL to open. Studio derives it from the server's own published metadata — never a hardcoded per-vendor link. */
+export async function startMcpOAuth(dir: string, name: string): Promise<string> {
+  const body = await apiRequest(`${MCP_OAUTH_BASE}/start`, {
+    method: 'POST',
+    body: { dir, name },
+    schema: StartMcpOAuthResultSchema,
+  })
+  return body.authorizeUrl
+}
+
+/**
+ * What the Claude CLI reports about this server, which is a DIFFERENT question
+ * from {@link getMcpOAuthStatus}: for a provider whose client allow-list
+ * refuses Studio, the sign-in can only have landed in the CLI's own keychain,
+ * where Studio's token store cannot see it.
+ *
+ * Separate call because it costs a live health check (~10s server-side, cached
+ * for a minute) — the card renders on the fast status first, then resolves
+ * this.
+ */
+export async function getMcpCliConnection(
+  dir: string,
+  name: string,
+  signal?: AbortSignal,
+): Promise<McpCliConnection> {
+  return apiRequest(`${MCP_OAUTH_BASE}/cli-status`, {
+    query: { dir, name },
+    schema: McpCliConnectionSchema,
+    signal,
+  })
+}
+
+/** Sign out of one server, leaving its other stored secrets untouched. */
+export async function signOutMcpOAuth(dir: string, name: string): Promise<void> {
+  await apiRequest(MCP_OAUTH_BASE, { method: 'DELETE', query: { dir, name } })
+}

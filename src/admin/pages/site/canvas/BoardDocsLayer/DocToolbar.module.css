@@ -1,0 +1,70 @@
+/**
+ * DocToolbar — floating rich-text toolbar for a doc card.
+ *
+ * `--toolbar-x` / `--toolbar-y` are the anchor card's on-screen top-left,
+ * written imperatively by DocToolbar.tsx when the canvas transform or the card
+ * geometry changes (see its module doc). `position: fixed` because those are
+ * viewport coordinates, NOT board units — the toolbar deliberately lives
+ * outside CanvasTransformLayer so the canvas zoom never scales it.
+ */
+.toolbar {
+    position: fixed;
+    left: var(--toolbar-x);
+    top: var(--toolbar-y);
+    /* Sit the bar's BOTTOM edge on the anchor point, so it hangs above the card. */
+    transform: translateY(-100%);
+    z-index: var(--z-canvas-floating-toolbar);
+    display: flex;
+    align-items: center;
+    gap: var(--space-4xs);
+    /* Nine controls, sized to land near a default 320px card. There is no
+       horizontal scroll and no wrap: a formatting bar you have to scroll is a
+       bar with too many controls in it, which is why alignment and
+       clear-formatting moved into the overflow menu and font family/size were
+       removed outright. The cap only stops the bar running off-screen on a
+       card near the viewport edge; it is not meant to be reached. */
+    max-width: min(360px, calc(100vw - var(--space-4xl)));
+    padding: var(--space-3xs);
+    background: var(--bg-surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--panel-radius);
+    box-shadow: var(--shadow-panel-drop);
+}
+
+/*
+ * Width-capped explicitly. Left to size itself the trigger takes its width
+ * from the widest OPTION ("Bulleted list"), which is wider than the control
+ * needs to be for the value it usually shows.
+ */
+.selectBlock {
+    flex: none;
+    width: 96px;
+}
+
+.color {
+    flex: none;
+    width: 28px;
+}
+
+/*
+ * The letter-glyph toggles. The vendored icon set carries no bold/italic/
+ * strike marks (see `vendor/pixel-art-icons/`), so these buttons wear the
+ * typographic convention instead — which is what every other editor's toolbar
+ * shows anyway.
+ */
+.glyphBold {
+    font-weight: 700;
+}
+
+.glyphItalic {
+    font-style: italic;
+    font-family: Georgia, "Times New Roman", serif;
+}
+
+.glyphUnderline {
+    text-decoration: underline;
+}
+
+.glyphStrike {
+    text-decoration: line-through;
+}

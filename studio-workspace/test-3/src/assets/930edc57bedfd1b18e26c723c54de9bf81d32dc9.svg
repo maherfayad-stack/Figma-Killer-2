@@ -1,0 +1,14 @@
+<svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="chartLineDown" clip-path="url(#clip0_15_5892)">
+<g id="Vector">
+</g>
+<path id="Vector_2" d="M18.75 15.75L12 9L9 12L3 6" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"/>
+<path id="Vector_3" d="M18.75 12V15.75H15" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"/>
+<path id="Vector_4" d="M21 19.5H3V4.5" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<defs>
+<clipPath id="clip0_15_5892">
+<rect width="24" height="24" fill="white"/>
+</clipPath>
+</defs>
+</svg>

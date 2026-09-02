@@ -1,0 +1,48 @@
+/* FrameBulkInspector — bulk frame actions when 1+ board frames are selected
+   (WS-7.2). Mirrors FrameSizePanel's compact strip layout, extended with the
+   bulk-only sections (apply-to-all, fit height, align/distribute, rename,
+   delete). */
+
+.panel {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-s);
+    padding: var(--space-m) var(--space-xl);
+}
+
+.header {
+    font-size: var(--text-s);
+    font-weight: 600;
+    color: var(--text);
+}
+
+.dimensions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-s);
+}
+
+.sectionLabel {
+    font-size: var(--text-xs);
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    margin-top: var(--space-xs);
+}
+
+.iconRow {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2xs);
+}
+
+.renameRow {
+    display: flex;
+    align-items: center;
+    gap: var(--space-s);
+}
+
+.renameRow > :first-child {
+    flex: 1;
+}

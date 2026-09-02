@@ -1,0 +1,158 @@
+/*
+ * The open thread, hanging below-right of its pin.
+ *
+ * Counter-scales exactly like the pin (see CommentPin.module.css for why this
+ * is CSS and not a subscription), so a conversation is the same readable size
+ * at 20% zoom as at 200%.
+ */
+
+.popover {
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2xs);
+    box-sizing: border-box;
+    width: 280px;
+    padding: var(--space-s);
+    border-radius: var(--panel-radius);
+    background: var(--bg-surface);
+    box-shadow: var(--canvas-chrome-shadow);
+    color: var(--text);
+    text-align: left;
+    cursor: default;
+    pointer-events: auto;
+    transform-origin: 0 0;
+    /* Offset clears the pin, whose tip sits on the anchor point. */
+    transform: scale(calc(1 / var(--canvas-zoom))) translate(14px, 8px);
+}
+
+/*
+ * Opened to the LEFT of its pin, because the default right-hand placement
+ * would have run under the canvas's right edge — which since the comments
+ * pane moved to the right sidebar is a wall the popover meets often, not a
+ * rare screen-edge case. The flip is measured, not guessed: see the component.
+ */
+.popoverFlipped {
+    transform: scale(calc(1 / var(--canvas-zoom))) translate(calc(-100% - 14px), 8px);
+}
+
+.header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3xs);
+}
+
+.seq {
+    color: var(--text-subtle);
+    font-size: var(--text-2xs);
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+
+.resolvedTag {
+    padding: var(--space-px) var(--space-2xs);
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface-3);
+    color: var(--text-muted);
+    font-size: var(--text-2xs);
+}
+
+.spacer {
+    flex: 1;
+}
+
+/*
+ * The stale-anchor notice. Nothing in Figma or Penpot corresponds to this —
+ * it exists because Studio node ids are source positions and can rot out from
+ * under a comment. Same wording the agent posts when it refuses to act, so
+ * there is one explanation rather than two.
+ */
+.stale {
+    margin: 0;
+    padding: var(--space-2xs) var(--space-s);
+    border-radius: var(--radius);
+    background: var(--bg-surface-2);
+    box-shadow: inset 2px 0 0 var(--canvas-comment-pin-stale);
+    color: var(--text-muted);
+    font-size: var(--text-2xs);
+    line-height: 1.45;
+}
+
+.comments {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-s);
+    margin: 0;
+    padding: 0;
+    max-height: 320px;
+    overflow-y: auto;
+    list-style: none;
+}
+
+.comment {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3xs);
+    min-width: 0;
+}
+
+.byline {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-2xs);
+    min-width: 0;
+}
+
+.author {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-bright);
+    font-size: var(--text-2xs);
+    font-weight: 600;
+}
+
+/* An AI-written comment is marked in the byline AND tagged. A reviewer has to
+   be able to tell at a glance which half of a thread is machine-written. */
+.agent {
+    color: var(--info-text);
+}
+
+.agentTag {
+    padding: 0 var(--space-3xs);
+    border-radius: var(--radius-sm);
+    background: var(--overlay-10);
+    color: var(--info-text);
+    font-size: var(--text-2xs);
+    font-weight: 700;
+    letter-spacing: 0.04em;
+}
+
+.stamp {
+    color: var(--text-subtle);
+    font-size: var(--text-2xs);
+    white-space: nowrap;
+}
+
+.body {
+    margin: 0;
+    color: var(--text);
+    font-size: var(--text-xs);
+    line-height: 1.5;
+    /* A pasted selector or a long URL must wrap rather than widen the card. */
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+}
+
+/*
+ * The ⋯ trigger. `align-items: baseline` on `.byline` would drop an icon-only
+ * button below the text baseline (it has no text to sit on), so this one opts
+ * out and centres itself against the line instead.
+ */
+.kebabTrigger {
+    align-self: center;
+    flex: 0 0 auto;
+}

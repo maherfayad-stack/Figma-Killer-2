@@ -1,0 +1,199 @@
+/**
+ * Build a capability-scoped MCP `Server` over Studio's existing tool engine.
+ *
+ * We use the low-level SDK `Server` + `setRequestHandler` (not the higher-level
+ * `McpServer.registerTool`, which requires Zod schemas — banned repo-wide).
+ * This lets us advertise our canonical TypeBox `inputSchema` verbatim as JSON
+ * Schema (exactly as the AI drivers send it to providers) and run each call
+ * through `executeAiTool`, which already does TypeBox input validation, a
+ * capability re-check, and `{ ok, data | error }` normalisation.
+ */
+import { Server } from '@modelcontextprotocol/sdk/server/index.js'
+import {
+  CallToolRequestSchema,
+  ListResourcesRequestSchema,
+  ListToolsRequestSchema,
+  ReadResourceRequestSchema,
+  type CallToolResult,
+} from '@modelcontextprotocol/sdk/types.js'
+import type { DbClient } from '../../db/client'
+import type { CoreCapability } from '@core/capabilities'
+import { getErrorMessage } from '@core/utils/errorMessage'
+import type { AiBrowserBridge, AiTool, AiToolOutput } from '../runtime/types'
+import { executeAiTool } from '../drivers/http/execTool'
+import { mcpToolsForCapabilities, mcpToolsForStudioWorkspace } from './registry'
+import { MCP_RESOURCES, findMcpResource } from './resources'
+import {
+  getEditorBridgeForUser,
+  type EditorBridgeScope,
+} from './editorBridge'
+import {
+  PERMISSION_REQUEST_TOOL_NAME,
+  getPermissionGate,
+  permissionGateToolDefinition,
+  runPermissionRequest,
+} from './permissionGate'
+import { getConnectorWorkspace } from './connectorWorkspace'
+
+export interface McpServerContext {
+  db: DbClient
+  userId: string
+  connectorId: string
+  capabilities: readonly CoreCapability[]
+  uploadsDir?: string
+}
+
+// Used for server-resolved tools, which never call the bridge.
+const NOOP_BRIDGE: AiBrowserBridge = {
+  callBrowser: async () => {
+    throw new Error('[ai:mcp] this tool has no server handler and no live editor bridge')
+  },
+}
+
+const NO_WORKSPACE_MESSAGE: Record<EditorBridgeScope, string> = {
+  site: 'This tool runs in the Site editor. Open the Site editor in a browser (signed in as the connector owner) and try again.',
+}
+
+export function buildMcpServer(ctx: McpServerContext): Server {
+  const server = new Server(
+    { name: 'alm-figma-killer', version: '1.0.0' },
+    { capabilities: { tools: {}, resources: {} } },
+  )
+
+  // Static reference resources (WS-9.5) — read-only, not capability-gated:
+  // they're documentation, not a data source, so every connector can read
+  // "how to write React this parser imports cleanly" regardless of grant.
+  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+    resources: MCP_RESOURCES.map((r) => ({ uri: r.uri, name: r.name, description: r.description, mimeType: r.mimeType })),
+  }))
+  server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+    const resource = findMcpResource(request.params.uri)
+    if (!resource) throw new Error(`Unknown resource: ${request.params.uri}`)
+    return {
+      contents: [{ uri: resource.uri, mimeType: resource.mimeType, text: resource.text }],
+    }
+  })
+
+  // A connector bound to a Studio project is the in-canvas agent, which holds
+  // native file tools and needs only what the filesystem cannot do; an unbound
+  // one is an external MCP client with no filesystem access and gets the full
+  // registry. See `mcpToolsForStudioWorkspace`'s own doc for the reasoning.
+  const tools = getConnectorWorkspace(ctx.connectorId)
+    ? mcpToolsForStudioWorkspace(ctx.capabilities)
+    : mcpToolsForCapabilities(
+        ctx.capabilities,
+        ctx.uploadsDir
+          ? { connectorId: ctx.connectorId, uploadsDir: ctx.uploadsDir }
+          : undefined,
+      )
+  const byName = new Map<string, AiTool>(tools.map((t) => [t.name, t]))
+
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: [
+      // Advertised only while this connector has a live permission gate — i.e.
+      // only to the per-turn connector the `claudeCli` driver minted, never to
+      // an external MCP client. Listing is mandatory for it to work at all:
+      // the CLI resolves `--permission-prompt-tool` against `tools/list` at
+      // startup and aborts if it is missing.
+      ...(getPermissionGate(ctx.connectorId) ? [permissionGateToolDefinition()] : []),
+      ...tools.map((t) => ({
+      name: t.name,
+      description: t.description,
+      // Our TypeBox object schema IS a valid JSON-Schema tool definition. The
+      // `AiTool.inputSchema` field is the general `TSchema`, so we adapt it to
+      // the SDK's object-schema shape (a type-level adaptation, not a runtime
+      // data boundary — every MCP tool's schema is a `Type.Object`).
+      inputSchema: t.inputSchema as unknown as { type: 'object'; properties?: Record<string, unknown> },
+      })),
+    ],
+  }))
+
+  server.setRequestHandler(CallToolRequestSchema, async (request): Promise<CallToolResult> => {
+    const { name, arguments: args } = request.params
+
+    // Handled before the registry lookup: the permission gate is a protocol
+    // construct, not one of Studio's capability-gated tools. It has no
+    // capability of its own because it grants nothing — it only relays a
+    // question to the human who is already watching this turn.
+    if (name === PERMISSION_REQUEST_TOOL_NAME) {
+      const gate = getPermissionGate(ctx.connectorId)
+      if (!gate) {
+        return { isError: true, content: [{ type: 'text', text: `Unknown tool: ${name}` }] }
+      }
+      return { content: [{ type: 'text', text: await runPermissionRequest(gate, args ?? {}) }] }
+    }
+
+    const tool = byName.get(name)
+    if (!tool) {
+      return { isError: true, content: [{ type: 'text', text: `Unknown tool: ${name}` }] }
+    }
+
+    // Server-resolved tools run in-process; browser tools are relayed to the
+    // connector owner's matching open workspace. No workspace → a clear,
+    // actionable error. Browser tools currently belong only to Site; keep
+    // that invariant explicit instead of guessing a bridge.
+    let bridge = NOOP_BRIDGE
+    if (tool.execution === 'browser') {
+      if (tool.scope !== 'site') {
+        return {
+          isError: true,
+          content: [{ type: 'text', text: `Browser tool "${tool.name}" has unsupported scope "${tool.scope}".` }],
+        }
+      }
+      const browserScope: EditorBridgeScope = tool.scope
+      const live = getEditorBridgeForUser(ctx.userId, browserScope)
+      if (!live) {
+        return { isError: true, content: [{ type: 'text', text: NO_WORKSPACE_MESSAGE[browserScope] }] }
+      }
+      bridge = live
+    }
+
+    const controller = new AbortController()
+    let output: AiToolOutput
+    try {
+      output = await executeAiTool(tool, args ?? {}, bridge, controller.signal, {
+        db: ctx.db,
+        userId: ctx.userId,
+        capabilities: ctx.capabilities,
+        conversationId: `mcp:${ctx.connectorId}`,
+        // The Studio project this connector's turn is about, when one is bound
+        // (`connectorWorkspace.ts`). This is the path the Studio agent's own
+        // tool calls take — it is a `claude` subprocess reaching back in
+        // through /_studio/mcp, so `chat.ts`'s per-turn workspaceDir never
+        // reaches it and the tools would otherwise default to the wrong
+        // project entirely.
+        workspaceDir: getConnectorWorkspace(ctx.connectorId),
+        snapshot: null,
+      })
+    } catch (err) {
+      // Browser bridge rejection is terminal for a chat turn, but MCP has no
+      // surrounding provider loop to terminate. Translate the same transport
+      // failure into the protocol's normal tool-error result instead of
+      // letting the request handler reject with an internal MCP error.
+      return {
+        isError: true,
+        content: [{
+          type: 'text',
+          text: getErrorMessage(err, `Browser tool "${tool.name}" could not return a result.`),
+        }],
+      }
+    }
+
+    if (!output.ok) {
+      return { isError: true, content: [{ type: 'text', text: output.error ?? 'Tool failed.' }] }
+    }
+    // A tool that mutates but returns no payload (e.g. deleteNode) must still
+    // read as an unambiguous success — never the literal "null".
+    const payload = output.data === undefined || output.data === null ? { ok: true } : output.data
+    const content: CallToolResult['content'] = [{ type: 'text', text: JSON.stringify(payload) }]
+    // Forward image attachments (e.g. render_snapshot's PNG) as MCP image
+    // content blocks so vision clients actually receive the screenshot — they
+    // travel on `output.images`, never inlined into the text payload.
+    for (const image of output.images ?? []) {
+      content.push({ type: 'image', data: image.data, mimeType: image.mimeType })
+    }
+    return { content }
+  })
+
+  return server
+}

@@ -1,0 +1,624 @@
+/**
+ * POST /admin/api/ai/chat
+ *
+ * Opens an NDJSON stream against a chat. Body:
+ *   {
+ *     conversationId: string,
+ *     content:        Array<{ kind: 'text' | 'image', ... }>,
+ *     snapshot?:      unknown   // live CMS Site editor snapshot for this turn
+ *     workspaceDir?:  string    // open Studio project's absolute dir
+ *   }
+ *
+ * The conversation row already carries `(credentialId, modelId)` from when
+ * it was created. The handler:
+ *   1. Verifies `ai.chat` + ownership of the conversation.
+ *   2. Loads + decrypts the credential (rejects if rotated).
+ *   3. Resolves the driver for the credential's provider.
+ *   4. Validates `workspaceDir` once (`resolveValidatedWorkspaceDir`) and uses
+ *      the result for TWO things (WS-12): which toolset `selectStudioTools`
+ *      offers (the real Studio tools vs. the CMS `site` tools), and which
+ *      system prompt gets built below. `workspaceDir` is also forwarded
+ *      verbatim on `AiStreamRequest` for `claudeCli` (WS-11), which does its
+ *      OWN, separate validation before using it as a subprocess `cwd` — this
+ *      handler's validation is for tool/prompt selection only, not a trust
+ *      decision claudeCli.ts can skip re-making.
+ *   5. Builds an `AiStreamRequest` (system prompt + tools + history).
+ *      Write tools are filtered out unless the caller has `ai.tools.write`.
+ *   6. Persists the user message, then runs `runChat({ ... })`.
+ *   7. Streams NDJSON events back as the driver produces them.
+ */
+
+import { safeParseValue } from '@core/utils/typeboxHelpers'
+import {
+  AI_CHAT_MAX_REQUEST_BYTES,
+  AiChatRequestBodySchema,
+  type AiChatRequestBody,
+  type AiContentBlock,
+} from '@core/ai'
+import {
+  RequestBodyTooLargeError,
+  badRequest,
+  jsonResponse,
+  payloadTooLarge,
+  readValidatedBody,
+} from '../../http'
+import { requireCapability } from '../../auth/authz'
+import type { DbClient } from '../../db/client'
+import { createAuditEvent } from '../../repositories/audit'
+import {
+  appendMessage,
+  listMessagesForConversation,
+  readConversationForUser,
+  replaceDefaultConversationTitle,
+  deriveConversationTitle,
+  DEFAULT_CONVERSATION_TITLE,
+} from '../conversations/store'
+import {
+  buildMessageHistory,
+  projectUserImagesForModel,
+} from '../conversations/history'
+import {
+  readCredentialForUser,
+  resolveCredentialForDriver,
+  touchCredentialLastUsed,
+} from '../credentials/store'
+import { resolveDriver } from '../drivers'
+import { resolveModelCapabilities } from '../drivers/modelCapabilities'
+import {
+  AiImageInputError,
+  canonicaliseAiUserContent,
+  preflightAiUserContent,
+} from '../inputImages'
+import { selectStudioTools } from '../tools'
+import { StudioAgentSnapshotSchema } from '../tools/studio/snapshot'
+import {
+  createBridge,
+  createConversationsPersister,
+  encodeStreamEvent,
+  runChat,
+} from '../runtime'
+import { normalizeContextTokens } from '../contextTokens'
+import { resolveValidatedWorkspaceDir } from '../../handlers/studio/workspaceDir'
+import { registerTurnDesignReferences } from '../../handlers/studio/turnDesignReferences'
+import { buildCmsSiteSystemPrompt, buildStudioProjectSystemPrompt } from '../chatSystemPrompt'
+import type { AiStreamEvent } from '../runtime/types'
+import type { AiStreamRequest } from '../drivers/types'
+
+const activeChatConversations = new Set<string>()
+const REQUEST_ABORTED = Symbol('request-aborted')
+
+
+/**
+ * Match `/admin/api/ai/chat`. Returns `null` if path doesn't match.
+ */
+export function tryHandleAiChat(
+  req: Request,
+  db: DbClient,
+  pathname: string,
+): Promise<Response> | null {
+  if (pathname !== '/admin/api/ai/chat') return null
+  return handleAiChat(req, db)
+}
+
+async function handleAiChat(
+  req: Request,
+  db: DbClient,
+): Promise<Response> {
+  if (req.method !== 'POST') {
+    return jsonResponse({ error: 'Method not allowed' }, { status: 405 })
+  }
+
+  // `ai.chat` is the read floor for the conversation endpoint — required
+  // for every caller. Write tools are filtered separately below based on
+  // the caller's `ai.tools.write` capability so a Client granted chat
+  // can use the agent for ideas without it being able to mutate the
+  // editor store.
+  const userOrResponse = await requireCapability(req, db, 'ai.chat')
+  if (userOrResponse instanceof Response) return userOrResponse
+  const user = userOrResponse
+
+  let chatBody: AiChatRequestBody | null
+  try {
+    chatBody = await readValidatedBody(req, AiChatRequestBodySchema, {
+      maxBytes: AI_CHAT_MAX_REQUEST_BYTES,
+    })
+  } catch (err) {
+    if (err instanceof RequestBodyTooLargeError) {
+      return payloadTooLarge('Chat request is too large.')
+    }
+    throw err
+  }
+  if (!chatBody) return badRequest('Invalid request body.')
+  const { conversationId, content, snapshot, workspaceDir, effort, permissionMode } = chatBody
+  // Validated once, reused for both tool selection and prompt assembly below
+  // — a client-supplied path is never trusted twice with two different
+  // checks that could drift. `null` means either no project is open or the
+  // requested dir failed containment (not this project's own real dir, or
+  // outside studio-workspace/ entirely) — both degrade to the CMS toolset,
+  // never to trusting the raw client value.
+  const validatedWorkspaceDir = resolveValidatedWorkspaceDir(workspaceDir)
+
+  const conversation = await readConversationForUser(db, user.id, conversationId)
+  if (!conversation) {
+    return jsonResponse({ error: 'Conversation not found' }, { status: 404 })
+  }
+  if (!conversation.credentialId) {
+    return jsonResponse(
+      { error: 'Conversation has no credential set. Open AI settings to configure a provider.' },
+      { status: 400 },
+    )
+  }
+
+  const credential = await readCredentialForUser(db, user.id, conversation.credentialId)
+  if (!credential) {
+    return jsonResponse(
+      { error: 'Credential not found or no longer accessible.' },
+      { status: 404 },
+    )
+  }
+  let resolvedCredential
+  try {
+    resolvedCredential = await resolveCredentialForDriver(credential)
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Credential resolution failed.'
+    return jsonResponse({ error: message }, { status: 409 })
+  }
+
+  const driver = resolveDriver(credential.providerId)
+  let preflight: ReturnType<typeof preflightAiUserContent>
+  try {
+    preflight = preflightAiUserContent(content)
+  } catch (err) {
+    if (err instanceof AiImageInputError) {
+      return err.status === 413 ? payloadTooLarge(err.message) : badRequest(err.message)
+    }
+    throw err
+  }
+  const requestedImage = preflight.images.length > 0
+
+  // Resolve every selected model, not only image-bearing turns: the same
+  // authoritative flag also gates browser-tool screenshots. Model-specific
+  // drivers are cached/de-duplicated by the shared resolver.
+  const modelCapabilities = await waitForRequest(
+    resolveModelCapabilities(driver, resolvedCredential, conversation.modelId),
+    req.signal,
+  )
+  if (modelCapabilities === REQUEST_ABORTED) return clientClosedRequest()
+  const tools = selectStudioTools(user.capabilities, { studioProjectOpen: validatedWorkspaceDir !== null })
+  if (requestedImage && !modelCapabilities.visionInput) {
+    return jsonResponse(
+      { error: 'The selected model does not support image input. Choose a vision-capable model.' },
+      { status: 422 },
+    )
+  }
+  if (tools.length > 0 && !modelCapabilities.toolCalling) {
+    return jsonResponse(
+      { error: 'The selected model does not support tool calling. Choose an agent-capable model.' },
+      { status: 422 },
+    )
+  }
+  if (req.signal.aborted) return clientClosedRequest()
+
+  // One provider stream may write a conversation at a time so concurrent tabs
+  // cannot interleave assistant/tool rows. Acquire admission before the
+  // expensive Sharp boundary: the retryable loser must not decode eight images
+  // only to discover that another request already owns the conversation.
+  const releaseConversation = acquireConversationStream(conversation.id)
+  if (!releaseConversation) {
+    return jsonResponse(
+      { error: 'This conversation is already generating a response. Wait for it to finish.' },
+      { status: 409 },
+    )
+  }
+  if (req.signal.aborted) {
+    releaseConversation()
+    return clientClosedRequest()
+  }
+
+  // Full decode/re-encode is deliberately after the capability gates so an
+  // incompatible selected model cannot force needless Sharp work.
+  let userContent: AiContentBlock[]
+  try {
+    userContent = await canonicaliseAiUserContent(preflight, req.signal)
+  } catch (err) {
+    releaseConversation()
+    if (req.signal.aborted) return clientClosedRequest()
+    if (err instanceof AiImageInputError) {
+      return err.status === 413 ? payloadTooLarge(err.message) : badRequest(err.message)
+    }
+    throw err
+  }
+  if (req.signal.aborted) {
+    releaseConversation()
+    return clientClosedRequest()
+  }
+
+  let existingRecords: Awaited<ReturnType<typeof listMessagesForConversation>>
+  let latestConversation: NonNullable<Awaited<ReturnType<typeof readConversationForUser>>>
+  try {
+    const refreshedConversation = await readConversationForUser(db, user.id, conversation.id)
+    if (!refreshedConversation) {
+      releaseConversation()
+      return jsonResponse({ error: 'Conversation not found' }, { status: 404 })
+    }
+    latestConversation = refreshedConversation
+    if (
+      latestConversation.credentialId !== conversation.credentialId
+      || latestConversation.modelId !== conversation.modelId
+    ) {
+      releaseConversation()
+      return jsonResponse(
+        { error: 'The conversation model changed while this message was being prepared. Send again.' },
+        { status: 409 },
+      )
+    }
+    existingRecords = await listMessagesForConversation(db, conversation.id)
+  } catch (err) {
+    releaseConversation()
+    throw err
+  }
+  if (req.signal.aborted) {
+    releaseConversation()
+    return clientClosedRequest()
+  }
+  const prepared = await (async () => {
+    try {
+      // Append the user's message BEFORE streaming so it's persisted even if
+      // the stream aborts mid-response.
+      const appendedMessage = await appendMessage(db, conversation.id, {
+        role: 'user',
+        content: userContent,
+      })
+
+      // The first prompt names the conversation: replace the placeholder title
+      // with an excerpt of what the user asked for. Only fires while the title
+      // is still the default, so a user-renamed chat is never overwritten.
+      if (latestConversation.title === DEFAULT_CONVERSATION_TITLE) {
+        const text = userContent.find((block) => block.kind === 'text')
+        const imageCount = userContent.filter((block) => block.kind === 'image').length
+        const derivedTitle = text?.kind === 'text'
+          ? deriveConversationTitle(text.text)
+          : imageCount === 1 ? 'Image' : 'Images'
+        if (derivedTitle) {
+          await replaceDefaultConversationTitle(db, user.id, conversation.id, derivedTitle)
+            .catch((err) => { console.error('[ai/chat] auto-title failed:', err) })
+        }
+      }
+
+      const messages = projectUserImagesForModel(
+        buildMessageHistory([...existingRecords, appendedMessage]),
+        modelCapabilities.visionInput,
+      )
+      // An image attached to a turn with a Studio project open IS the design
+      // to match — arm it as a durable reference BEFORE the prompt is built,
+      // so the live digest below reports what `studio_compare` can measure
+      // against this turn. Idempotent by content hash and never fatal; see
+      // `registerTurnDesignReferences`.
+      //
+      // Scoped to the page the user was looking at: `activePageId` comes
+      // straight off the SAME `StudioAgentSnapshot` the live digest below is
+      // built from (`buildStudioProjectSystemPrompt` parses it again for the
+      // rest of the digest) — never re-derived by a second path. Parsed here,
+      // silently, because an invalid/absent snapshot degrading to "register
+      // unscoped" is not itself an error worth logging twice; the later parse
+      // in `buildStudioProjectSystemPrompt` still logs if the snapshot is
+      // malformed. Unscoped means the pasted reference can only ever be found
+      // again by explicit id or as "most recent project-wide" — the same
+      // fallback that existed before this fix, not a new failure mode.
+      if (validatedWorkspaceDir && preflight.imageBytes.length > 0) {
+        const parsedSnapshotForReferenceScope = safeParseValue(StudioAgentSnapshotSchema, snapshot)
+        const activePageId = parsedSnapshotForReferenceScope.ok
+          ? (parsedSnapshotForReferenceScope.value.activePageId ?? undefined)
+          : undefined
+        await registerTurnDesignReferences(validatedWorkspaceDir, preflight.imageBytes, activePageId)
+      }
+
+      // Plain text of THIS turn's own message — threaded through to the live
+      // digest's Figma-URL nudge (verification-gate item 4) only; never
+      // persisted anywhere beyond that regex check.
+      const userMessageText = userContent
+        .filter((block): block is Extract<AiContentBlock, { kind: 'text' }> => block.kind === 'text')
+        .map((block) => block.text)
+        .join('\n')
+
+      const systemPrompt = validatedWorkspaceDir
+        ? await buildStudioProjectSystemPrompt(validatedWorkspaceDir, snapshot, conversation.id, tools, { userId: user.id }, userMessageText)
+        : buildCmsSiteSystemPrompt(snapshot)
+
+      // Capture totals reported by the persister so the audit row can hold
+      // them when the stream completes (we read them off the conversation row
+      // diff post-stream — see the post-loop block).
+      const tokensAtStart = {
+        prompt: latestConversation.promptTokensTotal,
+        completion: latestConversation.completionTokensTotal,
+        cost: latestConversation.costUsdTotal,
+      }
+
+      await createAuditEvent(db, {
+        actorUserId: user.id,
+        action: 'ai.chat.started',
+        targetType: 'ai_conversation',
+        targetId: conversation.id,
+        metadata: {
+          providerId: credential.providerId,
+          modelId: conversation.modelId,
+        },
+      })
+      return { messages, systemPrompt, tokensAtStart }
+    } catch (err) {
+      releaseConversation()
+      throw err
+    }
+  })()
+  const { messages, systemPrompt, tokensAtStart } = prepared
+
+  // `req.signal` covers request-side aborts, but a streaming response consumer
+  // can disappear independently (tab reload, dev-server hot restart, proxy
+  // disconnect). Own a second lifecycle signal and abort it from the response
+  // stream's `cancel()` hook or when enqueue proves the consumer is gone.
+  const streamAbort = new AbortController()
+  const turnSignal = AbortSignal.any([req.signal, streamAbort.signal])
+
+  // Aborts ONLY when the guard below actually force-releases the lock — see
+  // `abandonTurn` and `runChat`'s `abandonedSignal` doc. Threaded into
+  // `runChat` so an abandoned turn can never interleave writes with whatever
+  // NEW turn now legitimately holds this conversation.
+  const turnDeath = new AbortController()
+
+  // See `armAbortedReleaseGuard`'s doc comment: the lock this releases must
+  // not depend on the driver's own promise ever settling.
+  const disposeAbortedReleaseGuard = armAbortedReleaseGuard(
+    turnSignal,
+    () => abandonTurn(turnDeath, releaseConversation),
+  )
+
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      let streamClosed = false
+      let destroyBridge: (() => void) | null = null
+      let streamError: string | null = null
+
+      const closeStream = () => {
+        if (streamClosed) return
+        streamClosed = true
+        try { controller.close() } catch { /* already closed */ }
+      }
+      const emit = (event: AiStreamEvent): void => {
+        if (streamClosed) return
+        if (event.type === 'error') streamError = event.message
+        // Inject the live "context used" count onto each per-round `context`
+        // event: the provider-normalised input the model held that round.
+        // Drivers report raw token buckets; the handler knows the provider, so
+        // it normalises here for the composer meter. (The window is resolved
+        // client-side from the model catalogue, so it isn't carried on the
+        // wire.) `usage` stays billing-only — the meter is driven by `context`.
+        const wireEvent: AiStreamEvent =
+          event.type === 'context'
+            ? { ...event, contextTokens: normalizeContextTokens(credential.providerId, event) }
+            : event
+        try {
+          controller.enqueue(encodeStreamEvent(wireEvent))
+        } catch {
+          streamClosed = true
+          streamAbort.abort()
+        }
+      }
+
+      try {
+        // Mutable per-turn context. `snapshot` starts at the value the browser
+        // posted with the request and is refreshed in place by the bridge's
+        // onSnapshot after each mutating browser tool — so a read tool run
+        // later in the same turn sees current state, not stale turn-start state.
+        const toolContextBase = {
+          db,
+          userId: user.id,
+          capabilities: user.capabilities,
+          conversationId: conversation.id,
+          // The default target for every Studio tool's optional `dir`. Without
+          // it they fall back to "first project alphabetically", which silently
+          // pointed the agent at a project the user was not looking at.
+          workspaceDir: validatedWorkspaceDir ?? undefined,
+          snapshot,
+        }
+        const { bridgeId, bridge, destroy } = createBridge(
+          emit,
+          turnSignal,
+          undefined,
+          (next) => { toolContextBase.snapshot = next },
+        )
+        destroyBridge = destroy
+        emit({ type: 'bridgeReady', bridgeId })
+
+        const request: AiStreamRequest = {
+          systemPrompt,
+          // Full conversation history — direct HTTP drivers replay it every
+          // turn (there is no server-side session to resume).
+          messages,
+          tools,
+          modelId: conversation.modelId,
+          modelCapabilities,
+          credentials: resolvedCredential,
+          signal: turnSignal,
+          bridge,
+          toolContextBase,
+          workspaceDir,
+          effort,
+          permissionMode,
+          sessionEpoch: latestConversation.sessionEpoch,
+        }
+
+        const persister = createConversationsPersister(db, conversation.id, {
+          providerId: credential.providerId,
+          modelId: conversation.modelId,
+        })
+        await runChat({ driver, request, persister, emit, abandonedSignal: turnDeath.signal })
+
+        // Best-effort: record that this credential was used.
+        await touchCredentialLastUsed(db, credential.id).catch(() => { /* noop */ })
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : String(err)
+        // Full Error preserves the stack trace in the operator's terminal.
+        console.error('[ai/chat] stream failed:', err)
+        streamError = detail
+        emit({ type: 'error', message: `AI chat failed: ${detail}` })
+      } finally {
+        if (destroyBridge) destroyBridge()
+        // Emit the terminal audit event. Re-read the conversation row to
+        // capture the deltas the persister just committed.
+        try {
+          const post = await readConversationForUser(db, user.id, conversation.id)
+          const promptDelta = post ? post.promptTokensTotal - tokensAtStart.prompt : 0
+          const completionDelta = post ? post.completionTokensTotal - tokensAtStart.completion : 0
+          const costDelta = post ? Number((post.costUsdTotal - tokensAtStart.cost).toFixed(6)) : 0
+          await createAuditEvent(db, {
+            actorUserId: user.id,
+            action: streamError ? 'ai.chat.failed' : 'ai.chat.completed',
+            targetType: 'ai_conversation',
+            targetId: conversation.id,
+            metadata: {
+              providerId: credential.providerId,
+              modelId: conversation.modelId,
+              promptTokens: promptDelta,
+              completionTokens: completionDelta,
+              costUsd: costDelta,
+              ...(streamError ? { error: streamError.slice(0, 200) } : {}),
+            },
+          })
+        } catch (auditErr) {
+          // Audit failures must never break the user-visible stream — the
+          // request already finished by the time we hit this branch.
+          console.error('[ai/chat] audit emit failed:', auditErr)
+        } finally {
+          disposeAbortedReleaseGuard()
+          releaseConversation()
+          closeStream()
+        }
+      }
+    },
+    cancel() {
+      // Abort provider fetches and pending browser waiters immediately; the
+      // handler's finally block then destroys the bridge and releases the
+      // per-conversation writer lock.
+      streamAbort.abort()
+    },
+  })
+
+  return new Response(stream, {
+    status: 200,
+    headers: {
+      'Content-Type': 'application/x-ndjson',
+      'Cache-Control': 'private, no-store',
+      'X-Accel-Buffering': 'no',
+    },
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether a chat stream is currently in flight for this conversation. Read by
+ * the "Restart agent session" endpoint (`conversations.ts`'s `handleRestartSession`)
+ * so a restart can't race a live turn server-side — defense in depth on top
+ * of the AgentPanel's own disabled-while-streaming control.
+ */
+export function isConversationStreaming(conversationId: string): boolean {
+  return activeChatConversations.has(conversationId)
+}
+
+function acquireConversationStream(conversationId: string): (() => void) | null {
+  if (activeChatConversations.has(conversationId)) return null
+  activeChatConversations.add(conversationId)
+  let released = false
+  return () => {
+    if (released) return
+    released = true
+    activeChatConversations.delete(conversationId)
+  }
+}
+
+/**
+ * Guarantees that `release` runs the moment `signal` aborts, independently of
+ * whatever ALSO calls `release` on the "natural" path (the stream handler's
+ * own `finally`), which may be blocked awaiting a driver that never settles.
+ *
+ * **Immediate, deliberately — there is no grace period.** This originally
+ * waited 15s, on the reasoning that releasing the lock while the old turn
+ * might still write would permit exactly the interleaved assistant/tool rows
+ * `acquireConversationStream` exists to prevent. That reasoning was correct
+ * at the time and is now obsolete: `release` here is `abandonTurn`, which
+ * aborts `turnDeath` BEFORE releasing, and `runChat` checks that signal
+ * before every remaining write. Releasing is therefore safe by construction
+ * rather than by hope, and once it is safe, delay buys nothing and costs the
+ * user everything.
+ *
+ * What the delay cost: pressing Stop and immediately sending another message
+ * returned 409 "This conversation is already generating a response" for up to
+ * 15 seconds — plus the driver's own teardown (a bounded stderr drain and the
+ * SIGTERM→SIGKILL escalation, several more seconds). Stop means stopped. A
+ * user who has just stopped a turn is telling us the turn is over; making
+ * them wait to be believed is the bug, not the safety.
+ *
+ * The subprocess teardown still proceeds in the background on its own
+ * schedule — it simply no longer holds the conversation hostage while it
+ * finishes.
+ *
+ * Returns `dispose()`, which the natural path calls once it settles, so the
+ * listener is not left attached to a long-lived signal. Exported for its own
+ * focused unit test — standing up the full HTTP handler to prove this is
+ * unnecessary weight.
+ */
+export function armAbortedReleaseGuard(
+  signal: AbortSignal,
+  release: () => void,
+): () => void {
+  const onAbort = (): void => release()
+  signal.addEventListener('abort', onAbort, { once: true })
+  if (signal.aborted) onAbort()
+  return () => {
+    signal.removeEventListener('abort', onAbort)
+  }
+}
+
+/**
+ * The action performed once `armAbortedReleaseGuard`'s grace period expires:
+ * mark the turn dead, THEN release the lock — in that exact order. Order is
+ * the whole point: `runChat` (`server/ai/runtime/runner.ts`) checks
+ * `turnDeath.signal` before every remaining persister write, so a new turn
+ * must never be able to acquire the conversation lock (via `release`) before
+ * this one has already been marked unable to write. Releasing first, even by
+ * one microtask, would reopen exactly the interleaved-writes hazard
+ * `acquireConversationStream` exists to prevent — a new turn writing while
+ * this one might still be mid-write, "sound by construction" would just be
+ * "usually fine."
+ *
+ * Exported for its own unit test — proving the ordering doesn't require
+ * standing up the full HTTP handler.
+ */
+export function abandonTurn(turnDeath: AbortController, release: () => void): void {
+  turnDeath.abort()
+  release()
+}
+
+function clientClosedRequest(): Response {
+  return new Response(null, { status: 499, statusText: 'Client Closed Request' })
+}
+
+function waitForRequest<T>(promise: Promise<T>, signal: AbortSignal): Promise<T | typeof REQUEST_ABORTED> {
+  if (signal.aborted) return Promise.resolve(REQUEST_ABORTED)
+  return new Promise<T | typeof REQUEST_ABORTED>((resolve, reject) => {
+    const onAbort = () => resolve(REQUEST_ABORTED)
+    signal.addEventListener('abort', onAbort, { once: true })
+    promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort))
+  })
+}
+
+// `buildCmsSiteSystemPrompt`/`buildStudioProjectSystemPrompt` moved to
+// `server/ai/chatSystemPrompt.ts` (module-size-budgets.test.ts; also kept OUT
+// of `server/ai/handlers/` because it never touches a `Request` and would
+// otherwise trip `ai-handlers-capability-gated.test.ts`) — re-exported here so
+// this stays their canonical import path (`server/ai/handlers/chat`), which
+// `src/__tests__/agent/studioProjectSystemPrompt.test.ts` and this file's own
+// callers above both use.
+export { buildCmsSiteSystemPrompt, buildStudioProjectSystemPrompt } from '../chatSystemPrompt'

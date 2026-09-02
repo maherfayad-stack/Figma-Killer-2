@@ -1,0 +1,87 @@
+/**
+ * useMediaDnd — shared drag-and-drop wiring for the Media workspace.
+ *
+ * Owns the active drop-target highlight plus the dragOver / dragLeave / drop
+ * handlers, all delegating their legality decisions to the pure rules in
+ * `utils/mediaDnd`. Both the canvas (grid + list) and the sidebar folder tree
+ * consume this hook, so a single source governs which media drops are legal.
+ */
+import { useEffect, useState, type DragEvent } from 'react'
+import {
+  clearActiveMediaDragPayload,
+  hasMediaDropData,
+  readActiveMediaDragPayload,
+  readMediaDropPayload,
+} from '../utils/mediaDragDrop'
+import {
+  canAcceptDrop,
+  commitDropPayload,
+  folderDropKey,
+  type MediaDndTarget,
+} from '../utils/mediaDnd'
+
+interface MediaDnd {
+  /** True when `targetFolderId` is the folder currently highlighted as the drop target. */
+  isDropTarget: (targetFolderId: string | null) => boolean
+  /** Clear the highlight (e.g. on `dragEnd`). */
+  clearDropTarget: () => void
+  handleDragOver: (event: DragEvent<HTMLElement>, targetFolderId: string | null) => void
+  handleDragLeave: (event: DragEvent<HTMLElement>) => void
+  handleDrop: (event: DragEvent<HTMLElement>, targetFolderId: string | null) => Promise<void>
+}
+
+export function useMediaDnd(workspace: MediaDndTarget, enabled = true): MediaDnd {
+  const [dropTargetKey, setDropTargetKey] = useState<string | null>(null)
+
+  // `dragend` fires on the drag SOURCE regardless of whether the drop
+  // succeeded, was rejected, or was cancelled (Escape / dropped outside any
+  // target) — the one place guaranteed to end every drag session. Cleared
+  // here rather than per-surface `onDragEnd` wiring so a stale
+  // `activeDragPayload` can never survive past the gesture that set it,
+  // no matter which of the several drag sources (asset tile/row, folder
+  // tile/row, sidebar folder tree) started it. See `mediaDragDrop.ts`'s
+  // module doc for why this session mirror exists at all.
+  useEffect(() => {
+    document.addEventListener('dragend', clearActiveMediaDragPayload)
+    return () => document.removeEventListener('dragend', clearActiveMediaDragPayload)
+  }, [])
+
+  function handleDragOver(event: DragEvent<HTMLElement>, targetFolderId: string | null) {
+    if (!enabled) return
+    if (!hasMediaDropData(event.dataTransfer)) return
+    // `dataTransfer.getData()` is unreadable during `dragover` (HTML DnD spec
+    // "protected mode") — read the same-document session mirror instead of
+    // `readMediaDropPayload`, which only ever returns `""`/`null` here.
+    const payload = readActiveMediaDragPayload()
+    if (!canAcceptDrop(workspace, payload, targetFolderId)) return
+    event.preventDefault()
+    event.stopPropagation()
+    event.dataTransfer.dropEffect = 'move'
+    setDropTargetKey(folderDropKey(targetFolderId))
+  }
+
+  function handleDragLeave(event: DragEvent<HTMLElement>) {
+    const nextTarget = event.relatedTarget
+    if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) return
+    setDropTargetKey(null)
+  }
+
+  async function handleDrop(event: DragEvent<HTMLElement>, targetFolderId: string | null) {
+    if (!enabled) return
+    if (!hasMediaDropData(event.dataTransfer)) return
+    event.preventDefault()
+    event.stopPropagation()
+    setDropTargetKey(null)
+    const payload = readMediaDropPayload(event.dataTransfer)
+    if (!payload || !canAcceptDrop(workspace, payload, targetFolderId)) return
+    await commitDropPayload(workspace, payload, targetFolderId)
+  }
+
+  return {
+    isDropTarget: (targetFolderId) => enabled && dropTargetKey === folderDropKey(targetFolderId),
+    clearDropTarget: () => setDropTargetKey(null),
+    handleDragOver,
+    handleDragLeave,
+    handleDrop,
+  }
+}

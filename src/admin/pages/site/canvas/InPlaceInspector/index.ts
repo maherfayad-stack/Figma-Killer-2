@@ -1,0 +1,1 @@
+export { InPlaceInspector } from './InPlaceInspector'

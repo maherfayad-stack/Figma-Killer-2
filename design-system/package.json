@@ -1,0 +1,26 @@
+{
+  "name": "design-system-template",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Scaffold for a new project's design-system/ folder. Mirrors the real Almosafer DS token/component shape (ADR-0006) — CSS custom properties + a JS token mirror, plain component+CSS pairs — NOT W3C DTCG. See src/index.ts for the CHANGE-REQUEST detail.",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./tokens.css": "./src/tokens/tokens.css"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "eslint .",
+    "test": "vitest run"
+  },
+  "peerDependencies": {
+    "react": "^19.2.7"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.17",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.10"
+  }
+}

@@ -1,0 +1,38 @@
+/**
+ * BoardGuidesLayer — snap-alignment guide lines (Phase 6B).
+ * Uses design tokens from globals.css (no hardcoded colours).
+ *
+ * Absolutely positioned at the transform layer's origin, same as
+ * BoardNotesLayer/BoardDocsLayer, so `--guide-position`/`--guide-start`
+ * (set inline per-guide by BoardGuidesLayer.tsx) are plain board units.
+ */
+.layer {
+    position: absolute;
+    top: 0;
+    left: 0;
+    pointer-events: none;
+}
+
+.line {
+    position: absolute;
+    background: var(--canvas-snap-guide-color);
+    pointer-events: none;
+}
+
+/* A vertical line at board-x `--guide-position`, spanning
+   `--guide-start`..`--guide-start + --guide-length` on the y axis. */
+.line[data-axis='x'] {
+    left: var(--guide-position);
+    top: var(--guide-start);
+    width: 1px;
+    height: var(--guide-length);
+}
+
+/* A horizontal line at board-y `--guide-position`, spanning
+   `--guide-start`..`--guide-start + --guide-length` on the x axis. */
+.line[data-axis='y'] {
+    top: var(--guide-position);
+    left: var(--guide-start);
+    width: var(--guide-length);
+    height: 1px;
+}

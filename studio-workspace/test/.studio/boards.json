@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "boards": [
+    {
+      "id": "9757d3b9-a30b-4cbd-841f-daa963ac476c",
+      "name": "Board 1",
+      "frames": [
+        {
+          "id": "d587888e-0d02-4f3b-bf84-0ddc1f464d14",
+          "pageId": "sheet",
+          "x": 0,
+          "y": 0,
+          "width": 393,
+          "height": 798.0594563943739
+        },
+        {
+          "id": "0bf7caa8-8a69-46c1-a0b4-cc25d32ba0e8",
+          "pageId": "home",
+          "x": 429.93031286091286,
+          "y": 0,
+          "width": 393,
+          "height": 852
+        }
+      ],
+      "notes": [],
+      "docs": [],
+      "guides": []
+    }
+  ]
+}

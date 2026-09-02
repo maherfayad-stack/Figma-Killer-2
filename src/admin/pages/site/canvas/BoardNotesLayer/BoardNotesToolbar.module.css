@@ -1,0 +1,19 @@
+/**
+ * BoardNotesToolbar — bottom-left floating action bar, untransformed
+ * (viewport-anchored) canvas chrome. Same stacking tier as CanvasModeToggle /
+ * CanvasNotch so it sits above the transform layer and the plugin overlay
+ * layer, below floating panels.
+ */
+.toolbar {
+    position: absolute;
+    bottom: var(--space-2xl);
+    left: var(--space-2xl);
+    z-index: 53;
+    display: flex;
+    gap: var(--space-xs);
+    /* Cleared the left rail. `left` already anchors this bar; the extra
+       offset was a hardcoded 20px on top of it — the one violation the
+       admin spacing gate has been reporting. `--space-5xl` is the scale's
+       20px step, so the position is unchanged. */
+    margin-left: var(--space-5xl);
+}

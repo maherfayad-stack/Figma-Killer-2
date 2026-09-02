@@ -1,0 +1,412 @@
+{
+  "version": 1,
+  "nextSeq": 9,
+  "threads": [
+    {
+      "id": "6126ff62-2b9f-4050-944c-d53c70d8cd1f",
+      "seq": 1,
+      "boardId": "2fd078d6-209f-44df-842e-4bda43d97ed5",
+      "anchor": {
+        "frameId": "3884d231-f0eb-4dcb-a48b-49e01249f3ad",
+        "pageId": "onboarding",
+        "dx": 246.1171875,
+        "dy": 787.3046875,
+        "node": {
+          "nodeId": "pages/Onboarding.tsx:63:14",
+          "indexPath": [
+            0,
+            1,
+            1,
+            2,
+            1
+          ],
+          "moduleId": "base.text",
+          "textSnippet": "terms and conditions"
+        }
+      },
+      "resolved": true,
+      "createdAt": "2026-09-02T12:25:33.874Z",
+      "comments": [
+        {
+          "id": "34823ed9-8bc5-483d-9b3e-3036085cd975",
+          "author": {
+            "userId": "smoke-local-test",
+            "displayName": "Local Smoke Test",
+            "kind": "user"
+          },
+          "body": "missing text",
+          "createdAt": "2026-09-02T12:25:33.874Z",
+          "editedAt": null
+        },
+        {
+          "id": "2995249c-4a21-4022-824e-983debee7d54",
+          "author": {
+            "userId": "smoke-local-test",
+            "displayName": "Studio agent",
+            "kind": "agent"
+          },
+          "body": "Fixed. The legal paragraph had its plain text sitting as bare JSX text nodes between the two coloured link spans, and Studio's renderer only kept the elements — so \"By clicking Agree…\", \", and\" and \"You can opt-out anytime.\" were all dropped. Each run is now its own `<span>` (`.legalRun` / `.link` / `.linkSpaced`) so every phrase is a real text node you can select and edit, and the word gaps between them are drawn with a `::after { content: ' '; white-space: pre }` rule rather than left as whitespace between JSX nodes.",
+          "createdAt": "2026-09-02T12:33:17.426Z",
+          "editedAt": null
+        }
+      ]
+    },
+    {
+      "id": "5e4b6821-d3b3-4d7b-9c4e-510ad7f2df13",
+      "seq": 2,
+      "boardId": "2fd078d6-209f-44df-842e-4bda43d97ed5",
+      "anchor": {
+        "frameId": "3884d231-f0eb-4dcb-a48b-49e01249f3ad",
+        "pageId": "onboarding",
+        "dx": 112.46875,
+        "dy": 705.5859375,
+        "node": {
+          "nodeId": "pages/Onboarding.tsx:54:12",
+          "indexPath": [
+            0,
+            1,
+            1,
+            0
+          ],
+          "moduleId": "base.container",
+          "textSnippet": ""
+        }
+      },
+      "resolved": true,
+      "createdAt": "2026-09-02T12:25:41.487Z",
+      "comments": [
+        {
+          "id": "cee53b94-c57d-4005-9691-98bd4931e387",
+          "author": {
+            "userId": "smoke-local-test",
+            "displayName": "Local Smoke Test",
+            "kind": "user"
+          },
+          "body": "should be full width",
+          "createdAt": "2026-09-02T12:25:41.487Z",
+          "editedAt": null
+        },
+        {
+          "id": "fb9c9543-4d7d-442d-9653-fc7df836cbc0",
+          "author": {
+            "userId": "smoke-local-test",
+            "displayName": "Studio agent",
+            "kind": "agent"
+          },
+          "body": "Fixed. The wrapper was full width already; the button inside it was not, because I had written the rule as `.cta > :global(.btn)`. Studio's CSS-module compiler emits `:global(...)` verbatim into the injected stylesheet, which is not valid CSS, so the browser dropped the rule entirely. `Button` accepts a `className` and appends it to its own classes, so \"Agree\" and \"Maybe later\" now carry `className={styles.ctaButton}` with `width: 100%`, and `.cta` is a column flex container. Both buttons now measure the full 361px content width.",
+          "createdAt": "2026-09-02T12:33:19.797Z",
+          "editedAt": null
+        }
+      ]
+    },
+    {
+      "id": "9afa31d5-935b-4675-85ba-4176e714399b",
+      "seq": 3,
+      "boardId": "2fd078d6-209f-44df-842e-4bda43d97ed5",
+      "anchor": {
+        "frameId": "d7132d36-dbde-434c-b257-1ff2d0ce909f",
+        "pageId": "sms",
+        "dx": 231.46875,
+        "dy": 654.6171875,
+        "node": {
+          "nodeId": "pages/SMS.tsx:64:14",
+          "indexPath": [
+            0,
+            2,
+            3,
+            2,
+            0
+          ],
+          "moduleId": "base.image",
+          "textSnippet": ""
+        }
+      },
+      "resolved": true,
+      "createdAt": "2026-09-02T12:26:09.310Z",
+      "comments": [
+        {
+          "id": "75009e86-d983-4834-968b-abe57e5ecf22",
+          "author": {
+            "userId": "smoke-local-test",
+            "displayName": "Local Smoke Test",
+            "kind": "user"
+          },
+          "body": "no need for keyboard",
+          "createdAt": "2026-09-02T12:26:09.310Z",
+          "editedAt": null
+        },
+        {
+          "id": "d8a25e28-67bc-411f-8c0a-74caf4bfd627",
+          "author": {
+            "userId": "smoke-local-test",
+            "displayName": "Studio agent",
+            "kind": "agent"
+          },
+          "body": "Done — the on-screen keyboard is gone. I removed the whole keypad block from `pages/SMS.tsx` (the digit rows, the delete key and this image), its `.keyboard`/`.key*`/`.deleteGlyph` rules from `pages/SMS.module.css`, and the now-unused `deleteKeyImage` import. The screen is now just the sheet header, the title, the \"sent via\" line, the six code inputs and the resend timer.\n\nOne consequence to flag: the Figma frame this screen is measured against (node 2:2176) does include the keyboard across its bottom ~318px, so `studio_compare` against the registered \"SMS — Figma\" reference will now report that band as a difference. Say the word if you'd rather I put it back, or re-register the reference from a keyboard-less export.",
+          "createdAt": "2026-09-02T12:33:25.856Z",
+          "editedAt": null
+        },
+        {
+          "id": "c6a0a10f-d9cb-437b-96d8-1becf772bb02",
+          "author": {
+            "userId": "smoke-local-test",
+            "displayName": "Studio agent",
+            "kind": "agent"
+          },
+          "body": "The element this comment pointed at no longer exists, so there is no single place to apply this change. The comment has been left open.",
+          "createdAt": "2026-09-02T12:33:40.627Z",
+          "editedAt": null
+        },
+        {
+          "id": "be07a6ab-d3dd-4ae3-bea0-7181e4163883",
+          "author": {
+            "userId": "smoke-local-test",
+            "displayName": "Studio agent",
+            "kind": "agent"
+          },
+          "body": "Note: I tried to resolve this thread and Studio refused it — the pin was anchored to the delete-key `<img>`, and that element no longer exists now that the keypad is gone, so the anchor is \"detached\". Leaving it open for you to close.",
+          "createdAt": "2026-09-02T12:33:48.370Z",
+          "editedAt": null
+        }
+      ]
+    },
+    {
+      "id": "a6eb11bf-4cde-4cd9-bc81-198408e88104",
+      "seq": 4,
+      "boardId": "2fd078d6-209f-44df-842e-4bda43d97ed5",
+      "anchor": {
+        "frameId": "d7132d36-dbde-434c-b257-1ff2d0ce909f",
+        "pageId": "sms",
+        "dx": 87.203125,
+        "dy": 365.6875,
+        "node": {
+          "nodeId": "pages/SMS.tsx:44:12",
+          "indexPath": [
+            0,
+            1,
+            1,
+            2
+          ],
+          "moduleId": "base.container",
+          "textSnippet": ""
+        }
+      },
+      "resolved": true,
+      "createdAt": "2026-09-02T12:26:27.392Z",
+      "comments": [
+        {
+          "id": "2b64e3e1-6caf-4d1d-8f76-f351070be157",
+          "author": {
+            "userId": "smoke-local-test",
+            "displayName": "Local Smoke Test",
+            "kind": "user"
+          },
+          "body": "missing content",
+          "createdAt": "2026-09-02T12:26:27.392Z",
+          "editedAt": null
+        },
+        {
+          "id": "7e18aa04-a656-4c93-9a3a-5b19664bb7ad",
+          "author": {
+            "userId": "smoke-local-test",
+            "displayName": "Studio agent",
+            "kind": "agent"
+          },
+          "body": "Fixed. Same defect as the Onboarding legal line: \"Resend in\" was a bare JSX text node next to the `<span>` holding \"29 seconds\", and only the span survived, so the row rendered as just \"29 seconds\". It is now `<span className={styles.resendRun}>Resend in</span>` followed by the semibold span, with the gap drawn by a `::after { content: ' '; white-space: pre }` rule. I applied the same treatment to the \"SMS at +966 55 333 4444\" line just above, which was rendering as \"SMSat+966 55 333 4444\" for the same reason.",
+          "createdAt": "2026-09-02T12:33:28.415Z",
+          "editedAt": null
+        }
+      ]
+    },
+    {
+      "id": "a3c96ea7-ae92-44a5-ad76-0e4aba778aa9",
+      "seq": 5,
+      "boardId": "2fd078d6-209f-44df-842e-4bda43d97ed5",
+      "anchor": {
+        "frameId": "2a978b29-58cf-40b2-bf8c-efb5873db9d3",
+        "pageId": "sign-up",
+        "dx": 106.421875,
+        "dy": 326.876953125,
+        "node": {
+          "nodeId": "pages/SignUp.tsx:27:16",
+          "indexPath": [
+            0,
+            1,
+            1,
+            0,
+            1,
+            0
+          ],
+          "moduleId": "alm.Button",
+          "textSnippet": ""
+        }
+      },
+      "resolved": true,
+      "createdAt": "2026-09-02T12:26:32.667Z",
+      "comments": [
+        {
+          "id": "28015281-8cdb-4dd9-80c1-4eab81e8e0da",
+          "author": {
+            "userId": "smoke-local-test",
+            "displayName": "Local Smoke Test",
+            "kind": "user"
+          },
+          "body": "full width",
+          "createdAt": "2026-09-02T12:26:32.667Z",
+          "editedAt": null
+        },
+        {
+          "id": "816e044b-cb39-48c8-8a40-de961e5fc8ca",
+          "author": {
+            "userId": "smoke-local-test",
+            "displayName": "Studio agent",
+            "kind": "agent"
+          },
+          "body": "Fixed. Root cause was the same `:global(.btn)` mistake as on Onboarding — Studio's CSS-module compiler passes `:global(...)` through verbatim, so the browser dropped both the width and the coral fill and the button fell back to an inline-flex aqua pill. \"Continue\" now takes `className={styles.continueButton}` directly on the `Button` (it accepts and appends `className`), which sets `width: 100%` and re-points `--button-primary-default` at `--background-warning-default` — done through the token the package's own rule reads, so it wins regardless of stylesheet order rather than by fighting specificity.",
+          "createdAt": "2026-09-02T12:33:33.974Z",
+          "editedAt": null
+        }
+      ]
+    },
+    {
+      "id": "85867b8a-3a05-4514-9d7b-af5c7da08188",
+      "seq": 6,
+      "boardId": "2fd078d6-209f-44df-842e-4bda43d97ed5",
+      "anchor": {
+        "frameId": "2a978b29-58cf-40b2-bf8c-efb5873db9d3",
+        "pageId": "sign-up",
+        "dx": 131.40625,
+        "dy": 646.767578125,
+        "node": {
+          "nodeId": "pages/SignUp.tsx:39:16",
+          "indexPath": [
+            0,
+            1,
+            1,
+            2,
+            0,
+            0
+          ],
+          "moduleId": "alm.Button",
+          "textSnippet": ""
+        }
+      },
+      "resolved": true,
+      "createdAt": "2026-09-02T12:26:41.705Z",
+      "comments": [
+        {
+          "id": "b5b67210-a49c-42c2-aa90-002122dd2336",
+          "author": {
+            "userId": "smoke-local-test",
+            "displayName": "Local Smoke Test",
+            "kind": "user"
+          },
+          "body": "not the right button sizes",
+          "createdAt": "2026-09-02T12:26:41.705Z",
+          "editedAt": null
+        },
+        {
+          "id": "4a872946-6e9f-433d-a581-b455942b8bb2",
+          "author": {
+            "userId": "smoke-local-test",
+            "displayName": "Studio agent",
+            "kind": "agent"
+          },
+          "body": "Fixed. The three alternative sign-in buttons were rendering as bare inline pills — no full width and no outline — because their rules were also written as `:global(.btn)` and were dropped. Each now carries its class on the `Button` itself: `.outlineButton` (email, Google) sets `width: 100%` plus a 1px `--border-secondary-default` inset ring, and `.appleButton` sets the same width with a black `--background-brand-apple` ring and re-points `--text-link-default` to `--text-base-default` for the black label. All three keep `size=\"default\"`, so they are the design's 48px tall × 361px wide.",
+          "createdAt": "2026-09-02T12:33:36.886Z",
+          "editedAt": null
+        }
+      ]
+    },
+    {
+      "id": "eabf39ae-4624-4173-936f-1af8eeb0ea17",
+      "seq": 7,
+      "boardId": "2fd078d6-209f-44df-842e-4bda43d97ed5",
+      "anchor": {
+        "frameId": "3884d231-f0eb-4dcb-a48b-49e01249f3ad",
+        "pageId": "onboarding",
+        "dx": 34.74796184277649,
+        "dy": 507.59742378065204,
+        "node": {
+          "nodeId": "pages/Onboarding.tsx:38:18",
+          "indexPath": [
+            0,
+            1,
+            0,
+            1,
+            1,
+            1,
+            0
+          ],
+          "moduleId": "base.svg",
+          "textSnippet": ""
+        }
+      },
+      "resolved": true,
+      "createdAt": "2026-09-02T12:27:20.866Z",
+      "comments": [
+        {
+          "id": "b088ffe2-0bd9-436d-bba3-f4338c8f7106",
+          "author": {
+            "userId": "smoke-local-test",
+            "displayName": "Local Smoke Test",
+            "kind": "user"
+          },
+          "body": "darkmode icon color",
+          "createdAt": "2026-09-02T12:27:20.866Z",
+          "editedAt": null
+        }
+      ]
+    },
+    {
+      "id": "ba448cec-09aa-44da-816c-fa4c55eba7ae",
+      "seq": 8,
+      "boardId": "2fd078d6-209f-44df-842e-4bda43d97ed5",
+      "anchor": {
+        "frameId": "d7132d36-dbde-434c-b257-1ff2d0ce909f",
+        "pageId": "sms",
+        "dx": 52.74561227222406,
+        "dy": 103.02845757242567,
+        "node": {
+          "nodeId": "pages/SMS.tsx:11:10~components/SheetHeader.tsx:12:10",
+          "indexPath": [
+            0,
+            0,
+            0,
+            0,
+            1,
+            0
+          ],
+          "moduleId": "base.container",
+          "textSnippet": ""
+        }
+      },
+      "resolved": false,
+      "createdAt": "2026-09-02T12:49:22.966Z",
+      "comments": [
+        {
+          "id": "07b1f1d2-07ab-46ae-b28c-5f0ccb58b02c",
+          "author": {
+            "userId": "smoke-local-test",
+            "displayName": "Local Smoke Test",
+            "kind": "user"
+          },
+          "body": "comment",
+          "createdAt": "2026-09-02T12:49:22.966Z",
+          "editedAt": null
+        },
+        {
+          "id": "412b8565-2a54-42e5-a296-b3af63f448fc",
+          "author": {
+            "userId": "smoke-local-test",
+            "displayName": "Local Smoke Test",
+            "kind": "user"
+          },
+          "body": "good comment for good design",
+          "createdAt": "2026-09-02T12:51:21.744Z",
+          "editedAt": null
+        }
+      ]
+    }
+  ]
+}

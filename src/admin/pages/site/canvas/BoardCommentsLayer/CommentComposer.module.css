@@ -1,0 +1,36 @@
+/* The write field, shared by the draft popover and every reply. */
+
+.composer {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2xs);
+}
+
+.actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-2xs);
+}
+
+/*
+ * Inline (reply) layout: box and button on one line. The box takes the
+ * remaining width and the button keeps its intrinsic size, so a long submit
+ * label never squeezes the field to nothing. `align-items: flex-end` keeps the
+ * button pinned to the bottom edge as the textarea grows downward, which is
+ * where the eye expects it once the reply wraps to a second line.
+ */
+.inline {
+    flex-direction: row;
+    align-items: flex-end;
+}
+
+.inline .field {
+    flex: 1 1 auto;
+    /* Without this a textarea's intrinsic `cols` width wins over `flex: 1` and
+       the button is pushed out of the popover. */
+    min-width: 0;
+}
+
+.inlineActions {
+    flex: 0 0 auto;
+}

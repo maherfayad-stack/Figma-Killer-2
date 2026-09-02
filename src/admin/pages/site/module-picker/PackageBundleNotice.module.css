@@ -1,0 +1,37 @@
+/* PackageBundleNotice — E4 package-bundle refusal notice, shared by
+ * ModulePicker.tsx and ModuleInserterDialog.tsx. Same "warning chip"
+ * language DepsSection's `.runtimeIssues` already uses for an in-panel
+ * diagnostic, reused here so a refusal reads the same way across every
+ * Studio surface that shows one. */
+
+.notice {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+    border: 1px solid color-mix(in srgb, var(--warning) 22%, transparent);
+    border-radius: var(--radius);
+    background: color-mix(in srgb, var(--warning) 8%, transparent);
+    color: var(--warning-text);
+}
+
+.notice[data-size='compact'] {
+    margin: var(--space-3xs) 0;
+    padding: var(--space-xs);
+}
+
+.notice[data-size='roomy'] {
+    margin: 0 var(--space-5xl) var(--space-2xl);
+    padding: var(--space-xs) var(--space-l);
+}
+
+.noticeText {
+    min-width: 0;
+    flex: 1;
+    color: var(--text-muted);
+    font-size: var(--text-2xs);
+    line-height: 1.35;
+}
+
+.notice[data-size='roomy'] .noticeText {
+    font-size: var(--text-s);
+}

@@ -1,0 +1,104 @@
+/*
+ * The write-target row: an "Editing" label, the Element / class chips, and the
+ * assign-class action. It is the widest fixed run of content in the panel, and
+ * with no `min-width: 0` it refused to shrink — pushing the whole scroll
+ * column past the panel edge, where `overflow-x: hidden` quietly amputated
+ * whatever fell off the right (the assign button, the clear buttons on the
+ * rows below it). Wrapping is the honest failure mode for a row that genuinely
+ * cannot fit: two short lines beat one line with its end cut off.
+ */
+.row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-xs);
+    min-width: 0;
+    padding: var(--space-2xs) var(--inspector-pad-x);
+}
+
+.editingLabel {
+    flex: 0 0 auto;
+    color: var(--text-subtle);
+    font-size: var(--text-xs);
+}
+
+.chips {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3xs);
+    min-width: 0;
+}
+
+.chip.chip {
+    gap: var(--space-4xs);
+    /* Caps the chip at half a 260px panel's content column so a long class
+       name ellipses inside the chip instead of widening the row. */
+    max-width: 120px;
+    min-width: 0;
+}
+
+.chip.chip > * {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Presentational chip (the class target — see StyleTargetChip.tsx's doc for
+   why it isn't a Button). Same visual shell as the Button-based Element
+   chip's `secondary` variant so the two read as one control group.
+
+   The truncation lives here, not on `.chip.chip > *`: that rule targets child
+   ELEMENTS, and this chip's class name is a bare text node with no wrapper, so
+   it was capped at 120px and then painted straight through the chip's right
+   edge and over the button beside it. */
+.chipStatic {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    height: 22px;
+    padding: 0 var(--space-xs);
+    border: 1px solid var(--overlay-20);
+    border-radius: var(--radius);
+    background: transparent;
+    color: var(--text-subtle);
+    font-size: var(--text-xs);
+    line-height: 1;
+    cursor: default;
+}
+
+/* The active class target carries the CSS write-back warning — tinted with
+   the shared warning state token, not a decorative color. */
+.chipStatic[data-active='true'] {
+    background: var(--warning-10);
+    border-color: var(--warning-30);
+    color: var(--warning-text);
+}
+
+/* panel-02 (WS-6.3) — a class whose declarations genuinely reach disk on
+   save gets the success state token instead of the warning one. Two
+   attribute selectors outrank the rule above regardless of source order. */
+.chipStatic[data-active='true'][data-writable='true'] {
+    background: var(--success-10);
+    border-color: var(--success-30);
+    color: var(--success-text);
+}
+
+.chipDisabled {
+    opacity: 0.5;
+}
+
+/* Track F1 — the "Assign class" informational row. Neutral, not a warning:
+   it isn't refusing anything, it's pointing at a different control. */
+.chipInfo {
+    color: var(--text-subtle);
+    border-style: dashed;
+}
+
+.warningIcon {
+    flex: 0 0 auto;
+    color: var(--warning);
+}

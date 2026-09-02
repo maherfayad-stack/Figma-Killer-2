@@ -1,0 +1,57 @@
+/* ImageSourceSection — WS-8.3 image picker, replacing the generic CodeValueControl
+   row for a module's declared image prop when Studio can offer a real edit.
+   Drop-zone treatment mirrors SiteImport's DropStep.module.css. */
+
+.dropZone {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+    padding: var(--space-xs);
+    border: 1.5px dashed var(--border);
+    border-radius: var(--radius);
+    transition: background 80ms ease-out, border-color 80ms ease-out;
+}
+
+.dropZone[data-active="true"] {
+    background: var(--bg-surface-2);
+    border-color: var(--text-disabled);
+}
+
+.preview {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 48px;
+    height: 48px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface-2);
+    color: var(--text-muted);
+    overflow: hidden;
+}
+
+.previewImg {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+.actions {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-3xs);
+    min-width: 0;
+}
+
+.dropHint {
+    font-size: var(--text-2xs);
+    color: var(--text-muted);
+}
+
+.hint {
+    display: block;
+    margin-top: var(--space-2xs);
+    font-size: var(--text-2xs);
+    color: var(--text-muted);
+}

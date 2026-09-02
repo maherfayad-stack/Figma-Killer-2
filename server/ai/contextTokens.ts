@@ -1,0 +1,34 @@
+/**
+ * Provider-normalised "context used" — the total input tokens a model held in
+ * context for one turn, computed consistently across providers' differing usage
+ * accounting so the composer's context meter compares like-for-like.
+ *
+ *   - Anthropic (and `claudeCli`, which wraps the same Messages API accounting
+ *     under the hood) reports `input_tokens` EXCLUDING the cache buckets, so
+ *     the true total is prompt + cacheRead + cacheCreation.
+ *   - OpenAI / OpenRouter / Ollama / Custom Provider report `input_tokens` as
+ *     the full input (any cached tokens are already a subset), so prompt alone
+ *     is the total.
+ *
+ * Two callers share this: the chat handler injects the value onto the wire
+ * `usage` event for the live meter, and the persister writes it to the
+ * conversation row so the meter survives a reload.
+ */
+
+import type { AiProviderId } from './runtime/types'
+
+interface ContextUsageTokens {
+  promptTokens: number
+  cacheReadTokens?: number
+  cacheCreationTokens?: number
+}
+
+export function normalizeContextTokens(
+  providerId: AiProviderId,
+  usage: ContextUsageTokens,
+): number {
+  if (providerId === 'anthropic' || providerId === 'claudeCli') {
+    return usage.promptTokens + (usage.cacheReadTokens ?? 0) + (usage.cacheCreationTokens ?? 0)
+  }
+  return usage.promptTokens
+}

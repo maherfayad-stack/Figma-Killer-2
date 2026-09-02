@@ -1,0 +1,13 @@
+.axesGroup {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4xs);
+}
+
+.axisButton {
+    min-width: 44px;
+}
+
+.localeSelect {
+    min-width: 64px;
+}

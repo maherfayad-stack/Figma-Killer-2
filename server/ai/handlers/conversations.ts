@@ -1,0 +1,256 @@
+/**
+ * Conversations handler — full CRUD over chat history.
+ *
+ *   GET    /admin/api/ai/conversations                       list
+ *   POST   /admin/api/ai/conversations                       create
+ *   GET    /admin/api/ai/conversations/:id                   read (+messages)
+ *   PUT    /admin/api/ai/conversations/:id                   update
+ *   DELETE /admin/api/ai/conversations/:id                   soft-delete
+ *
+ * Every operation is scoped to the authenticated user (cross-user reads
+ * return 404).
+ */
+
+import {
+  AI_USER_IMAGE_MAX_BASE64_CHARS,
+  AI_USER_IMAGE_MAX_BYTES,
+} from '@core/ai'
+import { Type } from '@core/utils/typeboxHelpers'
+import { binaryResponse } from '../../binary'
+import { jsonResponse, readValidatedBody, badRequest } from '../../http'
+import { requireCapability } from '../../auth/authz'
+import type { DbClient } from '../../db/client'
+import {
+  bumpSessionEpochForUser,
+  createConversationForUser,
+  listConversationsForUser,
+  listMessagesForConversation,
+  readMessageForUser,
+  readConversationForUser,
+  softDeleteConversationForUser,
+  toConversationDetailView,
+  toConversationView,
+  updateConversationForUser,
+} from '../conversations/store'
+import { isConversationStreaming } from './chat'
+
+const CreateBodySchema = Type.Object({
+  title: Type.Optional(Type.String()),
+  credentialId: Type.String({ minLength: 1 }),
+  modelId: Type.String({ minLength: 1 }),
+})
+
+const UpdateBodySchema = Type.Object({
+  title: Type.Optional(Type.String({ minLength: 1 })),
+  credentialId: Type.Optional(Type.String({ minLength: 1 })),
+  modelId: Type.Optional(Type.String({ minLength: 1 })),
+})
+
+export function tryHandleAiConversations(
+  req: Request,
+  db: DbClient,
+  _url: URL,
+  pathname: string,
+): Promise<Response> | null {
+  if (pathname === '/admin/api/ai/conversations') {
+    return dispatchCollection(req, db)
+  }
+  const imageMatch = pathname.match(
+    /^\/admin\/api\/ai\/conversations\/([^/]+)\/messages\/([^/]+)\/images\/(\d+)$/,
+  )
+  if (imageMatch) {
+    return handleMessageImage(
+      req,
+      db,
+      imageMatch[1]!,
+      imageMatch[2]!,
+      Number(imageMatch[3]),
+    )
+  }
+  const restartMatch = pathname.match(/^\/admin\/api\/ai\/conversations\/([^/]+)\/restart-session$/)
+  if (restartMatch) {
+    return handleRestartSession(req, db, restartMatch[1]!)
+  }
+  const match = pathname.match(/^\/admin\/api\/ai\/conversations\/([^/]+)$/)
+  if (match) {
+    return dispatchItem(req, db, match[1]!)
+  }
+  return null
+}
+
+async function handleMessageImage(
+  req: Request,
+  db: DbClient,
+  conversationId: string,
+  messageId: string,
+  blockIndex: number,
+): Promise<Response> {
+  if (req.method !== 'GET') {
+    return jsonResponse({ error: 'Method not allowed' }, { status: 405 })
+  }
+  const userOrResponse = await requireCapability(req, db, 'ai.chat')
+  if (userOrResponse instanceof Response) return userOrResponse
+
+  const message = await readMessageForUser(
+    db,
+    userOrResponse.id,
+    conversationId,
+    messageId,
+  )
+  const block = message?.content[blockIndex]
+  if (block?.kind !== 'image' || block.mimeType !== 'image/jpeg') return imageNotFound()
+
+  const bytes = decodeStoredJpeg(block.data)
+  if (!bytes) return imageNotFound()
+  return binaryResponse(bytes, {
+    headers: {
+      'Content-Type': 'image/jpeg',
+      'Content-Length': String(bytes.byteLength),
+      'Cache-Control': 'private, no-store',
+      'X-Content-Type-Options': 'nosniff',
+    },
+  })
+}
+
+function decodeStoredJpeg(data: string): Buffer | null {
+  if (!data || data.length > AI_USER_IMAGE_MAX_BASE64_CHARS || data.length % 4 !== 0) return null
+  const bytes = Buffer.from(data, 'base64')
+  if (
+    bytes.byteLength === 0
+    || bytes.byteLength > AI_USER_IMAGE_MAX_BYTES
+    || bytes.toString('base64') !== data
+    || bytes[0] !== 0xff
+    || bytes[1] !== 0xd8
+    || bytes[2] !== 0xff
+  ) return null
+  return bytes
+}
+
+function imageNotFound(): Response {
+  return jsonResponse({ error: 'Conversation image not found' }, { status: 404 })
+}
+
+// ---------------------------------------------------------------------------
+// Collection
+// ---------------------------------------------------------------------------
+
+async function dispatchCollection(req: Request, db: DbClient): Promise<Response> {
+  if (req.method === 'GET') return handleList(req, db)
+  if (req.method === 'POST') return handleCreate(req, db)
+  return jsonResponse({ error: 'Method not allowed' }, { status: 405 })
+}
+
+async function handleList(req: Request, db: DbClient): Promise<Response> {
+  const userOrResponse = await requireCapability(req, db, 'ai.chat')
+  if (userOrResponse instanceof Response) return userOrResponse
+
+  const records = await listConversationsForUser(db, userOrResponse.id)
+  return jsonResponse({ conversations: records.map(toConversationView) })
+}
+
+async function handleCreate(req: Request, db: DbClient): Promise<Response> {
+  const userOrResponse = await requireCapability(req, db, 'ai.chat')
+  if (userOrResponse instanceof Response) return userOrResponse
+
+  const body = await readValidatedBody(req, CreateBodySchema)
+  if (!body) return badRequest('Invalid request body.')
+
+  const record = await createConversationForUser(db, userOrResponse.id, body)
+  return jsonResponse({ conversation: toConversationView(record) }, { status: 201 })
+}
+
+// ---------------------------------------------------------------------------
+// Item
+// ---------------------------------------------------------------------------
+
+async function dispatchItem(req: Request, db: DbClient, id: string): Promise<Response> {
+  if (req.method === 'GET') return handleRead(req, db, id)
+  if (req.method === 'PUT') return handleUpdate(req, db, id)
+  if (req.method === 'DELETE') return handleDelete(req, db, id)
+  return jsonResponse({ error: 'Method not allowed' }, { status: 405 })
+}
+
+async function handleRead(req: Request, db: DbClient, id: string): Promise<Response> {
+  const userOrResponse = await requireCapability(req, db, 'ai.chat')
+  if (userOrResponse instanceof Response) return userOrResponse
+
+  const conv = await readConversationForUser(db, userOrResponse.id, id)
+  if (!conv) return jsonResponse({ error: 'Conversation not found' }, { status: 404 })
+
+  const messages = await listMessagesForConversation(db, id)
+  return jsonResponse(
+    {
+      conversation: toConversationDetailView(
+        conv,
+        messages,
+        (messageId, blockIndex) => conversationImageUrl(id, messageId, blockIndex),
+      ),
+    },
+    { headers: { 'Cache-Control': 'private, no-store' } },
+  )
+}
+
+function conversationImageUrl(
+  conversationId: string,
+  messageId: string,
+  blockIndex: number,
+): string {
+  return `/admin/api/ai/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}/images/${blockIndex}`
+}
+
+async function handleUpdate(req: Request, db: DbClient, id: string): Promise<Response> {
+  const userOrResponse = await requireCapability(req, db, 'ai.chat')
+  if (userOrResponse instanceof Response) return userOrResponse
+
+  const body = await readValidatedBody(req, UpdateBodySchema)
+  if (!body) return badRequest('Invalid request body.')
+
+  const record = await updateConversationForUser(db, userOrResponse.id, id, body)
+  if (!record) return jsonResponse({ error: 'Conversation not found' }, { status: 404 })
+  return jsonResponse({ conversation: toConversationView(record) })
+}
+
+async function handleDelete(req: Request, db: DbClient, id: string): Promise<Response> {
+  const userOrResponse = await requireCapability(req, db, 'ai.chat')
+  if (userOrResponse instanceof Response) return userOrResponse
+
+  const ok = await softDeleteConversationForUser(db, userOrResponse.id, id)
+  if (!ok) return jsonResponse({ error: 'Conversation not found' }, { status: 404 })
+  return jsonResponse({ ok: true })
+}
+
+// ---------------------------------------------------------------------------
+// Restart session — POST /admin/api/ai/conversations/:id/restart-session
+//
+// Bumps `session_epoch` (migration 021) so the next turn's `claudeCli`
+// session id derives to a brand-new UUID (`claudeCliSessionId`), forcing a
+// genuinely fresh CLI session — one that re-reads newly-approved MCP servers
+// and other per-spawn config — WITHOUT touching this conversation's rows.
+// Every other provider driver ignores `session_epoch`, so this is a no-op
+// for them (the endpoint still succeeds; there is simply nothing for a
+// non-claudeCli turn to pick up differently next time).
+// ---------------------------------------------------------------------------
+
+async function handleRestartSession(req: Request, db: DbClient, id: string): Promise<Response> {
+  if (req.method !== 'POST') {
+    return jsonResponse({ error: 'Method not allowed' }, { status: 405 })
+  }
+  const userOrResponse = await requireCapability(req, db, 'ai.chat')
+  if (userOrResponse instanceof Response) return userOrResponse
+
+  // Defense in depth: the AgentPanel control is already disabled while
+  // streaming, but a restart mid-turn would race the running `claude`
+  // subprocess (which already resolved ITS session id for this turn before
+  // this request could land) — refuse server-side too, same 409 shape
+  // `chat.ts`'s own admission check uses for "already generating a response".
+  if (isConversationStreaming(id)) {
+    return jsonResponse(
+      { error: 'Wait for the current response to finish before restarting the session.' },
+      { status: 409 },
+    )
+  }
+
+  const ok = await bumpSessionEpochForUser(db, userOrResponse.id, id)
+  if (!ok) return jsonResponse({ error: 'Conversation not found' }, { status: 404 })
+  return jsonResponse({ ok: true })
+}

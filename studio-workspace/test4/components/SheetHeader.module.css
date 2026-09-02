@@ -1,0 +1,38 @@
+/* "Bottom sheet iOS 26" header: a dark scrim behind the status bar, then the
+   white sheet toolbar that rounds over it and carries the glass back button. */
+.sheet {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
+.sheet::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 32px 0;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.15) 45.192%, rgba(0, 0, 0, 0) 100%);
+  pointer-events: none;
+}
+
+.sheet > * {
+  position: relative;
+}
+
+.toolbar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 44px;
+  padding: var(--space) 0;
+  box-sizing: content-box;
+  background: var(--background-base-default);
+  border-radius: 38px 38px 0 0;
+}
+
+.back {
+  position: absolute;
+  top: 50%;
+  left: var(--space);
+  transform: translateY(-50%);
+}

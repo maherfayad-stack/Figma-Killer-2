@@ -1,0 +1,60 @@
+/* Warning tone as STATE (see docs/design.md's two-layer colour model): this is
+   a consequence the user needs to weigh before editing, not decoration. */
+.notice {
+  display: flex;
+  gap: var(--space-2xs);
+  align-items: flex-start;
+  padding: var(--space-xs) var(--space-s);
+  border-radius: var(--radius);
+  background: var(--warning-10);
+  color: var(--warning-text);
+}
+
+/* Info tone as STATE: `SourceConstraintNotice`'s third variant states a fact
+   about where a VALUE came from — nothing is blocked and nothing needs
+   weighing, so it must not shout in warning amber the way a real structural
+   lock does. Same `--info-text` mix the dependencies/script panels use. */
+.noticeInfo {
+  background: color-mix(in srgb, var(--info-text) 12%, transparent);
+  color: var(--info-text);
+}
+
+.noticeInfo .icon {
+  color: var(--info-text);
+}
+
+.icon {
+  flex-shrink: 0;
+  color: var(--warning);
+  /* Optical alignment with the first line of text, without a hardcoded offset. */
+  align-self: baseline;
+}
+
+.text {
+  margin: 0;
+  font-size: var(--text-2xs);
+  line-height: 1.4;
+}
+
+/* R8 — a `file:line` mention inside the notice's running prose, styled as an
+   inline link rather than a full button: no background, underline affordance,
+   inherits the surrounding paragraph's color and size instead of Button's own. */
+.jumpToSourceButton {
+  display: inline-flex;
+  height: auto;
+  min-height: 0;
+  padding: 0;
+  gap: var(--space-3xs);
+  background: transparent;
+  color: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  vertical-align: baseline;
+}
+
+.jumpToSourceButton:hover {
+  background: transparent;
+  color: inherit;
+}

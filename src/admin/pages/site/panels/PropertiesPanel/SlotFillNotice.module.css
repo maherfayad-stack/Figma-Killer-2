@@ -1,0 +1,44 @@
+/* Info tone as STATE (see docs/design.md's two-layer colour model) — states a
+   fact about where this node sits in the tree; nothing is blocked and
+   nothing needs weighing. Mirrors `SharedComponentNotice.module.css`'s
+   `.noticeInfo` variant rather than re-deriving the tone from scratch. */
+.notice {
+  display: flex;
+  gap: var(--space-2xs);
+  align-items: flex-start;
+  padding: var(--space-xs) var(--space-s);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--info-text) 12%, transparent);
+  color: var(--info-text);
+}
+
+.icon {
+  flex-shrink: 0;
+  align-self: baseline;
+}
+
+.text {
+  margin: 0;
+  font-size: var(--text-2xs);
+  line-height: 1.4;
+}
+
+.jumpButton {
+  display: inline-flex;
+  height: auto;
+  min-height: 0;
+  padding: 0;
+  gap: var(--space-3xs);
+  background: transparent;
+  color: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  vertical-align: baseline;
+}
+
+.jumpButton:hover {
+  background: transparent;
+  color: inherit;
+}

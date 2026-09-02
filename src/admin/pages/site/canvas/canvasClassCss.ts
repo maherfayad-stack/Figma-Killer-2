@@ -1,0 +1,257 @@
+import {
+  bagToCSS,
+  createStyleRuleCssEmitter,
+  generateClassCSS,
+  type ViewportContext,
+  type ResponsiveCssOptions,
+} from '@core/publisher'
+import { filterReemittableColorTokens, generateFrameworkRootCss } from '@core/framework'
+import { generateFontsCss } from '@core/fonts'
+import { isImportedStyleRuleId, styleRuleSelector } from '@core/page-tree'
+import type { StyleRule, ConditionDef } from '@core/page-tree'
+import type { SiteFontsSettings } from '@core/fonts'
+import type {
+  FrameworkColorSettings,
+  FrameworkPreferencesSettings,
+  FrameworkSpacingSettings,
+  FrameworkTypographySettings,
+} from '@core/framework-schema'
+
+interface CanvasResponsiveCssOptions extends ResponsiveCssOptions {
+  mediaSignature?: string
+}
+
+/**
+ * `board-27` — true when a `StyleRule` needs to render through the canvas's
+ * class-registry OVERLAY (`mc-classes`, `ClassStyleInjector`) rather than
+ * being left to render from `AuthoredCssInjector`'s raw, on-disk `mc-authored`
+ * text alone.
+ *
+ * An EDITOR-AUTHORED rule (no `sc-` prefix — created in the CSS Classes
+ * panel) always needs the overlay: it was never on disk to begin with, so
+ * there is no raw text for it anywhere else in the document. An IMPORTED
+ * rule only needs it once a SESSION EDIT has actually touched it
+ * (`updatedAt > 0` — every edit action on an existing rule bumps this; see
+ * `propertyActions.ts`/`conditionActions.ts`/`crudActions.ts`) — until then
+ * its declarations render faithfully from the raw `.css` text
+ * `AuthoredCssInjector` injects, which (unlike this registry) survived
+ * happy-dom's lossy CSSOM parse intact.
+ *
+ * Re-emitting an UNEDITED imported rule here too would double its CSS
+ * payload for a Tailwind-heavy `extraCss` blob and reintroduce the exact
+ * CSSOM-loss risk `AuthoredCssInjector` exists to remove — see that
+ * module's own doc, and `docs/agent-refs/canvas-internals.md`.
+ */
+function styleRuleNeedsCanvasOverlay(rule: StyleRule): boolean {
+  return !isImportedStyleRuleId(rule.id) || rule.updatedAt > 0
+}
+
+function buildCanvasClassCSS(
+  classes: Record<string, StyleRule>,
+  breakpoints: ViewportContext[],
+  conditions: ReadonlyArray<ConditionDef> = [],
+  frameworkColors?: FrameworkColorSettings | null,
+  frameworkTypography?: FrameworkTypographySettings | null,
+  frameworkSpacing?: FrameworkSpacingSettings | null,
+  frameworkPreferences?: FrameworkPreferencesSettings | null,
+  fonts?: SiteFontsSettings | null,
+  responsiveOptions: CanvasResponsiveCssOptions = {},
+): string {
+  const blocks: string[] = []
+
+  // The publisher reset is NOT part of this string. It is emitted by
+  // `ClassStyleInjector` into its own `@layer reset`, below `@layer vendor` —
+  // bundling it in here put a zero-specificity reset one cascade layer ABOVE
+  // every design system's package CSS, which layer order let it annihilate.
+  // See `canvasCssLayers.ts` for the full account.
+
+  // Fonts go first so `@font-face` declarations exist before any rule that
+  // references the family — browsers tolerate the reverse order, but the
+  // ordering keeps generated CSS easier to inspect.
+  const fontsCss = generateFontsCss(fonts)
+  if (fontsCss) blocks.push(fontsCss)
+  // Extracted color tokens are never re-declared here — their real `:root`
+  // declaration already exists in the project's own stylesheet, loaded by
+  // UserStylesheetInjector/ProjectCssInjector into the SAME document. See
+  // `filterReemittableColorTokens`'s doc (colors.ts) for the full account
+  // of why a second, HSLA-normalized declaration is a defect, not a
+  // convenience (STUDIO-FIGMA-PARITY-PLAN.md T4).
+  const frameworkCss = generateFrameworkRootCss({
+    colors: filterReemittableColorTokens(frameworkColors),
+    typography: frameworkTypography,
+    spacing: frameworkSpacing,
+    preferences: frameworkPreferences,
+  })
+  if (frameworkCss) blocks.push(frameworkCss)
+
+  // The registry CSS is the publisher's own generator — the canvas ships the
+  // exact bytes a publish would (rule order, condition/viewport cascade, and
+  // sanitized raw @keyframes rules included), so the preview cannot drift
+  // from the published output. `board-27` — filtered to just the rules that
+  // NEED the overlay (see `styleRuleNeedsCanvasOverlay`); an unedited
+  // imported rule renders from `AuthoredCssInjector`'s raw text instead.
+  const overlayClasses = Object.fromEntries(
+    Object.entries(classes).filter(([, rule]) => styleRuleNeedsCanvasOverlay(rule)),
+  )
+  const classCss = generateClassCSS(overlayClasses, breakpoints, conditions, responsiveOptions)
+  if (classCss) blocks.push(classCss)
+
+  return blocks.join('\n\n')
+}
+
+type CanvasClassCssGenerator = typeof buildCanvasClassCSS
+
+/**
+ * Wrap the registry-CSS generator in a single-slot identity memo.
+ *
+ * Every breakpoint-frame `ClassStyleInjector` regenerates this CSS with the
+ * SAME store-snapshot inputs in the same commit — the generation is pure and
+ * all inputs are Mutative-immutable, so comparing the 8 argument identities
+ * is exact: frames 2..N (and any re-run with unchanged inputs) return the
+ * cached string instead of re-sorting and re-emitting the whole registry.
+ *
+ * The factory shape exists so tests can inject a counting generator; runtime
+ * code uses the bound `generateCanvasClassCSS` singleton below.
+ */
+export function createCanvasClassCssMemo(
+  generate: CanvasClassCssGenerator = buildCanvasClassCSS,
+): CanvasClassCssGenerator {
+  let lastInputs: readonly unknown[] | null = null
+  let lastCss = ''
+  return (
+    classes,
+    breakpoints,
+    conditions = [],
+    frameworkColors,
+    frameworkTypography,
+    frameworkSpacing,
+    frameworkPreferences,
+    fonts,
+    responsiveOptions = {},
+  ) => {
+    const inputs = [
+      classes,
+      breakpoints,
+      conditions,
+      frameworkColors,
+      frameworkTypography,
+      frameworkSpacing,
+      frameworkPreferences,
+      fonts,
+      responsiveOptions.mediaSignature,
+    ]
+    const prev = lastInputs
+    if (prev && inputs.every((value, i) => Object.is(value, prev[i]))) {
+      return lastCss
+    }
+    lastCss = generate(
+      classes,
+      breakpoints,
+      conditions,
+      frameworkColors,
+      frameworkTypography,
+      frameworkSpacing,
+      frameworkPreferences,
+      fonts,
+      responsiveOptions,
+    )
+    lastInputs = inputs
+    return lastCss
+  }
+}
+
+/**
+ * Generate the canvas class-registry CSS (fonts + framework root CSS + the
+ * publisher's `generateClassCSS` output). The publisher reset is emitted
+ * separately, into its own lower cascade layer — see `canvasCssLayers.ts`.
+ * Identity-memoized — see `createCanvasClassCssMemo`.
+ */
+export const generateCanvasClassCSS: CanvasClassCssGenerator = createCanvasClassCssMemo()
+
+/**
+ * Generate a higher-specificity preview rule for a single class, used by
+ * the canvas style injector while a user is hovering a suggestion. The
+ * doubled class selector (`.foo.foo`) wins over any base / breakpoint
+ * rule emitted by `generateCanvasClassCSS`, without committing the
+ * change to the document or pushing a history entry.
+ */
+export function generatePreviewClassCSS(
+  cls: StyleRule,
+  preview: { breakpointId?: string | null; styles: Record<string, unknown> },
+  responsiveOptions: ResponsiveCssOptions = {},
+): string {
+  const priorities = preview.breakpointId
+    ? cls.contextStylePriorities?.[preview.breakpointId]
+    : cls.stylePriorities
+  const decls = bagToCSS(preview.styles, responsiveOptions, priorities)
+  if (!decls) return ''
+  const selector = styleRuleSelector(cls)
+  const doubled = `${selector}${selector}`
+  if (!preview.breakpointId) {
+    return `${doubled} {\n${decls}\n}`
+  }
+  return `[data-breakpoint-id="${escapeCssAttribute(preview.breakpointId)}"] ${doubled} {\n${decls}\n}`
+}
+
+/**
+ * Optional in-flight edit overlaid onto the forced state preview so dragging a
+ * control updates it live. `contextId` is the breakpoint/condition the edit
+ * targets (`null` for the base context).
+ */
+interface ForcedStateInflight {
+  contextId: string | null
+  styles: Record<string, unknown>
+}
+
+/**
+ * CSS that force-previews a *state* rule onto a single node, regardless of
+ * whether the state (`:hover`/`:focus`/…) is actually active.
+ *
+ * Selecting a state pill in the picker can't toggle a real `:hover` (there's no
+ * DOM API for it), so we paint the rule's declarations directly onto the
+ * selected element. The `[data-node-id]` attribute selector is doubled for
+ * specificity — the same trick `generatePreviewClassCSS` uses — so the forced
+ * state wins over the element's base class rules while leaving unspecified
+ * properties to fall through.
+ *
+ * The emission itself is the publisher's `createStyleRuleCssEmitter`: the base
+ * styles AND every `contextStyles` override are emitted under their real
+ * `@media`/`@container`/`@supports` preludes. Because each canvas frame is an
+ * iframe at a fixed width, those queries evaluate per-frame exactly as on the
+ * published page — so a hover override that only applies at a breakpoint is
+ * previewed only in that breakpoint's frame.
+ */
+export function generateForcedStateCSS(
+  nodeId: string,
+  rule: StyleRule,
+  breakpoints: ViewportContext[],
+  conditions: ReadonlyArray<ConditionDef> = [],
+  inflight?: ForcedStateInflight | null,
+  responsiveOptions: ResponsiveCssOptions = {},
+): string {
+  const rawSelector = `[data-node-id="${escapeCssAttribute(nodeId)}"]`
+  const selector = `${rawSelector}${rawSelector}`
+
+  const baseStyles = inflight && inflight.contextId === null
+    ? { ...rule.styles, ...inflight.styles }
+    : rule.styles
+
+  // Merge any in-flight edit into the context it targets so a brand-new
+  // context override previews live too.
+  const contextStyles: Record<string, Record<string, unknown>> = { ...(rule.contextStyles ?? {}) }
+  if (inflight && inflight.contextId !== null) {
+    contextStyles[inflight.contextId] = { ...(contextStyles[inflight.contextId] ?? {}), ...inflight.styles }
+  }
+
+  const emitRule = createStyleRuleCssEmitter(breakpoints, conditions, responsiveOptions)
+  return emitRule(selector, {
+    styles: baseStyles,
+    stylePriorities: rule.stylePriorities,
+    contextStyles,
+    contextStylePriorities: rule.contextStylePriorities,
+  }).join('\n\n')
+}
+
+function escapeCssAttribute(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+}

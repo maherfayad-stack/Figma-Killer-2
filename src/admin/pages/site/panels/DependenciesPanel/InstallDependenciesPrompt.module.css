@@ -1,0 +1,39 @@
+/* InstallDependenciesPrompt — the "Install dependencies" empty state and the
+ * status chip shown in its place while the background install job (WS-1.4)
+ * runs. Sits above DepsSection's package list, inside the shared body
+ * padding, so it owns only its own bottom margin. */
+
+.emptyState {
+    margin-bottom: var(--space-xs);
+}
+
+.statusChip {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4xs);
+    margin-bottom: var(--space-xs);
+    padding: var(--space-xs) var(--space-s);
+    border: 1px solid color-mix(in srgb, var(--info-text) 22%, transparent);
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--info-text) 8%, transparent);
+}
+
+.statusHeader {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2xs);
+    color: var(--info-text);
+    font-size: var(--text-2xs);
+    font-weight: 700;
+}
+
+.logTail {
+    overflow: hidden;
+    margin: 0;
+    color: var(--text-disabled);
+    font-family: monospace;
+    font-size: var(--text-3xs);
+    line-height: 1.4;
+    white-space: pre-wrap;
+    text-overflow: ellipsis;
+}

@@ -1,0 +1,339 @@
+{
+  "version": 1,
+  "nextSeq": 16,
+  "threads": [
+    {
+      "id": "f50f6ad9-2b2f-4389-bcac-ffccebcc7a0a",
+      "seq": 3,
+      "boardId": "a8194ebe-07af-4346-9f76-5fe6634ee9b5",
+      "anchor": {
+        "frameId": "a1879581-1b1c-4d32-a61f-cabf7074367a",
+        "pageId": "onboarding",
+        "dx": 227.828125,
+        "dy": 803.703125,
+        "node": {
+          "nodeId": "pages/Onboarding.tsx:12:6",
+          "indexPath": [
+            0
+          ],
+          "moduleId": "base.container",
+          "textSnippet": ""
+        }
+      },
+      "resolved": false,
+      "createdAt": "2026-09-02T06:58:53.868Z",
+      "comments": [
+        {
+          "id": "de5da156-e58c-4288-b7a2-52690346c18b",
+          "author": {
+            "userId": "smoke-local-test",
+            "displayName": "Local Smoke Test",
+            "kind": "user"
+          },
+          "body": "missing content here",
+          "createdAt": "2026-09-02T06:58:53.868Z",
+          "editedAt": null
+        },
+        {
+          "id": "0658de50-e9fc-4068-b5fc-5679f36ba127",
+          "author": {
+            "userId": "smoke-local-test",
+            "displayName": "Local Smoke Test",
+            "kind": "user"
+          },
+          "body": "ALOT OF CONTNET",
+          "createdAt": "2026-09-02T07:11:35.253Z",
+          "editedAt": null
+        }
+      ]
+    },
+    {
+      "id": "62793c87-ab5c-403f-a190-45d264f2256f",
+      "seq": 6,
+      "boardId": "a8194ebe-07af-4346-9f76-5fe6634ee9b5",
+      "anchor": {
+        "frameId": "bfcb5a5e-c39e-4c4c-9265-f024a1c0c59f",
+        "pageId": "sign-up",
+        "dx": 291.34375,
+        "dy": 484.287109375,
+        "node": {
+          "nodeId": "pages/SignUp.tsx:60:12",
+          "indexPath": [
+            0,
+            1,
+            5,
+            1
+          ],
+          "moduleId": "base.container",
+          "textSnippet": ""
+        }
+      },
+      "resolved": true,
+      "createdAt": "2026-09-02T07:11:05.461Z",
+      "comments": [
+        {
+          "id": "aba94348-0588-45a1-871d-e58df7b55232",
+          "author": {
+            "userId": "smoke-local-test",
+            "displayName": "Local Smoke Test",
+            "kind": "user"
+          },
+          "body": "THESE SHOULD BE AT THE FAR BOTTOM",
+          "createdAt": "2026-09-02T07:11:05.461Z",
+          "editedAt": null
+        }
+      ]
+    },
+    {
+      "id": "005a71fb-db61-4ef2-8fd4-ab4b76be23b3",
+      "seq": 9,
+      "boardId": "a8194ebe-07af-4346-9f76-5fe6634ee9b5",
+      "anchor": {
+        "frameId": "809f5ae2-be87-4294-858e-a4784e5b6863",
+        "pageId": "sms",
+        "dx": 108.0703125,
+        "dy": 159.3779296875,
+        "node": {
+          "nodeId": "pages/SMS.tsx:10:10",
+          "indexPath": [
+            0,
+            0,
+            0
+          ],
+          "moduleId": "base.container",
+          "textSnippet": ""
+        }
+      },
+      "resolved": true,
+      "createdAt": "2026-09-02T07:27:46.089Z",
+      "comments": [
+        {
+          "id": "e937d737-6370-48d3-bb2c-db7f1daed287",
+          "author": {
+            "userId": "smoke-local-test",
+            "displayName": "Local Smoke Test",
+            "kind": "user"
+          },
+          "body": "WRONT TITLE CHECK FIGMA AGAIN",
+          "createdAt": "2026-09-02T07:27:46.089Z",
+          "editedAt": null
+        }
+      ]
+    },
+    {
+      "id": "53fd1069-c215-43d4-8ee3-fd775dba7a02",
+      "seq": 10,
+      "boardId": "a8194ebe-07af-4346-9f76-5fe6634ee9b5",
+      "anchor": {
+        "frameId": "bfcb5a5e-c39e-4c4c-9265-f024a1c0c59f",
+        "pageId": "sign-up",
+        "dx": 260.2109375,
+        "dy": 713.4169921875,
+        "node": {
+          "nodeId": "pages/SignUp.tsx:41:16",
+          "indexPath": [
+            0,
+            0,
+            0,
+            1,
+            1,
+            1
+          ],
+          "moduleId": "base.container",
+          "textSnippet": ""
+        }
+      },
+      "resolved": true,
+      "createdAt": "2026-09-02T07:27:57.512Z",
+      "comments": [
+        {
+          "id": "6b1d0edc-b020-4118-b8ce-1e49ae555a99",
+          "author": {
+            "userId": "smoke-local-test",
+            "displayName": "Local Smoke Test",
+            "kind": "user"
+          },
+          "body": "CONTENT MESSING",
+          "createdAt": "2026-09-02T07:27:57.512Z",
+          "editedAt": null
+        }
+      ]
+    },
+    {
+      "id": "0e6e25b0-1cbc-4e26-8460-d9aa85da279a",
+      "seq": 11,
+      "boardId": "a8194ebe-07af-4346-9f76-5fe6634ee9b5",
+      "anchor": {
+        "frameId": "bfcb5a5e-c39e-4c4c-9265-f024a1c0c59f",
+        "pageId": "sign-up",
+        "dx": 131.4453125,
+        "dy": 151.3515625,
+        "node": {
+          "nodeId": "pages/SignUp.tsx:11:8",
+          "indexPath": [
+            0,
+            0
+          ],
+          "moduleId": "alm.BottomSheet",
+          "textSnippet": ""
+        }
+      },
+      "resolved": true,
+      "createdAt": "2026-09-02T07:28:18.402Z",
+      "comments": [
+        {
+          "id": "c0ff33cd-a0ee-469e-a2c2-4e5c98802580",
+          "author": {
+            "userId": "smoke-local-test",
+            "displayName": "Local Smoke Test",
+            "kind": "user"
+          },
+          "body": "TITLE MISSING HERE, AND REMOVE THE ONE AT THE FAR TOP AND THE X IS BACK",
+          "createdAt": "2026-09-02T07:28:18.402Z",
+          "editedAt": null
+        }
+      ]
+    },
+    {
+      "id": "bc2d39cb-1869-432f-8270-6a771225d06b",
+      "seq": 12,
+      "boardId": "a8194ebe-07af-4346-9f76-5fe6634ee9b5",
+      "anchor": {
+        "frameId": "809f5ae2-be87-4294-858e-a4784e5b6863",
+        "pageId": "sms",
+        "dx": 67.2890625,
+        "dy": 102.328125,
+        "node": {
+          "nodeId": "pages/SMS.tsx:9:8",
+          "indexPath": [
+            0,
+            0
+          ],
+          "moduleId": "alm.BottomSheet",
+          "textSnippet": ""
+        }
+      },
+      "resolved": true,
+      "createdAt": "2026-09-02T07:28:22.790Z",
+      "comments": [
+        {
+          "id": "6cd6967e-053c-4d5c-aa6e-128614550ec9",
+          "author": {
+            "userId": "smoke-local-test",
+            "displayName": "Local Smoke Test",
+            "kind": "user"
+          },
+          "body": "THE X IS BACK",
+          "createdAt": "2026-09-02T07:28:22.790Z",
+          "editedAt": null
+        }
+      ]
+    },
+    {
+      "id": "f2cd397c-b435-42a0-999f-a0379e75f3c4",
+      "seq": 13,
+      "boardId": "a8194ebe-07af-4346-9f76-5fe6634ee9b5",
+      "anchor": {
+        "frameId": "809f5ae2-be87-4294-858e-a4784e5b6863",
+        "pageId": "sms",
+        "dx": 93.78125,
+        "dy": 121.9296875,
+        "node": {
+          "nodeId": "pages/SMS.tsx:10:8",
+          "indexPath": [
+            0,
+            0
+          ],
+          "moduleId": "alm.BottomSheet",
+          "textSnippet": ""
+        }
+      },
+      "resolved": false,
+      "createdAt": "2026-09-02T08:25:09.613Z",
+      "comments": [
+        {
+          "id": "14102900-ac43-406b-b077-5268990181d9",
+          "author": {
+            "userId": "smoke-local-test",
+            "displayName": "Local Smoke Test",
+            "kind": "user"
+          },
+          "body": "this is wrong to much spacem should look exactly like figma",
+          "createdAt": "2026-09-02T08:25:09.613Z",
+          "editedAt": null
+        }
+      ]
+    },
+    {
+      "id": "ea2cc9ae-83ac-4e39-9e5d-ee6f8aba9b64",
+      "seq": 14,
+      "boardId": "a8194ebe-07af-4346-9f76-5fe6634ee9b5",
+      "anchor": {
+        "frameId": "809f5ae2-be87-4294-858e-a4784e5b6863",
+        "pageId": "sms",
+        "dx": 64.4375,
+        "dy": 368.24365234375,
+        "node": {
+          "nodeId": "pages/SMS.tsx:13:10",
+          "indexPath": [
+            0,
+            0,
+            0
+          ],
+          "moduleId": "base.container",
+          "textSnippet": ""
+        }
+      },
+      "resolved": false,
+      "createdAt": "2026-09-02T08:25:17.253Z",
+      "comments": [
+        {
+          "id": "0885b5ee-9ada-44a0-b969-a753680dc97c",
+          "author": {
+            "userId": "smoke-local-test",
+            "displayName": "Local Smoke Test",
+            "kind": "user"
+          },
+          "body": "missing content",
+          "createdAt": "2026-09-02T08:25:17.253Z",
+          "editedAt": null
+        }
+      ]
+    },
+    {
+      "id": "f041d9ba-b8fa-4400-8f78-e9b30c56e9eb",
+      "seq": 15,
+      "boardId": "a8194ebe-07af-4346-9f76-5fe6634ee9b5",
+      "anchor": {
+        "frameId": "bfcb5a5e-c39e-4c4c-9265-f024a1c0c59f",
+        "pageId": "sign-up",
+        "dx": 164.2890625,
+        "dy": 124.8828125,
+        "node": {
+          "nodeId": "pages/SignUp.tsx:12:8",
+          "indexPath": [
+            0,
+            0
+          ],
+          "moduleId": "alm.BottomSheet",
+          "textSnippet": ""
+        }
+      },
+      "resolved": false,
+      "createdAt": "2026-09-02T08:25:22.073Z",
+      "comments": [
+        {
+          "id": "eea8a2d6-3496-444c-89c0-02f6d79c0c34",
+          "author": {
+            "userId": "smoke-local-test",
+            "displayName": "Local Smoke Test",
+            "kind": "user"
+          },
+          "body": "too much space",
+          "createdAt": "2026-09-02T08:25:22.073Z",
+          "editedAt": null
+        }
+      ]
+    }
+  ]
+}

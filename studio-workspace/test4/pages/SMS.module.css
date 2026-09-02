@@ -1,0 +1,142 @@
+/* The Figma frame stacks three absolutely-positioned layers: the sheet header,
+   the content banner (which starts 11px under the header), and the keypad
+   pinned to the bottom. */
+.page {
+  position: relative;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 100vh;
+  background: var(--background-base-default);
+}
+
+.header {
+  position: absolute;
+  inset: 0 0 auto 0;
+  z-index: 1;
+}
+
+.banner {
+  position: absolute;
+  inset: 124px 0 auto 0;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+  align-items: center;
+  padding: var(--space) var(--space) var(--space-lg);
+  background: var(--background-base-default);
+  overflow: hidden;
+}
+
+.title {
+  width: 100%;
+  margin: 0;
+  font-family: var(--type-headline-family);
+  font-size: var(--type-headline-size);
+  font-weight: var(--type-headline-weight);
+  line-height: 36px;
+  letter-spacing: -0.5px;
+  color: var(--text-base-default);
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space);
+  width: 100%;
+}
+
+/* ── "sent via" ── */
+.channel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+  width: 100%;
+}
+
+.channelLabel {
+  margin: 0;
+  font-family: var(--type-body-regular-family);
+  font-size: var(--type-body-size);
+  font-weight: var(--type-body-regular-weight);
+  line-height: var(--type-body-lh);
+  color: var(--text-base-default);
+}
+
+.channelValue {
+  display: flex;
+  gap: var(--space-xs);
+  align-items: flex-start;
+  margin: 0;
+  color: var(--text-base-default);
+}
+
+.icon {
+  display: flex;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  color: var(--icon-base-default);
+}
+
+.icon svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.strong {
+  font-family: var(--type-subtitle-family);
+  font-size: var(--type-subtitle-size);
+  font-weight: var(--type-subtitle-weight);
+  line-height: var(--type-subtitle-lh);
+}
+
+.at {
+  font-family: var(--type-body-regular-family);
+  font-size: var(--type-body-size);
+  font-weight: var(--type-body-regular-weight);
+  line-height: var(--type-body-lh);
+}
+
+/* Each run is its own element so it stays individually editable; the word gaps
+   between them are drawn as margin rather than left as bare whitespace between
+   JSX nodes, which the canvas trims away. */
+.at {
+  margin-inline: 0.28em;
+}
+
+.resendRun {
+  margin-inline-end: 0.28em;
+}
+
+/* ── code inputs ── */
+.codeInputs {
+  display: flex;
+  gap: var(--space-sm);
+  width: 100%;
+}
+
+.codeInput {
+  flex: 1;
+  min-width: 0;
+  height: 50.5px;
+  border-radius: var(--rounded-xs);
+  background: var(--background-base-default);
+  box-shadow: inset 0 0 0 1px var(--border-base-default);
+}
+
+.resend {
+  margin: 0;
+  font-family: var(--type-caption-regular-family);
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-regular-weight);
+  line-height: var(--type-caption-lh);
+  color: var(--text-base-default);
+}
+
+.strongCaption {
+  font-family: var(--type-caption-semibold-family);
+  font-weight: var(--type-caption-semibold-weight);
+}
+
