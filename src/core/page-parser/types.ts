@@ -203,6 +203,19 @@ export interface ParsedNode {
    */
   codeFunctionPaths?: string[]
   /**
+   * Handler prop name -> the screen it navigates to, for handlers whose
+   * destination is written as a literal (`onClick` -> `'/sign-in'`).
+   *
+   * A FLOW the project already has. Studio turns these into read-only
+   * `origin: 'code'` prototype connectors, drawn differently from the ones a
+   * designer drew, so the board shows what the app actually does on day one.
+   *
+   * Deliberately absent for anything computed — a template literal, a variable,
+   * a branch. See `readNavigationIntent` for why a wrong derived link is worse
+   * than a missing one.
+   */
+  codeNavigationTargets?: Record<string, string>
+  /**
    * True when the element's sole child WAS an expression rather than a
    * literal JSX child — regardless of whether §7 could resolve it to a value.
    * Set for BOTH cases: a resolution that produced `text` (`{c.heading}`) and

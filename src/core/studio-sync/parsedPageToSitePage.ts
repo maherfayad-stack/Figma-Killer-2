@@ -149,6 +149,13 @@ export function parsedPageToSitePage(parsed: ParsedPage, opts: ParsedPageToSiteP
       ? (node.codeFunctionPaths ?? []).map((path) => `callSiteProps:${path}`)
       : (node.codeFunctionPaths ?? [])
 
+    // Carried through UNREMAPPED, unlike its two neighbours above. Those are
+    // remapped so a module can find a prop under the namespace it reads props
+    // from; this one is never read as a prop. Its only consumer derives
+    // connectors from the DESTINATIONS, and the handler's name is a label on
+    // the way there, not an address into a props bag.
+    const codeNavigationTargets = node.codeNavigationTargets
+
     // R2 — `node.resolvedProps` remapped the exact same way `codeProps` just
     // was, so a key here always lines up with a key in `codeProps`: an
     // instance's keys move into the `callSiteProps:<name>` namespace,
@@ -272,6 +279,7 @@ export function parsedPageToSitePage(parsed: ParsedPage, opts: ParsedPageToSiteP
       // questions — see `PageNode.codeProps`.
       ...(codeProps.length > 0 ? { codeProps } : {}),
       ...(codeFunctionPaths.length > 0 ? { codeFunctionPaths } : {}),
+      ...(codeNavigationTargets !== undefined ? { codeNavigationTargets } : {}),
       // Carry the source `style={{…}}` through so the canvas renders the real
       // inline styles (`NodeRenderer` reads `node.inlineStyles`). Without this
       // an authored flex/gap/etc. layout is invisible on the board.

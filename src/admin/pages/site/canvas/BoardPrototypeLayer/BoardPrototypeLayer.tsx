@@ -29,6 +29,7 @@ import { useContext, useRef, type CSSProperties, type PointerEvent as ReactPoint
 import { useEditorStore } from '@site/store/store'
 import { selectActiveBoardFrames } from '@site/store/slices/boardSelectors'
 import { commitLinkDraft } from '@site/studio/prototypeActions'
+import { selectVisibleLinks } from '@site/store/slices/prototypeSelectors'
 import { resolveLinkSource, type PrototypeLink } from '@core/studio-prototype'
 import { CanvasViewportActionsContext } from '../CanvasContexts'
 import { screenToBoard } from '../CanvasRulers/rulerGeometry'
@@ -51,7 +52,10 @@ const EMPTY_IDS: string[] = []
 export function BoardPrototypeLayer() {
   const boardMode = useEditorStore((s) => s.boardMode)
   const frames = useEditorStore(selectActiveBoardFrames)
-  const links = useEditorStore((s) => s.prototype.links)
+  // Authored links merged with the ones derived from the user's navigation
+  // code. Only computed in prototype mode — the derivation walks every node of
+  // every loaded page, and design mode never draws a connector.
+  const links = useEditorStore((s) => (s.boardMode === 'prototype' ? selectVisibleLinks(s) : s.prototype.links))
   const selectedLinkId = useEditorStore((s) => s.selectedLinkId)
   const setSelectedLink = useEditorStore((s) => s.setSelectedLink)
   const linkDraft = useEditorStore((s) => s.linkDraft)

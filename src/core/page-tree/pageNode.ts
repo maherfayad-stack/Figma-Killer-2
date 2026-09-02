@@ -146,6 +146,17 @@ export const PageNodeSchema = Type.Object({
    */
   codeFunctionPaths: Type.Optional(Type.Array(Type.String())),
   /**
+   * Studio import — handler prop name -> the screen it navigates to, for the
+   * handlers whose destination is written as a literal.
+   *
+   * A flow the project ALREADY HAS. Studio turns these into read-only
+   * `origin: 'code'` prototype connectors, so the board shows the app's real
+   * navigation beside the links a designer drew. Provenance, not a lock: it
+   * makes no claim about writability and nothing reads it during an edit. See
+   * `ParsedNode.codeNavigationTargets` in `@core/page-parser`.
+   */
+  codeNavigationTargets: Type.Optional(Type.Record(Type.String(), Type.String())),
+  /**
    * Studio import (§2) — the local component this node was inlined out of
    * (`'SheetHeader'`). Provenance, not a lock: the node is editable and its
    * writeback target is that component's own source location.
@@ -227,6 +238,20 @@ function parseCodeFunctionPaths(raw: unknown): string[] | undefined {
 }
 
 /**
+ * Parse a raw `codeNavigationTargets` field. Same tolerance as its siblings: a
+ * malformed entry is dropped rather than failing the page, because a derived
+ * connector is an extra Studio draws, never something a page depends on.
+ */
+function parseCodeNavigationTargets(raw: unknown): Record<string, string> | undefined {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return undefined
+  const targets: Record<string, string> = {}
+  for (const [key, value] of Object.entries(raw)) {
+    if (key.length > 0 && typeof value === 'string' && value.length > 0) targets[key] = value
+  }
+  return Object.keys(targets).length > 0 ? targets : undefined
+}
+
+/**
  * Parse a single PageNode, throwing `Error('<nodePath>.<field>: <message>')` on
  * required-field failures so parsePage/parseSiteDocument can report the exact
  * invalid path.
@@ -259,6 +284,7 @@ export function parsePageNode(raw: unknown, nodePath: string): PageNode {
   const assetOrigin = parseAssetOrigin(r.assetOrigin)
   const codeProps = parseCodeProps(r.codeProps)
   const codeFunctionPaths = parseCodeFunctionPaths(r.codeFunctionPaths)
+  const codeNavigationTargets = parseCodeNavigationTargets(r.codeNavigationTargets)
 
   return {
     ...base,
@@ -270,6 +296,7 @@ export function parsePageNode(raw: unknown, nodePath: string): PageNode {
     ...(assetOrigin !== undefined ? { assetOrigin } : {}),
     ...(codeProps !== undefined ? { codeProps } : {}),
     ...(codeFunctionPaths !== undefined ? { codeFunctionPaths } : {}),
+    ...(codeNavigationTargets !== undefined ? { codeNavigationTargets } : {}),
     ...(typeof r.fromComponent === 'string' && r.fromComponent.length > 0
       ? { fromComponent: r.fromComponent }
       : {}),

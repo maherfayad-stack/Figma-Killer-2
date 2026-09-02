@@ -399,6 +399,9 @@ function processElement(
       // there is nothing at this location for a scalar write to land on.
       codeProps: codePropNames([...propsResult.codeProps, 'svg'], styleResult.codeStyles),
       ...(propsResult.codeFunctionPaths.length > 0 ? { codeFunctionPaths: propsResult.codeFunctionPaths } : {}),
+      ...(Object.keys(propsResult.codeNavigationTargets).length > 0
+        ? { codeNavigationTargets: propsResult.codeNavigationTargets }
+        : {}),
       ...(styleResult.styles !== undefined ? { inlineStyles: styleResult.styles } : {}),
       ...(svgLock.resolution ? { resolution: svgLock.resolution } : {}),
       ...(svgResolvedProps ? { resolvedProps: svgResolvedProps } : {}),
@@ -430,6 +433,9 @@ function processElement(
       // expression — see the sibling branch above.
       codeProps: codePropNames([...propsResult.codeProps, 'svg'], styleResult.codeStyles),
       ...(propsResult.codeFunctionPaths.length > 0 ? { codeFunctionPaths: propsResult.codeFunctionPaths } : {}),
+      ...(Object.keys(propsResult.codeNavigationTargets).length > 0
+        ? { codeNavigationTargets: propsResult.codeNavigationTargets }
+        : {}),
       ...(styleResult.styles !== undefined ? { inlineStyles: styleResult.styles } : {}),
       ...(rawLock.resolution ? { resolution: rawLock.resolution } : {}),
       ...(rawResolvedProps ? { resolvedProps: rawResolvedProps } : {}),
@@ -497,6 +503,9 @@ function processElement(
     ...(lock.lockReason ? { lockReason: lock.lockReason } : {}),
     ...(codeProps.length > 0 ? { codeProps } : {}),
     ...(propsResult.codeFunctionPaths.length > 0 ? { codeFunctionPaths: propsResult.codeFunctionPaths } : {}),
+      ...(Object.keys(propsResult.codeNavigationTargets).length > 0
+        ? { codeNavigationTargets: propsResult.codeNavigationTargets }
+        : {}),
     // `codeText` covers two different reasons the text isn't a literal: it
     // resolved (via code, hence `resolution`) OR it definitely could NOT
     // resolve (`hasCodeText`) — both mean "this node's text came from an

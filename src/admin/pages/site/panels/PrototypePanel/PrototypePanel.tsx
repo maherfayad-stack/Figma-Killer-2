@@ -18,7 +18,7 @@
  * prototype rots without anyone noticing.
  */
 import { useEditorStore } from '@site/store/store'
-import { selectLinkSource, selectSelectedLink } from '@site/store/slices/prototypeSelectors'
+import { selectLinkSource, selectSelectedLink, selectVisibleLinks } from '@site/store/slices/prototypeSelectors'
 import { transitionsForAction, type PrototypeAction, type PrototypeLink, type PrototypeTransition } from '@core/studio-prototype'
 import { deleteLink, updateLink } from '@site/studio/prototypeActions'
 import { PanelHeader } from '@admin/shared/PanelHeader'
@@ -49,7 +49,7 @@ const TRANSITION_LABELS: Record<PrototypeTransition, string> = {
 export function PrototypePanel() {
   const setBoardMode = useEditorStore((s) => s.setBoardMode)
   const selected = useEditorStore(selectSelectedLink)
-  const links = useEditorStore((s) => s.prototype.links)
+  const links = useEditorStore(selectVisibleLinks)
   const pages = useEditorStore((s) => s.site?.pages)
   const setSelectedLink = useEditorStore((s) => s.setSelectedLink)
 
@@ -105,7 +105,10 @@ function LinkRow({
         onClick={() => onSelect(link.id)}
         data-broken={source.live ? undefined : 'true'}
       >
-        <span className={styles.rowAction}>{ACTION_LABELS[link.action]}</span>
+        <span className={styles.rowAction}>
+          {ACTION_LABELS[link.action]}
+          {link.origin === 'code' && <span className={styles.rowFromCode}>from code</span>}
+        </span>
         <span className={styles.rowTarget}>{label}</span>
         {!source.live && <span className={styles.rowBroken}>Source element is gone</span>}
       </Button>
@@ -133,6 +136,35 @@ function LinkInspector({ link, pageOptions }: { link: PrototypeLink; pageOptions
         ? { transition: legal.includes(link.transition as PrototypeTransition) ? link.transition : legal[0] }
         : { transition: undefined }),
     })
+  }
+
+  /**
+   * A derived link is a READING of the user's source, not a thing on the board.
+   * Editing it here would either lie (the board would disagree with the code) or
+   * require Studio to rewrite a handler it cannot honestly rewrite. So the
+   * inspector explains it instead, which is the answer the user actually wants
+   * when they click a connector they did not draw.
+   */
+  if (link.origin === 'code') {
+    return (
+      <div className={styles.body}>
+        <p className={styles.warning} role="status">
+          This connector was read out of your code, not drawn on the board. Change the handler in
+          the source to change where it goes.
+        </p>
+        <div className={styles.field}>
+          <span className={styles.fieldLabel}>Navigates to</span>
+          <span className={styles.rowTarget}>
+            {pageOptions.find((page) => page.id === link.targetPageId)?.title ?? 'Deleted page'}
+          </span>
+        </div>
+        <div className={styles.actions}>
+          <Button variant="ghost" onClick={() => setSelectedLink(null)}>
+            Done
+          </Button>
+        </div>
+      </div>
+    )
   }
 
   return (

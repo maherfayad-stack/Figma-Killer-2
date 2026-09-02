@@ -87,3 +87,9 @@
     gap: var(--space-2xs);
     margin-top: var(--space-2xs);
 }
+
+/* A connector Studio read out of the source, not one the designer drew. */
+.rowFromCode {
+    margin-left: var(--space-3xs);
+    color: var(--canvas-prototype-link-code);
+}

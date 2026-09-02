@@ -21,6 +21,7 @@ import {
 } from 'ts-morph'
 import { LOOP_ID_SEPARATOR, styleValueKey } from '@core/page-tree'
 import type { ParsedNode, ParsedPropValue } from './types'
+import { readNavigationIntent } from './navigationIntent'
 export { ICON_PROP_SVG_KEY, SVG_DOCUMENT_RE, rawHtmlValueExpression, resolveRawSvgMarkup } from './iconPropValues'
 import {
   tryResolveExpression,
@@ -115,6 +116,15 @@ export function extractProps(
    * `actions[0].onClick`) — see `ParsedNode.codeFunctionPaths`.
    */
   codeFunctionPaths: string[]
+  /**
+   * Handler prop name -> the screen it navigates to, for the handlers whose
+   * destination is written as a literal. `onClick` -> `'/sign-in'`.
+   *
+   * The source of `origin: 'code'` prototype links: flows the project already
+   * has, drawn on the board without anyone having to redraw them. Deliberately
+   * empty for anything computed — see `readNavigationIntent`.
+   */
+  codeNavigationTargets: Record<string, string>
   assetOrigin?: ValueOrigin
 } {
   const result: Record<string, ParsedPropValue> = {}
@@ -124,6 +134,8 @@ export function extractProps(
   const codeProps: string[] = []
   /** See the `codeFunctionPaths` field on this function's own return type, above. */
   const codeFunctionPaths: string[] = []
+  /** See `codeNavigationTargets` on this function's own return type, above. */
+  const codeNavigationTargets: Record<string, string> = {}
   // First resolved import-backed asset value wins — mirrors `textOrigin`'s
   // "only the first" scoping (see its doc comment in `./types`): a node
   // rarely has more than one image-shaped prop, and picking one honest target
@@ -235,6 +247,12 @@ export function extractProps(
       // definitely no value at all, so don't even try `tryResolveExpression`".
       if (Node.isArrowFunction(expression) || Node.isFunctionExpression(expression)) {
         codeProps.push(name)
+        // A handler that navigates somewhere is a FLOW the project already has,
+        // and Studio draws it on the board beside the links a designer drew.
+        // Bounded and literal-only — see `readNavigationIntent` for why a
+        // wrong derived link is worse than a missing one.
+        const destination = readNavigationIntent(expression)
+        if (destination !== undefined) codeNavigationTargets[name] = destination
         continue
       }
       if (Node.isIdentifier(expression)) {
@@ -322,7 +340,7 @@ export function extractProps(
     }
   }
 
-  return { props: result, resolutions, resolutionsByKey, codeProps, codeFunctionPaths, ...(assetOrigin ? { assetOrigin } : {}) }
+  return { props: result, resolutions, resolutionsByKey, codeProps, codeFunctionPaths, codeNavigationTargets, ...(assetOrigin ? { assetOrigin } : {}) }
 }
 
 /**
