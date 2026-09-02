@@ -23,7 +23,15 @@
  * the drop, in `prototypeActions`.
  */
 import type { EditorStoreSliceCreator } from '@site/store/types'
-import { createPrototypeFile, type PrototypeFile } from '@core/studio-prototype'
+import {
+  INITIAL_PLAY_STATE,
+  applyPlayAction,
+  createPrototypeFile,
+  type PlayState,
+  type PrototypeFile,
+  type PrototypeLink,
+  type PrototypeTransition,
+} from '@core/studio-prototype'
 
 /** A connector being dragged, in BOARD coordinates. */
 export interface LinkDraft {
@@ -53,19 +61,29 @@ export interface PrototypeSlice {
    * The player is ARMED: a click in live mode follows a prototype link instead
    * of selecting a node.
    *
-   * This exists because without it a click in live mode would mean both things
-   * at once, which is not resolvable — see `STUDIO-PROTOTYPE-PLAN.md` §5. It is
-   * separate from `boardMode` on purpose: arming the player is about the live
-   * frame, authoring links is about the board.
+   * Without this a click in live mode would mean both things at once, which is
+   * not resolvable. It is separate from `boardMode` on purpose: arming the
+   * player is about the live frame, authoring links is about the board.
    */
   playMode: boolean
   /**
-   * The screens the player has navigated through, oldest first, as page ids.
-   * `back` pops it. Empty means "wherever the player started".
+   * The two screen stacks. The MACHINE lives in `@core/studio-prototype`'s
+   * `playback.ts` — this slice only holds its state and hands it back, so the
+   * rules about what `back` pops are stated once and are unit-testable without
+   * a store.
    */
-  playHistory: readonly string[]
-  /** Overlays currently presented on top, innermost last. `close` pops it. */
-  playOverlays: readonly string[]
+  playState: PlayState
+  /**
+   * The transition of the LAST followed link — the animation the incoming
+   * screen or overlay should play, and nothing more.
+   *
+   * Stored rather than derived because `PlayState` is a stack of page ids: once
+   * an action has been applied there is no longer anything in it that says HOW
+   * you arrived. `back` and `close` carry no transition of their own (they
+   * reverse whatever brought you here), so they leave this null and the
+   * component reverses the presentation itself.
+   */
+  playTransition: PrototypeTransition | null
 
   loadPrototype: (file: PrototypeFile) => void
   markPrototypeLoadFailed: () => void
@@ -73,15 +91,13 @@ export interface PrototypeSlice {
   adoptPrototype: (file: PrototypeFile) => void
   setSelectedLink: (linkId: string | null) => void
   setPlayMode: (active: boolean) => void
-  /** Push a screen the player navigated to. */
-  pushPlayScreen: (pageId: string) => void
-  /** Present an overlay on top of whatever is showing. */
-  pushPlayOverlay: (pageId: string) => void
-  /** `back` — pop the screen stack. Returns false when there is nowhere to go. */
-  popPlayScreen: () => boolean
-  /** `close` — dismiss the top overlay. Returns false when none is showing. */
-  popPlayOverlay: () => boolean
-  /** Return the player to where it started, dropping every stack. */
+  /**
+   * Follow a link. Returns false when the action changed nothing — a `back` on
+   * the entry screen, a `close` with nothing presented — so the caller can say
+   * so instead of silently doing nothing.
+   */
+  followPrototypeLink: (link: PrototypeLink) => boolean
+  /** Return the player to where it started. */
   resetPlay: () => void
   beginLinkDraft: (draft: LinkDraft) => void
   /** Move the loose end. A no-op when no drag is in flight. */
@@ -100,8 +116,8 @@ export const createPrototypeSlice: EditorStoreSliceCreator<PrototypeSlice> = (se
   selectedLinkId: null,
   linkDraft: null,
   playMode: false,
-  playHistory: [],
-  playOverlays: [],
+  playState: INITIAL_PLAY_STATE,
+  playTransition: null,
 
   loadPrototype: (file) => {
     set((s) => {
@@ -142,60 +158,30 @@ export const createPrototypeSlice: EditorStoreSliceCreator<PrototypeSlice> = (se
       s.playMode = active
       // Disarming returns the player to its starting screen. Leaving it three
       // screens deep with the arrow cursor back would make the live frame show
-      // a page the page tree does not think is open.
+      // a page the editor does not think is open.
       if (!active) {
-        s.playHistory = []
-        s.playOverlays = []
+        s.playState = INITIAL_PLAY_STATE
+        s.playTransition = null
       }
     })
   },
 
-  pushPlayScreen: (pageId) => {
+  followPrototypeLink: (link) => {
+    let moved = false
     set((s) => {
-      // Navigating out from under an overlay dismisses it: the overlay belonged
-      // to the screen being left.
-      s.playOverlays = []
-      s.playHistory = [...s.playHistory, pageId]
+      const next = applyPlayAction(s.playState, link)
+      if (next === s.playState) return
+      s.playState = next
+      s.playTransition = link.transition ?? null
+      moved = true
     })
-  },
-
-  pushPlayOverlay: (pageId) => {
-    set((s) => {
-      s.playOverlays = [...s.playOverlays, pageId]
-    })
-  },
-
-  popPlayScreen: () => {
-    let popped = false
-    set((s) => {
-      // `back` closes an overlay first if one is up — that is what the gesture
-      // means to someone looking at a sheet over a screen.
-      if (s.playOverlays.length > 0) {
-        s.playOverlays = s.playOverlays.slice(0, -1)
-        popped = true
-        return
-      }
-      if (s.playHistory.length === 0) return
-      s.playHistory = s.playHistory.slice(0, -1)
-      popped = true
-    })
-    return popped
-  },
-
-  popPlayOverlay: () => {
-    let popped = false
-    set((s) => {
-      if (s.playOverlays.length === 0) return
-      s.playOverlays = s.playOverlays.slice(0, -1)
-      popped = true
-    })
-    return popped
+    return moved
   },
 
   resetPlay: () => {
     set((s) => {
-      s.playHistory = []
-      s.playOverlays = []
+      s.playState = INITIAL_PLAY_STATE
+      s.playTransition = null
     })
   },
 

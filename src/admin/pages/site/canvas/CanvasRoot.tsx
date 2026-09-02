@@ -62,6 +62,8 @@ import { clientPointToEditorDoc } from './canvasDomGeometry'
 import { useConfirmDelete } from '@admin/shared/dialogs/ConfirmDeleteDialog'
 import { useEditorPreference, readEditorSelectPreference } from '@site/preferences/editorPreferences'
 import { useTemplatePreviewContext } from '@site/hooks/useTemplatePreviewContext'
+import { usePrototypePlayback } from './usePrototypePlayback'
+import { followPrototypeLinkAt } from '@site/studio/playNavigation'
 import styles from './CanvasRoot.module.css'
 
 const VisualComponentModeControl = lazy(() =>
@@ -91,7 +93,14 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
   const spotlight = useContext(SpotlightContext)
 
   // Store subscriptions
-  const canvasPage = useEditorStore(selectActiveCanvasPage)
+  const editingPage = useEditorStore(selectActiveCanvasPage)
+  const {
+    canvasPage,
+    overlayPage,
+    screenTransition: playScreenTransition,
+    overlayTransition: playOverlayTransition,
+    playMode,
+  } = usePrototypePlayback(editingPage)
   const breakpoints = useEditorStore((s) => s.site?.breakpoints ?? EMPTY_BREAKPOINTS)
   const activeBreakpointId = useEditorStore((s) => s.activeBreakpointId)
   const canvasView = useEditorStore((s) => s.canvasView)
@@ -274,6 +283,16 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
 
   const onNodeClick = (nodeId: string, e: React.MouseEvent, breakpointId?: string, frameId?: string | null) => {
     e.stopPropagation()
+    // An ARMED player owns every click in the live frame. Falling through to
+    // selection when no link is found would make the same gesture mean two
+    // different things depending on where it landed, which is the exact
+    // ambiguity the Play toggle exists to remove.
+    if (playMode && canvasPage) {
+      // Overlay first: it is on top, and a node id alone does not say which of
+      // the two mounted surfaces the click came from.
+      followPrototypeLinkAt(nodeId, [overlayPage?.id ?? null, canvasPage.id])
+      return
+    }
     if (breakpointId && breakpointId !== activeBreakpointId) {
       setActiveBreakpoint(breakpointId)
       if (preserveSelectionWhenActivatingBreakpoint) {
@@ -587,6 +606,9 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
             {isLive ? (
               <CanvasLiveSurface
                 page={canvasPage}
+                overlayPage={overlayPage}
+                overlayTransition={playOverlayTransition}
+                screenTransition={playScreenTransition}
                 activeBreakpoint={activeBreakpoint}
                 templateContext={templatePreviewContext}
                 runtimeScripts={runtimeScripts}

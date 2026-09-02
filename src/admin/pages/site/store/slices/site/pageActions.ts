@@ -26,8 +26,11 @@ import { deleteStudioPage } from '@site/studio/studioPageRequests'
 import { requestCmsSiteReload } from '@admin/state/adminEvents'
 import { pushToast } from '@ui/components/Toast'
 import { getErrorMessage } from '@core/utils/errorMessage'
+import type { PrototypeFile } from '@core/studio-prototype'
 import type { SiteSlice, SiteSliceHelpers } from './types'
 import { clearCanvasSelectionDraft } from '../selectionSlice'
+import { applyPrototypeOp } from '@site/studio/prototypeApi'
+import { getStudioWorkspaceDir } from '@site/studio/studioWorkspaceDir'
 
 /**
  * Delete `pageId`'s source file, reporting failure honestly.
@@ -50,6 +53,26 @@ async function commitStudioPageDeletion(pageId: string): Promise<void> {
       body: getErrorMessage(err, 'Unknown page error'),
     })
     requestCmsSiteReload()
+  }
+}
+
+/**
+ * Drop prototype links orphaned by a page deletion.
+ *
+ * Silent on failure by design: the page IS deleted either way, and a toast here
+ * would report a cleanup problem on top of an action that succeeded. The links
+ * are pruned again on the next load, since `prunePrototypeLinks` runs against
+ * whatever pages exist then.
+ */
+async function prunePrototypeLinksForRemainingPages(
+  pageIds: string[],
+  adopt: (file: PrototypeFile) => void,
+): Promise<void> {
+  if (pageIds.length === 0) return
+  try {
+    adopt(await applyPrototypeOp({ kind: 'prune', pageIds }, getStudioWorkspaceDir()))
+  } catch (err) {
+    console.error('[pageActions] pruning prototype links failed:', err)
   }
 }
 
@@ -111,6 +134,20 @@ export function createPageActions({
       // `boardsSaveGuard.ts` that this shrink was asked for rather than a
       // symptom of a bad load, so the boards autosave is not refused.
       get().removeFrame(pageId)
+      // Prototype links are the page's third half. Deleting a page is the one
+      // edit that orphans a link without touching the link's own source, so the
+      // prune is the caller's job — the server cannot enumerate pages without
+      // parsing the project, which is exactly the work that route avoids. It is
+      // told which pages STILL EXIST, read after the splice.
+      //
+      // Calls the API module directly rather than `@site/studio/prototypeActions`:
+      // that module reads the store, and importing it from inside a slice closes
+      // a store -> siteSlice -> pageActions -> store cycle. The same reason
+      // `commitStudioPageDeletion` above talks to `studioPageRequests`.
+      void prunePrototypeLinksForRemainingPages(
+        (get().site?.pages ?? []).map((candidate) => candidate.id),
+        (file) => get().adoptPrototype(file),
+      )
       void commitStudioPageDeletion(pageId)
     },
 

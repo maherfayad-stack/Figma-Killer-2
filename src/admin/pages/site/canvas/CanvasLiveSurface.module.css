@@ -106,3 +106,113 @@
     pointer-events: none;
     user-select: none;
 }
+
+/*
+ * ── Prototype playback ──────────────────────────────────────────────────────
+ *
+ * Only ever active while the player is armed. In every other state the screen
+ * wrapper is a plain box with `data-transition="instant"`, which animates
+ * nothing, and the overlay is not rendered at all.
+ *
+ * Every animation here is neutralised by the global `prefers-reduced-motion`
+ * rule in globals.css, which clamps `animation-duration` for everything.
+ */
+.prototypeScreen {
+    display: contents;
+}
+
+/*
+ * `display: contents` cannot host an animation, so the animated variants
+ * become real boxes. They only do so when a transition is actually playing,
+ * which keeps the default (editing) path structurally identical to what it was
+ * before playback existed.
+ */
+.prototypeScreen:not([data-transition='instant']) {
+    display: block;
+    width: 100%;
+    height: 100%;
+    animation-duration: 220ms;
+    animation-timing-function: cubic-bezier(0.32, 0.72, 0, 1);
+    animation-fill-mode: both;
+}
+
+.prototypeScreen[data-transition='dissolve'] {
+    animation-name: prototypeDissolve;
+}
+
+/* A leftward navigation brings the new screen in from the right. */
+.prototypeScreen[data-transition='slide-left'],
+.prototypeScreen[data-transition='push-left'] {
+    animation-name: prototypeSlideFromRight;
+}
+
+.prototypeScreen[data-transition='slide-right'],
+.prototypeScreen[data-transition='push-right'] {
+    animation-name: prototypeSlideFromLeft;
+}
+
+/* The overlay sits over the screen it was opened from, which stays mounted. */
+.prototypeOverlay {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+}
+
+.prototypeScrim {
+    position: absolute;
+    inset: 0;
+    background: var(--scrim-40);
+    animation: prototypeDissolve 220ms cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+
+.prototypeOverlayFrame {
+    position: absolute;
+    overflow: hidden;
+    animation-duration: 260ms;
+    animation-timing-function: cubic-bezier(0.32, 0.72, 0, 1);
+    animation-fill-mode: both;
+}
+
+/* A popup is centred over the screen and does not fill it. */
+.prototypeOverlay[data-transition='popup'] .prototypeOverlayFrame,
+.prototypeOverlay[data-transition='instant'] .prototypeOverlayFrame {
+    inset: 15% 8%;
+    border-radius: var(--panel-radius);
+    animation-name: prototypePopIn;
+}
+
+/*
+ * A sheet is anchored to the bottom and deliberately leaves screen showing
+ * above it: how much it leaves is the whole difference between a small sheet
+ * and a big one, and it is why a sheet page still gets a full-size frame.
+ */
+.prototypeOverlay[data-transition='sheet'] .prototypeOverlayFrame {
+    inset: 40% 0 0 0;
+    border-radius: var(--panel-radius) var(--panel-radius) 0 0;
+    animation-name: prototypeSheetUp;
+}
+
+@keyframes prototypeDissolve {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@keyframes prototypeSlideFromRight {
+    from { transform: translateX(100%); }
+    to { transform: translateX(0); }
+}
+
+@keyframes prototypeSlideFromLeft {
+    from { transform: translateX(-100%); }
+    to { transform: translateX(0); }
+}
+
+@keyframes prototypePopIn {
+    from { opacity: 0; transform: scale(0.94); }
+    to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes prototypeSheetUp {
+    from { transform: translateY(100%); }
+    to { transform: translateY(0); }
+}

@@ -37,6 +37,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react'
 import type { Breakpoint, Page } from '@core/page-tree'
+import type { PrototypeTransition } from '@core/studio-prototype'
 import type { TemplateRenderDataContext } from '@core/templates/dynamicBindings'
 import { CanvasComposedTree } from './CanvasComposedTree'
 import { BreakpointSelectionOverlay } from './BreakpointSelectionOverlay'
@@ -62,6 +63,16 @@ interface LiveWidthOverride {
 
 interface CanvasLiveSurfaceProps {
   page: Page | null
+  /**
+   * The prototype overlay presented on top of `page`, or null. Only ever set
+   * while the player is armed — an overlay is a PLAYER concept, not an editing
+   * one, and the editing surface has no equivalent.
+   */
+  overlayPage?: Page | null
+  /** How the overlay arrived, for its entrance animation. */
+  overlayTransition?: PrototypeTransition | null
+  /** How the current screen arrived, when no overlay is on top of it. */
+  screenTransition?: PrototypeTransition | null
   activeBreakpoint: Breakpoint | null
   templateContext?: TemplateRenderDataContext
   runtimeScripts?: InjectableRuntimeScript[]
@@ -81,6 +92,9 @@ interface ResizeDragState {
 
 export function CanvasLiveSurface({
   page,
+  overlayPage = null,
+  overlayTransition = null,
+  screenTransition = null,
   activeBreakpoint,
   templateContext,
   runtimeScripts,
@@ -184,6 +198,22 @@ export function CanvasLiveSurface({
               data-breakpoint-id={activeBreakpoint.id}
               className={styles.iframeViewport}
             >
+            {/*
+              Keying the screen on its own page id is what makes a `navigate`
+              animate: React remounts the subtree, so the entrance animation
+              re-runs instead of the new page silently swapping in.
+
+              KNOWN LIMIT, accepted for v1: only the INCOMING screen animates.
+              A true `push` moves the outgoing screen too, which needs both
+              mounted at once. The incoming half reads correctly on its own and
+              costs nothing; the outgoing half would double frame mounts on
+              every navigation.
+            */}
+            <div
+              key={page.id}
+              className={styles.prototypeScreen}
+              data-transition={screenTransition ?? 'instant'}
+            >
             <IframeFrameSurface
               ref={handleIframeRef}
               interaction="live"
@@ -197,6 +227,7 @@ export function CanvasLiveSurface({
                 </CanvasBreakpointContext.Provider>
               </CanvasTemplateContext.Provider>
             </IframeFrameSurface>
+            </div>
 
               <BreakpointSelectionOverlay
                 breakpointId={activeBreakpoint.id}
@@ -204,6 +235,42 @@ export function CanvasLiveSurface({
                 iframeElement={iframeEl}
                 overlayRoot={overlayRoot}
               />
+
+              {/*
+                The prototype overlay: a second frame over the first, with a
+                scrim, exactly as a popup or a bottom sheet presents over the
+                screen it was opened from. The screen underneath stays MOUNTED
+                — that is the whole difference between `overlay` and `navigate`,
+                and it is why closing one returns instantly with its scroll
+                position intact.
+
+                Keyed on the page id so React remounts (and therefore re-runs
+                the entrance animation) when one overlay replaces another.
+              */}
+              {overlayPage && (
+                <div
+                  key={overlayPage.id}
+                  className={styles.prototypeOverlay}
+                  data-transition={overlayTransition ?? 'instant'}
+                  data-testid="prototype-overlay"
+                >
+                  <div className={styles.prototypeScrim} aria-hidden="true" />
+                  <div className={styles.prototypeOverlayFrame}>
+                    <IframeFrameSurface
+                      interaction="live"
+                      breakpointId={activeBreakpoint.id}
+                      width={activeBreakpoint.width}
+                      runtimeScripts={runtimeScripts}
+                    >
+                      <CanvasTemplateContext.Provider value={templateContext}>
+                        <CanvasBreakpointContext.Provider value={activeBreakpoint.id}>
+                          <CanvasComposedTree page={overlayPage} />
+                        </CanvasBreakpointContext.Provider>
+                      </CanvasTemplateContext.Provider>
+                    </IframeFrameSurface>
+                  </div>
+                </div>
+              )}
             </div>
           </DeviceMockup>
 
