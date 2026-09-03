@@ -22,10 +22,30 @@
  * document inside it. That is why none of this needs the canvas root's rect or
  * the live transform ref, and why composing `frame origin + element rect` is
  * the whole conversion.
+ *
+ * WHAT "WHERE IS THIS NODE" MEANS, AND WHY IT IS NOT `getBoundingClientRect`
+ * ────────────────────────────────────────────────────────────────────────
+ * Two whole classes of node report no box of their own, and BOTH are ordinary
+ * things a user points at:
+ *
+ *   - a module whose root is LAYOUT-TRANSPARENT (`display: contents`) — how a
+ *     module hosts a third-party component without inserting a box into the
+ *     author's layout, which is every component out of a design-system package;
+ *   - a node that renders no element at all (a `studio.instance` fragment).
+ *
+ * The canvas already has one answer for both — `nodeVisualRect` unions the
+ * children of a transparent element, and `findCanvasNodeRectSource` falls back
+ * to a fragment node's shallowest rendered descendants when given the tree.
+ * This file uses them rather than measuring elements itself: a second opinion
+ * about where a node is means the `+` handle and the selection ring disagree
+ * about which things exist.
  */
 import { useEffect, useState } from 'react'
 import { FRAME_HEIGHT, FRAME_WIDTH, type BoardFrame } from '@core/studio-board'
-import { findRenderedCanvasNodes } from '../canvasNodeLookup'
+import type { Page } from '@core/page-tree'
+import { useEditorStore } from '@site/store/store'
+import { nodeVisualRect } from '../canvasDomGeometry'
+import { findCanvasNodeRectSource } from '../canvasNodeLookup'
 import type { BoardRect } from './connectorGeometry'
 
 export function frameBoardRect(frame: BoardFrame): BoardRect {
@@ -38,33 +58,6 @@ export function frameBoardRect(frame: BoardFrame): BoardRect {
 }
 
 /**
- * The box an element OCCUPIES ON SCREEN, even when it has none of its own.
- *
- * Every node Studio renders for a component out of a design-system package is a
- * `display: contents` wrapper: the node id has to live on an element, but that
- * element must not add a box, or it would break the CSS combinators
- * (`body > nav`, `:nth-child()`) that the published DOM relies on. Such an
- * element's `getBoundingClientRect()` is `0×0` — correct per spec, and useless
- * here, because the thing the user is pointing at is plainly visible.
- *
- * A `Range` over the element's contents reports what its children actually
- * occupy, text nodes included, which is the honest answer to "where is this
- * node". `NodeRenderer` measures inline text the same way.
- *
- * `null` only when there genuinely is nothing rendered.
- */
-export function visualBox(element: Element): DOMRect | null {
-  const own = element.getBoundingClientRect()
-  if (own.width > 0 || own.height > 0) return own
-
-  const range = element.ownerDocument.createRange()
-  range.selectNodeContents(element)
-  const contents = range.getBoundingClientRect()
-  range.detach()
-  return contents.width > 0 || contents.height > 0 ? contents : null
-}
-
-/**
  * A node's rect RELATIVE TO ITS FRAME's top-left, in unscaled CSS pixels.
  *
  * `null` when the node has no element in any canvas frame — a page that is not
@@ -72,13 +65,18 @@ export function visualBox(element: Element): DOMRect | null {
  * Callers draw nothing rather than guessing at a position.
  */
 export function measureNodeFrameRect(nodeId: string): BoardRect | null {
-  const rendered = findRenderedCanvasNodes(nodeId)[0]
-  if (!rendered) return null
+  const found = findCanvasNodeRectSource(nodeId, treeOwning(nodeId))
+  if (!found) return null
 
-  const box = visualBox(rendered.element)
+  // `nodeVisualRect` is the canvas's one answer to "where is this node", and
+  // it already handles the two cases that matter here: a LAYOUT-TRANSPARENT
+  // root (`display: contents`, how a module hosts a third-party component
+  // without adding a box — every design-system component is one) reports a
+  // 0×0 box of its own, so its children's union is the visual box.
+  const box = nodeVisualRect(found.source)
   if (!box) return null
 
-  const view = rendered.element.ownerDocument.defaultView
+  const view = found.doc.defaultView
   // The rect is relative to the iframe's VIEWPORT, so a scrolled frame needs
   // its scroll added back to get a stable frame-local coordinate.
   return {
@@ -87,6 +85,19 @@ export function measureNodeFrameRect(nodeId: string): BoardRect | null {
     width: box.width,
     height: box.height,
   }
+}
+
+/**
+ * The page tree containing `nodeId`, so a node that rendered NO ELEMENT can
+ * still be located from its descendants (`findCanvasNodeRectSource`).
+ *
+ * Read imperatively rather than subscribed: this runs inside a measurement
+ * pass, never during render, and the answer only changes when the page set
+ * does — which already triggers a remeasure through the observer.
+ */
+function treeOwning(nodeId: string): Page | null {
+  const pages = useEditorStore.getState().site?.pages
+  return pages?.find((page) => page.nodes[nodeId] !== undefined) ?? null
 }
 
 /** Compose a frame-local rect with its frame's board position. */
@@ -129,7 +140,7 @@ export function useNodeFrameRects(nodeIds: readonly string[]): ReadonlyMap<strin
     const observer = new ResizeObserver(measure)
     const seen = new Set<Document>()
     for (const id of ids) {
-      const doc = findRenderedCanvasNodes(id)[0]?.element.ownerDocument
+      const doc = findCanvasNodeRectSource(id, treeOwning(id))?.doc
       if (!doc || seen.has(doc)) continue
       seen.add(doc)
       observer.observe(doc.documentElement)

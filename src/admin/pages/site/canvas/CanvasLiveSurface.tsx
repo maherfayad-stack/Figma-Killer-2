@@ -32,6 +32,7 @@ import {
   useCallback,
   useEffect,
   useRef,
+  type ReactNode,
   useState,
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
@@ -44,7 +45,8 @@ import { BreakpointSelectionOverlay } from './BreakpointSelectionOverlay'
 import { CanvasBreakpointContext, CanvasPageContext, CanvasTemplateContext } from './CanvasContexts'
 import { IframeFrameSurface, type IframeFrameSurfaceHandle } from './IframeFrameSurface'
 import { DeviceMockup } from './DeviceMockup'
-import { playScreenEntrance } from './screenEntrance'
+import { overlayMotion, play } from './playbackMotion'
+import { PrototypeScreenStack } from './PrototypeScreenStack'
 import { DeviceScrollbarInjector } from './DeviceScrollbarInjector'
 import { DEVICE_BEZEL_PX, resolveDeviceKind, type DeviceKind } from './deviceKind'
 import type { InjectableRuntimeScript } from './useRuntimeScriptBuild'
@@ -74,6 +76,11 @@ interface CanvasLiveSurfaceProps {
   overlayTransition?: PrototypeTransition | null
   /** How the current screen arrived, when no overlay is on top of it. */
   screenTransition?: PrototypeTransition | null
+  /**
+   * The player is armed. Mounts the two-slot screen stack: a navigation has an
+   * outgoing screen to animate, which editing never does.
+   */
+  playMode?: boolean
   activeBreakpoint: Breakpoint | null
   templateContext?: TemplateRenderDataContext
   runtimeScripts?: InjectableRuntimeScript[]
@@ -96,6 +103,7 @@ export function CanvasLiveSurface({
   overlayPage = null,
   overlayTransition = null,
   screenTransition = null,
+  playMode = false,
   activeBreakpoint,
   templateContext,
   runtimeScripts,
@@ -106,7 +114,8 @@ export function CanvasLiveSurface({
   // Outer viewport `<div>` wrapping the iframe — the selection overlay measures
   // it for positioning context, and queries the iframe element for node rects.
   const viewportRef = useRef<HTMLDivElement | null>(null)
-  const screenRef = useRef<HTMLDivElement | null>(null)
+  const overlayPanelRef = useRef<HTMLDivElement | null>(null)
+  const overlayScrimRef = useRef<HTMLDivElement | null>(null)
   const [iframeEl, setIframeEl] = useState<HTMLIFrameElement | null>(null)
   // The iframe's own document, tracked so the device chrome can reach inside
   // it (scrollbar hiding). Published by the handle, so it updates when the
@@ -133,16 +142,54 @@ export function CanvasLiveSurface({
     return () => observer.disconnect()
   }, [])
 
-  // Replay the entrance every time the player lands on a different screen.
-  // Keyed on the page id rather than driven by a remount, so the `<iframe>`
-  // below survives navigation — see the `prototypeScreen` comment in the JSX.
+  /**
+   * One screen's frame. Shared by the single editing slot and both player
+   * slots so a screen cannot render differently depending on which one holds
+   * it. `iframeRef` is only passed by the editing slot — the selection overlay
+   * measures against that iframe, and the player has no selection.
+   */
+  const renderScreen = (screenPage: Page, iframeRef?: typeof handleIframeRef): ReactNode => (
+    <IframeFrameSurface
+      ref={iframeRef}
+      interaction="live"
+      breakpointId={activeBreakpoint?.id ?? ''}
+      width={activeBreakpoint?.width ?? 0}
+      runtimeScripts={runtimeScripts}
+    >
+      {/*
+        `NodeRenderer` resolves every node id against the page named by
+        `CanvasPageContext`, falling back to the ACTIVE document when there is
+        none — which is why the live frame worked for as long as it only ever
+        showed the page being edited. The player shows a different one, and
+        without this provider every id it asked for was looked up in the wrong
+        tree, found nothing, and rendered an empty device. Each board frame
+        provides its own id for exactly this reason.
+      */}
+      <CanvasPageContext.Provider value={screenPage.id}>
+        <CanvasTemplateContext.Provider value={templateContext}>
+          <CanvasBreakpointContext.Provider value={activeBreakpoint?.id ?? ''}>
+            <CanvasComposedTree page={screenPage} />
+          </CanvasBreakpointContext.Provider>
+        </CanvasTemplateContext.Provider>
+      </CanvasPageContext.Provider>
+    </IframeFrameSurface>
+  )
+
+  // The overlay presents itself — a sheet rises from the bottom edge, a popup
+  // scales up in place — over a screen that stays mounted behind a scrim.
+  const overlayPageId = overlayPage?.id ?? null
   useEffect(() => {
-    const element = screenRef.current
-    if (!element) return
-    const animation = playScreenEntrance(element, screenTransition)
-    if (!animation) return
-    return () => animation.cancel()
-  }, [page?.id, screenTransition])
+    if (!overlayPageId) return
+    const motion = overlayTransition ? overlayMotion(overlayTransition) : null
+    if (!motion) return
+    const animations = [
+      play(overlayPanelRef.current, motion.panel, motion.duration, motion.easing),
+      play(overlayScrimRef.current, motion.scrim, motion.duration, motion.easing),
+    ].filter((animation): animation is Animation => animation !== null)
+    return () => {
+      for (const animation of animations) animation.cancel()
+    }
+  }, [overlayPageId, overlayTransition])
 
   const deviceKind = resolveDeviceKind(activeBreakpoint)
   const naturalWidth = computeNaturalWidth(activeBreakpoint, containerWidth, deviceKind)
@@ -212,50 +259,25 @@ export function CanvasLiveSurface({
               className={styles.iframeViewport}
             >
             {/*
-              DELIBERATELY NOT KEYED on the page id. Keying here is the obvious
-              way to replay a CSS entrance animation, and it remounts the
-              `<iframe>` below with it — the portal that renders the page into
-              the frame's body does not survive that, so every navigation
-              landed on an empty device. The entrance is played imperatively
-              instead (`playScreenEntrance`), which needs no remount.
+              In the player, two screen slots so a `push` can move the screen
+              it is leaving as well as the one arriving. Outside it, one slot,
+              exactly as before — editing never navigates, so it never needs a
+              second frame, and mounting one would cost an iframe for nothing.
 
-              KNOWN LIMIT, accepted for v1: only the INCOMING screen animates.
-              A true `push` moves the outgoing screen too, which needs both
-              mounted at once. The incoming half reads correctly on its own and
-              costs nothing; the outgoing half would double frame mounts on
-              every navigation.
+              DELIBERATELY NOT KEYED on the page id in either case. Keying is
+              the obvious way to replay a CSS entrance animation and it
+              remounts the `<iframe>` with it; the portal that renders the page
+              into the frame's body does not survive that, so every navigation
+              landed on an empty device. `playbackMotion` replays the entrance
+              against a frame that stays put.
             */}
-            <div
-              ref={screenRef}
-              className={styles.prototypeScreen}
-              data-transition={screenTransition ?? 'instant'}
-            >
-            <IframeFrameSurface
-              ref={handleIframeRef}
-              interaction="live"
-              breakpointId={activeBreakpoint.id}
-              width={activeBreakpoint.width}
-              runtimeScripts={runtimeScripts}
-            >
-              {/*
-                `NodeRenderer` resolves every node id against the page named by
-                `CanvasPageContext`, falling back to the ACTIVE document when
-                there is none — which is why the live frame worked for as long
-                as it only ever showed the page being edited. The player shows
-                a different one, and without this provider every id it asked
-                for was looked up in the wrong tree, found nothing, and
-                rendered an empty device. Each board frame provides its own id
-                for exactly this reason; the live frame has to as well.
-              */}
-              <CanvasPageContext.Provider value={page.id}>
-                <CanvasTemplateContext.Provider value={templateContext}>
-                  <CanvasBreakpointContext.Provider value={activeBreakpoint.id}>
-                    <CanvasComposedTree page={page} />
-                  </CanvasBreakpointContext.Provider>
-                </CanvasTemplateContext.Provider>
-              </CanvasPageContext.Provider>
-            </IframeFrameSurface>
-            </div>
+            {playMode ? (
+              <PrototypeScreenStack page={page} transition={screenTransition} renderScreen={renderScreen} />
+            ) : (
+              <div className={styles.prototypeScreen} data-slot-state="front">
+                {renderScreen(page, handleIframeRef)}
+              </div>
+            )}
 
               <BreakpointSelectionOverlay
                 breakpointId={activeBreakpoint.id}
@@ -277,29 +299,13 @@ export function CanvasLiveSurface({
               */}
               {overlayPage && (
                 <div
-                  key={overlayPage.id}
                   className={styles.prototypeOverlay}
                   data-transition={overlayTransition ?? 'instant'}
                   data-testid="prototype-overlay"
                 >
-                  <div className={styles.prototypeScrim} aria-hidden="true" />
-                  <div className={styles.prototypeOverlayFrame}>
-                    <IframeFrameSurface
-                      interaction="live"
-                      breakpointId={activeBreakpoint.id}
-                      width={activeBreakpoint.width}
-                      runtimeScripts={runtimeScripts}
-                    >
-                      {/* Same reason as the screen above: the overlay is a
-                          third page, never the one being edited. */}
-                      <CanvasPageContext.Provider value={overlayPage.id}>
-                      <CanvasTemplateContext.Provider value={templateContext}>
-                        <CanvasBreakpointContext.Provider value={activeBreakpoint.id}>
-                          <CanvasComposedTree page={overlayPage} />
-                        </CanvasBreakpointContext.Provider>
-                      </CanvasTemplateContext.Provider>
-                      </CanvasPageContext.Provider>
-                    </IframeFrameSurface>
+                  <div ref={overlayScrimRef} className={styles.prototypeScrim} aria-hidden="true" />
+                  <div ref={overlayPanelRef} className={styles.prototypeOverlayFrame}>
+                    {renderScreen(overlayPage)}
                   </div>
                 </div>
               )}

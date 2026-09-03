@@ -56,6 +56,7 @@ import { useCanvasLayerContextMenu } from './useCanvasLayerContextMenu'
 import { useCanvasKeyboardShortcuts } from './useCanvasKeyboardShortcuts'
 import { useCanvasSelectionKeyboard } from './useCanvasSelectionKeyboard'
 import { useBoardAnnotationKeyboard } from './useBoardAnnotationKeyboard'
+import { usePrototypeLinkKeyboard } from './usePrototypeLinkKeyboard'
 import { useCanvasToolShortcuts } from './useCanvasToolShortcuts'
 import { useBoardSelectAllShortcut } from './useBoardSelectAllShortcut'
 import { clientPointToEditorDoc } from './canvasDomGeometry'
@@ -450,6 +451,7 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
 
   // Sticky notes + doc cards: delete / duplicate / copy-paste / nudge.
   useBoardAnnotationKeyboard(editable, isLive)
+  usePrototypeLinkKeyboard(editable && !isLive)
 
   // Bare-letter tool keys: T (text), F (container), C (comment mode).
   useCanvasToolShortcuts(editable, isLive)
@@ -609,6 +611,7 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
                 overlayPage={overlayPage}
                 overlayTransition={playOverlayTransition}
                 screenTransition={playScreenTransition}
+                playMode={playMode}
                 activeBreakpoint={activeBreakpoint}
                 templateContext={templatePreviewContext}
                 runtimeScripts={runtimeScripts}

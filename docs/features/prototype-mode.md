@@ -257,6 +257,24 @@ honest: delete the handler and the connector is gone, with no stale row.
 - Derived links get the **neutral** transition. The code says where it goes and
   nothing about how it should look getting there.
 
+## 7b. Two ways to draw a link, and one way to delete one
+
+The `+` handle beside the element is the primary affordance, and it can only be
+drawn where the canvas can measure the node. That now covers a
+`display: contents` component root and a zero-DOM fragment node (see §6), but
+"can this be measured" is the wrong question to gate a feature on — so the
+**selection toolbar carries the same action**. Clicking it arms a pick:
+the next click on a frame commits the link, Escape cancels, and the rubber band,
+the snap and the drop wash are the same draft the drag uses, so the two entry
+points cannot drift apart. `LinkDraft.mode` is what separates them — `drag`
+commits on pointer-up because the button is held down, `pick` commits on the
+next click because it is not.
+
+**Delete / Backspace removes a selected link**, Escape deselects it
+(`usePrototypeLinkKeyboard`). It runs in the CAPTURE phase and claims the event:
+a link and a node can be selected at once, and without claiming it one keystroke
+would delete both.
+
 ## 8. Playback
 
 **The live frame must declare which page it is showing.** `NodeRenderer`
@@ -267,6 +285,27 @@ the page being edited — and meant that the moment the player navigated to a
 different screen, every id it asked for was looked up in the wrong tree, found
 nothing, and rendered an empty device. Each board frame provides its own page id
 for exactly this reason; the live frame and the overlay now do too.
+
+**Motion comes from the `almosafer-prototype` skill's tokens**, in
+`playbackMotion.ts` — one module for every animation the player runs, so a
+duration is never written twice. `EASE_IOS` (`cubic-bezier(0.32, 0.72, 0, 1)`)
+is the curve the design system's own `BottomSheet` ships: a sheet the DS
+animates and a sheet Studio animates have to move identically. Navigation is
+420ms, a sheet 500ms, a popup 280ms, and dismissal is quicker than presentation
+— arriving is the moment worth drawing out.
+
+**A slide moves only the arriving screen; a push moves both.** The departing
+screen parallaxes back a third of the way and DARKENS (a fade would read as a
+cross-dissolve; the screen is meant to still be there, underneath). That needs
+both screens mounted at once, which is what `PrototypeScreenStack` is: two slots
+that pages move between, never a frame that gets remounted. The back slot mounts
+on the first navigation of a session and is reused for every one after it.
+
+**An overlay presents over a screen that stays mounted**, behind a scrim — that
+is the whole difference from a navigation, and it is why closing one returns
+instantly with its scroll position intact. A sheet rises from the bottom edge on
+the design system's curve; a popup is a centred card, so it scales up in place
+and takes a dialog's shorter beat.
 
 **The entrance animation must not remount the frame.** A CSS `@keyframes`
 entrance only replays when the element is remounted, so the screen wrapper was

@@ -47,6 +47,13 @@ export interface LinkDraft {
   toY: number
   /** Page currently under the cursor, or `null` over empty board. */
   hoverPageId: string | null
+  /**
+   * How the gesture ends. `drag` commits on pointer-up, because the user is
+   * holding the button down. `pick` was started from the selection toolbar
+   * with a click, so the button is already up: it commits on the NEXT click,
+   * and Escape cancels.
+   */
+  mode: 'drag' | 'pick'
 }
 
 export interface PrototypeSlice {
@@ -57,6 +64,17 @@ export interface PrototypeSlice {
   /** Link whose properties the inspector is showing, or `null`. */
   selectedLinkId: string | null
   linkDraft: LinkDraft | null
+  /**
+   * A link the selection toolbar asked for, waiting on board geometry.
+   *
+   * The toolbar knows WHICH node but nothing about where it is on the board,
+   * and a draft needs a real anchor to draw from. `BoardPrototypeLayer` is the
+   * only thing that can measure that, so it converts this into a `pick` draft
+   * on its next render and clears it. Two steps because the alternative —
+   * teaching the toolbar board geometry — would be a second implementation of
+   * the layer's measurement.
+   */
+  pendingLinkSource: { pageId: string; nodeId: string } | null
   /**
    * The player is ARMED: a click in live mode follows a prototype link instead
    * of selecting a node.
@@ -100,6 +118,9 @@ export interface PrototypeSlice {
   /** Return the player to where it started. */
   resetPlay: () => void
   beginLinkDraft: (draft: LinkDraft) => void
+  /** Selection toolbar entry point — see `pendingLinkSource`. */
+  requestLinkFromNode: (source: { pageId: string; nodeId: string }) => void
+  clearPendingLinkSource: () => void
   /** Move the loose end. A no-op when no drag is in flight. */
   updateLinkDraft: (position: { toX: number; toY: number; hoverPageId: string | null }) => void
   cancelLinkDraft: () => void
@@ -114,6 +135,7 @@ export const createPrototypeSlice: EditorStoreSliceCreator<PrototypeSlice> = (se
   prototypeLoaded: false,
   prototypeLoadFailed: false,
   selectedLinkId: null,
+  pendingLinkSource: null,
   linkDraft: null,
   playMode: false,
   playState: INITIAL_PLAY_STATE,
@@ -206,6 +228,21 @@ export const createPrototypeSlice: EditorStoreSliceCreator<PrototypeSlice> = (se
   cancelLinkDraft: () => {
     set((s) => {
       s.linkDraft = null
+      s.pendingLinkSource = null
+    })
+  },
+
+  requestLinkFromNode: (source) => {
+    set((s) => {
+      s.pendingLinkSource = source
+      s.linkDraft = null
+      s.selectedLinkId = null
+    })
+  },
+
+  clearPendingLinkSource: () => {
+    set((s) => {
+      s.pendingLinkSource = null
     })
   },
 })

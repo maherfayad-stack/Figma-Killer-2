@@ -1,6 +1,7 @@
 /**
  * SelectionToolbar — the floating action bar for the current canvas selection:
- * drag handle, insert-module, duplicate, delete.
+ * drag handle, insert-module, duplicate, delete — plus, in prototype mode, the
+ * second way to draw a link.
  *
  * Extracted from `BreakpointSelectionOverlay.tsx`, which named this exact
  * split as its own extraction candidate when it was grandfathered over the
@@ -26,6 +27,7 @@ import { cn } from '@ui/cn'
 import { CopyPlusSolidIcon } from 'pixel-art-icons/icons/copy-plus-solid'
 import { TrashSolidIcon } from 'pixel-art-icons/icons/trash-solid'
 import { HandGrabSolidIcon } from 'pixel-art-icons/icons/hand-grab-solid'
+import { LinkIcon } from 'pixel-art-icons/icons/link'
 import { CanvasInsertModuleButton } from './CanvasInsertModuleButton'
 import styles from './BreakpointSelectionOverlay.module.css'
 
@@ -37,6 +39,23 @@ interface SelectionToolbarProps {
   /** True while a reorder drag started from this toolbar's handle is in flight. */
   dragging: boolean
   onDragPointerDown: (event: React.PointerEvent<HTMLElement>) => void
+}
+
+/**
+ * Start a prototype link from the selected node.
+ *
+ * The `+` handle beside the element is the primary affordance, but it can only
+ * be drawn where the canvas can measure the node — so the action also lives
+ * here, on chrome that is already floating over the selection. This sets the
+ * request; `usePrototypeLinkPick` turns it into a draft once it has the board
+ * geometry the toolbar has no way to know.
+ */
+function startPrototypeLink() {
+  const state = useEditorStore.getState()
+  const nodeId = state.selectedNodeId
+  const pageId = state.activePageId
+  if (!nodeId || !pageId) return
+  state.requestLinkFromNode({ pageId, nodeId })
 }
 
 function duplicateSelectedLayers() {
@@ -54,6 +73,9 @@ function deleteSelectedLayers() {
 }
 
 export function SelectionToolbar({ toolbarRef, mode, dragging, onDragPointerDown }: SelectionToolbarProps) {
+  const inPrototypeMode = useEditorStore((s) => s.boardMode === 'prototype')
+  const picking = useEditorStore((s) => s.linkDraft?.mode === 'pick' || s.pendingLinkSource !== null)
+
   return (
     <div
       ref={toolbarRef}
@@ -82,6 +104,21 @@ export function SelectionToolbar({ toolbarRef, mode, dragging, onDragPointerDown
         <HandGrabSolidIcon size={13} color="var(--text)" />
       </Button>
       <CanvasInsertModuleButton buttonClassName={styles.selectionToolbarButton} />
+
+      {inPrototypeMode && (
+        <Button
+          variant="secondary"
+          size="xs"
+          iconOnly
+          aria-label="Draw a prototype link from this element"
+          aria-pressed={picking}
+          tooltip={picking ? 'Click a screen to link to — Esc cancels' : 'Link this element to a screen'}
+          className={styles.selectionToolbarButton}
+          onClick={startPrototypeLink}
+        >
+          <LinkIcon size={13} color={picking ? 'var(--canvas-prototype-link)' : 'var(--text)'} />
+        </Button>
+      )}
 
       <Button
         variant="secondary"

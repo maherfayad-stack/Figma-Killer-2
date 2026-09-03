@@ -112,6 +112,9 @@
     --scrim-20: rgba(0, 0, 0, 0.2);
     --scrim-30: rgba(0, 0, 0, 0.3);
     --scrim-40: rgba(0, 0, 0, 0.4);
+    /* Opaque black, for a scrim whose opacity is animated rather than fixed —
+       the dim over a screen the prototype player is navigating away from. */
+    --scrim-solid: rgb(0, 0, 0);
     --scrim-50: rgba(0, 0, 0, 0.5);
     --scrim-60: rgba(0, 0, 0, 0.6);
     --scrim-70: rgba(0, 0, 0, 0.7);

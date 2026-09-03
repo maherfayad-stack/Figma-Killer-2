@@ -58,6 +58,7 @@ import {
   type ConnectorRoute,
 } from './connectorGeometry'
 import { frameBoardRect, toBoardRect, useNodeFrameRects } from './usePrototypeEndpoints'
+import { usePrototypeLinkPick } from './usePrototypeLinkPick'
 import styles from './BoardPrototypeLayer.module.css'
 
 /** Stable identity so the measuring hook does not rebuild its observer. */
@@ -99,8 +100,21 @@ export function BoardPrototypeLayer() {
   // The `+` handle needs the same measurement as a connector's source, so it
   // rides the same observer rather than opening a second one. Sorted so the
   // hook's join key is stable under map-iteration order changes.
-  const measuredIds = [...new Set([...resolvedSourceIds.values(), ...(selectedNodeId ? [selectedNodeId] : [])])].sort()
+  // The toolbar's pending request has to be measured too, or the pick it asked
+  // for can never resolve an anchor to draw from.
+  const pendingLinkSource = useEditorStore((s) => s.pendingLinkSource)
+  const measuredIds = [
+    ...new Set([
+      ...resolvedSourceIds.values(),
+      ...(selectedNodeId ? [selectedNodeId] : []),
+      ...(pendingLinkSource ? [pendingLinkSource.nodeId] : []),
+    ]),
+  ].sort()
   const localRects = useNodeFrameRects(boardMode === 'prototype' ? measuredIds : EMPTY_IDS)
+
+  // The selection toolbar's entry point into the same draft this layer draws.
+  // Called before the early return below, because a hook has to be.
+  usePrototypeLinkPick(localRects)
 
   if (boardMode !== 'prototype') return null
 
@@ -269,6 +283,7 @@ function PrototypeHandle({ localRects }: { localRects: ReadonlyMap<string, Board
       toX: anchor.x,
       toY: anchor.y,
       hoverPageId: null,
+      mode: 'drag',
     })
 
     const onMove = (e: PointerEvent) => {
