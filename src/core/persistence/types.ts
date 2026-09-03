@@ -25,6 +25,16 @@ interface SaveDirtyHints {
 export interface SaveSiteOptions {
   /** Dirty hints from the editor store. Absent → replace-mode full save. */
   dirty?: SaveDirtyHints
+  /**
+   * This save is the last-chance flush from an unload handler (tab close,
+   * hard reload), not an ordinary autosave. The document is about to be torn
+   * down, so the request has to be one the browser promises to deliver
+   * anyway — `keepalive` — instead of an ordinary `fetch` it will cancel.
+   *
+   * An adapter that cannot make that promise may ignore this; the flush is
+   * best-effort by nature and the next save retries whatever did not land.
+   */
+  unloading?: boolean
 }
 
 /**

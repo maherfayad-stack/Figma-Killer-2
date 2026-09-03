@@ -255,6 +255,42 @@ export function useInspectComputedStyle(
  * available" and fall back to the existing spec-default table, not as
  * "everything is unset."
  */
+/**
+ * The rendered PARENT's `display` + `flex-direction`, or `null` when the node
+ * has no rendered element (nothing mounted, a global-selector edit) or is the
+ * document root.
+ *
+ * Its own hook rather than two more entries in `useFrameComputedStyleValues`'
+ * property list because the subject is a DIFFERENT element. "Fill container"
+ * and "Hug contents" are questions about the container, and the container's
+ * layout is the only thing that decides which declaration expresses them —
+ * see `elementSizing.ts`. Reading the node's own `display` instead is the
+ * classic way to get this wrong.
+ *
+ * Same synchronous render-time read, same cache, and the same staleness
+ * caveat as the hook below: an edit to the PARENT's own layout does not change
+ * this node's object identity, so the segmented control can show the previous
+ * container's answer until something re-renders the panel.
+ */
+export function useFrameParentLayout(
+  nodeId: string | null,
+  activeBreakpointId: string,
+): { display: string; flexDirection: string } | null {
+  const cache = useRenderedCanvasNodeCache()
+  const layoutBox = useMutableBox<{ display: string; flexDirection: string }>()
+  if (!nodeId) return null
+  const element = resolveElement(cache, nodeId, activeBreakpointId)
+  const parent = element?.parentElement
+  if (!parent) return null
+  const view = parent.ownerDocument.defaultView
+  if (!view) return null
+  const cs = view.getComputedStyle(parent)
+  return stabilizeRecord(layoutBox, {
+    display: cs.display,
+    flexDirection: cs.flexDirection,
+  })
+}
+
 export function useFrameComputedStyleValues(
   nodeId: string | null,
   activeBreakpointId: string,

@@ -150,6 +150,18 @@ interface ApiRequestOptions<S extends TSchema = TSchema> {
   credentials?: RequestCredentials
   /** Message used when the server provides no error envelope/text. */
   fallbackMessage?: string
+  /**
+   * Keep the request alive past the document's teardown, for a save issued
+   * from `beforeunload`/`pagehide`. WITHOUT this the browser cancels an
+   * in-flight `fetch` as the page goes away, so a fire-and-forget request
+   * from an unload handler is delivered only sometimes — which reads to a
+   * user as "my last edit randomly didn't save".
+   *
+   * The platform limit is a 64KB body across all in-flight keepalive
+   * requests; past that `fetch` rejects. Callers that might exceed it should
+   * not rely on this as their only save.
+   */
+  keepalive?: boolean
   /** Injectable fetch — test seam only; defaults to the global `fetch`. */
   fetchImpl?: FetchLike
 }
@@ -255,11 +267,13 @@ async function requestResponse(
     headers,
     credentials = 'include',
     fallbackMessage,
+    keepalive,
     fetchImpl = globalThis.fetch.bind(globalThis),
   } = options
 
   const init: RequestInit = { method, credentials }
   if (signal) init.signal = signal
+  if (keepalive) init.keepalive = true
 
   const finalHeaders: Record<string, string> = { ...headers }
   if (body !== undefined) {

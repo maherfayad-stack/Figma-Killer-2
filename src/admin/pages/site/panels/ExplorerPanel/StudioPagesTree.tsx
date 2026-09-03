@@ -32,20 +32,29 @@
  * same "click a page to open it" convention `SiteExplorerPanel` already
  * follows.
  *
+ * Right-clicking a page row opens Rename / Delete page. "Delete" moves the
+ * page's files to `.studio/trash/` rather than erasing them, and the Trash
+ * section at the bottom of this panel is the only place they can be removed
+ * for good — see `pageActions.ts`.
+ *
  * Expand/collapse state is local component state (a `Set<string>` of
  * expanded page ids) — UI-only, never persisted to `boards.json` or the
  * site document. The active page auto-expands the first time it becomes
  * active so opening/switching pages always reveals their layers.
  */
 import { useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useEditorStore } from '@site/store/store'
 import { selectActiveBoard } from '@site/store/slices/boardSelectors'
 import type { Page } from '@core/page-tree'
 import { DomPanel, PageLayerSubtree } from '@site/panels/DomPanel'
 import { AddFramePicker, NewPageButton } from '@site/canvas/BoardFramesLayer'
 import { Input } from '@ui/components/Input'
+import { ContextMenu, ContextMenuItem } from '@ui/components/ContextMenu'
+import { useConfirmDelete } from '@admin/shared/dialogs/ConfirmDeleteDialog'
 import { TreeChevron, TreeContainer, TreeIconSlot, TreeLabel, TreeRow } from '@site/ui/Tree'
 import { FileTextSolidIcon } from 'pixel-art-icons/icons/file-text-solid'
+import { TrashSolidIcon } from 'pixel-art-icons/icons/trash-solid'
 import { useInlineRename } from '@site/hooks/useInlineRename'
 import styles from './StudioPagesTree.module.css'
 
@@ -66,6 +75,7 @@ export function StudioPagesTree({ editable = true }: StudioPagesTreeProps) {
   const activePageId = useEditorStore((s) => s.activePageId)
   const openPageInCanvas = useEditorStore((s) => s.openPageInCanvas)
   const renamePage = useEditorStore((s) => s.renamePage)
+  const deletePage = useEditorStore((s) => s.deletePage)
 
   // Narrow to the active board's own pages once boards have loaded — see the
   // doc comment above. `board.frames` order isn't meaningful for reading, so
@@ -127,6 +137,7 @@ export function StudioPagesTree({ editable = true }: StudioPagesTreeProps) {
             onToggleExpand={() => toggleExpanded(page.id)}
             onActivate={() => openPageInCanvas(page.id)}
             onRename={(title) => renamePage(page.id, title)}
+            onDelete={() => deletePage(page.id)}
           />
         ))}
       </TreeContainer>
@@ -142,10 +153,27 @@ interface PageRowProps {
   onToggleExpand: () => void
   onActivate: () => void
   onRename: (title: string) => void
+  onDelete: () => void
 }
 
-function PageRow({ page, isActive, expanded, editable, onToggleExpand, onActivate, onRename }: PageRowProps) {
+function PageRow({ page, isActive, expanded, editable, onToggleExpand, onActivate, onRename, onDelete }: PageRowProps) {
   const [rename, renameInputRef] = useInlineRename({ onCommit: onRename })
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
+  const confirmDelete = useConfirmDelete()
+
+  // `alwaysConfirm`: deleting a page is document-level blast radius, so it asks
+  // even when the user has turned per-node delete confirmation off. The wording
+  // promises recovery because `deletePage` really does move the files to
+  // `.studio/trash/` — see `pageActions.ts`.
+  const requestDelete = () => {
+    confirmDelete({
+      title: `Delete "${page.title}"?`,
+      description: 'Its files move to the trash, at the bottom of this panel, where you can restore them.',
+      confirmLabel: 'Delete page',
+      alwaysConfirm: true,
+      commit: onDelete,
+    })
+  }
 
   // Capture phase — fires before any click inside this row (the header, or a
   // node row in the revealed subtree), so `activePageId` is already this
@@ -173,6 +201,13 @@ function PageRow({ page, isActive, expanded, editable, onToggleExpand, onActivat
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggleExpand() }
         }}
+        onContextMenu={(e) => {
+          // stopPropagation, so a right-click on a page row never also opens
+          // the node-tree background menu of the subtree rendered beneath it.
+          e.preventDefault()
+          e.stopPropagation()
+          setContextMenu({ x: e.clientX, y: e.clientY })
+        }}
       >
         <TreeChevron expanded={expanded} onClick={(e) => { e.stopPropagation(); onToggleExpand() }} />
         <TreeIconSlot icon={FileTextSolidIcon} iconSize={11} iconColor="var(--text-disabled)" />
@@ -191,6 +226,25 @@ function PageRow({ page, isActive, expanded, editable, onToggleExpand, onActivat
           />
         ) : (
           <TreeLabel>{page.title}</TreeLabel>
+        )}
+
+        {contextMenu && createPortal(
+          <ContextMenu
+            x={contextMenu.x}
+            y={contextMenu.y}
+            ariaLabel={`Options for page ${page.title}`}
+            animateExit
+            onClose={() => setContextMenu(null)}
+          >
+            <ContextMenuItem onClick={() => { setContextMenu(null); rename.start(page.title) }}>
+              Rename
+            </ContextMenuItem>
+            <ContextMenuItem danger onClick={() => { setContextMenu(null); requestDelete() }}>
+              <span aria-hidden="true"><TrashSolidIcon size={13} /></span>
+              Delete page
+            </ContextMenuItem>
+          </ContextMenu>,
+          document.body,
         )}
       </TreeRow>
 

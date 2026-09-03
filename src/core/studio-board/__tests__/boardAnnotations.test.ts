@@ -9,6 +9,8 @@
 import { describe, expect, test } from 'bun:test'
 import {
   MIN_ANNOTATION_SIZE,
+  DEFAULT_DOC_WIDTH,
+  docContentScale,
   annotationPaintOrder,
   createBoard,
   parseBoardsFile,
@@ -142,5 +144,37 @@ describe('DocBlock markdown -> html migration', () => {
     })
     expect(parsed.boards[0]!.notes[0]!.z).toBe(3)
     expect('z' in parsed.boards[0]!.notes[1]!).toBe(false)
+  })
+})
+
+/**
+ * `docContentScale` — how much a doc card magnifies its text.
+ *
+ * The behaviour a user is promised: a card twice as wide reads twice as big,
+ * and one dragged to an extreme is still legible rather than either a smear or
+ * two words filling the board.
+ */
+describe('docContentScale', () => {
+  test('renders at 1x at the width a doc is created with', () => {
+    expect(docContentScale(DEFAULT_DOC_WIDTH)).toBe(1)
+  })
+
+  test('magnifies in proportion to width — twice as wide reads twice as big', () => {
+    expect(docContentScale(DEFAULT_DOC_WIDTH * 2)).toBe(2)
+    expect(docContentScale(DEFAULT_DOC_WIDTH * 0.75)).toBeCloseTo(0.75)
+  })
+
+  test('clamps both ends, so no card is unreadable or absurd', () => {
+    // MIN_ANNOTATION_SIZE (80) would otherwise be 0.25x — a smear.
+    expect(docContentScale(MIN_ANNOTATION_SIZE)).toBe(0.5)
+    expect(docContentScale(20_000)).toBe(4)
+  })
+
+  test('never returns a scale that would blank a card', () => {
+    // A width of 0/NaN is not reachable through the UI, but a CSS `zoom: 0`
+    // would make the doc invisible with no way back, so it is refused here
+    // rather than trusted not to happen.
+    expect(docContentScale(0)).toBe(1)
+    expect(docContentScale(Number.NaN)).toBe(1)
   })
 })

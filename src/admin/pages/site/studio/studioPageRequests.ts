@@ -1,18 +1,21 @@
 /**
- * studioPageRequests — the page-LIFECYCLE wire contract: create a page, delete
- * a page. Separate from `studioSaveRequests.ts` (the save/edit contract) for
- * the reason those two change: that module is about writing INTO a page's
- * source, this one is about whether the page's file exists at all.
+ * studioPageRequests — the page-LIFECYCLE wire contract: creating a page.
+ * Separate from `studioSaveRequests.ts` (the save/edit contract) for the
+ * reason those two change: that module is about writing INTO a page's source,
+ * this one is about whether the page's file exists at all.
  *
- * Both calls leave the board to the server. Creating a page places its frame
- * (D5 §11.3); deleting one removes every frame of it. The caller's only job
- * afterwards is `requestCmsSiteReload()`.
+ * The other end of that lifecycle lives in `studioTrashRequests.ts`, not here.
+ * Removing a page is recoverable — its files move to `.studio/trash/` — and
+ * the trash has a lifecycle of its own (an entry id, a restore that can
+ * conflict, a purge) that creating a page knows nothing about.
+ *
+ * Creating a page leaves the board to the server: it places the new frame
+ * (D5 §11.3). The caller's only job afterwards is `requestCmsSiteReload()`.
  */
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { apiRequest } from '@core/http'
 import type { PageKind } from '@core/studio-board'
 import { getStudioWorkspaceDir } from './studioWorkspaceDir'
-import { studioWriteDir } from './studioSaveRequests'
 
 /** POST /admin/api/studio/page response — the newly scaffolded page. */
 const StudioCreatePageResponseSchema = Type.Object({
@@ -67,38 +70,5 @@ export function createStudioPage(
     method: 'POST',
     body,
     schema: StudioCreatePageResponseSchema,
-  })
-}
-
-/** DELETE /admin/api/studio/page response — what the delete actually removed. */
-const StudioDeletePageResponseSchema = Type.Object({
-  ok: Type.Boolean(),
-  pageId: Type.String(),
-  /** Project-relative paths of every file removed — the page, plus a stylesheet nothing else imported. */
-  removedFiles: Type.Array(Type.String()),
-  /** How many board frames of this page went with it, across every board. */
-  removedFrames: Type.Number(),
-})
-export type DeletedStudioPage = Static<typeof StudioDeletePageResponseSchema>
-
-/**
- * Deletes a page from the project for real: its source file, a stylesheet
- * nothing else imports any more, and every board frame of it.
- *
- * This is what makes `deletePage` mean something in Studio. The editor store's
- * own `deletePage` only splices the page out of the in-memory `site.pages`, so
- * on its own the `.tsx` survives and the next reload parses it straight back
- * in — the same "a write must land in the source or it did not happen"
- * invariant every other studio commit answers to.
- *
- * Throws `ApiError` on failure (an unknown `pageId` → 404) so the caller can
- * toast the message and reload to put the page back on screen, since the
- * store already removed it optimistically.
- */
-export function deleteStudioPage(pageId: string): Promise<DeletedStudioPage> {
-  return apiRequest('/admin/api/studio/page', {
-    method: 'DELETE',
-    body: { dir: studioWriteDir(), pageId },
-    schema: StudioDeletePageResponseSchema,
   })
 }

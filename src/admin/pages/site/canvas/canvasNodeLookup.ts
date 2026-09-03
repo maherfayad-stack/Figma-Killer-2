@@ -76,6 +76,43 @@ export function ownElementForNode(doc: Document, nodeId: string): HTMLElement | 
 }
 
 /**
+ * The element a node is actually SEEN as — `ownElementForNode`, then down
+ * through any layout-transparent host it renders.
+ *
+ * A module is allowed to carry the node id on a wrapper that produces no box:
+ * `src/modules/alm/register.tsx` puts the editor's `data-node-id` and event
+ * handlers on a `display: contents` div and renders the design-system
+ * component inside it, deliberately, so the wrapper cannot disturb the
+ * component's own layout (a real box there would break percentage-height
+ * chains and every sibling combinator crossing it).
+ *
+ * That host is the right thing to SELECT and the wrong thing to size: `width`
+ * on `display: contents` does nothing. The element the user is pointing at is
+ * one level down. Descent stops at anything carrying its own `data-node-id` —
+ * that box belongs to a different node, and resizing it here would write to
+ * the wrong place — and at anything with more than one element child, where
+ * there is no single "the" element to mean.
+ */
+export function presentedElementForNode(doc: Document, nodeId: string): HTMLElement | null {
+  const own = ownElementForNode(doc, nodeId)
+  const view = doc.defaultView
+  if (!own || !view) return own
+
+  let element = own
+  // Bounded rather than `while (true)`: a cycle is impossible in a tree, but a
+  // deep chain of transparent wrappers is not worth walking, and a fixed
+  // ceiling keeps this safe to call from a render.
+  for (let depth = 0; depth < 4; depth += 1) {
+    if (view.getComputedStyle(element).display !== 'contents') return element
+    const children = Array.from(element.children)
+    const only = children.length === 1 ? (children[0] as HTMLElement) : null
+    if (!only || only.hasAttribute('data-node-id')) return element
+    element = only
+  }
+  return element
+}
+
+/**
  * Per-overlay cache of nodeId → rendered element inside one breakpoint
  * iframe.
  *

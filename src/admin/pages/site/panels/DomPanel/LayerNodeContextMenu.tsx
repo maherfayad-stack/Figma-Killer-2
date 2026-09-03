@@ -59,7 +59,7 @@ import { resolveInsertLocation } from '@site/store/insertLocation'
 import { ModulePicker } from '@site/module-picker'
 import { canComponentizeNode } from '@site/componentization'
 import { useConfirmDelete } from '@admin/shared/dialogs/ConfirmDeleteDialog'
-import { explainInstanceDuplicateConstraint, explainStructuralConstraint, type EditConstraint } from '@core/page-tree'
+import { explainStructuralConstraint, type EditConstraint } from '@core/page-tree'
 import type { AnyModuleDefinition } from '@core/module-engine'
 import { PenSquareSolidIcon } from 'pixel-art-icons/icons/pen-square-solid'
 import { CopyPlusSolidIcon } from 'pixel-art-icons/icons/copy-plus-solid'
@@ -203,18 +203,19 @@ export function LayerNodeContextMenu({
       }
       return null
     }
-    // R5 — a single `studio.instance`'s Duplicate gets the real "duplicate as
-    // a new file" wording instead of the generic "cannot duplicate imported
-    // code" every other node shows, since that hatch genuinely exists for it
-    // (reachable today from the Properties panel's Component section /
-    // Detach's own failure card — `InstanceCallSiteView.tsx`, not touched by
-    // this track). Still disabled here: this menu has no wiring to the
-    // extract flow itself, only a truer explanation of why the direct
-    // gesture refuses and where the real one lives.
-    const duplicate =
-      !isMulti && nodes.length === 1 && nodes[0]?.moduleId === 'studio.instance'
-        ? explainInstanceDuplicateConstraint()
-        : firstRefusal('duplicate')
+    // A component instance now duplicates like anything else: `<Card/>` beside
+    // `<Card/>` is an ordinary JSX child copy, and `duplicateJsxElement`
+    // writes it. This used to special-case `studio.instance` to explain that
+    // only "duplicate as a NEW FILE" was possible — true while no duplicate
+    // could be written at all, and misleading now, because it answered a
+    // question the user did not ask. Duplicating an instance on a design
+    // canvas means "give me a second one here", not "fork the component".
+    //
+    // The new-file hatch is a genuinely different action and keeps its own
+    // home in the Properties panel's Component section
+    // (`InstanceCallSiteView.tsx`), where it reads as the deliberate choice it
+    // is rather than as a consolation prize for a refusal.
+    const duplicate = firstRefusal('duplicate')
     return { duplicate, wrap: firstRefusal('wrap'), delete: firstRefusal('delete') }
   })()
 

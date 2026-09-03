@@ -38,6 +38,7 @@ import type { IPersistenceAdapter, SaveSiteOptions } from '@core/persistence/typ
 import {
   type Page,
   type SiteDocument,
+  canWriteInlineStyleForModule,
   hasWritableSourceLocation,
   isPropWritableToSource,
   isStyleWritableToSource,
@@ -459,13 +460,19 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
           }
         }
 
-        // Inline color/shadow edits write a `style={{}}` attribute onto the
-        // source element. Only safe for `base.*` nodes: their source element
-        // IS the host tag at this location, so a literal `style` prop lands
-        // where the editor expects it. `alm.*` design-system components may
-        // not forward a `style` prop to their root element at all — out of
-        // scope for source writeback this slice.
-        if (node.moduleId.startsWith('base.')) {
+        // Inline style edits write a `style={{}}` attribute onto the source
+        // element. Only safe for `base.*` nodes: their source element IS the
+        // host tag at this location, so a literal `style` prop lands where the
+        // editor expects it. `alm.*`/`pkg.*` design-system components may not
+        // forward a `style` prop to their root element at all — out of scope
+        // for source writeback this slice.
+        //
+        // `canWriteInlineStyleForModule` rather than an inline
+        // `startsWith('base.')`: this rule is the one every OFFER has to agree
+        // with (`StyleSurface`'s inline composer, `CanvasResizeHandles`'s drag
+        // handles), and S4 is what happens when a second copy of it drifts —
+        // an edit surface that writes into the store and nowhere else.
+        if (canWriteInlineStyleForModule(node.moduleId)) {
           const style = literalInlineStyles(node.inlineStyles)
           const changed = Object.entries(style).filter(
             ([k, v]) =>
@@ -551,6 +558,12 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
         method: 'POST',
         body: { dir: loadedDir(), edits },
         schema: StudioSaveResponseSchema,
+        // The unload flush is the ONLY save the browser would otherwise
+        // cancel mid-flight: `beforeunload` cannot await, so without
+        // `keepalive` an edit made inside the last `STUDIO_AUTOSAVE_DELAY_MS`
+        // before a reload is delivered only sometimes. That is the exact
+        // shape of "I resized it, refreshed, and it went back".
+        keepalive: opts?.unloading === true,
       })
 
       // WS-4.4/4.5/6.3 — a `detach`/`swap`/`css` refusal is a NAMED, expected

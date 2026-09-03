@@ -116,3 +116,22 @@ export function requestEditorSave(): void {
     window.dispatchEvent(new Event(EDITOR_SAVE_REQUEST_EVENT))
   }
 }
+
+/**
+ * Fired on `window` after `.studio/trash/` changed — a page was moved in, an
+ * entry was restored, or the trash was purged.
+ *
+ * The explorer's Trash section re-READS the server on this signal rather than
+ * receiving the new state in the event's detail. The trash is a directory on
+ * disk that an agent turn, a second tab, or the user's own editor can change
+ * at any time, so a payload here would only ever be one writer's guess at what
+ * the trash now holds. The event says "it moved", never "it is now this".
+ */
+export const STUDIO_TRASH_CHANGED_EVENT = 'studio-trash-changed'
+
+/** Tell every mounted Trash section to re-read `.studio/trash/`. */
+export function notifyStudioTrashChanged(): void {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event(STUDIO_TRASH_CHANGED_EVENT))
+  }
+}

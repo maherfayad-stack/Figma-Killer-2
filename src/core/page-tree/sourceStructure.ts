@@ -164,11 +164,24 @@ export function refuseStructuralEdit(input: {
       // element before asking, so it never reaches here.
       break
     case 'duplicate':
-      return {
-        reason: 'duplicate',
-        message:
-          'Studio cannot duplicate an element in imported code yet. The copy would have no source location of its own, so it could never be written back — copy the JSX in the file instead.',
-      }
+      // Answered by `refusePlacement` below, exactly like a delete.
+      //
+      // This used to refuse unconditionally, on the grounds that "the copy
+      // would have no source location of its own, so it could never be written
+      // back". That is true of a copy minted on the CANVAS — a `nanoid()` node
+      // in the tree with no `line:col` behind it. It is not true of a copy
+      // written to the FILE: `duplicateJsxElement` splices the element's own
+      // bytes in after itself, the board re-reads the file, and the copy gets a
+      // real id the same way an inserted element does. Insert had already
+      // proved the pattern; duplicate was refusing a problem it did not have.
+      //
+      // A copy needs no anchor, because "immediately after the original" is
+      // what duplicate MEANS — there is no position for the user to get wrong,
+      // and none for Studio to fail to express. Multi-select is safe for the
+      // same reason a multi-delete is: `orderStudioEditsForApply` runs a batch
+      // bottom-to-top, so bytes added lower in a file cannot move the location
+      // of an edit still pending above them.
+      break
     case 'wrap':
       return {
         reason: 'wrap',
@@ -198,8 +211,10 @@ export function refuseStructuralEdit(input: {
   // An insert is written INTO this container, so a plain container at a known
   // location is the whole requirement — there is no sibling to write against
   // (the anchor is an optional refinement `planSourceInsert` drops when it is
-  // not addressable, since appending is still an honest position).
-  if (kind === 'delete' || kind === 'insert') return null
+  // not addressable, since appending is still an honest position). A delete
+  // needs no neighbour either, and nor does a duplicate: all three name their
+  // own target.
+  if (kind === 'delete' || kind === 'insert' || kind === 'duplicate') return null
 
   if (!anchor) {
     return {

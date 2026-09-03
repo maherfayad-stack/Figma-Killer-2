@@ -40,7 +40,12 @@ import type { NodeTree, PageNode } from '@core/page-tree'
 import { subtreeHasOutlet, treeHasOutlet } from '@core/templates'
 import { wouldCreateCycle, syncSlotInstances, applySlotSyncResult } from '@core/visualComponents'
 import { pushToast } from '@ui/components/Toast'
-import { commitStudioDelete, commitStudioInsert, commitStudioMove } from '@site/studio/studioSaveRequests'
+import {
+  commitStudioDelete,
+  commitStudioDuplicate,
+  commitStudioInsert,
+  commitStudioMove,
+} from '@site/studio/studioSaveRequests'
 import { resolveActiveTreeTarget } from './helpers'
 import { createDeleteNodesAction } from './deleteNodesAction'
 import { duplicateNodeWithScopedClasses } from './duplicateWithScopedClasses'
@@ -189,13 +194,35 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
     return true
   }
 
-  const refuseCopy = (kind: 'duplicate' | 'wrap', nodeIds: readonly string[]): boolean => {
+  /**
+   * True when a duplicate/wrap gesture has been fully dealt with here — either
+   * refused out loud, or written to the user's source — and the caller must
+   * therefore mint nothing on the canvas.
+   *
+   * A duplicate on a studio-imported tree is a SOURCE write, exactly like an
+   * insert: `duplicateJsxElement` splices the element's own bytes in after
+   * itself and the reload brings the copy back as a parsed node with a real
+   * `rel:line:col`. Minting a `nanoid()` copy here instead would produce the
+   * very node that could never be written back — the thing the old blanket
+   * refusal was actually worried about.
+   *
+   * A studio tree never holds canvas-minted nodes (see `insertNode`: an insert
+   * there writes to source rather than minting), so `plan.commit` is either
+   * every id or none, never a mix.
+   */
+  const writeCopyToSource = (kind: 'duplicate' | 'wrap', nodeIds: readonly string[]): boolean => {
     const tree = readTree()
     if (!tree) return false
     const plan = planSourceCopy(tree, kind, nodeIds)
-    if (plan.ok) return false
-    toastStructuralRefusal(STRUCTURAL_REFUSAL_TITLE[kind], plan.refusal)
-    return true
+    if (!plan.ok) {
+      toastStructuralRefusal(STRUCTURAL_REFUSAL_TITLE[kind], plan.refusal)
+      return true
+    }
+    if (plan.commit) {
+      void commitStudioDuplicate(plan.commit)
+      return true
+    }
+    return false
   }
 
   const actions: NodeActions = {
@@ -541,7 +568,7 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
     },
 
     duplicateNode: (nodeId) => {
-      if (refuseCopy('duplicate', [nodeId])) return ''
+      if (writeCopyToSource('duplicate', [nodeId])) return ''
       let newId = ''
       let blockedByOutlet = false
       // Per-node "module-style" classes (scope.type === 'node') must be cloned
@@ -568,7 +595,7 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
 
     duplicateNodes: (nodeIds) => {
       if (nodeIds.length === 0) return []
-      if (refuseCopy('duplicate', nodeIds)) return []
+      if (writeCopyToSource('duplicate', nodeIds)) return []
       const newIds: string[] = []
       let blockedByOutlet = false
       mutateActiveTreeAndSite((tree, site) => {
@@ -597,7 +624,7 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
     deleteNodes: createDeleteNodesAction(helpers),
 
     wrapNode: (nodeId, containerModuleId, defaults = {}) => {
-      if (refuseCopy('wrap', [nodeId])) return ''
+      if (writeCopyToSource('wrap', [nodeId])) return ''
       // Auto-resolve the module's schema defaults so the wrapper node renders correctly.
       // Without this, wrapNode(id, 'base.container') produces props:{} → props.tag=undefined
       // → React.createElement(undefined) → "Element type is invalid" crash (Task #414).
@@ -613,7 +640,7 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
 
     wrapNodes: (nodeIds, containerModuleId, defaults = {}) => {
       if (nodeIds.length === 0) return null
-      if (refuseCopy('wrap', nodeIds)) return null
+      if (writeCopyToSource('wrap', nodeIds)) return null
       // Same defaults-resolution rule as `wrapNode` (Task #414 — defaults must
       // come from the module registry so the wrapper renders).
       const mod = registry.get(containerModuleId)

@@ -1,0 +1,253 @@
+/* The shell's own chrome. Everything inside a frame is the project's CSS —
+   these tokens never leak in, and none of them are design-system tokens. */
+:root {
+  --shell-board: #f7f9fa;
+  --shell-surface: #ffffff;
+  /* The tinted surface: option rows and control fills, so a stack of bars
+     reads as one primary row and N qualifiers rather than N equal bars. */
+  --shell-surface-2: #f7f9fa;
+  --shell-text: #1c1c1c;
+  --shell-text-subtle: #66797f;
+  --shell-hover: rgba(0, 0, 0, 0.06);
+  --shell-accent: #0c9ab0;
+  /* ONE hairline colour, for every rule the chrome draws and for the ring
+     around a device. They are the same line at two scales, so they are one
+     token — a second token holding the same value is how they drift apart. */
+  --shell-line: #d8dcde;
+  /* The live-option marker. The only warm colour in the shell, and it earns
+     its place by marking exactly one thing: which option in a row is on. */
+  --shell-marker: #ef4550;
+  /* The canvas dot grid, and the device bezel each frame is set into. */
+  --shell-dot: rgba(0, 0, 0, 0.16);
+  --shell-bezel: #ffffff;
+}
+
+html[data-theme='dark'] {
+  --shell-board: #232525;
+  --shell-surface: #1c1c1c;
+  --shell-surface-2: #232525;
+  --shell-text: #f8f9f9;
+  --shell-text-subtle: #929fa3;
+  --shell-hover: rgba(255, 255, 255, 0.08);
+  --shell-line: #3c4244;
+  --shell-dot: rgba(255, 255, 255, 0.12);
+  /* Not white in the dark: a white bezel around a dark screen is a lightbox. */
+  --shell-bezel: #1c1c1c;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root { height: 100%; margin: 0; }
+
+body {
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  color: var(--shell-text);
+  background: var(--shell-board);
+  overscroll-behavior: none;
+}
+
+.shell { display: flex; flex-direction: column; height: 100%; }
+
+/* The bar and every option row move as ONE block. That is what lets the mobile
+   rule be a single position:fixed instead of a chain of sibling selectors that
+   has to be re-derived every time a row is added. */
+.shell__chrome { flex-shrink: 0; }
+
+.shell__bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 52px;
+  padding: 0 20px;
+  background: var(--shell-surface);
+  border-bottom: 1px solid var(--shell-line);
+}
+
+/* The project's name. The last word takes the accent — the one decorative use
+   of colour in the shell, and it is a single word in a corner. */
+.shell__title { font-size: 14px; font-weight: 600; color: var(--shell-text); white-space: nowrap; }
+.shell__title em { font-style: normal; color: var(--shell-accent); }
+
+.shell__spacer { flex: 1; }
+
+.shell__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--shell-line);
+  border-radius: 8px;
+  background: var(--shell-surface-2);
+  color: var(--shell-text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.shell__btn:hover { border-color: var(--shell-text-subtle); }
+
+/* Outlined, not filled. A filled button reads as the primary ACTION on the
+   bar; this is reporting which view you are in. */
+.shell__btn[aria-pressed='true'] { border-color: var(--shell-accent); color: var(--shell-accent); }
+
+.shell__btn--icon { padding: 0 8px; }
+.shell__btn svg { display: block; }
+.shell__btn:focus-visible { outline: 2px solid var(--shell-accent); outline-offset: 1px; }
+
+/* A row of options: text links, with a marker under the live one. Buttons
+   stretch the row's full height so that marker lands on the row's own edge
+   rather than floating inside it. */
+.shell__nav {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  height: 40px;
+  padding: 0 20px;
+  overflow-x: auto;
+  background: var(--shell-surface);
+  border-bottom: 1px solid var(--shell-line);
+}
+
+/* A row that picks a VARIANT of what you are looking at, rather than what you
+   are looking at, sits on the tinted surface. */
+.shell__nav--group { background: var(--shell-surface-2); }
+
+.shell__nav-label {
+  display: flex;
+  align-items: center;
+  padding-right: 8px;
+  border-right: 1px solid var(--shell-line);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--shell-text);
+  white-space: nowrap;
+}
+
+.shell__nav button {
+  padding: 0 4px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--shell-text-subtle);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.shell__nav button:hover { color: var(--shell-text); }
+
+.shell__nav button[aria-current='true'] {
+  border-bottom-color: var(--shell-marker);
+  color: var(--shell-accent);
+  font-weight: 600;
+}
+
+.shell__nav button:focus-visible { outline: 2px solid var(--shell-accent); outline-offset: -2px; }
+
+/* Flow view — one device, centred, scrollable when the window is short. */
+.shell__stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  overflow-y: auto;
+  padding: clamp(8px, 4vh, 40px) 0;
+  background: var(--shell-board);
+}
+
+/* NOT transform: scale() — a transformed ancestor kills backdrop-filter, and
+   these screens are mostly glass. */
+.shell__phone {
+  position: relative;
+  flex-shrink: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  /* Set from JS as custom properties rather than inline width/height, so the
+     mobile rules below can take the device full-bleed without !important. */
+  width: var(--device-w);
+  height: min(var(--device-h), 100%);
+  border-radius: 50px;
+  background: var(--background-base-default);
+  box-shadow: 0 0 0 1px var(--shell-line), 0 20px 60px rgba(0, 0, 0, 0.32);
+}
+
+.shell__empty {
+  margin: auto;
+  max-width: 32rem;
+  padding: 24px;
+  text-align: center;
+  color: var(--shell-text-subtle);
+  line-height: 1.5;
+}
+
+/* The control that brings the chrome back on a phone. Desktop has room for the
+   toolbar, so it never appears there. */
+.shell__chrome-toggle {
+  display: none;
+  position: fixed;
+  z-index: 30;
+  right: 12px;
+  bottom: 12px;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: var(--shell-surface);
+  color: var(--shell-text);
+  font: inherit;
+  font-size: 15px;
+  /* Faint until touched: it floats over the design, and it is the tool, not
+     part of the screen being previewed. */
+  opacity: 0.55;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
+  cursor: pointer;
+}
+
+.shell__chrome-toggle:hover,
+.shell__chrome-toggle:focus-visible,
+.shell[data-chrome='open'] .shell__chrome-toggle { opacity: 1; }
+
+/* On a phone the browser IS the device, so the shell's own chrome is in the
+   way: it squeezed the screen between two bars, clipped the design, and the
+   toolbar itself overflowed a 390px window. Hidden by default here, and shown
+   OVER the design rather than shrinking it, so the screen is always previewed
+   at the size the phone actually gives it. */
+@media (max-width: 700px) {
+  .shell__chrome-toggle { display: block; }
+
+  .shell[data-chrome='closed'] .shell__chrome { display: none; }
+
+  /* Shown OVER the design rather than above it, so the screen is always
+     previewed at the size the phone actually gives it. */
+  .shell[data-chrome='open'] .shell__chrome {
+    position: fixed;
+    z-index: 25;
+    left: 0;
+    right: 0;
+    top: 0;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28);
+  }
+
+  .shell__bar, .shell__nav { padding: 0 12px; }
+
+  /* Clear of the floating toggle, so the last option in a row is never stuck
+     underneath it. */
+  .shell__nav:last-child { padding-right: 60px; }
+
+  .shell__stage { padding: 0; }
+
+  .shell__phone {
+    width: 100%;
+    height: 100%;
+    border-radius: 0;
+    box-shadow: none;
+  }
+}

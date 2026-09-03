@@ -86,8 +86,30 @@ describe('refuseStructuralEdit', () => {
 
   it('refuses every gesture that would need a source position that does not exist yet', () => {
     expect(refuseStructuralEdit({ kind: 'reparent', node: { id: PLAIN } })?.reason).toBe('reparent')
-    expect(refuseStructuralEdit({ kind: 'duplicate', node: { id: PLAIN } })?.reason).toBe('duplicate')
     expect(refuseStructuralEdit({ kind: 'wrap', node: { id: PLAIN } })?.reason).toBe('wrap')
+  })
+
+  it('ALLOWS a duplicate of a plain element — the copy is written, not minted', () => {
+    // Duplicate used to be in the list above, refused on the grounds that the
+    // copy would have no source location. `duplicateJsxElement` writes the
+    // element's own bytes back into the file and the board re-reads them, so
+    // the copy's location comes from the file — the same answer insert gives.
+    expect(refuseStructuralEdit({ kind: 'duplicate', node: { id: PLAIN } })).toBeNull()
+  })
+
+  it('still refuses a duplicate wherever the ORIGINAL has no honest position', () => {
+    // The placement rules are what keep this safe, and they are unchanged: a
+    // `.map` row copied is not one more row, and a copy inside a shared
+    // component would appear at every call site.
+    expect(
+      refuseStructuralEdit({ kind: 'duplicate', node: { id: 'pages/Home.tsx:12:6#3' } })?.reason,
+    ).toBe('list-row')
+    expect(
+      refuseStructuralEdit({ kind: 'duplicate', node: { id: 'pages/Home.tsx:12:6~ui/Icon.tsx:2:4' } })?.reason,
+    ).toBe('shared-component')
+    expect(
+      refuseStructuralEdit({ kind: 'duplicate', node: { id: 'app/layout.tsx:5:4' } })?.reason,
+    ).toBe('route-chrome')
   })
 
   it('allows an INSERT into a plain container — the new element is written, not minted', () => {

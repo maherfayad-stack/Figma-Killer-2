@@ -59,15 +59,10 @@
 
 import { use, useEffect, useEffectEvent, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { CanvasResizeHandles } from './CanvasResizeHandles'
+import { ReorderDropIndicators } from './ReorderDropIndicators'
 import { selectCanvasPageFor, useEditorStore } from '@site/store/store'
-import {
-  getNodeDisplayName,
-  getNodeHtmlTag,
-  styleRuleSelector,
-  type Page,
-} from '@core/page-tree'
-import { registry } from '@core/module-engine'
-import type { VisualComponent } from '@core/visualComponents'
+import { styleRuleSelector } from '@core/page-tree'
 import { useEditorPermissions } from '@site/editorPermissionsContext'
 import { useShallow } from 'zustand/react/shallow'
 import { cn } from '@ui/cn'
@@ -75,6 +70,7 @@ import { CanvasPageContext, CanvasViewportActionsContext } from './CanvasContext
 import { SelectionToolbar } from './SelectionToolbar'
 import { useCanvasReorderDrag } from './useCanvasReorderDrag'
 import { useCanvasTreeLadderOverlay } from './CanvasTreeLadderOverlay'
+import { isCanvasGestureActive } from './canvasGesture'
 import { CanvasNodeElementCache } from './canvasNodeLookup'
 import { InPlaceInspector } from './InPlaceInspector'
 import {
@@ -85,56 +81,22 @@ import {
 } from './canvasOverlayGeometry'
 import type { CanvasRectSource } from './canvasDomGeometry'
 import {
-  dropIndicatorStyle,
   hideOverlayElement,
   measureSelectorHighlightRects,
+  overlayRectIsFinite,
+  overlayRectsEqual,
   positionInspector,
   positionNodeBadge,
   positionOverlayElement,
   positionToolbar,
   publishSelectionAnchor,
-  rectStyle,
   syncSelectorHighlightRings,
 } from './canvasSelectionOverlayPositioning'
+import { EMPTY_VISUAL_COMPONENTS, resolveNodeBadgeLabel } from './nodeBadgeLabel'
 import styles from './BreakpointSelectionOverlay.module.css'
 
-const EMPTY_VISUAL_COMPONENTS: readonly VisualComponent[] = []
 /** Stable empty fallback for the frame-scoped selection read below (Guideline #239 — no inline `?? []`). */
 const EMPTY_SELECTED_NODE_IDS: readonly string[] = []
-
-/** Two nullable rects are equal when every field matches (or both are null). */
-function overlayRectsEqual(a: CanvasOverlayRect | null, b: CanvasOverlayRect | null): boolean {
-  if (a === b) return true
-  if (!a || !b) return false
-  return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height
-}
-
-/** `null` (frame doesn't own the node — legitimate) or every field a finite number. */
-function overlayRectIsFinite(rect: CanvasOverlayRect | null): boolean {
-  if (!rect) return true
-  return (
-    Number.isFinite(rect.x) &&
-    Number.isFinite(rect.y) &&
-    Number.isFinite(rect.width) &&
-    Number.isFinite(rect.height)
-  )
-}
-
-/**
- * The node's tag or display name for the in-iframe node badge (WS-5.1) —
- * same fallback order the Alt-hover tree ladder rows already use
- * (`CanvasTreeLadderRowButton`).
- */
-function resolveNodeBadgeLabel(
-  page: Page | null,
-  nodeId: string,
-  visualComponents: ReadonlyArray<VisualComponent>,
-): string | null {
-  const node = page?.nodes[nodeId]
-  if (!node) return null
-  const definition = registry.get(node.moduleId)
-  return getNodeHtmlTag(node, definition) || getNodeDisplayName(node, definition, visualComponents) || null
-}
 
 interface BreakpointSelectionOverlayProps {
   /**
@@ -243,6 +205,8 @@ export function BreakpointSelectionOverlay({
   const badgeRefs = useRef<Map<string, HTMLDivElement | null> | null>(null)
   if (badgeRefs.current === null) badgeRefs.current = new Map()
   const hoverRef = useRef<HTMLDivElement>(null)
+  // Filled by `CanvasResizeHandles`; read only by the RAF tick below.
+  const resizeFrameRef = useRef<HTMLDivElement | null>(null)
   // Container whose children are the orange selector-affinity rings. Their
   // count is driven by the live DOM (how many elements match the selector), so
   // they're created/positioned imperatively in the RAF tick rather than mapped
@@ -406,7 +370,11 @@ export function BreakpointSelectionOverlay({
 
     // ── Ring/badge READ phase (cheap in the common design-mode case) ─────
     const trackedIds = new Set<string>()
-    const ringPlacements: Array<{ id: string; ring: HTMLDivElement | null; rect: CanvasOverlayRect | null }> = []
+    const ringPlacements: Array<{
+      id: string
+      ring: HTMLDivElement | null
+      rect: CanvasOverlayRect | null
+    }> = []
     for (const id of selectedNodeIds) {
       trackedIds.add(id)
       const rect = measureRing(elementCache.resolve(iframeDoc, id, framePage))
@@ -429,6 +397,14 @@ export function BreakpointSelectionOverlay({
 
     // ── Ring/badge WRITE phase ────────────────────────────────────────────
     for (const { ring, rect } of ringPlacements) positionOverlayElement(ring, rect)
+    // Resize handles ride the SAME measured rect as the ring, so they cannot
+    // drift off the box they belong to. WHETHER they exist at all is
+    // `canOfferResize`'s decision, made in `CanvasResizeHandles` against the
+    // node's module and its presented element — so there is no second gate
+    // here: a frame that should not be offered was never rendered, and
+    // re-deriving the rule in this tick is how the two get to disagree.
+    const sole = ringPlacements.length === 1 ? ringPlacements[0] : undefined
+    positionOverlayElement(resizeFrameRef.current, sole ? sole.rect : null)
     positionOverlayElement(hoverRef.current, hoverRect)
     syncSelectorHighlightRings(
       selectorHighlightRef.current,
@@ -443,6 +419,15 @@ export function BreakpointSelectionOverlay({
         positionNodeBadge(badge, rect, resolveNodeBadgeLabel(framePage, id, visualComponents))
       }
     }
+
+    // A pointer gesture that changes layout every frame (an element resize) is
+    // the one case this tick's cost model does not cover: the rect below would
+    // differ on EVERY frame, marking the anchor dirty and running the
+    // "expensive, rare" parent-doc measure session per pointermove. The rings
+    // above have already been positioned, so they keep tracking the element;
+    // the toolbar and inspector simply hold still until the drag ends, and
+    // `canvasGesture`'s settle pass recomputes them once. See `canvasGesture.ts`.
+    if (isCanvasGestureActive()) return
 
     // Content-reflow detection for the inspected node (see tick docblock,
     // point 2): compare THIS tick's already-measured cheap local rect against
@@ -556,6 +541,14 @@ export function BreakpointSelectionOverlay({
   // inside `CanvasTransformLayer`, so it was never subject to the
   // zoom-multiplied drift this work order fixes.
   const usingIframeOverlay = Boolean(overlayRoot)
+  // A SINGLE selection only: the drag writes an inline style to one element,
+  // so three selected elements would mean three edits behind one set of
+  // handles — a different feature, not a loop over this one. In-iframe only:
+  // the parent-document fallback positions from zoom-converted math
+  // (`standing-03`), and handles are far less forgiving of drift than a ring.
+  const resizeNodeId = usingIframeOverlay && showRings && selectedNodeIds.length === 1
+    ? (selectedNodeIds[0] ?? null)
+    : null
   const legacyRingClassName = (variant: 'selection' | 'hover') =>
     usingIframeOverlay ? undefined : cn(styles.ring, styles[variant])
   const legacyRingMode = usingIframeOverlay ? undefined : toolbarMode
@@ -616,6 +609,15 @@ export function BreakpointSelectionOverlay({
           data-canvas-overlay-node-id={hoverRingNodeId}
         />
       )}
+      {/* The one interactive thing in this click-through overlay — see the
+          module's Contract note and `CanvasResizeHandles`. */}
+      {resizeNodeId && (
+        <CanvasResizeHandles
+          nodeId={resizeNodeId}
+          iframeDoc={overlayRoot?.ownerDocument ?? null}
+          onFrameReady={(element) => { resizeFrameRef.current = element }}
+        />
+      )}
     </>
   ) : null
 
@@ -648,43 +650,9 @@ export function BreakpointSelectionOverlay({
 
   return (
     <>
-      {/* Drop indicators stay inside the breakpoint viewport — they only
-          appear transiently during a drag, and the transform-scaled
-          coordinate path is established for them via `dropIndicatorStyle`. */}
-      <div className={styles.overlayLayer}>
-        {reorderDrag.target && (
-          <div
-            className={styles.dropIndicator}
-            data-position={reorderDrag.target.position}
-            data-axis={reorderDrag.target.axis}
-            style={dropIndicatorStyle(reorderDrag.target)}
-            aria-hidden="true"
-          />
-        )}
-
-        {reorderDrag.invalid && (
-          <div
-            className={styles.invalidDropIndicator}
-            style={rectStyle(reorderDrag.invalid.rect)}
-            data-axis={reorderDrag.invalid.axis}
-            // G5 — present when this box means "this position would refuse
-            // the source write" (a real drop target the store's own gate
-            // would still reject — shared component, route chrome, …),
-            // distinct from an ordinary structural rejection (locked node,
-            // cycle) which carries no message. `reorderDrag.invalid.
-            // refusalMessage` holds the full sentence for a FUTURE
-            // cursor-following label — not wired up to a visible tooltip
-            // here: this element is `pointer-events: none` (so a native
-            // `title` would never fire) and a real label needs a small
-            // positioned component this pass didn't build. The red box
-            // itself is what ships today — previously this exact case
-            // (a structurally valid position the write would still refuse)
-            // rendered a confident VALID drop line instead.
-            data-refusal-reason={reorderDrag.invalid.refusalMessage ? 'source-writeback' : undefined}
-            aria-hidden="true"
-          />
-        )}
-      </div>
+      {/* Drop indicators stay in the breakpoint viewport rather than the
+          iframe overlay root — see `ReorderDropIndicators`. */}
+      <ReorderDropIndicators target={reorderDrag.target} invalid={reorderDrag.invalid} />
       {canvasChrome && createPortal(canvasChrome, overlayRoot ?? portalTarget)}
       {toolbar && createPortal(toolbar, portalTarget)}
       {inspector && createPortal(inspector, portalTarget)}

@@ -1,0 +1,139 @@
+{
+  "version": 1,
+  "links": [
+    {
+      "id": "bdb3afb0-d601-4ffc-b1f0-e55daa7a8b49",
+      "origin": "design",
+      "source": {
+        "pageId": "sign-up",
+        "node": {
+          "nodeId": "pages/SignUp.tsx:30:16",
+          "indexPath": [
+            0,
+            1,
+            1,
+            0,
+            1,
+            0
+          ],
+          "moduleId": "alm.Button",
+          "textSnippet": ""
+        }
+      },
+      "trigger": "click",
+      "action": "overlay",
+      "targetPageId": "sms",
+      "transition": "sheet"
+    },
+    {
+      "id": "72c775ca-bd15-481e-b607-6b2e33fd75b4",
+      "origin": "design",
+      "source": {
+        "pageId": "onboarding",
+        "node": {
+          "nodeId": "pages/Onboarding.tsx:45:10",
+          "indexPath": [
+            0,
+            1,
+            1
+          ],
+          "moduleId": "base.container",
+          "textSnippet": ""
+        }
+      },
+      "trigger": "click",
+      "action": "navigate",
+      "targetPageId": "sign-up",
+      "transition": "slide-left"
+    },
+    {
+      "id": "738d5631-3626-4542-963b-1216d6e5ab31",
+      "origin": "design",
+      "source": {
+        "pageId": "sms",
+        "node": {
+          "nodeId": "pages/SMS.tsx:11:10",
+          "indexPath": [
+            0,
+            0,
+            0
+          ],
+          "moduleId": "studio.instance",
+          "textSnippet": ""
+        }
+      },
+      "trigger": "click",
+      "action": "back",
+      "targetPageId": null
+    },
+    {
+      "id": "b14ba0be-ab2c-4ca4-958d-753cd53d678b",
+      "origin": "design",
+      "source": {
+        "pageId": "sign-up",
+        "node": {
+          "nodeId": "pages/SignUp.tsx:21:8~components/SheetHeader.tsx:23:12",
+          "indexPath": [
+            0,
+            0,
+            0,
+            1,
+            0,
+            0
+          ],
+          "moduleId": "alm.GlassButton",
+          "textSnippet": ""
+        }
+      },
+      "trigger": "click",
+      "action": "back",
+      "targetPageId": null
+    },
+    {
+      "id": "ea91ae57-7b4a-46fb-b51f-e05c9bb9ee29",
+      "origin": "design",
+      "source": {
+        "pageId": "sms",
+        "node": {
+          "nodeId": "pages/SMS.tsx:11:10~components/SheetHeader.tsx:22:10",
+          "indexPath": [
+            0,
+            0,
+            0,
+            0,
+            1,
+            0
+          ],
+          "moduleId": "base.container",
+          "textSnippet": ""
+        }
+      },
+      "trigger": "click",
+      "action": "back",
+      "targetPageId": null
+    },
+    {
+      "id": "9ef314f0-8cc3-4167-abb1-37a02d9f4094",
+      "origin": "design",
+      "source": {
+        "pageId": "sms",
+        "node": {
+          "nodeId": "pages/SMS.tsx:36:14",
+          "indexPath": [
+            0,
+            1,
+            1,
+            1,
+            5
+          ],
+          "moduleId": "base.container",
+          "textSnippet": ""
+        }
+      },
+      "trigger": "click",
+      "action": "navigate",
+      "targetPageId": "onboarding",
+      "transition": "slide-left"
+    }
+  ]
+}

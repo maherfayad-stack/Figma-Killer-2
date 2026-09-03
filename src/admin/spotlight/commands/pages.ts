@@ -147,7 +147,7 @@ export function getPagesCommands(): Command[] {
     {
       id: 'pages.deletePage',
       title: 'Delete current page',
-      subtitle: 'Permanently remove the active page',
+      subtitle: 'Move the active page to the trash',
       group: 'pages',
       iconName: 'trash-solid',
       keywords: ['page', 'delete', 'remove', 'destroy'],

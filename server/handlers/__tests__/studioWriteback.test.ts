@@ -1111,6 +1111,39 @@ export default function Page() {
     )
   })
 
+  it('duplicates an element through the batch route, byte for byte', () => {
+    write('pages/Page.tsx', PAGE)
+
+    const result = applyStudioEditBatch(tmpDir, [{ kind: 'duplicate', nodeId: 'pages/Page.tsx:6:8' }])
+
+    expect(result.written).toBe(1)
+    expect(result.refusals).toEqual([])
+    // The copy only — the import is untouched, because the binding it needs
+    // was already there and is now used twice.
+    expect(read('pages/Page.tsx')).toBe(PAGE.replace('      <TabBar />\n', '      <TabBar />\n      <TabBar />\n'))
+  })
+
+  it('duplicates two elements in one batch without either copy moving the other', () => {
+    write('pages/Page.tsx', PAGE)
+
+    // The reason a multi-duplicate is safe at all: the batch is applied
+    // bottom-to-top, so the bytes added after `<ChevronUpIcon/>` cannot shift
+    // the line `<TabBar/>` is still waiting to be found at.
+    const result = applyStudioEditBatch(tmpDir, [
+      { kind: 'duplicate', nodeId: 'pages/Page.tsx:6:8' },
+      { kind: 'duplicate', nodeId: 'pages/Page.tsx:7:8' },
+    ])
+
+    expect(result.written).toBe(2)
+    expect(result.refusals).toEqual([])
+    expect(read('pages/Page.tsx')).toBe(
+      PAGE.replace('      <TabBar />\n', '      <TabBar />\n      <TabBar />\n').replace(
+        '      <ChevronUpIcon />\n',
+        '      <ChevronUpIcon />\n      <ChevronUpIcon />\n',
+      ),
+    )
+  })
+
   it('deletes two elements in one batch and retires both their bindings', () => {
     write('pages/Page.tsx', PAGE)
 

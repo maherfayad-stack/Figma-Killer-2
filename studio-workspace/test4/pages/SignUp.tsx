@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { Button, Separator, TextInput } from '@alm-design/design-system'
 // The Apple mark paints from `currentColor` so it follows the button label.
 import appleLogoSvg from '../assets/1540a1e9-9c03-43d2-8d50-477cd174d411.svg?raw'
@@ -8,6 +9,13 @@ import { useLanguage } from '../i18n/LanguageContext'
 
 export default function SignUp() {
   const { t } = useLanguage()
+  // Real state. These were `value="+966" onChange={() => {}}` — a CONTROLLED
+  // React input whose handler throws every keystroke away, so the field could
+  // never change no matter where it was rendered. That is why nothing could be
+  // typed into these fields in the canvas, in live mode, or in the exported
+  // prototype.
+  const [code, setCode] = useState('+966')
+  const [mobileNumber, setMobileNumber] = useState('')
   return (
     <main className={styles.page}>
       <SheetHeader />
@@ -19,10 +27,10 @@ export default function SignUp() {
           <div className={styles.fields}>
             <div className={styles.phoneRow}>
               <div className={styles.codeField}>
-                <TextInput label={t.signUp.code} value="+966" onChange={() => {}} dropdown />
+                <TextInput label={t.signUp.code} value={code} onChange={(e) => setCode(e.target.value)} dropdown />
               </div>
               <div className={styles.numberField}>
-                <TextInput label={t.signUp.mobileNumber} value="" onChange={() => {}} required disabled={false} errorText="" skeleton={false} password={false} multiline={false} />
+                <TextInput label={t.signUp.mobileNumber} value={mobileNumber} onChange={(e) => setMobileNumber(e.target.value)} required disabled={false} errorText="" skeleton={false} password={false} multiline={false} />
               </div>
             </div>
 

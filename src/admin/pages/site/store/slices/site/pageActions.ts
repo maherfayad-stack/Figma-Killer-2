@@ -8,8 +8,13 @@
  * parses it straight back in. The store is the right place to commit the
  * source write for the same reason `deleteNodesAction.ts` commits its own: it
  * is the chokepoint every surface already runs through (the explorer's context
- * menu, its multi-select bulk delete, spotlight, the agent executor), so one
- * commit here is one commit for all of them.
+ * menu, spotlight, the agent executor), so one commit here is one commit for
+ * all of them.
+ *
+ * That commit moves the files to `.studio/trash/`, it does not erase them.
+ * Every caller of `deletePage` therefore gets a recoverable delete, and the
+ * only permanent removal in the product is the explorer's Trash section —
+ * see `commitStudioPageDeletion` below for why.
  */
 
 import {
@@ -22,8 +27,8 @@ import {
   reconcileSiteExplorerInPlace,
 } from '@core/page-tree'
 import { isStudioPageRootId } from '@core/page-tree'
-import { deleteStudioPage } from '@site/studio/studioPageRequests'
-import { requestCmsSiteReload } from '@admin/state/adminEvents'
+import { trashStudioPage } from '@site/studio/studioTrashRequests'
+import { notifyStudioTrashChanged, requestCmsSiteReload } from '@admin/state/adminEvents'
 import { pushToast } from '@ui/components/Toast'
 import { getErrorMessage } from '@core/utils/errorMessage'
 import type { PrototypeFile } from '@core/studio-prototype'
@@ -33,20 +38,33 @@ import { applyPrototypeOp } from '@site/studio/prototypeApi'
 import { getStudioWorkspaceDir } from '@site/studio/studioWorkspaceDir'
 
 /**
- * Delete `pageId`'s source file, reporting failure honestly.
+ * Move `pageId`'s files into `.studio/trash/`, reporting failure honestly.
+ *
+ * Deleting a page is RECOVERABLE — the only permanent removal in the product
+ * is the explorer's Trash section. A page is a file the user wrote, often the
+ * only copy of an afternoon's work, and the editor is not a place where one
+ * context-menu click can destroy that with nothing to undo it. Everything
+ * downstream still behaves as a delete, because `.studio/` is excluded from
+ * every reader (see `pageTrash.ts`): the page leaves the board, the page
+ * lists, and the style compiler the moment its files move.
+ *
+ * `title` travels with the request because once the file is under `.studio/`
+ * no parser looks at it again, so the server has nothing left to name the
+ * entry from.
  *
  * Fire-and-forget from the caller's point of view (the tree mutation already
  * landed optimistically, exactly like `commitStudioDelete`'s), but a FAILED
- * delete reloads: the page is still on disk, so leaving the canvas showing it
+ * trash reloads: the page is still on disk, so leaving the canvas showing it
  * gone would put the board back in the "shows something the files do not say"
  * state that `studioSaveRequests.ts` catalogues as audit finding E3. Reloading
  * puts the page back where the user can see it and try again.
  */
-async function commitStudioPageDeletion(pageId: string): Promise<void> {
+async function commitStudioPageDeletion(pageId: string, title: string): Promise<void> {
   try {
-    await deleteStudioPage(pageId)
+    await trashStudioPage(pageId, title)
+    notifyStudioTrashChanged()
   } catch (err) {
-    console.error('[pageActions] delete page failed:', err)
+    console.error('[pageActions] moving page to trash failed:', err)
     pushToast({
       kind: 'error',
       title: 'Could not delete page',
@@ -113,6 +131,9 @@ export function createPageActions({
       // after the splice there is no page left to ask.
       const page = get().site?.pages.find((candidate) => candidate.id === pageId)
       const isStudioPage = page !== undefined && isStudioPageRootId(page.rootNodeId)
+      // Read here too: the trash entry is named from this, and after the
+      // splice there is no page left to read a title from.
+      const title = page?.title ?? 'Untitled page'
 
       const deleted = mutateSite((p) => {
         if (!p.pages.some((page) => page.id === pageId)) return false
@@ -143,12 +164,12 @@ export function createPageActions({
       // Calls the API module directly rather than `@site/studio/prototypeActions`:
       // that module reads the store, and importing it from inside a slice closes
       // a store -> siteSlice -> pageActions -> store cycle. The same reason
-      // `commitStudioPageDeletion` above talks to `studioPageRequests`.
+      // `commitStudioPageDeletion` above talks to `studioTrashRequests`.
       void prunePrototypeLinksForRemainingPages(
         (get().site?.pages ?? []).map((candidate) => candidate.id),
         (file) => get().adoptPrototype(file),
       )
-      void commitStudioPageDeletion(pageId)
+      void commitStudioPageDeletion(pageId, title)
     },
 
     renamePage: (pageId, title, slug) => {

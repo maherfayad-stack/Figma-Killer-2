@@ -234,6 +234,17 @@ const ALLOWLIST = new Set([
   // stable-data-attribute pattern `.unknownModule`/`data-studio-unknown-module`
   // already established for this exact constraint.
   'admin/pages/site/canvas/PackageComponentPlaceholder.tsx',
+
+  // ── §8.17 Trash section collapse toggle ─────────────────────────────────
+  // StudioTrashList's disclosure toggle is the same pattern as §8.12 and sits
+  // directly beneath it in the same panel: its label must render in the exact
+  // compact uppercase-tracking typography (`.heading`) the Boards and Pages
+  // section headers use, with zero extra padding/min-height, or the three
+  // section headers of one panel stop lining up. Button's token-driven size
+  // system (26px+ min-height, fixed padding scale) doesn't fit that
+  // exact-typography disclosure. The row's real ACTIONS — Empty, Restore,
+  // Delete — are all `Button`; only the header toggle is bare.
+  'admin/pages/site/panels/ExplorerPanel/StudioTrashList.tsx',
 ])
 
 // ---------------------------------------------------------------------------

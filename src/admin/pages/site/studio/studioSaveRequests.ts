@@ -272,6 +272,31 @@ export async function commitStudioDelete(nodeIds: readonly string[]): Promise<vo
 }
 
 /**
+ * Copying one or more elements in the user's `.tsx`, each immediately after
+ * its original.
+ *
+ * Like an insert, nothing is minted on the canvas first: the source grows the
+ * copy and the reload brings it in as an ordinary parsed node with a real
+ * `rel:line:col`. That is also why the success toast is pushed here — until
+ * the write lands there is nothing on the board to show for the gesture.
+ *
+ * Several ids in one request for the same reason a multi-delete is one
+ * request: `applyStudioEditBatch` orders a batch bottom-to-top, so bytes added
+ * lower in a file cannot move the location of a copy still pending above them.
+ */
+export async function commitStudioDuplicate(nodeIds: readonly string[]): Promise<void> {
+  if (nodeIds.length === 0) return
+  await commitStructural(
+    nodeIds.map((nodeId) => ({ kind: 'duplicate' as const, nodeId })),
+    'Duplicate refused',
+    {
+      title: nodeIds.length === 1 ? 'Duplicated' : `Duplicated ${nodeIds.length} elements`,
+      body: 'Written to your project source.',
+    },
+  )
+}
+
+/**
  * Adding a new element to the user's `.tsx` — the write behind picking a
  * design-system component out of the canvas inserter.
  *

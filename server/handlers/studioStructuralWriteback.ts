@@ -27,7 +27,7 @@
  * formatting will not admit a byte-exact move, this insert would shadow a name
  * the file already binds.
  */
-import { deleteJsxElement, insertJsxElement, moveJsxElement } from '@core/ast-codemods'
+import { deleteJsxElement, duplicateJsxElement, insertJsxElement, moveJsxElement } from '@core/ast-codemods'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 
 /**
@@ -55,6 +55,20 @@ const MoveEditSchema = Type.Object({
  */
 const DeleteEditSchema = Type.Object({
   kind: Type.Literal('delete'),
+  nodeId: Type.String(),
+})
+
+/**
+ * One element copied in place (`struct-01`) — `duplicateJsxElement`.
+ *
+ * The same one-field shape as a delete, and for the same reason: the element
+ * names itself and the destination is implied. A duplicate always lands
+ * immediately after its original, so unlike an insert there is no anchor or
+ * position to carry — the copy's place is not a choice the user made, it is
+ * what "duplicate" means.
+ */
+const DuplicateEditSchema = Type.Object({
+  kind: Type.Literal('duplicate'),
   nodeId: Type.String(),
 })
 
@@ -161,8 +175,8 @@ const InsertEditSchema = Type.Object({
   props: Type.Optional(InsertPropsSchema),
 })
 
-/** The three structural edit kinds, folded into `StudioEditSchema` by `studioWriteback.ts`. */
-export const StructuralEditSchemas = [MoveEditSchema, DeleteEditSchema, InsertEditSchema] as const
+/** The four structural edit kinds, folded into `StudioEditSchema` by `studioWriteback.ts`. */
+export const StructuralEditSchemas = [MoveEditSchema, DeleteEditSchema, DuplicateEditSchema, InsertEditSchema] as const
 
 export const StructuralEditSchema = Type.Union([...StructuralEditSchemas])
 export type StructuralEdit = Static<typeof StructuralEditSchema>
@@ -179,7 +193,7 @@ export type StructuralEditOutcome = { ok: true } | { ok: false; reason: string; 
 
 /** The structural edit kinds, for the caller's `kind`-based branching. */
 export function isStructuralEditKind(kind: string): kind is StructuralEdit['kind'] {
-  return kind === 'move' || kind === 'delete' || kind === 'insert'
+  return kind === 'move' || kind === 'delete' || kind === 'duplicate' || kind === 'insert'
 }
 
 /**
@@ -222,6 +236,12 @@ export function applyStructuralEdit(
     }
     case 'delete': {
       const result = deleteJsxElement(loc)
+      return result.ok ? { ok: true } : { ok: false, ...result.refusal }
+    }
+    case 'duplicate': {
+      // No anchor: a copy goes immediately after what it copied, which the
+      // codemod derives from the element's own byte range.
+      const result = duplicateJsxElement(loc)
       return result.ok ? { ok: true } : { ok: false, ...result.refusal }
     }
     case 'insert': {

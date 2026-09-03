@@ -80,7 +80,7 @@
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import type { Project } from 'ts-morph'
-import type { ParsedPage } from '@core/page-parser'
+import { isPrototypeShellPath, type ParsedPage } from '@core/page-parser'
 import { IMPORTED_RULE_ID_PREFIX, IMPORTED_RULE_TIMESTAMP, type ConditionDef, type StyleRule } from '@core/page-tree'
 import { cssToStyleRules, type ImportWarning } from '@core/siteImport'
 import { collectEntryStylesheets, collectPageStylesheets } from '@core/studio-sync/collectPageStylesheets'
@@ -293,12 +293,19 @@ export async function loadStudioStyles(
   const sheets = new Map<string, PageStylesheet>()
   // Global stylesheets FIRST — resets and design tokens must precede the
   // per-screen rules that reference them. See `collectEntryStylesheets`.
+  // `isPrototypeShellPath` alongside the compiled-elsewhere filter: the
+  // preview shell Studio scaffolds ships its own `shell.css`/`CanvasPanel.css`,
+  // and those are the TOOL's stylesheets, not the design's. Guarded here as
+  // well as in `findEntryFile` because a user's own file could import one.
+  const usable = (sheet: PageStylesheet): boolean =>
+    !sheets.has(sheet.absPath) && !COMPILED_ELSEWHERE_RE.test(sheet.relPath) && !isPrototypeShellPath(sheet.relPath)
+
   for (const sheet of collectEntryStylesheets(project, workspaceRoot)) {
-    if (!sheets.has(sheet.absPath) && !COMPILED_ELSEWHERE_RE.test(sheet.relPath)) sheets.set(sheet.absPath, sheet)
+    if (usable(sheet)) sheets.set(sheet.absPath, sheet)
   }
   for (const { parsed, relFile } of pages) {
     for (const sheet of collectPageStylesheets(parsed, relFile, project, workspaceRoot)) {
-      if (!sheets.has(sheet.absPath) && !COMPILED_ELSEWHERE_RE.test(sheet.relPath)) sheets.set(sheet.absPath, sheet)
+      if (usable(sheet)) sheets.set(sheet.absPath, sheet)
     }
   }
   if (sheets.size === 0 && !extraCss) return EMPTY_STYLES

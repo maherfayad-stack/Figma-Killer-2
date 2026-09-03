@@ -8,6 +8,96 @@ Entry ids are `<area>-<nn>`. Areas in use: `parser`, `canvas`, `store`, `panel`,
 
 
 
+---
+
+### server-17 — the exported shell's chrome now matches the reference app it was asked to look like, measured rather than inferred
+
+**The report.** "The canvas doesn't look at all like the one from github", then,
+after a first attempt, "you literally gave me the same exact thing."
+
+**Why the first attempt was invisible.** It rewrote `CanvasPanel`'s layout to lay
+each board out as a titled row — correct, and a near no-op on the user's data.
+`test4` has ONE board with THREE frames already at x = -422, -2, 422. Sorting
+them into a row reproduces the arrangement they were already in; only the gap
+(27px → 120px) and a heading changed. **A layout algorithm can only be judged on
+the data it will run against.** Check the shape of the real workspace before
+claiming a layout change is visible.
+
+**The second, larger error behind it.** The reference's look was inferred from
+reading its CSS instead of running it. Do not do this — load the app
+(`https://travel-essentials-six.vercel.app`) and read computed styles off the
+live DOM.
+
+**What actually differed: the chrome.** Measured off the reference and now
+matched in `shellFiles.ts`:
+
+- Palette. Light `#ffffff` bar / `#f7f9fa` tint / `#d8dcde` line / `#1c1c1c`
+  text / `#66797f` muted. Dark `#1c1c1c` / `#232525` / `#3c4244` / `#f8f9f9` /
+  `#929fa3`. Accent `#0c9ab0`, live-option marker `#ef4550`.
+- 52px bar, 40px option rows, 32px/8px-radius outlined buttons, 13px row text
+  with a 2px marker under the current option, 14px/600 two-tone wordmark.
+- `--shell-frame-edge` is now `--shell-line`, used for BOTH the chrome's
+  hairlines and the ring around a device — the reference uses one colour for
+  both, and two tokens holding one value is how they drift apart.
+
+**Three structural changes worth keeping:**
+
+1. **Bar + option rows live in one `.shell__chrome` div.** The mobile rule was a
+   chain of `.shell__bar ~ .shell__bar` sibling selectors that had to be
+   re-derived every time a row was added. It is now one `position: fixed`.
+2. **The Canvas/Flow pair became one `Canvas` button** with `aria-pressed`. The
+   pair's second half was always the "you are here" half — a control that does
+   nothing, next to one that does.
+3. **The screen picker moved from a bottom bar to a top nav row**, matching the
+   reference, and the bottom bar is gone rather than kept alongside it.
+
+`PROJECT_NAME` was added to the registry for the wordmark, sourced from
+`basename(dir)` — NOT `package.json`'s `name`, which the scaffold writes as a
+constant `studio-project` and which would therefore give every project the same
+wordmark.
+
+**Verified:** 25 prototypeShell tests, 519 architecture gates, `bun run build`,
+`bun run lint` clean; canvas + flow in light and dark, mobile chrome opening as
+one 92px block, and a prototype link still presenting SMS over SignUp.
+
+**Not mine, still failing:** `server/handlers/studio/projectMcpApprovals.test.ts`
+cannot resolve `./agentRosterMcpTools` — that module is absent from disk and was
+never tracked in git, while the test importing it is committed. Someone's
+in-flight work; left alone.
+
+**Follow-up, same session — the mobile chrome became a bottom sheet.** The old
+mobile behaviour pinned the bar and its rows to the top of the window. The
+reference instead hides its chrome entirely, floats one 36px gear top-right, and
+opens an iOS-style sheet: 34px-radius panel inset 6px, 36x5 grabber, centred
+14px/600 title, uppercase 11px section labels, pill segmented controls with the
+live option lifted out in the surface colour, and a **blurred** scrim
+(`backdrop-filter: blur(20px)`) — a sharp design behind a translucent panel
+reads as two things at one depth. Matched, with Escape and scrim-click to close.
+
+The sheet carries everything the bar does (Appearance, Language, View, Screens,
+Boards) because on a phone the bar is *replaced*, not shrunk — there is no other
+route to those controls. `.shell__chrome-toggle` and the `data-chrome`
+attribute are gone.
+
+**Scrollbars are removed with one `*` rule** in `shell.css` and one in
+`ScreenFrame`'s `RESET` (`scrollbar-width: none` + a zero-size
+`::-webkit-scrollbar`). Stated on `*` deliberately, so a scroll container added
+later cannot reintroduce one. Overflow and scrolling are untouched — verified
+the frame still scrolls with a 0px gutter. A phone draws no persistent
+scrollbar; one down the side of a preview is both a lie about the design and a
+theft of ~15px of its width.
+
+**Bug found while verifying, fixed: `?lang=ar` never survived load.** App's URL
+effect wrote `{board, page, view, theme}` and no `lang`, so the param was
+stripped on the first render and every shared link opened in the project's
+default — while `urlState.js`'s own header comment promised a shareable
+language. The language lives BELOW the provider, so the sync belongs in `Shell`,
+not App: it now writes `lang` on change and applies the URL's value exactly once
+on mount, guarded by a ref (repeating it would overwrite every later change) and
+only for a locale `locales` actually declares.
+
+
+
 
 
 ---
@@ -162,6 +252,442 @@ misses both.
 (`nodeRendererLockdown`, `boardFrameVariantSelection`, `canvasFrameMounting`, …)
 fail only in a full-suite batch and pass per-file. Check per-file before
 believing one.
+
+---
+
+### canvas-15 — resize an element by dragging its edges; Fill / Hug / Fixed per axis
+
+**The ask.** "Change the width of elements by selecting them and dragging the
+sides", plus "make an element fill container, or hug content — even in
+components".
+
+**The decision that shaped everything.** A drag has to land somewhere in real
+source, and the two candidates are not equivalent. Writing to the element's CSS
+CLASS keeps source clean but resizes every element wearing it — in this repo's
+own fixture, `styles.cta` is worn by two buttons on SignUp and `SheetHeader` is
+used by two screens. The user was asked, and chose **that one element only**:
+the drag writes `style={{ width: '281px' }}` onto that exact JSX element via
+`setNodeInlineStyles` → the existing `kind: 'style'` edit → `setJsxStyle`.
+Verified on the real project — the dragged `div.cta` got the attribute and its
+sibling wearing the same class did not.
+
+The Fill/Hug control in the panel is deliberately NOT wired that way: it uses
+the panel's existing `onChange`, so it writes wherever the panel's style target
+already points (class or inline, shown by `StyleTargetChip`). Two gestures, two
+targets, both already visible in the UI — not two silent behaviours.
+
+**Three things that are easy to get wrong and are now settled in code.**
+
+1. **No zoom math in the drag.** The canvas zoom is a CSS transform on the
+   iframe element in the PARENT document; pointer events raised inside the
+   iframe's own document are already un-projected into its CSS pixels. Dividing
+   by zoom here would double-correct. Same property that let the rings drop
+   their conversion (WS-5.1) — see `useElementResizeDrag`'s docblock.
+2. **An element is not a board rect.** `rectResize.ts` returns a full next rect
+   including `x`/`y`, which is right for a frame and wrong for a laid-out
+   element: layout owns its origin, so `elementResize.ts` returns a SIZE and the
+   west/north handles invert the delta instead. It also reports which axes a
+   handle owns, so an east drag never freezes a hugged height into the source.
+3. **Fill/Hug are intents, not values.** The declaration depends entirely on the
+   PARENT (`elementSizing.ts`): `flex: 1 1 0%` along a flex main axis,
+   `align-self: stretch` across it, `width: 100%` off a flex parent. Writing
+   `width: 100%` on a flex-row child — the obvious translation — sets the flex
+   BASE size, which the container then grows or shrinks anyway. Hug on a cross
+   axis uses `fit-content` rather than `align-self: flex-start`, because
+   `stretch` only applies to an auto size, so `fit-content` hugs without
+   silently changing the element's ALIGNMENT.
+
+**Two bugs the browser caught that the gates could not.**
+
+- **`CSS.escape` is not defined in happy-dom.** Using it to build the node-id
+  selector threw during render and took out 21 canvas tests that had nothing to
+  do with resize. There was already an `escapeCssAttributeValue` in
+  `canvasNodeLookup.ts` doing exactly this job; the hook now uses the shared
+  `ownElementForNode` instead of its own selector.
+- **Handles on a node with no element.** `RenderedCanvasNodeCache.resolve`
+  falls back to a zero-DOM node's rendered DESCENDANTS so a `studio.instance`
+  (a component CALL SITE, rendered as a bare Fragment) can still be measured for
+  a ring. That fallback is right for drawing a box and wrong for anything that
+  writes: the first build drew eight handles around `<OnboardingHero />` that no
+  drag could move. `ownElementForNode` is the narrower question — "does this
+  node render an element of its own" — and both the frame's visibility and the
+  drag now gate on it.
+
+**"Even in components" — what it does and does not mean.** An inlined
+component's internals were already editable, with `SharedComponentNotice`
+showing the live instance count, and the drag rides that same writeback: it
+writes to the component's own file, and therefore to every instance. What you
+cannot resize is the call site itself (nothing to write to). Selecting a
+component's inner element from the canvas takes a second click — the first
+resolves to the instance node — which is existing selection behaviour, not
+something this work changed.
+
+**Two defects found by DOGFOODING, after the gates were green** — "it's so
+laggy and the cursor doesn't change shape":
+
+1. **A per-frame `querySelector` I put in the 60fps tick.** The resize gate
+   called `ownElementForNode(iframeDoc, id)` on EVERY animation frame, for every
+   selection, drag or no drag — an O(document) attribute scan over the user's
+   whole page. That is the exact cost `RenderedCanvasNodeCache` was built to
+   remove, reintroduced three feet from its own docblock warning about it. The
+   tick now keeps the source `elementCache.resolve` already returned and asks
+   `isOwnElementSource` (a duck-typed attribute compare — cross-document
+   `instanceof HTMLElement` is false against the parent realm's constructor).
+2. **Uncoalesced style writes during the drag.** Every `pointermove` wrote
+   `style.width`, invalidating layout for the whole page inside the frame, which
+   the overlay's own tick then measured. A trackpad emits well past 60Hz, so the
+   browser laid out several times per painted frame. `useElementResizeDrag` now
+   applies at most one write per `requestAnimationFrame`.
+
+3. **The cursor never changed, because `iframeBodyReset.ts` injects
+   `*, *::before, *::after { cursor: default !important }`** to neutralize the
+   USER's page affordances inside a design frame. An `!important` on the
+   universal selector cannot be beaten by specificity, so all eight handles drew
+   the default arrow. The cursor declarations in the injector now carry
+   `!important` themselves — the only ones in that block that do — which is the
+   same carve-out `[contenteditable]` already gets there for the text caret.
+   Measured after the fix: `ew-resize` / `ns-resize` / `nwse-resize` /
+   `nesw-resize` on the right handles, and the handle is the topmost hit-test
+   target (`elementFromPoint` returns it).
+
+**The verification gap that let #3 ship.** The browser check dispatched pointer
+events DIRECTLY on the handle element, which bypasses hit-testing and cursor
+resolution entirely — it proved the handler works and proved nothing about
+whether a real mouse can reach or read the handle. For any pointer affordance,
+`elementFromPoint` at the target's own centre is the assertion that matters;
+a synthetic `dispatchEvent` is not a substitute for it.
+
+**Verified in a browser**: handle frame pixel-identical to the selection ring;
+drag → live preview → `style={{ width: "281px" }}` in `pages/Onboarding.tsx`
+with the sibling untouched; Hug → `width: "fit-content"`; frame `display: none`
+on a Fragment node. All test edits reverted (`diff` clean against backups).
+
+**Pre-existing, not mine, and actively being edited right now:**
+`src/admin/pages/site/canvas/CanvasLiveSurface.tsx` has 6 type errors
+(`Cannot find name 'playMode'`/`'renderScreen'`) so `bun run build` does not
+complete, and `PrototypeScreenStack.tsx` fails the react-compiler lint rule.
+Both are untouched by this work. The batch-run canvas failures are the known
+cross-file isolation flake — every one of them passes per-file.
+*(Both were fixed by that session since; `bun run build` and `bun run lint` are
+now clean.)*
+
+**The follow-up bug: "I can no longer change components' width — they snap back
+once I release."** Reproduced by reading the write path, not by guessing. The
+offer and the write disagreed about the same node:
+
+- `fsCodemodAdapter.saveSite` emits a `kind: 'style'` edit **only** for a
+  `base.*` node — the S4 rule (`docs/audits/2026-08-06/10-classes-vs-inline-styles.md`),
+  because an `alm.*`/`pkg.*` component renders its `style=""` from ITS OWN
+  file and a `studio.instance` call site renders no element at all.
+- The store's `setNodeInlineStyles` has no module gate (correctly — in CMS mode
+  those styles persist to the DB), so the drag was accepted, written to the
+  store, and dropped on the way to source. The canvas showed the drag for its
+  whole length and reverted the instant the preview override lifted.
+
+That is the exact shape S4 already recorded for the PANEL ("the offer had no
+`moduleId` check at all and every keystroke was silently discarded"), shipped
+again on a new surface — and worse here, because a drag makes the discard
+*visible* and looks like a canvas bug rather than a refusal.
+
+**Fixed by giving the rule one home.** `resizeOffer.ts`'s `canOfferResize` is
+now the single gate the handles render behind, and it names all three refusals
+(no own element / unsizeable display / module doesn't own its `style=""`). It
+calls `canWriteInlineStyleForModule` — the same predicate `StyleSurface` hides
+its inline composer behind — and `fsCodemodAdapter` now calls that predicate too
+instead of its own inline `startsWith('base.')`. One rule, three readers.
+
+**What this means for the user's ask, honestly:** a design-system component
+(`<Button>` from `@alm-design/design-system`) can no longer be dragged at all,
+because Studio has nowhere to write the width. Their own file already shows the
+working pattern — `<div className={styles.cta} style={{ width: "170px" }}>`
+wrapping the Button. **The unbuilt path worth knowing about:** that DS's `dist`
+compiles every component to `({...props}) => <button {...i}/>` — it DOES spread
+rest props onto its root, so `<Button style={{width}}/>` would work at runtime.
+Studio refuses because it cannot know that without executing. A parser pass that
+proves "this package component forwards rest props to its root element" would
+make component resize land honestly, and is the real feature behind this bug.
+
+**Also in this pass:** `BreakpointSelectionOverlay.tsx` crossed the 700-line
+ceiling again (694 at HEAD + 16). Split, not grandfathered — the node-badge
+label moved to `nodeBadgeLabel.ts` (it was the only reason the overlay imported
+the module registry) and the two rect predicates joined
+`canvasSelectionOverlayPositioning.ts`, which already owns `CanvasOverlayRect`.
+671 lines now.
+
+**Verified pre-existing on a clean HEAD worktree, not this work:**
+`selectionToolbar.test.tsx` → "does not bubble toolbar clicks to the canvas
+background" (the "Add to canvas" dialog never opens) and the
+`canvasScrollUnrollPinInteraction` pin ⇄ unroll timeouts.
+
+**The second follow-up: "it snaps to full width until I refresh."** A different
+bug from the one above, in the same drag, and this one hit `base.*` nodes where
+the write DID land. `useElementResizeDrag` cleared its live preview one
+animation frame AFTER committing to the store — and the preview and the
+committed value are the same DOM property. So React applied `width: 148px` on
+the commit render, and the next frame `removeProperty('width')` deleted it.
+React never wrote it again: from its point of view the style prop had not
+changed, so there was nothing to reconcile. The element dropped to its document
+size — full width for an ordinary block child — while the user's file correctly
+said 148px, which is exactly why a reload "fixed" it.
+
+The fix is an ordering, not a mechanism: clear the preview BEFORE the commit, so
+the store update's re-render is the last thing to touch `style.width`. Both
+happen inside one pointerup handler, so the browser paints once and the
+intermediate state is never seen. **If you touch this, the rule is: never hand a
+DOM property back to React after React has written it.**
+
+---
+
+### canvas-16 — page `:hover` no longer fires in design frames
+
+**The ask.** "Disable all the hover interactions in the canvas in the pages, it
+only works in live mode."
+
+**Why it is not a stylesheet.** Every other thing the design canvas neutralises
+is a PROPERTY — cursors and text selection (`iframeBodyReset`), animations,
+transitions and smooth scroll (`CanvasAnimationInjector`) — so an injected
+`!important` rule overrides it. Hover is a MATCH, not a property:
+`.btn:hover { … }` names an arbitrary declaration block, and no blanket rule can
+undo an arbitrary declaration without knowing what it set. The other obvious
+route, taking pointer events away from content, is worse: the canvas's own
+selection and hover ring ARE `onMouseEnter` handlers on the page's real
+elements (`NodeRenderer`), so `pointer-events: none` would take click-to-select
+with it.
+
+**So the selectors are rewritten instead**, in the CSSOM, in place:
+`:hover` becomes `.studio-hover-off`, a class nothing in the frame wears.
+A class and not something else, for two reasons that both bite:
+
+- **Specificity is preserved.** `:hover` is (0,1,0) and so is a class, so every
+  rewritten rule keeps its exact cascade position among the rules that still
+  match.
+- **`:not(:hover)` stays honest.** That is the author's resting state and with
+  hover disabled it must apply ALWAYS. `:not(.studio-hover-off)` gives exactly
+  that for free; deleting the rule would lose it and a never-matching rewrite
+  would invert it.
+
+**Allowlist, never denylist.** Only the four page-content stylesheets
+(`mc-vendor`, `mc-authored`, `mc-classes`, `mc-user-styles`) are rewritten. The
+editor's own chrome lives in the same document and uses `:hover` for real
+affordances; a denylist would break it the day someone adds a fifth chrome
+sheet. Failing closed leaves a page rule hovering — a nuisance, not a broken
+editor.
+
+**It re-runs on a `<head>` MutationObserver** because each of those injectors
+rewrites its `<style>` element's `textContent` whenever its input changes,
+which reparses the sheet from the author's text and undoes the pass.
+
+**How you still see a hover state:** `ClassStyleInjector`'s
+`mc-classes-force-state` already paints a `:hover` rule's declarations onto the
+SELECTED node keyed by node id (`generateForcedStateCSS`) — no `:hover` in the
+selector, so this never touches it. That panel-driven preview was always the
+only way (you cannot toggle `:hover` from the DOM), and it is untouched.
+
+**Verified in the browser, both directions, on the user's own board:**
+
+| frame mode | live `:hover` rules in the DS sheet | rewritten |
+|---|---|---|
+| `live` | 62 | 0 |
+| `canvas` (design) | 0 | 62 |
+
+and on a real button: `.btn--primary:hover:not(:disabled)` is now
+`.btn--primary.studio-hover-off:not(:disabled)`, with `element.matches()`
+returning **false** and the `:not(:disabled)` half intact.
+`studio-editor-chrome` kept its own `:hover` rule throughout.
+
+---
+
+### save-01 — an edit made in the last 2s before a refresh was a coin flip
+
+**The report:** "why when scaling some components and I refresh it gets back to
+the state it was before?" — note *some*, and note *refresh*. Not a write that
+was refused (those revert on RELEASE, see canvas-15/16) and not a write that
+never had a target: this one reached the canvas, survived the release, and then
+lost the race to the reload.
+
+**The mechanism.** Studio autosaves on a debounce —
+`STUDIO_AUTOSAVE_DELAY_MS = 2_000`. Inside that window the only thing that can
+persist an edit is `usePersistence`'s `flushBeforeUnload`, and it issued an
+ORDINARY `fetch`. A `beforeunload` handler cannot await, which the code
+acknowledged and called fire-and-forget — but fire-and-forget is not the
+problem. The problem is that the browser **cancels an in-flight `fetch` as the
+document is torn down**. So the flush landed when it happened to get out first
+and vanished when it did not.
+
+That is exactly the reported shape: wait a couple of seconds and the edit is
+safe; refresh right after dragging and the file still says what it said before.
+"Some components" is "some of the time".
+
+**The fix** is the platform primitive for precisely this: `keepalive`, the
+browser's promise to deliver a request after the page is gone. Threaded as
+`SaveSiteOptions.unloading` → `apiRequest({ keepalive })` so it applies ONLY to
+the unload flush — an ordinary autosave must not opt in, because `keepalive`
+carries a 64KB cap across in-flight requests and a big batch would start
+failing for a teardown that is not happening. `pagehide` is now bound alongside
+`beforeunload`: neither covers every way a page goes away.
+
+**Honest limit on the diagnosis.** Found by reading the save path, not by a
+clean A/B — driving a resize + immediate reload in headless kept failing at the
+SELECTION step (synthetic pointer events do not select; the canvas selects
+through React handlers that want a real pointer), so both the race run and its
+control were no-ops and proved nothing. The mechanism is not in doubt and the
+fix is correct on its own terms, but the user is the one who can confirm the
+symptom is gone.
+
+**If it is not gone,** the next suspect is the debounce itself rather than the
+flush: a resize is a DISCRETE gesture with an obvious commit point, unlike
+typing, so `endCanvasGesture` is a natural place to save immediately instead of
+waiting 2s. That shrinks the window to nothing for this case specifically.
+
+---
+
+### canvas-17 — a design-system component can now be resized on the canvas
+
+**The ask, third time of asking:** "why when selecting a component like button I
+still can't make it wider or smaller".
+
+**The refusal was one line, and it had gone stale.**
+`canWriteInlineStyleForModule` allowed only `base.*`, so
+`fsCodemodAdapter.saveSite` emitted no `kind:'style'` edit for an `alm.*` node
+and every offer gated on that predicate refused. But Studio's OWN renderer
+already bets the other way: `src/modules/alm/register.tsx` pulls `style` out of
+the editor bag and passes it to the design-system component
+(`{ ...dsProps, ...(nodeStyle ? { style: nodeStyle } : {}) }`), precisely so the
+canvas shows what the published page would. The editor was rendering a size it
+refused to save — the same offer/write disagreement as S4, pointing the other
+way.
+
+**Why the bet is sound.** Every component in `@alm-design/design-system`
+destructures its named props and spreads the REST onto its root:
+`function Button({ variant, size, label, className = '', ...rest })` →
+`<button className={…} {...rest}>`. Verified in the shipped `dist`. So
+`<Button style={{ width: '277px' }} />` is one honest target — one source
+location, one rendered element, no other call site touched, which is the
+constraint the user set when they chose "that one element only". `pkg.*` (an
+arbitrary third-party package Studio knows nothing about) and `studio.instance`
+(a Fragment with no element at the call site) stay refused.
+
+**Known exception, deliberately not modelled:** a variant that returns early
+without spreading — `<Button variant="skeleton"/>` renders a bare `<span>` —
+takes the declaration in source and ignores it on screen. Narrowing per variant
+means modelling every component's internal branching, which is the
+"parse, never execute" line. A loading placeholder is not a thing anyone sizes.
+
+**The canvas half needed its own fix.** An `alm.*` node's `data-node-id` sits on
+a `display: contents` host (`TRANSPARENT_HOST_STYLE`), because a real box there
+would break percentage-height chains and every sibling combinator crossing it.
+That host is the right thing to SELECT and the wrong thing to size — `width` on
+`display: contents` does nothing — so `ownElementForNode` made every
+design-system component fail the unsizeable-display gate.
+`presentedElementForNode` descends through transparent hosts to the element the
+user is actually pointing at, stopping at anything carrying its own
+`data-node-id` (a different node's box) or at more than one element child (no
+single "the" element to mean). Both the handles and the drag preview use it.
+
+**Also removed a duplicated gate.** The overlay's RAF tick was re-deriving
+"should this node have handles" via `isOwnElementSource`; that rule now lives
+only in `canOfferResize`, and the tick positions whatever frame was rendered.
+`isOwnElementSource` is deleted — it had no other caller.
+
+**Verified end to end in the browser, on the user's own board:** selecting
+`<Button>` at `pages/Onboarding.tsx:47:14` produced a resize frame with 8
+handles in that frame and no other; dragging the east handle took the button
+357px → 277px, it STAYED at 277px after release (no snap-back, no full-width
+jump — the reordering above), and the source file gained
+`style={{ width: "277px" }}` on that exact call site. The test width was then
+reverted; `alignSelf: "stretch"` on that same Button is the user's own earlier
+Fill, which had been silently discarded until this change and now saves.
+
+**Still true after all this:** a LOCAL component call site (`<OnboardingHero/>`,
+`studio.instance`) cannot be resized, and that is not a gap to close the same
+way. It renders no element of its own, so there is nothing at the call site to
+carry a style; its box belongs to the component's own root, in the component's
+own file, where a size would change every instance. If that is ever wanted, the
+honest route is parsing the local component's source for a forwarded `style` —
+which Studio already has the AST for.
+
+---
+
+### struct-05 — the trash was fully built and reachable from nowhere; deleting a page had no UI at all
+
+**What was wrong — two separate holes that added up to one missing feature.**
+
+1. **No delete action existed in Studio.** "Delete page" was a context-menu item
+   on `SiteExplorerPanel`'s page rows. Commit `b45b7c2` dropped the explorer's
+   tab row and pointed `ExplorerPanel` straight at `StudioExplorer`, which
+   mounts `StudioBoardsList` + `StudioPagesTree` — and `StudioPagesTree` was
+   built with no context menu at all. The action was not removed on purpose; it
+   went with the panel that carried it. The nearest surviving gesture, the frame
+   header's "Remove from board", only unpins the frame — the `.tsx` stays. The
+   only real delete left was Spotlight's `pages.deletePage`.
+2. **The trash existed and nothing could reach it.** `pageTrash.ts`,
+   `trashRoutes.ts`, `pageFiles.ts`, `StudioTrashList.tsx` and
+   `studioTrashRequests.ts` were complete, documented and green (24 passing
+   tests) — but `tryServeStudioTrash` was in no router and `StudioTrashList`
+   was imported by nothing. **Its tests passed by calling it directly.** A
+   handler test that constructs its own `Request` and calls `tryServeX` proves
+   the handler works and says NOTHING about whether the server ever calls it;
+   same for a component nobody mounts. That is the second time this repo has
+   shipped a feature whose gates were green and whose wiring was absent — see
+   `comment-01`'s gate blindness. **A test that bypasses the composition root
+   cannot see a missing registration.**
+
+**What landed.**
+
+- `tryServeStudioTrash` registered in `STUDIO_SUB_ROUTERS` (`studio.ts`);
+  `StudioTrashList` mounted in `StudioExplorer`, below the pages tree.
+- `STUDIO_TRASH_CHANGED_EVENT` + `notifyStudioTrashChanged` in `adminEvents.ts`
+  — the component imported both and neither existed. The event carries NO
+  payload on purpose: the trash is a directory an agent turn or a second tab can
+  change, so the signal says "it moved", never "it is now this".
+- A page-row context menu in `StudioPagesTree` — Rename / Delete page — behind
+  `confirmDelete({ alwaysConfirm: true })`.
+- **"Delete page" in the CANVAS frame menu too** (`BoardFrameView.tsx`), below
+  "Remove from board". Shipping it only in the explorer was the same mistake in
+  miniature: the panel is not where people right-click a screen they are looking
+  at. The two items stay separate because they are different operations, not a
+  soft and hard version of one — Remove unpins THIS frame and leaves the `.tsx`;
+  Delete takes the page's files and therefore every frame of it. When a page has
+  more than one frame (the RTL/Light/AR variants "Duplicate as …" creates are
+  extra frames over the SAME page) the confirm names the count — "all 2 frames
+  of this page leave the board" — because deleting a page from a variant frame
+  is exactly where someone would expect only that variant to go.
+- **One delete semantic, not two.** `deletePage` in `pageActions.ts` now commits
+  to the trash instead of the hard delete, so every caller (context menu,
+  Spotlight, the agent executor) gets the same recoverable removal, and the only
+  permanent deletion in the product is the Trash section's own Delete / Empty.
+  The hard-delete path it replaced is GONE: `pageDelete.ts`, its
+  `DELETE /admin/api/studio/page` route, the client `deleteStudioPage`, and both
+  test suites. `pageTrash.ts` is a strict superset of what it did (same file set
+  via `pageFiles.ts`, same frame removal, plus App Router support), so keeping
+  it would have been two ways to do one thing.
+- §8.17 in `button-primitive-usage.test.ts` for the Trash disclosure toggle —
+  the file claimed §8.12 (the Boards toggle) and was failing the gate.
+
+**Verified in a browser, not just by gates.** Explorer: scaffold → right-click → Delete →
+`.tsx` AND its `.module.css` move to `.studio/trash/<uuid>/pages/` with paths
+preserved → "Trash (1)" appears → Restore → both files back, `git status` clean
+(byte-identical round trip), board frame re-placed, Trash section vanishes when
+empty → Delete permanently → files gone from disk. Canvas: the frame menu lists
+Delete page, its confirm names the page, Cancel is inert (files untouched), and
+a page duplicated as an RTL variant reports "all 2 frames". Console clean.
+
+**Two things a future agent should know.**
+
+- **Restore does not restore the frame's POSITION.** `restoreTrashedPage` calls
+  `autoPlaceBoardFrame`, which puts the frame at the next free grid slot. A
+  hand-positioned frame comes back somewhere else. Deliberate (a restored page
+  you cannot see is not restored) but it is a real limitation, not a bug to
+  re-fix by accident.
+- **`.studio/trash/` is NOT gitignored**, so trashed page files get committed
+  with the project. Arguably right — the repo is the document, so a trashed page
+  survives a clone — but it was an implicit consequence of putting the trash
+  under `.studio/`, not a decision anyone recorded. Worth an explicit call.
+
+**Pre-existing, not mine:** `selectorStability.test.ts` fails on
+`studio/playNavigation.ts:44`; five `studioCss.test.ts` failures come from
+`studioPageLoad.ts`'s prototype-shell ambient body styles; plus the
+`projectMcpApprovals.test.ts` missing-module error `struct-04` already records.
 
 ---
 

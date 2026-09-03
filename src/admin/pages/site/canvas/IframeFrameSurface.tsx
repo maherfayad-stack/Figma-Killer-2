@@ -69,15 +69,6 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { cn } from '@ui/cn'
-import { ClassStyleInjector } from './ClassStyleInjector'
-import { UserStylesheetInjector } from './UserStylesheetInjector'
-import { ProjectCssInjector } from './ProjectCssInjector'
-import { AuthoredCssInjector } from './AuthoredCssInjector'
-import { CanvasAnimationInjector } from './CanvasAnimationInjector'
-import { CanvasScrollUnrollInjector } from './CanvasScrollUnrollInjector'
-import { CanvasSelectionOverlayInjector } from './CanvasSelectionOverlayInjector'
-import { EditorChromeInjector } from './EditorChromeInjector'
-import { RuntimeScriptInjector } from './RuntimeScriptInjector'
 import type { InjectableRuntimeScript } from './useRuntimeScriptBuild'
 import { useIframeCursorBridge } from './useIframeCursorBridge'
 import { iframeLocalPointToParentClientPoint } from './iframeEventCoordinates'
@@ -91,6 +82,7 @@ import { closestReadonlyRegion, isElementLike } from './readonlyRegion'
 import styles from './IframeFrameSurface.module.css'
 import { IFRAME_SRC_DOC, claimIframeSrcDocument } from './iframeSrcDocument'
 import { CanvasFrameContexts } from './CanvasFrameContexts'
+import { CanvasFrameInjectors } from './CanvasFrameInjectors'
 import { useApplyPreviewAxes } from './previewAxesFrameEffect'
 import type { PreviewAxes } from '@core/studio-board'
 
@@ -662,40 +654,16 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
               axes={frameAxes}
               interaction={interaction}
             >
-              {/* Editor-chrome stylesheet — UNLAYERED so it beats every other bucket */}
-              <EditorChromeInjector targetDocument={iframeDoc} parentDocument={document} />
-              {/* Design frames only: selection/hover rings + the node-name badge
-                  render INSIDE this document (WS-5.1) so they track the element
-                  with zero zoom/pan conversion. See its own docblock. */}
-              {!isLive && !isCapture && (
-                <CanvasSelectionOverlayInjector
-                  targetDocument={iframeDoc}
-                  parentDocument={document}
-                  onRootReady={setOverlayRoot}
-                />
-              )}
-              {/* Vendor package CSS (Alm design-system + the open project's own
-                  bare-specifier package CSS) — read-only, @layer vendor,
-                  ordered below @layer user-authored. See canvasCssLayers.ts. */}
-              <ProjectCssInjector targetDocument={iframeDoc} />
-              {/* Design frames only: animations play once and hold their last
-                  keyframe, so an imported app's infinite shimmers/spinners
-                  don't run forever behind the selection ring. Live mode is a
-                  visitor preview, so it keeps the real motion. */}
-              {!isLive && <CanvasAnimationInjector targetDocument={iframeDoc} />}
-              {/* Design frames only: internal scroll regions (a flex:1
-                  overflow:auto app shell) become content-sized so the whole
-                  screen is visible instead of a scrollable box. Live mode
-                  scrolls natively and keeps the app's own clipping. */}
-              {!isLive && <CanvasScrollUnrollInjector targetDocument={iframeDoc} />}
-              {/* Author CSS — @layer user-authored (board-27's raw AuthoredCssInjector always precedes mc-classes; see its own doc) */}
-              <AuthoredCssInjector targetDocument={iframeDoc} viewport={viewport} />
-              <ClassStyleInjector targetDocument={iframeDoc} viewport={viewport} />
-              <UserStylesheetInjector targetDocument={iframeDoc} viewport={viewport} />
-              {children}
-              {/* Runtime scripts (opt-in) run against the node tree mounted
-                  above. Empty list = no-op, so this is safe to always mount. */}
-              <RuntimeScriptInjector targetDocument={iframeDoc} scripts={runtimeScripts ?? EMPTY_RUNTIME_SCRIPTS} />
+              <CanvasFrameInjectors
+                iframeDoc={iframeDoc}
+                isLive={isLive}
+                isCapture={isCapture}
+                viewport={viewport}
+                runtimeScripts={runtimeScripts ?? EMPTY_RUNTIME_SCRIPTS}
+                onOverlayRootReady={setOverlayRoot}
+              >
+                {children}
+              </CanvasFrameInjectors>
             </CanvasFrameContexts>,
             iframeDoc.body,
           )}

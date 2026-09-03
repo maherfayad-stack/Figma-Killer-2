@@ -1,0 +1,61 @@
+/* StudioTrashList — the "Trash" section below the Pages tree. Mirrors
+ * StudioBoardsList's compact section rhythm; only rendered when the trash has
+ * something in it. */
+
+.section {
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    border-top: 1px solid var(--border-subtle);
+    padding-bottom: var(--space-xs);
+}
+
+.header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-s) var(--space-s) var(--space-3xs);
+}
+
+.heading {
+    font-size: var(--text-2xs);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-subtle);
+}
+
+.disclosure {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3xs);
+    background: none;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+}
+
+.disclosureChevron {
+    flex-shrink: 0;
+    color: var(--text-disabled);
+    transition: transform 120ms ease;
+}
+
+.disclosureChevronExpanded {
+    transform: rotate(90deg);
+}
+
+.list {
+    display: flex;
+    flex-direction: column;
+    max-height: 180px;
+    overflow-y: auto;
+    padding: 0 var(--space-xs);
+}
+
+.deletedAt {
+    flex-shrink: 0;
+    font-size: var(--text-2xs);
+    color: var(--text-disabled);
+    font-variant-numeric: tabular-nums;
+}

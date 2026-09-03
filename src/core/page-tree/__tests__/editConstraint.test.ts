@@ -14,7 +14,6 @@ import {
   explainCssRuleConstraint,
   explainDetachConstraint,
   explainGestureConstraint,
-  explainInstanceDuplicateConstraint,
   explainMintedInsertConstraint,
   explainPropConstraint,
   explainStructuralConstraint,
@@ -193,20 +192,24 @@ describe('explainStructuralConstraint', () => {
     expect(constraint.actions).toEqual([])
   })
 
-  it('row 12 — duplicate refuses on ANY source-derived node (ordinary elements: no action)', () => {
+  it('row 12 — duplicate ALLOWS an ordinary source-derived element', () => {
+    // Was "refuses on ANY source-derived node". `duplicateJsxElement` writes
+    // the element's own bytes back into the file, so the copy has a real
+    // source location the moment the board re-reads it — the same answer
+    // insert has always given.
     const node = { id: 'src/screens/Home.jsx:9:1' }
-    const constraint = explainStructuralConstraint({ kind: 'duplicate', node })
-    assertWellFormed(constraint)
-    expect(constraint.reason).toBe('duplicate')
-    expect(constraint.actions).toEqual([])
+    expect(explainStructuralConstraint({ kind: 'duplicate', node })).toBeNull()
   })
 
-  it('row 12 (instance escape hatch, R5) — a studio.instance gets the extract offer instead', () => {
-    const constraint = explainInstanceDuplicateConstraint()
+  it('row 12 — duplicate still refuses where the original has no honest position', () => {
+    // The placement rows are what make the write safe, and they still apply:
+    // a copy of a `.map` row is a copy per item, and one inside a shared
+    // component would appear at every call site.
+    const constraint = explainStructuralConstraint({ kind: 'duplicate', node: { id: 'src/screens/Home.jsx:9:1#2' } })
     assertWellFormed(constraint)
-    expect(constraint.reason).toBe('duplicate')
-    expect(constraint.actions.some((a) => a.kind === 'extract')).toBe(true)
+    expect(constraint.reason).toBe('list-row')
   })
+
 
   it('row 13 — wrap refuses on any source-derived node with no action', () => {
     const node = { id: 'src/screens/Home.jsx:9:1' }

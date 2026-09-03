@@ -465,6 +465,7 @@ export function applyStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyO
       return { applied: true }
     case 'move':
     case 'delete':
+    case 'duplicate':
     case 'insert': {
       // Both ends decode through the same guard, so a hand-crafted
       // `anchorNodeId` cannot name a file outside the workspace or a file that

@@ -11,8 +11,10 @@ export type { ImportSpecifierLocation, UnresolvedAssetImport } from './assetImpo
 export type { BranchAlternative, FunctionLike, NodeLoc, ParsedNode, ParsedPage, ParsedPropValue } from './types'
 export {
   EXCLUDED_WORKSPACE_DIR_NAMES,
+  PROTOTYPE_SHELL_DIR,
   WORKSPACE_MAX_FILE_BYTES,
   WORKSPACE_MAX_FILES,
+  isPrototypeShellPath,
   listWorkspaceFiles,
 } from './workspaceFiles'
 export { createWorkspaceProject, resolveComponentSources, resolveExportedDeclaration } from './componentSources'

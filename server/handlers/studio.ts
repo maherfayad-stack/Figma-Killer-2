@@ -241,6 +241,7 @@ import { tryServeStudioI18nSetup } from './studio/i18nSetup'
 import { tryServeStudioProjectRoutes } from './studio/projectRoutes'
 import { tryServeStudioReloadScope } from './studio/reloadScope'
 import { tryServeStudioComments } from './studio/commentsRoutes'
+import { tryServeStudioTrash } from './studio/trashRoutes'
 import { tryServeStudioPrototype } from './studio/prototypeRoutes'
 import type { DbClient } from '../db/client'
 
@@ -274,6 +275,7 @@ const STUDIO_SUB_ROUTERS = [
   tryServeStudioProjectRoutes,
   tryServeStudioReloadScope,
   tryServeStudioPrototype,
+  tryServeStudioTrash,
 ] as const
 
 /** Body of POST /admin/api/studio/save — a batch of typed source writebacks. */

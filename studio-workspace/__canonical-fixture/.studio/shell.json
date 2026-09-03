@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "files": {
+    "index.html": "7983490ee9cea5c9d1951cd40eba678b98346642c1b440bdd5ac80c5e51739dd",
+    "vite.config.js": "17d5da7e88dfe51e09ccae73223b80d848cbbc5fbfa922eb8a961dc1774c74dc",
+    "prototype/main.jsx": "19e8d057019adc584d7c225c4dc04ca4eefe3c77a93b029ea98c91da3583a19e",
+    "prototype/App.jsx": "cacc7b21fa22f014efc3fe4f5d96f77d3a3838f50cdd9a73807caa6ffb0b3427",
+    "prototype/ScreenFrame.jsx": "e67d953c6c13647a2a995cfd2a3d8bfc58b489d336862243eda62469e39f140c",
+    "prototype/CanvasPanel.jsx": "1d7e3c441c856d8c7e8ca0b4c22436b522a3705109d58e2acea8d3f03db05c7c",
+    "prototype/CanvasPanel.css": "0300e16f2d21dfc6c26ed5882f8b0a34da9d4858887e79612cdca02fa13d5b85",
+    "prototype/shell.css": "e5a37e1cac509e421f2ded3b8eb666359dfdc229921ca905effbb54d86a0ffb6",
+    "prototype/urlState.js": "79aab659cdcd400435c3fd00eedecca6b5625f8d2a5ff8484991f4462a3530da",
+    "prototype/Player.jsx": "ebb0e3e986af699cc694e8786fbd84cf1e2a4c02373e194855bc3ffa65c02c4b",
+    "prototype/Player.css": "f0d99dc0d737e4b81dc9aca5ab2a5802fa271ecc99dea168a370e1f05dd0073b"
+  }
+}

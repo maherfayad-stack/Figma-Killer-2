@@ -64,6 +64,7 @@ import { TEXT_HTML_TAG_SET } from '@modules/base/utils/htmlTag'
 import { packageModuleId } from '@core/module-engine'
 import { parsedPageToSitePage } from '@core/studio-sync/parsedPageToSitePage'
 import { classIdsForClassName, loadStudioStyles, type StyleRuleSource } from './studioCss'
+import { ensurePrototypeShell } from './studio/prototypeShell'
 import { probeProject } from './studio/projectProbe'
 import { getCachedRouteParse, hashWorkspaceConfig, setCachedRouteParse } from './studio/pageParseCache'
 import { ALM_DESIGN_PACKAGE_SPECIFIER } from './studio/designSystemDetect'
@@ -486,6 +487,17 @@ export async function loadStudioPages(dir: string): Promise<StudioLoadResult> {
   if (!existsSync(pagesDir)) {
     return { pages: [], componentSources: {}, styleRules: {}, styleRuleSources: {}, conditions: [], vendorCss: '', authoredCss: '' }
   }
+
+  // Scaffold (or refresh) the runnable preview shell — `prototype/`,
+  // `index.html`, `vite.config.js`. This is the backfill: a workspace created
+  // before the shell existed grows one the first time it is opened, and every
+  // later open brings its two generated files back in step with `.studio/`.
+  //
+  // Here rather than in the HTTP route because "opened" is what should trigger
+  // it, and this function is what every opener runs — the editor's `/load`,
+  // and the MCP tools that read a project without a browser. It never throws
+  // and it writes nothing when nothing changed.
+  ensurePrototypeShell(dir)
 
   // One shared, workspace-wide ts-morph Project so a page's local
   // component imports resolve to real files elsewhere in the tree —

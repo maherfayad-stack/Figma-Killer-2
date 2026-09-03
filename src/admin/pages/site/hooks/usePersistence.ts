@@ -441,29 +441,42 @@ export function usePersistence(
     )
     const prefsUnsub = subscribeToEditorPrefsChanged(scheduleAutoSave)
 
-    // beforeunload flush — tab close / hard reload. Fire-and-forget: the
-    // handler cannot await async work, so this bypasses the save queue and
-    // ships the current netted marks WITHOUT resetting them (a failed flush
-    // is retried by the next save). One request now, so either the whole
-    // save lands or none of it does — no partial-prefix commits at unload.
+    // Unload flush — tab close / hard reload. The handler cannot await async
+    // work, so this bypasses the save queue and ships the current netted
+    // marks WITHOUT resetting them (a failed flush is retried by the next
+    // save). One request now, so either the whole save lands or none of it
+    // does — no partial-prefix commits at unload.
+    //
+    // `unloading: true` is what makes the request survive the teardown
+    // (`keepalive`). Fire-and-forget is not enough on its own: the browser
+    // cancels an ordinary in-flight `fetch` as the document goes away, so an
+    // edit made inside the autosave debounce before a reload was being
+    // delivered only sometimes.
     function flushBeforeUnload() {
       const { site, hasUnsavedChanges, peekDirtySaveSnapshot } = useEditorStore.getState()
       if (!site || !loadedRef.current || !hasUnsavedChanges) return
       clearTimeout(timer)
       void adapterRef.current
-        .saveSite(site, { dirty: peekDirtySaveSnapshot() })
+        .saveSite(site, { dirty: peekDirtySaveSnapshot(), unloading: true })
         .catch((err) => {
           console.error('[persistence] flush save failed:', err)
         })
     }
 
+    // Both events, because neither alone covers every way a page goes away:
+    // `beforeunload` does not fire on mobile Safari or when a backgrounded
+    // tab is discarded, and `pagehide` is the one the bfcache path gets.
+    // The flush is a no-op when there is nothing unsaved, so firing twice
+    // costs nothing.
     window.addEventListener('beforeunload', flushBeforeUnload)
+    window.addEventListener('pagehide', flushBeforeUnload)
 
     return () => {
       unsub()
       prefsUnsub()
       clearTimeout(timer)
       window.removeEventListener('beforeunload', flushBeforeUnload)
+      window.removeEventListener('pagehide', flushBeforeUnload)
       // Unmount cleanup — in-app SPA navigation AWAY from the editor (e.g. to
       // the Data view), which does NOT fire `beforeunload`. Unlike unload,
       // the promise survives unmount, so this routes through the save queue

@@ -15,6 +15,21 @@
   pointer-events: none;
 }
 
+/* In dark mode the sheet surface is already near-black, so the light-mode 15%
+   scrim is invisible: the area above the sheet needs a much deeper wash — and
+   one that never reaches full transparency — for the sheet edge to read at all.
+   Gated the same two ways the design system's own tokens are: the explicit
+   [data-theme='dark'] attribute, and the OS preference when no theme is forced. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .sheet::before {
+    background: linear-gradient(180deg, rgba(0, 0, 0, 0.75) 45.192%, rgba(0, 0, 0, 0.45) 100%);
+  }
+}
+
+[data-theme='dark'] .sheet::before {
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.75) 45.192%, rgba(0, 0, 0, 0.45) 100%);
+}
+
 .sheet > * {
   position: relative;
 }
@@ -30,9 +45,10 @@
   border-radius: 38px 38px 0 0;
 }
 
+/* Logical inset, not `left`: in RTL the back control belongs on the right edge. */
 .back {
   position: absolute;
   top: 50%;
-  left: var(--space);
+  inset-inline-start: var(--space);
   transform: translateY(-50%);
 }

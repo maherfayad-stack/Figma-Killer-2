@@ -343,11 +343,15 @@ function structuralActions(
       return [{ label: 'Drag them one by one', kind: 'select-container' }]
     case 'insert':
       return [{ label: 'Select the container to insert into', kind: 'select-container' }]
-    // Rows 9-16 — `route-chrome`, `code-placed`, `reparent`, `duplicate`,
-    // `wrap`, `cross-file`, `no-sibling-anchor` genuinely have no way forward
-    // today (per `sourceStructure.ts`'s own doc: "deliberately NOT built
-    // rather than approximated"). An empty array here is the honest answer,
-    // not a gap.
+    // Rows 9-16 — `route-chrome`, `code-placed`, `reparent`, `wrap`,
+    // `cross-file`, `no-sibling-anchor` genuinely have no way forward today
+    // (per `sourceStructure.ts`'s own doc: "deliberately NOT built rather than
+    // approximated"). An empty array here is the honest answer, not a gap.
+    //
+    // `duplicate` is no longer among them: it is written by
+    // `duplicateJsxElement` and only refuses where the ORIGINAL has no honest
+    // position, in which case the reason is one of the placement rows above
+    // and carries that row's actions.
     default:
       return []
   }
@@ -456,26 +460,6 @@ export function explainDetachConstraint(reason: string, message: string): EditCo
   }
 }
 
-/**
- * R5's fix — the SAME explanation `explainDetachConstraint` would give for a
- * Detach failure, offered from an attempted DUPLICATE gesture on a
- * `studio.instance` node instead. `sourceStructure.ts`'s generic `duplicate`
- * refusal ("copy the JSX in the file instead") is accurate but blanket; a
- * `studio.instance` has a real, working duplicate-as-new-component-file
- * escape hatch (`extractInstanceCopy`) that the generic message never
- * mentions. Callers on a canvas/layers-tree Duplicate gesture: check
- * `moduleId === 'studio.instance'` first and call this instead of
- * `explainStructuralConstraint({kind:'duplicate', …})`.
- */
-export function explainInstanceDuplicateConstraint(): EditConstraint {
-  return {
-    reason: 'duplicate',
-    scope: 'node',
-    explanation:
-      'This is a component instance — Studio cannot duplicate the call site itself, but it can duplicate the COMPONENT as a new file you can edit independently.',
-    actions: [{ label: 'Duplicate as a new file', kind: 'extract' }],
-  }
-}
 
 /**
  * Row 22 — a Swap refusal (`swapComponentInstance.ts` — component shape

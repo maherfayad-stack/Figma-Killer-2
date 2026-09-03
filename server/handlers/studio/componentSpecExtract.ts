@@ -43,6 +43,7 @@ import {
   type TypeNode,
   type VariableDeclaration,
 } from 'ts-morph'
+import { isPrototypeShellPath } from '@core/page-parser'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import type { ComponentSpec, PropKind, PropSpec } from './packageManifestSchema'
 import { PropSpecSchema } from './packageManifestSchema'
@@ -429,6 +430,10 @@ export function extractLocalComponentCatalog(project: Project, workspaceRoot: st
   for (const sourceFile of project.getSourceFiles()) {
     const relFile = toPosix(sourceFile.getFilePath()).replace(toPosix(workspaceRoot), '').replace(/^\/+/, '')
     if (!relFile) continue // shouldn't happen for a file `createWorkspaceProject` itself added, belt-and-braces
+    // Studio's own preview shell (`prototypeShell/`) is the viewer, not part of
+    // the design — `App`/`CanvasPanel` in the component picker would be Studio
+    // offering the user its own scaffold to place on their canvas.
+    if (isPrototypeShellPath(relFile)) continue
 
     for (const fn of sourceFile.getFunctions()) {
       if (fn.isDefaultExport()) {

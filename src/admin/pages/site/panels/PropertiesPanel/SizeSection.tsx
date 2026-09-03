@@ -15,6 +15,13 @@
  * glyph, and `border-box` / `content-box` name themselves, so neither needs a
  * caption above it.
  *
+ * Above the numeric cells sits one Fill / Hug / Fixed row per axis. Those are
+ * INTENTS, not CSS values: the declaration each one needs depends on what the
+ * parent is doing (`elementSizing.ts`), which is why this section reads the
+ * PARENT's layout and not the node's own. The numeric cells stay, because a
+ * fixed size still has to be typed somewhere and the segmented control is how
+ * you say `stop being a fixed size`.
+ *
  * Cells build on the shared nudge-enabled ScrubInput, so drag-to-scrub and
  * arrow-key nudging (±1 / ±8 Shift / ±0.1 Alt, empty starts from 0) work
  * here too. Emptying a field clears the property; the hover-revealed clear
@@ -23,6 +30,10 @@
 
 import type { ReactNode } from 'react'
 import type { CSSPropertyBag } from '@core/page-tree'
+import { useEditorStore } from '@site/store/store'
+import { useFrameParentLayout } from '@site/panels/InspectPanel/useInspectComputedStyle'
+import { SegmentedControl } from '@ui/components/SegmentedControl'
+import { currentSizingMode, sizingPatch, type SizingAxis, type SizingMode } from './elementSizing'
 import { Button } from '@ui/components/Button'
 import { CloseIcon } from 'pixel-art-icons/icons/close'
 import {
@@ -39,6 +50,18 @@ import styles from './SizeSection.module.css'
 
 /** Marks are 13px to match the in-field glyphs the generic rows draw. */
 const GLYPH_SIZE = 13
+
+/**
+ * Figma's three, in Figma's order and with its words. Spelling them
+ * `fit-content` / `flex: 1 1 0%` in the UI would name the MECHANISM, and the
+ * mechanism is the part that changes depending on the parent - the intent is
+ * the part that does not.
+ */
+const SIZING_OPTIONS = [
+  { value: 'fixed' as const, label: 'Fixed', tooltip: 'Keep this exact size' },
+  { value: 'hug' as const, label: 'Hug', tooltip: 'Shrink to fit the content' },
+  { value: 'fill' as const, label: 'Fill', tooltip: 'Grow to fill the container' },
+]
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -79,6 +102,43 @@ export function SizeSection({
         onPreview({ [property]: value ?? null } as Partial<CSSPropertyBag>)
     : undefined
 
+  // The PARENT decides what Fill and Hug mean. `null` (a global-selector
+  // edit, or nothing rendered) degrades to the block-layout answers, which
+  // are the correct ones when there is no flex container.
+  const selectedNodeId = useEditorStore((s) => s.selectedNodeId)
+  const activeBreakpointId = useEditorStore((s) => s.activeBreakpointId)
+  const parentLayout = useFrameParentLayout(selectedNodeId, activeBreakpointId)
+
+  const applySizing = (axis: SizingAxis, mode: SizingMode) => {
+    // Freeze what the element measures RIGHT NOW when switching to Fixed.
+    // Reading `currentStyles` (computed folded under stored) rather than
+    // `storedStyles` is what lets an element that never declared a width land
+    // on the width it visibly has, instead of collapsing to nothing.
+    const measured = currentStyles[axis]
+    const fixedValue =
+      typeof measured === 'string' && measured !== 'auto' ? measured : undefined
+    const patch = sizingPatch(axis, mode, parentLayout, fixedValue)
+    for (const [property, value] of Object.entries(patch)) {
+      const key = property as keyof CSSPropertyBag
+      if (value === null) onClearProperty(key)
+      else onChange(key, value)
+    }
+  }
+
+  // `storedStyles`, NOT `currentStyles`: which mode an axis is in is a question
+  // about what is DECLARED. `currentStyles` folds computed values underneath,
+  // and computed resolves every box to a concrete px — which would make every
+  // element on the page read as "Fixed", auto-height ones included.
+  const sizingRow = (axis: SizingAxis, ariaLabel: string) => (
+    <SegmentedControl
+      value={currentSizingMode(axis, storedStyles, parentLayout)}
+      options={SIZING_OPTIONS}
+      onChange={(mode) => applySizing(axis, mode)}
+      aria-label={ariaLabel}
+      fullWidth
+    />
+  )
+
   const cell = (
     property: keyof CSSPropertyBag,
     label: ReactNode,
@@ -99,6 +159,12 @@ export function SizeSection({
 
   return (
     <>
+      {/* Intent first, measurement second - the same reading order Figma
+          uses, and the order the controls depend on each other in. */}
+      <div className={styles.sizeGrid}>
+        {sizingRow('width', 'Width sizing')}
+        {sizingRow('height', 'Height sizing')}
+      </div>
       <div className={styles.sizeGrid}>
         {cell('width', 'W', 'Width')}
         {cell('height', 'H', 'Height')}

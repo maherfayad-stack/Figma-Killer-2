@@ -42,10 +42,13 @@ import type { Breakpoint, Page } from '@core/page-tree'
 import { MIN_FRAME_SIZE, type BoardFrame, type PreviewAxes } from '@core/studio-board'
 import { Input } from '@ui/components/Input'
 import { ContextMenu, ContextMenuItem } from '@ui/components/ContextMenu'
+import { useConfirmDelete } from '@admin/shared/dialogs/ConfirmDeleteDialog'
 import { useInlineRename } from '@site/hooks/useInlineRename'
 import { CloseIcon } from 'pixel-art-icons/icons/close'
 import { PenSquareSolidIcon } from 'pixel-art-icons/icons/pen-square-solid'
 import { CopyPlusSolidIcon } from 'pixel-art-icons/icons/copy-plus-solid'
+import { RulerDimensionSolidIcon } from 'pixel-art-icons/icons/ruler-dimension-solid'
+import { TrashSolidIcon } from 'pixel-art-icons/icons/trash-solid'
 import { CanvasFrameContext, CanvasPageContext } from '../CanvasContexts'
 import { BreakpointFrame } from '../BreakpointFrame'
 import { resizeRect, RESIZE_HANDLES, type ResizeRect, type ResizeHandle } from '../rectResize'
@@ -149,6 +152,7 @@ function BoardFrameViewImpl({
     onCommit: (title) => useEditorStore.getState().renamePage(page.id, title),
   })
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
+  const confirmDelete = useConfirmDelete()
   // WS-10 Phase 2 — "duplicate as variant" flips whichever axis it targets
   // relative to what this frame is ACTUALLY previewing right now (its own
   // override merged onto the board default), never the raw board default —
@@ -306,6 +310,39 @@ function BoardFrameViewImpl({
   /** Clears the stored height so the frame hugs its content again. */
   const handleResetHeight = () => useEditorStore.getState().setFrameSize(frame.id, width, undefined)
   const handleRemove = () => useEditorStore.getState().removeFrameById(frame.id)
+  /**
+   * Delete the PAGE this frame shows, not just the frame.
+   *
+   * The sibling of "Remove from board", and the two are genuinely different
+   * operations rather than a soft and hard version of one: removing unpins
+   * THIS frame and leaves the `.tsx` alone, while deleting takes the page's
+   * files — and therefore every frame of it, including the RTL/Light/AR
+   * variants "Duplicate as …" made, which are extra frames over the same page.
+   * The description says so, because a menu that lets you delete a page from a
+   * variant frame owes you that sentence before you click.
+   *
+   * `alwaysConfirm`: document-level blast radius, so it asks even when the
+   * per-node delete confirmation preference is off. Recoverable — the files
+   * move to `.studio/trash/`, listed in the explorer's Trash section.
+   */
+  const handleDeletePage = () => {
+    const frameCount = useEditorStore
+      .getState()
+      .boards.boards.reduce(
+        (total, candidate) => total + candidate.frames.filter((f) => f.pageId === page.id).length,
+        0,
+      )
+    confirmDelete({
+      title: `Delete "${page.title}"?`,
+      description:
+        frameCount > 1
+          ? `Its files move to the trash, and all ${frameCount} frames of this page leave the board. You can restore it from the explorer's Trash section.`
+          : "Its files move to the trash, in the explorer's Trash section, where you can restore them.",
+      confirmLabel: 'Delete page',
+      alwaysConfirm: true,
+      commit: () => useEditorStore.getState().deletePage(page.id),
+    })
+  }
   /** WS-10 Phase 2 — "duplicate as variant": create a sibling frame of this page with the given axis override. */
   const handleDuplicateAsVariant = (axes: Partial<PreviewAxes>) =>
     useEditorStore.getState().duplicateFrameAsVariant(frame.id, axes)
@@ -409,6 +446,12 @@ function BoardFrameViewImpl({
           )}
           {hasManualHeight && (
             <ContextMenuItem onClick={() => { setContextMenu(null); handleResetHeight() }}>
+              {/* The same icon this app already uses for a size — `number`
+                  fields in `fieldIcons`, the Size section in SpacingPanel — so
+                  a dimension reads as a dimension wherever it appears. It is
+                  also non-directional, which is right: fitting can shrink a
+                  frame or grow it, depending on the content. */}
+              <span aria-hidden="true"><RulerDimensionSolidIcon size={13} /></span>
               Fit height to content
             </ContextMenuItem>
           )}
@@ -418,6 +461,15 @@ function BoardFrameViewImpl({
           >
             <span aria-hidden="true"><CloseIcon size={13} /></span>
             Remove from board
+          </ContextMenuItem>
+          {/* Last, and below "Remove from board", because it is the bigger of
+              the two: removing unpins this frame, deleting takes the page. */}
+          <ContextMenuItem
+            danger
+            onClick={() => { setContextMenu(null); handleDeletePage() }}
+          >
+            <span aria-hidden="true"><TrashSolidIcon size={13} /></span>
+            Delete page
           </ContextMenuItem>
         </ContextMenu>,
         document.body,

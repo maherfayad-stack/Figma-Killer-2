@@ -304,6 +304,13 @@
        node-name badge (WS-5.1) sits on --canvas-selection-ring-color, which
        is too bright for --text-bright to read against. */
     --canvas-node-badge-text: #08110a;
+    /* The fill of a resize handle on a selected element. Fixed white for the
+       same reason --canvas-comment-pin-ring is: a handle sits on top of the
+       USER'S rendered page, and has to stay visible against arbitrary content
+       while the EDITOR's theme changes independently. Its border is
+       --canvas-selection-ring-color, so the handles read as part of the
+       selection rather than as a fourth affordance. */
+    --canvas-resize-handle-fill: #ffffff;
     /* Review comments (studio). A third canvas affordance alongside the
        selection and hover rings, and deliberately a different hue from both:
        a pin has to be findable on a board that is already wearing green

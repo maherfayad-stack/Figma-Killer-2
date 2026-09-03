@@ -132,17 +132,49 @@ export function isStylePatchWritableToSource(node: SourceWritableNode, patch: Re
 
 /**
  * True when a node's whole `style=""` layer can be written back at all, based
- * only on which module owns it. `fsCodemodAdapter.saveSite`'s inline-style
- * writeback loop only ever emits a `kind:'style'` edit for a `base.*` node —
- * a `pkg.*` design-system component, an `alm.*` primitive, or a
- * `studio.instance` component ref renders its own `style=""` (if any) from
- * ITS OWN source, not the call site's, so nothing this panel writes for that
- * node has anywhere to land. This is the single predicate the offer
- * (`StyleSurface`) and the write path must agree on — see
- * docs/audits/2026-08-06/10-classes-vs-inline-styles.md finding S4, where the
- * offer had no `moduleId` check at all and every keystroke was silently
- * discarded.
+ * only on which module owns it. This is the single predicate the OFFER
+ * (`StyleSurface`'s inline composer, `CanvasResizeHandles`'s drag handles) and
+ * the WRITE (`fsCodemodAdapter.saveSite`'s `kind:'style'` emission) must agree
+ * on — see `docs/audits/2026-08-06/10-classes-vs-inline-styles.md` finding S4,
+ * where the offer had no `moduleId` check at all and every keystroke was
+ * silently discarded.
+ *
+ * ## `base.*` — the element IS the source element
+ *
+ * Its host tag at this location is exactly what a literal `style` prop lands
+ * on. Nothing to reason about.
+ *
+ * ## `alm.*` — the call site forwards to the component's root
+ *
+ * These are call sites of `@alm-design/design-system` components in the user's
+ * own JSX, so `<Button style={{ width: '170px' }} />` is one honest target: one
+ * source location, one rendered element, no other call site affected. It works
+ * because every component in that package destructures its named props and
+ * spreads the REST onto its root element
+ * (`function Button({ variant, size, label, className = '', ...rest })` →
+ * `<button className={…} {...rest}>`), which is also the bet Studio's own
+ * renderer already makes: `src/modules/alm/register.tsx` pulls `style` out of
+ * the editor bag and passes it to the design-system component, precisely so
+ * the canvas shows what the published page would. Refusing the WRITE while
+ * making that bet on the CANVAS was the two halves disagreeing again, in the
+ * other direction — the editor rendered a size it would not save.
+ *
+ * The known exception is a component whose variant returns early without
+ * spreading (`<Button variant="skeleton"/>` renders a bare `<span>`): the
+ * declaration lands in source and does nothing on screen. A loading
+ * placeholder is not a thing anyone sizes, and narrowing this per variant
+ * would mean modelling every component's internal branching — which is the
+ * "parse, never execute" line.
+ *
+ * ## `pkg.*` and `studio.instance` — no target
+ *
+ * A `pkg.*` component is an arbitrary third-party package Studio knows nothing
+ * about; there is no basis for believing it forwards anything. A
+ * `studio.instance` is a LOCAL component call site rendered as a Fragment with
+ * zero DOM boxes, so there is no element at that position to carry a style at
+ * all — its box belongs to the component's own root, in the component's own
+ * file, and sizing it there changes every instance. Both are refused.
  */
 export function canWriteInlineStyleForModule(moduleId: string): boolean {
-  return moduleId.startsWith('base.')
+  return moduleId.startsWith('base.') || moduleId.startsWith('alm.')
 }

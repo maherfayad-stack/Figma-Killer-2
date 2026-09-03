@@ -93,6 +93,44 @@ export function removeDoc(board: Board, docId: string): Board {
 /** The smallest an annotation may be dragged to. Below this the chrome (colour swatches, the doc header) no longer fits and the card becomes ungrabbable. */
 export const MIN_ANNOTATION_SIZE = 80
 
+/** The width a doc card is created at. Also the width at which its text renders at 1x — see `docContentScale`. */
+export const DEFAULT_DOC_WIDTH = 320
+
+/** The height a doc card is created at. */
+export const DEFAULT_DOC_HEIGHT = 200
+
+/** Scale floor/ceiling for a doc's text. Past these a card is either unreadable or shows two words. */
+const DOC_SCALE_MIN = 0.5
+const DOC_SCALE_MAX = 4
+
+/**
+ * How much to magnify a doc card's text, given the card's width.
+ *
+ * A sticky note scales its text to fill its box, so making one bigger makes
+ * the writing bigger. A doc card did not: its type is set in absolute design
+ * tokens, so dragging a card larger bought more whitespace and a scrollbar,
+ * and at board zoom a doc was unreadable however large you made it. This is
+ * what closes that gap — the card carries a magnification, and resizing sets
+ * it.
+ *
+ * WIDTH drives it, not area or height, and that is the whole design:
+ *
+ *  - dragging a card WIDER magnifies the text, and line length in characters
+ *    stays put, so a paragraph never re-wraps just because you zoomed it;
+ *  - dragging a card TALLER shows more lines at the same size, which is what
+ *    you want when a doc is long.
+ *
+ * Two independent controls out of one gesture, and neither surprises you. The
+ * cost is that you cannot widen a card to get LONGER lines — that is inherent
+ * to scaling a card as a whole, which is the behaviour this implements.
+ *
+ * Pure, so the clamp is unit-tested without a DOM.
+ */
+export function docContentScale(width: number): number {
+  if (!Number.isFinite(width) || width <= 0) return 1
+  return Math.min(Math.max(width / DEFAULT_DOC_WIDTH, DOC_SCALE_MIN), DOC_SCALE_MAX)
+}
+
 export type AnnotationKind = 'note' | 'doc'
 
 export interface AnnotationRef {

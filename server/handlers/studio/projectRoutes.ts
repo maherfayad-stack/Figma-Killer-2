@@ -19,11 +19,6 @@
  *       stable identifier assigned once at creation). Just rewrites
  *       `.studio/meta.json`.
  *
- *   DELETE /admin/api/studio/page   body: { dir?, pageId }
- *       Deletes a page for real — its source file, a stylesheet nothing else
- *       imports any more, its board frames, and any directory those leave
- *       empty. See `./pageDelete.ts` for what it deliberately does NOT touch.
- *
  *   POST /admin/api/studio/page   body: { dir?, name? }
  *       WS-13 step 4 — scaffolds a new page CANONICAL BY CONSTRUCTION, one
  *       starter file, auto-placed on the board's first board at the next
@@ -40,7 +35,6 @@ import { DEFAULT_PAGE_KIND, DEFAULT_PROJECT_PLATFORM, frameDefaultsForPlatform, 
 import { badRequest, jsonResponse, readValidatedBody } from '../../http'
 import { applyProjectSeed } from './projectSeed'
 import { generateStudioProjectGuide } from './projectGuide'
-import { deleteStudioPage } from './pageDelete'
 import { createScaffoldedPage } from './pageScaffold'
 import { detectPageTemplateKit, starterPage } from './pageTemplates'
 import {
@@ -100,18 +94,6 @@ const CreatePageBodySchema = Type.Object({
    * `autoPlaceBoardFrame` has always applied.
    */
   boardId: Type.Optional(Type.String()),
-})
-
-/**
- * Body of DELETE /admin/api/studio/page — remove a page from the project.
- *
- * `pageId`, never a path: the id is resolved back to a file by re-running the
- * loader's own id assignment (`pageDelete.ts`), so a caller cannot name a file
- * outside the project's pages directory in the first place.
- */
-const DeletePageBodySchema = Type.Object({
-  dir: Type.Optional(Type.String()),
-  pageId: Type.String(),
 })
 
 export async function tryServeStudioProjectRoutes(
@@ -217,23 +199,6 @@ export async function tryServeStudioProjectRoutes(
       if (!body) return badRequest('invalid page body')
       const result = createScaffoldedPage(resolveProjectDir(body.dir), body.name ?? '', body.kind ?? DEFAULT_PAGE_KIND, body.boardId)
       if (!result.ok) return jsonResponse({ error: result.conflict }, { status: 409 })
-      return jsonResponse(result)
-    } catch (err) {
-      console.error('[studio]', err)
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
-    }
-  }
-
-  // Delete a page for real: its file, its orphaned stylesheet, its board
-  // frames. The editor store's own `deletePage` only ever spliced the page out
-  // of the in-memory tree, so the next reload parsed the untouched `.tsx`
-  // straight back in — see `./pageDelete.ts`.
-  if (pathname === '/admin/api/studio/page' && req.method === 'DELETE') {
-    try {
-      const body = await readValidatedBody(req, DeletePageBodySchema)
-      if (!body) return badRequest('invalid delete page body')
-      const result = deleteStudioPage(resolveProjectDir(body.dir), body.pageId)
-      if (!result.ok) return jsonResponse({ error: result.notFound }, { status: 404 })
       return jsonResponse(result)
     } catch (err) {
       console.error('[studio]', err)

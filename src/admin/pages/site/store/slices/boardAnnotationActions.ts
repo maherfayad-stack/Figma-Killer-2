@@ -46,6 +46,8 @@ import {
   removeDoc as removeDocFromBoard,
   resizeAnnotation as resizeAnnotationOnBoard,
   reorderAnnotations as reorderAnnotationsOnBoard,
+  DEFAULT_DOC_WIDTH,
+  DEFAULT_DOC_HEIGHT,
   type AnnotationRef,
   type Board,
   type DocBlock,
@@ -56,8 +58,6 @@ import {
 const DEFAULT_NOTE_COLOR: NoteColor = 'yellow'
 const DEFAULT_NOTE_WIDTH = 180
 const DEFAULT_NOTE_HEIGHT = 120
-const DEFAULT_DOC_WIDTH = 320
-const DEFAULT_DOC_HEIGHT = 200
 
 // --- sticky notes ---------------------------------------------------------
 

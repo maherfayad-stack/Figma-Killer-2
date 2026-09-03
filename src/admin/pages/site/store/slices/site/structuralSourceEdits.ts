@@ -245,19 +245,34 @@ function resolveInsertAnchor(
   return { anchorNodeId: null, position: 'after' }
 }
 
-/** Whether `nodeIds` may be duplicated or wrapped — refused on every studio-imported node. */
+/**
+ * Whether `nodeIds` may be duplicated or wrapped, and — for a duplicate on
+ * studio-imported nodes — which source copies to commit.
+ *
+ * `wrap` is still refused on every source-derived node: a wrapper is a NEW
+ * element that the wrapped node has to move inside, and moving a node into a
+ * different parent is `reparent`, which Studio cannot write yet.
+ *
+ * `duplicate` is not in that position and no longer pretends to be. The copy
+ * is the original's own bytes spliced in after it, so there is nothing to
+ * invent — see `duplicateJsxElement`. The ids that come back are the ORIGINALS
+ * (that is what the codemod is pointed at); the copies arrive on the board
+ * through the reload that follows the write.
+ */
 export function planSourceCopy(
   tree: NodeTree<PageNode>,
   kind: 'duplicate' | 'wrap',
   nodeIds: readonly string[],
-): StructuralPlan<never> {
+): StructuralPlan<readonly string[]> {
+  const sourceIds: string[] = []
   for (const id of nodeIds) {
     const node = tree.nodes[id]
     if (!node) continue
     const refusal = refuseStructuralEdit({ kind, node })
     if (refusal) return { ok: false, refusal }
+    if (kind === 'duplicate' && isSourceDerivedNodeId(id)) sourceIds.push(id)
   }
-  return { ok: true, commit: null }
+  return { ok: true, commit: sourceIds.length > 0 ? sourceIds : null }
 }
 
 /** Titles the refusal toasts use, one per gesture. Matches the `Detach refused` / `Swap refused` vocabulary. */

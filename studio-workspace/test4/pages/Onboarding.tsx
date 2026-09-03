@@ -4,8 +4,8 @@ import discountSvg from '@alm-design/design-system/src/icons/line-icons/discount
 import lightningSvg from '@alm-design/design-system/src/icons/line-icons/lightning.svg?raw'
 import smsSvg from '@alm-design/design-system/src/icons/line-icons/sms.svg?raw'
 import chartLineDownSvg from '../assets/cf9f4f5a-713a-4a3b-aceb-dacabb79e562.svg?raw'
-import heroImage from '../assets/dc9ed589-a139-4597-9cbc-7919c2afbe7b.png'
 import IOSStatusBar from '../components/IOSStatusBar'
+import OnboardingHero from '../components/OnboardingHero'
 import { useLanguage } from '../i18n/LanguageContext'
 
 export default function Onboarding() {
@@ -16,7 +16,7 @@ export default function Onboarding() {
 
       <div className={styles.body}>
         <div className={styles.top}>
-          <img className={styles.hero} src={heroImage} alt="" />
+          <OnboardingHero />
 
           <div className={styles.copy}>
             <h1 className={styles.title}>{t.onboarding.completeYourSetupDonT}</h1>
@@ -28,7 +28,7 @@ export default function Onboarding() {
               </li>
               <li className={styles.feature}>
                 <span className={styles.icon} dangerouslySetInnerHTML={{ __html: chartLineDownSvg }} />
-                <span className={styles.featureText}>{t.onboarding.priceDropsBeforeTheyAre}</span>
+                <span className={styles.featureText} style={{ width: "200px" }}>{t.onboarding.priceDropsBeforeTheyAre}</span>
               </li>
               <li className={styles.feature}>
                 <span className={styles.icon} dangerouslySetInnerHTML={{ __html: lightningSvg }} />
@@ -43,8 +43,8 @@ export default function Onboarding() {
         </div>
 
         <div className={styles.footer}>
-          <div className={styles.cta}>
-            <Button variant="primary" size="default" label={t.onboarding.agree} className={styles.ctaButton} />
+          <div className={styles.cta} style={{ width: "360px" }}>
+            <Button variant="primary" size="default" label={t.onboarding.agree} className={styles.ctaButton} style={{ width: "364px", alignSelf: "stretch" }} />
           </div>
           <div className={styles.cta}>
             <Button variant="primary-inverted" size="default" label={t.onboarding.maybeLater} className={styles.ctaButton} />

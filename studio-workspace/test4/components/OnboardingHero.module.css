@@ -1,0 +1,143 @@
+/* 353 x 280 in the design. Held as an aspect ratio rather than a fixed height so
+   the whole thing scales with the column it sits in. */
+.hero {
+  position: relative;
+  width: 100%;
+  max-width: 353px;
+  aspect-ratio: 353 / 280;
+  overflow: hidden;
+}
+
+/* The phone is optically centred in the design (72px of slack on both sides), so
+   it needs no direction handling. The mask replaces the white-to-transparent
+   rectangle Figma paints over its bottom — a mask fades to transparent instead of
+   to white, so it works on a dark page too. */
+.phone {
+  position: absolute;
+  top: 11.07%;
+  inset-inline: 0;
+  display: block;
+  width: 59.21%;
+  margin-inline: auto;
+  height: auto;
+  mask-image: linear-gradient(to bottom, black 45%, transparent 100%);
+}
+
+/* ── notification ── */
+.notification {
+  position: absolute;
+  top: 56.07%;
+  inset-inline: 0;
+  box-sizing: border-box;
+  display: flex;
+  gap: var(--space-md);
+  align-items: center;
+  padding-block: 10px;
+  padding-inline: var(--space-md);
+  border-radius: var(--rounded-lg);
+  /* Adaptive: a near-white card in light mode, a near-black one in dark — which
+     is what an iOS notification actually does. The blur is what stops the phone
+     wallpaper reading through the top half of the card. */
+  background: var(--overlay-navbar);
+  backdrop-filter: blur(45px);
+}
+
+/* The app icon arrives from Figma as a PNG whose rounded square is baked white —
+   right on the light notification card, a bright block on the dark one. The
+   design system ships both surfaces of the same mark: the `Colour` app logo is
+   the white square, the `White` one is the brand navy. Swapping them by scheme
+   is gated the two ways the design system's own tokens are — the explicit
+   [data-theme] attribute, and the OS preference when no theme is forced. */
+.appIcon {
+  position: relative;
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+}
+
+.appIcon svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.appLogoLight,
+.appLogoDark {
+  position: absolute;
+  inset: 0;
+}
+
+.appLogoDark {
+  display: none;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .appLogoLight {
+    display: none;
+  }
+
+  :root:not([data-theme='light']) .appLogoDark {
+    display: block;
+  }
+}
+
+[data-theme='dark'] .appLogoLight {
+  display: none;
+}
+
+[data-theme='dark'] .appLogoDark {
+  display: block;
+}
+
+/* Rides the trailing-bottom corner of the icon, so it follows writing direction. */
+.whatsappBadge {
+  position: absolute;
+  inset-inline-end: -3px;
+  bottom: -3px;
+  width: 18px;
+  height: 18px;
+}
+
+.body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  padding-block: var(--space-xs);
+  padding-inline-end: 6px;
+}
+
+.meta {
+  display: flex;
+  gap: var(--space-sm);
+  align-items: center;
+}
+
+.appName {
+  font-family: var(--type-body-semibold-family);
+  font-size: var(--type-body-size);
+  font-weight: var(--type-body-semibold-weight);
+  line-height: 1.2;
+  color: var(--text-base-default);
+  white-space: nowrap;
+}
+
+/* Pushed to the trailing edge by margin, so it follows the writing direction. */
+.time {
+  margin-inline-start: auto;
+  font-family: var(--type-caption-regular-family);
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-regular-weight);
+  line-height: 1.2;
+  color: var(--text-base-subtext);
+  white-space: nowrap;
+}
+
+.message {
+  margin: 0;
+  font-family: var(--type-body-regular-family);
+  font-size: var(--type-body-size);
+  font-weight: var(--type-body-regular-weight);
+  line-height: 1.2;
+  color: var(--text-base-default);
+}

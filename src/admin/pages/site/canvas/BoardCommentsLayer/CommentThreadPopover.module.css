@@ -13,7 +13,18 @@
     z-index: 1;
     display: flex;
     flex-direction: column;
-    gap: var(--space-2xs);
+    /*
+     * The popover's REGIONS — thread header, stale notice, comment list, reply
+     * box — at 4px read as one undifferentiated block. They are four different
+     * things and the eye should be told so before it starts reading.
+     *
+     * Matched to a comment's own `padding-block` so the reply box sits as far
+     * from the last comment as the comments sit from each other. At the old
+     * value it was nearer to the last comment than that comment's byline was
+     * to the one above it, which put the write field inside the conversation
+     * instead of after it.
+     */
+    gap: var(--space-m);
     box-sizing: border-box;
     width: 280px;
     padding: var(--space-s);
@@ -84,7 +95,12 @@
 .comments {
     display: flex;
     flex-direction: column;
-    gap: var(--space-s);
+    /*
+     * No gap here on purpose: the rhythm comes from each comment's own
+     * padding, so the rule between two comments sits centred in the space
+     * rather than hard against one of them.
+     */
+    gap: 0;
     margin: 0;
     padding: 0;
     max-height: 320px;
@@ -92,11 +108,39 @@
     list-style: none;
 }
 
+/*
+ * Proximity is the only thing saying "this body belongs to THAT byline", and
+ * it was not saying it. 4px inside a comment against 8px between two of them
+ * is 2:1 on paper — but the body's 1.5 line-height adds ~2.5px of half-leading
+ * on both sides, which flattens it to roughly 1.6:1. Below about 2:1 the eye
+ * stops grouping, and a byline starts reading as the heading of the comment
+ * ABOVE it. That is the reported bug, and it gets worse with every reply.
+ *
+ * So the pair stays tight (`--space-3xs`, unchanged) and the space between
+ * comments is now several times that, with a hairline in the middle of it.
+ * The rule is not decoration: a body can be one word or ten wrapped lines, and
+ * once the blocks are uneven, whitespace alone stops reading as a boundary —
+ * which is exactly when a thread has enough replies to need one.
+ */
 .comment {
     display: flex;
     flex-direction: column;
     gap: var(--space-3xs);
     min-width: 0;
+    padding-block: var(--space-m);
+}
+
+/* The list's own outer edges are the popover's `gap`, not this padding. */
+.comment:first-child {
+    padding-block-start: 0;
+}
+
+.comment:last-child {
+    padding-block-end: 0;
+}
+
+.comment + .comment {
+    border-top: 1px solid var(--border-muted);
 }
 
 .byline {

@@ -31,7 +31,7 @@
  */
 import { useCallback, useEffect, useRef, useState, memo, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react'
 import { createPortal } from 'react-dom'
-import type { DocBlock } from '@core/studio-board'
+import { docContentScale, type DocBlock } from '@core/studio-board'
 import { sanitizeBoardDocHtml } from '@core/sanitize'
 import { useEditorStore } from '@site/store/store'
 import { isAnnotationSelected } from '@site/store/slices/boardAnnotationSliceActions'
@@ -212,6 +212,10 @@ function DocBlockViewImpl({ doc }: DocBlockViewProps) {
           '--doc-y': `${doc.y}px`,
           '--doc-w': `${doc.w}px`,
           '--doc-h': `${doc.h}px`,
+          // How much to magnify the card's text. Derived from the card's own
+          // width rather than stored, so resizing IS the control and there is
+          // no second source of truth to keep in step. See `docContentScale`.
+          '--doc-scale': docContentScale(doc.w),
           '--annotation-z': doc.z ?? 0,
         } as CSSProperties}
         onContextMenu={handleContextMenu}

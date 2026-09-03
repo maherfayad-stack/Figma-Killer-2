@@ -440,3 +440,29 @@ function indicatorVars(x: number, y: number, width: number, height: number): CSS
     '--canvas-drop-h': `${height}px`,
   } as CSSProperties
 }
+
+// ---------------------------------------------------------------------------
+// Rect predicates — asked by the overlay's RAF tick every frame, to decide
+// whether anything actually moved (and, in dev, whether a measurement came
+// back sane). They live here, with the rect type and everything else that
+// reasons about `CanvasOverlayRect`, rather than as private helpers in the
+// one component that happens to call them.
+// ---------------------------------------------------------------------------
+
+/** Two nullable rects are equal when every field matches (or both are null). */
+export function overlayRectsEqual(a: CanvasOverlayRect | null, b: CanvasOverlayRect | null): boolean {
+  if (a === b) return true
+  if (!a || !b) return false
+  return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height
+}
+
+/** `null` (frame doesn't own the node — legitimate) or every field a finite number. */
+export function overlayRectIsFinite(rect: CanvasOverlayRect | null): boolean {
+  if (!rect) return true
+  return (
+    Number.isFinite(rect.x) &&
+    Number.isFinite(rect.y) &&
+    Number.isFinite(rect.width) &&
+    Number.isFinite(rect.height)
+  )
+}

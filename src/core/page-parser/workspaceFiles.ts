@@ -21,6 +21,36 @@ export const EXCLUDED_WORKSPACE_DIR_NAMES: ReadonlySet<string> = new Set([
 ])
 
 /**
+ * The directory Studio scaffolds its runnable preview app into
+ * (`ensurePrototypeShell`), and the one exclusion that is NOT in the set
+ * above.
+ *
+ * The distinction is the whole point. `prototype/` MUST be walked by
+ * `listWorkspaceFiles`, because "Download the code" has to ship the shell —
+ * that is what makes the export runnable. But nothing in the PARSE pipeline
+ * may treat it as the user's app: it is Studio's own scaffold, sitting inside
+ * the user's repository.
+ *
+ * Getting that wrong is not a subtle failure. The shell writes an
+ * `index.html` whose module script points at `prototype/main.jsx`, so
+ * `findEntryFile` adopted it as the project's entry point and walked the
+ * shell's own `shell.css` and `CanvasPanel.css` in as the user's design
+ * system — Studio reading its own scaffold back as the thing being designed.
+ * Every page in a scaffolded workspace picked up style rules nobody wrote.
+ *
+ * One constant, consulted by every part of the pipeline that asks "is this
+ * the user's source?" — `findEntryFile` and the entry-stylesheet walk here,
+ * `NON_PAGES_DIR_SEGMENTS` in `projectProbe`, and the local-component catalog
+ * in `componentSpecExtract`.
+ */
+export const PROTOTYPE_SHELL_DIR = 'prototype'
+
+/** True when a workspace-relative POSIX path is inside Studio's own preview shell rather than the user's app. */
+export function isPrototypeShellPath(relPath: string): boolean {
+  return relPath === PROTOTYPE_SHELL_DIR || relPath.startsWith(`${PROTOTYPE_SHELL_DIR}/`)
+}
+
+/**
  * Shared workspace size caps — one number reused by every operation that
  * copies a whole studio workspace around (the download zip in
  * `collectWorkspaceFiles`, and the GitHub import writer's per-file /
