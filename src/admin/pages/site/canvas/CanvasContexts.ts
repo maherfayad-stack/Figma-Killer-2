@@ -1,6 +1,7 @@
 import { createContext, type MouseEvent, type RefObject } from 'react'
 import type { TemplateRenderDataContext } from '@core/templates/dynamicBindings'
 import type { CanvasTransform } from '@site/hooks/useCanvas'
+import type { IframeInteraction } from './iframeBodyReset'
 
 /**
  * WS-10 Phase 2 — `frameId` is a SEPARATE dimension from `breakpointId`, not
@@ -63,3 +64,20 @@ export const CanvasTemplateContext = createContext<TemplateRenderDataContext | u
 export const CanvasDocumentContext = createContext<Document | null>(null)
 /** Host iframe element owned by the nearest IframeFrameSurface. */
 export const CanvasFrameElementContext = createContext<HTMLIFrameElement | null>(null)
+/**
+ * What KIND of frame a node is being rendered into, from the nearest
+ * `IframeFrameSurface`.
+ *
+ * A design frame is an editing surface where an authored control must not
+ * activate — clicking a `<select>` should select the node, not drop the
+ * browser's picker over the canvas. A LIVE frame is the opposite: it is the
+ * page as a visitor gets it, so its controls have to work, including typing
+ * into a field. Every other live-vs-design divergence in a frame is already
+ * decided from this same value (`iframeBodyReset`, the hover / animation /
+ * scroll-unroll injectors, `useCanvasFormControlSuppression`), and node-level
+ * suppression was the one place still deciding it for both at once.
+ *
+ * `'canvas'` by default so a node rendered outside any frame keeps the editing
+ * behaviour it has always had.
+ */
+export const CanvasInteractionContext = createContext<IframeInteraction>('canvas')

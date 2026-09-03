@@ -146,8 +146,25 @@ as **chrome-namespaced** aliases (`--chrome-font-sans`, `--chrome-text-*`,
 | Pointer | forwarded for space-pan / drags | not forwarded |
 | Keyboard | cloned onto parent `document`; `Tab` blocked | not forwarded |
 | Chrome CSS | applied | not applied |
+| Authored form controls | suppressed (a press selects the node) | left alone (focus, type, pick) |
 
 Both modes are **fully editable**. Neither is a read-only preview.
+
+The frame publishes its own mode as `CanvasInteractionContext`, which is how
+`NodeRenderer` knows which row of that table it is rendering into. Before it
+existed only the DOCUMENT-level suppression (`useCanvasFormControlSuppression`)
+was live-aware; the node-level handlers applied the design rule to both, so a
+live frame blurred every field the moment it was focused and no one could type
+in one.
+
+**One press is one activation.** A suppressed control activates its node on
+`pointerdown` — the press has to be cancelled before the browser focuses a
+field or opens a picker — so the `click` ending that same gesture must not
+activate it again. `NodeRenderer`'s latch is armed by the press and cleared by
+the click, and any press it does not suppress clears it too (a gesture that
+never became a click must not swallow the next one). This looked harmless for
+as long as activation only meant "select this node"; it became a visible bug
+when the prototype player made a click mean "follow this link".
 
 ---
 

@@ -656,7 +656,12 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
         />
         {iframeDoc &&
           createPortal(
-            <CanvasFrameContexts frameElement={iframeRef.current} frameDocument={iframeDoc} axes={frameAxes}>
+            <CanvasFrameContexts
+              frameElement={iframeRef.current}
+              frameDocument={iframeDoc}
+              axes={frameAxes}
+              interaction={interaction}
+            >
               {/* Editor-chrome stylesheet — UNLAYERED so it beats every other bucket */}
               <EditorChromeInjector targetDocument={iframeDoc} parentDocument={document} />
               {/* Design frames only: selection/hover rings + the node-name badge

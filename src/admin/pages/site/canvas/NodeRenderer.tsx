@@ -39,7 +39,14 @@ import {
   shouldSuppressAuthoredFormControlEvent,
 } from './canvasEventTargets'
 import { PackageComponentPlaceholder } from './PackageComponentPlaceholder'
-import { CanvasBreakpointContext, CanvasFrameContext, CanvasPageContext, CanvasSelectionContext, CanvasTemplateContext } from './CanvasContexts'
+import {
+  CanvasBreakpointContext,
+  CanvasFrameContext,
+  CanvasInteractionContext,
+  CanvasPageContext,
+  CanvasSelectionContext,
+  CanvasTemplateContext,
+} from './CanvasContexts'
 import {
   addEditorFormPreviewProps,
   resolveEditorFormPreviewState,
@@ -71,6 +78,13 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
   // `breakpointId` — see `CanvasFrameContext`'s doc. Declared before `node`
   // below (its selector closure reads it — TDZ).
   const frameId = use(CanvasFrameContext)
+  // A live frame is the page as a visitor gets it, so an authored control has
+  // to activate there: focus a field and type into it, open a select. Design
+  // frames suppress all of that, because a click on a control in an EDITING
+  // surface means "select this node". Same switch `useCanvasFormControlSuppression`
+  // reads at the document level; the node-level handlers below were the one
+  // place still applying the design rule to both.
+  const suppressesFormControls = use(CanvasInteractionContext) !== 'live'
   // Per-node subscription — editing this node's props only re-renders THIS
   // component. `frameId` (§4.4/Phase 4) lets a locale-variant frame read
   // `localizedPageSlice.ts`'s tree instead of `site.pages` — see
@@ -341,23 +355,35 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
     ...(isHovered && !isSelected ? { 'data-hovered': 'true' as const } : {}),
     onPointerDownCapture: (e) => {
       focusNodeWithoutScrolling(e.currentTarget, e.target, isInlineEditing)
-      if (!shouldSuppressAuthoredFormControlEvent(e.target, e.currentTarget)) return
+      if (!suppressesFormControls || !shouldSuppressAuthoredFormControlEvent(e.target, e.currentTarget)) {
+        // A press this node does not suppress still STARTS a new gesture, so
+        // whatever the last one latched is over. Without this, a latch left
+        // armed by a press that never became a click would swallow the next
+        // click on that same element.
+        latestSuppressedPointerTarget = null
+        return
+      }
       e.preventDefault()
       e.stopPropagation()
       latestSuppressedPointerTarget = e.currentTarget
       handleNodeClick(nodeId, e as unknown as React.MouseEvent)
     },
     onMouseDownCapture: (e) => {
-      if (!shouldSuppressAuthoredFormControlEvent(e.target, e.currentTarget)) return
-      e.preventDefault()
-      e.stopPropagation()
-      if (latestSuppressedPointerTarget === e.currentTarget) {
+      if (!suppressesFormControls || !shouldSuppressAuthoredFormControlEvent(e.target, e.currentTarget)) {
         latestSuppressedPointerTarget = null
         return
       }
+      e.preventDefault()
+      e.stopPropagation()
+      // The compatibility mousedown for a pointerdown this gesture already
+      // acted on. Deliberately does NOT clear the latch: the click still to
+      // come belongs to the same gesture.
+      if (latestSuppressedPointerTarget === e.currentTarget) return
+      latestSuppressedPointerTarget = e.currentTarget
       handleNodeClick(nodeId, e as unknown as React.MouseEvent)
     },
     onFocusCapture: (e) => {
+      if (!suppressesFormControls) return
       if (!shouldSuppressAuthoredFormControlEvent(e.target, e.currentTarget)) return
       if (isFocusableElement(e.target)) e.target.blur()
     },
@@ -366,6 +392,16 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
       if (isCanvasEditorControlTarget(e.target, e.currentTarget)) return
       e.preventDefault()
       e.stopPropagation()
+      // CLOSES the gesture a suppressed pointerdown opened. Without this, one
+      // click on an authored control activated the node TWICE — harmless while
+      // activation only meant "select this node", and not harmless at all once
+      // the player made it mean "follow this link": every prototype link on a
+      // button fired twice, pushing the same screen onto the stack twice, so
+      // going back once landed on the screen you were already looking at.
+      if (latestSuppressedPointerTarget === e.currentTarget) {
+        latestSuppressedPointerTarget = null
+        return
+      }
       handleNodeClick(nodeId, e as unknown as React.MouseEvent)
     },
     onClick: (e) => {
@@ -598,7 +634,11 @@ function LoopIterationsPreview({ node, baseTemplateContext }: LoopIterationsPrev
 // not rendering a node), and what brought this module back under the size
 // ceiling.
 
-// Mutable pointer-suppression latch. Stays HERE, not in `canvasEventTargets`:
-// that module is pure classification, and this is state only this component's
-// own handlers write.
+// The node whose authored control the CURRENT pointer gesture suppressed, so
+// that gesture activates it exactly once however many events it raises —
+// pointerdown, then a compatibility mousedown, then the click. Set when the
+// gesture opens, cleared by the click that ends it.
+//
+// Stays HERE, not in `canvasEventTargets`: that module is pure classification,
+// and this is state only this component's own handlers write.
 let latestSuppressedPointerTarget: EventTarget | null = null

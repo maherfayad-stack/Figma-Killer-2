@@ -12,6 +12,50 @@ Entry ids are `<area>-<nn>`. Areas in use: `parser`, `canvas`, `store`, `panel`,
 
 ---
 
+### canvas-16 — one press was two activations, and a live frame blurred every field you clicked
+
+Two bugs, one owner: `NodeRenderer` decided both, and neither knew what kind of
+frame it was rendering into.
+
+**"Back needs two clicks."** A suppressed authored control activates its node on
+`pointerdown` — the press has to be cancelled before the browser focuses a field
+or opens a picker — and the `click` that ENDS the same gesture activated it
+again. The old latch only deduped pointerdown against the compatibility
+mousedown; nothing carried to the click. Selecting the same node twice is
+invisible, which is why this survived so long. Following the same LINK twice is
+not: every prototype link authored on a button pushed its target twice, so the
+first Back popped a duplicate and landed on the screen you were already looking
+at. Measured in the browser before and after — one real click logged two
+`follow overlay` calls 18 ms apart, and logs one now.
+
+The latch is now armed by the press, cleared by the click, and cleared by any
+press this node does NOT suppress (a press that never became a click must not
+swallow the next one). That last clause is what the existing
+`canvasFormControls` test caught when the first attempt omitted it: a `<select>`
+never reaches `NodeRenderer`'s click handler at all — the DOCUMENT-level
+`useCanvasFormControlSuppression` claims it with `stopPropagation` — so a
+gesture on one can only be ended by the next gesture starting.
+
+**Typing in live mode.** The document-level hook has always been live-aware
+(`enabled: !isLive`); the node-level handlers were not, so `onFocusCapture`
+blurred every field in a live frame the instant it was focused, and
+`onPointerDownCapture` cancelled the press that would have focused it. Live mode
+is the page as a visitor gets it — the fix is the frame telling the node which
+it is. `CanvasInteractionContext` (published by `CanvasFrameContexts`, from the
+`interaction` prop `IframeFrameSurface` already had) is that signal; a node
+outside any frame defaults to `'canvas'`, the editing behaviour it always had.
+
+**Both are regression-tested** in `src/__tests__/canvas/canvasFormControls.test.tsx`
+— they fail on the old `NodeRenderer` and pass on the new one.
+
+**Trap for the next browser check:** `element.click()` fires only a `click`, so
+it never reproduced this — it looked like one activation because it WAS one. A
+faithful gesture needs pointerdown → mousedown → mouseup → click. gstack
+`$B click` also reported success while delivering nothing into a canvas iframe;
+dispatching the sequence by hand in `$B js` is what finally showed the truth.
+
+---
+
 ### proto-04 — a bottom sheet stopped 40% down the screen, because Studio cropped a page that had already drawn itself
 
 **The ask.** "Full screen bottom sheet shouldn't stop here" — a screen presented

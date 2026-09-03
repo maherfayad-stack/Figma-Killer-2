@@ -332,6 +332,15 @@ instantly with its scroll position intact. A sheet rises from the bottom edge on
 the design system's curve; a popup scales up in place and takes a dialog's
 shorter beat.
 
+**A link on a button used to fire twice.** `NodeRenderer` activates a node on
+`pointerdown` for an authored form control (the press is cancelled before the
+browser can focus or open it) and again on the `click` that ends the same
+gesture. Selecting the same node twice is invisible; following the same link
+twice is not — one press pushed the target screen onto the stack twice, so the
+first Back landed on the screen you were already looking at and it took two
+presses to move. Fixed in `NodeRenderer` rather than here: a gesture activates a
+node once, and the player is only the place it finally showed.
+
 **The overlay page is the whole presentation, and Studio crops nothing.** An
 overlay page is scaffolded at SCREEN size and draws its own panel, its own
 corner radius and its own scrim, because how much of the screen it leaves
