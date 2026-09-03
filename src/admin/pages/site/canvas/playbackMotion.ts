@@ -38,6 +38,7 @@ const EASE_OUT = 'cubic-bezier(0.22, 0.61, 0.36, 1)'
 const DUR_QUICK = 180
 const DUR_ALERT = 280
 const DUR_SELECT = 340
+const DUR_SHEET_OUT = 320
 const DUR_NAV = 420
 const DUR_SHEET = 500
 
@@ -147,8 +148,33 @@ export function overlayMotion(transition: PrototypeTransition): OverlayMotion | 
   }
 }
 
-/** The quick beat everything leaving uses. Exported so callers do not invent one. */
-export const DISMISS_MS = DUR_QUICK
+/**
+ * How an overlay LEAVES.
+ *
+ * Dismissal is quicker than presentation — arriving is the moment worth drawing
+ * out, leaving should get out of the way. That asymmetry is most of what reads
+ * as iOS, so the exit is not the entrance played backwards at the same speed.
+ */
+export function overlayExitMotion(transition: PrototypeTransition): OverlayMotion | null {
+  switch (transition) {
+    case 'sheet':
+      return {
+        panel: [{ transform: 'translateY(0)' }, { transform: 'translateY(100%)' }],
+        scrim: [{ opacity: 1 }, { opacity: 0 }],
+        duration: DUR_SHEET_OUT,
+        easing: EASE_IOS,
+      }
+    case 'popup':
+      return {
+        panel: [{ opacity: 1, transform: 'scale(1)' }, { opacity: 0, transform: 'scale(0.96)' }],
+        scrim: [{ opacity: 1 }, { opacity: 0 }],
+        duration: DUR_QUICK,
+        easing: EASE_OUT,
+      }
+    default:
+      return null
+  }
+}
 
 function prefersReducedMotion(): boolean {
   if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false
@@ -165,16 +191,22 @@ export function play(
   keyframes: Keyframe[] | null,
   duration: number,
   easing: string,
+  /**
+   * `backwards` for anything ARRIVING and staying: holding the last keyframe
+   * leaves an identity transform on the element, and a transformed ancestor
+   * disables `backdrop-filter` on everything inside it — the glass in a navbar
+   * or a sheet would silently stop blurring for the rest of the session.
+   *
+   * `both` for anything LEAVING, which has to hold its end state until it is
+   * hidden or unmounted, and is not around to poison anything afterwards.
+   */
+  fill: FillMode = 'backwards',
 ): Animation | null {
   if (!element || !keyframes) return null
   if (typeof element.animate !== 'function') return null
   return element.animate(keyframes, {
     duration: prefersReducedMotion() ? 1 : duration,
     easing,
-    // `backwards`, never `both`: holding the last keyframe leaves an identity
-    // transform on the element, and a transformed ancestor disables
-    // `backdrop-filter` on everything inside it — the glass in a navbar or a
-    // sheet would silently stop blurring for the rest of the session.
-    fill: 'backwards',
+    fill,
   })
 }

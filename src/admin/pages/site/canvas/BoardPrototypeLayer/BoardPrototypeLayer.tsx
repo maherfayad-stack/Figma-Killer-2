@@ -43,7 +43,7 @@ import { useEditorStore } from '@site/store/store'
 import { selectActiveBoardFrames } from '@site/store/slices/boardSelectors'
 import { commitLinkDraft } from '@site/studio/prototypeActions'
 import { visibleLinks } from '@site/store/slices/prototypeSelectors'
-import { resolveLinkSource, type PrototypeLink } from '@core/studio-prototype'
+import { actionTakesTarget, resolveLinkSource, type PrototypeLink } from '@core/studio-prototype'
 import { CanvasViewportActionsContext } from '../CanvasContexts'
 import { clearCanvasPointerRelay, markCanvasPointerRelay } from '../canvasPointerRelay'
 import { screenToBoard } from '../CanvasRulers/rulerGeometry'
@@ -133,11 +133,22 @@ export function BoardPrototypeLayer() {
   }
 
   const drawn: Array<{ link: PrototypeLink; route: ConnectorRoute }> = []
+  // A `back` or a `close` names no screen, so it has no connector to draw —
+  // and an interaction you cannot see on the board is one you will forget you
+  // authored. Each gets a chip on its own element instead.
+  const badges: Array<{ link: PrototypeLink; point: BoardPoint }> = []
+
   for (const link of links) {
-    const target = link.targetPageId ? frameByPage.get(link.targetPageId) : undefined
-    if (!target) continue
     const source = sourceRectFor(link.source.pageId, resolvedSourceIds.get(link.id) ?? null)
     if (!source) continue
+
+    if (!actionTakesTarget(link.action)) {
+      badges.push({ link, point: handlePoint(source) })
+      continue
+    }
+
+    const target = link.targetPageId ? frameByPage.get(link.targetPageId) : undefined
+    if (!target) continue
     drawn.push({ link, route: routeConnector(source, target) })
   }
 
@@ -209,6 +220,20 @@ export function BoardPrototypeLayer() {
           }
         />
       )}
+
+      {badges.map(({ link, point }) => (
+        <button
+          key={link.id}
+          type="button"
+          className={styles.badge}
+          data-selected={link.id === selectedLinkId ? 'true' : undefined}
+          aria-label={`${link.action === 'back' ? 'Go back' : 'Close overlay'} — prototype interaction`}
+          style={{ '--badge-x': `${point.x}px`, '--badge-y': `${point.y}px` } as CSSProperties}
+          onPointerDown={() => setSelectedLink(link.id)}
+        >
+          {link.action === 'back' ? 'Back' : 'Close'}
+        </button>
+      ))}
 
       <PrototypeHandle localRects={localRects} />
     </div>

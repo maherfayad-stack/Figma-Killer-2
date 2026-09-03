@@ -96,8 +96,16 @@ export function PrototypeScreenStack({ page, transition, renderScreen }: Prototy
 
     const animations = [
       play(incomingEl, motion.incoming, motion.duration, motion.easing),
-      play(outgoingEl, motion.outgoing, motion.duration, motion.easing),
-      play(outgoingEl?.querySelector<HTMLElement>(`.${styles.screenDim}`) ?? null, motion.dim, motion.duration, motion.easing),
+      // `both` on the way out: the departing screen has to HOLD its parallaxed
+      // position until it is hidden, or it snaps back for a frame first.
+      play(outgoingEl, motion.outgoing, motion.duration, motion.easing, 'both'),
+      play(
+        outgoingEl?.querySelector<HTMLElement>(`.${styles.screenDim}`) ?? null,
+        motion.dim,
+        motion.duration,
+        motion.easing,
+        'both',
+      ),
     ].filter((animation): animation is Animation => animation !== null)
 
     if (animations.length === 0) {

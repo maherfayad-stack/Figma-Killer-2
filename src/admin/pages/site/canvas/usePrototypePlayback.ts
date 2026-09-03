@@ -24,6 +24,12 @@ export interface PrototypePlayback {
   screenTransition: PrototypeTransition | null
   /** Entrance animation for an overlay that was just presented. */
   overlayTransition: PrototypeTransition | null
+  /**
+   * The presentation the overlay that just LEFT was wearing, so it can be
+   * played in reverse on the way out. Set by a `back`, a `close`, or a tap on
+   * the scrim.
+   */
+  overlayLeaveTransition: PrototypeTransition | null
   /** Whether clicks in the live frame belong to the player. */
   playMode: boolean
 }
@@ -32,6 +38,7 @@ export function usePrototypePlayback(editingPage: Page | null): PrototypePlaybac
   const playMode = useEditorStore((s) => s.playMode)
   const playState = useEditorStore((s) => s.playState)
   const playTransition = useEditorStore((s) => s.playTransition)
+  const playLeaveTransition = useEditorStore((s) => s.playLeaveTransition)
   const pages = useEditorStore((s) => s.site?.pages)
 
   if (!playMode) {
@@ -40,6 +47,7 @@ export function usePrototypePlayback(editingPage: Page | null): PrototypePlaybac
       overlayPage: null,
       screenTransition: null,
       overlayTransition: null,
+      overlayLeaveTransition: null,
       playMode: false,
     }
   }
@@ -63,6 +71,7 @@ export function usePrototypePlayback(editingPage: Page | null): PrototypePlaybac
     overlayPage,
     screenTransition: overlayPage ? null : playTransition,
     overlayTransition: overlayPage ? playTransition : null,
+    overlayLeaveTransition: playLeaveTransition,
     playMode: true,
   }
 }

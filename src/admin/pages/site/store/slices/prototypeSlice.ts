@@ -102,6 +102,11 @@ export interface PrototypeSlice {
    * component reverses the presentation itself.
    */
   playTransition: PrototypeTransition | null
+  /**
+   * The presentation the thing that just LEFT was wearing, so it can be played
+   * in reverse on the way out. Only a `back`, a `close` or a scrim tap sets it.
+   */
+  playLeaveTransition: PrototypeTransition | null
 
   loadPrototype: (file: PrototypeFile) => void
   markPrototypeLoadFailed: () => void
@@ -115,6 +120,15 @@ export interface PrototypeSlice {
    * so instead of silently doing nothing.
    */
   followPrototypeLink: (link: PrototypeLink) => boolean
+  /**
+   * Dismiss the top overlay without a link — what tapping the scrim does.
+   *
+   * Every iOS sheet dismisses by tapping outside it, and requiring the user to
+   * author a `close` link on a scrim they cannot select would make the most
+   * ordinary interaction in the whole vocabulary the hardest one to get.
+   * Returns false when nothing was presented.
+   */
+  dismissOverlay: () => boolean
   /** Return the player to where it started. */
   resetPlay: () => void
   beginLinkDraft: (draft: LinkDraft) => void
@@ -130,6 +144,20 @@ declare module '@site/store/types' {
   interface EditorStore extends PrototypeSlice {}
 }
 
+/**
+ * The link a tap on an overlay's scrim behaves as. Its source is never read —
+ * `applyPlayAction` only looks at the action — so it names a node that cannot
+ * exist rather than pretending to point at a real one.
+ */
+const SCRIM_DISMISS: PrototypeLink = {
+  id: 'scrim-dismiss',
+  origin: 'design',
+  source: { pageId: '', node: { nodeId: '', indexPath: [], moduleId: '', textSnippet: '' } },
+  trigger: 'click',
+  action: 'close',
+  targetPageId: null,
+}
+
 export const createPrototypeSlice: EditorStoreSliceCreator<PrototypeSlice> = (set) => ({
   prototype: createPrototypeFile(),
   prototypeLoaded: false,
@@ -140,6 +168,7 @@ export const createPrototypeSlice: EditorStoreSliceCreator<PrototypeSlice> = (se
   playMode: false,
   playState: INITIAL_PLAY_STATE,
   playTransition: null,
+  playLeaveTransition: null,
 
   loadPrototype: (file) => {
     set((s) => {
@@ -184,6 +213,7 @@ export const createPrototypeSlice: EditorStoreSliceCreator<PrototypeSlice> = (se
       if (!active) {
         s.playState = INITIAL_PLAY_STATE
         s.playTransition = null
+        s.playLeaveTransition = null
       }
     })
   },
@@ -191,19 +221,37 @@ export const createPrototypeSlice: EditorStoreSliceCreator<PrototypeSlice> = (se
   followPrototypeLink: (link) => {
     let moved = false
     set((s) => {
-      const next = applyPlayAction(s.playState, link)
-      if (next === s.playState) return
-      s.playState = next
-      s.playTransition = link.transition ?? null
+      const outcome = applyPlayAction(s.playState, link)
+      if (outcome.state === s.playState) return
+      s.playState = outcome.state
+      s.playTransition = outcome.entering
+      s.playLeaveTransition = outcome.leaving
       moved = true
     })
     return moved
+  },
+
+  dismissOverlay: () => {
+    let dismissed = false
+    set((s) => {
+      // Deliberately the SAME path an authored `close` takes, rather than a
+      // second implementation of "pop the top overlay". A tap outside is not a
+      // different rule about the stack, only a different way of asking.
+      const outcome = applyPlayAction(s.playState, SCRIM_DISMISS)
+      if (outcome.state === s.playState) return
+      s.playState = outcome.state
+      s.playTransition = outcome.entering
+      s.playLeaveTransition = outcome.leaving
+      dismissed = true
+    })
+    return dismissed
   },
 
   resetPlay: () => {
     set((s) => {
       s.playState = INITIAL_PLAY_STATE
       s.playTransition = null
+      s.playLeaveTransition = null
     })
   },
 

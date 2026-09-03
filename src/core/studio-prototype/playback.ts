@@ -14,7 +14,7 @@
  * belonged to the screen being left. Keeping it would leave a sheet floating
  * over a page it was never opened from.
  */
-import type { PrototypeLink } from './types'
+import type { PrototypeLink, PrototypeTransition } from './types'
 
 /**
  * The two stacks.
@@ -25,11 +25,59 @@ import type { PrototypeLink } from './types'
  * mutates one — every function below returns new arrays — so the guarantee is
  * in the implementation rather than the type.
  */
+/**
+ * One entry on either stack: what is showing, and HOW IT ARRIVED.
+ *
+ * The transition is remembered because `back` has none of its own — going back
+ * means reversing whatever brought you here, and once an action has been
+ * applied a bare stack of page ids no longer says what that was. Without it a
+ * pop is an instant cut sitting next to a 420ms push, which reads as a bug.
+ */
+export interface PlayEntry {
+  pageId: string
+  transition: PrototypeTransition
+}
+
 export interface PlayState {
   /** Screens pushed by `navigate`, oldest first. Empty means "the start screen". */
-  screens: string[]
+  screens: PlayEntry[]
   /** Overlays on top of the current screen, innermost last. */
-  overlays: string[]
+  overlays: PlayEntry[]
+}
+
+/**
+ * What a completed action should animate.
+ *
+ * `entering` plays on whatever is arriving; `leaving` on whatever is going
+ * away, which only a `back` or a `close` has. Both `null` means nothing moved.
+ */
+export interface PlayOutcome {
+  state: PlayState
+  entering: PrototypeTransition | null
+  leaving: PrototypeTransition | null
+}
+
+/**
+ * The transition that undoes `transition`.
+ *
+ * A leftward push is undone by a rightward one — that is what makes a pop feel
+ * like the reverse of the push, rather than a second push in the same
+ * direction. Everything symmetrical (a dissolve, a sheet, a popup) undoes
+ * itself: the direction is already implied by which way it is played.
+ */
+export function reverseTransition(transition: PrototypeTransition): PrototypeTransition {
+  switch (transition) {
+    case 'slide-left':
+      return 'slide-right'
+    case 'slide-right':
+      return 'slide-left'
+    case 'push-left':
+      return 'push-right'
+    case 'push-right':
+      return 'push-left'
+    default:
+      return transition
+  }
 }
 
 /**
@@ -47,12 +95,12 @@ export const INITIAL_PLAY_STATE: PlayState = { screens: [], overlays: [] }
  * it started on when nothing has been pushed.
  */
 export function currentScreen(state: PlayState, startPageId: string | null): string | null {
-  return state.screens[state.screens.length - 1] ?? startPageId
+  return state.screens[state.screens.length - 1]?.pageId ?? startPageId
 }
 
 /** The overlay presented on top, or `null`. */
 export function currentOverlay(state: PlayState): string | null {
-  return state.overlays[state.overlays.length - 1] ?? null
+  return state.overlays[state.overlays.length - 1]?.pageId ?? null
 }
 
 /**
@@ -64,31 +112,87 @@ export function canGoBack(state: PlayState): boolean {
   return state.overlays.length > 0 || state.screens.length > 0
 }
 
+/** A copy that shares nothing with `entry` — see `applyPlayAction`. */
+function cloneEntry(entry: PlayEntry): PlayEntry {
+  return { pageId: entry.pageId, transition: entry.transition }
+}
+
 /**
- * Apply a link. Returns the same object when the action changes nothing, so
- * callers can skip a state write and a re-render.
+ * Apply a link. Returns the SAME state object when the action changes nothing,
+ * so callers can skip a write and a re-render.
+ *
+ * A changed state ALIASES NOTHING from the one passed in — every entry is
+ * copied, and no array or object from the input is reused. That costs a few
+ * allocations per click and buys the only thing that makes this function safe
+ * to call from the editor store: the store hands it a Mutative DRAFT, and an
+ * object assigned back into a draft while still holding references INTO that
+ * same draft does not survive finalization. The symptom is precise and awful —
+ * the scalars written beside it stick, the stack silently does not, and the
+ * player shows a sheet that will not close. A pure function over plain data
+ * should not hand back pieces of its argument anyway.
  */
-export function applyPlayAction(state: PlayState, link: PrototypeLink): PlayState {
+export function applyPlayAction(state: PlayState, link: PrototypeLink): PlayOutcome {
+  const unchanged: PlayOutcome = { state, entering: null, leaving: null }
+  // `transition` is absent on a `back`/`close` and repaired to a legal value
+  // for everything else, so the fallback only ever applies to a hand-edited
+  // file that dropped it. `instant` is the honest reading of "not specified".
+  const transition = link.transition ?? 'instant'
+
   switch (link.action) {
     case 'navigate': {
-      if (!link.targetPageId) return state
-      return { screens: [...state.screens, link.targetPageId], overlays: [] }
+      if (!link.targetPageId) return unchanged
+      return {
+        state: {
+          screens: [...state.screens.map(cloneEntry), { pageId: link.targetPageId, transition }],
+          // Navigating out from under an overlay drops every overlay: it
+          // belonged to the screen being left.
+          overlays: [],
+        },
+        entering: transition,
+        leaving: null,
+      }
     }
 
     case 'overlay': {
-      if (!link.targetPageId) return state
-      return { ...state, overlays: [...state.overlays, link.targetPageId] }
+      if (!link.targetPageId) return unchanged
+      return {
+        state: {
+          screens: state.screens.map(cloneEntry),
+          overlays: [...state.overlays.map(cloneEntry), { pageId: link.targetPageId, transition }],
+        },
+        entering: transition,
+        leaving: null,
+      }
     }
 
-    case 'back': {
-      if (state.overlays.length > 0) return { ...state, overlays: state.overlays.slice(0, -1) }
-      if (state.screens.length === 0) return state
-      return { ...state, screens: state.screens.slice(0, -1) }
-    }
-
+    // `back` closes an overlay before it pops a screen — that is what the
+    // gesture means to someone looking at a sheet over a screen.
+    case 'back':
     case 'close': {
-      if (state.overlays.length === 0) return state
-      return { ...state, overlays: state.overlays.slice(0, -1) }
+      const overlay = state.overlays[state.overlays.length - 1]
+      if (overlay) {
+        return {
+          state: {
+            screens: state.screens.map(cloneEntry),
+            overlays: state.overlays.slice(0, -1).map(cloneEntry),
+          },
+          entering: null,
+          leaving: overlay.transition,
+        }
+      }
+      // `close` is only ever about an overlay. With none showing it is a no-op,
+      // where `back` goes on to pop the screen stack.
+      if (link.action === 'close') return unchanged
+      const screen = state.screens[state.screens.length - 1]
+      if (!screen) return unchanged
+      return {
+        state: {
+          screens: state.screens.slice(0, -1).map(cloneEntry),
+          overlays: state.overlays.map(cloneEntry),
+        },
+        entering: reverseTransition(screen.transition),
+        leaving: null,
+      }
     }
   }
 }

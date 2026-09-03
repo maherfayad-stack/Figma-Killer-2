@@ -100,8 +100,10 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
     overlayPage,
     screenTransition: playScreenTransition,
     overlayTransition: playOverlayTransition,
+    overlayLeaveTransition: playOverlayLeaveTransition,
     playMode,
   } = usePrototypePlayback(editingPage)
+  const dismissOverlay = useEditorStore((s) => s.dismissOverlay)
   const breakpoints = useEditorStore((s) => s.site?.breakpoints ?? EMPTY_BREAKPOINTS)
   const activeBreakpointId = useEditorStore((s) => s.activeBreakpointId)
   const canvasView = useEditorStore((s) => s.canvasView)
@@ -610,6 +612,8 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
                 page={canvasPage}
                 overlayPage={overlayPage}
                 overlayTransition={playOverlayTransition}
+                overlayLeaveTransition={playOverlayLeaveTransition}
+                onDismissOverlay={dismissOverlay}
                 screenTransition={playScreenTransition}
                 playMode={playMode}
                 activeBreakpoint={activeBreakpoint}

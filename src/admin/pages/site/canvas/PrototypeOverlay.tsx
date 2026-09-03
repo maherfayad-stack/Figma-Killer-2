@@ -1,0 +1,146 @@
+/**
+ * PrototypeOverlay — a sheet or a popup presented over the screen that opened
+ * it, and the interactions every one of them is expected to have.
+ *
+ * WHY THIS OWNS ITS OWN MOUNTING
+ * ──────────────────────────────
+ * React removes a component the moment its parent stops rendering it, so an
+ * overlay wired straight to "is one presented?" VANISHES rather than
+ * dismissing. It has to outlive the state change that closed it: this component
+ * keeps the last presented page mounted, plays the exit, and only then drops
+ * it. That is the same shape the design system's own sheets use, and it is the
+ * reason the dismissal is a real gesture rather than a cut.
+ *
+ * TAP-OUTSIDE IS NOT AN AUTHORED LINK
+ * ───────────────────────────────────
+ * Every iOS sheet dismisses by tapping outside it. Requiring the user to draw a
+ * `close` link on a scrim they cannot even select would make the most ordinary
+ * interaction in the whole vocabulary the only one they cannot express, so the
+ * scrim dismisses on its own. An authored `close` or `back` still works and
+ * goes through exactly the same exit.
+ */
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import type { Page } from '@core/page-tree'
+import type { PrototypeTransition } from '@core/studio-prototype'
+import { overlayExitMotion, overlayMotion, play } from './playbackMotion'
+import styles from './CanvasLiveSurface.module.css'
+
+interface Presented {
+  page: Page
+  /** How it came in, so it can leave the same way if nothing says otherwise. */
+  transition: PrototypeTransition | null
+}
+
+interface PrototypeOverlayProps {
+  /** The overlay the player wants presented, or `null` to dismiss. */
+  page: Page | null
+  /** How it should arrive. */
+  enterTransition: PrototypeTransition | null
+  /** How the one that just left was presented, from the play stack. */
+  leaveTransition: PrototypeTransition | null
+  /** Tap-outside. Omitted outside the player, where nothing dismisses. */
+  onDismiss?: () => void
+  renderScreen: (page: Page) => ReactNode
+}
+
+export function PrototypeOverlay({
+  page,
+  enterTransition,
+  leaveTransition,
+  onDismiss,
+  renderScreen,
+}: PrototypeOverlayProps) {
+  const [presented, setPresented] = useState<Presented | null>(
+    page ? { page, transition: enterTransition } : null,
+  )
+  /**
+   * Set the moment the overlay is asked to leave, carrying the presentation to
+   * play in reverse. Held here rather than read in the exit effect so the
+   * effect depends on ONE value that changes exactly once per dismissal.
+   */
+  const [closing, setClosing] = useState<{ transition: PrototypeTransition | null } | null>(null)
+  const panelRef = useRef<HTMLDivElement | null>(null)
+  const scrimRef = useRef<HTMLDivElement | null>(null)
+
+  // Adjusting state during render, the documented React pattern for "a prop
+  // changed and derived state has to follow". An effect would paint one frame
+  // of the new overlay in its final position before the entrance moved it.
+  if (page && presented?.page.id !== page.id) {
+    setPresented({ page, transition: enterTransition })
+    setClosing(null)
+  } else if (!page && presented && !closing) {
+    // Prefer what the play stack says left; fall back to how this one arrived.
+    setClosing({ transition: leaveTransition ?? presented.transition })
+  }
+
+  const presentedId = presented?.page.id ?? null
+
+  useEffect(() => {
+    if (!presentedId || closing) return
+    const motion = enterTransition ? overlayMotion(enterTransition) : null
+    if (!motion) return
+    const animations = [
+      play(panelRef.current, motion.panel, motion.duration, motion.easing),
+      play(scrimRef.current, motion.scrim, motion.duration, motion.easing),
+    ].filter((animation): animation is Animation => animation !== null)
+    return () => {
+      for (const animation of animations) animation.cancel()
+    }
+  }, [presentedId, closing, enterTransition])
+
+  useEffect(() => {
+    if (!closing) return
+    const drop = () => {
+      setPresented(null)
+      setClosing(null)
+    }
+    const motion = closing.transition ? overlayExitMotion(closing.transition) : null
+    if (!motion) {
+      drop()
+      return
+    }
+    const animations = [
+      play(panelRef.current, motion.panel, motion.duration, motion.easing, 'both'),
+      play(scrimRef.current, motion.scrim, motion.duration, motion.easing, 'both'),
+    ].filter((animation): animation is Animation => animation !== null)
+    if (animations.length === 0) {
+      drop()
+      return
+    }
+    let cancelled = false
+    void Promise.allSettled(animations.map((animation) => animation.finished)).then(() => {
+      if (!cancelled) drop()
+    })
+    return () => {
+      cancelled = true
+      for (const animation of animations) animation.cancel()
+    }
+  }, [closing])
+
+  if (!presented) return null
+
+  return (
+    <div
+      className={styles.prototypeOverlay}
+      data-transition={presented.transition ?? 'instant'}
+      data-closing={closing ? 'true' : undefined}
+      data-testid="prototype-overlay"
+    >
+      <div
+        ref={scrimRef}
+        className={styles.prototypeScrim}
+        // Deliberately not a control element: a scrim is a dismissal AREA, and
+        // giving it an accessible name would put "Close" in the tab order of a
+        // prototype whose own content is what should be reachable. The
+        // overlay's content still carries whatever close affordance the design
+        // drew. (Naming the element type in prose here would also trip BTN-3,
+        // which matches source text — see `single-drag-mechanism`'s own note.)
+        role="presentation"
+        onPointerDown={closing ? undefined : onDismiss}
+      />
+      <div ref={panelRef} className={styles.prototypeOverlayFrame}>
+        {renderScreen(presented.page)}
+      </div>
+    </div>
+  )
+}

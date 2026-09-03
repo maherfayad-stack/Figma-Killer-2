@@ -45,7 +45,7 @@ import { BreakpointSelectionOverlay } from './BreakpointSelectionOverlay'
 import { CanvasBreakpointContext, CanvasPageContext, CanvasTemplateContext } from './CanvasContexts'
 import { IframeFrameSurface, type IframeFrameSurfaceHandle } from './IframeFrameSurface'
 import { DeviceMockup } from './DeviceMockup'
-import { overlayMotion, play } from './playbackMotion'
+import { PrototypeOverlay } from './PrototypeOverlay'
 import { PrototypeScreenStack } from './PrototypeScreenStack'
 import { DeviceScrollbarInjector } from './DeviceScrollbarInjector'
 import { DEVICE_BEZEL_PX, resolveDeviceKind, type DeviceKind } from './deviceKind'
@@ -74,6 +74,10 @@ interface CanvasLiveSurfaceProps {
   overlayPage?: Page | null
   /** How the overlay arrived, for its entrance animation. */
   overlayTransition?: PrototypeTransition | null
+  /** How the overlay that just left was presented, for its exit animation. */
+  overlayLeaveTransition?: PrototypeTransition | null
+  /** Tap-outside on the overlay's scrim. */
+  onDismissOverlay?: () => void
   /** How the current screen arrived, when no overlay is on top of it. */
   screenTransition?: PrototypeTransition | null
   /**
@@ -102,6 +106,8 @@ export function CanvasLiveSurface({
   page,
   overlayPage = null,
   overlayTransition = null,
+  overlayLeaveTransition = null,
+  onDismissOverlay,
   screenTransition = null,
   playMode = false,
   activeBreakpoint,
@@ -114,8 +120,6 @@ export function CanvasLiveSurface({
   // Outer viewport `<div>` wrapping the iframe — the selection overlay measures
   // it for positioning context, and queries the iframe element for node rects.
   const viewportRef = useRef<HTMLDivElement | null>(null)
-  const overlayPanelRef = useRef<HTMLDivElement | null>(null)
-  const overlayScrimRef = useRef<HTMLDivElement | null>(null)
   const [iframeEl, setIframeEl] = useState<HTMLIFrameElement | null>(null)
   // The iframe's own document, tracked so the device chrome can reach inside
   // it (scrollbar hiding). Published by the handle, so it updates when the
@@ -174,22 +178,6 @@ export function CanvasLiveSurface({
       </CanvasPageContext.Provider>
     </IframeFrameSurface>
   )
-
-  // The overlay presents itself — a sheet rises from the bottom edge, a popup
-  // scales up in place — over a screen that stays mounted behind a scrim.
-  const overlayPageId = overlayPage?.id ?? null
-  useEffect(() => {
-    if (!overlayPageId) return
-    const motion = overlayTransition ? overlayMotion(overlayTransition) : null
-    if (!motion) return
-    const animations = [
-      play(overlayPanelRef.current, motion.panel, motion.duration, motion.easing),
-      play(overlayScrimRef.current, motion.scrim, motion.duration, motion.easing),
-    ].filter((animation): animation is Animation => animation !== null)
-    return () => {
-      for (const animation of animations) animation.cancel()
-    }
-  }, [overlayPageId, overlayTransition])
 
   const deviceKind = resolveDeviceKind(activeBreakpoint)
   const naturalWidth = computeNaturalWidth(activeBreakpoint, containerWidth, deviceKind)
@@ -297,18 +285,13 @@ export function CanvasLiveSurface({
                 Keyed on the page id so React remounts (and therefore re-runs
                 the entrance animation) when one overlay replaces another.
               */}
-              {overlayPage && (
-                <div
-                  className={styles.prototypeOverlay}
-                  data-transition={overlayTransition ?? 'instant'}
-                  data-testid="prototype-overlay"
-                >
-                  <div ref={overlayScrimRef} className={styles.prototypeScrim} aria-hidden="true" />
-                  <div ref={overlayPanelRef} className={styles.prototypeOverlayFrame}>
-                    {renderScreen(overlayPage)}
-                  </div>
-                </div>
-              )}
+              <PrototypeOverlay
+                page={overlayPage}
+                enterTransition={overlayTransition}
+                leaveTransition={overlayLeaveTransition}
+                onDismiss={onDismissOverlay}
+                renderScreen={renderScreen}
+              />
             </div>
           </DeviceMockup>
 

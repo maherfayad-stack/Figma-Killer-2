@@ -177,3 +177,32 @@
     background: var(--canvas-prototype-drop-wash);
     pointer-events: none;
 }
+
+/*
+ * A `back` or `close` interaction, which names no screen and so has no
+ * connector. Sized in screen pixels like the handle — it is chrome, and chrome
+ * that shrinks with the board is chrome nobody can read.
+ */
+.badge {
+    --badge-x: 0px;
+    --badge-y: 0px;
+    position: absolute;
+    left: calc(var(--badge-x) + 14px / var(--canvas-zoom));
+    top: var(--badge-y);
+    padding: var(--space-3xs) var(--space-xs);
+    transform: translate(-50%, -50%) scale(calc(1 / var(--canvas-zoom)));
+    border: 1px solid var(--canvas-prototype-link);
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface);
+    color: var(--canvas-prototype-link);
+    font-size: var(--text-xs);
+    line-height: 1.2;
+    white-space: nowrap;
+    cursor: pointer;
+    pointer-events: auto;
+}
+
+.badge[data-selected='true'] {
+    background: var(--canvas-prototype-link);
+    color: var(--canvas-comment-pin-text);
+}

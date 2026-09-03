@@ -100,6 +100,52 @@ export async function commitLinkDraft(targetPageId: string, targetKind: PageKind
   return link.id
 }
 
+/**
+ * Give an element a targetless interaction — `back` or `close`.
+ *
+ * These cannot be authored by dragging, because there is nothing to drag TO:
+ * "go back" names no screen, it names the one you came from, which is only
+ * known while the player is running. Without this the only way to express the
+ * single most common interaction in any prototype was to draw a link somewhere
+ * arbitrary and then change its action, which stores a destination that is a
+ * lie about the author's intent.
+ *
+ * Returns the new link's id, or `null` when the element could not be anchored.
+ */
+export async function createTargetlessLink(
+  pageId: string,
+  nodeId: string,
+  action: 'back' | 'close',
+): Promise<string | null> {
+  const state = useEditorStore.getState()
+  const page = state.site?.pages.find((candidate) => candidate.id === pageId)
+  const hint = page ? captureNodeHint(page, nodeId) : null
+  if (!hint) {
+    pushToast({
+      kind: 'error',
+      title: 'Could not add the interaction',
+      body: 'The element it would start from is no longer on the page.',
+    })
+    return null
+  }
+
+  const link: PrototypeLink = {
+    id: crypto.randomUUID(),
+    origin: 'design',
+    source: { pageId, node: hint },
+    trigger: 'click',
+    action,
+    // No destination, and no transition of its own: both are decided at
+    // playback time by what is actually on the stack.
+    targetPageId: null,
+  }
+
+  const ok = await run({ kind: 'upsert', link }, 'Could not add the interaction')
+  if (!ok) return null
+  useEditorStore.getState().setSelectedLink(link.id)
+  return link.id
+}
+
 /** Change an existing link — the inspector's every control routes through here. */
 export async function updateLink(link: PrototypeLink): Promise<void> {
   await run({ kind: 'upsert', link }, 'Could not update the link')

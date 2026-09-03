@@ -20,7 +20,7 @@
 import { useEditorStore } from '@site/store/store'
 import { findLink, linkSource, visibleLinks } from '@site/store/slices/prototypeSelectors'
 import { transitionsForAction, type PrototypeAction, type PrototypeLink, type PrototypeTransition } from '@core/studio-prototype'
-import { deleteLink, updateLink } from '@site/studio/prototypeActions'
+import { createTargetlessLink, deleteLink, updateLink } from '@site/studio/prototypeActions'
 import { PanelHeader } from '@admin/shared/PanelHeader'
 import { Select } from '@ui/components/Select'
 import { Button } from '@ui/components/Button'
@@ -52,6 +52,9 @@ export function PrototypePanel() {
   const selectedLinkId = useEditorStore((s) => s.selectedLinkId)
   const pages = useEditorStore((s) => s.site?.pages)
   const setSelectedLink = useEditorStore((s) => s.setSelectedLink)
+  const selectedNodeId = useEditorStore((s) => s.selectedNodeId)
+  const activePageId = useEditorStore((s) => s.activePageId)
+  const requestLinkFromNode = useEditorStore((s) => s.requestLinkFromNode)
 
   // Every store read above is a STABLE reference; the derived values are built
   // here, never inside `useEditorStore`. A selector that builds a fresh array
@@ -72,6 +75,12 @@ export function PrototypePanel() {
         <LinkInspector link={selected} pageOptions={pages ?? []} live={linkSource(selected, pages).live} />
       ) : (
         <div className={styles.body}>
+          {selectedNodeId && activePageId && (
+            <ElementActions
+              onLinkToScreen={() => requestLinkFromNode({ pageId: activePageId, nodeId: selectedNodeId })}
+              onGoBack={() => void createTargetlessLink(activePageId, selectedNodeId, 'back')}
+            />
+          )}
           {links.length === 0 ? (
             <EmptyState
               icon={<LinkIcon size={16} />}
@@ -93,6 +102,35 @@ export function PrototypePanel() {
           )}
         </div>
       )}
+    </div>
+  )
+}
+
+/**
+ * What the SELECTED ELEMENT can be given, without hunting for a connector.
+ *
+ * "Go back" cannot be authored by dragging — there is nothing to drag to. It
+ * names the screen you came from, which only exists while the player is
+ * running. Before this the only way to express the most common interaction in
+ * any prototype was to draw a link at some arbitrary screen and then change its
+ * action, leaving a stored destination that lies about what the author meant.
+ */
+function ElementActions({
+  onLinkToScreen,
+  onGoBack,
+}: {
+  onLinkToScreen: () => void
+  onGoBack: () => void
+}) {
+  return (
+    <div className={styles.elementActions}>
+      <p className={styles.elementActionsTitle}>On click</p>
+      <Button variant="secondary" size="sm" className={styles.elementAction} onClick={onLinkToScreen}>
+        Link to a screen…
+      </Button>
+      <Button variant="secondary" size="sm" className={styles.elementAction} onClick={onGoBack}>
+        Go back
+      </Button>
     </div>
   )
 }

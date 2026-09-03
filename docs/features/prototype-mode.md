@@ -270,6 +270,15 @@ points cannot drift apart. `LinkDraft.mode` is what separates them — `drag`
 commits on pointer-up because the button is held down, `pick` commits on the
 next click because it is not.
 
+**"Go back" cannot be drawn**, because there is nothing to drag to: it names the
+screen you came from, which only exists while the player is running. The panel
+offers it directly on the selected element (`createTargetlessLink`). Before
+this, expressing the most common interaction in any prototype meant drawing a
+link at an arbitrary screen and then changing its action, which stored a
+destination that lied about the author's intent. A targetless link has no
+connector, so it wears a chip on its own element instead — an interaction you
+cannot see on the board is one you will forget you authored.
+
 **Delete / Backspace removes a selected link**, Escape deselects it
 (`usePrototypeLinkKeyboard`). It runs in the CAPTURE phase and claims the event:
 a link and a node can be selected at once, and without claiming it one keystroke
@@ -301,11 +310,40 @@ both screens mounted at once, which is what `PrototypeScreenStack` is: two slots
 that pages move between, never a frame that gets remounted. The back slot mounts
 on the first navigation of a session and is reused for every one after it.
 
+**Going back reverses how you arrived.** `back` carries no transition of its
+own, and once an action has been applied a bare stack of page ids no longer says
+what brought you here — so each stack entry remembers its own presentation
+(`PlayEntry`), and a pop plays `reverseTransition` of it. A push-left is undone
+by a push-right; anything symmetrical undoes itself. Without this a pop was an
+instant cut sitting next to a 420ms push, which reads as a bug.
+
+`applyPlayAction` returns a state that **aliases nothing** from the one passed
+in. That costs a few allocations per click and buys the only thing that makes it
+safe to call from the store: the store hands it a Mutative draft, and an object
+assigned back into a draft while still holding references into that same draft
+does not survive finalization. `slices/__tests__/prototypePlayback.test.ts`
+drives the real store for exactly this reason — the pure-function tests passed
+the whole time a sheet could not be dismissed.
+
 **An overlay presents over a screen that stays mounted**, behind a scrim — that
 is the whole difference from a navigation, and it is why closing one returns
 instantly with its scroll position intact. A sheet rises from the bottom edge on
 the design system's curve; a popup is a centred card, so it scales up in place
 and takes a dialog's shorter beat.
+
+**Tapping outside dismisses it**, and that is not an authored link. Every iOS
+sheet dismisses by tapping outside; requiring the user to draw a `close` link on
+a scrim they cannot select would make the most ordinary interaction in the whole
+vocabulary the only one they could not express. `dismissOverlay` goes through
+the same `applyPlayAction` an authored `close` does — a tap outside is not a
+different rule about the stack, only a different way of asking.
+
+An overlay also has to OUTLIVE the state change that closed it: React removes a
+component the moment its parent stops rendering it, so an overlay wired straight
+to "is one presented?" vanishes rather than dismissing. `PrototypeOverlay` keeps
+the last presented page mounted, plays the exit, and only then drops it.
+Dismissal is quicker than presentation — 320ms for a sheet against 500ms in —
+because arriving is the moment worth drawing out.
 
 **The entrance animation must not remount the frame.** A CSS `@keyframes`
 entrance only replays when the element is remounted, so the screen wrapper was
