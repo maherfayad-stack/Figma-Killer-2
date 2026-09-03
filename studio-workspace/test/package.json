@@ -1,8 +1,0 @@
-{
-  "name": "studio-project",
-  "private": true,
-  "type": "module",
-  "dependencies": {
-    "@alm-design/design-system": "^1.1.2"
-  }
-}

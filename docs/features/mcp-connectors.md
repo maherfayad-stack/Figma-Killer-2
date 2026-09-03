@@ -125,6 +125,23 @@ node id is a source position and an agent acting on a rotten one edits the wrong
 element in the user's real file. See
 [`studio-comments.md`](studio-comments.md#the-agent-loop).
 
+**Prototype interactions** — `studio_list_prototype_links` (read, ungated),
+`studio_set_prototype_link` and `studio_delete_prototype_link` (both
+`studio.write`). These let an agent author the clickable flow between screens,
+which is the one design layer that is NOT in the user's source: an interaction
+lands in `.studio/prototype.json`, never as a written `onClick`, for the reason
+[`prototype-mode.md`](prototype-mode.md) §1 gives — "make a sheet slide up from
+here" has no single honest target in arbitrary React.
+
+The set tool takes a bare `nodeId` and captures the durable `NodeHint` itself
+against a fresh parse, so the agent never fabricates an `indexPath`; it refuses
+a node that is not in the page, a target that is not a page, an action/target
+mismatch (`navigate`/`overlay` need a target, `back`/`close` refuse one), a
+transition the action cannot wear, and any edit to an `origin: 'code'` link,
+which is derived from the user's real `onClick` and is not the board's to
+change. `studio_list_prototype_links` reports `anchorConfidence` per link, so a
+`detached` link is repointed rather than left dead on the board.
+
 **The live-reload bridge** (mcp-tooling) — the piece that makes these four
 writes actually visible on an open canvas without a manual reload.
 `studio_apply_edits`/`studio_codemod` map every file they touched back to a
@@ -141,7 +158,10 @@ ONLY the named pages via the `?pageIds=` filtered `GET /admin/api/studio/load`
 (server-16) and patches them into the store via `patchPages` (store-04) —
 which never marks the store dirty, so this cannot re-enter as an autosave —
 or, for `studio_set_frames`, re-fetches `.studio/boards.json` while preserving
-the user's current board. No open workspace (the common case for a headless
+the user's current board. `prototypeChanged` is the same mechanism for the
+interaction tools: wiring a link touches no page and no board, so without a
+flag of its own the push would be dropped by the "nothing to do" guard and the
+connector the user is watching would never draw the link the agent just made. No open workspace (the common case for a headless
 connector) makes this a pure no-op: the disk write already succeeded either
 way, and a stale canvas is the honest, expected outcome until the next reload.
 

@@ -18,10 +18,18 @@
  *
  * Everything that existed only because the agent had no filesystem:
  * `studio_read_file`, `studio_list_files`, `studio_create_page`,
- * `studio_apply_edits`, `studio_codemod`, `studio_find_nodes`,
- * `studio_get_node_source` are all strictly slower than the native
- * `Read`/`Write`/`Edit`/`Glob`/`Grep` the driver now grants
- * (`claudeCliToolSurface.ts`).
+ * `studio_apply_edits`, `studio_codemod`, `studio_get_node_source` are all
+ * strictly slower than the native `Read`/`Write`/`Edit`/`Glob`/`Grep` the
+ * driver now grants (`claudeCliToolSurface.ts`).
+ *
+ * `studio_find_nodes` was cut with that group and has been put back, because
+ * the justification did not actually apply to it. The others answer questions
+ * about FILE CONTENT, which the filesystem answers faster. That one answers
+ * "what is this element's node id", and a node id is `relFile:line:col` where
+ * the column is the tag-name start — a parser-derived fact that Grep cannot
+ * produce and that must match exactly. Without it the interaction tools below
+ * are unusable from this surface: the agent can see the button and edit the
+ * button, and has no way to name it.
  *
  * And the two measurement tools `studio_compare` replaced.
  * `studio_diff_frames` takes its baseline as a base64 STRING; a capture
@@ -100,6 +108,19 @@ export const STUDIO_AGENT_TOOL_NAMES: readonly string[] = [
   'studio_list_comments',
   'studio_reply_comment',
   'studio_resolve_comment',
+  // Interactions — the clickable flow between screens, and the one design
+  // layer that is NOT in the user's source. Absent until now, which made
+  // "wire the Continue button to the SMS screen" unanswerable rather than
+  // merely awkward: the agent could see the button, edit the button, and
+  // screenshot the button, but the thing that makes a prototype a prototype
+  // was invisible to it. The set tool captures the durable anchor itself, so
+  // the agent cannot write a link pointing at nothing.
+  // How the agent names an element for the tools below. See the note above on
+  // why the filesystem cannot stand in for this one.
+  'studio_find_nodes',
+  'studio_list_prototype_links',
+  'studio_set_prototype_link',
+  'studio_delete_prototype_link',
   // Orientation the filesystem cannot answer as cheaply or as truthfully.
   'studio_project_profile',
   'studio_list_pages',

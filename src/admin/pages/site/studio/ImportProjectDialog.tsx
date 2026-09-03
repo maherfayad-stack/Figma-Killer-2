@@ -34,6 +34,7 @@ import { requestCmsSiteReload } from '@admin/state/adminEvents'
 import { importGithubProject } from './importGithubProject'
 import { pickedFolderName, uploadProjectArchive, type UploadProjectResult } from './importUploadProject'
 import { setStudioWorkspaceDir } from './studioWorkspaceDir'
+import { requestImportSetupPass } from './importSetupPass'
 import dialogStyles from '@admin/shared/dialogs/SiteCreateDialog/SiteCreateDialog.module.css'
 import styles from './ImportProjectDialog.module.css'
 
@@ -81,14 +82,18 @@ export function ImportProjectDialog({ onClose }: ImportProjectDialogProps) {
 
   function handleSucceeded(result: UploadProjectResult) {
     setStudioWorkspaceDir(result.dir)
+    // Queued BEFORE the reload: the editor's own listener consumes it once the
+    // switch to this directory has landed, so the setup turn can never run
+    // against the project that was open a moment ago.
+    requestImportSetupPass(result.dir)
     requestCmsSiteReload()
     pushToast({
       kind: 'success',
       title: 'Project imported',
       body:
-        result.skipped > 0
+        (result.skipped > 0
           ? `${result.files} files imported, ${result.skipped} skipped.`
-          : `${result.files} files imported.`,
+          : `${result.files} files imported.`) + ' Setting it up with the agent…',
     })
     onClose()
   }

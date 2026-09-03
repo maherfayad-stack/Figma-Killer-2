@@ -22,9 +22,10 @@
      * from the last comment as the comments sit from each other. At the old
      * value it was nearer to the last comment than that comment's byline was
      * to the one above it, which put the write field inside the conversation
-     * instead of after it.
+     * instead of after it. It tracks that padding — raise one, raise both, or
+     * the write field starts reading as part of the last comment again.
      */
-    gap: var(--space-m);
+    gap: var(--space-l);
     box-sizing: border-box;
     width: 280px;
     padding: var(--space-s);
@@ -116,18 +117,24 @@
  * stops grouping, and a byline starts reading as the heading of the comment
  * ABOVE it. That is the reported bug, and it gets worse with every reply.
  *
- * So the pair stays tight (`--space-3xs`, unchanged) and the space between
- * comments is now several times that, with a hairline in the middle of it.
- * The rule is not decoration: a body can be one word or ten wrapped lines, and
- * once the blocks are uneven, whitespace alone stops reading as a boundary —
- * which is exactly when a thread has enough replies to need one.
+ * So the pair is pulled as tight as it can honestly go and the space between
+ * comments is opened up, with a hairline in the middle of it. The rule is not
+ * decoration: a body can be one word or ten wrapped lines, and once the blocks
+ * are uneven, whitespace alone stops reading as a boundary — which is exactly
+ * when a thread has enough replies to need one.
+ *
+ * `--space-px` rather than 0 for the pair: the body's own half-leading
+ * (~2.5px at `line-height: 1.5`) is already sitting above it, so this is about
+ * 4px of real gap doing the work of what used to be ~7px. Against ~24px
+ * between comments that is a 6:1 ratio — the byline can only belong to the
+ * text under it.
  */
 .comment {
     display: flex;
     flex-direction: column;
-    gap: var(--space-3xs);
+    gap: var(--space-px);
     min-width: 0;
-    padding-block: var(--space-m);
+    padding-block: var(--space-l);
 }
 
 /* The list's own outer edges are the popover's `gap`, not this padding. */

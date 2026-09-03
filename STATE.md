@@ -10,6 +10,90 @@ Entry ids are `<area>-<nn>`. Areas in use: `parser`, `canvas`, `store`, `panel`,
 
 ---
 
+### mcp-09 — the agent can author interactions, and every import now runs a setup pass
+
+**Two asks, one session.** "I want import project to pass it by the agent to
+configure what's imported", and "the agent should know we now have interactions
+and be able to utilise them."
+
+**Interactions — three tools** in `server/ai/mcp/tools/studio/prototypeTools.ts`,
+on the existing `applyPrototypeOp` engine, so the agent rides the same
+op-shaped writes the browser does:
+`studio_list_prototype_links` (ungated read), `studio_set_prototype_link` and
+`studio_delete_prototype_link` (both `studio.write`).
+
+**The agent passes a bare `nodeId`, never a `NodeHint`.** The hint's
+`indexPath`/`moduleId`/`textSnippet` are structural facts about a tree the
+agent is not holding; one it computed by hand would be a guess persisted as a
+fact. `captureNodeHint` builds it here against a fresh parse, so a malformed
+anchor is unreachable rather than discouraged.
+
+**The refusals are the interface**, and they are the point of the tests: a node
+not in the page, a target that is not a page, navigate/overlay without a target,
+back/close with one, a transition the action cannot wear, and any edit to an
+`origin: 'code'` link. Note the deliberate asymmetry with `serialize.ts`: the
+FILE reader repairs a bad action/transition pair because the alternative there
+is losing a link the user drew; the tool refuses, because a live caller can be
+told and corrected.
+
+**`studio_find_nodes` was put back on the agent surface.** It had been cut with
+the group whose justification was "the filesystem does this faster" — true of
+the others, which answer questions about file CONTENT, and false of this one. A
+node id is `relFile:line:col` where the column is the tag-name start: a
+parser-derived fact Grep cannot produce and that must match exactly. Without it
+the interaction tools were unusable from this surface — the agent could see the
+button and edit the button, and had no way to name it. **Caught by asking how
+the agent would obtain an argument, not by a failing test.** Worth repeating on
+any new tool that takes a node id.
+
+**`prototypeChanged` was added to the live-reload bridge** (`liveReloadPush.ts`
+→ `studioLiveReload.ts`). Wiring a link touches no page and no board, so
+without a flag of its own the push is dropped by the "nothing to do" guard and
+the board the user is watching never draws the link the agent just made — the
+same hole `commentsChanged` was added to close. `studioLiveReload.ts` calls
+`prototypeApi`, NOT `prototypeActions`, for the reason that module already
+documents: the actions module imports the store and would close a cycle
+`no-circular-dependencies` fails on.
+
+**Import setup pass.** `ImportProjectDialog` queues the new dir
+(`importSetupPass.ts`); `useStudioImportSetupPass` consumes it once the editor
+has switched, then opens the agent panel and sends `importSetupBrief`. Queued
+and consumed rather than fired from the dialog because the dialog knows the
+project landed on DISK, not that the editor is pointed at it — a turn started
+before `setStudioWorkspaceDir` + `requestCmsSiteReload` land would have the
+agent writing to the project that was open a moment ago. Never persisted: a
+pass in localStorage would re-run hours later against a project the user had
+since spent an afternoon editing.
+
+The brief is an ordered checklist because the steps really do depend on each
+other (deps before the fidelity report, pages parsing before frame sizes). Its
+last step wires interactions **only where the source already navigates** and
+lists anything else instead of drawing it — an invented flow is
+indistinguishable, on the board, from one the user drew.
+
+**Two product calls were the user's, made explicitly after the tradeoffs were
+put to them:** the pass runs on EVERY import with no opt-out, and it MAY edit
+their source to fix `studio_fidelity_report` findings. Do not quietly narrow
+either one back.
+
+**`shellFiles.ts` was split** — the mobile sheet (server-17) had pushed it to
+960 lines. `SHELL_CSS` moved to `shellCssTemplate.ts`, which is the seam the
+directory already uses: one emitted file per template module, alongside
+`canvasTemplate`/`screenFrameTemplate`/`playerTemplate`.
+
+**Verified:** 1238 tests across server/ai + the architecture gates, `bun run
+build`, `bun run lint` clean; 10 new prototype-tool tests, a prototype-only
+live-reload push test, 7 setup-pass tests. Docs updated in the same change:
+`prototype-mode.md` §7c, `mcp-connectors.md`, `agent.md`.
+
+**Still failing, still not mine:** `projectMcpApprovals.test.ts` cannot resolve
+`./agentRosterMcpTools` — absent from disk, never tracked in git, while the test
+importing it is committed.
+
+
+
+---
+
 ### server-17 — the exported shell's chrome now matches the reference app it was asked to look like, measured rather than inferred
 
 **The report.** "The canvas doesn't look at all like the one from github", then,
@@ -494,6 +578,45 @@ and on a real button: `.btn--primary:hover:not(:disabled)` is now
 `.btn--primary.studio-hover-off:not(:disabled)`, with `element.matches()`
 returning **false** and the `:not(:disabled)` half intact.
 `studio-editor-chrome` kept its own `:hover` rule throughout.
+
+---
+
+### comment-02 — a byline read as the heading of the comment above it
+
+**The report:** "enhance the spacing in the comment popup — when typing more
+comments it's so hard to know which title belongs to which comment."
+
+**It was a proximity failure, and the numbers say why.** Inside a comment,
+byline → body was `--space-3xs` (4px). Between two comments it was
+`--space-s` (8px). That is 2:1 on paper, which sounds fine — but `.body` has
+`line-height: 1.5` at `--text-xs`, adding ~2.5px of half-leading on BOTH sides
+and flattening the real ratio to about 1.6:1. Below roughly 2:1 the eye stops
+grouping, so each byline attached itself to whichever text was nearest, which
+is the comment above it.
+
+**Fixed with ratio, plus a rule.** The pair is `--space-px` — the body's own
+~2.5px of half-leading is already sitting above it, so ~4px of real gap does
+what ~7px used to. Comments carry `padding-block: var(--space-l)` with the
+list's own `gap: 0`, putting ~24px and a `--border-muted` hairline between
+them: about **6:1**, where it used to be 1.6:1. The line is not decoration — a
+body can be one word or ten wrapped lines, and once the blocks are uneven
+whitespace alone stops reading as a boundary, which is exactly when a thread is
+long enough to need one.
+
+The popover's own `gap` went `--space-2xs` → `--space-l`, **tracking** a
+comment's `padding-block`, so the reply box sits as far from the last comment
+as the comments sit from each other. At the old value the write field was
+NEARER to the last comment than that comment's byline was to the one above it,
+which put it inside the conversation instead of after it. **Raise one, raise
+both** — decoupling them brings that back.
+
+**Verified visually**, not by reading the numbers: the live board had no
+comment pins to open, so the popover's markup and declarations were rendered
+standalone as a before/after at the real token values
+(`--space-*`/`--text-*`/dark palette from `globals.css`) and compared. Three
+iterations, and the render earned every one — the first pass fixed the grouping
+but left the reply box too close, and the second was still not a wide enough
+ratio to read at a glance.
 
 ---
 

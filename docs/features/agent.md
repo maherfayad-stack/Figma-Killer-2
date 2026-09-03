@@ -293,6 +293,42 @@ The AST edit engine did not go anywhere. `studio_apply_edits`/`studio_codemod` a
 
 **`--permission-mode` is `bypassPermissions` on a Studio panel turn** — the composer sends it explicitly on every message (`agentSessionControlsInitialState`); see "Bypass is the Studio panel's DEFAULT mode" below for why that does not widen anything. When a request names NO mode at all, `resolvePermissionMode` (`claudeCliPermissionMode.ts`) falls back to `acceptEdits` with a project open and `default` otherwise — never to Bypass. Under `default` the CLI stops and asks before every file write, which Studio relays as an Allow/Deny card — a dozen identical questions to author one screen, each asking permission to do the thing the user just asked for. `acceptEdits` auto-accepts edits inside the working directory and nothing beyond it. Every other permission-bearing tool still prompts, and trust tiers are untouched (`studio_install_deps` reads `.studio/meta.json`, never the permission mode). An explicitly requested mode always wins.
 
+### The import setup pass
+
+**Every import runs the agent.** `ImportProjectDialog` queues the new directory
+(`importSetupPass.ts`), `useStudioImportSetupPass` consumes it once the editor
+has switched to that project, and the agent panel opens on a first turn built
+from `importSetupBrief`.
+
+It is queued and consumed rather than fired from the dialog because the dialog
+knows the project landed on disk, not that the editor is pointed at it.
+`setStudioWorkspaceDir` + `requestCmsSiteReload` are what redirect every
+subsequent request; a turn started before that lands would have the agent
+auditing — and writing to — the project that was open a moment ago. The hook
+listens on `CMS_SITE_RELOAD_EVENT` for the same reason
+`useStudioPrototypeLoad` does.
+
+**The queue is a module variable and is never persisted.** A pass in
+localStorage would re-run hours later against a project the user had since
+spent an afternoon editing, and the agent would "fix" their work back toward
+what the importer produced. If Studio is closed before the editor mounts, the
+queued dir dies with the page and no turn is started.
+
+**The brief is an ordered checklist, because the steps genuinely depend on each
+other:** profile → install dependencies → fix parse-blocking config → fix
+`studio_fidelity_report` findings in source → size the frames → wire the
+interactions. An unordered list of goals produced turns that installed
+dependencies last, after every step that needed them.
+
+The last step is bounded on purpose: the pass wires interactions **only where
+the source already navigates**, and lists anything else it noticed instead of
+drawing it. A flow the agent invented is indistinguishable, on the board, from
+one the user drew.
+
+The pass edits the user's source, so it runs in the open panel where they can
+read it, interrupt it and answer it. A turn running behind a closed panel is
+indistinguishable from Studio changing their repo on its own.
+
 ### No subagents
 
 **`Task` is granted, and screens are built in parallel.** It was withheld for a while, after a real failure: the CLI does **not** error on an unknown `subagent_type` — it silently falls back to its own built-in `general-purpose` agent and returns as if the work had happened. Observed exactly that way: the agent delegated screen authoring to an invented name, reported ten files written in detail, and every one was still an untouched scaffold. Studio used to generate an eleven-agent roster into `<project>/.claude/agents/` and spend a prompt paragraph warning the model not to invent a name; that only narrowed the odds, so the tool was removed.

@@ -25,6 +25,7 @@ import { Type, type Static } from '@core/utils/typeboxHelpers'
 import type { EditorStore } from '@site/store/types'
 import { fetchBoards } from '../studio/boardsApi'
 import { fetchComments } from '../studio/commentsApi'
+import { fetchPrototype } from '../studio/prototypeApi'
 import { studioWriteDir } from '../studio/studioSaveRequests'
 import { fetchStudioPagesById } from '../studio/studioLiveReloadFetch'
 import { getAgentStoreApi } from './storeRef'
@@ -48,6 +49,8 @@ export const StudioLiveReloadInputSchema = Type.Object({
    * read as false by the handler below.
    */
   commentsChanged: Type.Optional(Type.Boolean()),
+  /** Same optionality, same reason: an older push predating the interaction tools still validates. */
+  prototypeChanged: Type.Optional(Type.Boolean()),
 })
 export type StudioLiveReloadInput = Static<typeof StudioLiveReloadInputSchema>
 
@@ -88,6 +91,11 @@ async function reloadStudioComments(dir: string): Promise<void> {
   getStoreState().loadComments(await fetchComments(dir))
 }
 
+/** `prototypeApi` for the same reason `commentsApi` is used above: `prototypeActions` imports the store and would close the cycle. */
+async function reloadStudioPrototype(dir: string): Promise<void> {
+  getStoreState().loadPrototype(await fetchPrototype(dir))
+}
+
 export async function runStudioLiveReload(input: StudioLiveReloadInput): Promise<AiToolOutput> {
   // A different project is open than the one the write landed in — applying
   // THAT project's pages/boards to THIS board would silently cross-
@@ -126,6 +134,14 @@ export async function runStudioLiveReload(input: StudioLiveReloadInput): Promise
     } catch (err) {
       console.error('[studioLiveReload] comment reload failed — threads may be stale:', err)
       failed.push('comments')
+    }
+  }
+  if (input.prototypeChanged) {
+    try {
+      await reloadStudioPrototype(input.dir)
+    } catch (err) {
+      console.error('[studioLiveReload] prototype reload failed — links may be stale:', err)
+      failed.push('prototype')
     }
   }
   return aiToolOk({ applied: true, failed })

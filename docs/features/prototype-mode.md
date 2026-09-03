@@ -285,6 +285,45 @@ cannot see on the board is one you will forget you authored.
 a link and a node can be selected at once, and without claiming it one keystroke
 would delete both.
 
+## 7c. The third author — the agent
+
+Interactions are reachable from the Studio agent and from external MCP clients
+through three tools (`server/ai/mcp/tools/studio/prototypeTools.ts`):
+
+| Tool | Gate | What it does |
+|---|---|---|
+| `studio_list_prototype_links` | ungated read | Every link, with `anchorConfidence` per link and both page titles resolved. |
+| `studio_set_prototype_link` | `studio.write` | Create or repoint one. |
+| `studio_delete_prototype_link` | `studio.write` | Remove one. |
+
+They run the same `applyPrototypeOp` engine as the HTTP route, so an agent
+rides the same op-shaped writes the browser does rather than a second path with
+its own semantics — which is what §2's "why operations, not whole-file writes"
+was written for.
+
+**The agent supplies a `nodeId`, never a `NodeHint`.** §3 is the reason: the
+hint's `indexPath`, `moduleId` and `textSnippet` are structural facts about a
+tree the agent is not holding, and one it computed by hand would be a guess
+persisted as a fact. The tool captures the hint itself with `captureNodeHint`
+against a freshly parsed page, so a malformed anchor is unreachable rather than
+merely discouraged.
+
+**The refusals are the interface.** A node not in the page, a target that is not
+a page, `navigate`/`overlay` without a target, `back`/`close` with one, and a
+transition the action cannot wear are all refused with a code and the legal
+values — including `ACTION_TRANSITIONS`' own list, so the pairing in §4 is
+learned from the error rather than from the prompt. Note the one deliberate
+asymmetry with `serialize.ts`: the FILE reader repairs a bad action/transition
+pair because the alternative there is losing a link the user drew, while the
+tool refuses it because a live caller can be told and corrected.
+
+`origin: 'code'` links are read-only to both write tools. A link Studio derived
+from a real `onClick` is a statement about the user's source, and editing it on
+the board would make the two disagree.
+
+Writes push `prototypeChanged` down the live-reload bridge, so a link the agent
+draws appears on the open board without a manual reload.
+
 ## 8. Playback
 
 **The live frame must declare which page it is showing.** `NodeRenderer`

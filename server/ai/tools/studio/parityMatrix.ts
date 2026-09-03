@@ -59,6 +59,9 @@ export const STUDIO_CANVAS_PARITY_MATRIX: readonly ParityRow[] = [
 
   // ── Studio tools: what the filesystem cannot do.
   { action: 'Resize / move a board frame (bulk)', status: { kind: 'tool', toolNames: ['studio_set_frames'] } },
+  { action: 'List the prototype interactions', status: { kind: 'tool', toolNames: ['studio_list_prototype_links'] } },
+  { action: 'Wire a click to another screen', status: { kind: 'tool', toolNames: ['studio_set_prototype_link'] } },
+  { action: 'Remove a prototype interaction', status: { kind: 'tool', toolNames: ['studio_delete_prototype_link'] } },
   { action: 'Install dependencies', status: { kind: 'tool', toolNames: ['studio_install_deps'] } },
   { action: 'Poll an install job', status: { kind: 'tool', toolNames: ['studio_install_status'] } },
   { action: 'Confirm the code just written actually compiles', status: { kind: 'tool', toolNames: ['studio_typecheck'] } },

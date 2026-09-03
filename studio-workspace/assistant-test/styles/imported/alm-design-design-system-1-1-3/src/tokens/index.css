@@ -1,8 +1,0 @@
-@import './colors.css';
-@import './semantic.css';
-@import './typography.css';
-@import './spacing.css';
-@import './rounded.css';
-@import './elevation.css';
-
-body { margin: 0; }
