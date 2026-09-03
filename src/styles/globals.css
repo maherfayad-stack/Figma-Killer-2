@@ -336,6 +336,11 @@
     /* The rubber band mid-drag. Same hue as a committed link, dimmer, because
        it is not a link yet and abandoning the drag must leave nothing behind. */
     --canvas-prototype-link-draft: #7dd3fc;
+    /* The frame under the cursor mid-drag. A wash rather than a ring alone:
+       at board zoom a 2px outline on a 1440px frame is easy to miss, and the
+       whole point of the state is that you can tell WITHOUT aiming carefully
+       that releasing here will land the link on this page. */
+    --canvas-prototype-drop-wash: rgba(56, 189, 248, 0.12);
     --tree-drop-line: #5eead4;
     --tree-drop-line-shadow: rgba(94, 234, 212, 0.18);
     --tree-drop-inside-bg: rgba(94, 234, 212, 0.08);

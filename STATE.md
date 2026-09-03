@@ -12336,7 +12336,7 @@ pins it: `studioLiveReloadFetch.test.ts` (the meta line is applied) and
 
 - **Status:** shipped (Phases 1–7)
 - **Branch:** `feat/prototype-mode`
-- **Updated:** 2026-09-02
+- **Updated:** 2026-09-03
 
 Ask: click interactions between screens, Figma-style connector lines on the
 board, a Design/Prototype switch, a prototype-only inspector, and drag-from-`+`
@@ -12350,7 +12350,22 @@ down; this task recovered it, corrected three things in it, and built all of it.
 write into the user's `.tsx`. "Make a sheet slide up from here" has no single
 honest target in arbitrary React, and Studio refuses writes without one.
 
-**Three durable facts a future agent should not rediscover:**
+**Four durable facts a future agent should not rediscover:**
+
+0. **A parent-document canvas drag CANNOT reach a frame without the pointer
+   relay.** Every board frame is an `<iframe>`, and a left-click pointer event
+   inside one never reaches the parent's `window` — so a drag with `window`
+   listeners goes silent the instant the cursor enters a frame. The `+` handle
+   shipped without `markCanvasPointerRelay`, so a link could never be dropped on
+   a page: the gesture worked over empty board and died on contact with the only
+   thing it was aiming at, which reads as "the drop does nothing" rather than
+   "the drag stopped". Pointer capture alone does NOT survive the crossing for a
+   left-click mouse drag — `useCanvasReorderDrag` says so in a comment and
+   `CommentPin` believed the opposite (it had the same latent bug; fixed here).
+   `canvas-drag-pointer-relay.test.ts` now holds every file under `canvas/` that
+   listens for `pointermove` on `window` to arming the relay. Same lesson as the
+   selector-stability gate: the rule was real, written down nowhere, and got
+   rediscovered by breaking.
 
 1. **`@core/studio-anchor` is now the one way anything on disk points at an
    element.** Studio node ids are `relFile:line:col` and rot on nearly every

@@ -115,3 +115,24 @@
 .handle:hover {
     background: var(--canvas-prototype-link-draft);
 }
+
+/*
+ * The frame under the cursor mid-drag. Board units, like everything else in
+ * this layer, so it lands exactly on the frame at any zoom without measuring
+ * anything: a frame's board rect is store data, not a DOM read.
+ */
+.dropTarget {
+    --drop-x: 0px;
+    --drop-y: 0px;
+    --drop-w: 0px;
+    --drop-h: 0px;
+    position: absolute;
+    left: var(--drop-x);
+    top: var(--drop-y);
+    width: var(--drop-w);
+    height: var(--drop-h);
+    border: 2px solid var(--canvas-prototype-link);
+    border-radius: var(--radius);
+    background: var(--canvas-prototype-drop-wash);
+    pointer-events: none;
+}

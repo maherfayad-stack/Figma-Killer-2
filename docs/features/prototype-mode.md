@@ -164,11 +164,36 @@ own document — there is no document containing both ends); once the connector 
 in the parent, putting the `+` handle inside a frame would mean two coordinate
 systems for one gesture.
 
-**Two architecture gates sit on this file.** `single-drag-mechanism.test.ts`
+### Drawing a link crosses an iframe boundary
+
+Every drop target is an `<iframe>`. A left-click pointer event inside one never
+reaches the parent document's `window`, so a drag whose listeners live there
+goes silent the instant the cursor enters a frame — and here the frames *are*
+the targets, so the gesture dies on contact with the only thing it is aiming at.
+It still works perfectly over empty board, which is why the symptom reads as
+"the drop does nothing" rather than "the drag stopped".
+
+`markCanvasPointerRelay(pointerId)` sets the flag every `IframeFrameSurface`
+reads to forward `pointermove` / `pointerup` / `pointercancel` back out to the
+parent; `clearCanvasPointerRelay()` takes it down when the gesture ends. Pointer
+capture is set too, but it only covers the stretch before the cursor reaches a
+frame — capture alone does not survive the crossing for a left-click mouse drag.
+
+While a drag is over a valid frame the rubber band **snaps** to that frame's
+edge, routed exactly as the committed connector will be, and the frame takes a
+`--canvas-prototype-drop-wash` fill. Overlapping frames resolve topmost-first,
+and because the wash and the commit read the same `frameAtBoardPoint` answer,
+what lights up is always what you get.
+
+**Three architecture gates sit on this file.** `single-drag-mechanism.test.ts`
 bans `@dnd-kit` and the native HTML5 drag transfer API in new files, so the
 connector drag is raw pointer events. `canvas-overlay-pointerdown.test.ts` bans
 `stopPropagation` in `onPointerDown` under `canvas/` — it poisons use-gesture's
 tap state and then eats the next click anywhere on the canvas.
+`canvas-drag-pointer-relay.test.ts` requires the relay above of *every* file
+under `canvas/` that listens for `pointermove` on the parent `window`. It exists
+because this file was the third to need it and the first two only knew by
+accident.
 
 ## 7. Code-derived connectors
 

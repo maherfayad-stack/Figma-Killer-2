@@ -15,8 +15,18 @@
  * two coordinate systems for one gesture — the handle would be measured one way
  * and the rubber band it starts another. One layer, one space.
  *
- * TWO ARCHITECTURE GATES SIT DIRECTLY ON THIS FILE
- * ───────────────────────────────────────────────
+ * EVERY DROP TARGET IS AN IFRAME
+ * ──────────────────────────────
+ * A left-click pointer event inside an iframe never reaches the parent
+ * document's `window`, so a parent-doc drag goes silent the instant the cursor
+ * enters a frame — and here the frames ARE the targets, so the gesture died on
+ * contact with the only thing it was aiming at. It worked perfectly over empty
+ * board, which is what made it read as "the drop does nothing" rather than "the
+ * drag stopped". `markCanvasPointerRelay` is what makes each frame forward
+ * move/up/cancel back out for the duration.
+ *
+ * THREE ARCHITECTURE GATES SIT DIRECTLY ON THIS FILE
+ * ─────────────────────────────────────────────────
  *   - `single-drag-mechanism.test.ts` bans `@dnd-kit` and the native HTML5
  *     drag-and-drop transfer API in new files, so the connector drag is built
  *     from raw pointer events.
@@ -24,6 +34,9 @@
  *     `onPointerDown` anywhere under `canvas/` — it poisons use-gesture's tap
  *     state and then eats the next click ANYWHERE on the canvas.
  *     `preventDefault` only.
+ *   - `canvas-drag-pointer-relay.test.ts` requires the relay above of every
+ *     canvas drag that listens on the parent `window`. It exists because this
+ *     file is the third to need it and the first two only knew by accident.
  */
 import { useContext, useRef, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
 import { useEditorStore } from '@site/store/store'
@@ -32,6 +45,7 @@ import { commitLinkDraft } from '@site/studio/prototypeActions'
 import { visibleLinks } from '@site/store/slices/prototypeSelectors'
 import { resolveLinkSource, type PrototypeLink } from '@core/studio-prototype'
 import { CanvasViewportActionsContext } from '../CanvasContexts'
+import { clearCanvasPointerRelay, markCanvasPointerRelay } from '../canvasPointerRelay'
 import { screenToBoard } from '../CanvasRulers/rulerGeometry'
 import {
   frameAtBoardPoint,
@@ -113,12 +127,21 @@ export function BoardPrototypeLayer() {
     drawn.push({ link, route: routeConnector(source, target) })
   }
 
-  const draftRoute = linkDraft
-    ? routeDraftConnector(
-        { x: linkDraft.fromX, y: linkDraft.fromY, width: 0, height: 0 },
-        { x: linkDraft.toX, y: linkDraft.toY },
-      )
-    : null
+  // The frame the cursor is currently over, if any. Drives both the snap and
+  // the wash below — one source for "this is where it will land".
+  const hoveredRect = linkDraft?.hoverPageId ? (frameByPage.get(linkDraft.hoverPageId) ?? null) : null
+
+  let draftRoute: ConnectorRoute | null = null
+  if (linkDraft) {
+    const from: BoardRect = { x: linkDraft.fromX, y: linkDraft.fromY, width: 0, height: 0 }
+    // Snapped: once the cursor is over a frame the band leaves the cursor and
+    // lands on that frame's edge, routed exactly as `routeConnector` will route
+    // the committed link. A rubber band that keeps chasing the cursor over a
+    // valid target is a drag that never says whether releasing will do anything.
+    draftRoute = hoveredRect
+      ? routeConnector(from, hoveredRect)
+      : routeDraftConnector(from, { x: linkDraft.toX, y: linkDraft.toY })
+  }
 
   const bounds = routesBounds(draftRoute ? [...drawn.map((d) => d.route), draftRoute] : drawn.map((d) => d.route))
 
@@ -151,6 +174,22 @@ export function BoardPrototypeLayer() {
 
           {draftRoute && <path className={styles.draftLine} d={draftRoute.path} />}
         </svg>
+      )}
+
+      {hoveredRect && (
+        <div
+          className={styles.dropTarget}
+          data-testid="prototype-drop-target"
+          aria-hidden="true"
+          style={
+            {
+              '--drop-x': `${hoveredRect.x}px`,
+              '--drop-y': `${hoveredRect.y}px`,
+              '--drop-w': `${hoveredRect.width}px`,
+              '--drop-h': `${hoveredRect.height}px`,
+            } as CSSProperties
+          }
+        />
       )}
 
       <PrototypeHandle localRects={localRects} />
@@ -189,6 +228,20 @@ function PrototypeHandle({ localRects }: { localRects: ReadonlyMap<string, Board
     // `preventDefault` only, never `stopPropagation` — see this module's doc.
     event.preventDefault()
     dragging.current = true
+
+    // Keep the pointer stream alive across the iframe boundary. Capture holds
+    // it while the cursor is still over the parent doc; the relay flag takes
+    // over the moment it enters a frame. Without BOTH, every listener below
+    // stops firing as soon as the cursor reaches a page — see this module's doc.
+    if (typeof event.currentTarget.setPointerCapture === 'function') {
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId)
+      } catch {
+        // Some test envs / older browsers reject capture; the relay alone still
+        // carries the gesture, which is the half that crosses the boundary.
+      }
+    }
+    markCanvasPointerRelay(event.pointerId)
 
     const { canvasRootRef, transformRef } = viewportActions
     const frameRects = frames.map((f) => ({ ...frameBoardRect(f), pageId: f.pageId }))
@@ -231,6 +284,7 @@ function PrototypeHandle({ localRects }: { localRects: ReadonlyMap<string, Board
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', finish)
       window.removeEventListener('pointercancel', onCancel)
+      clearCanvasPointerRelay()
       if (!dragging.current) return
       dragging.current = false
 
@@ -249,6 +303,7 @@ function PrototypeHandle({ localRects }: { localRects: ReadonlyMap<string, Board
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', finish)
       window.removeEventListener('pointercancel', onCancel)
+      clearCanvasPointerRelay()
       dragging.current = false
       cancelLinkDraft()
     }

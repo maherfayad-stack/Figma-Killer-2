@@ -80,6 +80,7 @@ import { commentAvatarUser } from '@site/studio/commentAvatarUser'
 import type { CommentThread } from '@core/studio-comments'
 import { cn } from '@ui/cn'
 import { canvasTransformLayerOf } from '../canvasZoom'
+import { clearCanvasPointerRelay, markCanvasPointerRelay } from '../canvasPointerRelay'
 import { commentAnchorAtPoint } from './commentAnchorAtPoint'
 import styles from './CommentPin.module.css'
 
@@ -141,6 +142,7 @@ export function CommentPin({ thread, active }: CommentPinProps) {
       window.removeEventListener('pointercancel', onCancel)
       window.removeEventListener('keydown', onKeyDown, true)
       endDragRef.current = null
+      clearCanvasPointerRelay()
       try {
         pin.releasePointerCapture(event.pointerId)
       } catch {
@@ -194,13 +196,17 @@ export function CommentPin({ thread, active }: CommentPinProps) {
     window.addEventListener('pointerup', onUp)
     window.addEventListener('pointercancel', onCancel)
     window.addEventListener('keydown', onKeyDown, true)
+    // A pin is dropped ONTO page content, so this drag crosses into an iframe
+    // by design. Capture alone does not survive that crossing for a left-click
+    // mouse drag; the relay flag is what makes the frame forward move/up back
+    // to the listeners above. See `canvas-drag-pointer-relay.test.ts`.
+    markCanvasPointerRelay(event.pointerId)
     endDragRef.current = abort
     try {
-      // Last, and non-fatal. Capture is what keeps `pointermove` coming once
-      // the cursor crosses into a frame's iframe, so losing it degrades the
-      // drag rather than breaking it — the window listeners above still fire
-      // over the parent document. Throwing here after they were attached would
-      // strand them.
+      // Last, and non-fatal: capture keeps the stream alive while the cursor is
+      // still over the parent document, and the relay covers the rest, so
+      // losing it degrades the drag rather than breaking it. Throwing here
+      // after the listeners were attached would strand them.
       pin.setPointerCapture(event.pointerId)
     } catch {
       // InvalidPointerId — the pointer was already released.
