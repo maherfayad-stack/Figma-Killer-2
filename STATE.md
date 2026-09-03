@@ -12,6 +12,58 @@ Entry ids are `<area>-<nn>`. Areas in use: `parser`, `canvas`, `store`, `panel`,
 
 ---
 
+### server-18 — delete a project from the dashboard, recoverably; and the studio API has no auth
+
+**Shipped.** A delete control on every tile in the Overview launcher, behind a
+confirmation. `POST /admin/api/studio/delete` moves the project folder into
+`studio-workspace/.trash/<folder>-<timestamp>/` (`studio/projectTrash.ts`).
+Nothing is erased, ever: `studio-workspace/<project>/` is the user's own
+repository with no other copy, so the one control that could destroy it does not
+get to call `rmSync`. Restoring is `mv` back — which is why the dialog names the
+path rather than promising an undo the dashboard does not have.
+
+`listStudioProjects` skips `.trash`. Without that it lists itself as a project,
+and opening it points Studio at a directory of deleted projects. The skip is
+NOT in `EXCLUDED_WORKSPACE_DIR_NAMES` — that set names directories to ignore
+INSIDE a project, and this one is a sibling OF projects.
+
+Path validation compares the target's resolved PARENT to the projects root.
+That single check rejects `..` traversal, a nested path like `<project>/pages`,
+and the workspace root itself, and cannot be fooled by a sibling root sharing a
+prefix — which a `startsWith` test can.
+
+**Read this before you expose Studio anywhere.** `/admin/api/studio/*` is
+UNAUTHENTICATED. `commentsRoutes.ts` was the only file in the whole surface
+calling `requireAuthenticatedUser`; everything else — list, create, rename,
+scaffold a page, source writeback — answers a request with no session. Verified
+against a running server: `POST /admin/api/studio/rename` with no cookie returns
+404 "Project not found." — a business-logic answer, meaning it reached the
+handler. The admin login screen is a front door on a building with no walls.
+
+The new delete route is gated (`requireCapability(..., 'studio.write')`, verified
+returning 401 unauthenticated) because shipping an ungated delete would have been
+indefensible. It is deliberately the ODD one out, not a pattern the neighbours
+follow — do not read its gate as evidence that the others have one. Gating the
+rest is its own change: every route needs a session-bearing test, and those files
+are being edited by other sessions right now.
+
+`tryServeStudioProjectRoutes` now takes a `runtime` and is called outside the
+`STUDIO_SUB_ROUTERS` loop, next to `tryServeStudioComments` — the loop's
+`(req, url, pathname)` shape carries no `DbClient`, and a capability needs a
+session to hang off.
+
+**Verified.** `projectTrash.test.ts` (11) covers traversal, nesting, the root,
+the trash itself, and same-name double deletes keeping both copies.
+`DashboardPage.test.tsx` (4) covers the UI wiring, including the one that
+matters: pressing Delete opens a question and deletes nothing.
+
+**Not verified in a browser.** Logging into the local admin needs the smoke
+account's password hash reset, which the tool classifier blocks. The delete gate
+was probed live over HTTP; the grid and dialog were exercised in happy-dom, not
+driven by hand.
+
+---
+
 ### canvas-17 — "I can't select anything until I refresh" was the player, armed on a board that cannot show its own off switch
 
 **The report.** Selection dying until a page reload, repeatedly.

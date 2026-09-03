@@ -271,7 +271,6 @@ const STUDIO_SUB_ROUTERS = [
   tryServeStudioIcons,
   tryServeStudioTranslations,
   tryServeStudioI18nSetup,
-  tryServeStudioProjectRoutes,
   tryServeStudioReloadScope,
   tryServeStudioPrototype,
 ] as const
@@ -353,11 +352,17 @@ export async function tryServeStudio(
     if (response) return response
   }
 
-  // Called outside the loop above because it needs the `DbClient` to resolve
-  // the session into a comment's byline — the one studio route that has an
-  // author. See `studio/commentsRoutes.ts`'s module doc.
+  // Called outside the loop above because they need the `DbClient`, which the
+  // plain `(req, url, pathname)` sub-router shape does not carry:
+  //   - comments, to resolve the session into a byline (the one studio route
+  //     that has an author);
+  //   - project routes, because `/admin/api/studio/delete` is capability-gated
+  //     (`studio.write`) and a session is what a capability hangs off.
   const commentsResponse = await tryServeStudioComments(req, runtime, url, pathname)
   if (commentsResponse) return commentsResponse
+
+  const projectResponse = await tryServeStudioProjectRoutes(req, runtime, url, pathname)
+  if (projectResponse) return projectResponse
 
   if (pathname === '/admin/api/studio/load' && req.method === 'GET') {
     try {

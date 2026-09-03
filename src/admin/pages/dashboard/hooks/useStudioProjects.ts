@@ -40,6 +40,11 @@ const CreateProjectResponseSchema = Type.Object(
   { additionalProperties: true },
 )
 
+const DeleteProjectResponseSchema = Type.Object(
+  { projects: Type.Array(StudioProjectSchema) },
+  { additionalProperties: true },
+)
+
 const RenameProjectResponseSchema = Type.Object(
   { project: StudioProjectSchema },
   { additionalProperties: true },
@@ -88,4 +93,25 @@ export function renameStudioProject(dir: string, name: string): Promise<StudioPr
     body: { dir, name },
     schema: RenameProjectResponseSchema,
   }).then((res) => res.project)
+}
+
+/**
+ * Deletes a project and resolves to the refreshed list.
+ *
+ * Nothing is erased — the server moves the project's folder into
+ * `studio-workspace/.trash/` (`server/handlers/studio/projectTrash.ts`),
+ * because a studio project is the user's own repository with no other copy.
+ * The wording in the UI says so; this is the function that makes it true.
+ *
+ * Resolves to the whole remaining list rather than `void` so the launcher can
+ * redraw from the server's answer instead of guessing what is left. Throws
+ * `ApiError` on failure (403 without `studio.write`, 404 for a project that is
+ * already gone) so the caller can surface the message via a toast.
+ */
+export function deleteStudioProject(dir: string): Promise<StudioProject[]> {
+  return apiRequest('/admin/api/studio/delete', {
+    method: 'POST',
+    body: { dir },
+    schema: DeleteProjectResponseSchema,
+  }).then((res) => res.projects)
 }

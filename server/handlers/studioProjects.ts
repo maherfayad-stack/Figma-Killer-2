@@ -17,6 +17,7 @@ import { existsSync, readdirSync, statSync } from 'node:fs'
 import { basename, join, resolve, sep } from 'node:path'
 import { EXCLUDED_WORKSPACE_DIR_NAMES, listWorkspaceFiles } from '@core/page-parser'
 import { mergeStudioMeta, readStudioMeta, writeStudioMeta, type StudioMeta } from './studio/studioMeta'
+import { PROJECTS_TRASH_DIR_NAME } from './studio/projectTrash'
 
 /**
  * Root that holds every studio project. Each immediate subfolder of
@@ -304,7 +305,16 @@ export function projectPreviewLocale(dir: string): string | undefined {
 export function listStudioProjects(projectsRoot: string): StudioProjectSummary[] {
   if (!existsSync(projectsRoot) || !statSync(projectsRoot).isDirectory()) return []
   return readdirSync(projectsRoot, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && !EXCLUDED_WORKSPACE_DIR_NAMES.has(entry.name))
+    .filter(
+      (entry) =>
+        entry.isDirectory() &&
+        // The trash is a sibling OF projects, not one of them. Without this
+        // skip it lists itself as a project named `.trash`, and opening that
+        // would point Studio at a directory whose children are deleted
+        // projects. See `./studio/projectTrash.ts`.
+        entry.name !== PROJECTS_TRASH_DIR_NAME &&
+        !EXCLUDED_WORKSPACE_DIR_NAMES.has(entry.name),
+    )
     .sort((a, b) => a.name.localeCompare(b.name))
     .map((entry) => {
       const dir = join(projectsRoot, entry.name)
