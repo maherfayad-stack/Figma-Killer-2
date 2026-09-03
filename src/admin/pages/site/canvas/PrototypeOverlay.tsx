@@ -1,6 +1,6 @@
 /**
  * PrototypeOverlay — a sheet or a popup presented over the screen that opened
- * it, and the interactions every one of them is expected to have.
+ * it.
  *
  * WHY THIS OWNS ITS OWN MOUNTING
  * ──────────────────────────────
@@ -11,13 +11,18 @@
  * it. That is the same shape the design system's own sheets use, and it is the
  * reason the dismissal is a real gesture rather than a cut.
  *
- * TAP-OUTSIDE IS NOT AN AUTHORED LINK
- * ───────────────────────────────────
- * Every iOS sheet dismisses by tapping outside it. Requiring the user to draw a
- * `close` link on a scrim they cannot even select would make the most ordinary
- * interaction in the whole vocabulary the only one they cannot express, so the
- * scrim dismisses on its own. An authored `close` or `back` still works and
- * goes through exactly the same exit.
+ * THE PAGE IS THE PRESENTATION
+ * ────────────────────────────
+ * This layer supplies motion and a dim, and NOTHING about the overlay's shape.
+ * An overlay page is scaffolded at screen size and draws its own panel, its own
+ * corner radius and its own scrim (`pageKinds.ts`), so a height chosen here
+ * would be a second opinion about a decision the design already made — and the
+ * fixed 40% top inset this used to carry cropped the top off every full-screen
+ * sheet.
+ *
+ * The dim underneath is therefore all this adds. It is what the presenting
+ * screen sits behind while the overlay is still on its way up, and what shows
+ * through wherever an overlay page paints nothing.
  */
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { Page } from '@core/page-tree'
@@ -38,8 +43,6 @@ interface PrototypeOverlayProps {
   enterTransition: PrototypeTransition | null
   /** How the one that just left was presented, from the play stack. */
   leaveTransition: PrototypeTransition | null
-  /** Tap-outside. Omitted outside the player, where nothing dismisses. */
-  onDismiss?: () => void
   renderScreen: (page: Page) => ReactNode
 }
 
@@ -47,7 +50,6 @@ export function PrototypeOverlay({
   page,
   enterTransition,
   leaveTransition,
-  onDismiss,
   renderScreen,
 }: PrototypeOverlayProps) {
   const [presented, setPresented] = useState<Presented | null>(
@@ -120,24 +122,15 @@ export function PrototypeOverlay({
   if (!presented) return null
 
   return (
-    <div
-      className={styles.prototypeOverlay}
-      data-transition={presented.transition ?? 'instant'}
-      data-closing={closing ? 'true' : undefined}
-      data-testid="prototype-overlay"
-    >
-      <div
-        ref={scrimRef}
-        className={styles.prototypeScrim}
-        // Deliberately not a control element: a scrim is a dismissal AREA, and
-        // giving it an accessible name would put "Close" in the tab order of a
-        // prototype whose own content is what should be reachable. The
-        // overlay's content still carries whatever close affordance the design
-        // drew. (Naming the element type in prose here would also trip BTN-3,
-        // which matches source text — see `single-drag-mechanism`'s own note.)
-        role="presentation"
-        onPointerDown={closing ? undefined : onDismiss}
-      />
+    <div className={styles.prototypeOverlay} data-testid="prototype-overlay">
+      {/*
+        Presentation only, and deliberately not interactive: the overlay page
+        covers this completely, so a dismissal handler here could never fire.
+        Closing an overlay is authored on the affordance the design actually
+        drew — its close control gets a `close` link, one click in the
+        Prototype panel.
+      */}
+      <div ref={scrimRef} className={styles.prototypeScrim} role="presentation" />
       <div ref={panelRef} className={styles.prototypeOverlayFrame}>
         {renderScreen(presented.page)}
       </div>

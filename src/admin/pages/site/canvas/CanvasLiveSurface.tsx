@@ -76,8 +76,6 @@ interface CanvasLiveSurfaceProps {
   overlayTransition?: PrototypeTransition | null
   /** How the overlay that just left was presented, for its exit animation. */
   overlayLeaveTransition?: PrototypeTransition | null
-  /** Tap-outside on the overlay's scrim. */
-  onDismissOverlay?: () => void
   /** How the current screen arrived, when no overlay is on top of it. */
   screenTransition?: PrototypeTransition | null
   /**
@@ -107,7 +105,6 @@ export function CanvasLiveSurface({
   overlayPage = null,
   overlayTransition = null,
   overlayLeaveTransition = null,
-  onDismissOverlay,
   screenTransition = null,
   playMode = false,
   activeBreakpoint,
@@ -289,7 +286,6 @@ export function CanvasLiveSurface({
                 page={overlayPage}
                 enterTransition={overlayTransition}
                 leaveTransition={overlayLeaveTransition}
-                onDismiss={onDismissOverlay}
                 renderScreen={renderScreen}
               />
             </div>

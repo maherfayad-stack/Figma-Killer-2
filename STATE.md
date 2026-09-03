@@ -12,6 +12,52 @@ Entry ids are `<area>-<nn>`. Areas in use: `parser`, `canvas`, `store`, `panel`,
 
 ---
 
+### proto-04 — a bottom sheet stopped 40% down the screen, because Studio cropped a page that had already drawn itself
+
+**The ask.** "Full screen bottom sheet shouldn't stop here" — a screen presented
+as a sheet lost its top 40%, and the screen underneath showed through the gap.
+
+**Cause.** `CanvasLiveSurface.module.css` sized the overlay frame with a fixed
+inset per transition: `sheet` was `inset: 40% 0 0 0`, `popup` `inset: 15% 8%`.
+But an overlay page is scaffolded at SCREEN size and draws its own scrim, its
+own panel and the gap above it — `pageKinds.ts` already states this from the
+creation end ("a bottom sheet cropped to its own panel loses the one thing that
+makes it a bottom sheet, which is how much of the screen it leaves showing").
+Studio was deciding the sheet's height a second time, with a number the design
+never agreed to.
+
+**Fix.** The overlay frame is `inset: 0` and crops nothing. Plus
+`.prototypeOverlayFrame iframe { background: transparent }`: a canvas iframe
+carries `--canvas-frame-paper`, and that paper is what a translucent scrim would
+dim, so an overlay page could never show the screen it was presented over.
+
+**The consequence, taken deliberately: tap-outside dismissal is gone.** A
+full-screen overlay covers the scrim under it, so a `pointerdown` handler there
+could never fire — `onDismiss`, `dismissOverlay` and `SCRIM_DISMISS` were
+deleted rather than left as a lie. Dismissal is authored on the close affordance
+the design drew: the Prototype panel offers **"Close overlay"** beside "Go back"
+on the selected element. A keyboard fallback is not available either —
+`IframeFrameSurface` does not forward keydown from LIVE frames (`if (isLive)
+return`), so an Escape pressed after clicking into the player never reaches the
+parent document. Reinstating tap-outside would mean telling a panel from a
+backdrop inside someone else's design system; there is no honest signal for it.
+
+**Confirmed in the browser on `test4`**, not just in gates: SMS presented over
+SignUp fills the device with nothing cropped, and the authored `back` on the
+sheet's own chevron plays `translateY(0) → translateY(100%)` at 320 ms on
+`EASE_IOS` with the scrim fading out, then unmounts. That closes the "exit
+animation unconfirmed" note this branch was carrying.
+
+**For the next browser check:** a synthetic `dispatchEvent(new
+MouseEvent('click'))` on a node inside a canvas iframe does not reliably reach
+the player's click routing; `element.click()` does.
+
+**Not mine, failing at handoff:** `module-size-budgets` on
+`BreakpointSelectionOverlay.tsx` (710 lines) and `StudioTrashList.tsx` — both
+in-flight from parallel sessions.
+
+---
+
 ### struct-04 — deleting a page only ever deleted it from memory, so the next reload parsed it straight back in
 
 **What was wrong.** `deletePage` (`store/slices/site/pageActions.ts`) spliced the

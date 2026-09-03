@@ -79,6 +79,7 @@ export function PrototypePanel() {
             <ElementActions
               onLinkToScreen={() => requestLinkFromNode({ pageId: activePageId, nodeId: selectedNodeId })}
               onGoBack={() => void createTargetlessLink(activePageId, selectedNodeId, 'back')}
+              onCloseOverlay={() => void createTargetlessLink(activePageId, selectedNodeId, 'close')}
             />
           )}
           {links.length === 0 ? (
@@ -109,18 +110,26 @@ export function PrototypePanel() {
 /**
  * What the SELECTED ELEMENT can be given, without hunting for a connector.
  *
- * "Go back" cannot be authored by dragging — there is nothing to drag to. It
- * names the screen you came from, which only exists while the player is
- * running. Before this the only way to express the most common interaction in
- * any prototype was to draw a link at some arbitrary screen and then change its
- * action, leaving a stored destination that lies about what the author meant.
+ * Neither of the last two can be authored by dragging — there is nothing to
+ * drag to. "Go back" names the screen you came from and "Close" the overlay you
+ * are inside, and both only exist while the player is running. Before this the
+ * only way to express the most common interaction in any prototype was to draw
+ * a link at some arbitrary screen and then change its action, leaving a stored
+ * destination that lies about what the author meant.
+ *
+ * "Close" is also the ONLY way to dismiss an overlay. An overlay page covers
+ * the screen it is presented over (it draws its own scrim — see
+ * `PrototypeOverlay`), so there is no outside left to tap: the close control
+ * the design itself drew is what has to carry it.
  */
 function ElementActions({
   onLinkToScreen,
   onGoBack,
+  onCloseOverlay,
 }: {
   onLinkToScreen: () => void
   onGoBack: () => void
+  onCloseOverlay: () => void
 }) {
   return (
     <div className={styles.elementActions}>
@@ -130,6 +139,9 @@ function ElementActions({
       </Button>
       <Button variant="secondary" size="sm" className={styles.elementAction} onClick={onGoBack}>
         Go back
+      </Button>
+      <Button variant="secondary" size="sm" className={styles.elementAction} onClick={onCloseOverlay}>
+        Close overlay
       </Button>
     </div>
   )

@@ -270,10 +270,11 @@ points cannot drift apart. `LinkDraft.mode` is what separates them — `drag`
 commits on pointer-up because the button is held down, `pick` commits on the
 next click because it is not.
 
-**"Go back" cannot be drawn**, because there is nothing to drag to: it names the
-screen you came from, which only exists while the player is running. The panel
-offers it directly on the selected element (`createTargetlessLink`). Before
-this, expressing the most common interaction in any prototype meant drawing a
+**"Go back" and "Close overlay" cannot be drawn**, because there is nothing to
+drag to: one names the screen you came from and the other the overlay you are
+inside, and both exist only while the player is running. The panel offers them
+directly on the selected element (`createTargetlessLink`). Before this,
+expressing the most common interaction in any prototype meant drawing a
 link at an arbitrary screen and then changing its action, which stored a
 destination that lied about the author's intent. A targetless link has no
 connector, so it wears a chip on its own element instead — an interaction you
@@ -328,15 +329,25 @@ the whole time a sheet could not be dismissed.
 **An overlay presents over a screen that stays mounted**, behind a scrim — that
 is the whole difference from a navigation, and it is why closing one returns
 instantly with its scroll position intact. A sheet rises from the bottom edge on
-the design system's curve; a popup is a centred card, so it scales up in place
-and takes a dialog's shorter beat.
+the design system's curve; a popup scales up in place and takes a dialog's
+shorter beat.
 
-**Tapping outside dismisses it**, and that is not an authored link. Every iOS
-sheet dismisses by tapping outside; requiring the user to draw a `close` link on
-a scrim they cannot select would make the most ordinary interaction in the whole
-vocabulary the only one they could not express. `dismissOverlay` goes through
-the same `applyPlayAction` an authored `close` does — a tap outside is not a
-different rule about the stack, only a different way of asking.
+**The overlay page is the whole presentation, and Studio crops nothing.** An
+overlay page is scaffolded at SCREEN size and draws its own panel, its own
+corner radius and its own scrim, because how much of the screen it leaves
+showing is the whole difference between a small sheet and a full one
+(`pageKinds.ts` states the same invariant from the creation end). So the overlay
+frame is `inset: 0` and paints no paper of its own — a canvas iframe's
+`--canvas-frame-paper` would be what the presenting screen had to show through,
+leaving an opaque white sheet where a translucent scrim was drawn. A fixed
+`inset: 40% 0 0 0` here used to decide a sheet's height a second time, and cut
+the top 40% off every full-screen sheet.
+
+**Dismissal is therefore authored.** A full-screen overlay covers the screen it
+was presented over, so there is no outside left to tap — a scrim handler under
+it could never fire. The close control the design already drew is what carries
+it: select it and choose "Close overlay" in the Prototype panel, which stores a
+targetless `close` link. `back` does the same thing when an overlay is showing.
 
 An overlay also has to OUTLIVE the state change that closed it: React removes a
 component the moment its parent stops rendering it, so an overlay wired straight
@@ -349,7 +360,7 @@ because arriving is the moment worth drawing out.
 entrance only replays when the element is remounted, so the screen wrapper was
 keyed on the page id — which took the `<iframe>` down with it, and the portal
 that renders the page into the frame's body did not survive that. The entrance
-is played imperatively instead (`screenEntrance.ts`, Web Animations API), which
+is played imperatively instead (`playbackMotion.ts`, Web Animations API), which
 replays on demand with no remount, and is cheaper besides: an iframe remount
 re-parses and re-injects every stylesheet. That file honours
 `prefers-reduced-motion` itself — the global CSS rule that clamps

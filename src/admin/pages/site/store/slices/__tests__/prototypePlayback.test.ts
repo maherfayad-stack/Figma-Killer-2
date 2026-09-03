@@ -40,28 +40,22 @@ describe('the player, through the store', () => {
     expect(currentScreen(useEditorStore.getState().playState, 'sign-up')).toBe('sms')
   })
 
-  it('presents an overlay and takes it back off', () => {
+  it('presents an overlay, takes it back off, and reports the presentation to play out', () => {
     const store = useEditorStore.getState()
     store.followPrototypeLink(openSheet)
     expect(currentOverlay(useEditorStore.getState().playState)).toBe('filters')
 
-    // An authored close, and the scrim tap, are the same rule asked two ways.
-    store.followPrototypeLink(link({ action: 'close', targetPageId: null, transition: undefined }))
-    expect(currentOverlay(useEditorStore.getState().playState)).toBeNull()
-  })
-
-  it('dismisses on a scrim tap, and reports the presentation to play out', () => {
-    const store = useEditorStore.getState()
-    store.followPrototypeLink(openSheet)
-
-    expect(store.dismissOverlay()).toBe(true)
+    const close = link({ action: 'close', targetPageId: null, transition: undefined })
+    expect(store.followPrototypeLink(close)).toBe(true)
     expect(currentOverlay(useEditorStore.getState().playState)).toBeNull()
     // The exit animation needs to know it was a sheet, not a popup.
     expect(useEditorStore.getState().playLeaveTransition).toBe('sheet')
   })
 
-  it('has nothing to dismiss when no overlay is presented', () => {
-    expect(useEditorStore.getState().dismissOverlay()).toBe(false)
+  it('reports a close with nothing presented as the no-op it is', () => {
+    expect(useEditorStore.getState().followPrototypeLink(
+      link({ action: 'close', targetPageId: null, transition: undefined }),
+    )).toBe(false)
   })
 
   it('goes back through an overlay before it pops the screen under it', () => {

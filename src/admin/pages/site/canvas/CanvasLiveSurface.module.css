@@ -172,24 +172,33 @@
     background: var(--scrim-40);
 }
 
+/*
+ * THE OVERLAY PAGE IS THE WHOLE PRESENTATION, so the frame it renders in is a
+ * screen-sized frame and this crops nothing.
+ *
+ * `pageKinds.ts` already states the invariant this rule has to match: a sheet
+ * or a popup page is scaffolded at SCREEN size, drawing its own scrim, its own
+ * panel and the gap it leaves above that panel, because "how much of the screen
+ * it leaves showing" is the whole difference between a small sheet and a full
+ * one. Anything cropping that page here is deciding a second time — with a
+ * number the design never agreed to.
+ *
+ * That is exactly what a fixed `inset: 40% 0 0 0` did: a full-screen sheet lost
+ * its top 40% and the screen it was presented over showed through the gap.
+ */
 .prototypeOverlayFrame {
     position: absolute;
+    inset: 0;
     overflow: hidden;
 }
 
-/* A popup is centred over the screen and does not fill it. */
-.prototypeOverlay[data-transition='popup'] .prototypeOverlayFrame,
-.prototypeOverlay[data-transition='instant'] .prototypeOverlayFrame {
-    inset: 15% 8%;
-    border-radius: var(--panel-radius);
-}
-
 /*
- * A sheet is anchored to the bottom and deliberately leaves screen showing
- * above it: how much it leaves is the whole difference between a small sheet
- * and a big one, and it is why a sheet page still gets a full-size frame.
+ * The overlay frame paints no paper of its own. A canvas iframe carries
+ * `--canvas-frame-paper` so a short page has something to sit on, but here that
+ * background is what the presenting screen would have to show through: a sheet
+ * that dims the screen behind it would dim this instead, and the screen it was
+ * opened from would be invisible under an opaque sheet of white.
  */
-.prototypeOverlay[data-transition='sheet'] .prototypeOverlayFrame {
-    inset: 40% 0 0 0;
-    border-radius: var(--panel-radius) var(--panel-radius) 0 0;
+.prototypeOverlayFrame iframe {
+    background: transparent;
 }
