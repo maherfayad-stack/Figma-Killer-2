@@ -105,6 +105,7 @@ import type {
   PreviewAxes,
 } from '@core/studio-board'
 import type { SnapGuide } from '@site/canvas/boardSnapping'
+import { applyProjectDefaultViewport } from './projectDefaultViewport'
 import {
   createBoard,
   createBoardsFile,
@@ -678,8 +679,15 @@ export const createBoardSlice: EditorStoreSliceCreator<BoardSlice> = (set, get) 
 
   // ── Per-project frame size default (WS-7.2) ─────────────────────────────
 
-  setFrameDefaults: (defaults) => set({ frameDefaults: defaults, frameDefaultsSettled: true }),
-  clearFrameDefaults: () => set({ frameDefaults: {}, frameDefaultsSettled: false }),
+  // The project's frame size is half of what decides its opening viewport, and
+  // this is one of the two moments that can complete that picture (`loadSite`
+  // is the other) — see `projectDefaultViewport.ts`.
+  setFrameDefaults: (defaults) => set((s) => {
+    s.frameDefaults = defaults
+    s.frameDefaultsSettled = true
+    applyProjectDefaultViewport(s)
+  }),
+  clearFrameDefaults: () => set({ frameDefaults: {}, frameDefaultsSettled: false, defaultViewportApplied: false }),
 
   // ── Bulk frame actions (WS-7.2) — pure transforms live in
   // `boardBulkFrameActions.ts`; the `set`/`get` wiring around them (uniform

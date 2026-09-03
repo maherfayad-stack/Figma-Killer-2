@@ -198,6 +198,27 @@ export function readEditorSelectPreference(id: SelectPreferenceId): string {
   return typeof value === 'string' && value.length > 0 ? value : defaultSelectFor(id)
 }
 
+/**
+ * Whether the user has EXPLICITLY chosen a value for `id`, as opposed to
+ * inheriting the catalog default.
+ *
+ * `readEditorSelectPreference` cannot answer this — it returns the default for
+ * an unset preference, so "desktop because I picked it" and "desktop because
+ * nobody picked anything" come back identical. Callers that let something more
+ * specific decide when the user has not (a project whose screens are all phone-
+ * width choosing its own opening viewport) need the difference.
+ */
+export function hasEditorSelectPreference(id: SelectPreferenceId): boolean {
+  // Parsed against an EMPTY fallback rather than through `readEditorPrefs`,
+  // which fills in `DEFAULT_EDITOR_PREFS` — every catalog default, for every
+  // key. Through that, a store nobody has ever written to answers "yes, the
+  // user chose desktop", which is the exact question this exists to get right.
+  const raw = globalThis.localStorage?.getItem(EDITOR_PREFS_KEY) ?? null
+  const stored = parseJsonWithFallback(raw, EditorPrefsSchema, {}) as Record<string, unknown>
+  const value = stored[id]
+  return typeof value === 'string' && value.length > 0
+}
+
 /** Persist a select / select-dynamic preference and broadcast a change event. */
 export function setEditorSelectPreference(id: SelectPreferenceId, value: string): void {
   const current = readEditorPrefs()

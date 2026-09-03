@@ -332,6 +332,23 @@ instantly with its scroll position intact. A sheet rises from the bottom edge on
 the design system's curve; a popup scales up in place and takes a dialog's
 shorter beat.
 
+**Play is armed by arriving in live view, and disarmed by leaving it.** The
+player is a live-view thing — the board shows every screen at once, where a
+click is a selection. Leaving live with it still armed routed every board click
+to the player: no selection, no ring, and no Play button drawn there to turn it
+off, so only a page reload cleared it. `setCanvasView` owns both halves now (see
+`canvasSlice`), and arriving also turns on the site's runtime scripts, because
+seeing the thing run is what live mode is for.
+
+**Every frame the player mounts hides its scrollbars.** A phone draws none, and
+`DeviceScrollbarInjector` used to be wired through a ref only the editing slot
+published — so the two screen slots and the presented overlay, which is what a
+prototype is actually made of, each kept theirs. It is mounted inside
+`renderScreen` now, reading the frame's own document from
+`CanvasDocumentContext`, so every frame is covered by construction. The frame's
+resize grips stand down while the player is armed for the same reason: a 2px bar
+at the screen edge reads as exactly the scrollbar that was just removed.
+
 **A link on a button used to fire twice.** `NodeRenderer` activates a node on
 `pointerdown` for an authored form control (the press is cancelled before the
 browser can focus or open it) and again on the `click` that ends the same

@@ -45,6 +45,12 @@ interface CanvasSlice {
   /** Active breakpoint ID — determines which viewport frame is "focused" */
   activeBreakpointId: string
   /**
+   * Whether this project load has already had its opening viewport decided —
+   * see `projectDefaultViewport.ts`. Session-only and never persisted: it marks
+   * a load, not a preference.
+   */
+  defaultViewportApplied: boolean
+  /**
    * Active custom-condition id (a `site.conditions` id) the style panel is
    * editing under, or null when editing the viewport-resolved styles (base /
    * breakpoint). Orthogonal to `activeBreakpointId`: a condition can't reframe
@@ -161,6 +167,7 @@ export const createCanvasSlice: EditorStoreSliceCreator<CanvasSlice> = (set, get
   panX: 0,
   panY: 0,
   activeBreakpointId: 'desktop',
+  defaultViewportApplied: false,
   activeConditionId: null,
   activePageId: null,
   previousActivePageId: null,
@@ -183,8 +190,13 @@ export const createCanvasSlice: EditorStoreSliceCreator<CanvasSlice> = (set, get
   }),
 
   // Picking a viewport switches editing back to that viewport's styles, so the
-  // condition overlay is cleared.
-  setActiveBreakpoint: (id) => set({ activeBreakpointId: id, activeConditionId: null }),
+  // condition overlay is cleared. It also settles the opening-viewport question
+  // for this load: the author has answered it themselves.
+  setActiveBreakpoint: (id) => set({
+    activeBreakpointId: id,
+    activeConditionId: null,
+    defaultViewportApplied: true,
+  }),
 
   setActiveConditionId: (id) => set({ activeConditionId: id }),
 
@@ -192,7 +204,28 @@ export const createCanvasSlice: EditorStoreSliceCreator<CanvasSlice> = (set, get
 
   setCanvasMode: (mode) => set({ canvasMode: mode }),
 
-  setCanvasView: (view) => set({ canvasView: view }),
+  /**
+   * Switch canvas view — and arm or disarm the player with it.
+   *
+   * THE PLAYER BELONGS TO LIVE VIEW. Live mode is one real-size frame of the
+   * app, which is where following a prototype link means anything; the board
+   * shows every screen at once, and a click there is a selection. Leaving live
+   * with `playMode` still set was a trap with no way out: `CanvasModeToggle`
+   * only draws the Play button in live view, so the board silently routed every
+   * click to the player — no selection, no ring, no visible control to turn it
+   * off, and only a page reload cleared it.
+   *
+   * Arriving in live view arms BOTH the player and the site's runtime scripts,
+   * because that is what live mode is for: seeing the thing run. Either can be
+   * switched off from the toggle without leaving the view.
+   */
+  setCanvasView: (view) => {
+    if (Object.is(get().canvasView, view)) return
+    set({ canvasView: view, ...(view === 'live' ? { runScripts: true } : {}) })
+    // Through the player's own action rather than a second copy of it here:
+    // disarming also has to reset the screen stack, and that is its job.
+    get().setPlayMode(view === 'live')
+  },
 
   setBoardMode: (mode) => {
     if (Object.is(get().boardMode, mode)) return

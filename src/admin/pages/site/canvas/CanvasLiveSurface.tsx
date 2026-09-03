@@ -29,6 +29,7 @@
  */
 
 import {
+  use,
   useCallback,
   useEffect,
   useRef,
@@ -42,7 +43,12 @@ import type { PrototypeTransition } from '@core/studio-prototype'
 import type { TemplateRenderDataContext } from '@core/templates/dynamicBindings'
 import { CanvasComposedTree } from './CanvasComposedTree'
 import { BreakpointSelectionOverlay } from './BreakpointSelectionOverlay'
-import { CanvasBreakpointContext, CanvasPageContext, CanvasTemplateContext } from './CanvasContexts'
+import {
+  CanvasBreakpointContext,
+  CanvasDocumentContext,
+  CanvasPageContext,
+  CanvasTemplateContext,
+} from './CanvasContexts'
 import { IframeFrameSurface, type IframeFrameSurfaceHandle } from './IframeFrameSurface'
 import { DeviceMockup } from './DeviceMockup'
 import { PrototypeOverlay } from './PrototypeOverlay'
@@ -118,10 +124,6 @@ export function CanvasLiveSurface({
   // it for positioning context, and queries the iframe element for node rects.
   const viewportRef = useRef<HTMLDivElement | null>(null)
   const [iframeEl, setIframeEl] = useState<HTMLIFrameElement | null>(null)
-  // The iframe's own document, tracked so the device chrome can reach inside
-  // it (scrollbar hiding). Published by the handle, so it updates when the
-  // iframe finishes loading rather than staying null from the first render.
-  const [iframeDoc, setIframeDoc] = useState<Document | null>(null)
   // Always `null` here in practice — `CanvasSelectionOverlayInjector` is
   // design-mode only (WS-5.1), so a live-interaction `IframeFrameSurface`
   // never creates one. Tracked (rather than passing a literal `null`) so this
@@ -166,6 +168,14 @@ export function CanvasLiveSurface({
         tree, found nothing, and rendered an empty device. Each board frame
         provides its own id for exactly this reason.
       */}
+      {/*
+        Inside the frame, not beside it. A phone draws no scrollbar, and the
+        surface used to hide them through a ref only the EDITING slot published
+        — so the player's two screen slots and the presented overlay, the three
+        frames a prototype is actually made of, each kept theirs. Mounted here,
+        every frame this surface builds is covered by construction.
+      */}
+      <FrameScrollbars hidden={deviceKind !== null} />
       <CanvasPageContext.Provider value={screenPage.id}>
         <CanvasTemplateContext.Provider value={templateContext}>
           <CanvasBreakpointContext.Provider value={activeBreakpoint?.id ?? ''}>
@@ -219,7 +229,6 @@ export function CanvasLiveSurface({
   const handleIframeRef = (handle: IframeFrameSurfaceHandle | null) => {
     setIframeEl(handle?.iframeElement ?? null)
     setOverlayRoot(handle?.contentOverlayRoot ?? null)
-    setIframeDoc(handle?.contentDocument ?? null)
   }
 
   return (
@@ -229,13 +238,22 @@ export function CanvasLiveSurface({
           className={styles.frame}
           style={{ '--live-width': `${effectiveWidth}px` } as CSSProperties}
         >
-          <LiveResizeHandle
-            side="left"
-            onPointerDown={handlePointerDown('left')}
-            onPointerMove={handlePointerMove}
-            onPointerUp={finishDrag}
-            onPointerCancel={finishDrag}
-          />
+          {/*
+            Editing chrome, so the player stands it down with everything else.
+            The grip is a 2px bar at the screen's edge — while a prototype is
+            running it reads as a scrollbar on a phone that should not have one,
+            and resizing the frame is not a gesture anyone is reaching for
+            mid-flow. It comes back the moment Play is off.
+          */}
+          {!playMode && (
+            <LiveResizeHandle
+              side="left"
+              onPointerDown={handlePointerDown('left')}
+              onPointerMove={handlePointerMove}
+              onPointerUp={finishDrag}
+              onPointerCancel={finishDrag}
+            />
+          )}
 
           <DeviceMockup kind={deviceKind}>
             <div
@@ -291,15 +309,15 @@ export function CanvasLiveSurface({
             </div>
           </DeviceMockup>
 
-          <DeviceScrollbarInjector targetDocument={iframeDoc} hidden={deviceKind !== null} />
-
-          <LiveResizeHandle
-            side="right"
-            onPointerDown={handlePointerDown('right')}
-            onPointerMove={handlePointerMove}
-            onPointerUp={finishDrag}
-            onPointerCancel={finishDrag}
-          />
+          {!playMode && (
+            <LiveResizeHandle
+              side="right"
+              onPointerDown={handlePointerDown('right')}
+              onPointerMove={handlePointerMove}
+              onPointerUp={finishDrag}
+              onPointerCancel={finishDrag}
+            />
+          )}
 
           <div className={styles.widthBadge} aria-hidden="true">
             {Math.round(effectiveWidth)}px
@@ -324,6 +342,17 @@ export function CanvasLiveSurface({
       )}
     </div>
   )
+}
+
+/**
+ * Hides the scrollbars of the frame this renders INSIDE, reading that frame's
+ * own document from the context `IframeFrameSurface` publishes. A component
+ * rather than a prop because the document is only knowable from within the
+ * portal, which is the whole reason the old ref-based wiring reached one frame
+ * and missed three.
+ */
+function FrameScrollbars({ hidden }: { hidden: boolean }) {
+  return <DeviceScrollbarInjector targetDocument={use(CanvasDocumentContext)} hidden={hidden} />
 }
 
 /**

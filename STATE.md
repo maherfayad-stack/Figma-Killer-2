@@ -12,6 +12,58 @@ Entry ids are `<area>-<nn>`. Areas in use: `parser`, `canvas`, `store`, `panel`,
 
 ---
 
+### canvas-17 — "I can't select anything until I refresh" was the player, armed on a board that cannot show its own off switch
+
+**The report.** Selection dying until a page reload, repeatedly.
+
+**The cause.** `playMode` is session state that only LIVE view can see:
+`CanvasModeToggle` draws the Play button when `view === 'live'`, and
+`CanvasRoot`'s `onNodeClick` routes every click to `followPrototypeLinkAt`
+whenever the flag is set — in either view. Arm Play in live, switch back to the
+board, and every click on every frame went to the player: no selection, no ring,
+no control anywhere on screen to undo it. A reload was the only cure, because
+the flag is not persisted.
+
+`setCanvasView` now owns both halves: arriving in live arms the player (and the
+site's runtime scripts — asked for, and what live mode is for), leaving disarms
+it through `setPlayMode(false)` so the reset of the screen stack stays in one
+place. Regression-tested in `slices/__tests__/canvasViewDefaults.test.ts`.
+
+**Opening viewport.** A mobile project opened on `desktop`, because
+`applyDefaultBreakpointPreference` read `defaultBreakpoint` unconditionally and
+its catalog default IS `desktop` — so every load "preferred" desktop whether or
+not anyone had ever opened Settings. The gate is now
+`hasEditorSelectPreference`, which parses the stored prefs against an EMPTY
+fallback rather than `DEFAULT_EDITOR_PREFS`; that is the only way to tell
+"desktop because I picked it" from "desktop because nobody picked anything".
+Unchosen, the project decides: `projectDefaultViewport.ts` reads the project's
+own default frame width through the same `resolveDeviceKind` the device mockup
+uses, so a 393-wide project opens on its phone viewport. Applied once per load,
+from BOTH `loadSite` and `setFrameDefaults` — two independent fetches, either
+can land second.
+
+Watch the cycle: that module must not import `boardSlice` (which imports it), so
+it takes a `frameWidth: number | undefined` rather than a `FrameDefaults`.
+`no-circular-dependencies` catches this within a second of writing it.
+
+**Scrollbars in the player.** `DeviceScrollbarInjector` was mounted beside the
+frames with a document published by a ref only the EDITING slot gets, so the
+player's two screen slots and the presented overlay each kept their scrollbars —
+the three frames a prototype is actually made of. It is mounted inside
+`renderScreen` now, reading `CanvasDocumentContext` from within the portal,
+which is the only place a frame's own document is knowable. The live frame's
+resize grips also stand down while the player is armed: a 2px bar at the screen
+edge is indistinguishable from the scrollbar just removed.
+
+**The user's OTP boxes** (`studio-workspace/test4/pages/SMS.tsx`) were six empty
+`<span>`s. They are real uncontrolled `<input>`s now. UNCONTROLLED is the load-
+bearing word: the canvas parses that file and never executes it, so a
+`value={code[i]}` box would be frozen empty and impossible to type into, while
+an uncontrolled one is filled by the browser itself. Auto-advance is a delegated
+handler on the row, which runs in their real app and not in the canvas — expect
+that question again.
+---
+
 ### canvas-16 — one press was two activations, and a live frame blurred every field you clicked
 
 Two bugs, one owner: `NodeRenderer` decided both, and neither knew what kind of

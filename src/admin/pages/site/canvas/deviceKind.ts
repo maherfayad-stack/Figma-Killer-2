@@ -83,7 +83,16 @@ export function resolveDeviceKind(breakpoint: Breakpoint | null): DeviceKind | n
   // `null` = the icon explicitly means "not a device" (a monitor), which is an
   // answer, not a gap, so it must not fall through.
   if (named !== undefined) return named
-  if (breakpoint.width <= PHONE_MAX_WIDTH) return 'phone'
-  if (breakpoint.width <= TABLET_MAX_WIDTH) return 'tablet'
+  return deviceKindForWidth(breakpoint.width)
+}
+
+/**
+ * The device chrome a bare WIDTH implies — the fallback above, exposed for
+ * callers that have a size and no viewport to go with it (a project's default
+ * frame width, deciding which viewport to open on). Same thresholds, one copy.
+ */
+export function deviceKindForWidth(width: number): DeviceKind | null {
+  if (width <= PHONE_MAX_WIDTH) return 'phone'
+  if (width <= TABLET_MAX_WIDTH) return 'tablet'
   return null
 }

@@ -21,6 +21,7 @@ import { emptyDirtyMarks, type DirtyMarks } from './dirtyTracking'
 import { reconcileFrameworkClasses } from './framework/reconcile'
 import { collectAllNodeIds, historySurvivesReload } from './historyPreservation'
 import { applyNodeIndexPatch, clearNodeIndexes, rebuildNodeIndexes } from './nodeIndex'
+import { applyProjectDefaultViewport } from '../projectDefaultViewport'
 import type { SiteSlice, SiteSliceHelpers } from './types'
 
 type LifecycleActions = Pick<
@@ -165,6 +166,10 @@ export function createLifecycleActions({
           },
           site,
         )
+        // The site brings the viewports; the project's frame defaults say which
+        // one it is shaped for. Either fetch can land second, so both call in —
+        // see `projectDefaultViewport.ts`.
+        applyProjectDefaultViewport(state)
       })
     },
 

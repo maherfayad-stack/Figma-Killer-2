@@ -147,8 +147,20 @@ as **chrome-namespaced** aliases (`--chrome-font-sans`, `--chrome-text-*`,
 | Keyboard | cloned onto parent `document`; `Tab` blocked | not forwarded |
 | Chrome CSS | applied | not applied |
 | Authored form controls | suppressed (a press selects the node) | left alone (focus, type, pick) |
+| Scrollbars | n/a (frames grow to content) | hidden inside a device mockup |
 
 Both modes are **fully editable**. Neither is a read-only preview.
+
+**Arriving in live view arms the player and the site's runtime scripts; leaving
+disarms the player.** Live mode is one real-size frame of the app, which is
+where following a prototype link means anything — the board shows every screen
+at once and a click there is a selection. `playMode` left set when you leave was
+a trap with no way out: `CanvasModeToggle` only draws the Play button in live
+view, so the board silently routed every click to the player, with no ring, no
+selection and no visible control to turn it back off. A page reload was the only
+cure, which is what "I can't select anything until I refresh" was. `runScripts`
+stays where it is on the way out — it is orthogonal by design and applies to
+both views.
 
 The frame publishes its own mode as `CanvasInteractionContext`, which is how
 `NodeRenderer` knows which row of that table it is rendering into. Before it

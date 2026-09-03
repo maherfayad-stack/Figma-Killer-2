@@ -45,6 +45,7 @@ import { SiteValidationError } from '@core/persistence/validate'
 import {
   readAutoSaveDelayMs,
   readAutoSavePreference,
+  hasEditorSelectPreference,
   readEditorSelectPreference,
   subscribeToEditorPrefsChanged,
 } from '@site/preferences/editorPreferences'
@@ -107,10 +108,19 @@ function siteMissesEditorDataDeepLink(site: SiteDocument): boolean {
  * a matching breakpoint id. Falls back silently when the preference points to
  * a breakpoint the current site doesn't have (e.g. user previously edited a
  * site with a custom 'wide' breakpoint, then opened a site without it).
+ *
+ * ONLY when the user actually chose one. The catalog's default for this
+ * preference is `desktop`, so reading it unconditionally meant every load
+ * "preferred" desktop and a mobile project could never open on the phone its
+ * screens are drawn at — the answer would have been the same whether or not
+ * anyone had ever opened Settings. An unchosen preference leaves the decision
+ * to `projectDefaultViewport.ts`, which reads the project's own frame size; an
+ * explicit choice still outranks it.
  */
 function applyDefaultBreakpointPreference(
   breakpoints: ReadonlyArray<{ id: string }>,
 ): void {
+  if (!hasEditorSelectPreference('defaultBreakpoint')) return
   const preferredId = readEditorSelectPreference('defaultBreakpoint')
   if (!breakpoints.some((bp) => bp.id === preferredId)) return
   useEditorStore.getState().setActiveBreakpoint(preferredId)
