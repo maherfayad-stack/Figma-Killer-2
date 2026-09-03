@@ -79,3 +79,37 @@
     text-transform: uppercase;
     letter-spacing: 0.04em;
 }
+
+/*
+  Positioning context for the delete control, which is a sibling of the card
+  rather than a child of it — the card is a <button>, and a button inside a
+  button is invalid HTML.
+*/
+.cell {
+    position: relative;
+}
+
+/*
+  Revealed on hover or focus, so a grid of projects reads as projects rather
+  than as a row of delete buttons. `:focus-within` is what keeps it reachable
+  by keyboard: tabbing to the (still focusable) control makes it visible.
+*/
+.cardDelete {
+    position: absolute;
+    top: var(--space-s);
+    right: var(--space-s);
+    opacity: 0;
+    transition: opacity 120ms ease;
+}
+
+.cell:hover .cardDelete,
+.cell:focus-within .cardDelete {
+    opacity: 1;
+}
+
+/* Nothing to hover with, so it cannot be hover-revealed. */
+@media (hover: none) {
+    .cardDelete {
+        opacity: 1;
+    }
+}

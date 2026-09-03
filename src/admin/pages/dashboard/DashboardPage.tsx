@@ -26,6 +26,7 @@
 import { useState } from 'react'
 import { PlusIcon } from 'pixel-art-icons/icons/plus'
 import { FolderGlyphIcon } from 'pixel-art-icons/icons/folder-glyph'
+import { TrashSolidIcon } from 'pixel-art-icons/icons/trash-solid'
 import { AdminPageLayout } from '@admin/layouts/AdminPageLayout'
 import { useAuthenticatedAdminUser } from '@admin/sessionContext'
 import { useAdminNavigate } from '@admin/lib/useAdminNavigate'
@@ -38,10 +39,12 @@ import { setStudioWorkspaceDir } from '@site/studio/studioWorkspaceDir'
 import type { ProjectPlatform } from '@core/studio-board'
 import {
   createStudioProject,
+  deleteStudioProject,
   useStudioProjects,
   type StudioProject,
 } from './hooks/useStudioProjects'
 import { NewProjectDialog } from './NewProjectDialog'
+import { DeleteProjectDialog } from './DeleteProjectDialog'
 import styles from './DashboardPage.module.css'
 
 function greetingFor(displayName: string | null | undefined): string {
@@ -62,13 +65,19 @@ export function DashboardPage() {
   // Projects created this session, layered over the fetched list so a new
   // project shows up immediately without waiting for a refetch.
   const [created, setCreated] = useState<StudioProject[]>([])
+  // Deleted this session, subtracted from the fetched list for the same reason
+  // `created` is added to it: `useStudioProjects` has no refetch handle, so the
+  // launcher reconciles its own optimistic edits against a list it only reads.
+  const [removed, setRemoved] = useState<string[]>([])
+  // The project awaiting confirmation. `null` closes `DeleteProjectDialog`.
+  const [pendingDelete, setPendingDelete] = useState<StudioProject | null>(null)
 
   const isLoading = projects === null
   // Merge fetched + session-created, de-duped by dir (a refetch may already
   // include a just-created one).
   const merged = Array.from(
     new Map([...(projects ?? []), ...created].map((p) => [p.dir, p])).values(),
-  )
+  ).filter((p) => !removed.includes(p.dir))
   const needle = query.trim().toLowerCase()
   const filtered = needle
     ? merged.filter((p) => p.name.toLowerCase().includes(needle))
@@ -97,6 +106,35 @@ export function DashboardPage() {
       pushToast({
         kind: 'error',
         title: 'Could not create project',
+        body: getErrorMessage(err, 'Unknown project error'),
+      })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleDelete(project: StudioProject) {
+    if (busy) return
+    setBusy(true)
+    try {
+      await deleteStudioProject(project.dir)
+      setRemoved((prev) => [...prev, project.dir])
+      // A project created this session and then deleted has to leave `created`
+      // too, or it would be re-added by the merge on the next render.
+      setCreated((prev) => prev.filter((p) => p.dir !== project.dir))
+      setPendingDelete(null)
+      pushToast({
+        kind: 'success',
+        title: `Moved “${project.name}” to the trash`,
+        body: 'The folder is in studio-workspace/.trash/ — move it back to restore it.',
+      })
+    } catch (err) {
+      console.error('[DashboardPage] delete project failed:', err)
+      // The dialog stays open on failure so the user can see which project the
+      // message is about, and retry without hunting for the tile again.
+      pushToast({
+        kind: 'error',
+        title: 'Could not delete project',
         body: getErrorMessage(err, 'Unknown project error'),
       })
     } finally {
@@ -134,7 +172,7 @@ export function DashboardPage() {
       ) : (
         <ul className={styles.grid}>
           {filtered.map((project) => (
-            <li key={project.dir}>
+            <li key={project.dir} className={styles.cell}>
               <button
                 type="button"
                 className={styles.card}
@@ -148,10 +186,35 @@ export function DashboardPage() {
                   {project.pageCount} page{project.pageCount === 1 ? '' : 's'}
                 </span>
               </button>
+              {/*
+                A SIBLING of the card, never a child: the card is itself a
+                <button> (§8.11 of the button-primitive allowlist), and a
+                button nested in a button is invalid HTML that browsers
+                silently un-nest — the delete control would stop being
+                clickable in its own right.
+              */}
+              <Button
+                variant="ghost"
+                className={styles.cardDelete}
+                aria-label={`Delete ${project.name}`}
+                disabled={busy}
+                onClick={() => setPendingDelete(project)}
+              >
+                <TrashSolidIcon size={12} aria-hidden="true" />
+              </Button>
             </li>
           ))}
         </ul>
       )}
+
+      <DeleteProjectDialog
+        project={pendingDelete}
+        busy={busy}
+        onClose={() => setPendingDelete(null)}
+        onConfirm={() => {
+          if (pendingDelete) void handleDelete(pendingDelete)
+        }}
+      />
 
       <NewProjectDialog
         open={createOpen}

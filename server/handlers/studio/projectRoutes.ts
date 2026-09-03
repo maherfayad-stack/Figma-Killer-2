@@ -19,6 +19,21 @@
  *       stable identifier assigned once at creation). Just rewrites
  *       `.studio/meta.json`.
  *
+ *   POST /admin/api/studio/delete   body: { dir }
+ *       Deletes a project RECOVERABLY — moves its folder into
+ *       `studio-workspace/.trash/` (`./projectTrash.ts`). Returns the
+ *       refreshed `{ projects }` so the launcher can redraw without a
+ *       second round trip.
+ *
+ *       Unlike every other route here, `dir` is REQUIRED and is never fed
+ *       through `resolveProjectDir`: that helper's no-dir fallback resolves
+ *       to the first project on disk, which on a delete would turn a client
+ *       bug into deleting a project nobody named.
+ *
+ *       This is also the one route in this file that checks a capability,
+ *       which is why the sub-router now takes a `runtime`. See the note on
+ *       `tryServeStudioProjectRoutes` below.
+ *
  *   POST /admin/api/studio/page   body: { dir?, name? }
  *       WS-13 step 4 — scaffolds a new page CANONICAL BY CONSTRUCTION, one
  *       starter file, auto-placed on the board's first board at the next
@@ -32,7 +47,10 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { Type } from '@core/utils/typeboxHelpers'
 import { DEFAULT_PAGE_KIND, DEFAULT_PROJECT_PLATFORM, frameDefaultsForPlatform, PageKindSchema } from '@core/studio-board'
+import type { DbClient } from '../../db/client'
+import { requireCapability } from '../../auth/authz'
 import { badRequest, jsonResponse, readValidatedBody } from '../../http'
+import { ProjectTrashError, trashStudioProject } from './projectTrash'
 import { applyProjectSeed } from './projectSeed'
 import { generateStudioProjectGuide } from './projectGuide'
 import { createScaffoldedPage } from './pageScaffold'
@@ -96,8 +114,20 @@ const CreatePageBodySchema = Type.Object({
   boardId: Type.Optional(Type.String()),
 })
 
+/** Body of POST /admin/api/studio/delete. `dir` is required — see the module doc. */
+const DeleteProjectBodySchema = Type.Object({
+  dir: Type.String(),
+})
+
+/**
+ * `runtime` is here for ONE route: `/delete` is capability-gated and needs the
+ * `DbClient` to resolve the session. That is the same reason
+ * `tryServeStudioComments` takes one, and it is why both are called outside
+ * `STUDIO_SUB_ROUTERS`' plain `(req, url, pathname)` loop in `studio.ts`.
+ */
 export async function tryServeStudioProjectRoutes(
   req: Request,
+  runtime: { db: DbClient },
   _url: URL,
   pathname: string,
 ): Promise<Response | null> {
@@ -160,6 +190,32 @@ export async function tryServeStudioProjectRoutes(
       const project: StudioProjectSummary = { dir, name: displayName, pageCount: 1 }
       return jsonResponse({ project })
     } catch (err) {
+      console.error('[studio]', err)
+      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+    }
+  }
+
+  // Delete a project — recoverably. Nothing is erased: the folder is moved
+  // into `studio-workspace/.trash/`, because `studio-workspace/<project>/` is
+  // the user's own repository with no other copy. See `./projectTrash.ts`.
+  if (pathname === '/admin/api/studio/delete' && req.method === 'POST') {
+    // The only capability check in this file. Deleting a project is the most
+    // destructive thing this API can do, so it does not ship ungated — even
+    // though its neighbours here still are, which is a real gap and not a
+    // precedent this route is following.
+    const user = await requireCapability(req, runtime.db, 'studio.write')
+    if (user instanceof Response) return user
+    try {
+      const body = await readValidatedBody(req, DeleteProjectBodySchema)
+      if (!body) return badRequest('invalid delete body')
+      const requested = body.dir.trim()
+      if (!requested) return badRequest('delete requires an explicit project dir')
+      trashStudioProject(projectsRootDir(), requested)
+      return jsonResponse({ projects: listStudioProjects(projectsRootDir()) })
+    } catch (err) {
+      if (err instanceof ProjectTrashError) {
+        return jsonResponse({ error: err.message }, { status: err.reason === 'not-found' ? 404 : 400 })
+      }
       console.error('[studio]', err)
       return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
     }
