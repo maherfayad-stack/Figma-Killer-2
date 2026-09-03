@@ -18,7 +18,7 @@
  * prototype rots without anyone noticing.
  */
 import { useEditorStore } from '@site/store/store'
-import { selectLinkSource, selectSelectedLink, selectVisibleLinks } from '@site/store/slices/prototypeSelectors'
+import { findLink, linkSource, visibleLinks } from '@site/store/slices/prototypeSelectors'
 import { transitionsForAction, type PrototypeAction, type PrototypeLink, type PrototypeTransition } from '@core/studio-prototype'
 import { deleteLink, updateLink } from '@site/studio/prototypeActions'
 import { PanelHeader } from '@admin/shared/PanelHeader'
@@ -48,10 +48,16 @@ const TRANSITION_LABELS: Record<PrototypeTransition, string> = {
 
 export function PrototypePanel() {
   const setBoardMode = useEditorStore((s) => s.setBoardMode)
-  const selected = useEditorStore(selectSelectedLink)
-  const links = useEditorStore(selectVisibleLinks)
+  const authoredLinks = useEditorStore((s) => s.prototype.links)
+  const selectedLinkId = useEditorStore((s) => s.selectedLinkId)
   const pages = useEditorStore((s) => s.site?.pages)
   const setSelectedLink = useEditorStore((s) => s.setSelectedLink)
+
+  // Every store read above is a STABLE reference; the derived values are built
+  // here, never inside `useEditorStore`. A selector that builds a fresh array
+  // or object loops forever — see `prototypeSelectors`' module doc.
+  const links = visibleLinks(authoredLinks, pages)
+  const selected = findLink(links, selectedLinkId)
 
   const pageName = (pageId: string | null): string => {
     if (!pageId) return '—'
@@ -63,7 +69,7 @@ export function PrototypePanel() {
       <PanelHeader title="Prototype" panelId="prototype" onClose={() => setBoardMode('design')} />
 
       {selected ? (
-        <LinkInspector link={selected} pageOptions={pages ?? []} />
+        <LinkInspector link={selected} pageOptions={pages ?? []} live={linkSource(selected, pages).live} />
       ) : (
         <div className={styles.body}>
           {links.length === 0 ? (
@@ -75,7 +81,13 @@ export function PrototypePanel() {
           ) : (
             <ul className={styles.list}>
               {links.map((link) => (
-                <LinkRow key={link.id} link={link} label={pageName(link.targetPageId)} onSelect={setSelectedLink} />
+                <LinkRow
+                  key={link.id}
+                  link={link}
+                  label={pageName(link.targetPageId)}
+                  live={linkSource(link, pages).live}
+                  onSelect={setSelectedLink}
+                />
               ))}
             </ul>
           )}
@@ -88,14 +100,15 @@ export function PrototypePanel() {
 function LinkRow({
   link,
   label,
+  live,
   onSelect,
 }: {
   link: PrototypeLink
   label: string
+  /** Whether the source element still resolves. Computed by the parent. */
+  live: boolean
   onSelect: (id: string) => void
 }) {
-  const source = useEditorStore((s) => selectLinkSource(s, link))
-
   return (
     <li>
       <Button
@@ -103,22 +116,30 @@ function LinkRow({
         size="sm"
         className={styles.row}
         onClick={() => onSelect(link.id)}
-        data-broken={source.live ? undefined : 'true'}
+        data-broken={live ? undefined : 'true'}
       >
         <span className={styles.rowAction}>
           {ACTION_LABELS[link.action]}
           {link.origin === 'code' && <span className={styles.rowFromCode}>from code</span>}
         </span>
         <span className={styles.rowTarget}>{label}</span>
-        {!source.live && <span className={styles.rowBroken}>Source element is gone</span>}
+        {!live && <span className={styles.rowBroken}>Source element is gone</span>}
       </Button>
     </li>
   )
 }
 
-function LinkInspector({ link, pageOptions }: { link: PrototypeLink; pageOptions: ReadonlyArray<{ id: string; title: string }> }) {
+function LinkInspector({
+  link,
+  pageOptions,
+  live,
+}: {
+  link: PrototypeLink
+  pageOptions: ReadonlyArray<{ id: string; title: string }>
+  /** Whether the source element still resolves. Computed by the parent. */
+  live: boolean
+}) {
   const setSelectedLink = useEditorStore((s) => s.setSelectedLink)
-  const source = useEditorStore((s) => selectLinkSource(s, link))
   const transitions = transitionsForAction(link.action)
 
   /**
@@ -169,7 +190,7 @@ function LinkInspector({ link, pageOptions }: { link: PrototypeLink; pageOptions
 
   return (
     <div className={styles.body}>
-      {!source.live && (
+      {!live && (
         <p className={styles.warning} role="status">
           The element this link starts from no longer exists on the page.
         </p>

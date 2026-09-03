@@ -29,7 +29,7 @@ import { useContext, useRef, type CSSProperties, type PointerEvent as ReactPoint
 import { useEditorStore } from '@site/store/store'
 import { selectActiveBoardFrames } from '@site/store/slices/boardSelectors'
 import { commitLinkDraft } from '@site/studio/prototypeActions'
-import { selectVisibleLinks } from '@site/store/slices/prototypeSelectors'
+import { visibleLinks } from '@site/store/slices/prototypeSelectors'
 import { resolveLinkSource, type PrototypeLink } from '@core/studio-prototype'
 import { CanvasViewportActionsContext } from '../CanvasContexts'
 import { screenToBoard } from '../CanvasRulers/rulerGeometry'
@@ -52,19 +52,23 @@ const EMPTY_IDS: string[] = []
 export function BoardPrototypeLayer() {
   const boardMode = useEditorStore((s) => s.boardMode)
   const frames = useEditorStore(selectActiveBoardFrames)
-  // Authored links merged with the ones derived from the user's navigation
-  // code. Only computed in prototype mode — the derivation walks every node of
-  // every loaded page, and design mode never draws a connector.
-  const links = useEditorStore((s) => (s.boardMode === 'prototype' ? selectVisibleLinks(s) : s.prototype.links))
+  const authoredLinks = useEditorStore((s) => s.prototype.links)
   const selectedLinkId = useEditorStore((s) => s.selectedLinkId)
   const setSelectedLink = useEditorStore((s) => s.setSelectedLink)
   const linkDraft = useEditorStore((s) => s.linkDraft)
   const selectedNodeId = useEditorStore((s) => s.selectedNodeId)
 
-  // Both store reads are stable references, so resolution happens here in
-  // render rather than inside a selector that would return a fresh array on
-  // every call and re-render this layer forever.
+  // Both store reads above are STABLE references. Everything derived from them
+  // is computed here in the render body, never inside `useEditorStore` — a
+  // selector that builds a fresh array is an infinite render loop, because
+  // zustand compares with `Object.is` and a new array is never equal to the
+  // last one. See `prototypeSelectors`' module doc.
   const pages = useEditorStore((s) => s.site?.pages)
+
+  // Authored links merged with the ones derived from the user's navigation
+  // code. Only computed in prototype mode — the derivation walks every node of
+  // every loaded page, and design mode never draws a connector.
+  const links = boardMode === 'prototype' ? visibleLinks(authoredLinks, pages) : authoredLinks
 
   // Resolve each link's source element against the live tree BEFORE measuring:
   // a stored node id is a guess about a line number, and the id that actually
