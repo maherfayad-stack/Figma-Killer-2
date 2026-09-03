@@ -41,9 +41,10 @@ import type { PrototypeTransition } from '@core/studio-prototype'
 import type { TemplateRenderDataContext } from '@core/templates/dynamicBindings'
 import { CanvasComposedTree } from './CanvasComposedTree'
 import { BreakpointSelectionOverlay } from './BreakpointSelectionOverlay'
-import { CanvasBreakpointContext, CanvasTemplateContext } from './CanvasContexts'
+import { CanvasBreakpointContext, CanvasPageContext, CanvasTemplateContext } from './CanvasContexts'
 import { IframeFrameSurface, type IframeFrameSurfaceHandle } from './IframeFrameSurface'
 import { DeviceMockup } from './DeviceMockup'
+import { playScreenEntrance } from './screenEntrance'
 import { DeviceScrollbarInjector } from './DeviceScrollbarInjector'
 import { DEVICE_BEZEL_PX, resolveDeviceKind, type DeviceKind } from './deviceKind'
 import type { InjectableRuntimeScript } from './useRuntimeScriptBuild'
@@ -105,6 +106,7 @@ export function CanvasLiveSurface({
   // Outer viewport `<div>` wrapping the iframe — the selection overlay measures
   // it for positioning context, and queries the iframe element for node rects.
   const viewportRef = useRef<HTMLDivElement | null>(null)
+  const screenRef = useRef<HTMLDivElement | null>(null)
   const [iframeEl, setIframeEl] = useState<HTMLIFrameElement | null>(null)
   // The iframe's own document, tracked so the device chrome can reach inside
   // it (scrollbar hiding). Published by the handle, so it updates when the
@@ -130,6 +132,17 @@ export function CanvasLiveSurface({
     observer.observe(node)
     return () => observer.disconnect()
   }, [])
+
+  // Replay the entrance every time the player lands on a different screen.
+  // Keyed on the page id rather than driven by a remount, so the `<iframe>`
+  // below survives navigation — see the `prototypeScreen` comment in the JSX.
+  useEffect(() => {
+    const element = screenRef.current
+    if (!element) return
+    const animation = playScreenEntrance(element, screenTransition)
+    if (!animation) return
+    return () => animation.cancel()
+  }, [page?.id, screenTransition])
 
   const deviceKind = resolveDeviceKind(activeBreakpoint)
   const naturalWidth = computeNaturalWidth(activeBreakpoint, containerWidth, deviceKind)
@@ -199,9 +212,12 @@ export function CanvasLiveSurface({
               className={styles.iframeViewport}
             >
             {/*
-              Keying the screen on its own page id is what makes a `navigate`
-              animate: React remounts the subtree, so the entrance animation
-              re-runs instead of the new page silently swapping in.
+              DELIBERATELY NOT KEYED on the page id. Keying here is the obvious
+              way to replay a CSS entrance animation, and it remounts the
+              `<iframe>` below with it — the portal that renders the page into
+              the frame's body does not survive that, so every navigation
+              landed on an empty device. The entrance is played imperatively
+              instead (`playScreenEntrance`), which needs no remount.
 
               KNOWN LIMIT, accepted for v1: only the INCOMING screen animates.
               A true `push` moves the outgoing screen too, which needs both
@@ -210,7 +226,7 @@ export function CanvasLiveSurface({
               every navigation.
             */}
             <div
-              key={page.id}
+              ref={screenRef}
               className={styles.prototypeScreen}
               data-transition={screenTransition ?? 'instant'}
             >
@@ -221,11 +237,23 @@ export function CanvasLiveSurface({
               width={activeBreakpoint.width}
               runtimeScripts={runtimeScripts}
             >
-              <CanvasTemplateContext.Provider value={templateContext}>
-                <CanvasBreakpointContext.Provider value={activeBreakpoint.id}>
-                  <CanvasComposedTree page={page} />
-                </CanvasBreakpointContext.Provider>
-              </CanvasTemplateContext.Provider>
+              {/*
+                `NodeRenderer` resolves every node id against the page named by
+                `CanvasPageContext`, falling back to the ACTIVE document when
+                there is none — which is why the live frame worked for as long
+                as it only ever showed the page being edited. The player shows
+                a different one, and without this provider every id it asked
+                for was looked up in the wrong tree, found nothing, and
+                rendered an empty device. Each board frame provides its own id
+                for exactly this reason; the live frame has to as well.
+              */}
+              <CanvasPageContext.Provider value={page.id}>
+                <CanvasTemplateContext.Provider value={templateContext}>
+                  <CanvasBreakpointContext.Provider value={activeBreakpoint.id}>
+                    <CanvasComposedTree page={page} />
+                  </CanvasBreakpointContext.Provider>
+                </CanvasTemplateContext.Provider>
+              </CanvasPageContext.Provider>
             </IframeFrameSurface>
             </div>
 
@@ -262,11 +290,15 @@ export function CanvasLiveSurface({
                       width={activeBreakpoint.width}
                       runtimeScripts={runtimeScripts}
                     >
+                      {/* Same reason as the screen above: the overlay is a
+                          third page, never the one being edited. */}
+                      <CanvasPageContext.Provider value={overlayPage.id}>
                       <CanvasTemplateContext.Provider value={templateContext}>
                         <CanvasBreakpointContext.Provider value={activeBreakpoint.id}>
                           <CanvasComposedTree page={overlayPage} />
                         </CanvasBreakpointContext.Provider>
                       </CanvasTemplateContext.Provider>
+                      </CanvasPageContext.Provider>
                     </IframeFrameSurface>
                   </div>
                 </div>

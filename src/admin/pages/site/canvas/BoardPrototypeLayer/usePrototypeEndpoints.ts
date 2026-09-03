@@ -38,18 +38,45 @@ export function frameBoardRect(frame: BoardFrame): BoardRect {
 }
 
 /**
+ * The box an element OCCUPIES ON SCREEN, even when it has none of its own.
+ *
+ * Every node Studio renders for a component out of a design-system package is a
+ * `display: contents` wrapper: the node id has to live on an element, but that
+ * element must not add a box, or it would break the CSS combinators
+ * (`body > nav`, `:nth-child()`) that the published DOM relies on. Such an
+ * element's `getBoundingClientRect()` is `0×0` — correct per spec, and useless
+ * here, because the thing the user is pointing at is plainly visible.
+ *
+ * A `Range` over the element's contents reports what its children actually
+ * occupy, text nodes included, which is the honest answer to "where is this
+ * node". `NodeRenderer` measures inline text the same way.
+ *
+ * `null` only when there genuinely is nothing rendered.
+ */
+export function visualBox(element: Element): DOMRect | null {
+  const own = element.getBoundingClientRect()
+  if (own.width > 0 || own.height > 0) return own
+
+  const range = element.ownerDocument.createRange()
+  range.selectNodeContents(element)
+  const contents = range.getBoundingClientRect()
+  range.detach()
+  return contents.width > 0 || contents.height > 0 ? contents : null
+}
+
+/**
  * A node's rect RELATIVE TO ITS FRAME's top-left, in unscaled CSS pixels.
  *
- * `null` when the node has no element in any canvas frame — a zero-DOM fragment
- * node, a page that is not mounted, or an id that has gone stale. Callers draw
- * nothing rather than guessing at a position.
+ * `null` when the node has no element in any canvas frame — a page that is not
+ * mounted, an id that has gone stale, or a node that renders nothing at all.
+ * Callers draw nothing rather than guessing at a position.
  */
 export function measureNodeFrameRect(nodeId: string): BoardRect | null {
   const rendered = findRenderedCanvasNodes(nodeId)[0]
   if (!rendered) return null
 
-  const box = rendered.element.getBoundingClientRect()
-  if (box.width === 0 && box.height === 0) return null
+  const box = visualBox(rendered.element)
+  if (!box) return null
 
   const view = rendered.element.ownerDocument.defaultView
   // The rect is relative to the iframe's VIEWPORT, so a scrolled frame needs

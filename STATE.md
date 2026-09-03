@@ -12350,9 +12350,28 @@ down; this task recovered it, corrected three things in it, and built all of it.
 write into the user's `.tsx`. "Make a sheet slide up from here" has no single
 honest target in arbitrary React, and Studio refuses writes without one.
 
-**Four durable facts a future agent should not rediscover:**
+**Seven durable facts a future agent should not rediscover:**
 
-0. **A parent-document canvas drag CANNOT reach a frame without the pointer
+1. **A design-system component's node has NO BOX.** Studio renders every
+   component from a component package as a `display: contents` wrapper carrying
+   the node id, so `getBoundingClientRect()` on it is `0×0`. Anything that
+   measures a node must fall back to a `Range` over its contents
+   (`visualBox` in `usePrototypeEndpoints.ts`) or it will conclude that every
+   button in a real project renders nothing. This is what made prototype links
+   refuse to attach to buttons while working fine on `<p>` and `<h1>`.
+
+2. **`NodeRenderer` resolves node ids against `CanvasPageContext`**, falling
+   back to the ACTIVE document when no provider is above it. Any surface that
+   renders a page OTHER than the one being edited must provide it — board
+   frames always did; `CanvasLiveSurface` did not, so prototype playback
+   rendered an empty device on every navigation.
+
+3. **Board units are for positions, never for thickness.** A 2px stroke in
+   board units is 0.5px at 25% zoom. Counter-scale chrome with
+   `--canvas-zoom` (`vector-effect: non-scaling-stroke`, or
+   `calc(<px> / var(--canvas-zoom))`), the way comment pins already did.
+
+4. **A parent-document canvas drag CANNOT reach a frame without the pointer
    relay.** Every board frame is an `<iframe>`, and a left-click pointer event
    inside one never reaches the parent's `window` — so a drag with `window`
    listeners goes silent the instant the cursor enters a frame. The `+` handle
@@ -12367,7 +12386,7 @@ honest target in arbitrary React, and Studio refuses writes without one.
    selector-stability gate: the rule was real, written down nowhere, and got
    rediscovered by breaking.
 
-1. **`@core/studio-anchor` is now the one way anything on disk points at an
+5. **`@core/studio-anchor` is now the one way anything on disk points at an
    element.** Studio node ids are `relFile:line:col` and rot on nearly every
    edit, so a persisted reference stores a `NodeHint` (`nodeId` + `indexPath` +
    `moduleId` + `textSnippet`) and re-resolves it. It was extracted out of
@@ -12376,7 +12395,7 @@ honest target in arbitrary React, and Studio refuses writes without one.
    shared:** a comment refuses on `drifted` (the comment is about the text that
    changed), a prototype link follows it (relabelling a button does not change
    where it goes).
-2. **Everything about connectors is in BOARD space, and that is load-bearing.**
+6. **Everything about connectors is in BOARD space, and that is load-bearing.**
    Board-space endpoints are invariant under pan and zoom, so neither
    re-measures anything. A frame's rect is store data; the only DOM read is
    where an element sits inside its frame, driven by a `ResizeObserver` on the
@@ -12384,7 +12403,7 @@ honest target in arbitrary React, and Studio refuses writes without one.
    unscaled — the transform scales the `<iframe>` element, not the CSS pixels
    inside it. Measuring per RAF instead re-reads two iframes per connector on
    every wheel tick.
-3. **A derived (`origin: 'code'`) link is a claim about the user's source**, so
+7. **A derived (`origin: 'code'`) link is a claim about the user's source**, so
    the parser's navigation reader is bounded and literal-only. A wrong derived
    link tells the user their app does something it does not; a missing one costs
    them drawing a link by hand. Nine of its twelve tests are refusals.

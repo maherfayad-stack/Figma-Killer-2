@@ -101,8 +101,10 @@ describe('routeDraftConnector', () => {
 })
 
 describe('handlePoint', () => {
-  it('sits just outside the element, vertically centred', () => {
-    expect(handlePoint(button)).toEqual({ x: 230, y: 220 })
+  it('sits on the middle of the element\'s right edge', () => {
+    // No board-space gap: the handle's offset from the element is applied in
+    // screen space by the stylesheet, so it survives zoom. See `handlePoint`.
+    expect(handlePoint(button)).toEqual({ x: 220, y: 220 })
   })
 })
 

@@ -1,6 +1,20 @@
 /*
  * Prototype connectors and the `+` handle.
  *
+ * CHROME IS SIZED IN SCREEN PIXELS, POSITIONS IN BOARD UNITS
+ * ─────────────────────────────────────────────────────────
+ * Every coordinate here is a board unit, which is right for POSITIONS — the
+ * ancestor transform then handles pan/zoom for free. It is wrong for THICKNESS.
+ * A 2px stroke in board units is 1px at 50% zoom and 0.5px at 25%, so the
+ * connectors faded out at exactly the zoom levels where a whole flow fits on
+ * screen and you most want to see them. Chrome must not shrink with the
+ * content it annotates.
+ *
+ * `--canvas-zoom` (published on `CanvasTransformLayer` every rAF, the same
+ * variable comment pins counter-scale by) undoes the transform for anything
+ * whose SIZE is chrome: `vector-effect: non-scaling-stroke` for strokes,
+ * `calc(<px> / var(--canvas-zoom))` for everything else.
+ *
  * Absolutely positioned at the transform layer's origin, same as
  * BoardGuidesLayer/BoardNotesLayer, so every coordinate below is a plain board
  * unit and pan/zoom is handled by the ancestor transform for free.
@@ -41,6 +55,8 @@
     stroke: var(--canvas-prototype-link);
     stroke-width: 2;
     stroke-linecap: round;
+    /* Constant 2px on screen at every zoom — see this file's header. */
+    vector-effect: non-scaling-stroke;
 }
 
 /* A link derived from the user's real code is read-only on the board. */
@@ -55,12 +71,31 @@
     fill: none;
     stroke: transparent;
     stroke-width: 14;
+    /* A hit target that shrank with zoom would be 3px wide on a fitted board. */
+    vector-effect: non-scaling-stroke;
     pointer-events: stroke;
     cursor: pointer;
 }
 
+/*
+ * The two ends. Hollow at the source, filled at the target: which end the flow
+ * leaves and which it arrives at has to be readable from the drawing alone,
+ * and a rotated arrowhead cannot be sized in CSS without also knowing which
+ * edge it leaves from.
+ */
 .endpoint {
     fill: var(--canvas-prototype-link);
+    stroke: none;
+    r: calc(4px / var(--canvas-zoom));
+    pointer-events: none;
+}
+
+.origin {
+    fill: var(--bg-surface);
+    stroke: var(--canvas-prototype-link);
+    stroke-width: 2;
+    vector-effect: non-scaling-stroke;
+    r: calc(3px / var(--canvas-zoom));
     pointer-events: none;
 }
 
@@ -69,7 +104,7 @@
 }
 
 .connector[data-selected='true'] .endpoint {
-    r: 7;
+    r: calc(6px / var(--canvas-zoom));
 }
 
 .draftLine {
@@ -78,6 +113,7 @@
     stroke-width: 2;
     stroke-dasharray: 5 5;
     stroke-linecap: round;
+    vector-effect: non-scaling-stroke;
     pointer-events: none;
 }
 
@@ -90,7 +126,10 @@
     --handle-x: 0px;
     --handle-y: 0px;
     position: absolute;
-    left: var(--handle-x);
+    /* `handlePoint` returns the middle of the element's RIGHT EDGE, with no
+       gap: the offset is applied here, in screen pixels, so the handle sits
+       the same distance from its element at every zoom. */
+    left: calc(var(--handle-x) + 14px / var(--canvas-zoom));
     top: var(--handle-y);
     display: flex;
     align-items: center;
@@ -100,8 +139,10 @@
     padding: 0;
     /* Centre on the board point with a transform rather than a negative
        margin: half of 20px is not a spacing-scale value and never will be —
-       it is geometry tied to the handle's own size, not rhythm. */
-    transform: translate(-50%, -50%);
+       it is geometry tied to the handle's own size, not rhythm. The scale
+       undoes the canvas transform so the handle stays a 20px target instead
+       of the 10px speck it was at a typical board zoom. */
+    transform: translate(-50%, -50%) scale(calc(1 / var(--canvas-zoom)));
     border: 1px solid var(--canvas-comment-pin-ring);
     border-radius: 50%;
     background: var(--canvas-prototype-link);
@@ -131,8 +172,8 @@
     top: var(--drop-y);
     width: var(--drop-w);
     height: var(--drop-h);
-    border: 2px solid var(--canvas-prototype-link);
-    border-radius: var(--radius);
+    border: calc(2px / var(--canvas-zoom)) solid var(--canvas-prototype-link);
+    border-radius: calc(var(--radius) / var(--canvas-zoom));
     background: var(--canvas-prototype-drop-wash);
     pointer-events: none;
 }

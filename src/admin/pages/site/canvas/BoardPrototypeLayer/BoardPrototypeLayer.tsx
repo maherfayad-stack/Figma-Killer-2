@@ -168,7 +168,11 @@ export function BoardPrototypeLayer() {
                   underneath is what makes a connector clickable at all. */}
               <path className={styles.hitArea} d={route.path} onPointerDown={() => setSelectedLink(link.id)} />
               <path className={styles.line} d={route.path} data-origin={link.origin} />
-              <circle className={styles.endpoint} cx={route.to.x} cy={route.to.y} r={5} />
+              {/* Radii come from the stylesheet, which divides by the live
+                  canvas zoom — a fixed `r` here would be a board-unit size
+                  and shrink to a speck on a fitted board. */}
+              <circle className={styles.origin} cx={route.from.x} cy={route.from.y} />
+              <circle className={styles.endpoint} cx={route.to.x} cy={route.to.y} />
             </g>
           ))}
 

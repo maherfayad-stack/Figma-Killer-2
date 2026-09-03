@@ -157,11 +157,17 @@ export function routeDraftConnector(source: BoardRect, cursor: BoardPoint): Conn
 }
 
 /**
- * Where the `+` handle sits for a selected element: just outside its right
- * edge, vertically centred. Board space, so it tracks the element for free.
+ * The point the `+` handle attaches to: the middle of the element's right edge.
+ *
+ * The visible gap between the element and the handle is deliberately NOT here.
+ * Board space scales with zoom, so a gap expressed in board units collapses to
+ * nothing when zoomed out and yawns open when zoomed in — while the handle
+ * itself is drawn at a constant SCREEN size (see the module CSS). Chrome
+ * spacing is a screen-space decision, so the stylesheet owns it and this
+ * function answers only "where on the element".
  */
-export function handlePoint(source: BoardRect, gap = 10): BoardPoint {
-  return { x: source.x + source.width + gap, y: source.y + source.height / 2 }
+export function handlePoint(source: BoardRect): BoardPoint {
+  return { x: source.x + source.width, y: source.y + source.height / 2 }
 }
 
 /** Which frame rect contains a board point, innermost-last wins. */

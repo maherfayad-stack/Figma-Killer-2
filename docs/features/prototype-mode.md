@@ -164,6 +164,36 @@ own document — there is no document containing both ends); once the connector 
 in the parent, putting the `+` handle inside a frame would mean two coordinate
 systems for one gesture.
 
+### A node that has no box of its own
+
+Studio renders every component that comes out of a design-system package as a
+`display: contents` wrapper carrying the node id — the id has to live on an
+element, and that element must not add a box or it breaks the CSS combinators
+the published DOM depends on. `getBoundingClientRect()` on such an element is
+`0×0`.
+
+So `measureNodeFrameRect` measures a `Range` over the element's contents
+whenever its own rect is empty (`visualBox`). Without that fallback the
+prototype layer read every design-system component as "renders nothing": no `+`
+handle appeared on it, and a link whose source was one drew no connector. Since
+essentially every *button* in a real project is such a component, the feature
+worked on plain markup and on nothing a user would actually want to make
+clickable.
+
+### Chrome is sized in screen pixels, positions in board units
+
+Board units are right for POSITIONS — the canvas transform then handles pan and
+zoom for free. They are wrong for THICKNESS. A 2px connector stroke in board
+units is 1px at 50% zoom and 0.5px at 25%, so connectors faded out at exactly
+the zoom levels where a whole flow fits on screen. `--canvas-zoom` (published on
+`CanvasTransformLayer` every rAF, the same variable comment pins counter-scale
+by) undoes the transform for anything whose SIZE is chrome: `vector-effect:
+non-scaling-stroke` for strokes, `calc(<px> / var(--canvas-zoom))` for the rest.
+
+`handlePoint` returns the middle of the element's right edge and no gap: how far
+the handle sits from its element is a screen-space decision, so the stylesheet
+owns it.
+
 ### Drawing a link crosses an iframe boundary
 
 Every drop target is an `<iframe>`. A left-click pointer event inside one never
@@ -228,6 +258,26 @@ honest: delete the handler and the connector is gone, with no stale row.
   nothing about how it should look getting there.
 
 ## 8. Playback
+
+**The live frame must declare which page it is showing.** `NodeRenderer`
+resolves every node id against the page named by `CanvasPageContext`, falling
+back to the *active document* when there is none. `CanvasLiveSurface` did not
+provide it, which was invisible for as long as the live frame only ever showed
+the page being edited — and meant that the moment the player navigated to a
+different screen, every id it asked for was looked up in the wrong tree, found
+nothing, and rendered an empty device. Each board frame provides its own page id
+for exactly this reason; the live frame and the overlay now do too.
+
+**The entrance animation must not remount the frame.** A CSS `@keyframes`
+entrance only replays when the element is remounted, so the screen wrapper was
+keyed on the page id — which took the `<iframe>` down with it, and the portal
+that renders the page into the frame's body did not survive that. The entrance
+is played imperatively instead (`screenEntrance.ts`, Web Animations API), which
+replays on demand with no remount, and is cheaper besides: an iframe remount
+re-parses and re-injects every stylesheet. That file honours
+`prefers-reduced-motion` itself — the global CSS rule that clamps
+`animation-duration` cannot see a script-driven animation.
+
 
 The player is a stack machine (`@core/studio-prototype/playback.ts`), pure and
 testable without a store:
