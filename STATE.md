@@ -52,9 +52,20 @@ animation unconfirmed" note this branch was carrying.
 MouseEvent('click'))` on a node inside a canvas iframe does not reliably reach
 the player's click routing; `element.click()` does.
 
-**Not mine, failing at handoff:** `module-size-budgets` on
-`BreakpointSelectionOverlay.tsx` (710 lines) and `StudioTrashList.tsx` — both
-in-flight from parallel sessions.
+**One gate this branch had been failing since `4021e85`:**
+`selectorStability` bans a fresh `[]` fallback within five lines of a
+`useEditorStore` read, and `followPrototypeLinkAt` had
+`state.site?.pages ?? []`. It is a `getState()` call, not a reactive selector,
+so it could not have looped — but the gate is line-based and the honest fix is
+smaller than the exception: no site means no page a click came from, so it
+returns false. **Run `src/__tests__/store` and `src/__tests__/canvas`
+explicitly** — neither is under `src/admin/pages/site`, so a targeted canvas run
+misses both.
+
+**Batch-run isolation flake, confirmed again:** ~10 canvas tests
+(`nodeRendererLockdown`, `boardFrameVariantSelection`, `canvasFrameMounting`, …)
+fail only in a full-suite batch and pass per-file. Check per-file before
+believing one.
 
 ---
 

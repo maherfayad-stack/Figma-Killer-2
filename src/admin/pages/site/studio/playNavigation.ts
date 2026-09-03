@@ -80,7 +80,12 @@ export function resolveSourceIds(links: readonly PrototypeLink[], pages: readonl
  */
 export function followPrototypeLinkAt(nodeId: string, candidatePageIds: readonly (string | null)[]): boolean {
   const state = useEditorStore.getState()
-  const pages = state.site?.pages ?? []
+  // No site loaded means no page a click could have come from, so there is
+  // nothing to follow — and a fresh `[]` fallback beside a store read is what
+  // `selectorStability` bans, for the selector next to this one that would
+  // re-render forever on it.
+  const pages = state.site?.pages
+  if (!pages) return false
   const resolved = resolveSourceIds(state.prototype.links, pages)
 
   let link: PrototypeLink | null = null
