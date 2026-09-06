@@ -137,6 +137,19 @@
  *       unregistered `pkg.*` node — see `NodeRenderer.tsx`'s
  *       `PackageComponentPlaceholder`.
  *
+ *   GET  /admin/api/studio/git/status          → `studio/git.ts`
+ *   GET  /admin/api/studio/git/diff
+ *   GET  /admin/api/studio/git/log
+ *   POST /admin/api/studio/git/{branch,commit,push,init,restore}
+ *       W4-3 — version control as Studio's publish verb. Every canvas edit is
+ *       a working-tree mutation; these routes are how a designer turns a
+ *       session of them into a commit, a branch, and a push. `Bun.spawn` of
+ *       system git with an argv array (never a shell), `cwd` pinned to a
+ *       project that must be contained under `studio-workspace/` AND own its
+ *       `.git` — otherwise git's discovery walk would find Studio's OWN
+ *       repository and commit into it. No force push, no reset, no arbitrary
+ *       argument passthrough: the route surface IS the allowed command set.
+ *
  *   POST /admin/api/studio/extract-component   → `studio/extractComponent.ts`
  *       instance-ui-01 — the detach-refusal escape hatch (`extractComponentCopy`)
  *       as a plain route the admin browser can call: duplicate a component
@@ -242,6 +255,7 @@ import { tryServeStudioProjectRoutes } from './studio/projectRoutes'
 import { tryServeStudioReloadScope } from './studio/reloadScope'
 import { tryServeStudioComments } from './studio/commentsRoutes'
 import { tryServeStudioPrototype } from './studio/prototypeRoutes'
+import { tryServeStudioGit } from './studio/git'
 import type { DbClient } from '../db/client'
 
 /**
@@ -274,6 +288,7 @@ const STUDIO_SUB_ROUTERS = [
   tryServeStudioProjectRoutes,
   tryServeStudioReloadScope,
   tryServeStudioPrototype,
+  tryServeStudioGit,
 ] as const
 
 /** Body of POST /admin/api/studio/save — a batch of typed source writebacks. */
