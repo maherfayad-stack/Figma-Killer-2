@@ -21,6 +21,28 @@ WS-2.3 (package CSS injection) and WS-2.4 (computed-`className` variant probe)
 are the remaining WS-2 items, not yet dispatched. See
 `STUDIO-IMPORT-V2-PLAN.md`'s workstreams 2–9 for other M2 candidates.
 
+### mcp-18 — W9-1(2): `studio_computed_styles` read the frame HOST, so it returned zero rows in every real canvas
+- **Agent:** studio-implementer
+- **Stage:** done (gates green; draft PR open)
+- **Updated:** 2026-09-06
+- **Branch:** `fix/computed-styles-iframe` off fresh `origin/main`.
+- **Goal:** the tool the system prompt calls the arithmetic half of the fidelity loop actually returns rows.
+- **Scope:** `src/admin/pages/site/agent/studioComputedStyles.ts`, `src/admin/pages/site/agent/studioComputedStyles.test.ts`. Nothing else — the schema, the executor dispatch and the MCP bridge definition were already correct.
+- **Done so far:**
+  - The executor now resolves `frame.querySelector('iframe')?.contentDocument` and queries `[data-node-id]` on THAT document, and calls `getComputedStyle` on the iframe's own `defaultView`. It previously ran `frame.querySelectorAll` on the host element and read `frame.ownerDocument` — the host holds no page nodes at all, so every call since the tool shipped returned `nodeCount: 0`.
+  - A missing/unmounted iframe document is now its own honest refusal ("has not finished mounting its document yet … this is NOT an empty page. Take a studio_screenshot to force the frame to settle"), in the same shape as `studio_page_diagnostics`'s `no-frame`/`no-collector` notes.
+  - The test suite mounts a REAL iframe and puts the fixture nodes in its `contentDocument`. One new case (`reads the nodes inside the frame iframe, not the host document`) also plants a decoy `[data-node-id]` in the HOST viewport and asserts it is not reported; a second new case pins the not-ready refusal.
+- **Next step:** none for this entry. W9-1's other three items (reference drift, the bench harness, the docs/hygiene sweep) are separate PRs.
+- **Decisions:**
+  - **`getComputedStyle` comes from the IFRAME's window, not the host's.** Not cosmetic: `resolvedFontFamily` walks the stack against `doc.fonts.check`, and the admin document knows nothing about the fonts the user's project loaded. Reading fonts off the host would report "Open Sans did not load" for a page where it did.
+  - **Kept synchronous.** `waitForAgentRenderFrame` exists and polls, but this tool is dispatched synchronously from `executor.ts:669` and the caller already has `studio_screenshot` as the settle gesture. An honest refusal beats a silent 5s stall.
+  - **No `studio_page_diagnostics`-style shared iframe helper was extracted.** Two call sites, three lines each, and the two want different things out of the iframe (a `contentWindow` for the buffer vs. a `contentDocument` + `defaultView` pair for measurement). `captureAgentRenderSnapshot` in `renderEvidence.ts` is a third, with its own `doc.body` readiness rule.
+- **Landmines:**
+  - **The old test passed because its fixture had no iframe** — it mounted `data-page-id > data-breakpoint-id > [data-node-id]` directly, a shape that exists nowhere in the product. Verified the rewritten suite FAILS against the unfixed executor first: **8 of 9 fail, every failure a zero-row read.** Any future fixture in this folder must mount an iframe; `studioPageDiagnostics.test.ts` was already doing it right and is the model.
+  - `bun test src/__tests__/architecture` is 18 red on this base — all of them the pre-existing `icon-catalog-integrity` cluster (`standing-01`), untouched by this diff.
+- **Verification:** `bunx tsc -b` ✅ exit 0 (`bun run build`'s vite half cannot run in a worktree — `standing-08`). `bun run lint` ✅ clean. `bun test src/admin/pages/site/agent` → 18 pass / 0 fail. `bun test src/__tests__/ai src/__tests__/agent` → 488 pass / 0 fail. `bun test src/__tests__/architecture` → 478 pass / 18 fail, all `icon-catalog-integrity`.
+- **Human action needed:** **dogfood.** Open a project at `/admin/site`, ask the agent to call `studio_computed_styles` on a page with a board frame, and confirm it now reports real `fontSizePx`/`fontFamily` rows instead of `nodeCount: 0`. (Same-origin access is not the risk — `renderEvidence.ts` and `studioPageDiagnostics.ts` already read the same `srcDoc` iframe in production. What only a browser can show is whether the frame is settled at the moment the agent calls, i.e. how often the new not-ready refusal fires in practice.)
+
 ### struct-07 — W6-5: the code the wave train orphaned is deleted
 - **Agent:** studio-implementer
 - **Stage:** done (gates green; PR open as draft)
