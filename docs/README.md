@@ -159,6 +159,7 @@ Three categories, three voices:
 | [features/studio-comments.md](features/studio-comments.md) | Review threads pinned to the board (`.studio/comments.json`): the anchor-confidence model, the op-based HTTP route, and the agent loop that reads, replies and resolves |
 | [features/studio-git.md](features/studio-git.md) | Version control as Studio's publish verb — status/diff/branch/commit/push against the project's own repository, the guard that stops git finding Studio's OWN repo, and the `studio.git.write`-gated agent commit tool |
 | [features/studio-deploy.md](features/studio-deploy.md) | Preview deploys through the project's own Vercel/Netlify CLI — the Tier-2 gate, provider detection, the check → build → deploy job, and why Studio stores no provider token |
+| [features/studio-share.md](features/studio-share.md) | Share links: a read-only board snapshot at a revocable `/share/<token>` URL — the on-disk registry, the snapshot writer over the headless capture, the stripped viewer payload, and why every failure is the same 404 |
 | [features/studio-prototype.md](features/studio-prototype.md) | Prototype mode: authored links (`.studio/prototype.json`) plus the flow map Studio DERIVES from the project's own navigation code — the four AST rules, what they refuse, and the board-space connector layer |
 
 ### Reference

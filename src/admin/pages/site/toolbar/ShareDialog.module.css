@@ -1,0 +1,82 @@
+/* ShareDialog — the share-link manager inside the shared Dialog chrome. */
+
+.intro {
+    margin: 0 0 var(--space-l);
+    font-size: var(--text-s);
+    line-height: 1.6;
+    color: var(--text-muted);
+}
+
+.empty {
+    margin: 0;
+    padding: var(--space-xl);
+    text-align: center;
+    font-size: var(--text-s);
+    color: var(--text-subtle);
+    background: var(--bg-surface-2);
+    border-radius: var(--radius-sm);
+}
+
+.list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: var(--space-2xs);
+}
+
+.row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-m);
+    padding: var(--space-m);
+    background: var(--bg-surface-2);
+    border-radius: var(--radius-sm);
+}
+
+.rowMain {
+    display: grid;
+    gap: var(--space-4xs);
+    min-width: 0;
+    flex: 1;
+}
+
+.boardName {
+    font-size: var(--text-s);
+    font-weight: 600;
+    color: var(--text);
+}
+
+.rowMeta {
+    font-size: var(--text-xs);
+    color: var(--text-subtle);
+}
+
+.url {
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.rowActions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4xs);
+    flex-shrink: 0;
+}
+
+/* Revoked links are kept and collapsed rather than deleted — see
+ * `shareStore.ts` for why an owner should still be able to see them. */
+.revoked {
+    margin-top: var(--space-l);
+}
+
+.revokedSummary {
+    cursor: pointer;
+    font-size: var(--text-xs);
+    color: var(--text-subtle);
+    padding-bottom: var(--space-2xs);
+}

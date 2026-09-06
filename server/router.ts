@@ -3,6 +3,7 @@ import { handleMcpHttp, MCP_ENDPOINT_PATH } from './ai/mcp'
 import { tryServeAgentCapture } from './ai/mcp/capture/captureRoute'
 import { handleCmsRequest } from './handlers/cms'
 import { tryServeStudio } from './handlers/studio'
+import { tryServeSharePublic } from './handlers/studio/sharePublic'
 import { tryServeDesignImport } from './handlers/designImport'
 import type { DbClient } from './db/client'
 import { renderNotFoundResponse, renderPublicResolution } from './publish/publicRouter'
@@ -95,6 +96,15 @@ const routes: readonly RouteHandler[] = [
   tryServeHole,
   tryServeModuleJsAsset,
   tryServePublicForm,
+  // Share links (W5-2) — `/share/<token>` and its two data sub-paths. The
+  // only genuinely PUBLIC Studio surface: no session, no cookie, no database,
+  // authenticated by an unguessable token that is checked against
+  // `.studio/shares.json` on every single request so a revocation is
+  // immediate. Sits here, among the other unauthenticated `/_studio/*`
+  // namespaces, rather than under `/admin` — a viewer must never be sent to
+  // an admin URL — and BEFORE the static-asset and public-page routes, whose
+  // fallbacks would otherwise answer a share URL with something else.
+  tryServeSharePublicRoute,
   tryServeRuntimeAsset,
   tryServeRuntimePackageNamespace,
   tryServeSiteCssNamespace,
@@ -227,6 +237,21 @@ function tryServeHole(req: Request, runtime: ServerRuntime, url: URL, pathname: 
 function tryServeModuleJsAsset(req: Request, runtime: ServerRuntime, url: URL, pathname: string): Promise<Response> | null {
   if (!isModuleJsAssetPath(pathname)) return null
   return handleModuleJsAssetRequest(req, url, { db: runtime.db })
+}
+
+/**
+ * Share links. Owns the whole `/share/` namespace and absorbs it — an unknown
+ * sub-path, a revoked token, or an unsupported method gets the handler's own
+ * 404 page rather than falling through to the published-site resolver. See
+ * `handlers/studio/sharePublic.ts`.
+ */
+function tryServeSharePublicRoute(
+  req: Request,
+  _runtime: ServerRuntime,
+  _url: URL,
+  pathname: string,
+): Promise<Response | null> {
+  return tryServeSharePublic(req, pathname)
 }
 
 function tryServePublicForm(req: Request, runtime: ServerRuntime, url: URL, pathname: string): Promise<Response | null> | null {

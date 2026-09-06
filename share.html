@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Shared board · Studio</title>
+    <!--
+      The public share viewer (W5-2). Vite's THIRD HTML entry, and the only
+      one a logged-out stranger is ever served.
+
+      Deliberately not index.html and not agent-capture.html:
+
+        - No import map. A viewer never loads a plugin bundle.
+        - No admin bootstrap, no loader skeleton, no session probe — there is
+          no session here, and a request that looked for one would 401 in
+          somebody's browser for no reason.
+        - No `class="dark"`. The viewer picks up the visitor's own colour
+          scheme through `color-scheme`, because it is chrome around a set of
+          finished images rather than a rendering of the project.
+
+      Everything this page shows is a PNG plus a rectangle. It contains no
+      editor code at all, which is structural rather than a promise: nothing
+      in this entry's module graph imports the store, the canvas, or the
+      module registry.
+    -->
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/admin/shareViewer/main.tsx"></script>
+  </body>
+</html>
