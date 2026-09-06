@@ -41,6 +41,7 @@ import { dirname, isAbsolute, join } from 'node:path'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { parseJsonWithFallback } from '@core/utils/jsonValidate'
 import { ProjectProfileSchema } from './projectProfileSchema'
+import { LastDeploySchema } from './deploySchema'
 import { RegisteredMcpServerSchema } from '@core/ai'
 
 /**
@@ -202,6 +203,16 @@ export const StudioMetaSchema = Type.Object({
   stories: Type.Optional(StoriesMetaSchema),
   /** WS-12 §5.1 — see `AgentSessionSchema` above. */
   agentSession: Type.Optional(AgentSessionSchema),
+  /**
+   * W5-4 — the most recent preview deploy for this project: which provider,
+   * how it ended, the URL, and the branch/dirty state it shipped. Written by
+   * `deployJobs.ts` at the start and the end of every deploy, and the reason
+   * "last preview: <url>" survives a page reload, a server restart, and
+   * reopening the project a week later.
+   *
+   * Deliberately carries NO log — see `deploySchema.ts`'s `LastDeploySchema`.
+   */
+  lastDeploy: Type.Optional(LastDeploySchema),
   /**
    * Names of servers in the project's own `.mcp.json` that the user has
    * approved for Studio to spawn/connect. An allow-list of NAMES, never the

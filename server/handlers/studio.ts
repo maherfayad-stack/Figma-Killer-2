@@ -149,6 +149,17 @@
  *       `.git` — otherwise git's discovery walk would find Studio's OWN
  *       repository and commit into it. No force push, no reset, no arbitrary
  *       argument passthrough: the route surface IS the allowed command set.
+ *
+ *   GET  /admin/api/studio/deploy/status       → `studio/deploy.ts`
+ *   POST /admin/api/studio/deploy
+ *   GET  /admin/api/studio/deploy/:id
+ *       W5-4 — a PREVIEW deploy through the provider CLI the user already has
+ *       (`vercel`/`netlify`, detected from `vercel.json`/`netlify.toml`).
+ *       Tier 2 (`run-project`) only: it builds the project, which runs the
+ *       project's own code. Studio stores no provider token and passes none to
+ *       the subprocess — the CLI's own login on this machine is the credential.
+ *       No `--prod` argv exists, and no request field reaches an argv.
+ *
  *   GET/POST /admin/api/studio/style-compile-consent → `studio/styleCompileConsent.ts`
  *       WS-2.1's missing front door: whether THIS project needs its own
  *       Sass/PostCSS/Tailwind compiler run (and is still at Tier 0, so it
@@ -263,6 +274,7 @@ import { tryServeStudioReloadScope } from './studio/reloadScope'
 import { tryServeStudioComments } from './studio/commentsRoutes'
 import { tryServeStudioPrototype } from './studio/prototypeRoutes'
 import { tryServeStudioGit } from './studio/git'
+import { tryServeStudioDeploy } from './studio/deploy'
 import { tryServeStudioStories } from './studio/storiesRoutes'
 import { syncStoryBoardFrames } from './studio/boardFrames'
 import type { DbClient } from '../db/client'
@@ -299,6 +311,7 @@ const STUDIO_SUB_ROUTERS = [
   tryServeStudioReloadScope,
   tryServeStudioPrototype,
   tryServeStudioGit,
+  tryServeStudioDeploy,
   tryServeStudioStories,
 ] as const
 

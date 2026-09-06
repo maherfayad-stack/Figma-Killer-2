@@ -9,6 +9,11 @@ unattributed working-tree mutation, and a designer had no way to ship one
 without leaving the tool for a terminal. Git is Studio's publish verb — there
 is no export step, so "publish" means *commit, branch, push*.
 
+The step after it — *see it live* — is
+[`studio-deploy.md`](studio-deploy.md): a preview deploy through the provider
+CLI the user already has, rendered as a Deploy section at the bottom of this
+same panel.
+
 ---
 
 ## The shape

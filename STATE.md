@@ -4819,6 +4819,34 @@ Verified directly against the live iframe DOM (`class` attribute literally empty
 
 ## Recently landed
 
+### server-12 — W5-4: preview deploys through the project's own Vercel/Netlify CLI
+- **Agent:** server-engineer
+- **Stage:** done (static gates green; **needs human dogfood** — a real deploy cannot run in CI)
+- **Updated:** 2026-09-06
+- **Goal:** a designer who has committed a change can get a preview URL without leaving Studio. v1 = build + deploy a preview from the current working tree, show the URL.
+- **Scope:** NEW `server/handlers/studio/{deploy,deployJobs,deployProviders,deployRunner,deploySchema}.ts` · NEW `server/handlers/__tests__/deploy.test.ts` · NEW `src/admin/pages/site/studio/deployRequests.ts` · NEW `src/admin/pages/site/panels/GitPanel/{DeploySection.tsx,DeploySection.module.css,useDeployState.ts}` · NEW `docs/features/studio-deploy.md`. Minimal edits: `server/handlers/studio.ts` (one `STUDIO_SUB_ROUTERS` entry + its doc block), `server/handlers/studio/studioMeta.ts` (one additive optional field), `src/admin/pages/site/panels/GitPanel/GitPanel.tsx` (mount the section), `docs/{README.md,agent-refs/path-index.md,features/studio-git.md}`.
+- **Done so far:**
+  - Routes at `/admin/api/studio/deploy{,/status,/:id}` (`deploy.ts`), **Tier-2 (`run-project`) gated**. `canDeploy: false` is a 200 with the tier + a written explanation, so the panel explains itself instead of rendering a button that refuses.
+  - Pipeline (`deployJobs.ts`): `vercel whoami`/`netlify status` → `vercel build`/`netlify build` → `vercel deploy --prebuilt`/`netlify deploy`. Polled job, phases reported, log capped, same shape as `installDeps.ts`.
+  - `.studio/meta.json` gains ONE additive optional field, `lastDeploy` (`deploySchema.ts`, a pure leaf that exists to break the `studioMeta` ↔ `deployJobs` cycle — same split as `projectProfileSchema.ts`). It is both the "last preview" the panel shows and the restart-durability net: an orphaned `'running'` resolves to `'interrupted'`.
+  - UI is a **Deploy section inside the existing GitPanel**, deliberately not a new rail entry — it is the end of the same sentence, and the branch/dirty state it shows is the one the panel already has. Rendered outside the panel's `isRepo` branch, because a project with no repository can still be deployed.
+  - 25 tests in `server/handlers/__tests__/deploy.test.ts`, all green.
+- **Next step:** human dogfood — open Version control on a Tier-2 project with a real linked Vercel or Netlify project, deploy, and confirm the URL opens. Nothing else is blocked on it.
+- **Decisions:**
+  - **Tier 2, not Tier 1** — a build runs `vite.config.ts` and every plugin it loads, and then PUBLISHES the result; that is strictly more than `componentBundle.ts`'s bounded package build.
+  - **No "promote to Tier 2" button in this section** — that consent lets Studio execute the repository and must not sit one click from "Deploy". The section names the tier and where it is set.
+  - **The provider's CLI builds, not a package-manager script Studio picked** — both CLIs read the project's own framework config to decide what "build" means and where the output goes. `vercel build` + `deploy --prebuilt` is the documented pair; a hand-rolled `npm run build` would force Studio to also guess a publish directory.
+  - **Both providers offered when neither OR both are configured.** Studio never picks between two: deploying to the wrong one publishes under a URL somebody else's DNS points at.
+  - **Dirty trees deploy.** Previews of work in progress are the point; the branch + change count are shown and recorded instead.
+  - **No agent tool**, matching `studio_git_push`'s absence for the same reason.
+- **Landmines:**
+  - **`stdin: 'ignore'` is load-bearing, not incidental.** Both CLIs prompt interactively when a directory is unlinked. With no terminal that prompt would block until the 10-minute timeout; at EOF it fails immediately and prints the real `vercel link` instruction, which is what the panel surfaces. Do not "helpfully" give this subprocess a stdin.
+  - **URL parsing must match by LABEL.** Vercel prints an `Inspect:` dashboard link directly ABOVE `Preview:`, and Netlify prints `Build logs:` above its two URL lines — a positional "first https:// in the output" match returns the build-log page on both, which looks like success and is not the site. The tests use verbatim captured transcripts for exactly this.
+  - The env allowlist **deliberately omits** `VERCEL_TOKEN`/`VERCEL_ORG_ID`/`VERCEL_PROJECT_ID`/`NETLIFY_AUTH_TOKEN`/`NETLIFY_SITE_ID` even though both CLIs honour them. That absence is the feature — Studio holds no provider credential. Do not add them to make a deploy "work in CI".
+  - `assertWithinWorkspace` is reused from `gitRunner.ts` rather than reimplemented; it is a general project-directory containment guard that happened to be needed for git first. Deploy deliberately does NOT require `.git`.
+- **Verification:** `bun test server/handlers/__tests__/deploy.test.ts` → 25 pass. `bun run build` (tsc + vite) clean. `bun run lint` clean. `bun test src/__tests__/architecture` → 509 pass, 1 fail (`icon-catalog-integrity`, pre-existing). `bun test server/handlers` → 1416 pass, 1 fail, which vanishes when the two suspect files run alone — the documented batch-isolation flake, not mine.
+- **Human action needed:** dogfood the Deploy section in Version control on a Tier-2 project with a linked Vercel or Netlify project.
+
 ### perf-03 — five measured hot-path fixes: the `frameId` branch nobody cached, per-frame CSS work that was frame-invariant, a frame memo that stopped one boundary too high, and an autosave that fired mid-word
 - **Agent:** perf-hunter
 - **Stage:** done (static gates green; **needs human dogfood** — see below)
