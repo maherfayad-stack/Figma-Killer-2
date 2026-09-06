@@ -36,8 +36,8 @@ interface DeferredClose {
  * close that anchored dropdowns (Select, combobox) rely on; only the
  * right-click context menus opt into the deferred exit animation.
  *
- * State transitions follow the derive-from-props pattern (the same one
- * `useDelayedUnmount` uses): the reset is detected during render, never via a
+ * State transitions follow the derive-from-props pattern: the reset is
+ * detected during render, never via a
  * setState-in-effect, and the deferred-unmount timer lives in an effect keyed
  * on `closing` so its cleanup fires the moment a reopen flips `closing` back
  * to false.

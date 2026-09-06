@@ -32,14 +32,13 @@
  *   - **Multi-fetch orchestrators / optimistic collections** — several
  *     independent loads with granular per-fetch flags, or a fetched list that
  *     is then locally mutated (optimistic add/edit/delete). Examples:
- *     `useContentWorkspace`, `useDataWorkspace`, `useMediaWorkspace`,
- *     `usePluginsWorkspace`, `useUsersPageData`, and the media-list pickers
- *     that own a mutable list via `useStandaloneMediaEditor`
- *     (`MediaLibraryControl`, `useContentMediaPicker`, `MediaWidget`).
+ *     `useMediaWorkspace`, `usePluginsWorkspace`, `useUsersPageData`, and the
+ *     media-list pickers that own a mutable list via
+ *     `useStandaloneMediaEditor` (`MediaLibraryControl`).
  *   - **Module-level cached loads** that dedupe across mounts and publish into
- *     a store or shared cache (`useSiteSummary`, `BindingPickerPopover`).
+ *     a store or shared cache (`useSiteSummary`).
  *   - **Event-driven / subscription / activation effects** that aren't a GET
- *     (`useInstalledEditorPlugins`, `AdminSectionNavigation`, `SpotlightRoot`).
+ *     (`useInstalledEditorPlugins`, `SpotlightRoot`).
  *   - **Non-fetch effects** — rAF loops (`BreakpointSelectionOverlay`),
  *     debounced builders (`useRuntimeScriptBuild`), dynamic module imports
  *     (`PluginPageRenderer`), boot orchestration with `flushSync` paint timing

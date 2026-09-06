@@ -14,12 +14,13 @@
  *                                  while the home page is active.
  *   /admin/site?page=<slug>      → opens the page with that slug.
  *
- * Incoming deep links from the Data workspace's "Open in Site editor" button
- * (see `handleOpenInSiteEditor` in `DataPage.tsx`) are also consumed once:
+ * Two older deep-link forms are still consumed once on load, so links saved
+ * before the Data workspace was deleted keep resolving:
  *   /admin/site?table=pages&row=<rowId>       → openPageInCanvas(rowId)
  *   /admin/site?table=components&row=<rowId>  → setActiveDocument({ kind: 'visualComponent', vcId: rowId })
- * After consuming them, the WRITE sync normalizes the URL to the `?page=` form
- * (or strips it for the home page / VC mode) by clearing `table`/`row`.
+ * Nothing in the tree writes them any more. After consuming them, the WRITE
+ * sync normalizes the URL to the `?page=` form (or strips it for the home
+ * page / VC mode) by clearing `table`/`row`.
  *
  * Shared URL plumbing (replaceState semantics, router-free) lives in
  * `@admin/lib/urlState`; this hook only maps editor-store state onto it.

@@ -161,7 +161,7 @@ function renderEditorLayout({
     loadSiteWithSelectedHeading()
   }
   // AdminCanvasLayout renders the Toolbar (AccountMenuButton -> useStepUp +
-  // useAuthenticatedAdminUser) and AdminSectionNavigation (router hooks).
+  // useAuthenticatedAdminUser), which needs a session.
   // Each test that previously rendered without a session is updated to pass
   // a sensible default user; tests that opt in to a custom user keep that.
   // The default mirrors an Editor — all rail capabilities present — so the
@@ -462,6 +462,7 @@ describe('AdminCanvasLayout — permanent panel rail', () => {
       'panel-rail-selectors',
       'panel-rail-inspect',
       'panel-rail-content',
+      'panel-rail-git',
     ])
     expect(primaryButtons.map((button) => button.getAttribute('data-icon'))).toEqual([
       'database-solid',
@@ -469,6 +470,7 @@ describe('AdminCanvasLayout — permanent panel rail', () => {
       'paint-bucket',
       'eye-solid',
       'globe-solid',
+      'cloud-upload',
     ])
     // Rail colour is semantic, not a hash: each button's accent names the JOB
     // it does (`RailAccentGroup` in `@ui/railAccent`). Framework and Classes
@@ -481,6 +483,7 @@ describe('AdminCanvasLayout — permanent panel rail', () => {
       'mint', // selectors — style
       'sky', //  inspect   — inspect
       'lilac', // content  — content
+      'gold', // git       — navigate (project-level, like the explorer)
     ])
     // Comments joins the AI assistant in the global group rather than the
     // primary one: both open a surface that is NOT the left sidebar (comments

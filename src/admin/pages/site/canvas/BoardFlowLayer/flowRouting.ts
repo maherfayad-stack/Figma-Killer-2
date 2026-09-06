@@ -52,7 +52,7 @@ export interface FlowLine {
 }
 
 /** A frame's board box, with `width`/`height` defaulted the same way the renderer defaults them. */
-export function frameRect(frame: BoardFrame): FlowRect {
+function frameRect(frame: BoardFrame): FlowRect {
   return {
     x: frame.x,
     y: frame.y,

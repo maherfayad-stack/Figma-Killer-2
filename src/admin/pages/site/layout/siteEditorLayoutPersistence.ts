@@ -90,7 +90,7 @@ function deriveSiteActiveLeftPanel(selection: SiteLayoutSelection): string | nul
   return null
 }
 
-export function siteLayoutFromSelection(
+function siteLayoutFromSelection(
   selection: SiteLayoutSelection,
 ): StoredWorkspaceLayout {
   const [
@@ -110,7 +110,6 @@ export function siteLayoutFromSelection(
   return {
     leftWidth: clampSidebarWidth(leftSidebarWidth),
     rightWidth: propertiesWidth,
-    leftOpen: deriveSiteActiveLeftPanel(selection) !== null,
     rightOpen: propertiesOpen,
     activeLeftPanel: deriveSiteActiveLeftPanel(selection),
     activeEditorFileId,

@@ -5,9 +5,10 @@
  * can reference the type without creating cycles through layout modules.
  */
 /**
- * `'dashboard'` is the admin home — the first page every user lands on. A
- * configurable widget grid (visitors, pages, posts, storage, plugins, …)
- * plus a setup-onboarding panel. Gated by `dashboard.read`.
+ * `'dashboard'` is the Studio launcher ("Overview") — the first page every
+ * user lands on. A grid of the React projects in `studio-workspace/`, plus
+ * the "New project" / "Import project" entry points. Gated by
+ * `dashboard.read`.
  *
  * `'account'` is the user's own settings page (profile, devices, security,
  * activity). Self-targeted — no capability gate; every authenticated user

@@ -241,8 +241,10 @@ export type DataField = Static<typeof DataFieldSchema>
  * runtime code (architecture tests, pickers, compat maps) can iterate over
  * all types without relying on TypeScript reflection.
  *
- * Keep in sync with the `DataFieldSchema` union above — the architecture
- * test `binding-compatibility-coverage.test.ts` will catch any drift.
+ * Keep in sync with the `DataFieldSchema` union above. There is no gate test
+ * enforcing that today — the one that used to live under
+ * `src/__tests__/architecture/` went with the Data workspace — so a new field
+ * type must be added in both places by hand.
  */
 export const DATA_FIELD_TYPES = [
   'text',

@@ -9,67 +9,9 @@
  */
 import { Type } from '@core/utils/typeboxHelpers'
 
-// ─── Media provider ───────────────────────────────────────────────────────────
-// GET /admin/api/cms/media?query=<q>&limit=<n>
-
-const MediaAssetSummarySchema = Type.Object(
-  {
-    id: Type.String(),
-    filename: Type.String(),
-    mimeType: Type.String(),
-    sizeBytes: Type.Number(),
-    publicPath: Type.String(),
-    title: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-    deletedAt: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-  },
-  { additionalProperties: true },
-)
-
-export const MediaListResponseSchema = Type.Object(
-  { assets: Type.Array(MediaAssetSummarySchema) },
-  { additionalProperties: true },
-)
-
-// ─── Data tables provider ─────────────────────────────────────────────────────
-// GET /admin/api/cms/data/tables?query=<q>&limit=<n>
-
-const DataTableSummarySchema = Type.Object(
-  {
-    id: Type.String(),
-    name: Type.String(),
-    slug: Type.String(),
-    kind: Type.Optional(Type.String()),
-    singularLabel: Type.Optional(Type.String()),
-    pluralLabel: Type.Optional(Type.String()),
-  },
-  { additionalProperties: true },
-)
-
-export const DataTablesListResponseSchema = Type.Object(
-  { tables: Type.Array(DataTableSummarySchema) },
-  { additionalProperties: true },
-)
-
-// ─── Content (data row) provider ─────────────────────────────────────────────
-// GET /admin/api/cms/data/search?query=<q>&limit=<n>
-
-const DataRowSearchEntrySchema = Type.Object(
-  {
-    id: Type.String(),
-    tableId: Type.String(),
-    tableSlug: Type.String(),
-    tableName: Type.String(),
-    slug: Type.String(),
-    status: Type.String(),
-    updatedAt: Type.String(),
-  },
-  { additionalProperties: true },
-)
-
-export const DataSearchResponseSchema = Type.Object(
-  { entries: Type.Array(DataRowSearchEntrySchema) },
-  { additionalProperties: true },
-)
+// The media, data-table and data-row providers were deleted with the Content /
+// Data / Media workspaces; their schemas went with them. What is left is the
+// one provider in this file's remaining company that still fetches.
 
 // ─── Plugins / plugin pages provider ─────────────────────────────────────────
 // GET /admin/api/cms/plugins

@@ -10,9 +10,11 @@ import {
 /**
  * Subscribe the Site editor store to Site-workspace layout persistence.
  *
- * Non-site canvas workspaces use `@admin/state/useWorkspaceLayoutPersistence`
- * so Content/Data/Media do not import the Site editor store for generic
- * sidebar chrome.
+ * This is the only layout-persistence hook left: the Content / Data / Media
+ * workspaces it used to have a sibling for were deleted, and with them
+ * `useWorkspaceLayoutPersistence`. What remains of the old shared store is
+ * `@admin/state/workspaceLayout`, now just the in-memory left-sidebar width
+ * that `MediaSidebar` reads inside the media picker.
  */
 export function useEditorLayoutPersistence(): void {
   useEffect(() => {

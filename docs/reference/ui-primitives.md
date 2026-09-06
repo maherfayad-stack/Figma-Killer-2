@@ -66,7 +66,6 @@ Every interactive control in `src/admin/` goes through one of these. Bare `<butt
 | `Tooltip`          | Hover hint — replaces `title=`; `CursorTooltip` anchors to a pointer | `content`, `side: 'top' \| 'bottom' \| 'left' \| 'right' \| 'auto'`, `children`; `CursorTooltip` takes `point` |
 | `Toast`            | Transient confirmation / error notification                          | Used via `pushToast({ kind, title, body, location? })`     |
 | `ContextMenu`      | Right-click and overflow (`…`) menus; searchable and nested menus use companion exports | `ariaLabel`, `onClose`, `children`; `x`/`y` (point) or `anchorRef` (anchor); `ContextMenuItem`, `ContextMenuSubmenu`, `MenuSearchHeader` |
-| `FloatingActionBar`| Multi-select bulk-action bar                                         | `selection`, `actions`                                     |
 | `ErrorBoundary`    | Component-level error containment                                    | `location: string`, `resetKeys?`, `children`               |
 
 ### Data / display
@@ -78,7 +77,6 @@ Every interactive control in `src/admin/` goes through one of these. Bare `<butt
 | `Heading`                  | Semantic h1-h6 using editor typography tokens                | `level`, `children`                                      |
 | `Text`                     | Body, muted, strong, or monospace text in host/plugin UI     | `variant`, `size`, `children`                            |
 | `Code`                     | Preformatted snippets or logs                                | `children`                                               |
-| `Image`                    | Image with built-in blurhash fallback                        | `src`, `blurhash`, `alt`, `width`, `height`              |
 | `CanvasModulePlaceholder`  | Diagonal-stripe placeholder for empty modules on the canvas  | `label`                                                  |
 | `Kbd`                      | Single keyboard keycap. Use anywhere a key name appears as a hint. | `children`, `className`                             |
 | `ShortcutKeys`             | Full shortcut sequence ("⌘K", "Ctrl+Shift+P") — splits the label into individual `Kbd` spans. | `label`, `aria-hidden`, `className` |
