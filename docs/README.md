@@ -190,6 +190,7 @@ Three categories, three voices:
 |-------------------------------------|-------------------------------------------------------------------|
 | [deployment/](deployment/)          | Platform deploys, VPS/Docker installs, TLS, backup, releases      |
 | [e2e/](e2e/)                        | Browser E2E protocols: agent-run audits and Playwright automation docs |
+| [state-archive/](state-archive/)    | Overflow from `STATE.md`, verbatim, one file per quarter — the historical handoff record |
 
 ---
 
