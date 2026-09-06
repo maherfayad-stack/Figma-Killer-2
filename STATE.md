@@ -6,8 +6,42 @@ before stopping.** Format and rules: [`docs/agent-refs/handoff-protocol.md`](doc
 Entry ids are `<area>-<nn>`. Areas in use: `parser`, `canvas`, `store`, `panel`,
 `server`, `mcp`, `perf`, `sec`, `test`, `docs`, `meta`, `style`, `asset`, `struct`.
 
+---
 
+### struct-05 — two modules crossed the 700-line ceiling on `main`; both split, neither grandfathered
 
+- **Agent:** studio-implementer
+- **Stage:** done
+- **Updated:** 2026-09-06
+- **Branch:** `refactor/split-oversize-modules` off `main`.
+
+Recent merges pushed `IframeFrameSurface.tsx` (707) and `server/ai/drivers/claudeCli.ts`
+(716) past `module-size-budgets`' 700-line CEILING, failing the gate on `main`.
+Fixed the way every prior crossing in this file was: **extraction, not a
+`GRANDFATHERED` entry** — the ledger gained nothing and should stay as it is.
+`IframeFrameSurface.tsx` (707 → 444) finally performed the split its own
+graduation note had named and deferred: the cross-iframe wheel + pointer +
+keyboard forwarding — every event that fires inside the frame but belongs to the
+editor's parent-document layers (canvas pan/zoom, the cross-frame drag relay, the
+global shortcut listeners) — moved verbatim to `canvas/useIframeEventForwarding.ts`,
+alongside its sibling `useIframeCursorBridge`/`useIframeFrameAutoHeight` hooks;
+the hook is called at the exact position the two effects occupied, so effect
+order, injector mount order, and dep arrays are unchanged (the extracted deps
+gained only `iframeRef`, a stable ref object, because it is now a parameter and
+`exhaustive-deps` demands it). The component is left owning the iframe document
+alone. `claudeCli.ts` (716 → 655) gave up the one part of itself that has nothing
+to do with running a turn: the static `FALLBACK_MODELS` catalogue plus
+`claudeCliCapabilities()` — pure data and one pure function, changing when
+Anthropic ships a model alias, not when the turn machinery changes — now
+`drivers/claudeCliModels.ts`, exporting `CLAUDE_CLI_FALLBACK_MODELS`. This was
+deliberately kept clear of the streaming body, the argv assembly, and the session
+flags so the **planned warm-process rework** of `streamClaudeCli` lands on an
+unmoved file with ~45 lines of headroom. Pure moves throughout: no re-export
+shims, no behaviour change, no runtime logic touched. Verified: the gate passes,
+`bun run build` and `bun run lint` clean, `src/admin/pages/site/canvas` 90/90,
+and `claudeCli.test.ts` is **bit-identical to its `origin/main` baseline (24 pass
+/ 53 fail)** — that cluster and `icon-catalog-integrity` were already failing
+before this branch and are not this change's.
 
 
 ---
