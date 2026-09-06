@@ -3,7 +3,7 @@
  *
  * One of the two top-level admin layouts in `src/admin/layouts/`:
  *   - AdminCanvasLayout — used by the Site editor. Carries the floating
- *     editor panels, the page canvas, and the SiteExplorer DnD context.
+ *     editor panels, the page canvas, and the layer-tree DnD context.
  *   - AdminPageLayout (this file) — used by Plugins, Users, Account, and
  *     plugin admin pages. Strips the canvas / sidebar / DnD chrome and
  *     renders a simple centered page body with a unified header (title,

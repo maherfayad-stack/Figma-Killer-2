@@ -77,7 +77,7 @@ interface PanelProps {
  * children — the shell owns chrome (aside + header + scrollable body).
  *
  * Forwards a ref to the outer `<aside>` so callers can focus it or
- * measure it (e.g. SiteExplorerPanel's autofocus on open).
+ * measure it (e.g. a panel's autofocus on open).
  */
 export function Panel({
   panelId,

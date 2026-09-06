@@ -9,7 +9,6 @@ import { PanelRail } from '@site/sidebars/PanelRail'
 import { PluginEditorPanel } from '@site/panels/PluginEditorPanel'
 import { SelectorsPanel } from '@site/panels/SelectorsPanel'
 import { FrameworkChangeConfirmProvider } from '@admin/shared/dialogs/FrameworkChangeConfirmDialog'
-import { VCDeletionConfirmProvider } from '@admin/shared/dialogs/VCDeletionConfirmDialog'
 import { SidebarResizeHandle } from '@admin/shared/SidebarResizeHandle'
 import styles from './LeftSidebar.module.css'
 
@@ -134,7 +133,6 @@ export function LeftSidebar({
       />
 
       <FrameworkChangeConfirmProvider>
-      <VCDeletionConfirmProvider>
         <div
           className={styles.panelSlot}
           data-testid="left-sidebar-panel-slot"
@@ -224,7 +222,6 @@ export function LeftSidebar({
             </div>
           )}
         </div>
-      </VCDeletionConfirmProvider>
       </FrameworkChangeConfirmProvider>
 
       {panelExpanded && (

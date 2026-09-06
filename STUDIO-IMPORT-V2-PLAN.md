@@ -1020,7 +1020,9 @@ Build it:
 5. Literal-`src` case (`src="/img/hero.png"`) is just `setJsxProp` — already works,
    just needs the picker UI in front of it.
 6. UI: `SizeSection`-adjacent image control with drag-drop, "replace", the
-   project's own asset browser (reuse `MediaExplorerPanel`'s shape, pointed at
+   project's own asset browser (the CMS `MediaExplorerPanel` this once pointed
+   at has been deleted as dead chrome — `MediaPickerModal` under
+   `src/admin/shared/media/` is the surviving shape to model it on, pointed at
    the workspace instead of the CMS media library), and object-fit/position.
 
 **Gate:** `setImportSpecifier.test.ts`, `assetUpload.test.ts` (containment

@@ -2,9 +2,9 @@
  * EmptyState — shared placeholder for empty panels and empty sections.
  *
  * Replaces the duplicated `.emptyState` blocks that lived in every panel
- * (ColorsPanel, SelectorsPanel, FrameworkScalePanel, SiteExplorerPanel,
- * ContentExplorerPanel, AgentPanel, CodeEditorPanel, PropertiesPanel,
- * BreakpointFrame). One primitive, two visual variants:
+ * (ColorsPanel, SelectorsPanel, FrameworkScalePanel, ExplorerPanel,
+ * AgentPanel, CodeEditorPanel, PropertiesPanel, BreakpointFrame). One
+ * primitive, two visual variants:
  *
  *   - variant="card" (default) — surfaced rounded card with muted text.
  *     Used when the panel body has filters/headers but the list itself is
