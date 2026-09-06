@@ -77,12 +77,12 @@
  * reporting it "unmapped forever" is exactly the `unmapped` silent-loss bug
  * this module's own doc above describes, just for a different cause.
  *
- * `resolveCssInsertDestination` decides WHERE such a rule's first write goes
- * (CLAUDE.md's "exactly one honest target", applied to a destination rather
- * than a declaration): the one editable `.css` file this project's already-
- * parsed rules point at, if there is exactly one — else refuse, naming why.
- * `isEditorAuthoredRuleId` is the gate that keeps this from ever firing for
- * an imported rule: only a `nanoid()` id is a candidate.
+ * `resolveCssInsertDestination` (now in `cssInsertDestination.ts`, which also
+ * owns the `StyleRule.id -> (file, selector)` registry) decides WHERE such a
+ * rule's first write goes — CLAUDE.md's "exactly one honest target", applied
+ * to a destination rather than a declaration. `isEditorAuthoredRuleId` is the
+ * gate that keeps it from ever firing for an imported rule: only a `nanoid()`
+ * id is a candidate.
  *
  * Once a destination resolves, `commitBaseline` SYNTHESIZES a
  * `styleRuleSources` entry for it (after the save that carried the insert
@@ -94,14 +94,9 @@
  * ## Creating a NEW stylesheet (the plan's deferred middle branch, now landed)
  *
  * When zero editable stylesheets exist yet, `resolveCssInsertDestination`
- * does not refuse outright — it tries to name the PAGE this rule belongs to
- * (`scope.nodeId`, decoded via `@core/page-tree`'s `decodeSourceNodeId` —
- * only a NODE-SCOPED rule, i.e. one `ensureNodeStyleClass` auto-created for a
- * specific element, carries this; a freestanding class made with
- * `createClass` while nothing is selected has no page association at all,
- * and gets the ordinary refusal instead of a guess). If a page resolves, the
- * destination is `{ ok: true, kind: 'create', pageFile }` and
- * `collectStyleRuleEdits` emits an `op: 'create'` edit instead of `insert`.
+ * does not refuse outright — it names the PAGE this rule belongs to and
+ * returns `{ ok: true, kind: 'create', pageFile }`, and `collectStyleRuleEdits`
+ * emits an `op: 'create'` edit instead of `insert`.
  *
  * The SERVER does the actual work (`studioCssWriteback.ts`'s
  * `applyCssCreateEdit`) — detects whether this project leans on CSS Modules
@@ -114,25 +109,42 @@
  *
  * Because the CLIENT does not know which file the server actually created
  * until the save response says so, `commitBaseline`'s automatic per-rule
- * synthesis (below) does NOT attempt to synthesize a source for a `create`
+ * synthesis does NOT attempt to synthesize a source for a `create`
  * destination — guessing a path here would be exactly the kind of
  * fabricated write target this module exists to refuse. Instead,
- * `recordCreatedStylesheet` is the explicit seam: once a save's response
- * reports `createdStylesheets` (`StudioEditBatchResult`, decoded back to a
- * rule id with `ruleIdFromCssCreateNodeId`), the caller records the mapping
- * so the SAME rule is writable through the ordinary `set` path on its very
- * next edit — with no reload. Wiring that call into `fsCodemodAdapter.ts`'s
- * save-success path is the one piece left for whoever owns that file next
- * (out of this pass's ownership, same posture as the `unmapped` toast-
- * wording gap documented above); `recordCreatedStylesheet` and the node-id
- * codec are exported specifically so that wiring is a few lines, not a
- * redesign. Absent that wiring, the rule becomes writable on the NEXT page
- * load regardless (the server's newly-created file gets picked up like any
- * other `.css` file the next time `studioCss.ts` parses the workspace).
+ * `recordCreatedStylesheet` (`cssInsertDestination.ts`) is the explicit seam,
+ * fed by `notifyCreatedStylesheets` from the save response's
+ * `createdStylesheets` (joined back to a rule id with
+ * `ruleIdFromCssCreateNodeId`). The same uncertainty is why a class TOKEN for
+ * such a rule is REFUSED rather than guessed on this save — see
+ * `classNameWriteback.ts`'s `resolveClassToken`.
  */
-import { decodeSourceNodeId, isGeneratedClass, isImportedStyleRuleId, type StyleRule } from '@core/page-tree'
-import { camelToKebabCssProperty, classifyStylesheetEditability } from '@core/css-codemods'
-import { Type } from '@core/utils/typeboxHelpers'
+import { isGeneratedClass, type Page, type StyleRule } from '@core/page-tree'
+import { camelToKebabCssProperty } from '@core/css-codemods'
+import {
+  buildClassPageIndex,
+  getStudioStyleRuleSources,
+  isEditorAuthoredRuleId,
+  replaceStyleRuleSources,
+  resolveCssInsertDestination,
+  type StyleRuleSource,
+} from './cssInsertDestination'
+
+/**
+ * The destination half of this module lives in `cssInsertDestination.ts` (the
+ * `StyleRule.id -> (file, selector)` registry, and which file a brand-new
+ * class belongs in). Re-exported verbatim so every existing import site is
+ * unchanged — see that module's doc for the seam.
+ */
+export {
+  buildClassPageIndex,
+  getStudioStyleRuleSources,
+  recordCreatedStylesheet,
+  resolveCssInsertDestination,
+  StyleRuleSourceSchema,
+  type CssInsertDestination,
+  type StyleRuleSource,
+} from './cssInsertDestination'
 
 /**
  * The synthetic per-frame breakpoint every studio board frame mounts. Declared
@@ -150,21 +162,6 @@ export const STUDIO_BREAKPOINT_ID = 'studio'
  */
 function effectiveStudioStyles(rule: StyleRule): Record<string, unknown> {
   return { ...rule.styles, ...(rule.contextStyles?.[STUDIO_BREAKPOINT_ID] ?? {}) }
-}
-
-/**
- * A `StyleRule.id`'s write-back target, exactly `server/handlers/studioCss.ts`'s
- * `StyleRuleSource`. A rule id absent from the load stream's `styleRuleSources`
- * map has no hand-editable `.css` source.
- */
-export const StyleRuleSourceSchema = Type.Object({
-  file: Type.String(),
-  selector: Type.String(),
-})
-
-export interface StyleRuleSource {
-  file: string
-  selector: string
 }
 
 /** One EXISTING rule's declaration change, matching `studioCssWriteback.ts`'s `CssSetEditSchema`. */
@@ -231,145 +228,6 @@ export function ruleIdFromCssCreateNodeId(nodeId: string): string | null {
 }
 
 /**
- * `StyleRule.id -> (file, selector)` from the last load's meta line, PLUS
- * every entry Track B1's `commitBaseline` has synthesized since (a rule this
- * session inserted, now writable through the ordinary `set` path). `mutable`
- * here means exactly that "plus" — see `commitBaseline`'s doc.
- * `StyleTargetChip` reads this to explain a class's write-back tier before the
- * user edits it; `collectStyleRuleEdits` reads it to decide where a change goes.
- */
-let styleRuleSources: Record<string, StyleRuleSource> = {}
-
-/**
- * True for a rule the user created IN THE EDITOR (`createClass`/
- * `applyCssRules`, `nanoid()` ids) — never one an import parsed (always the
- * deterministic `sc-` prefix, see `@core/page-tree`'s `styleRuleOrigin.ts`).
- * Only an editor-authored rule is a Track B1 insert candidate: an unmapped
- * IMPORTED rule (Tailwind/Sass/PostCSS output, a non-`.css` module) has a
- * real reason to stay unmapped, and must never silently gain a fabricated
- * write target.
- */
-function isEditorAuthoredRuleId(ruleId: string): boolean {
-  return !isImportedStyleRuleId(ruleId)
-}
-
-/**
- * A resolved insert destination, or a NAMED refusal — CLAUDE.md's "exactly
- * one honest target" applied to WHICH FILE a brand-new rule belongs in,
- * rather than to a declaration inside one that already exists.
- *
- *   - `kind: 'existing'` — the one editable stylesheet this workspace
- *     already knows how to write to (`op: 'insert'`).
- *   - `kind: 'create'` — no editable stylesheet exists yet, but this rule
- *     names a page to co-locate a NEW one with (`op: 'create'`); the SERVER
- *     picks the actual file name/convention (see `studioCssWriteback.ts`'s
- *     `applyCssCreateEdit`).
- */
-export type CssInsertDestination =
-  | { ok: true; kind: 'existing'; file: string }
-  | { ok: true; kind: 'create'; pageFile: string }
-  | { ok: false; reason: 'no-editable-stylesheet' | 'ambiguous-stylesheet'; message: string }
-
-/**
- * The page a rule is associated with, or `null` when it has none. Only a
- * NODE-SCOPED rule (`scope: { type: 'node', nodeId, role: 'module-style' }`
- * — `ensureNodeStyleClass`'s auto-created per-element classes) carries a
- * `nodeId`, and only when that id is a STUDIO source location
- * (`decodeSourceNodeId`, `rel:line:col`, possibly with a `.map`/inline
- * suffix) does it name a real file. A freestanding class made with
- * `createClass`/`applyCssRules` while nothing is selected has no `scope` at
- * all — there genuinely is no page to co-locate a brand-new stylesheet with,
- * so `resolveCssInsertDestination` refuses for those rather than guessing
- * "the currently open page" (this module has no notion of which page is
- * open — see its own "Baseline discipline").
- */
-function pageFileForRule(rule: StyleRule): string | null {
-  if (rule.scope?.type !== 'node') return null
-  return decodeSourceNodeId(rule.scope.nodeId)?.rel ?? null
-}
-
-/**
- * Where a rule with no write-back source at all should have its first
- * declarations written. Resolution order — see this module's "Creating a
- * NEW stylesheet" doc above for the full design:
- *
- *   1. The stylesheet CO-LOCATED WITH THE RULE'S OWN PAGE, when the rule is
- *      node-scoped and such a file is already a known write target
- *      (`pages/Home.tsx` -> `pages/Home.module.css`). This is not a guess
- *      among equals: a class created while styling a node on Home belongs in
- *      Home's stylesheet, and `pageFileForRule` already recovers that page
- *      from the rule's own scope.
- *
- *      This step did not exist, and its absence was not a rare edge: the
- *      ambiguity check below counted stylesheets across the WHOLE workspace,
- *      so any project whose pages each own a `*.module.css` — four of them in
- *      the project this was reported from (Home, Onboarding, SMS, SignUp) —
- *      refused EVERY new class with "Studio found 4 candidate stylesheets".
- *      The per-page answer was reachable the entire time and was only
- *      consulted in step 4, which `files.size > 1` returned before.
- *   2. Else, the one stylesheet this project already knows how to write to:
- *      every DISTINCT, hand-editable (`classifyStylesheetEditability` ===
- *      'plain-css') `.css` file already named in `styleRuleSources`, IF
- *      there is exactly one.
- *   3. Else, if the count was MORE than one, refuse with
- *      `ambiguous-stylesheet`, naming every candidate — Studio will not
- *      guess which file a new class belongs in. This branch NEVER creates:
- *      the ambiguity is about multiple EXISTING choices, not about needing
- *      a new one.
- *   4. Else (zero candidates) — try to name the rule's PAGE
- *      (`pageFileForRule`). If one resolves, offer `kind: 'create'`. If not,
- *      refuse with `no-editable-stylesheet`.
- */
-/**
- * `pages/Home.tsx` and `pages/Home.module.css` — same directory, same basename
- * up to the first dot. The convention this project scaffolds every page with
- * (`starterPage`'s `stylesFileName`), and the only pairing precise enough to
- * call a destination rather than a guess.
- */
-function isCoLocatedStylesheet(pageFile: string, cssFile: string): boolean {
-  const dirOf = (path: string) => path.slice(0, path.lastIndexOf('/') + 1)
-  if (dirOf(pageFile) !== dirOf(cssFile)) return false
-  const stemOf = (path: string) => path.slice(path.lastIndexOf('/') + 1).split('.')[0]
-  return stemOf(pageFile) === stemOf(cssFile)
-}
-
-export function resolveCssInsertDestination(rule: StyleRule): CssInsertDestination {
-  const files = new Set<string>()
-  for (const source of Object.values(styleRuleSources)) {
-    if (classifyStylesheetEditability(source.file).kind === 'plain-css') files.add(source.file)
-  }
-
-  // The rule's own page answers this before any counting does.
-  const rulePageFile = pageFileForRule(rule)
-  if (rulePageFile) {
-    const coLocated = [...files].sort().find((file) => isCoLocatedStylesheet(rulePageFile, file))
-    if (coLocated) return { ok: true, kind: 'existing', file: coLocated }
-  }
-
-  if (files.size === 1) return { ok: true, kind: 'existing', file: [...files][0]! }
-
-  if (files.size > 1) {
-    return {
-      ok: false,
-      reason: 'ambiguous-stylesheet',
-      message:
-        `Studio found ${files.size} candidate stylesheets in this project (${[...files].sort().join(', ')}) ` +
-        'and will not guess which one a new class belongs in.',
-    }
-  }
-
-  if (rulePageFile) return { ok: true, kind: 'create', pageFile: rulePageFile }
-
-  return {
-    ok: false,
-    reason: 'no-editable-stylesheet',
-    message:
-      'Studio could not find a hand-editable .css file in this project, and this class has no page to co-locate ' +
-      'a new one with. Select the element while styling it, or add a .css file to the project, then try again.',
-  }
-}
-
-/**
  * Every style rule's EFFECTIVE declarations as last synced, keyed by rule id —
  * `effectiveStudioStyles`, not the raw `styles` bag. Same "only write what the
  * user actually changed" discipline `fsCodemodAdapter`'s `loadedValues`
@@ -386,18 +244,14 @@ let baseline = new Map<string, Record<string, unknown>>()
  */
 let contextBaseline = new Map<string, Record<string, unknown>>()
 
-/** The current workspace's `StyleRule.id -> (file, selector)` write-back map, from the last load. */
-export function getStudioStyleRuleSources(): Record<string, StyleRuleSource> {
-  return styleRuleSources
-}
-
 /** Record the load's mapping + baseline. Called once per `loadSite`. */
 export function setStudioStyleRuleSources(
   sources: Record<string, StyleRuleSource>,
   styleRules: Record<string, StyleRule>,
+  pages: readonly Page[] = [],
 ): void {
-  styleRuleSources = sources
-  commitBaseline(styleRules)
+  replaceStyleRuleSources(sources)
+  commitBaseline(styleRules, { pages })
 }
 
 /**
@@ -427,37 +281,62 @@ export function setStudioStyleRuleSources(
  * so guessing one here would be exactly the fabricated-write-target bug this
  * module exists to prevent. See `recordCreatedStylesheet` for the `create`
  * counterpart of this seam.
+ *
+ * ## `refusedRuleIds` — a baseline must never advance past a refusal
+ *
+ * `style-02`. This ran unconditionally after every save, including the ones
+ * where the server REFUSED the write (a duplicated selector, a covering
+ * shorthand, a compiled stylesheet). The declaration never reached disk, but
+ * the baseline adopted it anyway — so the user's obvious next move, setting
+ * the SAME value again, diffed as "no change", produced no edit, and was
+ * never even attempted a second time. The refusal was reported once and then
+ * became permanent and invisible.
+ *
+ * A rule named here keeps its PREVIOUS baseline entry, so the very same
+ * change is re-sent on the next save. The caller joins server refusals back
+ * to rule ids through `StyleRuleEditPlan.ruleIdByNodeId`, and de-dupes the
+ * repeat refusal TOAST rather than the repeat attempt — reporting a thing
+ * twice is cheap; silently dropping a user's work is not.
  */
-export function commitBaseline(styleRules: Record<string, StyleRule>): void {
+export interface CommitBaselineOptions {
+  /** The document's pages, for `buildClassPageIndex`. Empty is safe — it only costs the co-location step. */
+  pages?: readonly Page[]
+  /** Rules whose write was refused; their baseline entry is preserved, not advanced. */
+  refusedRuleIds?: ReadonlySet<string>
+}
+
+export function commitBaseline(styleRules: Record<string, StyleRule>, options: CommitBaselineOptions = {}): void {
+  const pageIndex = buildClassPageIndex(options.pages ?? [])
+  const refused = options.refusedRuleIds
+  const previousBaseline = baseline
+  const previousContextBaseline = contextBaseline
   baseline = new Map()
   contextBaseline = new Map()
   for (const [id, rule] of Object.entries(styleRules)) {
+    if (refused?.has(id)) {
+      // Nothing reached disk for this rule — keep the baseline it was diffed
+      // against so the same change is attempted again next save.
+      const previous = previousBaseline.get(id)
+      if (previous) baseline.set(id, previous)
+      for (const contextId of realContextIds(rule)) {
+        const key = `${id}::${contextId}`
+        const previousContext = previousContextBaseline.get(key)
+        if (previousContext) contextBaseline.set(key, previousContext)
+      }
+      continue
+    }
     baseline.set(id, effectiveStudioStyles(rule))
     for (const contextId of realContextIds(rule)) {
       contextBaseline.set(`${id}::${contextId}`, { ...rule.contextStyles![contextId] })
     }
-    if (!styleRuleSources[id] && isEditorAuthoredRuleId(id) && !isGeneratedClass(rule)) {
-      const destination = resolveCssInsertDestination(rule)
+    const sources = getStudioStyleRuleSources()
+    if (!sources[id] && isEditorAuthoredRuleId(id) && !isGeneratedClass(rule)) {
+      const destination = resolveCssInsertDestination(rule, pageIndex)
       if (destination.ok && destination.kind === 'existing') {
-        styleRuleSources[id] = { file: destination.file, selector: rule.selector }
+        sources[id] = { file: destination.file, selector: rule.selector }
       }
     }
   }
-}
-
-/**
- * Records the stylesheet a `create` edit's server response says it actually
- * created (`StudioEditBatchResult.createdStylesheets`, decoded back to a
- * rule id with `ruleIdFromCssCreateNodeId`), so the SAME rule is writable
- * through the ordinary `set` path on its very next edit — with no reload.
- * This is the `create`-branch counterpart of what `commitBaseline` already
- * does automatically for an `existing` destination; it cannot be automatic
- * here because the file name is a SERVER decision (see `commitBaseline`'s
- * doc), so the caller that owns the save round trip must feed the result
- * back in explicitly.
- */
-export function recordCreatedStylesheet(ruleId: string, file: string, selector: string): void {
-  styleRuleSources[ruleId] = { file, selector }
 }
 
 /** Every context on a rule that is a REAL media query, not the synthetic studio viewport. */
@@ -465,14 +344,29 @@ function realContextIds(rule: StyleRule): string[] {
   return Object.keys(rule.contextStyles ?? {}).filter((id) => id !== STUDIO_BREAKPOINT_ID)
 }
 
+/**
+ * One class the user changed that could not be written, and the specific
+ * reason — `style-02`. `label` and `reason` are separate fields because the
+ * caller renders them in different places: the label names WHICH class in the
+ * toast title/lead, the reason is the toast body. Concatenating the two into
+ * one string (as this used to) produced a self-contradictory sentence — the
+ * generic lead said "no hand-editable CSS file in this project" while the
+ * appended reason said "Studio found 4 candidate stylesheets".
+ */
+export interface UnmappedStyleRule {
+  label: string
+  /** A complete, user-readable sentence, or `null` for "no source, no more specific reason". */
+  reason: string | null
+}
+
 /** What a save should do about the CSS side of the document. */
 export interface StyleRuleEditPlan {
   edits: CssEditPayload[]
   /**
-   * Selectors the user changed that have no hand-editable `.css` source — the
+   * Classes the user changed that have no hand-editable `.css` source — the
    * caller must TELL them, not skip silently. See this module's doc.
    */
-  unmapped: string[]
+  unmapped: UnmappedStyleRule[]
   /**
    * Selectors the user changed under a REAL breakpoint/condition. Writing one
    * needs `setDeclarationAtMedia` plus the condition's query, which the
@@ -480,6 +374,14 @@ export interface StyleRuleEditPlan {
    * silently dropped.
    */
   unwritableContexts: string[]
+  /**
+   * Every emitted edit's synthetic `nodeId` mapped back to the `StyleRule.id`
+   * it came from. A `css` edit's nodeId is a fabricated join key
+   * (`css:<file>#<selector>#<property>`), and the save response echoes it back
+   * on `refusals` — this is what lets the caller tell `commitBaseline` which
+   * rules must NOT advance. See `commitBaseline`'s `refusedRuleIds`.
+   */
+  ruleIdByNodeId: Record<string, string>
 }
 
 /**
@@ -493,10 +395,15 @@ export interface StyleRuleEditPlan {
  * operation yet, and inventing one that deletes lines from a user's
  * stylesheet is not something to do as a side effect of a diff.
  */
-export function collectStyleRuleEdits(styleRules: Record<string, StyleRule>): StyleRuleEditPlan {
+export function collectStyleRuleEdits(
+  styleRules: Record<string, StyleRule>,
+  pages: readonly Page[] = [],
+): StyleRuleEditPlan {
   const edits: CssEditPayload[] = []
-  const unmapped: string[] = []
+  const unmapped: UnmappedStyleRule[] = []
   const unwritableContexts: string[] = []
+  const ruleIdByNodeId: Record<string, string> = {}
+  const pageIndex = buildClassPageIndex(pages)
 
   for (const [ruleId, rule] of Object.entries(styleRules)) {
     // A framework-generated utility (`.text-color-metal`, `.bg-color-metal-5`,
@@ -543,30 +450,30 @@ export function collectStyleRuleEdits(styleRules: Record<string, StyleRule>): St
     }
     if (changed.length === 0) continue
 
-    const source = styleRuleSources[ruleId]
+    const source = getStudioStyleRuleSources()[ruleId]
     if (!source) {
       // Track B1 — an IMPORTED rule with no source has a real reason to stay
       // unmapped (Tailwind/Sass/PostCSS output, a non-.css module); only a
       // rule the user created IN THE EDITOR is an insert candidate at all.
       if (!isEditorAuthoredRuleId(ruleId)) {
-        unmapped.push(label)
+        unmapped.push({ label, reason: null })
         continue
       }
-      const destination = resolveCssInsertDestination(rule)
+      const destination = resolveCssInsertDestination(rule, pageIndex)
       if (!destination.ok) {
-        // The destination refusal has its own specific reason — fold it into
-        // the label text itself (rather than dropping it) since this plan's
-        // `unmapped` wire carries plain strings, joined verbatim into the
-        // caller's toast; this is still "refuse and say why", just carried
-        // in the one channel available here.
-        unmapped.push(`${label} — ${destination.message}`)
+        // The destination refusal has its own specific sentence, carried
+        // whole — see `UnmappedStyleRule`'s doc for why it is no longer
+        // concatenated into the label.
+        unmapped.push({ label, reason: destination.message })
         continue
       }
       if (destination.kind === 'existing') {
+        const nodeId = `css:insert:${destination.file}#${rule.selector}`
+        ruleIdByNodeId[nodeId] = ruleId
         edits.push({
           kind: 'css',
           op: 'insert',
-          nodeId: `css:insert:${destination.file}#${rule.selector}`,
+          nodeId,
           file: destination.file,
           selector: rule.selector,
           declarations: Object.fromEntries(changed),
@@ -579,6 +486,7 @@ export function collectStyleRuleEdits(styleRules: Record<string, StyleRule>): St
       // pick that up from the save response). `nodeId` carries the rule id
       // itself so the response can be joined back to it — see
       // `ruleIdFromCssCreateNodeId`.
+      ruleIdByNodeId[`${CSS_CREATE_NODE_ID_PREFIX}${ruleId}`] = ruleId
       edits.push({
         kind: 'css',
         op: 'create',
@@ -590,10 +498,12 @@ export function collectStyleRuleEdits(styleRules: Record<string, StyleRule>): St
       continue
     }
     for (const [property, value] of changed) {
+      const nodeId = `css:${source.file}#${source.selector}#${property}`
+      ruleIdByNodeId[nodeId] = ruleId
       edits.push({
         kind: 'css',
         op: 'set',
-        nodeId: `css:${source.file}#${source.selector}#${property}`,
+        nodeId,
         file: source.file,
         selector: source.selector,
         property,
@@ -602,5 +512,5 @@ export function collectStyleRuleEdits(styleRules: Record<string, StyleRule>): St
     }
   }
 
-  return { edits, unmapped, unwritableContexts }
+  return { edits, unmapped, unwritableContexts, ruleIdByNodeId }
 }

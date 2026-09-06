@@ -176,8 +176,8 @@ describe('Track B1 integration — a class created in the editor reaches disk en
     const plan = collectStyleRuleEdits({ [NEW_CLASS_ID]: styled })
 
     expect(plan.edits).toHaveLength(0)
-    expect(plan.unmapped[0]).toContain('.brand-new')
-    expect(plan.unmapped[0]).toContain('could not find a hand-editable .css file')
+    expect(plan.unmapped[0]!.label).toBe('.brand-new')
+    expect(plan.unmapped[0]!.reason).toContain('could not find a hand-editable .css file')
 
     // Nothing to send — applying an empty batch is a no-op, proving there is
     // no silent write happening anywhere in this path.
@@ -203,8 +203,8 @@ describe('Track B1 integration — a class created in the editor reaches disk en
     const plan = collectStyleRuleEdits({ [NEW_CLASS_ID]: styled })
 
     expect(plan.edits).toHaveLength(0)
-    expect(plan.unmapped[0]).toContain('src/screens/A.css')
-    expect(plan.unmapped[0]).toContain('src/screens/B.css')
+    expect(plan.unmapped[0]!.reason).toContain('src/screens/A.css')
+    expect(plan.unmapped[0]!.reason).toContain('src/screens/B.css')
     // Neither file is touched — an ambiguous destination is a refusal, never a guess.
     expect(read('src/screens/A.css')).toBe('.a {\n  color: red;\n}\n')
     expect(read('src/screens/B.css')).toBe('.b {\n  color: red;\n}\n')

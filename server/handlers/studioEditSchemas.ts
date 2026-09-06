@@ -85,19 +85,40 @@ const StyleEditSchema = Type.Object({
  * Replaces Phase 0 item 0.6's honesty-only stopgap: a `node.classIds` change
  * now reaches disk here instead of only ever warning that it couldn't.
  *
- * `add`/`remove` carry class NAMES (`site.styleRules[id].name`), never ids —
- * the ids are Studio's own `sc-<hash>` bookkeeping, and the codemod edits the
- * literal token text in the user's `className` attribute. Can REFUSE with a
- * specific reason (`css-module-binding` / `template-dynamic` / `spread-
- * attribute` / `unsupported-call` / `unsupported-expression` —
- * `ClassNameRefusalReason` in `@core/ast-codemods`) exactly like `detach`/
- * `swap`/`css` do — see `applyStudioEdit`'s `'class'` case.
+ * `add`/`remove` carry TOKENS, never `StyleRule` ids — the ids are Studio's own
+ * `sc-<hash>` bookkeeping. Two token shapes, because two kinds of class exist
+ * in a real repo (`style-02`):
+ *
+ *   - `{ kind: 'literal', token }` — a class whose NAME is what the DOM
+ *     carries: a plain `.css` rule, a Tailwind utility, a generated framework
+ *     class. Written as a plain token in the `className` attribute.
+ *   - `{ kind: 'module', file, local }` — a class declared in a CSS Module.
+ *     Its DOM name is a bundler-computed hash, so writing any literal name for
+ *     it produces markup that styles nothing outside the tool that computed
+ *     that hash. `file` is the workspace-relative `*.module.css` path (guarded
+ *     by `studioWriteback.ts`'s `resolveClassNameTokens` before it is ever
+ *     turned into a specifier) and `local` is the class as WRITTEN in that file, so the
+ *     codemod can emit the only reachable spelling: `styles.<local>`.
+ *
+ * Can REFUSE with a specific reason (`css-module-binding` /
+ * `css-module-import-missing` / `template-dynamic` / `spread-attribute` /
+ * `unsupported-call` / `unsupported-expression` — `ClassNameRefusalReason` in
+ * `@core/ast-codemods`) exactly like `detach`/`swap`/`css` do — see
+ * `applyStudioEdit`'s `'class'` case.
  */
+const ClassNameTokenSchema = Type.Union([
+  Type.Object({ kind: Type.Literal('literal'), token: Type.String() }),
+  Type.Object({ kind: Type.Literal('module'), file: Type.String(), local: Type.String() }),
+])
+
+/** One class token on the wire — `literal` or `module`. See `ClassEditSchema`. */
+export type StudioClassNameToken = Static<typeof ClassNameTokenSchema>
+
 const ClassEditSchema = Type.Object({
   kind: Type.Literal('class'),
   nodeId: Type.String(),
-  add: Type.Array(Type.String()),
-  remove: Type.Array(Type.String()),
+  add: Type.Array(ClassNameTokenSchema),
+  remove: Type.Array(ClassNameTokenSchema),
 })
 
 /**

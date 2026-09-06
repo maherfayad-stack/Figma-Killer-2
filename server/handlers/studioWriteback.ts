@@ -43,9 +43,9 @@
  * throwing (e.g. a text edit landing on an element with mixed children) is
  * logged and skipped by the route rather than aborting the whole batch.
  */
-import { isAbsolute, join, resolve, sep } from 'node:path'
-import { existsSync, readFileSync, realpathSync } from 'node:fs'
-import { EXCLUDED_WORKSPACE_DIR_NAMES, INLINE_ID_SEPARATOR } from '@core/page-parser'
+import { join } from 'node:path'
+import { existsSync, readFileSync } from 'node:fs'
+import { INLINE_ID_SEPARATOR } from '@core/page-parser'
 import { isInlinedNodeId, isRouteChromeNodeId } from '@core/page-tree'
 import {
   createImportPruneSession,
@@ -61,6 +61,7 @@ import {
   swapComponentInstance,
 } from '@core/ast-codemods'
 import { applyCssEdit } from './studioCssWriteback'
+import { relativeImportSpecifier, resolveClassNameTokens, resolveContainedRefPath } from './studioEditTargets'
 import {
   applySlotEdit,
   isSlotEditKind,
@@ -294,84 +295,6 @@ export function studioEditFile(dir: string, nodeId: string): string | null {
 }
 
 /**
- * Validates that `assetPathRel` — the client-supplied, workspace-relative
- * path of the file a `kind: 'asset'` edit should point an import AT — is safe
- * to reference, and resolves to a POSIX-normalized form once confirmed.
- *
- * Same adversarial posture as `resolveStudioAssetResponse`'s read-path guard
- * (`server/handlers/studioAsset.ts`): reject absolute/UNC/drive-letter forms,
- * `..`/empty segments on EITHER separator, and any `EXCLUDED_WORKSPACE_DIR_NAMES`
- * segment; then require CONTAINMENT ON THE REAL PATH after resolving symlinks
- * — a workspace can arrive from GitHub, and git stores symlinks, so a textual
- * check alone is bypassable. `null` on any violation, or when the target does
- * not exist (a specifier pointing nowhere is worse than refusing the edit).
- *
- * This never touches `assetPathRel` itself for the WRITE — `applyStudioEdit`
- * only ever calls `setImportSpecifier` on the file holding the import — but a
- * bad value here would still inject an arbitrary relative reference into the
- * user's tracked source, so it gets the full guard set before being trusted.
- */
-function resolveContainedAssetPath(dir: string, assetPathRel: string): string | null {
-  if (assetPathRel.length === 0) return null
-  if (isAbsolute(assetPathRel)) return null
-  if (/^[a-zA-Z]:/.test(assetPathRel)) return null // Windows drive path
-  if (assetPathRel.startsWith('\\\\') || assetPathRel.startsWith('//')) return null // UNC path
-
-  const segments = assetPathRel.split(/[\\/]+/).filter((segment) => segment.length > 0)
-  if (segments.length === 0) return null
-  if (segments.some((segment) => segment === '..' || segment === '.')) return null
-  if (segments.some((segment) => EXCLUDED_WORKSPACE_DIR_NAMES.has(segment))) return null
-
-  const root = resolve(dir)
-  const resolved = resolve(join(dir, ...segments))
-  if (resolved !== root && !resolved.startsWith(root + sep)) return null
-
-  let real: string
-  try {
-    real = realpathSync(resolved)
-  } catch {
-    return null // missing file / broken symlink — nowhere honest to point an import
-  }
-  let realRoot: string
-  try {
-    realRoot = realpathSync(root)
-  } catch {
-    return null
-  }
-  if (real !== realRoot && !real.startsWith(realRoot + sep)) return null
-
-  return segments.join('/')
-}
-
-/**
- * A relative module specifier from the file at `fromFileRel` to the file at
- * `toFileRel`, both workspace-relative POSIX paths — the exact inverse of
- * what `resolveImageAssetImport` (`src/core/page-parser/assetImports.ts`)
- * resolves when READING an import, so a round trip (edit, reload, re-resolve)
- * lands back on the same file. Always relative (`./…` / `../…`), matching
- * every specifier shape this pipeline already reads.
- */
-function relativeImportSpecifier(fromFileRel: string, toFileRel: string): string {
-  const fromDir = fromFileRel.split('/').slice(0, -1).join('/')
-  const fromSegments = fromDir.length > 0 ? fromDir.split('/') : []
-  const toSegments = toFileRel.split('/')
-
-  let common = 0
-  while (
-    common < fromSegments.length &&
-    common < toSegments.length - 1 &&
-    fromSegments[common] === toSegments[common]
-  ) {
-    common += 1
-  }
-
-  const ups = fromSegments.length - common
-  const downSegments = toSegments.slice(common)
-  const relPath = [...Array(ups).fill('..'), ...downSegments].join('/')
-  return relPath.startsWith('.') ? relPath : `./${relPath}`
-}
-
-/**
  * Applies one typed studio edit to the .tsx source under `dir`, dispatching
  * on `edit.kind` to the matching `ast-codemods` writer. Extracted as a pure
  * helper (dir + edit in, codemod side effect out) so it's unit-testable
@@ -442,7 +365,16 @@ export function applyStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyO
       // for a `className` shape it can't safely rewrite — translated into
       // `StudioEditRefusalError` here, the same "leaf returns, dispatcher
       // throws" shape `applyCssEdit`'s `'css'` case already uses just above.
-      const result = setJsxClassName({ ...loc, add: edit.add, remove: edit.remove })
+      //
+      // `style-02` — a `module` token names a `*.module.css` by
+      // workspace-relative path. That path arrives FROM THE CLIENT, so it
+      // gets the same containment guard `asset` already applies, and is
+      // turned into a relative specifier here (not in the codemod) so the
+      // path decoder stays server-side and singular.
+      const add = resolveClassNameTokens(dir, target.rel, edit.add)
+      const remove = resolveClassNameTokens(dir, target.rel, edit.remove)
+      if (add === null || remove === null) return { applied: false } // unsafe or missing stylesheet — refuse, never guess
+      const result = setJsxClassName({ ...loc, add, remove })
       if (!result.ok) throw new StudioEditRefusalError(result.refusal.reason, result.refusal.message)
       return { applied: true }
     }
@@ -454,7 +386,7 @@ export function applyStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyO
       // the same `studioEditLocation` every other kind shares — `target.rel`
       // is therefore the file HOLDING the import, which is exactly what
       // `relativeImportSpecifier` needs as its "from" side.
-      const assetPath = resolveContainedAssetPath(dir, edit.assetPath)
+      const assetPath = resolveContainedRefPath(dir, edit.assetPath)
       if (assetPath === null) return { applied: false } // unsafe or missing target — refuse, never guess
       const specifier = relativeImportSpecifier(target.rel, assetPath)
       setImportSpecifier({ ...loc, specifier })
