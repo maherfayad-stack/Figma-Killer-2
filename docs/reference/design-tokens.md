@@ -313,8 +313,13 @@ Used inside CodeMirror only. Don't reach for these in editor chrome.
 | `--shadow-panel-drop`          | Sub-token: `0 12px 40px rgba(0, 0, 0, 0.65)`                               |
 | `--shadow-input-focus`         | Inset composite achromatic glow for focused inputs                         |
 | `--shadow-tooltip`             | `0 4px 16px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.04)`   |
+| `--shadow-card-hover`          | Contact shadow under a hovered borderless tile card (paired with a 2px rise) |
 
 Use `--shadow-panel` directly when you need a floating-panel feel. Don't recompose from the sub-tokens.
+
+`--shadow-card-hover` is much tighter than `--shadow-panel-drop` — a card lifts a
+couple of pixels off the surface it sits on, it does not float above it — and is
+re-tuned in the light theme, because the scrims stay pure black in both.
 
 ---
 

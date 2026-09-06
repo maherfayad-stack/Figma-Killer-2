@@ -316,6 +316,29 @@ The dashboard pattern. Borderless tiles on a darker parent, 1px grid gap, 16px r
 }
 ```
 
+**Clickable tiles lift for real.** On a tile that *is* an action — a launcher
+project card, not a read-only widget — the `-2` → `-3` tone step alone is around
+2% and most displays swallow it, so the card the pointer is over reads the same
+as its neighbours. Pair the tone change with a 2px rise and the contact shadow:
+
+```css
+.tile {
+  transition: background 120ms ease, transform 120ms ease, box-shadow 150ms ease;
+}
+.tile:hover {
+  background: var(--bg-surface-3);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-card-hover);
+}
+.tile:active {
+  transform: translateY(0);   /* the press has somewhere to land */
+  box-shadow: none;
+}
+```
+
+Still no border, still achromatic. Reference implementation:
+`src/admin/pages/dashboard/DashboardPage.module.css`.
+
 Each tile usually carries:
 
 - A **title row** with a small accent dot (7px, `--radius-sm`) + uppercase 11px label
