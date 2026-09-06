@@ -35,8 +35,22 @@ import { EXCLUDED_WORKSPACE_DIR_NAMES } from '@core/page-parser'
 
 /** Windows drive-letter prefix (`C:` / `c:/…`) — an absolute path that `isAbsolute` misses on POSIX. */
 const DRIVE_LETTER_RE = /^[A-Za-z]:/
-/** Any C0/C7F control character. Newlines in particular would corrupt every NUL/line-delimited git output this feature parses. */
-const CONTROL_CHAR_RE = /[\u0000-\u001f\u007f]/
+/**
+ * Any C0/DEL control character. Newlines in particular would corrupt every
+ * NUL/line-delimited git output this feature parses, and a NUL would truncate
+ * an argv token.
+ *
+ * Written as a scan rather than a regex literal: a character class containing
+ * real control characters is what `no-control-regex` exists to catch, and the
+ * loop says what it means without needing the escape sequences read carefully.
+ */
+function hasControlCharacter(value: string): boolean {
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i)
+    if (code < 0x20 || code === 0x7f) return true
+  }
+  return false
+}
 
 /**
  * Lexical judgement of a workspace-relative path — the cheap half, run before
@@ -44,7 +58,7 @@ const CONTROL_CHAR_RE = /[\u0000-\u001f\u007f]/
  * normalized path means "lexically acceptable, now check containment".
  */
 export function normalizeWorkspaceRelativePath(input: string): string | null {
-  if (!input || CONTROL_CHAR_RE.test(input)) return null
+  if (!input || hasControlCharacter(input)) return null
   if (input.startsWith('/') || input.startsWith('\\')) return null // absolute + UNC
   if (DRIVE_LETTER_RE.test(input)) return null
   // A leading `-` would be read as a flag by git even inside `--` in some
@@ -111,7 +125,7 @@ function safeRealpath(path: string): string | null {
  */
 export function isArgvSafeBranchName(name: string): boolean {
   if (!name || name.length > 255) return false
-  if (CONTROL_CHAR_RE.test(name)) return false
+  if (hasControlCharacter(name)) return false
   if (name.startsWith('-')) return false
   return true
 }

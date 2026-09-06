@@ -61,6 +61,7 @@ import {
   type GitRunResult,
 } from './gitRunner'
 import { parseGitStatusPorcelainV2, type GitStatus, type GitStatusEntry } from './gitStatusParse'
+import { readTurnWriteLog } from './turnWriteLog'
 
 /** Enough history for "what happened recently" without turning the log route into a repository export. */
 export const MAX_LOG_COMMITS = 50
@@ -85,9 +86,30 @@ export interface GitOperationFailure {
   dirtyFiles?: string[]
 }
 
+/**
+ * A status entry plus the one thing git cannot know: whether Studio's own
+ * agent wrote this file.
+ *
+ * The agent authors files natively (`Write`/`Edit` inside the project `cwd`),
+ * which never touches Studio's HTTP surface — `turnWriteLog.ts` exists because
+ * a `PostToolUse` hook is the only signal that fires exactly when that happens.
+ * Pairing it with git status is what lets the panel say "the AI wrote this one"
+ * next to a file the user is about to commit under their own name.
+ *
+ * **Scope, stated honestly:** the write log is reset at the start of every
+ * turn, so `agentAuthored` means "written by the agent during the MOST RECENT
+ * turn", not "ever written by an agent". A file the agent wrote three turns
+ * ago and the user has not committed shows as unlabelled. That is a real
+ * limitation of the underlying signal, not of this pairing — a durable
+ * per-file authorship record would be a different (and much larger) feature.
+ */
+export interface GitStatusEntryWithAuthorship extends GitStatusEntry {
+  agentAuthored: boolean
+}
+
 export interface GitProjectStatus {
   branch: GitStatus['branchStatus']
-  entries: GitStatusEntry[]
+  entries: GitStatusEntryWithAuthorship[]
   /** How many changed paths were withheld because they sit under an excluded directory — see the module doc. */
   excludedCount: number
   /** Whether an `origin` remote exists. `false` disables push in the panel instead of failing on click. */
@@ -105,7 +127,10 @@ export async function readGitStatus(dir: string): Promise<GitProjectStatus | Git
   if (!result.ok) return failure('git-failed', clientSafeGitError(result, 'Could not read git status'))
 
   const parsed = parseGitStatusPorcelainV2(result.stdout)
-  const kept = parsed.entries.filter((entry) => !isExcludedPath(entry.path))
+  const agentWritten = new Set(readTurnWriteLog(dir).map((entry) => entry.file))
+  const kept = parsed.entries
+    .filter((entry) => !isExcludedPath(entry.path))
+    .map((entry) => ({ ...entry, agentAuthored: agentWritten.has(entry.path) }))
   return {
     branch: parsed.branchStatus,
     entries: kept,

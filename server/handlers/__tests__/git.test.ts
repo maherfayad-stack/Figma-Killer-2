@@ -21,7 +21,7 @@
  * from the host, so the test does not depend on the developer's global config
  * and does not write to it.
  */
-import { afterAll, afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { afterAll, beforeEach, describe, expect, it } from 'bun:test'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
@@ -403,6 +403,23 @@ describe('git routes — rejections', () => {
     const body = (await res.json()) as { error: string }
     expect(body.error).not.toContain(projectsRootDir())
     expect(body.error).not.toContain(dir)
+  })
+
+  it('labels files the agent wrote this turn, and only those', async () => {
+    fs.writeFileSync(path.join(dir, 'pages', 'Home.tsx'), 'agent wrote this\n')
+    fs.writeFileSync(path.join(dir, 'pages', 'ByHand.tsx'), 'a human wrote this\n')
+    fs.mkdirSync(path.join(dir, '.studio', 'cache'), { recursive: true })
+    fs.writeFileSync(
+      path.join(dir, '.studio', 'cache', 'turnWrites.json'),
+      JSON.stringify([{ file: 'pages/Home.tsx', atMs: Date.now() }]),
+    )
+
+    const status = (await (await call(`/admin/api/studio/git/status?dir=${encodeURIComponent(dir)}`)).json()) as {
+      status: { entries: Array<{ path: string; agentAuthored: boolean }> }
+    }
+    const byPath = new Map(status.status.entries.map((e) => [e.path, e.agentAuthored]))
+    expect(byPath.get('pages/Home.tsx')).toBe(true)
+    expect(byPath.get('pages/ByHand.tsx')).toBe(false)
   })
 
   it('filters excluded directories out of status and says how many it withheld', async () => {
