@@ -51,7 +51,6 @@ function reparsedTree(ctaId: string, text: string): NodeTree {
 function link(overrides: Partial<PrototypeLink> = {}): PrototypeLink {
   return {
     id: 'link-1',
-    origin: 'design',
     source: { pageId: 'welcome', node: captureNodeHint(tree(), 'cta')! },
     trigger: 'click',
     action: 'navigate',
@@ -135,11 +134,13 @@ describe('repair vs drop', () => {
     expect(file.links.map((l) => l.id)).toEqual(['good'])
   })
 
-  it('defaults an unrecognised origin to design, never to code', () => {
-    // `code` means "Studio read this out of the user's real source", which makes
-    // it read-only on the board. Never claim that on a guess.
-    const file = parsePrototypeFile({ version: 1, links: [{ ...link(), origin: 'nonsense' }] })
-    expect(file.links[0]!.origin).toBe('design')
+  it('drops a leftover origin field instead of round-tripping it', () => {
+    // A persisted link is always one the user drew — code-derived flows are
+    // `CodeFlowEdge`s, recomputed on every load and never written to this file
+    // (see `codeFlow.ts`'s header). A pre-Phase-6 file still carrying `origin`
+    // opens without it rather than keeping a field nothing reads.
+    const file = parsePrototypeFile({ version: 1, links: [{ ...link(), origin: 'code' }] })
+    expect(file.links[0]).not.toHaveProperty('origin')
   })
 })
 

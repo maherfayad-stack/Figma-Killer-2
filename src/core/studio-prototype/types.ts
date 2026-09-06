@@ -101,17 +101,19 @@ export const PrototypeSourceSchema = Type.Object({
 })
 export type PrototypeSource = Static<typeof PrototypeSourceSchema>
 
+/**
+ * A link the USER drew. There is no `origin` discriminator here any more.
+ *
+ * Phase 1 carried `origin: 'design' | 'code'` on the guess that Phase 6's
+ * code-derived flows would be the same shape with a different provenance.
+ * Building Phase 6 disproved it: a derived edge is recomputed from the source
+ * on every load, so it has no id to keep stable, no `NodeHint` to re-resolve,
+ * and no transition anybody chose — and it needs a field this shape has no room
+ * for, the snippet it was read out of. It lives next door as `CodeFlowEdge`
+ * (`./codeFlow.ts`), which left `origin` with exactly one possible value.
+ */
 export const PrototypeLinkSchema = Type.Object({
   id: Type.String(),
-  /**
-   * `design` — the user drew it. `code` — Studio read it out of a real `onClick`
-   * in their source (Phase 6) and it is READ-ONLY on the board.
-   *
-   * Present from Phase 1 precisely so Phase 6 needs no migration: the board's
-   * whole differentiator is showing flows that are already true in the code
-   * beside the ones the designer invented, drawn differently.
-   */
-  origin: Type.Union([Type.Literal('design'), Type.Literal('code')]),
   source: PrototypeSourceSchema,
   trigger: PrototypeTriggerSchema,
   action: PrototypeActionSchema,
