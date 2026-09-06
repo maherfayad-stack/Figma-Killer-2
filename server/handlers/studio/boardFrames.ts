@@ -13,6 +13,12 @@
  * Every function here is safe to call with no `boards.json` present: a
  * project an agent scaffolded into before any human opened it in a browser
  * has none, and that is not an error.
+ *
+ * W5-3 adds `syncStoryBoardFrames`, which places Storybook stories on a board
+ * of their OWN rather than the project's — see its doc for why that is the
+ * least-surprising surface for a producer that can outnumber a project's
+ * screens ten to one, and why it places each story exactly once instead of
+ * reconciling.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -24,11 +30,16 @@ import {
   serializeBoardsFile,
   upsertBoard,
   upsertFrame,
+  FRAME_GAP,
+  FRAME_HEIGHT,
+  FRAME_WIDTH,
+  type Board,
   type BoardsFile,
 } from '@core/studio-board'
 import { discoverPageFiles, projectPagesDir } from '../studioProjects'
 import { pageIdFromRelPath } from '../studioPageIds'
-import { readStudioMeta } from './studioMeta'
+import { mergeStudioMeta, readStudioMeta } from './studioMeta'
+import type { StorySummary } from './storyDiscovery'
 
 export function boardsFilePath(dir: string): string {
   return join(dir, '.studio', 'boards.json')
@@ -160,6 +171,101 @@ export function syncBoardFramesFromDisk(dir: string): string[] {
     placed.push(pageId)
   }
   return placed
+}
+
+/** The board a project's Storybook frames live on. Its own board, deliberately — see {@link syncStoryBoardFrames}. */
+const STORIES_BOARD_NAME = 'Stories'
+
+/**
+ * Places a frame for every Storybook story that has never had one, on a board
+ * of their own — W5-3.
+ *
+ * **Why a separate board, not the project's own.** A design system routinely
+ * has more stories than screens, so folding them into `boards[0]` would double
+ * (or decuple) the frame count of a board the author curated, on a load they
+ * did not ask anything of. A board named "Stories" is already discoverable —
+ * it appears in the board switcher next to the ones they made — and costs the
+ * default board nothing. That is the "toggle or section" this feature needed,
+ * expressed as the section the board model already has.
+ *
+ * **Why it is one-time, not reconciled.** `.studio/meta.json`'s
+ * `stories.placedPageIds` records every story frame ever placed. A frame the
+ * user deleted is in that list, so it never comes back; a story written after
+ * the last load is not, so it appears. And once `stories.boardId` no longer
+ * resolves — they deleted the whole board — nothing is placed again at all.
+ * A reconciler that kept restoring what someone removed would be a worse bug
+ * than the missing frame it fixes (`syncBoardFramesFromDisk` states the same
+ * rule for pages).
+ *
+ * **Layout.** One ROW per `meta.title`, variants left to right along it, which
+ * is how a design system reads: `Components/Button` is a row of buttons. This
+ * is deliberately not `defaultFramePosition`'s two-column grid — that grid
+ * exists to stack unrelated screens, and stories are related by construction.
+ *
+ * Writes nothing when there is nothing to place, so `boards.json`'s mtime
+ * (which `compareVerdictCache.ts` keys on) is left alone on every load after
+ * the first.
+ */
+export function syncStoryBoardFrames(dir: string, stories: readonly StorySummary[]): void {
+  if (stories.length === 0) return
+  const meta = readStudioMeta(dir)
+  if (meta.stories?.enabled === false) return
+
+  const placed = new Set(meta.stories?.placedPageIds ?? [])
+  const pending = stories.filter((story) => !placed.has(story.pageId))
+  if (pending.length === 0) return
+
+  const existing = readBoardsFile(dir)
+  const recordedBoardId = meta.stories?.boardId
+  // A recorded id that no longer resolves means the user deleted the Stories
+  // board. Honour that: place nothing, and leave the ledger as it is so a
+  // later re-enable starts from a clean slate rather than half a board.
+  if (recordedBoardId !== undefined && !existing.boards.some((b) => b.id === recordedBoardId)) return
+
+  const board = recordedBoardId
+    ? existing.boards.find((b) => b.id === recordedBoardId)!
+    : createBoard(crypto.randomUUID(), STORIES_BOARD_NAME)
+
+  const frameDefaults = readStudioMeta(dir).frameDefaults ?? {}
+  const width = frameDefaults.width ?? FRAME_WIDTH
+  const height = frameDefaults.height ?? FRAME_HEIGHT
+  // Rows are keyed by title across the WHOLE story set, not just the pending
+  // slice, so a story added later lands in its component's existing row
+  // instead of starting a second one.
+  const rowIndex = new Map<string, number>()
+  const columnsUsed = new Map<string, number>()
+  const pendingPageIds = new Set(pending.map((story) => story.pageId))
+  for (const story of stories) {
+    if (!rowIndex.has(story.title)) rowIndex.set(story.title, rowIndex.size)
+    // Already-placed siblings hold the leading columns of their row, so a
+    // newly-written story lands after them rather than on top of one.
+    if (!pendingPageIds.has(story.pageId)) {
+      columnsUsed.set(story.title, (columnsUsed.get(story.title) ?? 0) + 1)
+    }
+  }
+
+  let next: Board = board
+  for (const story of pending) {
+    const column = columnsUsed.get(story.title) ?? 0
+    columnsUsed.set(story.title, column + 1)
+    next = upsertFrame(next, {
+      id: crypto.randomUUID(),
+      pageId: story.pageId,
+      x: column * (width + FRAME_GAP),
+      y: (rowIndex.get(story.title) ?? 0) * (height + FRAME_GAP),
+      width,
+      height,
+    })
+  }
+
+  writeBoardsFile(dir, upsertBoard(existing, next))
+  mergeStudioMeta(dir, {
+    stories: {
+      ...meta.stories,
+      boardId: next.id,
+      placedPageIds: [...placed, ...pending.map((story) => story.pageId)],
+    },
+  })
 }
 
 /** Whether `.studio/boards.json` already carries a frame for `pageId` on any board. */

@@ -250,6 +250,8 @@ import { tryServeStudioProjectRoutes } from './studio/projectRoutes'
 import { tryServeStudioReloadScope } from './studio/reloadScope'
 import { tryServeStudioComments } from './studio/commentsRoutes'
 import { tryServeStudioPrototype } from './studio/prototypeRoutes'
+import { tryServeStudioStories } from './studio/storiesRoutes'
+import { syncStoryBoardFrames } from './studio/boardFrames'
 import type { DbClient } from '../db/client'
 
 /**
@@ -283,6 +285,7 @@ const STUDIO_SUB_ROUTERS = [
   tryServeStudioProjectRoutes,
   tryServeStudioReloadScope,
   tryServeStudioPrototype,
+  tryServeStudioStories,
 ] as const
 
 /** Body of POST /admin/api/studio/save — a batch of typed source writebacks. */
@@ -376,6 +379,13 @@ export async function tryServeStudio(
       if (pageIdsParam === null) return badRequest('invalid pageIds query param')
       const loaded = await loadStudioPages(dir) // always full — meta is project-wide, filtered below
       const { componentSources, styleRules, styleRuleSources, conditions, vendorCss, authoredCss } = loaded
+      // W5-3 — a story that parsed into a page but has no frame is invisible.
+      // Placed here rather than inside `loadStudioPages` so the parse pipeline
+      // stays a pure read: opening the board is the moment the board may be
+      // written, and this is the route that means it. One-time and idempotent
+      // — see `syncStoryBoardFrames`. No-ops instantly when there are no
+      // stories, which is every project that does not use Storybook.
+      syncStoryBoardFrames(dir, loaded.stories)
       const { pages, missingPageIds } = filterStudioLoadPages(loaded.pages, pageIdsParam)
       // WS-3.3 — the client needs the CURRENT trust tier to decide whether an
       // unregistered `pkg.*` node should fetch a component bundle (Tier ≥ 1)

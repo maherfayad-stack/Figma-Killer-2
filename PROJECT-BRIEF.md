@@ -242,6 +242,17 @@ never silently no-ops.
   templates in `pageTemplates.ts`, the shared vocabulary in
   `@core/studio-board`'s `pageKinds.ts`. A kind is a creation-time choice only:
   nothing persists it, because the `.tsx` on disk IS the answer
+- Storybook CSF import (`W5-3`): a project's `*.stories.{tsx,ts,jsx}` become
+  board frames — one per accepted story — on a board of their OWN named
+  "Stories", never mixed into the board the author curated. Two accepted
+  shapes, read statically and never executed: an args-only CSF3 object
+  (synthesized into a real call site and run through `inlineLocalComponents`)
+  and a jsx-only function body (the ordinary page pipeline, real writable ids
+  in the `.stories.tsx`). Everything else refuses by name — `render-logic`,
+  `play-function`, `decorators`, `loaders`, `csf2-storiesof`, … — reported by
+  `GET /admin/api/studio/stories`. Measured: **97.8 %** accepted on
+  Shopify Polaris, **67.2 %** on Primer React.
+  `server/handlers/studio/story{Discovery,Pages}.ts`
 - MCP server with a live editor bridge, and ~46 `studio_*` tools in
   `server/ai/mcp/tools/studio/` — including the **visual-audit loop**
   (`studio_export_frames`, `studio_screenshot`, `studio_diff_frames`,
