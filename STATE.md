@@ -8,6 +8,185 @@ Entry ids are `<area>-<nn>`. Areas in use: `parser`, `canvas`, `store`, `panel`,
 
 ---
 
+### perf-04 — the user's own save reparsed the whole board; the agent's writes had used the narrow path for weeks
+
+- **Agent:** store-engineer
+- **Stage:** built and gated. `bun run build`, `bun run lint` clean; targeted
+  suites green (see "Verification"). **Needs human dogfood** — the numbers
+  below are a synthetic corpus, not a real board.
+- **Updated:** 2026-09-06
+- **Branch:** `fix/narrow-save-reload` off `main` (rebased onto `a90c3fc`).
+
+**The defect.** `fsCodemodAdapter.saveSite` answered `shifted ||
+sharedComponents` with `requestCmsSiteReload()` — the full `loadSite()`:
+re-parse and re-convert every page, re-stream all of them, replace the whole
+document, re-render every frame. `sharedComponents` is `isInlinedNodeId(id) ||
+isRouteChromeNodeId(id)`, so on a Next.js App Router board — where the layout
+chrome is shared by construction — it is true for a large share of ordinary
+edits. The user paid a whole-board reparse roughly two seconds after they
+stopped typing. The narrow path (`/reload-scope` → `?pageIds=` →
+`patchPages`) already existed, worked, and was used only by the MCP
+live-reload push and the structural commits.
+
+**Client.** One module now owns "a write landed; make the board agree" —
+`src/admin/pages/site/studio/studioBoardResync.ts`
+(`resyncBoardAfterWrite(touchedFiles, { refusedRuleIds })`). Both writers call
+it: `commitStructural` (moved out of `studioSaveRequests.ts`, where it was
+`reloadStructuralScope`) and `saveSite`. Its module doc **enumerates the cases
+that keep the full `loadSite()`** — page create/delete/rename, a new component
+file, a workspace switch, project-wide settings that re-derive every page, the
+`asset`/`detach`/`swap`/`insert-slot` one-shots, and anything `/reload-scope`
+cannot prove narrow.
+
+**Server, half 1 — `reload-scope` stopped asking a binary question.** It used
+to answer "is this file a page's OWN route file, and does no other route
+depend on it?", which meant a shared component always widened and App Router
+widened unconditionally. It now **inverts `pageParseCache.ts`'s recorded
+per-route dependency sets**: a touched file's scope is every cached route that
+recorded it as a dependency. `anyOtherRouteDependsOnFile` is replaced by
+`cachedRouteDependencies(dir)`. A shared `components/Card.tsx` narrows to the
+pages that inline it; an App Router `layout.tsx` narrows to every route
+beneath it. Four rules keep it from ever UNDER-reloading, all widening:
+cold cache · a discovered route with no cache entry · **a project with any
+Storybook story file** (W5-3's `storyPages.ts` is a third route producer and
+does not use the parse cache, so its routes record no dependencies at all) ·
+a touched file no cached route claims (this is what covers the cache's
+documented one-level-deep limit) · a cached route no longer discoverable.
+
+**Server, half 2 — `?pageIds=` reaches the compute.**
+`loadStudioPages(dir, { pageIds })` skips the per-page CONVERT
+(`parsedPageToSitePage` + the asset-sentinel rewrite) for unrequested routes.
+`filterStudioLoadPages` is gone; `missingStudioLoadPageIds` reports only.
+Parse and style collection stay project-wide **on purpose and it is
+commented**: `loadStudioStyles` builds the registry from every route's
+stylesheets together, so narrowing it would ship a shrunken `styleRules`, and
+the client replaces its registry wholesale — `canvas-14`'s "renders against
+last minute's stylesheet" with a new cause. The parse is cached; convert is
+not, which is exactly why convert is the narrowable stage.
+
+**Measured** (synthetic corpus: shared `Header` component, one stylesheet per
+page, ~100 nodes/page; warm parse cache, which a targeted reload always has;
+median of 15 runs on this machine):
+
+| | 15 pages | 40 pages |
+|---|---|---|
+| server compute, full | 22.5 ms | 102.9 ms |
+| server compute, `?pageIds=` one page | 14.5 ms (**−36%**) | 45.5 ms (**−56%**) |
+| page payload | 247 KB → 16 KB (−93%) | 659 KB → 16 KB (−97%) |
+| client `JSON.parse` of pages | 0.9 ms → 0.1 ms | 4.1 ms → 0.1 ms |
+
+Those are the *narrowed-load* numbers only. The path this replaces was
+`loadSite()`, which on top of the full load also pays two more HTTP round
+trips (`/framework`, `/tokens`), a whole-document `validateSite`,
+`resetLoadedValues` over every page, and a full-board re-render — none of
+which a `patchPages` patch pays.
+
+**Two interleaving landmines, both fixed, both with a regression test that was
+verified to FAIL when the fix is reverted** (`studio/__tests__/saveNarrowResync.test.ts`):
+
+1. **Ordering.** A resync re-reads the touched pages and rewrites the very
+   diff baselines `saveSite` advances *after* its POST
+   (`commitNodeValuesBaseline`, `commitStyleRuleBaseline`,
+   `commitClassIdsBaseline`). Resyncing inline — where `requestCmsSiteReload()`
+   used to sit — lets the save's own commit then overwrite the fresh disk
+   baseline with the PRE-reload document, and the next autosave tick re-sends
+   every prop of every reloaded page as if the user had just typed it. The
+   adapter therefore records `resyncTouchedFiles` and awaits the resync as the
+   LAST thing `saveSite` does. `requestCmsSiteReload()` was fire-and-forget and
+   hid this; an awaited narrow reload does not.
+2. **The refusal baseline.** `fetchStudioPagesById` calls
+   `setStudioStyleRuleSources`, which calls `commitBaseline` on the freshly
+   parsed rules. Without `refusedRuleIds` that adopts, as the new baseline, a
+   value the server just REFUSED to write — so the user's obvious retry (the
+   same value again) diffs as "no change" and is never attempted a second
+   time. That is `style-02`'s bug #3, reachable again through the reload path.
+   `refusedRuleIds` is now threaded save → resync → fetch → `commitBaseline`,
+   and `setStudioStyleRuleSources`'s third argument changed from `pages` to the
+   full `CommitBaselineOptions`.
+
+**Also cleaned up (in scope, not drive-by):** `studioWriteDir` /
+`setStudioLoadedDir` moved from `studioSaveRequests.ts` to
+`studioWorkspaceDir.ts`, which already owns "which project is active" — six
+unrelated clients (icon/component/translation catalogs, page requests, the
+live-reload bridge, the new resync module) were importing the save module
+purely to ask that question, and the resync module would otherwise have closed
+a cycle. `resolveModuleId`/`resolveTextProp` extracted from
+`studioPageLoad.ts` (which my doc additions pushed to 751 lines) into
+`server/handlers/studio/moduleMapping.ts` — they encode the base-module
+catalogue's rules, not the pipeline's.
+
+**Store-engineer handoff, per the contract.**
+
+- **Slices touched: none.** No slice gained state and no selector was added or
+  changed. `patchPages` (`site/lifecycleActions.ts`) is called with the same
+  `PatchPagesInput` it already accepted, from one more caller. Nothing new is
+  stored, nothing new is derived, nothing new needs to survive reload.
+- **New selectors: none.** (So: no O(n) selector was introduced; the "never
+  put a tree walk in a selector" rule is untouched by this change.)
+- **New mutations: none.** No history entry, no coalesce key. `patchPages`
+  keeps its deliberate posture — bypasses `mutateSite`/`runHistoricMutation`,
+  never flips `hasUnsavedChanges`, never pushes undo history, because the
+  content came FROM disk.
+- The one store-adjacent behaviour change is *which* store action a save-
+  triggered reload ends in: `patchPages` instead of `loadSite`. That is
+  strictly gentler — `loadSite` replaces the whole document; `patchPages`
+  upserts by page id and leaves other pages' unsaved edits alone.
+
+**Landmines for the next agent.**
+
+1. **Narrowing may never UNDER-reload.** Every widening rule in
+   `reloadScope.ts` is load-bearing. If you make one of them narrower, the
+   failure mode is a board silently showing stale content with no error
+   anywhere — the hardest class of bug in this system to notice.
+2. **Storybook projects do not narrow at all right now**, on purpose (rule 2).
+   The named follow-up is to have `buildStoryRouteEntries` record its parses
+   in `pageParseCache` like the other two route producers do; then delete the
+   `storyFilesIn` gate and its test.
+3. **`fsCodemodAdapter.ts` is at 699 of the 700-line ceiling.** The next
+   feature in it has to extract first. `studioSaveRequests.ts` (552) and
+   `studioBoardResync.ts` (158) are where the extractions have been going.
+4. **A narrow resync drops an editor-authored rule that was never written to
+   disk** — `patchPages` replaces `styleRules` wholesale and never merges
+   (a merge would resurrect a rule the edit deleted, `canvas-14`). This is
+   PARITY with `loadSite`, not a new hazard, and it is documented in
+   `studioBoardResync.ts`. Do not "fix" it by making the narrow path merge:
+   the two reload paths would then give different answers for the same
+   document, which is worse than the thing it fixes.
+5. **If you add a field to the load stream's `meta` line, apply it in
+   `fetchStudioPagesById` too** — `canvas-14`'s standing rule, now on a hotter
+   path than it was.
+
+**Verification.**
+
+- `bun run build` ✅, `bun run lint` ✅.
+- `bun test src/__tests__/architecture src/__tests__/editor-store
+  src/__tests__/studio src/admin/pages/site/studio server/handlers` — 2582
+  pass, 2 fail. Both pre-existing and outside this change:
+  `icon-catalog-integrity` (`chevron-left` missing from `node_modules`) and
+  `server/handlers/studio/projectMcpApprovals.test.ts` (`Cannot find module
+  './agentRosterMcpTools'`).
+- Full `bun test` on the pre-rebase tree: 10837 pass / 73 fail, every failure
+  in the documented pre-existing set (`streamClaudeCli` cluster,
+  `icon-catalog-integrity`, `stopGateCheck`, and the canvas iframe-rendering
+  suites that pass in isolation and fail only in a batch run).
+- New tests: 6 in `reloadScope.test.ts` (shared-component narrowing, App
+  Router route + layout-chain narrowing, and four widening cases), 5 in
+  `studioPageLoadNarrow.test.ts` (the narrowed compute keeps the project-wide
+  registries byte-identical, including rules only an unrequested page
+  imports), 4 in `pageParseCache.test.ts` (the dependency map, incl. that it
+  reads recorded keys and never mtimes), 8 in `saveNarrowResync.test.ts`
+  (routing + the two interleaving guards).
+- NOT run: browser/e2e.
+
+**Human action needed:** dogfood at `/admin/site?studio` on a board with
+several frames sharing a component. Type in one text node, wait for the
+autosave, and confirm (a) only the frames that actually share the touched file
+flicker/re-render, (b) undo still walks back through the whole burst, and
+(c) a class edit that Studio refuses still re-attempts on your next save
+instead of going quiet.
+
+---
+
 ### struct-05 — two modules crossed the 700-line ceiling on `main`; both split, neither grandfathered
 
 - **Agent:** studio-implementer
