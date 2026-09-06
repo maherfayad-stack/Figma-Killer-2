@@ -1147,3 +1147,95 @@ export default function Page() {
     expect(read('pages/Page.tsx')).toBe(source.replace('      <Card id="a" />\n', ''))
   })
 })
+
+
+/**
+ * `style-02` — the `class` kind's module token. The client names a class
+ * STRUCTURALLY (`{ kind: 'module', file, local }`) because a CSS-Modules class
+ * has no literal name in the built app; this dispatcher turns that
+ * workspace-relative path into the specifier the importing file would spell,
+ * through the same containment guard an `asset` edit's path gets.
+ */
+describe('applyStudioEdit — the class kind, module tokens', () => {
+  const page = [
+    "import styles from './Card.module.css'",
+    'export function Card() {',
+    '  return <div>Hi</div>',
+    '}',
+    '',
+  ].join('\n')
+
+  it('writes the member expression for a module token', () => {
+    write('src/ui/Card.tsx', page)
+    write('src/ui/Card.module.css', '.row { color: red; }\n')
+
+    const applied = applyStudioEdit(tmpDir, {
+      kind: 'class',
+      nodeId: 'src/ui/Card.tsx:3:11',
+      add: [{ kind: 'module', file: 'src/ui/Card.module.css', local: 'row' }],
+      remove: [],
+    })
+
+    expect(applied.applied).toBe(true)
+    expect(read('src/ui/Card.tsx')).toContain('className={styles.row}')
+  })
+
+  it('computes the specifier relative to the IMPORTING file, not the workspace root', () => {
+    write(
+      'src/ui/Card.tsx',
+      ["import s from '../styles/Card.module.css'", 'export function Card() {', '  return <div>Hi</div>', '}', ''].join('\n'),
+    )
+    write('src/styles/Card.module.css', '.row { color: red; }\n')
+
+    applyStudioEdit(tmpDir, {
+      kind: 'class',
+      nodeId: 'src/ui/Card.tsx:3:11',
+      add: [{ kind: 'module', file: 'src/styles/Card.module.css', local: 'row' }],
+      remove: [],
+    })
+
+    expect(read('src/ui/Card.tsx')).toContain('className={s.row}')
+  })
+
+  it('declines an out-of-workspace module path without writing anything', () => {
+    write('src/ui/Card.tsx', page)
+
+    const applied = applyStudioEdit(tmpDir, {
+      kind: 'class',
+      nodeId: 'src/ui/Card.tsx:3:11',
+      add: [{ kind: 'module', file: '../../elsewhere/Card.module.css', local: 'row' }],
+      remove: [],
+    })
+
+    expect(applied.applied).toBe(false)
+    expect(read('src/ui/Card.tsx')).toBe(page)
+  })
+
+  it('declines a module token pointing at something that is not a *.module.css', () => {
+    write('src/ui/Card.tsx', page)
+    write('src/ui/Card.css', '.row { color: red; }\n')
+
+    const applied = applyStudioEdit(tmpDir, {
+      kind: 'class',
+      nodeId: 'src/ui/Card.tsx:3:11',
+      add: [{ kind: 'module', file: 'src/ui/Card.css', local: 'row' }],
+      remove: [],
+    })
+
+    expect(applied.applied).toBe(false)
+    expect(read('src/ui/Card.tsx')).toBe(page)
+  })
+
+  it('still writes a plain literal token as a plain token', () => {
+    write('src/ui/Card.tsx', page)
+
+    applyStudioEdit(tmpDir, {
+      kind: 'class',
+      nodeId: 'src/ui/Card.tsx:3:11',
+      add: [{ kind: 'literal', token: 'bg-red-500' }],
+      remove: [],
+    })
+
+    expect(read('src/ui/Card.tsx')).toContain('className="bg-red-500"')
+  })
+})

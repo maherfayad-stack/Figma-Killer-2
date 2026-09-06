@@ -2,8 +2,14 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { setJsxClassName } from '../setJsxClassName'
+import { setJsxClassName, type ClassNameToken } from '../setJsxClassName'
 import { locateTag } from './fixtureLocation'
+
+/** Plain class tokens — the ordinary shape. `mod()` below is the CSS-Modules one. */
+const t = (...tokens: string[]): ClassNameToken[] => tokens.map((token) => ({ kind: 'literal', token }))
+
+/** A CSS-Modules token: the class as written in `specifier`, attached as `styles.<local>`. */
+const mod = (specifier: string, local: string): ClassNameToken => ({ kind: 'module', specifier, local })
 
 let tmpDir: string
 
@@ -28,7 +34,7 @@ describe('setJsxClassName', () => {
       const file = writeFixture('add-absent.tsx', source)
       const { line, col } = locateTag(source, 'div')
 
-      const result = setJsxClassName({ file, line, col, add: ['a', 'b'], remove: [] })
+      const result = setJsxClassName({ file, line, col, add: t('a', 'b'), remove: t() })
 
       expect(result.ok).toBe(true)
       expect(fs.readFileSync(file, 'utf8')).toContain('className="a b"')
@@ -39,7 +45,7 @@ describe('setJsxClassName', () => {
       const file = writeFixture('remove-absent.tsx', source)
       const { line, col } = locateTag(source, 'div')
 
-      const result = setJsxClassName({ file, line, col, add: [], remove: ['ghost'] })
+      const result = setJsxClassName({ file, line, col, add: t(), remove: t('ghost') })
 
       expect(result.ok).toBe(true)
       expect(fs.readFileSync(file, 'utf8')).toBe(source)
@@ -52,7 +58,7 @@ describe('setJsxClassName', () => {
       const file = writeFixture('literal-merge.tsx', source)
       const { line, col } = locateTag(source, 'div')
 
-      const result = setJsxClassName({ file, line, col, add: ['d'], remove: ['b'] })
+      const result = setJsxClassName({ file, line, col, add: t('d'), remove: t('b') })
 
       expect(result.ok).toBe(true)
       expect(fs.readFileSync(file, 'utf8')).toContain('className="a c d"')
@@ -65,7 +71,7 @@ describe('setJsxClassName', () => {
       const file = writeFixture('tailwind-swap.tsx', source)
       const { line, col } = locateTag(source, 'div')
 
-      const result = setJsxClassName({ file, line, col, add: ['bg-blue-600'], remove: ['bg-red-500'] })
+      const result = setJsxClassName({ file, line, col, add: t('bg-blue-600'), remove: t('bg-red-500') })
 
       expect(result.ok).toBe(true)
       const written = fs.readFileSync(file, 'utf8')
@@ -78,7 +84,7 @@ describe('setJsxClassName', () => {
       const file = writeFixture('literal-empty.tsx', source)
       const { line, col } = locateTag(source, 'div')
 
-      const result = setJsxClassName({ file, line, col, add: [], remove: ['only'] })
+      const result = setJsxClassName({ file, line, col, add: t(), remove: t('only') })
 
       expect(result.ok).toBe(true)
       expect(fs.readFileSync(file, 'utf8')).not.toContain('className')
@@ -89,7 +95,7 @@ describe('setJsxClassName', () => {
       const file = writeFixture('literal-single-quote.tsx', source)
       const { line, col } = locateTag(source, 'div')
 
-      const result = setJsxClassName({ file, line, col, add: ['c'], remove: [] })
+      const result = setJsxClassName({ file, line, col, add: t('c'), remove: t() })
 
       expect(result.ok).toBe(true)
       expect(fs.readFileSync(file, 'utf8')).toContain("className='a b c'")
@@ -100,7 +106,7 @@ describe('setJsxClassName', () => {
       const file = writeFixture('literal-noop.tsx', source)
       const { line, col } = locateTag(source, 'div')
 
-      const result = setJsxClassName({ file, line, col, add: ['a'], remove: ['not-there'] })
+      const result = setJsxClassName({ file, line, col, add: t('a'), remove: t('not-there') })
 
       expect(result.ok).toBe(true)
       expect(fs.readFileSync(file, 'utf8')).toBe(source)
@@ -113,7 +119,7 @@ describe('setJsxClassName', () => {
       const file = writeFixture('expr-string.tsx', source)
       const { line, col } = locateTag(source, 'div')
 
-      const result = setJsxClassName({ file, line, col, add: ['c'], remove: ['a'] })
+      const result = setJsxClassName({ file, line, col, add: t('c'), remove: t('a') })
 
       expect(result.ok).toBe(true)
       expect(fs.readFileSync(file, 'utf8')).toContain('className={"b c"}')
@@ -124,7 +130,7 @@ describe('setJsxClassName', () => {
       const file = writeFixture('expr-template.tsx', source)
       const { line, col } = locateTag(source, 'div')
 
-      const result = setJsxClassName({ file, line, col, add: ['c'], remove: [] })
+      const result = setJsxClassName({ file, line, col, add: t('c'), remove: t() })
 
       expect(result.ok).toBe(true)
       expect(fs.readFileSync(file, 'utf8')).toContain('className={`a b c`}')
@@ -137,7 +143,7 @@ describe('setJsxClassName', () => {
       const file = writeFixture('template-add.tsx', source)
       const { line, col } = locateTag(source, 'div')
 
-      const result = setJsxClassName({ file, line, col, add: ['b'], remove: [] })
+      const result = setJsxClassName({ file, line, col, add: t('b'), remove: t() })
 
       expect(result.ok).toBe(true)
       expect(fs.readFileSync(file, 'utf8')).toContain('className={`a b ${x}`}')
@@ -148,7 +154,7 @@ describe('setJsxClassName', () => {
       const file = writeFixture('template-remove.tsx', source)
       const { line, col } = locateTag(source, 'div')
 
-      const result = setJsxClassName({ file, line, col, add: [], remove: ['a'] })
+      const result = setJsxClassName({ file, line, col, add: t(), remove: t('a') })
 
       expect(result.ok).toBe(false)
       if (!result.ok) expect(result.refusal.reason).toBe('template-dynamic')
@@ -164,7 +170,7 @@ describe('setJsxClassName', () => {
       const file = writeFixture('cn-merge.tsx', source)
       const { line, col } = locateTag(source, 'div')
 
-      const result = setJsxClassName({ file, line, col, add: ['c'], remove: [] })
+      const result = setJsxClassName({ file, line, col, add: t('c'), remove: t() })
 
       expect(result.ok).toBe(true)
       expect(fs.readFileSync(file, 'utf8')).toContain("cn('a b c', x)")
@@ -180,7 +186,7 @@ describe('setJsxClassName', () => {
       const file = writeFixture('cn-append.tsx', source)
       const { line, col } = locateTag(source, 'div')
 
-      const result = setJsxClassName({ file, line, col, add: ['extra'], remove: [] })
+      const result = setJsxClassName({ file, line, col, add: t('extra'), remove: t() })
 
       expect(result.ok).toBe(true)
       expect(fs.readFileSync(file, 'utf8')).toContain(
@@ -195,7 +201,7 @@ describe('setJsxClassName', () => {
       const file = writeFixture('cn-remove.tsx', source)
       const { line, col } = locateTag(source, 'div')
 
-      const result = setJsxClassName({ file, line, col, add: [], remove: ['b'] })
+      const result = setJsxClassName({ file, line, col, add: t(), remove: t('b') })
 
       expect(result.ok).toBe(true)
       expect(fs.readFileSync(file, 'utf8')).toContain("cn('a c', x)")
@@ -208,7 +214,7 @@ describe('setJsxClassName', () => {
       const file = writeFixture('cn-remove-all.tsx', source)
       const { line, col } = locateTag(source, 'div')
 
-      const result = setJsxClassName({ file, line, col, add: [], remove: ['only'] })
+      const result = setJsxClassName({ file, line, col, add: t(), remove: t('only') })
 
       expect(result.ok).toBe(true)
       const written = fs.readFileSync(file, 'utf8')
@@ -223,7 +229,7 @@ describe('setJsxClassName', () => {
       const file = writeFixture('unsupported-call.tsx', source)
       const { line, col } = locateTag(source, 'div')
 
-      const result = setJsxClassName({ file, line, col, add: ['b'], remove: [] })
+      const result = setJsxClassName({ file, line, col, add: t('b'), remove: t() })
 
       expect(result.ok).toBe(false)
       if (!result.ok) expect(result.refusal.reason).toBe('unsupported-call')
@@ -247,7 +253,7 @@ describe('setJsxClassName', () => {
       const file = writeFixture('css-module.tsx', source)
       const { line, col } = locateTag(source, 'div')
 
-      const result = setJsxClassName({ file, line, col, add: ['x'], remove: [] })
+      const result = setJsxClassName({ file, line, col, add: t('x'), remove: t() })
 
       expect(result.ok).toBe(true)
       expect(fs.readFileSync(file, 'utf8')).toContain('className={`${styles.card} x`}')
@@ -264,7 +270,7 @@ describe('setJsxClassName', () => {
       const file = writeFixture('css-module-multi.tsx', source)
       const { line, col } = locateTag(source, 'div')
 
-      expect(setJsxClassName({ file, line, col, add: ['x', 'y'], remove: [] }).ok).toBe(true)
+      expect(setJsxClassName({ file, line, col, add: t('x', 'y'), remove: t() }).ok).toBe(true)
       const written = fs.readFileSync(file, 'utf8')
       expect(written).toContain('className={`${styles.card} x y`}')
       // Node ids are `rel:line:col`; a newline here would shift every node
@@ -283,7 +289,7 @@ describe('setJsxClassName', () => {
       const file = writeFixture('css-module-remove.tsx', source)
       const { line, col } = locateTag(source, 'div')
 
-      const result = setJsxClassName({ file, line, col, add: [], remove: ['card'] })
+      const result = setJsxClassName({ file, line, col, add: t(), remove: t('card') })
 
       expect(result.ok).toBe(false)
       if (!result.ok) expect(result.refusal.reason).toBe('css-module-binding')
@@ -301,7 +307,7 @@ describe('setJsxClassName', () => {
       const file = writeFixture('css-module-noop.tsx', source)
       const { line, col } = locateTag(source, 'div')
 
-      expect(setJsxClassName({ file, line, col, add: [], remove: [] }).ok).toBe(true)
+      expect(setJsxClassName({ file, line, col, add: t(), remove: t() }).ok).toBe(true)
       expect(fs.readFileSync(file, 'utf8')).toBe(source)
     })
 
@@ -315,7 +321,7 @@ describe('setJsxClassName', () => {
       const file = writeFixture('non-css-module-member.tsx', source)
       const { line, col } = locateTag(source, 'div')
 
-      const result = setJsxClassName({ file, line, col, add: ['x'], remove: [] })
+      const result = setJsxClassName({ file, line, col, add: t('x'), remove: t() })
 
       expect(result.ok).toBe(false)
       if (!result.ok) expect(result.refusal.reason).toBe('unsupported-expression')
@@ -333,7 +339,7 @@ describe('setJsxClassName', () => {
       const file = writeFixture('identifier.tsx', source)
       const { line, col } = locateTag(source, 'div')
 
-      const result = setJsxClassName({ file, line, col, add: ['x'], remove: [] })
+      const result = setJsxClassName({ file, line, col, add: t('x'), remove: t() })
 
       expect(result.ok).toBe(false)
       if (!result.ok) expect(result.refusal.reason).toBe('unsupported-expression')
@@ -350,10 +356,209 @@ describe('setJsxClassName', () => {
       const file = writeFixture('ternary.tsx', source)
       const { line, col } = locateTag(source, 'div')
 
-      const result = setJsxClassName({ file, line, col, add: ['x'], remove: [] })
+      const result = setJsxClassName({ file, line, col, add: t('x'), remove: t() })
 
       expect(result.ok).toBe(false)
       if (!result.ok) expect(result.refusal.reason).toBe('unsupported-expression')
+    })
+  })
+
+  // `style-02`. A class declared in a `*.module.css` has no literal name in
+  // the built app — the bundler hashes it. Writing Studio's own compiled hash
+  // as a plain token produced markup that styles nothing outside Studio's
+  // canvas, which is the bug these tests exist to keep fixed.
+  describe('module tokens — a CSS-Modules class is a binding, never a string', () => {
+    it('writes the member expression, not the class name, onto a bare element', () => {
+      const source = [
+        "import styles from './Card.module.css'",
+        'export function Card() {',
+        '  return <div>Hi</div>',
+        '}',
+        '',
+      ].join('\n')
+      const file = writeFixture('module-bare.tsx', source)
+      const { line, col } = locateTag(source, 'div')
+
+      const result = setJsxClassName({ file, line, col, add: [mod('./Card.module.css', 'row')], remove: [] })
+
+      expect(result.ok).toBe(true)
+      const written = fs.readFileSync(file, 'utf8')
+      expect(written).toContain('className={styles.row}')
+      // The hash `styleCompile.ts` computes for the canvas must never appear.
+      expect(written).not.toContain('Card_row__')
+    })
+
+    it('uses whatever local binding the file actually chose, not a hardcoded `styles`', () => {
+      const source = [
+        "import css from './Card.module.css'",
+        'export function Card() {',
+        '  return <div className="wrap">Hi</div>',
+        '}',
+        '',
+      ].join('\n')
+      const file = writeFixture('module-alias.tsx', source)
+      const { line, col } = locateTag(source, 'div')
+
+      expect(setJsxClassName({ file, line, col, add: [mod('./Card.module.css', 'row')], remove: [] }).ok).toBe(true)
+      expect(fs.readFileSync(file, 'utf8')).toContain('className={`wrap ${css.row}`}')
+    })
+
+    it('bracket-indexes a local name that is not a JS identifier', () => {
+      const source = [
+        "import styles from './Card.module.css'",
+        'export function Card() {',
+        '  return <div>Hi</div>',
+        '}',
+        '',
+      ].join('\n')
+      const file = writeFixture('module-kebab.tsx', source)
+      const { line, col } = locateTag(source, 'div')
+
+      expect(setJsxClassName({ file, line, col, add: [mod('./Card.module.css', 'card-row')], remove: [] }).ok).toBe(true)
+      expect(fs.readFileSync(file, 'utf8')).toContain('className={styles["card-row"]}')
+    })
+
+    it('gives an existing side-effect import a binding in place — no new line', () => {
+      const source = [
+        "import './Card.module.css'",
+        'export function Card() {',
+        '  return <div>Hi</div>',
+        '}',
+        '',
+      ].join('\n')
+      const file = writeFixture('module-side-effect.tsx', source)
+      const { line, col } = locateTag(source, 'div')
+
+      expect(setJsxClassName({ file, line, col, add: [mod('./Card.module.css', 'row')], remove: [] }).ok).toBe(true)
+      const written = fs.readFileSync(file, 'utf8')
+      expect(written).toContain("import styles from './Card.module.css'")
+      expect(written).toContain('className={styles.row}')
+      expect(written.split('\n').length).toBe(source.split('\n').length)
+    })
+
+    // The refusal, not the convenience. Adding the import would insert a line
+    // at the top of the file and move every other pending edit in the batch.
+    it('REFUSES css-module-import-missing when the file does not import the stylesheet', () => {
+      const source = ['export function Card() {', '  return <div className="wrap">Hi</div>', '}', ''].join('\n')
+      const file = writeFixture('module-no-import.tsx', source)
+      const { line, col } = locateTag(source, 'div')
+
+      const result = setJsxClassName({ file, line, col, add: [mod('./Card.module.css', 'row')], remove: [] })
+
+      expect(result.ok).toBe(false)
+      if (!result.ok) expect(result.refusal.reason).toBe('css-module-import-missing')
+      expect(fs.readFileSync(file, 'utf8')).toBe(source)
+    })
+
+    it('does not add a binding on a refusal path (the file is left byte-identical)', () => {
+      const source = [
+        "import './Card.module.css'",
+        'export function Card({ dynamicClass }) {',
+        '  return <div className={dynamicClass}>Hi</div>',
+        '}',
+        '',
+      ].join('\n')
+      const file = writeFixture('module-refusal-no-bind.tsx', source)
+      const { line, col } = locateTag(source, 'div')
+
+      const result = setJsxClassName({ file, line, col, add: [mod('./Card.module.css', 'row')], remove: [] })
+
+      expect(result.ok).toBe(false)
+      expect(fs.readFileSync(file, 'utf8')).toBe(source)
+    })
+
+    it('appends a module token to an existing binding without dropping it', () => {
+      const source = [
+        "import styles from './Card.module.css'",
+        'export function Card() {',
+        '  return <div className={styles.card}>Hi</div>',
+        '}',
+        '',
+      ].join('\n')
+      const file = writeFixture('module-append.tsx', source)
+      const { line, col } = locateTag(source, 'div')
+
+      expect(setJsxClassName({ file, line, col, add: [mod('./Card.module.css', 'row')], remove: [] }).ok).toBe(true)
+      expect(fs.readFileSync(file, 'utf8')).toContain('className={`${styles.card} ${styles.row}`}')
+    })
+
+    it('removes the whole attribute when the module token IS the entire className', () => {
+      const source = [
+        "import styles from './Card.module.css'",
+        'export function Card() {',
+        '  return <div className={styles.card}>Hi</div>',
+        '}',
+        '',
+      ].join('\n')
+      const file = writeFixture('module-remove-whole.tsx', source)
+      const { line, col } = locateTag(source, 'div')
+
+      expect(setJsxClassName({ file, line, col, add: [], remove: [mod('./Card.module.css', 'card')] }).ok).toBe(true)
+      expect(fs.readFileSync(file, 'utf8')).not.toContain('className')
+    })
+
+    it('removes a module token that is one argument of a cn() join', () => {
+      const source = [
+        "import styles from './Card.module.css'",
+        'export function Card({ x }) {',
+        '  return <div className={cn(styles.card, x)}>Hi</div>',
+        '}',
+        '',
+      ].join('\n')
+      const file = writeFixture('module-remove-cn.tsx', source)
+      const { line, col } = locateTag(source, 'div')
+
+      expect(setJsxClassName({ file, line, col, add: [], remove: [mod('./Card.module.css', 'card')] }).ok).toBe(true)
+      expect(fs.readFileSync(file, 'utf8')).toContain('cn(x)')
+    })
+
+    it('adds a module token to a cn() join as its own argument', () => {
+      const source = [
+        "import styles from './Card.module.css'",
+        'export function Card({ x }) {',
+        "  return <div className={cn('base', x)}>Hi</div>",
+        '}',
+        '',
+      ].join('\n')
+      const file = writeFixture('module-add-cn.tsx', source)
+      const { line, col } = locateTag(source, 'div')
+
+      expect(setJsxClassName({ file, line, col, add: [mod('./Card.module.css', 'row')], remove: [] }).ok).toBe(true)
+      expect(fs.readFileSync(file, 'utf8')).toContain("cn('base', x, styles.row)")
+    })
+
+    it('is idempotent — re-sending the same module add rewrites nothing', () => {
+      const source = [
+        "import styles from './Card.module.css'",
+        'export function Card({ x }) {',
+        "  return <div className={cn('base', x)}>Hi</div>",
+        '}',
+        '',
+      ].join('\n')
+      const file = writeFixture('module-idempotent.tsx', source)
+      const { line, col } = locateTag(source, 'div')
+
+      setJsxClassName({ file, line, col, add: [mod('./Card.module.css', 'row')], remove: [] })
+      const afterFirst = fs.readFileSync(file, 'utf8')
+      setJsxClassName({ file, line, col, add: [mod('./Card.module.css', 'row')], remove: [] })
+      expect(fs.readFileSync(file, 'utf8')).toBe(afterFirst)
+    })
+
+    it('appends a module span to a dynamic template without touching the interpolation', () => {
+      const source = [
+        "import styles from './Card.module.css'",
+        'export function Card({ x }) {',
+        '  return <div className={`base ${x}`}>Hi</div>',
+        '}',
+        '',
+      ].join('\n')
+      const file = writeFixture('module-template.tsx', source)
+      const { line, col } = locateTag(source, 'div')
+
+      expect(setJsxClassName({ file, line, col, add: [mod('./Card.module.css', 'row')], remove: [] }).ok).toBe(true)
+      const written = fs.readFileSync(file, 'utf8')
+      expect(written).toContain('className={`base ${x} ${styles.row}`}')
+      expect(written.split('\n').length).toBe(source.split('\n').length)
     })
   })
 
@@ -362,10 +567,10 @@ describe('setJsxClassName', () => {
     const file = writeFixture('idempotent.tsx', source)
     const { line, col } = locateTag(source, 'div')
 
-    setJsxClassName({ file, line, col, add: ['b'], remove: [] })
+    setJsxClassName({ file, line, col, add: t('b'), remove: t() })
     const afterFirst = fs.readFileSync(file, 'utf8')
 
-    setJsxClassName({ file, line, col, add: ['b'], remove: [] })
+    setJsxClassName({ file, line, col, add: t('b'), remove: t() })
     const afterSecond = fs.readFileSync(file, 'utf8')
 
     expect(afterSecond).toBe(afterFirst)
@@ -375,6 +580,6 @@ describe('setJsxClassName', () => {
     const source = 'export const x = 1\n'
     const file = writeFixture('no-element.tsx', source)
 
-    expect(() => setJsxClassName({ file, line: 1, col: 1, add: ['a'], remove: [] })).toThrow(/No JSX element found/)
+    expect(() => setJsxClassName({ file, line: 1, col: 1, add: t('a'), remove: t() })).toThrow(/No JSX element found/)
   })
 })

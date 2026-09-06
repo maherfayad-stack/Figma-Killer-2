@@ -10,6 +10,7 @@ export { setJsxClassName } from './setJsxClassName'
 export type {
   ClassNameRefusal,
   ClassNameRefusalReason,
+  ClassNameToken,
   SetJsxClassNameFailure,
   SetJsxClassNameParams,
   SetJsxClassNameResult,

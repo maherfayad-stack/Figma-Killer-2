@@ -764,20 +764,39 @@ The path, end to end:
 | `duplicate-declaration` | the property is declared twice inside the target rule |
 | `shorthand-override` | a covering shorthand (`padding` over `padding-top`) follows the property |
 | `important-override` | a covering shorthand carries `!important` |
-| `compiled-stylesheet` | `.module.css`, `.min.css`, or a `dist/`-style build path (`classifyStylesheetEditability`) |
+| `compiled-stylesheet` | a `.min.css` or a `dist/`-style build path (`classifyStylesheetEditability`). A `*.module.css` is **not** in this bucket — what is compiled there is the class NAME, not the file, and `studioCss.ts`'s `cssModuleSource` inverts `moduleClassMaps` so the selector arriving here is the one as written in the file |
+
+**Where a BRAND-NEW class's first declarations go** is the same "exactly one honest target" rule one level up, and it lives in `src/admin/pages/site/studio/cssInsertDestination.ts`. In order: the stylesheet **co-located with the class's own page** (`pages/Home.tsx` → `pages/Home.module.css`); else the single editable `.css` file this project already writes to; else a named refusal (`ambiguous-stylesheet`, listing the candidates); else, with no stylesheet anywhere, a `create` edit naming the page for the server to co-locate a new one with.
+
+`style-02`: that co-location step used to read the page from `rule.scope.nodeId` only, and the sole producer of node-scoped rules (`ensureNodeStyleClass`) has no non-test caller — so it never fired, and **every** new class in a project with two or more stylesheets refused with "Studio found N candidate stylesheets". The page was recoverable the whole time from where the class is *assigned*: `buildClassPageIndex` walks the pages, decodes each node id back to its file, and answers when every node carrying that class is in one file (two files ⇒ still ambiguous, still refused).
 
 **What still does not reach disk as a rule declaration**, reported to the user rather than dropped silently (`meta-03` decision 3's third tier):
 
-- A rule with **no mapped `.css` source** — a Tailwind/Sass/PostCSS-generated class or a CSS Modules compile. There is no stylesheet declaration to rewrite, so this refusal is permanent, not a gap awaiting a feature — but the element carrying that class is not stuck: its own `className` attribute is a *different* write target, covered next.
+- A rule with **no mapped `.css` source** — a Tailwind/Sass/PostCSS-generated class. There is no stylesheet declaration to rewrite, so this refusal is permanent, not a gap awaiting a feature — but the element carrying that class is not stuck: its own `className` attribute is a *different* write target, covered next.
 - A **real breakpoint/condition override** (`mobile`, a `@media` condition). Writing one needs `setDeclarationAtMedia` plus the condition's query, which the `css` edit kind does not carry yet.
 
-Both surface as toasts on save. Silence is the one outcome that loses a user's work without telling them, so neither is a silent skip.
+Both surface as toasts on save. Silence is the one outcome that loses a user's work without telling them, so neither is a silent skip. Each unmapped class carries its own `reason` (`UnmappedStyleRule`), rendered as the toast BODY — `style-02`: it used to be concatenated into the generic lead, producing the self-contradictory "…has no hand-editable CSS file in this project — Studio found 4 candidate stylesheets…".
+
+**A baseline never advances past a refusal (`style-02`).** `commitBaseline` ran unconditionally after every save, including the ones the server refused. The declaration never reached disk, but the baseline adopted it — so the user's obvious next move, typing the same value again, diffed as "no change", produced no edit, and was never attempted a second time. The refusal was reported once and then became permanent and invisible. `commitBaseline` now takes `refusedRuleIds` (joined from the save response's `refusals` through `StyleRuleEditPlan.ruleIdByNodeId`) and keeps those rules' previous baseline entry; the repeat TOAST is de-duplicated instead, in `refusalToasts.ts`. `commitClassIdsBaseline`'s `refusedNodeIds` is the same fix on the `className` side.
 
 ### `className` write-back (Track B2, `setJsxClassName`)
 
 The previous section rewrites a rule's *declaration* in its `.css` file. This one rewrites the *attribute* — an element's own `className` — and is the write path that makes a Tailwind element editable at all: a fill/spacing change on a Tailwind element is `bg-red-500` → `bg-blue-600`, a class-token swap on the element, not a stylesheet declaration, so it needs no mapped `.css` source and is not subject to the `unmapped` refusal above.
 
-`kind: 'class'` edits (`ClassEditSchema` in `server/handlers/studioEditSchemas.ts`) carry `add`/`remove` as class **names** (`site.styleRules[id].name`), never `sc-<hash>` ids — the codemod edits the literal token text in the user's `className`, and ids are Studio's own bookkeeping with no meaning in source. They dispatch to `setJsxClassName` (`src/core/ast-codemods/setJsxClassName.ts`), which understands:
+`kind: 'class'` edits (`ClassEditSchema` in `server/handlers/studioEditSchemas.ts`) carry `add`/`remove` as **tokens**, never `sc-<hash>` ids — ids are Studio's own bookkeeping with no meaning in source. Two token shapes, because two kinds of class exist in a real repo:
+
+| Token | For | Written as |
+|---|---|---|
+| `{ kind: 'literal', token }` | a class whose NAME is what the DOM carries: a plain `.css` rule, a Tailwind utility, a generated framework class | a plain token in the attribute |
+| `{ kind: 'module', file, local }` | a class declared in a `*.module.css` | the member expression its default import provides — `styles.<local>` |
+
+**Why the module token exists (`style-02`).** The client used to send `site.styleRules[id].name` for every class. For a CSS-Modules rule that name is Studio's **own compiled hash** (`styleCompile.ts`'s `<fileBase>_<local>__<sha1-5>`, computed so the canvas can cascade the module's CSS) — so the write landed, the save reported success, and the resulting `className="SignUp_socialBtn__a1b2c"` matched something only inside Studio's iframe and nothing at all in the user's built app. The local name comes from `StyleRule.displayName` (which `studioCss.ts` sets from the inverse of `moduleClassMaps`), or from the rule's own name for a class the editor authored into that file. A `:global(...)` class inside a module file has no `displayName`, is never renamed by the compiler, and correctly stays a literal.
+
+A class the editor created that has **no source yet** resolves through the same `resolveCssInsertDestination` its declarations will use on this very save, so the pair always agrees. The one case that refuses client-side is a `create` destination: the SERVER picks that file's name and convention (`detectStylesheetConvention`), so the client cannot yet tell whether the class is reachable by name. One save later `recordCreatedStylesheet` has the answer, and — because the node's `classIds` baseline was held back — the assignment is retried and lands.
+
+The `file` on a module token is workspace-relative and arrives from the browser, so `server/handlers/studioEditTargets.ts` puts it through the same containment guard an `asset` edit's path gets (absolute/UNC/drive forms, `..`, `EXCLUDED_WORKSPACE_DIR_NAMES`, real-path containment after resolving symlinks) plus a literal `*.module.css` extension check, and only then converts it to the specifier the importing file would spell. A path that fails is declined, never written.
+
+They dispatch to `setJsxClassName` (`src/core/ast-codemods/setJsxClassName.ts`), which understands:
 
 | `className` shape | Handling |
 |---|---|
@@ -785,17 +804,23 @@ The previous section rewrites a rule's *declaration* in its `.css` file. This on
 | `className="a b"` (plain string literal) | token add/remove in place |
 | `className={"a b"}` / `` className={`a b`} `` (static expression) | same, token add/remove |
 | `` className={`a ${x}`} `` (dynamic template) | ADD appends to the static head only; REMOVE refuses `template-dynamic` — a token might live in the interpolated part, unreadable from source text |
-| `className={cn('a', x)}` / `clsx`/`classNames`/`classnames` | ADD merges into a literal string argument (or appends one); REMOVE strips the token from every literal argument it appears in, best-effort — a token reachable only through a non-literal argument (`isActive && 'active'`) is left alone |
+| `className={cn('a', x)}` / `clsx`/`classNames`/`classnames` | ADD merges a literal into a literal string argument and appends a module token as its own argument; REMOVE strips a literal from every literal argument it appears in, best-effort — a token reachable only through a non-literal argument (`isActive && 'active'`) is left alone — and removes a module token by exact-argument match |
+| `className={styles.card}` | ADD wraps it in a template (`` {`${styles.card} ${styles.row}`} ``); REMOVE of that exact binding, with nothing else on the element, drops the attribute |
+
+Adding a module token promotes a static value to a template literal — the only shape that carries both a name and a binding — and appends a new interpolated span to a dynamic template. Neither ever introduces a newline, which is what keeps this codemod's "never shifts another node's `line:col`" promise.
 
 and refuses, by name, rather than guessing:
 
 | Refusal | When |
 |---|---|
-| `css-module-binding` | `className={styles.card}`, a default import from a `*.module.css` file — the honest edit is the class's own declaration, not this binding |
+| `css-module-import-missing` | a module token whose stylesheet this file does not import at all. Adding the `import` would insert a LINE at the top and move every other pending edit in the batch — the exact hazard `orderStudioEditsForApply` and `pruneOrphanedImports`' post-pass exist to avoid — so it is refused with the import to add spelled out. An existing side-effect `import './x.module.css'` is NOT this case: a default binding is added to it **in place**, costing no line |
+| `css-module-binding` | removing some OTHER token from a `className={styles.card}` — that token comes from the module, so deleting it here would not delete it |
 | `template-dynamic` | removing a token from a dynamic template literal (see table above) |
 | `unsupported-call` | a function call other than `cn`/`clsx`/`classNames`/`classnames` |
 | `spread-attribute` | `className={...spread}` |
 | `unsupported-expression` | a bare identifier, ternary, or any other shape this codemod does not recognize |
+
+The CLIENT refuses one more, before an edit is ever sent (`classNameWriteback.ts`'s `tokenRefusals`): `stylesheet-not-created-yet`, for a class whose stylesheet the server is creating in this same save. It, and every server refusal, holds the node's `classIds` baseline back so the assignment is retried rather than lost.
 
 A request where every `add` token is already present and every `remove` token is already absent is a silent no-op — `{ ok: true }` with the file untouched — so a re-sent, already-applied edit never re-refuses or rewrites. A pure token **reorder** (no add/remove) writes nothing, by design: token order inside a `className` attribute has no effect on CSS cascade order — that is decided by declaration order in the stylesheet — so there is nothing honest to persist.
 

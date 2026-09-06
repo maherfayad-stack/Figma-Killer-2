@@ -12,6 +12,178 @@ Entry ids are `<area>-<nn>`. Areas in use: `parser`, `canvas`, `store`, `panel`,
 
 ---
 
+### style-02 — a class assignment wrote Studio's own hash into the user's JSX, and a refused write was silently adopted
+
+- **Agent:** parser-surgeon
+- **Stage:** done
+- **Updated:** 2026-09-06
+- **Goal:** three style-writeback correctness bugs from a verified audit, fixed
+  with the refusal (not the guess) wherever the honest answer is unknowable:
+  the CSS-Modules class token, new-class co-location, and a baseline that
+  advanced past refusals.
+- **Scope:**
+  - `src/core/ast-codemods/setJsxClassName.ts` (+ `index.ts` barrel, its test)
+  - `server/handlers/studioEditSchemas.ts`, `studioWriteback.ts`,
+    **new** `studioEditTargets.ts` (+ `studioWriteback.test.ts`,
+    `cssInsertIntegration.test.ts`)
+  - `src/admin/pages/site/studio/`: `classNameWriteback.ts`,
+    `styleRuleWriteback.ts`, `loadedValuesBaseline.ts`, `fsCodemodAdapter.ts`,
+    `studioEditPayload.ts`, **new** `cssInsertDestination.ts`, **new**
+    `refusalToasts.ts` (+ `fsCodemodAdapter.test.ts`)
+  - `src/ui/components/Toast/` — `ToastInput` is now an exported type
+  - tests: **new** `src/__tests__/studio/classTokenWriteback.test.ts`,
+    `src/__tests__/studio/styleRuleWriteback.test.ts`
+  - `docs/features/studio-import.md` (CSS + `className` write-back sections)
+  - NOT touched, deliberately: `panels/PropertiesPanel/**`,
+    `property-controls/**`, `usePersistence.ts`, `canvas/`, `store.ts` — a
+    parallel session owns those. Every fix here is resolver-side.
+
+**The three bugs.**
+
+1. **A CSS-Modules class was attached by its compiled hash.** `classNamesFor`
+   sent `styleRules[id].name` for every class. For a rule parsed out of a
+   `*.module.css`, that name is *Studio's own* `styleCompile.ts` hash
+   (`<fileBase>_<local>__<sha1-5>`), minted so the canvas can cascade the
+   module's CSS. Writing it produced `className="SignUp_socialBtn__a1b2c"` in
+   the user's real `.tsx` — a token that matches inside Studio's iframe and
+   **nothing** in their built app. Landed, reported "saved", styled nothing.
+2. **Every new class refused in any multi-stylesheet project.** The
+   co-location step in `resolveCssInsertDestination` read the page from
+   `rule.scope.nodeId`, and the only producer of node-scoped rules
+   (`ensureNodeStyleClass`) has no non-test caller — so it never ran, and a
+   project whose pages each own a stylesheet got "Studio found 4 candidate
+   stylesheets ... and will not guess" for every class.
+3. **The diff baseline advanced past refusals.** `commitBaseline` /
+   `commitClassIdsBaseline` ran unconditionally after every save. A refused
+   write never reached disk, but the baseline adopted its value — so the
+   user's obvious retry (the same value again) diffed as "no change", produced
+   no edit, and was never attempted a second time. Reported once, then
+   permanently invisible.
+
+- **Done so far:**
+  - `ClassNameToken` is now a discriminated union on the wire and in the
+    codemod: `{kind:'literal',token}` or `{kind:'module',file,local}`.
+    `classNameWriteback.ts`'s `resolveClassToken` decides which, from the
+    rule's SOURCE FILE rather than its name.
+  - `setJsxClassName` resolves a module token through the target file's own
+    imports (`styles` / `s` / `css` — whatever that file chose) and writes
+    `styles.<local>`, or `styles['kebab-name']`. It adds a default binding to
+    an existing side-effect `import './x.module.css'` **in place** (no line
+    cost), promotes a static value to a template literal to carry both a name
+    and a binding, and appends a span to a dynamic template. Removal is
+    supported where unambiguous (the whole attribute; one `cn()` argument).
+  - `server/handlers/studioEditTargets.ts` (new) owns the client-supplied
+    REFERENCE paths — the `asset` kind's image and the `class` kind's
+    `*.module.css` — through one guard: absolute/UNC/drive forms, `..`,
+    `EXCLUDED_WORKSPACE_DIR_NAMES`, and real-path containment after resolving
+    symlinks, plus a literal `*.module.css` extension check before anything
+    becomes an import specifier.
+  - `cssInsertDestination.ts` (new) owns the `StyleRule.id -> (file, selector)`
+    registry and the destination ladder. `buildClassPageIndex` answers "which
+    page is this class on" from where it is ASSIGNED (decoding each node id to
+    its file), which is what makes co-location fire for an ordinary
+    `createClass`. Two files carrying the class ⇒ absent from the index ⇒ still
+    the ambiguity refusal.
+  - `commitBaseline(styleRules, { pages, refusedRuleIds })` and
+    `commitClassIdsBaseline(pages, refusedNodeIds)` preserve the previous entry
+    for anything refused. `StyleRuleEditPlan.ruleIdByNodeId` is the join from
+    the response's synthetic `css:...` nodeIds back to rule ids.
+  - `refusalToasts.ts` (new) de-duplicates the repeat TOAST instead, keyed
+    `(kind, target, reason)`, reset on `loadSite`.
+  - `StyleRuleEditPlan.unmapped` is `{label, reason}[]`; the reason is the
+    toast BODY. It used to be concatenated into the generic lead, producing
+    "…has no hand-editable CSS file in this project — Studio found 4 candidate
+    stylesheets…", which contradicts itself.
+- **Next step:** items 4 and 5 of the audit are NOT in this change and are the
+  obvious follow-up, on their own branch:
+  **(4) property REMOVAL never reaches disk, silently** — `collectStyleRuleEdits`
+  only iterates properties present now, and `setJsxStyle` merges, so deleting a
+  declaration is a no-op with no toast. Needs `op:'unset'` on the CSS edit
+  schema + a `removeDeclaration` codemod (postcss `decl.remove()`, refusing via
+  `analyzeDeclarationTarget`), and a `remove: string[]` on `kind:'style'`.
+  **(5) per-breakpoint writes (~40 lines)** — `setDeclarationAtMedia` already
+  exists and insert/create edits already carry `atMedia`; only `CssSetEditSchema`
+  lacks the field. Adding it, routing set-with-atMedia through
+  `setDeclarationAtMedia`, and resolving `contextId → mediaQuery` from
+  `site.breakpoints`/`site.conditions` deletes the "Breakpoint override not
+  saved" refusal for the media case (container/supports still refuse by name).
+- **Decisions:**
+  - **A missing `import` for a module token REFUSES
+    (`css-module-import-missing`) rather than adding one.** Adding an import
+    inserts a LINE at the top of the file, shifting the `line:col` of every
+    other edit still pending in the same batch — the exact hazard
+    `orderStudioEditsForApply` exists to prevent and why `pruneOrphanedImports`
+    is a post-pass. A deferred post-batch pass was considered and rejected:
+    `css`/`create` edits sort LAST (no decodable location) and themselves add
+    an import, so there is no phase ordering that is safe for both. The refusal
+    names the exact import to add.
+  - **A `create` destination refuses the class TOKEN, client-side
+    (`stylesheet-not-created-yet`).** The server decides that file's name and
+    convention (`detectStylesheetConvention`), so the client cannot yet know
+    whether the class is reachable by name or only as a binding. The node's
+    `classIds` baseline is held back, `recordCreatedStylesheet` records the
+    answer from the response, and the assignment lands on the next save.
+  - **A partially-resolvable class drift is held back WHOLE.** Sending half of
+    it would advance the baseline past the other half; one element carrying an
+    add without its paired remove is worse than one more save tick.
+  - **`isGeneratedClass` short-circuits to a literal** before any destination
+    resolution — a framework utility is regenerated from
+    `.studio/framework.json` and its name IS its DOM name; resolving a
+    stylesheet for it would be nonsense.
+  - Repeat refusals are de-duped at the TOAST, never by advancing the baseline.
+    The old behaviour got "exactly one message" by throwing the edit away.
+- **Landmines** (not already in the 578-line doc — `studio-scribe` should fold
+  these in):
+  - **`StyleRule.name` means two different things.** For an imported CSS-Modules
+    rule it is the COMPILED class (`studioCss.ts` sets `displayName` to the
+    local name); for everything else it is the source name. Anything that
+    writes a class name into source must branch on the rule's SOURCE FILE, not
+    on `name`. This is bug 1 in one sentence.
+  - **A `:global(.foo)` class inside a `*.module.css` has a module `source` but
+    NO `displayName`** — the compiler never renames it. It must stay a literal
+    token. `displayName ?? (editor-authored ? name : literal)` is the exact
+    rule; getting it backwards writes `styles.foo` for a class that has no such
+    key.
+  - **`classifyStylesheetEditability` deliberately answers `plain-css` for
+    `*.module.css`** (what is compiled is the NAME, not the file). The
+    write-back docs still said otherwise in one table row; fixed here. Do not
+    "restore" it.
+  - **`resolveCssInsertDestination` is consulted twice per save for the same
+    rule** — once for its declarations (`collectStyleRuleEdits`) and once for
+    its class token (`classNameWriteback`). They must agree, which is why both
+    call the same function with the same page index rather than each deriving a
+    destination.
+  - **`setJsxClassName` mutates the ts-morph project before it decides to
+    refuse.** `params.project` can be shared across edits, so a binding added
+    on a path that later refuses would be persisted by whoever saves next
+    (leaving an unused import ⇒ a `noUnusedLocals` build failure). The
+    import-binding mutation is therefore a deferred closure run only by
+    `commit()`.
+  - **Three modules were at their 700-line ceiling.** `styleRuleWriteback.ts`,
+    `fsCodemodAdapter.ts`, and `server/handlers/studioWriteback.ts` all crossed
+    it; the three new modules above are the splits, along seams that already
+    existed (registry+destination / refusal reporting / reference paths).
+- **Verification:**
+  - `bun run build` — pass (`tsc -b` + vite).
+  - `bun run lint` — clean.
+  - `bun test src/core/ast-codemods src/__tests__/studio src/admin/pages/site/studio server/handlers/__tests__/studioWriteback.test.ts server/handlers/__tests__/cssInsertIntegration.test.ts src/__tests__/architecture`
+    — 1078 pass, 1 fail: `pixel-art-icons/dist/icons/chevron-left.js exports
+    "ChevronLeftIcon"`, an icon-catalog gate reading `node_modules` in a fresh
+    worktree install. Not mine — no icon or vendor file is in the diff.
+  - Full `bun test` also shows the pre-existing canvas/happy-dom and
+    `streamClaudeCli` failures other sessions own, plus
+    `server/handlers/studio/projectMcpApprovals.test.ts` (missing import).
+  - New tests: 12 module-token cases in `setJsxClassName.test.ts`, 5 dispatcher
+    cases in `studioWriteback.test.ts` (including two out-of-workspace
+    declines), 11 in `classTokenWriteback.test.ts` (two of which use a
+    deliberately non-eSIM repo shape — feature folders, `.jsx`, one global
+    plain stylesheet), 3 baseline-refusal cases in `styleRuleWriteback.test.ts`.
+  - NOT run: browser/e2e. Nothing here was dogfooded in a real canvas.
+- **Human action needed:** dogfood at `/admin/site?studio` on a CSS-Modules
+  project — assign a class to an element and confirm the `.tsx` gains
+  `styles.<local>`, not a hash; then assign one to a page whose file does not
+  import that stylesheet and confirm the `css-module-import-missing` toast
+  names the import to add.
 ### panel-10 — a refusal now shows its reason, its way forward, and where in the source it lives
 ### panel-10 — a Tailwind/Sass project imported unstyled and nothing on screen said why
 ### mcp-17 — the assistant loop paid for its whole context every round, ran its read batch one tool at a time, and captured five screens in five browser round trips

@@ -34,43 +34,157 @@
  * both empty, `reordered: true`) produces no edit and no toast. There is
  * nothing honest to persist.
  *
- * ## Per-token refusals are not decided here
+ * ## Per-ATTRIBUTE refusals are not decided here; per-TOKEN ones are
  *
  * `setJsxClassName` (`@core/ast-codemods`) is the only place that has
  * actually read the `className` expression, so it is the only place that can
- * refuse (a CSS Modules binding, a dynamic template, a spread attribute, an
- * unrecognized function call). This module only ever PROPOSES the edit; the
- * refusal comes back from the server on `StudioEditBatchResult.refusals`
+ * refuse on the SHAPE of that attribute (a CSS Modules binding, a dynamic
+ * template, a spread attribute, an unrecognized function call). Those
+ * refusals come back from the server on `StudioEditBatchResult.refusals`
  * with `kind: 'class'`, surfaced by `fsCodemodAdapter.ts`'s existing
  * `REFUSAL_TITLES` toast loop exactly like `detach`/`swap`/`css` already are.
+ *
+ * What a TOKEN spells, though, is this module's question, because only the
+ * client holds the `StyleRule.id -> (file, selector)` registry — see
+ * `resolveClassToken`, and `tokenRefusals` for the cases it declines rather
+ * than guesses.
  */
-import { getNodeDisplayName, hasWritableSourceLocation, type Page, type SiteDocument, type StyleRule } from '@core/page-tree'
+import {
+  getNodeDisplayName,
+  hasWritableSourceLocation,
+  isGeneratedClass,
+  isImportedStyleRuleId,
+  type Page,
+  type SiteDocument,
+  type StyleRule,
+} from '@core/page-tree'
 import { registry } from '@core/module-engine'
 import { collectClassIdsDrift } from './loadedValuesBaseline'
+import { buildClassPageIndex, getStudioStyleRuleSources, resolveCssInsertDestination } from './styleRuleWriteback'
 import type { ClassAssignmentDriftDetail } from '@site/panels/classAssignmentUnsavedNotice'
+
+/**
+ * One class token on the wire — `server/handlers/studioEditSchemas.ts`'s
+ * `ClassNameTokenSchema`. See `resolveClassToken` for which shape a rule gets
+ * and why.
+ */
+export type ClassNameEditToken =
+  | { kind: 'literal'; token: string }
+  | { kind: 'module'; file: string; local: string }
 
 /** One `kind: 'class'` edit, matching `server/handlers/studioEditSchemas.ts`'s `ClassEditSchema`. */
 export interface ClassNameEditPayload {
   kind: 'class'
   nodeId: string
-  add: string[]
-  remove: string[]
+  add: ClassNameEditToken[]
+  remove: ClassNameEditToken[]
+}
+
+/** One class that could not be turned into a writable token, and the sentence saying why. */
+export interface ClassTokenRefusal {
+  nodeLabel: string
+  className: string
+  reason: string
+  message: string
 }
 
 export interface ClassNameEditPlan {
   edits: ClassNameEditPayload[]
   /** Drifts with no writable source location at all — genuinely can never be written from this node id. */
   unwritable: ClassAssignmentDriftDetail[]
+  /**
+   * Classes whose TOKEN could not be resolved honestly (`style-02`). Reported,
+   * never guessed at — and the affected node ids are also returned in
+   * `refusedNodeIds` so the caller can hold their `classIds` baseline back and
+   * try again on the next save.
+   */
+  tokenRefusals: ClassTokenRefusal[]
+  /** Node ids whose drift was NOT fully sent — their baseline must not advance. */
+  refusedNodeIds: string[]
 }
 
-/** Resolves class ids to their display names, dropping any id with no rule (shouldn't happen — a classId always comes from an assigned rule). */
-function classNamesFor(ids: readonly string[], styleRules: Record<string, StyleRule>): string[] {
-  const names: string[] = []
-  for (const id of ids) {
-    const name = styleRules[id]?.name
-    if (name) names.push(name)
+type ClassTokenResult =
+  | { ok: true; token: ClassNameEditToken }
+  | { ok: false; reason: string; message: string }
+
+/**
+ * The token that ATTACHES this rule's class to an element in the user's real
+ * source — `style-02`, and the worst correctness bug this module has had.
+ *
+ * The old answer was `styleRules[id].name`, unconditionally. For a class that
+ * came out of a `*.module.css` that name is Studio's OWN compiled hash
+ * (`styleCompile.ts`'s `<fileBase>_<local>__<sha1-5>`), computed so the canvas
+ * can render the module's cascade. Writing it into the user's JSX produced a
+ * `className` token that matches something only inside Studio's iframe and
+ * NOTHING in their actual app — a write that looks like it worked, is really
+ * on disk, and styles nothing.
+ *
+ * So the token is resolved from the rule's SOURCE FILE, not its name:
+ *
+ *   - a `*.module.css` source ⇒ a `module` token (`styles.<local>`), where
+ *     `local` is the name as written in that file: `displayName` for an
+ *     imported rule (`studioCss.ts` sets it from the inverse class map), or
+ *     the rule's own name for one the editor authored into that file.
+ *   - anything else ⇒ a `literal` token. This is right for a plain `.css`
+ *     rule, for a Tailwind utility (no source at all, and the class name IS
+ *     the DOM name), for a framework-generated class, and for a `:global(...)`
+ *     class inside a module file (never renamed, so it has no `displayName`
+ *     and is an ordinary name).
+ *   - a rule the editor authored that has no source YET resolves through
+ *     `resolveCssInsertDestination`, the same destination its declarations
+ *     will be inserted into on this very save — so the pair always agrees.
+ *   - a `create` destination REFUSES: the server picks that file's name and
+ *     convention (`detectStylesheetConvention`), so the client cannot yet
+ *     tell whether the class is reachable as a literal or only as a binding.
+ *     One save later `recordCreatedStylesheet` has the answer and the token
+ *     resolves normally — which is why a refusal here holds the node's
+ *     `classIds` baseline back instead of advancing past it.
+ */
+function resolveClassToken(
+  classId: string,
+  styleRules: Record<string, StyleRule>,
+  pageIndex: ReadonlyMap<string, string>,
+): ClassTokenResult | null {
+  const rule = styleRules[classId]
+  if (!rule) return null // no rule behind the id — nothing to name (shouldn't happen)
+
+  // A framework-generated utility (`.text-color-metal`, a typography step) is
+  // regenerated from `.studio/framework.json`, never from a `.css` file, and
+  // its NAME is what the DOM carries everywhere it renders. It has no source
+  // and never will — resolving a destination for it would be nonsense.
+  if (isGeneratedClass(rule)) return { ok: true, token: { kind: 'literal', token: rule.name } }
+
+  const moduleToken = (file: string, local: string | undefined): ClassTokenResult =>
+    local ? { ok: true, token: { kind: 'module', file, local } } : { ok: true, token: { kind: 'literal', token: rule.name } }
+
+  const source = getStudioStyleRuleSources()[classId]
+  if (source) {
+    if (!/\.module\.css$/i.test(source.file)) return { ok: true, token: { kind: 'literal', token: rule.name } }
+    // `displayName` is the local name for an IMPORTED module rule; a rule the
+    // editor authored into that file carries its local name as `name`. A
+    // `:global(...)` class has neither and falls back to the literal.
+    return moduleToken(source.file, rule.displayName ?? (isImportedStyleRuleId(classId) ? undefined : rule.name))
   }
-  return names
+
+  // No source at all. An imported rule that stayed unmapped is Tailwind /
+  // compiled output, whose class name IS the DOM name.
+  if (isImportedStyleRuleId(classId)) return { ok: true, token: { kind: 'literal', token: rule.name } }
+
+  const destination = resolveCssInsertDestination(rule, pageIndex)
+  if (!destination.ok) return { ok: false, reason: destination.reason, message: destination.message }
+  if (destination.kind === 'create') {
+    return {
+      ok: false,
+      reason: 'stylesheet-not-created-yet',
+      message:
+        `Studio is creating a stylesheet next to ${destination.pageFile} for this class in this save. Until that ` +
+        'file exists it cannot tell whether the class is reachable by name or only through a CSS-Module binding, ' +
+        'so it will attach the class on your next change rather than guess.',
+    }
+  }
+  return /\.module\.css$/i.test(destination.file)
+    ? moduleToken(destination.file, rule.name)
+    : { ok: true, token: { kind: 'literal', token: rule.name } }
 }
 
 /**
@@ -87,25 +201,65 @@ export function collectClassNameEdits(
 ): ClassNameEditPlan {
   const edits: ClassNameEditPayload[] = []
   const unwritable: ClassAssignmentDriftDetail[] = []
+  const tokenRefusals: ClassTokenRefusal[] = []
+  const refusedNodeIds: string[] = []
+  const pageIndex = buildClassPageIndex(pages)
+
+  /** Plain class NAMES, for the honesty toast — which is about what the user sees, not what gets written. */
+  const displayNames = (ids: readonly string[]): string[] =>
+    ids.map((id) => styleRules[id]?.displayName ?? styleRules[id]?.name).filter((name): name is string => Boolean(name))
 
   for (const drift of collectClassIdsDrift(pages)) {
     if (drift.addedClassIds.length === 0 && drift.removedClassIds.length === 0) continue // reorder-only — nothing the cascade cares about
 
-    const addedClassNames = classNamesFor(drift.addedClassIds, styleRules)
-    const removedClassNames = classNamesFor(drift.removedClassIds, styleRules)
+    const nodeLabel = getNodeDisplayName(drift.node, registry.get(drift.node.moduleId), visualComponents)
 
     if (!hasWritableSourceLocation(drift.nodeId)) {
       unwritable.push({
-        nodeLabel: getNodeDisplayName(drift.node, registry.get(drift.node.moduleId), visualComponents),
-        addedClassNames,
-        removedClassNames,
+        nodeLabel,
+        addedClassNames: displayNames(drift.addedClassIds),
+        removedClassNames: displayNames(drift.removedClassIds),
         reordered: false,
       })
       continue
     }
 
-    edits.push({ kind: 'class', nodeId: drift.nodeId, add: addedClassNames, remove: removedClassNames })
+    const add: ClassNameEditToken[] = []
+    const remove: ClassNameEditToken[] = []
+    let refused = false
+    for (const [ids, into] of [
+      [drift.addedClassIds, add],
+      [drift.removedClassIds, remove],
+    ] as const) {
+      for (const classId of ids) {
+        const resolved = resolveClassToken(classId, styleRules, pageIndex)
+        if (!resolved) continue
+        if (!resolved.ok) {
+          tokenRefusals.push({
+            nodeLabel,
+            className: styleRules[classId]?.displayName ?? styleRules[classId]?.name ?? classId,
+            reason: resolved.reason,
+            message: resolved.message,
+          })
+          refused = true
+          continue
+        }
+        into.push(resolved.token)
+      }
+    }
+
+    // A partially-resolvable drift is held back WHOLE. Sending half of it
+    // would advance the baseline past the other half on the caller's side,
+    // and one element carrying an add without its paired remove is a worse
+    // intermediate state than one more save tick.
+    if (refused) {
+      refusedNodeIds.push(drift.nodeId)
+      continue
+    }
+    if (add.length === 0 && remove.length === 0) continue
+
+    edits.push({ kind: 'class', nodeId: drift.nodeId, add, remove })
   }
 
-  return { edits, unwritable }
+  return { edits, unwritable, tokenRefusals, refusedNodeIds }
 }
