@@ -15,6 +15,7 @@ The server is implemented with the official `@modelcontextprotocol/sdk`. That pa
 - **Studio is an MCP server.** One Streamable-HTTP endpoint at `/_studio/mcp` serves both local and remote clients (local is just `localhost`).
 - **Thin adapter over the existing tool engine.** No tool logic is duplicated. MCP is a new *caller* alongside the built-in agent and the plugin host; tool dispatch reuses `executeAiTool`.
 - **Tool surface = the full catalog.** Server-resolved tools (`site_list_documents`, `site_read_styles`, and explicit `site_publish`) run headless — no editor needed. Every browser-execution tool the agent panel has is exposed too, **relayed to the open Site workspace** — the single source of truth for edits. If that workspace is not open, its tools return a clear error; headless tools still work.
+- **Visual verification is headless.** `studio_screenshot`, `studio_export_frames` and `studio_compare` render in a server-side browser against what is on disk — they need no Studio tab open and never disturb one that is. The live editor bridge is their fallback, and stays the deliberate choice for state only an open tab holds (the current selection, an unsaved in-progress edit). See "Headless capture".
 - **Draft, then publish.** Browser writes save the draft and never leak intermediate work to visitors. A connector with `ai.tools.write` + `pages.publish` calls `site_publish` once after its edit sequence; that server-side tool runs the canonical full-site pipeline and atomically swaps the rebuilt static slot.
 - **Bearer-token auth, one secret per connector.** The token is shown once on creation and stored only as a SHA-256 hash. New tokens expire after 90 days by default; admins can choose a custom TTL or explicitly create a non-expiring token. Revocable.
 - **Capability-gated.** A connector carries a granted capability subset; the same gate the built-in agent uses (`toolAllowedForCapabilities`) filters the toolset. An MCP caller can never invoke a tool the granting capabilities couldn't authorize over HTTP.
@@ -60,6 +61,7 @@ repositories (headless reads) / live editor store (browser tools)
 | `resources.ts` | Static MCP **resources** (not tools) — `studio://guidelines`. |
 | `editorBridge.ts` | Per-user live workspace bridge registry + `createEditorBridgeStream`; browser tools route to the owner's open Site workspace. |
 | `handlers/editorBridge.ts` | `GET /admin/api/ai/editor-bridge?scope=site` — the capability-gated NDJSON stream the workspace holds open. |
+| `capture/` | **Headless agent capture (W4-2A).** `captureFrames.ts` (headless-first / live-bridge-fallback routing), `headlessCapture.ts` (the driver), `browserPool.ts` (one warm Chromium, N pages — shared with `studio_render_reference`), `captureRoute.ts` + `capturePayload.ts` + `captureToken.ts` (the `/admin/agent-capture` surface and its single-purpose grant), `captureOrigin.ts` (which origin to navigate to). See "Headless capture" below. |
 | `connectors/` | `types.ts` (server-only record), `token.ts` (generate + SHA-256 hash), `store.ts` (CRUD + `toConnectorView`). |
 | `handlers/connectors.ts` | `/admin/api/ai/mcp/connectors` CRUD, gated by `ai.providers.manage`. |
 
@@ -167,24 +169,24 @@ documentation, not a data source).
 **9.2 — the visual-audit trio** (`mcp-02`), requirement 10 ("audit the frames
 visually by exporting them as images and comparing them to the live one"):
 
-- `studio_export_frames` — **browser-relayed** (`execution:'browser'`,
-  `scope:'site'`, `mutates:true` + `studio.write`), the one 9.x tool that is
-  NOT headless: a Studio board frame does not exist offscreen the way a CMS
-  breakpoint does (every board frame shares one synthetic `'studio'`
-  breakpoint id at its OWN authored width, with no `Breakpoint` object in
-  `site.breakpoints` a transient mount could target without touching
-  `CanvasRoot.tsx`, which a concurrent work order owned at ship time). Instead
-  it captures the REAL, already-mounted board frame: forces zoom to 1 and
-  pans the requested page fully on screen (so the capture is width-accurate
-  regardless of the user's current zoom), activates it, waits for mount +
-  settle, then reuses `site_render_snapshot`'s own capture pipeline
-  (`renderEvidence.ts`, extended with a `pageId` filter). Because it captures
-  the real live DOM, the design-canvas freeze (`CanvasAnimationInjector`) and
-  scroll-unroll (`CanvasScrollUnrollInjector`) injectors apply automatically.
-  Side effect, by design: temporarily takes over the live canvas's pan/zoom/
-  active-page (clearing node selection) for the batch, restored afterward —
-  documented in the tool description since a user editing in the same session
-  will see their view jump.
+- `studio_export_frames` — `execution:'server'`, `mutates:true` + `studio.write`.
+  Routes through `capture/captureFrames.ts`: **headless first**, the live
+  editor bridge as fallback and as the deliberate choice for state only an open
+  tab holds. `source` picks explicitly (`auto` | `headless` | `live`), and the
+  result carries `capturedVia` saying which answered.
+  - **Headless (default).** A server-side Chromium loads `/admin/agent-capture`
+    and rasterises each frame. Needs no browser tab, and never scrolls, zooms
+    or re-pages one that is open.
+  - **Live.** The original path, unchanged: relay to the connector owner's open
+    Site workspace, where `src/admin/pages/site/agent/studioExportFrames.ts`
+    captures the REAL, already-mounted board frame — forcing zoom to 1, panning
+    the page fully on screen, activating it, waiting for mount + settle, then
+    reusing `site_render_snapshot`'s capture pipeline (`renderEvidence.ts`).
+    Its side effect is why it is no longer the default: it takes over the live
+    canvas's pan/zoom/active-page (clearing node selection) for the batch. It
+    remains the ONLY way to see the user's current selection, an in-progress
+    edit not yet saved to disk, or an unpersisted board re-frame.
+
 - `studio_render_reference` — **Tier 2**, `execution:'server'`, `mutates:true`
   + `studio.run.project` (never granted by default, never implicit — this is
   the only Studio tool that EXECUTES the project's own code). Boots the
@@ -286,6 +288,124 @@ This is why an open editor (yours, or one the agent opens) unlocks the full edit
 
 ---
 
+## Headless capture
+
+**W4-2A.** Visual verification used to be hostage to the user's open tab. Every
+`studio_screenshot`, `studio_export_frames` and `studio_compare` relayed to the
+live editor, which meant: nothing could be verified with the tab closed; each
+frame cost a canvas pan + mount + settle wait; the viewport of whoever was
+editing visibly jumped; and a wedged tab burned the full bridge timeout before
+failing with "No Studio board is connected" — the same message for every
+possible cause.
+
+All three now try a **server-side headless browser first** and keep the bridge
+as the fallback.
+
+```
+studio_screenshot / studio_export_frames / studio_compare
+        │
+        ▼  capture/captureFrames.ts
+   ┌────────────────────────────────────────────────┐
+   │ 1. headless  → mint grant → warm Chromium      │
+   │                → /admin/agent-capture?token=…  │
+   │                → settle → screenshot each frame│
+   │ 2. live tab  → editorBridge → studio_export_…  │   (fallback, or source:'live')
+   │ 3. neither   → capture-unavailable, BOTH reasons│
+   └────────────────────────────────────────────────┘
+```
+
+### The capture route
+
+`/admin/agent-capture?token=…` is a **second Vite HTML entry**
+(`agent-capture.html` → `src/admin/agentCapture/`), not a route inside the
+admin SPA. A separate entry makes "no editor shell" structural rather than a
+promise: the bundle contains the base modules, the editor store, the canvas and
+the capture app — no router, no boot probe, no toast provider, no plugin
+runtime, no panels, no persistence, no autosave.
+
+It renders with the SAME code the canvas renders with: `IframeFrameSurface` in
+`interaction="capture"` mode wrapping `CanvasComposedTree`, one frame per
+requested page under its own `CanvasPageContext` (the same mechanism
+`BoardFrameView` uses to render several pages at once). Every design-frame
+injector therefore applies — authored CSS, class CSS, project CSS, the
+animation freeze, the scroll-unroll — and readiness uses `AgentSnapshotFrame`'s
+own settle loop (preview data idle → DOM quiet → fonts ready → DOM quiet
+again). The page publishes a validated report on
+`window.__studioAgentCapture`; the driver polls one expression, then reads it
+in a single `evaluate` and validates it against `AgentCaptureReportSchema`.
+
+The wire contract for both hops lives in `@core/studio-capture` — the payload
+(server → page) and the report (page → server), TypeBox on both sides.
+
+### Why no `studio.run.project` gate
+
+`studio_render_reference` is Tier 2 and gated because it boots the PROJECT'S
+OWN dev server: `scripts.dev` runs and every dependency it imports executes.
+That gate is unchanged.
+
+Headless capture executes none of that. It renders Studio's own parse output —
+the `Page` trees the bounded static evaluator produced by READING the AST —
+through Studio's own module renderers. No project component is invoked, no hook
+is called, no project module is evaluated; the only project-authored bytes
+involved are CSS text and image files, both inert. Parse-never-execute holds
+here exactly as it holds in the live canvas, so this path needs exactly the
+capability the live-tab path already needs (`studio.write`) and no more. Gating
+it higher would make the SAFE path harder to reach than the live path that
+renders the identical DOM.
+
+### The capture grant
+
+Authentication is a **single-purpose capture token**, never the admin session
+cookie — handing a screenshot job the operator's whole admin authority is not
+something taking a picture needs. It follows `sessionConnector.ts`'s turn-token
+pattern, one notch tighter:
+
+- **No capabilities.** A grant is not a principal. It authorises exactly two
+  reads — the capture payload for its own `pageIds`, and the local image assets
+  those pages reference — both scoped to the ONE project directory recorded in
+  the grant. `dir` never comes from the request, so there is no traversal
+  surface; parsed asset URLs are re-pointed at
+  `/admin/api/agent-capture/asset?token=…` server-side.
+- **Minutes, not days.** 5-minute TTL, in-process registry.
+- **Revoked in a `finally`** the moment the capture ends. The TTL is the net,
+  not the boundary.
+
+Any request to the namespace without a live grant — and any non-GET — gets a
+bare 404.
+
+### Resolution
+
+`dpr` is applied as Chromium's `deviceScaleFactor`, so a frame is RENDERED at
+that density rather than rasterised at 1x and scaled up. The cap that applies
+is the shared one in `@core/ai`'s `captureScale.ts` (`effectiveCaptureRatio`),
+which the live `renderEvidence.ts` path now also calls — so a `studio_compare`
+verdict does not depend on which rasteriser produced the bytes. It is computed
+first from the authored frame geometry the driver already knows, then
+re-checked against the real captured bytes (a scroll-unrolled page can exceed
+its authored height), with `imageScale` derived from the actual pixel width
+either way.
+
+### Failure honesty
+
+A headless failure is named (`headless-browser-unavailable`,
+`headless-navigation-failed`, `headless-not-ready`, `headless-page-error`,
+`headless-invalid-report`) and falls back to the bridge. When BOTH paths fail
+the error is `capture-unavailable` and it states both reasons — including how
+to fix the headless one (`bunx playwright install chromium`). A host with no
+Chromium is a supported configuration: the first failed launch is remembered
+for 60s so the fallback is immediate rather than paying a failed launch on
+every call.
+
+### Where it runs from
+
+The driver navigates to `/admin/agent-capture` on this server when a build
+exists on disk (`dist/index.html`), and to Vite's own `agent-capture.html` on
+5173 in a `bun run dev` session — Vite's SPA fallback would otherwise answer
+the canonical route with the main entry. `STUDIO_CAPTURE_ORIGIN` overrides the
+origin for a deployment this process cannot guess.
+
+---
+
 ## Authentication
 
 Each connector has a bearer secret (`imcp_…`). The client sends `Authorization: Bearer <token>`. The server hashes the presented token and looks up a non-revoked, non-expired connector, yielding its capability set. Missing/invalid/expired tokens get a `401` with `WWW-Authenticate: Bearer resource_metadata="…/.well-known/oauth-protected-resource"`.
@@ -372,6 +492,9 @@ An admin cannot grant a capability they do not hold (enforced in `handlers/conne
 - `server/ai/mcp/tools/studioImportTool.test.ts` — capability gating, the `dir`-stripping input schema, the imported-pages summary helper, and an end-to-end handler run against a stubbed global `fetch` (no real network calls); `server/handlers/__tests__/studioGithubImport.test.ts` covers the underlying import engine itself.
 - `server/ai/mcp/tools/studio/{projectTools,editTools,fidelityReport}.test.ts` — orientation/edit/fidelity tool handlers against temp fixture projects; `fidelityCodes.test.ts` — doc ⇄ code parity gate against `docs/features/studio-import.md`'s table.
 - `server/ai/mcp/resources.test.ts` — `studio://guidelines` resource listing/read.
+- `server/ai/mcp/capture/captureToken.test.ts` — grant scoping (project + page set), immediate revocation, expiry, and that a caller cannot widen a grant after minting it.
+- `server/ai/mcp/capture/captureFrames.test.ts` — the routing decision: headless first, bridge fallback, `source:'live'`/`'headless'` overrides, and that a both-paths failure names BOTH reasons instead of blaming a missing board.
+- `server/ai/mcp/capture/headlessCapture.test.ts` — headless capture end to end against a real fixture workspace, including **W4-2A's definition of done: `studio_compare` across five pages with no editor bridge connected**. Everything server-side is real (the capture route handler, token minting/resolution/revocation, the payload builder running the real `loadStudioPages` parse, the driver, the resolution clamp, and the whole of `studio_compare` including pixelmatch diffing and the verdict cache). Only Chromium is faked — CI has no browser binary — and the fake still calls the real route with the token out of the navigation URL and validates the payload against the shared schema, so a broken route or a rejected grant fails the test. What it stands in for is rasterisation alone.
 - `server/handlers/studio/designReferenceStore.test.ts` — register/list/get/read/remove against real sharp-encoded PNG/JPEG bytes, containment, idempotent delete, and graceful degradation when a registered file is missing from disk.
 - `server/handlers/studio/referenceUpload.test.ts` — the chat panel's `POST/GET/DELETE /admin/api/studio/reference-upload` HTTP contract end to end.
 - `server/ai/mcp/tools/studio/designReferenceTools.test.ts` — the five design-reference MCP tools' shapes and handlers, including the dpr-recommendation math.

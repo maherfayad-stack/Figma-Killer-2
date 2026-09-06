@@ -21,10 +21,17 @@
  *   2. **Wait for the canvas to re-read** (`awaitStudioLiveReload`) — awaited,
  *      not fire-and-forget, because capturing first would photograph the
  *      previous version of the file.
- *   3. **Capture** — relay to the browser-side `studio_export_frames` handler
- *      (`src/admin/pages/site/agent/studioExportFrames.ts`) over the same live
- *      editor bridge every browser tool uses, and return its PNGs as MCP image
- *      blocks.
+ *   3. **Capture** — hand the resolved page ids to `capture/captureFrames.ts`,
+ *      which renders them in a server-side headless browser and, only if that
+ *      cannot run, falls back to relaying to the open editor tab. Return the
+ *      PNGs as MCP image blocks.
+ *
+ * Step 3 stopped needing an open browser tab in W4-2A. That matters most
+ * exactly here: steps 1 and 2 have just made DISK the source of truth, and
+ * this tool exists to look at files the agent itself wrote — so the honest
+ * renderer is the one that reads those files, not the one that happens to be
+ * mounted in someone's tab. It also means a capture no longer scrolls, zooms,
+ * or re-pages a canvas the user is working in.
  *
  * `studio_export_frames` still exists and still does step 3 alone; it stays in
  * the MCP registry for external clients that manage their own board. It is
@@ -45,7 +52,7 @@ import { syncBoardFramesFromDisk } from '../../../../handlers/studio/boardFrames
 import { loadStudioPages } from '../../../../handlers/studioPageLoad'
 import { canonicalSummaryForFile } from '../../../../handlers/studio/canonicalPageCheck'
 import { resolvePageSourceFile } from '../../../../handlers/studio/pageSourceFile'
-import { awaitEditorBridgeForUser } from '../../editorBridge'
+import { captureFrames } from '../../capture/captureFrames'
 import { awaitStudioLiveReload } from './liveReloadPush'
 import { resolveToolProjectDir } from './resolveToolProjectDir'
 import { MAX_BATCH_PAGES, resolveRequestedPages } from './pageNameMatch'
@@ -95,7 +102,7 @@ export const studioScreenshotTool: AiTool = {
   mutates: true,
   requiredCapabilities: ['studio.write'],
   description:
-    'See what a screen actually looks like. Places a board frame for any page file that does not have one yet, waits for the canvas to re-read the files from disk, then captures each requested screen from the live DOM and returns it as a PNG image block. This is how you verify your own work: write the files, then look at them. Name screens the way you named the files ("Checkout"), or omit `pages` to capture the whole project. Each result carries the captured width/height, its index into the response images, `nodeRects` (node id -> frame-local rect) for feeding studio_diff_frames, and — for a .tsx/.jsx screen — `canonical: { isCanonical, violations, advisories }`, the same WS-13 canonical-JSX self-check studio_read_file exposes, run against the file you just wrote so a non-literal prop/className, a spread prop, a Sass/CSS-in-JS import, an unresolvable dynamic map, or a likely unnecessary wrapper element shows up on the very call your own "write, then look" loop already makes, not only if you separately think to call studio_read_file. It does NOT catch a hardcoded colour, a fixed pixel width, or a literal inline style object — those are values the system prompt\'s own rules ban, not structural editability breaks; studio_measure_reference and careful reading remain how you catch those.',
+    'See what a screen actually looks like. Places a board frame for any page file that does not have one yet, waits for the parse to re-read the files from disk, then renders each requested screen and returns it as a PNG image block. This is how you verify your own work: write the files, then look at them. It does NOT need a Studio browser tab open, and it never disturbs one that is — the capture runs in a headless browser on the server against what is ON DISK, which is exactly what you just wrote; the open editor tab is used only as a fallback when the headless browser cannot run. `capturedVia` in the result says which path answered. Name screens the way you named the files ("Checkout"), or omit `pages` to capture the whole project. Each result carries the captured width/height, its index into the response images, `nodeRects` (node id -> frame-local rect) for feeding studio_diff_frames, and — for a .tsx/.jsx screen — `canonical: { isCanonical, violations, advisories }`, the same WS-13 canonical-JSX self-check studio_read_file exposes, run against the file you just wrote so a non-literal prop/className, a spread prop, a Sass/CSS-in-JS import, an unresolvable dynamic map, or a likely unnecessary wrapper element shows up on the very call your own "write, then look" loop already makes, not only if you separately think to call studio_read_file. It does NOT catch a hardcoded colour, a fixed pixel width, or a literal inline style object — those are values the system prompt\'s own rules ban, not structural editability breaks; studio_measure_reference and careful reading remain how you catch those.',
   inputSchema: ScreenshotInputSchema,
   handler: async (input, ctx: ToolContext) => {
     const { dir: dirInput, pages: requested, dpr, axes } = input as {
@@ -105,14 +112,6 @@ export const studioScreenshotTool: AiTool = {
       axes?: { direction?: 'ltr' | 'rtl'; colorScheme?: 'light' | 'dark' }
     }
     const dir = resolveToolProjectDir(dirInput, ctx)
-
-    const bridge = await awaitEditorBridgeForUser(ctx.userId, 'site', ctx.signal)
-    if (!bridge) {
-      return {
-        ok: false,
-        error: 'No Studio board is connected. A screenshot is a capture of the live canvas, so it needs the project open in a Studio browser tab. If it IS open, the tab reconnects on its own within a few seconds — just call this again once.',
-      }
-    }
 
     // 1. The board must agree with disk before anything is captured.
     const placed = syncBoardFramesFromDisk(dir)
@@ -132,13 +131,21 @@ export const studioScreenshotTool: AiTool = {
     // 2. Awaited, so the capture below photographs the files as they are NOW.
     await awaitStudioLiveReload(ctx.userId, { dir, pageIds: ids, boardsChanged: placed.length > 0 })
 
-    // 3. The existing browser capture path, unchanged.
-    const captured = await bridge.callBrowser('studio_export_frames', {
+    // 3. Capture — headless first, the live editor tab as fallback. The
+    // routing lives in `capture/captureFrames.ts`; this tool is indifferent to
+    // which path answered beyond reporting it, because both produce the same
+    // frames from the same parse output. Headless is the RIGHT default here
+    // specifically because steps 1 and 2 just made disk the source of truth:
+    // this tool exists to look at files the agent has already written.
+    const captured = await captureFrames({
+      userId: ctx.userId,
+      dir,
       pageIds: ids,
       ...(dpr === undefined ? {} : { dpr }),
       ...(axes === undefined ? {} : { axes }),
+      ...(ctx.signal ? { signal: ctx.signal } : {}),
     })
-    if (!captured.ok) return captured
+    if (!captured.output.ok) return captured.output
 
     // A6 (STUDIO-FIGMA-PARITY-PLAN.md): re-arm the WS-13 canonical-JSX
     // self-check on the one path guaranteed to run right after a real write —
@@ -149,7 +156,7 @@ export const studioScreenshotTool: AiTool = {
     // hook to attach this to instead — see `canonicalPageCheck.ts`'s doc.
     // Bounded by the same `ids`/`MAX_FRAMES` cap the capture itself already
     // enforces; never fails the call (`canonicalSummaryForFile` never throws).
-    const rawData = captured.data as { frames?: Array<Record<string, unknown>> } | null
+    const rawData = captured.output.data as { frames?: Array<Record<string, unknown>> } | null
     const pageById = new Map(pages.map((p) => [p.id, p]))
     // Built ONCE for the whole batch (up to MAX_FRAMES pages) and reused —
     // see `canonicalPageCheck.ts`'s doc for why a workspace-aware project is
@@ -172,10 +179,18 @@ export const studioScreenshotTool: AiTool = {
         ...(rawData ?? {}),
         ...(framesWithCanonical ? { frames: framesWithCanonical } : {}),
         dir,
+        // Which path took the picture. `headless` means no editor tab was
+        // involved at all; `live` means it came from the open tab (and, if
+        // `headlessFallbackReason` is present, only because headless could
+        // not run — that reason is the actionable one).
+        capturedVia: captured.source,
+        ...(captured.source === 'live' && captured.headlessFailure
+          ? { headlessFallbackReason: captured.headlessFailure.error }
+          : {}),
         ...(placed.length > 0 ? { newlyPlacedOnBoard: placed } : {}),
         ...(unmatched.length > 0 ? { unmatched } : {}),
       },
-      ...(captured.images ? { images: captured.images } : {}),
+      ...(captured.output.images ? { images: captured.output.images } : {}),
     }
   },
 }

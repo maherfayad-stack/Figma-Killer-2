@@ -1,0 +1,26 @@
+/**
+ * The capture surface is not editor chrome — it is the thing being
+ * photographed. So it carries no tokens, no theme, and no decoration: any
+ * border, shadow, or background of ours would end up inside the PNG the agent
+ * measures against a design reference.
+ */
+.page {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+}
+
+/*
+ * `max-content` in both axes so the wrapper hugs the iframe exactly. The
+ * driver rasterises THIS element, so a single pixel of wrapper padding or
+ * margin would shift every `nodeRects` coordinate relative to the image —
+ * which is also why there is deliberately no spacing between frames. They are
+ * block-stacked and captured one element at a time, so adjacency is invisible
+ * to the output and a gap would buy nothing.
+ */
+.frame {
+  display: block;
+  inline-size: max-content;
+  block-size: max-content;
+  pointer-events: none;
+}

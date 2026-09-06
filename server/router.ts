@@ -1,5 +1,6 @@
 import { tryHandleAi } from './ai/handlers'
 import { handleMcpHttp, MCP_ENDPOINT_PATH } from './ai/mcp'
+import { tryServeAgentCapture } from './ai/mcp/capture/captureRoute'
 import { handleCmsRequest } from './handlers/cms'
 import { tryServeStudio } from './handlers/studio'
 import { tryServeDesignImport } from './handlers/designImport'
@@ -75,6 +76,13 @@ const routes: readonly RouteHandler[] = [
   // auth. Matched before the admin-cookie-gated AI routes since it lives under
   // `/_studio/` and authenticates per-connector, not via the admin session.
   tryServeMcp,
+  // Headless agent capture — `/admin/agent-capture` + its two
+  // `/admin/api/agent-capture/*` data endpoints. Matched BEFORE the
+  // admin-cookie-gated AI/CMS routes and before `tryServeAdminApp` (which
+  // would otherwise answer `/admin/agent-capture` with the ordinary admin
+  // SPA), since this namespace authenticates with a single-purpose capture
+  // grant rather than the admin session.
+  tryServeAgentCaptureRoute,
   // AI runtime — `/admin/api/ai/*`. The legacy `/admin/api/agent` and
   // `/admin/api/agent/tool-result` were deleted in Phase 3 of the AI
   // runtime rewrite. The site editor now POSTs `/admin/api/ai/chat` — one
@@ -142,6 +150,21 @@ function tryServeHealth(_req: Request, _runtime: ServerRuntime, _url: URL, pathn
  */
 function tryServeAi(req: Request, runtime: ServerRuntime, url: URL, _pathname: string): Promise<Response> | null {
   return tryHandleAi(req, runtime.db, url)
+}
+
+/**
+ * Headless agent capture. Owns `/admin/agent-capture` and the
+ * `/admin/api/agent-capture/*` namespace, and absorbs both entirely (an
+ * unknown method or a bad token gets a 404 from the handler rather than
+ * falling through to a later route). See `capture/captureRoute.ts`.
+ */
+function tryServeAgentCaptureRoute(
+  req: Request,
+  _runtime: ServerRuntime,
+  url: URL,
+  pathname: string,
+): Promise<Response | null> {
+  return tryServeAgentCapture(req, url, pathname)
 }
 
 /**

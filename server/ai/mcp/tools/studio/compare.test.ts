@@ -45,6 +45,22 @@ mock.module('./liveReloadPush', () => ({
   awaitStudioLiveReload: async () => {},
 }))
 
+/**
+ * W4-2A — `compare.ts` now captures through `capture/captureFrames.ts`, which
+ * tries the HEADLESS path first. These tests are about the bridge path's dpr
+ * math, batching and verdict cache, so headless is stubbed as unavailable —
+ * exactly what a host with no Chromium reports, and the case the live-bridge
+ * fallback exists for. The headless path has its own tests in
+ * `server/ai/mcp/capture/`.
+ */
+mock.module('../../capture/headlessCapture', () => ({
+  captureFramesHeadless: async () => ({
+    ok: false,
+    code: 'headless-browser-unavailable',
+    error: 'No Chromium available in this test environment.',
+  }),
+}))
+
 const { studioCompareTool } = await import('./compare')
 
 function solidPng(width: number, height: number, rgb: [number, number, number] = [255, 255, 255]): Buffer {
